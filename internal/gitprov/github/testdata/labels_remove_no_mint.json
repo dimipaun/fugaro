@@ -1,0 +1,19 @@
+[
+  {
+    "method": "GET",
+    "path": "/repos/acme/web/installation",
+    "status": 200,
+    "response": {
+      "id": 777
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/app/installations/777/access_tokens",
+    "status": 404,
+    "response": {
+      "message": "Not Found",
+      "documentation_url": "https://docs.github.com/rest/apps/apps#create-an-installation-access-token-for-an-app"
+    }
+  }
+]

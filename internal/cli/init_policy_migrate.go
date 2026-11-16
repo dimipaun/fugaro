@@ -514,7 +514,9 @@ func policyMigrationRefusal(err error) error {
 // (inflightAnswer): the update door passes inflightQuiet, because the owner's
 // ruling of 2026-11-09 is that `fugaro update` is safe while runs are in flight
 // and never tells anybody to wait, the doors that reach the stage without being
-// the update door (`fugaro setup`, `fugaro accounts add`) pass inflightManaged
+// the update door (`fugaro setup`, and the composite doors running a named
+// subset of the stages: `fugaro accounts add`, `accounts rm`, `accounts alias`)
+// pass inflightManaged
 // and keep the answer of 2026-11-06. It is a parameter and not a field of the
 // migration for
 // the reason the paragraph above gives for admitted: a door is a fact of the
@@ -716,7 +718,7 @@ const (
 	// refusal (refuseRunsInFlight), because every ruling widens the person's
 	// session and never a marker's. And it is `fugaro update`'s alone, which is
 	// why it is not what every door into the stage passes (inflightManaged):
-	// `fugaro setup` and `fugaro accounts add` reach this stage too, and the
+	// `fugaro setup` and the composite doors reach this stage too, and the
 	// ruling is about the one command the whole upgrade is.
 	inflightQuiet
 	// inflightManaged is the answer the doors that are not `fugaro update` had
@@ -728,9 +730,10 @@ const (
 	// a project that is not managed and a coding agent's session included, is
 	// refused without --yes.
 	//
-	// It is `fugaro setup`'s and `fugaro accounts add`'s: those doors converge
-	// the same stages (initStages) and neither is the update door, so neither
-	// gets the update door's answer, and the update door's own line
+	// It is `fugaro setup`'s and the composite doors' — `fugaro accounts add`,
+	// `accounts rm` and `accounts alias` converge the same stages through
+	// stagesNamed (spec §2.5 rule 2) and none of them is the update door, so
+	// none gets the update door's answer, and the update door's own line
 	// (announceRunsInFlight) is not one of theirs. What they keep is what they
 	// had, which is this.
 	inflightManaged
@@ -1290,7 +1293,8 @@ func (m *policyMigration) planDetail() string {
 // (inflightAnswer, refuseRunsInFlight): `fugaro update` implies no refusal and
 // no request to wait at all — the owner's ruling of 2026-11-09, the whole
 // upgrade being this command — the doors that reach this stage without being
-// the update door (`fugaro setup`, `fugaro accounts add`) keep the answer of
+// the update door (`fugaro setup`, and the composite doors naming a subset of
+// the stages) keep the answer of
 // 2026-11-06 they had before it. The refusal --yes is the way past is
 // `fugaro project policy publish --delete`'s, the same reading
 // (internal/cli/project_cmd.go).
@@ -1373,8 +1377,9 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 // `fugaro update`'s answer is the owner's ruling of 2026-11-09 (inflightQuiet):
 // the whole upgrade is that command, it is safe while runs are in flight, and
 // it never asks anybody to wait. That ruling is that door's, and the doors that
-// reach this stage without being it — `fugaro setup`, and `fugaro accounts
-// add` / `accounts rm`, whose stage list is built from initStages too — keep
+// reach this stage without being it — `fugaro setup`, and the composite doors
+// (`fugaro accounts add`, `accounts rm`, `accounts alias`), whose stage list is
+// built from initStages through stagesNamed too — keep
 // the answer they had before it (inflightManaged), which is the ruling of
 // 2026-11-06 those doors' own users were given: a managed project's own session
 // writes and is told the count, every other session is refused without --yes.

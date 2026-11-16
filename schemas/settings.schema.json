@@ -396,6 +396,12 @@
         "batch.task_timeout": {
           "default": "unset = Fugaro's own task timeout"
         },
+        "binaries.allow": {
+          "default": "unset = none: no path is admitted, so a run that adds a binary anywhere fails finalize and the person reads the reason there"
+        },
+        "binaries.max_bytes": {
+          "default": "unset = 2097152 (2 MiB): the largest a single added file may be, and a project may lower it"
+        },
         "bitbucket_api_roots": {
           "default": "unset = the provider's public API"
         },

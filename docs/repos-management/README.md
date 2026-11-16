@@ -1,6 +1,6 @@
 # Repository management: full commands for a repository's enrolment in a project
 
-**Status: a design. Nothing is approved and nothing is built.** The owner's order of 2026-11-14 — *"we need full management commands for repos: add, remove, ls, status (sort of a doctor)"* — is recorded verbatim in [spec.md](spec.md) §0, and every open question it leaves is a numbered decision in [reconciliation.md](reconciliation.md) §4, **D2400–D2417, each with a recommendation and the cost of each alternative, every one still unanswered.** The plan is [implementation-plan.md](implementation-plan.md): seven tasks **RE0–RE6**, one of which **adopts the draft another run left** (draft pull request #2690, head `2bcda85d`), one of which is **owner-run**, and none of which is approved.
+**Status: a design. Nothing is implemented yet; the owner approved all tasks on 2026-11-15.** The owner's order of 2026-11-14 — *"we need full management commands for repos: add, remove, ls, status (sort of a doctor)"* — is recorded verbatim in [spec.md](spec.md) §0, and every open question it leaves is a numbered decision in [reconciliation.md](reconciliation.md) §4, **D2400–D2417, each with a recommendation and the cost of each alternative, all eighteen answered by the owner on 2026-11-15, each as recommended.** The plan is [implementation-plan.md](implementation-plan.md): seven tasks **RE0–RE6**, one of which **adopts the draft another run left** (draft pull request #2690, head `2bcda85d`), one of which is **owner-run**, and all of which the owner approved on 2026-11-15 (RE6 stays his own run).
 
 **The design was written as four documents — no code, no Terraform, no schema, no `go.mod`.** [reconciliation.md](reconciliation.md) is the one that decides what is true; where it and [spec.md](spec.md) disagree, the reconciliation wins.
 
@@ -17,7 +17,7 @@
 
 The order asks for four verbs that cover that subject: **`add`** as the whole converge behind one confirmation, **`rm`** as its inverse with an explicit list of what it deliberately leaves, **`ls`** as one row per repository with a versioned `--json` document the console can read, and **`status`** as a doctor for a repository that exits nonzero when something blocks a launch. The reconciliation's own reading is that **almost every piece already exists** — the group, the gate, the ETag-guarded allow-list writer, the in-flight-run read, the local-config writer, most of `status`'s rows as existing `doctor` checks, and the whole repository root and retire flow as `fugaro update --repo`. **What is missing is the reach**, and the honest part of the design is saying which built piece each verb reuses and which it must not fork.
 
-**What this design is not.** It is not approved, not built, and not a licence to run anything: three of its four writers touch the published policy, this machine's config and Terraform, and the one live check is the owner's own, on a throwaway installation.
+**What this design is not.** It is approved to build but not yet built, and not a licence to run anything: three of its four writers touch the published policy, this machine's config and Terraform, and the one live check is the owner's own, on a throwaway installation.
 
 ## The number block
 
@@ -25,7 +25,7 @@ Read **on 2026-11-14** at `origin/main` = **`5c170e5c`**, rather than inherited 
 
 - **On `main`**, the highest written decision is **D2399** (`docs/review-job`, whose block its own README states as D2380–D2399), and that design's check block is **610–619**, of which **610 and 611** are used — `docs/status.md` names *"owner Checks 610 and 611"* as that work's.
 - **In the open work streams**, every branch that writes a decision block was fetched and read: **none writes a decision above D2399 and none reserves a check in 620–629**. The draft this plan adopts claims nothing here — a task branch writes no decision block.
-- **This work takes D2400–D2429** — **D2400–D2417 written here, every one pending the owner's answer, D2418–D2429 reserved** — and **Checks 620–629**, of which **620** is the plan's one owner-run check and **621–629 are reserved**.
+- **This work takes D2400–D2429** — **D2400–D2417 written here, every one answered by the owner on 2026-11-15 as recommended, D2418–D2429 reserved** — and **Checks 620–629**, of which **620** is the plan's one owner-run check and **621–629 are reserved**.
 
 A number reserved by a plan that has not merged is invisible to a grep, and a number reserved in a merged plan is invisible to a grep of the checklist — `docs/plans/2026-10-16-voice.md` §2 (line 58) states both, and it is why §5's fourth command reads the designs' own files and not one file. A later task that needs a number re-checks that section's facts rather than this conclusion.
 

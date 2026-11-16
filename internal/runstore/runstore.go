@@ -145,6 +145,34 @@ type Halt struct {
 	Scope  string     `json:"scope"` // run | repo | global
 	At     time.Time  `json:"at"`
 	Detail string     `json:"detail,omitempty"`
+	// WorkspaceRefusal, when set, says the workspace's own credentials
+	// service refused this run, and which of the workspace's refusals it was:
+	// its stop switch, its cap, or a settle that failed — the values of
+	// internal/gateway's WorkspaceRefusals, which result.schema.json's enum
+	// is held to (docs/workspaces/spec.md §5, §9; D2022's O19,
+	// docs/stateless-orchestrator/implementation-plan.md).
+	//
+	// It is the marker the run's record did not have (U12, resolved NO on
+	// 2026-11-13) and the reason a launcher needs it: a workspace's refusal
+	// reaches a member's run as the same budget_unavailable/run halt a
+	// member's own credentials-service outage writes, so a daemon reading
+	// records alone cannot tell them apart, counts the refusal as one of an
+	// item's ordinary attempts, and trips its breaker only after three. It
+	// says who refused and never why the run stopped — Reason, Scope and
+	// Detail keep exactly what they said before this field existed, so a run
+	// refused by a workspace stops where it always stopped and only its
+	// record says by whom.
+	//
+	// It is written from the marker the workspace's service put on the
+	// refusal it answered (internal/gateway's WorkspaceRefusalHeader, read by
+	// the gateway that halts the run) and never inferred from a reason, a
+	// scope or a detail: a member's own credentials service writes those the
+	// same way, and a field a run can claim for itself is a field a daemon
+	// would pause a queue on for nothing. Absent — never an empty string —
+	// for every run no workspace refused, which is every run on an
+	// installation with no workspace and every record written before this
+	// field existed, so an old reader sees the record it always saw.
+	WorkspaceRefusal string `json:"workspace_refusal,omitempty"`
 }
 
 // Outcome is the state of the run's pull request.

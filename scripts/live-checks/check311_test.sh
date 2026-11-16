@@ -254,6 +254,59 @@ test_the_non_windows_stop_names_the_sibling_check() {
   expect_contains "$ps" "the only modes this script has off Windows" "and names the two modes that do work there"
 }
 
+test_no_call_writes_a_concatenation_outside_parentheses() {
+  # In PowerShell `Name 'lit' + $x` is a command invocation with three
+  # positional arguments: the quoted string, the operator and the variable. A
+  # function that declares parameters binds the first argument to its first
+  # parameter and drops the rest into $args, so the call does not fail -- it
+  # quietly loses half its message, cut at the quoted string. `Say 'STOPPING: '
+  # + $why` wrote 'STOPPING: ' and nothing else, so every Stop-Run caller lost
+  # the reason for the stop, and `Set-Fact $key 'PASS' 'lit: ' + $question` cut
+  # the row's detail at a dangling colon. Both shipped, and both hid behind a
+  # machine without pwsh, where every runtime case of this file returns early.
+  #
+  # The reading is taken HERE, where no interpreter is needed, and it is the
+  # general rule rather than the two names it started as: every call to a
+  # function this script defines -- those are the ones that declare parameters
+  # and so drop the extra arguments into $args -- must parenthesise its
+  # concatenation. A quoted string followed by a bare `+` at paren depth 0
+  # inside such a call is the defect, whatever it concatenates.
+  local loose
+  loose=$(awk -v sq="'" -v dq='"' '
+    NR == FNR {
+      if ($0 ~ /^function /) { n = $2; sub(/[^A-Za-z0-9_-].*$/, "", n); fn[n] = 1 }
+      next
+    }
+    {
+      line = $0
+      called = 0
+      for (n in fn) { if (line ~ ("(^|[^A-Za-z0-9_-])" n "([ (]|$)")) { called = 1; break } }
+      if (!called) next
+      depth = 0; q = ""; prev = ""; bad = 0
+      for (i = 1; i <= length(line); i++) {
+        c = substr(line, i, 1)
+        if (q != "") {
+          if (q == sq) {
+            if (c == sq) { if (substr(line, i + 1, 1) == sq) { i++ } else { q = "" } }
+          } else if (c == "`") { i++ } else if (c == dq) { q = "" }
+          prev = c
+          continue
+        }
+        if (c == "#") break
+        if (c == sq || c == dq) { q = c; prev = c; continue }
+        if (c == "(") depth++
+        else if (c == ")") depth--
+        else if (c == "+" && depth == 0 && (prev == sq || prev == dq)) bad = 1
+        if (c != " " && c != "\t") prev = c
+      }
+      if (bad) print FNR ": " line
+    }
+  ' "$script" "$script")
+  [ -z "$loose" ] ||
+    fail "a call concatenates outside parentheses, so the extra arguments land in \$args and the message is cut at the quoted string: $loose"
+  expect_contains "$(body_of Stop-Run)" "Say ('STOPPING: ' + \$why)" "Stop-Run writes its sentence through a parenthesised concatenation"
+}
+
 # ------------------------------------------------------------- what it runs
 test_the_watched_runs_are_never_captured() {
   expect_contains "$bare_body" "& \$script:Fugaro @argv" "the watched run is started as a command, not through a pipe"
@@ -569,7 +622,7 @@ test_a_phase_that_is_not_one_is_refused_where_pwsh_is() {
   if ! have_pwsh; then skip_no_pwsh "test_a_phase_that_is_not_one_is_refused_where_pwsh_is"; return 0; fi
   run311 -Phase later -Project "$PROJECT"
   expect_status "$status" 2 "a phase that is not one"
-  expect_contains "$err" "--Phase takes all, look, failure or logs" "the refusal says what it takes, on stderr where the stop is written"
+  expect_contains "$err" "-Phase takes all, look, failure or logs" "the refusal says what it takes, on stderr where the stop is written"
   expect_contains "$out" "FACT project: INFO" "and the block is printed with what was measured, which is nothing"
 }
 
@@ -614,6 +667,7 @@ t test_a_row_of_an_unselected_phase_is_not_measured
 t test_the_guards_are_all_there_and_run_before_anything_else
 t test_the_dry_run_branch_comes_after_the_agent_guard_and_before_the_platform_one
 t test_the_non_windows_stop_names_the_sibling_check
+t test_no_call_writes_a_concatenation_outside_parentheses
 t test_the_watched_runs_are_never_captured
 t test_the_pipe_and_the_document_are_read_from_a_capture
 t test_the_forced_failure_is_a_terraform_that_answers_version

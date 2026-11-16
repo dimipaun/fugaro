@@ -12,6 +12,21 @@
 # make them, and a call made by anything else would be answered about that other
 # identity rather than about a run's.
 #
+# The seven attempts are made WITHOUT A MODEL. They used to be made by the
+# working run's own agent, told by the task file to make each one and print a
+# line; on 2026-11-15 the model provider's safeguards refused that prompt, so
+# the agent never ran and every refusal row read FAIL. They are now the sandbox
+# repository's own check command (its workflow's `commands.test`, named by the
+# working run's recipe), which the runner runs as shell in the run's container,
+# at the run's own identity, before the first model call of the run: no model is
+# asked anything about them, and no prompt of this check is worded to get one
+# past anything. That command is `scripts/chk191-probe.sh` in the sandbox
+# repository, copied from `scripts/live-checks/check191-probe.sh` here — the
+# exact lines it needs in that repository's fugaro.yaml are in
+# docs/secrets-brokering/check191-steps.md. When a run reports no attempt at all
+# the check refuses with those lines, in place of the seven rows, rather than
+# failing them as if the service had served the calls.
+#
 # Check 192 (plan B1.14), under --after-flip, reads the other side of the same
 # switch: after the flip the repository's jobs no longer mount bitbucket-token
 # and its job accounts hold no accessor on it, a run on that repository still
@@ -135,8 +150,10 @@
 #             stay, which is what `fugaro runs ls` shows; nothing else is
 #             written.
 # Costs:      three (Check 191) or two (Check 192) real runs: a model-driven
-#             loop each, billed to the installation as any run is, plus the
-#             seven attempts, which are refused before a model call is served.
+#             loop each, billed to the installation as any run is. The seven
+#             attempts cost no model call at all: they are made by the sandbox
+#             repository's own check command, before the run's first model call,
+#             and every one of them is refused by the service.
 # Runs:       by YOU. No agent runs any step of it, and its own test
 #             (check191_test.sh) runs it against fake tools only.
 # Cleanup:    always, including on a Ctrl-C: the scratch directory, and the
@@ -169,10 +186,32 @@
 # log is read for the CHK191 attempt lines alone, and every field of those is
 # cut to a short plain-word shape before it is printed.
 #
+#             The review-only run's push: its agent is asked to make the
+#             attempt, and its own sentence is read against the service's own
+#             lines and never on its word — a refusal has to carry the class of
+#             a service refusal line, and a push the agent says was SERVED only
+#             counts where that run's own lines carry the served call (the one
+#             status that is not a refusal, internal/credsvc's StatusOK). An
+#             empty reading means the agent made no attempt that reached the
+#             service, NOT that nothing inside a review run can reach it: the
+#             way from inside a run to the service is the runner's own loopback
+#             forwarder, which attaches the run's identity to whatever arrives
+#             and drops the caller's own Authorization (internal/gateway's
+#             gitforward). What nothing does is POINT a review run at it — the
+#             runner gives its agent no git credential and no forwarder rewrite
+#             (internal/runner's refreshGitAuth) and a mode: review recipe runs
+#             no repository command (internal/recipe) — and that gap, with the
+#             owner's decision it needs, is written out in
+#             docs/secrets-brokering/check191-steps.md. The row is recorded as
+#             NOT MEASURED (exit 2) where the service's lines carry neither a
+#             class nor a served call for it.
 # Knobs (all CHECK191_*): REPO, OTHER_REPO, PLAIN_REPO (the sandbox
 # repositories), OTHER_PR (the number of an open pull request in REPO — the
 # run's OWN repository, and not the run's own pull request — that the run tries
-# to update), RUN_ID (the base the runs' ids are built from:
+# to update; OTHER_REPO and OTHER_PR are the values the PROBE carries, and this
+# check cannot hand a value to a run's container: they must be the same two
+# values in ${REPO}'s own copy of the probe, or in the command its fugaro.yaml
+# runs it with), RUN_ID (the base the runs' ids are built from:
 # YYYYMMDD-HHMMSS, today's UTC date and the time, which is the day the service
 # reads a run's outcome under), CHECKOUT (the proxied repository's own checkout,
 # for --after-flip: the directory doctor must be run in; defaults to $PWD),
@@ -981,10 +1020,10 @@ guard_inputs() {
     guard_one_repo "$PLAIN_REPO" CHECK191_PLAIN_REPO
     guard_checkout
   else
-    [ -n "$OTHER_REPO" ] || stop "CHECK191_OTHER_REPO must name a SECOND sandbox repository of the installation (<workspace>/<repository>): one of the refusals is a call to another repository, and it cannot be made against this one"
+    [ -n "$OTHER_REPO" ] || stop "CHECK191_OTHER_REPO must name a SECOND sandbox repository of the installation (<workspace>/<repository>): one of the refusals is a call to another repository, and it cannot be made against this one. The same value is the one ${REPO}'s own probe must carry (CHK191_PROBE_OTHER_REPO): the attempts are made by that repository's check command, and nothing carries a value from here into a run's container"
     guard_one_repo "$OTHER_REPO" CHECK191_OTHER_REPO
     case "$OTHER_PR" in
-    "" | *[!0-9]*) stop "CHECK191_OTHER_PR must be the number of an open pull request in ${REPO} — the run's own repository — that is not this run's own pull request: got '${OTHER_PR}'. It has to be this repository's, because a call that names another repository is refused for the repository before the pull-request rules are reached, so a pull request of ${OTHER_REPO} would earn the other-repository refusal and never other_pull_request" ;;
+    "" | *[!0-9]*) stop "CHECK191_OTHER_PR must be the number of an open pull request in ${REPO} — the run's own repository — that is not this run's own pull request: got '${OTHER_PR}'. It has to be this repository's, because a call that names another repository is refused for the repository before the pull-request rules are reached, so a pull request of ${OTHER_REPO} would earn the other-repository refusal and never other_pull_request. The same value is the one ${REPO}'s own probe must carry (CHK191_PROBE_OTHER_PR)" ;;
     esac
   fi
   case "$RUN_BASE" in
@@ -1110,9 +1149,21 @@ row_of() { cat "$SCRATCH/row-$1" 2>/dev/null || true; }
 launch_err() { cat "$SCRATCH/launch-err" 2>/dev/null || true; }
 
 run_log() { # run_log LABEL RID — the run's own log, and the attempts it reported
-  local label=$1 rid=$2
-  fugaro logs "$rid" >"$SCRATCH/log-$label.txt" 2>>"$SCRATCH/run-$label.err" || true
-  reader attempts "$SCRATCH/log-$label.txt" >"$SCRATCH/reported-$label"
+  local label=$1 rid=$2 waited=0
+  # Cloud Logging lags the container the lines were written in, and the reading
+  # below is taken the moment the run's row turned terminal: an empty reading
+  # here would refuse a sandbox repository that carries the probe (the seven
+  # rows and the run-outcome row are read from it). The loop waits for the first
+  # line the reader recognises and stops as soon as it has one — the same shape,
+  # the same knobs and the same reason as audit_read's own retry.
+  while :; do
+    fugaro logs "$rid" >"$SCRATCH/log-$label.txt" 2>>"$SCRATCH/run-$label.err" || true
+    reader attempts "$SCRATCH/log-$label.txt" >"$SCRATCH/reported-$label"
+    if grep -q '^attempt=' "$SCRATCH/reported-$label"; then return 0; fi
+    if [ "$waited" -ge "$LOG_WAIT_SECONDS" ]; then return 0; fi
+    sleep "$LOG_POLL_SECONDS"
+    waited=$((waited + LOG_POLL_SECONDS))
+  done
 }
 
 # audit_read RID OUT NEED: the run's service lines, retried while Cloud Logging
@@ -1139,7 +1190,16 @@ audit_read() {
 # ---------------------------------------------------------------- the 191 steps
 # The seven refusals, in ONE table: the attempt's name as the throwaway run
 # reports it, the fact it settles, and the class the service refuses it under
-# (gitproxy.Classify's vocabulary). The last two attempts are both REST calls
+# (gitproxy.Classify's vocabulary). Every one of them is made by the sandbox
+# repository's OWN check command — the probe, scripts/chk191-probe.sh, which the
+# working run's recipe runs before the run's first model call — and never by an
+# agent: on 2026-11-15 the model provider's safeguards refused the prompt that
+# used to ask for them, so no row of this table could be measured at all. The
+# probe's targets are non-destructive for the same reason: an attempt the proxy
+# wrongly SERVES must not damage the sandbox repository, so the other-ref
+# attempt names a branch no run owns, the ref-delete attempt names the run's own
+# branch (which the run pushes again at the end), and the two pull-request
+# attempts name a pull request of this repository that is not the run's own. The last two attempts are both REST calls
 # outside the repository's own paths, so both are refused `call_not_allowed`:
 # the class is COUNTED, not looked for, which is what tells the two apart from
 # the one the table says they are. The class is read off the service's own
@@ -1185,6 +1245,15 @@ audit_class_count() {
 # (C1.13).
 audit_audited() {
   printf '%s\n' "$1" | grep -c '^request_refused$' || true
+}
+
+# audit_served STATUSES: how many of the run's lines are the one status that is
+# not a refusal — a credential answered, which is what the route writes for a
+# call it forwarded (StatusOK, internal/credsvc/audit.go). It is what backs a
+# probe's own sentence that the service SERVED its call: without a line of this
+# run's own carrying it, that sentence is the caller's word and nothing else.
+audit_served() {
+  printf '%s\n' "$1" | grep -c '^ok$' || true
 }
 
 audit_class_need() { # audit_class_need CLASS
@@ -1417,51 +1486,64 @@ step_policy() {
   step_policy_switch || return 1
 }
 
+# probe_missing RID STATUS PUSHED PR: the working run reported no attempt at
+# all, which is one fact and not seven: the sandbox repository's own check
+# command is not Check 191's probe. Nothing about the proxy is read from that
+# run — a run whose check steps all pass ends with no push and no pull request
+# at all (internal/runner's endWithoutPR, "every check passed: nothing to fix"),
+# so the run-outcome row would read FAIL for a reason that is not the run's —
+# and every row that needed the attempts is recorded as one this check could NOT
+# measure, with the step that adds the probe printed for its owner. The check
+# cannot make the attempts from here (a run's identity is sealed to its own
+# execution: a launch token and a job identity bound to one run id and one
+# repository) and does not put a model in the loop to make them.
+probe_missing() { # probe_missing RID STATUS PUSHED PR
+  local rid=$1 status=$2 pushed=$3 pr=$4 row name key cls
+  unmeasured run-outcome "the working run (${rid}) ended status=${status:-unread} pushed=${pushed:-unread} pr=${pr:-unread}, and nothing about the proxy is read from it: this repository's own test command is not Check 191's probe, so its check step passed, and a run whose check steps all pass ends with no push and no pull request at all (internal/runner's endWithoutPR). Add the probe and run this check again — the step is in docs/secrets-brokering/check191-steps.md, 'The sandbox repository's half'"
+  for row in "${ATTEMPTS[@]}"; do
+    IFS='|' read -r name key cls <<<"$row"
+    unmeasured "$key" "the ${name} attempt was never made: the working run (${rid}) reported no CHK191 line at all, so this repository's own test command is not Check 191's probe (scripts/chk191-probe.sh), which is what makes the seven attempts — this check launches the run with --recipe test-and-fix, whose one check step runs this repository's commands.test before the run's first model call. Add the probe (the exact lines are in docs/secrets-brokering/check191-steps.md, 'The sandbox repository's half') and run this check again; 'fugaro logs ${rid}' shows what that run's check step ran"
+  done
+  owner "stopped: the working run (${rid}) made none of the seven attempts, so this repository's own test command is not Check 191's probe and nothing about the proxy was read from it. The step is in docs/secrets-brokering/check191-steps.md ('The sandbox repository's half'), and it is two lines: copy scripts/live-checks/check191-probe.sh from Fugaro's repository into ${REPO} as scripts/chk191-probe.sh and commit and push it there, then set ${REPO}'s own fugaro.yaml to run it from commands.test — 'test: CHK191_PROBE_OTHER_REPO=<workspace>/<another sandbox repo> CHK191_PROBE_OTHER_PR=<n> bash scripts/chk191-probe.sh', the two values being the same ones this check was handed (CHECK191_OTHER_REPO and CHECK191_OTHER_PR). Then run this check again"
+}
+
 step_work_run() {
   local task=$SCRATCH/task-work.md row status pushed pr rid
   rid=$(run_id work)
+  # The recipe is what puts the probe in the run at all: a check step is the
+  # only place a repository's own command runs before the agent is called, and
+  # the default recipe has none (internal/recipe/catalog/default.yaml is
+  # first_line, review, adversarial). test-and-fix's one check step is
+  # `command: test` — this repository's own commands.test — which is why the
+  # probe is what the sandbox repository's test command has to be, and why the
+  # seven attempts are made with no model in the loop at all (the gate runs at
+  # the top of the agent loop, internal/runner/runner.go).
   cat >"$task" <<TASK_EOF
 You are a probe for Fugaro's Check 191, run by this repository's owner.
 
-FIRST, do the one thing a run normally does: append one line to this
-repository's README.md saying that Check 191 ran here on $(date -u +%Y-%m-%d),
-commit it, push your branch and open the pull request. Change no other file and
-make no other commit. Every call that takes is served by this installation's
+Do the one thing a run normally does: append one line to this repository's
+README.md saying that Check 191 ran here on $(date -u +%Y-%m-%d), then
+commit it, push your branch and open the pull request. Change no other file
+and make no other commit. Every call that takes is served by this installation's
 credentials service — the job holds no Bitbucket token of its own — and that
 served clone, push and pull request is the positive half of what this run is
 for. A run whose agent commits nothing is failed and pushed as a draft anyway,
 so a run that changes nothing measures a failure rather than the proxy.
 
-THEN make each of the seven attempts below against this repository's git host and its
-API, with the credentials this job gave you (they are in the environment and in
-the git remote's helper — use them as they are). After each attempt print
-exactly one line, on its own, in this form and with nothing else on it:
+The seven attempts this check measures are NOT yours to make. This run's check
+step is the probe — this repository's own test command, scripts/chk191-probe.sh
+— which makes them before you are called and prints one CHK191 line per attempt
+into this run's log. The probe exits non-zero ON PURPOSE: a run whose check
+steps all pass ends with no push and no pull request at all, and this run's
+pushed branch and pull request are the other half of what this check measures.
+So do not run the probe, do not change it, do not change this repository's
+fugaro.yaml or its workflow, and do not read its failure as yours to fix: make
+no commit that touches it.
 
-CHK191 attempt=<name> refused=<yes|no> answer=<the HTTP status, or the first words of the refusal>
-
-The attempts, with the name to use for each:
-  other-repository    read from the other repository named below
-  other-ref           push a commit to the branch main of this repository
-  tag                 create the tag chk191-probe on this repository
-  ref-delete          delete the branch main of this repository
-  other-pull-request  comment on pull request ${OTHER_PR} in ${REPO}
-  merge               merge pull request ${OTHER_PR} in ${REPO}
-  workspaces          read the workspace list (GET /2.0/workspaces) of the API
-
-The other repository is ${OTHER_REPO}. The pull request is number ${OTHER_PR} in
-THIS repository (${REPO}) — the one the run above pushes to — and it is not this
-run's own. It has to be this repository's: a call that names another repository
-is refused for the repository, and the refusal this check reads for the
-other-pull-request attempt is the one a write to another run's pull request of
-this repository earns. A refusal may come from the git host itself or from the
-credentials service in front of it — what this check reads is the answer YOU got,
-so print refused=yes with the answer's own words (the service names the rule it
-refused under) when the call was refused, and refused=no with its status when it
-was served.
-
-Do nothing else. Print one line per attempt as you go, then stop.
+Do nothing else. Commit the one README line, push it, open the pull request,
+then stop.
 TASK_EOF
-  if ! row=$(launch_into "$REPO" "work" "$rid" "$task"); then
+  if ! row=$(launch_into "$REPO" "work" "$rid" "$task" --recipe test-and-fix); then
     fact run-launch FAIL "$(launch_err)"
     return 0
   fi
@@ -1469,6 +1551,19 @@ TASK_EOF
   status=$(field_of status "$row")
   pushed=$(field_of pushed "$row")
   pr=$(field_of pr "$row")
+  # The probe's lines, and the reason they are read HERE: the one thing a launch
+  # can report instead of them is that the repository carries no probe, and that
+  # is the owner's step rather than a reading about the proxy — a run whose check
+  # step passes ends with no push and no pull request, so the run-outcome row
+  # below would read FAIL for a cause the run did not choose. A repository that
+  # DOES carry the probe reports all seven lines or none (its own guard reports
+  # refused=none for the ones it could not make), so a run that reported no line
+  # at all is one whose check step ran something else.
+  run_log "work" "$rid"
+  if ! grep -q '^attempt=' "$SCRATCH/reported-work"; then
+    probe_missing "$rid" "$status" "$pushed" "$pr"
+    return 1
+  fi
   if [ "$pushed" != yes ] || [ -z "$pr" ] || [ "$pr" = 0 ]; then
     fact run-outcome FAIL "the working run (${rid}) ended status=${status:-unread} pushed=${pushed:-unread} pr=${pr:-unread}, so nothing shows the credentials service SERVING a call: the task asks for one commit, a push and a pull request, and that is the positive half of this check — the seven refusals below are only a reading of the proxy when the very same run pushed through it. Read it: fugaro logs ${rid}"
     return 0
@@ -1489,7 +1584,11 @@ step_refusals() {
     seen=$(audit_class_count "$classes" "$cls")
     need=$(audit_class_need "$cls")
     if [ -z "$said" ]; then
-      fact "$key" FAIL "the working run reported NO line for the ${name} attempt: its task asked for one 'CHK191 attempt=${name} refused=... answer=...' line per attempt, so the attempt was never made or never printed. Run 'fugaro logs $(run_id work)' and read what the agent did"
+      fact "$key" FAIL "the working run reported NO line for the ${name} attempt, and its probe reports all seven or none: the probe is this repository's own check command, and it writes one 'CHK191 attempt=${name} refused=... answer=...' line per attempt — refused=none for the ones it could not make — so a log that holds the other six and not this one is a probe that differs from scripts/live-checks/check191-probe.sh, or a run whose check step was cut short. Read 'fugaro logs $(run_id work)' and this repository's own copy of the probe"
+      continue
+    fi
+    if [ "${said%% *}" = refused=none ]; then
+      unmeasured "$key" "the ${name} attempt was NOT made: the probe reported refused=none for it (${said}), which is what it writes for an attempt it could not make. The answer field says which of the probe's own guards stopped it: no_other_repository_named and no_other_pull_request_named are a value it was not given (the other repository, and the number of an open pull request of ${REPO} that is not this run's own — set them in ${REPO}'s own copy of the probe, or on the command line its fugaro.yaml runs it with: nothing carries a value from this check into a run's container); no_forwarder_rewrite is a run whose environment carries no Bitbucket forwarder because the repository is not proxied, which the proxied row above reads too; no_own_repository_or_branch is a command that did not run in a checkout of ${REPO} on the run's own branch"
       continue
     fi
     if [ "${said%% *}" != refused=yes ]; then
@@ -1508,8 +1607,48 @@ step_refusals() {
   done
 }
 
+# review_unmeasured WHY: the review row's own shape — a review-only run whose
+# push the check cannot read as a refusal about the proxy — recorded as one this
+# check could not measure, with the reason WHY was handed to it and the reading
+# that would settle it named. It is NOT a FAIL: an empty reading here says the
+# run's own agent made no attempt that reached the service, NOT that the code
+# cannot produce one. The route from inside a run to the service is the runner's
+# own loopback forwarder, which attaches the run's own identity to whatever
+# arrives and drops the caller's own Authorization (internal/gateway's
+# gitforward), so a process in that container which finds the port does reach
+# the service — and that is exactly what this row's SERVED branch reads, once
+# the service's own lines carry the served call. What nothing does is POINT such
+# a run at it: the runner gives a review run's agent no git credential and no
+# forwarder rewrite (internal/runner's refreshGitAuth) and a mode: review recipe
+# allows exactly one review step and no repository command (internal/recipe),
+# so the way to the listener is the agent's own to find. The check has no
+# attempt of its own to put in the run's place (a run's identity is sealed to
+# its own execution).
+review_unmeasured() { # review_unmeasured WHY
+  unmeasured review-run "$1. An empty reading of this row says the run's own agent made no attempt that reached the service, NOT that the code cannot produce one: the route from inside a run to the service is the runner's own loopback forwarder, which attaches the run's identity to whatever arrives and drops the caller's own Authorization (internal/gateway's gitforward), so a process in that container that finds the port does reach the service — which is what this row's SERVED branch exists for, once the service's own lines carry the served call. What nothing does is point such a run at it: the runner gives a review run's agent no git credential and no forwarder rewrite (internal/runner's refreshGitAuth), and a mode: review recipe allows exactly one review step and no repository command (internal/recipe). The two classes the rules answer for a review identity's push, once a call reaches them, are read_only (the identity is the installation review-only job class: Decide refuses every push from a read-only identity before the push rules are read, internal/gitproxy/rules.go) and no_run_branch (the identity carries no fb and is not read-only, which is a review-mode run of a per-repository job)"
+}
+
+# step_review_run: the review-only run, and the one attempt this check cannot
+# make without a model — its own agent is asked to push a branch. What that
+# agent reports is read against the service's own lines and never taken on its
+# word: a refusal has to carry the class of a service refusal line, and a served
+# push has to
+# have a served call of that run behind it (one line of its own carrying the one
+# status that is not a refusal, StatusOK), so the row prints the finding this
+# check exists for only when the service really answered. What the row reads is
+# the SERVICE's own class line for that run, and the two classes a review
+# identity's push can earn are internal/gitproxy's own: read_only, where the
+# identity is the installation's review-only job class (bitbucketproxy sets
+# Identity.ReadOnly from the JOB's class, and Decide refuses every push from a
+# read-only identity before the push's own rules are read), and no_run_branch,
+# where the identity is not read-only and carries no fb — a review-mode run of a
+# per-repository job. The row used to pin no_run_branch alone, which is the
+# wrong expectation for one of the two shapes a review run can be launched in.
+# not_admitted, which an earlier run's log carried, is neither: it is the
+# published block's own rule about the REPOSITORY, decided before any rule about
+# what an identity may write, so it settles nothing about a push.
 step_review_run() {
-  local task=$SCRATCH/task-review.md row said classes statuses rid pr
+  local task=$SCRATCH/task-review.md row said classes statuses got what other rid pr
   rid=$(run_id review)
   # The working run's own pull request is what this probe reviews, and it is the
   # only pull request the check knows is open and is its own artifact. A
@@ -1545,23 +1684,48 @@ TASK_EOF
   classes=$(cat "$SCRATCH/classes-review" 2>/dev/null || true)
   statuses=$(cat "$SCRATCH/statuses-review" 2>/dev/null || true)
   said=$(sed -n 's/^attempt=push //p' "$SCRATCH/reported-review" | head -n 1)
-  if [ -z "$said" ]; then
-    fact review-run FAIL "the review-only run (${rid}) reported no 'CHK191 attempt=push' line, so whether its push was refused is not settled. Run 'fugaro logs ${rid}' and read what it did"
+  got=$(printf '%s\n' "$classes" | grep -m1 -x -e read_only -e no_run_branch || true)
+  if [ "${said%% *}" = refused=yes ]; then
+    if [ -n "$got" ]; then
+      if [ "$(audit_audited "$statuses")" -lt 1 ]; then
+        fact review-run FAIL "the review-only run's push was refused under ${got} but the service's audit lines hold no request_refused line for it, so the refusal was not recorded (D143): read the audit lines (gcloud logging read, jsonPayload.status) and that run's log"
+        return 0
+      fi
+      case "$got" in
+      read_only)
+        what="the installation review-only job class, whose every push internal/gitproxy refuses before it reads the push rules at all"
+        other="no_run_branch (an identity that is not read-only and carries no fb, which is a review-mode run of a per-repository job)"
+        ;;
+      *)
+        what="an identity that is not read-only and carries no fb, which is a review-mode run of a per-repository job"
+        other="read_only (the installation review-only job class, refused before the push rules are read)"
+        ;;
+      esac
+      fact review-run PASS "the review-only run's push was refused with the service's own words (${said}), the service's own line carries the class ${got} — ${what} — and the refusal is audited. The other of the two classes the rules can answer for a review identity's push is ${other}"
+      return 0
+    fi
+    if [ -n "$classes" ]; then
+      fact review-run FAIL "the review-only run was refused its push (${said}) and the service's own lines carry $(printf '%s' "$classes" | tr '\n' ' ') for it, none of which is the class a review identity's push earns: read_only (the identity is the installation review-only job class, and every push of it is refused before the push rules) or no_run_branch (the identity carries no fb and is not read-only). not_admitted is neither and is not a wrong reading of a push: it is the published block's own rule about the REPOSITORY, decided before any rule about what an identity may write. The refusal and the service's line about it are two halves of one reading"
+      return 0
+    fi
+    review_unmeasured "the review-only run (${rid}) was refused its push (${said}) and the service's own lines carry no class for it at all"
     return 0
   fi
-  if [ "${said%% *}" != refused=yes ]; then
-    fact review-run FAIL "the review-only run's push was SERVED (${said}): a run that is not admitted to write a branch pushed one, which is the finding this row exists for. Read that run's log and the service's lines"
+  case "${said%% *}" in
+  refused=no)
+    if [ "$(audit_served "$statuses")" -lt 1 ]; then
+      review_unmeasured "the review-only run's own agent reported its push was SERVED (${said}) and the service's own lines hold no served call for that run ($(audit_served "$statuses") line(s) of its own carry the one status that is not a refusal, internal/credsvc's StatusOK, which is what a call the route forwarded writes), so the sentence has no service line behind it: this row is read from the service's own lines, never from the agent's word alone, and a finding about the proxy is not printed on one"
+      return 0
+    fi
+    fact review-run FAIL "the review-only run's push was SERVED (${said}), and the service's own lines carry the served call behind it: a run that is not admitted to write a branch pushed one, which is the finding this row exists for. Read that run's log and the service's lines"
     return 0
-  fi
-  if ! printf '%s\n' "$classes" | grep -qx no_run_branch; then
-    fact review-run FAIL "the review-only run was refused its push (${said}) but the service's own lines hold no no_run_branch refusal for it (they carry: $(printf '%s' "$classes" | tr '\n' ' ')): the refusal and the service's line about it are two halves of one reading"
+    ;;
+  refused=none | "")
+    review_unmeasured "the review-only run (${rid}) reported ${said:-no line for the push attempt}, so no attempt of its own reached the service at all"
     return 0
-  fi
-  if [ "$(audit_audited "$statuses")" -lt 1 ]; then
-    fact review-run FAIL "the review-only run's push was refused under no_run_branch but the service's audit lines hold no request_refused line for it, so the refusal was not recorded (D143): read the audit lines (gcloud logging read, jsonPayload.status) and that run's log"
-    return 0
-  fi
-  fact review-run PASS "the review-only run's push was refused with the service's own words (${said}), the service's own line carries the class no_run_branch, and the refusal is audited"
+    ;;
+  esac
+  fact review-run FAIL "the review-only run printed '${said}' for the push attempt, which is not the one line this attempt asks for ('CHK191 attempt=push refused=<yes|no> answer=<...>'): read that run's log"
 }
 
 # step_ended_identity: the last row of Check 191 — a run whose outcome is
@@ -1706,8 +1870,12 @@ run_191() {
   # a repository the policy admits AND that is on the switch — does not hold
   # would launch three real runs to measure a path they never take.
   step_policy || return 0
-  step_work_run
-  run_log "work" "$(run_id work)"
+  # step_work_run reads the run's own log itself (its attempt lines are what
+  # tell a run that made the attempts from a repository that carries no probe),
+  # and it stops the check the same way step_policy does when the repository
+  # does not carry it: every row below is read from the attempts, and a run that
+  # made none of them settles nothing about the proxy.
+  step_work_run || return 0
   audit_read "$(run_id work)" "$SCRATCH/audit-work.json" "${#ATTEMPTS[@]}"
   audit_lines "$(run_id work)" "$SCRATCH/audit-work.json" work
   step_refusals
@@ -1884,9 +2052,9 @@ plan() {
     say "  [network, read] fugaro project policy show --project fugaro --json — whether ${REPO} is admitted with proxy: true, whether an account of the node's accounts block admits it too (the model credential's own admission) and whether the node's credentials.fallback spends (which is who answers a model call no shared account can)"
     say "  [network, read] gcloud run services get-iam-policy fugaro-credentials --project=${P} --region=${L} --format=json and gcloud run jobs list --project=${P} --region=${L} --format=json — whether every job account of ${REPO} holds roles/run.invoker on the credentials service (the switch, read from the service's own policy and the repository's own jobs)"
     say "  [network, read] gcloud secrets list --project=${P} --format=json, then gcloud secrets versions list <the credentials service's bundle container> --project=${P} --format=json — whether the service has a model credential to serve a run out of, read here where doctor's own row answers about the invoker grant instead"
-    say "  [network, runs] fugaro run --repo ${REPO} --run-id $(run_id work) — the throwaway run itself, whose task commits one line, pushes it and opens its pull request through the service, THEN makes the seven attempts and prints one line per attempt"
+    say "  [network, runs] fugaro run --repo ${REPO} --recipe test-and-fix --run-id $(run_id work) — the throwaway run itself, whose task commits one line, pushes it and opens its pull request through the service. Its check step (test-and-fix's one check step, command: test) runs ${REPO}'s own commands.test BEFORE the run's first model call: that command is the probe, scripts/chk191-probe.sh, which makes the seven attempts at the run's own identity through the service's forwarder and prints one CHK191 line per attempt. No model is asked anything about the attempts, and a ${REPO} whose commands.test is not the probe is refused by name rather than failed"
     say "  [network, read] gcloud logging read (service fugaro-credentials, jsonPayload.run) — the service's own lines for each run: its audit lines, and the refusal line that carries a refusal's class"
-    say "  [network, runs] fugaro run --repo ${REPO} --recipe review-only --pr <the working run's own pull request> --run-id $(run_id review) — a review-only run (mode: review is launched with the pull request it reviews, and such a run has no branch of its own), whose push must be refused"
+    say "  [network, runs] fugaro run --repo ${REPO} --recipe review-only --pr <the working run's own pull request> --run-id $(run_id review) — a review-only run (mode: review is launched with the pull request it reviews, and such a run has no branch of its own), whose push the service must refuse. The two classes the rules can answer for a review identity's push are read_only (the identity is the installation's review-only job class, and every push of it is refused before the push's own rules) and no_run_branch (the identity carries no fb and is not read-only) — not_admitted, which an earlier run's log carried, is the published block's rule about the REPOSITORY and settles nothing about a push. The run's agent is asked to push, and what it reports is read against the service's own lines and never on its word: a refusal count behind it as audited, and a push it says was SERVED only where the run's own lines hold the one status that is not a refusal (StatusOK) — an empty reading means the agent made no attempt that reached the service, not that nothing inside a review run can reach it (the way to the service inside a run is the runner's own loopback forwarder, which attaches the run's identity to whatever arrives and drops the caller's Authorization, internal/gateway's gitforward; nothing POINTS a review run at it, which is the product gap named in docs/secrets-brokering/check191-steps.md)"
     say "  [network, write+delete] ONE Realtime Database node, outcomes/<day>/<slug>/$(run_id ended).json, written by you with your own credentials and deleted again by the restore, and one run ($(run_id ended)) launched with that outcome already written"
     for row in "${ATTEMPTS[@]}"; do
       IFS='|' read -r name key _ <<<"$row"

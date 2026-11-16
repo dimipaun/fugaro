@@ -61,6 +61,18 @@ The plugin's skills are in `plugin/skills` (`setup`, `working`, `routing`, `para
 - Titles are short and say what changed, often prefixed by the area or milestone, for example `rtdb: conditional PUT must not carry print=silent` or `M9c: fugaro watch, the live terminal dashboard`. Explain the why in the body.
 - Fill in the PR template: tests, docs, no secrets.
 
+### Landing a batch of pull requests
+
+`scripts/land-prs.sh` is the merge helper a landing ends with. The merge is the person's to make, at their own hands, in the provider's own interface — the [`landing` skill](plugin/skills/landing/SKILL.md) says what is safe to land, and an agent never merges for them — and this is the person's own command for making it for a batch: their own `gh`, the provider's own CLI, under their own credential. The script refuses a coding agent's session, so the person is the one who runs it. It exists so a landing of many pull requests is one command instead of a merge per pull request with a wait in between.
+
+```sh
+bash scripts/land-prs.sh --repo OWNER/NAME 1234 1235 1236
+```
+
+It reads every pull request's mergeable state in one parallel sweep and prints one line per pull request — state, draft or ready, MERGEABLE, CONFLICTING or UNKNOWN, and the title — before it touches anything. `--check-only` stops there and merges nothing. Then it merges the ones that are open and MERGEABLE, back to back and in the order given, marking a draft ready first; one that is CONFLICTING, still UNKNOWN or not open is skipped and named, and a merge that fails is reported while the batch goes on, with a draft it marked ready put back the way it found it. The exit status is 0 when every pull request ended merged, 1 when any did not, and 2 for a usage error or a coding agent's session.
+
+It never force-pushes, never rewrites a branch, never runs tests and never decides what is safe to merge: the caller has already decided, and the script only merges and reports. Its hermetic test is `scripts/land-prs_test.sh`, driven from `scripts/land_prs_test.go`.
+
 ## Licensing of contributions
 
 Contributions to the core are accepted under the MIT licence in [LICENSE](LICENSE), and an outside pull request is merged only after its author signs the Contributor License Agreement, which a bot asks for on the first one. You sign once, by clicking the link CLA Assistant posts on your first pull request, or at https://cla-assistant.io/dimipaun/fugaro. Signing is what keeps the copyright relicensable; a pull request that has not signed waits rather than merges. `console/`, `mobile/` and `ee/` are under a business licence of their own ([LICENSING.md](LICENSING.md)), and anybody may contribute to them who accepts that licence's terms ([console/LICENSE.md](console/LICENSE.md), [mobile/LICENSE.md](mobile/LICENSE.md), [ee/LICENSE](ee/LICENSE)) and has signed the same Contributor License Agreement, which grants the relicensing rights for those directories too. The agreement's text is [docs/licensing/CLA.md](docs/licensing/CLA.md), which counsel has approved and which is published at https://gist.githubusercontent.com/dimipaun/d5bb5db937f973b25be5778ce14ec8dd/raw/64918c7fc0f782327db82e7e790db53c3d47d09f/fugaro-cla.md (the URL CLA Assistant is given, and the one the three licence files name), and the bot that asks for it is installed by the owner, so an outside pull request to any of the three waits until the bot is live.

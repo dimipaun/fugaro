@@ -188,3 +188,39 @@ func SetWorkspaceHeadroom(h http.Header, room budget.WorkspaceRoom) {
 	}
 	h.Set(gateway.WorkspaceHeadroomHeader, strconv.FormatInt(int64(room.Headroom), 10))
 }
+
+// SetWorkspaceRefusal writes the workspace's own marker onto a refusal the
+// workspace's service answers (gateway.WorkspaceRefusalHeader): which of the
+// workspace's refusals it was, one of gateway.WorkspaceRefusals. It is the
+// second half of the same wire SetWorkspaceHeadroom writes the first half of,
+// and it exists for the run's record rather than for the service's decision:
+// the refusal is the same refusal either way, and what the marker adds is that
+// the member's run can say in its own record that the workspace refused it
+// instead of recording the same halt a member's own service outage writes
+// (docs/stateless-orchestrator/reconciliation.md U12).
+//
+// A reason outside the three is written as no marker rather than as a value a
+// gateway this release would have to guess at: the vocabulary is closed
+// (gateway.ValidWorkspaceRefusal), and a service that answered something else
+// is answering a refusal that is not the workspace's own.
+//
+// IT IS NOT WIRED TO A REFUSAL YET, and the reason is workspace_cap.go's own:
+// the marker belongs on the three refusals the workspace's service answers on
+// its own account — the stop it reads from the workspace's kill switch, the
+// cap its meter takes the room against, and the settle it could not write
+// back — and none of the three is on a call path this release runs. The stop
+// is answered by the workspace's own deployment of this service, which this
+// tree does not yet build (NewWorkspace has no non-test caller, and the
+// service cannot tell its two deployments apart until one names the
+// workspace); the cap and the settle are the meter, whose wiring to the
+// service's paid-call path is the task docs/workspaces/implementation-plan.md
+// W7 says no task of that plan owns. So a member's run records the marker
+// only against a service that writes it, which is what the tests beside this
+// file stand in for, and the writer arrives with the wiring that makes a
+// workspace's refusal happen at all.
+func SetWorkspaceRefusal(h http.Header, reason string) {
+	if !gateway.ValidWorkspaceRefusal(reason) {
+		return
+	}
+	h.Set(gateway.WorkspaceRefusalHeader, reason)
+}

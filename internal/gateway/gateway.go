@@ -90,6 +90,25 @@ type Upstream struct {
 	// validate refuses a service upstream that carries an in-job credential
 	// (D143).
 	Service *Service
+	// AuthMode is the auth the run's own repository goes out on, declared to
+	// the credentials service on every call (HeaderAuthMode, B2.2). It is
+	// only read with KindService, and only "api-key" and "oauth" are declared:
+	// a cascade run's repository auth is what the service already holds, and
+	// a vertex run never reaches the service at all. Empty sends no
+	// declaration, which the service refuses for a repository it cannot
+	// otherwise place (D2070 (a)).
+	//
+	// It is also what admits Routes beside this upstream: an api-key
+	// declaration is a switched api-key run, whose provider keys stay on the
+	// runner path (R6, D1634), so the models its routes claim are the
+	// provider's and the rest are the service's (validateRoutes).
+	AuthMode string
+	// Account names the Claude account an oauth run goes out on, declared
+	// beside AuthMode (HeaderAuthAccount) and empty for every other auth. The
+	// service reads it against the accounts the repository's record names, so
+	// a run that declares one the record does not have is refused rather than
+	// served another.
+	Account string
 }
 
 // Options configure a gateway.
@@ -97,7 +116,9 @@ type Options struct {
 	Upstream Upstream
 	// Routes send the models they claim to a provider, each with its own
 	// credential; every other model goes to Upstream. Only with the
-	// anthropic upstream.
+	// anthropic upstream, or with a service upstream that declares api-key
+	// (B2.2: a switched api-key run's provider keys stay on the runner path,
+	// R6/D1634).
 	Routes []Route
 	Prices *pricing.Table
 	Mode   Mode
@@ -280,7 +301,16 @@ type Halt struct {
 	Reason string // "run_cap"; with a lease also repo_daily_cap, global_daily_cap, no_cap, kill_switch
 	Scope  string // "run", "repo" or "global"; "" is "run"
 	Detail string // "run cap $20.00 reached ($19.84 spent, $1.30 needed)"; with nothing spent, "cannot hold a call that needs up to"
-	At     time.Time
+	// WorkspaceRefusal, when set, says the workspace's own credentials
+	// service refused this call, and which of the workspace's refusals it
+	// was: one of the three gateway.WorkspaceRefusals (workspace_refusal.go).
+	// It is read off the refusal the service answered and from nowhere else,
+	// so it is set only where the service said so — never inferred from a
+	// reason, a scope or a detail, which a member's own service writes the
+	// same way. Empty for every other halt, which is every halt this gateway
+	// wrote before the marker existed.
+	WorkspaceRefusal string
+	At               time.Time
 }
 
 // Ledger is the run's money: what the cap grants, what settled calls

@@ -42,8 +42,8 @@ var argsUpdUser = []string{"plugin", "update", "fugaro@fugaro", "--scope", "user
 // convergeRig is an installation set up at convergePrev and left alone since,
 // in a checkout of its own repository:
 //
-//   - the policy node is the one the fixture's release left published (v7Node,
-//     v6Node or v3Node), so the policy stage has to migrate it when it is
+//   - the policy node is the one the fixture's release left published (v8Node,
+//     v7Node or v3Node), so the policy stage has to migrate it when it is
 //     behind and leave it alone when it is not;
 //   - the deployed rules carry the previous generation's marker, so
 //     policy-rules-skew fires and the rules stage has to deploy;
@@ -69,31 +69,31 @@ type convergeRig struct {
 	builder *fakeBuilder
 }
 
-// v7Node is the published node this binary writes: nothing has to be migrated,
+// v8Node is the published node this binary writes: nothing has to be migrated,
 // only the rules generation, the base image and the plugin moved. It is the
 // fixture for "an installation that already published under this release and is
 // behind on everything else", and it is what tells a door that leaves a current
 // node alone from one that rewrites it every time.
-func v7Node() map[string]any {
+func v8Node() map[string]any {
 	return map[string]any{
-		"version":     7,
+		"version":     8,
 		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
 		"allow_repos": []string{"github/acme/app"},
 	}
 }
 
-// v6Node is the published node the release before this one leaves behind: one
+// v7Node is the published node the release before this one leaves behind: one
 // policy version below this binary's, so the run's policy stage has to carry it
 // forward as well as move the rules generation, the base image and the plugin.
-// This reader reads such a node as it stands (ReadsVersion: the step from 6 to
-// 7 moves the number and nothing else — E2's model grades have no default to
-// write, like AR0's binaries block before them), so the fixture is stale on
-// everything else and on nothing about the node's own shape — which is the
-// state the bump leaves an installation in between the update's image stages
-// and its policy stage.
-func v6Node() map[string]any {
-	n := v7Node()
-	n["version"] = 6
+// This reader reads such a node as it stands (ReadsVersion: the step from 7 to
+// 8 moves the number and nothing else — the binaries block arrived on the node
+// at version 6 and this bump only gives the owner's config a carrier for it,
+// AR1), so the fixture is stale on everything else and on nothing about the
+// node's own shape — which is the state the bump leaves an installation in
+// between the update's image stages and its policy stage.
+func v7Node() map[string]any {
+	n := v8Node()
+	n["version"] = 7
 	return n
 }
 
@@ -116,7 +116,7 @@ func newestRefusedVersion(t *testing.T) int {
 // staleNode is the node a release the reader refuses leaves published: the
 // update's policy stage has to migrate it in place.
 func staleNode(t *testing.T) map[string]any {
-	n := v6Node()
+	n := v7Node()
 	n["version"] = newestRefusedVersion(t)
 	return n
 }
@@ -282,7 +282,7 @@ func TestUpdateConvergesFromThePreviousRelease(t *testing.T) {
 	// rules generation, the base image and the plugin and leaves the node
 	// alone.
 	t.Run("the node this binary writes", func(t *testing.T) {
-		converge(t, v7Node(), []string{"policy-rules-skew", "plugin-pin"})
+		converge(t, v8Node(), []string{"policy-rules-skew", "plugin-pin"})
 	})
 	// The node the previous release publishes: one policy version below this
 	// binary's, so the policy stage has to carry it forward by the same run
@@ -292,13 +292,13 @@ func TestUpdateConvergesFromThePreviousRelease(t *testing.T) {
 	// written forward by the run, and the node it leaves is what the assertion
 	// in converge reads.
 	t.Run("the node the previous release publishes", func(t *testing.T) {
-		converge(t, v6Node(), []string{"policy-rules-skew", "plugin-pin"})
+		converge(t, v7Node(), []string{"policy-rules-skew", "plugin-pin"})
 	})
 	// The node two releases back: version 4, whose step to 5 is not shape-free
 	// (it marks every ownerless pool legacy-open), so the reader refuses it
 	// until the same run's policy stage has carried it through both steps.
 	t.Run("the node two releases back", func(t *testing.T) {
-		node := v7Node()
+		node := v8Node()
 		node["version"] = 4
 		converge(t, node, []string{"policy-older-than-binary", "policy-rules-skew", "plugin-pin"})
 	})
@@ -374,7 +374,7 @@ func TestUpdateMigratesTheNodeBeforeItReplacesTheCredentialsService(t *testing.T
 	// release's in the fake source, so a run that reaches the move resolves and
 	// verifies it rather than failing the resolve and leaving the service where
 	// it was (the rig of the images kind publishes base and history only).
-	r := newConvergeRig(t, v6Node())
+	r := newConvergeRig(t, v7Node())
 	publishCredentialsImage(t, r.imagesRig, convergeRelease)
 	seedCredentialsService(t, r.imagesRig, oldCredentialsRef(convergePrev))
 	// The installation root's plan holds the service's own revision moving, and
@@ -439,7 +439,7 @@ func TestUpdateMigratesTheNodeBeforeItReplacesTheCredentialsService(t *testing.T
 // lands at the policy stage — the credentials-service stage after it is already
 // too late, the node being at this version by then.
 func TestUpdateFailsTheCredentialsResolveBeforeItMigratesTheNode(t *testing.T) {
-	r := newConvergeRig(t, v6Node())
+	r := newConvergeRig(t, v7Node())
 	// The block an earlier release left, and no publishCredentialsImage: the
 	// release's signed "-pinned" tag is what the resolve reads, and this run
 	// has none.
@@ -500,7 +500,7 @@ func TestUpdateFailsTheCredentialsResolveBeforeItMigratesTheNode(t *testing.T) {
 // credentials image is untouched too, which is what makes the two halves one
 // decision rather than two.
 func TestUpdateInAnAgentSessionHoldsTheNodeAtItsVersion(t *testing.T) {
-	r := newConvergeRig(t, v6Node())
+	r := newConvergeRig(t, v7Node())
 	seedCredentialsService(t, r.imagesRig, oldCredentialsRef(convergePrev))
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"credentials_service": credentialsServiceOutput(),
@@ -660,19 +660,89 @@ func convergeOn(t *testing.T, r *convergeRig, stale []string) string {
 	return out
 }
 
+// TestInstallationAtPolicyVersion7ConvergesBinaries is this task's red step,
+// and the state every installation of the release behind is in: its published
+// node is version 7 and carries the binaries block it has carried since version
+// 6, and `fugaro update` must end with a version-8 node that still carries that
+// block.
+//
+// Both halves of the step are the assertions below, and each of them fails on
+// its own without this task. The number: the chain has no step from 7 to 8
+// until this release adds one, so the run stops at the policy stage and the
+// installation is left needing a second command — the HARD RULE's one failure.
+// The block: the drift between the owner's config and the node plans a publish,
+// and that publish rebuilds the node from the config, which states no binaries
+// block here (the key's carrier in the project layer is new with the same
+// release, AR1, D987, so a machine nobody has edited says nothing about it).
+// What leaves the block standing is the keep the publish reads the config
+// through (BinariesEffective): silence is not a request to withdraw a grant,
+// and the owner who wants one withdrawn writes the empty block. The step itself
+// moves the number and nothing else (migrateV7ToV8), so nothing here is what
+// puts the member back.
+func TestInstallationAtPolicyVersion7ConvergesBinaries(t *testing.T) {
+	node := v7Node()
+	node["binaries"] = map[string]any{"allow": []string{"brand/*.png"}, "max_bytes": 1048576}
+	r := newConvergeRig(t, node)
+	if v := nodeVersionOn(t, r.db); v != 7 {
+		t.Fatalf("the fixture's published node is version %d, want 7: the red step is about the node the release behind leaves", v)
+	}
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	if v, want := nodeVersionOn(t, r.db), projectpolicy.Version; v != want {
+		t.Errorf("after one fugaro update, the published node is version %d, want %d", v, want)
+	}
+	p := convergeNode(t, r)
+	if want := []string{"brand/*.png"}; !slices.Equal(p.BinariesAllow(), want) {
+		t.Errorf("after one fugaro update, the node's binaries.allow = %v, want %v: the step to version 8 dropped the owner's grant", p.BinariesAllow(), want)
+	}
+	if got := p.BinariesMaxBytes(); got != 1048576 {
+		t.Errorf("after one fugaro update, the node's binaries.max_bytes = %d, want 1048576: the step to version 8 put the cap back at the ceiling it had been lowered from", got)
+	}
+}
+
+// TestUpdatePolicyStagePublishesTheBinariesBlock is the other half of the same
+// command: the owner's own config states a block — the key the local project
+// config gained with this release (AR1; the project layer file refuses it) —
+// and `fugaro update` is what carries it onto the node. No second command,
+// which is the HARD RULE's whole point here: an operator who edits `binaries:`
+// in the local project config and runs `fugaro update` has published it, and
+// one who never edits it never sees the member move.
+//
+// The fixture's node is this binary's own version (v8Node), because what this
+// test is about is the editor's path and not the migration: nothing about the
+// node is stale but the rules generation and the plugin, so the only reason the
+// policy stage has anything to publish is the drift between this config's block
+// and the node's — the binaries row policyConfigDrift gained with this release,
+// without which the edit would sit in the file and never reach a run.
+func TestUpdatePolicyStagePublishesTheBinariesBlock(t *testing.T) {
+	r := newConvergeRig(t, v8Node())
+	r.appendConfig(t, "binaries:\n  allow:\n    - website/public/**\n    - brand/*.png\n  max_bytes: 1048576\n")
+	registerInstallation(t, r.initRig)
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	p := convergeNode(t, r)
+	if want := []string{"website/public/**", "brand/*.png"}; !slices.Equal(p.BinariesAllow(), want) {
+		t.Errorf("after one fugaro update, the node's binaries.allow = %v, want %v: the policy stage did not carry the owner's block onto the node", p.BinariesAllow(), want)
+	}
+	if got := p.BinariesMaxBytes(); got != 1048576 {
+		t.Errorf("after one fugaro update, the node's binaries.max_bytes = %d, want 1048576: the policy stage did not carry the cap the owner set", got)
+	}
+}
+
 // TestUpdateKeepsAHandWrittenBinariesBlock is the update door's half of the
 // review finding AR0's keep exists for, and the door the probe that found it
-// ran: this release models `binaries` and no key of the operator's config
-// states it (D986), so the policy stage's publish has to carry the node's block
-// over rather than rewrite the node without it — a rewrite that takes the
-// owner's grant away in silence (the list gone, and max_bytes back at the
-// ceiling it was lowered from), where the same node was *refused* while the key
-// was unmodelled ("publishing would drop them"). Both doors build the node
-// through policyNodeForPublish, so this is the same keep the explicit door's
+// ran: the policy stage's publish has to carry the node's block over rather
+// than rewrite the node without it — a rewrite that takes the owner's grant
+// away in silence (the list gone, and max_bytes back at the ceiling it was
+// lowered from), where the same node was *refused* while the key was unmodelled
+// ("publishing would drop them"). The state it pins is the one this release
+// leaves an installation in: the owner's config states no binaries block (its
+// key arrived with this same release, AR1, so a file nothing was written into
+// says nothing about it), and the node's own block is what every run of the
+// project must go on reading. Both doors build the node through
+// policyNodeForPublish, so this is the same keep the explicit door's
 // TestPublishKeepsTheBinariesListWhenTheLocalFileSaysNothing pins, reached
 // through the one command the HARD RULE says the whole upgrade is.
 func TestUpdateKeepsAHandWrittenBinariesBlock(t *testing.T) {
-	node := v7Node()
+	node := v8Node()
 	node["binaries"] = map[string]any{"allow": []string{"brand/*.png"}, "max_bytes": 1048576}
 	r := newConvergeRig(t, node)
 	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
@@ -695,7 +765,7 @@ func TestUpdateKeepsAHandWrittenBinariesBlock(t *testing.T) {
 // TestProjectPolicyPublishKeepsTheModelGrades pins, reached through the one
 // command the HARD RULE says the whole upgrade is.
 func TestUpdateKeepsAHandWrittenModelGrades(t *testing.T) {
-	node := v7Node()
+	node := v8Node()
 	node["model_grades"] = map[string]any{
 		"strong":    map[string]any{"model": "anthropic/claude-sonnet-5.5", "access": "openrouter-main"},
 		"strongest": map[string]any{"model": "anthropic/claude-opus-4.6"},
@@ -727,7 +797,7 @@ func TestUpdateKeepsAHandWrittenModelGrades(t *testing.T) {
 // file that writes them replaces what the node holds, where a machine whose
 // config is silent about them keeps it (the catalog's rule, D1140).
 func TestUpdateConvergesPreviousPolicy(t *testing.T) {
-	r := newConvergeRig(t, v6Node())
+	r := newConvergeRig(t, v7Node())
 	// The local config states both, which is all an operator does after this
 	// release: `fugaro image map set` writes the map, and the bake switch is
 	// the setup wizard's answer or `fugaro settings set bake_repos`.
@@ -783,7 +853,7 @@ func TestUpdateConvergesPreviousPolicy(t *testing.T) {
 // image build` and a catalog edit before the next `fugaro update`.
 func TestUpdateConvergesNoCatalogDefault(t *testing.T) {
 	const entry = "tools"
-	r := newConvergeRig(t, v6Node())
+	r := newConvergeRig(t, v7Node())
 	r.appendConfig(t, "image_catalog:\n  entries:\n    - name: "+entry+"\n      tags: [node]\n      source: { kind: inline, inline: \"FROM scratch\\n\" }\n")
 	registerInstallation(t, r.initRig)
 	if p := convergeNode(t, r); p.ImageCatalog != nil {
@@ -845,7 +915,7 @@ func TestUpdateConvergesAPrebuiltDefaultBesideAWorkflowsOwnImage(t *testing.T) {
 	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n" +
 		"  app: { dockerfile: .fugaro/app.Dockerfile, commands: { build: sh build.sh, test: sh test.sh } }\n" +
 		"  api: { dockerfile: .fugaro/api.Dockerfile, commands: { build: sh build.sh, test: sh test.sh } }\n"
-	r := newConvergeRigYAML(t, v6Node(), yaml)
+	r := newConvergeRigYAML(t, v7Node(), yaml)
 	// The two Dockerfiles the workflows name, as the repository behind had
 	// them: `fugaro validate` reads a workflow's dockerfile: as a file that is
 	// there, so a checkout without them is not the shape this test is about.
@@ -901,7 +971,7 @@ func TestUpdateConvergesAPrebuiltDefaultBesideAWorkflowsOwnImage(t *testing.T) {
 // assertions are made on the raw node, because what an older reader meets is
 // the bytes and not this binary's decoded view of them.
 func TestEntryServicesOlderReaderConverges(t *testing.T) {
-	r := newConvergeRig(t, v6Node())
+	r := newConvergeRig(t, v7Node())
 	r.appendConfig(t, "image_catalog:\n  entries:\n"+
 		"    - name: app\n      tags: [node, postgres]\n      services: [postgres, redis]\n"+
 		"      source: { kind: image, image: ghcr.io/acme/app:1 }\n")
@@ -978,7 +1048,7 @@ func convergeNode(t *testing.T, r *convergeRig) *projectpolicy.Policy {
 // generation's document and carry no orchestrator marker at all, which is the
 // state every installation is in until this release's update runs.
 func TestUpdateConvergesTheOrchestratorRulesFromThePreviousGeneration(t *testing.T) {
-	r := newConvergeRig(t, v7Node())
+	r := newConvergeRig(t, v8Node())
 	currentRelease(t)
 	// The fixture is the previous generation, or the assertions below prove
 	// nothing: no marker, and a document this binary does not generate.
@@ -1040,7 +1110,7 @@ func TestUpdateConvergesTheOrchestratorRulesFromThePreviousGeneration(t *testing
 // in flight, which is the other half of the same rule, is pinned by
 // TestUpdateLeavesARunInFlightRunning.
 func TestUpdateConvergesTheVoicePolicyNodeFromThePreviousGeneration(t *testing.T) {
-	r := newConvergeRig(t, v7Node())
+	r := newConvergeRig(t, v8Node())
 	currentRelease(t)
 	// The fixture is the release behind, or the assertions below prove
 	// nothing: the marker is the previous generation and the deployed document
@@ -1145,7 +1215,7 @@ func sortedAnyKeys(node map[string]any) []string {
 // it `fugaro update` on an older binary would take the subtree out from under a
 // daemon whose own gate reads the same marker.
 func TestUpdateRefusesToRewindTheOrchestratorMarker(t *testing.T) {
-	r := newConvergeRig(t, v7Node())
+	r := newConvergeRig(t, v8Node())
 	currentRelease(t)
 	ahead := rules.OrchestratorRulesVersion + 1
 	r.db.Set(rules.PathOrchestratorRulesMarker(), ahead)
@@ -1247,7 +1317,7 @@ func executeConsole(t *testing.T, args ...string) (string, error) {
 // "- repositoryproject: <name>" — the stage run into the header, on no line of
 // its own.
 func TestUpdateEndsTheSpinnerLineBeforeTheProjectHeader(t *testing.T) {
-	r := newConvergeRig(t, v6Node())
+	r := newConvergeRig(t, v7Node())
 	currentRelease(t)
 	skillWarned.Store(false)
 	t.Cleanup(func() { skillWarned.Store(false) })
@@ -1309,7 +1379,7 @@ func TestUpdateNeverSendsThePersonToUpdateFromInsideIt(t *testing.T) {
 		{"no claude on PATH", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_ = newConvergeRig(t, v6Node())
+			_ = newConvergeRig(t, v7Node())
 			currentRelease(t)
 			skillWarned.Store(false)
 			t.Cleanup(func() { skillWarned.Store(false) })
