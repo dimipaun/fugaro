@@ -2724,8 +2724,19 @@ NAME is the name in the document's own spelling — the name fugaro creds set
 takes. A named Claude account's row is claude-oauth-token-<account>, where <account>
 is the account the policy's accounts block speaks.
 
+A Bitbucket token carries more, because a name and a PRESENT answer are the
+same for a token that serves every call of its repository and for one Bitbucket
+refuses: its type, what it covers, the expiry the operator recorded, when the
+add-time check last proved it, the state the credential state store holds
+(available, exhausted, backed_off or broken), the time a hold ends when it has
+one, and how many requests it has served in the current window. bitbucket-token
+is the legacy key: the implicit untyped token, whose coverage is the
+project_secrets entry's allow_data_to list and whose expiry is the
+secret_expires entry of the same name.
+
 Nothing else is printed: never a value, never a prefix of one, never a length
-that would narrow a guess. --json carries the same shape.
+that would narrow a guess. --json carries the same shape, with those facts as
+fields of the row.
 
 The listing needs the container to exist, and it needs its newest version to be
 one the service could read: an absent container, a container with no version, an
@@ -2733,6 +2744,12 @@ unreadable payload, a document the service's own loader refuses, and a version
 that is DISABLED are each a named failure, never an empty list — a listing that
 answered nothing for any of them would read as "the bundle holds no credential"
 while the service is in fact issuing from one this command could not read.
+
+A document holding a Bitbucket token also needs the project's credential state,
+and a state store that does not answer is a named failure too, for the same
+reason: the row would say nothing about a token the store holds something
+about. A project with no Firebase backend has no such store, and its rows carry
+the record's facts alone.
 
 It is refused from a coding agent's session and from a run's process, before
 anything is read.
@@ -2953,10 +2970,13 @@ permissions Fugaro's runs ask for: that is the one thing that reads a secret's
 value (the App's private key, with your own credentials, held in memory only to
 sign, never printed), and it is refused in a coding agent's session. With
 --check-bitbucket-token, in your own terminal, it also reads the credentials
-service's bundle to see that it holds a Bitbucket token and asks Bitbucket
-whether it still accepts it, one GET /repositories/<repo> per proxied
-repository: that too reads a secret's value (with your own credentials, in
-memory only, never printed) and is refused in a coding agent's session.
+service's bundle to see which Bitbucket tokens it holds and asks Bitbucket
+whether it still accepts each of them, one GET /repositories/<repo> per proxied
+repository and per token that serves it (the narrowest token covering a
+repository is the one a run of it is served by): a repository no token covers,
+and a token the credential state holds as broken, are named too. That too reads
+a secret's value (with your own credentials, in memory only, never printed) and
+is refused in a coding agent's session.
 Otherwise it never prints a secret's value and never creates, enables or
 changes anything.
 
@@ -3017,7 +3037,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `--all` | bool | `false` | no | print every check, the informational and audit lines included |
-| `--check-bitbucket-token` | bool | `false` | no | also check the credentials service's bundle holds a Bitbucket token and that Bitbucket still accepts it: reads the bundle with your own credentials, in memory only, for one GET /repositories/<repo> per proxied repository (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it) |
+| `--check-bitbucket-token` | bool | `false` | no | also check the credentials service's bundle holds a Bitbucket token and that Bitbucket still accepts every token it holds: reads the bundle with your own credentials, in memory only, for one GET /repositories/<repo> per proxied repository, with the token that repository's runs are served by (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it) |
 | `--check-github-app` | bool | `false` | no | also check each recorded GitHub App is installed with the permissions runs ask for: reads the App's private key from Secret Manager with your own credentials, in memory only, for one signed token (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it) |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--dir` | string | `.` | no | a directory in the checkout, for the plugin wiring |
@@ -7057,6 +7077,7 @@ Flags:
 | `--attempts` | int | `0` | no | launch N (2 to 4) independent runs of the same task, workflow, ref and recipe as a best-of-N batch (bestof-<first run id> unless --batch is given); refused with --pr, --run-id, --retry or a review-mode recipe |
 | `--batch` | string | "" | no | batch label, to group runs in fugaro runs ls |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--context` | stringArray | `[]` | no | a repository this run reads and never writes, as owner/name: repeatable, at most 5, each admitted by the project's allow_repos. The list is recorded on the task and in the run's own identity, which is what the release that reads it fetches with — this release's runner does not clone a context repository yet. Refused for a Bitbucket repository and where the installation's credentials service does not serve the repository |
 | `--continues` | string | "" | no | continue the chain of RUN (a run ID, or <repo-slug>/<run-id>): this launch inherits the chain's remaining limits, for a chain with no pull request — the run you name opened nothing to follow up. The chain's limit is read from the run that began it, and what it has spent from the chain's runs' budget ledgers; this launch's own --max-* may only tighten the remaining. Refused with --pr, --retry and --attempts, which name a chain's previous run themselves |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for run |
@@ -7112,6 +7133,7 @@ Subcommands:
 
 - `fugaro runs digest` -- Write a closed period's report of this repository into its own docs tree
 - `fugaro runs ls` -- List runs with their status, stage, cost and PR
+- `fugaro runs reports` -- Write every repository's closed-period reports into the runs bucket (the project's reports job)
 - `fugaro runs show` -- Show a run's chain and what is left of its limits
 - `fugaro runs stats` -- Aggregate run records by the person who started each run
 - `fugaro runs summary` -- Count the window's runs and their spend, without reading a run object
@@ -7305,6 +7327,59 @@ Flags:
 | `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
 | `--state` | string | "" | no | only runs in this state, a run's or its pull request's (cancelled, error, failed, halted, infra_error, launching, pending, running, succeeded, unlaunched, unreviewed, live, ready, stalled) |
 | `--watch` | bool | `false` | no | redraw until every run has settled |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro runs reports`
+
+Write every repository's closed-period reports into the runs bucket (the project's reports job)
+
+Write the project's stored reports: one report per repository and closed period,
+under reports/<slug>/<YYYY>/<key>.md of the runs bucket -- D321's layout, in the
+bucket rather than in a repository's docs tree.
+
+With --job, as the project's reports job runs it, the whole assignment is the JSON
+document in FUGARO_REPORTS_JOB_SPEC, which the installation renders: the project,
+the runs bucket, the repository slugs to report and the period kinds to close. The
+job has no checkout and no local config, so nothing here reads either, and without
+the document the command refuses to start rather than writing reports somewhere
+nobody named. It refuses too outside a Cloud Run job, which is where it runs.
+
+Each kind's most recently closed period is taken from this run's own clock (a day
+is yesterday, the week is the one that ended on Sunday, the month and the year are
+the ones that ended yesterday): which periods have closed is the one thing a nightly
+run cannot be handed in advance. A rerun compares every report with the stored one
+first -- equal means the object is left as it is, so a re-fired schedule writes
+nothing the second time, and a period whose records changed is overwritten.
+
+The bytes are internal/digest's own writer, so a stored report is the file fugaro
+runs digest writes for the same repository and period. Each report's pattern rules
+read the series already stored -- the reports before it -- and a yearly report is
+the stored monthly ones of that year added up, because the run records are kept 90
+days.
+
+Nothing in a report is a person or a task's own words (G1, D323). The command
+writes with the job's own credentials and nothing else: no git credential, no model
+credential, no secret, and reports/ is the only prefix it may write.
+
+Then it writes the project's own aggregate of each period, beside them at
+reports/<YYYY>/<key>.md: the one document that names every repository, which adds
+the repositories' stored reports up -- a year's is the stored monthly aggregates of
+that year -- and names no rule and no pattern (E2, E7).
+
+Without --job there is nothing to report: a person reads or writes one repository's
+report of one period in a checkout with fugaro runs digest.
+
+Usage: `fugaro runs reports`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for reports |
+| `--job` | bool | `false` | no | run as the project's reports job (reads FUGARO_REPORTS_JOB_SPEC) |
 
 Subcommands:
 

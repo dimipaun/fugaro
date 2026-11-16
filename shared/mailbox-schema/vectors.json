@@ -139,6 +139,36 @@
       "verdict": "verified"
     },
     {
+      "name": "registration",
+      "why": "P5.2.1, §3.5 (b): the app's registration-and-preferences message — the token, the platform and §3.8's switches, all of them inside the bytes the tag covers",
+      "direction": "inbox",
+      "message": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "register this phone",
+        "at": 1700000000000,
+        "mac": "06ff14a3d9b64a8d5c3829619d343c47cf329df9605a28afb9f9e82cbeaf536f",
+        "kind": "registration",
+        "token": "not-a-real-registration-token",
+        "platform": "ios",
+        "prefs": {
+          "kill_switch": true,
+          "cap_reached": true,
+          "consumer_offline": true,
+          "cap_near": false,
+          "prompt": true,
+          "quiet_hours": {
+            "zone": "Europe/Berlin",
+            "start": 1320,
+            "end": 420
+          }
+        }
+      },
+      "canonical": "{\"at\":1700000000000,\"direction\":\"inbox\",\"id\":\"m-0001\",\"kind\":\"registration\",\"platform\":\"ios\",\"prefs\":{\"cap_near\":false,\"cap_reached\":true,\"consumer_offline\":true,\"kill_switch\":true,\"prompt\":true,\"quiet_hours\":{\"end\":420,\"start\":1320,\"zone\":\"Europe/Berlin\"}},\"sender\":\"phone\",\"text\":\"register this phone\",\"token\":\"not-a-real-registration-token\"}",
+      "mac": "06ff14a3d9b64a8d5c3829619d343c47cf329df9605a28afb9f9e82cbeaf536f",
+      "verdict": "verified"
+    },
+    {
       "name": "html characters stay raw",
       "why": "Go escapes <, > and & unless SetEscapeHTML(false) is set; the tagged bytes are the raw characters",
       "direction": "inbox",
@@ -1016,6 +1046,485 @@
       },
       "code": "unknown-field",
       "field": "direction"
+    },
+    {
+      "name": "unsigned registration",
+      "why": "a registration is signed like every other kind: an unsigned one could register a device of an impostor's choosing",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "kind": "registration",
+        "token": "not-a-real-registration-token",
+        "platform": "ios",
+        "prefs": {
+          "kill_switch": true,
+          "cap_reached": true,
+          "consumer_offline": true,
+          "cap_near": false,
+          "prompt": true,
+          "quiet_hours": {
+            "zone": "Europe/Berlin",
+            "start": 1320,
+            "end": 420
+          }
+        }
+      },
+      "code": "missing-field",
+      "field": "mac"
+    },
+    {
+      "name": "registration without a token",
+      "why": "the token is the field the kind exists for (§3.5 (b): the mailbox is the only path that can carry one)",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "registration",
+        "platform": "ios",
+        "prefs": {
+          "kill_switch": true,
+          "cap_reached": true,
+          "consumer_offline": true,
+          "cap_near": false,
+          "prompt": true,
+          "quiet_hours": {
+            "zone": "Europe/Berlin",
+            "start": 1320,
+            "end": 420
+          }
+        }
+      },
+      "code": "missing-field",
+      "field": "token"
+    },
+    {
+      "name": "registration without a platform",
+      "why": "§3.4's node carries the platform the token was issued for, and this message is where the principal reads it",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "registration",
+        "token": "not-a-real-registration-token",
+        "prefs": {
+          "kill_switch": true,
+          "cap_reached": true,
+          "consumer_offline": true,
+          "cap_near": false,
+          "prompt": true,
+          "quiet_hours": {
+            "zone": "Europe/Berlin",
+            "start": 1320,
+            "end": 420
+          }
+        }
+      },
+      "code": "missing-field",
+      "field": "platform"
+    },
+    {
+      "name": "options on a registration",
+      "why": "a kind carries its own fields and no others",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "registration",
+        "token": "not-a-real-registration-token",
+        "platform": "ios",
+        "prefs": {
+          "kill_switch": true,
+          "cap_reached": true,
+          "consumer_offline": true,
+          "cap_near": false,
+          "prompt": true,
+          "quiet_hours": {
+            "zone": "Europe/Berlin",
+            "start": 1320,
+            "end": 420
+          }
+        },
+        "options": [
+          "one"
+        ]
+      },
+      "code": "field-not-allowed",
+      "field": "options"
+    },
+    {
+      "name": "a token on a plain message",
+      "why": "the token travels on a registration alone: on any other kind the (kind, field) table does not name it",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "token": "not-a-real-registration-token"
+      },
+      "code": "field-not-allowed",
+      "field": "token"
+    },
+    {
+      "name": "a token one code unit past its bound",
+      "why": "a token is bounded (the design's word): 257 code units is a body, not a registration token",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "registration",
+        "token": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "platform": "ios",
+        "prefs": {
+          "kill_switch": true,
+          "cap_reached": true,
+          "consumer_offline": true,
+          "cap_near": false,
+          "prompt": true,
+          "quiet_hours": {
+            "zone": "Europe/Berlin",
+            "start": 1320,
+            "end": 420
+          }
+        }
+      },
+      "code": "too-long",
+      "field": "token"
+    },
+    {
+      "name": "an unknown platform",
+      "why": "the platforms are ios and android, and a platform outside the pair is not one the sender can address",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "registration",
+        "token": "not-a-real-registration-token",
+        "platform": "windows",
+        "prefs": {
+          "kill_switch": true,
+          "cap_reached": true,
+          "consumer_offline": true,
+          "cap_near": false,
+          "prompt": true,
+          "quiet_hours": {
+            "zone": "Europe/Berlin",
+            "start": 1320,
+            "end": 420
+          }
+        }
+      },
+      "code": "unknown-platform",
+      "field": "platform"
+    },
+    {
+      "name": "a zone that is not an IANA zone name",
+      "why": "the quiet-hours zone is an IANA name, not a path and not free text",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "registration",
+        "token": "not-a-real-registration-token",
+        "platform": "ios",
+        "prefs": {
+          "kill_switch": true,
+          "cap_reached": true,
+          "consumer_offline": true,
+          "cap_near": false,
+          "prompt": true,
+          "quiet_hours": {
+            "zone": "../../etc/passwd",
+            "start": 1320,
+            "end": 420
+          }
+        }
+      },
+      "code": "bad-zone",
+      "field": "prefs.quiet_hours.zone"
+    },
+    {
+      "name": "a zone whose later segment is a path step",
+      "why": "a segment of dots alone is a path step, and the letter-first rule guards the string's first character and not the segments after it",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "registration",
+        "token": "not-a-real-registration-token",
+        "platform": "ios",
+        "prefs": {
+          "kill_switch": true,
+          "cap_reached": true,
+          "consumer_offline": true,
+          "cap_near": false,
+          "prompt": true,
+          "quiet_hours": {
+            "zone": "UTC/../../etc/passwd",
+            "start": 1320,
+            "end": 420
+          }
+        }
+      },
+      "code": "bad-zone",
+      "field": "prefs.quiet_hours.zone"
+    },
+    {
+      "name": "a quiet-hours window whose ends are the same minute",
+      "why": "a window from a minute to itself is either a whole day or none of one, and a sender that guessed would suppress the wrong hours",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "registration",
+        "token": "not-a-real-registration-token",
+        "platform": "ios",
+        "prefs": {
+          "kill_switch": true,
+          "cap_reached": true,
+          "consumer_offline": true,
+          "cap_near": false,
+          "prompt": true,
+          "quiet_hours": {
+            "zone": "UTC",
+            "start": 600,
+            "end": 600
+          }
+        }
+      },
+      "code": "bad-window",
+      "field": "prefs.quiet_hours.end"
+    },
+    {
+      "name": "a quiet-hours minute outside the day",
+      "why": "a minute of the local day is 0 through 1439",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "registration",
+        "token": "not-a-real-registration-token",
+        "platform": "ios",
+        "prefs": {
+          "kill_switch": true,
+          "cap_reached": true,
+          "consumer_offline": true,
+          "cap_near": false,
+          "prompt": true,
+          "quiet_hours": {
+            "zone": "UTC",
+            "start": 1440,
+            "end": 420
+          }
+        }
+      },
+      "code": "bad-window",
+      "field": "prefs.quiet_hours.start"
+    },
+    {
+      "name": "a quiet-hours minute that is not a whole number",
+      "why": "a minute of the local day is a whole number, and a float is not one",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "registration",
+        "token": "not-a-real-registration-token",
+        "platform": "ios",
+        "prefs": {
+          "kill_switch": true,
+          "cap_reached": true,
+          "consumer_offline": true,
+          "cap_near": false,
+          "prompt": true,
+          "quiet_hours": {
+            "zone": "UTC",
+            "start": 1.5,
+            "end": 2
+          }
+        }
+      },
+      "code": "bad-window",
+      "field": "prefs.quiet_hours.start"
+    },
+    {
+      "name": "a quiet-hours window missing one of its ends",
+      "why": "a window is its zone and both of its ends, so a partial one would leave the consumer inventing a value the app never sent",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "registration",
+        "token": "not-a-real-registration-token",
+        "platform": "ios",
+        "prefs": {
+          "kill_switch": true,
+          "cap_reached": true,
+          "consumer_offline": true,
+          "cap_near": false,
+          "prompt": true,
+          "quiet_hours": {
+            "zone": "UTC",
+            "start": 1
+          }
+        }
+      },
+      "code": "missing-field",
+      "field": "prefs.quiet_hours.end"
+    },
+    {
+      "name": "an unknown field inside a quiet-hours window",
+      "why": "a quiet-hours window is a closed record like every other one here",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "registration",
+        "token": "not-a-real-registration-token",
+        "platform": "ios",
+        "prefs": {
+          "kill_switch": true,
+          "cap_reached": true,
+          "consumer_offline": true,
+          "cap_near": false,
+          "prompt": true,
+          "quiet_hours": {
+            "zone": "UTC",
+            "start": 1,
+            "end": 2,
+            "tz": "UTC"
+          }
+        }
+      },
+      "code": "unknown-field",
+      "field": "prefs.quiet_hours.tz"
+    },
+    {
+      "name": "prefs without one of the switches",
+      "why": "the message carries the whole switch state, so a partial one would leave the consumer choosing a value the app never sent",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "registration",
+        "token": "not-a-real-registration-token",
+        "platform": "ios",
+        "prefs": {
+          "kill_switch": true,
+          "cap_reached": true,
+          "consumer_offline": true,
+          "prompt": true,
+          "quiet_hours": {
+            "zone": "Europe/Berlin",
+            "start": 1320,
+            "end": 420
+          }
+        }
+      },
+      "code": "missing-field",
+      "field": "prefs.cap_near"
+    },
+    {
+      "name": "a switch that is not a boolean",
+      "why": "a switch is true or false, and never a string the consumer would have to read",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "registration",
+        "token": "not-a-real-registration-token",
+        "platform": "ios",
+        "prefs": {
+          "kill_switch": true,
+          "cap_reached": true,
+          "consumer_offline": true,
+          "cap_near": "off",
+          "prompt": true,
+          "quiet_hours": {
+            "zone": "Europe/Berlin",
+            "start": 1320,
+            "end": 420
+          }
+        }
+      },
+      "code": "wrong-type",
+      "field": "prefs.cap_near"
+    },
+    {
+      "name": "an unknown field inside prefs",
+      "why": "§3.8's controls are a closed set like every other record here",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "registration",
+        "token": "not-a-real-registration-token",
+        "platform": "ios",
+        "prefs": {
+          "kill_switch": true,
+          "cap_reached": true,
+          "consumer_offline": true,
+          "cap_near": false,
+          "prompt": true,
+          "quiet_hours": {
+            "zone": "Europe/Berlin",
+            "start": 1320,
+            "end": 420
+          },
+          "sound": true
+        }
+      },
+      "code": "unknown-field",
+      "field": "prefs.sound"
     }
   ]
 }

@@ -802,3 +802,19 @@ whole-database read and no write; the compounding case (D2020 (a) with D2021 (b)
   `WorkspaceMeter.Reserve` and `Settle` have no non-test caller, so no call is refused at a workspace ceiling and none fails to settle yet —
   the `cap` and `settle` markers are the wire's and the record's, and the calls that would write them arrive with the meter's wiring. O19
   remains a task of its own.
+  **Follow-up, 2026-11-16: the bound is written, and the owner chose its shape.** Put the question this unit left open — a source a run cannot
+  write is not available, so what bound does the pause owe — and the owner ruled **corroborate and auto-expire**, the recommendation.
+  *Corroborate:* `ee/orchestrator.WorkspaceRefused` answers true only for a marker that is one of the three **and** a halt that is the shape
+  that path writes — `budget_unavailable` / `run` / `the credentials service cannot read the state it must read (state_unavailable)`, the one
+  shape `gateway.ValidWorkspaceRefusalHalt` states, which all three markers share because all three reach a member's gateway as the same typed
+  refusal. A marker with another reason, another scope, another sentence, or no halt at all is an ordinary refusal: it counts toward the
+  breaker exactly as O6's rule says, which is what `TestWorkspaceRefusedReadsOnlyTheRunRecord`'s table pins row by row.
+  *Auto-expire:* the trip raises the breaker's own question — `breaker-tripped-workspace-<stamp>`, `waiting_on: person`, the id only the daemon
+  may write — and it lifts itself after `orchestrator.WorkspacePauseWindow`, one hour (`internal/orchestrator/breaker.go`), unless a person
+  answers it first. `BreakerOpen` reads the pause off the unanswered, unexpired questions of the prefix, so nothing retires the decision: a
+  person may still answer it after the window, and the answer then changes nothing. What a forger reaches is therefore bounded, and the two
+  ends are pinned together: a record whose halt is not that shape raises no pause at all, and one that is holds the queue for at most one
+  window (`TestAForgedMarkerPausesAtMostTheWindow`, `TestAWorkspacePauseExpires`). A person who wants the queue stopped for longer stops it
+  the way the other stops work, with the kill switch. The trip also leaves the audit line `<run>:workspace-refused` (D1230), and a log that
+  cannot be written costs the evidence and not the stop. What this unit said is still true of the field: `credsvc.SetWorkspaceRefusal` has no
+  caller, so no record of this release carries a marker for an honest path to corroborate.

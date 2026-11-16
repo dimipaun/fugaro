@@ -23,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/coordpath"
+	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -304,12 +305,20 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		if err != nil {
 			return publishFailure(err, narrowedSoFar)
 		}
+		// The identities the node's bitbucket_tokens key carries (R12) are read
+		// here, once, and handed to the build both doors share: the state store
+		// is where the add-time check wrote them, and the node is the only
+		// document the credentials service reads.
+		identities, err := bitbucketTokenIdentities(ctx, db, lc)
+		if err != nil {
+			return publishFailure(err, narrowedSoFar)
+		}
 		// The one build both doors take (policyNodeForPublish): `fugaro update`'s
 		// policy stage writes the node the local config states from the same
 		// flags, and two builds of one node from one config is a node that
 		// depends on which door the operator came through
 		// (TestUpdateStageAndTheExplicitDoorBuildTheSameNode).
-		body, pol, sources, err := policyNodeForPublish(ctx, lc, old, raw, exists, o.seedRepos, o.removeRouting)
+		body, pol, sources, err := policyNodeForPublish(ctx, lc, old, raw, exists, o.seedRepos, o.removeRouting, identities)
 		if err != nil {
 			return publishFailure(err, narrowedSoFar)
 		}
@@ -566,6 +575,10 @@ const rulesDeviceGeneration = 3
 // coordinator's read grant (coordinator plan P3, D194).
 const rulesCoordinatorGeneration = 4
 
+// rulesVoiceGeneration is the rules generation that added the voice policy node
+// (mobile plan task P5.3.1).
+const rulesVoiceGeneration = 5
+
 // rulesMarkerOlderText is the sentence for the state between the two
 // generations: at or above PolicyRulesVersion and below RulesVersion. Nothing
 // refuses here — Read reads the policy the marker's rules carry and
@@ -578,10 +591,15 @@ const rulesCoordinatorGeneration = 4
 // Each branch names the one thing the next generation adds, so the sentence
 // never sends the operator after a grant the deployed rules already carry: a
 // marker at rulesDeviceGeneration already has the mailbox and the device
-// binding, and one at rulesCoordinatorGeneration already has the coordinator's
-// read grant, so for it the sentence names the voice policy node (mobile plan
-// task P5.3.1).
+// binding, one at rulesCoordinatorGeneration already has the coordinator's read
+// grant and only the voice policy node is new to it (mobile plan task P5.3.1),
+// and one at rulesVoiceGeneration already has that node too and only the
+// registration kind's fields are new to it (mobile plan task P5.2.2).
 func rulesMarkerOlderText(gen int) string {
+	if gen >= rulesVoiceGeneration {
+		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox, the device binding, the coordinator's read grant and the voice policy node, so runs, a published policy, the mobile app and the coordinator are unaffected — what they predate is this release's own document, which adds the fields a push registration carries (the `token`, `platform` and `prefs` fields of a mailbox message of the new `registration` kind, mobile plan task P5.2.2): the app writes one into its own inbox, and until this is deployed the database refuses that message with no error, so the phone is registered with nothing; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
+			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, projectpolicy.RulesVersion)
+	}
 	if gen >= rulesCoordinatorGeneration {
 		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox, the device binding and the coordinator's read grant, so runs, a published policy, the mobile app and the coordinator are unaffected — what they predate is this release's own document, which adds the voice policy node %s/{shared,repos/$slug} (mobile plan task P5.3.1): a run token reads its own project's node there, and no client writes either node; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
 			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, rules.PathVoice, projectpolicy.RulesVersion)
@@ -602,6 +620,42 @@ func readPolicyNode(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) (
 		return "", false, nil, dbErr(lc, err, false)
 	}
 	return etag, found, raw, nil
+}
+
+// bitbucketTokenIdentities is the half of the node's bitbucket_tokens key the
+// local config does not state (R12, R5): the account UUID the add-time check
+// proved for each typed token, keyed by the token's DOCUMENT KEY — the key
+// `creds set` writes the token's status under (T6), so the store's own map is
+// handed to the derivation without re-keying it.
+//
+// It is read only when the local config names a typed token, and that is R3's
+// half of the rule rather than an optimization: an installation holding the
+// legacy bitbucket-token alone publishes no such key at all, so its update must
+// reach no state store and converge with no step — the read is a cloud read of
+// the project's own database, and a project with no record has nothing for it
+// to answer.
+//
+// A name the store does not hold, and one it holds with an empty identity,
+// contribute nothing: an absent identity is what a repository token has and all
+// it has (R14), never a value to be guessed. A read that fails is an error
+// rather than an empty set, because an empty set is a legal answer here and a
+// failed read that wore it would publish a node claiming the project's tokens
+// have no account.
+func bitbucketTokenIdentities(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) (map[string]string, error) {
+	if len(lc.BitbucketTokens) == 0 {
+		return nil, nil
+	}
+	statuses, err := (&creds.RTDBStore{DB: db}).TokenStatuses(ctx)
+	if err != nil {
+		return nil, dbErr(lc, err, false)
+	}
+	out := make(map[string]string, len(statuses))
+	for name, st := range statuses {
+		if st.Identity != "" {
+			out[name] = st.Identity
+		}
+	}
+	return out, nil
 }
 
 // refuseNewerPolicy refuses a node written by a newer Fugaro (P8, the other
@@ -936,7 +990,7 @@ func refuseAProfileMountingTheBitbucketCredential(lc *localcfg.Config) error {
 // step 3, design §4.1(1)), and a publish that dropped an entry would silently
 // move them to the provider's usual URL. printPolicyDiff says which side each
 // entry came from.
-func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.Policy, removeRouting bool) (*projectpolicy.Policy, bool, error) {
+func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.Policy, removeRouting bool, identities map[string]string) (*projectpolicy.Policy, bool, error) {
 	if lc.Budget == nil || lc.Budget.Mode == "" {
 		return nil, false, userErr("this project's config sets no budget.mode, and a published policy's budget block must name one (off, observe or enforce): the mode decides whether the caps bite, and a block that leaves it out would take it from each job's environment, which nobody reading the policy can see; set budget: { mode: ... } in %s, or leave the policy unpublished", lc.Name)
 	}
@@ -1042,6 +1096,22 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	// that same decode) rather than to a copy of it here: one rule, at the one
 	// point a root can be written.
 	token, err := projectpolicy.DeriveBitbucketToken(profiles, lc.ProjectSecrets)
+	if err != nil {
+		return nil, false, userErr("%v", err)
+	}
+	// The typed tokens are derived beside that block and from the other half of
+	// the same file (R5): the legacy untyped record's coverage IS the block
+	// above, while each record of the config's bitbucket_tokens block is a
+	// token of its own, and the key is the one place the credentials service
+	// learns what each of them reaches. identities is the half the file does
+	// not state (R12): the account UUID `creds set` proved for a token is in
+	// the creds state store, and the caller reads it there, so a hand-edited
+	// file cannot add one.
+	//
+	// A project that names no record derives no key at all, which is what
+	// leaves the node of an installation holding the legacy bitbucket-token
+	// alone byte for byte what it was (R3).
+	tokens, err := projectpolicy.DeriveBitbucketTokens(lc.BitbucketTokens, identities)
 	if err != nil {
 		return nil, false, userErr("%v", err)
 	}
@@ -1234,6 +1304,7 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		Profiles:             profiles,
 		Accounts:             accounts,
 		BitbucketToken:       token,
+		BitbucketTokens:      tokens,
 		BitbucketAPIRoots:    lc.BitbucketAPIRoots,
 		ReviewFloor:          floor,
 		VerifierAccounts:     verifierAccounts,

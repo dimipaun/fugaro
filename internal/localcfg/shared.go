@@ -109,6 +109,20 @@ func (c *Config) Shared() *Config {
 	s.Credentials = nil
 	s.Pools = nil
 	s.Crafts = config.Crafts{}
+	// The cascade, the grades and the removals travel the three blocks above
+	// into the policy node, and every one of them is dropped here for the
+	// reason they are, each with its own edge. The cascade's fallback decides
+	// whether a run may spend the project's money at all (D152), so a launcher
+	// who could publish it would be choosing every teammate's spending; a grade
+	// names the model a rung of the ladder runs and the credential or pool its
+	// calls go out on, which is the grant the pool and craft blocks are dropped
+	// for one step further out; and the removals are the one block here whose
+	// publication would be destructive rather than a widened grant — a launcher
+	// who could write them would be deleting pools, credentials and crafts of
+	// the project's node from the file it can write (D2607, F23, F22).
+	s.CredentialCascade = nil
+	s.ModelGrades = nil
+	s.NodeRemovals = nil
 	s.ProjectSecrets = nil
 	s.WorkflowSecrets = nil
 	// BitbucketAPIRoots is the owner's policy as well, and it travels the same

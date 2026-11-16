@@ -283,15 +283,30 @@ func TestDocsCheck600IsThePlansNumber(t *testing.T) {
 		}
 	}
 	// The census of the register's highest written section is a reading of the
-	// register, and it has to carry the same number the register does, or a
-	// reader of that design's row takes a stale figure for the register's
-	// progress. 600's four sections were the highest when this work landed; the
-	// highest since is the mobile orchestrator work's register text of
-	// 2026-11-16 (Checks 660 to 663, Task P5.1h), so the row reads 663 and this
-	// assertion moves with the register.
+	// register, and this work is what moved it to 600. It moves again every time
+	// a later work writes a higher section -- Check 601 did, below this one, and
+	// so did the mobile-auth allocation of 2026-11-14 (Checks 620 to 627) -- so
+	// the figure is read off the register rather than written in here: what the
+	// periodic-reviews row is held to is the register's own number, not the
+	// number that was true when 600 merged, and a hardcoded one would fail on a
+	// later work's section rather than on a stale row.
+	register := readDoc(t, liveChecksDoc)
+	highest := 0
+	for _, m := range check600NumberRE.FindAllStringSubmatch(register, -1) {
+		if n, err := strconv.Atoi(m[1]); err == nil && n > highest {
+			highest = n
+		}
+	}
+	if highest == 0 {
+		t.Fatalf("%s carries no `## Check` section: this assertion would otherwise pass whatever the census claims", liveChecksDoc)
+	}
 	census := readDoc(t, "docs/periodic-reviews/README.md")
-	if !strings.Contains(census, "The register's highest **written** `## Check` section is **663**") {
-		t.Errorf("docs/periodic-reviews/README.md's Checks 340–349 row does not read the register's highest written `## Check` section as 663: Checks 660 to 663 (the mobile orchestrator work's register text of 2026-11-16, Task P5.1h) are the highest written, and that row is the reading other designs take the register's progress from")
+	m := check340CensusHighestRE.FindStringSubmatch(census)
+	if m == nil {
+		t.Fatalf("docs/periodic-reviews/README.md's Checks 340–349 row no longer states the highest written `## Check` section: that statement is what a reader takes the register's progress from")
+	}
+	if claimed, _ := strconv.Atoi(m[1]); claimed != highest {
+		t.Errorf("docs/periodic-reviews/README.md's Checks 340–349 row reads the register's highest written `## Check` section as %d, and the register's is %d: that row is the reading other designs take the register's progress from, and Check %s's four sections are what it read when it was written", claimed, highest, check600Number)
 	}
 }
 

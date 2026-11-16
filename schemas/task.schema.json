@@ -74,6 +74,14 @@
       "maxItems": 4,
       "uniqueItems": true
     },
+    "context_repos": {
+      "type": "array",
+      "description": "The repositories this run reads and never writes (fugaro run --context, plan task C5a; D613): owner/name, one to five, each admitted by the project's published allow_repos. They are recorded on the task and in the launcher-minted claim of the run's own identity (fcr), whose reader the credentials service is: the service cannot read the task, and the task file is writable by the job. Absent for every launch that named none, which is the common case and every spec written before the field. The shape is task.ContextReposProblem's, applied by the launcher on write and by task.Parse on read: each entry must look like owner/name, which is task.CanonicalRepo's own rule — two or more '/'-separated elements of letters, digits, '.', '_' and '-', with no '.' or '..' element (the part the pattern cannot carry). Needs a 0.26.0 runner, which is why a launch that sets it is gated at launch (internal/cli/recipes_skew.go's contextReposSince): task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than running the task without it.",
+      "items": { "type": "string", "pattern": "^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)+$" },
+      "minItems": 1,
+      "maxItems": 5,
+      "uniqueItems": true
+    },
     "mutate": {
       "type": "array",
       "description": "The mutation check the launch asked for (fugaro review --mutate <file:test>, docs/cloud-senior-review D885): the file in the reviewed head the runner flips a boolean literal in, and the test that must kill it. At most one, and only for a review of exactly one pull request — the rules the `dependentRequired` and `allOf` entries below carry, and the ones task.Spec.Validate applies: the check runs the head's own code in a subprocess of the review job's own (D891(a)), and one worktree holds the whole review only when one pull request was resolved. task.Parse decodes with DisallowUnknownFields, so a runner before the release that reads this field refuses the whole spec. No launch writes the field yet: the command that would is CSR2's and the launcher-side gate it needs (the `…Since` constant internal/cli/recipes_skew.go declares) is CSR6's, so the gate lands with the flag rather than the launch being left for the job to refuse. Needs a 0.16.0 runner.",
