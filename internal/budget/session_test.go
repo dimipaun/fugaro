@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -1420,6 +1421,19 @@ func TestGeneration5WritesTodaysLeaves(t *testing.T) {
 		// of the run.
 		if n := len(leafSteps(f, base+"/micros")); n != 1 {
 			t.Fatalf("generation %d wrote the model's charge in %d writes, want one round", gen, n)
+		}
+		// And nothing at all is still pending. A figure whose leaf this
+		// document does not grant would never leave the pending figures -- no
+		// round can write it and so none can take it off -- so every beat
+		// after the report would read the day counters again to find that
+		// out, for the rest of the run. A beat with nothing pending reads no
+		// day counter at all.
+		landed := len(f.db.Requests())
+		time.Sleep(150 * time.Millisecond) // several beats at the fixture's 40 ms
+		for _, r := range f.db.Requests()[landed:] {
+			if r.Method == http.MethodGet && strings.Contains(r.Path, "/spend/") {
+				t.Fatalf("generation %d: a beat after the report landed read the day counters (%s): a figure the deployed document cannot hold is still pending", gen, r.Path)
+			}
 		}
 	}
 }

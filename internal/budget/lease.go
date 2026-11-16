@@ -364,14 +364,10 @@ func (s *Session) report(ctx context.Context, rep gateway.StageReport) error {
 	s.pend.calls += int64(rep.Calls)
 	s.pend.tokens += rep.Tokens
 	s.pend.overrun = add(s.pend.overrun, rep.Overrun)
-	// ByModel is the stage's whole per-model figure and NotionalBy the tier-A
-	// part of it (F23): both are increments to the model's own entry, whose
-	// `micros` leaf is that whole and whose `notional` leaf is that part.
+	// ByModel is the stage's whole per-model figure: an increment to the
+	// model's own entry, whose `micros` leaf is it.
 	for m, v := range rep.ByModel {
 		s.addUse(m, ModelUse{Micros: v})
-	}
-	for m, v := range rep.NotionalBy {
-		s.addUse(m, ModelUse{Notional: v})
 	}
 	// The tokens the stage's calls reported, by the model that served them
 	// (F25): the day counter's four token leaves, which every deployed
@@ -384,15 +380,22 @@ func (s *Session) report(ctx context.Context, rep gateway.StageReport) error {
 	for m, u := range rep.TokensBy {
 		s.addUse(m, ModelUse{In: u.Input, Out: u.Output, CR: u.CacheRead, CW: satAddN(u.CacheWrite5m, u.CacheWrite1h)})
 	}
-	// What the providers reported for the stage's calls and what the price
-	// table would have charged those same calls at the two ends of the tier
-	// that served them: the day counter's `rep`, `tlo` and `thi` (F7, D2650).
-	// A generation that does not grant them is never asked for them, rather
+	// The four leaves this stage's remaining figures are written to: the
+	// tier-A part of the model's charge (F23), and what the providers reported
+	// for the stage's calls and what the price table would have charged those
+	// same calls at the two ends of the tier that served them (F7, D2650). A
+	// generation that does not grant them is never asked for them, rather
 	// than being told figures it may not write: a leaf that could never be
 	// written would sit in the pending figures for the rest of the run,
 	// keeping it from ever reporting itself settled (the argument tierKey
-	// makes for a tier with no leaf).
+	// makes for a tier with no leaf) -- and the `notional` figure is no
+	// exception, because plan writes that leaf only where the document
+	// carries it, so a queued one could never be taken off the pending
+	// figures and no round would ever empty them.
 	if s.spendLeaves() {
+		for m, v := range rep.NotionalBy {
+			s.addUse(m, ModelUse{Notional: v})
+		}
 		for m, v := range rep.ReportedBy {
 			s.addUse(m, ModelUse{Rep: v})
 		}
