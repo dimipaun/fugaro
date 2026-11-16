@@ -578,8 +578,18 @@ test_the_listings_newest_row_of_another_run_is_not_followed() {
 # measured; and the edit the check made to the owner's fugaro.yaml has to be put
 # back by name, because the branch it was committed to is still at its own start
 # and switching to it carries the edit over rather than undoing it.
+#
+# The refusal is pinned at this case's own checkout rather than left to the
+# machine: with user.* gone git still GUESSES an identity from the login and a
+# hostname that carries a dot — macOS, and any box with a real FQDN, answers for
+# it — and a guessed identity commits, so this case would read a run where it
+# expects the config row. user.useConfigOnly turns the guess off, so what
+# refuses here is git on every machine. run200 carries the rest: the
+# GIT_AUTHOR_*/GIT_COMMITTER_* variables unset, and the global and system
+# configs hidden, so nothing outside this checkout answers for the identity.
 test_a_commit_git_refuses_leaves_the_file_as_it_was() {
   setup_case commit-refused
+  git -C "$dir/sandbox" config user.useConfigOnly true
   git -C "$dir/sandbox" config --unset user.email
   git -C "$dir/sandbox" config --unset user.name
   run200_default

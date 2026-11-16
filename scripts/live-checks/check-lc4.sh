@@ -121,6 +121,35 @@ fact() { # fact KEY PASS|FAIL|INFO "detail"
   printf '%s|%s|%s\n' "$1" "$2" "$3" >>"$FACTS_FILE"
 }
 
+# Reading a fact row out of the block is a match against a shell string, never a
+# pipeline: `grep -q` ends at its first match and closes the pipe, and under
+# `set -o pipefail` a pipeline's status is then its WRITER's, so
+# `printf … | grep -q` answers with printf's SIGPIPE (141) rather than with the
+# match whenever the rows after the matched one do not fit the pipe's buffer
+# (64 KiB). A FAILed row would then read as absent and the check would exit 0
+# beside its own finding: the block is big enough for that on a run whose job
+# mounts many secrets, and it happened in CI.
+facts_has() { # facts_has FACTS KEY... — a row whose key is one of these
+  local facts=$1 key
+  shift
+  for key in "$@"; do
+    case "$facts" in
+    "$key|"* | *$'\n'"$key|"*) return 0 ;;
+    esac
+  done
+  return 1
+}
+facts_failed() { # facts_failed FACTS KEY... — a row whose key is one of these, FAILed
+  local facts=$1 key
+  shift
+  for key in "$@"; do
+    case "$facts" in
+    "$key|FAIL|"* | *$'\n'"$key|FAIL|"*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
 # on_error: an INTERNAL error is a fact, never a verdict. Under `set -e` the
 # first command that fails outside a guard would end the run with no fact at
 # all, and the block would then read as an answer about the account's mounts for
@@ -879,26 +908,26 @@ finish() {
   cleanup
   local facts=$FACTS_CAPTURED
   if [ "$HELP_SHOWN" = yes ]; then exit 0; fi
-  if [ -n "$ABORT_REASON" ] && ! printf '%s' "$facts" | grep -q '^aborted|'; then
+  if [ -n "$ABORT_REASON" ] && ! facts_has "$facts" aborted; then
     facts="${facts}"$'\n'"aborted|FAIL|$ABORT_REASON"
   fi
   # A run that never reached its verdict ends honestly, whatever stopped it: a
   # block that then read as a finished run would offer a FAILed mount row as an
   # answer about the account when the steps that would have filled it never ran.
   if [ "$REACHED_END" = no ]; then
-    if ! printf '%s' "$facts" | grep -q '^aborted|'; then
+    if ! facts_has "$facts" aborted; then
       facts="${facts}"$'\n'"aborted|FAIL|the run ended before it reached its verdict (exit ${status}): the rows that read 'not reached' were NOT measured, which is this script ending on an error rather than an answer about the account's job"
     fi
     if [ "$status" -eq 0 ] || [ "$status" -eq 1 ]; then status=2; fi
   fi
   if [ -z "$SCRATCH" ]; then
     facts="${facts}"$'\n'"restore|PASS|nothing was created: the run stopped before it made a scratch directory, so there is nothing to remove and no cloud state of this check's to undo"
-  elif ! printf '%s' "$facts" | grep -q '^restore|'; then
+  elif ! facts_has "$facts" restore; then
     facts="${facts}"$'\n'"restore|FAIL|the Restore recorded nothing, and this check has nothing to restore: it made no write at all. Every call it makes is a describe, a list or a get-iam-policy — read the transcript above rather than assume a teardown happened"
   fi
   # The verdict is taken from the facts, not from the exit path: an exit 0 beside
   # a FAILed row, or beside a Restore that did not finish, would read as a pass.
-  if [ "$status" -eq 0 ] && printf '%s\n' "$facts" | grep -qE '^(doctor|job|token-mount|token-secret|profile-mounts|other-mounts|sa-accessor|sa-other-account|restore)\|FAIL\|'; then
+  if [ "$status" -eq 0 ] && facts_failed "$facts" doctor job token-mount token-secret profile-mounts other-mounts sa-accessor sa-other-account restore; then
     status=1
   fi
   if [ -n "$SCRATCH" ] && [ "$SCRATCH_REMOVED" != yes ]; then

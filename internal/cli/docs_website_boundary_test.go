@@ -1766,7 +1766,12 @@ func TestWebsiteChecklistHasCheck69aAnd69b(t *testing.T) {
 			t.Errorf("the summary table has no %q row: the check is in the register's index or it is not in the register", strings.Trim(n, "| "))
 			continue
 		}
-		for _, want := range []string{"USER-RUN, NOT RUN", "run by you", "No agent runs any step", "See \"Check " + strings.Trim(n, "| ") + "\" below"} {
+		// The owner's run result is recorded in the row itself, so the row reads
+		// either not-yet-run or ran; both keep the check the owner's.
+		if !strings.Contains(row, "USER-RUN, NOT RUN") && !strings.Contains(row, "USER-RUN, RAN") {
+			t.Errorf("the %q row carries neither \"USER-RUN, NOT RUN\" nor \"USER-RUN, RAN\": %s", strings.Trim(n, "| "), row)
+		}
+		for _, want := range []string{"run by you", "No agent runs any step", "See \"Check " + strings.Trim(n, "| ") + "\" below"} {
 			if !strings.Contains(row, want) {
 				t.Errorf("the %q row does not carry %q: %s", strings.Trim(n, "| "), want, row)
 			}

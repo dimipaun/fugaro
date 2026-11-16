@@ -79,12 +79,16 @@ import {
 } from '../src/api/types/ops'
 import orgsSchema from '../schemas/orgs.schema.json'
 import orgsCreate from '../schemas/fixtures/orgs.create.json'
+import orgsList from '../schemas/fixtures/orgs.list.json'
+import orgsMembers from '../schemas/fixtures/orgs.members.json'
 import orgsMembership from '../schemas/fixtures/orgs.membership.json'
 import orgsOrganisation from '../schemas/fixtures/orgs.organisation.json'
 import {
   type Membership,
   type Organisation,
   type OrganisationCreate,
+  type OrganisationList,
+  type OrganisationMembers,
 } from '../src/api/types/orgs'
 import reportsSchema from '../schemas/reports.schema.json'
 import reportsCustomer from '../schemas/fixtures/reports.customer.json'
@@ -301,6 +305,20 @@ const FIXTURES: Fixture[] = [
     definition: 'create',
     same: true satisfies Identical<keyof JsonShape<OrganisationCreate>, keyof typeof orgsCreate>,
     fixture: orgsCreate satisfies JsonShape<OrganisationCreate>,
+  },
+  {
+    name: 'orgs.list',
+    schema: orgsSchema,
+    definition: 'list',
+    same: true satisfies Identical<keyof JsonShape<OrganisationList>, keyof typeof orgsList>,
+    fixture: orgsList satisfies JsonShape<OrganisationList>,
+  },
+  {
+    name: 'orgs.members',
+    schema: orgsSchema,
+    definition: 'members',
+    same: true satisfies Identical<keyof JsonShape<OrganisationMembers>, keyof typeof orgsMembers>,
+    fixture: orgsMembers satisfies JsonShape<OrganisationMembers>,
   },
   {
     name: 'orgs.membership',

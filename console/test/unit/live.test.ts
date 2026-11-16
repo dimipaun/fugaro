@@ -43,6 +43,7 @@ import {
   UNAVAILABLE_MARK,
   formatReading,
   measured,
+  notional,
   unavailable,
 } from '../../src/shared/availability'
 import { TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
@@ -52,7 +53,13 @@ import { githubToken } from '../support/fakeSecrets'
 import type { LiveDocument, RunView } from '../../src/shared/schema'
 import {
   BurnHistory,
+  HourHistory,
   LIVE_BURN_WINDOW_SECONDS,
+  LIVE_BURN_WINDOW_WORD,
+  LIVE_CAPS_HIDDEN_WORD,
+  LIVE_HOUR_MAX_SAMPLES,
+  LIVE_HOUR_WINDOW_SECONDS,
+  LIVE_HOUR_WINDOW_WORD,
   LIVE_LOST_AFTER_SECONDS,
   LIVE_NEAR_DEADLINE_FRACTION,
   LIVE_SILENT_AFTER_SECONDS,
@@ -60,17 +67,22 @@ import {
   LIVE_THEMES,
   PIPELINE_SEGMENTS,
   buildLiveModel,
+  concurrentOf,
   contradiction,
   deadlineFlag,
   headroomOf,
   healthFlag,
+  hoursLeftOf,
+  perHourOf,
   pipelineOf,
+  redZoneOf,
   renderLive,
   runStateOf,
   sparkline,
   stageSegment,
   watchHealth,
 } from '../../src/renderer/screens/live'
+import { COORDINATOR_QUEUE_CAPS_HIDDEN_WORD } from '../../src/renderer/screens/coordinator'
 import type {
   LiveFactory,
   LiveModel,
@@ -1887,5 +1899,275 @@ describe('a repository the feed names by its slug (review round 2 of PR 494)', (
     const repos = frame.repos.map((repo) => ({ ...repo, repo: 'teammate-app-dc4d4e59e884fc44' }))
     const tree = renderLive(factory, modelOf({ ...frame, repos } as LiveDocument), 'light')
     expect(texts(tree, 'live-repo-name')).toEqual(['teammate-app-dc4d4e59e884fc44'])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The gauge, the hour line and the two cap bars (slice V, D736/D737)
+// ---------------------------------------------------------------------------
+
+describe('the spend-rate gauge and the cap bars', () => {
+  /** gaugeOf is the drawn gauge of a model: the panel's one `div.live-gauge`. */
+  function gaugeOf(model: LiveModel): FakeScreen {
+    return one(panel(model), 'live-gauge')
+  }
+
+  it('live: red zone from headroom and hours left', () => {
+    // **The red zone is a rate and not a threshold anyone chose** (D737): what
+    // is left of today's cap, divided by what is left of the UTC day. At 19:00Z
+    // five hours remain, so $10 of headroom gives $2.00/h -- and the same $10
+    // an hour before midnight gives $10.00/h, which is why a fixed line would be
+    // a number about nobody's day.
+    expect(hoursLeftOf('2026-10-15T19:00:00Z')).toBe(5)
+    expect(hoursLeftOf('2026-10-15T23:00:00Z')).toBe(1)
+    expect(formatReading(redZoneOf(measured(10), '2026-10-15T19:00:00Z'), 'usd')).toBe('$2.00')
+    expect(formatReading(redZoneOf(measured(10), '2026-10-15T23:00:00Z'), 'usd')).toBe('$10.00')
+    // A stamp exactly at midnight is a whole day and never zero hours: dividing
+    // by none is the one answer a red zone may not be.
+    expect(hoursLeftOf('2026-10-15T00:00:00Z')).toBe(24)
+    // A stamp the console cannot read is a sentence rather than a rate, and so
+    // is a headroom nobody measured: a cap that was never read has no zone.
+    expect(redZoneOf(measured(10), 'not a stamp').state).toBe('unavailable')
+    expect(redZoneOf(unavailable('no cap'), '2026-10-15T19:00:00Z').because).toContain('what is left of the day’s cap')
+
+    // The gauge's other figure is the same burn in $/h (`perHourOf`), with the
+    // state and the lower-bound flag carried across unchanged: a notional burn
+    // must not become money by being multiplied.
+    expect(formatReading(perHourOf(measured(0.1)), 'usd')).toBe('$6.00')
+    expect(perHourOf(measured(0.1, { lowerBound: true })).lowerBound).toBe(true)
+    expect(perHourOf(notional(1)).state).toBe('notional')
+    expect(perHourOf(unavailable('no burn')).state).toBe('unavailable')
+
+    // End to end, on figures chosen so the zone lands on a whole rate: the
+    // frame's stamp is 12:04:21Z, so 11.9275 hours are left, and $71.565 of
+    // headroom is $6.00/h. A burn of $0.10/min is the same $6.00/h, which puts
+    // the needle exactly on the red zone's own edge.
+    const model = fleetModel({
+      daily_cap_usd: 100,
+      counted_usd: 28.435,
+      leased_usd: 28.435,
+      percent: 28.435,
+      burn: { known: true, usd_per_min: 0.1, fast: false },
+    })
+    expect(formatReading(model.fleet.redZone, 'usd')).toBe('$6.00')
+    expect(formatReading(model.fleet.rate, 'usd')).toBe('$6.00')
+    const gauge = gaugeOf(model)
+    // The axis is twice the red-zone rate, so the zone is the right half of the
+    // track and the needle's position is comparable with it at one scale.
+    expect(one(gauge, 'live-gauge-zone').getAttribute('x')).toBe('50')
+    expect(one(gauge, 'live-gauge-zone').getAttribute('width')).toBe('50')
+    expect(one(gauge, 'live-gauge-needle').getAttribute('x')).toBe('50')
+    expect(texts(gauge, 'live-gauge-rate')).toEqual(['$6.00'])
+
+    // **A red zone of zero is a red zone and not a missing one.** A spent-out
+    // cap has no headroom, so no rate outlasts the day: the whole track is red
+    // and the needle stands one unit inside its right-hand end, where the
+    // `viewBox` still draws it.
+    const atCap = fleetModel({ daily_cap_usd: 50, counted_usd: 50, leased_usd: 50, percent: 100 })
+    expect(atCap.fleet.redZone.value).toBe(0)
+    expect(one(gaugeOf(atCap), 'live-gauge-zone').getAttribute('width')).toBe('100')
+    expect(one(gaugeOf(atCap), 'live-gauge-needle').getAttribute('x')).toBe('99')
+
+    // A zone nobody can read draws no zone and no needle -- an unreadable
+    // threshold is not a threshold of none -- and a rate nobody can read leaves
+    // the zone where it is, because the zone is still a fact about the day.
+    const noHeadroom = fleetModel({ daily_cap_usd: null, percent: null })
+    expect(noHeadroom.fleet.redZone.state).toBe('unavailable')
+    const blind = gaugeOf(noHeadroom)
+    expect(all(blind, 'live-gauge-zone')).toEqual([])
+    expect(all(blind, 'live-gauge-needle')).toEqual([])
+    expect(texts(blind, 'live-gauge-rate')).toEqual(['$0.00'])
+    const noRate: LiveModel = {
+      ...model,
+      fleet: { ...model.fleet, rate: unavailable('the document carries no burn rate') },
+    }
+    expect(all(gaugeOf(noRate), 'live-gauge-zone')).toHaveLength(1)
+    expect(all(gaugeOf(noRate), 'live-gauge-needle')).toEqual([])
+  })
+
+  it('live: hour history bounded', () => {
+    // The hour line is the console's own second history (D737): an hour of
+    // arrivals, held only while the console runs, and nothing in `internal/watch`
+    // is asked to agree with it. What is held here is that it is an hour, that
+    // its boundary is the same half-open one the burn window uses, and that it
+    // is bounded twice over.
+    expect(LIVE_HOUR_WINDOW_SECONDS).toBe(60 * 60)
+    const hours = new HourHistory()
+    hours.observe('r', { at: '2026-10-15T12:00:00Z', reading: measured(0.01) })
+    hours.observe('r', { at: '2026-10-15T13:00:00Z', reading: measured(0.02) })
+    expect(hours.window('r', '2026-10-15T13:00:00Z')).toHaveLength(2)
+    expect(hours.window('r', '2026-10-15T13:00:01Z').map((one) => one.at)).toEqual(['2026-10-15T13:00:00Z'])
+
+    // The stamp keeps its milliseconds: at half-second spacing two arrivals
+    // would otherwise collapse into one, and the history holds one sample per
+    // stamp on purpose.
+    const stamp = (ms: number): string => new Date(ms).toISOString()
+    const base = Date.parse('2026-10-15T00:00:00Z')
+    // 5,000 arrivals half a second apart are 41 minutes, so the window still
+    // holds every one of them and the sample cap is what binds.
+    const fast = new HourHistory()
+    for (let n = 0; n < 5000; n++) {
+      fast.observe('r', { at: stamp(base + n * 500), reading: measured(0.01) })
+    }
+    expect(fast.size('r')).toBe(LIVE_HOUR_MAX_SAMPLES)
+    // And an hour-long feed keeps an hour rather than the session: the oldest
+    // sample left is the one at the cut, which is the shape `window` returns.
+    const long = new HourHistory()
+    for (let second = 0; second < 5000; second++) {
+      long.observe('r', { at: stamp(base + second * 1000), reading: measured(0.01) })
+    }
+    expect(long.window('r', stamp(base + 4999 * 1000))).toHaveLength(LIVE_HOUR_WINDOW_SECONDS + 1)
+    expect(long.window('r', stamp(base + 4999 * 1000))[0]?.at).toBe(
+      stamp(base + (4999 - LIVE_HOUR_WINDOW_SECONDS) * 1000),
+    )
+
+    // The two lines are two instruments over the same repository: a sample
+    // fourteen minutes old is off the five-minute line and still on the hour's,
+    // which is the whole reason the second history exists.
+    const slug = theLastFrame().repos[0]?.slug ?? ''
+    const burn = new BurnHistory()
+    const hour = new HourHistory()
+    for (const history of [burn, hour]) {
+      history.observe(slug, { at: '2026-10-15T11:50:00Z', reading: measured(0.05) })
+    }
+    const model = buildLiveModel(frameAt('2026-10-15T12:04:21Z'), burn, null, new Map(), hour)
+    const row = model.repos[0]
+    if (row === undefined) throw new Error('no repository row')
+    expect(row.spark.bars).toHaveLength(1)
+    expect(row.hour.bars).toHaveLength(2)
+    // Both are drawn, and each under its own window's word: two shapes side by
+    // side that only their colour tells apart is the one thing the design
+    // forbids (`spark`).
+    const meters = one(renderLive(factory, model, 'light'), 'live-repo')
+    expect(texts(meters, 'live-meter-word')).toEqual([LIVE_BURN_WINDOW_WORD, LIVE_HOUR_WINDOW_WORD])
+    expect(all(meters, 'live-hour-bar')).toHaveLength(2)
+  })
+
+  it('live: burn window still equals BurnWindow', () => {
+    // D737 added a second history and left the first one alone: one hour is an
+    // *addition* to the five-minute window, never a widening of it. The window
+    // the burn line is drawn over is still `internal/watch/state.go`'s, so the
+    // drawn instrument still measures the thing the CLI's own rate measures.
+    expect(goConstant('state.go', 'BurnWindow')).toBe('5 * time.Minute')
+    expect(LIVE_BURN_WINDOW_SECONDS).toBe(5 * 60)
+    const held = new BurnHistory()
+    held.observe('r', { at: '2026-10-15T12:00:00Z', reading: measured(0.01) })
+    // A sample *at* the cut stays and one second further takes it out, which is
+    // what `State.Burn` does with the same two stamps.
+    expect(held.window('r', '2026-10-15T12:05:00Z')).toHaveLength(1)
+    expect(held.window('r', '2026-10-15T12:05:01Z')).toHaveLength(0)
+    // The hour history does not reach the five-minute line: a sample nineteen
+    // minutes old is inside the hour the second history keeps and outside the
+    // five minutes this one does, and the burn line is drawn from the burn
+    // history alone.
+    const slug = theLastFrame().repos[0]?.slug ?? ''
+    const burn = new BurnHistory()
+    const hour = new HourHistory()
+    for (const history of [burn, hour]) {
+      history.observe(slug, { at: '2026-10-15T11:45:00Z', reading: measured(0.09) })
+    }
+    const model = buildLiveModel(frameAt(AT_CAP), burn, null, new Map(), hour)
+    const row = model.repos[0]
+    if (row === undefined) throw new Error('no repository row')
+    // One bar on the five-minute line -- the frame's own sample, which the model
+    // observes into both histories on every build -- against two on the hour's:
+    // the sample nineteen minutes back and the frame's. That difference is the
+    // whole point of the second history, and it is the burn window that draws
+    // the first line, not the wider one.
+    expect(row.spark.bars).toHaveLength(1)
+    expect(row.hour.bars).toHaveLength(2)
+    expect(row.spark.bars[0]?.at).toBe(AT_CAP)
+  })
+
+  it('live: concurrent bar against max_parallel', () => {
+    // The second cap bar is the concurrent-run cap: the runs that are *not*
+    // queued, as a share of `max_parallel` (V1.1's field). The fixture's last
+    // frame has one live run and one queued one, so a cap of 8 is a quarter
+    // taken.
+    const model = fleetModel({ max_parallel: 8 })
+    expect(model.fleet.active).toBe(1)
+    expect(model.fleet.queued).toBe(1)
+    expect(formatReading(model.fleet.concurrent, 'percent')).toBe('12.5%')
+    const panelModel = panel(model)
+    const runs = one(panelModel, 'live-fleet-runs-cap')
+    expect(runs.getAttribute('data-fill')).toBe('12.5%')
+    expect(runs.getAttribute('data-state')).toBe('measured')
+    // The cap itself is drawn beside the caption: a share with no "of what" is
+    // not a figure anyone can act on, and the label is what says which cap this
+    // bar is a share of.
+    expect(one(panelModel, 'live-fleet-cap-limit').textContent).toBe('8')
+    expect(texts(panelModel, 'live-fleet-cap-word')).toEqual(['SPEND OF CAP', 'RUNS OF CAP'])
+    // The spend bar beside it is unchanged: the day's money as a share of the
+    // day's cap, from the document's own percent.
+    expect(one(panelModel, 'live-fleet-spend-cap').getAttribute('data-fill')).toBe('100.0%')
+
+    // A cap of zero is a real cap and not a missing one: nothing running is
+    // honestly 0% of it, and a run running against it is a document
+    // contradicting itself -- there is no finite share of none, and `Infinity`
+    // drawn as a full bar would be the misreport this screen exists not to make.
+    expect(formatReading(concurrentOf(0, measured(0)), 'percent')).toBe('0.0%')
+    expect(concurrentOf(1, measured(0)).state).toBe('unavailable')
+    expect(concurrentOf(1, measured(0)).because).toContain('is 0')
+  })
+
+  it('live: a null max_parallel draws an unavailable bar', () => {
+    // `max_parallel` is null for a writer with no config to read (and absent
+    // altogether from a CLI older than the field), and null is **unknown** and
+    // never a cap of none: a bar drawn full over an installation nobody capped
+    // says "the fleet is at its limit" about a limit that was never set.
+    const model = fleetModel({ max_parallel: null })
+    expect(model.total.maxParallel.state).toBe('unavailable')
+    expect(formatReading(model.total.maxParallel, 'count')).toBe(UNAVAILABLE_MARK)
+    const panelModel = panel(model)
+    const runs = one(panelModel, 'live-fleet-runs-cap')
+    expect(runs.getAttribute('data-fill')).toBe(UNAVAILABLE_MARK)
+    expect(runs.getAttribute('data-state')).toBe('unavailable')
+    expect(runs.textContent).toBe(UNAVAILABLE_MARK)
+    expect(runs.getAttribute('title')).toContain('max_parallel')
+    const limit = one(panelModel, 'live-fleet-cap-limit')
+    expect(limit.textContent).toBe(UNAVAILABLE_MARK)
+    expect(limit.getAttribute('title')).toContain('max_parallel')
+    // The spend bar is not affected: a cap nobody could read for concurrent runs
+    // says nothing about the day's money.
+    expect(one(panelModel, 'live-fleet-spend-cap').getAttribute('data-state')).toBe('measured')
+
+    // `concurrentOf` says the same thing without a document: an unreadable cap
+    // is unavailable with the cap's own reason, whatever the run count is.
+    expect(concurrentOf(3, unavailable('no max_parallel')).state).toBe('unavailable')
+  })
+
+  it('live: gauge withheld in the reduced mode', () => {
+    const model = fleetModel({ max_parallel: 8 })
+    const open = renderLive(factory, model, 'light')
+    expect(all(open, 'live-gauge-zone')).toHaveLength(1)
+    expect(all(open, 'live-gauge-needle')).toHaveLength(1)
+
+    // In the reduced mode the `caps` view is withheld, and the answer travels as
+    // a model the screen is handed (`capsWithheld`) rather than as a flag the
+    // drawing reads: a figure the gate withheld is one the gauge cannot draw
+    // back later. An unreadable rate and an unreadable zone are drawn as
+    // unavailable readings, so the gauge loses its shapes and not only its
+    // numbers.
+    const reduced = renderLive(factory, model, 'light', true)
+    expect(all(reduced, 'live-gauge-zone')).toEqual([])
+    expect(all(reduced, 'live-gauge-needle')).toEqual([])
+    const rate = one(reduced, 'live-gauge-rate')
+    expect(rate.textContent).toBe(UNAVAILABLE_MARK)
+    expect(rate.getAttribute('title')).toBe(LIVE_CAPS_HIDDEN_WORD)
+    const runs = one(reduced, 'live-fleet-runs-cap')
+    expect(runs.getAttribute('data-state')).toBe('unavailable')
+    expect(runs.getAttribute('data-fill')).toBe(UNAVAILABLE_MARK)
+    expect(one(reduced, 'live-fleet-cap-limit').textContent).toBe(UNAVAILABLE_MARK)
+    // One mode withholding one view in two places under two sentences would
+    // read as two modes: this is the Coordinator's own word for the same gate.
+    expect(LIVE_CAPS_HIDDEN_WORD).toBe(COORDINATOR_QUEUE_CAPS_HIDDEN_WORD)
+
+    // **The money of the totals block is not withheld.** `counted_usd`,
+    // `daily_cap_usd` and this bar have been read since the console's first
+    // release, and taking them back is the `spend` view's question rather than
+    // the cap bars' -- so the spend bar beside the runs bar still draws, at the
+    // document's own percent.
+    expect(one(reduced, 'live-fleet-spend-cap').getAttribute('data-fill')).toBe('100.0%')
+    expect(one(reduced, 'live-cap').textContent).toBe('$50.00')
   })
 })

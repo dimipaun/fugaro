@@ -61,6 +61,11 @@ func TestSecurityMdStatesTheModelAndItsLimits(t *testing.T) {
 		// the first slash — a source stating the default registry as userinfo
 		// is another host's artifact.
 		"is read as a URL and not as text",
+		// The other half of the image claim, and the one a repository's jobs
+		// actually run on: what source a catalog image carries and who can
+		// read it (C6 as re-pointed by D651; the sentences themselves are
+		// pinned in docs_registry_readers_test.go).
+		"### The source an image carries, and who can read it",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("SECURITY.md never says %q", want)

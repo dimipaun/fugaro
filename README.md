@@ -12,6 +12,8 @@ Website: [fugaro.dev](https://fugaro.dev)
 
 *Fugax* is Latin for "fleeting." Fugaro runs long, self-contained coding-agent loops (implement, test, review, fix, compile, open a pull request) in throwaway cloud containers instead of on your laptop. Each task gets its own Cloud Run job execution in your own Google Cloud project, runs Claude Code headless to completion, pushes its work, opens a pull request and disappears. Google Cloud is the only backend.
 
+What Fugaro can do today, capability by capability: [FEATURES.md](FEATURES.md).
+
 > **Status: pre-1.0.** Minor versions may break things. Releases and their notes are on the [Releases page](https://github.com/dimipaun/fugaro/releases); how a release is cut and verified is in [docs/release.md](docs/release.md).
 
 ## Why Fugaro
@@ -129,8 +131,10 @@ workflows:
     commands:
       build: npm run build
       test: npm test
-    secrets:                  # logical names; values stored with fugaro secrets set
-      - { name: npm-token, env: NPM_TOKEN }
+    # secrets:                # logical names; disabled for now and ignored (D2313): a shared
+    #                         # job mounts only the project's secrets, so store the value for the
+    #                         # project instead (`fugaro secrets set NAME`, no `--repo`)
+    #   - { name: npm-token, env: NPM_TOKEN }
     resources: { cpu: 4, memory: 8Gi }
     timeouts: { total: 3h, stage: 60m, verify: 30m, finalize_reserve: 5m }
 ```

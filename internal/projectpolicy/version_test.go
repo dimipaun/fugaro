@@ -20,7 +20,7 @@ func TestSkewMessagesShareTheSentence(t *testing.T) {
 			t.Errorf("%s does not start with Skew: %q", name, msg)
 		}
 	}
-	if Version != 7 {
+	if Version != 8 {
 		t.Errorf("Version = %d: a version bump needs the plan's skew handling, this test and the CLI's", Version)
 	}
 }
@@ -254,8 +254,9 @@ func TestDecodeRefusesAVersion3Node(t *testing.T) {
 }
 
 // TestDecodeReadsAShapeFreePredecessor: version 7 is the model grades'
-// lockstep (E2, D2039), and the step that carries a version-6 node forward
-// moves the number and nothing else (migrateV6ToV7), so a version-6 node is a
+// lockstep (E2, D2039) and version 8 is the binaries carrier's (AR1, D990),
+// and the steps that carry a node forward move the number and nothing else
+// (migrateV6ToV7, migrateV7ToV8), so a version-6 node is a
 // version-7 node whose model_grades member is absent — which is what a project
 // that never set a grade means, and what a version-6 release could write.
 // Refusing it would be refusing a node this reader reads member for member, and
@@ -302,12 +303,12 @@ func TestDecodeReadsAShapeFreePredecessor(t *testing.T) {
 		t.Errorf("ModelGrades = %+v, want none: a version-6 node sets no grade, which is what an absent member means", p.ModelGrades)
 	}
 
-	// Both steps in the walk are shape-free, so the node two versions back is
+	// Every step in the walk is shape-free, so the node three versions back is
 	// read as well: a version-5 node's members are all members this reader
 	// knows, and the walk is what admits it.
 	p, found, err = Decode([]byte(`{"version": 5, "budget": {"mode": "enforce"}, "binaries": {"allow": ["brand/*.png"]}}`))
 	if err != nil || p == nil || !found {
-		t.Fatalf("Decode of a version-5 node = (%v, %v, %v), want the policy and no error: both steps from 5 to 7 are shape-free", p, found, err)
+		t.Fatalf("Decode of a version-5 node = (%v, %v, %v), want the policy and no error: every step from 5 to 8 is shape-free", p, found, err)
 	}
 	if want := []string{"brand/*.png"}; !slices.Equal(p.BinariesAllow(), want) {
 		t.Errorf("BinariesAllow() = %v, want %v: a member a version-5 node carries is read, not dropped", p.BinariesAllow(), want)

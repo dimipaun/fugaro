@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -2681,6 +2682,101 @@ func TestCloneURLsNotInShared(t *testing.T) {
 		}
 	}
 	if c.CloneURLs == nil {
+		t.Error("Shared/MergeShared cleared the local block")
+	}
+}
+
+// TestLocalConfigRefusesAnUnreadableBinariesPattern: the block's own rule is
+// projectpolicy's (ValidBinariesAllow / ValidBinariesMaxBytes), applied at load
+// and never after it, and a misspelt pattern is a refusal rather than a rule
+// that quietly admits nothing (AR1, spec.md §2.1). It is the same rule the
+// node's decode applies, so a file this loader accepts is one the published
+// node can carry: a second spelling of the pattern rule is how one lock comes
+// to mean two things.
+func TestLocalConfigRefusesAnUnreadableBinariesPattern(t *testing.T) {
+	for name, block := range map[string]string{
+		"an absolute path":        "allow: [/etc/passwd]",
+		"a parent component":      "allow: ['../elsewhere/**']",
+		"an empty entry":          "allow: ['']",
+		"a blank entry":           "allow: ['   ']",
+		"an unreadable glob":      "allow: ['brand/[.png']",
+		"a cap of zero":           "allow: ['brand/*.png'], max_bytes: 0",
+		"a cap above the ceiling": "allow: ['brand/*.png'], max_bytes: 3145728",
+		"a negative cap":          "allow: ['brand/*.png'], max_bytes: -1",
+	} {
+		if _, err := Parse([]byte(sample + "binaries: {" + block + "}\n")); err == nil {
+			t.Errorf("%s: the file loaded, and a grant the owner misspells must be refused where it is written — an entry the matcher cannot read is a rule that admits nothing while looking like one", name)
+		}
+	}
+	// The half that must not be refused: the entry the design's own draft took
+	// for an unreadable one is a readable pattern (F15), and the ceiling itself
+	// is the highest cap a project may write.
+	c, err := Parse([]byte(sample + "binaries: {allow: ['website/public/**.png', 'brand/*.png'], max_bytes: 2097152}\n"))
+	if err != nil {
+		t.Fatalf("a block the rule accepts was refused: %v", err)
+	}
+	if c.Binaries == nil || len(c.Binaries.Allow) != 2 || c.Binaries.MaxBytes != 2097152 {
+		t.Errorf("binaries = %+v, want the two globs and the ceiling the file names", c.Binaries)
+	}
+}
+
+// TestLocalConfigBinariesKeepsThePublishedBlockWhenSilent is the keep rule
+// written out the way the clone URLs' is (BinariesEffective, D987): a machine
+// whose config says nothing keeps the node's block — a teammate's file that
+// predates the key, or an owner who declined to set one, must not publish a node
+// that takes the owner's admission away — a stated block replaces it, and a
+// written empty block is how the admission is taken away on purpose.
+func TestLocalConfigBinariesKeepsThePublishedBlockWhenSilent(t *testing.T) {
+	published := &projectpolicy.Binaries{Allow: []string{"brand/*.png"}, MaxBytes: 1048576}
+	silent, err := Parse([]byte(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := silent.BinariesEffective(published); got != published {
+		t.Errorf("a silent config takes %+v, want the published block", got)
+	}
+	if got := silent.BinariesEffective(nil); got != nil {
+		t.Errorf("a silent config beside a node with no block takes %+v, want no member published at all", got)
+	}
+	stated, err := Parse([]byte(sample + "binaries: {allow: ['assets/*.webp'], max_bytes: 4096}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stated.BinariesEffective(published); got != stated.Binaries {
+		t.Errorf("a config that states a block takes %+v, want its own", got)
+	}
+	empty, err := Parse([]byte(sample + "binaries: {allow: []}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := empty.BinariesEffective(published); got != nil {
+		t.Errorf("a written empty block takes %+v, want none: it is how a published admission is taken away on purpose", got)
+	}
+}
+
+// TestBinariesNotInShared: the block is the owner's own grant over the bytes a
+// run's agent may add, and the shared config is a file the launcher writes — a
+// launcher that could write it would be admitting its own payload (D986, F11,
+// localcfg's Config.Shared), which is the one thing the rule exists to refuse.
+// internal/cli's ParseShared refuses the key besides.
+func TestBinariesNotInShared(t *testing.T) {
+	c, err := Parse([]byte(sample + "binaries: {allow: ['brand/*.png']}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, got := range map[string]*Config{"shared": c.Shared(), "merged": MergeShared(nil, c)} {
+		if got.Binaries != nil {
+			t.Errorf("%s: binaries = %+v", name, got.Binaries)
+		}
+		out, err := got.Marshal()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if strings.Contains(string(out), "binaries") {
+			t.Errorf("%s: output carries binaries:\n%s", name, out)
+		}
+	}
+	if c.Binaries == nil {
 		t.Error("Shared/MergeShared cleared the local block")
 	}
 }

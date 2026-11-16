@@ -393,6 +393,26 @@ func TestHotfixRefusesADirtyTree(t *testing.T) {
 	res.requireFailureContaining(t, "the working tree is not clean")
 }
 
+// TestHotfixDoesNotCheckTheFeatureMatrixStamp: the FEATURES.md precondition is
+// the ordinary release's. A hotfix branch may commit nothing but the release's
+// own three files (scripts/hotfix-commits.sh), so it can never refresh the
+// matrix and the matrix waits for the next ordinary release (docs/release.md,
+// "Hotfix releases"): main here has no FEATURES.md at all, and the run goes
+// through anyway.
+func TestHotfixDoesNotCheckTheFeatureMatrixStamp(t *testing.T) {
+	r := newHotfixRepo(t)
+	r.git(t, "rm", "--quiet", "FEATURES.md")
+	r.git(t, "commit", "--quiet", "-m", "features: there is no matrix yet")
+	r.git(t, "push", "--quiet", "origin", "main")
+	if _, err := os.Stat(filepath.Join(r.local, "FEATURES.md")); !os.IsNotExist(err) {
+		t.Fatalf("the fixture still holds FEATURES.md: %v", err)
+	}
+
+	res := runHotfix(t, r, r.state(t), "0.12.1", "--fix", r.fix, "--dry-run")
+
+	res.requireSuccess(t)
+}
+
 // TestHotfixDryRunChangesNothing: the plan is printed for a release the text of
 // which is not on the branch yet, and nothing is pushed, tagged or left behind.
 func TestHotfixDryRunChangesNothing(t *testing.T) {
