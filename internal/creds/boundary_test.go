@@ -325,19 +325,21 @@ func importPaths(path string) ([]string, error) {
 // somewhere to get one — and this is the point a reader should take, that the
 // rule is deliberately coarser than the call it is about.
 //
-// Three shapes are exempt, and each of them is the marks half of this boundary —
-// the one thing internal/cli imports this package for (C1.21):
+// Three shapes are exempt, and each of them is the non-slip half of this
+// boundary — the one thing internal/cli imports this package for: the marks
+// (C1.21) and the Bitbucket tokens' statuses (R12):
 //
-//   - the store built inline as the receiver of a marks call, and never held:
-//     (&creds.RTDBStore{DB: db}).Marks(ctx);
-//   - the store bound to a name a FUNCTION uses only for the marks: every other
-//     appearance of that identifier is a marks receiver or another binding of
-//     that name (store := &creds.RTDBStore{DB: db}; store.UpdateMark(...)). A
-//     copy, an argument, an index or a method value is none of those, so the
-//     name stops being marks-only and the mention becomes a finding again. The
-//     binding has to be one a function body holds: a name at package level, and a
-//     struct field, are reachable from the package's other files — this scan reads
-//     one file at a time — so neither is ever exempt, however it is used;
+//   - the store built inline as the receiver of a marks or a status call, and
+//     never held: (&creds.RTDBStore{DB: db}).Marks(ctx), or .TokenStatuses(ctx);
+//   - the store bound to a name a FUNCTION uses only for those methods: every
+//     other appearance of that identifier is a receiver of one of them or another
+//     binding of that name (store := &creds.RTDBStore{DB: db};
+//     store.UpdateMark(...)). A copy, an argument, an index or a method value is
+//     none of those, so the name stops being theirs-only and the mention becomes a
+//     finding again. The binding has to be one a function body holds: a name at
+//     package level, and a struct field, are reachable from the package's other
+//     files — this scan reads one file at a time — so neither is ever exempt,
+//     however it is used;
 //   - the store handed to the service, which may hold one: the operator's CLI
 //     builds the state the credentials service serves from locally. This is the
 //     service package alone and not the state's own — nothing outside hands that
@@ -353,8 +355,8 @@ func importPaths(path string) ([]string, error) {
 //     the literal's stores otherwise, and the copies and indexes that reach a slip
 //     method through a value are holes again.
 //
-// The list is closed the way the importers are, and Marks and UpdateMark are not
-// slip methods — that distinction is what the lists below are.
+// The list is closed the way the importers are, and none of the four methods it
+// holds is a slip method — that distinction is what the lists below are.
 //
 // The limits are the ones no parse can pass, and they are narrower than they
 // were. A store that crosses a file boundary is caught in the file that writes
@@ -405,21 +407,24 @@ var slipMethods = []string{"Create", "Slip", "Claim", "End"}
 // through: the concrete store, which implements SlipStore, and the interface
 // itself. Naming either of them outside the service is a finding, because a file
 // that holds a store writes one of these names to get one, however it then
-// reaches the value (the marks shapes below excepted).
+// reaches the value (the non-slip shapes below excepted).
 var slipStoreTypes = []string{"RTDBStore", "SlipStore"}
 
-// markMethods are the methods a file outside the service may call on a creds
+// nonSlipMethods are the methods a file outside the service may call on a creds
 // store: the marks read and the marks write, which is what `fugaro accounts`
-// does (C1.21), and the Bitbucket token status's own write and read — the write
-// what `fugaro creds set bitbucket-token--<name>` does (T11, R12: the add-time
-// check's answer — when it last passed and the identity it read — is recorded
-// where the proxy reads it, and this command is the only writer of it), the read
-// what the listing does (`creds ls` and `doctor`, T10, R7). Both halves are the
-// operator's own state and neither is a slip, which is what this list is drawn
-// along: the token status hangs off the same store, and UpdateTokenStatus writes
-// and TokenStatuses reads its own node, never a slip's. Every other method the
-// store carries is the slip half's.
-var markMethods = []string{"Marks", "UpdateMark", "UpdateTokenStatus", "TokenStatuses"}
+// does (C1.21), and the Bitbucket tokens' status read and status write, which is
+// what `creds ls` and `doctor` present and what the add-time check writes
+// (TokenStatusStore: R12, T6). The two subtrees are one thing to this rule — the
+// non-secret state of a credential, name-keyed, read and written by the
+// operator's CLI — and every other method the store carries is the selection's
+// or the slip half's.
+//
+// The list is a widening of what a file outside may do with a store it holds and
+// not a hole in the slip half: a slip method called on a name this list exempts
+// is a finding of its own (slipMethods, on the bound name and on the store built
+// inline alike), so a file that reads a token's status and then claims a slip
+// through the same value is reported twice over.
+var nonSlipMethods = []string{"Marks", "UpdateMark", "TokenStatuses", "UpdateTokenStatus"}
 
 // servicePackage is the one package a file outside may hand a creds store to: the
 // service, which is the operator's CLI building the state the service serves
@@ -570,14 +575,19 @@ func TestBoundaryAllowsSlipsOnlyViaService(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "a store's token status written through a local, which is not a slip",
+			name: "a store's Bitbucket token statuses read, which is not a slip",
+			src:  "package x\n\nimport \"github.com/dimipaun/fugaro/internal/creds\"\n\nfunc f() { (&creds.RTDBStore{}).TokenStatuses(ctx) }\n",
+			want: false,
+		},
+		{
+			name: "a store's Bitbucket token status updated through a local, which is not a slip",
 			src:  "package x\n\nimport \"github.com/dimipaun/fugaro/internal/creds\"\n\nfunc f() { st := &creds.RTDBStore{}; st.UpdateTokenStatus(ctx, \"n\", nil) }\n",
 			want: false,
 		},
 		{
-			name: "a store's token status read through a local, which is not a slip either",
-			src:  "package x\n\nimport \"github.com/dimipaun/fugaro/internal/creds\"\n\nfunc f() { st := &creds.RTDBStore{}; st.TokenStatuses(ctx) }\n",
-			want: false,
+			name: "a store read for a token's status and claimed through, which is a slip",
+			src:  "package x\n\nimport \"github.com/dimipaun/fugaro/internal/creds\"\n\nfunc f() { st := &creds.RTDBStore{}; st.TokenStatuses(ctx); st.Claim(\"id\") }\n",
+			want: true,
 		},
 		{
 			name: "a store inferred by var and its marks read, which is not a slip",
@@ -635,12 +645,12 @@ func TestBoundaryAllowsSlipsOnlyViaService(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "a store bound and used for nothing, which is not the marks either",
+			name: "a store bound and used for nothing, which is not one of those methods either",
 			src:  "package x\n\nimport \"github.com/dimipaun/fugaro/internal/creds\"\n\nvar st = &creds.RTDBStore{}\n",
 			want: true,
 		},
 		{
-			name: "a store whose name escapes to a copy, which the marks shapes do not cover",
+			name: "a store whose name escapes to a copy, which the non-slip shapes do not cover",
 			src:  "package x\n\nimport \"github.com/dimipaun/fugaro/internal/creds\"\n\nfunc f() { st := &creds.RTDBStore{}; st.Marks(ctx); s2 := st; _ = s2 }\n",
 			want: true,
 		},
@@ -706,7 +716,7 @@ func TestBoundaryAllowsSlipsOnlyViaService(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(found) > 0 {
-		t.Fatalf("a file outside the service reaches the slip store:\n  %s\n\nA slip is the service's grant to ONE run (D1932): the grant is what a launcher asks for, the claim is what the run's job presents, and no operator command grants, claims or ends one (G10). Reading the marks is the one thing this package is imported for outside the service (fugaro accounts, C1.21), and it is done with the store built inline as a marks receiver, held in a name used only for the marks, or handed to the service: a file outside the service has no other business naming a creds store, because naming one is how a store is got, and a store is what the slip half hangs off. Read or write slips from internal/credsvc, or add the directory to slipImporters with its reason if this is genuinely a new caller.", strings.Join(found, "\n  "))
+		t.Fatalf("a file outside the service reaches the slip store:\n  %s\n\nA slip is the service's grant to ONE run (D1932): the grant is what a launcher asks for, the claim is what the run's job presents, and no operator command grants, claims or ends one (G10). Reading the marks and the Bitbucket tokens' statuses is what this package is imported for outside the service (fugaro accounts, C1.21; the add-time check and the listing, R12), and it is done with the store built inline as a receiver of one of those methods, held in a name used only for them, or handed to the service: a file outside the service has no other business naming a creds store, because naming one is how a store is got, and a store is what the slip half hangs off. Read or write slips from internal/credsvc, or add the directory to slipImporters with its reason if this is genuinely a new caller.", strings.Join(found, "\n  "))
 	}
 
 	// The one-list is exactly the two callers above, for the reason
@@ -724,7 +734,8 @@ func TestBoundaryAllowsSlipsOnlyViaService(t *testing.T) {
 //
 // Three ways, because a name is not the only one: the identifiers of the slip
 // half named through this package, a mention of a creds store type (which the
-// marks shapes except), and a slip method called on a store the file bound.
+// non-slip methods' shapes except), and a slip method called on a store the file
+// bound.
 func slipReferences(path, rel string, src []byte) []string {
 	f, err := parser.ParseFile(token.NewFileSet(), path, src, 0)
 	if err != nil || f == nil {
@@ -744,7 +755,7 @@ func slipReferences(path, rel string, src []byte) []string {
 	if !ok {
 		return nil
 	}
-	// The mentions of the store type this file is allowed to write: the marks
+	// The mentions of the store type this file is allowed to write: the non-slip
 	// shapes, and a store handed to a package that may hold one.
 	allowed := exemptStoreMentions(f, name)
 	// The identifiers this file binds a creds value to: a slip method called on
@@ -797,10 +808,10 @@ func slipReferences(path, rel string, src []byte) []string {
 // marks and once for a store it claims through is still found for the second.
 func exemptStoreMentions(f *ast.File, pkg string) map[ast.Node]bool {
 	allowed := map[ast.Node]bool{}
-	// A store built inline as the receiver of a marks call, and never held.
+	// A store built inline as the receiver of a non-slip call, and never held.
 	ast.Inspect(f, func(n ast.Node) bool {
 		sel, ok := n.(*ast.SelectorExpr)
-		if !ok || !slices.Contains(markMethods, sel.Sel.Name) {
+		if !ok || !slices.Contains(nonSlipMethods, sel.Sel.Name) {
 			return true
 		}
 		if t := storeLiteralType(sel.X, pkg); t != nil {
@@ -808,20 +819,21 @@ func exemptStoreMentions(f *ast.File, pkg string) map[ast.Node]bool {
 		}
 		return true
 	})
-	// A store bound to a name a function uses only for the marks: every other
-	// appearance of that identifier is a marks receiver or another binding of the
-	// name. A copy, an argument, an index or a method value is none of those, so
-	// the name stops being marks-only and the mention stays a finding.
+	// A store bound to a name a function uses only for those methods: every other
+	// appearance of that identifier is a receiver of one of them or another
+	// binding of the name. A copy, an argument, an index or a method value is none
+	// of those, so the name stops being theirs-only and the mention stays a
+	// finding.
 	//
 	// The binding has to be one a FUNCTION body holds (a review of this change).
 	// A name bound at package level is reachable from the package's other files,
 	// and this scan reads one file at a time: `var st = &creds.RTDBStore{}` with
 	// st.Marks(ctx) here and st.End(id) in another file of the package would be
-	// exempt by the marks rule while the second file is what claims. A package
+	// exempt by the non-slip rule while the second file is what claims. A package
 	// level name is therefore never exempt, which is the shape that crosses a
 	// file boundary and the reason the exemption is drawn here rather than over
 	// the package.
-	only := marksOnlyNames(f)
+	only := nonSlipOnlyNames(f)
 	for _, body := range functionBodies(f) {
 		ast.Inspect(body, func(n ast.Node) bool {
 			switch d := n.(type) {
@@ -954,22 +966,22 @@ func isStoreMention(n ast.Node, pkg string) bool {
 	return ok && x.Name == pkg && slices.Contains(slipStoreTypes, sel.Sel.Name)
 }
 
-// marksOnlyNames answers the identifiers the file uses only for the marks: at
-// least one marks receiver, and no appearance that is neither a receiver nor
-// another binding of the name. Appearances are counted rather than scoped,
-// deliberately: the file is all the scan has, and a name with more appearances
-// than the two shapes account for is a name whose uses this rule cannot see —
-// which fails closed, and names nothing a reader cannot check by looking at the
-// file. Where the binding has to be is the caller's question, not this one: a
-// name bound in a function body can be exempt (exemptStoreMentions) and a name
-// at package level cannot. The marks receiver is required rather than left to the
-// count (a review of this change): a name bound once and used for nothing at all
-// satisfies a count that only asks for no other uses, and "no other uses" is not
-// the marks.
-func marksOnlyNames(f *ast.File) map[string]bool {
+// nonSlipOnlyNames answers the identifiers the file uses only for the methods
+// nonSlipMethods lists: at least one such receiver, and no appearance that is
+// neither a receiver nor another binding of the name. Appearances are counted
+// rather than scoped, deliberately: the file is all the scan has, and a name with
+// more appearances than the two shapes account for is a name whose uses this rule
+// cannot see — which fails closed, and names nothing a reader cannot check by
+// looking at the file. Where the binding has to be is the caller's question, not
+// this one: a name bound in a function body can be exempt (exemptStoreMentions)
+// and a name at package level cannot. The receiver is required rather than left
+// to the count (a review of this change): a name bound once and used for nothing
+// at all satisfies a count that only asks for no other uses, and "no other uses"
+// is not one of these methods.
+func nonSlipOnlyNames(f *ast.File) map[string]bool {
 	appearances := map[string]int{}
 	bindings := map[string]int{}
-	marks := map[string]int{}
+	allowed := map[string]int{}
 	ast.Inspect(f, func(n ast.Node) bool {
 		switch d := n.(type) {
 		case *ast.Ident:
@@ -985,15 +997,15 @@ func marksOnlyNames(f *ast.File) map[string]bool {
 				bindings[id.Name]++
 			}
 		case *ast.SelectorExpr:
-			if x, ok := d.X.(*ast.Ident); ok && slices.Contains(markMethods, d.Sel.Name) {
-				marks[x.Name]++
+			if x, ok := d.X.(*ast.Ident); ok && slices.Contains(nonSlipMethods, d.Sel.Name) {
+				allowed[x.Name]++
 			}
 		}
 		return true
 	})
 	only := map[string]bool{}
 	for name, n := range appearances {
-		if name != "_" && marks[name] > 0 && n == bindings[name]+marks[name] {
+		if name != "_" && allowed[name] > 0 && n == bindings[name]+allowed[name] {
 			only[name] = true
 		}
 	}

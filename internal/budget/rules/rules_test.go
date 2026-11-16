@@ -860,6 +860,24 @@ func TestDeviceNodesAreClientDenied(t *testing.T) {
 	if r, ok := attrs[".read"].(string); ok {
 		t.Errorf("/%s .read = %q: the node is written and read over IAM only", node, r)
 	}
+	// And its sibling `config/admin/push/$uid` — the registration and the
+	// ledger the sender writes (the push-notifications design §3.4) —
+	// has no node of its own here, which is a decision rather than an omission:
+	// it inherits `config/admin`'s own refusal, and a node written out is the
+	// only way a client could be granted one. P5.2.2's registration kind does
+	// not touch it, and if a later generation does, this is the diff that says
+	// so.
+	if v, has := paths["config/admin"][".read"]; !has || v != false {
+		t.Errorf("/config/admin .read = %v, want false: the push store is denied by inheritance from this node and carries no rule of its own", paths["config/admin"][".read"])
+	}
+	if v, has := paths["config/admin"][".write"]; !has || v != false {
+		t.Errorf("/config/admin .write = %v, want false", paths["config/admin"][".write"])
+	}
+	for p := range paths {
+		if p == "config/admin/push" || strings.HasPrefix(p, "config/admin/push/") {
+			t.Errorf("/%s is written out in the template: the push store is refused by /config/admin's own denial, and a node of its own is the only way to grant a client one", p)
+		}
+	}
 }
 
 // TestDeviceNodeCarriesNoShapeRule is P2's fourth claim — the plan's red step
@@ -1136,7 +1154,7 @@ const schemaPath = "../../../shared/mailbox-schema/index.js"
 // is `export const NAME = <number, Number.MAX_SAFE_INTEGER, or a frozen array
 // of strings>;`, so a value this cannot parse is a failure rather than a
 // silently unchecked number.
-func schemaCatalog(t *testing.T) (consts map[string]int64, fields, required []string) {
+func schemaCatalog(t *testing.T) (consts map[string]int64, fields, required, kinds []string) {
 	t.Helper()
 	b, err := os.ReadFile(schemaPath)
 	if err != nil {
@@ -1167,15 +1185,17 @@ func schemaCatalog(t *testing.T) (consts map[string]int64, fields, required []st
 				fields = got
 			case "REQUIRED_FIELDS":
 				required = got
+			case "KINDS":
+				kinds = got
 			}
 		default:
 			t.Fatalf("shared/mailbox-schema exports %s = %s, which this reader does not understand: teach it, so the number stays checked", name, expr)
 		}
 	}
-	if len(consts) == 0 || len(fields) == 0 || len(required) == 0 {
-		t.Fatalf("shared/mailbox-schema: read %d constants, %d fields and %d required fields", len(consts), len(fields), len(required))
+	if len(consts) == 0 || len(fields) == 0 || len(required) == 0 || len(kinds) == 0 {
+		t.Fatalf("shared/mailbox-schema: read %d constants, %d fields, %d required fields and %d kinds", len(consts), len(fields), len(required), len(kinds))
 	}
-	return consts, fields, required
+	return consts, fields, required, kinds
 }
 
 // TestMailboxRulesAgreeWithTheSharedSchema pins, without the emulator, the part
@@ -1196,17 +1216,31 @@ func schemaCatalog(t *testing.T) (consts map[string]int64, fields, required []st
 // schema does not name fails there too, because the rules may gate fewer
 // fields than the schema, never one it does not have.
 //
+// P5.2.1 grew the schema again and P5.2.2 is the generation that grew the
+// template with it: `token`, `platform` and `prefs` are the registration kind's,
+// the kind enumeration carries the fifth kind, and the fields are gated on the
+// message's own tag. Until generation 6 the rules gated none of them — a
+// registration message was refused at the database, which was fail-closed
+// rather than wrong, because no writer of one exists before the consumer
+// (P5.2.4) and the app's registration path (P5.2.8). The gap was pinned below
+// as exactly those three fields; P5.2.2 closes it, and the loop now fails on any
+// field of the schema the rules do not gate.
+//
 // What this test cannot pin is the rest of the schema's judgement, and §6.4
 // says where the rules are looser rather than claiming they are the same: the
 // id's key rule (no `%`, no control character, no lone surrogate — all of
-// which the schema refuses) is the schema's alone, and `text`'s control
-// characters with it. The characters the schema states as a pattern (a tag, a
-// head SHA, an identity, a target) are checked at the database too, and
+// which the schema refuses) is the schema's alone, `text`'s control characters
+// with it, and so is the token's: the schema refuses a control character in one
+// and states no pattern of its own (a real token's alphabet would fail any
+// class it could name), so TOKENOK checks the bound and non-emptiness and the
+// characters stay the schema's. The characters the
+// schema states as a pattern (a tag, a head SHA, an identity, a target, a
+// registration's quiet-hours zone) are checked at the database too, and
 // TestMailboxRulesCheckTheSchemasCharacters pins them. The emulator cases
 // (emulator_mailbox_test.go, emulator_pairing_test.go) prove what the rules do
 // refuse.
 func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
-	consts, fields, required := schemaCatalog(t)
+	consts, fields, required, kinds := schemaCatalog(t)
 	if got, want := MaxKeyLength, consts["ID_MAX"]; int64(got) != want {
 		t.Errorf("MaxKeyLength = %d, the schema's ID_MAX = %d", got, want)
 	}
@@ -1237,6 +1271,11 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 		{"MaxTargetLength", MaxTargetLength, consts["TARGET_MAX"]},
 		{"MinShaLength", MinShaLength, consts["SHA_MIN"]},
 		{"MaxShaLength", MaxShaLength, consts["SHA_MAX"]},
+		// P5.2.2's three, the registration's own: the token, the quiet-hours
+		// zone and the largest minute of the local day.
+		{"MaxTokenLength", MaxTokenLength, consts["TOKEN_MAX"]},
+		{"MaxZoneLength", MaxZoneLength, consts["ZONE_MAX"]},
+		{"MaxMinute", MaxMinute, consts["MINUTE_MAX"]},
 	} {
 		if int64(c.got) != c.want {
 			t.Errorf("%s = %d, the schema's own bound = %d", c.what, c.got, c.want)
@@ -1245,7 +1284,7 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 	if want := []string{"id", "sender", "text", "at", "mac"}; !slices.Equal(required, want) {
 		t.Errorf("the schema's REQUIRED_FIELDS = %v, want %v", required, want)
 	}
-	if want := []string{"id", "sender", "text", "at", "mac", "acked", "agent", "kind", "options", "reply_to", "action"}; !slices.Equal(fields, want) {
+	if want := []string{"id", "sender", "text", "at", "mac", "acked", "agent", "kind", "options", "reply_to", "action", "token", "platform", "prefs"}; !slices.Equal(fields, want) {
 		t.Errorf("the schema's FIELDS = %v, want %v", fields, want)
 	}
 
@@ -1286,6 +1325,24 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 		v, _ := attrs[".validate"].(string)
 		if !strings.Contains(v, c.frag) {
 			t.Errorf("/%s .validate = %q, want it to carry the schema's own bound (%q)", c.path, v, c.frag)
+		}
+	}
+
+	// The kind enumeration is the schema's KINDS, in the schema's own order, on
+	// both messages: a word the schema does not name but the rules accept is a
+	// kind the consumer has to guess at, and a word the schema names and the
+	// rules refuse is a message the phone can send that the database refuses —
+	// the direction §6.4 refuses for a bound, asked of a vocabulary. P5.2.2 adds
+	// the registration word to it.
+	enum := "newData.isString() && (newData.val() == '" + strings.Join(kinds, "' || newData.val() == '") + "')"
+	for _, p := range []string{`mailbox/$mb/inbox/$msg/kind`, `mailbox/$mb/outbox/$msg/kind`} {
+		attrs, ok := paths[p]
+		if !ok {
+			t.Errorf("the template does not generate /%s", p)
+			continue
+		}
+		if v, _ := attrs[".validate"].(string); v != enum {
+			t.Errorf("/%s .validate = %q, want the schema's KINDS in its own order (%q)", p, v, enum)
 		}
 	}
 
@@ -1358,13 +1415,17 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 	// The fields, per node: the schema's own set, and every one of them a field
 	// the schema names. An inbox message has the required P6.3 fields plus the
 	// optional ones (`acked` is the phone's ack of a message it spoke, which
-	// lives on an outbox message), and an outbox message has all of them.
+	// lives on an outbox message), and an outbox message has all of them. The
+	// registration's three (P5.2.2) are on both: the app writes its registration
+	// into its own inbox, and the consumer's messages travel the other way
+	// through the same document.
+	gated := map[string]bool{}
 	for _, c := range []struct {
 		path string
 		want []string
 	}{
-		{`mailbox/$mb/inbox/$msg`, []string{"id", "sender", "text", "at", "mac", "agent", "kind", "options", "reply_to", "action"}},
-		{`mailbox/$mb/outbox/$msg`, []string{"id", "sender", "text", "at", "mac", "acked", "agent", "kind", "options", "reply_to", "action"}},
+		{`mailbox/$mb/inbox/$msg`, []string{"id", "sender", "text", "at", "mac", "agent", "kind", "options", "reply_to", "action", "token", "platform", "prefs"}},
+		{`mailbox/$mb/outbox/$msg`, []string{"id", "sender", "text", "at", "mac", "acked", "agent", "kind", "options", "reply_to", "action", "token", "platform", "prefs"}},
 	} {
 		if _, ok := paths[c.path]; !ok {
 			t.Errorf("the template does not generate /%s", c.path)
@@ -1385,8 +1446,74 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 			t.Errorf("/%s holds %v, the shared schema's field set for it is %v", c.path, got, want)
 		}
 		for _, field := range got {
+			gated[field] = true
 			if !slices.Contains(fields, field) {
 				t.Errorf("/%s gates %q, which the shared schema does not name: the rules may gate fewer fields than the schema, never one it does not have", c.path, field)
+			}
+		}
+	}
+
+	// The fields the schema names and the rules do not gate: none, since P5.2.2
+	// closed P5.2.1's three. Pinned rather than tolerated, so that the licence
+	// to lag by one generation — which is what P5.2.1 took, and what the rules
+	// generation exists to make explicit — is not a licence to lag by any field.
+	var ungated []string
+	for _, field := range fields {
+		if !gated[field] {
+			ungated = append(ungated, field)
+		}
+	}
+	slices.Sort(ungated)
+	if len(ungated) != 0 {
+		t.Errorf("the rules do not gate %v, which the shared schema names: every field of the schema is a field the rules gate since generation 6", ungated)
+	}
+}
+
+// registrationFieldValidators is what each field node of a registration
+// carries, in the macros' own spelling: the message's kind read from the field
+// (`PARENTKIND`), the field's own bound, and — on the three the schema makes
+// required or optional of that kind — the tag of the message it sits on
+// (`PARENTMACOK`). Mobile plan task P5.2.2.
+//
+// Built through expand rather than written out, registrationRequiredClause's
+// reason: the macro writes the expression, and a second spelling of it here
+// would be a second thing to keep in step. What it adds to the field-set
+// assertion above is the *gate*: that one counts a field as gated when its
+// node exists, so a validator that lost `PARENTKIND == 'registration' && ` —
+// or negated it — would leave every field of the schema accounted for while a
+// token, a platform or a preference record travelled on an ordinary message of
+// any kind. Each entry is compared as a whole, so a change to a bound, to an
+// arm or to the conjunction fails here and not only in the golden.
+var registrationFieldValidators = []struct{ field, expr string }{
+	{"token", "PARENTKIND == 'registration' && TOKENOK && PARENTMACOK"},
+	{"platform", "PARENTKIND == 'registration' && PLATFORMOK && PARENTMACOK"},
+	{"prefs", "PARENTKIND == 'registration' && newData.hasChildren(['kill_switch', 'cap_reached', 'consumer_offline', 'cap_near', 'prompt']) && PARENTMACOK"},
+	{"prefs/quiet_hours", "newData.hasChildren(['zone', 'start', 'end'])"},
+	{"prefs/quiet_hours/zone", "ZONEOK"},
+	{"prefs/quiet_hours/start", "MINUTEOK"},
+	{"prefs/quiet_hours/end", "MINUTEOK && newData.val() != newData.parent().child('start').val()"},
+}
+
+// TestRegistrationFieldValidatorsCarryTheKindGate reads the generated document
+// the way the emulator will: field by field, on both messages, against the
+// expression the macros expand to.
+func TestRegistrationFieldValidatorsCarryTheKindGate(t *testing.T) {
+	paths := generatedPaths(t)
+	for _, dir := range []string{"inbox", "outbox"} {
+		for _, f := range registrationFieldValidators {
+			p := "mailbox/$mb/" + dir + "/$msg/" + f.field
+			attrs, ok := paths[p]
+			if !ok {
+				t.Errorf("the template does not generate /%s", p)
+				continue
+			}
+			// The depth render expands at: one per key below the root.
+			want, err := expand(f.expr, len(strings.Split(p, "/")))
+			if err != nil {
+				t.Fatalf("/%s: %v", p, err)
+			}
+			if got, isStr := attrs[".validate"].(string); !isStr || got != want {
+				t.Errorf("/%s .validate = %v, want %q: the kind gate on a field is what refuses it on a message that is not a registration", p, attrs[".validate"], want)
 			}
 		}
 	}
@@ -1518,8 +1645,9 @@ func schemaPatterns(t *testing.T) map[string]string {
 // `matches()`, so every field whose character set the schema states as a
 // pattern carries the same pattern at the database — the tag and the head SHA
 // are hex, an agent id and a boot id are identities, a run target and a repo
-// target are the schema's run and repo shapes. A list (options, agents) is a
-// list: present means a child at an index below its bound, and a scalar in
+// target are the schema's run and repo shapes, and a registration's quiet-hours
+// zone is the schema's IANA name and not an offset. A list (options, agents) is
+// a list: present means a child at an index below its bound, and a scalar in
 // its place is refused. And a pairing uid is the `p~` uid P6.6 mints.
 func TestMailboxRulesCheckTheSchemasCharacters(t *testing.T) {
 	pats := schemaPatterns(t)
@@ -1528,6 +1656,7 @@ func TestMailboxRulesCheckTheSchemasCharacters(t *testing.T) {
 		{"IDENTITY_PATTERN", patternIdentity},
 		{"RUN_PATTERN", patternRun},
 		{"REPO_PATTERN", patternRepo},
+		{"ZONE_PATTERN", patternZone},
 	} {
 		if want, ok := pats[c.name]; !ok {
 			t.Errorf("the shared schema no longer defines %s: the rules' copy has nothing to agree with", c.name)
@@ -1546,6 +1675,19 @@ func TestMailboxRulesCheckTheSchemasCharacters(t *testing.T) {
 			{m + `/action/target/repo`, ".matches(" + patternRepo + ")"},
 			{m + `/options`, "newData.hasChildren()"},
 			{m + `/options/$i`, "$i.matches(" + indexPattern(MaxOptions) + ")"},
+			// P5.2.2's registration: the token's bound and no character class of
+			// its own (the schema states none either), the two platforms, the
+			// zone's pattern and the two ends of the quiet-hours window as
+			// minutes that differ, and — on each of the three fields — the
+			// message's own tag, re-read one node up.
+			{m + `/token`, "newData.val().length <= " + strconv.Itoa(MaxTokenLength)},
+			{m + `/token`, "newData.parent().child('mac').val().matches(" + patternHex + ")"},
+			{m + `/platform`, "newData.val() == 'android'"},
+			{m + `/prefs`, "newData.hasChildren(['kill_switch', 'cap_reached', 'consumer_offline', 'cap_near', 'prompt'])"},
+			{m + `/prefs/quiet_hours/zone`, ".matches(" + patternZone + ")"},
+			{m + `/prefs/quiet_hours/zone`, "newData.val().length <= " + strconv.Itoa(MaxZoneLength)},
+			{m + `/prefs/quiet_hours/start`, "newData.val() <= " + strconv.Itoa(MaxMinute)},
+			{m + `/prefs/quiet_hours/end`, "newData.val() != newData.parent().child('start').val()"},
 		} {
 			wantFrag(t, paths, c.path, c.frag)
 		}
@@ -1561,7 +1703,7 @@ func TestMailboxRulesCheckTheSchemasCharacters(t *testing.T) {
 	} {
 		wantFrag(t, paths, c.path, c.frag)
 	}
-	consts, _, _ := schemaCatalog(t)
+	consts, _, _, _ := schemaCatalog(t)
 	if int64(MaxBootLength) != consts["BOOT_MAX"] {
 		t.Errorf("MaxBootLength = %d, the schema's BOOT_MAX = %d", MaxBootLength, consts["BOOT_MAX"])
 	}
@@ -2037,6 +2179,34 @@ const outcomeStatusPath = "outcomes/$day/" + slugForPath + "/$run/status"
 // spacing the template writes it in.
 const unreviewedClause = " || newData.val() == 'unreviewed'"
 
+// registeredKindClause is the disjunct P5.2.2 adds to the kind enumeration, on
+// both messages, with the spacing the template writes it in.
+const registeredKindClause = " || newData.val() == 'registration'"
+
+// registrationRequiredClause is the conjunct P5.2.2 adds to the message's own
+// validator — KINDREQ's registration arm, which is what makes a registration
+// carry its token and its platform. Built from kindOf rather than written out,
+// because the macro writes that expression and a second spelling of it here
+// would be a second thing to keep in step.
+var registrationRequiredClause = " && (" + kindOf("newData") + " == 'registration' ? (newData.child('token').exists() && newData.child('platform').exists()) : true)"
+
+// namedRuleChanges is the whole of what this document's existing rules may
+// change: each path, and the one clause the change adds to its validator. Every
+// other path stays as it was, and removing the clause from the new string has
+// to leave the generation-3 one byte for byte — so a change that also moved a
+// bound, dropped a conjunct or reworded an arm is not one of these.
+var namedRuleChanges = map[string]string{
+	// The outcome's status gains the run status 'unreviewed' (docs/
+	// binary-allow-rule's NV0, D994).
+	outcomeStatusPath: unreviewedClause,
+	// The two messages gain the registration kind (mobile plan task P5.2.2):
+	// the word in the enumeration, and the required fields on the message.
+	"mailbox/$mb/inbox/$msg":       registrationRequiredClause,
+	"mailbox/$mb/outbox/$msg":      registrationRequiredClause,
+	"mailbox/$mb/inbox/$msg/kind":  registeredKindClause,
+	"mailbox/$mb/outbox/$msg/kind": registeredKindClause,
+}
+
 // TestOutcomeRuleAcceptsEveryRunStatus: the outcome's status validator accepts
 // every status a run ends with, and nothing else. The set is a literal
 // in the template, because the template is a document and not Go, and
@@ -2115,11 +2285,12 @@ const outcomeStatusNone = "none"
 // and doctor's policy-rules-skew already reports the installation that has not
 // run it yet.
 //
-// The check is exact: the one path, the `.validate` attribute of it alone, and
-// removing that one clause from the new string leaving the generation-3 one
-// byte for byte.
+// The check is exact: one of the named paths, the `.validate` attribute of it
+// alone, and removing that path's own clause from the new string leaving the
+// generation-3 one byte for byte.
 func isNamedRuleChange(p string, want, got map[string]any) bool {
-	if p != outcomeStatusPath || len(want) != len(got) {
+	clause, named := namedRuleChanges[p]
+	if !named || len(want) != len(got) {
 		return false
 	}
 	if !maps.Equal(withoutValidate(want), withoutValidate(got)) {
@@ -2130,7 +2301,7 @@ func isNamedRuleChange(p string, want, got map[string]any) bool {
 	if !wok || !gok {
 		return false
 	}
-	return strings.Contains(gs, unreviewedClause) && strings.Replace(gs, unreviewedClause, "", 1) == ws
+	return strings.Contains(gs, clause) && strings.Replace(gs, clause, "", 1) == ws
 }
 
 // withoutValidate is m without its `.validate`, so the attributes beside it are
@@ -2152,9 +2323,10 @@ func withoutValidate(m map[string]any) map[string]any {
 // (docs/mcp-server/implementation-plan.md's M3, D922), the build lease's
 // (docs/no-prompt-policy/implementation-plan.md's T8, D1543, F22), the
 // stateless orchestrator's (docs/stateless-orchestrator/implementation-plan.md's
-// O2, D1220) or the workspace family's (docs/workspaces/implementation-plan.md's
-// W3, workspace.go). Anything else that appears in the document is a rules
-// change nobody asked for.
+// O2, D1220), the workspace family's (docs/workspaces/implementation-plan.md's
+// W3, workspace.go) or a registration message's own fields (mobile plan task
+// P5.2.2). Anything else that appears in the document is a rules change nobody
+// asked for.
 //
 // They are equalities and not prefixes, for the reason isNewCredsPath gives
 // below: P3 adds the family's own node and nothing under it, so a path *under*
@@ -2168,7 +2340,38 @@ func withoutValidate(m map[string]any) map[string]any {
 // look legitimate.
 func isNamedAddition(p string) bool {
 	return isNewCredsPath(p) || p == coordpath.PathRoot || p == PathMCPAuth ||
-		p == PathBuildLeases || p == PathOrchestrator || isNewWorkspacePath(p) || isNewVoicePath(p)
+		p == PathBuildLeases || p == PathOrchestrator || isNewWorkspacePath(p) || isNewVoicePath(p) ||
+		isNewRegistrationPath(p)
+}
+
+// isNewRegistrationPath reports whether p is one of the field nodes a
+// registration kind adds to a message (mobile plan task P5.2.2): the three the
+// schema names, the preference record's own, and the quiet-hours window inside
+// it — on both the inbox and the outbox, whose field sets the schema holds
+// equal.
+//
+// They are equalities and not prefixes, for isNewCredsPath's reason: a path
+// *under* one of them is a change to what that field contains, which is the
+// shape a rule hidden one level down takes, and it belongs here as a diff a
+// reviewer reads rather than as a match this function waves through. The two
+// `$other` closures are named too — they are rules of their own, and the one
+// that would widen the field set if it were dropped.
+func isNewRegistrationPath(p string) bool {
+	for _, dir := range []string{"inbox", "outbox"} {
+		for _, field := range []string{
+			"token", "platform",
+			"prefs", "prefs/$other",
+			"prefs/kill_switch", "prefs/cap_reached", "prefs/consumer_offline",
+			"prefs/cap_near", "prefs/prompt",
+			"prefs/quiet_hours", "prefs/quiet_hours/$other",
+			"prefs/quiet_hours/zone", "prefs/quiet_hours/start", "prefs/quiet_hours/end",
+		} {
+			if p == "mailbox/$mb/"+dir+"/$msg/"+field {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // isNewVoicePath reports whether p is one of the four locations the voice
@@ -2269,12 +2472,18 @@ func isNewCredsPath(p string) bool {
 //     not know the family is there, which is the drift the marker exists to
 //     report; so the generation moved to 4 and doctor's policy-rules-skew is
 //     what tells an installation whose owner has not redeployed yet. P5.3.1
-//     moves it to 5 for the same reason one step over: the voice policy node
+//     moved it to 5 for the same reason one step over: the voice policy node
 //     (PathVoice, `config/policy/voice/{shared,repos/$slug}`) is a grant too —
 //     a run token reads its own project's node there and did not before — and
 //     the generation is what tells an installation at 4 that its deployed
-//     document is not this binary's. `fugaro update`'s rules stage is the
-//     migration, and it is the same stage every generation is met through.
+//     document is not this binary's. P5.2.2 moves it to 6 for the same reason
+//     in the other direction: the registration kind's fields are what the phone
+//     *writes* into its own inbox, so under the document behind the app's every
+//     registration is refused at the database with no error — a reach a client
+//     holds, which is what the marker records — and the widening folds into the
+//     same stage: `fugaro update`'s rules deploy is the migration, and it is
+//     the same stage every generation is met through, safe while runs are in
+//     flight.
 //   - projectpolicy.PolicyRulesVersion gates the policy nodes, which neither
 //     change touches. It stays 1.
 //   - rules.CredsRulesVersion is the credentials family's own generation, at 1,
@@ -2289,8 +2498,8 @@ func isNewCredsPath(p string) bool {
 // Hand mutation this fails on: bumping any of the four (or lowering one of the
 // family versions), which is what a reviewer must see argued for.
 func TestRulesVersionUnchanged(t *testing.T) {
-	if projectpolicy.RulesVersion != 5 {
-		t.Errorf("projectpolicy.RulesVersion = %d, want 5: the generation that carries the voice policy node (mobile plan task P5.3.1)", projectpolicy.RulesVersion)
+	if projectpolicy.RulesVersion != 6 {
+		t.Errorf("projectpolicy.RulesVersion = %d, want 6: the generation that carries the registration kind's fields in the mailbox (mobile plan task P5.2.2)", projectpolicy.RulesVersion)
 	}
 	if projectpolicy.PolicyRulesVersion != 1 {
 		t.Errorf("projectpolicy.PolicyRulesVersion = %d, want 1: this change does not touch the policy nodes", projectpolicy.PolicyRulesVersion)
