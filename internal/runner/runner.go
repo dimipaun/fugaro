@@ -2169,9 +2169,13 @@ func BakedDir(workDir, slug string) string {
 // will open (credentialVars). bootstrap therefore calls this before it asks
 // where the run clones from.
 //
-// Only a per-repository job looks. A project job's image bakes no checkout and
-// the run refuses any it finds (checkProjectCheckoutOrigin), so there is nothing
-// for it to adopt. And the run must be able to name the repository its task
+// Only a per-repository job looks here, and returns below for the other class:
+// a project job's image bakes the project's repositories, and the run settles
+// them in checkProjectCheckoutOrigin instead — the one that is this run's
+// repository's reset and adopted there, the rest removed (D2308, D2309) — so
+// whichever class a run is in, the checkout it works on is settled under this
+// binding before anything fetches through it. And the run must be able to name
+// the repository its task
 // names under the kind its own slug derives (providerForSlug): a slug no
 // provider kind produces — what `--provider fake` gives a local invocation —
 // names no repository to call a baked directory after and no remote to hold the
@@ -2423,10 +2427,12 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// fetch, the agent's git and the final push would all run with no git
 	// credential at all (the review finding on this change).
 	//
-	// It is also the other half of checkProjectCheckoutOrigin's question, for
-	// the job that may hold a baked checkout: which repository the one in the
-	// image is a checkout of, and whether this run may work on it at all (a
-	// shared image bakes several). Here rather than in openCheckout, which is
+	// It is also the per-repository half of checkProjectCheckoutOrigin's
+	// question, for the job that may hold a baked checkout: which repository the
+	// one in the image is a checkout of, and whether this run may work on it at
+	// all (a shared image bakes several; the project job's half is that
+	// function's, which resets this run's own and removes the rest, D2308,
+	// D2309). Here rather than in openCheckout, which is
 	// called once the provider below has minted this run's git credential, so a
 	// refusal is still a run that requested nothing.
 	if err := r.openBakedCheckout(ctx); err != nil {
