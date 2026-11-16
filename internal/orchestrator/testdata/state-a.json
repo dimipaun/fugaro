@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "rev": 12,
   "agent_id": "orchestrator-a",
   "role": "orchestrator",
@@ -18,7 +18,7 @@
       "approved": {
         "by": "owner",
         "at": "2026-11-07T08:00:00Z",
-        "spec_digest": "sha256:54c955b7e8d5f1cd02c485fdf7678deb469bc171b6694aa2170e44a0adbd5471",
+        "spec_digest": "sha256:b56fc366cac5a65c96d4aaee38d43bbae825f8230991c3348e5e3c8dd951d1de",
         "attempts": 2
       },
       "attempts": 1,
@@ -86,7 +86,7 @@
     {
       "id": "wi-1:1",
       "run_id": "20261107-090000-abcd",
-      "spec_digest": "sha256:54c955b7e8d5f1cd02c485fdf7678deb469bc171b6694aa2170e44a0adbd5471",
+      "spec_digest": "sha256:b56fc366cac5a65c96d4aaee38d43bbae825f8230991c3348e5e3c8dd951d1de",
       "approval_at": "2026-11-07T08:00:00Z",
       "at": "2026-11-07T09:00:00Z"
     }

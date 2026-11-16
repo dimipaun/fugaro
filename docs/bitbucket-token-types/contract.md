@@ -142,8 +142,9 @@ read off the error with `errors.As`, never off its text.
 The node gains one top-level key, `projectpolicy.BitbucketTokensKey` (`bitbucket_tokens`), whose value is
 `BitbucketTokens{Entries: []BitbucketTokenNode{...}}`: per token, the document key, the type, the coverage patterns — in
 the same provider-qualified spelling a `Record` carries, held to the same `ValidBitbucketTokenCoverage`, so a record read
-off the node validates as it stands — and the identity UUID, and never a value and never a secret version. A project that
-names no typed token publishes no key at all.
+off the node validates as it stands — the project UUID a project token is scoped to (the one fact of a project token that
+matching needs, R2; empty for a repository and for a workspace token), and the identity UUID, and never a value and never
+a secret version. A project that names no typed token publishes no key at all.
 
 The rule lives in `projectpolicy` with the shape, and not in the package that holds the record, so that one rule holds both
 sides of R3: a rule the node accepted and the record refused would drop the implicit legacy record of an installation whose

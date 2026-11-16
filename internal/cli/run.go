@@ -257,6 +257,19 @@ type runOptions struct {
 	// display fact and reaches no other reader: the task is the record, and
 	// it carries the resolved account alone (F4).
 	account launchAccount
+	// allowDuplicate is --allow-duplicate: the launcher's own word that a
+	// second run of the plan task above is deliberate, and the one way past
+	// the duplicate refusal (planTaskDuplicate). False (the default) is the
+	// ordinary launch: a task a run in flight, or a pull request a run of it
+	// left behind, already holds is refused, because a second run of it spends
+	// the money and the review time twice. Nothing else reads it, and it
+	// records nothing: a launch that passes it stores a task byte-identical
+	// to one that does not, and it turns the one refusal off for this launch
+	// alone. With no --plan-task there is no claim to duplicate and it is
+	// inert, deliberately: it is a permission and not an instruction, so a
+	// caller that passes it to every launch of a batch is not refused by the
+	// launches that have nothing to duplicate.
+	allowDuplicate bool
 	// planTask is --plan-task, as the task stores it: the id of one task in
 	// one plan ("setup-wizard/W1.3"), recorded so the console can join this
 	// run to a node of that plan's dependency graph (console dependency
@@ -390,6 +403,15 @@ func newRunCmd() *cobra.Command {
 			"as the plan's own graph spells them, at most 128 bytes; what the run does is\n" +
 			"unchanged by it. A follow-up (--pr) records one only when it is given, and\n" +
 			"--retry takes none (the stored task keeps its own).\n\n" +
+			"A plan task already being worked on is a refusal: while a run of it is in\n" +
+			"flight, or a run of it left a pull request behind, the launch stops before\n" +
+			"anything is pushed or started and names what holds the task and the ways out\n" +
+			"(--pr, --retry, --continues). --allow-duplicate launches anyway, for a second\n" +
+			"attempt that is deliberate, such as the redundant attempts of one hard task.\n" +
+			"The check reads the run records and never the code host, so a pull request a\n" +
+			"run left is still refused once it has been merged; a read that cannot be made\n" +
+			"is skipped with one warning, and the launch goes ahead: it never blocks on its\n" +
+			"own failure.\n\n" +
 			"--no-compression turns the repository's agent.compression off for this run only,\n" +
 			"overriding its fugaro.yaml. There is no --compression flag: turning compression\n" +
 			"on is a reviewed fugaro.yaml change. A follow-up (--pr) keeps its run's choice,\n" +
@@ -415,7 +437,8 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.runID, "run-id", "", "run ID to use; repeating one reports its launch instead of starting another")
 	f.StringVar(&o.batch, "batch", "", "batch label, to group runs in fugaro runs ls")
 	f.StringVar(&o.title, "title", "", "the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given")
-	f.StringVar(&o.planTask, "plan-task", "", "record the plan task this run works on, as <plan>/<task> (for example setup-wizard/W1.3): the id the console's graph joins this run to a node by; it changes nothing about what the run does, and a follow-up (--pr) records one only when given")
+	f.StringVar(&o.planTask, "plan-task", "", "record the plan task this run works on, as <plan>/<task> (for example setup-wizard/W1.3): the id the console's graph joins this run to a node by; it changes nothing about what the run does, and a follow-up (--pr) records one only when given. A plan task that a run in flight, or a pull request a run of it left behind, already holds is refused (--allow-duplicate launches it anyway)")
+	f.BoolVar(&o.allowDuplicate, "allow-duplicate", false, "launch even though the plan task named by --plan-task is already being worked on: a run of it in flight, or a pull request a run of it left behind. It turns that one refusal off, for a second attempt that is deliberate (the redundant attempts of a hard task); it records nothing, and with no --plan-task there is nothing to duplicate and it changes nothing")
 	f.StringVar(&o.tf, "task-file", "", "read the task from this file, or - for stdin")
 	f.StringVar(&o.retry, "retry", "", "launch the stored task of RUN (a full run ID, or <repo-slug>/<run-id>) that never started: a run an ending names is never launched, since the bucket cannot vouch for which run an ending means")
 	f.StringVar(&o.totalTimeout, "total-timeout", "", "override the workflow's timeouts.total for this run, such as 45m")
@@ -446,7 +469,7 @@ func newRunCmd() *cobra.Command {
 }
 
 // taskFlags are the flags --retry excludes: the stored task.json supplies them.
-var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "title", "plan-task", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path", "tier", "security", "no-compression", "review-levels", "review-run", "max-usd", "max-tokens", "max-time", "max-review-rounds", "continues", "used-usd", "used-tokens", "used-time", "used-review-rounds"}
+var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "title", "plan-task", "allow-duplicate", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path", "tier", "security", "no-compression", "review-levels", "review-run", "max-usd", "max-tokens", "max-time", "max-review-rounds", "continues", "used-usd", "used-tokens", "used-time", "used-review-rounds"}
 
 // prFlags are the flags --pr excludes: the previous run on the PR supplies them.
 var prFlags = []string{"ref", "workflow"}
@@ -496,6 +519,14 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	// --attempts is refused above.
 	if prSet && o.continues != "" {
 		return userErr("--continues names the run this launch continues, and --pr names the pull request whose chain it joins; pass one of them")
+	}
+	// --allow-duplicate answers the duplicate refusal (planTaskDuplicate),
+	// which only a new task's launch can meet: a --pr follow-up continues the
+	// pull request that already exists and a --continues launch continues a
+	// run of its chain, so neither starts a second run of a plan task and
+	// neither has a duplicate to allow.
+	if (prSet || o.continues != "") && cmd.Flags().Changed("allow-duplicate") {
+		return userErr("--allow-duplicate is for a deliberate second run of a plan task, and this launch continues one that exists (--pr, --continues): it takes no --allow-duplicate")
 	}
 	var text string
 	var total time.Duration
@@ -764,6 +795,18 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	}
 	if err != nil {
 		return err
+	}
+	// The duplicate guard, after the task is built and before the launch's
+	// reporter: it answers whether this task is already being worked on, and a
+	// launch it refuses is no run to keep a log of. It is asked here for the
+	// plain launch alone — a best-of-N batch left through runAttempts above,
+	// which resolves its own plan and asks the same question itself — and only
+	// for a launch that starts a new task, since a --pr, --retry or --continues
+	// launch is a way out of its refusal rather than one that could meet it.
+	if o.retry == "" && !prSet && o.continues == "" {
+		if err := planTaskDuplicate(ctx, env, o, slug, spec.RunID, cmd.ErrOrStderr()); err != nil {
+			return err
+		}
 	}
 	// The launch's reporter opens where the launch's own work does, once the
 	// task is built: every refusal above it — the flags, and the spec a
@@ -2725,6 +2768,14 @@ func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, 
 	// unresolvable one) refuses outright must not first pay for either.
 	plan, err := resolveBatchPlan(ctx, env, o, total, warn, true)
 	if err != nil {
+		return err
+	}
+	// The duplicate guard, before the backend listing and the budget read
+	// below, for the reason the plan is resolved there too: a batch of a task
+	// that is already being worked on is exactly the second run the guard
+	// refuses, and it costs the batch's own run ids nothing -- none of them
+	// exists yet, so the read has no run of this launch's to leave out.
+	if err := planTaskDuplicate(ctx, env, o, plan.slug, "", warn); err != nil {
 		return err
 	}
 	noteRigorRequest(ctx, o, plan.repo, warn)

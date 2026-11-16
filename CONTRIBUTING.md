@@ -61,6 +61,28 @@ The plugin's skills are in `plugin/skills` (`setup`, `working`, `routing`, `para
 - Titles are short and say what changed, often prefixed by the area or milestone, for example `rtdb: conditional PUT must not carry print=silent` or `M9c: fugaro watch, the live terminal dashboard`. Explain the why in the body.
 - Fill in the PR template: tests, docs, no secrets.
 
+### Landing a batch of pull requests
+
+`scripts/land-prs.sh` is the merge helper a landing ends with. The merge is the person's to make, at their own hands, in the provider's own interface — the [`landing` skill](plugin/skills/landing/SKILL.md) says what is safe to land, and an agent never merges for them — and this is the person's own command for making it for a batch: their own `gh`, the provider's own CLI, under their own credential. The script refuses a coding agent's session, so the person is the one who runs it. It exists so a landing of many pull requests is one command instead of a merge per pull request with a wait in between.
+
+```sh
+bash scripts/land-prs.sh --repo OWNER/NAME 1234 1235 1236
+```
+
+It reads every pull request's mergeable state in one parallel sweep and prints one line per pull request — state, draft or ready, MERGEABLE, CONFLICTING or UNKNOWN, and the title — before it touches anything. `--check-only` stops there and merges nothing. Then it merges the ones that are open and MERGEABLE, back to back and in the order given, marking a draft ready first; one that is CONFLICTING, still UNKNOWN or not open is skipped and named, and a merge that fails is reported while the batch goes on, with a draft it marked ready put back the way it found it. The exit status is 0 when every pull request ended merged, 1 when any did not, and 2 for a usage error or a coding agent's session.
+
+When at least one pull request merged, the batch ends with the census, printed after `merged X of Y`. This is what catches the batch that moved a pinned count in a doc: two pull requests each moving the same figure merge with no conflict at all and leave `main` red for a 25-minute CI run. A census that failed is the batch's exit status even when every merge succeeded, `--no-census` skips it, and `--check-only` never runs it.
+
+The census is `scripts/docs-census.sh`, a script of its own because it is not a person's alone to run: an agent landing pull requests under the owner's word runs the same command and gets the same answer. It merges nothing, decides nothing and refuses no session — it reads and tests.
+
+```sh
+bash scripts/docs-census.sh [--base NAME] [--since SHA]
+```
+
+It fetches the base the pull requests named — `main` unless they say otherwise — makes a worktree of `origin/<base>` in a temporary directory, and runs `go test ./internal/cli/ -run Docs -count=1 -timeout 9m` and `go test ./plugin/ -count=1 -timeout 5m` there, so what is tested is the merged tree and never the checkout the caller happens to be in. It prints `census: ok`, or one `census: FAILED (<command>)` line per failing command with the failing test names as go printed them, exits 1 when a suite failed, and prints the line `website content changed: run npm run check in website/` when `--since <the base before the batch>` was given and the diff from it moved a path under `website/`: `npm run check` is minutes of Node rather than seconds, so it is not run here.
+
+It never force-pushes, never rewrites a branch and never decides what is safe to merge: the caller has already decided, and the merges are theirs. Its hermetic test is `scripts/land-prs_test.sh`, driven from `scripts/land_prs_test.go`, and the census's is `scripts/docs-census_test.sh`, driven from `scripts/docs_census_test.go`.
+
 ## Licensing of contributions
 
 Contributions to the core are accepted under the MIT licence in [LICENSE](LICENSE), and an outside pull request is merged only after its author signs the Contributor License Agreement, which a bot asks for on the first one. You sign once, by clicking the link CLA Assistant posts on your first pull request, or at https://cla-assistant.io/dimipaun/fugaro. Signing is what keeps the copyright relicensable; a pull request that has not signed waits rather than merges. `console/`, `mobile/` and `ee/` are under a business licence of their own ([LICENSING.md](LICENSING.md)), and anybody may contribute to them who accepts that licence's terms ([console/LICENSE.md](console/LICENSE.md), [mobile/LICENSE.md](mobile/LICENSE.md), [ee/LICENSE](ee/LICENSE)) and has signed the same Contributor License Agreement, which grants the relicensing rights for those directories too. The agreement's text is [docs/licensing/CLA.md](docs/licensing/CLA.md), which counsel has approved and which is published at https://gist.githubusercontent.com/dimipaun/d5bb5db937f973b25be5778ce14ec8dd/raw/64918c7fc0f782327db82e7e790db53c3d47d09f/fugaro-cla.md (the URL CLA Assistant is given, and the one the three licence files name), and the bot that asks for it is installed by the owner, so an outside pull request to any of the three waits until the bot is live.

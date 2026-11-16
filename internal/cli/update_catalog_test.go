@@ -147,6 +147,67 @@ func TestUpdatePinsTheCatalogBaseForAPlainRunWithNoCheckout(t *testing.T) {
 	}
 }
 
+// TestUpdateDeploysTheReportsJobFromTheBaseItPins: the reports job (R7) runs
+// FROM the base image the installation records, exactly as the catalog check
+// job does, and it is nil while there is none — so the run that pins the image
+// is the run that has to deploy it. The installation root's second apply is
+// that run's: it re-reads the spec after the images stage has moved the base
+// image, and both jobs travel in it at the pin. A second apply that carried
+// only the catalog check back would apply the reports job from the image the
+// run started with — absent on the first pin, the previous release's on every
+// upgrade — leaving it an entire `fugaro update` behind.
+func TestUpdateDeploysTheReportsJobFromTheBaseItPins(t *testing.T) {
+	r := catalogUpdateRig(t)
+	// The two passes of the installation root are told apart by their plans:
+	// the first has nothing to deploy (no base image is recorded yet), the
+	// second deploys the jobs.
+	r.script["plan@installation"] = []map[string]any{
+		{"exit": 0},
+		{"exit": 2},
+	}
+	r.script["show@installation"] = map[string]any{"stdout": planJSON(t, change("module.installation.google_cloud_run_v2_job.reports", "create"))}
+	r.save(t)
+	fakeTerminal(t)
+
+	out, errOut, err := executeStdin(t, "", "update")
+	if err != nil {
+		t.Fatalf("an installation that records no base image does not reach this release's reports job with `fugaro update` alone (exit %d):\n%s\n%s", ExitCode(err), out, errOut)
+	}
+
+	pin := r.pinnedBase(config.BaseKind, convergeRelease)
+	rep, _ := r.tfvars(t)["reports"].(map[string]any)
+	if rep == nil {
+		t.Fatalf("the installation tfvars carry no reports, so this run applied the root without the job R7 plans: %v", r.tfvars(t))
+	}
+	if got := rep["image"]; got != pin {
+		t.Errorf("the reports job runs from %v, want the base image the run pinned, %q: the job runs the CLI out of the image, and one left at the image the run started with lags an update", got, pin)
+	}
+	if cc, _ := r.tfvars(t)["catalog_check"].(map[string]any); cc["image"] != rep["image"] {
+		t.Errorf("the two scheduled jobs run from different images (%v and %v); both run FROM base_images.%s", cc["image"], rep["image"], config.BaseKind)
+	}
+	if got := rep["job"]; got != infra.ReportsJobName {
+		t.Errorf("the installation's reports job is named %v, want %q", got, infra.ReportsJobName)
+	}
+	// The job's whole assignment is its environment's document, which is the
+	// wire format R11's command reads: a job deployed without it starts and
+	// writes nothing.
+	env, _ := rep["env"].(map[string]any)
+	raw, _ := env[infra.ReportsJobDocEnv].(string)
+	if raw == "" {
+		t.Fatalf("the reports job's environment carries no %s: %v", infra.ReportsJobDocEnv, env)
+	}
+	var doc infra.ReportsJobDoc
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		t.Fatalf("%s: %v", infra.ReportsJobDocEnv, err)
+	}
+	if doc.Version != infra.ReportsJobDocVersion {
+		t.Errorf("the job's document is version %d, want %d", doc.Version, infra.ReportsJobDocVersion)
+	}
+	if doc.Bucket == "" || doc.Project == "" {
+		t.Errorf("the job's document names project %q and bucket %q, and it has no checkout to read either from", doc.Project, doc.Bucket)
+	}
+}
+
 // TestUpdateLeavesAnInstallationWithACurrentCatalogBaseAlone: the state the
 // pin above leaves behind — a catalog, and the base image this release's own
 // run would write — is the ordinary one: the images stage says No changes and

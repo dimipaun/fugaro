@@ -92,16 +92,24 @@ func (r *run) parentEnv() map[string]string {
 // environment (F8, D1373); a declared one still reaches the agent through the
 // declared-secret path alone.
 //
+// held is every name this run's workflow declares a secret for, declared or
+// not (imageEnvDroppedNamesForRun). The two are the same set for every run but
+// a review one, and the second is what holds the rule after the flip: a
+// switched repository's job mounts none of those secrets, so its
+// FUGARO_SECRET_ENVS names none of them and the run fetched their values
+// instead — a value that would otherwise reach a review run's agent here
+// (G12).
+//
 // Nothing here registers a value with the redactor (D1376, the owner's O3
 // answer of 2026-11-06): a passed value is not a secret, the doc already
 // forbids a credential in an image, and the agent can read the runner's
 // environment through /proc.
-func (r *run) imageEnv(declared []string) map[string]string {
+func (r *run) imageEnv(declared, held []string) map[string]string {
 	parent := r.parentEnv()
 	if parent[ImageEntryEnv] == "" {
 		return nil
 	}
-	dropped := ImageEnvDroppedNames(parent, declared)
+	dropped := imageEnvDroppedNamesForRun(parent, declared, held)
 	out := make(map[string]string, len(parent))
 	for name, value := range parent {
 		if !slices.Contains(dropped, name) {
@@ -538,7 +546,7 @@ func (r *run) writeManagedSettings(stage string, pins map[string]string) error {
 	}
 	vars := map[string]string{}
 	if gw != nil && account == "" {
-		gwVars, err := agent.GatewayVars(r.modelAuth(), *gw, r.parentEnv())
+		gwVars, err := agent.GatewayVars(r.servedAuth(), *gw, r.parentEnv())
 		if err != nil {
 			return fmt.Errorf("writing Claude Code's managed settings: %w", err)
 		}

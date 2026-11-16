@@ -64,7 +64,7 @@ type policyDrift struct {
 // `providers` reaches a run through its own job's copy, not through this node
 // (F9), so a config whose only difference is its providers: block is no reason
 // to rewrite what every run of the project is admitted by.
-func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy) []policyDrift {
+func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy, identities map[string]string) []policyDrift {
 	if lc.Budget == nil || p == nil {
 		// A config with no budget block names no budget backend, so the stage
 		// reads no node for it at all (policyNodeUnreachable); and a node the
@@ -158,6 +158,21 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy) []policyDri
 	// operator has to see.
 	if lc.CloneURLs != nil {
 		add("clone_urls", projectpolicy.CloneURLs(lc.CloneURLsEffective(nil)), p.CloneURLs, false)
+	}
+	// The binaries block reaches a run off this node and nowhere else (D981,
+	// D983) — no job's environment carries it — and the local config is its
+	// carrier from this release on (AR1, D987), so a config that states one
+	// where the node carries another is exactly the gap this stage exists to
+	// close: without the comparison, the operator's own `binaries:` edit would
+	// reach no run until they ran the explicit publish, which is the second
+	// command the HARD RULE forbids. It is compared by the publisher's own keep
+	// rule (BinariesEffective), the clone_urls line's reason: a config that
+	// writes no block is not reported — nil would read as a difference against
+	// every node that carries a block, and the block is then deliberately the
+	// node's own (D987) — while a written block, the empty one that clears the
+	// list included, is the operator's edit and is reported like any other.
+	if lc.Binaries != nil {
+		add("binaries", lc.BinariesEffective(p.Binaries), p.Binaries, false)
 	}
 	// The triage switch reaches a run off this node too (D1854), so a config
 	// that states it where the node states the other answer is a difference a
@@ -271,6 +286,32 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy) []policyDri
 	for _, member := range accountChoiceNames(fileAccounts, nodeAccounts) {
 		add(member, fileAccounts[member], nodeAccounts[member], false)
 	}
+	// The typed Bitbucket tokens are DERIVED from the local config, like the
+	// accounts block and for a stronger reason: the node is the only place the
+	// credentials service learns what each token reaches (R5), and this key is
+	// new with a release that does not move the node's version — so an
+	// installation whose node is already at this version has NO migration step
+	// that would carry it, and this comparison is the whole of what makes
+	// `fugaro update` publish it. Without the row the operator's own records
+	// reach no run, and the one command the upgrade is would need a second one.
+	//
+	// It is compared by the derivation and not by the records as written, which
+	// is the accounts rule above: the node's spelling of a coverage entry is
+	// provider-qualified and the file's is not, so comparing the file's own
+	// form would report a difference on every run — a publish on every update,
+	// forever. A derivation the config cannot state is reported as the member
+	// alone (the accounts case), and the publisher's own refusal names the
+	// entry to fix.
+	//
+	// A config that names no record derives none, and a node that carries the
+	// key is then a difference this stage closes: removing the block is how an
+	// operator takes the tokens away, and it is a removal they have to see.
+	tokens, err := projectpolicy.DeriveBitbucketTokens(lc.BitbucketTokens, identities)
+	if err != nil {
+		out = append(out, policyDrift{Member: projectpolicy.BitbucketTokensKey})
+		return out
+	}
+	add(projectpolicy.BitbucketTokensKey, tokens, p.BitbucketTokens, false)
 	return out
 }
 
@@ -468,12 +509,12 @@ func policyImageTokensRefusal(p *projectpolicy.Policy, ref string) error {
 // kept as the writer's rule has it. `fugaro project policy publish` and the
 // policy stage call it, so the bytes they write from one local config cannot
 // differ; TestUpdateStageAndTheExplicitDoorBuildTheSameNode is the guard.
-func policyNodeForPublish(ctx context.Context, lc *localcfg.Config, old *projectpolicy.Policy, base []byte, exists, seed, removeRouting bool) ([]byte, *projectpolicy.Policy, map[string]string, error) {
+func policyNodeForPublish(ctx context.Context, lc *localcfg.Config, old *projectpolicy.Policy, base []byte, exists, seed, removeRouting bool, identities map[string]string) ([]byte, *projectpolicy.Policy, map[string]string, error) {
 	allow, sources, err := publishAllowRepos(ctx, lc, old, seed)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	pol, keepRouting, err := buildProjectPolicy(lc, allow, old, removeRouting)
+	pol, keepRouting, err := buildProjectPolicy(lc, allow, old, removeRouting, identities)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -483,7 +524,7 @@ func policyNodeForPublish(ctx context.Context, lc *localcfg.Config, old *project
 	if err := policyImageTokensRefusal(pol, lc.BaseImage(config.BaseKind)); err != nil {
 		return nil, nil, nil, err
 	}
-	body, err := policyNodeBytes(pol, base, exists, keepRouting, lc.CloneURLs == nil)
+	body, err := policyNodeBytes(pol, base, exists, keepRouting, lc.CloneURLs == nil, lc.Binaries == nil)
 	if err != nil {
 		return nil, nil, nil, err
 	}

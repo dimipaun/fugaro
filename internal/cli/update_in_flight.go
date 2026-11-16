@@ -29,19 +29,21 @@ import (
 // internal/budget/rules); and no step of the update writes a run's registry
 // entry, its ledger, its day counters or its record.
 //
-// Four steps can still reach one, and the line names every one of them that
+// Five steps can still reach one, and the line names every one of them that
 // this run can take — naming a step and why, rather than either claiming a
 // safety that is not there or dropping the claim: the budget mode's raise to
 // enforce, which a session re-reads on every lease and every report while the
 // policy node is read once (`Session.readConfig`); the policy node itself, which
 // a project routed through the credentials cascade re-reads on EVERY model call
 // (`internal/credsvc`), so a run in flight is held to the node this update
-// publishes from its next call; the window between that write and the
-// credentials service's own replacement, which is the release before this one's
-// service meeting a node it cannot read for the length of one apply; and a
-// retirement, which deletes an orphaned Cloud Run job and takes the executions
-// running on it with it (`deleteOrphanedJob`, init_retire.go). None of the four
-// is the update stopping a run, and none of them is asked to wait.
+// publishes from its next call; the Bitbucket tokens that node's write carries,
+// which a proxied call re-reads per request, so the call after the publish may
+// be served by a different token than the call before it; the window between
+// that write and the credentials service's own replacement, which is the release
+// before this one's service meeting a node it cannot read for the length of one
+// apply; and a retirement, which deletes an orphaned Cloud Run job and takes the
+// executions running on it with it (`deleteOrphanedJob`, init_retire.go). None
+// of the five is the update stopping a run, and none of them is asked to wait.
 
 // announceRunsInFlight prints the update door's one line about the runs in
 // flight, and nothing at all when there are none (an installation with an empty
@@ -76,33 +78,35 @@ func (e *initEngine) announceRunsInFlight(ctx context.Context) {
 	if err != nil || n == 0 {
 		return
 	}
+	lead := fmt.Sprintf("%s%s in flight: update waits for none and changes nothing they hold", o.programPrefix(), runsPhrase(n))
 	if steps := e.inFlightSteps(ctx, db); len(steps) > 0 {
-		// The step names are the screen's line, and the clause that says why
-		// each one can reach a run is the run's own account (stageDetail: the
-		// log always, the terminal under -v). A run with no log has nowhere
-		// else to put them, so there the whole clause stands where it always
-		// did (G5).
+		// The screen says only that a step can; the steps and the clause that
+		// says why each one can are the run's own account (stageDetail: the log always,
+		// the terminal under -v). A run with no log has nowhere else to put
+		// them, so there the whole clause stands (G5).
 		if r.repLog == nil {
-			fmt.Fprintf(r.w, "%s%d run(s) are in flight: fugaro update asks no run to finish first and rewrites nothing a run holds, but these steps can still reach them — %s\n",
-				o.programPrefix(), n, inFlightWhy(steps))
+			fmt.Fprintf(r.w, "%s, but can still reach them: %s\n", lead, inFlightWhy(steps))
 			return
 		}
-		fmt.Fprintf(r.stageDetail(), "%s%d run(s) are in flight: fugaro update asks no run to finish first and rewrites nothing a run holds, but these steps can still reach them — %s\n",
-			o.programPrefix(), n, inFlightWhy(steps))
-		fmt.Fprintf(r.w, "%s%d run(s) are in flight: fugaro update asks no run to finish first and rewrites nothing a run holds; it can still reach them at %s\n",
-			o.programPrefix(), n, strings.Join(inFlightNames(steps), ", "))
+		fmt.Fprintf(r.stageDetail(), "%s, but can still reach them: %s\n", lead, inFlightWhy(steps))
+		fmt.Fprintf(r.w, "%s, but can still reach them\n", lead)
 		return
 	}
-	fmt.Fprintf(r.w, "%s%d run(s) are in flight: fugaro update asks no run to finish first and rewrites nothing a run holds, and no step of it can reach them\n",
-		o.programPrefix(), n)
+	fmt.Fprintf(r.w, "%s, and no step reaches them\n", lead)
+}
+
+func runsPhrase(n int) string {
+	if n == 1 {
+		return "1 run"
+	}
+	return fmt.Sprintf("%d runs", n)
 }
 
 // inFlightStep is one step of this update that can reach a run in flight: the
-// name the door's own line carries, and the clause that says why — the step and
-// the reason, in the words a person reads, which is what the log gets whole.
+// clause that names it and says why, in the words a person reads, which is what
+// the log gets whole.
 type inFlightStep struct {
-	name string
-	why  string
+	why string
 }
 
 // inFlightWhy is the steps as the one clause each that explains them, for the
@@ -115,19 +119,8 @@ func inFlightWhy(steps []inFlightStep) string {
 	return strings.Join(whys, "; ")
 }
 
-// inFlightNames is the steps as the short names the screen's one line carries:
-// they are what CLAUDE.md's rule is about — the steps that can still reach a
-// run are named there rather than denied.
-func inFlightNames(steps []inFlightStep) []string {
-	names := make([]string, len(steps))
-	for i, s := range steps {
-		names[i] = s.name
-	}
-	return names
-}
-
 // inFlightSteps is the steps of THIS update that can reach a run in flight, one
-// entry each: the name the screen's line carries and the clause that says why,
+// entry each: the clause that names it and says why,
 // in the words a person reads. An empty result is the update that leaves every
 // run in flight exactly where it is, and it is the ordinary case.
 //
@@ -142,28 +135,27 @@ func (e *initEngine) inFlightSteps(ctx context.Context, db *rtdb.Client) []inFli
 	isManaged := e.managedProjectRead(ctx)
 	if e.budgetModeBindsRuns(ctx, db, isManaged) {
 		steps = append(steps, inFlightStep{
-			name: fmt.Sprintf("the budget mode's raise to %s", budget.ModeEnforce),
-			why:  fmt.Sprintf("the budget mode's raise to %s, which a run in flight meets at its next lease and which is your own caps taking effect", budget.ModeEnforce)})
+			why: fmt.Sprintf("the budget mode's raise to %s, which a run in flight meets at its next lease and which is your own caps taking effect", budget.ModeEnforce)})
 	}
 	if e.policyReadsLive(ctx, db) {
 		steps = append(steps, inFlightStep{
-			name: "the policy this update publishes",
-			why:  fmt.Sprintf("the policy this update publishes, which every model call of this project's runs re-reads (%s: %s), so a run in flight is held to the new node from its next call", "routing.claude.via", projectpolicy.RouteCascade)})
+			why: fmt.Sprintf("the policy this update publishes, which every model call of this project's runs re-reads (%s: %s), so a run in flight is held to the new node from its next call", "routing.claude.via", projectpolicy.RouteCascade)})
 	}
 	if e.credentialsWindowOpens(ctx, db) {
 		steps = append(steps, inFlightStep{
-			name: "the credentials service this update replaces",
-			why:  "the credentials service this update replaces, which reads the published node on every call it serves: this run raises the node's version in one stage and moves the service in the next, and a call landing between the two meets the previous release's service with a node its own binary does not understand"})
+			why: "the credentials service this update replaces, which reads the published node on every call it serves: this run raises the node's version in one stage and moves the service in the next, and a call landing between the two meets the previous release's service with a node its own binary does not understand"})
+	}
+	if e.tokensPublishReachesRuns(ctx, db) {
+		steps = append(steps, inFlightStep{
+			why: "the Bitbucket tokens this update publishes, which a proxied call re-reads on every request (bitbucketproxy.go): the call after the publish may be served by a different token than the call before it, and it is the operator's own records taking effect"})
 	}
 	if e.markerConverges(ctx) {
 		steps = append(steps, inFlightStep{
-			name: "the creation fact this update rewrites",
-			why:  fmt.Sprintf("the creation fact this update rewrites from version %d to version %d, which a run in flight re-reads per command: that run is the release behind, whose reader refuses a version it does not know, so its own apply keeps the typed confirmation instead of applying under the gate — nothing of the run is rewritten, and no record, ledger or counter of it is touched", managed.MarkerVersionBuilds, managed.MarkerVersionNoBuilds)})
+			why: fmt.Sprintf("the creation fact this update rewrites from version %d to version %d, which a run in flight re-reads per command: that run is the release behind, whose reader refuses a version it does not know, so its own apply keeps the typed confirmation instead of applying under the gate — nothing of the run is rewritten, and no record, ledger or counter of it is touched", managed.MarkerVersionBuilds, managed.MarkerVersionNoBuilds)})
 	}
 	if e.retireTakesExecutions(isManaged) {
 		steps = append(steps, inFlightStep{
-			name: "the retirement this update runs",
-			why:  "the retirement this update runs, which deletes an orphaned job and takes the executions still running on it"})
+			why: "the retirement this update runs, which deletes an orphaned job and takes the executions still running on it"})
 	}
 	return steps
 }
@@ -278,6 +270,49 @@ func (e *initEngine) credentialsWindowOpens(ctx context.Context, db *rtdb.Client
 		return false
 	}
 	return credentialsImageStale(releaseVersion(), image)
+}
+
+// tokensPublishReachesRuns is whether this update's policy stage can publish a
+// node whose bitbucket_tokens key a run in flight then meets: the local config
+// names typed Bitbucket token records (so the stage derives the key and the
+// drift comparison finds it) and the published node turns the credentials
+// service's Bitbucket route on (`bitbucket_token.proxy`, the operator's
+// per-installation switch), which is what sends a run's Bitbucket calls through
+// the service rather than to the provider with the job's own mounted token.
+//
+// The route re-reads the node on every request it serves — the selection is made
+// from the node's coverage, and the record it builds is derived from the node
+// alone (`internal/credsvc/bitbucketproxy.go`) — where the runner's own read is
+// memoized at bootstrap. So the first call after this update's write may be
+// served by a different token than the call before it: a record the operator has
+// just added takes over a repository it covers, and one they narrowed stops
+// serving it. That is the operator's own records taking effect on a run already
+// running, which is why it is named rather than passed over.
+//
+// A run of the release behind sees the key too, and neither half of the gate is
+// about that: its runner tolerates an unknown top-level key and falls back to
+// its single `GET /user` identity (R5), and the row for this step in
+// docs/design/update-in-flight.md names it. What this asks is the pair the
+// per-call re-read is gated on, and it errs towards naming the step, as every
+// clause here: whether the publish turns out to change the key at all (the
+// records may be exactly what the node already carries) is the stage's own
+// decision, and so is whether this run gets as far as writing it.
+//
+// Both reads answer silence the way the rest of this file does: a node that is
+// not there is a project with no proxy switch to read, and a read that failed is
+// the answer every other clause treats as "no". The node is read through
+// ReadCarriedForward for policyReadsLive's reason — the node every installation
+// holds while this update runs may be written in the version behind, and Read
+// would refuse it and answer "no proxy" for the project that has one.
+func (e *initEngine) tokensPublishReachesRuns(ctx context.Context, db *rtdb.Client) bool {
+	if e.lc == nil || len(e.lc.BitbucketTokens) == 0 {
+		return false
+	}
+	p, found, err := projectpolicy.ReadCarriedForward(ctx, db)
+	if err != nil || !found || p == nil || p.BitbucketToken == nil {
+		return false
+	}
+	return p.BitbucketToken.Proxy
 }
 
 // markerConverges is whether this update rewrites the installation's creation

@@ -4,8 +4,10 @@ package eeboundary
 // moved code fills is set once, and by `ee/register` alone. The core defines the
 // setters -- cli.SetLaunchDeclarer and cli.RegisterCommand (E1.1),
 // policy.SetGovernance, runner.SetStage, digest.SetSections (E1.2),
-// cli.SetEditionEE (E1.3), orchestrator.SetHandoff and orchestrator.SetBatch
-// (O17 and O18 of the stateless orchestrator plan) and
+// runner.SetGatewayStageLimit (T7.2's gateway half),
+// cli.SetEditionEE (E1.3), orchestrator.SetHandoff, orchestrator.SetBatch and
+// orchestrator.SetWorkspace
+// (O17, O18 and O19 of the stateless orchestrator plan) and
 // access.SetSubscriptionLimit (the lapse limit, RS9 of docs/roles-scopes) --
 // and a core caller that called one could set a seam
 // to something the tagged build did not intend, or switch enforcement off in a
@@ -52,9 +54,11 @@ var seamSetterNames = []string{
 	"SetSections",
 	"SetGovernance",
 	"SetStage",
+	"SetGatewayStageLimit",
 	"SetEditionEE",
 	"SetHandoff",
 	"SetBatch",
+	"SetWorkspace",
 	"SetSubscriptionLimit",
 	"RegisterLaunchPlanner",
 }
@@ -171,7 +175,7 @@ func TestOnlyEERegisterSetsTheSeams(t *testing.T) {
 		t.Fatalf("the scan parsed %d non-test Go files: it did not see the module, so an empty result would prove nothing", parsed)
 	}
 	assertNoFindings(t, &report{findings: findings}, seamRule,
-		"Every seam is a package-level value whose default is the core implementation, and ee/register sets it once (design ee-boundary-moves.md §5.5). A core caller that set cli.SetLaunchDeclarer, cli.RegisterCommand, policy.SetGovernance, runner.SetStage, digest.SetSections, cli.SetEditionEE, orchestrator.SetHandoff, orchestrator.SetBatch or access.SetSubscriptionLimit could halve the enforcement a tagged binary registered or switch a seam off. Move the call into ee/register, or reach the seam's value instead of setting it.")
+		"Every seam is a package-level value whose default is the core implementation, and ee/register sets it once (design ee-boundary-moves.md §5.5). A core caller that set cli.SetLaunchDeclarer, cli.RegisterCommand, policy.SetGovernance, runner.SetStage, runner.SetGatewayStageLimit, digest.SetSections, cli.SetEditionEE, orchestrator.SetHandoff, orchestrator.SetBatch or access.SetSubscriptionLimit could halve the enforcement a tagged binary registered or switch a seam off. Move the call into ee/register, or reach the seam's value instead of setting it.")
 }
 
 func TestSeamSetterScanCatchesPlantedCalls(t *testing.T) {

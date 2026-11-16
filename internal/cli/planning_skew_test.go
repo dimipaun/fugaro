@@ -380,7 +380,7 @@ func TestValidateWarnsWhenTheProjectLayerSetsPlanning(t *testing.T) {
 // make writing the key an operator step, and `fugaro update` the one command the
 // user is told to run may not be two.
 func TestUpdateConvergesFromThePreviousVersionWithPlanningKey(t *testing.T) {
-	r := newConvergeRigYAML(t, v6Node(), refreshYAML+"planning: { decoupling: false }\n")
+	r := newConvergeRigYAML(t, v7Node(), refreshYAML+"planning: { decoupling: false }\n")
 	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
 }
 
@@ -434,7 +434,7 @@ func predateBaseImageTo(t *testing.T, r *convergeRig, rel string) {
 // judged the config as the run found it would refuse here and turn writing the
 // key into an operator step, which is the failure this test exists to catch.
 func TestUpdateConvergesFromABaseImageThatPredatesPlanning(t *testing.T) {
-	r := newConvergeRigYAML(t, v6Node(), refreshYAML+"planning: { decoupling: false }\n")
+	r := newConvergeRigYAML(t, v7Node(), refreshYAML+"planning: { decoupling: false }\n")
 	predatePlanning(t, r)
 	if got, want := projectConfigOf(t, r).BaseImages["base"], pinnedRef("base", shiftRelease(t, planningSince, -1)); got != want {
 		t.Fatalf("the installation records the base image %s, want the release before the key, %s: this is not the installation the test is about", got, want)

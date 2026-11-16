@@ -79,6 +79,11 @@ const (
 	schedulerAudience = "https://api.fugaro.example"
 	sealerKeyName     = "projects/fugaro-example/locations/europe-west1/keyRings/portal/cryptoKeys/handover"
 	tenantsCollection = "orgs"
+	// termsVersion is the version of the terms the fixture's deployment serves
+	// and records at a sign-up (D2199). The owner has not published the wording
+	// itself, so a test names a version of its own, in the shape the terms will
+	// spell one.
+	termsVersion = "2026-10-27"
 )
 
 // buyerAddress is the address a merchant's payload carries for the buyer of a
@@ -320,12 +325,25 @@ func (s *steps) index(step string) int {
 //
 // It answers a query's documents in no particular order, which is what a store
 // with no order does: a test that is about an order asks for one.
+//
+// A withdrawal a rebind makes through a transaction (Tx.Revoke) goes to the key
+// store the case reads, because a deployment's two seams are one document store:
+// firestore_store.go's NewDocStore is handed the database the portal's seam is
+// reached over, and the key store's records live in it beside the portal's
+// documents. A case that reads a revocation back from f.store is therefore
+// reading the same place the service wrote it, and a case that needs the store's
+// own rules — a transaction that cannot commit, a write that lands beside this
+// seam's — wires one document store behind both seams instead
+// (workspaces_test.go's docsOnDocstore).
 type docsSpy struct {
-	mu   sync.Mutex
-	held map[string]Doc
+	mu    sync.Mutex
+	held  map[string]Doc
+	store Store
 }
 
-func newDocsSpy() *docsSpy { return &docsSpy{held: map[string]Doc{}} }
+func newDocsSpy(store Store) *docsSpy {
+	return &docsSpy{held: map[string]Doc{}, store: store}
+}
 
 func (d *docsSpy) Get(_ context.Context, collection, id string) (Doc, error) {
 	d.mu.Lock()
@@ -348,6 +366,21 @@ func (d *docsSpy) Delete(_ context.Context, collection, id string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	delete(d.held, collection+"/"+id)
+	return nil
+}
+
+// Revoke withdraws keys into the store this seam stands on, one store call each:
+// in a deploy the two seams are one document store, and here they are one test
+// store. This spy has no transactions of its own to nest, which is exactly what
+// makes it unable to tell a withdrawal committed with the caller's transaction
+// from one committed beside it — a case that has to tell them apart wires a real
+// document store behind both seams (workspaces_test.go's docsOnDocstore).
+func (d *docsSpy) Revoke(ctx context.Context, revocations []Revocation) error {
+	for _, r := range revocations {
+		if err := d.store.Revoke(ctx, r); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -375,19 +408,32 @@ func (d *docsSpy) Update(ctx context.Context, fn func(context.Context, Tx) error
 }
 
 // signInSpy is the portal's sign-in verifier in a test: the caller it answers
-// and every token it was handed, so a test reads what an area did with one.
+// and every token it was handed, so a test reads what an area did with one. The
+// tokens are taken under a lock because a case may put a burst of requests
+// through the handler at once (orgs_test.go's concurrent sign-ups).
 type signInSpy struct {
+	mu     sync.Mutex
 	caller Caller
 	err    error
 	tokens []string
 }
 
 func (s *signInSpy) Verify(_ context.Context, idToken string) (Caller, error) {
+	s.mu.Lock()
 	s.tokens = append(s.tokens, idToken)
+	s.mu.Unlock()
 	if s.err != nil {
 		return Caller{}, s.err
 	}
 	return s.caller, nil
+}
+
+// RequireSSO is the rule and not the spy: the fixture's seam applies P1.3's own
+// implementation (ssoRefuses), so a test that reads a refusal reads the rule a
+// deployment would apply. What the spy answers is the caller, and that is what a
+// test sets to be somebody else.
+func (s *signInSpy) RequireSSO(caller Caller, rule SSORule) error {
+	return ssoRefuses(signInOf(caller), rule)
 }
 
 // paddleSpy is the merchant of record in a test: what it answers and what it was
@@ -557,7 +603,7 @@ func newFixtureWith(t *testing.T, env Environment, edit func(*fixture)) *fixture
 	f.stepUp = &stepUpSpy{accept: true, accepts: stepUpCode}
 	f.notifier = &notifierSpy{}
 	f.auditor = &auditorSpy{}
-	f.docs = newDocsSpy()
+	f.docs = newDocsSpy(f.store)
 	f.signIn = &signInSpy{caller: Caller{
 		UID: "uid-1", Email: ownerAccount, Provider: "google.com", AuthTime: f.now,
 	}}
@@ -616,6 +662,7 @@ func newFixtureWith(t *testing.T, env Environment, edit func(*fixture)) *fixture
 		SchedulerAudience: schedulerAudience,
 		SealerKeyName:     sealerKeyName,
 		TenantsCollection: tenantsCollection,
+		TermsVersion:      termsVersion,
 	}
 	f.deps = &Deps{
 		Store:     f.store,

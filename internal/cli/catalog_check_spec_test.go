@@ -450,15 +450,104 @@ func TestTheInstallationTakesTheJobsSettingFromThePublishedLayer(t *testing.T) {
 		})
 	}
 
-	// An installation with no catalog check reads nothing: there is no value to
-	// correct, and the read would be a bucket call this run does not owe.
+	// An installation with neither of the scheduled jobs reads nothing: there
+	// is no value to correct, and the read would be a bucket call this run does
+	// not owe.
 	old := layerPublishedRead
 	t.Cleanup(func() { layerPublishedRead = old })
 	layerPublishedRead = func(context.Context, *localcfg.Config, string) ([]byte, int64, bool, error) {
-		t.Fatal("the bucket was read for an installation with no catalog check")
+		t.Fatal("the bucket was read for an installation with neither of the scheduled jobs")
 		return nil, 0, false, nil
 	}
 	if got := (&initRun{}).publishedJobsPaused(context.Background(), lc, infra.InstallationSpec{}); got.CatalogCheck != nil {
 		t.Errorf("a spec with no catalog check came back with one: %+v", got.CatalogCheck)
+	}
+}
+
+// TestTheInstallationTakesTheReportsJobSettingFromThePublishedLayer: the
+// reports job's half of the same correction (R7). Its schedule is stopped by
+// default and started by jobs.reports.paused alone, so a run whose local layer
+// file is not the project's answer — one the layer stage seeds FROM the
+// published object, or re-seeds because the object has moved past it (D854) —
+// would apply a stop the project never asked for and leave the job idle until
+// the next update.
+//
+// The two keys are one object, so the answers are read together: a document
+// that starts both jobs corrects both, and the bucket is read once.
+func TestTheInstallationTakesTheReportsJobSettingFromThePublishedLayer(t *testing.T) {
+	const (
+		both    = "version: 1\nproject: aurora\ngcp_project: proj-1234\njobs:\n  catalog_check: { paused: false }\n  reports: { paused: false }\n"
+		silent  = "version: 1\nproject: aurora\ngcp_project: proj-1234\n"
+		stopped = "version: 1\nproject: aurora\ngcp_project: proj-1234\njobs:\n  reports: { paused: true }\n"
+	)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	lc, err := localcfg.Parse([]byte(catalogProducerLocal))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		what      string
+		file      string // "" writes no local layer file
+		published string // "" publishes no layer at all
+		recorded  string // the generation this machine's file was written from; "" is the first run
+		want      bool
+	}{
+		{"no local file, the published layer starts the job", "", both, "", false},
+		{"the local file is stale, the published layer starts the job", silent, both, "3", false},
+		{"the local file is the published one, and it starts the job", both, both, "7", false},
+		{"the local file is the published one, and it stops the job", stopped, stopped, "7", true},
+		{"no local file, no published layer", "", "", "", true},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			lc.LayerGeneration = tc.recorded
+			path := localLayerPath(t)
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				t.Fatal(err)
+			}
+			if tc.file != "" {
+				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(tc.file), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			spec, err := installOptions(&initOptions{}, lc)
+			if err != nil {
+				t.Fatalf("installOptions: %v", err)
+			}
+			if spec.Reports == nil {
+				t.Fatal("the installation plans no reports job, and this local config records a base image")
+			}
+			var reads int
+			old := layerPublishedRead
+			t.Cleanup(func() { layerPublishedRead = old })
+			layerPublishedRead = func(context.Context, *localcfg.Config, string) ([]byte, int64, bool, error) {
+				reads++
+				if tc.published == "" {
+					return nil, 0, false, nil
+				}
+				return []byte(tc.published), 7, true, nil
+			}
+			got := (&initRun{}).publishedJobsPaused(context.Background(), lc, spec)
+			if reads != 1 {
+				t.Errorf("the bucket was read %d times, want 1: the two keys are one object, and one read answers for both", reads)
+			}
+			if got.Reports == nil {
+				t.Fatal("the spec lost its reports job")
+			}
+			if got.Reports.Paused != tc.want {
+				t.Errorf("the installation applies the reports schedule paused %v, want %v: the setting is the project layer's, and this run's own file is not always the project's answer", got.Reports.Paused, tc.want)
+			}
+			// The two keys are corrected together, from the one read: the
+			// document starts both jobs, so whenever it is the project's answer
+			// the catalog check comes back started in the same call.
+			if got.CatalogCheck == nil {
+				t.Fatal("the spec lost its catalog check")
+			}
+			if want := tc.published != both; got.CatalogCheck.Paused != want {
+				t.Errorf("the catalog check comes back paused %v, want %v: the two keys are one object, and one read answers for both", got.CatalogCheck.Paused, want)
+			}
+		})
 	}
 }

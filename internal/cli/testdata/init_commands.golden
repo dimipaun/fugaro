@@ -14,7 +14,7 @@
     fugaro setup --firebase-project <gcp-project-id>
 [images] prompt: in your own terminal window, not through a coding agent or a pipe, run the command below: it asks you nothing and pins this release's base images and copies the release images
     fugaro setup
-[installation-2] prompt: in your own terminal window, not through a coding agent or a pipe, run the command below: it asks you nothing and applies the catalog check job
+[installation-2] prompt: in your own terminal window, not through a coding agent or a pipe, run the command below: it asks you nothing and applies the scheduled jobs
     fugaro setup
 [installation-2/firebase] prompt: in your own terminal window, not through a coding agent or a pipe, run the command below: it asks you nothing and applies the history job
     fugaro setup --firebase-project <gcp-project-id>

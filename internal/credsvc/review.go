@@ -53,17 +53,18 @@ const (
 	// with the run's own permission set, and the operator's stop flag.
 	ClassRepository JobClass = "repository"
 	// ClassShared is a *coding* shared project job (gcp.ProjectServiceAccountID
-	// over the published policy's profiles): admitted to the model path and to
-	// the mint for the identity's own repository, when that repository is one
-	// its profile is bound to (G21), and refused everywhere else. It is the
-	// same shape the review half already pairs with, and for the reason F40
-	// gives: a shared account names no single repository the way a
-	// per-repository job's does, so the binding is the identity's own
-	// repository plus the two gates that admit it, the row's list and the
-	// project's own answer for the profile (pairShared). It is bound to the
-	// account Verify answered with, exactly as the review class is: the
-	// identity's profile comes from the verifier's own row and never from
-	// anything the caller sent.
+	// over the published policy's profiles): admitted to the model path, to
+	// the Bitbucket proxy route and to the mint for the identity's own
+	// repository, when that repository is one its profile is bound to (G21)
+	// and, on the proxy route, one the published block lists and proxies
+	// (B5.3), and refused everywhere else. It is the same shape the review
+	// half already pairs with, and for the reason F40 gives: a shared account
+	// names no single repository the way a per-repository job's does, so the
+	// binding is the identity's own repository plus the gates that admit it,
+	// the row's list and the project's own answer for the profile
+	// (pairShared). It is bound to the account Verify answered with, exactly
+	// as the review class is: the identity's profile comes from the verifier's
+	// own row and never from anything the caller sent.
 	ClassShared JobClass = "shared"
 	// ClassReview is the review-only variant of a project job, per
 	// (profile, account): admitted to the mint, the sign and the model path

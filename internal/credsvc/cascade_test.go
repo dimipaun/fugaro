@@ -806,8 +806,8 @@ func TestProviderKeyPairingIsRefusedWhenOnlyAnAccountGoesByName(t *testing.T) {
 	if resp.StatusCode != StatusUnavailable {
 		t.Fatalf("a review caller paired with %q was answered %d, want %d: %s", config.ProviderKeyAccount, resp.StatusCode, StatusUnavailable, body)
 	}
-	if e := refusal(t, resp.StatusCode, body); e.Error != ErrorStateUnavailable {
-		t.Errorf("the refusal is %+v, want %q", e, ErrorStateUnavailable)
+	if e := refusal(t, resp.StatusCode, body); e.Error != ErrorNoCandidateCredentials {
+		t.Errorf("the refusal is %+v, want %q: nothing was offered this pairing, and that is the class that says the state was read and the list was empty", e, ErrorNoCandidateCredentials)
 	}
 	if got := resp.Header.Get(HeaderCredential); got != "" {
 		t.Errorf("%s = %q, want none: no credential answered this call", HeaderCredential, got)

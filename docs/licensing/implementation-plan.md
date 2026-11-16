@@ -48,7 +48,7 @@ organisation features, and `LICENSING.md` still says which parts the MIT licence
 
 **Amended 2026-10-27: the Subscription Terms draft.** [subscription-terms.md](subscription-terms.md)
 is a first draft of the Fugaro Subscription Terms that counsel's licence text names "at [URL TO BE
-PUBLISHED]", written for counsel to review and **not in force**. Two tasks follow it, both after
+PUBLISHED]", written for counsel to review and, at that date, not in force (counsel approved it on 2026-10-28 and it was published on 2026-11-11). Two tasks follow it, both after
 counsel: **L4.3** publishes the approved text on the website (owner-run), and **L4.4** replaces the
 placeholder URL in the three licence files. Neither is approved, and this amendment edits no
 licence file ([reconciliation.md](reconciliation.md#amendment-2026-10-27-the-subscription-terms-draft)).

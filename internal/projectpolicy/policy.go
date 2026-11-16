@@ -342,6 +342,37 @@ type Policy struct {
 	// rule.
 	BitbucketToken *BitbucketToken `json:"bitbucket_token,omitempty"`
 
+	// BitbucketTokens are the project's TYPED Bitbucket tokens (R5): one entry
+	// per record of the local config's bitbucket_tokens block, carrying the
+	// token's document key, its type, its coverage and the identity the creds
+	// state store recorded for it. The credentials service reads it per
+	// request to decide which token serves a call, and the runner reads it once
+	// at bootstrap to know which accounts are its own (F20); the legacy
+	// bitbucket-token key above is not among the entries — it is the untyped
+	// record of R3 and is read off this node's own block.
+	//
+	// It is a TOP-LEVEL key and not a member of the block above, and that is
+	// deliberate rather than tidiness: every member of bitbucket_token is
+	// refused when it is unknown (validBitbucketTokenBlock), while every
+	// unknown top-level key is listed in UnknownKeys and tolerated by a runner
+	// of the release behind (P8) and refused by its CLI. A member added inside
+	// the block would therefore make every reader of the release behind refuse
+	// the WHOLE node — and the node is re-read while runs are in flight (the
+	// service reads it per model call and per request), so that refusal would
+	// stop runs an update promises to leave alone. The key is the same skew the
+	// image_catalog key set (D1156), down to the one line the release notes owe
+	// it: an older CLI refuses a node carrying it until it is upgraded, and an
+	// older runner keeps serving, falling back to its single GET /user
+	// identity.
+	//
+	// It is a pointer because the promise is about the bytes: omitempty is a
+	// no-op on a struct, so a value would write "bitbucket_tokens":{} for every
+	// project that names no typed token and make the key's skew every project's.
+	// An absent member and a written empty one are the same key — a project
+	// that names no typed token — so the node of such a project is byte for
+	// byte what it was before this key existed.
+	BitbucketTokens *BitbucketTokens `json:"bitbucket_tokens,omitempty"`
+
 	// BitbucketAPIRoots are the Bitbucket API roots the owner allow-lists
 	// (D474, task T2.8): the runner accepts FUGARO_BITBUCKET_API_URL only when
 	// it is one of these, matched exactly after trimming one trailing "/". The
@@ -464,8 +495,9 @@ type Policy struct {
 	ImageMap ImageMap `json:"image_map,omitempty"`
 
 	// Binaries is the rule that says which paths a run may add a binary at and
-	// how large one may be (D981–D983, AR0): the owner's own grant, on this
-	// node and nowhere else. It travels every member's road — the owner writes
+	// how large one may be (D981–D983, AR0): the owner's own grant, which the
+	// owner's local config states (AR1) and every run reads from this node. It
+	// travels every member's road — the owner writes
 	// it and the run fails closed on it — and it is here rather than in a
 	// repository's `fugaro.yaml` for a sharper reason than most: that file
 	// lives in the checkout the run's own agent writes, so a key there would
@@ -582,7 +614,7 @@ var knownTopLevelKeys = map[string]bool{
 	"providers": true, "model_prices": true, "routing": true,
 	"profiles": true, "clone_urls": true, "accounts": true,
 	"credentials": true, "base_branch": true,
-	"bitbucket_token": true, "bitbucket_api_roots": true,
+	"bitbucket_token": true, "bitbucket_tokens": true, "bitbucket_api_roots": true,
 	"review_floor": true, "verifier_accounts": true,
 	"image_catalog": true,
 	"image_map":     true, "bake_repos": true, "image_services": true,
@@ -1463,6 +1495,22 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 			return nil, true, err
 		}
 		p.BitbucketToken = bt
+	}
+	// The typed tokens' own key, beside the block and never inside it (R5):
+	// it is read whether or not the block is written, because the two are
+	// different tokens — the block is the legacy untyped one and this key is
+	// every typed one — and a project that holds only one of them reads
+	// exactly what it holds. It is decoded before the profiles for the block's
+	// reason: a node that carries it is read whole rather than against a part
+	// of itself, and nothing here is judged against the profiles (the typed
+	// records add no admission of their own; coverage never replaces
+	// allow_data_to, D2354).
+	if traw, ok := doc[BitbucketTokensKey]; ok && !IsNull(traw) {
+		tokens, err := decodeBitbucketTokens(traw)
+		if err != nil {
+			return nil, true, err
+		}
+		p.BitbucketTokens = tokens
 	}
 	if fraw, ok := doc["profiles"]; ok && !IsNull(fraw) {
 		// decodeProfileBlock's errors name their place themselves

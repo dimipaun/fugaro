@@ -80,6 +80,31 @@ func TestCheckRecipeImage(t *testing.T) {
 	}
 }
 
+// TestImageGateRefusalCarriesTheCauseMarker: the refusal an image gate writes is
+// what a person's log holds when a launch is turned away over a job image older
+// than the Fugaro its job would run, and `fugaro troubleshoot` answers that class
+// from the log alone by matching a marker inside that sentence
+// (causeMarkerJobImage, troubleshootCauses). A refusal that stopped carrying it
+// would leave that failure — the owner's own, reported 2026-11-15 — unanswered
+// again, and the launch here is the smallest one that really is refused.
+func TestImageGateRefusalCarriesTheCauseMarker(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x",
+		Recipe: &task.Recipe{Name: "mine", Source: "repo"}}
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.4.1")
+	err := checkRecipeImage(context.Background(), env, appSlug, spec, "base", &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("an image older than the recipe gate needs was accepted")
+	}
+	if !strings.Contains(err.Error(), causeMarkerJobImage) {
+		t.Errorf("the refusal does not carry the marker troubleshoot reads for this class (%q): %v", causeMarkerJobImage, err)
+	}
+	if !strings.Contains(err.Error(), imageGateRemedy) {
+		t.Errorf("the refusal no longer names the move the cause answers with: %v", err)
+	}
+}
+
 // TestCheckRecipeImageDigestSince: a recipe holding the digest step needs a
 // job image whose runner executes it, which is a release of its own
 // (digestSince) and not the 0.7.0 one the recipe's use_when would otherwise

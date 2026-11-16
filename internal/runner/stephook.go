@@ -187,7 +187,7 @@ func (r *run) stepTiming(name string, started time.Time) runstore.StageTiming {
 		Calls:            &sp.calls,
 		Agents:           &zero,
 		Repeats:          &zero,
-		ServedBy:         runstore.CredentialForAuth(r.modelAuth()),
+		ServedBy:         runstore.CredentialForAuth(r.servedAuth()),
 	}
 }
 

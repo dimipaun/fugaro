@@ -51,7 +51,7 @@ const catalogStaleYAML = `image_catalog:
 func catalogStaleRig(t *testing.T, serverBase, workerBase string) (*convergeRig, *[]string, *[]imageBuildOptions) {
 	t.Helper()
 	useSelf(t)
-	r := newConvergeRig(t, v7Node())
+	r := newConvergeRig(t, v8Node())
 	r.appendConfig(t, catalogStaleYAML)
 	// The config the run selects is the canonical copy under projects/, and
 	// the checkout names the project that has one there (localcfg's selection,

@@ -19,7 +19,11 @@
       },
       "policy": {
         "shared": { ".read": "TOKEN", ".write": false },
-        "repos": { "$slug": { ".read": "TOKEN && auth.token.fs == $slug", ".write": false } }
+        "repos": { "$slug": { ".read": "TOKEN && auth.token.fs == $slug", ".write": false } },
+        "voice": {
+          "shared": { ".read": "TOKEN", ".write": false },
+          "repos": { "$slug": { ".read": "TOKEN && auth.token.fs == $slug", ".write": false } }
+        }
       },
       "limits": { ".read": "TOKEN" },
       "mode": { ".read": "TOKEN" },
@@ -269,7 +273,7 @@
             "at": { ".validate": "TIMESTAMP" },
             "mac": { ".validate": "MACOK" },
             "agent": { ".validate": "AGENTID" },
-            "kind": { ".validate": "newData.isString() && (newData.val() == 'message' || newData.val() == 'prompt' || newData.val() == 'answer' || newData.val() == 'action')" },
+            "kind": { ".validate": "newData.isString() && (newData.val() == 'message' || newData.val() == 'prompt' || newData.val() == 'answer' || newData.val() == 'action' || newData.val() == 'registration')" },
             "options": {
               ".validate": "PARENTKIND == 'prompt' && newData.hasChildren()",
               "$i": { ".validate": "OPTIONIDX && newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxOptionLength}}" }
@@ -295,6 +299,24 @@
               },
               "$other": { ".validate": false }
             },
+            "token": { ".validate": "PARENTKIND == 'registration' && TOKENOK && PARENTMACOK" },
+            "platform": { ".validate": "PARENTKIND == 'registration' && PLATFORMOK && PARENTMACOK" },
+            "prefs": {
+              ".validate": "PARENTKIND == 'registration' && newData.hasChildren(['kill_switch', 'cap_reached', 'consumer_offline', 'cap_near', 'prompt']) && PARENTMACOK",
+              "kill_switch": { ".validate": "newData.isBoolean()" },
+              "cap_reached": { ".validate": "newData.isBoolean()" },
+              "consumer_offline": { ".validate": "newData.isBoolean()" },
+              "cap_near": { ".validate": "newData.isBoolean()" },
+              "prompt": { ".validate": "newData.isBoolean()" },
+              "quiet_hours": {
+                ".validate": "newData.hasChildren(['zone', 'start', 'end'])",
+                "zone": { ".validate": "ZONEOK" },
+                "start": { ".validate": "MINUTEOK" },
+                "end": { ".validate": "MINUTEOK && newData.val() != newData.parent().child('start').val()" },
+                "$other": { ".validate": false }
+              },
+              "$other": { ".validate": false }
+            },
             "$other": { ".validate": false }
           }
         },
@@ -309,7 +331,7 @@
             "at": { ".validate": "TIMESTAMP" },
             "mac": { ".validate": "MACOK" },
             "agent": { ".validate": "AGENTID" },
-            "kind": { ".validate": "newData.isString() && (newData.val() == 'message' || newData.val() == 'prompt' || newData.val() == 'answer' || newData.val() == 'action')" },
+            "kind": { ".validate": "newData.isString() && (newData.val() == 'message' || newData.val() == 'prompt' || newData.val() == 'answer' || newData.val() == 'action' || newData.val() == 'registration')" },
             "options": {
               ".validate": "PARENTKIND == 'prompt' && newData.hasChildren()",
               "$i": { ".validate": "OPTIONIDX && newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxOptionLength}}" }
@@ -331,6 +353,24 @@
                 ".validate": "newData.hasChildren(['id', 'at'])",
                 "id": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxKeyLength}}" },
                 "at": { ".validate": "TIMESTAMP" },
+                "$other": { ".validate": false }
+              },
+              "$other": { ".validate": false }
+            },
+            "token": { ".validate": "PARENTKIND == 'registration' && TOKENOK && PARENTMACOK" },
+            "platform": { ".validate": "PARENTKIND == 'registration' && PLATFORMOK && PARENTMACOK" },
+            "prefs": {
+              ".validate": "PARENTKIND == 'registration' && newData.hasChildren(['kill_switch', 'cap_reached', 'consumer_offline', 'cap_near', 'prompt']) && PARENTMACOK",
+              "kill_switch": { ".validate": "newData.isBoolean()" },
+              "cap_reached": { ".validate": "newData.isBoolean()" },
+              "consumer_offline": { ".validate": "newData.isBoolean()" },
+              "cap_near": { ".validate": "newData.isBoolean()" },
+              "prompt": { ".validate": "newData.isBoolean()" },
+              "quiet_hours": {
+                ".validate": "newData.hasChildren(['zone', 'start', 'end'])",
+                "zone": { ".validate": "ZONEOK" },
+                "start": { ".validate": "MINUTEOK" },
+                "end": { ".validate": "MINUTEOK && newData.val() != newData.parent().child('start').val()" },
                 "$other": { ".validate": false }
               },
               "$other": { ".validate": false }

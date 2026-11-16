@@ -28,5 +28,13 @@ export interface WorkspaceBind {
   project_id: string
 }
 
+/**
+ * Every workspace of the caller's own organisation, oldest first. An
+ * organisation that has bound nothing is an empty list and not an absent one.
+ */
+export interface WorkspaceList {
+  workspaces: Workspace[]
+}
+
 /** Everything `workspaces.schema.json` describes. */
-export type Workspaces = Workspace | WorkspaceBind
+export type Workspaces = Workspace | WorkspaceBind | WorkspaceList

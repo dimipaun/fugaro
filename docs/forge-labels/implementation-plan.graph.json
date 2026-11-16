@@ -1,0 +1,244 @@
+{
+  "schema_version": 3,
+  "plan": "docs/forge-labels/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "T1",
+      "title": "the label capability and the GitHub adapter",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/gitprov/labels.go",
+          "internal/gitprov/labels_test.go",
+          "internal/gitprov/github/labels.go",
+          "internal/gitprov/github/labels_test.go",
+          "internal/gitprov/github/testdata/labels_*.json"
+        ]
+      }
+    },
+    {
+      "id": "T2",
+      "title": "the fake and Bitbucket sides of the capability",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/gitprov/fake/labels.go",
+          "internal/gitprov/fake/labels_test.go",
+          "internal/gitprov/bitbucket/labels.go",
+          "internal/gitprov/bitbucket/labels_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T3",
+      "title": "the credentials service's label route",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/creds/labelroute.go",
+          "internal/credsvc/labelroute.go",
+          "internal/credsvc/labelroute_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T4",
+      "title": "the daemon's label client",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/creds/labelclient.go",
+          "internal/creds/labelclient_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T5",
+      "title": "the orchestrator's label syncer",
+      "run": null,
+      "version": null,
+      "size": 4,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/orchestrator/labelplan.go",
+          "internal/orchestrator/labelsync.go",
+          "internal/orchestrator/labelsync_test.go",
+          "internal/orchestrator/tick.go"
+        ]
+      }
+    },
+    {
+      "id": "T6",
+      "title": "the documents",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/git-providers.md",
+          "SECURITY.md",
+          "website/content/security.md",
+          "docs/releases/v*.md",
+          "internal/cli/docs_forge_labels_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T7",
+      "title": "wire the daemon to the real label path and prove it",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/orchestrator_labels.go",
+          "internal/cli/orchestrator_labels_test.go",
+          "internal/cli/orchestrator_run.go"
+        ]
+      }
+    },
+    {
+      "id": "T8",
+      "title": "the work item carries its spec",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/orchestrator/state.go",
+          "internal/orchestrator/patch.go",
+          "internal/orchestrator/state_test.go",
+          "internal/orchestrator/patch_test.go",
+          "schemas/orchestrator-state.schema.json",
+          "schemas/orchestrator-patch.schema.json"
+        ]
+      }
+    },
+    {
+      "id": "T9",
+      "title": "the label route's census",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/labelroute.go",
+          "internal/credsvc/audit.go",
+          "internal/credsvc/server.go",
+          "internal/credsvc/callerclass_test.go",
+          "internal/credsvc/audit_answer_test.go",
+          "internal/credsvc/slip_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CK",
+      "title": "Check 640",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check640.sh",
+          "scripts/live-checks/check640_test.sh",
+          "scripts/live_checks_test.go",
+          "internal/cli/docs_check640_test.go",
+          "docs/gcp-live-checklist.md"
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "task": "T2",
+      "needs": "T1",
+      "reason": "implements the Labeler interface T1 writes"
+    },
+    {
+      "task": "T5",
+      "needs": "T1",
+      "reason": "written against the Labeler interface and OwnedLabel T1 writes"
+    },
+    {
+      "task": "T3",
+      "needs": "T1",
+      "reason": "the route performs its writes through T1's adapter"
+    },
+    {
+      "task": "T4",
+      "needs": "T3",
+      "reason": "speaks the request and response shape T3 writes"
+    },
+    {
+      "task": "T4",
+      "needs": "T1",
+      "reason": "implements the Labeler interface"
+    },
+    {
+      "task": "T5",
+      "needs": "T8",
+      "reason": "reads the spec field"
+    },
+    {
+      "task": "T6",
+      "needs": "T3",
+      "reason": "documents the reach T3 fixes"
+    },
+    {
+      "task": "T7",
+      "needs": "T2",
+      "reason": "the end-to-end test uses the fake provider"
+    },
+    {
+      "task": "T7",
+      "needs": "T3",
+      "reason": "reaches the real route"
+    },
+    {
+      "task": "T7",
+      "needs": "T4",
+      "reason": "wires the real client"
+    },
+    {
+      "task": "T7",
+      "needs": "T5",
+      "reason": "wires the real syncer"
+    },
+    {
+      "task": "T7",
+      "needs": "T8",
+      "reason": "passes the spec name"
+    },
+    {
+      "task": "CK",
+      "needs": "T7",
+      "reason": "the check runs the real path"
+    },
+    {
+      "task": "T3",
+      "needs": "T9",
+      "reason": "fills the purpose and the registered route T9 adds"
+    }
+  ],
+  "decoupling": [],
+  "contract_changes": []
+}

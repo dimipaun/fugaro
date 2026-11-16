@@ -112,6 +112,16 @@ func routeAct(path string) (purpose, credential string) {
 		// run's mint and not a person's read, even though all three are signed
 		// with the one key.
 		return PurposeMergeMint, config.GitHubAppKeySecret
+	case LabelPath:
+		// The label route issues from the SAME credential the three routes above
+		// issue from — the App key in the bundle, which is what the service signs
+		// the token it performs the label act with — and names it here for their
+		// reason: it is the endpoint's own name for what it signs with, known
+		// before the bundle is read and after it alike. The purpose is what tells
+		// the four acts apart (D2439): a daemon's label call is not a merge, a
+		// run's mint or a person's read, even though all four are signed with the
+		// one key.
+		return PurposeLabel, config.GitHubAppKeySecret
 	case SlipPath:
 		// A grant's line names the launcher and no credential: the act is a
 		// request for a run's grant and not an issuance, so there is no name of
@@ -128,6 +138,15 @@ func routeAct(path string) (purpose, credential string) {
 		// tier — and naming one would be recording a fact the route does not
 		// have.
 		return PurposeSlipClaim, ""
+	case WorkflowSecretsPath:
+		// The workflow-secrets route's credential is the CONTAINER the value
+		// was read from, and THAT NAME IS NOT IN THE PATH: it is the record's
+		// answer for the variable the call names (workflowsecrets.go), which
+		// the route reads once the record is in hand — so the route names the
+		// purpose and leaves the credential to the handler, exactly as the sign
+		// route leaves its account's key. A refusal answered before the record
+		// was read has no container to name and so carries none.
+		return PurposeWorkflowSecret, ""
 	case SignPath:
 		// The sign route's credential is the account's review-signing key
 		// (verdict.go), and THAT NAME IS NOT IN THE PATH: it is the caller's
@@ -137,6 +156,24 @@ func routeAct(path string) (purpose, credential string) {
 		// in a model call's. A refusal answered before the handler has no
 		// account to name and so carries none.
 		return PurposeReviewSign, ""
+	case BuildTokenPath:
+		// A build's line names one of TWO purposes, and which one is the
+		// PROVIDER's answer — and the provider is in the body: a GitHub build is
+		// answered a token (PurposeBuildToken, the App key as its credential)
+		// and a Bitbucket build a proxy grant (PurposeBuildGrant, no credential
+		// at all — R6, D2302). This rule cannot read the provider off the path.
+		//
+		// What it names is therefore the route's OWN act — the credential this
+		// endpoint exists to issue — and that is the fact a line written for a
+		// refusal answered BEFORE the body was read has: the caller's class and
+		// the run-identity headers, which is the whole of the gate ahead of the
+		// read. The credential stays empty for the sign route's and the
+		// workflow-secrets route's reason: which key the act issues from is the
+		// provider's answer too, and the handler fills it in once it has read
+		// the call. An empty credential on a refused line is admissible
+		// (checked), and the two purposes are the only ones a build's line
+		// carries.
+		return PurposeBuildToken, ""
 	}
 	if strings.HasPrefix(path, BitbucketProxyPrefix) {
 		// The Bitbucket proxy route (B1.5), and the ONE route whose two facts
@@ -191,7 +228,7 @@ func servedRoute(r *http.Request) bool {
 		return false
 	}
 	switch r.URL.Path {
-	case MessagesPath, CountTokensPath, MintPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, SlipPath, SlipClaimPath:
+	case MessagesPath, CountTokensPath, MintPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, SlipPath, SlipClaimPath, WorkflowSecretsPath, BuildTokenPath:
 		return true
 	}
 	return false
@@ -211,6 +248,18 @@ type JobAccount struct {
 	Email string
 	Slug  string
 	Repo  string
+	// Workflow is the workflow whose job runs as this account, as the
+	// deployment spells it (RepoJob.Workflow). It is what the workflow-secrets
+	// route serves a call by (B3.2, G19): one repository has one job account
+	// per workflow, the account is the job (nothing about the caller decides
+	// its class), and the account is therefore the only thing that can say
+	// WHICH workflow's secrets a call is served — never X-Fugaro-Run-Job, which
+	// is text the caller writes. A row with no workflow is a row this build
+	// cannot derive (JobAccountsFor refuses one) and is served no workflow
+	// secret at all: the record holds no empty workflow name (creds.
+	// PutWorkflowSecrets refuses one), so such a row is refused by the record
+	// rather than by a check here.
+	Workflow string
 }
 
 // SharedJobAccount is one shared project job's service account and the profile
@@ -280,9 +329,10 @@ func JobAccountsFor(fugaroProject, gcpProject, provider string, jobs []RepoJob) 
 			return nil, fmt.Errorf("credsvc: job accounts for %q: %w", j.Repo, err)
 		}
 		out = append(out, JobAccount{
-			Email: serviceAccountEmail(gcp.ServiceAccountID(slug, j.Workflow), gcpProject),
-			Slug:  slug,
-			Repo:  canonical,
+			Email:    serviceAccountEmail(gcp.ServiceAccountID(slug, j.Workflow), gcpProject),
+			Slug:     slug,
+			Repo:     canonical,
+			Workflow: j.Workflow,
 		})
 	}
 	return out, nil
@@ -391,11 +441,16 @@ type Config struct {
 	// proxy asks it only after Decide admitted the call and with the one
 	// policy-and-bundle snapshot the decision itself used.
 	//
-	// nil is a service whose token store is not wired: every proxied call is
-	// served with the bundle's legacy bitbucket-token entry, which is the
-	// release behind's behaviour and the state of an installation between this
-	// field and the store's wiring (I1). It is a field of the deployment and
-	// not of the request: no caller, no record and no policy can set it.
+	// nil leaves the store to NewServer, which builds the real one over the
+	// configured State and this service's client (I1) whenever that state can
+	// keep a Bitbucket token's status. A deployment therefore sets nothing
+	// here; a test sets its own to decide what the selection answers.
+	//
+	// nil on a service whose state CANNOT keep a token's status is a service
+	// served by the bundle's legacy bitbucket-token entry alone: an
+	// installation that never stored a typed token, whose behaviour is what it
+	// was before this work (R3). It is a field of the deployment and not of the
+	// request: no caller, no record and no policy can set it.
 	Selector bbtokens.Selector
 	// State is the cascade's shared state under creds/.
 	State creds.Store
@@ -422,6 +477,36 @@ type Config struct {
 	// reason than either: a service that cannot write a slip cannot grant a run
 	// its credentials at all, so it is not a service this build starts.
 	Slips creds.SlipStore
+	// BaseURL is this service's own URL, scheme and host with no trailing
+	// slash: what a build's Bitbucket grant points the build's git at
+	// (buildtoken.go, B1). It is the deployment's value — the same one
+	// AuthConfig.Audience is built from (internal/cli/credentials_serve.go) —
+	// and never the request's Host header, which is the caller's own text: a
+	// grant URL built from it would send a build's clone wherever its caller
+	// said.
+	//
+	// It may be empty, and an empty one is a service that answers no Bitbucket
+	// build: the route refuses the Bitbucket half rather than answering a grant
+	// that names no proxy. It is not required at construction because an
+	// installation whose repositories are GitHub's needs none, and refusing to
+	// start for a value no route of it reads would break a service this build
+	// has nothing against.
+	BaseURL string
+	// BuildPairs is what a Bitbucket build's grant recorded and what the
+	// proxy's own admission reads back for a build's call (B1, rule 9): the
+	// repositories of the entry one build is baking, keyed on the project's
+	// build identity and the build id (creds.PathBuildPair).
+	//
+	// It may be nil, and a nil one is a service that answers no Bitbucket build
+	// at all: the grant refuses rather than naming a proxy whose every call
+	// would be refused — a pairing that cannot be written is a grant that
+	// serves nothing — and the proxy's build path refuses a call it cannot look
+	// up. It is not required at construction, for BaseURL's reason: an
+	// installation whose repositories are GitHub's needs no pairing and is a
+	// service this build has nothing against, while a service that started
+	// without one is the state of a deployment whose database client is not
+	// wired for this node. *creds.RTDBStore is one.
+	BuildPairs creds.BuildPairStore
 	// Signs is the create-only write the one-signature mark is taken with
 	// (C3.9e, D1074): the sign route's own node, which is why it is neither
 	// DB's business nor State's. It may be nil, and a nil one is a service
@@ -431,6 +516,19 @@ type Config struct {
 	// review job signs nothing and is a service this build starts.
 	// *rtdb.Client is one.
 	Signs SignMarks
+	// WorkflowSecrets reads the record `fugaro update` writes for a
+	// repository's jobs (B3.1, B3.2): the workflow-secrets route serves a call
+	// out of it and out of nothing else, so a service with no reader serves no
+	// workflow secret at all (the route refuses rather than answering an empty
+	// value) and *RTDBWorkflowSecrets is the implementation a deployment wires
+	// (internal/cli/credentials_serve.go).
+	//
+	// It may be nil, and nil is the state of an installation whose database
+	// client is not wired for this node: the route refuses, which is why this
+	// is not required at construction the way Slips is — an installation that
+	// predates this release has no record to read and is a service this build
+	// still starts.
+	WorkflowSecrets WorkflowSecretRecords
 	// AuditLog is where the service's audited acts are written (C1.13): every
 	// line this service writes, the mint's (C2.1) and the probe's (C1.12)
 	// included. There is one writer and one handler — Server.audit is the ONLY
@@ -526,6 +624,14 @@ type Verifier interface {
 	// the address is the numeric `sub` — the owner a per-user credential's name
 	// is checked against (R7) and the identity the slip records (DS1.1).
 	VerifyLauncher(ctx context.Context, tok string) (LauncherCaller, error)
+	// VerifyBuildCaller admits the caller of the build route (buildtoken.go,
+	// B1): the installation's build identities, and nothing else. It is a class
+	// of its own against one more list — the build service accounts — and its
+	// audience is this service's own URL alone, like every class whose caller
+	// is not a person. A build holds no run identity and is a job of no
+	// repository, so the route it serves is answered ahead of RequestFromHTTP
+	// and the class is all it has.
+	VerifyBuildCaller(ctx context.Context, tok string) (string, error)
 }
 
 // PolicyReader is the published policy as the service reads it: the project's
@@ -676,6 +782,32 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	if cfg.State == nil {
 		return nil, errors.New("credsvc: the service has no credential state")
+	}
+	// The Bitbucket token store, built here from the state store the service was
+	// already handed and never from a field of its own (I1): a token's status
+	// lives in the creds state store's own subtree (T6, D2351), so a deployment
+	// wires ONE store, and this value is the token half of it. It is built
+	// before the wrap below, because the wrapper is a SELECTION's reader and
+	// carries no token method — the store the token half needs is the one that
+	// was configured.
+	//
+	// A state store that cannot keep a Bitbucket token's status leaves Selector
+	// as it was, which is a service served by the bundle's legacy entry alone
+	// (Config.Selector): the behaviour of an installation between T8's route and
+	// this task, kept reachable so that no deployment is switched on by a build.
+	//
+	// The store is handed the hardened client and not cfg.Client as it stands,
+	// because the hardening is done below: a deployment sets no Client at all,
+	// and the project lookup would then run on http.DefaultClient, whose
+	// timeouts and compression are not this service's. Hardening here rather
+	// than moving the block is what keeps the type assertion on the store that
+	// was configured — the stateReads wrap below is a selection's reader and
+	// carries no token method — while giving the lookup the one client the
+	// service sends upstream with.
+	if cfg.Selector == nil {
+		if statuses, ok := cfg.State.(creds.TokenStatusStore); ok {
+			cfg.Selector = NewBitbucketTokenStore(statuses, upstreamClient(cfg.Client))
+		}
 	}
 	// The state is read through this service's own reader (stateReads), which
 	// labels the read that failed as it fails: a selection makes three reads of
@@ -881,7 +1013,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// "no admin endpoint" is kept by there being nothing to reach rather
 		// than by a check inside a handler.
 		s.refuse(w, http.StatusNotFound, "not_found",
-			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+SlipPath+" and "+SlipClaimPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
+			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+LabelPath+", "+SlipPath+", "+SlipClaimPath+", "+WorkflowSecretsPath+" and "+BuildTokenPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
 		return
 	}
 	if r.URL.Path == VerifyPath {
@@ -921,6 +1053,50 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// readMergeMintRequest, and the run-identity headers are refused by name
 		// inside the handler.
 		s.mergeMint(ctx, w, r)
+		return
+	}
+	if r.URL.Path == LabelPath {
+		// The sixth route answered before the shared parse, and the orchestrator
+		// daemon's reason is the merge mint's (D2439): the daemon is not a run of
+		// this installation and holds no run identity, so RequestFromHTTP would
+		// refuse the call — for the missing identity headers — before the daemon
+		// class ever read the token. What replaces the parse is this route's own
+		// read of the call, and the run-identity headers are refused by name
+		// inside the handler.
+		s.labelRoute(ctx, w, r)
+		return
+	}
+	if r.URL.Path == BuildTokenPath {
+		// The seventh route answered before the shared parse, and the build
+		// class's reason is the other six's (B1): a build reading a catalog
+		// entry holds no run identity and is a job of no repository — it is the
+		// project's build service account — so RequestFromHTTP would refuse the
+		// call for the missing identity headers before the class ever read the
+		// token. What replaces the parse is this route's own read of the body
+		// (readBuildRequest below), and the run-identity headers are refused by
+		// name inside the handler.
+		s.buildToken(ctx, w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, BitbucketProxyPrefix) && r.Header.Get(HeaderBuild) != "" {
+		// The Bitbucket proxy's BUILD half (B1, rule 9): the data plane of the
+		// identity the build route paired, and the one route of the build class
+		// that is not the build route itself. It is answered ahead of the
+		// shared parse for the build route's own reason — a build holds no run
+		// identity, so RequestFromHTTP would refuse the call for the missing
+		// identity headers before anything looked at its token — and the parse
+		// is replaced by this route's own admission: the build's ID token
+		// (VerifyBuildCaller, the same class list the build route reads), the
+		// build id it names, and the pairing that id was recorded under.
+		//
+		// The gate is the header and not the token, and that is deliberate: a
+		// RUN's proxy traffic never carries it (the run's forwarder adds the
+		// two identity headers and nothing else, B1.6), so a run's call keeps
+		// the admission below it — the parse, Verify and the pairing — with
+		// nothing added to that path and no second verification of its token.
+		// A caller that sets this header and holds no build identity is refused
+		// here and never reaches the run's half.
+		s.buildProxy(ctx, w, r)
 		return
 	}
 	if r.URL.Path == SlipPath {
@@ -1114,6 +1290,23 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.mint(ctx, w, r, id, ja)
 		return
 	}
+	if r.URL.Path == WorkflowSecretsPath {
+		// The workflow-secrets route (B3.2, G19). Everything above it is its
+		// admission and nothing below it is: the two identities have been
+		// verified, the pairing has fixed the repository the calling job's
+		// account is bound to, and the operator's stop switches have been read,
+		// so a stopped service serves no workflow secret. It reads no policy
+		// and consults no cascade and no budget: what it serves is not a model
+		// credential and was chosen at no tier, and the one gate its own class
+		// needs — that the caller IS a per-repository job of a workflow — is the
+		// route's own (workflowsecrets.go), because it is a fact about the
+		// ACCOUNT the pairing has just resolved. What it reads is the record
+		// `fugaro update` wrote for the caller's repository and the one
+		// container that record names, and nothing a caller sends can reach
+		// either beyond the variable's name.
+		s.workflowSecrets(ctx, w, r, id, ja)
+		return
+	}
 	if r.URL.Path == SignPath {
 		// The sign route (C3.9e). Everything above it is its admission and
 		// nothing below it is: the two identities have been verified, the
@@ -1132,28 +1325,28 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, BitbucketProxyPrefix) {
 		// The Bitbucket proxy route (B1.5). Everything above it is its
 		// admission and nothing below it is: the two identities have been
-		// verified, the pairing has fixed the repository the run's own job
-		// account is (canonical, G3), and the operator's stop flag has been
-		// read, so a stopped service proxies nothing. It reads the project's
-		// published block itself — which is what admits the repository, and
-		// whether the installation proxies it at all (G9) — and the bundle,
-		// for the one token it forwards with; and it consults no cascade,
-		// because a Bitbucket token is not a model credential and no tier,
-		// admission or budget has anything to say about it.
-		if id.JobClass == ClassShared {
-			// A shared caller IS paired by now (the identity's repository is
-			// one its profile is bound to), and the route is still refused:
-			// what it forwards is a workspace token, and the class's binding
-			// for it is the published block's own admission of that repository
-			// as a proxied one (G21's other half, B5.3). Until that check
-			// exists, proxying a shared caller would forward a credential
-			// whose reach is the whole workspace on a binding this route never
-			// made. The refusal is a verified caller refused at a route, and
-			// so it is recorded once like every other one.
-			s.refuseCall(ctx, w, id, purpose, credential, "", StatusUnverified, ErrorUnverifiedRunIdentity,
-				"the Bitbucket proxy is not served to a shared project job's account")
-			return
-		}
+		// verified, the pairing has fixed the repository this call is served
+		// for (canonical, G3) — the run's own job account's repository for a
+		// per-repository caller, and the run identity's own repository,
+		// resolved through the installation's table and admitted by the
+		// calling job's profile, for a review caller and for a shared project
+		// job's caller (pairShared, G21) — and the operator's stop flag has
+		// been read, so a stopped service proxies nothing. It reads the
+		// project's published block itself — which is what admits the
+		// repository, and whether the installation proxies it at all (G9) —
+		// and the bundle, for the one token it forwards with; and it consults
+		// no cascade, because a Bitbucket token is not a model credential and
+		// no tier, admission or budget has anything to say about it.
+		//
+		// The shared class is served here (B5.3), and what binds its call is
+		// the same three facts a per-repository caller's is, read over the
+		// profile rather than over one row: the repository the request names
+		// must be the identity's own, which the pairing answered with, and
+		// that repository must be one the published block lists and one this
+		// installation proxies (gitproxy.Decide, G3 and G9). The pairing is
+		// what keeps the block's workspace-wide reach off every other
+		// repository of the profile: a call the rules are handed is a call for
+		// the identity's repository or for none at all.
 		s.bitbucketProxy(ctx, w, r, id, canonical)
 		return
 	}

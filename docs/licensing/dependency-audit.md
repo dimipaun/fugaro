@@ -139,8 +139,10 @@ family — so the rule passes and this paragraph is what records it.
 
 | Package | Version | Declared | In the package? |
 | --- | --- | --- | --- |
-| `elkjs` | 0.11.0 | EPL-2.0 | **Yes** — `dist/bundle/elk-worker.min.js` is copied verbatim by the bundler |
+| `elkjs` | 0.12.1 | `EPL-2.0 OR GPL-3.0-or-later` | **Yes** — `dist/bundle/elk-worker.min.js` is copied verbatim by the bundler |
 | `lightningcss` and its 11 platform binaries | 1.33.0 | MPL-2.0 | No — build-time CSS for the console's own stylesheet |
+
+Since 0.12.1 `elkjs` declares a choice of two licences. The owner reviewed the expression on 2026-11-15 and accepted it; the audit reads the console as taking EPL-2.0, as it did for 0.11.0, so no GPL obliges anything. `copyleftAllowed` in `internal/eeboundary/licence_test.go` names it with this reason, under the console's lockfile and no other.
 
 `elkjs` is the one that matters, it is already handled, and it is handled in the right place:
 `console/THIRD_PARTY_NOTICES.md` names the file, the exact version, the tarball it came from, the

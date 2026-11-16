@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,7 +20,7 @@ import (
 // liveCheckScripts are the owner-run live checks' scripts and their tests.
 // Each test drives its script against fake tools on PATH -- a fake `claude`
 // and a fake upstream for Check 90, fake `gcloud`, `fugaro` and `curl` for
-// Check 91, fake `gcloud` and `fugaro` for Checks 111, 146 and 401, fake `gcloud`,
+// Check 91, fake `gcloud` and `fugaro` for Checks 27, 111, 146 and 401, fake `gcloud`,
 // `git`, `curl` and `fugaro` for Check 190, fake `gcloud`, `fugaro` and a fake
 // Realtime Database behind a fake `curl` for Check 191, fake `gcloud`, `fugaro`
 // and `curl` for Check 195 (a small project whose service and account appear and
@@ -85,6 +87,24 @@ import (
 // older than the release, a coder that reads images itself, a slot that is set,
 // a run that never ends, a record that is another run's, and a refusal whose
 // sentence has lost one of the parts an owner needs.
+// Check 440's fakes are a fake `fugaro` that resolves a run ending the way the
+// CLI does -- the active runs and the window first, the whole bucket only on a
+// miss, the numbered pick list and one question only at a real terminal, and
+// never a cancel through an ending -- and a fake `gcloud` for the two rows that
+// read the runs bucket, over a run set each case seeds, so a case says what the
+// check measured and that it launched nothing here.
+// Check 291's fakes are a fake `fugaro`, a fake `gcloud` and a fake `gh`, with
+// real git against a bare repository inside each case's own directory: the
+// catalog entry's line, the job's stamp and the names a run drops, the
+// reservation read with a name set on the job by hand, and the run's own
+// transcript all come out of the case's own state files, so a case bends one
+// reading at a time and says what the check then reads -- and its `--dry-run`
+// case pins that a plan makes no call at all. Its fake `run` names the run it
+// launched only in the `--json` document (a person's own line is a reporter step
+// on stderr, and its short name is not the run's id), and its fake `runs ls`
+// keeps a run in flight until its second poll and writes that run's transcript
+// only where the row turns terminal, so a check that read a run id off the human
+// line or read a transcript before its run ended fails these cases.
 // Checks 490 to 492 drive a fake `fugaro` and a fake `gcloud` over the
 // post-review triage work, one per reading an owner takes on a real run: 490
 // launches ONE sandbox run and reads its record's triage block and its
@@ -136,6 +156,20 @@ import (
 // and the fake `git` and `gh` really delete a branch and really move a pull
 // request from OPEN to CLOSED, so the teardown's own read-backs are readings of
 // state that changed.
+// Check 601's fakes are a fake `gcloud` that serves a job's own describe in the
+// v1 shape a job really has -- spec.template.spec.template.spec, a secret as
+// valueSource.secretKeyRef, a volume's as secret.secretName -- with and without
+// a mounted secret and, for the case that pins it, in an execution's own shape
+// instead; a project's IAM policy; the review run's signature and record as
+// files the test writes; and the credentials service's own audit lines. A fake
+// `fugaro` whose `doctor --json` carries the census entry the review job and its
+// Claude account are read from, and a fake `curl` that mints a token sentinel
+// per account, records the account, the route and the body it was handed and the
+// authorization header of the `--config` file, and answers each route as a mode
+// says -- with the type that route's own refusal carries, so a case can say
+// which class a refusal was about (and that a body refusal, or a state the
+// service could not read, is not one), and that the token travelled through a
+// 0600 file and never into the check's output.
 // Check 211's fakes are a fake `fugaro`, a fake `gcloud` and a fake `belong`:
 // the fake `gcloud` serves the run's own objects at its own prefix in the runs
 // bucket out of the case's own directory and refuses every other bucket and
@@ -177,13 +211,37 @@ import (
 // on stderr -- files a log with the sink's own name shape, mode and retention
 // rule, and fails exactly when the check's own fake `terraform` is first on
 // PATH, so the forced failure is the check's own shim end to end and a case
-// bends the one thing it judges. Check 350's are a fake `gcloud` and a fake
+// bends the one thing it judges. Check 311's fake is none: its subject is a
+// Windows console, so PowerShell and Windows both have to be there for its
+// steps to run at all, and its test is mostly a reading of its own text -- the
+// block keys, the phases, the guards, the readings and the ones it refuses to
+// take -- beside the six cases that run nothing (`-SelfTest`, `-DryRun`, the
+// three refusals that come before the first tool is looked for, and the stop a
+// machine that is not Windows makes), which it RUNS wherever `pwsh` is on PATH
+// and says so in one line where it is not. Its
+// one case that is neither runs the self-test's own three rules again in bash,
+// over the script's text, so the tree that carried the rule-1 defect is red on
+// a machine without PowerShell too. Check 350's are a fake `gcloud` and a fake
 // `fugaro` beside a REAL local checkout and its bare origin -- git stays on this
 // machine -- with one shared call log for both fakes, so a case says what the
 // check read AND in what order: the hash of the old record is taken before the
 // first CLI read of the window, which is half of what step 4 is about, and a
 // case that rewrites a copy of the script with the comparison removed proves
-// the FAIL it reads elsewhere is the comparison's.
+// the FAIL it reads elsewhere is the comparison's. Check 200's are a fake
+// `gcloud` that serves the run's own record and the image's build record, a
+// fake `fugaro` that answers `version`, `doctor`, the settings write -- which it
+// REFUSES, the way the CLI does, since no command writes that key -- `run` and
+// `runs ls`, and a fake `go` whose build writes a binary that answers a paid
+// name with the core stub -- beside a REAL local git repository and its bare
+// origin, so the throwaway branch, the commit, the push and the Restore's own
+// deletion are readings of a repository the test owns rather than of a fake's
+// log.
+// Check 27's fakes are a fake `gcloud` and a fake `fugaro` that hold a throwaway
+// project which exists only once something creates it, its billing link, its
+// Firestore location, its buckets, its jobs, its secret containers and its
+// images — and whose `setup` REFUSES the create path when it has no terminal, so
+// a case says both what the check read back and that the wizard was really given
+// a pty. No live step of it is run.
 // Check C0's fake is a fake `fugaro` alone, serving each read out of a document
 // the test writes -- so a case knows the document's exact length and can hold
 // the byte count in the readings table against the file -- and recording every
@@ -220,11 +278,26 @@ import (
 // program), so a check that forgot to set the marker is caught by the caps
 // moving rather than by a log line. 381's and 382's checkouts are real git work
 // trees with an origin remote, because the repository whose caps are lowered or
-// raised is the one that remote names.
+// raised is the one that remote names. 139 drives a fake `fugaro` that serves
+// the runs list and one run's record out of the case's own files and a fake
+// `gcloud` that serves that run's `model call` entries, with a mode for each
+// state a case bends: a listing whose only settled runs are oauth, one whose
+// gateway runs carry no sub-agent, no entry at all, a stage name carrying two
+// sessions (not a finding: the runner reuses stage names across sessions), a
+// sub-agent id spanning two sessions or sharing a session with an entry whose
+// agent_id is empty (in another stage: the comparison is run-wide), an id seen
+// only on refused entries, a background model that carries an id, a background
+// model the run never called, a background model that is also a stage's own
+// model (the run's effective background, which the row refuses to count), an
+// account, a run or a log view naming belong, a read that fails, hangs or
+// answers something that is not a document, a record naming no execution, a
+// record and a listing that disagree about the execution, a doctor that exits 1
+// (an answer, #2719) and one that does not answer at all.
 var liveCheckScripts = []struct {
 	name string
 	test string
 }{
+	{"check27.sh", "check27_test.sh"},
 	{"check69.sh", "check69_test.sh"},
 	{"check90.sh", "check90_test.sh"},
 	{"check91.sh", "check91_test.sh"},
@@ -241,6 +314,7 @@ var liveCheckScripts = []struct {
 	{"check190.sh", "check190_test.sh"},
 	{"check191.sh", "check191_test.sh"},
 	{"check195.sh", "check195_test.sh"},
+	{"check291.sh", "check291_test.sh"},
 	{"check300.sh", "check300_test.sh"},
 	{"check301.sh", "check301_test.sh"},
 	{"check302.sh", "check302_test.sh"},
@@ -248,6 +322,7 @@ var liveCheckScripts = []struct {
 	{"check304.sh", "check304_test.sh"},
 	{"check305.sh", "check305_test.sh"},
 	{"check310.sh", "check310_test.sh"},
+	{"check311.ps1", "check311_test.sh"},
 	{"check313.sh", "check313_test.sh"},
 	{"check314.sh", "check314_test.sh"},
 	{"check330.sh", "check330_test.sh"},
@@ -265,6 +340,7 @@ var liveCheckScripts = []struct {
 	{"check511.sh", "check511_test.sh"},
 	{"check520.sh", "check520_test.sh"},
 	{"check521.sh", "check521_test.sh"},
+	{"check440.sh", "check440_test.sh"},
 	{"check420.sh", "check420_test.sh"},
 	{"check421.sh", "check421_test.sh"},
 	{"check422.sh", "check422_test.sh"},
@@ -277,10 +353,13 @@ var liveCheckScripts = []struct {
 	{"check119.sh", "check119_test.sh"},
 	{"check57b.sh", "check57b_test.sh"},
 	{"check124.sh", "check124_test.sh"},
+	{"check-c39.sh", "check-c39_test.sh"},
 	{"check-380-no-prompt-update.sh", "check-380-no-prompt-update_test.sh"},
 	{"check-381-over-cap-build.sh", "check-381-over-cap-build_test.sh"},
 	{"check-382-agent-cannot-raise-a-cap.sh", "check-382-agent-cannot-raise-a-cap_test.sh"},
 	{"check550.sh", "check550_test.sh"},
+	{"check139.sh", "check139_test.sh"},
+	{"check200.sh", "check200_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
@@ -304,6 +383,147 @@ const liveCheckTimeout = 12 * time.Minute
 // test goes to shard i, each in its own temp dir, so the wall time of the
 // package is about the longest shard instead of the sum.
 const liveCheckShards = 3
+
+// liveCheckCIShardEnv is how CI's `scripts-live-*` runners split the checks
+// between them: `<index>/<of>`, the shape of the `-run` filter that used to
+// stand in for it. It has to be a variable read here because `-run` cannot do
+// it: the shards below are goroutines in this test's body rather than
+// subtests, and Go runs a top-level test whose name matches the first element
+// of a multi-element pattern even when no subtest of it matches -- so the
+// filter `^TestLiveCheckScripts$/^[^/]+$/^shard0$` selected this test on all
+// three runners and each one ran every check.
+const liveCheckCIShardEnv = "LIVE_CHECK_SHARD"
+
+// parseLiveCheckCIShard reads that variable. An empty value is the local case
+// and runs everything; a value it cannot read is an error rather than a
+// fallback to the whole suite, because a typo would otherwise put every check
+// on every runner again -- the state this variable exists to end, and one that
+// costs the runner its whole budget rather than reporting itself.
+func parseLiveCheckCIShard(env string) (index, of int, set bool, err error) {
+	if env == "" {
+		return 0, 0, false, nil
+	}
+	i, o, ok := strings.Cut(env, "/")
+	if !ok {
+		return 0, 0, false, fmt.Errorf("%s=%q is not <index>/<of>", liveCheckCIShardEnv, env)
+	}
+	index, err = strconv.Atoi(i)
+	if err != nil {
+		return 0, 0, false, fmt.Errorf("%s=%q: %v is not a shard index", liveCheckCIShardEnv, env, i)
+	}
+	of, err = strconv.Atoi(o)
+	if err != nil {
+		return 0, 0, false, fmt.Errorf("%s=%q: %v is not a shard count", liveCheckCIShardEnv, env, o)
+	}
+	if of < 1 || index < 0 || index >= of {
+		return 0, 0, false, fmt.Errorf("%s=%q: a shard is 0 <= <index> < <of>, so no runner would own this one", liveCheckCIShardEnv, env)
+	}
+	return index, of, true, nil
+}
+
+// TestLiveCheckCIShardCoversTheSuiteOnce: the split CI makes is a partition of
+// this file's items -- every one of them on exactly one runner, each item
+// unchanged -- and a variable it cannot read is refused rather than run whole.
+// The suite is 171 items on one runner and under a minute each; a split that
+// dropped one, ran one twice or fell back to everything would show up as a
+// green run that tested less, which is the failure this pins.
+func TestLiveCheckCIShardCoversTheSuiteOnce(t *testing.T) {
+	var items []liveCheckShard
+	for _, c := range liveCheckScripts {
+		for i := 0; i < liveCheckShards; i++ {
+			items = append(items, liveCheckShard{c.test, i})
+		}
+	}
+	for _, of := range []int{1, 2, 3, 4, 6, 8} {
+		seen := map[liveCheckShard]int{}
+		for index := 0; index < of; index++ {
+			shard := ciLiveCheckShards(items, index, of)
+			if len(shard) == 0 {
+				t.Fatalf("of %d: runner %d is given nothing: one runner of a split this size would report success having run no check at all", of, index)
+			}
+			// In the file's order, so that the split is a property of this
+			// file rather than of the runner: two runs of the same commit
+			// hand a runner the same list.
+			next := 0
+			for _, s := range shard {
+				for next < len(items) && items[next] != s {
+					next++
+				}
+				if next == len(items) {
+					t.Fatalf("of %d: runner %d is given %v after %v, and this file lists them the other way round", of, index, s, shard[0])
+				}
+				seen[s]++
+				next++
+			}
+		}
+		if len(seen) != len(items) {
+			t.Fatalf("of %d: the runners are given %d distinct items and this file lists %d: the split has to cover the suite, and a drop is a green run that tested less", of, len(seen), len(items))
+		}
+		for s, n := range seen {
+			if n != 1 {
+				t.Fatalf("of %d: %v is given to %d runners: an item run twice spends a runner's budget on work another runner is doing", of, s, n)
+			}
+		}
+	}
+
+	for _, c := range []struct {
+		env        string
+		index, of  int
+		set        bool
+		wantRefuse bool
+	}{
+		{env: ""},
+		{env: "0/1", index: 0, of: 1, set: true},
+		{env: "2/3", index: 2, of: 3, set: true},
+		{env: " 0/3", wantRefuse: true},
+		{env: "0 /3", wantRefuse: true},
+		{env: "0", wantRefuse: true},
+		{env: "0/", wantRefuse: true},
+		{env: "/3", wantRefuse: true},
+		{env: "x/3", wantRefuse: true},
+		{env: "0/x", wantRefuse: true},
+		{env: "0/0", wantRefuse: true},
+		{env: "-1/3", wantRefuse: true},
+		{env: "3/3", wantRefuse: true},
+		{env: "4/3", wantRefuse: true},
+		{env: "0/3/4", wantRefuse: true},
+	} {
+		index, of, set, err := parseLiveCheckCIShard(c.env)
+		switch {
+		case c.wantRefuse:
+			if err == nil {
+				t.Errorf("%s=%q was read as shard %d of %d: a runner told to run something that is not a shard would run the whole suite or none of it, and neither says so", liveCheckCIShardEnv, c.env, index, of)
+			}
+		case err != nil:
+			t.Errorf("%s=%q: %v", liveCheckCIShardEnv, c.env, err)
+		case set != c.set || (set && (index != c.index || of != c.of)):
+			t.Errorf("%s=%q was read as shard %d of %d (set %v), want %d of %d (set %v)", liveCheckCIShardEnv, c.env, index, of, set, c.index, c.of, c.set)
+		}
+	}
+}
+
+// liveCheckShard is one item of the live suite: one script's test, and which
+// of that script's own CHECK_TEST_SHARD shards it is.
+type liveCheckShard struct {
+	test string
+	n    int
+}
+
+// ciLiveCheckShards is the shard of this file's items a CI runner runs: item i
+// goes to runner i%of, so every item runs on exactly one runner, the assignment
+// is stable across runs, and a check added to liveCheckScripts lands on a
+// runner on its own. The items are numbered in the order this file lists them,
+// which is what makes that stability a property of the file rather than of the
+// runner.
+func ciLiveCheckShards(shards []liveCheckShard, index, of int) []liveCheckShard {
+	var mine []liveCheckShard
+	for i, s := range shards {
+		if i%of == index {
+			mine = append(mine, s)
+		}
+	}
+	return mine
+}
 
 // liveCheckWorkers is how many shards run at once. Splitting a script into
 // shards only shortens the package if the shards really run side by side, and
@@ -346,24 +566,34 @@ func (b *syncBuffer) String() string {
 //
 // The shards go through liveCheckWorkers goroutines rather than through
 // t.Parallel() subtests, so that how much of the package runs at once is this
-// file's decision and not -parallel's: see the comment on that constant.
+// file's decision and not -parallel's: see the comment on that constant. The
+// same choice is why CI splits this test by liveCheckCIShardEnv instead of by
+// `-run`: what a runner is given is the list it starts from, and the list is
+// built here.
 func TestLiveCheckScripts(t *testing.T) {
 	for _, tool := range []string{"bash", "python3"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skipf("%s is not installed", tool)
 		}
 	}
-	type shard struct {
-		test string
-		n    int
-	}
-	var shards []shard
+	var shards []liveCheckShard
 	for _, c := range liveCheckScripts {
 		for i := 0; i < liveCheckShards; i++ {
-			shards = append(shards, shard{c.test, i})
+			shards = append(shards, liveCheckShard{c.test, i})
 		}
 	}
-	queue := make(chan shard)
+	// What this runner was given of them, when CI says so. It is read after
+	// the whole list is built rather than left to the workflow's `-run`
+	// filter, which cannot reach into this test: see liveCheckCIShardEnv.
+	if index, of, set, err := parseLiveCheckCIShard(os.Getenv(liveCheckCIShardEnv)); err != nil {
+		t.Fatal(err)
+	} else if set {
+		all := len(shards)
+		if shards = ciLiveCheckShards(shards, index, of); len(shards) == 0 {
+			t.Fatalf("%s=%d/%d takes none of this file's %d shards, so this runner would report success having run nothing", liveCheckCIShardEnv, index, of, all)
+		}
+	}
+	queue := make(chan liveCheckShard)
 	var (
 		mu       sync.Mutex
 		failures []string

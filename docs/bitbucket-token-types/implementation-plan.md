@@ -40,7 +40,7 @@ credentials, gets the strictest rigor and an independent review before any side 
 | The audit line names the token used (name only), and a refusal class names no token | T8 |
 | `creds set` refuses a token that does not work with one precise message and writes nothing; a write scope it cannot prove is reported "not verified" | T7, T11 |
 | Type and coverage that disagree are refused at `creds set` and at `fugaro validate` | T2, T11 |
-| The node block carries name, type, coverage and identity and no value, no secret name and no secret version | T3 |
+| The node block carries name, type, coverage, the project UUID a project token is scoped to, and identity, and no value, no secret name and no secret version | T3 |
 | `allow_data_to` stays the operator's authorization; coverage never replaces it, and `doctor` names an allowed repository no token covers | T3, T10 |
 | An installation holding only the legacy `bitbucket-token` keeps working with no step, and a run in flight is unaffected | T12, I1 |
 | The proxy's upstream hosts remain the adapter's constants; no record can name a host | T8 |
@@ -90,7 +90,7 @@ Inert until the proxy reads it (I1). A bundle with the new keys is refused by an
 - Reviewer tier: standard.
 
 ### T3: the node carries each token's coverage
-- Acceptance: `projectpolicy` derives a new top-level node key `bitbucket_tokens` (R5), holding each record's name, type and coverage patterns (provider-qualified like `allow_repos`) and, from the state store, its identity UUID; never a value; `bitbucket_token` (`allow_repos`, `proxy`) is untouched and `Version` does not move; a node without the key reads as today; the runner's decode tolerates the key (P8) and the CLI's strict readers refuse it only on a release that does not know it, both pinned by the pair of tests `image_catalog` has (the old reader lists the key; the older CLI refuses it), and the commit body and the release notes carry the one-line skew (R5); the key is derived from records only, so a config with none publishes none.
+- Acceptance: `projectpolicy` derives a new top-level node key `bitbucket_tokens` (R5), holding each record's name, type and coverage patterns (provider-qualified like `allow_repos`), the project UUID a project token is scoped to (R2) and, from the state store, its identity UUID; never a value; `bitbucket_token` (`allow_repos`, `proxy`) is untouched and `Version` does not move; a node without the key reads as today; the runner's decode tolerates the key (P8) and the CLI's strict readers refuse it only on a release that does not know it, both pinned by the pair of tests `image_catalog` has (the old reader lists the key; the older CLI refuses it), and the commit body and the release notes carry the one-line skew (R5); the key is derived from records only, so a config with none publishes none.
 - Files: `internal/projectpolicy/bitbucket.go`, `internal/projectpolicy/bitbucket_test.go`, `internal/projectpolicy/policy.go`, `internal/cli/project_cmd_test.go` (the older-CLI refusal test calls the unexported `refuseUnknownPolicyKeys`).
 - Interfaces: consumes C1's node-key shape and record types; produces the key the proxy and the runner read.
 - Tests: `TestDeriveBitbucketTokensKey`, `TestNodeWithoutTokensKeyReadsAsBefore`, `TestNodeTokensKeyCarriesNoValue`, `TestOldRunnerReaderToleratesTheTokensKey`, `TestOlderCLIRefusesANodeCarryingTheTokensKey`.

@@ -566,7 +566,7 @@ for the correct number of user seats, and leaves to those Terms the Licensor's i
 further description of a user seat, the ownership of subscribers' modifications (clause 2.1), any
 patent licence (clause 10.1) and what may be kept after termination (clause 11.3).
 [subscription-terms.md](subscription-terms.md) is a **first draft of those Terms for counsel to
-review: not reviewed by counsel and not in force**, with every commercial term in brackets for the
+review: not reviewed by counsel and, at that date, not in force** (since approved and published on 2026-11-11), with every commercial term in brackets for the
 owner, a list of the owner's commercial questions and a list of questions for counsel. Its defined
 terms follow the licence's ("Agreement", "Licensor", "production", "user seat"); it treats the MIT
 core as outside the Subscription; and it describes the licence key only as D308's design intent
@@ -614,7 +614,7 @@ L4.5). What changed in the draft:
 
 Still open: the Enterprise seat floor (the owner's) and the late-payment interest rate (counsel's).
 The draft's counsel list gains the items the session added. The licence files, the CLA and
-`LICENSING.md` are not edited, and the draft is still **not in force**.
+`LICENSING.md` are not edited, and the draft was then still not in force (published since 2026-11-11).
 
 
 ## Amendment 2026-10-27 (the Subscription Terms URL)

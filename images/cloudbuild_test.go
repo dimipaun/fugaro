@@ -516,12 +516,81 @@ func TestCIWorkflowTestsEveryTerraformRoot(t *testing.T) {
 	}
 }
 
-// TestStagedCIWorkflowIsTheRealOnePlusOneRoot pins the staged copy to the real
-// workflow: exactly one line may differ — the `terraform` job's root loop —
-// and the staged line must be the real one with the one root it does not name
-// yet appended. The word is read out of the tree rather than written here,
-// because it is a different root each time: `compute` when this test was
-// written, `workspace` while W3's copy is the staged one.
+// ciShardMatrixRows are the rows of the staged ci.yml's `shard` matrix, in
+// order: the file's own list, not a count, because a matrix is the thing this
+// change is and every runner's name, package, index, shard count and filter is
+// a decision the timings behind it were read for.
+var ciShardMatrixRows = []string{
+	"          - {name: cli-update, pkg: ./internal/cli, index: 0, of: 1, only: update}",
+	"          - {name: cli-0, pkg: ./internal/cli, index: 0, of: 8, only: other}",
+	"          - {name: cli-1, pkg: ./internal/cli, index: 1, of: 8, only: other}",
+	"          - {name: cli-2, pkg: ./internal/cli, index: 2, of: 8, only: other}",
+	"          - {name: cli-3, pkg: ./internal/cli, index: 3, of: 8, only: other}",
+	"          - {name: cli-4, pkg: ./internal/cli, index: 4, of: 8, only: other}",
+	"          - {name: cli-5, pkg: ./internal/cli, index: 5, of: 8, only: other}",
+	"          - {name: cli-6, pkg: ./internal/cli, index: 6, of: 8, only: other}",
+	"          - {name: cli-7, pkg: ./internal/cli, index: 7, of: 8, only: other}",
+	"          - {name: scripts-live-0, pkg: ./scripts, index: 0, of: 3, only: live}",
+	"          - {name: scripts-live-1, pkg: ./scripts, index: 1, of: 3, only: live}",
+	"          - {name: scripts-live-2, pkg: ./scripts, index: 2, of: 3, only: live}",
+	"          - {name: scripts-0, pkg: ./scripts, index: 0, of: 2, only: nonlive}",
+	"          - {name: scripts-1, pkg: ./scripts, index: 1, of: 2, only: nonlive}",
+	"          - {name: runner-0, pkg: ./internal/runner, index: 0, of: 2}",
+	"          - {name: runner-1, pkg: ./internal/runner, index: 1, of: 2}",
+	"          - {name: issues-0, pkg: ./internal/issues, index: 0, of: 2}",
+	"          - {name: issues-1, pkg: ./internal/issues, index: 1, of: 2}",
+	"          - {name: rest-0, pkg: rest, index: 0, of: 6}",
+	"          - {name: rest-1, pkg: rest, index: 1, of: 6}",
+	"          - {name: rest-2, pkg: rest, index: 2, of: 6}",
+	"          - {name: rest-3, pkg: rest, index: 3, of: 6}",
+	"          - {name: rest-4, pkg: rest, index: 4, of: 6}",
+	"          - {name: rest-5, pkg: rest, index: 5, of: 6}",
+	"          - {name: rest-gcp, pkg: ./internal/backend/gcp, index: 0, of: 1}",
+	"          - {name: rest-images, pkg: ./images, index: 0, of: 1}",
+	"          - {name: rest-plugin, pkg: ./plugin, index: 0, of: 1}",
+}
+
+// ciShardEdits are the lines of the `shard` job this staging takes, each with
+// the real line it replaces. The comparisons that use them are multiset ones
+// over the job's code, so a line of that job changed on main and not picked up
+// here is a failure and not something the owner's `cp` would quietly revert; one
+// real line may be replaced by several staged ones, as the live runner's is.
+var ciShardEdits = []struct {
+	what   string
+	real   []string
+	staged []string
+}{
+	{
+		"the live runner's shard, which its -run pattern cannot express",
+		[]string{`            go test -race -timeout 40m -json -run "^TestLiveCheckScripts\$/^[^/]+\$/^shard${INDEX}\$" "$PKG" | tee test.json | jq -rj 'select(.Action=="output").Output'`},
+		[]string{
+			`            LIVE_CHECK_SHARD="$INDEX/$OF" \`,
+			`              go test -race -timeout 40m -json -run '^TestLiveCheckScripts$' "$PKG" | tee test.json | jq -rj 'select(.Action=="output").Output'`,
+		},
+	},
+	{
+		"the race build at the listing step, so the run below it compiles nothing",
+		[]string{`          go test -list '.*' "$PKG" | grep -E '^(Test|Example|Fuzz)' | sort > all.txt`},
+		[]string{`          go test -race -list '.*' "$PKG" | grep -E '^(Test|Example|Fuzz)' | sort > all.txt`},
+	},
+	{
+		"the three packages with a runner of their own, left out of the rest hash",
+		[]string{`            go list ./... | grep -vE '/(internal/cli|scripts|internal/runner|internal/issues)$' | while read -r p; do`},
+		[]string{`            go list ./... | grep -vE '/(internal/cli|scripts|internal/runner|internal/issues|internal/backend/gcp|images|plugin)$' | while read -r p; do`},
+	},
+}
+
+// TestStagedCIWorkflowIsTheRealOnePlusTheShardTimings pins the staged copy to
+// the real workflow: the two may differ only inside the `shard` job, and what
+// differs there is exactly the matrix rows above and the lines `ciShardEdits`
+// lists — every other line of that job is compared, so a main edit inside it
+// that this copy did not pick up fails here instead of being copied over. It
+// was rewritten on 2026-11-15, when the copy staged for the shard timings became
+// the first one to differ on more than the Terraform root loop the test used to
+// pin: it held the two files to exactly one differing line, so any change that
+// was not that one failed it by construction. What it holds now is the same fact
+// with the change named rather than counted, and the next staging of this file
+// rewrites the two lists rather than the rule.
 //
 // The staged file is a snapshot of a file a run may not push, and a stale
 // snapshot is worse than a missing one: the README tells the owner to `cp` it
@@ -531,9 +600,9 @@ func TestCIWorkflowTestsEveryTerraformRoot(t *testing.T) {
 // `pull_request` trigger with `workflow_dispatch:` (CI is no longer a merge
 // gate; every push to main and on demand), and the copy staged before it
 // would have re-enabled PR-triggered CI while claiming to change one word.
-// When this fails, re-stage: copy the real file here and add the word
+// When this fails, re-stage: copy the real file here and apply the change
 // (docs/pending-workflows/README.md, `## ci.yml`).
-func TestStagedCIWorkflowIsTheRealOnePlusOneRoot(t *testing.T) {
+func TestStagedCIWorkflowIsTheRealOnePlusTheShardTimings(t *testing.T) {
 	real, err := os.ReadFile(ciWorkflowPath)
 	if err != nil {
 		t.Fatal(err)
@@ -545,57 +614,123 @@ func TestStagedCIWorkflowIsTheRealOnePlusOneRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	realLines := strings.Split(string(real), "\n")
-	stagedLines := strings.Split(string(staged), "\n")
-	if len(realLines) != len(stagedLines) {
-		t.Fatalf("the staged ci.yml has %d lines and .github/workflows/ci.yml has %d: the staged copy is a snapshot of a file this run cannot push, so it is re-staged from the real one (docs/pending-workflows/README.md, `## ci.yml`) rather than patched",
-			len(stagedLines), len(realLines))
+	rs, re := shardJobSpan(t, ciWorkflowPath, string(real))
+	ss, se := shardJobSpan(t, pendingCIWorkflowPath, string(staged))
+	if outside, want := string(staged[:ss])+string(staged[se:]), string(real[:rs])+string(real[re:]); outside != want {
+		for i, line := range strings.Split(outside, "\n") {
+			wantLines := strings.Split(want, "\n")
+			if i < len(wantLines) && line != wantLines[i] {
+				t.Fatalf("the staged ci.yml differs from .github/workflows/ci.yml outside the `shard` job, at line %d: staged %q, real %q. The staged copy is that job's change and nothing else, and a copy that differs elsewhere is a snapshot of an older ci.yml — copying it in reverts whatever main changed since it was staged", i+1, line, wantLines[i])
+			}
+		}
+		t.Fatalf("the staged ci.yml and .github/workflows/ci.yml differ outside the `shard` job, in their line count: the staged copy is that job's change and nothing else")
 	}
-	var diff []int
-	for i := range realLines {
-		if realLines[i] != stagedLines[i] {
-			diff = append(diff, i)
+
+	job := string(staged[ss:se])
+	var rows []string
+	for _, line := range strings.Split(job, "\n") {
+		if strings.Contains(line, "- {name:") {
+			rows = append(rows, line)
 		}
 	}
-	if len(diff) != 1 {
-		t.Fatalf("the staged ci.yml differs from .github/workflows/ci.yml on lines %v (%d of them), want exactly one — the root loop. Copying a stale snapshot in would revert everything else main changed in ci.yml since it was staged",
-			lineNumbers(diff), len(diff))
+	if !slices.Equal(rows, ciShardMatrixRows) {
+		t.Errorf("the staged `shard` matrix is\n%s\nand the staging's own matrix is\n%s\n: every runner's name, package, index and shard count is a decision the timings behind this change were read for, so a matrix that is not this one is a copy of another state (docs/pending-workflows/README.md, `## ci.yml`)", strings.Join(rows, "\n"), strings.Join(ciShardMatrixRows, "\n"))
 	}
-	i := diff[0]
-	loop := regexp.MustCompile(`^(\s*)for r in ([a-z ]+); do$`)
-	mReal, mStaged := loop.FindStringSubmatch(realLines[i]), loop.FindStringSubmatch(stagedLines[i])
-	if mReal == nil || mStaged == nil {
-		t.Fatalf("line %d is where the staged ci.yml differs and it is not the Terraform root loop: real %q, staged %q. The one staged change may only be a root name on that line",
-			i+1, realLines[i], stagedLines[i])
+	var wantReal, wantStaged []string
+	for _, e := range ciShardEdits {
+		wantReal = append(wantReal, e.real...)
+		wantStaged = append(wantStaged, e.staged...)
 	}
-	roots, err := os.ReadDir("../deploy/terraform/gcp/roots")
-	if err != nil {
-		t.Fatal(err)
+	realOnly, stagedOnly := ciShardJobDiff(string(real[rs:re]), job)
+	if dropped := onlyLines(realOnly, wantReal); len(dropped) > 0 {
+		t.Errorf("these lines of the real `shard` job are not in the staged one, and this staging is not about them:\n%s\nThe staged copy is a snapshot a person copies over .github/workflows/ci.yml, so a line of that job main changed since it was staged — a bound, a step, a runner's own line — would be reverted by that copy. Re-stage it from the real file and apply the change the README's `## ci.yml` section writes down", strings.Join(dropped, "\n"))
 	}
-	var missing []string
-	for _, r := range roots {
-		if r.IsDir() && !regexp.MustCompile(`\b`+r.Name()+`\b`).MatchString(mReal[2]) {
-			missing = append(missing, r.Name())
-		}
+	if added := onlyLines(stagedOnly, wantStaged); len(added) > 0 {
+		t.Errorf("these lines of the staged `shard` job are not in the real one, and this staging is not about them:\n%s\nEither the change is wider than the one this staging was reviewed as — the README's `## ci.yml` section lists it line by line — or the copy has drifted from the file it was taken from", strings.Join(added, "\n"))
 	}
-	if len(missing) != 1 {
-		t.Fatalf("the real loop names %q and the roots under deploy/terraform/gcp/roots leave %v unnamed: the staged copy adds one word, so exactly one root may be missing from the real loop",
-			mReal[2], missing)
+	if unapplied := onlyLines(wantReal, realOnly); len(unapplied) > 0 {
+		t.Errorf("the staged `shard` job still carries these lines, which this staging replaces:\n%s\nA copy that carries both the line and its replacement is neither the change nor what runs today", strings.Join(unapplied, "\n"))
 	}
-	if want := mReal[1] + "for r in " + mReal[2] + " " + missing[0] + "; do"; stagedLines[i] != want {
-		t.Fatalf("line %d: the staged loop is %q, want the real loop %q with %q appended (%q): the staged copy adds one word and changes nothing else",
-			i+1, stagedLines[i], realLines[i], missing[0], want)
+	if strings.Contains(job, `^TestLiveCheckScripts\$/^[^/]+\$/^shard`) {
+		t.Errorf("the staged `shard` job still filters the live checks with `-run \"^TestLiveCheckScripts$/^[^/]+$/^shard${INDEX}$\"`, which matches no subtest of that test and so runs every check on every runner: that pattern is the fault this staging exists to fix")
 	}
 }
 
-// lineNumbers is the 1-based numbering of the differing lines, for a message
-// a reader can open the file at.
-func lineNumbers(idx []int) []int {
-	out := make([]int, len(idx))
-	for i, n := range idx {
-		out[i] = n + 1
+// ciShardJobDiff returns the lines of two `shard` jobs that are not in both, one
+// list per side. It is a multiset comparison, so the order of the two files does
+// not enter into it and a line that one side carries twice is not matched by a
+// single copy on the other.
+func ciShardJobDiff(realJob, stagedJob string) (realOnly, stagedOnly []string) {
+	real, staged := ciShardCodeLines(realJob), ciShardCodeLines(stagedJob)
+	return onlyLines(real, staged), onlyLines(staged, real)
+}
+
+// ciShardCodeLines is a `shard` job's lines with the blank ones, the
+// comment-only ones and the matrix rows taken out: what is left is the job's
+// behaviour, and that is what the two files are held to. The comment block above
+// the job is prose rewritten with the matrix the row list pins, and the blocks
+// inside the steps say why a line is what it is.
+func ciShardCodeLines(job string) []string {
+	var lines []string
+	for _, line := range strings.Split(job, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "- {name:") {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+// onlyLines is the difference of two lines' multisets: the lines of a whose
+// copies b does not have, in a's order.
+func onlyLines(a, b []string) []string {
+	have := map[string]int{}
+	for _, line := range b {
+		have[line]++
+	}
+	var out []string
+	for _, line := range a {
+		if have[line] > 0 {
+			have[line]--
+			continue
+		}
+		out = append(out, line)
 	}
 	return out
+}
+
+// shardJobSpan returns the byte range of a ci.yml's `shard` job — its own
+// comment block, then its key, up to the next job's key (a line indented by two
+// spaces and ending in a colon). That whole span is what a staging of this file
+// may touch; nothing else may differ. The comment block counts because it
+// explains the matrix and so moves with it.
+func shardJobSpan(t *testing.T, path, workflow string) (int, int) {
+	t.Helper()
+	lines := strings.SplitAfter(workflow, "\n")
+	starts := make([]int, len(lines)+1)
+	for i, line := range lines {
+		starts[i+1] = starts[i] + len(line)
+	}
+	start, end := -1, -1
+	for i, line := range lines {
+		key := strings.TrimSuffix(line, "\n")
+		if key == "  shard:" {
+			start = i
+			for start > 0 && strings.HasPrefix(strings.TrimSuffix(lines[start-1], "\n"), "  #") {
+				start--
+			}
+			continue
+		}
+		if start >= 0 && strings.HasPrefix(key, "  ") && !strings.HasPrefix(key, "   ") && strings.HasSuffix(key, ":") {
+			end = i
+			break
+		}
+	}
+	if start < 0 || end < 0 {
+		t.Fatalf("%s has no `shard` job: a staged copy of it is this job's change, and a file without the job is not this workflow", path)
+	}
+	return starts[start], starts[end]
 }
 
 // TestCIWorkflowPermissionsScoped holds every workflow file to a read-only

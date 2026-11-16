@@ -55,7 +55,7 @@ func (r *run) stageTiming(name string, started time.Time, claudeUSD float64, sub
 		// the auths that name no single credential class (F18, D1415). The
 		// account arm below overrides it, because the credential that served
 		// that stage is the account's and not the run's.
-		ServedBy: runstore.CredentialForAuth(r.modelAuth()),
+		ServedBy: runstore.CredentialForAuth(r.servedAuth()),
 		// The stage's sub-agent tool calls, counted by the relay from its
 		// own stream for every auth mode. Always set: the relay counts even
 		// a stage that spawned none, and 0 sub-agents is a figure, unlike an

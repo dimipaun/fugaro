@@ -351,6 +351,27 @@ const recipesV07Since = "0.7.0"
 // planTaskSince's bullet records.
 const digestSince = "0.13.0"
 
+// reportsSince is the first fugaro release whose CLI answers fugaro runs
+// reports --job: the command the project's reports job executes, which writes
+// every repository's closed periods into reports/ of the runs bucket. A build
+// before it knows no such command, so a firing that reaches such a job image
+// fails with "unknown command" and writes no report at all.
+//
+// It is the release's own *Since constant beside digestSince because the two
+// are the two halves of one series and neither implies the other: digestSince
+// is the release whose runner writes a report run into a checkout's docs tree
+// (T3.1's step, which a recipe asks for), and reportsSince is the release
+// whose CLI writes the same reports into the project's bucket with no recipe
+// and no model call. A skill or a recipe that names fugaro runs reports is
+// gated at this value, and the schedule that runs it is the installation's own
+// setting (jobs.reports.paused), which R7 deploys stopped: a schedule an
+// installation turns on is on a CLI of this release or, since fugaro update
+// upgrades launchers and the job image together, of a later one.
+//
+// docs/release.md's ("Before you tag") checklist verifies it equals the
+// release that ships the command.
+const reportsSince = "0.26.0"
+
 // adversarialSince is the first fugaro release whose runner acts on the
 // adversarial step, review level 3 (D720): it runs the step after the senior
 // review, a rejection bounces back to the first-line loop, and the level
@@ -599,6 +620,30 @@ const reviewAdmissionSince = "0.21.0"
 // remedy for them. docs/release.md's ("Before you tag") list carries that
 // reading.
 const providerEntrySince = "0.22.0"
+
+// bitbucketTokenSince is the first fugaro release whose credentials service
+// reads the bundle's typed Bitbucket token family (config.BitbucketTokenPrefix,
+// D2350, R13 of docs/bitbucket-token-types): the keys
+// bitbucket-token--<name>, each holding one access token the service's proxy
+// serves. It is the family's own entry of the same kind as providerEntrySince
+// above, and it is a constant of its own rather than that one for the reason
+// that entry's comment gives: the loader refuses the WHOLE document for a key
+// it does not know, so the release a document is readable by is decided by the
+// newest entry it holds and not by one release for the document.
+//
+// `fugaro creds set` is the bundle's only writer, so the guard is at that write
+// too (creds.go's refuseAnEntryTheServiceCannotRead, which judges the release
+// that SERVES the document rather than the installation's pin).
+//
+// It names 0.24.0, the release T1's own commit (`6eda5ddf`, #2591) went out in
+// and therefore the first release whose credentials service was built with the
+// family's reader. The direction is providerEntrySince's: the constant is the
+// tag that shipped the key and not the release this guard is written in, and a
+// release that raised it would refuse `fugaro creds set bitbucket-token--<name>`
+// on installations whose deployed service already reads the family — which is
+// every installation on that release — with `fugaro update` no remedy for them.
+// docs/release.md's ("Before you tag") list carries that reading.
+const bitbucketTokenSince = "0.24.0"
 
 // gitSecretIDSince is the first fugaro release whose runner reads
 // CheckJobSpec's git_secret_id (internal/infra/spec.go): the daily image
@@ -1262,8 +1307,8 @@ func checkImageSinceDev(ctx context.Context, env *cloudEnv, slug string, spec *t
 	}
 	refuse := func(why string) error {
 		return userErr("%s needs a job image whose runner knows %s (fugaro %s or later), but the job image of %s workflow %s %s. "+
-			"Run fugaro update in its checkout, in your own terminal window (never in a coding agent's session; its images stage verifies %s, pins it by digest through the installation's remote repository and rebuilds the workflow's image)%s",
-			subject, knows, since, spec.Repo, spec.Workflow, why, base, alt)
+			"Run fugaro update in its checkout, in your own terminal window (never in a coding agent's session; its images stage verifies %s, pins it by digest through the installation's remote repository and rebuilds the workflow's image)%s%s",
+			subject, knows, since, spec.Repo, spec.Workflow, why, base, alt, causeMarkerJobImage)
 	}
 	b, err := env.recordBucket(ctx)
 	if err != nil {

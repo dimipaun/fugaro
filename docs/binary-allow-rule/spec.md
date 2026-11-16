@@ -1,7 +1,8 @@
 # The binary allow rule and the no-verdict label: the design
 
-**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
-approved.** This document is the design in full, refreshed against `main` on 2026-11-04 (#1476 is
+**Status: design answered by the owner 2026-11-04, with D990, D992 and D993 ruled 2026-11-15; AR0
+and AR2 landed (#2202, #2204); the owner approved ALL binary-allow-rule tasks (AR0–AR7) on
+2026-11-15.** This document is the design in full, refreshed against `main` on 2026-11-04 (#1476 is
 merged; the managed gate is current — see §6). Where [reconciliation.md](reconciliation.md)
 disagrees with it, the reconciliation wins, and the tasks in
 [implementation-plan.md](implementation-plan.md) are written to what is here.
@@ -313,37 +314,37 @@ block is a member `buildProjectPolicy` fills like `review_floor`, so:
   refreshes the job images of the checkout it runs in (behind its own confirmations, one per build),
   so that checkout's runs and the node arrive in one command. A repository of the project whose job
   image is a derived image of *another* checkout keeps the image it had, and the launcher refuses a
-  launch onto an image older than the release that introduced the node's version (0.24.0 for version
-  5), naming `fugaro image refresh --repo … --workflow …` (`internal/cli`'s `policyImageGate`),
+  launch onto an image older than the release that introduced the node's version (0.26.0 for version
+  8), naming `fugaro image refresh --repo … --workflow …` (`internal/cli`'s `policyImageGate`),
   rather than starting a run that halts at bootstrap on a node it cannot read.
 - **The window between the two is not a refusal.** The update migrates the node in its policy stage
   and moves the credentials service onto this release's image in the stage immediately after it, with
   nothing between the two, so the service it installs is never handed a node it has not migrated —
   and the reader accepts a node one shape-free step behind anyway (`projectpolicy`'s `ReadsVersion`:
-  the 5 → 6 step moves the version member and nothing else). What an old *job image* meets is the
+  the 7 → 8 step moves the version member and nothing else). What an old *job image* meets is the
   launcher's gate above rather than a halt. What no order can close is the release behind's own
-  service, which refuses a version-5 node until that stage applies: the window is one apply, that
+  service, which refuses a version-8 node until that stage applies: the window is one apply, that
   binary was released, and the update's own line about the runs in flight names it when this run both
   raises the node and moves the service (`credentialsWindowOpens`). Two writes make the order hold
   rather than merely be intended: the image the move pins is resolved and verified **before** the
   node is raised (`credentialsResolveBeforeRaise`), so a resolve this run cannot make fails with the
   node exactly where it was, and a run that will replace no service — a coding agent's session, a
   development build — does not raise the node at all (`credentialsMoveHeld`).
-- **The policy version moves 5 → 6** (§D990 — the recommendation; the owner did not rule on it),
-  `VersionSince` gains its row (`6: "0.24.0"`, the release that ships it — §4's slot read 0.20.0
-  when the plan was written, and a row naming a release that already carries a version-5 node is
-  the floor the launch gate holds a job image to), and
+- **The policy version moves 7 → 8** (§D990, ruled yes by the owner 2026-11-15; the version was 5
+  when this was written, and versions 6 and 7 have since shipped, both in 0.24.0),
+  `VersionSince` gains its row (`8: "0.26.0"`, the release that ships AR1 — and the row names the
+  release that introduced the version, since it is the floor the launch gate holds a job image to), and
   `TestVersionSinceCoversEveryVersion` fails until it does. The convergence test the HARD RULE asks
-  for — an installation at the previous version ends `fugaro update` with a version-6 node published
-  — is `TestInstallationAtThePreviousVersionConvergesBinaries`, written with the `…Binaries` suffix
+  for — an installation at the previous version ends `fugaro update` with a version-8 node published
+  — is `TestInstallationAtPolicyVersion7ConvergesBinaries`, written with the `…Binaries` suffix
   so it cannot collide with the sibling designs' convergence tests in package `cli`.
-- **The migration is the node's own.** An installation whose published node is version 5 and carries
-  no `binaries` member is not broken by the bump in either direction: a version-6 reader tolerates a
-  node with no `binaries` (the block is optional, absent meaning "admits nothing"), and the version-5
+- **The migration is the node's own.** An installation whose published node is version 7 and carries
+  no `binaries` member is not broken by the bump in either direction: a version-8 reader tolerates a
+  node with no `binaries` (the block is optional, absent meaning "admits nothing"), and the version-7
   node is republished by the same update that refreshes the image. The only operator step is
   `fugaro update`.
 
-**What a version-5 reader makes of a version-6 node, stated plainly.** It refuses the node
+**What a version-7 reader makes of a version-8 node, stated plainly.** It refuses the node
 (`RunnerSkew`) — which is the fail-closed direction and the reason the bump is taken rather than
 tolerated. See §D990 for why, and for the cost of the alternative.
 
