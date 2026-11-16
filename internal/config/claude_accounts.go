@@ -384,6 +384,34 @@ func AllowedClaudeAccounts(accounts map[string]ClaudeAccount, repo string) []str
 	return out
 }
 
+// ClaudeAccountTokenNames is names less the ones creds declares a key
+// credential: the ones whose value is a Claude account's token, stored under
+// config.ClaudeAccountSecret(name) and mounted by a job of the account's own.
+//
+// A key credential's name is not one of them, and the reason is the container
+// rather than the name: its value is the key its provider issued, under the
+// credential's own derived secret (CredentialSecret, D1670), so nothing ever
+// writes a version to the account's token container for that name — a reader
+// that asked for one asks the owner for a value no command of this release
+// stores, under a name no job of the account's mounts. What keeps the name in
+// claude_accounts is the reach its allow_data_to bounds, which is a fact about
+// where the key may be sent and not about a token.
+//
+// A name no credentials entry mentions — every account declared before the
+// credentials block existed — is kept unchanged, and the answer is a fresh
+// slice: callers compare it and append to it, and neither may reach the
+// caller's own list or the one AllowedClaudeAccounts built.
+func ClaudeAccountTokenNames(creds []Credential, names []string) []string {
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		if c, ok := CredentialNamed(creds, name); ok && KeyCredentialType(c.Type) {
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
 // reservedAccountNameMessage is the ONE sentence both halves of the name rule
 // answer the reserved name with. The message never echoes the name (the rule
 // every message here keeps: the value that reached the check is untrusted text

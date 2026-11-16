@@ -331,6 +331,28 @@ const (
 	// — the repository a build may even ask for is read off the classification
 	// the call did not get.
 	PurposeBuildProxy = "build_proxy"
+	// PurposeContextToken is the read-only installation token a RUN is answered
+	// with for its context repositories (C5b, D613): one token per App
+	// installation over the repositories the run's own identity names and
+	// reads, which is the reach the run has beyond its own repository and the
+	// only one it has.
+	//
+	// The credential a line of this purpose names is the App key the service
+	// mints with — the same credential a mint, a read mint, a merge mint, a
+	// label call and a build's mint name, and the purpose is what tells the six
+	// acts apart. It is not a model credential of the cascade and has no tier,
+	// so a line for it names a credential and no tier (credentialWithoutTier).
+	//
+	// Its caller IS a job of this installation — the launching run's — so it is
+	// not one of callerWithoutJobPurpose's, and its line carries the run and
+	// the job like a mint's. It carries the run's OWN repository and never one
+	// of the context repositories: which repositories a call was served for is
+	// a property of the call and not of the run, and a line that named one of
+	// them would read as a mint for that repository's own run. The refusal a
+	// call is refused for names the repository it was refused for, and the
+	// purpose is what tells an operator that a run read beyond its own
+	// repository at that instant.
+	PurposeContextToken = "context_token"
 )
 
 // ValidPurpose reports whether purpose is one this service issues a credential
@@ -340,7 +362,7 @@ func ValidPurpose(purpose string) bool {
 	case PurposeForward, PurposeProbe, PurposeMint, PurposeReviewSign, PurposeReviewVerify, PurposeBitbucketRead, PurposeGitHubRead,
 		PurposeGit, PurposeBitbucketAPI, PurposeSlipGrant, PurposeSlipClaim, PurposeMergeMint, PurposeWorkflowSecret, PurposeLabel,
 		PurposeBuildToken, PurposeBuildGrant, PurposeBuildGit,
-		PurposeBuildBitbucket, PurposeBuildProxy:
+		PurposeBuildBitbucket, PurposeBuildProxy, PurposeContextToken:
 		return true
 	}
 	return false
@@ -375,7 +397,8 @@ func credentialWithoutTier(purpose string) bool {
 		purpose == PurposeBitbucketAPI || purpose == PurposeMergeMint ||
 		purpose == PurposeWorkflowSecret || purpose == PurposeLabel ||
 		purpose == PurposeBuildToken || purpose == PurposeBuildGit ||
-		purpose == PurposeBuildBitbucket || purpose == PurposeBuildProxy
+		purpose == PurposeBuildBitbucket || purpose == PurposeBuildProxy ||
+		purpose == PurposeContextToken
 }
 
 // callerWithoutJobPurpose reports whether a line records a caller's act rather

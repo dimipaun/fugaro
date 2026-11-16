@@ -872,7 +872,7 @@ func (e *cloudEnv) proxiedRepo(ctx context.Context, slug string, spec *task.Spec
 	// io.Discard because the launch reads the same two documents and words the
 	// one warning this read can report (repoServiceAuth).
 	auth, deployed := e.repoServiceAuth(ctx, spec, io.Discard)
-	return len(credentialsServiceLaunchEnv(e.lc, "", spec.Repo, auth, e.policyMode(ctx), deployed)) > 0
+	return len(credentialsServiceLaunchEnv(e.lc, "", spec.Repo, auth, e.policyMode(ctx), deployed, false)) > 0
 }
 
 // proxiedOnBatchMessage is the Batch arm of G14's launch check, built with the

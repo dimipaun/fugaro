@@ -211,33 +211,51 @@ const projectID = "aurora-fp"
 // waits for the new day so a test never straddles it.
 func newHarness(t *testing.T) *harness {
 	t.Helper()
+	rules, err := Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return newHarnessWithRules(t, rules)
+}
+
+// newHarnessWithRules is newHarness over a document other than this binary's
+// own: a test whose subject is a generation's *arrival* has to start on the
+// document the release behind deployed (the frozen copy of it,
+// testdata/rules.generation6.json), because the rules a database enforces are
+// the ones that were deployed and not the ones this binary would write.
+func newHarnessWithRules(t *testing.T, doc []byte) *harness {
+	t.Helper()
 	if emuSkip != "" {
 		t.Skip("no Realtime Database emulator: " + emuSkip)
 	}
 	if ms := time.Now().UnixMilli() % 86_400_000; ms > 86_400_000-8_000 {
 		time.Sleep(time.Duration(86_400_000-ms+200) * time.Millisecond)
 	}
-	rules, err := Generate()
-	if err != nil {
-		t.Fatal(err)
-	}
 	h := &harness{t: t, ns: fmt.Sprintf("%s-%d-%d", project, time.Now().UnixNano()%1_000_000_000, nsCounter.Add(1))}
 	h.hc = &http.Client{Transport: nsTransport{h.ns}, Timeout: 30 * time.Second}
 	h.admin = h.client(rtdb.Auth{Source: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "owner"})})
-	// Deploy exactly as `fugaro update` does: PUT /.settings/rules.json.
-	req, _ := http.NewRequest(http.MethodPut, emuURL+"/.settings/rules.json", bytes.NewReader(rules))
+	h.deployRules(doc)
+	h.set("fugaro/project", projectID)
+	return h
+}
+
+// deployRules deploys a document exactly as `fugaro update` does: PUT
+// /.settings/rules.json. It is the one way the emulator's rules change, so a
+// test that moves a database from one generation to the next deploys the
+// document the update would and asserts the same writes against both.
+func (h *harness) deployRules(doc []byte) {
+	h.t.Helper()
+	req, _ := http.NewRequest(http.MethodPut, emuURL+"/.settings/rules.json", bytes.NewReader(doc))
 	req.Header.Set("Authorization", "Bearer owner")
 	resp, err := h.hc.Do(req)
 	if err != nil {
-		t.Fatal(err)
+		h.t.Fatal(err)
 	}
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode != 200 {
-		t.Fatalf("deploying the generated rules: %d %s", resp.StatusCode, body)
+		h.t.Fatalf("deploying the rules: %d %s", resp.StatusCode, body)
 	}
-	h.set("fugaro/project", projectID)
-	return h
 }
 
 func (h *harness) client(a rtdb.Auth) *rtdb.Client {

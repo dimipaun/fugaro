@@ -403,12 +403,12 @@ func contextCascadeSharedPolicy() string {
 
 // TestContextReposRefusalJudgesTheDecidedJob: a launch whose document selects a
 // profile a shared project job holds runs on that job, and a shared project job
-// is never told the credentials service's address (credentialsServiceLaunchEnv:
-// the service refuses that job class whole, and the address would cost it the
-// App key it still mounts). So --context is refused there even though this
-// installation's service serves this repository — the case that answers "" for
-// every launch judges the repository's own job, and would pass a launch whose
-// run is then handed no address at all.
+// is told the credentials service's address on the same switch a repository's
+// own job is (credentialsServiceLaunchEnv, B5.2): the repository's record and
+// its document's auth. So --context is refused there while the repository is
+// not switched — the case that answers "" for every launch judges the
+// repository's own job, and would pass a launch whose run is then handed no
+// address at all — and goes once it is.
 func TestContextReposRefusalJudgesTheDecidedJob(t *testing.T) {
 	// The verdict that passes: a repository the published policy serves no
 	// profile for keeps its own job, which is handed the address, so the launch
@@ -427,16 +427,18 @@ func TestContextReposRefusalJudgesTheDecidedJob(t *testing.T) {
 
 	// The same repository and the same switch, on a document that selects a
 	// shared project job.
-	cascadeShared := func() *projectJobFixture {
+	cascadeShared := func(recorded bool) *projectJobFixture {
 		f := newProjectJobFixtureMode(t, "enforce")
 		publishPolicy(t, f.launchBudgetFixture, contextCascadeSharedPolicy())
 		f.db.Set(rules.PathCredsRulesMarker(), rules.CredsRulesVersion)
 		f.appendConfig(t, "credentials_service:\n  url: "+launchCredsURL+"\n")
-		markRepoCredentialsServiceReady(t, f.cloudFixture)
+		if recorded {
+			markRepoCredentialsServiceReady(t, f.cloudFixture)
+		}
 		projectJobCheckoutYAML(t, projectJobCascadeRepoYAML)
 		return f
 	}
-	shared := cascadeShared()
+	shared := cascadeShared(false)
 	_, _, err := runBudget(t, "--context", "acme/lib")
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("--context on a launch that runs on a shared project job: err = %v (exit %d), want a refusal", err, ExitCode(err))
@@ -458,23 +460,33 @@ func TestContextReposRefusalJudgesTheDecidedJob(t *testing.T) {
 
 	// The job the gate judged is the job the launch runs on: the same launch
 	// with no context repository starts on it.
-	control := cascadeShared()
+	control := cascadeShared(false)
 	if _, _, err := runBudget(t); err != nil {
 		t.Fatalf("a launch naming no context repository on the same document: %v", err)
 	}
 	if profile, provider, _ := launchedProjectJob(t, control.cloudFixture); profile != "standard" || provider != "github" {
 		t.Fatalf("the launch ran on the %s/%s job, want the standard/github one the gate judged", profile, provider)
 	}
-	// And the pair the gate judges with: this repository's own job would be
-	// handed the address, the shared job it runs on is handed nothing.
-	env := memEnv(t, control.cloudFixture)
-	spec := readSpec(t, control.cloudFixture, budgetRun)
-	auth, deployed := env.repoServiceAuth(context.Background(), spec, io.Discard)
-	if got := credentialsServiceLaunchEnv(env.lc, "", spec.Repo, auth, env.policyMode(context.Background()), deployed); len(got) == 0 {
-		t.Fatalf("a launch of %s on a repository's own job would be handed no address (auth %q, deployed %v): this fixture cannot tell the two jobs apart", spec.Repo, auth, deployed)
+	// The same launch once the repository is switched: the shared job is told
+	// the address, so the gate passes and the execution carries it.
+	switched := cascadeShared(true)
+	var sharedEnv map[string]string
+	switched.run.OnRun = func(c gcpfake.RunCall) { sharedEnv = c.Env }
+	if _, _, err := runBudget(t, "--context", "acme/lib"); err != nil {
+		t.Fatalf("--context on a launch on a switched shared project job %s: %v", switched.job, err)
 	}
-	if got := credentialsServiceLaunchEnv(env.lc, control.job, spec.Repo, auth, env.policyMode(context.Background()), deployed); len(got) != 0 {
-		t.Fatalf("the shared project job %s was handed %v", control.job, got)
+	if got := sharedEnv[envCredentialsServiceURL]; got != launchCredsURL {
+		t.Fatalf("the launch passed the gate and the shared job's execution was handed %q, want %s", got, launchCredsURL)
+	}
+	// And the pair the gate judges with agrees: the switched repository's own
+	// job and the shared job it runs on are both handed the address.
+	env := memEnv(t, switched.cloudFixture)
+	spec := readSpec(t, switched.cloudFixture, budgetRun)
+	auth, deployed := env.repoServiceAuth(context.Background(), spec, io.Discard)
+	for name, job := range map[string]string{"the repository's own job": "", "the shared project job": switched.job} {
+		if got := credentialsServiceLaunchEnv(env.lc, job, spec.Repo, auth, env.policyMode(context.Background()), deployed, false); len(got) == 0 {
+			t.Fatalf("%s is handed no address (auth %q, deployed %v) on a switched repository", name, auth, deployed)
+		}
 	}
 
 	// A review launch is the shape this gate judges as a repository's own

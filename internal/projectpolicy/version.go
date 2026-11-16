@@ -398,7 +398,33 @@ const PolicyRulesVersion = 1
 // fields are new children of a subtree no run writes, a run that bootstrapped
 // under the release behind keeps its records, its ledger and its counters, and
 // every write it makes still lands (docs/design/update-in-flight.md).
-const RulesVersion = 6
+//
+// Generation 7 is the four day-counter leaves a run's stage report writes per
+// model (spend-accuracy task SA5.0, D2648 as amended by D2650,
+// docs/spend-accuracy/day-leaves.md): `notional`, `rep`, `tlo` and `thi` under
+// `spend/<day>/repos/<slug>/byModel/<model>`, granted exactly as `micros` is —
+// the amount bound, increase-only, at most MAXRES a write. It bumps where the
+// credentials children deliberately did not, and it bumps for generation 6's
+// reason sharpened: these are a *client's writes*, and the client is a run.
+// Realtime Database applies a multi-path update atomically, so a run under the
+// older document does not lose one leaf — the whole stage report is refused and
+// the stage fails, which is why the writer asks the deployed generation before
+// it writes them (reconciliation F10, SA5.1). The marker is the only thing that
+// tells such an installation that its deployed document is not this binary's.
+//
+// What the bump does to an existing installation is what every bump does, and
+// it is met the same way: `fugaro doctor` reports policy-rules-skew until the
+// owner runs `fugaro update`, whose rules stage deploys this document and
+// records generation 7 in the marker, so an installation at generation 6
+// converges in one run and no second command. The deploy still refuses to write
+// this binary's document under a marker *above* it, so an older CLI cannot take
+// the leaves away behind a newer one's back. And the update is safe while runs
+// are in flight, which the marker's own write path carries: the leaves are new
+// siblings of a node a run already writes, so a run that bootstrapped under the
+// release behind keeps writing `micros` and the token leaves, and keeps its
+// records, its ledger and its counters — every write it makes still lands, and
+// it writes no leaf it does not know (docs/design/update-in-flight.md).
+const RulesVersion = 7
 
 // VersionError is the refusal of a node written in a version this Fugaro does
 // not understand. It carries both versions, so each side prints its own

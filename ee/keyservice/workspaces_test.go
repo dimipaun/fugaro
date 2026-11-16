@@ -1115,9 +1115,10 @@ func (f *bindingFixture) racer(t *testing.T) *racingDocs {
 // NewDocStore over the same behind Deps.Store, and what it then reads back is
 // what the deploy's backend would have left.
 //
-// The deploy's own adapter is written with the rest of P1.2, so this is the only
-// implementation of that seam in the repository today, and the cases over it are
-// what hold the seam's contract meanwhile.
+// The deploy's own adapter is docstore_docs.go (P1.7), and this stands beside
+// it rather than in its place: what a case needs here is the one collection it
+// refuses to write, and the adapter has no such hook. The cases over both are
+// what hold the seam's contract.
 type docsOnDocstore struct {
 	db docstore.Store
 	// refuse is the one collection this store's transactions fail to write,
