@@ -537,7 +537,7 @@ func TestNoServiceURLNoFetch(t *testing.T) {
 		// An api-key job run, so nothing about the run needs a service at all:
 		// what is asserted is what a run does with a declared secret its job
 		// does not carry when there is no one to ask.
-		b := admissionRun(t, "github", "acme/app", "enforce", "", `{"version":5,"allow_repos":["*"]}`)
+		b := admissionRun(t, "github", "acme/app", "enforce", "", `{"version":9,"allow_repos":["*"]}`)
 		b.deps.Local = false
 		b.deps.Project = "aurora"
 		b.deps.Env = filterEnv(b.deps.Env, secretEnvVar)

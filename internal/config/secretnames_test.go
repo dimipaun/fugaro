@@ -269,6 +269,24 @@ func TestValidateModelProvidersRefusesHarnessOAuthSecretNames(t *testing.T) {
 	}
 }
 
+// TestValidateModelProvidersRefusesAKeyCredentialsDerivedSecretName: the third
+// reserved family, and the one MC22 adds. A typed credential's key lives in the
+// container its own derived name (CredentialSecret) resolves to, and that
+// container is where the credential's reader looks — so a provider pointing
+// .secret at it would have the key read as the provider's and sent wherever
+// that entry's calls route. It is refused whether or not a credentials entry
+// declares the name, as the harness namespaces above are, and the name is
+// derived rather than chosen, so there is no provider key an operator could
+// have meant by it.
+func TestValidateModelProvidersRefusesAKeyCredentialsDerivedSecretName(t *testing.T) {
+	p := okProvider()
+	p.Secret = CredentialSecret("acme")
+	ps := ValidateModelProviders(map[string]ModelProvider{"openrouter": p})
+	if !hasProblem(ps, "providers.openrouter.secret", "typed credential's own derived secret name", 0) {
+		t.Errorf("a typed credential's derived secret name: problems = %s", problemsText(ps))
+	}
+}
+
 // TestValidateModelProvidersRefusesAnotherProvidersConvention: <p>-api-key
 // belongs to p's key whether or not p stores its key there, so a *second*
 // provider claiming it is refused — the same collision as two providers

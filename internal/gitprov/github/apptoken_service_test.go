@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -441,5 +442,123 @@ func TestServiceTokensRefusesAURLThatIsNotOneToSendAnIdentityTo(t *testing.T) {
 	defer mu.Unlock()
 	if calls != 1 {
 		t.Fatalf("the fixture's server answered %d calls, want 1: a refused URL was sent to", calls)
+	}
+}
+
+// TestServiceContextTokens: the client's half of C5b's route, and the shapes it
+// refuses rather than handing on.
+//
+// A context mint is asked ONCE per run and nothing is cached, which is the
+// deliberate difference from Token above: the write mint's token is what the
+// whole run makes its API calls with, so one mint an hour keeps the audit log
+// readable, while a context list is asked for when the run starts and the
+// answer is the caller's to hold. The test pins that by asking twice and
+// requiring two calls.
+//
+// Every refusal below is a sentence written here, carrying the status the
+// service answered with and no value: the list a call names is the run's own
+// and the token a call is answered with is a credential, so neither reaches an
+// error. The empty-token, no-repository and too-short-expiry shapes are refused
+// for the reason the write mint's are — each would fail later and further away
+// from the cause, and a token already minted and audited at the service that
+// reaches nobody has still been minted.
+func TestServiceContextTokens(t *testing.T) {
+	now := time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC)
+	token := serviceTokenPrefix + "context"
+	answer := func(tokens string) string {
+		return `{"tokens":[` + tokens + `]}`
+	}
+	one := func(tok, expires, repos string) string {
+		return `{"token":"` + tok + `","expires_at":"` + expires + `","repositories":[` + repos + `]}`
+	}
+	client := func(f *serviceFake) *ServiceTokens {
+		return &ServiceTokens{
+			URL: f.srv.URL, AppID: "1234", Job: "fugaro-run-job",
+			RunIDToken: func() string { return "run-identity-token" },
+			IDToken:    func(context.Context) (string, error) { return "job-id-token", nil },
+			Now:        func() time.Time { return now },
+		}
+	}
+
+	f := newServiceFake(t, now)
+	f.body = answer(one(token, "2026-10-22T11:00:00Z", `"acme/app"`))
+	s := client(f)
+	tokens, err := s.ContextTokens(context.Background(), []string{"acme/app", "acme/lib"})
+	if err != nil {
+		t.Fatalf("asking the service for a context token: %v", err)
+	}
+	if len(tokens) != 1 || tokens[0].Token != token || !tokens[0].ExpiresAt.Equal(now.Add(time.Hour)) {
+		t.Fatalf("ContextTokens = %+v, want the service's one token", tokens)
+	}
+	if want := []string{"acme/app"}; !slices.Equal(tokens[0].Repositories, want) {
+		t.Errorf("the token covers %v, want %v", tokens[0].Repositories, want)
+	}
+	req, body := f.call(0)
+	if req.Method != http.MethodPost {
+		t.Errorf("the context mint is a %s, want POST", req.Method)
+	}
+	if want := ServiceContextTokenPath; req.URL.Path != want {
+		t.Errorf("the context mint was asked at %s, want %s", req.URL.Path, want)
+	}
+	if want := `{"app_id":"1234","repositories":["acme/app","acme/lib"]}`; body != want {
+		t.Errorf("the context mint's body is %s, want %s", body, want)
+	}
+	if want := "Bearer job-id-token"; req.Header.Get("Authorization") != want {
+		t.Errorf("the context mint's job identity is %q, want %q", req.Header.Get("Authorization"), want)
+	}
+	if want := "run-identity-token"; req.Header.Get(ServiceHeaderRunIdentity) != want {
+		t.Errorf("the context mint's run identity is %q, want %q", req.Header.Get(ServiceHeaderRunIdentity), want)
+	}
+	if want := "fugaro-run-job"; req.Header.Get(ServiceHeaderRunJob) != want {
+		t.Errorf("the context mint reports job %q, want %q", req.Header.Get(ServiceHeaderRunJob), want)
+	}
+
+	// Asked again, the service is asked again: nothing is cached, because the
+	// answer is a credential the run was audited once for and holds.
+	if _, err := s.ContextTokens(context.Background(), []string{"acme/app"}); err != nil {
+		t.Fatalf("asking the service a second time: %v", err)
+	}
+	if f.minted() != 2 {
+		t.Errorf("the service answered %d calls, want 2 -- a context mint is not cached", f.minted())
+	}
+
+	const planted = "PLANTED-VALUE-IN-AN-ANSWER"
+	cases := []struct {
+		name   string
+		status int
+		body   string
+		wantIn string
+	}{
+		{name: "a refusal", status: http.StatusForbidden, body: `{"error":"not_this_run","message":"` + planted + `"}`, wantIn: "403"},
+		{name: "a body that is not a context mint's", body: planted, wantIn: "not a context mint's"},
+		{name: "no tokens at all", body: `{"tokens":[]}`, wantIn: "carries no token"},
+		{name: "an empty token", body: answer(one("", "2026-10-22T11:00:00Z", `"acme/app"`)), wantIn: "that is empty"},
+		{name: "a token that names no repository", body: answer(one(token, "2026-10-22T11:00:00Z", "")), wantIn: "names no repository"},
+		{name: "a token expiring too soon", body: answer(one(token, "2026-10-22T10:01:00Z", `"acme/app"`)), wantIn: "expires too soon"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newServiceFake(t, now)
+			f.status, f.body = tc.status, tc.body
+			s := client(f)
+			tokens, err := s.ContextTokens(context.Background(), []string{"acme/app"})
+			if err == nil {
+				t.Fatalf("an answer that is not a context mint's returned %+v", tokens)
+			}
+			if !errors.Is(err, ErrServiceTokens) {
+				t.Errorf("the refusal is %v, want one wrapping %v", err, ErrServiceTokens)
+			}
+			if !strings.Contains(err.Error(), tc.wantIn) {
+				t.Errorf("the refusal %q does not say what happened (%q)", err, tc.wantIn)
+			}
+			for _, v := range []string{planted, token, "run-identity-token", "job-id-token"} {
+				if v != "" && strings.Contains(err.Error(), v) {
+					t.Errorf("a value reached the refusal: %q", err)
+				}
+			}
+			if tokens != nil {
+				t.Errorf("a refused context mint returned %+v", tokens)
+			}
+		})
 	}
 }

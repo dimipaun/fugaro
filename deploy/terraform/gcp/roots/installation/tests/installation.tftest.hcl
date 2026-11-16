@@ -2570,6 +2570,23 @@ run "credentials_service_on" {
     }
   }
 
+  # The build class's entry is the email of the account this apply creates
+  # beside the service (B5, D2301), which is unknown during a plan — the module
+  # reads it off the account rather than spelling an address, so the service
+  # admits the identity build_identity.tf grants invoker to and not a guess at
+  # it. The override gives it a value so the exact map below, which carries
+  # that entry, is readable here; it is the mechanism the verifier runs use
+  # for their account.
+  override_resource {
+    target          = google_service_account.build_identity[0]
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-build-identity@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-build-identity@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-build-identity@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
   assert {
     condition     = google_service_account.credentials[0].account_id == "fugaro-credentials"
     error_message = "the service's account is the one credentials_service.account_id names, and the grants below are read against it"
@@ -2696,7 +2713,7 @@ run "credentials_service_on" {
   # below, which names none, is where the entry carries the installation's own
   # verifier account alone (CSR14 — the entry is rendered in every state of the
   # list, and an absent member is the state the account is the default in).
-  # Three of the ten are rendered only from what this file's own variables
+  # Three of the eleven are rendered only from what this file's own variables
   # name: the verifier list (C3.9g1) and, since BB4, the read mint's admitted
   # people — the operators among the installation's user: members, as the bare
   # addresses a Google ID token's email claim carries, which is what the
@@ -2706,6 +2723,13 @@ run "credentials_service_on" {
   # a URL, a job table that binds nothing, a verifier list or a person list
   # that is not a list of addresses) is refused by the process itself, by name,
   # and is C1.14's tests.
+  #
+  # FUGARO_BUILD_ACCOUNTS is in this map because it is not conditional on
+  # anything this file's variables name: the account is created by the same
+  # apply that turns the service on, so every run of this test that deploys the
+  # service renders the entry with the one address the account it creates has
+  # (B5, D2301 — the literal account ID, which is what lets the Go side name
+  # that address before anything is planned).
   #
   # This run also names two review job accounts, so the EIGHTH name is
   # rendered: the review class's admitted set, which the class is dead without
@@ -2728,6 +2752,7 @@ run "credentials_service_on" {
       FUGARO_REVIEW_JOB_ACCOUNTS     = "[{\"account\":\"default\",\"profile\":\"standard\",\"provider\":\"github\"},{\"account\":\"acme-personal\",\"profile\":\"standard\",\"provider\":\"github\"}]"
       FUGARO_VERIFIER_ACCOUNTS       = "[\"person-1@example.com\",\"fugaro-coordinator@proj-1234.iam.gserviceaccount.com\"]"
       FUGARO_PERSON_ACCOUNTS         = "[\"operator@example.com\"]"
+      FUGARO_BUILD_ACCOUNTS          = "[\"fugaro-build-identity@proj-1234.iam.gserviceaccount.com\"]"
     })
     error_message = "the container's environment is the names the service reads and nothing else: no secret ID, no credential value, and no entry beyond the ones the module sets for this run"
   }
@@ -2872,6 +2897,18 @@ run "credentials_service_first_apply_has_no_audience_yet" {
     }
   }
 
+  # And the same for the build class's entry (B5, D2301), which is the other
+  # account this apply creates and the other value the set's length depends on.
+  override_resource {
+    target          = google_service_account.build_identity[0]
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-build-identity@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-build-identity@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-build-identity@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
   assert {
     condition = tomap({
       for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e.name => e.value
@@ -2883,8 +2920,8 @@ run "credentials_service_first_apply_has_no_audience_yet" {
     error_message = "the placeholder must not look like a Cloud Run URL: a run.app-shaped audience would be a guess at another service's name"
   }
   assert {
-    condition     = length(google_cloud_run_v2_service.credentials[0].template[0].containers[0].env) == 9
-    error_message = "the unset case sets the same nine names, the audience and the verifier entry among them: a name the module drops is a service the process refuses by a different message, and the verifier entry is rendered in every state of the list (CSR14)"
+    condition     = length(google_cloud_run_v2_service.credentials[0].template[0].containers[0].env) == 10
+    error_message = "the unset case sets the same ten names, the audience, the verifier entry and the build class's entry among them: a name the module drops is a service the process refuses by a different message, and the verifier entry and the build entry are rendered in every state of the list (CSR14)"
   }
   # This run names no review job account, and the entry is not rendered at
   # all: the process reads the absence as an empty review set and admits no
@@ -2895,8 +2932,8 @@ run "credentials_service_first_apply_has_no_audience_yet" {
   # run above is the set's own).
   #
   # Mutation (run, restore): rendering the entry in every state — the
-  # unconditional block this one is not — fails the count above (ten names,
-  # not nine), so the fail-closed state cannot be replaced by an empty list
+  # unconditional block this one is not — fails the count above (eleven names,
+  # not ten), so the fail-closed state cannot be replaced by an empty list
   # that reads as "the installation said so".
   assert {
     condition     = length([for e in google_cloud_run_v2_service.credentials[0].template[0].containers[0].env : e if e.name == "FUGARO_REVIEW_JOB_ACCOUNTS"]) == 0

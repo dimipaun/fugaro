@@ -63,6 +63,13 @@ variable "repo" {
     # never proxies a repository, and every tfvars written before the fact
     # existed, plans exactly what it planned.
     bitbucket_proxied = optional(bool, false)
+    # Which of the model credentials the credentials service serves this
+    # repository's runs (D2072, G17): `all`, `anthropic` or `none`, computed by
+    # Go (infra.ModelSecretsServed) and passed to every workflow of this
+    # repository. Optional and `all`: a tfvars written before the input existed
+    # — every golden one — plans exactly what it planned, which is the drop
+    # every switched repository's root has made since the opt-in.
+    model_secrets_served = optional(string, "all")
     registry = object({
       repository_id   = string
       cleanup_dry_run = bool

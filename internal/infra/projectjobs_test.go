@@ -198,6 +198,144 @@ func TestProjectJobsDoNotFollowTheRepositories(t *testing.T) {
 
 func sortedJobNames(jobs map[string]ProjectJob) []string { return slices.Sorted(maps.Keys(jobs)) }
 
+// projectJobRepoReadyLC is projectJobRepoLC with the switch's own record on the
+// repository's entry (localcfg.Repo.CredentialsServiceReady, which `fugaro
+// update` writes when it applies that repository's root with the service on):
+// the deployer's answer to "is this profile's repositories' auth one the
+// service serves".
+const projectJobRepoReadyLC = "  acme/webapp: { provider: github, base_branch: main, workflows: [web], github_app_id: \"123456789\", credentials_service_ready: true }\n"
+
+// TestProjectJobKeepsItsMountsBeforeTheFlip is G17 for S5, on the deployer's
+// side: what the switch adds to a shared job is the credentials service and
+// nothing else. The job's account gets roles/run.invoker on it
+// (deploy/terraform/gcp/modules/project/sa.tf) and the launcher hands its
+// executions the address (internal/cli's credentialsServiceLaunchEnv), while
+// every mount the job has stays exactly where it was — the drop is B5.7's flip,
+// behind the owner's check, and a job that lost a mount here would run with no
+// model credential and no address to fetch one from.
+//
+// The equality is the whole of it: the switched job, with its one new field
+// cleared, must be the job the same config builds with the service off. That
+// covers the mounts (SecretEnv), the redaction list, the environment, the
+// service account, the conditions and the two booleans in one assertion, so a
+// later change that quietly drops something while adding the field fails here.
+//
+// Mutation (run, restore): have the switch clear jobSecrets (or set
+// SecretEnv = nil) for a switched profile — the equality fails on the mount,
+// and the URL-less block stays the same job as before, which is the state that
+// must not move either.
+func TestProjectJobKeepsItsMountsBeforeTheFlip(t *testing.T) {
+	// The repository line is the first key of the config's repos block, so it
+	// goes between m4LocalConfig and the additions that follow it (the same
+	// shape projectJobSpec builds).
+	tail := m5Additions + projectProfilesLCBlock
+	off := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+tail)
+	on := projectJobsFor(t, m4LocalConfig+projectJobRepoReadyLC+tail+credentialsServiceLCBlock)
+	if got, want := sortedJobNames(on), sortedJobNames(off); !slices.Equal(got, want) {
+		t.Fatalf("the switch moved the job set to %v, want %v: one job per (profile, provider, account), whatever its repositories' records say", got, want)
+	}
+	lc := parseLC(t, m4LocalConfig+projectJobRepoReadyLC+tail+credentialsServiceLCBlock)
+	want := &CredentialsService{Name: CredentialsServiceName, Region: lc.Region}
+	for name, job := range on {
+		before := off[name]
+		if job.CredentialsService == nil {
+			t.Errorf("the job %s carries no credentials service, want %+v: its profile's repository is switched on, so its account is granted roles/run.invoker on the installation's service and its runs are told where it is", name, *want)
+			continue
+		}
+		if *job.CredentialsService != *want {
+			t.Errorf("the job %s carries the credentials service %+v, want %+v: the name is the one the installation root creates it under and the region is the installation's, and the URL is Cloud Run's to assign — a job is told it at launch (internal/cli's credentialsServiceLaunchEnv), never from the tfvars", name, *job.CredentialsService, *want)
+		}
+		job.CredentialsService, before.CredentialsService = nil, nil
+		if !reflect.DeepEqual(job, before) {
+			t.Errorf("the job %s = %+v with the service switched on, want the job it is with the service off, %+v: the grant and the address are all this task adds (G17 — the mounts are dropped by B5.7's flip alone)", name, job, before)
+		}
+	}
+	// The same profile with no record, and with no service at all: the second
+	// is the installation that never opted in, and the first is the repository
+	// whose own root has not been applied with the service on — neither
+	// repository's auth is one the service serves, and the job is left exactly
+	// as it is.
+	for _, tc := range []struct {
+		name string
+		jobs map[string]ProjectJob
+	}{
+		{"no record on the repository", projectJobsFor(t, m4LocalConfig+projectJobRepoLC+tail+credentialsServiceLCBlock)},
+		{"no service on the installation", off},
+	} {
+		for name, job := range tc.jobs {
+			if job.CredentialsService != nil {
+				t.Errorf("%s: the job %s carries the credentials service %+v, want none: the module would grant its account roles/run.invoker on a service that serves none of its runs", tc.name, name, *job.CredentialsService)
+			}
+		}
+	}
+}
+
+// TestTheProjectJobsSwitchFollowsTheRecordsOfTheRun pins the re-derivation a
+// run owes the records it writes itself: the switch is read from the local
+// config's per-repository records, and two writers move them INSIDE a run that
+// applies the installation root — the upgrade backfill at the end of the
+// installation stage and the repository stage's own record write. A set derived
+// once, when the run's options were read, is behind those records from the
+// moment either has written, and the apply that follows would deploy a shared
+// job whose account the launcher has already been told to hand the service's
+// address — refused at the front door, with no fallback (D143).
+//
+// The record that has to move the answer is the repository's own kind: the
+// second config below is the first with ONE field added to the repository line
+// (projectJobRepoReadyLC), which is exactly what `recordCredentialsServiceReady`
+// writes, and every job of the profile that admits that repository has to gain
+// the service — and nothing else about it (the equality is
+// TestProjectJobKeepsItsMountsBeforeTheFlip's own).
+//
+// Mutations (run, restore): have RefreshProjectJobCredentialsService return its
+// input and the staleness answer is false and the jobs stay off; have it clear
+// the field instead of setting it and the equality fails.
+func TestTheProjectJobsSwitchFollowsTheRecordsOfTheRun(t *testing.T) {
+	tail := m5Additions + projectProfilesLCBlock
+	off := m4LocalConfig + projectJobRepoLC + tail + credentialsServiceLCBlock
+	on := m4LocalConfig + projectJobRepoReadyLC + tail + credentialsServiceLCBlock
+	before, after := parseLC(t, off), parseLC(t, on)
+	if off == on {
+		t.Fatal("the two fixtures are the same document: this test is about the one record that differs between them")
+	}
+	jobs := projectJobsFor(t, off)
+	if !ProjectJobsCredentialsServiceStale(jobs, after) {
+		t.Fatalf("the set derived before the record moved is not reported stale, though the config now serves the profile's repository: the run's last apply of the installation root is then skipped, and the grant lands only on a second fugaro update")
+	}
+	refreshed := RefreshProjectJobCredentialsService(jobs, after)
+	if ProjectJobsCredentialsServiceStale(refreshed, after) {
+		t.Errorf("the re-derived set is still stale: the answer has to be a fixed point of the config it was derived from, or every later stage plans the root again")
+	}
+	if ProjectJobsCredentialsServiceStale(jobs, before) {
+		t.Errorf("a set derived from the records as they stand is reported stale: it is, on a run where nothing moved, exactly what the config derives")
+	}
+	want := &CredentialsService{Name: CredentialsServiceName, Region: after.Region}
+	if got, wantNames := sortedJobNames(refreshed), sortedJobNames(jobs); !slices.Equal(got, wantNames) {
+		t.Fatalf("the re-derivation moved the job set to %v, want %v: one job per (profile, provider, account), whatever its repositories' records say", got, wantNames)
+	}
+	for name, job := range refreshed {
+		if job.CredentialsService == nil || *job.CredentialsService != *want {
+			t.Errorf("after the record moved, the job %s carries %v, want %+v: its profile admits the repository whose record says the service is ready", name, job.CredentialsService, *want)
+			continue
+		}
+		was := jobs[name]
+		was.CredentialsService, job.CredentialsService = nil, nil
+		if !reflect.DeepEqual(job, was) {
+			t.Errorf("the re-derivation changed the job %s to %+v, want the job it was, %+v, with the service cleared: it re-reads one field and touches nothing else (G17)", name, job, was)
+		}
+	}
+	// A job whose profile the config no longer declares is answered off: there
+	// is no profile left for a repository to be served through. The config
+	// records the repository whose record is on, so only the missing profile
+	// can be what moves the answer.
+	undeclared := parseLC(t, m4LocalConfig+projectJobRepoReadyLC+m5Additions+credentialsServiceLCBlock)
+	for name, job := range RefreshProjectJobCredentialsService(refreshed, undeclared) {
+		if job.CredentialsService != nil {
+			t.Errorf("the job %s carries the credentials service %+v, though the config declares no profile %q at all: the set is the door's, and a profile a person has removed serves nothing", name, *job.CredentialsService, job.Profile)
+		}
+	}
+}
+
 // The job's env is what the installation knows and nothing per-repository
 // (plan task 3.2 step 1): the four identity variables, plus the budget
 // backend's address and web key when the installation has them. The provider
@@ -1052,6 +1190,99 @@ func TestProjectJobAccountAxis(t *testing.T) {
 			t.Errorf("jobs %s and %s share the service account %s: the whole point of the account axis is that one job's credential is readable by that job alone", prev, name, j.ServiceAccount.AccountID)
 		}
 		seenSA[j.ServiceAccount.AccountID] = name
+	}
+}
+
+// keyCredentialAccountAxisLC is the account axis's fixture with a KEY
+// credential beside a token account: acme-key is a name `fugaro accounts add
+// --type openrouter` declares (MC22, D1670), whose value is stored under the
+// credential's own derived secret (config.CredentialSecret) and never under
+// acme-key's claude-oauth-token container, and acme-personal is the account
+// whose token a job of this profile really holds. The profile lists both,
+// because a key credential's claude_accounts entry keeps the meaning it has
+// for such a name — the list of repositories the key may be sent to — and only
+// the JOB is what the name must not get (config.ClaudeAccountTokenNames).
+const keyCredentialAccountAxisLC = `claude_accounts:
+  acme-personal: { allow_data_to: [acme/webapp] }
+  acme-key: { allow_data_to: [acme/webapp] }
+credentials:
+  - { name: acme-key, type: openrouter }
+project_secrets:
+  claude-oauth-token: { allow_data_to: [acme/webapp] }
+  github-app-key: { allow_data_to: [acme/webapp] }
+profiles:
+  standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, allow_repos: [github/acme/webapp], claude_accounts: [acme-personal, acme-key], secrets: [github-app-key] }
+`
+
+// TestProjectJobsLeaveAKeyCredentialOut is MC22 (D1670) at the project job
+// set, and it is the same rule TestAKeyCredentialDeploysNoJobMountingAnEmptyToken
+// pins on the per-repository set: a name the local config declares a KEY
+// credential gets no job, because every job of the axis exists to carry an
+// account's Claude token — projectAccountMount mounts
+// config.ClaudeAccountSecret(acme-key) as CLAUDE_CODE_OAUTH_TOKEN — and
+// nothing ever writes a version to that container for such a name. A job built
+// for it would mount an empty token, the run launched on it would fail in the
+// credential, and `fugaro secrets ls` would flag a MISSING name no
+// `claude setup-token` step could fill. The rule is the one WorkflowAccounts
+// applies (config.ClaudeAccountTokenNames), reused rather than restated: the
+// name's claude_accounts entry keeps the reach it bounds, and only the job
+// goes.
+//
+// The token account beside it is the control: the rule is about the
+// credential's TYPE and not about the profile's list, so acme-personal's job,
+// its own job service account and its token mount stay exactly where they
+// were — and the no-account job every profile keeps stays with them (D9).
+//
+// Mutation (run, restore): iterate config.ProjectJobAccounts(pr) alone (the
+// pre-fix code), which gives the key account a job and a job service account
+// again, both mounting the empty token.
+func TestProjectJobsLeaveAKeyCredentialOut(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+keyCredentialAccountAxisLC)
+	jobs, err := ProjectJobs(lc, "fugaro-runs-proj-1234", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := gcp.ProjectJobName("standard", "github", "acme-key")
+	keySA := gcp.ProjectServiceAccountID("standard", "github", "acme-key")
+	token := config.ClaudeAccountSecret("acme-key")
+	for name, j := range jobs {
+		if name == key || j.Job == key || j.Account == "acme-key" {
+			t.Errorf("the job set holds %s (profile %s, provider %s, account %q): a name declared a key credential gets no job, and every job of this axis mounts %s as %s — a container nothing writes a version to for such a name (its value is %s)",
+				name, j.Profile, j.Provider, j.Account, token, config.ReservedSecrets[config.ClaudeOAuthToken], config.CredentialSecret("acme-key"))
+		}
+		if j.ServiceAccount.AccountID == keySA {
+			t.Errorf("the job %s runs as %s, the job service account of acme-key: the secretAccessor member follows the mount, so an account that mounts nothing must have no service account either", name, keySA)
+		}
+		if _, mounted := j.SecretEnv[config.ReservedSecrets[config.ClaudeOAuthToken]]; mounted && j.SecretEnv[config.ReservedSecrets[config.ClaudeOAuthToken]] == token {
+			t.Errorf("the job %s mounts %s as %s: no job mounts a key credential's empty token container", name, token, config.ReservedSecrets[config.ClaudeOAuthToken])
+		}
+	}
+	// The set is not emptied by the rule: the profile's no-account job and its
+	// one token account's job are the two it deploys.
+	want := []string{
+		gcp.ProjectJobName("standard", "github", ""),
+		gcp.ProjectJobName("standard", "github", "acme-personal"),
+	}
+	if got := sortedJobNames(jobs); !slices.Equal(got, want) {
+		t.Fatalf("jobs = %v, want %v: the profile's no-account job and acme-personal's — the token account the profile serves", got, want)
+	}
+	personal := jobs[gcp.ProjectJobName("standard", "github", "acme-personal")]
+	if got := personal.SecretEnv[config.ReservedSecrets[config.ClaudeOAuthToken]]; got != config.ClaudeAccountSecret("acme-personal") {
+		t.Errorf("acme-personal's job mounts %s = %q, want %q", config.ReservedSecrets[config.ClaudeOAuthToken], got, config.ClaudeAccountSecret("acme-personal"))
+	}
+	if got := gcp.ProjectServiceAccountID("standard", "github", "acme-personal"); personal.ServiceAccount.AccountID != got {
+		t.Errorf("acme-personal's job runs as %s, want %s", personal.ServiceAccount.AccountID, got)
+	}
+	// And the account stays where it was, in the block a publish derives from
+	// the same config: a key credential keeps its claude_accounts entry, whose
+	// allow_data_to is the reach its key may be sent to (D1670) — the rule here
+	// drops a job and never the account.
+	accounts, err := projectpolicy.DeriveAccounts(profilesAsPolicy(lc.Profiles), lc.ClaudeAccounts, lc.ProjectSecrets, lc.PolicyRepoAccounts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := accounts["acme-key"]; !ok {
+		t.Errorf("the accounts block lost acme-key: %v — a key credential keeps its claude_accounts entry, whose allow_data_to is the reach its key may be sent to", slices.Sorted(maps.Keys(accounts)))
 	}
 }
 

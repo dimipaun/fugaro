@@ -97,6 +97,29 @@ func (p *Provider) appSlug(ctx context.Context) (slug string, ok bool) {
 	return "", false
 }
 
+// AppIdentity is the login this App's own account carries on this host --
+// "<slug>[bot]", the spelling GitHub compares a pull request's author
+// against -- and an error when that identity could not be read.
+//
+// It is appSlug with its failure surfaced rather than folded into the Self
+// FetchPRHead reports: Self is false both for an author that is another
+// account's and for a GET /app that failed and may pass on the next call,
+// which is right for a gate that must not trust a stranger's pull request
+// (reviewmode.go) and wrong for a caller that has to tell a bad call from an
+// outage. The credentials service's label route is that caller: a write it
+// cannot corroborate because the App was never named is an act to retry, not
+// a call to refuse.
+//
+// appSlug has already warned with the reason a read failed, once per
+// Provider, so the error here names no more than the failure itself.
+func (p *Provider) AppIdentity(ctx context.Context) (string, error) {
+	slug, ok := p.appSlug(ctx)
+	if !ok {
+		return "", errors.New("the App's identity could not be read")
+	}
+	return slug + botSuffix, nil
+}
+
 // readAppSlug asks the API who Fugaro is, by the one route this process can
 // take. It returns the slug, the read's name (for the warning), and an error
 // that is nil only when there is a slug to return.

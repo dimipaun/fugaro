@@ -131,10 +131,41 @@ locals {
     env => var.bitbucket_proxied && contains(local.proxied_git_secret_names, logical)
   }
 
+  # One entry per mount: this mount is a MODEL credential the credentials
+  # service serves — the first of the three families above — exactly when the
+  # input says so. The input is Go's answer for this repository
+  # (infra.ModelSecretsServed, written into the repository root's tfvars as
+  # model_secrets_served) and it has three arms, because the two halves of the
+  # family are served at different times (D2072, G17):
+  #
+  #   * `all` — the cascade: the service holds the account's token AND every
+  #     provider key, which is the state every switched repository was in
+  #     before B2.3, and the arms a tfvars written then means by saying
+  #     nothing (the variable's own default).
+  #   * `anthropic` — an `api-key` or `oauth` repository the switch admits
+  #     (B2.3): the service serves its runs the Anthropic key or the account's
+  #     token, and it serves them NOTHING else — the run may still reach a
+  #     provider of its own on a FUGARO_PROVIDER_KEY_ the job mounts, so that
+  #     accessor stays with the job. It is the arm B2.7's flip turns on, and
+  #     config.ServiceServedAuths is the list that decides which auths get it;
+  #     the input is empty of it until that flip, so every mount stays.
+  #   * `none` — an `api-key` or `oauth` repository whose credential the
+  #     service does NOT hold yet: every mount stays, and with it every
+  #     accessor, which is what makes this release inert for the repositories
+  #     it switches on.
+  #
+  # A repository the switch does not admit is `none` by the same input, and so
+  # the model clauses of the drop below never fire for it — its job keeps the
+  # mounts an earlier release gave it (D147's "with it off nothing changes").
+  is_served_model_secret = {
+    for env, logical in var.workflow.secret_env :
+    env => var.model_secrets_served != "none" && (contains(local.model_secret_env_names, env) || (var.model_secrets_served == "all" && startswith(env, local.model_secret_env_prefix)))
+  }
+
   # One entry per mount, so the drop below is per mount and never per name.
   is_service_held = {
     for env, logical in var.workflow.secret_env :
-    env => contains(local.model_secret_env_names, env) || startswith(env, local.model_secret_env_prefix) || contains(local.service_held_secret_names, logical) || local.is_proxied_git[env]
+    env => local.is_served_model_secret[env] || contains(local.service_held_secret_names, logical) || local.is_proxied_git[env]
   }
 
   # The secrets the job's own account may read, by logical name: every secret

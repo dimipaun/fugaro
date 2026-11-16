@@ -22,7 +22,7 @@ edits a file by hand. Three properties define it, and each is a rule of this des
    a key whose owner is not a command that exists, or a sentence saying `setup` or `update` owns it, is
    the defect this design closes (§4).
 2. **Every shape has a mechanism.** The generic writer handles scalars and string lists today
-   (`internal/cli/settings_set.go:106`); a map entry, an object-list entry and a
+   (`internal/cli/settings_set.go:117`); a map entry, an object-list entry and a
    concrete spelling of a wildcard key have none. §2 gives them one, in the generic path, and a
    dedicated command exists only where a rule differs (§3).
 3. **Nothing is published by a second command.** The HARD RULE in `CLAUDE.md` — `fugaro update` is the
@@ -41,29 +41,29 @@ project layer file's entries, D1175), and the dedicated commands of §3 are then
 
 The registry spells a wildcard key `workflows.*.commands.test`
 (`internal/settings/registry.go:223`). `settingsWriteLookup`
-(`internal/cli/settings_set.go:584`) reaches a wildcard row only for a spelling
+(`internal/cli/settings_set.go:624`) reaches a wildcard row only for a spelling
 `settingsGenericKeys` names, so a concrete key a person would type — `workflows.web.commands.test` —
 resolves to no row and is refused.
 
 **Recommendation (D1161): a concrete key matches the wildcard row whose pattern it fits.** The
 resolution is the settings read's own rule, reused rather than re-derived:
-`settingsPatternMatch` (`internal/cli/settings_set.go:607`) already matches a
+`settingsPatternMatch` (`internal/cli/settings_set.go:647`) already matches a
 pattern against a concrete key. The write path uses it to find the row, keeps the concrete key in the
 document it prints and the diff it shows, and the registry row supplies the layers, the default, the
 merge rule and the owner. The alternative — requiring the literal `*` — costs nothing to write and
 makes the command unusable by a person, which is the whole point of the ruling.
 
 **What changes is the allowlist and not the resolver.** The wildcard loop is already bounded to rows
-`settingsGenericKeys` names by name (`internal/cli/settings_set.go:584`), which is how
-`stages.*.claude_account` (`:130`) is reachable and why `workflows.*` is not; the literal `*` spelling
-keeps its own refusal (`:525`). So the task is to decide, row by row, which wildcard blocks the generic
+`settingsGenericKeys` names by name (`internal/cli/settings_set.go:624`), which is how
+`stages.*.claude_account` (`:141`) is reachable and why `workflows.*` is not; the literal `*` spelling
+keeps its own refusal (`:565`). So the task is to decide, row by row, which wildcard blocks the generic
 path carries — the same decision `settingsGenericKeys` is for at every other row — and the resolver
 needs no change at all.
 
 ### 2.2 `--add-entry` and `--remove-entry`
 
 `settings set --add` and `--remove` already add and remove **items of a string-list key**
-(`internal/cli/settings_set.go:294`, `:2050`), through `yamledit.AddListItem` and
+(`internal/cli/settings_set.go:334`, `:2106`), through `yamledit.AddListItem` and
 `yamledit.RemoveListItem` (`internal/yamledit/yamledit.go:234`, `:258`). They do not
 reach a **map** (`workflows.*.cache.*.key`, `providers.*.models`) or an **object list**
 (`workflows.*.cache` is a sequence of mappings, `workflows.*.secrets` a sequence of
@@ -89,8 +89,8 @@ entry by `name`), because the registry names leaves and not blocks.
 ### 2.3 The dry run, the confirmation, the backup and the compare-and-swap
 
 **Recommendation (D1166): an entry write is the same edit as any other.** It is classified by the same
-`settingsTypedWrite` call (`internal/cli/settings_set.go:1878`), printed by the
-same dry-run document (`internal/cli/settings_set.go:2225`), confirmed through
+`settingsTypedWrite` call (`internal/cli/settings_set.go:1934`), printed by the
+same dry-run document (`internal/cli/settings_set.go:2281`), confirmed through
 the same `applySettingsEdit` (`internal/cli/settings_write.go:86`), backed up
 by the same `backupFile` (`internal/cli/init.go:2602`) and refused when the file moved by
 the same byte compare-and-swap (`internal/cli/settings_write.go:150`). There is
@@ -219,12 +219,12 @@ mechanism, not a new registry. **Which of them the generic path writes today is 
 answer and not this list's**: `fugaro models` owns the five `ab.*` leaves and `defaults.agent`'s
 `model`, `models.*`, `crafts.*.model`, `levels.*` and `recipe`
 (`internal/settings/registry.go:518`, `:625`), and the family refusal is asked before the allowlist
-(`internal/cli/settings_set.go:218`), so those are refused until D1178's owner rename hands them
+(`internal/cli/settings_set.go:229`), so those are refused until D1178's owner rename hands them
 over — the `ab` **block** is written now, through §2's entry mechanism, whose row the generic path
 builds itself.
 
 **Recommendation (D1176): the edit's own next step publishes.** `fugaro settings set --layer project`
-already ends with `next: fugaro update` (`internal/cli/settings_set.go:2273`); the
+already ends with `next: fugaro update` (`internal/cli/settings_set.go:2329`); the
 HARD RULE is that `update` publishes the layer, not that a person runs `fugaro config publish` after it.
 `fugaro config publish` therefore **stays** as the operator's own door (and is the door the agent runs
 under the gate, [managed spec](../managed-agent-converge/spec.md) §4.2), but no *edit* here requires it:
@@ -260,7 +260,7 @@ three parts:
   command that would be read as an editor.
 - **The mechanism is the read's own table, not the write's map.** `settingsFamilyCommands` is asked a
   second question too — it is what refuses a write and points the key at its family
-  (`internal/cli/settings_set.go:556`) — so a family cannot simply be added to it: `config` owns
+  (`internal/cli/settings_set.go:596`) — so a family cannot simply be added to it: `config` owns
   `max_parallel` (`internal/settings/registry.go:560`) and `setup` owns `update_check` (`:566`), and both
   are keys the generic path writes today, so an entry for either family would refuse two keys `settings
   set` writes.
@@ -270,10 +270,10 @@ three parts:
 **Recommendation (D1179): the four budget keys stay the generic writer's, and the allowlist gains the
 two it refuses.** `budget.mode`, `budget.per_day_usd`, `budget.per_run_usd` and `budget.allowed_models`
 are a repository's own tightening of a ceiling (`internal/config/scope.go:91`, four `InRepo` rows): two
-of them are already in `settingsGenericKeys` (`internal/cli/settings_set.go:106`) and the other two are
+of them are already in `settingsGenericKeys` (`internal/cli/settings_set.go:117`) and the other two are
 **added to it**, which is the whole of what F13 needs — today they default to the owner `settings set`
 (`internal/settings/registry.go:324`) while the allowlist refuses them on purpose
-(`internal/cli/settings_set.go:89`). `fugaro budget set` keeps writing the budget **database**'s caps
+(`internal/cli/settings_set.go:100`). `fugaro budget set` keeps writing the budget **database**'s caps
 under its ETag-guarded write (`internal/cli/budget.go:923`) and owns no registry row. `compute_prices.*`
 (`internal/settings/registry.go:595`) becomes a generic-writer entry (D1162) as well: it is a deliberate
 local override with its own validation (`internal/localcfg/localcfg.go:119`) that no run's ceiling turns
@@ -361,8 +361,6 @@ gives it a command — with the converge flag that changes it when the two doors
 | `endpoints.service_usage` | — |
 | `endpoints.storage` | — |
 | `image_source` | `--image-source` |
-| `layer.jobs.catalog_check.paused` | — |
-| `layer.jobs.reports.paused` | — |
 | `layer_generation` | — |
 | `local.gcp_project` | `--gcp-project` |
 | `local.version` | — |
@@ -407,7 +405,11 @@ gives it a command — with the converge flag that changes it when the two doors
   until somebody needs it changed.
 - **A key the generic writer carries is not an installation fact**, whatever its owner column says:
   `commit_name`, `commit_email` and `update_check` are `setup`'s by owner and `settings set`'s by the
-  allowlist (D1179), so no row here names them.
+  allowlist (D1179), so no row here names them. R1 of docs/config-ownership/ added two more of the same
+  shape: `layer.jobs.catalog_check.paused` and `layer.jobs.reports.paused` were this table's rows with
+  the owner `update`, and D2603 hands the two switches to the generic path — `settings set` owns and
+  writes them, so both rows left the table in the same change, which is what the predicate behind this
+  table asks for.
 
 ## 7. What this design is not
 

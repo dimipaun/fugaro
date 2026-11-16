@@ -21,6 +21,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/infra"
 	infraTF "github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
@@ -537,6 +538,102 @@ func TestLauncherAccountsReadFromEnv(t *testing.T) {
 	}
 }
 
+// TestBuildAccountsReadFromEnv is the wiring of the build class's own list (B5,
+// D2301): FUGARO_BUILD_ACCOUNTS is the name credentials.tf renders from the
+// account the installation module creates beside the service, so the identity a
+// catalog build runs as is the identity the build route admits -- one value,
+// rendered by the module and read here, and never a second spelling in Go.
+//
+// The entry the first half uses is one credsvc's own fold refuses (a build
+// identity is matched against a Google ID token's email claim, as every class's
+// address is), so the refusal is reachable ONLY if the entry arrived at
+// NewAuthenticator -- the launcher list's own proof, and the one this class
+// needs most: a list parsed and then dropped on the way to AuthConfig would
+// leave the class empty, the route refusing every build, and nothing about the
+// parser able to tell.
+//
+// The second half is the optional-value rule this class shares with the
+// verifier list: the module renders the entry whenever it deploys the service,
+// so a service deployed by a release before this one renders none at all and
+// must start the service it always did, with a build class that admits nobody,
+// rather than refuse to bind a port.
+func TestBuildAccountsReadFromEnv(t *testing.T) {
+	const entry = "buiłd@example.invalid"
+	for _, n := range credentialsServiceEnvNames {
+		t.Setenv(n, credentialsServeEnv[n])
+	}
+	t.Setenv(envBuildAccounts, `["`+entry+`"]`)
+	fakeCredentialsService(t)
+
+	_, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error: an entry the build class cannot fold must refuse the process rather than be dropped on the way to it", err)
+	}
+	if !strings.Contains(err.Error(), "cannot verify its callers") || !strings.Contains(err.Error(), "build") {
+		t.Fatalf("err = %v, want the refusal that says the service cannot verify its callers because a build entry could not be folded, which is reachable only if %s reached the authenticator", err, envBuildAccounts)
+	}
+	if strings.Contains(err.Error(), entry) {
+		t.Errorf("err = %v, which carries the build entry itself: the refusal names the variable and never an account", err)
+	}
+
+	// A value that is not the array the module renders is a deployment that is
+	// wrong, refused by name.
+	for _, raw := range []string{`"` + entry + `"`, `[{"email":"` + entry + `"}]`, `["ok@example.invalid",3]`, "not json"} {
+		got, err := credentialsServiceBuildAccounts(raw)
+		if err == nil {
+			t.Errorf("credentialsServiceBuildAccounts(%q) = %v, want a refusal: the value is the document the module renders or nothing", raw, got)
+			continue
+		}
+		if !strings.Contains(err.Error(), envBuildAccounts) {
+			t.Errorf("the refusal for %q is %q, want it to name %s", raw, err, envBuildAccounts)
+		}
+		if strings.Contains(err.Error(), entry) {
+			t.Errorf("the refusal for %q carries an entry: %q", raw, err)
+		}
+	}
+
+	// The optional half: absent and empty are the empty class, and the service
+	// starts with a build route that admits nobody.
+	for _, raw := range []string{"", "[]"} {
+		t.Setenv(envBuildAccounts, raw)
+		cfg, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+		if err != nil {
+			t.Fatalf("credentialsServiceConfig with %s = %q: %v (the entry arrives with the deployment of the build identity the module creates, so a release that renders none must start the same service it always did)", envBuildAccounts, raw, err)
+		}
+		if _, err := credsvc.NewServer(cfg); err != nil {
+			t.Fatalf("NewServer with %s = %q: %v", envBuildAccounts, raw, err)
+		}
+	}
+
+	// The build class is held against every other one (B1): the identity the
+	// class admits is the project's build account and never one of the
+	// installation's own callers, because a job or an operator that could also
+	// be a build would hold a build's reach over a project's catalog entries.
+	// The refusal below is reachable only if the parsed list arrived at the
+	// authenticator's cross-check, which is the second half of the proof above.
+	t.Setenv(envVerifierAccounts, credentialsServeEnv[envVerifierAccounts])
+	t.Setenv(envBuildAccounts, credentialsServeEnv[envVerifierAccounts])
+	if _, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard); err == nil {
+		t.Errorf("%s carrying the installation's own verifier is accepted: the build class is the one list held against every other, and one caller in two classes is a class decided by which route read the token", envBuildAccounts)
+	} else if !strings.Contains(err.Error(), "build") || !strings.Contains(err.Error(), "verifier") {
+		t.Errorf("err = %v, want the refusal that names the two classes an address on both lists would be", err)
+	}
+
+	// ... and the module's own value is a value this process starts on: an
+	// installation that renders the entry gets a service that serves the build
+	// route, and the empty class above is for the installations that render
+	// none. The address is derived from the account ID the module creates the
+	// account under, so it is not a second spelling of anything.
+	t.Setenv(envBuildAccounts, `["`+infra.BuildIdentityEmail(credentialsServeEnv[envGCPProject])+`"]`)
+	cfg, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+	if err != nil {
+		t.Fatalf("credentialsServiceConfig with %s = the installation's build identity: %v", envBuildAccounts, err)
+	}
+	if _, err := credsvc.NewServer(cfg); err != nil {
+		t.Fatalf("NewServer with the installation's build identity as its build class: %v", err)
+	}
+}
+
 // TestCredentialsServiceConfigBuildsFromAFullEnvironment is the headline: the
 // whole of this task is that the service can be configured at all, so a
 // complete environment must build a credsvc.Config that NewServer accepts --
@@ -850,6 +947,25 @@ func TestCredentialsServiceConfigRefusesAMalformedVariable(t *testing.T) {
 			set:   map[string]string{envSharedJobAccounts: `[{"profile":"standard","provider":"github","account":"team-a","repos":["github/acme/webapp",""]}]`},
 			names: []string{envSharedJobAccounts},
 		},
+		{
+			name:  "the build accounts are not JSON",
+			set:   map[string]string{envBuildAccounts: "fugaro-build-identity@proj-1234.iam.gserviceaccount.com"},
+			names: []string{envBuildAccounts},
+		},
+		{
+			name:  "the build accounts are an object",
+			set:   map[string]string{envBuildAccounts: `{"email":"fugaro-build-identity@proj-1234.iam.gserviceaccount.com"}`},
+			names: []string{envBuildAccounts},
+		},
+		{
+			// A list of addresses is what the module renders from the account it
+			// creates, so one carrying rows is a deployment that is wrong
+			// rather than a class admitting nobody -- the verifier list's rule,
+			// one class over.
+			name:  "the build list carries a row rather than an address",
+			set:   map[string]string{envBuildAccounts: `[{"email":"fugaro-build-identity@proj-1234.iam.gserviceaccount.com"}]`},
+			names: []string{envBuildAccounts},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, n := range credentialsServiceEnvNames {
@@ -946,15 +1062,15 @@ func TestCredentialsServiceRefusalsNeverCarryAValue(t *testing.T) {
 // The other direction is a name this command reads that nothing sets, which is
 // a fact the service silently does not have.
 //
-// The list is the seven REQUIRED names plus the six optional ones, which is
+// The list is the seven REQUIRED names plus the seven optional ones, which is
 // the whole of what the module renders and what this command reads: the
 // optional ones belong here because a name the module sets and this command
 // does not read is the same mistake whether the command requires it or reads it
 // outside the loop. Which of the names is which is pinned by the tests around
 // this one, not by this comparison.
 //
-// All six are rendered conditionally — the module sets each of them only on an
-// installation where it applies — and the reason they belong here rather than
+// All seven are rendered conditionally — the module sets each of them only on
+// an installation where it applies — and the reason they belong here rather than
 // in credentialsServiceEnvNames is pinned by the tests around this one. One of
 // them is rendered by no module yet and is read from
 // CredentialsServiceEnvAwaitingTheModule below: FUGARO_SHARED_JOB_ACCOUNTS
@@ -972,7 +1088,7 @@ func TestCredentialsServiceEnvIsTheDeploymentsOwn(t *testing.T) {
 		inModule[m[1]] = true
 	}
 	pending := infraTF.CredentialsServiceEnvAwaitingTheModule()
-	read := append(slices.Clone(credentialsServiceEnvNames), envVerifierAccounts, envPersonAccounts, envLauncherAccounts, envCoordinatorAccount, envReviewJobAccounts, envSharedJobAccounts)
+	read := append(slices.Clone(credentialsServiceEnvNames), envVerifierAccounts, envPersonAccounts, envLauncherAccounts, envCoordinatorAccount, envReviewJobAccounts, envSharedJobAccounts, envBuildAccounts)
 	for _, n := range read {
 		if slices.Contains(pending, n) {
 			if inModule[n] {

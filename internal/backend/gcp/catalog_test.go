@@ -53,11 +53,10 @@ func catalogBuildSpec(t *testing.T) CatalogBuildSpec {
 			Generation:   1712345678901234,
 			SHA256:       strings.Repeat("b", 64),
 		},
-		ServiceAccount:  BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com",
-		MachineType:     "E2_HIGHCPU_8",
-		WorkflowSecrets: []config.Secret{{Name: "npm-token", Env: "NPM_TOKEN"}},
-		Bucket:          "gs://fugaro-runs-proj-1234",
-		Selftest:        []byte(`{"skip_verify":true,"tools":"critical"}`),
+		ServiceAccount: BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com",
+		MachineType:    "E2_HIGHCPU_8",
+		Bucket:         "gs://fugaro-runs-proj-1234",
+		Selftest:       []byte(`{"skip_verify":true,"tools":"critical"}`),
 		// What a submitter states about the build itself: the digest of the
 		// template it would build with, which the record carries so the check
 		// sees an engine-side change (F33, D1402).
@@ -140,67 +139,54 @@ func TestCatalogBuildReadsTheCopiedDockerfile(t *testing.T) {
 	}
 }
 
-// TestCatalogBuildMountsItsSecretAsAFileNeverAnEnv is the SEC property of
-// this task (D1150): an entry's build secret reaches the build the way a
-// workflow secret already does — the value is a Secret Manager version in
-// availableSecrets, the variable is in the build step's secretEnv and in
-// _SECRET_ENVS, and the step writes it into a private temporary file and
-// passes that file to BuildKit as a file secret. It is never an ENV, a
-// build argument, a layer, a step's env: or a log line; a mount that would
-// export it (BuildKit's env=) is refused by Cloud Build's docker anyway.
+// TestCatalogBuildMountsItsSecretAsAFileNeverAnEnv is PIC4's SEC property
+// (D1150), and the name is that task's own pin — the plan and
+// docs_project_image_catalog_test.go both read it. What it asserts is the
+// stronger fact D2311 leaves in its place (B9): an entry's build is handed no
+// secret at all. The one secret the request names is the repository's provider
+// credential, which the clone step reads and no other step does; the build
+// step's secretEnv is empty, _SECRET_ENVS is empty, and the loop the step
+// reads it with passes docker no --secret — so an entry that mounts one has
+// nothing to mount, whatever its definition says. A secret is still never an
+// ENV, a build argument, a layer, a step's env: or a log line, which is what
+// the property was about: it is now never handed over at all.
 func TestCatalogBuildMountsItsSecretAsAFileNeverAnEnv(t *testing.T) {
 	s := catalogBuildSpec(t)
 	b, err := CatalogBuildRequest("proj-1234", s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	slug := catalogSlug(t)
 	var secrets []string
 	for _, sm := range b.AvailableSecrets.SecretManager {
 		secrets = append(secrets, sm.Env+"="+sm.VersionName)
 	}
 	want := []string{
 		"GIT_TOKEN=projects/proj-1234/secrets/" + s.GitSecretID + "/versions/latest",
-		"NPM_TOKEN=projects/proj-1234/secrets/" + SecretID(slug, "npm-token") + "/versions/latest",
 	}
 	if !slices.Equal(secrets, want) {
 		t.Fatalf("availableSecrets = %v, want %v", secrets, want)
 	}
 	build := step(t, b, "build")
-	if !slices.Equal(build.SecretEnv, []string{"NPM_TOKEN"}) {
-		t.Fatalf("the build step's secretEnv = %v", build.SecretEnv)
+	if len(build.SecretEnv) != 0 {
+		t.Fatalf("the build step is handed the secrets %v: a catalog build mounts none (B9, D2311), and the clone step's checkout is what the entry works on", build.SecretEnv)
 	}
-	if b.Substitutions["_SECRET_ENVS"] != "NPM_TOKEN" {
-		t.Fatalf("_SECRET_ENVS = %q", b.Substitutions["_SECRET_ENVS"])
+	if got := b.Substitutions["_SECRET_ENVS"]; got != "" {
+		t.Fatalf("_SECRET_ENVS = %q, want empty: the loop the build step reads it with would hand docker a --secret for every name in it", got)
 	}
-	// The variable name may appear in the loop the step reads
-	// _SECRET_ENVS with, and nowhere as an env: or a build argument: a
-	// secret in the step's env: is a secret in the build's environment, its
-	// log and every child process; a build argument is in the image's
-	// history.
 	script := strings.Join(build.Args, "\n")
-	for _, st := range b.Steps {
-		if slices.ContainsFunc(st.Env, func(e string) bool { return strings.HasPrefix(e, "NPM_TOKEN=") }) {
-			t.Fatalf("step %s carries the secret variable in its env: %v", st.Id, st.Env)
-		}
-		switch st.Id {
-		case "build":
-		default:
-			// Only the credential step reads another secret, and it is the
-			// provider credential, not the entry's.
-			if len(st.SecretEnv) > 0 && (st.Id != credentialStep || !slices.Equal(st.SecretEnv, []string{gitTokenEnv})) {
-				t.Fatalf("step %s mounts a secret it does not need: %v", st.Id, st.SecretEnv)
-			}
-		}
+	// B8's half of the same fact: the credential the template's build step used
+	// to mount is the checkout the clone step exports, so no argument of this
+	// request mounts the credential file either. The trap that removes it stays
+	// — it is the cleanup of a path no step of this request writes.
+	if strings.Contains(script, `--secret "id=git-credentials`) {
+		t.Fatalf("the build step still mounts the credential file as a build secret: %q", script)
 	}
-	if strings.Contains(script, "NPM_TOKEN") {
-		t.Fatalf("the build step's script names the secret variable: %q", script)
-	}
-	if !strings.Contains(script, `--secret "id=$$e,src=$$sec/$$e"`) {
-		t.Fatalf("the build step does not pass a file secret: %q", script)
-	}
+	// The loop the step reads _SECRET_ENVS with is the one place a secret name
+	// would reach docker as a build secret, and it is left with an empty list:
+	// the loop's own text stays, its file-private write stays, and neither an
+	// env: nor a build argument can carry a name, because there is none.
 	if !strings.Contains(script, "umask 077") {
-		t.Fatalf("the secret file is not written private: %q", script)
+		t.Fatalf("the secret file the loop writes is not private: %q", script)
 	}
 	if strings.Contains(script, "env=") {
 		t.Fatalf("the build step mounts a secret as an env: %q", script)
@@ -209,6 +195,19 @@ func TestCatalogBuildMountsItsSecretAsAFileNeverAnEnv(t *testing.T) {
 	// the textual substitution the request applies.
 	if strings.Contains(script, "${_SECRET_ENVS") {
 		t.Fatalf("the script holds a substitution the request would rewrite: %q", script)
+	}
+	for _, st := range b.Steps {
+		switch st.Id {
+		case "build":
+			// Nothing to check beyond above: an empty secretEnv cannot carry a
+			// name.
+		default:
+			// Only the credential step reads another secret, and it is the
+			// provider credential, not an entry's.
+			if len(st.SecretEnv) > 0 && (st.Id != credentialStep || !slices.Equal(st.SecretEnv, []string{gitTokenEnv})) {
+				t.Fatalf("step %s mounts a secret it does not need: %v", st.Id, st.SecretEnv)
+			}
+		}
 	}
 }
 
@@ -1300,7 +1299,6 @@ func TestPrebuiltEntrySmoked(t *testing.T) {
 		"a registry image":           func(s *CatalogBuildSpec) { s.Image = "us-east5-docker.pkg.dev/proj-1234/fugaro/agent:latest" },
 		"a context":                  func(s *CatalogBuildSpec) { s.Context = "." },
 		"a definition":               func(s *CatalogBuildSpec) { s.Definition = CatalogDefinition{SourceCommit: strings.Repeat("a", 40)} },
-		"workflow secrets":           func(s *CatalogBuildSpec) { s.WorkflowSecrets = []config.Secret{{Name: "npm-token", Env: "NPM_TOKEN"}} },
 		"a no-smoke run":             func(s *CatalogBuildSpec) { s.NoSmoke = true },
 		"a reference with a quote":   func(s *CatalogBuildSpec) { s.Prebuilt = `docker.io/library/node:22"x` },
 		"a bucket that is not gs://": func(s *CatalogBuildSpec) { s.Bucket = "fugaro-runs-proj-1234" },

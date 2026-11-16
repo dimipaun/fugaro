@@ -193,6 +193,27 @@ type Spec struct {
 	// resolved by a reader that would have to guess which repository was
 	// meant.
 	ContextRepos []string `json:"context_repos,omitempty"`
+	// ChangeSet is the change set this run is a member of (fugaro run
+	// --change-set, plan task D1; reconciliation-image-setup D613 step 2,
+	// D616, D642): the set's ID and the whole member list, which the one
+	// launch that created every member run wrote into each member's task.
+	// Membership is fixed there and read from here — the settle step acts
+	// only when every member lists the same set — so a task file that names
+	// a set is a member of that set and nothing else can make it one. A
+	// task file is writable by launchers and by runs of the same repository
+	// (SECURITY.md), so a member can stall a set but cannot widen one unseen
+	// (D642, T5): this block is a coordination record, never an
+	// authorization input.
+	//
+	// It is written only when the launch named one, so a spec from a launch
+	// without --change-set is byte-identical to what the previous release
+	// wrote, and every spec written before this field reads the same. A
+	// spec that carries one needs a runner that knows the field: Parse
+	// decodes with DisallowUnknownFields, so an older runner refuses the
+	// whole task rather than run it as an ordinary one — which is why the
+	// launcher gates such a launch on the job image (internal/cli's
+	// changeSetSince) instead.
+	ChangeSet *ChangeSet `json:"change_set,omitempty"`
 	// ProjectLayer is the project layer the launching CLI read
 	// (docs/design/layered-config.md §8): its exact text, which the runner
 	// resolves fugaro.yaml against. Nil: none. A runner before 0.6.0
@@ -917,6 +938,70 @@ func ContextReposProblem(repo string) string {
 	return ""
 }
 
+// MaxChangeSetMembers bounds the repositories one change set may span
+// (ChangeSet.Members, fugaro run --change-set, plan task D1): a launch that
+// names more writes more tasks and starts more jobs, each with its own budget
+// and its own pull request, in the one command a person types. The cap is the
+// handful MaxContextRepos allows, for the same reason: a change that has to
+// land across repositories lands across a few siblings — the contract and what
+// consumes it — and a set bigger than a person can still read at launch is one
+// they cannot check. A value over the cap is a refusal, not a truncation: a set
+// that silently left out a member would deliver half a change.
+const MaxChangeSetMembers = 5
+
+// ChangeSet is the change set a run is a member of (Spec.ChangeSet, fugaro run
+// --change-set; plan task D1, D613 step 2, D616, D642): the set's ID and every
+// member of it. One launch creates one run per repository in the set, and every
+// one of those tasks carries this same block, so what the settle step reads
+// from a member is what the launch wrote (D642).
+//
+// It says nothing about what a member's run may do: each member run writes its
+// own repository alone, under its own claim, on its own pull request (D613's
+// linked runs), and the block is what tells the members apart from one another.
+type ChangeSet struct {
+	// ID is the set's own ID: the run ID of its first member (ChangeSetMembers
+	// are in launch order, so Members[0].Run). A launch mints every member's
+	// run ID at once anyway, so the first of them names the set with no second
+	// identity to mint, keep unique or look up.
+	ID string `json:"id"`
+	// Members is every member of the set, in launch order, the run reading
+	// this block included: 2 to MaxChangeSetMembers of them, each a repository
+	// no other member names. A member's repository is canonical
+	// (CanonicalRepo), the form the policy admits and every reader compares.
+	Members []ChangeSetMember `json:"members"`
+}
+
+// ChangeSetMember is one repository of a change set and the run that writes it:
+// the two facts the settle step reads a member's record and pull request by
+// (D3), and the two a member's own status section lists its siblings by — a run
+// reads only its own repository's records, so a sibling's pull request is one
+// it cannot look up itself.
+type ChangeSetMember struct {
+	// Repo is the member's repository, canonical.
+	Repo string `json:"repo"`
+	// RunID is the member's run ID, in the form NewRunID writes. On a member's
+	// task it is that run's own ID; on the task of a follow-up to a member's
+	// pull request (D2) it is the ID of the run that created the member, since
+	// the set is the launch's and a follow-up joins it rather than changing it.
+	RunID string `json:"run_id"`
+}
+
+// Member returns the member whose repository is repo, and whether the set names
+// one. It exists so a reader that holds a run's own repository — the runner
+// rendering a status section, the settle step walking a set — asks the set the
+// same question the same way, rather than each comparing names itself.
+func (c *ChangeSet) Member(repo string) (ChangeSetMember, bool) {
+	if c == nil {
+		return ChangeSetMember{}, false
+	}
+	for _, m := range c.Members {
+		if m.Repo == repo {
+			return m, true
+		}
+	}
+	return ChangeSetMember{}, false
+}
+
 // PlanTaskElemRE is the form of one "/"-separated element of a plan task
 // id: letters, digits, '.', '_' and '-', starting with a letter or a digit.
 // An allow-list rather than a list of refusals, because the id is shown as
@@ -1399,6 +1484,48 @@ func (s *Spec) Validate() error {
 					bad("task spec: context_repos repeats %s", c)
 				}
 				seen[c] = true
+			}
+		}
+	}
+	// The change set (Spec.ChangeSet, fugaro run --change-set): an ID that is
+	// its first member's run, two to MaxChangeSetMembers members, each a
+	// canonical repository with a run ID, no repository twice, and this run's
+	// own repository among them. A block that is present and names fewer than
+	// two members is refused rather than read as "no set": the launcher writes
+	// no key at all for a launch that named no --change-set (omitempty), so a
+	// task.json carrying a one-member set was written by something other than
+	// this launcher — and a set of one is a draft pull request no settle can
+	// lift (D614). The run's own repository is required to be in the list
+	// because the set is what says whose sibling this run is: a member that
+	// lists a set it is not in would be one no settle waits for.
+	if cs := s.ChangeSet; cs != nil {
+		switch {
+		case !runIDRE.MatchString(cs.ID):
+			bad("task spec: change_set id %q must look like 20260926-221530-a1b2", cs.ID)
+		case len(cs.Members) < 2 || len(cs.Members) > MaxChangeSetMembers:
+			bad("task spec: change_set must name 2 to %d members", MaxChangeSetMembers)
+		default:
+			if cs.Members[0].RunID != cs.ID {
+				bad("task spec: change_set id %s is not its first member's run %s", cs.ID, cs.Members[0].RunID)
+			}
+			seen := map[string]bool{}
+			for _, m := range cs.Members {
+				c, err := CanonicalRepo(m.Repo)
+				if err != nil {
+					bad("task spec: change_set names %q, which must look like owner/name", m.Repo)
+					continue
+				}
+				if !runIDRE.MatchString(m.RunID) {
+					bad("task spec: change_set member %s names %q, which must look like a run ID", c, m.RunID)
+				}
+				if seen[c] {
+					bad("task spec: change_set repeats %s", c)
+				}
+				seen[c] = true
+			}
+			own, _ := CanonicalRepo(s.Repo)
+			if !seen[own] {
+				bad("task spec: change_set does not name this run's repository %s", s.Repo)
 			}
 		}
 	}

@@ -1680,7 +1680,18 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 // tfvars carry no block at all, has nothing to move and answers with the
 // sentence rather than an apply. It asks the same predicate the move does
 // (credentialsImageStale), so the two can never disagree about whether there is
-// anything to do.
+// anything to move.
+//
+// The image is not the only thing this stage settles. The shared project jobs'
+// switch is read from the local config's per-repository records, and two
+// writers move them inside a run that applies the installation root: the
+// upgrade backfill (init.go's install, after that root's first apply) and the
+// repository stage's own record write. A run whose records have moved past the
+// jobs its spec holds has a grant to make that no later apply of this run would
+// otherwise make, and a launcher that reads the records live has already been
+// told to use it (ProjectJobsCredentialsServiceStale) — so that run answers with
+// an apply rather than the sentence, and the root is planned once more with the
+// switch re-derived (installRoot).
 func newCredentialsStage(e *initEngine) *engineStage {
 	return &engineStage{e: e, name: initflow.CredentialsService, isolate: true,
 		skip: func() string {
@@ -1699,10 +1710,22 @@ func newCredentialsStage(e *initEngine) *engineStage {
 				return ""
 			case doc == nil:
 				return "the installation's tfvars carry no credentials service"
-			case !credentialsImageStale(ver, image):
-				return "the recorded image is already this release's"
+			case credentialsImageStale(ver, image):
+				return ""
+			case infra.ProjectJobsCredentialsServiceStale(e.spec.ProjectJobs, e.lc):
+				// The image is this release's and the run still has an apply to
+				// make: the records the shared project jobs' switch is read from
+				// moved after the last apply of this root — the upgrade backfill
+				// writes them at the end of the installation stage, and the
+				// repository stage writes the checkout it converges — so a
+				// profile the launcher now hands the service's address has no
+				// roles/run.invoker grant on it yet, and the run it is handed to
+				// halts at the front door (D143). This stage is the run's only
+				// further apply of the installation root, so the grant lands
+				// here or on a second `fugaro update`.
+				return ""
 			}
-			return ""
+			return "the recorded image is already this release's"
 		},
 		run: func(ctx context.Context) error {
 			if err := e.setup(ctx); err != nil {

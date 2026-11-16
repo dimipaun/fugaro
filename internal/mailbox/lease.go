@@ -615,6 +615,80 @@ func Take(ctx context.Context, store HeartbeatStore, opts LeaseOptions) (LeaseRu
 	return LeaseRun{}, ErrLeaseContention
 }
 
+// Renew rewrites the heartbeat while this consumer already holds the claim on
+// it, which is what keeps both halves of M1's node true for a long-lived
+// consumer: the phone reads this value for presence (M1(c), §4.2 — a consumer
+// that stopped writing it looks offline), and the claim it carries stops being
+// fresh `ttl` after the instant it was written, at which point the holder's own
+// re-read stops honouring it (ActionBound) and any other consumer may take the
+// mailbox.
+//
+// It is deliberately not Take. The module refuses a take of a fresh claim to
+// everyone, **its holder included** — "a lease is renewed by releasing it, not
+// by re-taking it" — and this store admits no released value to release it to:
+// the heartbeat node is either absent or a heartbeat of exactly `{at, boot,
+// mac}`, so releasing would mean deleting the node, which the consumer neither
+// holds a grant for nor is allowed (D113b fences it to the outbox and the
+// heartbeat). What is left is the write M1 already rests on: read the node with
+// its ETag, check that the claim it carries is this consumer's own, sign
+// `{at, boot, mac}` at the caller's instant and write it back **conditional on
+// that ETag**. The store's if-match is the fence here exactly as it is for a
+// take, so a claim another consumer took over in the meantime is never
+// overwritten by a stale reader; a renewal that finds a heartbeat holding no
+// claim, or someone else's, writes nothing and answers lost.
+func Renew(ctx context.Context, store HeartbeatStore, opts LeaseOptions) (LeaseRun, error) {
+	if opts.NoHeartbeat {
+		return LeaseRun{Verdict: LeaseNone}, nil
+	}
+	path, err := HeartbeatPath(opts.Mailbox)
+	if err != nil {
+		return LeaseRun{}, err
+	}
+	if err := opts.check(); err != nil {
+		return LeaseRun{}, err
+	}
+	ttl := opts.ttl()
+
+	for attempt := 1; attempt <= opts.attempts(); attempt++ {
+		_, etag, claim, err := readHeartbeat(ctx, store, path, ttl)
+		if err != nil {
+			return LeaseRun{}, err
+		}
+		if claim == nil {
+			// Nobody holds the mailbox: taking one is Take's decision, and this
+			// function holds one rule rather than two.
+			return LeaseRun{Verdict: LeaseLost, Attempts: attempt}, nil
+		}
+		if claim.Holder != opts.Holder {
+			return lostRun(*claim, ttl, attempt), nil
+		}
+
+		value, err := signedHeartbeat(opts)
+		if err != nil {
+			return LeaseRun{}, err
+		}
+		err = store.PutIfMatch(ctx, path, etag, value)
+		switch {
+		case err == nil:
+			mine := Lease{Holder: opts.Holder, At: opts.At}
+			return LeaseRun{
+				Verdict:   LeaseHeld,
+				Lease:     &mine,
+				Holder:    opts.Holder,
+				ExpiresAt: opts.At + ttl,
+				Attempts:  attempt,
+			}, nil
+		case errors.Is(err, rtdb.ErrPrecondition):
+			// The heartbeat moved under this renewal, so what was read is not
+			// what would be replaced: re-read and decide again, never force.
+			continue
+		default:
+			return LeaseRun{}, err
+		}
+	}
+	return LeaseRun{}, ErrLeaseContention
+}
+
 // Confirm re-reads the lease before this consumer acts on it.
 //
 // The module's caller obligation is the reason it exists: **a holder stops
