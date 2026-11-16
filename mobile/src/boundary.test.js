@@ -154,6 +154,11 @@ test('the scan walks the app, and not an empty list', () => {
     'src/accounts/secure-store.js',
     'src/accounts/expo-secure-store.js',
     'src/app/root.js',
+    // The voice switch (P5.3.6) is on a credential path -- it is the app's own
+    // half of where an utterance may go -- so its door is named here on
+    // purpose: the everyday rules below then cover it like any other file, and
+    // a directory that stopped being walked is a failure rather than silence.
+    'src/voice-switch/index.js',
   ]) {
     assert.ok(files.includes(expected), `${expected} is in the walk`);
   }
