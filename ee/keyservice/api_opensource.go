@@ -38,10 +38,18 @@ import (
 	"strings"
 )
 
-// apiOpenSourcePath is the open-source ask's door on the portal's API (P1.0):
+// RouteAPIOpenSource is the open-source ask's door on the portal's API (P1.0):
 // the SPA's own origin reaches it through Hosting's rewrite (F21), which is why
 // it is registered under the subtree rather than mounted by Handler.
-const apiOpenSourcePath = "/api/open-source"
+//
+// It is exported and its own constant, and named with the `/api` prefix for the
+// reason `RouteTrial` is (api_trial.go): the SPA posts to this path
+// (ee/portal/src/screens/workspaces/workspaces.tsx), and a path that lives in two
+// files is a path that drifts between them. It is not `RouteOpenSource`, which is
+// the website's form's route and not this one (routes.go): the two doors read
+// different bodies from different clients, and the website's retires with its
+// route in P9.3 while this one is what remains.
+const RouteAPIOpenSource = "/api/open-source"
 
 // maxOpenSourceBodyBytes is what an open-source ask may body: the repositories
 // the licence would cover, as their URLs, one entry each, and the deploy's own
@@ -57,7 +65,7 @@ func init() {
 	// the store to write the queue entry, and it says so, so that a deployment
 	// serving it without either is refused when it starts rather than answering
 	// every ask with a failure of its own (api.go's `reaching`).
-	registerAPI(http.MethodPost, apiOpenSourcePath, (*Service).apiRequestOpenSource,
+	registerAPI(http.MethodPost, RouteAPIOpenSource, (*Service).apiRequestOpenSource,
 		withBody(maxOpenSourceBodyBytes), reaching(needDocs, needSignIn))
 }
 
@@ -230,9 +238,11 @@ func (s *Service) apiRequestOpenSource(w http.ResponseWriter, r *http.Request) {
 		failAPI(w, err)
 		return
 	}
-	// 202 and no body: the request is accepted and nothing about it is finished —
-	// the decision is a person's (P5.1) — and the applicant holds nothing to keep
-	// (no key, no id a screen shows), which is the trial's answer read one step
-	// earlier.
-	w.WriteHeader(http.StatusAccepted)
+	// 204 and no body: the request is filed and nothing about it is decided (P5.1),
+	// and the applicant holds nothing to keep — no key, no id a screen shows — so
+	// there is no body to read and none is promised. 202 would say as much, but the
+	// SPA's client reads a body wherever there is one and answers 204 as the one
+	// status with nothing to parse (`ee/portal/src/api/client.ts`), so the status
+	// this route answers is the one shape both sides already agree on.
+	w.WriteHeader(http.StatusNoContent)
 }

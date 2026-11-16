@@ -267,8 +267,8 @@ func trialBody(workspace string) string {
 func TestTrialIsTeamTierFourteenDays(t *testing.T) {
 	f := trialAs(t)
 	rec := f.ask(trialBody(workspaceID))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("a trial ask answered %d (%s), want 200", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("a trial ask answered %d (%s), want 204", rec.Code, rec.Body.String())
 	}
 
 	keys := f.mintedKeys()
@@ -330,9 +330,12 @@ func TestTrialIsTeamTierFourteenDays(t *testing.T) {
 	}
 
 	// The trial is a licence the portal holds (P3.3): a workspace of the
-	// organisation's own, bound to the project the ask named, and the grant that
+	// organisation's own, named for the project the ask named, and the grant that
 	// licenses it — which is what P3.1's screen reads a card off and what a
-	// purchase of the same workspace would supersede (D2204).
+	// purchase of the same workspace would supersede (D2204). What the workspace
+	// does **not** carry is the project id, and that is the point of the assertions
+	// below: a project id on a workspace is the cross-organisation claim only a
+	// binding may make, after the installation there is probed (D2205, TN-P1).
 	workspace, entitlement := f.trialLicence()
 	if entitlement.Source != "trial" || entitlement.Row != PolicyTrial || entitlement.Status != "active" {
 		t.Errorf("the trial's entitlement is %+v, want an active grant of the %s row sourced as a trial", entitlement, PolicyTrial)
@@ -346,8 +349,14 @@ func TestTrialIsTeamTierFourteenDays(t *testing.T) {
 	if entitlement.BoundAt == nil {
 		t.Error("the trial's entitlement reads unbound, and its key has just been minted: a card would offer to bind a workspace that already has one (P3.1)")
 	}
-	if workspace.ProjectID == nil || *workspace.ProjectID != workspaceID || workspace.BoundAt == nil {
-		t.Errorf("the trial's workspace is %+v, want one bound to the project the ask named (%s)", workspace, workspaceID)
+	if workspace.Name != workspaceID {
+		t.Errorf("the trial's workspace is named %q, want the project the ask named (%q): the card P3.4 draws shows it by name", workspace.Name, workspaceID)
+	}
+	if workspace.ProjectID != nil {
+		t.Errorf("the trial's workspace carries the project id %q: nothing proved the asker controls that project (D2201, F37), and a project id on a workspace is the claim that bars every other organisation's binding of it until operations transfer it (D2204, D2205, TN-P1). The id is attached by the bind path, which probes the installation first", *workspace.ProjectID)
+	}
+	if workspace.BoundAt == nil {
+		t.Errorf("the trial's workspace is %+v, want one reading bound: its key is minted by the same request, and a workspace with a key behind it that read unbound is one the screen offers to bind again", workspace)
 	}
 	if workspace.EntitlementID == nil || *workspace.EntitlementID != entitlement.ID {
 		t.Errorf("the trial's workspace is %+v, want the one pointing at its licence %s (D2204)", workspace, entitlement.ID)
@@ -386,8 +395,8 @@ func TestTrialIsTeamTierFourteenDays(t *testing.T) {
 // served on its own pair.
 func TestTrialIsOnePerWorkspaceAndAccount(t *testing.T) {
 	f := trialAs(t)
-	if rec := f.ask(trialBody(workspaceID)); rec.Code != http.StatusOK {
-		t.Fatalf("the first ask answered %d (%s), want 200", rec.Code, rec.Body.String())
+	if rec := f.ask(trialBody(workspaceID)); rec.Code != http.StatusNoContent {
+		t.Fatalf("the first ask answered %d (%s), want 204", rec.Code, rec.Body.String())
 	}
 
 	// The same account, another project: the account has had its trial.
@@ -433,8 +442,8 @@ func TestTrialIsOnePerWorkspaceAndAccount(t *testing.T) {
 	// colleague asking for a project of their own is served, and what they are
 	// served is a licence of their own — the organisation's second.
 	f.joinsAs(WireOrganisation{ID: trialOrganisation}, "uid-other", "other@acme.example", roleMember)
-	if rec := f.ask(trialBody("acme-colleague")); rec.Code != http.StatusOK {
-		t.Fatalf("a colleague's ask for a project of their own answered %d (%s), want 200", rec.Code, rec.Body.String())
+	if rec := f.ask(trialBody("acme-colleague")); rec.Code != http.StatusNoContent {
+		t.Fatalf("a colleague's ask for a project of their own answered %d (%s), want 204", rec.Code, rec.Body.String())
 	}
 	if licences := f.trialEntitlements(); len(licences) != 2 {
 		t.Errorf("the store holds %d trial entitlement(s), want the two served asks': %+v", len(licences), licences)
@@ -458,8 +467,8 @@ func TestTrialIsOnePerWorkspaceAndAccount(t *testing.T) {
 func TestAnotherOrgCannotBurnYourTrial(t *testing.T) {
 	f := trialAs(t)
 	stranger := f.foundsAs("uid-squatter", "founder@widgets.example", "Widgets Ltd")
-	if rec := f.askFrom("198.51.100.30:4040", trialBody(workspaceID)); rec.Code != http.StatusOK {
-		t.Fatalf("a stranger naming a project id of its own answered %d (%s), want 200: the id is a caller's own string and the trial it names is the asking organisation's (D2201)",
+	if rec := f.askFrom("198.51.100.30:4040", trialBody(workspaceID)); rec.Code != http.StatusNoContent {
+		t.Fatalf("a stranger naming a project id of its own answered %d (%s), want 204: the id is a caller's own string and the trial it names is the asking organisation's (D2201)",
 			rec.Code, rec.Body.String())
 	}
 
@@ -468,8 +477,8 @@ func TestAnotherOrgCannotBurnYourTrial(t *testing.T) {
 	// asked for.
 	f.signsInAs("uid-trial", trialAccount)
 	owning := f.askFrom("198.51.100.31:4040", trialBody(workspaceID))
-	if owning.Code != http.StatusOK {
-		t.Fatalf("the organisation the project belongs to answered %d (%s), want 200: another organisation's trial naming the same project id is not this one's and cannot bar it (D2201, TN-P1, F37)",
+	if owning.Code != http.StatusNoContent {
+		t.Fatalf("the organisation the project belongs to answered %d (%s), want 204: another organisation's trial naming the same project id is not this one's and cannot bar it (D2201, TN-P1, F37)",
 			owning.Code, owning.Body.String())
 	}
 	if minted := f.mintedKeys(); len(minted) != 2 {
@@ -492,13 +501,15 @@ func TestAnotherOrgCannotBurnYourTrial(t *testing.T) {
 		}
 	}
 	// Each organisation holds its own licence for the project, and neither names
-	// the other's: the two workspaces are two, and both name the project because
-	// that is all a project id is worth before a binding proves it.
-	if held := f.organisationWorkspaces(stranger.ID); len(held) != 1 || held[0].ProjectID == nil || *held[0].ProjectID != workspaceID {
-		t.Errorf("the stranger's organisation holds %+v, want the one workspace its trial wrote for %s", held, workspaceID)
+	// the other's: the two workspaces are two, both drawn by the project's name,
+	// and **neither carries its id** — the stranger's ask proves nothing about the
+	// project (D2201, F37), so the claim that the project is spoken for is left to
+	// a binding, which probes the installation before it makes it (D2205, TN-P1).
+	if held := f.organisationWorkspaces(stranger.ID); len(held) != 1 || held[0].Name != workspaceID || held[0].ProjectID != nil {
+		t.Errorf("the stranger's organisation holds %+v, want the one workspace its trial named for %s and no project id", held, workspaceID)
 	}
-	if held := f.organisationWorkspaces(trialOrganisation); len(held) != 1 || held[0].ProjectID == nil || *held[0].ProjectID != workspaceID {
-		t.Errorf("the owning organisation holds %+v, want the one workspace its trial wrote for %s", held, workspaceID)
+	if held := f.organisationWorkspaces(trialOrganisation); len(held) != 1 || held[0].Name != workspaceID || held[0].ProjectID != nil {
+		t.Errorf("the owning organisation holds %+v, want the one workspace its trial named for %s and no project id", held, workspaceID)
 	}
 	if licences := f.trialEntitlements(); len(licences) != 2 {
 		t.Errorf("the store holds %d trial entitlement(s), want one per organisation: %+v", len(licences), licences)
@@ -509,6 +520,63 @@ func TestAnotherOrgCannotBurnYourTrial(t *testing.T) {
 	again := f.askFrom("198.51.100.32:4040", trialBody(workspaceID))
 	if again.Code != http.StatusConflict {
 		t.Errorf("the organisation asking again for its own installation answered %d (%s), want 409", again.Code, again.Body.String())
+	}
+}
+
+// TestAnotherOrgsTrialDoesNotBarYourBinding is the harm the trial's own write is
+// kept away from, driven through the two acts that would meet on one project id.
+//
+// A project id on a workspace is the claim that the project is spoken for in
+// **every** organisation (D2204, `refuseBoundProject`), and the binding asks that
+// check before it probes the installation (D2205). A trial ask, though, is a
+// signed-in stranger's: the id it names is a string the asker typed and nothing
+// in the ask proves they run that project (D2201, F37). So a trial that wrote the
+// id onto its workspace would let any account bar the organisation that really
+// runs the project from binding it — 409 `project_id_bound` for as long as
+// operations has not transferred it (TN-P1) — for a licence covering nothing. The
+// trial therefore writes the project's **name** and no id (trialLicence), and the
+// claim is the binding's: the second act below is answered as if the stranger's
+// trial had not happened, and the installation is probed by the binding alone.
+func TestAnotherOrgsTrialDoesNotBarYourBinding(t *testing.T) {
+	f := newBindingFixture(t)
+	// An organisation with a paid licence nobody has bound yet: the second act is
+	// this licence's binding to the project the case is about.
+	_, dana, paid := f.licensingWorkspace(t)
+
+	// A stranger founds an organisation of its own and takes a trial naming a
+	// project id it does not run — which is the only thing a project id is at this
+	// door, a caller's own string.
+	stranger := f.foundsAs("uid-squatter", "founder@widgets.example", "Widgets Ltd")
+	if rec := f.ask(trialBody(exampleProject)); rec.Code != http.StatusNoContent {
+		t.Fatalf("the stranger's trial ask answered %d (%s), want 204", rec.Code, rec.Body.String())
+	}
+	if asked := f.probe.saw(); len(asked) != 0 {
+		t.Errorf("the trial asked a project's database about %v: D2205's probe is the binding's, and an ask that probed would be a door that reads a project on a stranger's word", asked)
+	}
+	held := f.organisationWorkspaces(stranger.ID)
+	if len(held) != 1 || held[0].Name != exampleProject || held[0].ProjectID != nil {
+		t.Fatalf("the stranger's trial wrote %+v, want one workspace naming %s and claiming no project id", held, exampleProject)
+	}
+	strangers := held[0].ID
+
+	// The organisation that really runs the project binds it. What answers is the
+	// binding's own state: the stranger's trial is not another organisation's
+	// binding of this project, and it is not an answer to this one.
+	f.actsAs(danaUID, danaEmail, signInGoogle)
+	rec := f.bind(t, paid.ID, exampleProject)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("binding the project answered %d (%s), want 200: another organisation's trial naming this project id is a caller's own string and claims nothing about it (D2201, D2204, F37, TN-P1)",
+			rec.Code, rec.Body.String())
+	}
+	if asked := f.probe.saw(); len(asked) != 1 || asked[0] != exampleProject {
+		t.Errorf("the binding asked about %v, want the one probe of %s the binding itself makes (D2205)", asked, exampleProject)
+	}
+	bound, _ := f.workspace(dana.ID)
+	if bound.ProjectID == nil || *bound.ProjectID != exampleProject {
+		t.Errorf("the organisation's own workspace is %+v, want it bound to the project it named", bound)
+	}
+	if after, _ := f.workspace(strangers); after.ProjectID != nil {
+		t.Errorf("the stranger's workspace is %+v after the binding, want it still claiming no project id: the trial never held one to lose", after)
 	}
 }
 
@@ -539,8 +607,8 @@ func TestTrialIsRefusedForAnAccountWithNoOrganisation(t *testing.T) {
 		t.Errorf("the refused ask wrote %+v, want no workspace", workspaces)
 	}
 	f.signsInAs("uid-trial", trialAccount)
-	if rec := f.ask(trialBody(workspaceID)); rec.Code != http.StatusOK {
-		t.Errorf("the member's ask answered %d (%s), want 200", rec.Code, rec.Body.String())
+	if rec := f.ask(trialBody(workspaceID)); rec.Code != http.StatusNoContent {
+		t.Errorf("the member's ask answered %d (%s), want 204", rec.Code, rec.Body.String())
 	}
 }
 
@@ -629,8 +697,8 @@ func TestTrialIsRefusedForAFreeMailAddress(t *testing.T) {
 		t.Errorf("the refused asks wrote %+v, want no workspace: a refusal writes nothing", workspaces)
 	}
 	f.signsInAs("uid-trial", trialAccount)
-	if rec := f.ask(trialBody(workspaceID)); rec.Code != http.StatusOK {
-		t.Errorf("an address at a domain of its own answered %d (%s), want 200: the refusal is the account's domain's, not the route's", rec.Code, rec.Body.String())
+	if rec := f.ask(trialBody(workspaceID)); rec.Code != http.StatusNoContent {
+		t.Errorf("an address at a domain of its own answered %d (%s), want 204: the refusal is the account's domain's, not the route's", rec.Code, rec.Body.String())
 	}
 }
 
@@ -696,8 +764,8 @@ func TestTrialIsSingleSeatWhateverTheAskNames(t *testing.T) {
 	}
 
 	rec := f.ask(trialBody(workspaceID))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("the ask this route reads answered %d (%s), want 200", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("the ask this route reads answered %d (%s), want 204", rec.Code, rec.Body.String())
 	}
 	keys := f.mintedKeys()
 	if len(keys) != 1 {
@@ -757,8 +825,8 @@ func TestTrialIsThrottledPerDomain(t *testing.T) {
 		f.signIn.caller = Caller{UID: "uid-trial", Email: trialAccount, Provider: "google.com", AuthTime: f.now}
 		f.seededOrganisation(trialOrganisation, "Acme Ltd", orgTypeCustomer, "uid-trial", trialAccount, roleOwner)
 	})
-	if rec := f.askFrom(applicantIP, trialBody(workspaceID)); rec.Code != http.StatusOK {
-		t.Fatalf("the first ask answered %d (%s), want 200", rec.Code, rec.Body.String())
+	if rec := f.askFrom(applicantIP, trialBody(workspaceID)); rec.Code != http.StatusNoContent {
+		t.Fatalf("the first ask answered %d (%s), want 204", rec.Code, rec.Body.String())
 	}
 	// The same domain, another account, another address: this is the ask a
 	// per-address bucket would have served.
@@ -771,8 +839,8 @@ func TestTrialIsThrottledPerDomain(t *testing.T) {
 	// domain and not the trial route as a whole.
 	f.foundsAs("uid-three", "founder@widgets.example", "Widgets Ltd")
 	third := f.askFrom("198.51.100.45:4040", trialBody("widgets-workspace"))
-	if third.Code != http.StatusOK {
-		t.Errorf("an ask from another domain answered %d (%s), want 200: the bucket is the domain's and not the route's", third.Code, third.Body.String())
+	if third.Code != http.StatusNoContent {
+		t.Errorf("an ask from another domain answered %d (%s), want 204: the bucket is the domain's and not the route's", third.Code, third.Body.String())
 	}
 	if minted := f.mintedKeys(); len(minted) != 2 {
 		t.Errorf("the asks minted %d key(s), want the two that were served", len(minted))
@@ -860,8 +928,8 @@ func TestTrialIsRefusedForANameTheStoreCannotFile(t *testing.T) {
 
 	f.signsInAs("uid-trial", trialAccount)
 	served := f.ask(trialBody(workspaceID))
-	if served.Code != http.StatusOK {
-		t.Fatalf("the ask naming what the store holds answered %d (%s), want 200: the refusals are the names' and not the store's", served.Code, served.Body.String())
+	if served.Code != http.StatusNoContent {
+		t.Fatalf("the ask naming what the store holds answered %d (%s), want 204: the refusals are the names' and not the store's", served.Code, served.Body.String())
 	}
 	if minted := f.mintedKeys(); len(minted) != 1 {
 		t.Errorf("the served ask minted %d key(s), want the one it was served", len(minted))
@@ -927,8 +995,8 @@ func TestTrialIsServedWhenItsIssuanceWentUnanswered(t *testing.T) {
 	f.deps.Store = unansweredIssuance{Store: f.store}
 	f.start()
 	rec := f.ask(trialBody(workspaceID))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("the ask answered %d (%s), want 200: its issuance landed and only its answer was lost", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("the ask answered %d (%s), want 204: its issuance landed and only its answer was lost", rec.Code, rec.Body.String())
 	}
 	minted := f.mintedKeys()
 	if len(minted) != 1 {
@@ -1001,8 +1069,8 @@ func TestTrialIsServedWhenItsOwnClaimWentUnanswered(t *testing.T) {
 	f.deps.Store = unansweredClaim{Store: f.store}
 	f.start()
 	rec := f.ask(trialBody(workspaceID))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("the ask answered %d (%s), want 200: its own claim landed and only its answer was lost", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("the ask answered %d (%s), want 204: its own claim landed and only its answer was lost", rec.Code, rec.Body.String())
 	}
 	minted := f.mintedKeys()
 	if len(minted) != 1 {
@@ -1075,8 +1143,8 @@ func TestTrialIsNotSpentByAnAccountThatAlreadyHadOne(t *testing.T) {
 		f.signIn.caller = Caller{UID: "uid-trial", Email: trialAccount, Provider: "google.com", AuthTime: f.now}
 		f.seededOrganisation(trialOrganisation, "Acme Ltd", orgTypeCustomer, "uid-trial", trialAccount, roleOwner)
 	})
-	if rec := f.askFrom(applicantIP, trialBody(workspaceID)); rec.Code != http.StatusOK {
-		t.Fatalf("the account's own ask answered %d (%s), want 200", rec.Code, rec.Body.String())
+	if rec := f.askFrom(applicantIP, trialBody(workspaceID)); rec.Code != http.StatusNoContent {
+		t.Fatalf("the account's own ask answered %d (%s), want 204", rec.Code, rec.Body.String())
 	}
 	// The same account again, three times, each from its own address: every one
 	// is refused by §14's rule, and none of them is an ask the domain pays for.
@@ -1093,8 +1161,8 @@ func TestTrialIsNotSpentByAnAccountThatAlreadyHadOne(t *testing.T) {
 	}
 	f.joinsAs(WireOrganisation{ID: trialOrganisation}, "uid-two", "colleague@acme.example", roleMember)
 	colleague := f.askFrom("198.51.100.23:4040", trialBody("acme-colleague"))
-	if colleague.Code != http.StatusOK {
-		t.Errorf("a colleague at the same domain answered %d (%s), want 200: the allowance the repeats would have spent is still there",
+	if colleague.Code != http.StatusNoContent {
+		t.Errorf("a colleague at the same domain answered %d (%s), want 204: the allowance the repeats would have spent is still there",
 			colleague.Code, colleague.Body.String())
 	}
 	if minted := f.mintedKeys(); len(minted) != 2 {

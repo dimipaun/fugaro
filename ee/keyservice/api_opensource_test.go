@@ -50,7 +50,7 @@ func (f *fixture) askOpenSource(body string) *httptest.ResponseRecorder {
 // tells the per-address bucket from the per-request one.
 func (f *fixture) askOpenSourceFrom(ip, body string) *httptest.ResponseRecorder {
 	f.t.Helper()
-	req := httptest.NewRequest(http.MethodPost, intakeOrigin+apiOpenSourcePath, strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, intakeOrigin+RouteAPIOpenSource, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+portalIDToken)
 	req.RemoteAddr = ip
@@ -75,8 +75,8 @@ func TestOpenSourceRequestQueuesForOperations(t *testing.T) {
 	// stored is the host's own canonical form of each and never the line.
 	rec := f.askOpenSource(openSourceAsk(t,
 		repositoryURL, repositoryTwoURL+".git", repositoryURL+"/"))
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("the ask answered %d (%s), want 202: the request is a person's to decide and nothing about it is finished", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("the ask answered %d (%s), want 204: the request is a person's to decide and nothing about it is finished", rec.Code, rec.Body.String())
 	}
 	if rec.Body.Len() != 0 {
 		t.Errorf("the ask answered with %q, want no body: the applicant holds nothing — no key and no id a screen shows", rec.Body.String())
@@ -332,7 +332,7 @@ func TestOpenSourceRequestIsRefusedWithoutASignIn(t *testing.T) {
 			f.signIn.tokens = nil
 			f.signIn.err = tc.err
 			f.signIn.caller = tc.caller
-			req := httptest.NewRequest(http.MethodPost, intakeOrigin+apiOpenSourcePath, strings.NewReader(body))
+			req := httptest.NewRequest(http.MethodPost, intakeOrigin+RouteAPIOpenSource, strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			if tc.auth != "" {
 				req.Header.Set("Authorization", tc.auth)
@@ -363,9 +363,9 @@ func TestOpenSourceRequestIsRefusedWithoutASignIn(t *testing.T) {
 // without either is refused when it starts (api.go's `reaching`, `missing`),
 // rather than answering every ask with a failure of its own.
 func TestOpenSourceIsMountedOnlyWithItsSeams(t *testing.T) {
-	route, known := apiRoutes.lookup(http.MethodPost, apiOpenSourcePath)
+	route, known := apiRoutes.lookup(http.MethodPost, RouteAPIOpenSource)
 	if !known {
-		t.Fatalf("no route is mounted at %s %s, so nothing serves an open-source ask", http.MethodPost, apiOpenSourcePath)
+		t.Fatalf("no route is mounted at %s %s, so nothing serves an open-source ask", http.MethodPost, RouteAPIOpenSource)
 	}
 	for _, seam := range []struct {
 		need apiNeed
@@ -385,6 +385,69 @@ func TestOpenSourceIsMountedOnlyWithItsSeams(t *testing.T) {
 	}
 }
 
+// TestTheAsksAreThePathAndFieldsTheSPASends pins both halves of one contract:
+// the paths these two routes are mounted at and the field names their bodies
+// carry. The SPA posts to them from the workspace card
+// (ee/portal/src/screens/workspaces/workspaces.tsx), and its own suite pins its
+// half — the path it joins `API_BASE` to and the body it sends — so what keeps
+// the two one contract is that each side names the same facts here.
+//
+// The mistake this is written against is a real one: the card posted the
+// portal's own workspace id in the trial's field, to a path
+// (`/api/opensource`) nothing is mounted at, and the two halves of that
+// contract were pinned nowhere.
+func TestTheAsksAreThePathAndFieldsTheSPASends(t *testing.T) {
+	if RouteTrial != "/api/trial" {
+		t.Errorf("RouteTrial is %q, want the path the SPA's `/trial` is joined to", RouteTrial)
+	}
+	if RouteAPIOpenSource != "/api/open-source" {
+		t.Errorf("RouteAPIOpenSource is %q, want the path the SPA's `/open-source` is joined to", RouteAPIOpenSource)
+	}
+	for _, door := range []struct {
+		ask  string
+		path string
+	}{
+		{"the trial", RouteTrial},
+		{"the open-source ask", RouteAPIOpenSource},
+	} {
+		if _, known := apiRoutes.lookup(http.MethodPost, door.path); !known {
+			t.Errorf("nothing is mounted at POST %s, so %s is a request the API answers 404 no_route", door.path, door.ask)
+		}
+	}
+
+	// The bodies, read strictly as the routes read them: the trial names the
+	// **Firebase project id** in `workspace_id`, and the open-source ask names
+	// the repositories in `repositories`.
+	var trial TrialCall
+	if err := decodeWire([]byte(`{"workspace_id":"example-portal"}`), &trial); err != nil {
+		t.Fatalf("the body the SPA posts to the trial is not one this route reads: %v", err)
+	}
+	if trial.WorkspaceID != "example-portal" {
+		t.Errorf("the trial's body reads %q, want the Firebase project id it carries", trial.WorkspaceID)
+	}
+	var ask OpenSourceCall
+	if err := decodeWire([]byte(`{"repositories":["https://code.example/acme/widget"]}`), &ask); err != nil {
+		t.Fatalf("the body the SPA posts to the open-source ask is not one this route reads: %v", err)
+	}
+	if len(ask.Repositories) != 1 || ask.Repositories[0] != "https://code.example/acme/widget" {
+		t.Errorf("the open-source ask's body reads %v, want the lines the applicant sent", ask.Repositories)
+	}
+
+	// What the two fields are is what the card got wrong: the portal's own
+	// workspace id is not a Firebase project id, and the trial's field is the
+	// project's (K2.7's rule is counted on it, D2201). A portal id — the
+	// 43-character one `newID` mints, as base62 — fails the shape binding and
+	// the trial both check, which is what the route answers 422 `invalid_project_id`
+	// about.
+	id, err := newID()
+	if err != nil {
+		t.Fatalf("minting a portal id: %v", err)
+	}
+	if validProjectID(id) {
+		t.Errorf("the portal's own workspace id %q is a valid Firebase project id, and the two are different names for different things: the trial's field carries the project's", id)
+	}
+}
+
 // TestOpenSourceRequestIsThrottledPerAccount: what is scarce behind this route
 // is a person's attention on the queue (§4.5, P5.1), so the second allowance is
 // the account's — the address the sign-in proved — and not the route's or the
@@ -396,8 +459,8 @@ func TestOpenSourceRequestIsThrottledPerAccount(t *testing.T) {
 		f.cfg.Throttle = Limits{Requests: 1, Window: time.Hour}
 	})
 	f.actsAs(danaUID, danaEmail, signInGoogle)
-	if rec := f.askOpenSourceFrom("198.51.100.60:4040", openSourceAsk(t, repositoryURL)); rec.Code != http.StatusAccepted {
-		t.Fatalf("the first ask answered %d (%s), want 202", rec.Code, rec.Body.String())
+	if rec := f.askOpenSourceFrom("198.51.100.60:4040", openSourceAsk(t, repositoryURL)); rec.Code != http.StatusNoContent {
+		t.Fatalf("the first ask answered %d (%s), want 204", rec.Code, rec.Body.String())
 	}
 	second := f.askOpenSourceFrom("198.51.100.61:4040", openSourceAsk(t, repositoryTwoURL))
 	if second.Code != http.StatusTooManyRequests {
@@ -405,8 +468,8 @@ func TestOpenSourceRequestIsThrottledPerAccount(t *testing.T) {
 	}
 	f.actsAs(erinUID, erinEmail, signInGoogle)
 	third := f.askOpenSourceFrom("198.51.100.62:4040", openSourceAsk(t, repositoryTwoURL))
-	if third.Code != http.StatusAccepted {
-		t.Errorf("another account's ask answered %d (%s), want 202: the bucket is the account's and not the route's", third.Code, third.Body.String())
+	if third.Code != http.StatusNoContent {
+		t.Errorf("another account's ask answered %d (%s), want 204: the bucket is the account's and not the route's", third.Code, third.Body.String())
 	}
 	if open := f.open(); len(open) != 2 {
 		t.Errorf("the queue holds %d open request(s), want the two that were served", len(open))
@@ -420,8 +483,8 @@ func TestOpenSourceRequestIsThrottledPerAccount(t *testing.T) {
 func TestOpenSourceQueueIsReadAsTheServiceWritesIt(t *testing.T) {
 	f := newFixture(t)
 	f.actsAs(danaUID, danaEmail, signInGoogle)
-	if rec := f.askOpenSource(openSourceAsk(t, repositoryURL)); rec.Code != http.StatusAccepted {
-		t.Fatalf("the ask answered %d (%s), want 202", rec.Code, rec.Body.String())
+	if rec := f.askOpenSource(openSourceAsk(t, repositoryURL)); rec.Code != http.StatusNoContent {
+		t.Fatalf("the ask answered %d (%s), want 204", rec.Code, rec.Body.String())
 	}
 	held, err := f.svc.queue(context.Background())
 	if err != nil {

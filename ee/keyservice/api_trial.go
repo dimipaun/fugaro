@@ -290,16 +290,21 @@ func (s *Service) trial(w http.ResponseWriter, r *http.Request) {
 	if !s.trialFree(w, r, installation, caller.Email) {
 		return
 	}
-	// D2204 read where the trial can honour it. One project id is one workspace
-	// and one installation runs one key, and this route is about to write a
-	// workspace of its own for the project the ask named — so an organisation
-	// that already holds that project would end up holding it twice, which is a
-	// licence the screen draws twice and a key that fights the one already there.
-	// What it is **not** asked is the rule binding asks: a trial would otherwise
-	// let any organisation bar another's binding of a project id that is a
-	// caller's own string (D2201, F37), and TN-P1's ruling keeps that harm on the
-	// binding side — where the probe and the operations transfer are — rather
-	// than letting a trial reach it.
+	// D2204 read where the trial can honour it. The licence below is written for
+	// the project the ask named — the trial is *about* that project, even though
+	// what it writes carries no project id (trialLicence) — so an organisation
+	// that already holds a licence of its own for that project would end up
+	// holding two for one installation, which is a licence the screen draws twice
+	// and a key that fights the one already there.
+	//
+	// What it is **not** asked is the rule binding asks. That rule reads every
+	// organisation's workspaces, and a trial would then let any signed-in account
+	// bar a stranger's binding by naming a project id — a caller's own string
+	// that proves nothing (D2201, F37). So this reads the asking organisation's
+	// own records only, and the trial writes no project id at all: the claim that
+	// one project id is one workspace is made by the binding, after the
+	// installation there is probed (D2205) and where operations can transfer a
+	// project a squatter took (TN-P1).
 	if !s.trialProjectFree(w, r, organisation.ID, call.WorkspaceID) {
 		return
 	}
@@ -480,8 +485,12 @@ func (s *Service) trial(w http.ResponseWriter, r *http.Request) {
 	}
 	// The answer carries no key and no secret (D2135): the bundle went to the
 	// account's own address, and an answer the SPA holds is not a place a
-	// credential may be shown.
-	w.WriteHeader(http.StatusOK)
+	// credential may be shown. It is 204 with no body at all rather than 200 with
+	// an empty one, because there is nothing in it to read: the SPA's client reads
+	// a body only where there is one (`ee/portal/src/api/client.ts`), and a
+	// success with a body it has to parse is a shape that has to be promised on
+	// both sides.
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // trialLanded answers whether the store holds the trial this ask claimed, which
@@ -606,8 +615,9 @@ func (s *Service) trialFree(w http.ResponseWriter, r *http.Request, installation
 
 // trialProjectFree answers whether the caller's organisation holds no workspace
 // for this Firebase project, which is D2204 read where a trial can honour it:
-// the licence below is written onto a workspace of its own for that project, and
-// an organisation that already holds it would hold one project twice.
+// the licence below is granted for the project the ask named, and an
+// organisation that already has a licence of its own on that project would hold
+// two on one installation.
 //
 // What is asked is the organisation's own workspaces and never every
 // organisation's, and that is D2201's half of the rule (F37, TN-P1): a project
@@ -616,7 +626,9 @@ func (s *Service) trialFree(w http.ResponseWriter, r *http.Request, installation
 // a stranger's binding by naming its project — while the harm D2204 refuses
 // among strangers is refused where it can be proved, at the binding, where the
 // installation is probed (D2205) and operations can transfer a project a
-// squatter took (TN-P1).
+// squatter took (TN-P1). Since what the trial writes carries no project id
+// (trialLicence), the only rows this can find are bindings that were probed,
+// and a stranger's trial is not one of them.
 func (s *Service) trialProjectFree(w http.ResponseWriter, r *http.Request, organisationID, projectID string) bool {
 	held, err := recordsWhere[WireWorkspace](r.Context(), s.docs, workspacesCollection, Where{Field: "project_id", Value: projectID})
 	if err != nil {
@@ -655,10 +667,11 @@ func (s *Service) trialLicence(ctx context.Context, organisation WireOrganisatio
 		// Every read comes before every write: the store is read-before-write and
 		// refuses a document read after one the same transaction has written
 		// (docstore's ErrReadAfterWrite). The rule is asked here and not only above
-		// for the reason every other one is (grantEntitlement): a workspace another
-		// request wrote between the route's own read and this one is part of what
+		// for the reason every other one is (grantEntitlement): a binding another
+		// request made between the route's own read and this one is part of what
 		// this transaction read, so the store runs it again on the state that
-		// holds it rather than committing a second workspace for one project.
+		// holds it rather than granting a trial for a project this organisation
+		// has just bound a licence of its own to.
 		held, err := recordsWhere[WireWorkspace](ctx, tx, workspacesCollection, Where{Field: "project_id", Value: projectID})
 		if err != nil {
 			return err
@@ -692,12 +705,22 @@ func (s *Service) trialLicence(ctx context.Context, organisation WireOrganisatio
 		// card offering to bind a workspace that already has one.
 		bound := at
 		entitlement.BoundAt = &bound
-		project := projectID
+		// The workspace carries the project's **name** and not its id, and that is
+		// the whole of this route's answer to D2204. A project id on a workspace is
+		// the claim that one project id is bound by one workspace across every
+		// organisation (workspaces.go's `refuseBoundProject`), and it is a claim
+		// only the binding may make: the binding is where the installation is
+		// probed (D2205) and where operations can transfer a project a squatter
+		// took (TN-P1). An ask that wrote it without proving anything would let any
+		// signed-in account bar a stranger's binding for good by naming the
+		// stranger's project id — a string the asker types and nothing checks
+		// (D2201, F37). So the licence is granted for the project, the card is
+		// drawn with its name, and the project id is attached by the same
+		// `POST /workspaces/bind` every other licence's is, after its probe.
 		if err := putRecord(ctx, tx, workspacesCollection, id, WireWorkspace{
 			ID:             id,
 			OrganisationID: organisation.ID,
 			Name:           projectID,
-			ProjectID:      &project,
 			EntitlementID:  &entitlement.ID,
 			CreatedAt:      at,
 			BoundAt:        &bound,
