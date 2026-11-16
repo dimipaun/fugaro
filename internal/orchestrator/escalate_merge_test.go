@@ -50,6 +50,10 @@ const (
 	// mergeFinding is a finding key of the shape the tree writes (runstore's
 	// ValidFindingKey): lower hex, sixteen characters.
 	mergeFinding = "0123456789abcdef"
+	// mergeRoutinePath is a path sensitivity.Classify calls Routine, and
+	// mergeSecurityPath one it does not: the two the Routine clause is read on.
+	mergeRoutinePath  = "docs/status.md"
+	mergeSecurityPath = "internal/gateway/proxy.go"
 )
 
 // mergeStub is the launcher, the commenter and the log as one seam: what the
@@ -375,7 +379,7 @@ func mergeRecord(head string) *runstore.Record {
 		RunID:        mergeRun,
 		Status:       runstore.StatusSucceeded,
 		PushedHead:   head,
-		ChangedFiles: runstore.NewChangedFiles([]string{"docs/status.md"}),
+		ChangedFiles: runstore.NewChangedFiles([]string{mergeRoutinePath}),
 		PR:           &runstore.PRRef{Number: mergePR},
 	}
 }
@@ -391,13 +395,14 @@ func mergeYes() runstore.MergeJudge {
 }
 
 // mergePass is a reading every clause of D1245's gate passes on: a run that
-// ended at the judged head, a routine path set, green CI, no finding, a scored
-// review of that head and the judge's yes.
+// ended at the judged head, a routine path set the host reports for that head,
+// green CI, no finding, a scored review of that head and the judge's yes.
 func mergePass(head string) orchestrator.MergeReading {
 	return orchestrator.MergeReading{
 		Read:      true,
 		Number:    mergePR,
 		Record:    mergeRecord(head),
+		Paths:     runstore.NewChangedFiles([]string{mergeRoutinePath}),
 		Findings:  orchestrator.Findings{Read: orchestrator.FindingsReadable, List: []orchestrator.Finding{}},
 		ReviewRun: mergeReviewRun,
 		Scored:    true,
@@ -531,7 +536,19 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 			"a path outside the routine allowlist",
 			string(orchestrator.GatePathsNotRoutine),
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) {
-				r.Record.ChangedFiles = runstore.NewChangedFiles([]string{"internal/gateway/proxy.go"})
+				r.Paths = runstore.NewChangedFiles([]string{mergeSecurityPath})
+			},
+		},
+		{
+			"a path set nobody read from the host",
+			string(orchestrator.GatePathsUncorroborated),
+			func(r *orchestrator.MergeReading, _ *mergeHostStub) { r.Paths = nil },
+		},
+		{
+			"a host path set nobody bounded",
+			string(orchestrator.ReasonPathsTruncated),
+			func(r *orchestrator.MergeReading, _ *mergeHostStub) {
+				r.Paths = &runstore.ChangedFiles{Paths: []string{mergeRoutinePath}, Total: 500}
 			},
 		},
 		{
@@ -690,7 +707,8 @@ func TestR3NonRoutineWaitsInEveryMode(t *testing.T) {
 		t.Run(string(mode), func(t *testing.T) {
 			m := landable(t, now)
 			read := m.reader.reads["wi-1"]
-			read.Record.ChangedFiles = runstore.NewChangedFiles([]string{"internal/gateway/proxy.go"})
+			read.Record.ChangedFiles = runstore.NewChangedFiles([]string{mergeSecurityPath})
+			read.Paths = runstore.NewChangedFiles([]string{mergeSecurityPath})
 			m.reader.reads["wi-1"] = read
 
 			ladder := r3Read(headA)
@@ -703,6 +721,53 @@ func TestR3NonRoutineWaitsInEveryMode(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestR3PathsComeFromTheHostNotTheRecord is D1245's Routine clause read on the
+// document that can carry it: the host's changed files at the judged head.
+//
+// The record's changed-path set is the run's own account of its diff — the job
+// writes it from inside the container it shares with the agent — and a merge
+// that lands unread rests on this clause, so the account cannot be its own
+// corroboration. The triage reads the same rule into ErrTriageUncorroborated,
+// and the read that lifts it is a host's own report of the head. What the two
+// documents say here is deliberately at odds, and the host's answer is the one
+// the clause follows: a routine record over a host that reports a security path
+// refuses, because what the pull request would carry is the host's to know and
+// not the run's to claim.
+//
+// Mutation: classify the record's list instead of the host's and the first case
+// below merges a head whose diff touches the gateway.
+func TestR3PathsComeFromTheHostNotTheRecord(t *testing.T) {
+	now := o6Now()
+
+	t.Run("a routine record over a host that reports otherwise refuses", func(t *testing.T) {
+		m := landable(t, now)
+		read := m.reader.reads["wi-1"]
+		read.Record.ChangedFiles = runstore.NewChangedFiles([]string{mergeRoutinePath})
+		read.Paths = runstore.NewChangedFiles([]string{mergeSecurityPath})
+		m.reader.reads["wi-1"] = read
+
+		m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+
+		refusedAt(t, m, headA, "ladder-r3-wait-"+headA[:8], string(orchestrator.GatePathsNotRoutine))
+		if got := m.host.beyond(); len(got) != 0 {
+			t.Fatalf("the host was asked %v, and a head the clause refuses merges nothing", got)
+		}
+	})
+
+	t.Run("a record that claims more than the host reports still lands", func(t *testing.T) {
+		m := landable(t, now)
+		read := m.reader.reads["wi-1"]
+		read.Record.ChangedFiles = runstore.NewChangedFiles([]string{mergeSecurityPath})
+		m.reader.reads["wi-1"] = read
+
+		m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+
+		if !slices.Equal(m.host.merged, []string{headA}) {
+			t.Fatalf("the host merged %v, and the set the clause reads is the host's at the judged head", m.host.merged)
+		}
+	})
 }
 
 // TestR3CriticalAlwaysWaits is G10's other half: the ceiling D2037 gives

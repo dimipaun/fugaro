@@ -182,8 +182,14 @@ type MergeReading struct {
 	// for a ladder to merge.
 	Number int
 	// Record is the run whose head this is: its status, the commit it pushed
-	// and the changed-path set D1245 classifies.
+	// and what it says it changed.
 	Record *runstore.Record
+	// Paths is the changed-path set the host reports for this head, and nil
+	// where that read was not made. D1245's Routine clause is read on this set
+	// and never on the record's (see mergeGate): a record is the run's own
+	// account of its diff, and the clause is a rule about what may be merged
+	// unread.
+	Paths *runstore.ChangedFiles
 	// Findings is that run's open findings and the state of the read that
 	// produced them (BF1) — the same input the triage reads, so the two rules
 	// refuse on the same evidence.
@@ -324,6 +330,11 @@ const (
 	// GatePathsNotRoutine is a changed-path set the classifier does not call
 	// Routine: D1245's clause, and the one D2047 keeps narrow.
 	GatePathsNotRoutine GateReason = "paths_not_routine"
+	// GatePathsUncorroborated is a head whose changed-path set nobody read from
+	// the host. The record's own list is the run's account of its diff, and a
+	// clause that decides whether a merge may land unread does not rest on the
+	// diff's own opinion of itself (D1245, D2047).
+	GatePathsUncorroborated GateReason = "paths_uncorroborated"
 	// GateMergeRefused is a merge the host would not take. The refusal's own
 	// closed code sits beside it (MergeOutcome.Refusal).
 	GateMergeRefused GateReason = "merge_refused"
@@ -398,10 +409,18 @@ type MergeInput struct {
 // it, because every clause below is about that commit and a clause read on a
 // head the pull request has moved past is a fact about a commit nobody will
 // merge. The review clause comes before the deterministic one because a rebase
-// run is an agent and its own record is the only account of its diff (E8's
-// corroboration): the scored review of the head is what makes reading the paths
-// out of that record acceptable at all. And the judge comes last of the
-// readings, so a head the deterministic gate refuses never spends a model call.
+// run is an agent and nothing but a scored review of the head makes acting on
+// its record acceptable at all. And the judge comes last of the readings, so a
+// head the deterministic gate refuses never spends a model call.
+//
+// The deterministic clauses read two documents and are careful about which says
+// what. The record is the run's: whether it ended, that it pushed this head, and
+// that it changed something are facts about the run, and the run is the only
+// thing that can answer them. What it changed is not: D1245's Routine clause is
+// read on the host's own report of the head's changed paths (MergeReading.Paths)
+// and refuses when that read was not made, because a merge that lands unread
+// rests on it, and the diff's own account of itself is not corroboration (D2047;
+// triage reads the same rule as a reading nothing corroborated).
 func mergeGate(in MergeInput) MergeOutcome {
 	switch {
 	case !in.Read.Read:
@@ -450,7 +469,22 @@ func mergeGate(in MergeInput) MergeOutcome {
 	if in.CI != gitprov.CIGreen {
 		return waitFact(GateCIRed)
 	}
-	if sensitivity.Classify(paths.Paths) != sensitivity.Routine {
+	// The paths D1245 classifies are the host's at this head and not the
+	// record's: the record says the run changed something and pushed this
+	// commit, which is the run's own business, and the host says what the commit
+	// really touched, which is what a merge rests on. A set nobody read is a
+	// refusal and not a reading (G5), and one the host could not show whole is
+	// the same refusal the triage has a code for.
+	host := in.Read.Paths.Bounded()
+	switch {
+	case host == nil:
+		return waitFact(GatePathsUncorroborated)
+	case host.Truncated:
+		return waitReason(ReasonPathsTruncated)
+	case len(host.Paths) == 0:
+		return waitReason(ReasonPathsMissing)
+	}
+	if sensitivity.Classify(host.Paths) != sensitivity.Routine {
 		return waitFact(GatePathsNotRoutine)
 	}
 	if blocksALanding(in.Read.Findings.List) {
