@@ -97,6 +97,29 @@ func TestCascadeCarrierValidatesAtLoad(t *testing.T) {
 			t.Errorf("%s: the refusal does not name the key the operator wrote: %v", name, err)
 		}
 	}
+	// The node's model grades are carried here too, and held at load to the
+	// rule the node's own decode applies (config.ValidateModelGrades): a grade
+	// is a model and the credential or pool its calls go out on, so a grade
+	// written with no model — the state the rung that needs it refuses and asks
+	// about (D2039) — is refused where the operator wrote it.
+	grades, err := Parse([]byte(sample + "model_grades:\n  strong: {model: anthropic/claude-sonnet-5.5, access: acme-main}\n"))
+	if err != nil {
+		t.Fatalf("a grade the rule accepts was refused: %v", err)
+	}
+	if g := grades.ModelGrades; g == nil || !g.Set(config.GradeStrong) || g.Of(config.GradeStrong).Model != "anthropic/claude-sonnet-5.5" {
+		t.Errorf("model_grades = %+v, want the strong grade the file states", g)
+	}
+	for name, doc := range map[string]string{
+		"a grade with no model":              "model_grades:\n  strong: {access: acme-main}\n",
+		"a grade whose model is not an ID":   "model_grades:\n  strongest: {model: \"claude opus\"}\n",
+		"a grade whose access is not a name": "model_grades:\n  strong: {model: anthropic/claude-sonnet-5.5, access: \"Not A Name\"}\n",
+		"a grade this Fugaro does not have":  "model_grades:\n  stronger: {model: anthropic/claude-opus-5.5}\n",
+	} {
+		if _, err := Parse([]byte(sample + doc)); err == nil {
+			t.Errorf("%s: the file loaded, and a grade the node would refuse must not be readable here", name)
+		}
+	}
+
 	// A member this Fugaro does not model is refused by the strict decode,
 	// which names the member and the block's type rather than the file's key;
 	// the check here is that it is refused at all, because a misspelt member
