@@ -2503,7 +2503,8 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 	checks = append(checks, doctorCheck{ID: "policy-published", Severity: "info",
 		Problem: fmt.Sprintf("a policy is published at %s (version %d, %d allow-list entries)", shared, p.Version, len(p.AllowRepos)),
 		Fix:     "fugaro project policy show prints it"})
-	if err := refuseUnknownPolicyKeys(p); err != nil {
+	unknownKeys := refuseUnknownPolicyKeys(p)
+	if unknownKeys != nil {
 		// Published and in force by version and marker, and refused by every
 		// reader anyway: `policy show`, `project show` and `repos ls` refuse it
 		// through this same helper, and so do the launch gates that decide
@@ -2515,7 +2516,7 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 		// wording of it, so what doctor prints is what the command that refused
 		// the operator printed, and the two cannot drift.
 		checks = append(checks, doctorCheck{ID: "policy-unknown-keys", Severity: "warning",
-			Problem: "no run is bounded by the policy node: " + err.Error(),
+			Problem: "no run is bounded by the policy node: " + unknownKeys.Error(),
 			Fix:     "remove the unknown key from the node by hand (fugaro project policy show prints it), or upgrade Fugaro (brew upgrade dimipaun/tap/fugaro, then fugaro update) if a newer release writes it; 'fugaro project policy publish' refuses this node too, so publishing is not the fix"})
 	}
 	if len(p.AllowRepos) == 0 {
@@ -2532,6 +2533,14 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 	checks = append(checks, doctorCredsRules(ctx, db, p, lc)...)
 	if c := doctorPolicyVsJobs(lc); c != nil {
 		checks = append(checks, *c)
+	}
+	// A repository's own Bitbucket token copy, on the node in force (plan task
+	// T2.4): the shared-job decision is one the runs themselves make off this
+	// policy, so the check is asked only where the policy is the one they read
+	// — not for a node some unknown key has every reader refusing
+	// (policy-unknown-keys above).
+	if unknownKeys == nil {
+		checks = append(checks, doctorBitbucketOwnTokenSharedJob(ctx, lc, p)...)
 	}
 	// The two routing checks of plan task 1b.3 step 2, over the node in force:
 	// the switch is read off the policy the runs themselves read, and resolved
