@@ -1222,6 +1222,15 @@
         "name": {
           "default": "unset = the file is refused (name: is required)"
         },
+        "node_removals.craft_credentials": {
+          "default": "unset = empty: no typed credential has been removed from this config"
+        },
+        "node_removals.crafts": {
+          "default": "unset = empty: no craft has been removed from this config"
+        },
+        "node_removals.pools": {
+          "default": "unset = empty: no pool has been removed from this config"
+        },
         "orchestrator.batch_size": {
           "default": "unset = 10 (policy.DefaultBatchSize)"
         },
