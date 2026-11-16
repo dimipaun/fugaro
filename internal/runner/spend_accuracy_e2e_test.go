@@ -93,8 +93,21 @@ func TestSpendFieldsEndToEnd(t *testing.T) {
 	}
 	// The run's model figure is the settled ledger's, and the ledger holds
 	// every call the run made: three calls here, of which one reported no cost.
+	//
+	// What "settled" is, is SA2.1's rule and not this task's: SA1.4 pins that
+	// the ledger's figure reaches the record, so this line holds whichever rule
+	// the gateway settles by. Today's is the table's price for all three calls
+	// plus the route fee, which is why the figure equals the charge and differs
+	// from reported_usd; under SA2.1 it becomes the report plus the fee on the
+	// two calls that carried one, floored by the table on the third, and
+	// reported_usd stops being a different number (D2640, F16). SA2.1 is not in
+	// this tree, so the assertion below is written to the rule in force and
+	// moves with it rather than pinning the old one.
 	if !near(rec.Cost.ModelUSD, rec.CostUSD) || rec.Cost.ModelSource != "gateway" {
 		t.Errorf("model_usd = %v (source %q), want the gateway's settled %v", rec.Cost.ModelUSD, rec.Cost.ModelSource, rec.CostUSD)
+	}
+	if !near(rec.Cost.ModelBy[deepseek], rec.Cost.ModelUSD) {
+		t.Errorf("model_by[%s] = %v, want the run's whole settled %v", deepseek, rec.Cost.ModelBy[deepseek], rec.Cost.ModelUSD)
 	}
 
 	// The record the CLI's readers are handed is the run's own, written to
