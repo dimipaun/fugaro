@@ -888,6 +888,9 @@ func TestTriageRowCarriesItsOwnRoundsFailure(t *testing.T) {
 	if got := triageRowRounds(rec); !eq(got, "1", "2", "2") {
 		t.Fatalf("the triage rows carry the rounds %v, want round 1's row and round 2's retried pair", got)
 	}
+	// The new field is additive: a record carrying it is one the published
+	// schema accepts.
+	assertStoredRecordValidates(t, h.store)
 	rows := triageTableRows(t, runner.Report(rec, "runs/acme-app/"+rec.RunID+"/", nil))
 	if len(rows) != 3 {
 		t.Fatalf("the report has %d triage rows, want the run's three attempts:\n%s", len(rows), strings.Join(rows, "\n"))
@@ -935,6 +938,7 @@ func TestTriageRowCarriesItsOwnRoundsFailureWhenARetryHalts(t *testing.T) {
 	if got := triageRowRounds(rec); !eq(got, "1", "2", "2") {
 		t.Fatalf("the triage rows carry the rounds %v, want round 1's row and the halted round 2's pair", got)
 	}
+	assertStoredRecordValidates(t, h.store)
 	report := runner.Report(rec, "runs/acme-app/"+rec.RunID+"/", nil)
 	line := "**Triage:** the judge did not answer for round 1: " + answer + ", so the fail-safe blocked every finding the mode's table blocks."
 	if !strings.Contains(report, line) {

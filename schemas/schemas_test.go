@@ -1820,6 +1820,51 @@ func TestResultSchemaStageCredential(t *testing.T) {
 	}
 }
 
+// TestResultSchemaStageRound pins the schema half of the round a per-round
+// stage's attempt served (docs/triage.md, D1846): the member is optional — every
+// stage but the triage judge's, and every record written before it existed,
+// carries none — and where it is there it is a round number the triage block's
+// own `round` could carry, so the report can pair a row with its round's
+// failure by a key instead of by position.
+func TestResultSchemaStageRound(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	validate := func(stage string) error {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(
+			`{"version":1,"run_id":"20261116-100000-abcd","status":"running","stage":"review",` +
+				`"outcome":"none","cost_usd":0,"started_at":"2026-11-16T10:00:00Z","stages":[` + stage + `]}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	const head = `{"name":"triage","started_at":"2026-11-16T10:00:00Z","duration_s":1`
+	for _, tc := range []struct {
+		name  string
+		stage string
+	}{
+		{"the round the judge weighed", head + `,"round":2}`},
+		{"the first round", head + `,"round":1}`},
+		{"no round at all", head + `}`},
+	} {
+		if err := validate(tc.stage); err != nil {
+			t.Errorf("schema rejects a stage with %s: %v", tc.name, err)
+		}
+	}
+	for _, tc := range []struct {
+		name  string
+		stage string
+	}{
+		{"round zero", head + `,"round":0}`},
+		{"a negative round", head + `,"round":-1}`},
+		{"a fractional round", head + `,"round":1.5}`},
+		{"a round as a string", head + `,"round":"2"}`},
+	} {
+		if err := validate(tc.stage); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, tc.stage)
+		}
+	}
+}
+
 func TestResultSchemaImageBlock(t *testing.T) {
 	sch := compile(t, "result.schema.json")
 	base := `{"version":1,"run_id":"20260927-100000-abcd","status":"running","stage":"bootstrap","outcome":"none","cost_usd":0,"started_at":"2026-09-27T10:00:00Z"`

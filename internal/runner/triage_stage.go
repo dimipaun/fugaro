@@ -246,10 +246,10 @@ func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v 
 	}
 	if !parsed {
 		// An ERROR and not a WARNING, because the round did not merely answer
-		// badly: the judge did not run, and every finding the mode's table
+		// badly: it bought no verdict at all, and every finding the mode's table
 		// blocks blocks (D1846). It is the line a reader of the run's log
-		// finds the failure by, and the cause is what tells an expired
-		// credential from an answer the reader refused.
+		// finds the failure by, and the cause is what tells a call that never
+		// got through from an answer the reader refused.
 		r.d.Log.Error("the triage round produced no readable verdict; every finding the mode's table blocks blocks",
 			"round", round, "cause", cause)
 	}
