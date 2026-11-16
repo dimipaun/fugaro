@@ -274,6 +274,16 @@ type run struct {
 	// the Firebase identity it is read with, so the node is read once, decoded
 	// once and its token taken once (projectpolicy.go).
 	projPolicy policyRead
+	// routedClaude is the switch applyRouting applied to this run's pins, nil
+	// when it applied none (no switch, or a state with nothing to act on: the
+	// gateway off, via direct, via auto under a Vertex run or with an Anthropic
+	// key in the job). A pin written after that loop — a replay arm's
+	// challenger, which can only be written once the levels are resolved — is
+	// routed through this (routeModel), because a pin the switch names has to
+	// name the route's own ID wherever it is written: the run would otherwise
+	// carry two spellings of one model, and the gateway would have no route for
+	// the one the arm's stage pins (abreplay.go's applyReplayLevel).
+	routedClaude *config.RoutingClaude
 	// job is the identity this run adopted from the Cloud Run job it is in,
 	// computed and matched in admissionCheck (projectjob.go, plan task 3.3):
 	// the (profile, provider, account) the job's own name was computed from.

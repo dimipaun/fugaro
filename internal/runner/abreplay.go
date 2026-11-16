@@ -107,11 +107,25 @@ func (r *run) replayPrompt(reviewPrompt string, level policy.Level) string {
 // run the level has no stage to replay it in — a refusal rather than a forcing,
 // because what the arm asks for is a comparison at a level the champion's own
 // run did not run either, which is no comparison at all.
+//
+// The challenger is routed here (routeModel) and not merely written: this is
+// the one pin of the run that lands after the switch has run, because the
+// levels the switch rewrites are also what say whether there is a stage to
+// replay in at all (bootstrap calls this after resolvePolicy). A challenger the
+// project routes and that kept the canonical ID would leave the owner's route:
+// the level's pin would name a model no route claims while every other pin
+// names the route's own ID, and the arm's review calls would go direct — the
+// same outcome, one write later, that TestRoutingRoutesALevelsOwnModel pins for
+// a level's own model (TestABReplayRoutesTheChallenger).
 func (r *run) applyReplayLevel() error {
 	if !levelOn(r.levels, r.replay) {
 		return r.refuseArm(fmt.Sprintf("this task replays review level %s, and the run it carries does not run that level: a reviewer arm's one review is the slot level's, and which levels run is the run's own mode, recipe, policy and task (resolveLevels). Launch the arm against a run whose levels include the slot's", r.replay))
 	}
-	r.setLevelModel(r.replay, r.spec.AB.Challenger)
+	model, err := r.routeModel(r.spec.AB.Challenger)
+	if err != nil {
+		return err
+	}
+	r.setLevelModel(r.replay, model)
 	return nil
 }
 
