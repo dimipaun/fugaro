@@ -368,22 +368,26 @@ func craftRouteProblems(crafts []CraftModel, rt *Routing, providers map[string]M
 	}
 	var ps []Problem
 	for _, c := range craftModels(crafts) {
-		if strings.Contains(c.Model, "/") || claimed(providers, c.Model) {
-			if _, _, ok := ProviderFor(providers, c.Model); !ok {
-				ps = append(ps, Problem{Path: c.craftPath(), Message: unclaimedModelRefusal(c.Model)})
+		if !strings.Contains(c.Model, "/") && !claimed(providers, c.Model) {
+			// A Claude ID: routed only when the switch names it, and then only
+			// by a switch whose via routes at all (D1a's explicit list, D1b's
+			// default).
+			if sw == nil || !sw.Names(c.Model) {
+				continue
+			}
+			if via := sw.ViaValue(); via != RouteOpenRouter && via != RouteAuto {
+				continue
+			}
+			if route, sent, ok := RoutingClaudeFor(sw, c.Model, providers); !ok || route == RouteDirect || sent == c.Model {
+				ps = append(ps, Problem{Path: c.craftPath(), Message: fmt.Sprintf("%s is named by the routing switch and this configuration cannot resolve its route: the switch routes nothing rather than sending the call direct, so a run on it halts in bootstrap — name a route entry that claims the model with allow_data_to written, or remove the ID from the switch's list (D1b)", CodeSpan(c.Model))})
 			}
 			continue
 		}
-		// A Claude ID: routed only when the switch names it, and then only by a
-		// switch whose via routes at all (D1a's explicit list, D1b's default).
-		if sw == nil || !sw.Names(c.Model) {
-			continue
-		}
-		if via := sw.ViaValue(); via != RouteOpenRouter && via != RouteAuto {
-			continue
-		}
-		if route, sent, ok := RoutingClaudeFor(sw, c.Model, providers); !ok || route == RouteDirect || sent == c.Model {
-			ps = append(ps, Problem{Path: c.craftPath(), Message: fmt.Sprintf("%s is named by the routing switch and this configuration cannot resolve its route: the switch routes nothing rather than sending the call direct, so a run on it halts in bootstrap — name a route entry that claims the model with allow_data_to written, or remove the ID from the switch's list (D1b)", CodeSpan(c.Model))})
+		// A provider model, or any spelling a provider claims: it must be one
+		// the caller's provider entries serve, which is the pin rule's own
+		// question and its own refusal (CheckProviderPolicy).
+		if !claimed(providers, c.Model) {
+			ps = append(ps, Problem{Path: c.craftPath(), Message: unclaimedModelRefusal(c.Model)})
 		}
 	}
 	return ps
@@ -465,7 +469,10 @@ type CraftAccess struct {
 	// Accounts are the project's Claude accounts by name: a credential of type
 	// claude-oauth is the account of the same name (D1621 — the migration
 	// derives one from the other), and the account's own allow_data_to is what
-	// admits a repository to it.
+	// admits a repository to it. The run reads the same rule off the published
+	// node, where the publish carries that list as the account's allow_repos,
+	// which is why the refusal below names both spellings, as the run's own
+	// skip sentence does.
 	Accounts map[string]ClaudeAccount
 	// Providers are the provider entries by name, whose allow_data_to admits a
 	// repository to an openrouter member.
