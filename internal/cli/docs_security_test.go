@@ -412,6 +412,23 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"**Deployed for every installation, and reached only where the switch is on (the owner's ruling of 2026-11-05; DON1 and DON8).**",
 		"**`fugaro update` deploys it on every installation**",
 		"the deploy alone changes no run",
+		// The switch's terms, per auth. The section said a repository whose
+		// auth is not the cascade "is never switched on", which B2.2 and B2.3
+		// made false (infra.CredentialsServiceServes admits `api-key` and
+		// `oauth` under a gateway mode, runner.ServiceSwitchedAuth names them,
+		// and internal/cli's credentialsServiceLaunchEnv hands them the
+		// address), and the auth-blind drop it named beside that was false for
+		// the same reason — the review of this branch caught both still
+		// standing ten lines above the paragraph that says the opposite.
+		"the switch admits an `api-key` or `oauth` repository too",
+		"a budget mode of `observe` or `enforce`, because the gateway that reaches the service exists only there",
+		"`anthropic-api-key` for `api-key` and every account's `claude-oauth-token[-<account>]` for `oauth`",
+		"a `vertex` repository is the one `agent.auth` it never admits",
+		// And what the switch does not do for the two auths it now admits: the
+		// mount stays until B2.7's flip (D2072), which is the limit the bullet
+		// below states in full.
+		"the mount drop has not landed",
+		"while its job still declares its model credential, mounts it, and its account still holds `secretAccessor` on it",
 		// The job holds nothing — and the one job that is not reached, named
 		// rather than left to be assumed, because a shared project job keeps
 		// its accessors and its token mount. The claim is the cascade job's as
@@ -475,6 +492,15 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"the service is the only identity with access to Secret Manager",
 		"the service audits every issuance",
 		"the bundle cannot leak",
+		// The pre-B2.3 rule, in the two spellings this section carried before
+		// the review of this branch: a non-cascade repository is switched on
+		// under the mode and the bundle entry named above, and its job keeps
+		// its model mount until the flip — so a reader who meets either
+		// sentence concludes that a credential this release brokers never
+		// leaves its job, which is the exposure the service exists to shrink.
+		"A repository whose `agent.auth` is not `cascade` is never switched on",
+		"a repository job in another `agent.auth` mode has no model credential at all",
+		"the drop is auth-blind",
 	} {
 		if strings.Contains(flattenDoc(s), banned) {
 			t.Errorf("SECURITY.md says %q: that claim is wider than the code on this tree", banned)
