@@ -884,29 +884,50 @@ a started run whose refusal counts as an attempt (G4) — it spends its approval
 such cycles (`internal/orchestrator/breaker.go`, `BreakerThreshold`). **D2022** put the choice to the owner, who answered **the recommendation
 (a)** on 2026-11-10; **this task is written for it**.
 
-- **Files (13):** `internal/orchestrator/hooks.go` (edit: a `WorkspaceFuncs` seam, `Refused func(RunReport) bool`, set once by
+- **Files (22):** `internal/orchestrator/hooks.go` (edit: a `WorkspaceFuncs` seam, `Refused func(RunReport) bool`, set once by
   `ee/register`; **the core default answers false**, so an untagged build behaves exactly as today), `internal/orchestrator/hooks_test.go`
   (edit), `internal/orchestrator/runview.go` (edit: `RunReport` carries the refusal's source as the run record states it — **the field's name
   and spelling were W7's to set, and #2275 merged without writing one — it is `halt.workspace_refusal` as of 2026-11-15, below**), `internal/cli/orchestrator_run.go` (edit: the reader fills that field from the run
-  record) with `internal/cli/orchestrator_run_test.go` (edit), `internal/orchestrator/breaker.go` (edit: a trip at once, which raises the **same** `breaker-tripped` decision with the
-  workspace's reason, so the pause is the one `Plan` already refuses over through `BreakerOpen`, `breaker.go:126`, and no new pause
-  mechanism or decision kind exists), `internal/orchestrator/breaker_test.go` (edit), `internal/orchestrator/tick.go` (edit: the fold asks
-  the seam about a refused run and trips at once), `internal/orchestrator/tick_test.go` (edit), `ee/orchestrator/workspace.go` (new),
-  `ee/orchestrator/workspace_test.go` (new), `ee/register/orchestrator.go` (edit: installs the seam), `ee/register/orchestrator_test.go` (edit).
+  record) with `internal/cli/orchestrator_run_test.go` (edit), `internal/orchestrator/breaker.go` (edit: a trip at once, which raises the
+  breaker's **own** question with the workspace's reason, so the pause is the one `Plan` already refuses over through `BreakerOpen`,
+  `breaker.go:170`, and no new pause mechanism exists — but the question is **not** the streak's, and it is not the same decision: it carries
+  an id of its own, `breaker-tripped-workspace-<stamp>`, because it lifts itself after `WorkspacePauseWindow` while the streak's waits for a
+  person however long that takes, and the questions that have lapsed go out with the next one raised, so the document stays under its caps
+  (the reading of 2026-11-16 below)), `internal/orchestrator/breaker_test.go` (edit), `internal/orchestrator/tick.go` (edit: the fold asks
+  the seam about a refused run and puts the question in the same patch as the outcome it folds, so the two land together or not at all),
+  `internal/orchestrator/tick_workspace_test.go` (new: the refusal's own tests, beside `tick_test.go`'s), `ee/orchestrator/workspace.go` (new),
+  `ee/orchestrator/workspace_test.go` (new), `ee/register/orchestrator.go` (edit: installs the seam), `ee/register/orchestrator_test.go` (edit),
+  and the files the bound added past those 13: `internal/orchestrator/launch.go` and `internal/orchestrator/escalate_launch.go` with their
+  tests (`LadderLaunch` and the launch gate read the window-aware `BreakerOpen`), `internal/orchestrator/export_test.go`,
+  `internal/orchestrator/tick_decide_test.go`, `internal/orchestrator/ladder_test.go`, `internal/gateway/workspace_refusal.go` (edit:
+  `ValidWorkspaceRefusalHalt`, the one halt shape the rule corroborates), `internal/eeboundary/seam_test.go` (edit: the seam setter in
+  `seamSetterNames`), and `docs/stateless-orchestrator/reconciliation.md` (edit: U12's follow-up, the ruling recorded where the unit that
+  asked for it lives).
 - **Interfaces:** `orchestrator.SetWorkspace(WorkspaceFuncs) error` on the pattern of `SetHandoff` and `SetBatch` (`hooks.go:108`, `:187`:
   refuses a second call and a nil function); `ee/orchestrator.WorkspaceRefused(RunReport) bool` answers true only for a run whose record
-  says the workspace's credentials service refused it (its stop or its cap); the trip's decision is `waiting_on: person` (only a person
-  resolves it, D1225) and the audit line is `<run>:workspace-refused` (D1230). Nothing new is read from any database, no cap number is added,
+  says the workspace's credentials service refused it (its stop or its cap) **and** whose halt is the one shape that path writes
+  (`gateway.ValidWorkspaceRefusalHalt`); the trip's decision is `waiting_on: person` (a person resolves it, D1225), and it is the only
+  question of the prefix a person does not have to answer: it lifts itself after `orchestrator.WorkspacePauseWindow`; the audit line is
+  `<run>:workspace-refused` (D1230). Nothing new is read from any database, no cap number is added,
   and the money fence stays W7's and W8's.
 - **Schema/rules/config change:** **none** — the decision is the existing breaker decision (the prefix only the daemon may write,
-  `breaker.go`'s `BreakerDecisionID`), the audit transition is a name the existing pattern admits, and `RunReport` is in-process. Stated so a
+  `breaker.go`'s `BreakerDecisionID`; the trip's own id is that prefix plus `-workspace-<stamp>`, which the id's rules already admit, and the
+  state's shape carries the question's `at` either way), the audit transition is a name the existing pattern admits, and `RunReport` is
+  in-process. Stated so a
   reviewer checks it: **if W7's record field turns out to need a run-record change, that change is W7's (or a W-task's) and not this task's**,
   and this task waits for it.
 - **Tests:** `TestAWorkspaceRefusalPausesTheQueueAtOnce` (one refused run, and the next tick plans no launch for any item),
   `TestAWorkspaceRefusalRaisesOnePersonDecision`, `TestOnlyAPersonLiftsTheWorkspacePause`, `TestAnOrdinaryRefusalStillCountsTowardTheBreaker`
   (a refusal the seam does not claim keeps O6's rule), `TestTheCoreDefaultClaimsNoRefusal` (an untagged build: unchanged behaviour),
   `TestSetWorkspaceRefusesASecondCall`, `TestWorkspaceRefusedReadsOnlyTheRunRecord` (no database, no network), `TestRunViewCarriesTheWorkspaceRefusal` (the CLI reader), `TestCoreBuildsWithoutEE`
-  (the eeboundary guard is run).
+  (the eeboundary guard is run). **The bound the ruling of 2026-11-16 asked for adds:** `TestAWorkspacePauseExpires` (the pause lifts itself
+  when `WorkspacePauseWindow` has passed) and `TestAForgedMarkerPausesAtMostTheWindow` (a marker whose halt is the shape holds the queue for
+  one window, once, and no longer) — the two ends of what a forger reaches; `TestTheWorkspaceRuleReadsNothingButTheReport` and
+  `TestTheUntaggedBuildClaimsNoRefusal` (the rule's table row by row, and the core default); `TestAWorkspaceRefusalLeavesAnAuditLine` (the
+  line is evidence and its failure is the cycle's, not the pause's); `TestARefusedRunWhoseWriteFailsIsAskedAboutOnTheRetry` (the outcome and
+  the pause are one patch, so a store that refuses the write loses neither) and `TestNRefusalsAcrossNWindowsLeaveTheNodeBounded` (a refusal a
+  window for as many windows as it takes leaves the node at one question, under its caps and still writable — without it the state crosses
+  `MaxStateBytes` and every write from every class, a person's included, is refused with `ErrTooLarge` for good).
 - **Command:** `go test ./internal/orchestrator/ -run 'Workspace|Breaker|Tick' -count=1 && go test ./internal/cli/ -run TestRunViewCarriesTheWorkspaceRefusal -count=1 && go test ./ee/orchestrator/ ./ee/register/ -run 'Workspace|Orchestrator' -count=1 && go test ./internal/eeboundary/ -count=1`
 - **Depends on:** O6, O7, O8 and O18 (merged), **O14** (it writes `tick.go` at level 7), and externally **D2022 answered (a)** (done
   2026-11-10) and **W7** (#2275, merged 2026-11-11 as `d3b7613f`). **Serializes after** the open #2207 (`internal/cli/orchestrator_run.go`) and #2202 (`internal/cli/orchestrator_run_test.go`), and after O13 and O14 (`tick.go`,
@@ -935,6 +956,29 @@ such cycles (`internal/orchestrator/breaker.go`, `BreakerThreshold`). **D2022** 
   account's token from the metadata server (`SECURITY.md`, "Runs of one repository can see each other") — and O19 therefore still owes a bound
   on the pause, or a source a run cannot write, before it stops a queue on a claimed refusal. The field names the refusal; it does not
   authenticate it.
+  Read 2026-11-16 (**the bound is written, and the owner chose its shape**; `docs/stateless-orchestrator/reconciliation.md`'s U12 follow-up
+  records it too, and what is below is the task's own statement of it): put the question U12 left open — a source a run cannot write is not
+  available, so what bound does the pause owe — and the owner ruled **corroborate and auto-expire**, the recommendation. *Corroborate:*
+  `ee/orchestrator.WorkspaceRefused` answers true only for a marker that is one of the three **and** a halt that is the shape that path writes
+  — `budget_unavailable` / `run` / `the credentials service cannot read the state it must read (state_unavailable)`, the one shape
+  `gateway.ValidWorkspaceRefusalHalt` states, which all three markers share because all three reach a member's gateway as the same typed
+  refusal; a marker with another reason, another scope, another sentence, or no halt at all is an ordinary refusal, and it counts toward the
+  breaker exactly as O6's rule says (`TestWorkspaceRefusedReadsOnlyTheRunRecord` pins the combinations row by row). *Auto-expire:* the trip
+  raises the breaker's own question — `breaker-tripped-workspace-<stamp>`, `waiting_on: person`, the id only the daemon may write — and it
+  lifts itself after `orchestrator.WorkspacePauseWindow`, one hour (`internal/orchestrator/breaker.go`), unless a person answers it first;
+  `BreakerOpen` reads the pause off the unanswered, **unexpired** questions of the prefix, so nothing has to retire the decision, and a person
+  may still answer it after the window — the answer then changes nothing. **What a forged marker can and cannot do, in two sentences:** it
+  cannot stop the queue on the word alone — a record that claims a refusal without the halt shape the workspace's own path writes is an
+  ordinary refusal, trips nothing early, and the next approved item is launched as before — while one that does carry the shape, which a run
+  can write because the halt is in the same record it writes, holds the queue for at most one window, once, and a person who wants the queue
+  stopped for longer stops it the way the other stops work, with the kill switch. **And the half no other pass would have given back:** the
+  question is a decision nothing retires — retention never drops an open one, and `Retain` has no caller in the loop at all — so the lapsed
+  ones go out with the next question the fold raises (`dropLapsedWorkspaceQuestions`, on `decide/bounds.go`'s `dropStaleCallRecords` pattern),
+  which is what keeps a refusal a window from filling the document: past `MaxStateBytes` and `MaxDecisions` every write from every class, a
+  person's included, is refused with `ErrTooLarge` for good, `Apply` validating the state before the patch as well as the one after it
+  (`TestNRefusalsAcrossNWindowsLeaveTheNodeBounded`). The trip also leaves the audit line `<run>:workspace-refused` (D1230), and a log that
+  cannot be written costs the evidence and not the stop. What U12 said of the field is still true: `credsvc.SetWorkspaceRefusal` has no
+  caller, so no record of this release carries a marker for an honest path to corroborate.
 - **Commit:** `feat(ee): a workspace's refusal pauses the orchestrator's queue (O19)`
 - **Red step:** `TestAWorkspaceRefusalPausesTheQueueAtOnce` fails to build (no seam), then fails while a refused run is folded as an ordinary
   refusal and the next approved item is launched into the same stop.
