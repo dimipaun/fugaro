@@ -477,6 +477,14 @@ func ValidatePools(pools []Pool, creds []Credential) []Problem {
 // step that converges it — and a crossing an earlier release wrote elsewhere in
 // the block must not stand in the way of the next declaration.
 func ValidatePoolPaths(pools []Pool, creds []Credential) []Problem {
+	return pathCrossingProblems(pools, creds)
+}
+
+// pathCrossingProblems is D1668's rule, applied to a whole block: the two doors
+// that hold it — the one a pool is WRITTEN through (ValidatePoolPaths) and the
+// one a PUBLISHED node is read through (ValidatePublishedPools) — ask it here so
+// the sentence and the path it is reported at cannot be two.
+func pathCrossingProblems(pools []Pool, creds []Credential) []Problem {
 	defined := definedCredentialNames(creds)
 	var ps []Problem
 	for i, p := range pools {
@@ -514,10 +522,9 @@ func definedCredentialNames(creds []Credential) map[string]bool {
 // for that is a rewrite of the gateway's one-upstream-per-stage model, bought
 // for a case two pools express exactly.
 //
-// It is the same one sentence wherever it is said — `fugaro accounts pool add`
-// today, and the config's load and the published node's read once the split
-// below has landed — because the operator meets it at whichever door a pool
-// was written through, and it has to name the fix there.
+// It is the same one sentence wherever it is said — `fugaro accounts pool add`,
+// and the read of a published node — because the operator meets it at whichever
+// door a pool was written through, and it has to name the fix there.
 //
 // The two members the sentence names are named in path order, the credentials
 // service's first, so it reads the same whichever way the pool listed them, and
@@ -534,17 +541,30 @@ func definedCredentialNames(creds []Credential) map[string]bool {
 // It is the one rule of this file that a pool an earlier release wrote cannot
 // satisfy, so it is not one of the rules the READERS of a pool hold: 0.25.0's
 // `accounts pool add` wrote a pool naming both halves and its `accounts pool ls`
-// read it as valid, so a config or a node that carries one is a document no step
-// of this release can repair, and refusing it there would leave an installation
+// read it as valid, so a config or a node that carries one is a document no
+// validation can repair, and refusing it at a read would leave an installation
 // that cannot read its own config — the broken installation CLAUDE.md's HARD
 // RULE forbids, `fugaro update` reading the project config through the same
-// load. A pool that already crosses is therefore converged and not refused
-// (D1668, D1673: the split in `fugaro update` for the config, a step of the
-// policy chain for the published node), and this rule moves into ValidatePools
-// and ValidatePublishedPools in the change that lands that split — the
-// activation plan's MC21, in this refusal's own release (row 43). What protects
-// an installation until then is the door a NEW pool is written through, which
-// is the only caller of ValidatePoolPaths.
+// load. A pool that already crosses is therefore CONVERGED and not refused
+// (D1668, D1673): `fugaro update` splits it in the installation's own config
+// (internal/cli's derivePathPools, on every write of that file) and in the
+// published node, through a step of the policy chain
+// (internal/projectpolicy's migrateV8ToV9, which is the version bump this rule
+// ships with). The rule itself is held at two doors, and the two are the
+// activation plan's MC20 and MC21 together: the door a NEW pool is written
+// through (ValidatePoolPaths, whose one caller is `fugaro accounts pool add`)
+// and the read of a PUBLISHED node (ValidatePublishedPools, which
+// projectpolicy.Decode runs), so a node that already carries a crossing is
+// refused by the runner's Read, the credentials service's re-read, `doctor` and
+// `update` itself rather than served to a selector whose listed order it cannot
+// honour.
+//
+// It is deliberately NOT a rule of ValidatePools, which is the load of an
+// installation's own config: localcfg's validate asks it on every read of that
+// file, so a rule there would make `fugaro update` unable to read the very
+// config its own split is written into — the installation that cannot start,
+// for the length of the update. The config side is protected by the door a new
+// pool is written through and converged by derivePathPools instead.
 func poolCrossingProblem(at string, p Pool, creds []Credential, defined map[string]bool) (Problem, bool) {
 	members := PoolMembers(p, creds)
 	credsvc, runner, crossed, first := -1, -1, -1, ""
@@ -629,9 +649,10 @@ func poolEmailProblem(email string) string {
 }
 
 // ValidatePublishedPools reports every rule a policy node's craft_pools block
-// breaks: ValidatePools' rules and the one only a PUBLISHED pool is held to —
-// it names an owner, or it carries the marker the migration wrote (D1936,
-// D1942, F37).
+// breaks: ValidatePools' rules, D1668's one-path rule (pathCrossingProblems,
+// which the node's own version-8 step converges a crossing pool with before this
+// read ever sees one) and the one only a PUBLISHED pool is held to — it names an
+// owner, or it carries the marker the migration wrote (D1936, D1942, F37).
 //
 // The two functions exist because the two documents are not the same thing. The
 // installation's own config is the owner's own pools and survives an upgrade
@@ -642,6 +663,7 @@ func poolEmailProblem(email string) string {
 // pool is refused rather than served.
 func ValidatePublishedPools(pools []Pool, creds []Credential) []Problem {
 	ps := ValidatePools(pools, creds)
+	ps = append(ps, pathCrossingProblems(pools, creds)...)
 	for _, p := range pools {
 		if p.Name == "" || p.LegacyOpen || p.Owner != "" {
 			continue

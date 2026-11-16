@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/craft"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -77,10 +78,47 @@ func stageCraft(stage string) string {
 // What it writes is shown by the local config's own diff; only the keys that
 // need a person are returned, because a line per derived key would bury them.
 func migrateCraftKeys(c *localcfg.Config) []string {
-	if c == nil || (len(c.ClaudeAccounts) == 0 && c.DefaultClaudeAccount == "" && len(c.ClaudeAccountStages) == 0) {
+	if c == nil {
+		return nil
+	}
+	derivePathPools(c)
+	if len(c.ClaudeAccounts) == 0 && c.DefaultClaudeAccount == "" && len(c.ClaudeAccountStages) == 0 {
 		return nil
 	}
 	return deriveCraftAccesses(c, deriveCraftCredentials(c))
+}
+
+// derivePathPools splits every pool of the installation's own config whose
+// members span the two halves of a run into one pool per half, and repoints the
+// crafts that named it to the half their own model routes to (activation plan
+// MC21, D1668 and D1673).
+//
+// It runs on every write of the local config and so on `fugaro update`, and it
+// is what keeps the config readable: from this release a published node refuses
+// a pool whose members cross (config.ValidatePublishedPools), and the config
+// side has to name the same halves the node's own step does or the next publish
+// flips a craft back. The rule itself is one, in internal/craft
+// (craft.SplitCrossPathPools), and this is the config's use of it.
+//
+// It says nothing: what it writes is the local config's own diff, exactly as the
+// keys MC4's conversion derives are. A pool an installation holds is not a state
+// a person has to be told about twice — the split is complete when it is
+// written, and the file says nothing about it the next time.
+//
+// It runs BEFORE the account keys are converted, and that order is the point: a
+// derived pool takes a name a credential may not also take, and
+// deriveCraftCredentials refuses an account whose name a pool already holds.
+func derivePathPools(c *localcfg.Config) {
+	pools, access, splits := craft.SplitCrossPathPools(c.Pools, c.Credentials, c.Crafts, c.Routing, c.Providers)
+	if len(splits) == 0 {
+		return
+	}
+	c.Pools = pools
+	for _, name := range config.CraftNames {
+		if to, repointed := access[name]; repointed {
+			setCraftAccess(&c.Crafts, name, to)
+		}
+	}
 }
 
 // deriveCraftCredentials turns the installation's named Claude accounts into
