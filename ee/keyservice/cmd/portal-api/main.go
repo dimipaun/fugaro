@@ -41,6 +41,17 @@
 // program rather than a program of its own because it needs nothing the API does
 // not already build, and because a second binary that writes the portal's
 // records would be a second thing to deploy.
+//
+// **It runs in the deployment's own environment, as this image's one job.**
+// Seeding needs the whole of what the API needs — the same configuration, the
+// same secrets, the same store — so no terminal can start it: an owner's
+// credentials reach Firestore and Secret Manager but carry none of the twenty-odd
+// FUGARO_ variables a deployment's environment holds, and the loader refuses an
+// environment that is short one. The seed is therefore a Cloud Run job carrying
+// exactly this revision's environment
+// (ee/keyservice/terraform/services, `google_cloud_run_v2_job.seed`), and the
+// deploy executes it with the address to invite
+// (scripts/deploy-portal.sh's `--seed-operations`).
 
 package main
 
@@ -82,23 +93,39 @@ const shutdownGrace = 30 * time.Second
 // answered by then is one the merchant's retry will make again.
 const mintTimeout = 30 * time.Second
 
+// seedTimeout bounds the seed's whole run: it reads and writes a handful of
+// records and sends one mail, so a run still going after two minutes has failed
+// in a way its own message should end. The job's task timeout
+// (ee/keyservice/terraform/services) is longer, so this ends a stuck seed first
+// and with a line in the log rather than a killed task.
+const seedTimeout = 2 * time.Minute
+
 func main() {
 	if err := run(); err != nil {
 		log.Fatalf("portal-api: %v", err)
 	}
 }
 
-// run builds the deployment, serves it, and answers the one subcommand.
+// run is the program as the platform starts it: the process's own argv and
+// environment, and the deployment's own seams.
 func run() error {
-	args := os.Args[1:]
+	return runWith(os.Args[1:], os.Environ(), nil, openSeams)
+}
+
+// runWith is run with its two ambient inputs named — the argv this process was
+// given and the environment it runs in — and with the seams that reach a cloud
+// passed in. Nothing else differs, which is what makes the seed's own case a
+// drive of this program rather than of the pieces under it (main_test.go): what
+// the deployment's job runs is this function with the deployment's environment.
+func runWith(args, environ []string, secrets keyservice.Secrets, open seamsOpener) error {
 	if len(args) > 0 && args[0] == "seed-operations" {
-		return seedOperations(args[1:])
+		return seedOperations(args[1:], environ, secrets, open)
 	}
 	if len(args) > 0 {
 		return fmt.Errorf("this program serves, and its one subcommand is `seed-operations <address>`; %q is neither", args[0])
 	}
 	ctx := context.Background()
-	svc, cleanup, err := build(ctx)
+	svc, cleanup, err := build(ctx, environ, secrets, open)
 	if err != nil {
 		return err
 	}
@@ -106,45 +133,102 @@ func run() error {
 	return serve(svc.Handler())
 }
 
-// build is the whole of the wiring, and it is one function so that the seed
-// subcommand reaches a service built exactly the way the server's is: what the
-// seed writes has to be visible to the API that serves it, and two assemblies
-// could differ in a database name.
-func build(ctx context.Context) (*keyservice.Service, func(), error) {
-	project, err := keyservice.DeployProject(os.Environ())
-	if err != nil {
-		return nil, nil, err
-	}
-	secrets, err := keyservice.NewSecretManager(ctx, project)
-	if err != nil {
-		return nil, nil, err
-	}
-	cfg, deploy, err := keyservice.LoadConfig(ctx, os.Environ(), secrets)
-	if err != nil {
-		return nil, nil, err
-	}
+// deploymentSeams is the four seams a deployment's own clients stand behind: the
+// licence records, the portal's documents, the handover's sealer and the mail
+// path. They are opened together and passed to build because they are the only
+// things in this program a case cannot build — Firestore, Cloud KMS and Resend
+// all need a credential or a network — and separating them from the environment
+// is what lets a case drive the whole path from one (main_test.go).
+type deploymentSeams struct {
+	Store keyservice.Store
+	Docs  keyservice.Docs
+	// Sealer is the handover's encryption, on the KMS client below.
+	Sealer keyservice.Sealer
+	// Mailer is nil in the deployment and the mail path is built from the
+	// configuration then; a case that means to run a mail path stands one in.
+	Mailer keyservice.Mailer
+	// Close releases what was opened. It is never nil on a deployment's seams.
+	Close func()
+}
+
+// seamsOpener opens them for one deployment: the project the store lives in and
+// the configuration the sealer is built from.
+type seamsOpener func(ctx context.Context, project string, cfg keyservice.Config) (deploymentSeams, error)
+
+// openSeams is the deployment's own: the portal's Firestore database and one KMS
+// client for the sealer. Both read the service's own credentials, and neither is
+// told anything this program holds as a secret.
+func openSeams(ctx context.Context, project string, cfg keyservice.Config) (deploymentSeams, error) {
 	firestoreClient, err := firestore.NewClientWithDatabase(ctx, project, portalDatabase)
 	if err != nil {
-		return nil, nil, fmt.Errorf("the Firestore client: %w", err)
+		return deploymentSeams{}, fmt.Errorf("the Firestore client: %w", err)
 	}
 	kmsClient, err := kms.NewKeyManagementClient(ctx)
 	if err != nil {
 		firestoreClient.Close()
-		return nil, nil, fmt.Errorf("the Cloud KMS client: %w", err)
+		return deploymentSeams{}, fmt.Errorf("the Cloud KMS client: %w", err)
 	}
-	cleanup := func() {
+	sealer, err := keyservice.NewKMSSealer(kmsClient, cfg.SealerKeyName)
+	if err != nil {
 		kmsClient.Close()
 		firestoreClient.Close()
+		return deploymentSeams{}, err
 	}
 	// One database, two faces of it: the licence records (firestore_store.go)
 	// and the portal's own documents (docstore_docs.go). A deployment that gave
 	// the two seams two stores would commit a binding's withdrawal onto records
 	// no reader sees (api.go's Tx.Revoke).
 	db := docstore.NewFirestore(firestoreClient)
-	mailer, err := keyservice.NewResendMailer(cfg.ResendKey, deploy.MailFrom, nil)
+	return deploymentSeams{
+		Store:  keyservice.NewDocStore(db),
+		Docs:   keyservice.NewDocStoreDocs(db),
+		Sealer: sealer,
+		Close: func() {
+			kmsClient.Close()
+			firestoreClient.Close()
+		},
+	}, nil
+}
+
+// build is the whole of the wiring, and it is one function so that the seed
+// subcommand reaches a service built exactly the way the server's is: what the
+// seed writes has to be visible to the API that serves it, and two assemblies
+// could differ in a database name.
+//
+// A nil secrets is the deployment's own reader, which is what a revision has:
+// the API's account reads the containers through Secret Manager. Every other
+// value is the environment's, and the reader refuses one that is short.
+func build(ctx context.Context, environ []string, secrets keyservice.Secrets, open seamsOpener) (*keyservice.Service, func(), error) {
+	project, err := keyservice.DeployProject(environ)
 	if err != nil {
-		cleanup()
 		return nil, nil, err
+	}
+	if secrets == nil {
+		secrets, err = keyservice.NewSecretManager(ctx, project)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	cfg, deploy, err := keyservice.LoadConfig(ctx, environ, secrets)
+	if err != nil {
+		return nil, nil, err
+	}
+	seams, err := open(ctx, project, cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	cleanup := func() {
+		if seams.Close != nil {
+			seams.Close()
+		}
+	}
+	mailer := seams.Mailer
+	if mailer == nil {
+		mailer, err = keyservice.NewResendMailer(cfg.ResendKey, deploy.MailFrom, nil)
+		if err != nil {
+			cleanup()
+			return nil, nil, err
+		}
 	}
 	signIn, err := keyservice.NewPortalVerifier(deploy.Project, mcpauth.NewSecureTokenKeys())
 	if err != nil {
@@ -161,19 +245,14 @@ func build(ctx context.Context) (*keyservice.Service, func(), error) {
 		cleanup()
 		return nil, nil, err
 	}
-	sealer, err := keyservice.NewKMSSealer(kmsClient, cfg.SealerKeyName)
-	if err != nil {
-		cleanup()
-		return nil, nil, err
-	}
 	minter := keyservice.RemoteMints{
 		URL:    deploy.MinterURL,
 		Client: &http.Client{Timeout: mintTimeout},
 		Tokens: keyservice.MetadataTokens{},
 	}
 	svc, err := keyservice.New(cfg, keyservice.Deps{
-		Store:     keyservice.NewDocStore(db),
-		Docs:      keyservice.NewDocStoreDocs(db),
+		Store:     seams.Store,
+		Docs:      seams.Docs,
 		Mints:     minter,
 		MintsV1:   minter,
 		Mailer:    mailer,
@@ -183,7 +262,7 @@ func build(ctx context.Context) (*keyservice.Service, func(), error) {
 		SignIn:    keyservice.PortalSignIn{Verifier: signIn},
 		Paddle:    paddle,
 		Scheduler: jobSignIn{verifier: scheduler, account: deploy.SchedulerAccount},
-		Sealer:    sealer,
+		Sealer:    seams.Sealer,
 		Now:       time.Now,
 	})
 	if err != nil {
@@ -198,13 +277,13 @@ func build(ctx context.Context) (*keyservice.Service, func(), error) {
 // rather than by this program: what "already seeded" means is the organisation
 // record's, and a program that read it first would be a second statement of the
 // rule.
-func seedOperations(args []string) error {
+func seedOperations(args, environ []string, secrets keyservice.Secrets, open seamsOpener) error {
 	if len(args) != 1 || strings.TrimSpace(args[0]) == "" {
 		return errors.New("seed-operations writes the operations organisation and its first invitation, and it needs the one address to invite: `seed-operations <address>`")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), seedTimeout)
 	defer cancel()
-	svc, cleanup, err := build(ctx)
+	svc, cleanup, err := build(ctx, environ, secrets, open)
 	if err != nil {
 		return err
 	}
