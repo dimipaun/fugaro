@@ -577,8 +577,9 @@ func (s *Service) signUp(ctx context.Context, actor Caller, name string) (WireOr
 // about.
 //
 // The count is taken before the sign-up's transaction and not inside it, because
-// the memberships are QUERIED and api.go's Tx reads by id alone (signUpMu's own
-// comment holds the rest).
+// the memberships are QUERIED: a query inside that transaction would make every
+// other sign-up of the day a conflict with the one that writes beside it, so the
+// count is serialised instead (signUpMu's own comment holds the rest).
 func (s *Service) refuseAnotherOrganisation(ctx context.Context, uid string, now time.Time) error {
 	held, err := membershipsOf(ctx, s.docs, uid)
 	if err != nil {

@@ -969,13 +969,15 @@ func TestOrgCreationIsRateLimited(t *testing.T) {
 
 // TestConcurrentSignUpsRespectTheDailyLimit: F35's limit under the one thing that
 // can break it — one account signing up from many places at once. The day's count
-// is a read of the account's memberships and a write of one more, and api.go's Tx
-// reads by id alone, so the count is taken outside the transaction and signUpMu is
-// what makes the two atomic; without it every sign-up of a burst counts the
-// records written before the burst and each writes one more, which is an account
-// holding as many organisations as it sent requests. The burst is widened at the
-// count itself (burstCountDocs), so the window this closes is the one the case
-// reads rather than the one the scheduler happened to leave open.
+// is a read of the account's memberships and a write of one more, and a query
+// inside the sign-up's transaction would make every other sign-up of the day a
+// conflict with it (orgs.go's recordReader), so the count is taken outside the
+// transaction and signUpMu is what makes the two atomic; without it every sign-up
+// of a burst counts the records written before the burst and each writes one
+// more, which is an account holding as many organisations as it sent requests.
+// The burst is widened at the count itself (burstCountDocs), so the window this
+// closes is the one the case reads rather than the one the scheduler happened to
+// leave open.
 func TestConcurrentSignUpsRespectTheDailyLimit(t *testing.T) {
 	const burst = 8
 	f := newFixture(t)

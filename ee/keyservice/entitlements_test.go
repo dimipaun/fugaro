@@ -164,6 +164,84 @@ func TestPurchaseSupersedesATrial(t *testing.T) {
 	}
 }
 
+// TestTwoGrantsOfOneWorkspaceDoNotBothStayActive: D2204's one active
+// entitlement per workspace is a rule about a collection, and the window a
+// check about a collection has to survive is the one between reading it and
+// writing beside it. A grant that read the workspace's licences outside the
+// transaction that writes its own was reading state a competing grant can move
+// in that window, and the two then supersede what each of them read and leave
+// the workspace with two active licences — the pair the rule exists to refuse.
+// Here the competing grant lands in exactly that window, and what it wrote is
+// what the grant after it replaces.
+func TestTwoGrantsOfOneWorkspaceDoNotBothStayActive(t *testing.T) {
+	f := newBindingFixtureWith(t, func(f *fixture) {
+		f.deps.Docs = &racingDocs{Docs: f.deps.Docs, spy: f.docs}
+	})
+	racer := f.racer(t)
+	org := f.seededOrganisation("org-dana", "Dana Ltd", orgTypeCustomer, danaUID, danaEmail, roleOwner)
+	workspace := f.seedWorkspace("ws-1", org.ID, "Dana's portal")
+	trial := f.grant(t, entitlementGrant{
+		At:             f.now,
+		OrganisationID: org.ID,
+		WorkspaceID:    &workspace.ID,
+		Source:         entitlementSourceTrial,
+		Row:            PolicyTrial,
+		Seats:          1,
+		StartsAt:       f.now,
+	})
+
+	// The competing grant commits in the window: it is a grant of the same
+	// workspace, it supersedes the trial, and the licence it wrote is the one
+	// this grant has to find when it reads what it replaces.
+	var theirs WireEntitlement
+	racer.before = func(*docsSpy) {
+		theirs = f.grant(t, entitlementGrant{
+			At:             f.now,
+			OrganisationID: org.ID,
+			WorkspaceID:    &workspace.ID,
+			Source:         entitlementSourcePurchase,
+			Row:            PolicyTeamAnnual,
+			Seats:          3,
+			StartsAt:       f.now,
+		})
+	}
+	ours := f.grant(t, entitlementGrant{
+		At:             f.now,
+		OrganisationID: org.ID,
+		WorkspaceID:    &workspace.ID,
+		Source:         entitlementSourcePurchase,
+		Row:            PolicyTeamAnnual,
+		Seats:          5,
+		StartsAt:       f.now,
+	})
+	if theirs.ID == ours.ID {
+		t.Fatalf("the two grants wrote one record, %s", ours.ID)
+	}
+
+	if after, _ := f.entitlement(theirs.ID); after.Status != entitlementSuperseded {
+		t.Errorf("the grant that landed in the window is %q, want %q: the grant written after it is the one the workspace holds (D2204)",
+			after.Status, entitlementSuperseded)
+	}
+	if after, _ := f.entitlement(trial.ID); after.Status != entitlementSuperseded {
+		t.Errorf("the trial is %q, want %q", after.Status, entitlementSuperseded)
+	}
+	listed := f.entitlementsOf(t, org.ID)
+	active := make([]string, 0, len(listed))
+	for _, one := range listed {
+		if one.Status == entitlementActive {
+			active = append(active, one.ID)
+		}
+	}
+	if len(active) != 1 || active[0] != ours.ID {
+		t.Errorf("the workspace has the %d active licences %v, want the one %s: a workspace has one active entitlement (D2204)",
+			len(active), active, ours.ID)
+	}
+	licensed, _ := f.workspace(workspace.ID)
+	if licensed.EntitlementID == nil || *licensed.EntitlementID != ours.ID {
+		t.Errorf("the workspace is licensed by %v, want the grant that landed last, %s", licensed.EntitlementID, ours.ID)
+	}
+}
+
 // TestFirstPurchaseEndsTheFreeSeat: the first paid entitlement of an
 // organisation ends its free seat at its next renewal (D2203) — the seat is not
 // renewed rather than cut off, so its term stands and the key it minted would

@@ -89,11 +89,16 @@ type entitlementGrant struct {
 // replaces, writes the replacement and the supersede in one transaction, and
 // answers the record it wrote.
 //
-// What it replaces is read before the transaction and rewritten inside it, which
-// is what api.go's Tx can do: a transaction reads documents by id and cannot
-// query, so a candidate read inside one would be a candidate it could not look
-// for. The re-read inside is the guard against the other writer: a grant that
-// finds its candidate already superseded writes nothing over the newer state.
+// What it replaces is read inside that transaction, which is what api.go's Tx
+// can do: a query is a read of a collection and a transaction makes it like any
+// other (api.go's Tx, and recordReader's own note on the sign-up's count). It
+// has to be read there and not before — the rules above are about collections,
+// and a candidate read outside the write is state another grant can move in the
+// window between them: two grants of one workspace would each supersede what it
+// read and leave the workspace holding two active licences, which is the pair
+// D2204's rule exists to refuse. Read inside, a grant that landed in the window
+// is part of what this transaction read, and the store runs it again on state
+// that includes it.
 //
 // Every read this transaction makes is taken before its first write: the store
 // is read-before-write and refuses a document read after one the same transaction
@@ -104,22 +109,11 @@ func (s *Service) grantEntitlement(ctx context.Context, grant entitlementGrant) 
 	if !known {
 		return WireEntitlement{}, fmt.Errorf("keyservice: the row %q is not one an entitlement is granted on", grant.Row)
 	}
-	replaced, err := s.supersededBy(ctx, grant, row)
-	if err != nil {
-		return WireEntitlement{}, err
-	}
 	var granted WireEntitlement
-	err = s.docs.Update(ctx, func(ctx context.Context, tx Tx) error {
-		superseding := make([]WireEntitlement, 0, len(replaced))
-		for _, held := range replaced {
-			current, present, err := getRecord[WireEntitlement](ctx, tx, entitlementsCollection, held.ID)
-			if err != nil {
-				return err
-			}
-			if !present || current.Status != entitlementActive {
-				continue
-			}
-			superseding = append(superseding, current)
+	err := s.docs.Update(ctx, func(ctx context.Context, tx Tx) error {
+		superseding, err := s.supersededBy(ctx, tx, grant, row)
+		if err != nil {
+			return err
 		}
 		written, err := prepareEntitlement(ctx, tx, grant)
 		if err != nil {
@@ -143,8 +137,8 @@ func (s *Service) grantEntitlement(ctx context.Context, grant entitlementGrant) 
 	return granted, nil
 }
 
-// supersededBy answers the grants a new one replaces, read as the state stands
-// before the write.
+// supersededBy answers the grants a new one replaces, read from the transaction
+// that writes the new one.
 //
 // The workspace rule is D2204's: one workspace has one active entitlement, so
 // the grant that lands in a workspace replaces whatever is active there. The
@@ -153,7 +147,11 @@ func (s *Service) grantEntitlement(ctx context.Context, grant entitlementGrant) 
 // grant the organisation is paying for, and the seat it was given at sign-up is
 // not something it keeps beside one. A trial ends neither: it is a grant the
 // workspace holds, and D2203 names the paid grant alone.
-func (s *Service) supersededBy(ctx context.Context, grant entitlementGrant, row Policy) ([]WireEntitlement, error) {
+//
+// Both questions are asked of the state the transaction reads, which is the
+// state it writes beside: the grants it answers are the ones it supersedes and
+// not the ones a read before it happened to see.
+func (s *Service) supersededBy(ctx context.Context, from recordReader, grant entitlementGrant, row Policy) ([]WireEntitlement, error) {
 	replaced := make([]WireEntitlement, 0, 2)
 	seen := map[string]bool{}
 	collect := func(held []WireEntitlement) {
@@ -166,7 +164,7 @@ func (s *Service) supersededBy(ctx context.Context, grant entitlementGrant, row 
 		}
 	}
 	if grant.WorkspaceID != nil {
-		held, err := recordsWhere[WireEntitlement](ctx, s.docs, entitlementsCollection,
+		held, err := recordsWhere[WireEntitlement](ctx, from, entitlementsCollection,
 			Where{Field: "workspace_id", Value: *grant.WorkspaceID})
 		if err != nil {
 			return nil, err
@@ -174,7 +172,7 @@ func (s *Service) supersededBy(ctx context.Context, grant entitlementGrant, row 
 		collect(held)
 	}
 	if row.Kind == licence.KindPaid {
-		held, err := recordsWhere[WireEntitlement](ctx, s.docs, entitlementsCollection,
+		held, err := recordsWhere[WireEntitlement](ctx, from, entitlementsCollection,
 			Where{Field: "organisation_id", Value: grant.OrganisationID})
 		if err != nil {
 			return nil, err
@@ -196,10 +194,10 @@ func (s *Service) supersededBy(ctx context.Context, grant entitlementGrant, row 
 //
 // It is two steps and not one for the store's own reason: a transaction reads
 // before it writes (docstore's ErrReadAfterWrite), and the workspace a grant
-// names is read by the transaction writing the grant —
-// grantEntitlement's supersedes have already been written by then, so a read
-// taken there would be refused by the backend the deploy runs and nowhere in a
-// test.
+// names is read by the transaction writing the grant — a caller with a read of
+// its own to make first (grantEntitlement's supersedes) takes both reads before
+// it writes either, which one step reading the workspace after the first put
+// could not do.
 type entitlementWrite struct {
 	entitlement WireEntitlement
 	workspace   *WireWorkspace
@@ -237,7 +235,7 @@ func writeEntitlement(ctx context.Context, tx Tx, written entitlementWrite) erro
 
 // createEntitlement is both halves in order, for the one caller whose transaction
 // writes nothing before the grant: the sign-up's own (freeSeatOnOrgCreated). A
-// caller that has already written in the transaction it hands over calls the two
+// caller that has already read in the transaction it hands over calls the two
 // halves itself, in this order, and reads before it writes.
 func createEntitlement(ctx context.Context, tx Tx, grant entitlementGrant) (WireEntitlement, error) {
 	written, err := prepareEntitlement(ctx, tx, grant)
