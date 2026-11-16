@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
 )
 
@@ -66,6 +67,19 @@ func TestDogfoodWorkflowPinsTheCatalogEntry(t *testing.T) {
 	}
 	if last := lastInstruction(string(raw)); !strings.Contains(last, "/usr/local/lib/fugaro/finalize-checkout") {
 		t.Errorf("%s does not end with finalize-checkout: its last instruction is %q", path, last)
+	}
+	// Reading the file is not enough to know the entry can be built: the catalog
+	// judges the definition's own text too, and this entry cloned with the git
+	// credential mounted until B9 — which the refusal the same release ships
+	// answers by name, so `fugaro image build go` and every rebuild of the job's
+	// image would have been refused (D2311). The checkout reaches the entry's
+	// build as the named context the clone step exports (B8), so the definition
+	// copies it from there and asks for no secret of its own.
+	if line, ok := catalog.AskSecret(raw); ok {
+		t.Errorf("%s asks for a secret at line %d, which the catalog refuses by name: the clone step supplies the checkout, and the entry copies it from the build context `fugaro-checkout`", path, line)
+	}
+	if !strings.Contains(string(raw), "--from=fugaro-checkout") {
+		t.Errorf("%s never copies the checkout the clone step exports, so this entry cannot see the repository it warms: use `COPY --from=fugaro-checkout`", path)
 	}
 	// The base image ships both of these setuid-root and granting nothing, and a
 	// rendered image strips both after image.setup. Leaving either set is not a

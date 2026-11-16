@@ -26,12 +26,13 @@ import (
 	"github.com/dimipaun/fugaro/internal/updatecheck"
 )
 
-// fugaro runs digest -- one closed period's report of one repository, written
-// into that repository's own docs tree.
+// fugaro runs digest -- one closed period's report of one repository: written
+// into that repository's own docs tree, or read back from the runs bucket where
+// the project's reports job stores it.
 //
 // It is the terminal half of D320: a report run (T3.2) produces the same
 // files in the container, and this command produces them from a person's
-// terminal, from the same internal/digest. Four properties shape it, and each
+// terminal, from the same internal/digest. Five properties shape it, and each
 // has a test:
 //
 //   - One repository. The report is of this repository and of no other: a
@@ -47,6 +48,14 @@ import (
 //   - The folder is untrusted. A report is a file a person may edit by hand,
 //     so the ones the pattern rules read are re-checked by shape, and a file
 //     that fails is named and skipped, never fatal.
+//   - The stored read is a read and nothing else. The project's reports job
+//     writes the same report of every repository into the runs bucket (E1),
+//     and --stored <period> prints the object stored for this repository: the
+//     bytes the job wrote, which are what --stdout prints for that period
+//     (F2). The caller's own credentials read it -- a launcher's bucket-wide
+//     viewer reaches reports/ -- and no launcher may write there, because the
+//     job is its one writer, so this command writes into the bucket in no
+//     direction and commits nothing (D964, E5).
 
 // digestNow is runs digest's clock: which period is closed, and which one a
 // call without --date reports, depend on the day it runs. Tests replace it, as
@@ -70,6 +79,7 @@ type digestOptions struct {
 	asJSON      bool
 	submitDraft bool
 	due         bool
+	stored      string
 }
 
 // digestDueDocVersion is runs digest --due --json's document version. Members
@@ -138,7 +148,7 @@ func newRunsDigestCmd() *cobra.Command {
 	var o digestOptions
 	cmd := &cobra.Command{
 		Use:   "digest",
-		Short: "Write a closed period's report of this repository into its own docs tree",
+		Short: "Write a closed period's report of this repository, or print the stored one",
 		Long: "Write one closed period's report of this repository, from its run records, into\n" +
 			"the repository's own docs tree: <dir>/<YYYY>/<key>.md, plus the index\n" +
 			"<dir>/README.md regenerated from the files there (D321).\n\n" +
@@ -177,6 +187,18 @@ func newRunsDigestCmd() *cobra.Command {
 			"--stdout prints the report instead of writing it, and --json prints the summary\n" +
 			"block and the patterns as {repo, period, summary, patterns[], skipped[]}. Neither\n" +
 			"writes a file, so a caller can read a report before committing it.\n\n" +
+			"--stored <period> prints a report that is already stored instead: the one the\n" +
+			"project's reports job wrote for this repository and that period into the runs\n" +
+			"bucket, at reports/<slug>/<YYYY>/<key>.md (fugaro runs reports --job). The period\n" +
+			"is the key itself -- 2026-10-25, 2026-W43, 2026-10 or 2026 -- and nothing else is\n" +
+			"read: no run record, no folder, and nothing is written. The bytes are the object's\n" +
+			"own, which are the file --stdout prints for that period, so a report outlives the\n" +
+			"90 days its records are kept and is read back long after. The read is the caller's\n" +
+			"own credential's: a launcher's bucket-wide read reaches reports/, and no launcher\n" +
+			"may write there, because the project's reports job is its one writer (E1, E4) --\n" +
+			"so --stored never writes, and a report is written from a checkout with --dir\n" +
+			"alone. --period, --date, --dir, --stdout, --json and --submit-draft have nothing\n" +
+			"to act on beside it and are refused by name.\n\n" +
 			"--due is the cadence's own reading: it names the periods that have closed with no\n" +
 			"report under --dir, newest first -- the period that ended most recently is the\n" +
 			"first line, and of two that ended on the same day the longer one comes first --\n" +
@@ -208,6 +230,7 @@ func newRunsDigestCmd() *cobra.Command {
 	f.BoolVar(&o.asJSON, "json", false, "print the summary block and the patterns as JSON")
 	f.BoolVar(&o.submitDraft, "submit-draft", false, "print a redacted learning draft for a \"Skill learning\" issue; sends nothing")
 	f.BoolVar(&o.due, "due", false, "print the closed periods this checkout has no report for; reads the folder and nothing else")
+	f.StringVar(&o.stored, "stored", "", "print the report of this period the project's reports job stored in the runs bucket")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
@@ -215,6 +238,9 @@ func newRunsDigestCmd() *cobra.Command {
 func runRunsDigest(cmd *cobra.Command, o *digestOptions) error {
 	if o.due {
 		return runRunsDigestDue(cmd, o)
+	}
+	if o.stored != "" {
+		return runRunsDigestStored(cmd, o)
 	}
 	if o.stdout && o.asJSON {
 		return userErr("--stdout and --json don't go together")
@@ -325,6 +351,77 @@ func runRunsDigest(cmd *cobra.Command, o *digestOptions) error {
 	fmt.Fprintf(cmd.OutOrStdout(), "wrote %s\nwrote %s\n", path, indexPath)
 	digestIssuesSection(cmd, ctx, env)
 	return nil
+}
+
+// runRunsDigestStored is `runs digest --stored <period>`: the report the
+// project's reports job stored for this repository and that period, printed
+// where --stdout prints one (D1440).
+//
+// It is the one read of the stored series a person makes, and the reason it is
+// this command's: the bytes are the same file --dir writes for the same records
+// and period (F2), so a reader who wants the stored copy greps the bucket and a
+// reader who wants the report reads it here. Nothing is regenerated -- the run
+// records are kept 90 days (F24) and a stored report 18 months (E3), so for
+// most of a report's life there is nothing left to regenerate it from, and the
+// object is the report.
+//
+// It writes nothing at all, and it cannot: reports/ has one writer, the
+// project's reports job (E4), and a launcher's own credentials hold a read of
+// it and no write. So the read is the caller's, it names the object it read,
+// and a report is written from a checkout with --dir and nowhere else.
+func runRunsDigestStored(cmd *cobra.Command, o *digestOptions) error {
+	// --stored prints one stored report and writes nothing, so a flag that
+	// selects a period, a folder, an output shape or a draft has nothing to act
+	// on beside it. Each is refused by name rather than silently ignored, and by
+	// Changed rather than by value, so `--dir docs/fugaro-reviews` carrying its
+	// own default is refused too: the caller asked for something this read does
+	// not do.
+	for _, f := range []struct{ name, why string }{
+		{"period", "--stored names the period it reads, so --period has nothing to select"},
+		{"date", "--stored names the period it reads, so --date has nothing to select"},
+		{"dir", "--stored reads the runs bucket, so --dir names no folder it reads or writes"},
+		{"stdout", "--stored prints the report, so --stdout has nothing to add"},
+		{"json", "--stored prints the stored report, not JSON"},
+		{"submit-draft", "--stored prints a stored report, not a draft; the draft is of a report this call does not write"},
+	} {
+		if cmd.Flags().Changed(f.name) {
+			return userErr("--%s: %s", f.name, f.why)
+		}
+	}
+
+	// The key names its own dimension -- a day, a week, a month and a year are
+	// four shapes -- so a value that is not one of them is refused here rather
+	// than read as a period this command guessed at.
+	p, err := digest.KeyPeriod(o.stored)
+	if err != nil {
+		return userErr("--stored %q: use a period key (2026-10-25, 2026-W43, 2026-10 or 2026)", safetext.Strip(o.stored))
+	}
+
+	ctx := cmd.Context()
+	env, err := openCloud(ctx, o.cloud)
+	if err != nil {
+		return err
+	}
+	defer env.Close()
+	repo, slug, err := digestRepo(ctx, env, o.cloud, o.repo)
+	if err != nil {
+		return err
+	}
+	store := digest.NewStore(env.bucket.Bucket, slug)
+	object := store.Object(p.Key)
+	data, _, err := env.bucket.Read(ctx, object)
+	switch {
+	case errors.Is(err, blobx.ErrNotExist):
+		// The project's job writes the stored series, so a period it has not
+		// reported yet has no object -- and a repository whose reports are
+		// written into a checkout alone has none of them.
+		return userErr("no report of %s is stored for %s under %s: the project's reports job writes them (fugaro runs reports --job), and fugaro runs digest --dir writes one into a checkout",
+			p.Key, safetext.Strip(repo), store.Prefix())
+	case err != nil:
+		return remote(fmt.Errorf("reading %s: %w", object, err))
+	}
+	_, err = cmd.OutOrStdout().Write(data)
+	return err
 }
 
 // digestIssuesRows reads the project's shared issues, which runs digest prints
@@ -751,6 +848,7 @@ func runRunsDigestDue(cmd *cobra.Command, o *digestOptions) error {
 		{"repo", "--due reads the folder in this checkout, so --repo has nothing to name"},
 		{"stdout", "--due prints no report, so --stdout has nothing to print"},
 		{"submit-draft", "--due prints no draft; the draft is of a report this call does not write"},
+		{"stored", "--due reads the folder in this checkout, so --stored has nothing to read here"},
 	} {
 		if cmd.Flags().Changed(f.name) {
 			return userErr("--%s: %s", f.name, f.why)

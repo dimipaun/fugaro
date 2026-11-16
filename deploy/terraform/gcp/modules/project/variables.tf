@@ -61,11 +61,30 @@ variable "job" {
       expression = string
     })
     vertex = bool
+    # The installation's credentials service (B5.2, D147): its Cloud Run
+    # service name and region, or null for a profile the service does not
+    # serve. Set, it is what grants the job's account roles/run.invoker on
+    # that service (sa.tf) and nothing else — a shared job keeps every mount
+    # it has until B5.7's flip (G17). The URL is not here: Cloud Run assigns
+    # it, and a job is told it at launch (internal/cli's
+    # credentialsServiceLaunchEnv).
+    credentials_service = optional(object({
+      name   = string
+      region = string
+    }))
   })
 
   validation {
     condition     = can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.job.job))
     error_message = "job.job must be a job name: 1-63 characters of a-z, 0-9 and -, starting with a letter."
+  }
+
+  validation {
+    condition = var.job.credentials_service == null ? true : (
+      can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.job.credentials_service.name)) &&
+      can(regex("^[a-z]+-[a-z]+[0-9]+$", var.job.credentials_service.region))
+    )
+    error_message = "job.credentials_service needs a Cloud Run service name and a region such as us-east5."
   }
 
   validation {

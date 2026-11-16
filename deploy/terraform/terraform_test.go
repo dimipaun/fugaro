@@ -1730,6 +1730,14 @@ var (
 	// service (iam.tf). Its own reach is that row and the operators'
 	// token-creator grant on the account, which is what makes it a member
 	// expression worth admitting by name here rather than by shape.
+	// google_service_account.build_identity[0] is the project's build identity
+	// (B5, D2301): the one account a shared repository's catalog build runs as,
+	// created beside the credentials service and holding exactly one row —
+	// roles/run.invoker on that service (build_identity.tf) — which is also why
+	// the module renders its email into the service's build class rather than
+	// spelling an address in Go. Its reach is that row and nothing wider: no
+	// role on any repository's registry, and no other grant in this tree names
+	// it.
 	// var.workspace_service_account is the member's own workspace_pin's
 	// account, and the Firebase root's one grant to it is the read-only
 	// database role (modules/firebase/workspace_access.tf, W7). It is the ONE
@@ -1752,7 +1760,7 @@ var (
 	// The narrowing is not what makes the plan covered either:
 	// internal/infra/tf's grant rules do NOT accept an allUsers member, so the
 	// update whose plan carries this grant asks its own typed confirmation.
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier|intake)\[0\]\.member|google_service_account\.(catalog_check|reports|licence)\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account)\}")$`)
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier|intake|build_identity)\[0\]\.member|google_service_account\.(catalog_check|reports|licence)\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account)\}")$`)
 
 	// workspaceRolePath and workspaceRoleType name the ONE custom role in this
 	// tree no module creates: the workspace root's own (W3 of the workspaces
@@ -4347,6 +4355,104 @@ func TestProjectJobSecretGrantFollowsTheMount(t *testing.T) {
 	}
 }
 
+// TestProjectJobAccountGetsTheInvokerGrant is B5.2's Terraform half, and it is
+// the same grant modules/workflow/sa.tf makes for a repository's own job: the
+// job account's roles/run.invoker on the installation's credentials service,
+// one member, no condition, and the resource behind the job's own switch
+// (var.job.credentials_service, null for a profile the service does not serve).
+// Nothing else about the job moves — the mounts the run still holds are pinned
+// by the tftest's own two runs and by internal/infra's
+// TestProjectJobKeepsItsMountsBeforeTheFlip (G17).
+//
+// The switch reaches this module through ONE object attribute, so the two
+// documents that carry the object — the module's variable and both maps of the
+// installation root — have to admit it, or the whole plan is refused with
+// "unsupported attribute" the first time internal/infra writes one: that pair
+// is asserted here rather than left to the tftest, which spells the variable
+// itself and would notice nothing.
+//
+// Mutation (run, restore): drop the `== null ? 0 : 1` from the count — every
+// project job of every installation gets an invoker grant on a service some of
+// them are not admitted by, and a plan for a project with no service at all
+// fails on a null attribute.
+func TestProjectJobAccountGetsTheInvokerGrant(t *testing.T) {
+	path := "gcp/modules/project/sa.tf"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := resourceBlocks(t, path, b, "google_cloud_run_v2_service_iam_member")
+	if len(blocks) != 1 {
+		t.Fatalf("%s has %d service-invoker resources, want the one the profile's switch drives", path, len(blocks))
+	}
+	body := blocks[0].body
+	for _, want := range []string{
+		// Null is the switch's own answer on this side, and the whole of it.
+		"count = var.job.credentials_service == null ? 0 : 1",
+		// The service's own name and the region it runs in: the two values
+		// internal/infra writes (infra.CredentialsServiceName and the
+		// installation's region), and never a URL.
+		"location = var.job.credentials_service.region",
+		"name     = var.job.credentials_service.name",
+		`role     = "roles/run.invoker"`,
+		// The job's own account and no other member, ever.
+		"member   = google_service_account.job.member",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("%s: google_cloud_run_v2_service_iam_member.credentials does not hold %q:\n%s", path, want, body)
+		}
+	}
+	if strings.Contains(body, `"allUsers"`) || strings.Contains(body, `"allAuthenticatedUsers"`) || strings.Contains(body, "**:") {
+		t.Errorf("%s: the invoker grant names something wider than the job's own account:\n%s", path, body)
+	}
+	// No IAM condition and no second resource: the grant is the front door the
+	// service admits a shared caller at, and the service's own class check is
+	// the fence behind it (B5.1, G21) — a condition here would be a second
+	// place for the reach to be wrong.
+	if strings.Contains(body, "condition {") || strings.Contains(body, "condition =") {
+		t.Errorf("%s: the invoker grant carries a condition, want none: the service's own name is what it reaches:\n%s", path, body)
+	}
+
+	// The object attribute, in the module and in both maps of the root: one
+	// document short of the three and the plan refuses the tfvars.
+	optionalObject := regexp.MustCompile(`(?m)^\s*credentials_service\s*=\s*optional\(object\(\{`)
+	for _, tc := range []struct {
+		file string
+		vars []string
+	}{
+		{"gcp/modules/project/variables.tf", []string{`variable "job"`}},
+		{"gcp/roots/installation/variables.tf", []string{`variable "project_jobs"`, `variable "project_review_jobs"`}},
+	} {
+		src, err := os.ReadFile(tc.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		code := stripComments(string(src))
+		for _, name := range tc.vars {
+			head := name + " {"
+			i := strings.Index(code, head)
+			if i < 0 {
+				t.Fatalf("%s holds no %s block", tc.file, name)
+			}
+			open := i + len(head) - 1
+			end := matchBrace(code, open)
+			if end < 0 {
+				t.Fatalf("%s: unbalanced braces in %s", tc.file, name)
+			}
+			decl := code[open+1 : end]
+			if !optionalObject.MatchString(decl) {
+				t.Errorf("%s: %s does not declare credentials_service = optional(object({...})), so a tfvars entry carrying it is refused as an unsupported attribute", tc.file, name)
+				continue
+			}
+			for _, field := range []string{"name", "region"} {
+				if !regexp.MustCompile(`(?m)^\s*` + field + `\s+=\s+string\s*$`).MatchString(decl) {
+					t.Errorf("%s: %s's credentials_service declares no %s string, want exactly the two values the module reads (name and region, never a URL)", tc.file, name, field)
+				}
+			}
+		}
+	}
+}
+
 // customRolePermissions is the snapshot of the permissions Google allows in a
 // custom role (GA, customRolesSupportLevel empty), for the service prefixes
 // the modules use. See the header of the file for how it is made and refreshed.
@@ -5328,16 +5434,24 @@ func TestServiceHeldSecretsMatchTheCredentialsService(t *testing.T) {
 	}
 
 	// And the drop itself, clause by clause: a mount is a credential the
-	// service holds exactly when its VARIABLE is one of the model names, OR
-	// carries the provider-key prefix, OR its LOGICAL NAME is one the service
-	// holds. Pinning the whole expression is the point — the two model halves
-	// are what the review's mutation m1 removed, and with the prefix clause
-	// gone every FUGARO_PROVIDER_KEY_* secret keeps its job accessor, which is
-	// the one thing the opt-in exists to take away; the name clause (C2.3) is
-	// the App key, whose variable is a reserved name the model lists must never
-	// grow to cover (D145 keeps Bitbucket's token with the job, F7).
-	if !strings.Contains(squash(code), "env => contains(local.model_secret_env_names, env) || startswith(env, local.model_secret_env_prefix) || contains(local.service_held_secret_names, logical)") {
-		t.Errorf("%s: is_service_held must be `contains(model_secret_env_names, env) || startswith(env, model_secret_env_prefix) || contains(service_held_secret_names, logical)`; a missing clause leaves that credential's accessor with the job (review m1, C2.3):\n%s", path, code)
+	// service holds exactly when it is a MODEL secret the input says the
+	// service serves this repository (is_served_model_secret, B2.3), OR its
+	// LOGICAL NAME is one the service holds. Pinning the whole expression is
+	// the point — the name clause (C2.3) is the App key, whose variable is a
+	// reserved name the model lists must never grow to cover (D145 keeps
+	// Bitbucket's token with the job, F7), and the model clause is the one the
+	// review's mutation m1 removed (with the prefix gone every
+	// FUGARO_PROVIDER_KEY_* secret keeps its job accessor, which is the one
+	// thing the opt-in exists to take away). Since B2.3 the model clause is
+	// read from the local rather than written here, so that the arms the
+	// service serves and the arms the mount drop removes are one answer:
+	// TestServesAPIKeyAndOAuthWhenTheModeIsOn and its neighbours in
+	// internal/infra/ hold Go's side of it.
+	if !strings.Contains(squash(code), "env => local.is_served_model_secret[env] || contains(local.service_held_secret_names, logical)") {
+		t.Errorf("%s: is_service_held must be `local.is_served_model_secret[env] || contains(service_held_secret_names, logical)`; a missing clause leaves that credential's accessor with the job (review m1, C2.3):\n%s", path, code)
+	}
+	if !strings.Contains(squash(code), "env => var.model_secrets_served != \"none\" && (contains(local.model_secret_env_names, env) || (var.model_secrets_served == \"all\" && startswith(env, local.model_secret_env_prefix)))") {
+		t.Errorf("%s: is_served_model_secret must be the input's three arms — `all` the named model credentials AND every provider key, `anthropic` the named ones alone, `none` neither; a clause that ignores the input takes a provider key's accessor away from a repository the service serves no provider credential to (D2072, G17, R6):\n%s", path, code)
 	}
 
 	// The drop is gated on the opt-in, in the same expression that reads the
@@ -5389,6 +5503,107 @@ func TestServiceHeldSecretsMatchTheCredentialsService(t *testing.T) {
 	}
 	if !strings.Contains(squash(stripComments(string(jb))), `dynamic "env" { for_each = local.job_mounts`) {
 		t.Errorf("gcp/modules/workflow/job.tf: the container's secret env must iterate local.job_mounts rather than var.workflow.secret_env, or the App key's mount outlives its accessor (C2.3, F1):\n%s", jb)
+	}
+}
+
+// TestModelSecretsServedValidationMatchesGo is B2.3's mirror of the guard
+// above, for the input that decides the MODEL half of the same drop: the three
+// arms Go writes (config.ModelSecretsServedValues, from infra.ModelSecretsServed)
+// are exactly the three the module's validation accepts, and the default is
+// `all`.
+//
+// Both directions of the drift are a plan that fails on a real installation:
+// an arm Go writes and the module refuses fails the plan of the root the run is
+// applying -- `fugaro update --repo` is the whole upgrade (CLAUDE.md's HARD
+// RULE), so a refusal here is a repository nobody can converge -- and an arm
+// the module accepts and Go never writes is a branch no tfvars reaches, which
+// is a rule this file claims and the module does not hold. The default is read
+// too, and for the third state: a root applied before this input existed plans
+// exactly what it planned then, which is the `all` arm.
+func TestModelSecretsServedValidationMatchesGo(t *testing.T) {
+	const path = "gcp/modules/workflow/variables.tf"
+	b, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(b))
+	i := regexp.MustCompile(`(?m)^\s*variable\s+"model_secrets_served"\s*\{`).FindStringIndex(code)
+	if i == nil {
+		t.Fatalf("%s declares no model_secrets_served variable", path)
+	}
+	end := matchBrace(code, i[1]-1)
+	if end < 0 {
+		t.Fatalf("%s: unbalanced braces in the model_secrets_served variable", path)
+	}
+	body := code[i[1]:end]
+
+	if !hasAttr(body, "default", `"all"`) {
+		t.Errorf("%s: model_secrets_served must default to `all`; a required variable, or any other default, moves the plan of every root whose tfvars was written before the input existed (D2072):\n%s", path, body)
+	}
+	m := regexp.MustCompile(`contains\(\[([^\]]*)\],\s*var\.model_secrets_served\)`).FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("%s: model_secrets_served carries no validation on the three arms; an arm Go never writes and a value Go writes and the module refuses are both a plan nobody can apply:\n%s", path, body)
+	}
+	var got []string
+	for _, q := range regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(m[1], -1) {
+		got = append(got, q[1])
+	}
+	want := slices.Clone(config.ModelSecretsServedValues)
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("%s: model_secrets_served accepts %v, config.ModelSecretsServedValues = %v", path, got, want)
+	}
+}
+
+// TestAppKeyAndProxiedGitClausesStayOnTheVariable pins the half of the drop
+// B2.3 does NOT move, because moving it would be two regressions at once.
+//
+// The App key's clause and the proxied repository's are keyed on
+// var.credentials_service, which is the INSTALLATION's opt-in (D146), and the
+// model clauses are now keyed on the per-repository input (D2072): the input
+// answers for one repository, so a clause that read it for a credential the
+// service holds for the whole installation would leave the App key's accessor
+// with a job whose runner mints through the service (#907's regression), and
+// one that read var.credentials_service for a proxied repository's token would
+// take it from every Bitbucket repository of an opted-in installation (G9,
+// B1.13).
+//
+// The MOUNT local is pinned in full, and it is where the third claim is: it
+// names no model credential and never reads the input. The model mounts are Go's
+// to remove (internal/infra's dropModelMounts, whose answer is the same value
+// the accessor drop reads), because a mount this module removed for a runner
+// that cannot read the service yet would break every run — C1.20's pairing,
+// which B2.3 leaves exactly where it is.
+func TestAppKeyAndProxiedGitClausesStayOnTheVariable(t *testing.T) {
+	const path = "gcp/modules/workflow/sa.tf"
+	b, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(b))
+
+	local := func(name string) string {
+		t.Helper()
+		re := regexp.MustCompile(`(?s)\b` + name + `\s*=\s*\{\s*for env, logical in var\.workflow\.secret_env\s*:\s*(env => [^\n]+)`)
+		found := re.FindStringSubmatch(code)
+		if found == nil {
+			t.Fatalf("%s declares no %s local of the per-mount shape", path, name)
+		}
+		return squash(found[1])
+	}
+
+	if got := local("is_service_held"); !strings.Contains(got, "contains(local.service_held_secret_names, logical)") || !strings.Contains(got, "|| local.is_proxied_git[env]") {
+		t.Errorf("%s: is_service_held = %s; the App key's clause and the proxied repository's must stay keyed on the installation's opt-in, or the App key outlives the service that mints with it (#907) and a proxied repository's token goes with it (G9)", path, got)
+	}
+	if got := local("job_mounts"); got != "env => logical if var.credentials_service == null || !contains(local.service_held_secret_names, logical) && !local.is_proxied_git[env]" {
+		t.Errorf("%s: job_mounts = %s, want the opt-in, the App key's name and the proxied repository's clause and nothing else: the model mounts are dropped by Go's own spec from the tfvars this module plans (C1.20's pairing), and a mount removed here for a runner that cannot read the service yet breaks every run", path, got)
+	}
+	if !strings.Contains(squash(code), "logical if var.credentials_service == null || !local.is_service_held[env]") {
+		t.Errorf("%s: the job's accessor set must still be gated on the installation's opt-in (D147):\n%s", path, code)
+	}
+	if !strings.Contains(squash(code), "count = var.credentials_service == null ? 0 : 1") {
+		t.Errorf("%s: the invoker grant must stay keyed on var.credentials_service: the switch's other conditions decide whether a LAUNCH hands the job the address, never whether the grant exists (D2071):\n%s", path, code)
 	}
 }
 

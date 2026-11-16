@@ -411,6 +411,15 @@ func ValidateModelProviders(providers map[string]ModelProvider) []Problem {
 			// key could never be written, and every repository the provider
 			// allows would mount a secret that does not exist.
 			add(at+".secret", "%q is a harness's OAuth credential name (claude-oauth-token or codex-oauth-token, and the names in their -<name> namespaces): that is a person's subscription token, never a provider's key", p.Secret)
+		case KeyCredentialSecret(p.Secret):
+			// A typed credential's own derived secret name (CredentialSecret,
+			// MC22): that container is where the credential's reader looks for
+			// the key it spends on a call, so a provider pointing .secret at it
+			// would have the credential's key read as the provider's and sent
+			// wherever this entry's calls route. The name is derived from the
+			// credential and never chosen, so unlike the harness names above
+			// there is no provider key an operator could have meant by it.
+			add(at+".secret", "names starting %s are a typed credential's own derived secret name (credentials in the local config): that container holds a credential's key, never a provider's", CredentialSecretPrefix)
 		default:
 			if other, dup := secrets[p.Secret]; dup {
 				add(at+".secret", "%q is already the secret of provider %s: each provider has its own key", p.Secret, other)
@@ -573,6 +582,61 @@ const GitHubAppKeySecret = "github-app-key"
 // operator may store project-wide reaches many, so neither shape can be minted
 // per job (F7, D461).
 var ServiceHeldSecretNames = []string{}
+
+// ServiceServedAuths are the agent.auth values whose repositories reach the
+// credentials service besides the cascade (B2.1–B2.7, D498): the auths the
+// service's own cascade serves a run's model calls for, once the installation
+// has opted in, the repository's root has been re-applied with the switch on
+// and its budget mode is a gateway one.
+//
+// It is the FLIP LIST of D2072's second step, not a condition of the switch:
+// the switch admits `api-key` and `oauth` from the release that hands them the
+// service's address (B2.3), and this list is what decides whether their jobs
+// still MOUNT the model credential the service now serves them
+// (infra.ModelSecretsServed, dropModelMounts). It is EMPTY until B2.7, so
+// every mount stays for every auth but the cascade, which is G17's rule: a job
+// never loses a mount before the service serves that credential to the image
+// it runs.
+//
+// A name in it is a name the credentials service can serve a model call under,
+// and the two that belong here — "api-key" and "oauth" (B2.7) — are the two
+// whose runs the service's cascade and pool serve. `vertex` is not one of
+// them: a Vertex workflow's calls go to Vertex AI on the job's own service
+// account, which is not a credential this service holds. `cascade` is not one
+// either, and never will be: a cascade job has no model mount at all
+// (ModelSecretsServed answers `all` for it), so there is no mount for a flip
+// to take away.
+//
+// deploy/terraform's mirror tests hold the module's own lists to this package;
+// this one has no Terraform literal to be held to, because the value it feeds
+// is the per-repository model_secrets_served input Go writes into the tfvars,
+// whose three values ARE held to Go by TestModelSecretsServedValidationMatchesGo.
+var ServiceServedAuths = []string{}
+
+// The three values of the repository root's model_secrets_served input — which
+// model secrets the credentials service serves to a job, and therefore which
+// of its mounts the module may drop (infra.ModelSecretsServed is the one
+// function that answers it; deploy/terraform's
+// TestModelSecretsServedValidationMatchesGo holds the module's validation to
+// these three).
+//
+// They are the flip's vocabulary rather than the switch's: `none` is a job the
+// service serves no model credential — the switch is off for it, or its auth is
+// one no release serves yet — and it keeps every mount, accessor included;
+// `anthropic` is a job whose service serves the Claude OAuth token and the
+// Anthropic key and nothing else, so those two mounts go and a provider's key
+// stays (R6, D1634: a provider key is spent on a route the service forwards
+// rather than attaches, and its mount is the run's own); `all` is the cascade's
+// job, which mounts no model credential at all.
+const (
+	ModelSecretServedAll       = "all"
+	ModelSecretServedAnthropic = "anthropic"
+	ModelSecretServedNone      = "none"
+)
+
+// ModelSecretsServedValues are the three values above, for the mirror test
+// that holds the module's validation block to them.
+var ModelSecretsServedValues = []string{ModelSecretServedAll, ModelSecretServedAnthropic, ModelSecretServedNone}
 
 // IsServiceHeldSecretEnv reports whether a job mounting the logical secret
 // name under the variable env carries a credential the credentials service

@@ -158,6 +158,10 @@ const (
 	// The licence renewal job's own kind (plan K4.2), appended for the same
 	// reason: LicenceAccountID says why the account is its own kind.
 	toLicence
+	// The build identity's own kind (B5, D2301), appended for the reports
+	// job's reason. It is not a job account of a repository and not a person:
+	// BuildIdentityAccountID says why it is a kind of its own.
+	toBuildIdentity
 )
 
 // customKey is how grantRules names a custom role of the installation (by its
@@ -396,8 +400,19 @@ var grantRules = map[string]map[string]who{
 	// without the invoker bit the front end refuses it before the container
 	// runs. It is Fugaro's own account, on the same switch as the service, and
 	// it comes with nothing wider.
+	//
+	// toBuildIdentity is B5's (D2301), the verifier's fact one class over: the
+	// project's build identity (google_service_account.build_identity, whose
+	// address the module hands the service as FUGARO_BUILD_ACCOUNTS) is the
+	// build route's one caller class, and the class is asked for the credential
+	// a catalog build runs on, so without the invoker bit the front end refuses
+	// the build before the container can decide its class. It is Fugaro's own
+	// account, created by the same apply that turns the service on, and it
+	// comes with nothing wider — no actAs, no project role, and no second
+	// resource type: the registry roles a catalog build needs to push are added
+	// to this table deliberately, in the task that grants them.
 	"google_cloud_run_v2_service_iam_member": {
-		"roles/run.invoker": toAccounts | toPeople | toCoordinator | toVerifier,
+		"roles/run.invoker": toAccounts | toPeople | toCoordinator | toVerifier | toBuildIdentity,
 	},
 	"google_logging_log_view_iam_member": {
 		"roles/logging.viewAccessor": toPeople,
@@ -537,6 +552,31 @@ const CoordinatorAccountID = "fugaro-coordinator"
 // fact of the configuration rather than of the apply: the same run can both
 // create the account and write its address into the owner's published policy.
 const VerifierAccountID = "fugaro-verifier"
+
+// BuildIdentityAccountID is the project's build identity (internal/infra's
+// BuildIdentityAccountID; B5, D2301): the ONE account a project's catalog
+// builds run as, created in the installation's project by the same apply that
+// turns the credentials service on, and the ONE caller class of its build
+// route (toBuildIdentity). It is NOT among FugaroAccounts, for the verifier
+// account's reason: a catalog build may invoke that one service and do nothing
+// else of this installation's, so a grant this table does not carry for a
+// build identity is a widening nobody announced.
+//
+// It is a build identity and not a repository's build account
+// (gcp.BuildServiceAccountID, derived per repository): the per-repository one
+// dies with the repository's root while a catalog entry may name repositories
+// whose root is gone (M2), which is the whole of why this account exists.
+// The two are different names on purpose — `fugaro-build-identity` against the
+// derived `fugaro-b-<slug>-<hash>` — so a plan can never confuse one for the
+// other, and this constant is pinned to internal/infra's by
+// TestCoverNamesAreTheCodes.
+//
+// The ID is a LITERAL in the module (build_identity.tf's account_id) and a
+// constant here, which is the verifier's own arrangement: the address is a fact
+// of the configuration and can be named before the apply, so a later task can
+// hand it to CatalogBuildSpec and the module can render it into the service's
+// account sets (FUGARO_BUILD_ACCOUNTS) as one value read twice.
+const BuildIdentityAccountID = "fugaro-build-identity"
 
 // CatalogCheckAccountID is the project's catalog check job account (D1148
 // task (ii)), the one modules/installation/catalogcheck.tf creates in the
@@ -745,7 +785,10 @@ const (
 // own account (MCPServerAccountID), for the same reason (toCoordinator,
 // toCatalogCheck, toMCP). The reports job's account (ReportsAccountID) is not
 // among them either: its read of runs/ and its write of reports/ are a reach
-// no job holds, so it is a kind of its own too (toReports).
+// no job holds, so it is a kind of its own too (toReports). The project's
+// build identity (BuildIdentityAccountID) is not among them for the same
+// reason (toBuildIdentity): its reach is the credentials service's invoker bit
+// and nothing a job of any repository holds.
 var (
 	FugaroRoles    = []string{"fugaroLauncher", ViewerRole, "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, CatalogLeaseRole, WorkspaceReadRole, IntakeSecretsRole, SecretListerRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole, MCPStateReadRole, LicenceRenewalRole}
 	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
@@ -1107,6 +1150,14 @@ func (c Cover) isLicenceMember(m string) bool {
 	return p != "" && m == "serviceAccount:"+LicenceAccountID+"@"+p+".iam.gserviceaccount.com"
 }
 
+// isBuildIdentityMember is whether m is exactly the project's build identity as
+// an IAM member, in the installation's project: the account build_identity.tf
+// creates (var.project, BuildIdentityAccountID).
+func (c Cover) isBuildIdentityMember(m string) bool {
+	p := c.installationProject()
+	return p != "" && m == "serviceAccount:"+BuildIdentityAccountID+"@"+p+".iam.gserviceaccount.com"
+}
+
 // isMCPMember is whether m is exactly the front door's own account as an IAM
 // member, in the installation's project: the account coordinator.tf creates
 // and the service runs as (MCPServerAccountID).
@@ -1419,9 +1470,12 @@ var knownCommands = [][2][]string{
 // coordinator's own account, which is the read mint's second class (BB5), and
 // — only on one that deploys review-only jobs — those jobs' {profile,
 // provider, account} triples, which are the class the service admits a review
-// caller as (C3.9a), and — only on one whose roster names a launcher — the
+// caller as (C3.9a), — only on one whose roster names a launcher — the
 // addresses the launcher class admits (D1938, F25), which is the class the
-// grant route and the intake answer to. No secret ID and no secret value,
+// grant route and the intake answer to, and — only on an installation that
+// runs the service at all — the address of the project's build identity (B5,
+// D2301), which is the class the build route admits and the only list that
+// class is on. No secret ID and no secret value,
 // because the loader
 // derives the container from the project name and reads it as the service's own
 // account, and both job sets are derived from their triples rather than
@@ -1439,6 +1493,7 @@ var credentialsServiceEnv = []string{
 	"FUGARO_VERIFIER_ACCOUNTS", "FUGARO_PERSON_ACCOUNTS",
 	"FUGARO_COORDINATOR_ACCOUNT", "FUGARO_REVIEW_JOB_ACCOUNTS",
 	"FUGARO_LAUNCHER_ACCOUNTS", "FUGARO_SHARED_JOB_ACCOUNTS",
+	"FUGARO_BUILD_ACCOUNTS",
 }
 
 // intakeServiceArgs and intakeServiceEnv are the argv and the environment
@@ -2185,6 +2240,17 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 			// a plan that listed the intake's address would otherwise be able
 			// to grant it a launcher's or an operator's role.
 			kind = toIntake
+		case c.isBuildIdentityMember(m):
+			// ... and the project's build identity (B5, D2301): its own kind,
+			// which ONE row accepts — the invoker bit on the credentials
+			// service — so every other grant it is given, and every other role
+			// a plan might reach for, is refused and the update that carries
+			// them asks its owner. Read here, before the review screen's list,
+			// for the deployer's reason: a plan that listed its address would
+			// otherwise be able to grant it a launcher's or an operator's role,
+			// and the whole point of the account is that a catalog build
+			// reaches the one service and nothing else of this installation's.
+			kind = toBuildIdentity
 		case slices.Contains(c.Listed, m):
 			if !strings.HasPrefix(m, "user:") && !strings.HasPrefix(m, "group:") && !strings.HasPrefix(m, "serviceAccount:") {
 				return fmt.Sprintf("grants to %s, which is not a user, group or service account", m)

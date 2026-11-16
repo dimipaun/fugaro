@@ -115,6 +115,12 @@ func TestGrantRulesMatrix(t *testing.T) {
 	// service's invoker, and every other cell refuses it.
 	const verifier = "serviceAccount:" + VerifierAccountID + "@proj-1.iam.gserviceaccount.com"
 	const coordinator = "serviceAccount:" + CoordinatorAccountID + "@proj-1.iam.gserviceaccount.com"
+	// The project's build identity (B5, D2301) is a sixth, and it is in this
+	// map for the verifier's reason: its one row is the same service's invoker
+	// bit, that row's grant needs no condition for the check to accept it, so
+	// every other cell of the table has to refuse it here rather than in a test
+	// of its own.
+	const buildIdentity = "serviceAccount:" + BuildIdentityAccountID + "@proj-1.iam.gserviceaccount.com"
 	all := map[string]bool{}
 	for _, row := range grantRules {
 		for k := range row {
@@ -127,7 +133,7 @@ func TestGrantRulesMatrix(t *testing.T) {
 	for typ, row := range grantRules {
 		for key := range all {
 			role := grantRoleString(key)
-			for kind, member := range map[who]string{toPeople: person, toAccounts: account, toDeployer: "serviceAccount:" + DeployerAccount("proj-1"), toCredentials: credentials, toCoordinator: coordinator, toVerifier: verifier} {
+			for kind, member := range map[who]string{toPeople: person, toAccounts: account, toDeployer: "serviceAccount:" + DeployerAccount("proj-1"), toCredentials: credentials, toCoordinator: coordinator, toVerifier: verifier, toBuildIdentity: buildIdentity} {
 				want := row[key]&kind != 0
 				after := map[string]any{"member": member, "role": role, "bucket": "fugaro-runs-proj-1"}
 				if acct := deployerGrantAccountFor(typ, role); acct != "" {
@@ -225,7 +231,7 @@ func TestGrantRulesNameOnlyKnownTypesAndRoles(t *testing.T) {
 			t.Errorf("%s has no roles", typ)
 		}
 		for key, w := range row {
-			if w == 0 || w&^(toPeople|toAccounts|toDeployer|toCredentials|toCoordinator|toVerifier|toCatalogCheck|toMCP|toIntake|toReports|toLicence) != 0 {
+			if w == 0 || w&^(toPeople|toAccounts|toDeployer|toCredentials|toCoordinator|toVerifier|toCatalogCheck|toMCP|toIntake|toReports|toLicence|toBuildIdentity) != 0 {
 				t.Errorf("%s %s: bad principal kinds %d", typ, key, w)
 			}
 			if id, ok := strings.CutPrefix(key, customKey); ok {
@@ -344,8 +350,13 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		repo    = "google_artifact_registry_repository_iam_member"
 		secret  = "google_secret_manager_secret_iam_member"
 		runjob  = "google_cloud_run_v2_job_iam_member"
+		runsvc  = "google_cloud_run_v2_service_iam_member"
 		logview = "google_logging_log_view_iam_member"
 	)
+	// The project's build identity (B5, D2301), whose one row the cells below
+	// pin: the invoker bit on the credentials service, and no role of any
+	// other row.
+	const buildIdentity = "serviceAccount:" + BuildIdentityAccountID + "@proj-1.iam.gserviceaccount.com"
 	for _, c := range []struct {
 		typ, role, member string
 		covered           bool
@@ -376,6 +387,9 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		{secret, "roles/secretmanager.secretAccessor", account, true},
 		{runjob, "projects/proj-1/roles/fugaroJobRunner", person, true},
 		{runjob, "roles/run.invoker", account, true},
+		// The project's build identity's one row (B5, D2301): the same role on
+		// the SERVICE type, which is the whole of what the account may hold.
+		{runsvc, "roles/run.invoker", buildIdentity, true},
 		{logview, "roles/logging.viewAccessor", person, true},
 		// The credentials service's two rows, and only these two (0.10.1,
 		// ledger #903): the bundle's accessor and its own database role. The
@@ -400,6 +414,13 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		// Roles on the wrong type, or to the wrong kind of principal.
 		{bkt, "roles/storage.objectAdmin", account, false},
 		{project, "roles/storage.objectAdmin", person, false},
+		// The build identity is refused every role but its one row (B5,
+		// D2301): a bucket write — which is how a registry writer, the role a
+		// later task adds to this table on purpose, would look if it were
+		// widened into a row silently — and the invoker bit on the type that
+		// is not the service it invokes.
+		{bkt, "roles/storage.objectUser", buildIdentity, false},
+		{runjob, "roles/run.invoker", buildIdentity, false},
 		{project, "roles/secretmanager.secretAccessor", account, false},
 		{project, "roles/iam.serviceAccountUser", person, false},
 		{project, "projects/proj-1/roles/fugaroTokenMinter", person, false},
@@ -817,6 +838,86 @@ func TestCoordinatorAccountIsItsOwnPrincipalKind(t *testing.T) {
 		if got := listed.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); (len(got) == 0) != tc.covered {
 			t.Errorf("listed on the review screen: %s to the coordinator's writer: NotCovered = %q, covered want %v", tc.role, got, tc.covered)
 		}
+	}
+}
+
+// The project's build identity (B5, D2301) is its own kind of principal for
+// the credentials account's reason: as one of FugaroAccounts every toAccounts
+// row would have accepted it, so one confirmation would have covered handing
+// the identity a shared repository's catalog build runs as a job runner's
+// role, the history account's datastore.user or a build account's registry
+// writer. What a catalog build does need of the registry is a role another
+// task adds to this table deliberately; before that, its whole reach is the
+// one row below — roles/run.invoker on the credentials service, the class the
+// service answers the build route for.
+//
+// The table alone does not hold that: TestGrantRulesMatrix computes its
+// expectation from the table under test, so it follows a row that gains the
+// kind. This is the hand-written half — the one row the account may hold,
+// asserted over every (type, role) cell of grantRules and then for real
+// through the cover, role by role — and TestGrantRulesPinnedCells pins the
+// positive cell and two refusals beside it.
+func TestBuildIdentityIsItsOwnPrincipalKind(t *testing.T) {
+	const build = "serviceAccount:" + BuildIdentityAccountID + "@proj-1.iam.gserviceaccount.com"
+
+	if slices.Contains(FugaroAccounts, BuildIdentityAccountID) {
+		t.Errorf("the project's build identity is one of FugaroAccounts, so every toAccounts row accepts it: one confirmation would then cover granting the identity a catalog build runs as a job runner's role or a build account's registry writer")
+	}
+	// The one row it may hold, and nothing else: a second row that gains
+	// toBuildIdentity is a role this account may be granted, which is a
+	// decision the account's own task makes and not one a widened row makes
+	// silently.
+	allowed := map[string]map[string]bool{
+		"google_cloud_run_v2_service_iam_member": {"roles/run.invoker": true},
+	}
+	for typ, row := range grantRules {
+		for key, w := range row {
+			if (w&toBuildIdentity != 0) != allowed[typ][key] {
+				t.Errorf("%s %s: toBuildIdentity is %v, want %v — the build identity invokes the credentials service and holds no other role of the installation", typ, key, w&toBuildIdentity != 0, allowed[typ][key])
+			}
+		}
+	}
+	for typ, row := range allowed {
+		for key := range row {
+			if grantRules[typ][key]&toBuildIdentity == 0 {
+				t.Errorf("%s %s does not accept the build identity, so the module's own grant of it is refused and init cannot cover the plan that creates the account", typ, key)
+			}
+		}
+	}
+
+	// ... and the cover, role by role: every role of every row, the roles the
+	// table names for other kinds of principal included, plus roles no row
+	// names at all.
+	roles := map[string][]string{}
+	for typ, row := range grantRules {
+		for key := range row {
+			roles[typ] = append(roles[typ], grantRoleString(key))
+		}
+	}
+	roles["google_project_iam_member"] = append(roles["google_project_iam_member"],
+		"roles/owner", "roles/editor", "roles/logging.logWriter", "roles/storage.objectAdmin",
+		"projects/proj-1/roles/fugaroEverything")
+	for typ, list := range roles {
+		for _, role := range slices.Sorted(slices.Values(list)) {
+			after := map[string]any{"member": build, "role": role, "bucket": "fugaro-runs-proj-1"}
+			withCondFor(after, typ, role, false)
+			ch := rc(typ, after, map[string]any{}, "create")
+			got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil)
+			want := allowed[typ][mustRoleKey(t, role)]
+			if (len(got) == 0) != want {
+				t.Errorf("%s: %s to the build identity: NotCovered = %q, covered want %v", typ, role, got, want)
+			}
+		}
+	}
+
+	// The account is the installation's: the module creates it in the plan's
+	// own project, so the same account ID in the Firebase project is somebody
+	// else's and no row accepts it. (A suffixed address in this project is an
+	// ordinary job account of the run — the toAccounts reading — which is why
+	// the ID is exact in the row above rather than a prefix.)
+	ch := rc("google_cloud_run_v2_service_iam_member", map[string]any{"member": "serviceAccount:" + BuildIdentityAccountID + "@fp-2.iam.gserviceaccount.com", "role": "roles/run.invoker"}, map[string]any{}, "create")
+	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
+		t.Errorf("the build identity of another project: roles/run.invoker is covered, and the module creates %s@proj-1 alone", BuildIdentityAccountID)
 	}
 }
 

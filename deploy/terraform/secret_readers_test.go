@@ -136,6 +136,17 @@ var secretReaderExceptions = []struct {
 			"deploy/terraform/gcp/modules/installation/intake.tf google_project_iam_member.intake_lister",
 		},
 	},
+	// The enrolment view (repos-management RE0, `internal/cli/repos_view.go`):
+	// the fourth member of the group's reads that answers "what is this
+	// repository made of". It reads the same four things doctor's rotation
+	// check reads and one fewer than E23 — the containers carrying a
+	// repository's `fugaro_repo` label, each one's name and labels, whether it
+	// holds an enabled version, and that version's creation time, which is the
+	// rotation age D2415 lets a row print — and no value on any path: a
+	// listing of metadata and a listing of versions, never `versions.access`.
+	// The guard keys on the import, so it is a row of this table for the same
+	// reason E22 is.
+	{id: "E27", keys: []string{"internal/cli/repos_view.go"}},
 	// The licence renewal job's account (K4.2, docs/licence-key-v2): the one
 	// reader of the renewal container, which `update` creates empty and
 	// `fugaro licence set` later writes. The role is a CUSTOM one
@@ -145,7 +156,7 @@ var secretReaderExceptions = []struct {
 	// would cover the four (secretmanager.secretVersionManager and
 	// secretmanager.viewer) also carry create, delete, destroy, enable, disable
 	// and getIamPolicy on the container, none of which the job calls.
-	{id: "E27", keys: []string{"deploy/terraform/gcp/modules/installation/licence.tf google_secret_manager_secret_iam_member.licence_renewal"}},
+	{id: "E28", keys: []string{"deploy/terraform/gcp/modules/installation/licence.tf google_secret_manager_secret_iam_member.licence_renewal"}},
 }
 
 // A key under this prefix names a rule the scan enforces rather than a hit it
