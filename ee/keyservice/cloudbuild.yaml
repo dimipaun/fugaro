@@ -18,17 +18,32 @@
 # images a release deploys are the two this build pushed, and the `images:` list
 # at the end is what pushes and what a deploy reads the digests from.
 #
-# Substitutions: _REGION and _REPOSITORY name the registry the installation
-# created (P0.2, `fugaro setup` writes them); the tags are the commit's own
-# short sha and `latest`, so a deploy can pin either.
+# **The image names and the tag are the submitter's, and this file reads them
+# rather than deciding them.** scripts/deploy-portal.sh submits
+# `--substitutions=_REPOSITORY=<registry prefix>,_TAG=<commit>` and then deploys
+# `$_REPOSITORY/fugaro-portal-api:$_TAG` and `$_REPOSITORY/fugaro-key-minter:$_TAG`
+# — the two images below, and nothing else under those tags — so what is running
+# is what this build pushed and a reader can go from a revision back to the
+# commit the tag names. A build that named its own images would leave that deploy
+# naming an image nobody pushed, or, worse, a tag that already exists, which is
+# the previous image serving under the new revision's name; and an automatic
+# `$SHORT_SHA` is empty on a manual submit, which is the same fault one step
+# later. TestCloudBuildPushesWhatTheDeployNames holds this file and that script
+# together.
+#
+# The defaults are empty for that reason and not as an omission: a submit that
+# passes neither fails at its first `docker build`, because `:<empty>` is not a
+# tag the registry takes, and a build that guessed `latest` instead is the image
+# the deploy did not deploy. images/derived/cloudbuild.yaml's own substitutions
+# are declared the same way, for the same reason.
 substitutions:
-  _REGION: europe-west1
-  _REPOSITORY: fugaro
+  _REPOSITORY: "" # the registry prefix, e.g. europe-west1-docker.pkg.dev/<project>/fugaro-portal
+  _TAG: "" # the commit both images are, which the deploy then deploys
 options:
   logging: CLOUD_LOGGING_ONLY
 images:
-  - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/fugaro-portal-api:latest"
-  - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/fugaro-key-minter:latest"
+  - "${_REPOSITORY}/fugaro-portal-api:${_TAG}"
+  - "${_REPOSITORY}/fugaro-key-minter:${_TAG}"
 steps:
   - id: portal-api
     name: gcr.io/cloud-builders/docker
@@ -37,9 +52,7 @@ steps:
       - --file
       - ee/keyservice/cmd/portal-api/Dockerfile
       - --tag
-      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/fugaro-portal-api:latest"
-      - --tag
-      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/fugaro-portal-api:$SHORT_SHA"
+      - "${_REPOSITORY}/fugaro-portal-api:${_TAG}"
       - .
   - id: minter
     name: gcr.io/cloud-builders/docker
@@ -48,7 +61,5 @@ steps:
       - --file
       - ee/keyservice/cmd/minter/Dockerfile
       - --tag
-      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/fugaro-key-minter:latest"
-      - --tag
-      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/fugaro-key-minter:$SHORT_SHA"
+      - "${_REPOSITORY}/fugaro-key-minter:${_TAG}"
       - .
