@@ -468,8 +468,15 @@ write("logs/%s.json" % run_id, calls(run_log))
 if flag("FIX_REVIEW_LOG_EMPTY"):
     write("logs/%s.json" % review_id, [])
 else:
+    # FIX_REVIEW_LOG_SERVING_PAD repeats a byte in front of the serving model's
+    # name, which is how a case makes the printed block past one pipe buffer.
+    # The padding is AHEAD of the name so that the row always ends in the model
+    # the check looks for: a reader that stops at its first match still reads the
+    # name off the row, and the row is the pass it is either way.
     write("logs/%s.json" % review_id,
-          calls([("review", reviewer, s("FIX_REVIEW_LOG_SERVING", reviewer),
+          calls([("review", reviewer,
+                  "p" * number("FIX_REVIEW_LOG_SERVING_PAD", 0)
+                  + s("FIX_REVIEW_LOG_SERVING", reviewer),
                   s("FIX_REVIEW_LOG_ROUTE", ""), 400000)]))
 
 # ------------------------------------------------------------------ the job (B)
@@ -717,6 +724,25 @@ test_a_split_that_is_not_the_own_stages_spend_is_a_fail() {
   expect_contains "$(fact_line route-by)" "FAIL" "a split carrying the whole run: the row fails"
   expect_contains "$(fact_line route-by)" "not the run's own stages' spend" "a split carrying the whole run: and says why"
   expect_scratch_gone "a split carrying the whole run"
+}
+
+# The block this check prints can outgrow one pipe buffer, and a verdict is taken
+# from that block: a row read through a `printf … | grep` under `pipefail` gives
+# the reader the writer's SIGPIPE instead of the match once the facts past the
+# match do not fit the pipe, so a FAILed row prints in the block and the check
+# exits 0 beside it. This case is that block: the split's FAIL row is short and
+# printed early, the review log's own row carries the padding and passes, so the
+# only row the verdict has to find sits in front of a fact file past 64 KiB.
+test_a_fail_row_in_a_block_bigger_than_one_pipe_buffer_is_still_a_finding() {
+  prepare "$work/split-whole-big" FIX_ROUTE_BY=whole FIX_REVIEW_LOG_SERVING_PAD=250000
+  run330_both
+  expect_status "$status" 1 "a split behind a block past one pipe buffer"
+  expect_contains "$(fact_line route-by)" "FAIL" "a split behind a block past one pipe buffer: the row fails"
+  expect_contains "$(fact_line route-by)" "not the run's own stages' spend" "a split behind a block past one pipe buffer: and says why"
+  expect_contains "$(fact_line review-log)" "PASS" "a split behind a block past one pipe buffer: the padded row beside it passes"
+  [ "$(printf '%s' "$out" | wc -c)" -gt 200000 ] ||
+    fail "the block this case printed is not bigger than one pipe buffer ($(printf '%s' "$out" | wc -c) bytes)"
+  expect_scratch_gone "a split behind a block past one pipe buffer"
 }
 
 # The split and the run's whole spend being the same money is the other way the
@@ -1385,6 +1411,7 @@ t test_a_review_served_by_a_non_claude_model_is_a_fail
 t test_a_notional_review_dollar_is_a_fail
 t test_a_zero_review_dollar_is_a_fail
 t test_a_split_that_is_not_the_own_stages_spend_is_a_fail
+t test_a_fail_row_in_a_block_bigger_than_one_pipe_buffer_is_still_a_finding
 t test_a_split_equal_to_the_whole_run_is_a_fail
 t test_a_missing_split_is_a_fail
 t test_a_bouncing_run_with_a_residual_reads_as_its_own_stages_spend
