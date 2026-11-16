@@ -2,6 +2,8 @@ package gcp
 
 import (
 	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"encoding/base64"
 	"errors"
 	"os"
@@ -836,6 +838,14 @@ func runCatalogScan(t *testing.T, st *cloudbuild.BuildStep, subs map[string]stri
 	if err := writeScanRootfs(rootfs, f.files); err != nil {
 		t.Fatal(err)
 	}
+	// The layers the step's scan reads with docker save: one holding what the
+	// fixture ends with, which is where a file in the image as it ends came
+	// from. The layer-only case — a config a later layer deleted, which is the
+	// one the scan cannot find any other way — is images/scan_test.go's.
+	save := filepath.Join(dir, "save.tar")
+	if err := writeScanSave(save, f.files); err != nil {
+		t.Fatal(err)
+	}
 	config := filepath.Join(dir, "config")
 	if err := os.WriteFile(config, []byte(strings.Join(f.env, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -850,6 +860,7 @@ case "$1" in
   export) cat "$FAKE_DOCKER_ROOTFS" ;;
   inspect) cat "$FAKE_DOCKER_CONFIG" ;;
   cp) member=${2#*:}; tar -xOf "$FAKE_DOCKER_ROOTFS" "${member#/}" > "${3:?}" ;;
+  save) cat "$FAKE_DOCKER_SAVE" > "${3:?}" ;;
   run) exit "${FAKE_DOCKER_RUN_EXIT:-0}" ;;
 esac
 exit 0
@@ -861,6 +872,7 @@ exit 0
 	env := []string{
 		"PATH=" + bin + ":" + os.Getenv("PATH"),
 		"FAKE_DOCKER_CALLS=" + calls, "FAKE_DOCKER_ROOTFS=" + rootfs, "FAKE_DOCKER_CONFIG=" + config,
+		"FAKE_DOCKER_SAVE=" + save,
 		"OUT=" + out, "SCANDIR=" + scan, "TRIVY_CACHE_DIR=" + filepath.Join(dir, "trivy"),
 	}
 	for _, e := range st.Env {
@@ -887,11 +899,63 @@ exit 0
 // writeScanRootfs writes the fixture's files as the tar an image's export
 // holds, so the fake docker can stream it and copy out of it.
 func writeScanRootfs(path string, files map[string]string) error {
-	f, err := os.Create(path)
+	tarred, err := scanFilesTar(files)
 	if err != nil {
 		return err
 	}
-	tw := tar.NewWriter(f)
+	return os.WriteFile(path, tarred.Bytes(), 0o644)
+}
+
+// writeScanSave writes the fixture's files the way `docker save` hands them
+// over, as one layer of them: the scan walks a save's layers for a
+// .git/config, which no other read of the image can show it. The layer is a
+// compressed tar (gzip, docker's own default) inside an uncompressed outer
+// tar, beside the manifest a save also carries, so the step reads the members
+// that are layers and skips the one that is not -- which is what the file
+// rather than the pipe in the scan step's own script is for.
+func writeScanSave(path string, files map[string]string) error {
+	layer, err := scanFilesTar(files)
+	if err != nil {
+		return err
+	}
+	var compressed bytes.Buffer
+	zw := gzip.NewWriter(&compressed)
+	if _, err := zw.Write(layer.Bytes()); err != nil {
+		return err
+	}
+	if err := zw.Close(); err != nil {
+		return err
+	}
+	var out bytes.Buffer
+	tw := tar.NewWriter(&out)
+	for _, member := range []struct {
+		name string
+		body []byte
+	}{
+		{"blobs/sha256/" + strings.Repeat("e", 64), compressed.Bytes()},
+		{"manifest.json", []byte(`{"schemaVersion":2}`)},
+	} {
+		if err := tw.WriteHeader(&tar.Header{
+			Name: member.name, Typeflag: tar.TypeReg, Mode: 0o644, Size: int64(len(member.body)),
+		}); err != nil {
+			return err
+		}
+		if _, err := tw.Write(member.body); err != nil {
+			return err
+		}
+	}
+	if err := tw.Close(); err != nil {
+		return err
+	}
+	return os.WriteFile(path, out.Bytes(), 0o644)
+}
+
+// scanFilesTar is a tar of the fixture's files, under their full paths: the
+// scan reads the names in a tar and the text of the files it picks out of one,
+// and the directory entries of a real filesystem play no part in that.
+func scanFilesTar(files map[string]string) (*bytes.Buffer, error) {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
 	names := make([]string, 0, len(files))
 	for name := range files {
 		names = append(names, name)
@@ -900,16 +964,16 @@ func writeScanRootfs(path string, files map[string]string) error {
 	for _, name := range names {
 		body := files[name]
 		if err := tw.WriteHeader(&tar.Header{Name: name, Typeflag: tar.TypeReg, Mode: 0o644, Size: int64(len(body))}); err != nil {
-			return err
+			return nil, err
 		}
 		if _, err := tw.Write([]byte(body)); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if err := tw.Close(); err != nil {
-		return err
+		return nil, err
 	}
-	return f.Close()
+	return &buf, nil
 }
 
 // TestCatalogBuildHasACheckoutStepForAContextEntry: a catalog build gets one

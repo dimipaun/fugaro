@@ -10,9 +10,12 @@
 # Trivy's own rules cannot state (leaks, below): a variable named like a
 # credential in the environment the config sets, a credential file in the
 # filesystem the image ends with, and the `.git/config` of a checkout baked
-# into it, which Trivy's walk skips. A catalog build runs this route before it
-# promotes (internal/backend/gcp's catalog-scan step, B3, R2), so an image that
-# carries a credential of the build's is refused rather than promoted.
+# into it, which Trivy's walk skips: that one is read out of every layer of the
+# image as well as out of the filesystem it ends with, since a config a later
+# layer deleted is still a credential the image carries. A catalog build runs
+# this route before it promotes (internal/backend/gcp's catalog-scan step, B3,
+# R2), so an image that carries a credential of the build's is refused rather
+# than promoted.
 set -eu
 mode=vuln
 if [ "${1:-}" = --secrets ]; then
@@ -64,12 +67,16 @@ git_config_credential='\[credential|^[[:space:]]*helper[[:space:]]*=|extraheader
 #   - a `.git/config`, which Trivy skips: a directory named .git is left out of
 #     its filesystem analysis, so a checkout baked with `git clone
 #     https://user:token@host` in it is a credential no layer scan reports.
-#     Its contents are read here, while the image's own .gitconfig and a
+#     Its contents are read here, out of the filesystem the image ends with and
+#     out of every layer of it, while the image's own .gitconfig and a
 #     system-wide gitconfig stay Trivy's to judge.
 #
-# The two fences are complements, not duplicates: this one sees the filesystem
-# the image ends with, and Trivy's rules see every layer, so a `.netrc` a later
-# layer deleted is a finding there and nothing here could see it.
+# The two fences are complements, not duplicates: where Trivy's rules see the
+# contents of every layer, this one sees the filesystem the image ends with, so
+# a `.netrc` a later layer deleted is a finding there and no file here could
+# show it. A `.git/config` is the one file neither fence reads whole on its
+# own, which is why it is the one read in both: the layers through docker save
+# (below), the image as it ends through docker export.
 leaks() {
   work=$(mktemp -d)
   cid=$(docker create "$image")
@@ -102,6 +109,34 @@ leaks() {
       exit 1
     fi
   done < "$work/configs"
+  # And the same file in every layer of the image, which the export cannot
+  # show: an image whose checkout a later layer deleted -- its config handed to
+  # a build that copied the tree out of it, say -- carries the credential in a
+  # layer that the filesystem the image ends with no longer has. docker save is
+  # what hands over the layers, as an uncompressed tar whose members are the
+  # layers themselves (and the manifests and config, which are JSON).
+  #
+  # A member is written out before it is read, rather than piped into the
+  # reader: a layer is a compressed tar (gzip, docker's own default), and tar
+  # reads one out of a file by its magic while it refuses a compressed stream
+  # on stdin -- which would leave every layer unread, and the check passing
+  # over an image it never looked into, with nothing said.
+  docker save -o "$work/image.tar" "$image"
+  tar -tf "$work/image.tar" > "$work/outer"
+  while IFS= read -r entry; do
+    case "$entry" in */) continue ;; esac
+    tar -xOf "$work/image.tar" "$entry" > "$work/layer" 2>/dev/null || continue
+    tar -tf "$work/layer" 2>/dev/null | grep -E '(^|/)\.git/config$' > "$work/members" || continue
+    while IFS= read -r member; do
+      [ -n "$member" ] || continue
+      tar -xOf "$work/layer" "$member" 2>/dev/null > "$work/config" || continue
+      if grep -Eiq "$git_config_credential" "$work/config"; then
+        echo "scan.sh: $image bakes a .git/config that carries a credential: $member (in a layer of the image)" >&2
+        echo "scan.sh: a checkout baked into an image carries no credential in its config" >&2
+        exit 1
+      fi
+    done < "$work/members"
+  done < "$work/outer"
 }
 if [ "$mode" = secrets ]; then
   trivy --scanners secret --image-config-scanners secret --secret-config /trivy-secret.yaml --exit-code 1

@@ -2,6 +2,9 @@ package images_test
 
 import (
 	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,12 +16,25 @@ import (
 )
 
 // scanFixture is the image the fake docker answers for: the environment its
-// config sets and the files it holds. The scan reads a tarball and an env
-// listing rather than a daemon, so every test here is hermetic: nothing is
-// pulled, built or tagged.
+// config sets, the files it ends with, and — where a test states them — the
+// layers it holds. The scan reads tarballs and an env listing rather than a
+// daemon, so every test here is hermetic: nothing is pulled, built or tagged.
 type scanFixture struct {
 	env   []string
 	files map[string]string
+	// layers is what the image's own layers hold, for the one check that reads
+	// them. A test that states none gets one layer holding everything the
+	// image ends with, which is the ordinary image: what a file is in at the
+	// end, some layer put there.
+	layers []map[string]string
+}
+
+// saveLayers is the fixture's layers as docker save hands them over.
+func (f scanFixture) saveLayers() []map[string]string {
+	if f.layers != nil {
+		return f.layers
+	}
+	return []map[string]string{f.files}
 }
 
 // cleanFixture is an image the scan passes. Its config carries the variables
@@ -39,7 +55,7 @@ var cleanFixture = scanFixture{
 }
 
 // scanFakeDocker stands in for the docker CLI: it logs every call, answers the
-// four the leak check makes from the fixture it was given, and exits FAKE_EXIT
+// five the leak check makes from the fixture it was given, and exits FAKE_EXIT
 // for everything else -- the one trivy container, whose exit code the scan
 // passes on.
 const scanFakeDocker = `#!/bin/sh
@@ -49,6 +65,7 @@ case "$1" in
   export) cat "$FAKE_ROOTFS" ;;
   inspect) cat "$FAKE_ENV" ;;
   cp) member=${2#*:}; tar -xOf "$FAKE_ROOTFS" "${member#/}" > "${3:?}" ;;
+  save) cat "$FAKE_SAVE" > "${3:?}" ;;
   *) exit "${FAKE_EXIT:-0}" ;;
 esac
 `
@@ -68,24 +85,79 @@ func runScan(t *testing.T, f scanFixture, exit string, args ...string) (string, 
 	if err := writeRootfs(rootfs, f.files); err != nil {
 		t.Fatal(err)
 	}
+	save := filepath.Join(dir, "save.tar")
+	if err := writeSave(save, f.saveLayers()); err != nil {
+		t.Fatal(err)
+	}
 	cmd := exec.Command("sh", append([]string{"scan.sh"}, args...)...)
 	cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "FAKE_LOG="+log, "FAKE_EXIT="+exit,
-		"FAKE_ROOTFS="+rootfs, "FAKE_ENV="+env, "TRIVY_CACHE_DIR="+t.TempDir())
+		"FAKE_ROOTFS="+rootfs, "FAKE_SAVE="+save, "FAKE_ENV="+env, "TRIVY_CACHE_DIR="+t.TempDir())
 	out, err := cmd.CombinedOutput()
 	logged, _ := os.ReadFile(log)
 	return string(out), string(logged), err
 }
 
 // writeRootfs writes the fixture's files as the tar `docker export` streams.
-// Only regular files are written, under their full paths: the scan reads the
-// names in the tar and the text of the files it picks out of it, and the
-// directory entries of a real export play no part in that.
 func writeRootfs(path string, files map[string]string) error {
-	f, err := os.Create(path)
+	tarred, err := filesTar(files)
 	if err != nil {
 		return err
 	}
-	tw := tar.NewWriter(f)
+	return os.WriteFile(path, tarred.Bytes(), 0o644)
+}
+
+// writeSave writes the fixture's layers the way `docker save` hands them over:
+// an uncompressed outer tar whose members are the layers, each a *compressed*
+// tar of its own under the name a save gives it (gzip, docker's own default —
+// a layer the scan could only read out of a file, which is why the fixture is
+// not a plain tar), beside the manifests and the image's config, which are
+// JSON and not tars. What the scan reads is the members that list as tars, and
+// everything else has to be skipped without a word.
+func writeSave(path string, layers []map[string]string) error {
+	var out bytes.Buffer
+	tw := tar.NewWriter(&out)
+	add := func(name string, body []byte) error {
+		if err := tw.WriteHeader(&tar.Header{Name: name, Typeflag: tar.TypeReg, Mode: 0o644, Size: int64(len(body))}); err != nil {
+			return err
+		}
+		_, err := tw.Write(body)
+		return err
+	}
+	for i, files := range layers {
+		layer, err := filesTar(files)
+		if err != nil {
+			return err
+		}
+		var compressed bytes.Buffer
+		zw := gzip.NewWriter(&compressed)
+		if _, err := zw.Write(layer.Bytes()); err != nil {
+			return err
+		}
+		if err := zw.Close(); err != nil {
+			return err
+		}
+		if err := add(fmt.Sprintf("blobs/sha256/%064x", i+1), compressed.Bytes()); err != nil {
+			return err
+		}
+	}
+	for _, json := range []string{"index.json", "manifest.json", "oci-layout"} {
+		if err := add(json, []byte(`{"schemaVersion":2}`)); err != nil {
+			return err
+		}
+	}
+	if err := tw.Close(); err != nil {
+		return err
+	}
+	return os.WriteFile(path, out.Bytes(), 0o644)
+}
+
+// filesTar is a tar of the fixture's files. Only regular files are written,
+// under their full paths: the scan reads the names in the tar and the text of
+// the files it picks out of it, and the directory entries of a real filesystem
+// play no part in that.
+func filesTar(files map[string]string) (*bytes.Buffer, error) {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
 	names := make([]string, 0, len(files))
 	for name := range files {
 		names = append(names, name)
@@ -94,16 +166,16 @@ func writeRootfs(path string, files map[string]string) error {
 	for _, name := range names {
 		body := files[name]
 		if err := tw.WriteHeader(&tar.Header{Name: name, Typeflag: tar.TypeReg, Mode: 0o644, Size: int64(len(body))}); err != nil {
-			return err
+			return nil, err
 		}
 		if _, err := tw.Write([]byte(body)); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if err := tw.Close(); err != nil {
-		return err
+		return nil, err
 	}
-	return f.Close()
+	return &buf, nil
 }
 
 func TestScanSecretsScansLayersAndConfig(t *testing.T) {
@@ -205,6 +277,51 @@ func TestScanRefusesAnImageWithAGitCredential(t *testing.T) {
 				t.Errorf("the refusal does not name %s: %s", c.want, out)
 			}
 		})
+	}
+}
+
+// TestScanRefusesAGitCredentialInALayer: the checkout a build cloned with a
+// credential, whose config a later layer deleted, is a credential the image
+// still carries — and it is the one file neither fence above sees: Trivy
+// leaves a directory named .git out of its walk, and the export is the
+// filesystem the image ends with, where the file is gone. The fixture's export
+// holds no .git at all, so the layer is the only place the config exists and
+// this is exactly that case.
+func TestScanRefusesAGitCredentialInALayer(t *testing.T) {
+	f := cleanFixture
+	f.files = map[string]string{"etc/os-release": "ID=debian\n", "workspace/notes": "nothing here\n"}
+	f.layers = []map[string]string{
+		{"src/.git/config": "[remote \"origin\"]\n\turl = https://x-access-token:fixture@github.com/owner/repo.git\n"},
+		// The layer that deletes the checkout: what a config that was handed to
+		// a build and then dropped leaves behind.
+		{"src/README": "the checkout this image no longer ends with\n"},
+	}
+	out, log, err := runScan(t, f, "0", "--secrets", "fugaro-base:ci")
+	if err == nil {
+		t.Fatalf("an image whose layer carries a git credential passed the scan:\n%s", out)
+	}
+	if !strings.Contains(out, "in a layer of the image") || !strings.Contains(out, "src/.git/config") {
+		t.Errorf("the refusal does not say the config is in a layer: %s", out)
+	}
+	if !strings.Contains(log, "save -o") {
+		t.Errorf("the scan did not read the image's layers: %s", log)
+	}
+}
+
+// TestScanPassesACleanLayer: the layer check's other half, and the image that
+// would make it useless: a layer holding a checkout whose config is a plain
+// https remote is scanned and passes, so the refusals above are about a
+// credential and not about a .git being in a layer at all.
+func TestScanPassesACleanLayer(t *testing.T) {
+	f := cleanFixture
+	f.files = map[string]string{"etc/os-release": "ID=debian\n"}
+	f.layers = []map[string]string{
+		{"src/.git/config": "[remote \"origin\"]\n\turl = https://github.com/owner/repo.git\n"},
+		{"src/README": "kept\n"},
+	}
+	out, _, err := runScan(t, f, "0", "--secrets", "fugaro-base:ci")
+	if err != nil {
+		t.Fatalf("a layer holding a config with no credential was refused: %v\n%s", err, out)
 	}
 }
 
