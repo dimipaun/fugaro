@@ -634,10 +634,11 @@ func TestBakedCheckoutWithAnotherOriginHalts(t *testing.T) {
 // A baked .git this run cannot put into a fixed state halts the run, and the
 // halt names which shape it met (D2308): a .git that is a file naming a git
 // directory elsewhere, objects complemented by a store outside the checkout, a
-// commondir, a submodule's own configuration or hooks — a symbolic link under
-// .git/modules being one of those, since git follows it and no walk of the
-// directory does — and a submodule's working directory whose .git file names a
-// git directory outside this checkout's own .git/modules, whether it says so or
+// commondir, a submodule's own configuration, hooks, commondir or alternates —
+// the file shapes being the checkout's own, one level in — a symbolic link
+// anywhere under .git/modules being one of them too, since git follows it and no
+// walk of the directory does, and a submodule's working directory whose .git
+// file names a git directory outside this checkout's own .git/modules, whether it says so or
 // reaches one through such a link: each of them a way for what this run reads
 // and runs to be decided by something other than the checkout it works on, and
 // none of them reachable by a reset of this .git.
@@ -669,6 +670,17 @@ func TestBakedCheckoutWithAGitdirFileAlternatesOrSubmoduleHooksHalts(t *testing.
 		}},
 		{"a submodule's hooks", "a submodule's hook directory", func(t *testing.T, b *bk, dir string) {
 			bakedHook(t, filepath.Join(dir, ".git", "modules", "sub", "hooks"), "pre-commit", filepath.Join(t.TempDir(), "ran"))
+		}},
+		// The two shapes the top-level .git is refused for, one level in: the
+		// configuration git reads for a submodule, and the objects it reads for
+		// it, are those of another git directory.
+		{"a submodule's commondir", "names another git directory as the one shared by the submodule", func(t *testing.T, b *bk, dir string) {
+			testutil.Git(t, dir, "update-index", "--add", "--cacheinfo", "160000,"+strings.Repeat("a", 40)+",vendor/dep")
+			writeFileAt(t, filepath.Join(dir, "vendor", "dep", ".git"), "gitdir: ../../.git/modules/dep\n")
+			writeFileAt(t, filepath.Join(dir, ".git", "modules", "dep", "commondir"), filepath.Join(t.TempDir(), "external")+"\n")
+		}},
+		{"a submodule's alternates", "objects from a store outside the checkout", func(t *testing.T, b *bk, dir string) {
+			writeFileAt(t, filepath.Join(dir, ".git", "modules", "dep", "objects", "info", "alternates"), "../elsewhere/objects\n")
 		}},
 		// The shape clean -ffdx leaves alone: a submodule's path is tracked, so
 		// the whole directory stays, and the .git file in it decides which git

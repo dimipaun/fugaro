@@ -26,9 +26,20 @@ import (
 // runs its core.fsmonitor all the same: a top-level status runs the submodule's
 // own status.
 //
-// Mutation (run, restored), for the last two rows alone: drop the symlink
-// refusal from refuseSubmoduleState. Both are accepted, and the run's git finds
-// the linked configuration.
+// The commondir and alternates rows are the two shapes the top-level .git is
+// refused for, one level in: a commondir in a submodule's git directory names
+// the git directory git reads that submodule's configuration from, and an
+// alternates file there makes an external store's objects the submodule's.
+// Neither is named config, so the walk's name check and the worktree check both
+// miss them — measured in a scratch worktree: a submodule whose git directory
+// held only HEAD and a commondir naming an external repository made a plain
+// top-level git status run that repository's core.fsmonitor.
+//
+// Mutation (run, restored): drop the symlink refusal from refuseSubmoduleState
+// and the last two rows are accepted, the run's git finding the linked
+// configuration; drop the commondir or the alternates refusal — each was run on
+// its own — and that row alone is accepted the same way, ResetBakedGit
+// included.
 func TestBakedCheckoutResetRefusesAGitdirFileAlternatesOrSubmoduleHooks(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -52,6 +63,14 @@ func TestBakedCheckoutResetRefusesAGitdirFileAlternatesOrSubmoduleHooks(t *testi
 		}},
 		{"a submodule's hooks", "a submodule's hook directory", func(t *testing.T, repo *Repo) {
 			writeAt(t, filepath.Join(repo.Dir, ".git", "modules", "sub", "hooks", "pre-commit"), "#!/bin/sh\n")
+		}},
+		{"a submodule's commondir", "names another git directory as the one shared by the submodule", func(t *testing.T, repo *Repo) {
+			plantGitlink(t, repo, "vendor/dep")
+			writeAt(t, filepath.Join(repo.Dir, "vendor", "dep", ".git"), "gitdir: ../../.git/modules/dep\n")
+			writeAt(t, filepath.Join(repo.Dir, ".git", "modules", "dep", "commondir"), filepath.Join(t.TempDir(), "external")+"\n")
+		}},
+		{"a submodule's alternates", "objects from a store outside the checkout", func(t *testing.T, repo *Repo) {
+			writeAt(t, filepath.Join(repo.Dir, ".git", "modules", "dep", "objects", "info", "alternates"), "../elsewhere/objects\n")
 		}},
 		{"a symlinked .git/modules", "is a symbolic link", func(t *testing.T, repo *Repo) {
 			external := t.TempDir()

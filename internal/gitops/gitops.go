@@ -1376,7 +1376,9 @@ func (r *Repo) BakedGitOrigin(ctx context.Context) (string, error) {
 // read by git for that submodule: what such a configuration says (a URL to
 // fetch from, a hook to run) is the image's and no reset of the top-level .git
 // reaches it — and a symbolic link there hides one of those outside the
-// checkout, which git follows and no walk of the directory does. A submodule's
+// checkout, which git follows and no walk of the directory does, a commondir or
+// an objects/info/alternates there being the two above over again, pointed out
+// of the submodule's own git directory. A submodule's
 // WORKING DIRECTORY is the fifth shape, and it is the
 // same statement one step out: git keeps a submodule's git directory elsewhere
 // and the .git file in that directory names where — normally under this
@@ -1513,7 +1515,12 @@ func inDir(dir, path string) bool {
 // refuseSubmoduleState reports the first submodule configuration file or
 // non-empty hook directory under modules, at any depth: a submodule's git
 // directory can hold both, and both are read by git for that submodule rather
-// than for the checkout this package resets.
+// than for the checkout this package resets. A commondir or an
+// objects/info/alternates file there is refused for the same reason: the first
+// names the git directory git reads that configuration from — an external one,
+// whose configuration is then the one that counts — and the second makes an
+// external store's objects the submodule's, the two shapes the top-level .git
+// is refused for above.
 //
 // A symbolic link at modules or anywhere under it is refused as well, and it is
 // the same statement: git reads the directory a link names — that is how a
@@ -1542,6 +1549,15 @@ func refuseSubmoduleState(modules string) error {
 		if !d.IsDir() {
 			if d.Name() == "config" {
 				return fmt.Errorf("%s is a submodule's configuration, which git reads for that submodule", path)
+			}
+			// A commondir names the git directory git reads that configuration
+			// from, and an alternates file the store it reads objects from: both
+			// are the top-level .git's own two shapes, refused above, one level in.
+			if d.Name() == "commondir" {
+				return fmt.Errorf("%s names another git directory as the one shared by the submodule, so the configuration git reads for it is not one this checkout holds", path)
+			}
+			if strings.HasSuffix(filepath.ToSlash(path), "/objects/info/alternates") {
+				return fmt.Errorf("%s makes objects from a store outside the checkout available as the submodule's", path)
 			}
 			return nil
 		}
