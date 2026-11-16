@@ -210,6 +210,13 @@ func TestModelsCommandsPrintAHostileIDEscaped(t *testing.T) {
 			return []string{"models", "use", "owner/repo-a", "coder", id}
 		}},
 		{"rm", func(id string) []string { return []string{"models", "rm", id} }},
+		{"price set", func(id string) []string {
+			return []string{"models", "price", "set", id, "--cache-read", "1"}
+		}},
+		{"provider set", func(id string) []string {
+			return []string{"models", "provider", "set", id, "--kind", "anthropic-compat"}
+		}},
+		{"provider rm", func(id string) []string { return []string{"models", "provider", "rm", id} }},
 	} {
 		for _, id := range []string{hostile, csi} {
 			out, errOut, err := execute(t, c.args(id)...)
@@ -240,6 +247,9 @@ func TestModelsCommandsPrintAHostileIDEscaped(t *testing.T) {
 		{"add", []string{"models", "add", csi, "--price-in", "1", "--price-out", "2"}},
 		{"rm", []string{"models", "rm", csi}},
 		{"use", []string{"models", "use", "owner/repo-a", "coder", csi}},
+		{"price set", []string{"models", "price", "set", csi, "--cache-read", "1"}},
+		{"provider set", []string{"models", "provider", "set", csi, "--kind", "anthropic-compat"}},
+		{"provider rm", []string{"models", "provider", "rm", csi}},
 	} {
 		_, _, err := execute(t, c.args...)
 		if err == nil || !strings.Contains(ErrorText(err), "vendor/model-") {

@@ -20,7 +20,7 @@ As of 2026-11-16, read from `main`, the open pull requests and each plan's task 
 | --- | --- | --- |
 | credentials-service | about 32/36 | owner checks; Check 96 holds C2.3 |
 | go-to-market | 9/12 | owner G2.5, and two more |
-| licence-key-v2 | 19/26 | K2.6 superseded by the portal; the rest of K0–K7 not started or open (K3.4 held on TN1); D2130–D2146 answered 2026-11-11 except D2145 (default) (D2134 (amended by TN2) and D2144 not the recommendation), and all K* tasks approved 2026-11-13; TN1 seat enforcement is not in 0.24.0 (owner); owner Checks 560–564 not run |
+| licence-key-v2 | 19/26 | K2.6 superseded by the portal; K6.1 dropped 2026-11-16 (the key is set only by `fugaro licence`, no wizard step, no-prompt policy); the rest of K0–K7 not started or open (K3.4 held on TN1); D2130–D2146 answered 2026-11-11 except D2145 (default) (D2134 (amended by TN2) and D2144 not the recommendation), and all K* tasks approved 2026-11-13; TN1 seat enforcement is not in 0.24.0 (owner); owner Checks 560–564 not run |
 | licensing | 21/23 | owner-run only: L0.2's allow-list and status, the Terms publication's L4.3, L5.1 T3(c); the next Terms version is a redline with counsel (merged as #2798) |
 | stateless-orchestrator | 19/20 | O19 (approved, no longer blocked: the W-side marker `halt.workspace_refusal` merged as #2730, so a run the workspace refused is told apart in the run record; not started); owner Checks 301 to 304 and 305 (O16b) |
 | task-governance | 27/31 | 4 left, all in `ee/governance`; T7.3 is live (draft #2817) |
@@ -31,25 +31,25 @@ As of 2026-11-16, read from `main`, the open pull requests and each plan's task 
 | --- | --- | --- |
 | binary-allow-rule | 6/11 | AR3 to AR7, not started; all approved 2026-11-15 |
 | bitbucket-token-types | 13/19 | T10 to T12, T14 and I1 not started; CK (Checks 590 and 591) owner-run |
-| bitbucket-workspace-token | 7/13 | T1.4, T2.2, T2.4, T2.6 and T2.7 |
+| bitbucket-workspace-token | 7/13 | T1.4, T2.2, T2.4, T2.6 and T2.7; T2.4 and T2.6's phase-3 half rewritten for the proxy (a shared Bitbucket job holds no token) and approved to launch 2026-11-16 |
 | composite-commands | 2/10 | AP3 (live, draft #2816); AP4 to AP10 not started, AP5 and AP6 waiting on AP3; depends on no-prompt-policy |
 | config-ownership | 1/22 | all tasks approved 2026-11-15; 21 not started: T1, N3, L1, A1, M1, M2 and S1 are free to start; N1 waits on draft #2732, R1 on draft #2498, N4 on draft #2753, M3 and M4 on drafts #2576 and #2538; W1, W2, W3 and K1 on composite AP5, A2 and K2 on composite AP6; then I1 and D1; D2611, D2613, D2614, D2616 and T3, T5 answered 2026-11-15; no owner check; after deploy: `fugaro update` |
 | feature-matrix | 5/12 | all tasks approved 2026-11-15; T3 (live, draft #2825); then I1, T4b and T7 not started (I1 waits on T3), then T5 and T6 (owner-run, never dispatched), then CR1 (counted in the 12, raised only if T6 raises it); D2440–D2449 answered; no check taken; no after-deploy step |
-| forge-authorship-images | 12/25 | 13 left; the image-setup overlap is C6 and C8's C8b/C8c, not about 16 — [reconciliation-image-setup.md](forge-authorship-images/reconciliation-image-setup.md) |
+| forge-authorship-images | 12/25 | 13 left, all agent tasks approved 2026-11-16 (owner-run A5 and the unscheduled C8b/C8c stay out); D650–D653 answered 2026-11-16 as recommended; the image-setup overlap is C6 and C8's C8b/C8c, not about 16 — [reconciliation-image-setup.md](forge-authorship-images/reconciliation-image-setup.md) |
 | forge-labels | 4/9 | all tasks approved 2026-11-15; T3 to T6 not started; T7 and Check 640 wait on the daemon's identity to the credentials service (E10b); owner Check 640 |
 | mobile | about 37/67 | P4.1 (`fugaro mailbox` is not a registered command; its pieces T2 to T4 are merged), P6.7 and P6.13 (both wait on P4.1), P4.2 (Checks 80 and 83 to 88 are not in the register); P5.1a to P5.1h (approved 2026-11-14, not started; P5.1f also waits on P4.1), P5.2.1 to P5.2.10 (approved 2026-11-14, not started), P5.3.2, P5.3.3, P5.3.5, P5.3.6 and P5.3.7 (approved 2026-11-14, not started), P5.4 (unscheduled); owner P2.3 and P4.4 |
-| model-crafts | 10/26 | MC11 to MC26, the activation plan for the four known limits, none approved (D1660–D1671 are the owner's; D1672 answered 2026-11-15: A, then B and C together in one release, then D); owner Checks 420 to 422 (written as one script each; not run) and the activation plan's own Checks |
+| model-crafts | 10/26 | MC11 to MC26, the activation plan for the four known limits, all approved 2026-11-16 (MC26 stays owner-run; D1660–D1671 and D1673 are still "Not answered", the plan is built on their recommendations; D1672 answered 2026-11-15: A, then B and C together in one release, then D); owner Checks 420 to 422 (written as one script each; 420 and 421 ran 2026-11-15, premise not met and no run launched — both wait on the crafts, credentials and pools being published into the policy node, which the activation plan is to close; 422 not run) and the activation plan's own Checks |
 | outer-loop-escalation | 12/18 | E6 (stalled, draft #2498), E10b, E12 to E14, E15 (owner-run), not started; D2046 ruled 2026-11-13: `escalation.ready_drafts` is on by default; owner Checks 540 to 542 |
 | periodic-reviews | 9/14 | R8 to R11 (R11 stalled, draft #2815); owner Check 136; owner Check 340 ran a third time on 2026-11-13 and exited 1 (the reports job needs only slug-level listings); the revised Check is merged (#2524) and the owner runs it again |
 | portal | 18/42 | owner P0.1 to P0.6; not started: P1.7, P2.2, P2.4, P3.1 to P3.3, P3.6 (the renew entitlement gate), P4.1 to P4.3, P5.1, P5.2, P6.1 to P6.3, P7.1, P9.3, P9.4 |
 | repos-management | 0/7 | RE0 (live, draft #2828); RE1 to RE5 not started; RE6 owner-run; all approved 2026-11-15 and D2400–D2417 answered the same day; RE3 adopts draft #2690 (live, the earlier brief's RE1) |
 | review-job | 5/10 | RJ8 (live, draft #2671), RJ4 (live, draft #2784); RJ5, RJ9, RJ10 not started and not approved; owner Checks 610 and 611 |
-| review-levels-ab-jobmax | about 26/40 | A/B reviewer slot, `auto_launch`; B1.2 (stalled, draft #2771) and B1.4 (live, draft #2660) are open; J1.3 waits on T1.1 and T1.2, and X1 on T3.1, neither built |
+| review-levels-ab-jobmax | about 26/40 | A/B reviewer slot; the orchestrator replaces `/jobmax` (2026-11-16): J1.2, J1.3 and T1.1 to T1.3 closed as superseded, T3.1 and V1.3 waiting on a re-plan against the orchestrator and the config-ownership registry; B1.2 (stalled, draft #2771) and B1.4 (live, draft #2660) are open; X1 waits on T3.1 |
 | rigor-command | 3/10 | R6 (docs), R7 (the hotfix gate; stalled, draft #2538), W (`setup` asks the rigor mode; live, draft #2576); R2 to R5 closed 2026-11-10 as duplicates of settings-commands and config-management, so the spec is mostly superseded but not wholly |
 | rigor-modes | about 24/40 | T7.1, T8.1, T8.3; the overlay plan LV1 to LV7 is unblocked in principle (LD2: the level wins), but LV1.1's type-naming and record-version rulings are still open |
 | secrets-brokering | 30/65 | B1.13 flip (live, draft #2166, held on Check 191, which the owner is rerunning now that repo-level account admission and the model-free refusal attempts are on main), B1.15, B1.16; owner Checks 191 and 192; B2.3–B2.9, B3.3–B3.10, B4.2–B4.11, B5.2–B5.9 (all approved 2026-11-10, each with its own gate; owner Checks 193–197); dynamic-delivery subfolder: owner DS0.3 (Checks 510 and 511) |
 | shared-jobs-default | 8/32 | 24 left; S5 (stalled, draft #2753) is open, the rest not started; owner Checks 191, 192, 580, 581 and 582 |
-| subscriptions | about 22/51 | the rest not started or open; 10 owner-run; TN1 seat enforcement is not in 0.24.0 (owner) |
+| subscriptions | about 22/51 | the rest not started or open, all agent tasks approved 2026-11-16 (counsel- and entity-gated tasks and the 10 owner-run stay gated); TN1 seat enforcement is not in 0.24.0 (owner) |
 
 ## To do or parked
 
@@ -95,7 +95,6 @@ As of 2026-11-16, read from `main`, the open pull requests and each plan's task 
 | mcp-server | M9 parked (D936, the fence declined, no release schedules it); M11 declined (2026-11-09) |
 | mobile-auth | owner live checks, numbered Checks 620 to 627 on main (draft #2700's 601 to 608 was closed); P5's D231 gap is a follow-up awaiting the owner's decision — revoking the last device empties the node, so the next publish re-seeds the revoked entry |
 | model-ab-testing | owner Checks 210 to 212 (written on main, not run; drafts #2634 and #2637 were closed as superseded) |
-| model-crafts | owner Checks 420 to 422 (written; 420 and 421 ran 2026-11-15 and did not pass; 422 not run) |
 | models-commands | none |
 | no-prompt-policy | owner Checks 380 to 382 (scripts on main), not yet run; the T11 verification runs found nothing to fix (#2728, #2729) |
 | plugin-user-scope | E1, the release itself (rides the next CLI release; no operator step) |

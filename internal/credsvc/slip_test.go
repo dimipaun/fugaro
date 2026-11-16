@@ -1296,6 +1296,7 @@ func TestServedRoutesAreExactly(t *testing.T) {
 		{http.MethodPost, SlipPath},
 		{http.MethodPost, SlipClaimPath},
 		{http.MethodPost, WorkflowSecretsPath},
+		{http.MethodPost, BuildTokenPath},
 		{http.MethodGet, BitbucketProxyPrefix + "acme/aurora.git/info/refs"},
 		{http.MethodPost, BitbucketProxyPrefix + "acme/aurora.git/git-receive-pack"},
 		{http.MethodPut, BitbucketProxyPrefix + "acme/aurora.git/lfs/objects/batch"},
@@ -1347,7 +1348,7 @@ func TestServedRoutesAreExactly(t *testing.T) {
 			if e.Error != "not_found" {
 				t.Errorf("the refusal is %q, want not_found", e.Error)
 			}
-			for _, p := range []string{MessagesPath, CountTokensPath, MintPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, LabelPath, SlipPath, SlipClaimPath, WorkflowSecretsPath} {
+			for _, p := range []string{MessagesPath, CountTokensPath, MintPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, LabelPath, SlipPath, SlipClaimPath, WorkflowSecretsPath, BuildTokenPath} {
 				if !strings.Contains(e.Message, p) {
 					t.Errorf("the 404's sentence does not name the route %q: %s", p, e.Message)
 				}
@@ -1392,6 +1393,7 @@ func TestServedRoutesCensus(t *testing.T) {
 		{http.MethodPost, GitHubReadPath},
 		{http.MethodPost, MergeMintPath},
 		{http.MethodPost, LabelPath},
+		{http.MethodPost, BuildTokenPath},
 		{http.MethodPost, SlipPath},
 		{http.MethodPost, SlipClaimPath},
 		{http.MethodPost, WorkflowSecretsPath},
