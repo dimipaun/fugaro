@@ -504,12 +504,16 @@ func TestPoolArgvFillsTheSegmentPlaceholder(t *testing.T) {
 			if !ok {
 				t.Fatalf("%s: no registered writer", tc.key)
 			}
-			for _, word := range w.Argv {
+			// The template keeps `<1>` on both bases; whether ArgvFor fills it
+			// is the question, and it is asked of the filled argv rather than
+			// of the registration.
+			filled := w.ArgvFor(tc.key)
+			for _, word := range filled {
 				if word == "<1>" {
 					t.Skip("needs CR1 (#2842): per-segment argv placeholders")
 				}
 			}
-			if got := strings.Join(w.ArgvFor(tc.key), " "); got != tc.want {
+			if got := strings.Join(filled, " "); got != tc.want {
 				t.Errorf("WriterOf(%s).ArgvFor = %q, want %q", tc.key, got, tc.want)
 			}
 		})
