@@ -2492,20 +2492,21 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	diffLines(out, credsBefore, credsNow)
 	diffLines(out, poolsBefore, poolsNow)
 	diffLines(out, craftsBefore, craftsNow)
-	// A member this machine's file says nothing about is the node's own and this
+	// A block this machine's file says nothing about is the node's own and this
 	// publish only leaves it standing, which is a fact the operator reading the
-	// diff has to be told (the credentials block's line, the binaries block's
-	// and the model grades'): the member is unchanged, so no +/- line above
-	// mentions it, and an operator who never wrote the keys would read that
-	// silence as "they are gone".
+	// diff has to be told (the clone URLs' line, the binaries block's and the
+	// model grades'): the block is unchanged, so no +/- line above mentions it,
+	// and an operator who never wrote the keys would read that silence as "they
+	// are gone". A file that states one writes it, and then the +/- lines above
+	// are that file's own edit read back.
 	if old != nil {
-		if maps.Equal(credsBefore, credsNow) && len(credsNow) > 0 {
+		if len(lc.Credentials) == 0 && len(credsNow) > 0 {
 			fmt.Fprintf(out, "  craft_credentials kept: %s\n", craftKeptText("craft_credentials", credsNow))
 		}
-		if maps.Equal(poolsBefore, poolsNow) && len(poolsNow) > 0 {
+		if len(lc.Pools) == 0 && len(poolsNow) > 0 {
 			fmt.Fprintf(out, "  craft_pools kept: %s\n", craftKeptText("craft_pools", poolsNow))
 		}
-		if maps.Equal(craftsBefore, craftsNow) && len(craftsNow) > 0 {
+		if lc.Crafts == (config.Crafts{}) && len(craftsNow) > 0 {
 			fmt.Fprintf(out, "  crafts kept: %s\n", craftKeptText("crafts", craftsNow))
 		}
 	}
