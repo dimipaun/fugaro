@@ -2744,6 +2744,17 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 			return nil, userErr("reading the installation's tfvars: %v", err)
 		}
 	}
+	// And the voice hop's, the third key this spec never carries: written by the
+	// same run that wrote the two above (init_stages.go's carriedVoiceService and
+	// deployCredentialsService), and lost here exactly as badly — the key plans
+	// the hop's service, its account, its one role binding and its invoker
+	// grants away, and with them the only process that enforces the project's
+	// voice policy. Carried forward present or absent, like the intake's.
+	for _, prev := range documents {
+		if vars, err = infra.CarriedVoiceService(vars, prev); err != nil {
+			return nil, userErr("reading the installation's tfvars: %v", err)
+		}
+	}
 	// And the implicit default review job, on the same documents: the spec
 	// composes it only while the config records one GitHub App ID, so an
 	// installation that has the job and then records two — or none, its last
