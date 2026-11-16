@@ -667,7 +667,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 			if c := oauthTokenAllowedCheck(lc, repo, token, authOf(rf)); c != nil {
 				o.Checks = append(o.Checks, *c)
 			}
-			if c := doctorModelKeyInAgent(lc, rf); c != nil {
+			if c := doctorModelKeyInAgent(lc, rf, repo); c != nil {
 				o.Checks = append(o.Checks, *c)
 			}
 			o.Checks = append(o.Checks, doctorVisionChecks(ctx, co.Root, lc, rf, repo)...)
