@@ -395,7 +395,7 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// the declaration and nothing else, and with the sentence naming the command
 	// its owner runs at their own terminal (spec §4.2).
 	if marker := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); marker != "" {
-		return accountsAddTokenStep(name)
+		return accountsAddTokenStep(name, typ)
 	}
 	if profile == "" {
 		if config.KeyCredentialType(typ) {

@@ -924,7 +924,8 @@ either: that flag's document is the session-start nudge's, not a screen's.
 **Command:** `internal/cli/accounts.go` `newAccountsLsCmd`, indented
 (`printAccounts`). **Document:** `accountsListDoc`:
 `repo` string, `accounts` `[]string`, `complete` bool,
-`note`° (why selection failed), `states`°, `state_note`° and `aliases`°. **`complete: false` means the project config
+`note`° (why selection failed), `states`°, `state_note`°, `aliases`° and
+`credentials`°. **`complete: false` means the project config
 could not be selected — the screen renders `unavailable`, never "no
 accounts"** (the type's own doc comment is the authority). Flags: `--repo`
 (always passed explicitly), `--json`, plus the cloud flags. The **names** are
@@ -947,6 +948,21 @@ so a reader of an older release sees exactly the document it always did, and it
 is **names only**: the block is the owner's own local file and is never published
 (D2090), so a screen draws it as what a launch on this machine would resolve, not
 as anything a run in the project could read.
+
+**`credentials` (the key credentials' work, MC24, D1671)** is the project
+config's `credentials` block, one object per entry: `name`, `type`, and
+`serving_path` — the half of a run that serves a credential of that type
+(`credsvc` or `runner`, `config.CredentialServingPath`), or `""` for a type
+nothing places, which the loader refuses. The block is **not** the accounts
+above and the two may not be read as one: a key credential's name is
+deliberately **dropped from `accounts`** (`config.ClaudeAccountTokenNames`), so a
+screen that wants to show what a pool may list or a craft's access may name
+reads this member and never `accounts`. It is **additive within this document's
+version** (D848), it is empty/absent on a machine with no credentials block, and
+it is **names, types and paths only — never a secret ID and never a value
+(F27)**: the entry's derived secret name (`credential-<name>-key`) is
+deliberately not carried, because the config's own read answers which half serves
+it and the store is the only thing that names a container.
 
 **`states` (CLI 0.10.0, credentials-service C1.21)** is every listed account's
 credential state, keyed by account name, and it is **absent exactly when no
