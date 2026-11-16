@@ -347,6 +347,8 @@ Two exceptions: a workflow that sets `dockerfile:` drops its profile's `image:` 
 | `workflows.*.inputs.max_files` | profile, repo |  |
 | `workflows.*.inputs.max_bytes` | profile, repo |  |
 | `workflows.*.inputs.max_total_bytes` | profile, repo |  |
+| `workflows.*.needs` | repo | it is a repository's own reference to an entry of the project's image catalog, and the entries themselves are the project's (D1155) |
+| `ab.rate` | repo | it is the repository's own opt-out of sampling, and every other leaf of the block is the project's (D556) |
 | `followup.trusted` | repo | it decides whose comments steer a run with the repository's credentials |
 | `followup.allow_public` | repo | it decides whose comments steer a run with the repository's credentials |
 | `rigor.default` | project, repo |  |

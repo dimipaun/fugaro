@@ -924,7 +924,7 @@ stale has found a merge that did not.
 | Catalog recipes | 12 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
 | Top-level `fugaro.yaml` keys | 15 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*": '` |
 | Top-level `fugaro.yaml` keys whose name contains `review` | 0 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*review[a-z_]*": '` |
-| Config scope rows | 113 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
+| Config scope rows | 115 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
 | Layers a configuration key may be set in | 4 | `sed -n '/The layers a key may be set in/,/^)/p' internal/config/scope.go \| grep -c 'In[A-Z]'` |
 | Blocks the project layer's `defaults:` may set | 5 | `sed -n '/type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -c 'yaml:'` |
 | Fields of `task.Spec.Overrides` | 8 | `sed -n '/type Overrides struct {/,/^}/p' internal/task/task.go \| grep -cE 'yaml:\|json:'` |
@@ -1010,6 +1010,14 @@ release. Declared beside `digestSince` because a release can ship the stored
 writer without the terminal digest step and the other way round, it added one
 more image-skew `Since` constant and left the image-skew row at 45, so it moves
 to 46.
+
+Amended 2026-11-16: R1 of [docs/config-ownership/](../config-ownership/) gives the
+registry rows to two keys a repository states and nothing managed — its own
+`ab.rate` opt-out of sampling, the one leaf of that block left to the repository,
+and its `workflows.*.needs` reference to an entry of the project's image catalog —
+and both are repository-layer keys, so the scope table gains them as rows and the
+census row above moves by two, to 115 on the tree that also carries main's own two scope rows. No other row of this table moved with
+them.
 
 The **67** is the convention this folder follows: there is no registry test over
 `docs/`, so a folder that wants its documents pinned writes its own file, and

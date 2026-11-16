@@ -643,6 +643,45 @@ func policyCeilingValues(p *projectpolicy.Policy) map[string]string {
 	return out
 }
 
+// orchestratorEffectiveValues is the orchestrator block as this machine reads it
+// for the project, spelled as the settings keys above so that the one comparison
+// (settingsLoosens) measures it too.
+//
+// It is the daemon's own reading without the node
+// (orchestrator_run.go's orchestratorBlock): the file's block where it states
+// one, Fugaro's guardrails filling what it leaves unset, and the person's own
+// max_parallel filling the running cap they did not take. The node is left out
+// because the write that reads this is a command editing a file offline, which
+// is the residual settingsEffectiveCeiling documents for the node's other
+// members: where the file states nothing and a node states less than the
+// guardrail, this is the higher of the two, and a write landing between them
+// reads as a tightening though the daemon would be raised by it. Reading the
+// guardrail is still what closes the hole that matters — a file stating its
+// first rate is measured against the ceiling Fugaro ships and not against
+// nothing — and the node itself the read refuses to dial for a file edit is not
+// something a wider base could answer.
+//
+// It is a second spelling of a block policyCeilingValues already spells because
+// the two ask the same question of different layers: that one compares a node
+// about to replace another, and this one what a run gets from the file. The
+// block is the one family whose layers do not combine by the tighter-wins rule —
+// localcfg.OrchestratorEffective REPLACES the published block wholesale when the
+// file states any key of it — so a file that starts stating a rate raises what a
+// run gets whatever the node is pinned at, and a write into the file is measured
+// against the file's own block rather than against a clamp the node applies.
+func orchestratorEffectiveValues(lc *localcfg.Config) map[string]string {
+	blk := policy.Orchestrator{}
+	maxParallel := int64(0)
+	if lc != nil {
+		if eff := lc.OrchestratorEffective(nil); eff != nil {
+			blk = *eff
+		}
+		maxParallel = int64(lc.MaxParallel)
+	}
+	filled := blk.WithDefaults(maxParallel)
+	return policyCeilingValues(&projectpolicy.Policy{Orchestrator: &filled})
+}
+
 // policyLoosening is the ceiling members the node about to be published would
 // loosen, measured against the node it replaces, in key order.
 //
