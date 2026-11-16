@@ -332,6 +332,23 @@ func accountChoiceNames(sides ...map[string]string) []string {
 	return out
 }
 
+// splitAccountChoices separates a re-seed's unwritten members into the
+// account-choice keys and everything else, in the order they came. The two take
+// different remedies in the refusal (applyPolicyReseed), so the split happens
+// where the sentence is built rather than in the members' own shape: a member
+// that is an account choice is recognised by name and prefix, which is the same
+// spelling stageAccountMember and the published node use.
+func splitAccountChoices(hand []string) (accounts, rest []string) {
+	for _, member := range hand {
+		if member == "default_claude_account" || strings.HasPrefix(member, "claude_account_stages.") {
+			accounts = append(accounts, member)
+			continue
+		}
+		rest = append(rest, member)
+	}
+	return accounts, rest
+}
+
 // jsonText is a value as the two documents spell it, with the empty forms
 // folded onto the absent one: a node that omits a member and a config that
 // states an empty list for it mean the same thing, and comparing their bytes
@@ -1167,11 +1184,11 @@ func reseedPolicyKeys(old []byte, lc *localcfg.Config, p *projectpolicy.Policy, 
 			// and these are the operator's own settings, which is why the local
 			// config is their only store (the locLocal rows `fugaro settings set`
 			// writes). An operator whose node carries an account this file does
-			// not puts it back with that command — `fugaro settings set
-			// default_claude_account <name>`, `fugaro settings set
-			// stages.<stage>.claude_account <name>` — and runs `fugaro update`
-			// again, which is the path the refusal's message leaves open rather
-			// than a splice this re-seed could have made.
+			// not writes it back with that command and publishes it with
+			// `fugaro project policy publish`, not by running `fugaro update`
+			// again: the update refuses this file until a publish has landed
+			// (publishPlanFor's generation check), so its message names the
+			// publish rather than the run that would repeat the refusal.
 			hand = append(hand, member)
 		}
 	}
@@ -1198,8 +1215,28 @@ func applyPolicyReseed(cmd *cobra.Command, path string, lc *localcfg.Config, p *
 	}
 	out, written, hand := reseedPolicyKeys(old, lc, p, members)
 	if len(hand) > 0 {
-		return nil, userErr("the published policy node's %s cannot be re-seeded into %s by one edit, so the file was left as it is: put the published values there by hand, then run %s again",
-			strings.Join(hand, ", "), path, selfCommand()+" update")
+		// The remedy is per member, because the two kinds need different ones
+		// and naming the wrong one leaves the operator where they started: a
+		// value the node states and this file does not goes back by a hand edit
+		// the update then re-seeds around, while an account-choice key has no
+		// published value for a hand edit to put there — the local file is its
+		// only store — and the command that writes it to the node is
+		// `fugaro project policy publish` at the operator's own terminal. The
+		// update is named only where it is the way out: run again over an
+		// account key it refuses this same file (publishPlanFor), which is the
+		// dead end this sentence exists not to send anyone into.
+		accounts, rest := splitAccountChoices(hand)
+		var remedies []string
+		if len(rest) > 0 {
+			remedies = append(remedies, fmt.Sprintf("put the published values of %s there by hand — a flow block rewritten as a block mapping is one an edit can reach — and run %s again",
+				strings.Join(rest, ", "), selfCommand()+" update"))
+		}
+		if len(accounts) > 0 {
+			remedies = append(remedies, fmt.Sprintf("%s is your own account choice, which the local config is the only store of: write it with `fugaro settings set default_claude_account <name>` or `fugaro settings set stages.<stage>.claude_account <name>`, then publish it with `fugaro project policy publish` at your own terminal, which builds the node from this file and writes it there (%s is the upgrade and its policy stage refuses this file until that publish has landed)",
+				strings.Join(accounts, ", "), selfCommand()+" update"))
+		}
+		return nil, userErr("the published policy node's %s cannot be re-seeded into %s by one edit, so the file was left as it is: %s",
+			strings.Join(hand, ", "), path, strings.Join(remedies, "; and "))
 	}
 	if err := writeFileAtomicGuarded(cmd, path, old, out); err != nil {
 		return nil, err

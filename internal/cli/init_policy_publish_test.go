@@ -507,6 +507,41 @@ func TestUpdatePolicyReseedRefusesAMemberItCannotSplice(t *testing.T) {
 	}
 }
 
+// TestUpdatePolicyReseedRefusalNamesThePublishForAnAccountKey: the members a
+// re-seed cannot write are two kinds, and the sentence written for one is the
+// wrong remedy for the other. An account choice has no published value a hand
+// edit could put into the file — the local config is its only store — and
+// `fugaro update` run again refuses this same file (publishPlanFor's generation
+// check), so a refusal that named only the hand edit and the update would leave
+// the operator exactly where the refusal found them. `fugaro project policy
+// publish` is the command that writes those members to the node, and it is the
+// one this sentence has to name.
+func TestUpdatePolicyReseedRefusalNamesThePublishForAnAccountKey(t *testing.T) {
+	f := newProjectFixture(t, "")
+	setConfig(t, f, func(s string) string { return s + "policy_generation: etag-from-an-earlier-publish\n" })
+	node := staleBudgetNode()
+	node["default_claude_account"] = "team-b"
+	f.db.Set(projectpolicy.PathShared(), node)
+	h := newMigrationRig(t, f, &initOptions{})
+
+	out, err := h.apply(t, true)
+	if err == nil {
+		t.Fatalf("the re-seed carried an account key it cannot splice:\n%s", out)
+	}
+	for _, want := range []string{
+		"default_claude_account",
+		"`fugaro project policy publish`",
+		"`fugaro settings set default_claude_account <name>`",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "put the published values") {
+		t.Errorf("the refusal sends an account key to a hand edit, and there is no published value for one: %v", err)
+	}
+}
+
 // TestProjectPolicyPublishRecordsTheGenerationOfItsOwnWrite: the explicit door
 // writes one node, so it keeps the record the stage keeps (D854), in the file it
 // built that node from. The record is what the operator's next config edit is
