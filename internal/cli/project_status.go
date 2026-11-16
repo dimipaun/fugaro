@@ -218,8 +218,26 @@ func runProjectReposStatus(cmd *cobra.Command, o *projectReposOptions, args []st
 	}
 	reads := &reposStatusReads{lc: lc, view: v}
 	doc := reposStatusDoc{Version: reposStatusDocVersion, Project: lc.Name}
-	for _, row := range v.Repos {
-		doc.Repos = append(doc.Repos, reposStatusRepoOf(ctx, lc, row, reads))
+	// A named repository is the whole screen: the caller asked about one, and
+	// the nine rows of every OTHER repository are not an answer to that. Where
+	// the name is one the view built no row for -- a repository no half of the
+	// enrolment knows -- the row is drawn from the view's own answer for it
+	// rather than left out (F25, D2411): an empty screen is the one thing a
+	// mistyped name must not produce.
+	if named != "" {
+		rows := v.Repos
+		if i := slices.IndexFunc(rows, func(r reposViewRepo) bool { return r.Canonical == named }); i >= 0 {
+			rows = rows[i : i+1]
+		} else {
+			rows = []reposViewRepo{{Canonical: named, Provider: strings.SplitN(named, "/", 2)[0]}}
+		}
+		for _, row := range rows {
+			doc.Repos = append(doc.Repos, reposStatusRepoOf(ctx, lc, row, reads))
+		}
+	} else {
+		for _, row := range v.Repos {
+			doc.Repos = append(doc.Repos, reposStatusRepoOf(ctx, lc, row, reads))
+		}
 	}
 	doc.Repos = nonNil(doc.Repos)
 	return reposStatusPrint(cmd.OutOrStdout(), doc, asJSON)
