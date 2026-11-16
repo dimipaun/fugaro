@@ -783,6 +783,11 @@ var settingsHintListKeys = map[string]bool{
 	"git.pr.labels":                true, // config.PRSettings.Labels
 	"git.pr.reviewers":             true, // config.PRSettings.Reviewers
 	"layer.defaults.git.pr.labels": true, // config.LayerPR.Labels
+	// The installation's verifier accounts (R1 of docs/config-ownership): a
+	// list of bare addresses in the machine's own config, each held to
+	// policy.ValidVerifierAccounts — so a scalar write is one the loader always
+	// refuses, and --add is the only spelling this key has.
+	"verifier_accounts": true, // localcfg.Config.VerifierAccounts
 }
 
 // settingsWriteHintRows are the registry rows a write's unknown-key refusal may

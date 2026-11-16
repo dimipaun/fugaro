@@ -744,12 +744,17 @@ const settingsProbeItem = "probe-item"
 
 // settingsProbeItems are the items of the list keys whose validator is
 // stricter than "any string": budget.allowed_models refuses a name that is not
-// an explicit model ID (config.CheckModelID) and followup.trusted refuses
-// anything but a GitHub numeric user ID. The probe writes the item its key
-// needs, and every other key takes settingsProbeItem.
+// an explicit model ID (config.CheckModelID), followup.trusted refuses
+// anything but a GitHub numeric user ID, and verifier_accounts refuses anything
+// but the bare address a Google ID token's email claim carries
+// (policy.ValidVerifierAccounts). A plain item is refused by those loaders
+// whatever the list says, which is a probe that measures the validator rather
+// than the key. The probe writes the item its key needs, and every other key
+// takes settingsProbeItem.
 var settingsProbeItems = map[string]string{
 	"budget.allowed_models": "claude-probe-9-9",
 	"followup.trusted":      "100000002",
+	"verifier_accounts":     "verifier@example.invalid",
 }
 
 // settingsAddLands reports whether `--add` lands on key, in the layer the row
