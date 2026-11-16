@@ -208,6 +208,7 @@ var exemptAnswers = map[string]string{
 	"accounts pool rm":       "removes one pool from this machine's project config, and prints what it dropped",
 	"artifacts get":          "downloads a run's artifacts into a directory and prints where they landed",
 	"backends":               "prints its own help: the reading is the backends ls beside it",
+	"backends use":           "writes one backend key into this machine's project config, and prints the backend it selected",
 	"completion bash":        "cobra's own generated script, which cobra writes rather than this package",
 	"completion fish":        "cobra's own generated script, which cobra writes rather than this package",
 	"completion powershell":  "cobra's own generated script, which cobra writes rather than this package",
