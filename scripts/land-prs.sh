@@ -24,7 +24,9 @@
 #                                 [--no-census] [--no-delete-branch] N [N...]
 #
 #   --repo OWNER/NAME   the repository the numbers belong to; without it gh
-#                       answers for the repository of the current checkout
+#                       answers for the repository of the current checkout. The
+#                       census tests this checkout's tree, so a --repo naming
+#                       another repository skips it with a line
 #   --check-only        print the report and merge nothing; exit 0 when every
 #                       pull request is open and MERGEABLE, 1 otherwise
 #   --no-census         merge and report, and skip the census afterwards: for a
@@ -66,7 +68,11 @@
 #      what catches a batch that moved a pinned count in a doc -- two pull
 #      requests each moving the same figure merge with no conflict at all and
 #      leave the base red for a 25-minute CI run. `--no-census` skips it, and so
-#      does `--check-only`, which merges nothing.
+#      does `--check-only`, which merges nothing. A batch into more than one base
+#      is skipped with a line -- one tree, not two -- and so is one whose `--repo`
+#      names a repository this checkout is not, since the census reads this
+#      checkout's `origin/<base>` and would otherwise report on a tree nobody
+#      merged into.
 #
 # Exit: 0 when every pull request ended merged and the census passed, 1 when any
 # pull request did not end merged or the census failed (the summary lines say
@@ -512,9 +518,26 @@ status=0
 # requests each moving the same pinned count in a doc conflict with nothing and
 # still fail seven tests. Its own exit status is the batch's, even when every
 # merge succeeded, and the census script prints why.
+#
+# The tree it can read is this checkout's: docs-census.sh fetches origin/<base>
+# of the repository it is run in. A --repo naming another repository -- a
+# checkout of one landing pull requests of another -- would test the caller's
+# tree and answer `census: ok` about a tree nobody merged into, or fail over a
+# base that repository never had, which is worse than no census: a person cannot
+# tell a wrong `ok` from a right one. So the batch says what it merged into and
+# where to census it, the same way it answers a batch of two bases.
 if [ "$CENSUS" = yes ] && [ "$merged" -gt 0 ]; then
+  census_skip=""
   if [ -n "$MULTI_BASE" ]; then
-    printf 'census: skipped (the pull requests name more than one base: %s)\n' "$MULTI_BASE"
+    census_skip="the pull requests name more than one base: $MULTI_BASE"
+  elif [ -n "$REPO" ]; then
+    census_repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)
+    if [ "$(printf '%s' "$census_repo" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$REPO" | tr '[:upper:]' '[:lower:]')" ]; then
+      census_skip="the batch merged into $REPO and this is not a checkout of it: run bash scripts/docs-census.sh --base $BASE from one"
+    fi
+  fi
+  if [ -n "$census_skip" ]; then
+    printf 'census: skipped (%s)\n' "$census_skip"
   else
     census_args=(--base "$BASE")
     if [ -n "$SINCE" ]; then census_args+=(--since "$SINCE"); fi

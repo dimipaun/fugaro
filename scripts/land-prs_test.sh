@@ -63,6 +63,27 @@ cat >"$bin/gh" <<'FAKE'
 set -Eeuo pipefail
 dir=${FAKE_GH_DIR:?}
 printf '%s\n' "$*" >>"$dir/calls"
+if [ "${1:-}" = repo ]; then
+  # Which repository this checkout is, which land-prs.sh asks before it runs the
+  # census: the census reads this checkout's tree, so a --repo naming another
+  # repository is not censused here. A case says which repository it is standing
+  # in with in_repo; one that says nothing is not standing in one, and gh says
+  # so the way it does outside a checkout.
+  case "${2:-}" in
+  view)
+    if [ -f "$dir/current-repo" ]; then
+      cat "$dir/current-repo"
+      exit 0
+    fi
+    printf 'fake gh: not a git repository\n' >&2
+    exit 1
+    ;;
+  *)
+    printf 'fake gh: unsupported repo subcommand: %s\n' "${2:-}" >&2
+    exit 1
+    ;;
+  esac
+fi
 if [ "${1:-}" != pr ]; then
   printf 'fake gh: only `pr` is modelled, got: %s\n' "$*" >&2
   exit 1
@@ -201,6 +222,9 @@ new_case() { # new_case NAME
   base_ref=main
 }
 into_base() { base_ref=$1; }
+in_repo() { # in_repo OWNER/NAME -- the repository this checkout is, as gh answers it
+  printf '%s\n' "$1" >"$case_dir/current-repo"
+}
 go_fails() { # go_fails PATTERN -- the census commands whose arguments hold it
   printf '%s\n' "$1" >"$case_dir/go.fail"
 }
@@ -538,6 +562,37 @@ land --repo acme/widgets 96
 expect_status "$RC" 0 "a batch in a named repository exits 0"
 expect_contains "$(calls)" "pr view 96 --repo acme/widgets --json mergeable,isDraft,state,title,headRefOid,baseRefName" "the read names the repository"
 expect_contains "$(calls)" "pr merge 96 --repo acme/widgets --squash --delete-branch" "the merge names the repository"
+# The census is this checkout's tree, and this batch merged into another
+# repository's: a census here would answer about a tree nobody merged into, or
+# fail over a base this checkout never had, so it says so instead and leaves the
+# exit status to the merges.
+expect_contains "$OUT" "census: skipped (the batch merged into acme/widgets and this is not a checkout of it" \
+  "a batch in another repository is not censused in this checkout"
+expect_contains "$(calls)" "repo view --json nameWithOwner" "the repository this checkout is is asked of gh first"
+expect_equal "$(gocalls)" "" "no suite runs against a tree nobody merged into"
+expect_absent "$(gitcalls)" "fetch" "another repository's base is not fetched from this checkout"
+
+# A --repo naming the repository this checkout is, in whatever case gh answers
+# it: the tree the census reads is the one the batch merged into, so it runs.
+new_case repo-here
+in_repo Acme/Widgets
+view 97 OPEN false MERGEABLE "the one in this checkout's repository"
+land --repo acme/widgets 97
+expect_status "$RC" 0 "a --repo naming this checkout's repository lands"
+expect_contains "$OUT" "census: ok" "the batch's own repository is censused here"
+expect_contains "$(gitcalls)" "fetch origin main" "the census fetches this checkout's base"
+expect_equal "$(count_gocalls '^test ./plugin/ -count=1 -timeout 5m$')" 1 "both suites run"
+
+# A checkout of a third repository, landing a batch of another: still not the
+# tree the census would be reading, so it is skipped the same way.
+new_case repo-elsewhere-named
+in_repo other/thing
+view 98 OPEN false MERGEABLE "the one in a third repository"
+land --repo acme/widgets 98
+expect_status "$RC" 0 "a batch landed from another checkout still lands"
+expect_contains "$OUT" "census: skipped (the batch merged into acme/widgets and this is not a checkout of it" \
+  "the checkout this batch was run from is not the tree to census"
+expect_equal "$(gocalls)" "" "no suite runs against the wrong tree"
 
 # --------------------------------------------------------------- second pass
 # 112 is UNKNOWN through the first read and every poll, and only becomes
