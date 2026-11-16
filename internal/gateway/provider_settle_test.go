@@ -464,6 +464,19 @@ func TestUnpricedTierFloorOnAPartialCall(t *testing.T) {
 	if rep.Reported != 4_000 {
 		t.Errorf("stage reported %d, want the report %d the floor was made of", rep.Reported, 4_000)
 	}
+	// And the band is over the usage that report is over -- the input the
+	// call sent -- not over the output it reserved, which the provider never
+	// produced and which would put the report below the band for good. It is
+	// the row's own charge, with no multiple: the conservative tier multiple
+	// is what the charge adds to an estimate, and the band is the price the
+	// report is read against (F12, D2650).
+	band := cost(t, dsModel, pricing.Usage{Input: 10})
+	if rep.TableLoBy[dsModel] != band || rep.TableHiBy[dsModel] != band {
+		t.Errorf("band %v-%v, want %d each over the reported usage", rep.TableLoBy, rep.TableHiBy, band)
+	}
+	if rep.ReportedBy[dsModel] != 4_000 {
+		t.Errorf("reported by model %v, want the report 4000 the floor was made of", rep.ReportedBy)
+	}
 }
 
 // TestUnpricedTierReportedCostUnusableStaysConservative: a reported cost the
@@ -595,6 +608,16 @@ func TestCutProviderStreamChargesPartial(t *testing.T) {
 	}
 	if _, ok := call["reported_micros"]; ok {
 		t.Error("a cut stream's partial cost was recorded as the reported cost")
+	}
+	// And it is in none of the per-model figures that figure is the total of
+	// (SA1.2): a report recorded beside a band over the output the call
+	// reserved would put the run's report below its own band.
+	if rep.Reported != 0 || len(rep.ReportedBy) != 0 || len(rep.TableLoBy) != 0 || len(rep.TableHiBy) != 0 {
+		t.Errorf("a cut stream's partial cost reached the report split: %d %v %v-%v",
+			rep.Reported, rep.ReportedBy, rep.TableLoBy, rep.TableHiBy)
+	}
+	if rep.UnreportedCalls != 1 {
+		t.Errorf("unreported_calls %d, want the cut call counted as one with no recorded report", rep.UnreportedCalls)
 	}
 }
 
@@ -1091,5 +1114,145 @@ func TestUnparsedEventNamesSanitizedInLog(t *testing.T) {
 	}
 	if !strings.Contains(logs, "unrecognized") {
 		t.Errorf("the sanitized placeholder is missing from the log:\n%.500s", logs)
+	}
+}
+
+// --- the per-model report and the table's band (SA1.2, D2650) ---
+
+// bandRow sets dsModel's row to one whose charged rates r sit between two
+// different ends: the shape a catalog-priced row has once the tier it was
+// selected from carries a range, which is what the band is read against
+// (SA1.6).
+func bandRow(r, lo, hi pricing.Rates) func(*pricing.Table) {
+	return func(tbl *pricing.Table) {
+		m := tbl.Models[dsModel]
+		m.Rates, m.Lo, m.Hi = r, lo, hi
+		tbl.Models[dsModel] = m
+	}
+}
+
+// TestStageReportCarriesReportedByModel: the provider's own figure reaches the
+// stage's report split by the model that served the call and with no route
+// fee, beside the charge the table made (which does carry the fee) -- the two
+// figures diagnose and the drift alarm compare. The charge itself is the
+// table's, as it was before this task: the report is recorded, not settled on.
+func TestStageReportCarriesReportedByModel(t *testing.T) {
+	u := pricing.Usage{Input: 1000, Output: 2000}
+	call, rep := settleCase(t, 5, msg(dsModel, 4000, `"stream":true`), tierCostReply(t, u, "", "0.05"))
+	if rep.Reported != 50_000 || rep.ReportedBy[dsModel] != 50_000 {
+		t.Errorf("reported %d by model %v, want 50000 in the serving model's key", rep.Reported, rep.ReportedBy)
+	}
+	want := pricing.WithFee(cost0(t, u), 5)
+	if rep.Used != want || rep.ByModel[dsModel] != want {
+		t.Errorf("charged %d, want the table's own charge with the fee %d", rep.Used, want)
+	}
+	if rep.Reported == want {
+		t.Fatalf("the fixture's report and charge coincide (%d): the split proves nothing", want)
+	}
+	if rep.UnreportedCalls != 0 {
+		t.Errorf("unreported_calls %d, want 0: the response carried a cost", rep.UnreportedCalls)
+	}
+	if got := num(call["reported_micros"]); got != 50_000 {
+		t.Errorf("the call log's reported_micros %v, want 50000", got)
+	}
+}
+
+// TestTableBandOverReportedCallsOnly: the band is what the table would have
+// charged the calls a provider reported a cost for, at the selected row's two
+// ends and with no route fee. A call whose response carried no cost is in
+// neither end -- the table settled it, so its own charge would make the band
+// agree with itself -- and is counted in unreported_calls instead.
+func TestTableBandOverReportedCallsOnly(t *testing.T) {
+	reported := pricing.Usage{Input: 1000, Output: 2000}
+	silent := pricing.Usage{Input: 5000, Output: 5000}
+	charged := pricing.Rates{InputPerM: 1, OutputPerM: 4, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.1}
+	lo := pricing.Rates{InputPerM: 0.5, OutputPerM: 2, CacheWrite5m: 0.625, CacheWrite1h: 1, CacheRead: 0.05}
+	hi := pricing.Rates{InputPerM: 2, OutputPerM: 8, CacheWrite5m: 2.5, CacheWrite1h: 4, CacheRead: 0.2}
+	r := feeRouted(t, 10, bandRow(charged, lo, hi), routedStage, dsRoute,
+		tierCostReply(t, reported, "", "0.05"),
+		anthropicfake.Compat{}.StreamOK(dsModel, silent))
+	for i := 0; i < 2; i++ {
+		if resp, b := r.post(msg(dsModel, 4000, `"stream":true`)); resp.StatusCode != http.StatusOK {
+			t.Fatalf("call %d: %d %s", i+1, resp.StatusCode, b)
+		}
+	}
+	rep := r.gw.EndStage()
+	wantLo, wantHi := lo.Cost(reported), hi.Cost(reported)
+	if charge := pricing.WithFee(charged.Cost(reported), 10); !(wantLo < charge && charge < wantHi) {
+		t.Fatalf("the fixture's band %d-%d doesn't bracket the charge %d: the ends prove nothing", wantLo, wantHi, charge)
+	}
+	if lo.Cost(silent) == 0 {
+		t.Fatal("the unreported call's own band is zero: counting it would not show")
+	}
+	if rep.TableLoBy[dsModel] != wantLo || rep.TableHiBy[dsModel] != wantHi {
+		t.Errorf("band %v-%v, want %d-%d over the reported call alone",
+			rep.TableLoBy, rep.TableHiBy, wantLo, wantHi)
+	}
+	if rep.UnreportedCalls != 1 || rep.Calls != 2 {
+		t.Errorf("unreported_calls %d of %d calls, want 1 of 2", rep.UnreportedCalls, rep.Calls)
+	}
+	if rep.ReportedBy[dsModel] != 50_000 {
+		t.Errorf("reported by model %v, want the reported call's 50000", rep.ReportedBy)
+	}
+	l := r.gw.Ledger()
+	if l.TableLoBy[dsModel] != wantLo || l.TableHiBy[dsModel] != wantHi || l.UnreportedCalls != 1 {
+		t.Errorf("ledger band %v-%v unreported %d, want %d-%d and 1",
+			l.TableLoBy, l.TableHiBy, l.UnreportedCalls, wantLo, wantHi)
+	}
+}
+
+// TestBandFromPinWhenServingUnknown: a call the table prices at its maximum
+// has no row of its own, so its band is the pin's row's ends (RS7) -- the
+// live shape, where a provider serves a model ID the catalog doesn't price --
+// and a call whose pin the table doesn't know either is in the report and in
+// neither end of the band. A call on the Anthropic upstream records no report
+// at all, whatever its response carries: the report split is of the figure
+// the run's own Reported holds.
+func TestBandFromPinWhenServingUnknown(t *testing.T) {
+	u := pricing.Usage{Input: 1000, Output: 2000}
+	served := "deepseek/deepseek-v4.1-flash"
+	r := feeRouted(t, 0, nil, routedStage, dsRoute,
+		anthropicfake.Compat{Cost: 0.05, ServedBy: served}.StreamOK(dsModel, u))
+	if resp, b := r.post(msg(dsModel, 4000, `"stream":true`)); resp.StatusCode != http.StatusOK {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	rep := r.gw.EndStage()
+	want := cost0(t, u)
+	if rep.TableLoBy[served] != want || rep.TableHiBy[served] != want {
+		t.Errorf("band %v-%v, want the pin's row at %d each", rep.TableLoBy, rep.TableHiBy, want)
+	}
+	if got := maxRates().Cost(u); got == want || rep.ByModel[served] != got {
+		t.Errorf("the call was charged %d, want the table's maximum %d: the band is the pin's row, not the charge",
+			rep.ByModel[served], got)
+	}
+	if rep.ReportedBy[served] != 50_000 {
+		t.Errorf("reported by model %v, want the serving model's 50000", rep.ReportedBy)
+	}
+
+	// A call the gateway sends to the Anthropic upstream, whose response
+	// carries a cost all the same: the report the gateway records is the one
+	// its own Reported total holds, and that is the figure a route reports
+	// for a call the table priced -- so this one is in no split, in no band,
+	// and counted as a call with no recorded report. Keeping it out is what
+	// makes a stage's reported calls and its report total the same set.
+	anthropic := "claude-mystery-9"
+	h := newHarness(t, anthropicfake.Compat{Cost: 0.05}.StreamOK(anthropic, u))
+	h.gw.BeginStage(Stage{Name: "implement", Model: anthropic})
+	if resp, b := h.post(msg(anthropic, 4000, `"stream":true`)); resp.StatusCode != http.StatusOK {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	direct := h.gw.EndStage()
+	if direct.Reported != 0 || len(direct.ReportedBy) != 0 {
+		t.Errorf("an Anthropic call's cost reached the report: %d %v", direct.Reported, direct.ReportedBy)
+	}
+	if len(direct.TableLoBy) != 0 || len(direct.TableHiBy) != 0 {
+		t.Errorf("a call in no report has a band: %v-%v", direct.TableLoBy, direct.TableHiBy)
+	}
+	if direct.UnreportedCalls != 1 || direct.Calls != 1 {
+		t.Errorf("unreported_calls %d of %d calls, want the call counted as one with no recorded report",
+			direct.UnreportedCalls, direct.Calls)
+	}
+	if l := h.gw.Ledger(); len(l.ReportedBy) != 0 || l.UnreportedCalls != 1 {
+		t.Errorf("ledger report %v unreported %d, want the call in neither", l.ReportedBy, l.UnreportedCalls)
 	}
 }

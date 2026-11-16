@@ -204,6 +204,26 @@ type charge struct {
 	serviceTier string
 	route       string         // the provider route the call went to; "" is Anthropic
 	reported    pricing.Micros // the cost the provider reported: recorded for comparison, and the floor under a tier charge, but never the price of a call the table priced
+	// hasReport says `reported` above is a figure the gateway records, and is
+	// what the per-model report split and the band are over (F7, D2650). It
+	// is set by recordReport, with `reported` itself and nowhere else, so the
+	// three agree by construction: a stage's ReportedBy is its Reported model
+	// by model, and its band is over exactly the calls its report is over.
+	hasReport bool
+	// tableLo and tableHi are what the price table would have charged this
+	// call at the cheapest and dearest end of the row it was priced at, with
+	// no route fee and no multiple either (D2650, SA1.6): the multiple the
+	// charge carries is what an estimate adds at a tier the table does not
+	// price (F12), and a band that carried it would put every reported call
+	// of such a tier below its own band. They are taken over the usage the
+	// report is over, never the reserved output a partial call is charged
+	// for: the provider never produced that output, and pricing it into the
+	// band would put the call's report below the band for good. hasRow says
+	// the call has both ends: it is a call whose row the table knows, which a
+	// call priced at the table's maximum has only when its pin is known
+	// (RS7). A call with neither end is in no band and no drift alarm.
+	tableLo, tableHi pricing.Micros
+	hasRow           bool
 	// agentID is Claude Code's x-claude-code-agent-id for this call: the
 	// sub-agent that made it, or "" for the main session. The stage's
 	// report counts the distinct ones.
@@ -240,6 +260,32 @@ type charge struct {
 	// redirect, a 2xx whose usage did not parse -- says nothing about what
 	// the run had cached, and that is not zero (F24).
 	usageRead bool
+}
+
+// recordReport takes the provider's own figure for this call into the charge,
+// with the two ends of the row the call's band is taken from (F7, D2650,
+// SA1.6). It is one function because the three figures must be over the same
+// calls: `reported` is the run's comparison total, the split by serving model
+// and the band are what a reader puts beside it, and a report recorded where
+// `reported` is not (a route that reports no cost, a partial call the report
+// does not floor) would leave the split and the band describing calls the
+// run's own report total leaves out.
+//
+// The band is the row's own charge, with no route fee and no multiple: the
+// conservative tier and surprise multiples are what a charge adds to an
+// estimate (F12), and a band that carried them would sit above the report of
+// every call at a tier the table does not price -- doubled on a flat-ended
+// row, which is where the drift alarm reads it.
+//
+// u is the usage the report is over: a partial call is charged for the output
+// it reserved, but the provider reported on what it sent, and a band over the
+// reserved output would sit above the report by the output that never came.
+func (c *charge) recordReport(rep pricing.Micros, lo, hi pricing.Rates, u pricing.Usage, haveRow bool) {
+	c.reported, c.hasReport = rep, true
+	c.hasRow = haveRow
+	if haveRow {
+		c.tableLo, c.tableHi = lo.Cost(u), hi.Cost(u)
+	}
 }
 
 // settle releases a call's reservation w and charges it. An amount above
@@ -318,6 +364,9 @@ func (s *Server) settle(st *stageState, w pricing.Micros, c charge) {
 		}
 	} else {
 		r.Notional = satAdd(r.Notional, c.amount)
+		if c.amount > 0 {
+			r.NotionalBy[c.model] = satAdd(r.NotionalBy[c.model], c.amount)
+		}
 	}
 	if c.amount > 0 {
 		r.ByModel[c.model] = satAdd(r.ByModel[c.model], c.amount)
@@ -325,7 +374,45 @@ func (s *Server) settle(st *stageState, w pricing.Micros, c charge) {
 			r.ByRoute[c.route] = satAdd(r.ByRoute[c.route], c.amount)
 		}
 	}
+	if c.usageRead {
+		// The stage's tokens by the model that served the calls, so a
+		// reader's row for a model carries its dollars and its tokens
+		// together (F25). It is the same gate as Tokens and as the run's own
+		// per-model counts: a call whose usage the gateway could not read
+		// contributed no tokens anywhere.
+		r.TokensBy[c.model] = addUsage(r.TokensBy[c.model], c.usage)
+	}
 	r.Reported = satAdd(r.Reported, c.reported)
+	// The per-model report and the table's band are over the calls the
+	// gateway recorded a report for, and a call it recorded none for is
+	// counted instead (F7, D2650): the two answer what the providers said
+	// their calls cost and what the table predicts for those same calls, so a
+	// call the table settled itself has no provider figure to put beside it,
+	// and a call whose response carried one the gateway does not record --
+	// one the Anthropic upstream served, a partial call no report floors --
+	// is in no split the run's own report total carries either. Only a call
+	// the gateway sent can be counted, which is the gate Calls has too.
+	if c.hasReport {
+		r.ReportedBy[c.model] = satAdd(r.ReportedBy[c.model], c.reported)
+		if c.hasRow {
+			r.TableLoBy[c.model] = satAdd(r.TableLoBy[c.model], c.tableLo)
+			r.TableHiBy[c.model] = satAdd(r.TableHiBy[c.model], c.tableHi)
+		}
+	} else if c.sent {
+		r.UnreportedCalls++
+	}
+	// The run's own figures are kept here rather than summed from the
+	// stages' reports: a call that settles after its stage's report was
+	// taken is in these and in no report at all (F24).
+	if c.hasReport {
+		s.reportedBy[c.model] = satAdd(s.reportedBy[c.model], c.reported)
+		if c.hasRow {
+			s.tableLoBy[c.model] = satAdd(s.tableLoBy[c.model], c.tableLo)
+			s.tableHiBy[c.model] = satAdd(s.tableHiBy[c.model], c.tableHi)
+		}
+	} else if c.sent {
+		s.unreportedCalls++
+	}
 	r.Unreconciled = satAdd(r.Unreconciled, c.unreconciled)
 	r.Overrun = satAdd(r.Overrun, over)
 	if c.unparsed {
@@ -387,8 +474,15 @@ func (s *Server) settleProbe(st *stageState, tier, model string, amount pricing.
 		}
 	} else {
 		r.Notional = satAdd(r.Notional, amount)
+		r.NotionalBy[model] = satAdd(r.NotionalBy[model], amount)
 	}
 	r.ByModel[model] = satAdd(r.ByModel[model], amount)
+	// A probe carries no report -- the service closes its answer unread --
+	// so it is one of the calls the run's report is not over (F7). It is
+	// counted where every other call that carried none is, so that the
+	// record's own call count, its reports and this figure agree.
+	r.UnreportedCalls++
+	s.unreportedCalls++
 	s.log.Info("budget: a probe settled", "stage", st.st.Name, "tier", tier,
 		"model", logValue(model), "micros", int64(amount), "notional", !real)
 	s.checkLocked()

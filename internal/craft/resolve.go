@@ -1,4 +1,4 @@
-// Package craft resolves the crafts: which model a run's four crafts use and
+// Package craft resolves the crafts: which model a run's five crafts use and
 // which credential or pool each one's calls go out on, and for each half the
 // layer it came from (docs/model-crafts/spec.md §3, reconciliation MC2).
 //
@@ -162,9 +162,9 @@ func Resolve(layers []Layer, subscriptionSpread bool) (map[string]Effective, []c
 
 	// eff answers one craft, resolving the craft it follows first: a half the
 	// craft sets nowhere is that craft's answer, already resolved itself. The
-	// chain is config's own and short — the review follows the coder, the
-	// security review the senior review — and a craft that follows nobody ends
-	// it.
+	// chain is config's own and short — the first-line review and the merge
+	// judge follow the coder, the security review the senior review — and a
+	// craft that follows nobody ends it.
 	var eff func(string) Effective
 	eff = func(name string) Effective {
 		e := Effective{ModelFrom: SourceDefault, AccessFrom: SourceDefault}

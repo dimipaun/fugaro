@@ -82,6 +82,15 @@ func routeAct(path string) (purpose, credential string) {
 	switch path {
 	case MintPath:
 		return PurposeMint, config.GitHubAppKeySecret
+	case ContextTokenPath:
+		// The context mint issues from the SAME credential the mint does — the
+		// App key in the bundle — and names it here for the mint's reason: it is
+		// the endpoint's own name for what it signs with, known before the
+		// bundle is read and after it alike. The purpose is what tells the two
+		// acts apart (C5b, D613): a run's reach beyond its own repository is not
+		// its mint, even though both are signed with the one key, and an
+		// operator greps the purpose to see which of the two a run made.
+		return PurposeContextToken, config.GitHubAppKeySecret
 	case VerifyPath:
 		// A verify line's credential is the named account's review-signing key
 		// — the key the answer was computed with — and, like the sign route's,
@@ -228,7 +237,7 @@ func servedRoute(r *http.Request) bool {
 		return false
 	}
 	switch r.URL.Path {
-	case MessagesPath, CountTokensPath, MintPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, SlipPath, SlipClaimPath, WorkflowSecretsPath, BuildTokenPath:
+	case MessagesPath, CountTokensPath, MintPath, ContextTokenPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, SlipPath, SlipClaimPath, WorkflowSecretsPath, BuildTokenPath:
 		return true
 	}
 	return false
@@ -767,6 +776,13 @@ type Server struct {
 	// reason: what it bounds is a daemon looping on one endpoint, and a node
 	// under creds/ would be a second writer of a fact nothing else reads.
 	mergeMints *mergeMintRate
+	// labels is the label route's own state (F22, D2439): the installation
+	// tokens it has minted for itself and the two rate windows it counts its
+	// acts in, one for the reads and one for the writes. It is this service's
+	// own memory for the merge mint's reason, and the tokens are in it rather
+	// than the store because a token this route mints never leaves the process
+	// that mints it.
+	labels *labelState
 }
 
 // NewServer validates cfg and returns the service.
@@ -887,7 +903,7 @@ func NewServer(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, log: cfg.Log, now: cfg.Now, jobs: make(map[string]JobAccount, len(cfg.JobAccounts)), review: make(map[string]ReviewJobAccount, len(cfg.ReviewAccounts)), shared: make(map[string]SharedJobAccount, len(cfg.SharedAccounts)), audit: audit, slips: newSlipCache(), mergeMints: newMergeMintRate(cfg.Now)}
+	s := &Server{cfg: cfg, log: cfg.Log, now: cfg.Now, jobs: make(map[string]JobAccount, len(cfg.JobAccounts)), review: make(map[string]ReviewJobAccount, len(cfg.ReviewAccounts)), shared: make(map[string]SharedJobAccount, len(cfg.SharedAccounts)), audit: audit, slips: newSlipCache(), mergeMints: newMergeMintRate(cfg.Now), labels: newLabelState(cfg.Now)}
 	for _, ja := range cfg.JobAccounts {
 		if ja.Email == "" || ja.Slug == "" || ja.Repo == "" {
 			return nil, errors.New("credsvc: a job account with no email, slug or repository binds nothing")
@@ -1013,7 +1029,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// "no admin endpoint" is kept by there being nothing to reach rather
 		// than by a check inside a handler.
 		s.refuse(w, http.StatusNotFound, "not_found",
-			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+LabelPath+", "+SlipPath+", "+SlipClaimPath+", "+WorkflowSecretsPath+" and "+BuildTokenPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
+			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+ContextTokenPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+LabelPath+", "+SlipPath+", "+SlipClaimPath+", "+WorkflowSecretsPath+" and "+BuildTokenPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
 		return
 	}
 	if r.URL.Path == VerifyPath {
@@ -1288,6 +1304,34 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// of any other shape, so a coding run launched into the review job never
 		// reaches a mint at all.
 		s.mint(ctx, w, r, id, ja)
+		return
+	}
+	if r.URL.Path == ContextTokenPath {
+		// The context mint (C5b, D613). Everything above it is its admission and
+		// nothing below it is, exactly as for the mint it sits beside: the two
+		// identities have been verified, the pairing has fixed the repository
+		// the calling run belongs to, and the operator's stop switches have been
+		// read, so a stopped service reads no context repository either.
+		//
+		// It is a route of its own rather than a field of the mint's request for
+		// one reason: the mint's body carries the App ID and NOTHING ELSE, which
+		// is what makes "the repository is never the caller's to name" a property
+		// of the endpoint rather than a check on a field (docs/git-providers.md),
+		// and a repository list on that body would take that away. Here the
+		// caller does name repositories, and that is admissible only because
+		// naming one is not being served one: the run identity's own claim is the
+		// boundary, read before the policy and long before the key
+		// (admitContextRepos), so an agent calling this service with the job's
+		// identity gains nothing beyond its launch.
+		//
+		// It reads the bundle itself, because the App key is in it, and it reads
+		// the project's published policy for the allow-list that admits each
+		// context repository — the same list the launcher admitted them against,
+		// re-read here so `fugaro project repos rm` narrows a run's reach from
+		// the next call on. It consults no cascade and no budget: an installation
+		// token is not a model credential and no tier has anything to say about
+		// it.
+		s.contextTokens(ctx, w, r, id)
 		return
 	}
 	if r.URL.Path == WorkflowSecretsPath {

@@ -164,6 +164,22 @@
                   ".write": "TOKEN && auth.token.fs == $slug && DAYOK && newData.exists()",
                   ".validate": "AMOUNT && NEW >= OLD && NEW - OLD <= MAXRES"
                 },
+                "notional": {
+                  ".write": "TOKEN && auth.token.fs == $slug && DAYOK && newData.exists()",
+                  ".validate": "AMOUNT && NEW >= OLD && NEW - OLD <= MAXRES"
+                },
+                "rep": {
+                  ".write": "TOKEN && auth.token.fs == $slug && DAYOK && newData.exists()",
+                  ".validate": "AMOUNT && NEW >= OLD && NEW - OLD <= MAXRES"
+                },
+                "tlo": {
+                  ".write": "TOKEN && auth.token.fs == $slug && DAYOK && newData.exists()",
+                  ".validate": "AMOUNT && NEW >= OLD && NEW - OLD <= MAXRES"
+                },
+                "thi": {
+                  ".write": "TOKEN && auth.token.fs == $slug && DAYOK && newData.exists()",
+                  ".validate": "AMOUNT && NEW >= OLD && NEW - OLD <= MAXRES"
+                },
                 "in": {
                   ".write": "TOKEN && auth.token.fs == $slug && DAYOK && newData.exists()",
                   ".validate": "AMOUNT && NEW >= OLD && NEW - OLD <= {{.MaxTokensPerWrite}}"
@@ -406,7 +422,16 @@
     "buildleases": { ".read": false, ".write": false },
     "orchestrator": {
       ".read": "USER",
-      ".write": false
+      ".write": false,
+      "$id": {
+        "state": {
+          "work_items": {
+            "$item": {
+              "escalation": { ".read": "REPORTSJOB" }
+            }
+          }
+        }
+      }
     }
   }
 }

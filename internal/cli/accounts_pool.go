@@ -93,8 +93,11 @@ serves them.
 
 An OpenRouter or Vertex member is served by a run's own gateway; a Claude OAuth
 or Anthropic-key member by the credentials service, which selects by tier
-(OAuth before key: D154). A pool whose members need both is one that can only
-fail over where the credential is chosen again, at a stage boundary.
+(OAuth before key: D154). A pool is served on one of those halves and may not
+list members of both: a gateway holds one upstream per stage and the service
+selects by tier, so neither can walk an order that spans them, and a pool that
+names both is refused when it is declared. Name two pools, one per half, and let
+each craft's access name the one its stages need.
 
 The read is offline: it reads the selected project's config file and reaches no
 bucket, no database and no host.`,
@@ -151,10 +154,12 @@ func writeAccountsPoolLs(w interface {
 }
 
 // accountsPoolServingText is the path a pool's members are served by, as a
-// person reads it: the two paths by name, and the boundary a pool of both kinds
-// fails over at (D1634). A pool with no members at all — a document the loader
-// refuses, which this read still renders rather than hiding — says nothing is
-// served.
+// person reads it. A pool this release writes is served on one path, because a
+// pool that lists members of both is refused where it is written (D1668); a
+// config an earlier release wrote may still hold one that names both, and both
+// names are joined for it, with the boundary its failover is left at, rather
+// than hidden from the person reading the file. A pool with no members at all
+// says nothing is served.
 func accountsPoolServingText(paths []string) string {
 	var out []string
 	for _, p := range paths {
@@ -194,6 +199,13 @@ round-robin are all refused before the file is touched. A member list given on
 the command line is the whole list every time, so a member you leave out is
 dropped; leave the list off entirely and a pool that exists keeps the members it
 has.
+
+A pool is served on one half of a run — the credentials service for a Claude
+OAuth or Anthropic-key member, a run's own gateway for an OpenRouter route or
+the built-in vertex — and neither half can walk an order that spans them, so a
+list naming both halves is refused too: name two pools, one per half, and let
+each craft's access name the one its stages need. A pool a config already holds
+that names both is left as it is and declared beside, not rewritten here.
 
 --strategy failover (the default) or round-robin. A pool that already exists
 keeps the strategy it has when the flag is left out.
@@ -266,7 +278,19 @@ func runAccountsPoolAdd(cmd *cobra.Command, name string, members []string, o acc
 	if len(o.allowUsers) > 0 {
 		pool.AllowedUsers = o.allowUsers
 	}
-	if ps := config.ValidatePools(accountsPoolNext(lc, pool), lc.Credentials); len(ps) > 0 {
+	pools := accountsPoolNext(lc, pool)
+	if ps := config.ValidatePools(pools, lc.Credentials); len(ps) > 0 {
+		return userErr("%s", ps[0].Message)
+	}
+	// And the rule no reader of a pool holds, because a pool an earlier release
+	// wrote may already break it: this command is the one door a NEW member list
+	// comes through, so it is the door that refuses to write a crossing
+	// (config.ValidatePoolPaths, D1668). It judges the pool being written and not
+	// the block it lands in: a pool 0.25.0 already wrote stays exactly as it is —
+	// the split that converges it is MC21's — and a refusal over the whole block
+	// would leave an installation holding one unable to declare the two pools the
+	// sentence tells it to.
+	if ps := config.ValidatePoolPaths(poolsWithNewMembers(pool, members), lc.Credentials); len(ps) > 0 {
 		return userErr("%s", ps[0].Message)
 	}
 	key := accountsPoolKey(name, "members")
@@ -396,9 +420,11 @@ A pool is declared in this installation's own config, and this command removes
 the declaration from that file. The removal is recorded beside it, because the
 published node keeps a pool the config says nothing about: the record is what
 says the pool was taken away rather than never stated, and it is what a
-reconcile acts on. No reconcile is in this release yet, so the removal
-withdraws nothing from the node: a node that already carries the pool goes on
-serving it. A repository that selected the pool keeps its own file untouched.
+reconcile acts on. fugaro update publishes the pools this file states and never
+deletes a definition the file no longer states, and no reconcile is in this
+release yet, so the removal withdraws nothing from the node: a node that
+already carries the pool goes on serving it. A repository that selected the
+pool keeps its own file untouched.
 
 --layer picks the layer the removal lands in. A pool is declared in this
 installation's own config, so the only layer it has is local, and --layer with
@@ -581,4 +607,14 @@ func accountsPoolAddCommand(name string, members []string, o accountsPoolWriteOp
 		parts = append(parts, "--allow-user", quoteWord(u))
 	}
 	return strings.Join(parts, " ")
+}
+
+// poolsWithNewMembers is what the crossing rule judges: only a member list
+// this command was given, because an owner-only edit of a pool an earlier
+// release wrote must not be refused over the list it keeps.
+func poolsWithNewMembers(pool config.Pool, members []string) []config.Pool {
+	if len(members) == 0 {
+		return nil
+	}
+	return []config.Pool{pool}
 }

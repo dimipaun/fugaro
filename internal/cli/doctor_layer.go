@@ -119,6 +119,7 @@ func doctorLayerChecks(ctx context.Context, lc *localcfg.Config, root string, rf
 		// one after the other so they cannot drift.
 		catUnknown := catErr != nil && lc.ImageCatalog == nil
 		out = append(out, imageConfigChecks(ctx, env, rb, oi.Repo, slug, rf.Cfg, rf.Res, cat, imap, catUnknown)...)
+		out = append(out, catalogSecretChecks(ctx, rb, cat)...)
 		out = append(out, catalogImageChecks(ctx, env, rb, oi.Repo, slug, rf.Cfg, cat, imap, catUnknown)...)
 	}
 	return out
@@ -523,6 +524,16 @@ func catalogImageChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, re
 		// the unknown catalog's (workflowCatalogEntry — the unread line says
 		// such a workflow is not judged here).
 		if e.Source.Kind != config.SourceDockerfile && e.Source.Kind != config.SourceInline {
+			continue
+		}
+		// An entry whose published definition asks for a secret of its own
+		// (D2311) is catalogSecretChecks' line and not this check's. Every line
+		// this check could print about it would send the person to a build that
+		// does not happen: the daily check refuses to submit such an entry
+		// (image_check_catalog.go), so "the daily image check rebuilds it" would
+		// name a run that does nothing, and "build it once" would name a build
+		// the entry's own definition is refused at.
+		if catalogEntryAsksForASecret(ctx, rb, e.Name) {
 			continue
 		}
 		slugs := catalogEntrySlugs(ctx, env, slug, e)

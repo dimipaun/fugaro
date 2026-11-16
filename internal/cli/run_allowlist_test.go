@@ -77,7 +77,7 @@ func TestLaunchPolicyGatesRefusesASlugOfAnotherRepository(t *testing.T) {
 	f := newLaunchBudget(t, "off")
 	// The allow-list admits every repository, so what refuses below is the
 	// binding and not the policy.
-	publishPolicy(t, f, `{"version":6,"allow_repos":["*"]}`)
+	publishPolicy(t, f, `{"version":9,"allow_repos":["*"]}`)
 	// fileEnv and not memEnv: the gate now judges the job image as well, from
 	// the fixture's record bucket, and a memory bucket has no build record in
 	// it — a launch would be refused as one onto an image nobody has built.
@@ -127,7 +127,7 @@ func TestProviderKindsAgreeWithTheConfigsList(t *testing.T) {
 // is the only reason an operator sees it now rather than as a failed run.
 func TestRunRefusesBeforeLaunch(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
-	publishPolicy(t, f, `{"version":5,"allow_repos":["github/other/*"]}`)
+	publishPolicy(t, f, `{"version":9,"allow_repos":["github/other/*"]}`)
 	_, _, err := runBudget(t)
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v (exit %d), want a user error", err, ExitCode(err))
@@ -167,10 +167,12 @@ func TestRunRefusesBeforeLaunch(t *testing.T) {
 // remedy is `fugaro image refresh --repo X --workflow Y`).
 //
 // The two directions of the same node are what the sub-tests pin apart: the
-// node this release writes needs an image at 0.23.0 or later, and the node one
-// shape-free step behind it (a version-4 node, which this binary reads as it
-// stands) needs only the release that introduced *that* version — so the
-// tolerance and the gate are one answer rather than two.
+// node this release writes needs an image at the release that introduced it,
+// and the node one version behind it is refused before the gate is reached —
+// the crossing's step is not shape-free (MC21), so this binary does not read
+// that node as it stands and no image can make it readable. The gate and the
+// reader are therefore one answer rather than two: the node the gate judges is
+// always one this release reads.
 func TestRunRefusesAJobImageThatCannotReadThePolicyNode(t *testing.T) {
 	oldImage := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, projectpolicy.VersionSince[projectpolicy.Version], -1)
 	for _, tc := range []struct {
@@ -178,10 +180,16 @@ func TestRunRefusesAJobImageThatCannotReadThePolicyNode(t *testing.T) {
 		version int
 		base    string
 		refused bool
+		// wants are the sentences the refusal has to carry. A row the gate
+		// judges names the image; the row the READER refuses names no image at
+		// all, which is what tells the two refusals apart.
+		wants []string
 	}{
-		{"this release's node on an image that predates it", projectpolicy.Version, oldImage, true},
-		{"this release's node on the image that introduced it", projectpolicy.Version, "ghcr.io/dimipaun/fugaro-base:" + projectpolicy.VersionSince[projectpolicy.Version], false},
-		{"the node one shape-free step behind, read on the image that introduced that one", projectpolicy.Version - 1, "ghcr.io/dimipaun/fugaro-base:" + projectpolicy.VersionSince[projectpolicy.Version-1], false},
+		{"this release's node on an image that predates it", projectpolicy.Version, oldImage, true,
+			[]string{"policy version " + strconv.Itoa(projectpolicy.Version), "fugaro " + projectpolicy.VersionSince[projectpolicy.Version], oldImage, "acme/app", "web", imageGateRemedy}},
+		{"this release's node on the image that introduced it", projectpolicy.Version, "ghcr.io/dimipaun/fugaro-base:" + projectpolicy.VersionSince[projectpolicy.Version], false, nil},
+		{"the node one version behind, which this release does not read", projectpolicy.Version - 1, "ghcr.io/dimipaun/fugaro-base:" + projectpolicy.VersionSince[projectpolicy.Version-1], true,
+			[]string{"the project policy is version " + strconv.Itoa(projectpolicy.Version-1), "understands version " + strconv.Itoa(projectpolicy.Version), "fugaro update", "rewrites the node in place"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newLaunchBudget(t, "enforce")
@@ -197,13 +205,13 @@ func TestRunRefusesAJobImageThatCannotReadThePolicyNode(t *testing.T) {
 			if err == nil || ExitCode(err) != ExitUserError {
 				t.Fatalf("err = %v (exit %d), want a user error: the job image cannot read the node it would have to run under", err, ExitCode(err))
 			}
-			for _, want := range []string{
-				fmt.Sprintf("policy version %d", tc.version), "fugaro " + projectpolicy.VersionSince[projectpolicy.Version],
-				tc.base, "acme/app", "web", imageGateRemedy,
-			} {
+			for _, want := range tc.wants {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("the refusal does not say %q: %v", want, err)
 				}
+			}
+			if tc.version < projectpolicy.Version && strings.Contains(err.Error(), imageGateRemedy) {
+				t.Errorf("the refusal names the image gate for a node no image can make readable: %v", err)
 			}
 			// The refusal is a gate and not a failed run: nothing of the launch
 			// exists. What the operator would otherwise pay for is an execution
@@ -324,7 +332,7 @@ func TestRunRefusesUnderAPolicyOfThePolicyGeneration(t *testing.T) {
 // batch the policy refuses.
 func TestRunAttemptsRefusesBeforeAnyLaunch(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
-	publishPolicy(t, f, `{"version":5,"allow_repos":["github/other/*"]}`)
+	publishPolicy(t, f, `{"version":9,"allow_repos":["github/other/*"]}`)
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "Add a feature")
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v (exit %d), want a user error from the policy gate", err, ExitCode(err))

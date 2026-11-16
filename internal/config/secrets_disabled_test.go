@@ -42,8 +42,11 @@ workflows:
 
 // TestRepoLevelSecretNames: the ruling is about a name a repository declares
 // for itself, and every name the platform decides the scope of is not one —
-// a reserved name, the Claude OAuth namespace, the Codex harness's names and
-// the credentials service's bundle. A repository's copy of one of those is the
+// a reserved name, the Claude OAuth namespace, the Codex harness's names, a
+// typed credential's own derived secret and the credentials service's bundle:
+// each is a project-scope value whose reach its own entry decides, and a
+// repository copy of one would mount the project's value into that
+// repository's jobs. A repository's copy of one of those is the
 // object doctor's `secret-scope-shadowed` warns about, which is a different
 // finding about a different thing: reading it as the disabled feature would
 // tell a person the name is ignored when the value is one Fugaro itself
@@ -57,6 +60,7 @@ func TestRepoLevelSecretNames(t *testing.T) {
 		{"sandbox-probe", true},
 		{"claude-oauth-token-work", false},
 		{"claude-oauth-token", false},
+		{CredentialSecret("work"), false},
 		{CredentialsBundleSecret, false},
 		{BitbucketSecret, false},
 		{AnthropicSecret, false},

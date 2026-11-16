@@ -77,12 +77,23 @@ deleting it:
 
 ## Who publishes the node
 
-`fugaro update` is the one command an operator runs, and it is also what
-*publishes*: the same stage that migrates an older node writes the node the
-local config states when the published one does not carry it — the budget block,
-the model-price overrides, the base branch, the routing switch and the review
-floor. A config edit therefore reaches every run of the project through the one
-command, instead of a second `fugaro project policy publish` after every edit.
+`fugaro update`'s policy stage publishes the node the local config states where
+the published one does not carry it — the budget block, the model-price
+overrides, the base branch, the routing switch and the review floor — and it does
+so under one condition: the file records no `policy_generation` at all or records
+the one the node carries now (`publishPlanFor`,
+`internal/cli/init_policy_publish.go`). A file that records a generation the node
+has moved past is refused there (D854, below), so the command that publishes from
+such a file — and the one to run when an update has refused it — is **`fugaro
+project policy publish`**, at the operator's own terminal: it builds the node from
+the file, never consults the generation, and records the one it wrote. That it
+builds the node from the file is also its precondition: run it once the file
+states the node's own values, because a publish made first writes the file's
+older values for those members over the node's — the re-seed has already written
+every member it could splice, and the refusal names the members it could not. An
+ordinary config edit therefore reaches every run of the project through the one
+command the operator was going to run; the publish is the door for the file the
+update refuses.
 
 It is one write. The migration and the publish share one ownership read (the
 database this installation adopted), one ETag and one write path, and the
@@ -95,7 +106,8 @@ What the publish writes is read and changed through `fugaro settings`, not by
 hand: `fugaro settings 'budget.*'` prints each key with the value a run gets,
 the layer that decided it and the built-in default, and `fugaro settings set
 budget.per_run_usd 5 --layer local` writes the value the next `fugaro update`
-publishes. `settings set` and `unset` never write the node themselves — the
+publishes — or `fugaro project policy publish`, where that update refuses the
+file (above). `settings set` and `unset` never write the node themselves — the
 published node is written by `fugaro update` and by the commands that write it
 by hand (`fugaro project policy publish`, and `repos add`, `rm` and `sync` for
 its allow-list) — so a value the config states and the node does not carry yet
@@ -152,14 +164,38 @@ writer that published between this run's write and its read-back is **not**
 adopted, so the file never names a generation this machine did not write.
 
 A member a single file edit cannot re-seed is refused **by name** rather than
-skipped: a value the node leaves out, which the file would have to drop, and a
+skipped: a value the node leaves out, which the file would have to drop, a
 value written inside a flow collection (`budget: { mode: enforce, per_run_usd: 2
-}`, the shape the setup docs themselves use), which one edit cannot splice into.
-The refusal writes neither the file nor the generation, and it says what to do:
-put the published values in by hand — a flow block rewritten as a block mapping
-is one the edit can reach — and run `fugaro update` again. A re-seed that
-recorded the generation while leaving a member behind is exactly the overwrite
-this rule exists to prevent.
+}`, the shape the setup docs themselves use), which one edit cannot splice into,
+and the account-choice keys (`default_claude_account` and
+`claude_account_stages.<stage>`), the members whose only store the local config
+is — the node takes them from the file and never the other way, so a re-seed
+that wrote one of them would overwrite the newer node with the older file. The
+members the re-seed **can** splice are written even behind that refusal, with a
+backup of the file it replaces, and the refusal says which ones they were: the
+publish below builds the node from this file, so a spliced member dropped there
+would be this file's older value written back over the newer node the moment the
+operator followed the refusal's advice. The generation is not recorded in that
+state — the file still differs from the node on the members the refusal named,
+and a baseline claiming otherwise is the overwrite D854 exists to prevent.
+A member an edit can reach goes back by hand — a flow block rewritten as a block
+mapping is one the edit can reach — and the next `fugaro update` re-seeds the
+rest. An account-choice key has no edit that reaches it: the command that ends
+this refusal for one is **`fugaro project policy publish`**, run at the
+operator's own terminal, which builds the node from this file and never consults
+`policy_generation` — so the file is the source, the publish is the write, and
+the generation it records is what ends the refusal. Because it is the file that
+is the source, run it only once the file states the node's own values: the
+members the re-seed wrote are already there, and the ones the refusal named as
+members it could **not** write are the ones to put in by hand first — a publish
+made before those edits writes the file's older values for them over the node's.
+`fugaro update` is the
+upgrade, and in this state it publishes nothing: it refuses this file until that
+publish has happened. Where the stage does publish — the ordinary state, a file
+that records no generation or records the node's own — that is how a config edit
+reaches the node, these members included; the publish here is the way out of the
+refusal and not a second step of every edit. A re-seed that recorded the generation while leaving a member
+behind is exactly the overwrite this rule exists to prevent.
 
 A project policy is read under a deployed security rules generation, so the
 migration's write is gated on it (`requirePolicyRules`): the same run deploys

@@ -1,0 +1,796 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See ee/LICENSE for the terms.
+
+package keyservice
+
+// The invitations and the operations seed (portal plan P2.2; spec §Tenancy,
+// F9, F10, F40).
+//
+// **An invitation is an address, a role and a state, and nothing else.** It
+// holds no token: a stored token would be a list of live credentials, and what
+// makes an invitation usable is that the person controls the address — the
+// sign-in link Firebase Auth sends there proves it (wire_invites.go). The role
+// is on the invitation because it has to be chosen before the person exists,
+// and the acceptance is what binds a membership to a uid, because nothing
+// before it knows who the person is (F40).
+//
+// **Acceptance is one comparison and two writes.** The invitation's address and
+// the address the caller's token CLAIMED go through `access.Member` on both
+// sides (invitedMember), the membership the invitation becomes is written under the
+// accepting account's uid, and the invitation is marked accepted — one
+// transaction, so an invitation is never accepted twice and a membership is
+// never written for an invitation that is not.
+//
+// **An invitation is never a way around the SSO rule.** The rule follows the
+// membership a request USES (D2207, F10, P2.1's requireSSO), and an invitation
+// into a reseller or an operations organisation is that organisation's future
+// membership: the owner who writes it acts through their own membership of that
+// organisation, and the acceptance applies the rule to the organisation the
+// membership is being created in — an email-link sign-in neither invites into
+// such an organisation nor becomes a member of one by accepting.
+//
+// **Who may do what** is the organisation's own answer (accessTo): an owner or
+// an admin invites, reads the list and withdraws one, a plain member decides
+// nothing (D2186, D2195), and a caller of another organisation is a stranger to
+// all three — the same 404 whether the invitation is not there or is not
+// theirs. The operations membership reads across, as it reads everything, and
+// that read is written to the log by accessTo (D456, F9) — but reading across is
+// the whole of what it buys: inviting into an organisation and withdrawing an
+// invitation there are an owner's or an admin's to do, and an operations
+// membership that is a plain member is a plain member (inviteAccess).
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/url"
+	"slices"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/dimipaun/fugaro/internal/access"
+)
+
+// The collection the invitations live in. It is this area's own name and not
+// the deploy's, for the reason the tenancy's two are (orgs.go).
+const invitesCollection = "invites"
+
+// The four states an invitation is spelled in (wire_invites.go,
+// invites.schema.json). Pending, accepted and revoked are what is WRITTEN;
+// expired is derived from a pending one's own window and the clock, so the
+// record says what was decided and a person reading the list sees what has
+// happened to it.
+const (
+	invitePending  = "pending"
+	inviteAccepted = "accepted"
+	inviteRevoked  = "revoked"
+	inviteExpired  = "expired"
+)
+
+// inviteTTL is how long an invitation stays acceptable. It is longer than a
+// verification link's day because an invitation is a person's to answer when
+// they get to it — a colleague on holiday, a customer who sets the portal up
+// next week — and short enough that an invitation to somebody who has left is
+// not a way in months later. The number is this task's and the owner's to
+// change, as F35's limit is P2.1's.
+const inviteTTL = 7 * 24 * time.Hour
+
+// operationsOrganisationName is what the seeded operations organisation is
+// called, and the whole of what the seed decides about it beyond its type: a
+// name is what a switcher shows a person, and the operations organisation has
+// nobody to sign up and type one.
+const operationsOrganisationName = "Fugaro Operations"
+
+// routeInvitation is the portal page an invitation's mail leads to. The
+// invitation's id is in the link and it is not a secret (invites.schema.json):
+// what makes the invitation usable is the sign-in Firebase Auth sends to the
+// address, and the page then accepts the invitation it names. The page is the
+// portal's and P2.3's to build, beside the sign-in screen it hands the invited
+// organisation's type to (that screen's own comment names this task).
+const routeInvitation = "/invite"
+
+// The two labels the site's hosts differ by: the intake answers on `keys.` plus
+// the site's canonical host (§3.1, and S3.5's Terraform attaches that domain),
+// and the portal on its own subdomain, `app.` (spec §7). They are what
+// portalOrigin reads, and they are here rather than in a config field because
+// the deployment states one origin (Config.URL) and the two are the same site.
+const (
+	intakeHostLabel = "keys"
+	portalHostLabel = "app"
+)
+
+// invitationSubject is a constant, so that nothing an owner typed reaches a
+// header through the invitation's mail (§7.2's rule, read at this mail path).
+const invitationSubject = "You have been invited to a Fugaro organisation"
+
+// The refusals this area answers besides the API's own and P2.1's
+// (errNoSuchOrganisation).
+var (
+	// errNoSuchInvitation is an invitation that is not there, one of another
+	// organisation, and one bound to another address. The three are one answer
+	// on purpose, for the reason errNoSuchOrganisation is: an id is not a secret
+	// and which ones exist is not something a stranger learns from this service.
+	errNoSuchInvitation = errors.New("keyservice: the caller may not act on this invitation")
+	// errInvitationClosed is an invitation that has been accepted or withdrawn,
+	// which is not a state any action here moves it out of.
+	errInvitationClosed = errors.New("keyservice: this invitation is no longer pending")
+	// errInvitationExpired is a pending invitation whose window has closed.
+	errInvitationExpired = errors.New("keyservice: this invitation has expired")
+	// errInviteNotPermitted is a member of the organisation, who decides
+	// nothing in the portal (D2186, D2195).
+	errInviteNotPermitted = errors.New("keyservice: only an organisation's owners and admins may invite, read and withdraw")
+	// errInviteEmailRefused is an address no member of this tree can be: an
+	// invitation bound to one is one nobody could ever accept, because the
+	// acceptance is the two addresses folded and compared.
+	errInviteEmailRefused = errors.New("keyservice: this is not an address an invitation can be bound to")
+	// errInviteDomainRefused is an address outside the domain list the
+	// operations owner set (F9, P5.1).
+	errInviteDomainRefused = errors.New("keyservice: this address is outside the domains the operations owner allows")
+	// errInviteRoleRefused is a role that is not one of the portal's three.
+	errInviteRoleRefused = errors.New("keyservice: this is not a role a membership can hold")
+	// errInviteRateLimited is an organisation that has spent its invitation rate
+	// for the window (F35): the mail an invitation is, to an address the caller
+	// chooses, is what the rate bounds.
+	errInviteRateLimited = errors.New("keyservice: this organisation has invited as many people as it may right now")
+	// errOperationsSeeded is the seed asked for a deployment that is already
+	// seeded.
+	errOperationsSeeded = errors.New("keyservice: the operations organisation is already seeded")
+	// errNoPortalOrigin is a deployment whose intake origin is not the form the
+	// portal's own origin is read from, so no invitation's link can be built.
+	errNoPortalOrigin = errors.New("keyservice: the portal's own origin cannot be read from this deployment's intake origin")
+)
+
+// The actions this area writes, spelled `noun.verb` as wire_audit.go requires.
+// What is audited is what an invitation's state changes by — the creating, the
+// withdrawing, the accepting — and the reads across organisations, which
+// accessTo writes for the operations membership alone (D456, F9, P2.1).
+const (
+	actionInvitationList   = "invitation.list"
+	actionInvitationCreate = "invitation.create"
+	actionInvitationRevoke = "invitation.revoke"
+	actionInvitationAccept = "invitation.accept"
+)
+
+// seedMu is one seed at a time in this process. F40's seed reads whether a
+// deployment is already seeded and then writes an organisation, and two of them
+// in flight together would each read "nothing here" and each write one — two
+// operations organisations, whose members read across every customer's. It is a
+// package-level lock rather than a field on Service, and it is this process's,
+// like pageMu: a second instance is the store's to hold, and the seed is one
+// operator's command.
+var seedMu sync.Mutex
+
+// WireInviteList is one organisation's invitations, the way its owners and its
+// admins read them. It is a plain object rather than a bare array for the reason
+// WireOrgList is: an answer is an object everywhere in this API, and a list that
+// grows a field is then not a new shape.
+//
+// It is deliberately NOT registered as a wire shape, and that is the one place
+// this area departs from P1.1's rule that every shape is: registration requires
+// a fixture in ee/portal/schemas/fixtures/, that fixture requires a row in the
+// SPA's test/types.test.ts and a TypeScript type beside it, and both are the
+// portal's tree — a schema definition this task may not add without editing and
+// running them (ee/portal has no toolchain in this task's container, and the
+// plan gives the portal's screens to P2.3). The wrapper is what the members
+// screen already pins in words (`GET /orgs/{id}/invites`, an object with the
+// list under its own name), so the drift this leaves is a wrapper nobody has
+// compared, and P2.3 registers it with its schema, fixture and type together.
+type WireInviteList struct {
+	Invites []WireInvite `json:"invites"`
+}
+
+// inviteStateAt answers the state an invitation is IN: what it was written as,
+// or expired for a pending invitation whose window has closed. It is the one
+// place the clock is read against an invitation, so that the list, the
+// withdrawal and the acceptance cannot disagree about whether one is still
+// good.
+func inviteStateAt(invitation WireInvite, now time.Time) string {
+	if invitation.State == invitePending && !now.Before(invitation.ExpiresAt) {
+		return inviteExpired
+	}
+	return invitation.State
+}
+
+// validInviteRole answers whether a role is one a membership may hold. The set
+// is orgs.go's three and not a second list: a role this service does not know
+// is a membership it could not answer for.
+func validInviteRole(role string) bool {
+	switch role {
+	case roleOwner, roleAdmin, roleMember:
+		return true
+	}
+	return false
+}
+
+// portalOrigin answers the portal's own origin, which is where an invitation's
+// link has to point: the app is served there and the API is reached at
+// `/api/**` through hosting's rewrite (F21, the plan's P1.0: "no CORS (Hosting
+// rewrites `/api/**` to the service)"). A page on the intake's host is the
+// wrong app entirely — nothing serves an invitation's page there, so a link
+// built from Config.URL is a 404 and no invitation can ever be accepted.
+//
+// It is read from the intake's origin because that is the one origin a
+// deployment states, and the two are the same site under the two labels the
+// site's hosts differ by: the intake is `keys.` plus the canonical host (§3.1)
+// and the portal is `app.` plus it (spec §7's `app.fugaro.dev` beside the
+// design's `keys.fugaro.dev`, staging's host as the same pair). Nothing a
+// request carries is read here, so a caller cannot make this service mail a link
+// to a site of their own choosing (§7.2's rule, which the verification link
+// keeps the same way).
+//
+// An intake origin that is not that form is refused rather than guessed at. A
+// deployment that serves its portal elsewhere — its own host, a proxy in front
+// of both — is one whose portal origin has to be stated, and until it is, the
+// invitation that was not sent is a better failure than the mail that leads
+// somebody to a page that is not there.
+func portalOrigin(intakeOrigin string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(intakeOrigin))
+	if err != nil {
+		return "", fmt.Errorf("%w: the intake's URL %q does not parse: %v", errNoPortalOrigin, intakeOrigin, err)
+	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return "", fmt.Errorf("%w: the intake's URL %q states no scheme", errNoPortalOrigin, intakeOrigin)
+	}
+	label, site, found := strings.Cut(parsed.Host, ".")
+	if !found || label != intakeHostLabel || site == "" {
+		return "", fmt.Errorf("%w: the intake answers on %q, and the portal's origin is read from `%s.` plus the site's canonical host",
+			errNoPortalOrigin, parsed.Host, intakeHostLabel)
+	}
+	return parsed.Scheme + "://" + portalHostLabel + "." + site, nil
+}
+
+// invitationURL is the link an invitation's mail carries: the portal's own page
+// for it, built from the deployment's own origin (portalOrigin) and never from
+// the request's Host header (§7.2's rule, as verificationMail's link is).
+func invitationURL(origin, invitationID string) string {
+	return strings.TrimSuffix(origin, "/") + routeInvitation + "?invitation=" + url.QueryEscape(invitationID)
+}
+
+// invitationMail is the invitation as the person receives it: who is asking,
+// which address it is for, and the link that leads to it. The origin is the
+// PORTAL's (portalOrigin) and not the intake's, because that is where the page
+// the link names is served. The link is the whole of what the mail carries —
+// never a key and never a secret (D2182, F3) — and the organisation's name is
+// folded onto one line before it is written, because a name is text an owner
+// typed and a mail line is one line.
+func invitationMail(origin, organisation string, invitation WireInvite, ttl time.Duration) Message {
+	name := strings.Join(strings.Fields(organisation), " ")
+	return Message{
+		To:      invitation.Email,
+		Subject: invitationSubject,
+		Body: "You have been invited to join " + name + " on Fugaro.\n\n" +
+			invitationURL(origin, invitation.ID) + "\n\n" +
+			"The invitation is for " + invitation.Email + ", and only that address can accept it.\n" +
+			"The link works once, and it stops working " + humanTTL(ttl) + " from now.\n",
+	}
+}
+
+// inviteAccess turns a request into one organisation's access and checks the
+// role the act needs: the caller's own membership of it or the operations
+// membership it reaches the organisation through (accessTo, which the audit
+// line for that read is written by). The action is what a read across
+// organisations is filed under, and the acts that write file their own lines
+// beside it.
+//
+// **The role checked is the one held in the membership the request USES**, which
+// accessTo already answers: for a caller who belongs to the organisation it is
+// their role there, and for the operations membership it is their role in the
+// operations organisation. readsAcross says what that read across buys, and it is
+// the whole of the difference between the routes here: the list is one of the
+// reads the operations team makes everywhere and it asks for no role (P2.1's
+// apiListMembers' own reading, and the read is audited like every other), while
+// inviting somebody into an organisation and withdrawing an invitation there are
+// decisions D2186/D2195 give that organisation's owners and admins.
+//
+// **An act through the operations membership is refused whatever role it
+// holds.** Operations reads across organisations (F5, D2187); it does not decide
+// for another organisation's people, and the operations membership is not a
+// standing inside the organisation it reaches — it is what got the caller to the
+// read. An invitation written through it is worse than a wrong decision: the
+// membership it becomes is filed under the accepting account (F40), so an
+// operations account that invited itself as an owner would hold an owner
+// membership of a customer's organisation, cross F5's line, and make every later
+// act of theirs through that membership — the customer's own, and unwritten to
+// the log (D456, F9). The operations organisation's own invitations are not this
+// case: a caller in it is answered by ownMembership and reaches it as its own
+// member, so its owners and admins invite into it as any other organisation's do.
+func (s *Service) inviteAccess(ctx context.Context, actor Caller, organisationID, action string, readsAcross bool) (organisationAccess, error) {
+	held, err := s.accessTo(ctx, actor, organisationID, action)
+	if err != nil {
+		return organisationAccess{}, err
+	}
+	if held.Operations {
+		if readsAcross {
+			return held, nil
+		}
+		return organisationAccess{}, errInviteNotPermitted
+	}
+	if held.Membership.Role != roleOwner && held.Membership.Role != roleAdmin {
+		return organisationAccess{}, errInviteNotPermitted
+	}
+	return held, nil
+}
+
+// invitationDomains is the domain list the operations organisation's
+// invitations are limited to (F9): what the operations owner set, stored as the
+// tenant's own record — wire_ops.go's WireOpsLists in the collection the
+// deployment names (service.go's TenantsCollection), filed under the
+// organisation it belongs to, which is the record P5.1's writer sets.
+//
+// A deployment that has set none answers no domains, and the list is read as
+// the set of domains that are INSIDE it rather than as a filter over everything
+// else: nothing is inside an empty list, so no address may be invited into the
+// operations organisation. That is the reading wire_ops.go already takes for the
+// directory list, and it costs a deployment nothing, because the operations
+// organisation's own way in is the seed, which writes its first invitation
+// before any list can exist (SeedOperations) and files its record for P5.1's
+// writer to add domains to.
+func (s *Service) invitationDomains(ctx context.Context, organisationID string) ([]string, error) {
+	lists, found, err := getRecord[WireOpsLists](ctx, s.docs, s.cfg.TenantsCollection, organisationID)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, nil
+	}
+	domains := make([]string, 0, len(lists.EmailDomains))
+	for _, held := range lists.EmailDomains {
+		if domain := strings.ToLower(strings.TrimSpace(held)); domain != "" {
+			domains = append(domains, domain)
+		}
+	}
+	return domains, nil
+}
+
+// allowedInviteDomain answers whether an address is on a domain list, folded
+// through access.Member on both sides for the reason the acceptance is: a list
+// the owner wrote and an address an owner typed are one domain where the two
+// are one member, and a list that admitted a suffix or a lookalike would admit
+// every domain somebody registered under it.
+func allowedInviteDomain(address string, domains []string) bool {
+	member, err := access.Member(address)
+	if err != nil {
+		return false
+	}
+	_, domain, found := strings.Cut(member, "@")
+	return found && slices.Contains(domains, domain)
+}
+
+// invitedMember is whether a caller is the member an invitation is bound to.
+//
+// Both sides go through access.Member: the invitation's from the address as it
+// was typed when it was written, and the caller's from the address the token
+// CLAIMED (Caller.Member). Comparing the invitation's address with the caller's
+// Email gets it wrong in both directions, because mcpauth folds the whole
+// address while access.Member keeps the local part byte for byte: an invitation
+// for `Sam@example.com` would have no member any sign-in can equal — the person
+// it was mailed to meets a 404 and the invitation can never be accepted — and
+// one for `sam@example.com` would be accepted by a different member claiming
+// `SAM@example.com`, which is the drift F31 keeps out of every other comparison
+// here.
+//
+// An address that is no member at all, and a caller the seam answered without
+// one, answer false rather than an error: every caller of this is a permission
+// check, where the only two answers that mean anything are "yes" and "not this
+// person", and a comparison against an empty member admits nobody (F31's
+// fail-closed half).
+func invitedMember(address string, actor Caller) bool {
+	member, err := access.Member(address)
+	if err != nil {
+		return false
+	}
+	return member == actor.Member
+}
+
+// createInvitation writes one invitation of one organisation and mails it. What
+// is checked, in this order: the caller's standing in the organisation (an owner
+// or an admin of their own membership of it, and of nothing else: inviteAccess),
+// the role — `owner` is asked for by an owner alone, because the role asked for
+// is the membership the invitation becomes — the address as a member this tree
+// can compare, and — for the operations organisation alone — the domain list the
+// owner set (F9), then, last and only once every other check has passed, the
+// organisation's own invitation rate (F35). The invitation is written before the
+// mail is sent, so a mail path that fails leaves an invitation that stands and can be withdrawn rather than a link
+// to a record nothing holds; the failure is the caller's answer and never a
+// silent success. Its `invitation.create` line is written with the invitation
+// and before the mail, for the reason the line stands for: what the log records
+// is the invitation this request created.
+func (s *Service) createInvitation(ctx context.Context, actor Caller, organisationID string, asked WireInviteCreate) (WireInvite, error) {
+	held, err := s.inviteAccess(ctx, actor, organisationID, actionOrganisationRead, false)
+	if err != nil {
+		return WireInvite{}, err
+	}
+	role := strings.TrimSpace(asked.Role)
+	if !validInviteRole(role) {
+		return WireInvite{}, errInviteRoleRefused
+	}
+	// Only an owner makes another owner. An invitation's role is the membership
+	// it becomes when it is accepted (F40), so an admin inviting `owner` would be
+	// an admin conferring what D2186 and D2195 give an owner alone — and the
+	// invitation is exactly the route by which a role arrives before the person
+	// does, so "a role is moved by an owner and by nothing else" (acceptInvitation)
+	// would hold for everybody already in the organisation and for nobody the
+	// organisation is about to have. An admin invites admins and members.
+	if role == roleOwner && held.Membership.Role != roleOwner {
+		return WireInvite{}, errInviteNotPermitted
+	}
+	address := strings.TrimSpace(asked.Email)
+	if _, err := access.Member(address); err != nil {
+		return WireInvite{}, fmt.Errorf("%w: %v", errInviteEmailRefused, err)
+	}
+	if held.Organisation.Type == orgTypeOperations {
+		domains, err := s.invitationDomains(ctx, held.Organisation.ID)
+		if err != nil {
+			return WireInvite{}, err
+		}
+		if !allowedInviteDomain(address, domains) {
+			return WireInvite{}, errInviteDomainRefused
+		}
+	}
+	// The origin the mail's link is built from, read before anything is written:
+	// a deployment this service cannot build a usable link for refuses the
+	// invitation rather than leaving one nobody can accept behind it.
+	origin, err := portalOrigin(s.cfg.URL)
+	if err != nil {
+		return WireInvite{}, err
+	}
+	// The organisation's rate (F35, Config.InviteRate), spent last of all and
+	// before anything is written. It is spent here rather than at the route for
+	// the reason renew.go spends a key's own bucket after the secret is proved:
+	// the caller's standing is known by now, so an account of another
+	// organisation cannot spend somebody else's allowance by posting bodies that
+	// name it. A request that failed a check above is not an invitation and does
+	// not spend one; a request that would mail one does, whatever the mail path
+	// then answers.
+	if !s.invites.allow("organisation:" + organisationID) {
+		return WireInvite{}, errInviteRateLimited
+	}
+	id, err := newID()
+	if err != nil {
+		return WireInvite{}, err
+	}
+	now := s.now()
+	invitation := WireInvite{
+		ID:             id,
+		OrganisationID: held.Organisation.ID,
+		Email:          address,
+		Role:           role,
+		State:          invitePending,
+		// The inviter is kept as the address a person reads, and it is the
+		// address the sign-in proved: an inviter taken from a body would be one
+		// the caller chose.
+		InvitedBy: actor.Email,
+		CreatedAt: now,
+		ExpiresAt: now.Add(inviteTTL),
+	}
+	if err := s.putInvitation(ctx, invitation); err != nil {
+		return WireInvite{}, err
+	}
+	// The line follows the write and not the mail, because the write is what
+	// makes an invitation: an invitation that stands — pending, withdrawable,
+	// acceptable by the person it names — is one somebody created, and the mail
+	// is the invitation's delivery and not its existence. Written after the send
+	// it was a line a mail path that failed or timed out never got to write, so
+	// the log held no record of who asked for an invitation the organisation
+	// could then see in its list (D456, F9).
+	if err := s.recordAudit(ctx, actor, auditEntry{
+		Action:         actionInvitationCreate,
+		OrganisationID: &invitation.OrganisationID,
+		TargetID:       &invitation.ID,
+		Detail:         &invitation.Email,
+	}); err != nil {
+		return WireInvite{}, err
+	}
+	if err := s.mail.Send(ctx, invitationMail(origin, held.Organisation.Name, invitation, inviteTTL)); err != nil {
+		return WireInvite{}, err
+	}
+	return invitation, nil
+}
+
+// putInvitation writes one invitation under its own id.
+func (s *Service) putInvitation(ctx context.Context, invitation WireInvite) error {
+	doc, err := storedDoc(invitation)
+	if err != nil {
+		return err
+	}
+	return s.docs.Put(ctx, invitesCollection, invitation.ID, doc)
+}
+
+// listInvitations answers one organisation's invitations, newest first, with
+// each one's state as of now: the list a person reads is of what was asked and
+// what has happened to it, so an accepted, withdrawn or expired invitation
+// stays in it (invites.schema.json's own reading of the state). The order is the
+// creation instant and then the id, so that two invitations created in the same
+// instant still have an order a page and a test can rely on.
+func (s *Service) listInvitations(ctx context.Context, actor Caller, organisationID string) ([]WireInvite, error) {
+	held, err := s.inviteAccess(ctx, actor, organisationID, actionInvitationList, true)
+	if err != nil {
+		return nil, err
+	}
+	found, err := recordsWhere[WireInvite](ctx, s.docs, invitesCollection,
+		Where{Field: "organisation_id", Value: held.Organisation.ID})
+	if err != nil {
+		return nil, err
+	}
+	now := s.now()
+	invitations := make([]WireInvite, 0, len(found))
+	for _, invitation := range found {
+		invitation.State = inviteStateAt(invitation, now)
+		invitations = append(invitations, invitation)
+	}
+	sort.Slice(invitations, func(i, j int) bool {
+		left, right := invitations[i], invitations[j]
+		if left.CreatedAt.Equal(right.CreatedAt) {
+			return left.ID < right.ID
+		}
+		return left.CreatedAt.After(right.CreatedAt)
+	})
+	return invitations, nil
+}
+
+// revokeInvitation withdraws one invitation of one organisation: it stops being
+// acceptable, and it is kept as what it is — a record that somebody was asked.
+// The org it names and the invitation it names are both checked, because the
+// invitation's id is the API's and a caller of one organisation naming another's
+// id is a caller reaching past their own records.
+func (s *Service) revokeInvitation(ctx context.Context, actor Caller, organisationID, invitationID string) (WireInvite, error) {
+	held, err := s.inviteAccess(ctx, actor, organisationID, actionOrganisationRead, false)
+	if err != nil {
+		return WireInvite{}, err
+	}
+	var revoked WireInvite
+	err = s.docs.Update(ctx, func(ctx context.Context, tx Tx) error {
+		invitation, found, err := getRecord[WireInvite](ctx, tx, invitesCollection, invitationID)
+		if err != nil {
+			return err
+		}
+		if !found || invitation.OrganisationID != held.Organisation.ID {
+			return errNoSuchInvitation
+		}
+		// Only a pending invitation is the one a withdrawal acts on, and the two
+		// ways it is not pending are told apart so that a person withdrawing one
+		// that ran out of time is told that rather than that somebody accepted it.
+		if state := inviteStateAt(invitation, s.now()); state != invitePending {
+			if state == inviteExpired {
+				return errInvitationExpired
+			}
+			return errInvitationClosed
+		}
+		invitation.State = inviteRevoked
+		if err := putRecord(ctx, tx, invitesCollection, invitation.ID, invitation); err != nil {
+			return err
+		}
+		revoked = invitation
+		return nil
+	})
+	if err != nil {
+		return WireInvite{}, err
+	}
+	if err := s.recordAudit(ctx, actor, auditEntry{
+		Action:         actionInvitationRevoke,
+		OrganisationID: &revoked.OrganisationID,
+		TargetID:       &revoked.ID,
+		Detail:         &revoked.Email,
+	}); err != nil {
+		return WireInvite{}, err
+	}
+	return revoked, nil
+}
+
+// acceptInvitation is the one act an invited person makes: the membership the
+// invitation becomes, and the invitation marked accepted, in one transaction.
+//
+// What it refuses, and why the order is this one: an invitation that is not
+// there and one bound to another address are the same answer (errNoSuchInvitation)
+// and are decided BEFORE the organisation is read, so that a stranger holding a
+// guessed id learns nothing about the organisation it names; the window and the
+// state are next; and the SSO rule is last, applied to the organisation the
+// membership is being created in.
+//
+// A caller who is already a member of the organisation is accepted without
+// their membership being touched: the invitation is one way in and not a way to
+// change what somebody holds — a role is moved by an owner and by nothing else
+// (D2186, D2195) — so the invitation is spent and the record that exists stays
+// as it is.
+func (s *Service) acceptInvitation(ctx context.Context, actor Caller, invitationID string) (WireInvite, error) {
+	var accepted WireInvite
+	err := s.docs.Update(ctx, func(ctx context.Context, tx Tx) error {
+		invitation, found, err := getRecord[WireInvite](ctx, tx, invitesCollection, invitationID)
+		if err != nil {
+			return err
+		}
+		if !found || !invitedMember(invitation.Email, actor) {
+			return errNoSuchInvitation
+		}
+		org, present, err := getRecord[WireOrganisation](ctx, tx, organisationsCollection, invitation.OrganisationID)
+		if err != nil {
+			return err
+		}
+		if !present {
+			return errNoSuchInvitation
+		}
+		if state := inviteStateAt(invitation, s.now()); state != invitePending {
+			if state == inviteExpired {
+				return errInvitationExpired
+			}
+			return errInvitationClosed
+		}
+		if err := s.requireSSO(actor, org); err != nil {
+			return err
+		}
+		now := s.now()
+		_, member, err := getRecord[WireMembership](ctx, tx, membershipsCollection, membershipID(org.ID, actor.UID))
+		if err != nil {
+			return err
+		}
+		if !member {
+			if err := putRecord(ctx, tx, membershipsCollection, membershipID(org.ID, actor.UID), WireMembership{
+				OrganisationID: org.ID,
+				UID:            actor.UID,
+				Email:          actor.Email,
+				Role:           invitation.Role,
+				CreatedAt:      now,
+				// The acceptance is also the person's arrival: it is the one
+				// selection nobody makes, and it is what the switcher lands them
+				// on the next time they come (P2.1's signUp's own reason).
+				LastUsedAt: &now,
+			}); err != nil {
+				return err
+			}
+		}
+		invitation.State = inviteAccepted
+		invitation.AcceptedAt = &now
+		if err := putRecord(ctx, tx, invitesCollection, invitation.ID, invitation); err != nil {
+			return err
+		}
+		accepted = invitation
+		return nil
+	})
+	if err != nil {
+		return WireInvite{}, err
+	}
+	if err := s.recordAudit(ctx, actor, auditEntry{
+		Action:         actionInvitationAccept,
+		OrganisationID: &accepted.OrganisationID,
+		TargetID:       &accepted.ID,
+	}); err != nil {
+		return WireInvite{}, err
+	}
+	return accepted, nil
+}
+
+// SeedOperations writes the operations organisation and its own first
+// invitation, once, and answers the organisation it wrote. It is the deployment
+// owner's one-time act (P1.7's `seed-operations <address>` subcommand calls it),
+// and the operation is the intake's own: the operations organisation is never
+// signed up to, so it records no acceptance of the terms (P2.1), and its first
+// owner is bound at first sign-in like every other invitation (F40).
+//
+// **What "once" is, and why it is not "an operations organisation exists".**
+// The seed refuses a deployment where seeding has taken — an operations
+// organisation that holds a member or a live invitation. Reading it as the
+// mere existence of the organisation would make one missed week permanent: the
+// invitation's window closes, no member can be invited and no owner of the
+// organisation exists to invite one, and SeedOperations — the only door that
+// writes the organisation — would refuse to run again. So a deployment whose
+// invitation expired unaccepted is seeded again, into the organisation that is
+// already there rather than a second one: two operations organisations would be
+// two teams reading across every customer's.
+//
+// The address is not checked against the operations domain list, and it cannot
+// be: that list is keyed by the organisation's own id (invitationDomains),
+// which does not exist until this runs. The seed is the one way in that the
+// list does not gate, which is why it is one operator's one-time command.
+//
+// The invitation is mailed, so the person the seed names holds the link that
+// leads to it, and a mail path that fails is the caller's error. It is also the
+// one invitation this file takes back when its send fails: the organisation it
+// was written into has no member, so nothing but this command can withdraw it,
+// and a pending invitation is half of what the guard above refuses on — left
+// there, it would refuse the deployment's only remedy, running the seed again,
+// for the whole window the invitation is live.
+func (s *Service) SeedOperations(ctx context.Context, address string) (WireOrganisation, error) {
+	seedMu.Lock()
+	defer seedMu.Unlock()
+	address = strings.TrimSpace(address)
+	if _, err := access.Member(address); err != nil {
+		return WireOrganisation{}, fmt.Errorf("%w: %v", errInviteEmailRefused, err)
+	}
+	// Read before anything is written, for the reason createInvitation reads it
+	// there: a deployment whose portal origin cannot be read from its intake's is
+	// one whose seeded invitation nobody could accept, and an operator learns it
+	// from the command rather than from a person who says the link does not work.
+	origin, err := portalOrigin(s.cfg.URL)
+	if err != nil {
+		return WireOrganisation{}, err
+	}
+	held, err := recordsWhere[WireOrganisation](ctx, s.docs, organisationsCollection,
+		Where{Field: "type", Value: orgTypeOperations})
+	if err != nil {
+		return WireOrganisation{}, err
+	}
+	// The store's order is not an order, and there is at most one of these: a
+	// deterministic pick is what keeps a deployment that somehow holds two
+	// answering the same one every time.
+	sort.Slice(held, func(i, j int) bool { return held[i].ID < held[j].ID })
+	now := s.now()
+	var org WireOrganisation
+	switch {
+	case len(held) > 0:
+		org = held[0]
+		members, err := membersOf(ctx, s.docs, org.ID)
+		if err != nil {
+			return WireOrganisation{}, err
+		}
+		if len(members) > 0 {
+			return WireOrganisation{}, errOperationsSeeded
+		}
+		invitations, err := recordsWhere[WireInvite](ctx, s.docs, invitesCollection,
+			Where{Field: "organisation_id", Value: org.ID})
+		if err != nil {
+			return WireOrganisation{}, err
+		}
+		for _, invitation := range invitations {
+			if inviteStateAt(invitation, now) == invitePending {
+				return WireOrganisation{}, errOperationsSeeded
+			}
+		}
+	default:
+		id, err := newID()
+		if err != nil {
+			return WireOrganisation{}, err
+		}
+		org = WireOrganisation{
+			ID:        id,
+			Name:      operationsOrganisationName,
+			Type:      orgTypeOperations,
+			CreatedAt: now,
+		}
+	}
+	id, err := newID()
+	if err != nil {
+		return WireOrganisation{}, err
+	}
+	invitation := WireInvite{
+		ID:             id,
+		OrganisationID: org.ID,
+		Email:          address,
+		Role:           roleOwner,
+		State:          invitePending,
+		// The operator who runs the seed is who asked for this: the address the
+		// seed names is the one person the command knows about, and an audit of
+		// the organisation's first invitation names nobody else.
+		InvitedBy: address,
+		CreatedAt: now,
+		ExpiresAt: now.Add(inviteTTL),
+	}
+	err = s.docs.Update(ctx, func(ctx context.Context, tx Tx) error {
+		if err := putRecord(ctx, tx, organisationsCollection, org.ID, org); err != nil {
+			return err
+		}
+		return putRecord(ctx, tx, invitesCollection, invitation.ID, invitation)
+	})
+	if err != nil {
+		return WireOrganisation{}, err
+	}
+	if err := s.mail.Send(ctx, invitationMail(origin, org.Name, invitation, inviteTTL)); err != nil {
+		// The invitation goes back with the send that failed, and this is the one
+		// invitation in this file that does. createInvitation keeps its own on a
+		// failed send because somebody in the organisation can withdraw it, and
+		// the operations organisation has nobody: its guard refuses on a member
+		// OR a live invitation, so an invitation left pending here refuses the
+		// only remedy the deployment has — running the seed again — for the whole
+		// seven days it is live, with no member anywhere able to withdraw it. What
+		// the failure leaves is the organisation, which holds nothing and which
+		// the next run fills rather than writing a second one.
+		if undoErr := s.docs.Update(ctx, func(ctx context.Context, tx Tx) error {
+			return tx.Delete(ctx, invitesCollection, invitation.ID)
+		}); undoErr != nil {
+			return WireOrganisation{}, errors.Join(err, undoErr)
+		}
+		return WireOrganisation{}, err
+	}
+	return org, nil
+}

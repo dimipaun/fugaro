@@ -1,0 +1,9 @@
+{
+  "version": 7,
+  "budget": { "mode": "enforce", "per_run_usd": 5 },
+  "allow_repos": ["github/acme/app"],
+  "default_claude_account": "team-a",
+  "claude_account_stages": { "review_first": "team-b" },
+  "crafts": { "coder": { "access": "team-a" } },
+  "craft_credentials": [{ "name": "team-a", "type": "claude-oauth" }]
+}
