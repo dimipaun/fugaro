@@ -7219,7 +7219,7 @@ Flags:
 
 Subcommands:
 
-- `fugaro runs digest` -- Write a closed period's report of this repository into its own docs tree
+- `fugaro runs digest` -- Write a closed period's report of this repository, or print the stored one
 - `fugaro runs ls` -- List runs with their status, stage, cost and PR
 - `fugaro runs reports` -- Write every repository's closed-period reports into the runs bucket (the project's reports job)
 - `fugaro runs show` -- Show a run's chain and what is left of its limits
@@ -7229,7 +7229,7 @@ Subcommands:
 
 ## `fugaro runs digest`
 
-Write a closed period's report of this repository into its own docs tree
+Write a closed period's report of this repository, or print the stored one
 
 Write one closed period's report of this repository, from its run records, into
 the repository's own docs tree: <dir>/<YYYY>/<key>.md, plus the index
@@ -7277,6 +7277,19 @@ ones up rather than reading records.
 block and the patterns as {repo, period, summary, patterns[], skipped[]}. Neither
 writes a file, so a caller can read a report before committing it.
 
+--stored <period> prints a report that is already stored instead: the one the
+project's reports job wrote for this repository and that period into the runs
+bucket, at reports/<slug>/<YYYY>/<key>.md (fugaro runs reports --job). The period
+is the key itself -- 2026-10-25, 2026-W43, 2026-10 or 2026 -- and nothing else is
+read: no run record, no folder, and nothing is written. The bytes are the object's
+own, which are the file --stdout prints for that period, so a report outlives the
+90 days its records are kept and is read back long after. The read is the caller's
+own credential's: a launcher's bucket-wide read reaches reports/, and no launcher
+may write there, because the project's reports job is its one writer (E1, E4) --
+so --stored never writes, and a report is written from a checkout with --dir
+alone. --period, --date, --dir, --stdout, --json and --submit-draft have nothing
+to act on beside it and are refused by name.
+
 --due is the cadence's own reading: it names the periods that have closed with no
 report under --dir, newest first -- the period that ended most recently is the
 first line, and of two that ended on the same day the longer one comes first --
@@ -7316,6 +7329,7 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | the repository to report (owner/name, or a path inside its checkout); default: this checkout's origin |
 | `--stdout` | bool | `false` | no | print the report instead of writing it |
+| `--stored` | string | "" | no | print the report of this period the project's reports job stored in the runs bucket |
 | `--submit-draft` | bool | `false` | no | print a redacted learning draft for a "Skill learning" issue; sends nothing |
 
 Subcommands:
