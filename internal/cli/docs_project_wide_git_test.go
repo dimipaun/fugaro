@@ -486,11 +486,16 @@ func TestDocsStateTheBitbucketTokenTypesAndReach(t *testing.T) {
 		"`fugaro update` publishes the node's `bitbucket_tokens` key: each token's **name, type and coverage patterns**",
 		"never a value and never a secret version, so every run of the repository can read which repositories each token reaches",
 		"a **CLI of the previous release refuses an unknown top-level key**",
-		// What an operator runs about the skew, cited where the page states it
-		// (v0.25.0's `### For operators` line), and the row that says what the
-		// publish does to a run already in flight (T12).
+		// What an operator runs about the skew, cited where the page states it,
+		// and the row that says what the publish does to a run already in
+		// flight (T12). The step is the release that carries the publisher's
+		// (`### For operators`, v0.26.0); v0.25.0's notes carry the same rule
+		// as a known limit, because that release's own `fugaro update` cannot
+		// write the key -- the review found the section attributing the step to
+		// v0.25.0's `### For operators` section, which does not carry it.
 		"**upgrade the CLI before the `fugaro update` that publishes a typed Bitbucket token's coverage**",
-		"([v0.25.0's line](releases/v0.25.0.md) is the one that announces it)",
+		"it is the `For operators` step of the release that carries the publisher ([releases/v0.26.0.md](releases/v0.26.0.md))",
+		"the same rule is v0.25.0's, recorded under that release's `Known limits` heading ([releases/v0.25.0.md](releases/v0.25.0.md))",
 		"[`docs/design/update-in-flight.md:62`](design/update-in-flight.md), that page's `bitbucket_tokens` half",
 		// U8's line: the verified facts, and the unverified one named as
 		// unverified rather than answered either way.

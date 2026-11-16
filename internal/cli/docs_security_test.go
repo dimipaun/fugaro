@@ -660,7 +660,14 @@ func TestSecurityMdStatesTheBitbucketGitProxy(t *testing.T) {
 		"(`buildProjectPolicy`, `internal/cli/init_policy_publish.go`; `fugaro project policy publish` makes the same write)",
 		"a typed token stored before the next `fugaro update` serves nothing",
 		"`docs/design/update-in-flight.md:62`",
-		"**upgrade the CLI before the `fugaro update` that publishes a typed Bitbucket token's coverage** (`docs/releases/v0.25.0.md`)",
+		"**upgrade the CLI before the `fugaro update` that publishes a typed Bitbucket token's coverage**",
+		// The step's own release, and the one whose notes state the rule
+		// without being able to publish the key: the review found the section
+		// naming v0.25.0's `### For operators` section, which does not carry
+		// the step, and v0.25.0 is the release whose `fugaro update` cannot
+		// publish the key at all.
+		"That step is written by the release that carries the publisher, under its `For operators` heading (`docs/releases/v0.26.0.md`)",
+		"recorded under that release's `Known limits` heading (`docs/releases/v0.25.0.md`), because v0.25.0's own `fugaro update` cannot publish the key",
 		"never a value and never a secret version",
 		"**The identity set is trusted at the level of the node's writer (F21, R12):**",
 		// The set can be partial, and R14 is why: a repository token answers no
@@ -756,13 +763,19 @@ func TestSecurityMdStatesTheBitbucketGitProxy(t *testing.T) {
 		// What the second review found false once T12 landed: the publisher is
 		// on this tree and `fugaro update` runs it, so every spelling of "it is
 		// not here" is a claim about the tree that is no longer true -- and the
-		// one that said the release-notes line was owed, which v0.25.0's
-		// `### For operators` already carries.
+		// one that said the release-notes line was owed.
 		"and the publisher is not on this tree",
 		"no non-test code on this release writes it into the published node",
 		"a typed token stored today serves nothing",
 		"is the publisher's, T12, and is not written on this tree either",
 		"that line is owed with T12",
+		// What the third review found false: the operator step is not written
+		// in v0.25.0's `### For operators` section (that file's sentence sits
+		// under `### Known limits`), and v0.25.0 is the one release whose
+		// `fugaro update` cannot publish the key, so a citation that names it
+		// as the release the step belongs to can never come back.
+		"what it asks of an operator is the release notes' `### For operators` line",
+		"the release notes' `### For operators` line: **upgrade the CLI before",
 	} {
 		if strings.Contains(flattenDoc(s), banned) {
 			t.Errorf("SECURITY.md says %q: the proxy narrows the run, and the flip that takes the mount has not landed on this tree", banned)

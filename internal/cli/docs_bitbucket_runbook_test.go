@@ -376,7 +376,13 @@ func TestDocsBitbucketRunbookTokenTypes(t *testing.T) {
 		"A project that records no typed token derives no key at all, so an installation holding the legacy entry alone converges with no step and no read of the store (R3)",
 		"`docs/design/update-in-flight.md:62`",
 		"**upgrade the CLI**",
-		"the release notes' `### For operators` line, `docs/releases/v0.25.0.md`",
+		// The step's own release, and the one whose notes state the rule
+		// without being able to publish the key: the review found the section
+		// naming v0.25.0's `### For operators` section, which does not carry
+		// the step, and v0.25.0 is the release whose `fugaro update` cannot
+		// publish the key at all.
+		"That step is the `For operators` line of the release that carries the publisher (`docs/releases/v0.26.0.md`)",
+		"the rule is v0.25.0's, recorded under that release's `Known limits` heading (`docs/releases/v0.25.0.md`), because v0.25.0's own `fugaro update` cannot publish the key",
 		// The mark: where it lives, what shows it, and the two ways out of one
 		// no command clears.
 		"A 401 that a read of a repository the token covers confirms marks **that one token** `broken`; a 429 marks it `exhausted` until `Retry-After`; a 403 or a 404 marks nothing.",
