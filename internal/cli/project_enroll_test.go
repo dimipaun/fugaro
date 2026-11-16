@@ -1393,7 +1393,11 @@ func TestEnrollableArgAgreesWithReposAddOnEveryName(t *testing.T) {
 	// accepts is a name `repos add` accepts. The converse is deliberately false
 	// — `repos add github/*/*` would enrol every repository, and refusing to
 	// print it is the point of the gate — so the names it refuses are not
-	// checked against the command here.
+	// checked against the command here. The flag is what keeps this a test of
+	// the NAME: the plain form refuses for the workflow selection this fixture
+	// has no checkout to read, which is D2401's refusal and not a judgement
+	// about the shape — that refusal, and the fixing command it names, is
+	// TestReposAddRefusesWithTheFixingCommand's.
 	for _, name := range []string{
 		"github/acme/app",
 		"bitbucket/acme/group/app",

@@ -369,8 +369,19 @@ func reposEnrolmentEntry(ctx context.Context, lc *localcfg.Config, ownerName str
 		next.Workflows = slices.Sorted(maps.Keys(cfg.Workflows))
 	}
 	if len(next.Workflows) == 0 {
-		return next, "", userErr("cannot read %s's workflow list, and nothing here guesses one: it is the repository's own selection (fugaro.yaml, workflows:), read from its checkout. Run this from that checkout, or write it with 'fugaro settings set repos.%s.workflows' and run this again",
-			pluginwire.Printable(ownerName), ownerName)
+		// The remedy is D2401's, and it is the invocation the listings print
+		// for a name this machine does not know: run it from a checkout, where
+		// the selection is stated, or write the allow-list entry alone with
+		// the flag. A checkout that is here and states none is told apart from
+		// no checkout at all, because checkoutConfig answers nil for both and
+		// an operator standing in the checkout is sent nowhere by being told
+		// to run this from it.
+		where := "run this from a checkout of " + pluginwire.Printable(plan.canonical) + ", where its own fugaro.yaml states it"
+		if plan.checkout != "" {
+			where = "the checkout here at " + safetext.Field(plan.checkout) + " states none"
+		}
+		return next, "", userErr("cannot read %s's workflow list, and nothing here guesses one: it is the repository's own selection (fugaro.yaml, workflows:), so %s. Write it with 'fugaro settings set repos.%s.workflows' and run this again, or write the allow-list entry and nothing else with `fugaro project repos add %s --allow-list-only`",
+			pluginwire.Printable(ownerName), where, ownerName, pluginwire.Printable(plan.canonical))
 	}
 	if next.BaseBranch == "" && cfg != nil {
 		next.BaseBranch = cfg.Git.BaseBranch

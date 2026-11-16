@@ -65,6 +65,15 @@ workflows:
   web: { commands: { build: sh build.sh, test: sh test.sh } }
 `
 
+// enrolCheckoutNoWorkflowsYAML is this repository's checkout stating no
+// selection: the file is there and names no `workflows:`, which is the state
+// the workflow refusal has to tell apart from there being no checkout here.
+const enrolCheckoutNoWorkflowsYAML = `version: 1
+project: aurora
+git: { provider: github }
+agent: { auth: oauth }
+`
+
 // enrolRepo is the repository every test here enrols, and enrolEntry is the
 // allow-list entry that follows from github/.
 const (
@@ -355,6 +364,50 @@ func TestProjectReposAddRefusesStar(t *testing.T) {
 	}
 	if p := r.policy(t); !slices.Contains(p.AllowRepos, "*") {
 		t.Errorf("allow_repos = %v, want * on it", p.AllowRepos)
+	}
+}
+
+// TestReposAddRefusesWithTheFixingCommand is RE3's red step, and D2401's rule
+// run against the command: a value the converge cannot read is refused with the
+// one command that supplies it. The value here is the workflow list, the
+// repository's own statement and the one thing this command may not guess — and
+// the fixing command it names is `fugaro project repos add <canonical>
+// --allow-list-only`, which is the invocation a listing's own remedy reaches
+// this refusal with on a machine that has neither a `repos:` entry nor a
+// checkout of it.
+//
+// The second half is the state the same refusal has to tell apart:
+// checkoutConfig answers nil both for "no checkout here" and for a checkout
+// whose fugaro.yaml states no selection, so a sentence that sent an operator
+// standing in the checkout to that checkout would send them nowhere.
+func TestReposAddRefusesWithTheFixingCommand(t *testing.T) {
+	fixing := "fugaro project repos add " + enrolEntry + " --allow-list-only"
+
+	r := newAddRigWith(t, enrolRigLocal)
+	t.Chdir(t.TempDir())
+	before := r.cfgText(t)
+
+	_, _, err := r.enrol(t, enrolEntry)
+	if err == nil || !strings.Contains(err.Error(), fixing) {
+		t.Fatalf("project repos add %s away from a checkout: err = %v, want the refusal that names %q", enrolEntry, err, fixing)
+	}
+	if got := r.cfgText(t); got != before {
+		t.Errorf("the refused run wrote the local config:\n%s", got)
+	}
+
+	dir := filepath.Join(t.TempDir(), "checkout-b")
+	gitCheckout(t, dir, enrolCheckoutNoWorkflowsYAML)
+	testutil.Git(t, dir, "remote", "add", "origin", "https://github.com/owner/repo-b.git")
+	testutil.Git(t, dir, "add", "fugaro.yaml")
+	testutil.Git(t, dir, "commit", "-q", "-m", "fugaro.yaml")
+	t.Chdir(dir)
+
+	_, _, err = r.enrol(t, enrolEntry)
+	if err == nil || !strings.Contains(err.Error(), fixing) {
+		t.Fatalf("project repos add %s in its own checkout, whose fugaro.yaml states no selection: err = %v, want the refusal that names %q", enrolEntry, err, fixing)
+	}
+	if strings.Contains(err.Error(), "run this from a checkout of") {
+		t.Errorf("the refusal sends an operator who is standing in the checkout back to a checkout: %v", err)
 	}
 }
 
