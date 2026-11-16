@@ -101,6 +101,13 @@ type Tick struct {
 	// no path to the credentials service stands — and nothing a label does
 	// fails a cycle (docs/forge-labels, "best-effort").
 	Labels LabelSeams
+	// Merge is what this cycle reads the pull requests of the items waiting on
+	// a merge through (G3, D2705): the reader of each repository's pull request
+	// state and the log a read that failed leaves a line in. Left unset the
+	// cycle reads nothing at all, which is the same direction Labels fails in —
+	// an item whose pull request is never read stays in `review`, and nothing
+	// about a merge fails a cycle.
+	Merge MergeSeams
 	// Now is the database server's clock (rtdb.ServerNow). Every stamp a cycle
 	// writes comes from it, and a cycle that cannot read it refuses rather
 	// than stamping anything with this machine's clock (D1230).
@@ -113,6 +120,12 @@ type Report struct {
 	Outcome CycleOutcome
 	// Folded is how many finished runs the cycle wrote into the items.
 	Folded int
+	// Merged is how many items the cycle's merge read moved out of `review`:
+	// done for one whose pull request merged, failed for one that closed
+	// without merging (D2705). An item left in `review` because its pull
+	// request is still open, or because the read did not happen, is not
+	// counted.
+	Merged int
 	// Carried is how many of the plan's actions the starter carried out — a
 	// launch, a retry, a re-issue or an abandonment.
 	Carried int
@@ -242,6 +255,14 @@ func (c *cycle) run(ctx context.Context) error {
 			return err
 		}
 	}
+	// The merge read comes after the fold and before the plan: the fold has
+	// just left every item whose run succeeded with a pull request in `review`
+	// (D2705), and an item whose pull request has since merged is `done` before
+	// the plan is made, so the work that depends on it starts in this cycle
+	// rather than the next one.
+	if err := c.merge(ctx); err != nil {
+		return err
+	}
 	view := viewOf(reports)
 	if err := c.carry(ctx, view); err != nil {
 		return err
@@ -348,10 +369,10 @@ func (c *cycle) carry(ctx context.Context, view RunView) error {
 	return nil
 }
 
-// outcome is how the cycle reads itself for the breaker: a cycle that folded
-// or carried something moved the work, a cycle with an attempt that has not
-// reported is waiting on a run — never a failure, however many ticks of one run
-// go by (D1228) — and anything else did nothing at all.
+// outcome is how the cycle reads itself for the breaker: a cycle that folded,
+// carried or merged something moved the work, a cycle with an attempt that has
+// not reported is waiting on a run — never a failure, however many ticks of one
+// run go by (D1228) — and anything else did nothing at all.
 //
 // A judgement counts as work when it landed — Decided is the case the agent
 // answered and the patch it landed is committed — and a cycle whose only news
@@ -360,7 +381,7 @@ func (c *cycle) carry(ctx context.Context, view RunView) error {
 // is progress whatever the call beside it came to.
 func (c *cycle) outcome() CycleOutcome {
 	switch {
-	case c.rep.Folded > 0 || c.rep.Carried > 0 || c.rep.Triaged > 0 || c.rep.Escalated > 0 || c.rep.Decided > 0:
+	case c.rep.Folded > 0 || c.rep.Carried > 0 || c.rep.Triaged > 0 || c.rep.Escalated > 0 || c.rep.Decided > 0 || c.rep.Merged > 0:
 		return CycleProgress
 	case c.rep.DecideOutcome != "":
 		return c.rep.DecideOutcome
@@ -1078,7 +1099,12 @@ func ambiguousResult(s State, w WorkItem) (Intent, bool) {
 	if !ok || newest.Outcome == "" {
 		return Intent{}, false
 	}
-	phase, known := foldPhase(newest.Outcome)
+	// The pull request is not read here: the question is whether the phase
+	// table has a move for this ending at all, and for a succeeded attempt the
+	// two readings of it agree — from a phase an attempt is still expected from
+	// (queued, running, review) both `review` and `done` are reachable or
+	// neither is.
+	phase, known := foldPhase(newest.Outcome, false)
 	if !known || w.Phase.CanMoveTo(phase) {
 		return Intent{}, false
 	}
