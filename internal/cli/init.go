@@ -4480,6 +4480,12 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// workflow secrets is read from is the one THIS plan mounts, and `ready`
 	// is the decision MountSecretID reads back (update_workflowsecrets.go).
 	r.writeWorkflowSecrets(ctx, lc, ready, cfg)
+	// The repository auth record is written from the same spec, and for the
+	// same reason, one step later (D2070 (a), R7): it is what narrows this
+	// repository's calls at the service to the auth and the accounts its own
+	// configuration names, and `cfg` is the document a run of this repository
+	// checks out rather than this working tree (update_repoauth.go).
+	r.writeRepoAuth(ctx, lc, ready, cfg)
 	versions, err := infra.SecretVersions(ctx, c, ready)
 	if err != nil {
 		return r.retireLeftover(spec, initErr(err))
