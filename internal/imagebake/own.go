@@ -20,11 +20,28 @@ import "strings"
 // was not composed here, so its bytes are the entry's own. Append puts the
 // stages after the entry's bytes, so the first such line begins the engine's
 // part and everything before it is returned.
+//
+// A marker with nothing in front of it is not a boundary. Append composes a
+// definition by appending to bytes it was given, and the catalog refuses an
+// empty one before any build sees it (internal/catalog's bounded), so the
+// definition's own author always wrote something under the first stage — a line
+// a definition opens with is one the author wrote, whatever it says. Reading it
+// as the boundary would answer with no bytes of the entry's at all, and the
+// mount an author hid behind a copied marker line would be the one thing the
+// readers here never see.
+//
+// What this cannot be is a fence. An author who spells a marker line after
+// their own bytes, with a stage header under it, is not distinguishable from
+// this package in the object alone — so what the callers do with the answer is
+// a report, and the refusal that holds is the one the definition meets at
+// publish (internal/catalog's refuseCredentialIn, which reads the whole text)
+// and, since B8, a build step the catalog hands no secret of the entry's at
+// all.
 func EntryOwn(definition []byte) []byte {
 	at := 0
 	for line := range strings.Lines(string(definition)) {
 		rest, ok := strings.CutPrefix(strings.TrimSuffix(line, "\n"), markerPrefix)
-		if ok {
+		if ok && at > 0 {
 			if slug, under := strings.CutPrefix(rest, Root+"/"); under {
 				if _, err := Path(slug); err == nil {
 					return definition[:at]

@@ -785,6 +785,13 @@ func TestCatalogRefusesAnEntryThatMountsASecret(t *testing.T) {
 		// Instructions are case-insensitive to a build, so the flag is one here
 		// too.
 		{"FROM example.invalid/base\nrun --mount=type=secret,id=x true\n", "line 2"},
+		// The option's own name is folded too: `type=SECRET` is the same mount
+		// to a build that folds it, and a guard that read only the lowercase
+		// spelling would let that definition through with the mount intact. A
+		// mount of another type is one this guard has no opinion on whatever
+		// its case (the cache mounts below), so folding costs nothing.
+		{"FROM example.invalid/base\nRUN --mount=type=SECRET,id=git-credentials true\n", "line 2"},
+		{"FROM example.invalid/base\nRUN --mount=Type=Secret,id=x true\n", "line 2"},
 		// A stage's FROM, an ENV and a comment in front: the number a refusal
 		// prints is the instruction's own physical line, not the count of the
 		// instructions before it.
@@ -825,6 +832,10 @@ func TestCatalogRefusesAnEntryThatMountsASecret(t *testing.T) {
 		"FROM example.invalid/base\nRUN --mount=type=cache,id=fugaro-mise,target=/home/fugaro/.cache/mise true\n",
 		"FROM example.invalid/base\nRUN --mount=type=bind,source=/src,target=/dst true\n",
 		"FROM example.invalid/base\nRUN --mount=type=tmpfs,target=/tmp true\n",
+		// Folded and not secret: the guard folds the option's own name, and
+		// this is the definition that says the fold did not become a refusal of
+		// every mount.
+		"FROM example.invalid/base\nRUN --mount=type=CACHE,id=x npm ci\n",
 		"FROM example.invalid/base\nRUN --mount=\"type=cache,id=x\" npm ci\n",
 		// A comment that names the shape is a comment: nothing on the line asks
 		// a build for anything, and the guard reads instructions.

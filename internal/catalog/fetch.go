@@ -425,7 +425,13 @@ func asksForASecret(line string) bool {
 			continue
 		}
 		for _, field := range strings.Split(value, ",") {
-			if strings.TrimSpace(field) == "type=secret" {
+			// Folded: a build that folds the option's own value hands
+			// `type=SECRET` the mount this refuses, and the fold costs nothing
+			// where it does not — a mount of another type is one this guard has
+			// no opinion on whatever its case, and a spelling no build accepts
+			// being refused with the mount's own message is the direction a
+			// refusal may be wrong in.
+			if strings.EqualFold(strings.TrimSpace(field), "type=secret") {
 				return true
 			}
 		}

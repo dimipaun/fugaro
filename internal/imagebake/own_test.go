@@ -63,8 +63,21 @@ func TestEntryOwnIsTheAuthorsBytes(t *testing.T) {
 		t.Errorf("EntryOwn = %q, want the whole definition: a marker outside %s is not a stage of this package's", got, Root)
 	}
 
-	// And a definition that is nothing but stages has no bytes of its own.
-	if got := EntryOwn(def[len(own):]); len(got) != 0 {
-		t.Errorf("EntryOwn(stages alone) = %q, want nothing", got)
+	// A definition that opens with the marker is not one this package composed,
+	// however it continues: Append appends to bytes it was given, and the catalog
+	// refuses an empty definition, so the author's own bytes are always under the
+	// first stage. Read as the boundary it would answer with nothing, and a mount
+	// the entry's author wrote under a copied marker line — the shape this test
+	// below writes — would be the one thing the guard never saw.
+	forged := markerPrefix + Root + "/app\nFROM scratch\nRUN --mount=type=secret,id=NPM_TOKEN true\n"
+	if got := string(EntryOwn([]byte(forged))); got != forged {
+		t.Errorf("EntryOwn(a definition that opens with a marker) = %q, want the whole definition", got)
+	}
+	// And a definition that is nothing but stages: not composed by Append, and
+	// read whole for the same reason (a reader that asked for the entry's own
+	// bytes here has none, and answering with the engine's own mount would be
+	// worse than answering with them).
+	if got := EntryOwn(def[len(own):]); string(got) != string(def[len(own):]) {
+		t.Errorf("EntryOwn(stages alone) = %q, want the whole definition", got)
 	}
 }

@@ -10,10 +10,11 @@ package plugin_test
 // reads: the words are the product (the plan's honest limit). The behaviour is
 // Check 500, which the owner runs on the sandbox project. The code's own half of
 // the secrets rule is elsewhere: a Dockerfile whose ARG or ENV is named like a
-// credential, or whose clone URL carries userinfo, is refused when the catalog
-// reads it (IS11b, internal/catalog/fetch.go). That is the whole of it: nothing
-// refuses a copied credential file on either build path, so the skill says the
-// `COPY` half is its rule alone.
+// credential, whose clone URL carries userinfo, or that mounts a secret on a RUN
+// or passes one as a build argument is refused when the catalog reads it (IS11b,
+// internal/catalog/fetch.go; the mount and the argument are B9, D2311). That is
+// the whole of it: nothing refuses a copied credential file on either build
+// path, so the skill says the `COPY` half is its rule alone.
 
 import (
 	"regexp"
@@ -173,11 +174,19 @@ var (
 	// https://user:token@host/repo. The catalog refuses one when it reads the
 	// Dockerfile (IS11b), and a skill must not teach one either.
 	userinfoURLRE = regexp.MustCompile(`(?i)https?://[^\s/'"]+:[^\s@/'"]+@`)
+	// secretMountRE is the third shape the catalog now refuses: a `RUN` that
+	// mounts a secret (`--mount=…,type=secret`) or takes one as a build argument
+	// (`--secret`). An entry's build is handed none — the clone step supplies the
+	// checkout as the `fugaro-checkout` context (B8) — so a skill that taught the
+	// mount would teach a definition the catalog refuses by name (B9, D2311).
+	secretMountRE = regexp.MustCompile(`(?i)^\s*RUN\b[^\n]*(--secret\b|--mount=[^\n]*type=secret\b)`)
 )
 
-// TestImagesSkillNoBuildArgSecrets: the Dockerfiles the skill teaches carry no
-// credential, and it says how a token reaches a build instead — a BuildKit
-// secret mount, never a build argument or a COPY (F14, F22, IS11b).
+// TestImagesSkillNoBuildArgSecrets: the Dockerfiles the skill teaches ask for
+// no secret at all — never an ARG, an ENV, a COPY, a secret mount or a
+// `--secret` build argument — and it says what reaches a build instead: the
+// checkout, as the named `fugaro-checkout` build context the clone step exports
+// (F14, F22, IS11b; the mount and the argument are B9, D2311).
 //
 // Every fenced line is judged, and an inline span only for the clone URL: prose
 // has to be able to name a forbidden instruction to forbid it, and a Dockerfile
@@ -187,10 +196,13 @@ func TestImagesSkillNoBuildArgSecrets(t *testing.T) {
 		for _, u := range f.units {
 			if u.inBlock {
 				if m := secretArgRE.FindString(u.text); m != "" {
-					t.Errorf("%s:%d: %q is a credential in an image's build history: a token reaches a build in a secret mount, never an ARG or ENV:\n%s", f.path, u.line, strings.TrimSpace(m), u.text)
+					t.Errorf("%s:%d: %q is a credential in an image's build history: an entry's build is handed no secret, and an ARG or an ENV is not how one reaches it:\n%s", f.path, u.line, strings.TrimSpace(m), u.text)
 				}
 				if m := secretCopyRE.FindString(u.text); m != "" {
 					t.Errorf("%s:%d: %q copies a credential into the image:\n%s", f.path, u.line, strings.TrimSpace(m), u.text)
+				}
+				if m := secretMountRE.FindString(u.text); m != "" {
+					t.Errorf("%s:%d: %q asks for a secret of the entry's own, which the catalog refuses by name with the line it is written on: an entry's build is handed no secret, and the checkout arrives as the `fugaro-checkout` build context:\n%s", f.path, u.line, strings.TrimSpace(m), u.text)
 				}
 			}
 			if m := userinfoURLRE.FindString(u.text); m != "" {
@@ -199,12 +211,20 @@ func TestImagesSkillNoBuildArgSecrets(t *testing.T) {
 		}
 	}
 	skill := imagesSkillFile(t)
-	if !strings.Contains(skill, "--mount=type=secret") {
-		t.Error("the skill never names `--mount=type=secret`, and that is how a token reaches a build without reaching a layer")
-	}
 	lowered := strings.ToLower(skill)
 	if !strings.Contains(lowered, "layer") {
 		t.Error("the skill never says a secret does not reach a layer, which is the whole of the rule")
+	}
+	// The rule is now stronger than that sentence: an entry's Dockerfile asks
+	// for no secret at all, and the shape that replaces the mount is the named
+	// build context the clone step exports (B8). A skill that left the mount in
+	// place would teach a definition the catalog refuses, which is how this
+	// entry's own Dockerfile would have failed its build.
+	if !strings.Contains(skill, "fugaro-checkout") {
+		t.Error("the skill never names the `fugaro-checkout` build context, which is the one shape that brings a repository's checkout into an entry's build now that the entry is handed no secret")
+	}
+	if !strings.Contains(skill, "asks for no secret") {
+		t.Error("the skill never says an entry's Dockerfile asks for no secret at all, so an agent can still write the mount the catalog refuses (B9, D2311)")
 	}
 	// The predicates, on the lines they exist to catch: a check that matched
 	// nothing would pass the loop above by looking at nothing.
@@ -216,62 +236,85 @@ func TestImagesSkillNoBuildArgSecrets(t *testing.T) {
 		"an ENV token":      {secretArgRE, "ENV GIT_TOKEN=abc"},
 		"a copied dotfile":  {secretCopyRE, "COPY .npmrc /home/fugaro/.npmrc"},
 		"a userinfo remote": {userinfoURLRE, "RUN git clone https://user:tok3n@github.com/acme/app"},
+		"a secret mount":    {secretMountRE, "RUN --mount=type=secret,id=NPM_TOKEN,uid=1000 npm ci"},
+		"a secret argument": {secretMountRE, "RUN npm ci --secret id=NPM_TOKEN"},
 	} {
 		if c.re.FindString(c.text) == "" {
 			t.Errorf("the check does not catch %s (%q)", name, c.text)
 		}
 	}
-	// And the shape the skill does teach passes all three, so the pass above is
-	// the mount's own shape and not silence.
-	mount := `RUN --mount=type=secret,id=NPM_TOKEN,uid=1000 if test -e /run/secrets/NPM_TOKEN; then export NPM_TOKEN="$(cat /run/secrets/NPM_TOKEN)"; fi; npm ci`
-	for name, re := range map[string]*regexp.Regexp{"an argument": secretArgRE, "a copy": secretCopyRE, "a userinfo URL": userinfoURLRE} {
-		if re.MatchString(mount) {
-			t.Errorf("the check refuses the secret-mount shape it exists to allow, as %s", name)
+	// And the shape the skill does teach passes all four, so the pass above is
+	// the replacement's own shape and not silence: the checkout copied from the
+	// build context the clone step exports.
+	copy := `COPY --from=fugaro-checkout --chown=1000:1000 / /work/repo`
+	for name, re := range map[string]*regexp.Regexp{"an argument": secretArgRE, "a copy": secretCopyRE, "a userinfo URL": userinfoURLRE, "a secret mount": secretMountRE} {
+		if re.MatchString(copy) {
+			t.Errorf("the check refuses the checkout-copy shape it exists to allow, as %s", name)
 		}
 	}
-	// The catalog's half of the rule is narrower than the skill's:
-	// refuseCredentialIn (internal/catalog/fetch.go) reads ARG and ENV names and
-	// URLs with userinfo, and a Dockerfile that copies a registry dotfile is
-	// accepted. A skill that told the agent the catalog refuses every shape it
-	// forbids would hand it a backstop that is not there, so both halves of the
-	// rule are pinned, and the copy is named as the skill's own.
-	if !strings.Contains(skill, "named like a credential") || !strings.Contains(skill, "URL with userinfo") {
-		t.Error("the skill does not say which two shapes the catalog refuses (a credential-shaped ARG or ENV name, and a URL with userinfo), so an agent cannot tell the catalog's rule from its own")
+	// The catalog's half of the rule is narrower than the skill's: a Dockerfile
+	// that copies a registry dotfile is accepted, on either build path. A skill
+	// that told the agent the catalog refuses every shape it forbids would hand
+	// it a backstop that is not there, so both halves of the rule are pinned.
+	for _, want := range []string{"named like a credential", "URL with userinfo", "mounts a secret on a `RUN`"} {
+		if !strings.Contains(skill, want) {
+			t.Errorf("the skill does not say the catalog refuses %q, so an agent cannot tell the catalog's rule from its own", want)
+		}
 	}
 	if !strings.Contains(skill, "is this rule's alone") {
 		t.Error("the skill does not say a copied credential file is its own rule rather than the catalog's, and refuseCredentialIn does not read a COPY")
 	}
-}
-
-// TestImagesSkillMountsOnlyDeclaredSecrets: a catalog build mounts the secrets
-// the entry's own repository declares in its workflows, one mount per distinct
-// `env` those declarations name and under that declaration's `env`
-// (catalogBuildSecrets, internal/cli/image_build_catalog.go; the request's
-// AvailableSecrets, internal/backend/gcp/catalog.go). A stored secret no
-// workflow declares is never mounted, and a step that reads the file only when
-// it is there skips it without an error — so the skill has to say both halves
-// or an agent writes a mount that is never satisfied and reads the 401 as a
-// wrong token. And the mounts collapse by variable rather than by declaration:
-// the same declaration twice is one mount, and two workflows naming one `env`
-// for different secrets do not build at all, so a skill that taught "one mount
-// per declaration" would describe a build that never starts.
-func TestImagesSkillMountsOnlyDeclaredSecrets(t *testing.T) {
-	skill := imagesSkillFile(t)
-	for _, want := range []string{"workflows.<w>.secrets", "declaration's `env`", "401", "one mount per distinct `env`"} {
-		if !strings.Contains(skill, want) {
-			t.Errorf("the skill never says %q, so an agent cannot tell that a catalog build mounts the entry's repository's own declarations, under the variable each one names", want)
+	// The refusal the skill states is the tree's, not the skill's to promise:
+	// the catalog reads a definition's own text for a secret mount and for a
+	// `--secret` argument (B9, D2311), which is the sentence an agent has to be
+	// able to rely on.
+	fetch := readRepoFile(t, "internal/catalog/fetch.go")
+	for _, want := range []string{"func AskSecret(", "func SecretRefusal("} {
+		if !strings.Contains(fetch, want) {
+			t.Errorf("internal/catalog no longer carries %s, which is the refusal the skill states", want)
 		}
 	}
-	// The two halves of the claim are the tree's, so they are read from it: the
-	// mounts come from the checkout's workflow declarations keyed by their env,
-	// and the stored secret each one resolves is the declaration's `name`.
-	build := readRepoFile(t, "internal/cli/image_build_catalog.go")
-	if !strings.Contains(build, "cfg.Workflows[name].Secrets") || !strings.Contains(build, "at[ws.Env]") {
-		t.Error("catalogBuildSecrets no longer reads the checkout's workflows' secrets keyed by their env, which is the mount the skill describes")
+}
+
+// TestImagesSkillEntryBuildAsksForNoSecret: the one secret shape a catalog
+// build really does satisfy — a `RUN --mount=type=secret` under a variable the
+// entry's own repository declares in its workflows — is the shape the catalog
+// now refuses when it reads the definition (refuseCredentialIn and
+// SecretRefusal, internal/catalog/fetch.go; B9, D2311), and the skill has to
+// say so, because a mount that would work is the one an agent writes without
+// hesitating. Two things follow and both are pinned here: the skill names the
+// shape that replaces it (the `fugaro-checkout` build context, B8) and, for the
+// token no entry build can carry any more — a private registry's — the entry
+// kind that does work, `--image`, an image the team's own build publishes.
+func TestImagesSkillEntryBuildAsksForNoSecret(t *testing.T) {
+	skill := imagesSkillFile(t)
+	section := imageSkillSection(t, skill, "6. Write the entry's Dockerfile")
+	for _, want := range []string{
+		"asks for no secret",
+		"fugaro-checkout",
+		"--image",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("step 6 of the skill never says %q, so an agent cannot tell which secret shapes a catalog build satisfies and refuses, and which entry kind carries the repositories that need one:\n%s", want, section)
+		}
 	}
-	request := readRepoFile(t, "internal/backend/gcp/catalog.go")
-	if !strings.Contains(request, "Env: ws.Env") || !strings.Contains(request, "SecretID(s.Slug, ws.Name)") {
-		t.Error("the catalog build request no longer mounts each declared secret under its env from the secret the declaration names")
+	// The refusal the skill states is the tree's: the publish path reads the
+	// definition's own text for a secret of its own, and answers by name and
+	// line, which is the sentence an agent can rely on.
+	fetch := readRepoFile(t, "internal/catalog/fetch.go")
+	if !strings.Contains(fetch, "if asksForASecret(line.text) {") || !strings.Contains(fetch, "return SecretRefusal(e.Name, line.line)") {
+		t.Error("refuseCredentialIn no longer refuses a definition that asks for a secret of its own by name and line, which is the refusal the skill states")
+	}
+	// And the refusal is the entry's own definition's, not the build's: the
+	// build step still carries the secrets the repository declares in its
+	// workflows (catalogBuildSecrets, internal/cli/image_build_catalog.go, to the
+	// request's WorkflowSecrets), so a mount would be satisfied and refused
+	// anyway. That is the capability D2311 closes, an entry's build being handed
+	// no secret of the entry's — so a later task that takes the mounts away has
+	// to move this test with it, and one that reads this skill must not read the
+	// refusal as the build having nothing to mount.
+	if !strings.Contains(readRepoFile(t, "internal/cli/image_build_catalog.go"), "catalogBuildSecrets(cfg)") {
+		t.Error("the catalog build no longer reads the checkout's declared workflow secrets: the skill's rule that an entry asks for no secret of its own is now the whole of the guard, rather than a policy over a build that could satisfy one")
 	}
 }
 
