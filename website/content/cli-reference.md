@@ -564,6 +564,13 @@ starts from the first. A credential the config does not define, a repeated
 member, a name this command may not use and a strategy that is not failover or
 round-robin are all refused before the file is touched.
 
+A pool is served on one half of a run — the credentials service for a Claude
+OAuth or Anthropic-key member, a run's own gateway for an OpenRouter route or
+the built-in vertex — and neither half can walk an order that spans them, so a
+list naming both halves is refused too: name two pools, one per half, and let
+each craft's access name the one its stages need. A pool a config already holds
+that names both is left as it is and declared beside, not rewritten here.
+
 --strategy failover (the default) or round-robin. A pool that already exists
 keeps the strategy it has when the flag is left out, and this command replaces
 its members with the list on the command line: it is the whole list every time,
