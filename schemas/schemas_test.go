@@ -3812,6 +3812,108 @@ func TestTaskSchemaContextReposMatchesTheGoRule(t *testing.T) {
 	}
 }
 
+// TestTaskSchemaChangeSetMatchesTheGoRule ties the task schema's `change_set`
+// property to the Go rules it mirrors (task.MaxChangeSetMembers and the two
+// patterns task.Spec.Validate applies): the bounds and patterns are separate
+// copies, so without this a change to either would drift from the published
+// schema with only the corpus fixtures noticing — and a task.json the launcher
+// writes is exactly what this schema is for (plan task D1).
+//
+// The comparison is on instances rather than on the document, and it covers
+// only what both sides can judge. Three of task.Validate's change-set rules
+// are not here because a JSON Schema cannot carry them — no repository twice,
+// the ID naming the first member's run, and this run's own repository in the
+// list, each of which compares one item of the array against another or
+// against a sibling property. They are pinned where the Go rule lives
+// (internal/task's TestValidateChangeSet). uniqueItems is the schema's nearest
+// reading of the first: it refuses two identical members, which is a subset of
+// the repository rule, so it never refuses a list the Go rule accepts.
+func TestTaskSchemaChangeSetMatchesTheGoRule(t *testing.T) {
+	data, err := os.ReadFile("task.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]struct {
+			MinItems    int  `json:"minItems"`
+			MaxItems    int  `json:"maxItems"`
+			UniqueItems bool `json:"uniqueItems"`
+			Properties  map[string]struct {
+				MinItems    int  `json:"minItems"`
+				MaxItems    int  `json:"maxItems"`
+				UniqueItems bool `json:"uniqueItems"`
+			} `json:"properties"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	p, ok := doc.Properties["change_set"]
+	if !ok {
+		t.Fatal("task.schema.json has no change_set property: a launch with --change-set writes a task.json this schema refuses (additionalProperties: false)")
+	}
+	if _, ok := p.Properties["id"]; !ok {
+		t.Error("change_set carries no id property")
+	}
+	members, ok := p.Properties["members"]
+	if !ok {
+		t.Fatal("change_set carries no members property")
+	}
+	if members.MinItems != 2 || members.MaxItems != task.MaxChangeSetMembers || !members.UniqueItems {
+		t.Errorf("change_set.members carries minItems %d, maxItems %d, uniqueItems %v; want 2, task.MaxChangeSetMembers (%d) and true",
+			members.MinItems, members.MaxItems, members.UniqueItems, task.MaxChangeSetMembers)
+	}
+	sch := compile(t, "task.schema.json")
+	member := func(repo, run string) task.ChangeSetMember {
+		return task.ChangeSetMember{Repo: repo, RunID: run}
+	}
+	for _, tc := range []struct {
+		name string
+		set  *task.ChangeSet
+	}{
+		{"two", &task.ChangeSet{ID: "20261116-140000-abcd", Members: []task.ChangeSetMember{
+			member("acme/app", "20261116-140000-abcd"), member("acme/lib", "20261116-140001-beef")}}},
+		{"five", &task.ChangeSet{ID: "20261116-140000-abcd", Members: []task.ChangeSetMember{
+			member("acme/app", "20261116-140000-abcd"), member("a/1", "20261116-140001-beef"),
+			member("b/2", "20261116-140002-beef"), member("c/3", "20261116-140003-beef"),
+			member("d/4", "20261116-140004-beef")}}},
+		{"one member", &task.ChangeSet{ID: "20261116-140000-abcd", Members: []task.ChangeSetMember{
+			member("acme/app", "20261116-140000-abcd")}}},
+		{"six members", &task.ChangeSet{ID: "20261116-140000-abcd", Members: []task.ChangeSetMember{
+			member("acme/app", "20261116-140000-abcd"), member("a/1", "20261116-140001-beef"),
+			member("b/2", "20261116-140002-beef"), member("c/3", "20261116-140003-beef"),
+			member("d/4", "20261116-140004-beef"), member("e/5", "20261116-140005-beef")}}},
+		{"an empty member list", &task.ChangeSet{ID: "20261116-140000-abcd", Members: []task.ChangeSetMember{}}},
+		{"an id that is not a run id", &task.ChangeSet{ID: "cs-1", Members: []task.ChangeSetMember{
+			member("acme/app", "20261116-140000-abcd"), member("acme/lib", "20261116-140001-beef")}}},
+		{"a member that is not a repository", &task.ChangeSet{ID: "20261116-140000-abcd", Members: []task.ChangeSetMember{
+			member("acme/app", "20261116-140000-abcd"), member("acme", "20261116-140001-beef")}}},
+		{"a member with a trailing slash", &task.ChangeSet{ID: "20261116-140000-abcd", Members: []task.ChangeSetMember{
+			member("acme/app", "20261116-140000-abcd"), member("acme/", "20261116-140001-beef")}}},
+		{"a member with a bad run id", &task.ChangeSet{ID: "20261116-140000-abcd", Members: []task.ChangeSetMember{
+			member("acme/app", "20261116-140000-abcd"), member("acme/lib", "run-1")}}},
+		{"the same member twice", &task.ChangeSet{ID: "20261116-140000-abcd", Members: []task.ChangeSetMember{
+			member("acme/app", "20261116-140000-abcd"), member("acme/app", "20261116-140000-abcd")}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := task.Spec{Version: 1, RunID: "20261116-140000-abcd", Repo: "acme/app", Ref: "main", Task: "x", ChangeSet: tc.set}
+			body, err := json.Marshal(spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			schemaErr := sch.Validate(inst)
+			goErr := spec.Validate()
+			if (schemaErr == nil) != (goErr == nil) {
+				t.Errorf("schema and task.Validate disagree about %+v:\n schema: %v\n go:     %v", tc.set, schemaErr, goErr)
+			}
+		})
+	}
+}
+
 func TestTaskSchemaCompressionOffMatchesTheGoField(t *testing.T) {
 	sch := compile(t, "task.schema.json")
 	validate := func(s task.Spec) error {
