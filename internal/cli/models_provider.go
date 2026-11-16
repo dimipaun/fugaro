@@ -89,10 +89,14 @@ func newModelsProviderSetCmd() *cobra.Command {
 		Short: "Write the leaves of one provider route in this project's config",
 		Long: "Set the fields of one entry of the project config's providers block.\n\n" +
 			"Only the flags you pass are written: every other leaf of the entry, every\n" +
-			"comment and every other key of the file is kept. A name the config does not\n" +
-			"carry yet is created, and the file's own rules are what it is held to — an\n" +
-			"entry needs a kind, an endpoint, an auth and a secret name before it reads\n" +
-			"back.\n\n" +
+			"comment and every other key of the file is kept.\n\n" +
+			"The entry has to be in the file already: a name the config does not carry is\n" +
+			"refused, because a providers entry is not one until it lists the model IDs it\n" +
+			"serves (providers.<name>.models), and no flag here writes that list. Write\n" +
+			"the entry in the file — kind, base_url, auth, secret and models, as\n" +
+			"docs/multi-model.md §2 spells it — and its fields are this command's from\n" +
+			"then on, or claim one more model on a route that exists with\n" +
+			"`fugaro models add <id> --route <name>`.\n\n" +
 			"--secret names a stored secret and never carries the key itself: the value\n" +
 			"belongs in Secret Manager (`fugaro secrets set <name>`), and what lands in\n" +
 			"the file is that name. A value that looks like a key is refused, and the\n" +
@@ -264,7 +268,7 @@ func modelsProviderRefuseNew(path, name string, lc *localcfg.Config) error {
 	if _, ok := lc.Providers[name]; ok {
 		return nil
 	}
-	return userErr("providers.%s is not an entry %s carries, and this command writes the fields of one that is: a provider entry lists the model IDs it serves (providers.%s.models), and no flag here writes that list. Write the entry in that file — kind, base_url, auth, secret and models, as docs/multi-model.md §2 spells it — and its fields are this command's from then on; `fugaro models add <id> --route %s` claims one more model on a route that already exists", name, path, name, name)
+	return userErr("providers.%s is not an entry %s carries, and this command writes the fields of one that is: a provider entry lists the model IDs it serves (providers.%s.models), and no flag here writes that list. Write the entry in that file — kind, base_url, auth, secret and models, as docs/multi-model.md §2 spells it — and its fields are this command's from then on; `fugaro models add <id> --route %s` claims one more model on a route that already exists", oneLine(name), path, oneLine(name), oneLine(name))
 }
 
 // modelsProviderSecretRef refuses a --secret that is not the name of a stored
@@ -335,7 +339,7 @@ func modelsProviderLayer(key, layer string) error {
 	}
 	row, ok := modelsSettingsRow(key)
 	if !ok {
-		return userErr("%s: this build's settings registry has no row for that key, so no layer can carry it", key)
+		return userErr("%s: this build's settings registry has no row for that key, so no layer can carry it", oneLine(key))
 	}
 	have := make([]string, 0, len(row.Layers))
 	for _, l := range row.Layers {
@@ -349,7 +353,7 @@ func modelsProviderLayer(key, layer string) error {
 	if slices.Contains(have, layer) {
 		return nil
 	}
-	return userErr("%s is not a key --layer %s writes: it is written in %s", key, layer, strings.Join(have, ", "))
+	return userErr("%s is not a key --layer %s writes: it is written in %s", oneLine(key), oneLine(layer), strings.Join(have, ", "))
 }
 
 // modelsSettingsRow is the registry row a provider or price key is a spelling
@@ -362,12 +366,48 @@ func modelsSettingsRow(key string) (settings.Row, bool) {
 		return row, true
 	}
 	for _, row := range settings.Rows() {
-		if settingsPatternMatch(row.Key, key) {
+		if modelsPatternMatch(row.Key, key) {
 			row.Key = key
 			return row, true
 		}
 	}
 	return settings.Row{}, false
+}
+
+// modelsPatternMatch reports whether key is a spelling of the registry key
+// pattern where the pattern's `*` may stand for a name that itself carries a
+// dot. `model_prices.moonshotai/kimi-k2.5.cache_read` is a spelling of
+// `model_prices.*.cache_read`, but splitting both on the dot gives that key four
+// segments and the pattern three, so settingsPatternMatch — the equal-segment
+// rule the generic settings path uses — answers no. A model ID is one name
+// whatever dots it carries, which is what makes the difference: the star takes
+// the key's segments up to the pattern's own tail, and the rest of the rule is
+// settingsPatternMatch's. The comparison is segment by segment rather than
+// through a joined string, because joining and splitting again would split the
+// name the star stands for at the very dots this rule is about.
+func modelsPatternMatch(pattern, key string) bool {
+	p, k := strings.Split(pattern, "."), strings.Split(key, ".")
+	if len(k) <= len(p) {
+		return settingsPatternMatch(pattern, key)
+	}
+	star := -1
+	for i, segment := range p {
+		if segment != "*" {
+			continue
+		}
+		if star >= 0 {
+			return false
+		}
+		star = i
+	}
+	if star < 0 {
+		return false
+	}
+	tail := len(p) - star - 1
+	if len(k) < star+tail+1 {
+		return false
+	}
+	return slices.Equal(p[:star], k[:star]) && slices.Equal(p[len(p)-tail:], k[len(k)-tail:])
 }
 
 // modelsProviderRmOptions is one `models provider rm`.

@@ -189,6 +189,19 @@ func TestPriceSetWritesTheLeaves(t *testing.T) {
 		t.Errorf("web_search_per_1k = %v, want 0.01", fresh.WebSearchPer1k)
 	}
 
+	// A model ID may carry a dot, and it is one name whatever dots it carries:
+	// the key `model_prices.moonshotai/kimi-k2.5.input_per_m` is a spelling of
+	// the row `model_prices.*.input_per_m` even though splitting both on the dot
+	// counts four segments against three.
+	out, _, err = execute(t, "models", "price", "set", "moonshotai/kimi-k2.5", "--input-per-m", "0.6", "--output-per-m", "2.5")
+	if err != nil {
+		t.Fatalf("a model ID with a dot was refused: %v\n%s", err, out)
+	}
+	dotted := modelsWriteLocalConfig(t, path).ModelPrices["moonshotai/kimi-k2.5"]
+	if dotted.InputPerM == nil || *dotted.InputPerM != 0.6 || dotted.OutputPerM == nil || *dotted.OutputPerM != 2.5 {
+		t.Errorf("the dotted entry carries %v in and %v out, want 0.6 and 2.5", dotted.InputPerM, dotted.OutputPerM)
+	}
+
 	before := readFileString(t, path)
 	out, _, err = execute(t, "models", "price", "set", "vendor/model-half", "--cache-read", "0.2")
 	if err == nil {

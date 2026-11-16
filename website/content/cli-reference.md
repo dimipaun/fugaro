@@ -4758,10 +4758,15 @@ Write the leaves of one provider route in this project's config
 Set the fields of one entry of the project config's providers block.
 
 Only the flags you pass are written: every other leaf of the entry, every
-comment and every other key of the file is kept. A name the config does not
-carry yet is created, and the file's own rules are what it is held to — an
-entry needs a kind, an endpoint, an auth and a secret name before it reads
-back.
+comment and every other key of the file is kept.
+
+The entry has to be in the file already: a name the config does not carry is
+refused, because a providers entry is not one until it lists the model IDs it
+serves (providers.<name>.models), and no flag here writes that list. Write
+the entry in the file — kind, base_url, auth, secret and models, as
+docs/multi-model.md §2 spells it — and its fields are this command's from
+then on, or claim one more model on a route that exists with
+`fugaro models add <id> --route <name>`.
 
 --secret names a stored secret and never carries the key itself: the value
 belongs in Secret Manager (`fugaro secrets set <name>`), and what lands in
