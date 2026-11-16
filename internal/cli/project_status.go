@@ -288,11 +288,20 @@ func reposStatusRepoOf(ctx context.Context, lc *localcfg.Config, row reposViewRe
 }
 
 // reposStatusChecks is the nine rows of spec §2.4, in order.
+//
+// The credential containers are read once for the repository and handed to the
+// two rows that need them: the view reads them for the repository a caller
+// named and for no other, while this screen draws every repository, and a read
+// per row would be two Secret Manager listings per repository for one answer.
 func reposStatusChecks(ctx context.Context, lc *localcfg.Config, row reposViewRepo, reads *reposStatusReads) []doctorCheck {
+	creds := row.Credentials
+	if creds == nil {
+		creds = reposViewCredentialsOf(ctx, lc, row.Provider, reposViewLocalNameOf(row.Canonical, row.Local.Key))
+	}
 	return []doctorCheck{
 		reposStatusRowAppOf(lc, row),
-		reposStatusRowCredentialOf(ctx, lc, row),
-		reposStatusRowAccountsOf(ctx, lc, row, reads),
+		reposStatusRowCredentialOf(lc, row, creds),
+		reposStatusRowAccountsOf(ctx, lc, row, creds, reads),
 		reposStatusRowImageOf(ctx, lc, row, reads),
 		reposStatusRowAllowDataToOf(lc, row),
 		reposStatusRowBrokerOf(lc, row),
@@ -361,16 +370,12 @@ func reposStatusRowAppOf(lc *localcfg.Config, row reposViewRepo) doctorCheck {
 // A listing that did not answer is a warning and not a failure: reporting "I
 // could not look" as a container with no version would send an operator to
 // store a value that is already there.
-func reposStatusRowCredentialOf(ctx context.Context, lc *localcfg.Config, row reposViewRepo) doctorCheck {
+func reposStatusRowCredentialOf(lc *localcfg.Config, row reposViewRepo, creds *reposViewCredentials) doctorCheck {
 	want := config.GitHubAppKeySecret
 	if row.Provider != "github" {
 		want = config.BitbucketSecret
 	}
 	repo := reposViewLocalNameOf(row.Canonical, row.Local.Key)
-	creds := row.Credentials
-	if creds == nil {
-		creds = reposViewCredentialsOf(ctx, lc, row.Provider, repo)
-	}
 	if creds.State != "" {
 		return doctorCheck{ID: reposStatusRowCredential, Severity: "warning",
 			Problem: fmt.Sprintf("whether %s's %s container holds an enabled version could not be read: %s", pluginwire.Printable(row.Canonical), pluginwire.Printable(want), creds.State),
@@ -414,7 +419,7 @@ func credentialAge(e reposViewCredential) string {
 // reposStatusRowAccountsOf is doctor's own claude-accounts-stored check for this
 // repository, and a passing row of its own where doctor has nothing to say (a
 // repository whose config names no account of its own).
-func reposStatusRowAccountsOf(ctx context.Context, lc *localcfg.Config, row reposViewRepo, reads *reposStatusReads) doctorCheck {
+func reposStatusRowAccountsOf(ctx context.Context, lc *localcfg.Config, row reposViewRepo, creds *reposViewCredentials, reads *reposStatusReads) doctorCheck {
 	repo := reposViewLocalNameOf(row.Canonical, row.Local.Key)
 	if len(namedClaudeAccounts(lc, repo)) == 0 {
 		return doctorCheck{ID: reposStatusRowAccounts, OK: true, Severity: "info",
@@ -422,8 +427,11 @@ func reposStatusRowAccountsOf(ctx context.Context, lc *localcfg.Config, row repo
 	}
 	// nil says "the listing could not be attempted", which is the warning
 	// doctor's own check draws and not an installation that stores nothing.
+	// Only the credential read's own state earns that: where it answered, the
+	// entry list is the repository's containers whether or not any of them is
+	// an account token.
 	var listed []secretEntry
-	if creds := row.Credentials; creds != nil && creds.State == "" {
+	if creds.State == "" {
 		listed = []secretEntry{}
 		for _, e := range creds.Entries {
 			latest := ""
@@ -763,11 +771,12 @@ func reposStatusRowJobGrantOf(ctx context.Context, lc *localcfg.Config, row repo
 			Problem: "the credentials service's IAM policy could not be read, so whether " + p + "'s job account may invoke it is not in this answer: " + reads.bindWhy,
 			Fix:     "rerun with the Cloud Run and IAM APIs reachable, or read it yourself: gcloud run services get-iam-policy " + infra.CredentialsServiceName}
 	}
-	granted := false
+	granted, matched := false, false
 	for _, j := range accounts {
 		if j.Repo != repo {
 			continue
 		}
+		matched = true
 		member := "serviceAccount:" + gcp.ServiceAccountID(slug, j.Workflow) + "@" + lc.GCPProject + ".iam.gserviceaccount.com"
 		yes, unread := invokerGranted(bindings, member)
 		if unread || unknown {
@@ -778,6 +787,15 @@ func reposStatusRowJobGrantOf(ctx context.Context, lc *localcfg.Config, row repo
 		if yes {
 			granted = true
 		}
+	}
+	// No job account of this repository's at all is a read this row cannot
+	// judge, and never "it holds no grant": the list is derived from the
+	// installation's profiles, and a repository whose workflows none of them
+	// names has nothing here to judge rather than a missing grant.
+	if !matched {
+		return doctorCheck{ID: reposStatusRowJobGrant, Severity: "warning",
+			Problem: fmt.Sprintf("%s's job is deployed, and the installation's profiles name no job account of its own, so whether one may invoke the credentials service is not in this answer", p),
+			Fix:     selfCommand() + " update --repo " + quoteWord(row.Canonical) + " plans its jobs once its fugaro.yaml names a workflow the profile covers"}
 	}
 	if !granted {
 		return doctorCheck{ID: reposStatusRowJobGrant,
