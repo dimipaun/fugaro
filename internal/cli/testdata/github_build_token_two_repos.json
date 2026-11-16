@@ -1,0 +1,8 @@
+[
+  {"method": "GET", "path": "/repos/acme/app/installation", "status": 200,
+   "response": {"id": 777, "app_id": 12345, "target_type": "Organization"}},
+  {"method": "POST", "path": "/app/installations/777/access_tokens",
+   "request": {"repositories": ["app", "lib"], "permissions": {"contents": "read", "metadata": "read"}},
+   "status": 201,
+   "response": {"token": "build-token-not-a-real-credential", "expires_at": "2099-01-01T00:00:00Z", "repository_selection": "selected"}}
+]

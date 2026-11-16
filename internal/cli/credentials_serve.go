@@ -647,7 +647,27 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		// policy: the table must be the one the per-repository bindings are
 		// made from.
 		Repos: repos,
-		Log:   log,
+		// The service's own URL, which is already read and checked as the
+		// audience (credentialsServiceAudience above): a build's Bitbucket
+		// grant names the proxy its git will reach, and the URL in that answer
+		// is this service's and never the Host header of the call that asked
+		// for it -- a grant built from a caller's own text would send a
+		// build's clone wherever its caller said (B1, D2302). The check above
+		// is what makes this the same value a caller's ID token is minted for,
+		// so the grant names a URL the build can actually reach.
+		BaseURL: env[envCredentialsServiceURL],
+		// The build pairings (B1, rule 9): what a Bitbucket build's grant
+		// records and what the proxy's own admission reads back on every call
+		// that build's git makes, over the same client and therefore the same
+		// service identity as the slips above. It is a store of its own
+		// because the act is its own — a pairing is neither a selection's
+		// business nor a run's, it is written as a grant is answered and read
+		// by a caller that is not a run at all — and it is wired here rather
+		// than left to the database the other routes write through: a
+		// deployment that wired nothing would refuse every Bitbucket build
+		// rather than answer a grant naming a proxy that admits nothing.
+		BuildPairs: &creds.RTDBStore{DB: db},
+		Log:        log,
 	}, nil
 }
 

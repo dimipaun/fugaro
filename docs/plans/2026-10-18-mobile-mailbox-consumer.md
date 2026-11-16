@@ -133,7 +133,7 @@ paragraph.
       "at": { ".validate": "TIMESTAMP" },
       "mac": { ".validate": "MACOK" },
       "agent": { ".validate": "AGENTID" },
-      "kind": { ".validate": "newData.isString() && (newData.val() == 'message' || newData.val() == 'prompt' || newData.val() == 'answer' || newData.val() == 'action')" },
+      "kind": { ".validate": "newData.isString() && (newData.val() == 'message' || newData.val() == 'prompt' || newData.val() == 'answer' || newData.val() == 'action' || newData.val() == 'registration')" },
       "options": {
         ".validate": "PARENTKIND == 'prompt' && newData.hasChildren()",
         "$i": { ".validate": "OPTIONIDX && newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxOptionLength}}" }

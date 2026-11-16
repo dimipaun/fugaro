@@ -320,7 +320,7 @@ message from a bad state: `wrong-type`, `empty-string`, `bad-key`, `too-long`,
 `bad-character`, `bad-timestamp`, and the three this module shares with it —
 `not-an-object`, `unknown-field`, `missing-field`.
 
-P6.3 added a `mac` to every message and the four message kinds to the schema,
+P6.3 added a `mac` to every message and the message kinds to the schema,
 so nine of the schema's refusal codes reach the mailbox through a delivery,
 unchanged and unprefixed but for the field: `too-many` and `too-few` (a
 prompt's options and a heartbeat's agents are bounded lists), `unknown-verb`
@@ -329,7 +329,11 @@ could not be executed as it is written), `bad-mac` (a tag that is not a
 32-byte HMAC-SHA-256 in lowercase hex), `duplicate-entry` (two options, or two
 agents, that a spoken "option two" or "talk to <agent>" could not tell apart),
 and `field-not-allowed` (a field on a kind of message that does not carry it) —
-plus `unknown-kind` below. A delivery's refusal set is the schema's whole table
+plus `unknown-kind` below. P5.2.1 added the `registration` kind, and with it
+three more, for twelve in all: `unknown-platform` (a platform that is not one
+of the two the node shape in §3.4 names), `bad-zone` (a quiet-hours zone that
+is not an IANA-shaped name) and `bad-window` (a quiet-hours minute outside the
+day, or a window whose two ends are the same minute). A delivery's refusal set is the schema's whole table
 (`Object.values(REFUSALS)`), so a code added there reaches here without an edit
 in this module.
 `unknown-kind` is spelled the same in both modules and means a different

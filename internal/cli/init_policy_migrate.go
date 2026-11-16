@@ -60,6 +60,14 @@ type policyMigration struct {
 	changes []projectpolicy.Change
 	derived []string // the top-level members derived from the local config, sorted
 
+	// identities is what the creds state store holds for the project's typed
+	// Bitbucket tokens, keyed by each token's document key (R12). It is read
+	// once, from the same database this plan's node came from, because three
+	// readers of one plan need it — the migration's derived members, the drift
+	// comparison and the write's own verification — and a second read of a
+	// store the plan already had in hand would be a second state.
+	identities map[string]string
+
 	// node is the node as it stands: the migrated document when there is a
 	// migration, the published one otherwise. It is what the publish and the
 	// re-seed read, so both work on the document the operator's diff showed.
@@ -186,6 +194,15 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 	if err != nil {
 		return nil, false, err
 	}
+	// The identities the node's bitbucket_tokens key carries (R12) are read
+	// from this same database, once, before anything is derived from them: a
+	// project that names no typed token answers nil without a read at all, so
+	// the installation holding the legacy bitbucket-token alone converges with
+	// no step (R3).
+	identities, err := bitbucketTokenIdentities(ctx, db, lc)
+	if err != nil {
+		return nil, false, err
+	}
 	if !found {
 		// #1656: a project that has never published a node is not always a
 		// project with nothing to do. The local config can state something only
@@ -198,9 +215,9 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 		if !firstPublishCarriesANodeOnlyMember(lc) {
 			return nil, false, nil
 		}
-		return firstPolicyPublish(ctx, db, lc, etag, configPath)
+		return firstPolicyPublish(ctx, db, lc, etag, configPath, identities)
 	}
-	node, derr := withDerivedMembers(raw, lc)
+	node, derr := withDerivedMembers(raw, lc, identities)
 	moved, changes, err := projectpolicy.Migrate(node)
 	switch {
 	case err == nil && len(changes) == 0:
@@ -238,7 +255,7 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 	_ = json.Unmarshal(raw, &head)
 	m = &policyMigration{lc: lc, db: db, etag: etag, moved: moved, changes: changes,
 		from: head.Version, path: configPath, recorded: lc.PolicyGeneration,
-		derived: derivedMembers(base, raw)}
+		derived: derivedMembers(base, raw), identities: identities}
 	// The publish half reads the same node, through the same ownership gate and
 	// the same ETag: the stage is one writer, and a publish that opened a second
 	// read path would be the second writer — with its own, weaker gate — that
@@ -254,7 +271,7 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 	}
 	m.node = old
 	m.importCloneURLs = cloneURLsToImport(lc, old, configPath)
-	m.drift = policyConfigDrift(lc, old)
+	m.drift = policyConfigDrift(lc, old, identities)
 	if len(m.drift) > 0 {
 		if err := publishPlanFor(ctx, db, lc, m, base, old); err != nil {
 			return nil, true, err
@@ -405,14 +422,14 @@ func firstPublishCarriesANodeOnlyMember(lc *localcfg.Config) bool {
 // config states is a member the node does not carry yet — which is what the
 // operator's diff is a diff OF. policyConfigDrift reads a nil node as "nothing
 // to differ from" and would print no diff at all.
-func firstPolicyPublish(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, etag, configPath string) (*policyMigration, bool, error) {
-	body, pol, sources, err := policyNodeForPublish(ctx, lc, nil, nil, false, false, false)
+func firstPolicyPublish(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, etag, configPath string, identities map[string]string) (*policyMigration, bool, error) {
+	body, pol, sources, err := policyNodeForPublish(ctx, lc, nil, nil, false, false, false, identities)
 	if err != nil {
 		return nil, false, err
 	}
 	m := &policyMigration{lc: lc, db: db, etag: etag, path: configPath,
-		recorded: lc.PolicyGeneration, firstPublish: true}
-	m.drift = policyConfigDrift(lc, &projectpolicy.Policy{})
+		recorded: lc.PolicyGeneration, firstPublish: true, identities: identities}
+	m.drift = policyConfigDrift(lc, &projectpolicy.Policy{}, identities)
 	m.pub = &policyPublish{body: body, pol: pol, drift: m.drift, sources: sources,
 		adopted: lc.PolicyGeneration == ""}
 	if err := requirePolicyRules(ctx, db, lc); err != nil {
@@ -445,7 +462,7 @@ func publishPlanFor(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, m
 		m.generations = &policyGenerationState{recorded: lc.PolicyGeneration, published: m.etag}
 		return nil
 	}
-	body, pol, sources, err := policyNodeForPublish(ctx, lc, old, base, true, false, false)
+	body, pol, sources, err := policyNodeForPublish(ctx, lc, old, base, true, false, false, m.identities)
 	if err != nil {
 		return err
 	}
@@ -942,7 +959,7 @@ func (m *policyMigration) printGenerationState(w io.Writer) {
 // adds members too (the version) and the diff has to say which is which.
 func derivedMembers(moved, raw []byte) []string {
 	var out []string
-	for _, key := range []string{bitbucketTokenKey, bitbucketAPIRootsKey, verifierAccountsKey} {
+	for _, key := range []string{bitbucketTokenKey, projectpolicy.BitbucketTokensKey, bitbucketAPIRootsKey, verifierAccountsKey} {
 		before, was, err := jsonMember(raw, key)
 		if err == nil && was && !projectpolicy.IsNull(before) {
 			continue
@@ -968,11 +985,12 @@ const (
 
 // withDerivedMembers patches into the node the members a publish would have
 // derived from the project's local config and the node cannot state — the
-// bitbucket_token block, the bitbucket_api_roots allow-list and the
-// verifier_accounts list — using the publisher's own functions
-// (DeriveBitbucketToken, and the config's bitbucket_api_roots and
-// verifier_accounts, which the publisher copies). The returned node is the
-// input byte for byte when there was nothing to add.
+// bitbucket_token block, the typed bitbucket_tokens key, the
+// bitbucket_api_roots allow-list and the verifier_accounts list — using the
+// publisher's own functions (DeriveBitbucketToken, DeriveBitbucketTokens, and
+// the config's bitbucket_api_roots and verifier_accounts, which the publisher
+// copies). The returned node is the input byte for byte when there was nothing
+// to add.
 //
 // It runs whether or not the migration would have refused, and before it: a
 // version-3 node whose profile mounts the project's Bitbucket credential is
@@ -989,7 +1007,11 @@ const (
 // entry), and it is the caller's to place: only a write that would carry the
 // block — a pending migration — is stopped by it, because a node that is not
 // migrated derives nothing and so needs nothing.
-func withDerivedMembers(raw []byte, lc *localcfg.Config) ([]byte, error) {
+//
+// identities is the half of the typed tokens the file does not state (R12), and
+// it is read by the caller from the creds state store rather than here, because
+// the same read answers the drift comparison and the write's verification too.
+func withDerivedMembers(raw []byte, lc *localcfg.Config, identities map[string]string) ([]byte, error) {
 	carries := func(key string) bool {
 		before, was, err := jsonMember(raw, key)
 		return err == nil && was && !projectpolicy.IsNull(before)
@@ -1003,6 +1025,21 @@ func withDerivedMembers(raw []byte, lc *localcfg.Config) ([]byte, error) {
 		if token != nil {
 			if node, err = patchPolicyJSON(node, bitbucketTokenKey, token); err != nil {
 				return raw, userErr("deriving the policy's %s block from %s: %v", bitbucketTokenKey, lc.Name, err)
+			}
+		}
+	}
+	// The typed tokens are the other half of the same file and travel the same
+	// way (R5): the records are in the config and the identities are in the
+	// creds state store, and a node the migration rewrote without the key is a
+	// node whose runs cannot tell one token's coverage from another's.
+	if !carries(projectpolicy.BitbucketTokensKey) {
+		tokens, err := projectpolicy.DeriveBitbucketTokens(lc.BitbucketTokens, identities)
+		if err != nil {
+			return raw, userErr("%v", err)
+		}
+		if tokens != nil {
+			if node, err = patchPolicyJSON(node, projectpolicy.BitbucketTokensKey, tokens); err != nil {
+				return raw, userErr("deriving the policy's %s key from %s: %v", projectpolicy.BitbucketTokensKey, lc.Name, err)
 			}
 		}
 	}
@@ -1441,7 +1478,7 @@ func (s *policyMigrateStage) Verify(ctx context.Context) error {
 		// A publish that landed is a node the config states what it says: the
 		// write is the whole of the fix, and a node that still differs is a
 		// publish this Fugaro would make again on every run.
-		if drift := policyConfigDrift(s.m.lc, p); len(drift) > 0 {
+		if drift := policyConfigDrift(s.m.lc, p, s.m.identities); len(drift) > 0 {
 			return fmt.Errorf("the published policy was written but still does not carry what the local config states (%s)", memberListText(drift))
 		}
 	}

@@ -45,16 +45,15 @@ type gitCredentialOptions struct {
 }
 
 // gitCredBuildToken is where the entry mode gets the credentials service's build
-// route (internal/buildtoken's Client). It is nil in this tree — the route is
-// B1 and the client that talks to it is I2's, so the two halves of the contract
-// are built side by side and joined there — and the entry mode refuses when it
-// is nil rather than falling back to anything: the credential a bake clones with
-// is the project's build identity's and it reaches exactly the entry's
-// repositories, which is not something this process can mint for itself.
+// route (internal/buildtoken's Client), and what ships is the call itself
+// (gitcred_build.go, I2). The entry mode refuses when the seam is nil rather
+// than falling back to anything: the credential a bake clones with is the
+// project's build identity's and it reaches exactly the entry's repositories,
+// which is not something this process can mint for itself.
 //
 // A test installs a client that records the request here, so what the build asks
-// for is pinned rather than assumed; nothing that ships ever sets it.
-var gitCredBuildToken func(cmd *cobra.Command) (buildtoken.Client, error)
+// for is pinned rather than assumed, and only a test ever leaves it nil.
+var gitCredBuildToken func(cmd *cobra.Command) (buildtoken.Client, error) = newBuildTokenClient
 
 // newImageGitCredentialCmd is `fugaro image git-credential`, the image
 // build's credential step: it writes one git credential-store line for the
@@ -178,7 +177,7 @@ func runGitCredentialForEntry(cmd *cobra.Command, o gitCredentialOptions) error 
 		return userErr("--provider %q is not %s or %s", o.provider, gitprov.KindBitbucket, gitprov.KindGitHub)
 	}
 	if gitCredBuildToken == nil {
-		return userErr("this build cannot ask for the entry's credential: the credentials service's build route is not wired into this binary yet")
+		return userErr("this build cannot ask for the entry's credential: no route to the credentials service is installed in this binary")
 	}
 	client, err := gitCredBuildToken(cmd)
 	if err != nil {
