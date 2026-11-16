@@ -41,6 +41,10 @@ const testKID = "test-key-1"
 // credential, and it is not secret-shaped.
 const testUID = "m~AAAAAAAAAAAAAAAAAAAAAA"
 
+// testSlug is a project slug of the shape internal/task.Slug writes, which is
+// also the key the policy node lives under.
+const testSlug = "fugaro-aaaaaaaaaaaaaaaa"
+
 // testRunUID is a run's identity, the shape internal/budget/token mints for a
 // job: `r~<slug>~<run>`. It is here to be REFUSED — a run is not a device and
 // this service is not one a run may reach.

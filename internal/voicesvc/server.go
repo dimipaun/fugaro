@@ -67,17 +67,13 @@ func NewServer(cfg Config) (*Server, error) {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := s.now()
 	if r.URL.Path != StatusPath {
-		s.refuse(w, r, start, "", "", http.StatusNotFound, WireError{
-			Error:   ReasonNotFound,
-			Message: "this service answers one path: the project-status query at " + StatusPath,
-		})
+		s.refuseWith(w, r, start, "", "", http.StatusNotFound, ReasonNotFound,
+			"this service answers one path: the project-status query at "+StatusPath)
 		return
 	}
 	if r.Method != http.MethodPost {
-		s.refuse(w, r, start, "", "", http.StatusMethodNotAllowed, WireError{
-			Error:   ReasonBadRequest,
-			Message: "the project-status query is a POST carrying the project in its body",
-		})
+		s.refuseWith(w, r, start, "", "", http.StatusMethodNotAllowed, ReasonBadRequest,
+			"the project-status query is a POST carrying the project in its body")
 		return
 	}
 	s.status(w, r, start)
@@ -94,10 +90,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) status(w http.ResponseWriter, r *http.Request, start time.Time) {
 	tok, ok := BearerToken(r.Header.Get(HeaderAuth))
 	if !ok {
-		s.refuse(w, r, start, "", "", http.StatusUnauthorized, WireError{
-			Error:   ReasonTokenUnverified,
-			Message: "present the device's Firebase ID token as " + HeaderAuth + ": " + authScheme + "<token>",
-		})
+		s.refuseWith(w, r, start, "", "", http.StatusUnauthorized, ReasonTokenUnverified,
+			"present the device's Firebase ID token as "+HeaderAuth+": "+authScheme+"<token>")
 		return
 	}
 	id, err := s.auth.VerifyDevice(r.Context(), tok)
@@ -131,17 +125,31 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request, start time.Time)
 	})
 }
 
-// refuse answers a refusal this file built.
-func (s *Server) refuse(w http.ResponseWriter, r *http.Request, start time.Time, device, project string, status int, e WireError) {
-	s.refuseErr(w, r, start, device, project, refuse(e.Error, errors.New(e.Message)))
+// refuseWith answers a refusal this file built, with the status this file
+// chose. It is for the two the request's SHAPE decides — a path this service
+// does not serve and a method it does not serve — where the reason alone would
+// not carry the difference: `not_found` and `bad_request` are one reason each,
+// while "this path is not mine at all" and "this path is mine but you knocked
+// on it wrong" are two statuses.
+//
+// The status is an argument and not a lookup for that reason, and it is passed
+// at the call rather than defaulted, so a reader sees which the answer is.
+func (s *Server) refuseWith(w http.ResponseWriter, r *http.Request, start time.Time, device, project string, status int, reason, message string) {
+	WriteWireError(w, status, WireError{Error: reason, Message: message})
+	s.logCall(callLog{
+		act:     "voice status",
+		device:  device,
+		project: project,
+		status:  status,
+		reason:  reason,
+		elapsed: s.now().Sub(start),
+	})
 }
 
-// refuseErr answers an error carrying a wire reason, and logs the one line.
-//
-// The status is derived from the reason and never from the message: a handler
-// that read a sentence to decide an HTTP status would change its behaviour when
-// a sentence is edited, and half these sentences are another writer's text
-// (internal/projectpolicy's refusal).
+// refuseErr answers an error carrying a wire reason. The status is derived from
+// the reason and not from the message: a handler that read a sentence to decide
+// an HTTP status would change its behaviour when a sentence is edited, and half
+// these sentences are another writer's text (internal/projectpolicy's refusal).
 func (s *Server) refuseErr(w http.ResponseWriter, r *http.Request, start time.Time, device, project string, err error) {
 	reason := ReasonOf(err)
 	status := statusFor(reason)
