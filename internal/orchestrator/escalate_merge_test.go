@@ -1,0 +1,1192 @@
+package orchestrator_test
+
+import (
+	"context"
+	"reflect"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/dimipaun/fugaro/internal/escalation"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/orchestrator"
+	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/safetext"
+)
+
+// The ladder's executor past rung 2 (E10b): rung 3's merge under D1245's gate,
+// and rung 4's split.
+//
+// What is pinned here is the acting and never the deciding: escalation.Decide
+// answered the rung and E1's own tests hold that rule, so every test below hands
+// the hook a step, a reason and a reading and asserts on what it did with them.
+// The reading, the host and the log are stubs; the state is the real one
+// (internal/gcpfake) and the writes go through Apply, so the ledger these tests
+// read back is a document this release accepted and the question they read back
+// is one the validator would take.
+//
+// The hook is called directly rather than through a tick, and that is the one
+// thing a reader of this file should know. MergeSeams.Node is the cycle's own
+// state and commit path: a hook's write lands inside a cycle that holds a
+// revision of its own (patch.go's Apply is bound to BaseRev, store.go's Save to
+// the ETag it read), so a node of the hook's own would leave the cycle's next
+// write refused. The node here is therefore re-read before every write, which is
+// what O14's wiring has to do, and a tick-driven test would be a test about a
+// wiring no release has yet.
+
+const (
+	// mergeRun is the run behind the head under judgement, as the record names
+	// it.
+	mergeRun = "20261107-090000-abcd"
+	// mergeReviewRun and mergeJudgeRun are the two rung 3 runs of a head that
+	// is covered: the review D2043 requires and the judge whose answer may veto.
+	mergeReviewRun = "20261107-100000-revw"
+	mergeJudgeRun  = "20261107-110000-judg"
+	// mergePR is the pull request every reading here belongs to.
+	mergePR = 7
+	// mergeFinding is a finding key of the shape the tree writes (runstore's
+	// ValidFindingKey): lower hex, sixteen characters.
+	mergeFinding = "0123456789abcdef"
+)
+
+// mergeStub is the launcher, the commenter and the log as one seam: what the
+// hook started, what it posted and what it wrote down. The log remembers the
+// entries it was given, which is what makes the hook's own read of an earlier
+// line (MergeLog.Logged) the read a real log would answer.
+type mergeStub struct {
+	t          *testing.T
+	launchErr  error
+	commentErr error
+	loggedErr  error
+	appendErr  error
+	launched   []orchestrator.LadderRequest
+	comments   []string
+	lines      []orchestrator.Entry
+	written    map[string]bool
+}
+
+func newMergeStub(t *testing.T) *mergeStub {
+	t.Helper()
+	return &mergeStub{t: t, written: map[string]bool{}}
+}
+
+func (m *mergeStub) LaunchLadder(_ context.Context, req orchestrator.LadderRequest) error {
+	if m.launchErr != nil {
+		return m.launchErr
+	}
+	m.launched = append(m.launched, req)
+	return nil
+}
+
+func (m *mergeStub) LadderComment(_ context.Context, _ orchestrator.WorkItem, body string) error {
+	if m.commentErr != nil {
+		return m.commentErr
+	}
+	m.comments = append(m.comments, body)
+	return nil
+}
+
+func (m *mergeStub) Append(_ context.Context, e orchestrator.Entry) error {
+	if m.appendErr != nil {
+		return m.appendErr
+	}
+	m.lines = append(m.lines, e)
+	m.written[orchestrator.EntryID(e.Subject, e.Transition)] = true
+	return nil
+}
+
+func (m *mergeStub) Logged(_ context.Context, id string) (bool, error) {
+	if m.loggedErr != nil {
+		return false, m.loggedErr
+	}
+	return m.written[id], nil
+}
+
+// line is the one line a test expects under one transition, and it fails when
+// there is none: every outcome this file pins writes exactly one, and the id is
+// derived from the head, so a second entry under it is the same key rewritten.
+func (m *mergeStub) line(transition string) orchestrator.Entry {
+	m.t.Helper()
+	var found []orchestrator.Entry
+	for _, e := range m.lines {
+		if e.Transition == transition {
+			found = append(found, e)
+		}
+	}
+	if len(found) != 1 {
+		m.t.Fatalf("the log carries %d lines under %q, and one outcome writes one: %+v", len(found), transition, m.lines)
+	}
+	return found[0]
+}
+
+// mergeHostStub is MergeHost as a test sets it: the pull request and the checks
+// it answers with, the refusals it gives, and every call it was asked for in
+// the order it was asked.
+//
+// merged records only the heads a merge landed for, so a test that sees nothing
+// in it has seen no merge rather than a refused one; calls records the attempts
+// either way, which is what lets a test pin the order of a landing's two calls.
+type mergeHostStub struct {
+	t         *testing.T
+	state     gitprov.PRState
+	draft     bool
+	head      string
+	checks    []gitprov.CheckRun
+	prErr     error
+	checksErr error
+	readyErr  error
+	mergeErr  error
+	calls     []string
+	merged    []string
+}
+
+func newMergeHost() *mergeHostStub {
+	return &mergeHostStub{state: gitprov.PROpen}
+}
+
+func (h *mergeHostStub) PullRequest(context.Context, int) (gitprov.PRInfo, error) {
+	if h.prErr != nil {
+		return gitprov.PRInfo{}, h.prErr
+	}
+	h.calls = append(h.calls, "pull")
+	return gitprov.PRInfo{Number: mergePR, URL: "https://example.invalid/pr/7", State: h.state, Draft: h.draft, HeadSHA: h.head}, nil
+}
+
+func (h *mergeHostStub) Checks(_ context.Context, _ int, sha string) ([]gitprov.CheckRun, error) {
+	if h.checksErr != nil {
+		return nil, h.checksErr
+	}
+	h.calls = append(h.calls, "checks "+sha)
+	return h.checks, nil
+}
+
+func (h *mergeHostStub) MarkReady(_ context.Context, _ int, head string) error {
+	h.calls = append(h.calls, "ready "+head)
+	return h.readyErr
+}
+
+func (h *mergeHostStub) Merge(_ context.Context, _ int, head string) error {
+	h.calls = append(h.calls, "merge "+head)
+	if h.mergeErr != nil {
+		return h.mergeErr
+	}
+	h.merged = append(h.merged, head)
+	return nil
+}
+
+// beyond is every call but the two the gate reads whatever it decides: a pull
+// request and the checks on a head. A test that sees this empty has seen the
+// gate read and then refuse, and nothing asked for on the strength of it.
+func (h *mergeHostStub) beyond() []string {
+	var out []string
+	for _, c := range h.calls {
+		if !strings.HasPrefix(c, "pull") && !strings.HasPrefix(c, "checks ") {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// storeNode is the cycle's own write path as the seam sees it: the state the
+// node carries and one Apply of one op list committed through the store. It
+// re-reads the node before every write, so what the hook reads and what it lands
+// are the documents the store holds — and so Apply's own validation, and the
+// store's, stand between a test and a ledger this release would refuse.
+type storeNode struct {
+	t    *testing.T
+	node *orchestrator.Node
+	now  time.Time
+}
+
+func (n *storeNode) State(ctx context.Context) (orchestrator.State, error) {
+	s, _, err := n.node.Load(ctx)
+	return s, err
+}
+
+func (n *storeNode) Apply(ctx context.Context, ops []orchestrator.Op) error {
+	s, etag, err := n.node.Load(ctx)
+	if err != nil {
+		return err
+	}
+	next, err := orchestrator.Apply(s, orchestrator.Patch{BaseRev: s.Rev, Ops: ops}, orchestrator.Actor{Class: orchestrator.Daemon, Now: n.now})
+	if err != nil {
+		return err
+	}
+	return n.node.Save(ctx, next, etag)
+}
+
+// mergeHarness is one rung 3 or 4 execution: the node the state lives in, the
+// reading, the host, the log, the sink and the seams a hook acts through.
+type mergeHarness struct {
+	t      *testing.T
+	now    time.Time
+	db     *gcpfake.RTDB
+	node   *orchestrator.Node
+	reader *mergeReaderStub
+	host   *mergeHostStub
+	stub   *mergeStub
+	sink   *tickSink
+	seams  orchestrator.MergeSeams
+}
+
+// newMergeHarness is a hook over one node: the state is seeded through the
+// store's own write, and every seam but the state is a stub. The run ids are the
+// ones the minter hands out in order, so a test names the ids it expects a
+// launch to be minted under and a launch it did not expect fails loudly.
+func newMergeHarness(t *testing.T, now time.Time, runs []string, items ...orchestrator.WorkItem) *mergeHarness {
+	t.Helper()
+	f := gcpfake.NewRTDB(t)
+	node := mustNode(t, rtdbClient(t, f), nil)
+	ctx := context.Background()
+	s := o6Node(t, now, items...)
+	_, etag, err := node.Load(ctx)
+	if err != nil {
+		t.Fatalf("reading the empty node: %v", err)
+	}
+	if err := node.Save(ctx, s, etag); err != nil {
+		t.Fatalf("seeding the node with the test's state: %v", err)
+	}
+	m := &mergeHarness{
+		t: t, now: now, db: f, node: node,
+		reader: &mergeReaderStub{t: t, reads: map[string]orchestrator.MergeReading{}},
+		host:   newMergeHost(),
+		stub:   newMergeStub(t),
+		sink:   &tickSink{},
+	}
+	mint := &o6Mint{t: t, runs: runs}
+	m.seams = orchestrator.MergeSeams{
+		Read:    m.reader,
+		Host:    m.host,
+		Node:    &storeNode{t: t, node: node, now: now},
+		Launch:  m.stub,
+		Comment: m.stub,
+		Log:     m.stub,
+		Notify:  m.sink,
+		Now:     clockAt(now),
+		Mint:    mint.mint,
+	}
+	return m
+}
+
+// act drives one entry of the hook, as E10a's ladder does: the item looked up
+// again from the node rather than carried in, the step and the reason the
+// decision gave, and the reading the daemon made.
+func (m *mergeHarness) act(id string, step escalation.Step, reason escalation.Reason, read orchestrator.LadderReading) {
+	m.t.Helper()
+	beyond := m.seams.Beyond()
+	if beyond == nil {
+		m.t.Fatalf("the merge seams answered no hook, and every seam but the sink is set")
+	}
+	if err := beyond(context.Background(), itemAt(m.t, m.state(), id), step, reason, read); err != nil {
+		m.t.Fatalf("the rung %s hook ended as %v", step.Rung, err)
+	}
+}
+
+// state is the node as it now stands, read back through the store.
+func (m *mergeHarness) state() orchestrator.State {
+	m.t.Helper()
+	s, _, err := m.node.Load(context.Background())
+	if err != nil {
+		m.t.Fatalf("reading the node back: %v", err)
+	}
+	return s
+}
+
+// item is one item of the node as it now stands.
+func (m *mergeHarness) item(id string) orchestrator.WorkItem {
+	m.t.Helper()
+	return itemAt(m.t, m.state(), id)
+}
+
+// question is the ladder's question about one item, which these tests expect to
+// be there: every refusal this file pins raises one.
+func (m *mergeHarness) question(id string) orchestrator.Decision {
+	m.t.Helper()
+	d, ok := m.state().Decision(id + "-escalation")
+	if !ok {
+		m.t.Fatalf("the node carries no escalation question about %q", id)
+	}
+	if d.WaitingOn != orchestrator.OnPerson {
+		m.t.Errorf("the question about %q waits on %q, and every one of these is a person's (D1247)", id, d.WaitingOn)
+	}
+	return d
+}
+
+// mergeReaderStub is MergeReader as a test sets it: the readings by item, and
+// the heads it was asked about, which is what pins that the gate judged the head
+// the ladder named.
+type mergeReaderStub struct {
+	t     *testing.T
+	reads map[string]orchestrator.MergeReading
+	err   error
+	heads []string
+}
+
+func (r *mergeReaderStub) MergeAt(_ context.Context, item orchestrator.WorkItem, head string) (orchestrator.MergeReading, error) {
+	if r.err != nil {
+		return orchestrator.MergeReading{}, r.err
+	}
+	read, ok := r.reads[item.ID]
+	if !ok {
+		r.t.Fatalf("the merge gate read %q, which this test gave no reading for", item.ID)
+	}
+	r.heads = append(r.heads, item.ID+"/"+head)
+	return read, nil
+}
+
+// r2Ledger is an item's ledger when the decision is about to put it at rung 3:
+// it has spent its rebase and its one stronger pass, and the rung 3 transition
+// is the hook's to write.
+func r2Ledger(now time.Time, head string, outer int) *orchestrator.Escalation {
+	e := ledger(escalation.R2, outer,
+		step("", escalation.R0, escalation.ReasonRebase, now.Add(-3*time.Hour), head),
+		step(escalation.R0, escalation.R2, escalation.ReasonAttempts, now.Add(-2*time.Hour), ""))
+	return &e
+}
+
+// r3Ledger is an item's ledger with rung 3 already written: the hook that
+// re-enters it re-reads a head rather than making a move.
+func r3Ledger(now time.Time, head string, outer int) *orchestrator.Escalation {
+	e := ledger(escalation.R3, outer,
+		step("", escalation.R0, escalation.ReasonRebase, now.Add(-3*time.Hour), head),
+		step(escalation.R0, escalation.R2, escalation.ReasonAttempts, now.Add(-2*time.Hour), ""),
+		step(escalation.R2, escalation.R3, escalation.ReasonR2Clean, now.Add(-time.Hour), head))
+	return &e
+}
+
+// mergeItem is one of these tests' items: the item the ladder has walked to the
+// rung its ledger names, in the phase a stalled item is left in.
+func mergeItem(id string, e *orchestrator.Escalation) orchestrator.WorkItem {
+	w := workItemOf(id)
+	w.Phase = orchestrator.PhaseFailed
+	w.RunID = mergeRun
+	w.Escalation = e
+	return w
+}
+
+// mergeRecord is the run behind the judged head: it ended, it pushed that head,
+// it changed one routine path, and it opened a pull request.
+func mergeRecord(head string) *runstore.Record {
+	return &runstore.Record{
+		Version:      1,
+		RunID:        mergeRun,
+		Status:       runstore.StatusSucceeded,
+		PushedHead:   head,
+		ChangedFiles: runstore.NewChangedFiles([]string{"docs/status.md"}),
+		PR:           &runstore.PRRef{Number: mergePR},
+	}
+}
+
+// mergeYes is the judge's answer that vetoes nothing: its only two actions are
+// the yes and the block, and the yes adds nothing the gate did not have (D2031).
+func mergeYes() runstore.MergeJudge {
+	return runstore.MergeJudge{
+		Verdict: runstore.MergeJudgeMergeWithFollowUps,
+		Reason:  "nothing fundamental",
+		Model:   "test-judge",
+	}
+}
+
+// mergePass is a reading every clause of D1245's gate passes on: a run that
+// ended at the judged head, a routine path set, green CI, no finding, a scored
+// review of that head and the judge's yes.
+func mergePass(head string) orchestrator.MergeReading {
+	return orchestrator.MergeReading{
+		Read:      true,
+		Number:    mergePR,
+		Record:    mergeRecord(head),
+		Findings:  orchestrator.Findings{Read: orchestrator.FindingsReadable, List: []orchestrator.Finding{}},
+		ReviewRun: mergeReviewRun,
+		Scored:    true,
+		JudgeRun:  mergeJudgeRun,
+		Verdict:   mergeYes(),
+	}
+}
+
+// mergeGreen is CI as a host reports it green: one check, finished, successful.
+func mergeGreen() []gitprov.CheckRun {
+	return []gitprov.CheckRun{{Status: "completed", Conclusion: "success"}}
+}
+
+// r3Step is the decision's own step for rung 3, at the ceiling the caller names:
+// escalation.Decide takes it from the item's row, and the gate reads it from
+// there rather than from the mode (D2030).
+func r3Step(ceiling escalation.CeilingAction) escalation.Step {
+	return escalation.Step{Rung: escalation.R3, AtCeiling: ceiling}
+}
+
+// r4Step is the decision's step for rung 4: no ceiling, because the split
+// merges nothing and the branch stays open.
+func r4Step() escalation.Step { return escalation.Step{Rung: escalation.R4} }
+
+// r3Read is the ladder's reading of the item at the head under judgement.
+// Nothing in it but the head and a run under way reaches the gate.
+func r3Read(head string) orchestrator.LadderReading {
+	return orchestrator.LadderReading{Read: true, Mode: rigor.POC, Elapsed: 4 * time.Hour, Churn: escalation.KindNone, HeadSHA: head}
+}
+
+// landable is a harness whose gate passes on the whole of D1245's evidence.
+func landable(t *testing.T, now time.Time, runs ...string) *mergeHarness {
+	t.Helper()
+	m := newMergeHarness(t, now, runs, mergeItem("wi-1", r2Ledger(now, headA, 2)))
+	m.reader.reads["wi-1"] = mergePass(headA)
+	m.host.head = headA
+	m.host.checks = mergeGreen()
+	return m
+}
+
+// TestR3MergesOnlyUnderGate is the gate itself: the whole of D1245's evidence
+// lands the head the ladder judged, and each missing piece of it refuses.
+//
+// The clause under each case is what the case is named for, and the mutation is
+// the same one for all of them: drop that clause from the gate and the case
+// below merges a head the clause is there to refuse.
+func TestR3MergesOnlyUnderGate(t *testing.T) {
+	now := o6Now()
+
+	t.Run("the whole gate lands the head it judged", func(t *testing.T) {
+		m := landable(t, now)
+		m.act("wi-1", r3Step(escalation.CeilingAutoMergeNotify), escalation.ReasonR2Clean, r3Read(headA))
+
+		if !slices.Equal(m.host.merged, []string{headA}) {
+			t.Fatalf("the host merged %v, and the gate passed at %s", m.host.merged, headA)
+		}
+		if strings.Contains(strings.Join(m.host.calls, " "), "ready") {
+			t.Fatalf("the host was asked %v, and an ordinary pull request needs no ready call", m.host.calls)
+		}
+		if got := m.reader.heads; len(got) != 1 || got[0] != "wi-1/"+headA {
+			t.Fatalf("the gate read %v, and it judges the head the ladder named", got)
+		}
+
+		e := m.item("wi-1").Escalation
+		if e == nil || e.Rung != escalation.R3 || len(e.Transitions) != 3 {
+			t.Fatalf("the ledger reads %+v, and rung 3 is one more transition", e)
+		}
+		if last := e.Transitions[2]; last.From != escalation.R2 || last.Reason != escalation.ReasonR2Clean || last.HeadSHA != headA {
+			t.Fatalf("the transition is %+v, and the rung the decision named is what moved the item", last)
+		}
+		if e.OuterAttempts != 2 {
+			t.Fatalf("the ledger counts %d ladder runs, and a landing spends none of them", e.OuterAttempts)
+		}
+		if got := m.stub.line("ladder-r3-land-" + headA[:8]); !strings.Contains(got.Text, "rung R3 (r2_clean)") ||
+			!strings.Contains(got.Text, string(orchestrator.ReasonPathsRoutine)) || !strings.Contains(got.Text, string(orchestrator.ReasonCIGreen)) {
+			t.Fatalf("the line reads %q, and a landing carries the whole of its evidence (D1245)", got.Text)
+		}
+		if len(m.stub.comments) != 1 {
+			t.Fatalf("the ladder posted %d comments for one move", len(m.stub.comments))
+		}
+
+		m.host.state = gitprov.PRMerged
+		m.act("wi-1", r3Step(escalation.CeilingAutoMergeNotify), escalation.ReasonR2Clean, r3Read(headA))
+		if len(m.host.merged) != 1 {
+			t.Fatalf("the second cycle merged %v, and a pull request merges once", m.host.merged[1:])
+		}
+		if len(m.stub.comments) != 1 {
+			t.Fatalf("the second cycle posted %d comments, and a cycle that made no move posts none", len(m.stub.comments))
+		}
+		if got := m.item("wi-1").Escalation; len(got.Transitions) != 3 {
+			t.Fatalf("the ledger reads %+v, and a cycle at the rung the item is at makes no move", got)
+		}
+		m.stub.line("ladder-r3-merged-" + headA[:8])
+	})
+
+	for _, tc := range []struct {
+		name string
+		code string
+		drop func(*orchestrator.MergeReading, *mergeHostStub)
+	}{
+		{
+			"a run that has not ended",
+			string(orchestrator.GateRunRunning),
+			func(r *orchestrator.MergeReading, _ *mergeHostStub) { r.Record.Status = runstore.StatusRunning },
+		},
+		{
+			"a record that pushed another commit",
+			string(orchestrator.GateHeadUnpushed),
+			func(r *orchestrator.MergeReading, _ *mergeHostStub) { r.Record.PushedHead = headB },
+		},
+		{
+			"a record with no changed-path set",
+			string(orchestrator.ReasonPathsMissing),
+			func(r *orchestrator.MergeReading, _ *mergeHostStub) { r.Record.ChangedFiles = nil },
+		},
+		{
+			"a changed-path set nobody bounded",
+			string(orchestrator.ReasonPathsTruncated),
+			func(r *orchestrator.MergeReading, _ *mergeHostStub) {
+				r.Record.ChangedFiles = &runstore.ChangedFiles{Paths: []string{"docs/status.md"}, Total: 500}
+			},
+		},
+		{
+			"a run that changed nothing",
+			string(orchestrator.ReasonNoCommits),
+			func(r *orchestrator.MergeReading, _ *mergeHostStub) {
+				r.Record.ChangedFiles = runstore.NewChangedFiles(nil)
+			},
+		},
+		{
+			"a path outside the routine allowlist",
+			string(orchestrator.GatePathsNotRoutine),
+			func(r *orchestrator.MergeReading, _ *mergeHostStub) {
+				r.Record.ChangedFiles = runstore.NewChangedFiles([]string{"internal/gateway/proxy.go"})
+			},
+		},
+		{
+			"CI nobody could read",
+			string(orchestrator.ReasonCIUnknown),
+			func(_ *orchestrator.MergeReading, h *mergeHostStub) { h.checks = nil },
+		},
+		{
+			"CI that failed",
+			string(orchestrator.GateCIRed),
+			func(_ *orchestrator.MergeReading, h *mergeHostStub) {
+				h.checks = []gitprov.CheckRun{{Status: "completed", Conclusion: "failure"}}
+			},
+		},
+		{
+			"a critical finding",
+			string(orchestrator.ReasonCriticalFinding),
+			func(r *orchestrator.MergeReading, _ *mergeHostStub) {
+				r.Findings.List = []orchestrator.Finding{{Severity: orchestrator.SeverityCritical, Path: "docs/status.md", Key: mergeFinding}}
+			},
+		},
+		{
+			"a high finding in a security path",
+			string(orchestrator.ReasonSecurityHighFinding),
+			func(r *orchestrator.MergeReading, _ *mergeHostStub) {
+				r.Findings.List = []orchestrator.Finding{{Severity: orchestrator.SeverityHigh, Path: "internal/gateway/proxy.go", Key: mergeFinding}}
+			},
+		},
+		{
+			"findings nobody could read",
+			string(orchestrator.ReasonFindingsAbsent),
+			func(r *orchestrator.MergeReading, _ *mergeHostStub) { r.Findings.Read = orchestrator.FindingsAbsent },
+		},
+		{
+			"a record nobody can place",
+			string(orchestrator.ReasonRecordUnreadable),
+			func(r *orchestrator.MergeReading, _ *mergeHostStub) { r.Record.Status = runstore.Status("invented") },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := landable(t, now)
+			read := m.reader.reads["wi-1"]
+			tc.drop(&read, m.host)
+			m.reader.reads["wi-1"] = read
+			m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+
+			refusedAt(t, m, headA, "ladder-r3-wait-"+headA[:8], tc.code)
+		})
+	}
+}
+
+// refusedAt is the outcome of a rung 3 the gate refused: nothing merged, one
+// question for a person carrying the code, and one line under the head's own
+// name. It is the assertion every refusal case below shares.
+func refusedAt(t *testing.T, m *mergeHarness, head, transition, code string) {
+	t.Helper()
+	if len(m.host.merged) != 0 {
+		t.Fatalf("the host merged %v, and the gate refused this head", m.host.merged)
+	}
+	line := m.stub.line(transition)
+	if !strings.Contains(line.Text, code) {
+		t.Fatalf("the line reads %q, and %q is the code this refusal is recorded under", line.Text, code)
+	}
+	if !strings.Contains(m.question("wi-1").Question, code) {
+		t.Fatalf("the question reads %q, and the person it goes to reads the code", m.question("wi-1").Question)
+	}
+	if m.item("wi-1").Phase == orchestrator.PhaseCancelled {
+		t.Fatalf("the item was cancelled, and a rung 3 that cannot merge waits for a person")
+	}
+}
+
+// TestR3HeadMovedRefuses is D1243 and G2 at the one place they are worth the
+// most: the merge names the head the gate judged, so a push after the gate
+// refuses the merge rather than landing a commit no verdict covers.
+//
+// Mutation: drop the head from the merge and the second case below lands the
+// commit the review and the judge never read.
+func TestR3HeadMovedRefuses(t *testing.T) {
+	now := o6Now()
+
+	t.Run("the pull request moved past the judged head", func(t *testing.T) {
+		m := landable(t, now)
+		m.host.head = headB
+		m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+
+		refusedAt(t, m, headA, "ladder-r3-wait-"+headA[:8], string(orchestrator.GateHeadMoved))
+		if got := m.host.beyond(); len(got) != 0 {
+			t.Fatalf("the host was asked %v, and a head that moved is refused before the merge is asked for", got)
+		}
+	})
+
+	t.Run("the host refuses the merge it was asked for", func(t *testing.T) {
+		m := landable(t, now)
+		m.host.mergeErr = gitprov.ErrHeadMoved
+		m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+
+		if !slices.Equal(m.host.calls, []string{"pull", "checks " + headA, "merge " + headA}) {
+			t.Fatalf("the host was asked %v, and the merge names the judged head", m.host.calls)
+		}
+		refusedAt(t, m, headA, "ladder-r3-wait-"+headA[:8], string(orchestrator.GateMergeRefused))
+		line := m.stub.line("ladder-r3-wait-" + headA[:8])
+		if !strings.Contains(line.Text, "head_moved") {
+			t.Fatalf("the line reads %q, and a refusal the host gave is recorded under its own closed code", line.Text)
+		}
+	})
+}
+
+// TestR3VetoRaisesDecision is G1 and D1247: a judge that blocked the merge
+// raises one question for a person on the item's own ladder id, carrying the
+// judge's own words fenced, and says so once.
+//
+// Mutation: treat a blocked verdict as an absent one and the item waits with no
+// verdict attached, or treat it as a yes and the blocked head merges.
+func TestR3VetoRaisesDecision(t *testing.T) {
+	now := o6Now()
+	m := landable(t, now)
+	m.reader.reads["wi-1"] = func() orchestrator.MergeReading {
+		r := mergePass(headA)
+		r.Verdict = runstore.MergeJudge{
+			Verdict: runstore.MergeJudgeBlocked,
+			Reason:  "the change rewrites the gate it is judged by",
+			Blocker: "the blocking issue",
+			Model:   "test-judge",
+		}
+		return r
+	}()
+	m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+
+	refusedAt(t, m, headA, "ladder-r3-wait-"+headA[:8], string(orchestrator.GateJudgeVeto))
+	q := m.question("wi-1").Question
+	if !strings.Contains(q, "the blocking issue") || !strings.Contains(q, "the change rewrites the gate it is judged by") {
+		t.Fatalf("the question reads %q, and D2037 attaches the judge's own answer to it", q)
+	}
+	if !strings.Contains(q, "```") {
+		t.Fatalf("the question reads %q, and the judge's words are fenced off from this program's own", q)
+	}
+	if len(m.sink.got) != 1 || m.sink.got[0].Kind != orchestrator.NotifyDecisionNeeded || m.sink.got[0].Subject != "wi-1-escalation" {
+		t.Fatalf("the sink was told %+v, and one question is one notification", m.sink.got)
+	}
+
+	m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+	if len(m.sink.got) != 1 {
+		t.Fatalf("a second cycle told a person %+v, and the question the node already carries is not asked twice", m.sink.got[1:])
+	}
+}
+
+// TestR3NonRoutineWaitsInEveryMode is G10 and D2047: a path set outside the
+// allowlist never auto-merges, in any mode. The mode is not what decides — the
+// step's ceiling is read, and the gate's own clause refuses whatever it says.
+//
+// Mutation: read the mode instead of the ceiling and the Hotfix case below
+// merges a change to the gateway.
+func TestR3NonRoutineWaitsInEveryMode(t *testing.T) {
+	now := o6Now()
+	for _, mode := range []rigor.Mode{rigor.POC, rigor.Pro, rigor.Hotfix} {
+		t.Run(string(mode), func(t *testing.T) {
+			m := landable(t, now)
+			read := m.reader.reads["wi-1"]
+			read.Record.ChangedFiles = runstore.NewChangedFiles([]string{"internal/gateway/proxy.go"})
+			m.reader.reads["wi-1"] = read
+
+			ladder := r3Read(headA)
+			ladder.Mode = mode
+			m.act("wi-1", r3Step(escalation.CeilingAutoMergeNotify), escalation.ReasonR2Clean, ladder)
+
+			refusedAt(t, m, headA, "ladder-r3-wait-"+headA[:8], string(orchestrator.GatePathsNotRoutine))
+			if len(m.stub.launched) != 0 {
+				t.Fatalf("the ladder launched %+v, and a head the gate refuses spends no run", m.stub.launched)
+			}
+		})
+	}
+}
+
+// TestR3CriticalAlwaysWaits is G10's other half: the ceiling D2037 gives
+// Critical is a person, and the ladder will not merge such an item at any mode.
+//
+// Mutation: let a merge through when the ceiling is wait_person and the case
+// below lands work nothing but a person may land.
+func TestR3CriticalAlwaysWaits(t *testing.T) {
+	now := o6Now()
+	m := landable(t, now)
+
+	read := r3Read(headA)
+	read.Mode = rigor.Hotfix
+	m.act("wi-1", r3Step(escalation.CeilingWaitPerson), escalation.ReasonR2Clean, read)
+
+	refusedAt(t, m, headA, "ladder-r3-wait-"+headA[:8], string(orchestrator.GateModeWaits))
+	if !strings.Contains(m.question("wi-1").Question, "nothing fundamental") {
+		t.Fatalf("the question reads %q, and the wait carries the verdict it was read with", m.question("wi-1").Question)
+	}
+
+	m.host.state = gitprov.PRMerged
+	m.act("wi-1", r3Step(escalation.CeilingWaitPerson), escalation.ReasonR2Clean, read)
+	if len(m.host.merged) != 0 {
+		t.Fatalf("a pull request that merged itself changed the outcome: %v", m.host.merged)
+	}
+}
+
+// TestR3DraftNotReadiedWhenSwitchOff is D2041 and D2046: `escalation.ready_drafts`
+// off means a stalled draft the gate would otherwise land waits for a person —
+// the switch is off in every installation that never turned it on, and a daemon
+// must not ready what nobody asked it to.
+//
+// Mutation: ready the draft unconditionally and the case below merges a pull
+// request no person moved out of draft.
+func TestR3DraftNotReadiedWhenSwitchOff(t *testing.T) {
+	now := o6Now()
+	m := landable(t, now)
+	m.host.draft = true
+	m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+
+	refusedAt(t, m, headA, "ladder-r3-wait-"+headA[:8], string(orchestrator.GateDraftHeld))
+	if got := m.host.beyond(); len(got) != 0 {
+		t.Fatalf("the host was asked %v, and a draft nobody readied is not touched", got)
+	}
+}
+
+// TestR3DraftReadiedThenMergedWhenOn is the other side of the switch: with
+// `escalation.ready_drafts` on the ladder readies the draft first and merges the
+// same head immediately after, which is the one automatic merge D2030 allows
+// without a person reading the pull request first.
+//
+// Mutation: merge the draft without the ready call and a provider that refuses
+// a merge on a draft turns every rung 3 into a refusal.
+func TestR3DraftReadiedThenMergedWhenOn(t *testing.T) {
+	now := o6Now()
+	m := landable(t, now)
+	m.host.draft = true
+	m.seams.ReadyDrafts = true
+	m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+
+	want := []string{"pull", "checks " + headA, "ready " + headA, "merge " + headA}
+	if !slices.Equal(m.host.calls, want) {
+		t.Fatalf("the host was asked %v, and a draft is readied before it is merged", m.host.calls)
+	}
+	if !slices.Equal(m.host.merged, []string{headA}) {
+		t.Fatalf("the host merged %v, and the gate passed", m.host.merged)
+	}
+	m.stub.line("ladder-r3-land-" + headA[:8])
+}
+
+// TestR3FollowUpsFiledWithImportance is D2040: the findings a merge did not
+// block are filed as one item each, ranked by the judge where it ranked them and
+// by their severity where it did not, and every one of them waits for a person.
+//
+// The two structural halves are pinned with it: the items are smaller work of
+// the merged item and carry no specification (D1246), and a second cycle files
+// nothing twice.
+//
+// Mutation: file the findings as a re-run of the item's own spec and the work
+// the ladder just decided about is relaunched under a fresh approval.
+func TestR3FollowUpsFiledWithImportance(t *testing.T) {
+	now := o6Now()
+	m := landable(t, now)
+	read := mergePass(headA)
+	read.Findings.List = []orchestrator.Finding{
+		{Severity: orchestrator.SeverityHigh, Path: "docs/status.md", Key: mergeFinding},
+		{Severity: orchestrator.SeverityMedium, Path: "docs/status.md", Key: "fedcba9876543210"},
+	}
+	read.Verdict.FollowUps = []runstore.MergeJudgeFollowUp{{Key: mergeFinding, Importance: runstore.MergeJudgeMinor}}
+	m.reader.reads["wi-1"] = read
+
+	m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+
+	if !slices.Equal(m.host.merged, []string{headA}) {
+		t.Fatalf("the host merged %v, and a high finding on a routine path does not block a landing", m.host.merged)
+	}
+	s := m.state()
+	for _, tc := range []struct {
+		suffix     string
+		importance runstore.MergeJudgeImportance
+		severity   orchestrator.Severity
+	}{
+		{"-fu-" + mergeFinding, runstore.MergeJudgeMinor, orchestrator.SeverityHigh},
+		{"-fu-fedcba9876543210", runstore.MergeJudgeMinor, orchestrator.SeverityMedium},
+	} {
+		w, ok := s.Item("wi-1" + tc.suffix)
+		if !ok {
+			t.Fatalf("the node carries no follow-up %q: %+v", "wi-1"+tc.suffix, s.WorkItems)
+		}
+		if w.Phase != orchestrator.PhaseQueued || w.Approved != nil {
+			t.Fatalf("the follow-up is %s with approval %+v, and the daemon approves its own work in neither case", w.Phase, w.Approved)
+		}
+		if w.Spec != "" {
+			t.Fatalf("the follow-up carries the spec %q, and a follow-up is never a relaunch of it (D1246)", w.Spec)
+		}
+		if w.Repo != "owner/repo" || w.Recipe != "standard" || w.RigorTier != "medium" {
+			t.Fatalf("the follow-up is %+v, and it is the merged item's own work", w)
+		}
+		if !strings.Contains(w.Brief, string(tc.severity)) || !strings.Contains(w.Brief, string(tc.importance)) {
+			t.Fatalf("the brief reads %q, and the person reading it sees the severity and the importance", w.Brief)
+		}
+	}
+
+	m.host.state = gitprov.PRMerged
+	m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+	if len(m.state().WorkItems) != 3 {
+		t.Fatalf("the second cycle filed %d items, and a landing files each follow-up once", len(m.state().WorkItems))
+	}
+}
+
+// TestR3NotifiesProAndHotfix is D2030: the two ceilings that merge and tell
+// somebody do, and the one that merges quietly does not.
+//
+// Mutation: notify on every merge and POC's every small change wakes the owner;
+// notify on none and a Pro landing lands without a word.
+func TestR3NotifiesProAndHotfix(t *testing.T) {
+	now := o6Now()
+	for _, tc := range []struct {
+		ceiling escalation.CeilingAction
+		want    []orchestrator.Kind
+	}{
+		{escalation.CeilingAutoMerge, nil},
+		{escalation.CeilingAutoMergeNotify, []orchestrator.Kind{orchestrator.NotifyMergedNeedsReview}},
+	} {
+		t.Run(string(tc.ceiling), func(t *testing.T) {
+			m := landable(t, now)
+			m.act("wi-1", r3Step(tc.ceiling), escalation.ReasonR2Clean, r3Read(headA))
+
+			if !slices.Equal(m.host.merged, []string{headA}) {
+				t.Fatalf("the host merged %v, and both of these ceilings merge under the same gate", m.host.merged)
+			}
+			kinds := make([]orchestrator.Kind, 0, len(m.sink.got))
+			for _, n := range m.sink.got {
+				kinds = append(kinds, n.Kind)
+			}
+			if !slices.Equal(kinds, tc.want) {
+				t.Fatalf("the sink was told %v, and this ceiling tells %v", kinds, tc.want)
+			}
+			if len(tc.want) == 1 && (m.sink.got[0].Subject != "wi-1" || !strings.Contains(m.sink.got[0].Text, "under the merge gate")) {
+				t.Fatalf("the notification is %+v, and it is about the item the ladder merged", m.sink.got[0])
+			}
+		})
+	}
+}
+
+// TestR4SplitScopedToBlocker is rung 4: the branch and the pull request are kept
+// — the ladder asks the host for nothing at all — the item is stopped, and the
+// scope a person approves is the blocker the judge named (D2031, D1246).
+//
+// Mutation: relaunch the item's own spec instead of filing a scope and the same
+// specification runs a third time.
+func TestR4SplitScopedToBlocker(t *testing.T) {
+	now := o6Now()
+	m := newMergeHarness(t, now, nil, mergeItem("wi-1", r3Ledger(now, headA, 2)))
+	read := mergePass(headA)
+	read.Verdict = runstore.MergeJudge{
+		Verdict: runstore.MergeJudgeBlocked,
+		Reason:  "the split is the fundamental issue and not the rest",
+		Blocker: "the retry loop has no bound and no test covers it",
+		Model:   "test-judge",
+	}
+	m.reader.reads["wi-1"] = read
+
+	m.act("wi-1", r4Step(), escalation.ReasonChurnSame, r3Read(headA))
+
+	if len(m.host.calls) != 0 {
+		t.Fatalf("the host was asked %v, and rung 4 keeps the branch and the pull request", m.host.calls)
+	}
+	w := m.item("wi-1")
+	if w.Phase != orchestrator.PhaseCancelled {
+		t.Fatalf("the item is %s, and rung 4 stops it", w.Phase)
+	}
+	if e := w.Escalation; e == nil || e.Rung != escalation.R4 || len(e.Transitions) != 4 {
+		t.Fatalf("the ledger reads %+v, and rung 4 is one more transition", e)
+	}
+	split, ok := m.state().Item("wi-1-split")
+	if !ok {
+		t.Fatalf("the node carries no split: %+v", m.state().WorkItems)
+	}
+	if split.Phase != orchestrator.PhaseQueued || split.Approved != nil || split.Spec != "" {
+		t.Fatalf("the split is %+v, and it is work a person approves before anything runs", split)
+	}
+	if !strings.Contains(split.Brief, "the retry loop has no bound") || !strings.Contains(split.Brief, "```") {
+		t.Fatalf("the brief reads %q, and the judge's blocker is what the scope is", split.Brief)
+	}
+	if strings.Contains(split.Brief, "the specification the ladder decided about: nothing") == false {
+		t.Fatalf("the brief reads %q, and it says the original specification is not what runs", split.Brief)
+	}
+	if _, ok := m.state().Decision("wi-1-escalation"); ok {
+		t.Fatalf("rung 4 asked a person a question, and a scoped split has nothing to ask")
+	}
+	if len(m.stub.comments) != 1 {
+		t.Fatalf("the ladder posted %d comments for one move", len(m.stub.comments))
+	}
+	m.stub.line("ladder-r4-split-" + headA[:8])
+}
+
+// TestR4NoBlockerWaitsForAPerson is G5's rung 4: with no readable blocker there
+// is no scope this code has any business inventing, so the item is stopped — the
+// same as a scoped split — and the scope becomes a person's question.
+//
+// Mutation: take the verdict's reason for a scope and rung 4 files a split
+// scoped to a sentence that is not the fundamental issue.
+func TestR4NoBlockerWaitsForAPerson(t *testing.T) {
+	now := o6Now()
+	m := newMergeHarness(t, now, nil, mergeItem("wi-1", r3Ledger(now, headA, 2)))
+	read := mergePass(headA)
+	read.Read = true
+	read.Verdict = runstore.MergeJudge{Verdict: runstore.MergeJudgeBlocked, Reason: "the same finding came back twice", Unreadable: true}
+	m.reader.reads["wi-1"] = read
+
+	m.act("wi-1", r4Step(), escalation.ReasonChurnSame, r3Read(headA))
+
+	if w := m.item("wi-1"); w.Phase != orchestrator.PhaseCancelled {
+		t.Fatalf("the item is %s, and rung 4 stops it whether or not it can scope the split", w.Phase)
+	}
+	if _, ok := m.state().Item("wi-1-split"); ok {
+		t.Fatalf("a split was filed with no blocker to scope it to: %+v", m.state().WorkItems)
+	}
+	q := m.question("wi-1").Question
+	if !strings.Contains(q, "no blocker") {
+		t.Fatalf("the question reads %q, and it says what is missing", q)
+	}
+	m.stub.line("ladder-r4-split-" + headA[:8])
+}
+
+// TestR4BlockerTextFencedAndClipped is G8 and the untrusted-text rule: the
+// blocker is a record's own field, so what reaches a brief is cleaned, clipped to
+// the bound the record itself uses, and fenced with more backticks than the text
+// carries — a value that ended the fence would write the words after it as this
+// program's own.
+//
+// Mutation: write the blocker into the brief unfenced and a judge that answered
+// with a fence in it writes the rest of the brief.
+func TestR4BlockerTextFencedAndClipped(t *testing.T) {
+	now := o6Now()
+	m := newMergeHarness(t, now, nil, mergeItem("wi-1", r3Ledger(now, headA, 2)))
+	read := mergePass(headA)
+	raw := "\x1b[31mthe fence ``` is inside this\x1b[0m and then " + strings.Repeat("more ", 200)
+	read.Verdict = runstore.MergeJudge{
+		Verdict: runstore.MergeJudgeBlocked,
+		Blocker: raw,
+		Model:   "test-judge",
+	}
+	m.reader.reads["wi-1"] = read
+
+	m.act("wi-1", r4Step(), escalation.ReasonChurnSame, r3Read(headA))
+
+	split, ok := m.state().Item("wi-1-split")
+	if !ok {
+		t.Fatalf("the node carries no split: %+v", m.state().WorkItems)
+	}
+	if strings.ContainsRune(split.Brief, 0x1b) {
+		t.Fatalf("the brief carries an escape sequence: %q", split.Brief)
+	}
+	if !strings.Contains(split.Brief, "````") {
+		t.Fatalf("the brief reads %q, and a blocker carrying the fence opens a longer one", split.Brief)
+	}
+	if got := len([]rune(split.Brief)); got > orchestrator.MaxBriefRunes {
+		t.Fatalf("the brief is %d runes and the state accepts %d", got, orchestrator.MaxBriefRunes)
+	}
+	if strings.Contains(split.Brief, raw) {
+		t.Fatalf("the brief carries the blocker whole, and a blocker is clipped to the bound the record itself keeps it at")
+	}
+	want := safetext.Clip(safetext.MultiLine(raw), runstore.MaxMergeJudgeBlocker)
+	if !strings.Contains(split.Brief, want) {
+		t.Fatalf("the brief reads %q, and the blocker is the cleaned text clipped to %d runes", split.Brief, runstore.MaxMergeJudgeBlocker)
+	}
+	if !strings.Contains(split.Brief, "and then") {
+		t.Fatalf("the brief reads %q, and the blocker's own opening words are what a person reads", split.Brief)
+	}
+}
+
+// TestR3UnreadableInputRecommendsOnly is G5: a reading the daemon could not make
+// merges nothing and launches nothing, and the item waits for a person with the
+// input that could not be read.
+//
+// Mutation: treat an unreadable reading as an ordinary one and every clause of
+// the gate is decided on a zero value.
+func TestR3UnreadableInputRecommendsOnly(t *testing.T) {
+	now := o6Now()
+	for _, tc := range []struct {
+		name string
+		drop func(*orchestrator.MergeReading)
+		code string
+	}{
+		{
+			"the reading was not made",
+			func(r *orchestrator.MergeReading) { *r = orchestrator.MergeReading{} },
+			string(orchestrator.GateUnreadable),
+		},
+		{
+			"the head is not one the ladder recorded",
+			func(r *orchestrator.MergeReading) { r.Record = nil },
+			string(orchestrator.ReasonRecordUnreadable),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := landable(t, now)
+			read := m.reader.reads["wi-1"]
+			tc.drop(&read)
+			m.reader.reads["wi-1"] = read
+
+			m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+
+			refusedAt(t, m, headA, "ladder-r3-wait-"+headA[:8], tc.code)
+			if len(m.stub.launched) != 0 {
+				t.Fatalf("the ladder launched %+v, and an unreadable head spends no run", m.stub.launched)
+			}
+			if got := m.host.beyond(); len(got) != 0 {
+				t.Fatalf("the host was asked %v, and there is nothing to ask it for", got)
+			}
+		})
+	}
+}
+
+// TestR3JudgeAbsentIsVeto is D2044: a judge that did not answer — absent, failed,
+// malformed — is a veto and never a pass, while a head no judge has been asked
+// about is one launch and not a refusal.
+//
+// Mutation: read the zero verdict as a yes and a head nothing judged merges.
+func TestR3JudgeAbsentIsVeto(t *testing.T) {
+	now := o6Now()
+
+	t.Run("a head no judge has been asked about", func(t *testing.T) {
+		m := landable(t, now, mergeJudgeRun)
+		read := mergePass(headA)
+		read.JudgeRun, read.Verdict = "", runstore.MergeJudge{}
+		m.reader.reads["wi-1"] = read
+
+		m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+
+		if len(m.host.merged) != 0 {
+			t.Fatalf("the host merged %v, and no judge has read this head", m.host.merged)
+		}
+		if len(m.stub.launched) != 1 || m.stub.launched[0].Recipe != orchestrator.RecipeMergeJudge {
+			t.Fatalf("the ladder launched %+v, and rung 3's second run is the judge", m.stub.launched)
+		}
+		if m.stub.launched[0].HeadSHA != headA || m.stub.launched[0].Rung != escalation.R3 {
+			t.Fatalf("the judge was asked about %+v, and it judges the head the ladder named", m.stub.launched[0])
+		}
+		if e := m.item("wi-1").Escalation; e.OuterAttempts != 3 {
+			t.Fatalf("the ledger counts %d ladder runs, and the judge is one", e.OuterAttempts)
+		}
+		m.stub.line("ladder-r3-judge-" + headA[:8])
+	})
+
+	for _, tc := range []struct {
+		name string
+		give runstore.MergeJudge
+	}{
+		{"a judge that failed", runstore.MergeJudge{Unreadable: true}},
+		{"a judge that answered nothing", runstore.MergeJudge{}},
+		{"a judge whose answer nobody can place", runstore.MergeJudge{Verdict: runstore.MergeJudgeVerdict("maybe")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := landable(t, now)
+			read := mergePass(headA)
+			read.Verdict = tc.give
+			m.reader.reads["wi-1"] = read
+
+			m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+
+			refusedAt(t, m, headA, "ladder-r3-wait-"+headA[:8], string(orchestrator.GateJudgeVeto))
+		})
+	}
+}
+
+// TestR3RebasedHeadNeedsScoredReview is D2043 and G13: a head only a rebase run
+// has touched is an agent's own work, so rung 3 covers it with a review-only run
+// at that head before it may merge — one such run per head — and the merge waits
+// until the review has a verdict.
+//
+// Mutation: merge a head the review has not read and a rebase agent's push lands
+// on the strength of the rebase's own record.
+func TestR3RebasedHeadNeedsScoredReview(t *testing.T) {
+	now := o6Now()
+	m := landable(t, now, mergeReviewRun)
+	read := mergePass(headA)
+	read.Scored, read.ReviewRun = false, ""
+	m.reader.reads["wi-1"] = read
+
+	m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+
+	if len(m.host.merged) != 0 {
+		t.Fatalf("the host merged %v, and no scored review covers this head", m.host.merged)
+	}
+	if len(m.stub.launched) != 1 || m.stub.launched[0].Recipe != orchestrator.RecipeReviewOnly {
+		t.Fatalf("the ladder launched %+v, and D2043's first step is a review-only run", m.stub.launched)
+	}
+	if m.stub.launched[0].HeadSHA != headA {
+		t.Fatalf("the review was asked for head %q, and it reads the head under judgement", m.stub.launched[0].HeadSHA)
+	}
+	m.stub.line("ladder-r3-review-" + headA[:8])
+
+	m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+	if len(m.stub.launched) != 1 {
+		t.Fatalf("the ladder launched %+v, and one review per head is the bound D2043 states", m.stub.launched[1:])
+	}
+	refusedAt(t, m, headA, "ladder-r3-wait-"+headA[:8], string(orchestrator.GateReviewSpent))
+
+	read = mergePass(headA)
+	m.reader.reads["wi-1"] = read
+	h := m.seams.Host.(*mergeHostStub)
+	m.host.state = gitprov.PROpen
+	m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+	if !slices.Equal(h.merged, []string{headA}) {
+		t.Fatalf("the host merged %v, and a scored review of the head is what lets the gate pass", h.merged)
+	}
+}
+
+// TestR3BitbucketWithoutPreconditionWaits is G2 on a host that cannot bind a
+// merge to an expected head: the refusal is a person's question with the
+// provider's closed code on it, and never a merge taken on the hope that the
+// head is still the judged one.
+//
+// Mutation: retry the merge without the precondition and a head that moved
+// between the gate and the call lands unreviewed.
+func TestR3BitbucketWithoutPreconditionWaits(t *testing.T) {
+	now := o6Now()
+	m := landable(t, now)
+	m.host.mergeErr = gitprov.ErrMergeNoHeadPrecondition
+	m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+
+	refusedAt(t, m, headA, "ladder-r3-wait-"+headA[:8], string(orchestrator.GateMergeRefused))
+	line := m.stub.line("ladder-r3-wait-" + headA[:8])
+	if !strings.Contains(line.Text, "no_head_precondition") {
+		t.Fatalf("the line reads %q, and a host that cannot bind a merge says so in a closed code", line.Text)
+	}
+	if !strings.Contains(m.question("wi-1").Question, "no_head_precondition") {
+		t.Fatalf("the question reads %q, and the person it goes to reads the code", m.question("wi-1").Question)
+	}
+	if len(m.host.merged) != 0 {
+		t.Fatalf("the host merged %v, and it refused the merge it was asked for", m.host.merged)
+	}
+}
+
+// TestR3NoAdminBypass is G14: the seam a landing is made through is four calls
+// whose arguments are a number, a head and a context, so there is no room in it
+// for an admin merge, a bypass or a force — it is a property of the interface and
+// not a discipline a caller keeps.
+//
+// Mutation: add a merge method or an option to the interface and this test fails
+// until somebody argues for it.
+func TestR3NoAdminBypass(t *testing.T) {
+	typ := reflect.TypeOf((*orchestrator.MergeHost)(nil)).Elem()
+	var names []string
+	for i := range typ.NumMethod() {
+		m := typ.Method(i)
+		names = append(names, m.Name)
+		for j := range m.Type.NumIn() {
+			switch got := m.Type.In(j).String(); got {
+			case "context.Context", "int", "string":
+			default:
+				t.Errorf("%s takes a %s, and every argument a landing can name is a number, a head or a context", m.Name, got)
+			}
+		}
+	}
+	if !slices.Equal(names, []string{"Checks", "MarkReady", "Merge", "PullRequest"}) {
+		t.Fatalf("the seam is %v, and a landing needs exactly these four calls", names)
+	}
+
+	var host orchestrator.MergeHost = gitprov.Provider(nil)
+	if host != nil {
+		t.Fatalf("the provider is not the seam's own implementation: %T", host)
+	}
+}
