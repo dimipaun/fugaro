@@ -175,8 +175,7 @@ func newProjectReposRmCmd() *cobra.Command {
 			"the two it is. It also names, before the confirmation and after the write, what\n" +
 			"it deliberately leaves: the provider's App installation, the built images, the\n" +
 			"secrets and their versions, the run history, every pull request a run opened and\n" +
-			"the remote branch. Nothing here deletes a secret, an image or a run's history,\n" +
-			"and there is no --purge.\n" +
+			"the remote branch. Nothing here deletes a secret, an image or a run's history.\n" +
 			"\n" +
 			"So it asks you to type the project's name, and while a run is in flight only\n" +
 			"that typing confirms it: the sentence names the run, which keeps its job, its\n" +

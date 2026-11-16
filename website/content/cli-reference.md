@@ -6373,8 +6373,7 @@ stays admitted while github/acme/* is there); the confirmation says which of
 the two it is. It also names, before the confirmation and after the write, what
 it deliberately leaves: the provider's App installation, the built images, the
 secrets and their versions, the run history, every pull request a run opened and
-the remote branch. Nothing here deletes a secret, an image or a run's history,
-and there is no --purge.
+the remote branch. Nothing here deletes a secret, an image or a run's history.
 
 So it asks you to type the project's name, and while a run is in flight only
 that typing confirms it: the sentence names the run, which keeps its job, its

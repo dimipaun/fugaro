@@ -425,6 +425,17 @@ func TestReposRmIsStrictWhileARunIsGoing(t *testing.T) {
 			t.Errorf("%s: err = %v, want an unknown flag\nstdout:\n%s", flag, err, out)
 		}
 	}
+	// D2408's other half: the output names --purge nowhere, so nobody looks for
+	// it. The help is the one place an operator would read the name off, and a
+	// sentence saying the flag does not exist is how it comes back.
+	ownerAtTheTerminal(t)
+	help, _, err := executeOwnerStdin(t, "", "project", "repos", "rm", "--help")
+	if err != nil {
+		t.Fatalf("--help: %v\n%s", err, help)
+	}
+	if strings.Contains(help, "purge") {
+		t.Errorf("`project repos rm --help` names --purge:\n%s", help)
+	}
 
 	// And the typed name still confirms it: the strict question is a question,
 	// not a refusal of the command.
