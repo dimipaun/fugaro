@@ -1457,12 +1457,20 @@ func TestServiceServesUnderAPolicyWithNoCredentialsBlock(t *testing.T) {
 // What moves a call is what the answer MEANS and never its status: a usage limit
 // (429) and a credential that answered 401 are the two the cascade retries on
 // another member (usageLimitStatus, unauthorizedStatus; ReasonExhausted and
-// ReasonBroken), and the third sub-case is the boundary — an answer about the
-// request, an overloaded 529, is the client's own and moves nothing, so the pool
-// fails over on a credential and never on an upstream's mood. The plan's own
-// wording for this test lists 429/402/529 together, inherited from the runner
-// side's list; on this path 402 and 529 are the client's answer by the code's
-// own rule, and it is that rule this test holds.
+// ReasonBroken), and the third sub-case is the boundary this path draws — an
+// answer about the request, an overloaded 529, is the client's own and moves
+// nothing here, so a pool fails over on a credential and never on an upstream's
+// mood.
+//
+// The plan's own wording for this test lists 429/402/529 together, which is F5's
+// table of exhaustion signals (internal/runner's exhaustionSignals) rather than
+// this path's rule. Those are the answers through which the RUNNER learns a
+// credential is spent — a 402 as the provider's account out of credit, a 529 as
+// Anthropic being overloaded — and it reads them off the very answers this
+// service relays untouched, while the walk that then moves the run is the run's
+// own. So the two halves are one design and this test holds the dividing line:
+// this service moves a call on the two statuses that are about the credential,
+// and everything else it relays for the run's walk to read.
 //
 // The member that serves is asserted on the wire (HeaderCredential and the
 // switch header) rather than in the run's record: the record's craft_credentials

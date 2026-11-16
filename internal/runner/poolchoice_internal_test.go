@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -65,6 +66,11 @@ type poolSpec struct {
 	auth string
 	// model is the coder's pin, "" for the routed one.
 	model string
+	// node is the run's policy as the PUBLISHED DOCUMENT decodes it
+	// (projectpolicy.Decode), for the tests that hold the walk to what the
+	// publish writes rather than to a policy built in Go. Everything above is
+	// then the node's: a test that gives one leaves the fields beside it unset.
+	node *projectpolicy.Policy
 }
 
 // poolRun builds the run and the buffer it logs into: the named auth with the
@@ -97,8 +103,11 @@ func poolRun(t *testing.T, s poolSpec) (*run, *bytes.Buffer) {
 	if s.judge != "" {
 		crafts.MergeJudge = config.Craft{Access: s.judge}
 	}
-	p := &projectpolicy.Policy{
-		Crafts: &crafts, CraftCredentials: s.creds, CraftPools: s.pools, Accounts: accounts,
+	p := s.node
+	if p == nil {
+		p = &projectpolicy.Policy{
+			Crafts: &crafts, CraftCredentials: s.creds, CraftPools: s.pools, Accounts: accounts,
+		}
 	}
 	h := newAutoFakeRun(t, false, false, p, "", nil)
 	r := h.r
@@ -672,5 +681,80 @@ func TestSubscriptionSpreadReadsThePublishedSwitch(t *testing.T) {
 				t.Errorf("the second read = %v, want the first answer (%v)", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestThePublishedNodeIsThePoolTheRunWalks is MC19 on this path, and the half of
+// the seam the credentials service's own MC19 tests cannot hold: a run does not
+// read its pools out of its own configuration — it resolves them off the owner's
+// PUBLISHED node, the document the publish writes (MC18: the crafts, the
+// craft_credentials beside them and the pools those crafts' accesses name) — and
+// the fixtures above build that policy in Go, which leaves the read itself
+// untested. The tests below decode the document with projectpolicy and walk it
+// with stageCrafts and stagePool, which is the whole road from the publish to a
+// stage's member.
+//
+// What the walk makes of the node's members is F10 and D1627: the pool lists the
+// member this repository may not be given FIRST, so the member the stage is
+// served by is evidence the admission was read — the tie is the pool's listed
+// order and nothing else — and the skipped member is recorded in the run's own
+// line. A run that holds no member of the pool refuses the stage, naming the
+// pool and what became of every member.
+func TestThePublishedNodeIsThePoolTheRunWalks(t *testing.T) {
+	ctx := context.Background()
+	// The document as the publish writes it. `owner` is what the publish path
+	// requires of a pool (D1936), and the credentials beside it are the node's
+	// own definitions of the members' types, which is what config.PoolMembers
+	// reads a member through.
+	p, found, err := projectpolicy.Decode([]byte(`{
+		"version": ` + strconv.Itoa(projectpolicy.Version) + `,
+		"craft_credentials": [
+			{"name": "or-foreign", "type": "openrouter"},
+			{"name": "or-primary", "type": "openrouter"}
+		],
+		"craft_pools": [{"name": "acme-pair", "owner": "owner@example.com", "members": ["or-foreign", "or-primary"]}],
+		"crafts": {"coder": {"access": "acme-pair"}}
+	}`))
+	if err != nil || !found || p == nil {
+		t.Fatalf("the published document is not one projectpolicy.Decode accepts: (%+v, %v, %v)", p, found, err)
+	}
+
+	// This job holds or-primary's key and its provider, and no other: the
+	// launcher narrows the owner's providers to the ones whose allow_data_to
+	// names this repository (ProvidersForRepo, F10), so or-foreign is a member
+	// the repository is not admitted to and a credential this job does not hold
+	// (F20, D1635).
+	r, log := poolRun(t, poolSpec{node: p, providers: poolProviders("or-primary"), env: poolEnv("or-primary")})
+	if got := r.stageCrafts(ctx)[config.CraftCoder].Access; got != "acme-pair" {
+		t.Fatalf("the coder's craft goes out on %q, want the access the published node's crafts block names", got)
+	}
+	pool, creds, ok := r.stagePool(ctx, "implement")
+	if !ok || pool.Name != "acme-pair" || len(creds) != 2 {
+		t.Fatalf("the stage's pool is %+v with %d credential definitions (ok %v), want the node's own pool and both of its members' definitions", pool, len(creds), ok)
+	}
+	member, reason := r.checkStagePool(ctx, "implement")
+	if reason != "" {
+		t.Fatalf("the stage was refused although the node's second member serves it: %s", reason)
+	}
+	if member.Name != "or-primary" {
+		t.Fatalf("the stage is served by %q, want the member the node lists second and this repository may be given", member.Name)
+	}
+	if !strings.Contains(log.String(), "or-foreign") || !strings.Contains(log.String(), "allow_data_to") {
+		t.Errorf("the member this repository may not be given was not recorded as the skipped one: %q", log.String())
+	}
+
+	// A run that holds neither member — the node's pool is the same and the
+	// job was deployed without either key — leaves the stage nothing, and the
+	// refusal says what the pool held and what became of each member (D1627's
+	// other half: a pool with no admitting member refuses the stage).
+	none, _ := poolRun(t, poolSpec{node: p})
+	member, reason = none.checkStagePool(ctx, "implement")
+	if member.Name != "" || reason == "" {
+		t.Fatalf("a pool none of whose members this repository may be given served the stage: %+v", member)
+	}
+	for _, want := range []string{"acme-pair", "or-foreign", "or-primary", "allow_data_to"} {
+		if !strings.Contains(reason, want) {
+			t.Errorf("the refusal does not name %q: %s", want, reason)
+		}
 	}
 }
