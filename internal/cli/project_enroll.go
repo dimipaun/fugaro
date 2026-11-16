@@ -152,21 +152,41 @@ func newProjectReposAddCmd() *cobra.Command {
 	return cmd
 }
 
+// newProjectReposRmCmd is `fugaro project repos rm`: the inverse of `add`'s
+// converge, store by store (RE4, docs/repos-management).
 func newProjectReposRmCmd() *cobra.Command {
 	var o projectReposOptions
 	cmd := &cobra.Command{
 		Use:   "rm <provider/owner/name | owner/name | *>",
-		Short: "Un-enroll a repository: remove it from the allow-list",
-		Long: "Remove an entry from the published policy's allow_repos. Removing an allowed\n" +
-			"repository stops its runs — a run of a repository the list does not admit is\n" +
-			"refused before it mints a git token — unless another entry on the list still\n" +
-			"admits it, which is the case a pattern makes (github/acme/app stays admitted\n" +
-			"while github/acme/* is there); the confirmation says which of the two it is.\n" +
-			"Removing * refuses every repository the rest of the list does not admit.\n" +
+		Short: "Un-enroll a repository: remove its enrolment, its jobs and its state",
+		Long: "Remove a repository's enrolment in one step, the way `fugaro project repos add`\n" +
+			"writes it: the published allow-list entry, this machine's repos: entry, this\n" +
+			"machine's image mapping, the published per-repository admission\n" +
+			"(config/policy/repos/<slug>), the repository's Cloud Run jobs and its state\n" +
+			"under the installation's state bucket. Every step is the writer the enrolment\n" +
+			"used, one confirmation covers them all, and a store that holds nothing says so\n" +
+			"rather than failing — so a removal left half done by an earlier failure is\n" +
+			"finished by running it again.\n" +
+			"\n" +
+			"Removing an allowed repository stops its runs — a run of a repository the list\n" +
+			"does not admit is refused before it mints a git token — unless another entry on\n" +
+			"the list still admits it, which is the case a pattern makes (github/acme/app\n" +
+			"stays admitted while github/acme/* is there); the confirmation says which of\n" +
+			"the two it is. It also names, before the confirmation and after the write, what\n" +
+			"it deliberately leaves: the provider's App installation, the built images, the\n" +
+			"secrets and their versions, the run history, every pull request a run opened and\n" +
+			"the remote branch. Nothing here deletes a secret, an image or a run's history,\n" +
+			"and there is no --purge.\n" +
+			"\n" +
 			"So it asks you to type the project's name, and while a run is in flight only\n" +
-			"that typing confirms it.",
+			"that typing confirms it: the sentence names the run, which keeps its job, its\n" +
+			"record and its ledger until it ends.\n" +
+			"\n" +
+			"`*` is the allow-list's own entry for every repository and not a repository, so\n" +
+			"it removes that entry alone — there is no repository behind it, and no local\n" +
+			"entry, job or state of its own.",
 		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error { return runProjectReposEdit(cmd, &o, args[0], true) },
+		RunE: func(cmd *cobra.Command, args []string) error { return runProjectReposRm(cmd, &o, args[0]) },
 	}
 	addCloudFlags(cmd, &o.cloud)
 	return cmd

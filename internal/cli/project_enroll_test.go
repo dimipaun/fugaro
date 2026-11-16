@@ -477,15 +477,23 @@ func TestProjectSyncNeedsAnAppID(t *testing.T) {
 // node's text (or a gate that read another node) shows up as a launch that
 // went ahead.
 //
-// Mutation (verified, run and restored): make runProjectReposEdit write the
-// list without removing the entry (keep `allow` as it was) — this test fails,
-// the launch creating an execution for a repository that is still admitted.
+// The removal takes this machine's `repos:` entry away with the list entry
+// (RE4, D2405), and a launch with no checkout resolves that repository's
+// provider from that entry alone (localRepoProvider): the entry is kept aside
+// and written back below, so the launch is judged on the published list — the
+// half this test is about — rather than refused before the list is ever read.
+//
+// Mutation (verified, run and restored): make reposRemovalApply hand
+// putAllowRepos the list as it read it (keep `allow` instead of the list
+// without the entry) — this test fails, the launch creating an execution for a
+// repository that is still admitted.
 func TestProjectRemoveRepoStopsAdmittingTheRepo(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
 	publishPolicy(t, f, `{"version":5,"allow_repos":["github/acme/app"]}`)
 	if allow := allowReposOf(t, f.db); !projectpolicy.AdmitRepo(allow, "github/acme/app") {
 		t.Fatalf("allow_repos = %v: the fixture does not start with the repository admitted", allow)
 	}
+	local := rmLocalEntry(t, "acme/app")
 	// The removal is confirmed by a person at a real terminal, typing the
 	// project's name (nothing else stands in for it: T11 removed --yes).
 	fakeTerminal(t)
@@ -496,6 +504,7 @@ func TestProjectRemoveRepoStopsAdmittingTheRepo(t *testing.T) {
 	if allow := allowReposOf(t, f.db); len(allow) != 0 {
 		t.Fatalf("allow_repos = %v after the removal, want none", allow)
 	}
+	rmLocalEntryBack(t, "acme/app", local)
 	_, _, err = runBudget(t)
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v (exit %d), want the launch refused", err, ExitCode(err))
