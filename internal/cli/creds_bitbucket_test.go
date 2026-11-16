@@ -177,6 +177,11 @@ func newBitbucketFixture(t *testing.T, serving string, answers map[string]bitbuc
 		t.Fatal(err)
 	}
 	db.Set(budget.PathProject, "aurora")
+	// The mark `fugaro update --firebase-project` writes, which is what makes
+	// this database the installation's at all: every writer into it asks
+	// (requireOwnBudgetDB), and the fixture is the ordinary installation
+	// (ownership_test.go).
+	db.Set(budget.PathMark, auroraMark())
 	site := newBitbucketSite(t, answers)
 	site.install(t)
 	return &bitbucketFixture{credsFixture: f, db: db, site: site, skew: skew, path: path}

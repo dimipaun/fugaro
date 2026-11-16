@@ -280,6 +280,15 @@ func bitbucketWriters(ctx context.Context, sel localcfg.Selection, lc *localcfg.
 	if err != nil {
 		return nil, userErr("nothing was written: a typed Bitbucket token's identity is recorded in the project's credential state, so this write needs the project's Firebase backend: %v", err)
 	}
+	// This writes into the database, so it asks the ONE ownership question
+	// every writer into it asks (requireOwnBudgetDB, the call of
+	// budgetDBUnadopted that docs/design/upgrade.md's audit lists a path per
+	// writer for) before the name check beside it — the two are different
+	// questions, and a name at /fugaro/project is a string two installations
+	// can both carry.
+	if err := requireOwnBudgetDB(ctx, lc, db, "nothing was written"); err != nil {
+		return nil, err
+	}
 	// The database has to be this project's own, the check every other reader
 	// and writer of the state makes: a budget.rtdb_url pointing at another
 	// project's database would otherwise have this write record an identity in
