@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -872,5 +873,61 @@ func TestRunsReportsWritesTheYearAggregateFromTheStoredMonthlyAggregates(t *test
 	}
 	if summary.Runs != 5 || summary.Months != 2 {
 		t.Errorf("the yearly aggregate holds %d runs over %d months, want the stored 5 over 2:\n%s", summary.Runs, summary.Months, body)
+	}
+}
+
+// TestTheAggregateCarriesThePeriodsFailuresByClass: the aggregate carries the
+// period's failures by class beside its figures (D1432) -- the classes the
+// repositories' own reports hold, added up. The table has no money column and no
+// example run, which is not a rendering choice: an aggregate adds summary blocks
+// up, and a block carries a class's runs and nothing else.
+func TestTheAggregateCarriesThePeriodsFailuresByClass(t *testing.T) {
+	f := newReportsJob(t, []string{"acme/app", "acme/other"}, string(digest.ByDay))
+	digestClock(t, "2026-11-02")
+	f.seed(t, "acme/app", "20261101-090000-aaaa", time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC))
+	f.seedHalt(t, "acme/other", "20261101-100000-bbbb", time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC))
+	f.seedHalt(t, "acme/other", "20261101-110000-cccc", time.Date(2026, 11, 1, 11, 0, 0, 0, time.UTC))
+	// The class a halted run of this reason carries, read the way the report
+	// reads it rather than spelled out here.
+	class := runview.ClassOf(&runstore.Record{
+		Status: runstore.StatusHalted,
+		Halt:   &runstore.Halt{Reason: runstore.HaltBudgetUnavailable},
+	})
+	if class == "" {
+		t.Fatal("a halted record of this reason carries no class, so the table this test looks for would hold nothing")
+	}
+
+	out, errOut, err := execute(t, "runs", "reports", "--job")
+	if err != nil {
+		t.Fatalf("fugaro runs reports --job: %v\nstderr: %s", err, errOut)
+	}
+	key := f.aggregateKey("2026-11-01")
+	data, _, ok := f.object(t, key)
+	if !ok {
+		t.Fatalf("the run wrote no project aggregate at %s: %q", key, out)
+	}
+	body := string(data)
+	if !strings.Contains(body, "## Failures") || !strings.Contains(body, "| class | runs |\n| --- | --- |\n| `"+string(class)+"` | 2 |") {
+		t.Errorf("%s does not carry the period's two failures as the class %s:\n%s", key, class, body)
+	}
+	summary, err := digest.ReadSummary(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Failures[string(class)] != 2 {
+		t.Errorf("the aggregate's block counts %d runs of the class %s, want the 2 in acme/other's report:\n%s", summary.Failures[string(class)], class, body)
+	}
+	// The class is one a report of the same period holds, so the table is the
+	// reports' own classes added up and not a second derivation.
+	report, _, ok := f.object(t, f.reportKey("acme/other", "2026-11-01"))
+	if !ok {
+		t.Fatalf("the run wrote no report for acme/other: %q", out)
+	}
+	repo, err := digest.ReadSummary(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repo.Failures[string(class)] != 2 {
+		t.Errorf("acme/other's own report counts %d runs of the class %s, want 2: the aggregate adds the reports up\n%s", repo.Failures[string(class)], class, report)
 	}
 }
