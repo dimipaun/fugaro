@@ -1020,10 +1020,16 @@ post_sign() { # post_sign KEY CONFIG
 # the TYPE and the status together: the two classes this check asks about share
 # the refusal vocabulary with a body the route read only after admitting a
 # caller, and only the type says which it was.
+#
+# ANSWER_UNPARSED says which of the two an unreadable answer was: set when the
+# body was there and was not the contract's JSON at all, empty when there was no
+# body to read. The status line beside it is what makes that first case a
+# refusal this check can name -- the front end's own, before the container runs.
 read_answer() { # read_answer KEY
   local key=$1
   ANSWER_KIND=unreadable
   ANSWER_ERROR=""
+  ANSWER_UNPARSED=""
   ANSWER_STATUS=$(tr -d '\r\n' <"$SCRATCH/$key.out" 2>/dev/null | head -c 20 || true)
   ANSWER_TEXT=$(tr -d '\r\n' <"$SCRATCH/$key.body" 2>/dev/null | head -c 400 || true)
   if [ ! -s "$SCRATCH/$key.body" ]; then
@@ -1031,6 +1037,7 @@ read_answer() { # read_answer KEY
     return 0
   fi
   if ! read_json answer "$SCRATCH/$key.body" "$SCRATCH/$key.txt"; then
+    ANSWER_UNPARSED=1
     return 0
   fi
   if [ "$(field "$SCRATCH/$key.txt" has_valid)" = true ]; then
@@ -1071,6 +1078,23 @@ answer_is_class_refusal() {
   return 1
 }
 
+# answer_is_front_end_refusal: the answer a call with NO token gets on an
+# installation whose credentials service requires IAM. The service is deployed
+# with invoker_iam_disabled = false and no allUsers invoker
+# (deploy/terraform/gcp/modules/installation/credentials.tf), so Cloud Run's own
+# front end answers such a call itself -- HTTP 403 and a page of its own, which
+# is not the contract's JSON -- and the container never starts. That is the
+# refusal §8's step 11 is after, made a step earlier than the route can make it:
+# the class the route admits is the caller's token, and a call without one never
+# reaches the key. The status line is read here as everywhere else, so a 403
+# whose body is a page is this refusal and not an answer this check could not
+# get at.
+answer_is_front_end_refusal() {
+  [ "$ANSWER_KIND" = unreadable ] || return 1
+  [ "${ANSWER_STATUS:-}" = 403 ] || return 1
+  [ "${ANSWER_UNPARSED:-}" = 1 ] || return 1
+}
+
 # answer_is_body_refusal: a refusal of what the call SENT (request_refused),
 # which every route answers only after it has admitted its caller — so it is the
 # reading that says the gate did not refuse this caller.
@@ -1103,16 +1127,18 @@ step_verify_class() {
   say "asking the verify route with no token at all: POST ${SERVICE_URL}${VERIFY_PATH}"
   post_verify no-token
   read_answer no-token
-  if answer_is_class_refusal; then
+  if answer_is_front_end_refusal; then
+    fact verify-unauthenticated PASS "the call with no token was refused before it reached the service: the installation deploys this service with IAM required, so Cloud Run's own front end answered it with HTTP ${ANSWER_STATUS} and a body that is not the contract's JSON (${ANSWER_TEXT}), and the container never ran. §8's step 8 reads the same refusal from the other end, and this is the stronger half of it: the class is the token's, so a call without one is refused a step before the route could reach the key"
+  elif answer_is_class_refusal; then
     fact verify-unauthenticated PASS "the route refused a call with no token, with the class's own refusal (${ANSWER_ERROR}, HTTP ${ANSWER_STATUS}): ${ANSWER_TEXT}. §8's step 8 reads the same thing from the other end: the class is the token's, so a call without one is refused before the key is ever reached"
   elif [ "$ANSWER_KIND" = verdict ]; then
     fact verify-unauthenticated FAIL "the verify route answered ${ANSWER_TEXT} to a call that carried NO token: the class that route admits is the caller's token, and a call without one is refused rather than answered. This is a finding about the route itself, and it is the one row of §8's step 8 that does not wait on Open item 5"
   elif [ "$ANSWER_KIND" = refusal ]; then
-    fact verify-unauthenticated FAIL "the verify route refused a call that carried NO token with ${ANSWER_TEXT}, and that is not the refusal a call without a token gets (a class refusal, 403): a route answers anything else about a call it did not refuse for the token only after it has admitted a caller, and no caller was admitted here. This is a finding about the route itself. What it answered is in $SCRATCH/no-token.body"
+    fact verify-unauthenticated FAIL "the verify route refused a call that carried NO token with ${ANSWER_TEXT}, and that is not the refusal a call without a token gets (a class refusal, 403, or the front end's own 403 before the container runs): a route answers anything else about a call it did not refuse for the token only after it has admitted a caller, and no caller was admitted here. This is a finding about the route itself. What it answered is in $SCRATCH/no-token.body"
   elif [ "$ANSWER_KIND" = unreadable ]; then
     unmeasured verify-unauthenticated "the verify route's answer could not be read (curl exit ${BOUNDED_STATUS}): it printed ${ANSWER_TEXT}, which is neither a refusal this check knows nor a verdict. What it printed is in $SCRATCH/no-token.body"
   else
-    fact verify-unauthenticated FAIL "the verify route answered a call that carried NO token with ${ANSWER_TEXT}: that is neither the refusal a call without a token gets (a class refusal, 403) nor anything §8's step 8 admits, and this route has one answer only for a call it refuses for the token. This is a finding about the route itself, and it is the one row of §8's step 8 that does not wait on Open item 5. What it answered is in $SCRATCH/no-token.body"
+    fact verify-unauthenticated FAIL "the verify route answered a call that carried NO token with ${ANSWER_TEXT}: that is neither the refusal a call without a token gets (a class refusal, 403, or the front end's own 403 before the container runs) nor anything §8's step 8 admits, and this route has one answer only for a call it refuses for the token. This is a finding about the route itself, and it is the one row of §8's step 8 that does not wait on Open item 5. What it answered is in $SCRATCH/no-token.body"
   fi
 
   if [ -z "$REVIEW_SA" ]; then

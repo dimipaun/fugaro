@@ -342,6 +342,16 @@ if [ "$route" = sign ]; then
 fi
 case "$mode:$route:$account" in
 admit-no-token:verify:none) body='{"valid":false}'; code=200 ;;
+# The answer a call with NO token gets on a real installation: the service
+# requires IAM, so the refusal is Cloud Run's own front end's, made before the
+# container runs -- a 403 with a page of its own, never the contract's JSON.
+# This is the mode the row is written against, and the typed refusal the fake
+# answers by default is the other shape it admits, for an installation whose
+# front end does not stand in the way.
+frontend-refuses-no-token:verify:none)
+  body='<html><head><title>403 Forbidden</title></head><body><h1>403 Forbidden</h1><p>Your client does not have permission to get URL from this server.</p></body></html>'
+  code=403
+  ;;
 admit-review:verify:"$FAKE_REVIEW_SA") body='{"valid":true}'; code=200 ;;
 admit-coding-verify:verify:"$FAKE_CODING_SA") body='{"valid":false}'; code=200 ;;
 admit-coding-sign:sign:"$FAKE_CODING_SA")
@@ -797,6 +807,22 @@ test_a_route_that_admits_a_call_with_no_token_is_a_finding() {
   expect_contains "$out" "carried NO token" "a route that answers an unauthenticated call: what it did"
 }
 
+test_the_front_ends_own_refusal_of_a_token_less_call_is_a_pass() {
+  # A real installation answers the token-less call before the route sees it:
+  # the service is deployed with IAM required, so Cloud Run's own front end
+  # refuses it with a 403 and a page of its own. That is the refusal the row is
+  # after -- a row that knew only the service's typed refusal would leave this
+  # check unable to reach exit 0 on one at all.
+  local dir=$work/frontend
+  prepare "$dir"
+  run_ok "$dir" FAKE_MODE=frontend-refuses-no-token
+  expect_status "$status" 0 "the front end's own refusal"
+  expect_contains "$out" "FACT verify-unauthenticated: PASS" "the front end's own refusal: the row"
+  expect_contains "$out" "refused before it reached the service" "the front end's own refusal: what the row read"
+  expect_contains "$out" "HTTP 403" "the front end's own refusal: the status it read"
+  expect_contains "$out" "CHECK 601 RESULT END (exit 0)" "the front end's own refusal: the block ends 0"
+}
+
 test_a_route_that_admits_the_review_account_is_a_finding() {
   local dir=$work/admit-review
   prepare "$dir"
@@ -1006,6 +1032,7 @@ t test_an_audit_line_that_is_wrong_is_a_finding
 t test_no_audit_line_is_a_finding
 t test_a_line_for_another_run_is_a_finding
 t test_a_route_that_admits_a_call_with_no_token_is_a_finding
+t test_the_front_ends_own_refusal_of_a_token_less_call_is_a_pass
 t test_a_route_that_admits_the_review_account_is_a_finding
 t test_a_state_the_service_could_not_read_is_a_finding
 t test_a_refusal_of_the_body_is_a_finding

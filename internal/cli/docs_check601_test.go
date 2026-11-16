@@ -107,6 +107,19 @@ func TestDocsCheck601SectionSaysWhatItSettles(t *testing.T) {
 		"**Exit `0`**",
 		"A key the run never reached reads `FAIL — not reached`",
 		"CHECK601_KEEP_SCRATCH",
+		// The no-token row's two admissible refusals, which a reader has to
+		// find to know what the row can hold on: the front end's own 403 --
+		// what a real installation answers, since the service is deployed
+		// with IAM required and the container never runs -- and the
+		// service's typed class refusal for an installation whose front end
+		// lets the call through. Neither admits an answer, which is the
+		// difference the row is read on, so the sentence naming that is
+		// pinned with them.
+		"the **front end's own**, which is what a real installation answers",
+		"`invoker_iam_disabled = false`, and no `allUsers` invoker",
+		"**before the container runs**, which is the stronger of the two",
+		"the **service's own typed** refusal, `unverified_job_identity` with `HTTP 403`",
+		"a JSON `valid` verdict, or a refusal of the body sent",
 		// What the class is by construction: the review job carries no
 		// credential of its own, which is the row this check exists for.
 		"mounts no secret",

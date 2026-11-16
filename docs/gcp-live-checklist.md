@@ -15647,13 +15647,19 @@ deploys them:
   field §8 does not name**. Every act of the service that touches a credential writes exactly one line, so a
   signing with no line is the one thing that rule forbids, and a line for another run is what an owner reads
   when the run in front of them is not the one they think it is.
-- **The verify route's caller class.** A `POST /v1/review/verify` **with no token** is a typed refusal
-  rather than an answer: the class that route admits is the caller's own token, so a call without one is
-  refused before the key is ever reached. This is the half of step 8 that does **not** wait on Open item 5,
-  and the row says so. What the row reads is that refusal's own **type** — `unverified_job_identity`,
-  `HTTP 403` — and not merely "a refusal": a refusal of the body sent or of a state the service could not
-  read is answered **after** a caller has been admitted and means the opposite, so it is not read as this
-  row holding.
+- **The verify route's caller class.** A `POST /v1/review/verify` **with no token** is refused rather than
+  answered: the class that route admits is the caller's own token, so a call without one never reaches the
+  key. This is the half of step 8 that does **not** wait on Open item 5, and the row says so. The refusal
+  comes in either of two shapes and the row holds on both, read by the body and the status line together:
+  the **front end's own**, which is what a real installation answers — the service is deployed with IAM
+  required (`invoker_iam_disabled = false`, and no `allUsers` invoker), so Cloud Run's own front end refuses
+  the call with `HTTP 403` and a page of its own **before the container runs**, which is the stronger of the
+  two, made a step earlier than the route could make it — and the **service's own typed** refusal,
+  `unverified_job_identity` with `HTTP 403`, for an installation whose front end lets the call through to the
+  route. What neither shape admits is an **answer**, and that is the difference this row is read on: a JSON
+  `valid` verdict, or a refusal of the body sent or of a state the service could not read, is answered only
+  **after** a caller has been admitted and means the opposite, so any of them is read as this row failing
+  rather than holding.
 - **The gate holds where it was written** (step 11's second half). With an ID token minted by impersonating
   **the review job's own account**, the verify route is refused: a verifier is not a run, and a review
   account that can verify its own verdict is the widening this row exists to catch. The call is framed
