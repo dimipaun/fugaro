@@ -142,6 +142,47 @@ func TestDriftAlarmOldDayQuiet(t *testing.T) {
 	}
 }
 
+// TestDriftAlarmUnreadDayIsNotAPass: a day's counters the rules do not let
+// doctor read are not a day without a drift. The line says so at an info
+// severity, carries the unread marker — so no view files it as a measurement
+// and the default view counts it, which is the ruling the class rules exist
+// under (doctorClassOf, TestDoctorReadFailureIsCounted) — and names the path
+// that could not be read.
+func TestDriftAlarmUnreadDayIsNotAPass(t *testing.T) {
+	_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+	day := budget.Day(budgetNow())
+	driftSeed(t, db, day, "gh-acme-app", "openai/gpt-5.1", map[string]any{
+		"micros": 2000000, "rep": 700000, "tlo": 1000000, "thi": 1000000})
+	db.DenyRead("spend/" + budget.DayKey(day) + "/repos")
+
+	checks := driftChecks(t)
+	if len(checks) != 1 {
+		t.Fatalf("the alarm said %d things about a day it could not read, want the one note: %+v", len(checks), checks)
+	}
+	c := checks[0]
+	if c.OK || c.Severity != "info" {
+		t.Fatalf("the unread day is %+v, want an info note and not a warning about a comparison nobody made", c)
+	}
+	// The class is the unread marker's, which is unexported and so is read here
+	// where it is decided: a failed read is a finding the default view counts,
+	// never a measurement (doctorClassOf).
+	if c.Class != doctorClassAudit {
+		t.Errorf("the unread day is classed %q, want %q", c.Class, doctorClassAudit)
+	}
+	node := "spend/" + budget.DayKey(day) + "/repos"
+	if !strings.Contains(c.Problem, node) {
+		t.Errorf("the note does not name the node that could not be read: %q", c.Problem)
+	}
+	counted, _, _ := execute(t, "doctor", "--dir", t.TempDir())
+	if strings.Contains(counted, spendDriftCheckID) {
+		t.Errorf("the default view prints the unread note instead of counting it:\n%s", counted)
+	}
+	all, _, _ := execute(t, "doctor", "--all", "--dir", t.TempDir())
+	if !strings.Contains(all, node) {
+		t.Errorf("--all does not print the note:\n%s", all)
+	}
+}
+
 // TestDriftAlarmOfflineSkipped: `--offline` checks the update class and
 // nothing else (D945, D952), and the drift alarm is not that class — a report
 // outside the band is a fact about the price table, which no `fugaro update`
