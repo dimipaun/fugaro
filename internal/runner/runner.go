@@ -2649,6 +2649,26 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// gate refuses a digest launch against a release image that predates the
 	// step (digestSince, internal/cli/recipes_skew.go).
 	r.digest = recipe.UsesDigest(rcp)
+	// The diagnose step is a model stage this build's runner does not execute
+	// yet (T-TC4 lands it), and artifactMode runs the recipe's plan stage, if
+	// it has one, and then always commands.render (artifact.go) — so a run of
+	// a recipe holding the step would run the repository's render command in
+	// the step's place and end succeeded/artifacts having diagnosed nothing:
+	// no error, and no answer either. The catalog's troubleshoot names
+	// out/diagnosis.md and out/diagnosis.json, which no repository's render
+	// writes, so its own run would even end with an empty artifact set.
+	// Refused here, right after the recipe is resolved and before any stage,
+	// the way the digest step was refused until T3.2 dispatched it, and for
+	// the reason internal/recipe's RegisterStepKind gives: a step the parser
+	// accepts and the run drops may never happen. The launcher's image gate
+	// cannot make this refusal yet — the *Since constant for the step is
+	// T-TC6's — so this is the one a launch of a diagnosis meets. It names no
+	// way out: no release's runner runs the stage yet, so a refreshed job image
+	// would refuse the recipe again, and the release that runs it is T-TC4's to
+	// carry — not a step a person is sent to take here.
+	if recipe.UsesDiagnose(rcp) {
+		return fmt.Errorf("recipe %s holds a diagnose step, which this job image's runner does not execute yet: the run would run the repository's commands.render in the step's place and end succeeded with no diagnosis in it. No Fugaro release runs the diagnose step yet, so there is no job image to move to", rrec.Name)
+	}
 	// The rebase step is the runner's own work plus one model stage for the
 	// conflicts (rebase.go, E5): its run's step is the whole plan, it reviews
 	// nothing and it opens no pull request — what it delivers is a branch put
