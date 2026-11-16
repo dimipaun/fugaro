@@ -1443,7 +1443,7 @@ func TestBundleSchemaMatchesTheLoader(t *testing.T) {
 		{"a key credential", config.CredentialSecret("team-a") + ": " + fakeCred(t, "x") + "\n"},
 		{"a key credential name at the account length rule's bound", config.CredentialSecret(strings.Repeat("a", config.MaxClaudeAccountNameLen)) + ": " + fakeCred(t, "x") + "\n"},
 		{"a key credential name one byte over the account length rule", config.CredentialSecret(strings.Repeat("a", config.MaxClaudeAccountNameLen+1)) + ": " + fakeCred(t, "x") + "\n"},
-		{"a dash-heavy key credential name the regex admits and the length rule refuses", config.CredentialSecret("a" + strings.Repeat("-a", 30)) + ": " + fakeCred(t, "x") + "\n"},
+		{"a dash-heavy key credential name the regex admits and the length rule refuses", config.CredentialSecret("a"+strings.Repeat("-a", 30)) + ": " + fakeCred(t, "x") + "\n"},
 		{"a key credential name outside the account rule", config.CredentialSecret("9ci") + ": " + fakeCred(t, "x") + "\n"},
 		{"the key credential family with no name at all", config.CredentialSecretPrefix + config.CredentialKeySuffix + ": " + fakeCred(t, "x") + "\n"},
 		{"the key credential namespace without the key suffix", config.CredentialSecretPrefix + "team-a: " + fakeCred(t, "x") + "\n"},
