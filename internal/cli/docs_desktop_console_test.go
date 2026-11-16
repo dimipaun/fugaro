@@ -350,7 +350,11 @@ func TestDocsDesktopConsoleContractNamesEveryWatchField(t *testing.T) {
 // document, the cancel result, and the budget documents. A key that exists in
 // Go and not in the document fails here, and the document's own tables are
 // what it is checked against, so a field listed there cannot be one the code
-// does not have without this test's sibling below catching the mismatch.
+// does not have without this test's sibling below catching the mismatch. The
+// shapes of §6.9 and §6.10 are the exception: each is checked against that
+// section's own tables rather than against the whole file, because a word this
+// contract uses elsewhere would otherwise stand in for a field the section
+// never lists.
 func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 	const path = "console/docs/json-contract.md"
 	doc := readDoc(t, path)
@@ -379,25 +383,6 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(configListDoc{}),
 		reflect.TypeOf(configListInstallation{}),
 		reflect.TypeOf(configListCheckout{}),
-		reflect.TypeOf(plan.Document{}),
-		reflect.TypeOf(plan.Node{}),
-		reflect.TypeOf(plan.Edge{}),
-		reflect.TypeOf(plan.Footprint{}),
-		// The decoupling pass's own record (schema 3): one broken edge and one
-		// change request, and the `was` object under the first.
-		reflect.TypeOf(plan.Decoupling{}),
-		reflect.TypeOf(plan.BrokenEdge{}),
-		reflect.TypeOf(plan.ContractChange{}),
-		// The read's own document (V2.2.3): every key of what `plan graph
-		// --json` prints, so a computed field the contract does not name fails
-		// here too, not only the artifact's own.
-		reflect.TypeOf(plan.Graph{}),
-		reflect.TypeOf(plan.NodeState{}),
-		reflect.TypeOf(plan.CriticalPath{}),
-		// What the decoupling pass bought (CD3): the gain and the critical path
-		// it measures before and after, both of them the read's own fields.
-		reflect.TypeOf(plan.Gain{}),
-		reflect.TypeOf(plan.PathMeasure{}),
 		reflect.TypeOf(runstore.ChangedFiles{}),
 		// The rigor block and the rule inside it (docs/rigor-modes D24).
 		reflect.TypeOf(runstore.RigorRecord{}),
@@ -449,6 +434,63 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
 		if !strings.Contains(doc, "`"+name+"`") {
 			t.Errorf("%s never names the json field %q, which the shape it documents carries", path, name)
+		}
+	}
+
+	// §6.9's own shapes are held to §6.9's field tables instead of to the whole
+	// document, for the reason §6.10's block below gives — and the plan graph is
+	// where a Contains over the whole document is blindest: `tier` is a word
+	// this contract already uses for a reviewer's round (§6.1) and a price's
+	// band (§6.18), so the node's own `tier` was named nowhere in §6.9's tables
+	// and the whole-document check passed anyway, which is exactly the drift
+	// this test exists to catch. The section's tables are the document, the
+	// node and the state the read adds to it, the edge, the footprint, the
+	// decoupling record, the change requests and the gain, and the comparison
+	// is set EQUALITY in both directions, as §6.10's is.
+	graphShapes := []reflect.Type{
+		reflect.TypeOf(plan.Document{}),
+		reflect.TypeOf(plan.Node{}),
+		reflect.TypeOf(plan.Edge{}),
+		reflect.TypeOf(plan.Footprint{}),
+		// The decoupling pass's own record (schema 3): one broken edge and one
+		// change request, and the `was` object under the first.
+		reflect.TypeOf(plan.Decoupling{}),
+		reflect.TypeOf(plan.BrokenEdge{}),
+		reflect.TypeOf(plan.ContractChange{}),
+		// The read's own document (V2.2.3): every key of what `plan graph
+		// --json` prints, so a computed field the contract does not name fails
+		// here too, not only the artifact's own.
+		reflect.TypeOf(plan.Graph{}),
+		reflect.TypeOf(plan.NodeState{}),
+		reflect.TypeOf(plan.CriticalPath{}),
+		// What the decoupling pass bought (CD3): the gain and the critical path
+		// it measures before and after, both of them the read's own fields.
+		reflect.TypeOf(plan.Gain{}),
+		reflect.TypeOf(plan.PathMeasure{}),
+	}
+	const graph = "### 6.9 "
+	graphRows := mdSectionTables(t, path, mdSection(t, path, doc, graph))
+	graphListed := map[string]bool{}
+	for _, row := range graphRows {
+		for _, m := range jsonCellRE.FindAllStringSubmatch(row[0], -1) {
+			graphListed[m[1]] = true
+		}
+	}
+	graphKeys := jsonTagNames(t, namedTypes(graphShapes...), graphShapes...)
+	for _, name := range graphKeys {
+		if !graphListed[name] {
+			t.Errorf("%s's §6.9 tables never list the json field %q, which the shape it documents carries", path, name)
+		}
+	}
+	inGraph := map[string]bool{}
+	for _, name := range graphKeys {
+		inGraph[name] = true
+	}
+	for _, row := range graphRows {
+		for _, m := range jsonCellRE.FindAllStringSubmatch(row[0], -1) {
+			if !inGraph[m[1]] {
+				t.Errorf("%s's §6.9 field table lists %q, which no field of the plan graph shapes carries", path, m[1])
+			}
 		}
 	}
 
@@ -1354,6 +1396,39 @@ func docTableAfter(t *testing.T, path, doc, header string) [][]string {
 	}
 	if len(rows) == 0 {
 		t.Fatalf("%s's table under %q has no rows", path, header)
+	}
+	return rows
+}
+
+// mdSectionTables returns the data rows of EVERY field table in a section --
+// the shape a section that carries a dozen tables of one header needs, where
+// docTableAfter reads only the first. A row's cells are parsed as docTableAfter
+// parses them, and a row whose first cell names no `field` is not a data row:
+// that is how the "| Key | Type | ... |" header and the "|---|" rule drop out,
+// and how a section's prose table (one whose first cell is a word, not a
+// backticked key) is left to the tests that read it by name.
+func mdSectionTables(t *testing.T, path, section string) [][]string {
+	t.Helper()
+	var rows [][]string
+	for _, line := range strings.Split(section, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "|") {
+			continue
+		}
+		cells := strings.Split(strings.Trim(trimmed, "|"), "|")
+		for i := range cells {
+			cells[i] = strings.TrimSpace(cells[i])
+		}
+		if len(cells) < 2 || strings.Trim(cells[0], "-") == "" { // the header and the rule
+			continue
+		}
+		if jsonCellRE.FindStringSubmatch(cells[0]) == nil {
+			continue
+		}
+		rows = append(rows, cells)
+	}
+	if len(rows) == 0 {
+		t.Fatalf("%s: the section carries no field table with a row", path)
 	}
 	return rows
 }
