@@ -2151,6 +2151,38 @@ var runAccountGrants = setOf(
 	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=google_storage_bucket.runs.name | google_service_account.reports[0].member | for_each= | perms=`,
 	`google_cloud_run_v2_job_iam_member | "roles/run.invoker" | name=google_cloud_run_v2_job.reports[0].name | google_service_account.scheduler.member | for_each= | perms=`,
 
+	// The licence renewal job and its own account (plan K4.2 of
+	// docs/licence-key-v2): the scheduled `fugaro licence renew --job` of an
+	// installation whose coordinator job is deployed, which reads the
+	// installation's marker and published config to find WHICH installation it
+	// renews for, replaces the one object the licence is, and holds four calls
+	// on the single Secret Manager container `fugaro licence set` writes the
+	// renewal secret into. Reviewed whole, for the reason the reports job's
+	// block above is (a tftest cannot enumerate a module's resources): two
+	// bucket rows, one secret row and one invoker are the account's whole
+	// reach in the tree.
+	//
+	// The write is objectUser on the runs bucket under
+	// gcp.LicenceWriteCondition, whose ONE object is the licence and never the
+	// bucket's root the marker lives at (internal/backend/gcp builds the bytes
+	// and internal/infra/tf compares them byte for byte for a plan, and the
+	// installation root's own tftest reads what the module does with them); the
+	// read is objectViewer under gcp.LicenceReadCondition, three named objects
+	// with no listing, which is a List request naming no object and therefore
+	// reaching none. The secret row is the module's custom role and its four
+	// permissions are the key's own list — get the container's metadata, list
+	// its versions, access the newest one, add the next after a renewal that
+	// succeeded: no versions.destroy, versions.enable or versions.disable (the
+	// whole reason the role is not secretVersionManager), no project role, no
+	// actAs and no token minting, and the target is the installation's own
+	// container and not the runs bucket. The invoker row is the scheduler
+	// account's, the same roles/run.invoker the reports and check jobs' rows
+	// above are.
+	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | google_service_account.licence[0].member | for_each= | perms=`,
+	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=google_storage_bucket.runs.name | google_service_account.licence[0].member | for_each= | perms=`,
+	`google_secret_manager_secret_iam_member | "projects/${var.project}/roles/fugaroLicenceRenewal" | secret_id=var.licence.renewal_secret | google_service_account.licence[0].member | for_each= | perms=secretmanager.secrets.get,secretmanager.versions.access,secretmanager.versions.add,secretmanager.versions.list`,
+	`google_cloud_run_v2_job_iam_member | "roles/run.invoker" | name=google_cloud_run_v2_job.licence[0].name | google_service_account.scheduler.member | for_each= | perms=`,
+
 	// The history account's: the Firebase databases, its run listing, and a
 	// read of the runs bucket.
 	`google_project_iam_member | "roles/datastore.user" | project=var.project | "serviceAccount:${var.history_account}" | for_each= | perms=`,
@@ -3456,6 +3488,13 @@ var narrowingConditions = map[string]bool{
 	// — one prefix, never the bucket's root — is asserted above, on the builder
 	// itself, and the module's own plan is read by the installation root's test.
 	"var.reports.write_condition.expression": true,
+	// The licence renewal job's write grant (plan K4.2): the module is handed
+	// gcp.LicenceWriteCondition, the ONE object the job renews and not a prefix
+	// at all. That the bytes this names are the narrow ones is asserted above,
+	// on the builder itself (internal/backend/gcp), the cover compares them
+	// byte for byte for a plan, and the installation root's tftest reads which
+	// grant carries them.
+	"var.licence.write_condition.expression": true,
 }
 
 // grantMembers is who a grant is to: the member attribute, or the members of
