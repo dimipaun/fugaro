@@ -19,7 +19,7 @@ Two facts decide every row below, and both are read off the runner, not assumed.
 **The bootstrap reads are memoized.** The project policy node and the deployed
 rules generation are read once per run and never again: `policyRead` with its
 `done` flag and `readPolicy` (`internal/runner/projectpolicy.go`) memoize
-`projectpolicy.Read` (`internal/projectpolicy/read.go`), whose `rulesGeneration`
+`projectpolicy.Read` (`internal/projectpolicy/read.go`), whose `RulesGeneration`
 reads `config/limits/policyRules` (`projectpolicy.PathRulesMarker`). A marker or
 a node that moves mid-run does not reach the run through this path.
 
