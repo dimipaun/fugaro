@@ -71,6 +71,19 @@ var jsonCases = map[string]jsonCase{
 			return []string{"accounts", "ls", "--repo", "acme/app"}
 		},
 	},
+	// apply is a write verb whose run changes nothing here — this world's
+	// record owes no step — so what the fixture holds to the contract is the
+	// document an owed-nothing run prints. The command's other run arm, a step
+	// that fails, prints the same document (apply.go) and is driven through
+	// the command by apply_test.go, where the failure is a configuration the
+	// test builds rather than one this world happens to have.
+	"apply": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			jsonCloud(t)
+			return []string{"apply"}
+		},
+	},
 	"artifacts ls": {
 		reads: true,
 		run: func(t *testing.T) []string {

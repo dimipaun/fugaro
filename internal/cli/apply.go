@@ -221,7 +221,7 @@ func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, pending
 	// (D1351, D1354): the steps it runs are the loop's, and a command that ran
 	// a converge without a reporter of its own would print a second account of
 	// the same run beside the one the census expects.
-	run := stepRunFor(cmd, applyName, cmd.ErrOrStderr())
+	run := stepRunFor(cmd, "apply", cmd.ErrOrStderr())
 	defer run.close()
 	io := &initOptions{door: applyName, yes: true, nonInteractive: true, asJSON: o.asJSON}
 	r := newInitRun(cmd, io)
@@ -269,7 +269,12 @@ func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, pending
 	// this command again finishes the whole job.
 	if slices.Contains(names, apply.CatalogBuild) {
 		if err := applyCatalogBuild(cmd, lc); err != nil {
-			if !o.asJSON {
+			// --json answers one document on every outcome (G2), and this arm
+			// returns ahead of the answer below: nothing ran, so the document
+			// is the record as it was read, with every step still owed.
+			if o.asJSON {
+				fmt.Fprintln(cmd.OutOrStdout(), string(applyDocJSON(lc, pending, recorded, applyCurrent(pending, recorded, path), nil)))
+			} else {
 				applyKeptLine(cmd.OutOrStdout(), []string{apply.CatalogBuild})
 			}
 			return err

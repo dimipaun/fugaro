@@ -294,9 +294,35 @@ func (o *initOptions) doorProgram() string { return "fugaro " + o.doorName() }
 // onboarding an unlisted repository in either door's converge (D12's answer of
 // 2026-10-20, authState/onboardCovered), so this is what a run that gave no such
 // confirmation falls back on (W5.1).
+//
+// `fugaro apply` is the third door that does not ask either: it runs the steps
+// a change already saved and its input is nobody's, so an owed redeploy of an
+// unlisted repository is left for the user with the `fugaro setup` line exactly
+// as `update` leaves it. The row's other half — the answer — is where those two
+// doors part, and that is enrolsByAnswer's.
 func (o *initOptions) enrolling() bool {
-	return o.door != updateDoor.name || o.repo
+	switch o.door {
+	case updateDoor.name, applyName:
+		return o.repo
+	}
+	return true
 }
+
+// enrolsByAnswer is whether the run's own answer may cover onboarding an
+// unlisted repository in this door (authState/onboardCovered). The two front
+// doors may: D12's answer of 2026-10-20 covers the row in both of them and in
+// both of their modes, and a run of either that carries the answer is one a
+// command opened on the person's own — `update` has no flag that sets one
+// (T11), so in practice it is setup's and an internal converge's.
+//
+// `fugaro apply` may not, and that is the whole of the difference: the answer
+// it carries is its own rather than anybody's, and a pipe, a script, `--json`
+// and the console all reach that door (D1572). The step is one that creates
+// cloud resources and writes the checkout, so what a context can make happen by
+// running a command is not this; the repository is left for the user with the
+// line naming `fugaro setup` (enrolLeft) — the door that owns the question
+// (D5), and the one place a person is asked.
+func (o *initOptions) enrolsByAnswer() bool { return o.door != applyName }
 
 // initCreation is what a run of setup --create-project did, as the run itself
 // knows it (not inferred from the cloud afterwards): the project it created,

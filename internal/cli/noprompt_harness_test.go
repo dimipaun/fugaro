@@ -439,6 +439,7 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 // their bodies, in sentences of their own, which the run's own error carries.
 var closedStdinNoFixture = map[string]string{
 	"fugaro ab":                "refuses: the edition is not in this build",
+	"fugaro apply":             "owes nothing in this world, which holds no record: the whole of what a bare run does is the answer of a run with nothing to apply, and it reaches its own body to print it",
 	"fugaro accounts":          "is a name for its four subcommands: a bare run prints its own usage and returns",
 	"fugaro accounts alias":    "is a name for set and rm: a bare run prints its own usage and returns",
 	"fugaro accounts ls":       "selects no project and names the two ways to (--repo, an origin remote)",

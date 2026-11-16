@@ -590,6 +590,75 @@ func TestApplyStatusJSONMatchesSchema(t *testing.T) {
 	}
 }
 
+// TestApplyJSONAnswersItsDocumentWhenTheCatalogBuildFails: --json answers one
+// document on every outcome (G2). The catalog image is the one step that is not
+// a stage, and a build this run may not make returns from applyRunSteps before
+// the answer the loop prints — so the document is printed on that arm too,
+// holding the record as it was read: nothing applied, every step still owed. A
+// run that printed nothing would leave a script's stdout empty and the exit
+// code the only thing to read, which is the one shape no other failure arm of
+// this command has.
+func TestApplyJSONAnswersItsDocumentWhenTheCatalogBuildFails(t *testing.T) {
+	r, _ := applyWorld(t)
+	// A catalog this installation builds: a config that names none answers that
+	// nothing is owed before the build is reached, which is the other arm.
+	r.appendConfig(t, catalogBuildYAML)
+	owed(t, apply.CatalogBuild, apply.Change{Kind: apply.Resource, Key: apply.ResourceImage})
+	// The one build refusal this test can reach without Cloud Build: the step is
+	// billable and a coding agent's session may not spend it (D1571).
+	t.Setenv("CLAUDECODE", "1")
+
+	out, errOut, err := executeStdin(t, "", "apply", "--json")
+	if err == nil {
+		t.Fatalf("a coding agent's session built a billable catalog image:\n%s", out+errOut)
+	}
+	if got := out + errOut + ErrorText(err); !strings.Contains(got, initflow.AgentRefusal("CLAUDECODE")) {
+		t.Fatalf("the run did not reach the catalog build's own refusal:\n%s", got)
+	}
+	doc := applyDocOf(t, out)
+	if !slices.Equal(applySteps(doc.Pending), []string{apply.CatalogBuild}) {
+		t.Errorf("the document owes %v, want the catalog build: a build that failed leaves every step owed", applySteps(doc.Pending))
+	}
+	if len(doc.Applied) != 0 {
+		t.Errorf("the document reports %v as applied, and this run answered nothing", doc.Applied)
+	}
+	if p := record(t); len(p.Steps) != 1 {
+		t.Errorf("the record after the failed run is %+v, want the step still owed", p.Steps)
+	}
+	applySchemaCheck(t, []string{"apply", "--json"}, out)
+}
+
+// TestApplyNeverOnboardsAnUnlistedRepository: this door runs the steps a
+// management change saved on an answer of its own rather than a person's — a
+// pipe, a script, `--json` and the console all reach it (D1572) — so an owed
+// redeploy of a repository the local config does not list is left for the user,
+// with the line naming `fugaro setup`, exactly as `update`'s converge leaves it
+// (D5). Nothing a context can pass this command makes it enrol a repository,
+// which is what its --no-apply half exists to keep out of a script in the first
+// place.
+func TestApplyNeverOnboardsAnUnlistedRepository(t *testing.T) {
+	dir := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", ""))
+	t.Chdir(dir)
+	e, _ := stageEngine(t, "", &initOptions{door: applyName, yes: true, nonInteractive: true})
+	unknownRepo(e)
+	fakeTerminal(t)
+	rs := newRepositoryStage(e)
+	rs.engineStage.run = neverRun(t)
+	res, err := initflow.Run(t.Context(), []initflow.Stage{rs}, e.options())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stateOf(res, initflow.Repository); got != initflow.NeedsYou {
+		t.Fatalf("the repository stage is %v, want needs-you: this door onboarded a repository nobody opted in\n%s", got, res.Stages)
+	}
+	if len(res.Left) != 1 || res.Left[0].Kind != initflow.LeftCommand || res.Left[0].Text != selfCommand()+" "+setupDoor.name {
+		t.Fatalf("the run leaves %+v, want the one line naming the door that enrols", res.Left)
+	}
+	if d := stageDetailOf(res, initflow.Repository); !strings.Contains(d, selfCommand()+" "+applyName+" does not enrol one by asking") {
+		t.Errorf("the stage's own line is %q, want this door's, not a door that does enrol", d)
+	}
+}
+
 // applySchemaPath is schemas/apply-status.schema.json, resolved from this
 // file's own location: every test here chdirs into a rig's world, so a relative
 // path would look for the schema beside a temporary directory.
