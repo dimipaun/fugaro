@@ -183,6 +183,94 @@ func TestUpdateSaysNothingWhenNothingRuns(t *testing.T) {
 	}
 }
 
+// TestUpdateAskStopsOverARunInFlight is the door's one question, asked end to
+// end: `fugaro update --ask` on a managed project, at a terminal, over a run of
+// its own repository in flight — and the person answers stop. The run ends
+// there, at exit 0, having written nothing: no stage of the loop ran, so no
+// apply was made and no object of the installation moved, and the line under the
+// answer says what the answer cost.
+//
+// It is the guard in the converge read from outside (init_stages.go): the answer
+// reaches the run through --ask's own read (asksBack: the flag, marks that
+// answered managed, and a session that can answer) and stops it before the loop.
+// Nothing here is the update refusing — a run in flight is never a reason to
+// refuse — the question is the owner's and the answer to it is theirs.
+func TestUpdateAskStopsOverARunInFlight(t *testing.T) {
+	r := convergeRigWithMarker(t, markerBuildsFact)
+	startRunInFlight(t, r)
+	currentRelease(t)
+	fakeTerminal(t)
+
+	out, errOut, err := executeStdin(t, "y\n", "update", "--ask")
+	if err != nil {
+		t.Fatalf("the update refused the stop rather than taking it (exit %d): %v\n%s\n%s", ExitCode(err), err, out, errOut)
+	}
+	if !strings.Contains(out, "Stop here, before anything is written?") {
+		t.Errorf("the run did not ask whether to stop over the run in flight:\n%s", out)
+	}
+	if !strings.Contains(out, "stopped at your answer") {
+		t.Errorf("the run did not say it stopped with nothing written:\n%s", out)
+	}
+	// It stopped over the door's own note, and the check the wait was spent in is
+	// named on the way: the two halves of the feedback this change answers.
+	if note := inFlightLine(t, out); !strings.Contains(note, "1 run in flight") {
+		t.Errorf("the run stopped without naming the run in flight:\n%s", note)
+	}
+	if !strings.Contains(out, "Checking for runs in flight") {
+		t.Errorf("the run did not name the check it spent the wait in:\n%s", out)
+	}
+	if applies := r.ran(t, "apply"); len(applies) != 0 {
+		t.Errorf("the run applied %v after the answer to stop: nothing may be written", applies)
+	}
+}
+
+// TestUpdateAskGoesOnWhenTheAnswerIsNotStop is the other half of the door's
+// question, and the half the HARD RULE is about: a run in flight is never a
+// reason to stop, so going on is the answer the question defaults to — a reader
+// who presses return gets the update they would have had without the flag. The
+// installation converges (the apply the test above finds absent is made here)
+// and no line says the run stopped.
+//
+// The rig is the flag's own (managed_ask_test.go): a managed project whose plan
+// has one additive step, which is where the run's own confirmation comes from.
+// The input is the answers in the order the run asks for them: the empty line
+// is the return pressed at the door's question, which goes on, and the y lines
+// are what every later confirmation --ask gives back gets — the flag hands
+// every prompt to the terminal, and this test is about the first one. (More are
+// offered than the run needs, so a stage that stops asking does not move the
+// answer onto the question under test.)
+func TestUpdateAskGoesOnWhenTheAnswerIsNotStop(t *testing.T) {
+	r := askUpdateRig(t, askMarkWorlds()[0])
+	// The run in flight, as the database holds one: an entry under the project's
+	// own key, written when the run started and removed when it ends. This arm
+	// is about the question and not about the run, so it is the entry alone —
+	// TestUpdateLeavesARunInFlightRunning is where the run itself, its lease and
+	// its counters are real.
+	db := buildBudgetForRig(t, r)
+	db.Set("agents", map[string]any{initProject: map[string]any{
+		inFlightRunID: map[string]any{"repo": "github/acme/app"},
+	}})
+	fakeTerminal(t)
+	noAgentSession(t)
+
+	out, err := askUpdateRun(t, r, "\n"+strings.Repeat("y\n", 8), "update", "--ask")
+	if err != nil {
+		t.Fatalf("the update stopped over a run in flight on the default answer (exit %d): %v\n%s", ExitCode(err), err, out)
+	}
+	if !strings.Contains(out, "Stop here, before anything is written?") {
+		t.Errorf("the run did not ask whether to stop over the run in flight:\n%s", out)
+	}
+	if !strings.Contains(out, "1 run in flight") {
+		t.Errorf("the question was asked without the note that is its premise:\n%s", out)
+	}
+	if strings.Contains(out, "stopped at your answer") {
+		t.Errorf("the default answer stopped the update:\n%s", out)
+	}
+	if applies := r.ran(t, "apply"); len(applies) == 0 {
+		t.Errorf("the update applied nothing after the default answer, so a run in flight stopped it: %s", r.calls(t))
+	}
+}
+
 // TestUpdateInFlightLineNamesEveryStepThatCanReachARun: the audit found six
 // steps of the update that can still reach a run in flight — the budget mode's
 // raise to enforce, which a session re-reads on every lease while the policy
