@@ -3361,12 +3361,13 @@ func TestProjectPolicyPublishKeepsCloneURLs(t *testing.T) {
 	}
 }
 
-// TestProjectPolicyPublishKeepsTheCraftMembers: craft_credentials, craft_pools
-// and crafts are read by this Fugaro (the types exist, plan MC1) and written by
-// no command of it yet, so a publish must keep what the node holds instead of
-// rebuilding the node without them. The alternative is not a refusal but a
-// deletion: the publisher marshals the policy it built from the operator's
-// config, and a member no config field feeds is a member that silently goes.
+// TestProjectPolicyPublishKeepsTheCraftMembers: since MC18 the publisher writes
+// craft_credentials, craft_pools and crafts from the operator's config, and this
+// is the other half of that rule — a config that states none of the three keeps
+// what the node holds instead of rebuilding the node without them. The
+// alternative is not a refusal but a deletion: the publisher marshals the policy
+// it built, and a member neither the config nor the node feeds is a member that
+// silently goes.
 // The three are copied as typed values rather than patched in as document
 // members, the way the credentials block is (they are strict inside, so
 // publishedPolicyOf refuses an unmodelled key inside them before this point),
@@ -3376,8 +3377,8 @@ func TestProjectPolicyPublishKeepsTheCraftMembers(t *testing.T) {
 	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
 		t.Fatal(err)
 	}
-	// What a later release — or MC4 of this plan, once the config writes them —
-	// leaves on the node.
+	// What a node another writer left the members on — the owner by hand, or the
+	// migration of an installation that predates them.
 	node := f.db.Value(projectpolicy.PathShared()).(map[string]any)
 	node["craft_credentials"] = []any{map[string]any{"name": "acme-main", "type": "openrouter"}}
 	node["craft_pools"] = []any{map[string]any{"name": "acme-pool", "strategy": "failover", "members": []any{"acme-main", "vertex"}, "owner": "owner@example.com"}}

@@ -1416,7 +1416,10 @@ func publishedCraftCredentials(lc *localcfg.Config, old *projectpolicy.Policy) [
 // is left out and NAMED in one line: the node would be one this Fugaro refuses
 // to read back (config.ValidatePublishedPools refuses an ownerless published
 // pool, and both doors write through checkPolicyBytes), and neither door fails
-// on it (D2608).
+// on it (D2608). The check is the block's own and is asked of the pool in the
+// block it is being written into, so a pool of the config whose name the node
+// defines a credential of is left out here rather than refused: a craft's
+// access resolves to that credential, and the line says which name it was.
 func publishedCraftPools(lc *localcfg.Config, old *projectpolicy.Policy, creds []config.Credential) ([]config.Pool, []string) {
 	node := craftPoolsOf(old)
 	if len(lc.Pools) == 0 {

@@ -3153,3 +3153,72 @@ func TestTheNodeRefusesACraftAccessItCannotServe(t *testing.T) {
 		t.Errorf("the refused publish changed the node:\n got %s\nwant %s", got, held)
 	}
 }
+
+// TestPublishRefusesANameThatMeansTwoThings: a credential and a pool share one
+// namespace in a published block (config.ValidatePools), because a craft's
+// access names either of them and does not say which — so one name may mean
+// only one of the two. Neither document breaks it alone: since MC18 the two
+// halves of the node a publish writes come from two sources (the blocks the
+// file states, the node's own for every name it does not), and the clash exists
+// only in the one document those sources make together.
+//
+// The two directions are answered differently, and deliberately. A credential
+// of the file under a name the node publishes a pool of is refused by the build
+// itself, naming the two and the fix: nothing else would catch it, and a node
+// written anyway is one no reader decodes — the NEXT door would fail instead
+// (checkPolicyBytes' sentence about a document it cannot read back, which names
+// neither the name nor the two blocks it came from). The other way round — a
+// pool of the file under a name the node defines a credential of — is the
+// pool's own not-published path, which every unpublished pool takes: the
+// credential is the one a run resolves, so the pool is named in one line and
+// left out, and the publish succeeds (D2608's shape).
+func TestPublishRefusesANameThatMeansTwoThings(t *testing.T) {
+	// The node both halves read: a credential of the name one case writes a pool
+	// of, and a pool of the name the other writes a credential of.
+	seed := func(t *testing.T) (*projectFixture, string) {
+		t.Helper()
+		f := newProjectFixture(t, "")
+		if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+			t.Fatal(err)
+		}
+		node := f.db.Value(projectpolicy.PathShared()).(map[string]any)
+		node["craft_credentials"] = []any{map[string]any{"name": "acme-main", "type": "openrouter"}}
+		node["craft_pools"] = []any{map[string]any{
+			"name": "other-pool", "strategy": "failover", "members": []any{"acme-main"}, "owner": "owner@example.com"}}
+		f.db.Set(projectpolicy.PathShared(), node)
+		return f, nodeJSON(t, f, projectpolicy.PathShared())
+	}
+
+	t.Run("a credential of the file against a pool of the node", func(t *testing.T) {
+		f, held := seed(t)
+		rewriteProjectConfig(t, f, "credentials:\n  - { name: other-pool, type: openrouter }\n")
+		out, _, err := execute(t, "project", "policy", "publish")
+		if err == nil ||
+			!strings.Contains(err.Error(), "defines the credential other-pool and the published node holds a pool of that name") ||
+			!strings.Contains(err.Error(), "Rename one of the two") {
+			t.Fatalf("a name that means a credential and a pool was published: %v\n%s", err, out)
+		}
+		if got := nodeJSON(t, f, projectpolicy.PathShared()); got != held {
+			t.Errorf("the refused publish changed the node:\n got %s\nwant %s", got, held)
+		}
+	})
+
+	t.Run("a pool of the file against a credential of the node", func(t *testing.T) {
+		f, _ := seed(t)
+		rewriteProjectConfig(t, f, "pools:\n  - { name: acme-main, strategy: failover, members: [vertex], owner: owner@example.com }\n")
+		out, _, err := execute(t, "project", "policy", "publish")
+		if err != nil {
+			t.Fatalf("the pool the node's credential names was a failed publish: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "craft_pools acme-main not published: a credential of this name is defined in the same block") {
+			t.Errorf("the diff does not name the pool it left out:\n%s", out)
+		}
+		p := publishedPolicy(t, f)
+		if want := []config.Credential{{Name: "acme-main", Type: config.CredentialTypeOpenRouter}}; !slices.Equal(p.CraftCredentials, want) {
+			t.Errorf("craft_credentials = %+v, want the node's own %+v", p.CraftCredentials, want)
+		}
+		if len(p.CraftPools) != 1 || p.CraftPools[0].Name != "other-pool" {
+			t.Errorf("craft_pools = %+v, want the node's own pool alone", p.CraftPools)
+		}
+	})
+}
