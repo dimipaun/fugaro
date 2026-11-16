@@ -91,7 +91,17 @@ type WireEntitlementMint struct {
 	CheckInterval *string `json:"check_interval"`
 }
 
+// WireEntitlementList is every entitlement of the caller's organisation, which
+// is what `GET /api/entitlements` answers. Superseded and ended grants are in it
+// as well as the active one: a workspace whose licence a purchase replaced still
+// names that licence, and a card with no licence on it is a card that says
+// nothing about the key the installation is running on.
+type WireEntitlementList struct {
+	Entitlements []WireEntitlement `json:"entitlements"`
+}
+
 func init() {
 	registerWire("entitlements.entitlement", func() any { return new(WireEntitlement) })
 	registerWire("entitlements.mint", func() any { return new(WireEntitlementMint) })
+	registerWire("entitlements.list", func() any { return new(WireEntitlementList) })
 }

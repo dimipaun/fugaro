@@ -46,8 +46,13 @@ import checkoutSession from '../schemas/fixtures/checkout.session.json'
 import { type CheckoutCreate, type CheckoutSession } from '../src/api/types/checkout'
 import entitlementsSchema from '../schemas/entitlements.schema.json'
 import entitlementsEntitlement from '../schemas/fixtures/entitlements.entitlement.json'
+import entitlementsList from '../schemas/fixtures/entitlements.list.json'
 import entitlementsMint from '../schemas/fixtures/entitlements.mint.json'
-import { type Entitlement, type EntitlementMint } from '../src/api/types/entitlements'
+import {
+  type Entitlement,
+  type EntitlementList,
+  type EntitlementMint,
+} from '../src/api/types/entitlements'
 import errorSchema from '../schemas/error.schema.json'
 import errorRefusal from '../schemas/fixtures/error.refusal.json'
 import { type ErrorRefusal } from '../src/api/types/error'
@@ -109,8 +114,9 @@ import statementsStatement from '../schemas/fixtures/statements.statement.json'
 import { type Statement, type StatementPayment } from '../src/api/types/statements'
 import workspacesSchema from '../schemas/workspaces.schema.json'
 import workspacesBind from '../schemas/fixtures/workspaces.bind.json'
+import workspacesList from '../schemas/fixtures/workspaces.list.json'
 import workspacesWorkspace from '../schemas/fixtures/workspaces.workspace.json'
-import { type Workspace, type WorkspaceBind } from '../src/api/types/workspaces'
+import { type Workspace, type WorkspaceBind, type WorkspaceList } from '../src/api/types/workspaces'
 
 /**
  * How a declared type looks from the fixture's side: a union of string literals
@@ -200,6 +206,13 @@ const FIXTURES: Fixture[] = [
     definition: 'entitlement',
     same: true satisfies Identical<keyof JsonShape<Entitlement>, keyof typeof entitlementsEntitlement>,
     fixture: entitlementsEntitlement satisfies JsonShape<Entitlement>,
+  },
+  {
+    name: 'entitlements.list',
+    schema: entitlementsSchema,
+    definition: 'list',
+    same: true satisfies Identical<keyof JsonShape<EntitlementList>, keyof typeof entitlementsList>,
+    fixture: entitlementsList satisfies JsonShape<EntitlementList>,
   },
   {
     name: 'entitlements.mint',
@@ -389,6 +402,13 @@ const FIXTURES: Fixture[] = [
     definition: 'bind',
     same: true satisfies Identical<keyof JsonShape<WorkspaceBind>, keyof typeof workspacesBind>,
     fixture: workspacesBind satisfies JsonShape<WorkspaceBind>,
+  },
+  {
+    name: 'workspaces.list',
+    schema: workspacesSchema,
+    definition: 'list',
+    same: true satisfies Identical<keyof JsonShape<WorkspaceList>, keyof typeof workspacesList>,
+    fixture: workspacesList satisfies JsonShape<WorkspaceList>,
   },
   {
     name: 'workspaces.workspace',
