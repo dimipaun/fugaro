@@ -46,7 +46,15 @@ func secretsClock(t *testing.T, day string) {
 // secretsLocalConfig is the local config this machine's project has after a run.
 func secretsLocalConfig(t *testing.T) *localcfg.Config {
 	t.Helper()
-	data, err := os.ReadFile(os.Getenv("FUGARO_CONFIG"))
+	return secretsConfigAt(t, os.Getenv("FUGARO_CONFIG"))
+}
+
+// secretsConfigAt is the same read of a config the caller names: --config and
+// --project aim a record at a file that is not the one the machine's
+// environment selects, and a test of either has to read that file back.
+func secretsConfigAt(t *testing.T, path string) *localcfg.Config {
+	t.Helper()
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,6 +121,50 @@ func TestSecretsSetWritesExpiryAndRotation(t *testing.T) {
 	}
 	if !slices.Equal(*hooked, want) {
 		t.Fatalf("the write told the hook %v, want %v", *hooked, want)
+	}
+}
+
+// TestSecretsSetWritesTheAimedConfig: --config and --project are the aiming
+// pair every cloud command of this family takes, and these three records are
+// local config keys — the whole of what an installation records about its
+// secrets lives in its own project config file. A run that resolved the
+// selection from the environment alone would write one installation's record
+// into another installation's file, which is what the aim exists to prevent
+// (settingsAimedSelection); the file the environment selects is read back here,
+// because an aim is a selection and never a second write.
+func TestSecretsSetWritesTheAimedConfig(t *testing.T) {
+	settingsFixture(t, "")
+	byProject := writeProject(t, "basalt", "basalt-gcp")
+	byConfig := writeProject(t, "cinder", "cinder-gcp")
+	secretsClock(t, secretsTestToday)
+	hooked := secretsHookRecord(t)
+	selected := os.Getenv("FUGARO_CONFIG")
+	before := readFileString(t, selected)
+
+	if _, _, err := execute(t, "secrets", "set", "--project", "basalt", "--rotation-days", "30"); err != nil {
+		t.Fatalf("--project: %v", err)
+	}
+	if got := secretsConfigAt(t, byProject).SecretRotationDays; got != 30 {
+		t.Fatalf("--project basalt recorded no period in basalt's config (secret_rotation_days = %d)", got)
+	}
+	const root = "https://bitbucket.example.com"
+	if _, _, err := execute(t, "secrets", "set", "--config", byConfig, "--bitbucket-api-root", root); err != nil {
+		t.Fatalf("--config: %v", err)
+	}
+	if got := secretsConfigAt(t, byConfig).BitbucketAPIRoots; !slices.Equal(got, []string{root}) {
+		t.Fatalf("--config recorded no root in the config it names: bitbucket_api_roots = %v", got)
+	}
+	if after := readFileString(t, selected); after != before {
+		t.Fatalf("a record aimed at another config was written into the selected one:\n%s", after)
+	}
+	// Each aimed write is a write of its own and ends on the hook: the aim
+	// decides which file, and never whether the stage is owed.
+	want := []afterWriteChange{
+		{Key: "secret_rotation_days", Store: settings.StoreLocal},
+		{Key: "bitbucket_api_roots", Store: settings.StoreLocal},
+	}
+	if !slices.Equal(*hooked, want) {
+		t.Fatalf("the aimed writes told the hook %v, want %v", *hooked, want)
 	}
 }
 
@@ -531,6 +583,85 @@ func TestSecretsSetDryRunAnswersTheRecord(t *testing.T) {
 	}
 	if len(*hooked) != 0 {
 		t.Fatalf("a dry run told the hook %v", *hooked)
+	}
+}
+
+// secretsRunDoc is the document a run of several records prints, as a consumer
+// reads it: the run's own facts beside the records, and no key of its own.
+type secretsRunDoc struct {
+	Version int               `json:"version"`
+	Key     *string           `json:"key"`
+	Layer   string            `json:"layer"`
+	Path    string            `json:"path"`
+	Changed bool              `json:"changed"`
+	Records []secretsWriteDoc `json:"records"`
+}
+
+// TestSecretsSetDryRunPrintsOneDocumentForARun: several record flags are
+// several writes, and the answer to one run is one document — a consumer reads
+// one value, and two objects printed one after the other are not one. The run's
+// document carries the run's own facts and every record in `records`, and it
+// names no single key, because a run of records writes several; each record
+// keeps the document the dry run has always answered with, so a one-flag run is
+// unchanged.
+func TestSecretsSetDryRunPrintsOneDocumentForARun(t *testing.T) {
+	settingsFixture(t, "")
+	secretsClock(t, secretsTestToday)
+	hooked := secretsHookRecord(t)
+	path := os.Getenv("FUGARO_CONFIG")
+	before := readFileString(t, path)
+	args := []string{"secrets", "set", "--rotation-days", "30", "--bitbucket-api-root", "https://bitbucket.example.com"}
+
+	out, errOut, err := execute(t, append(append([]string{}, args...), "--dry-run", "--json")...)
+	if err != nil {
+		t.Fatalf("stdout %q, stderr %q: %v", out, errOut, err)
+	}
+	// One value and not several: the decode reads the whole stream, and a
+	// second document after the first is what it refuses.
+	var run secretsRunDoc
+	if err := json.Unmarshal([]byte(out), &run); err != nil {
+		t.Fatalf("the run did not print one document: %v\n%s", err, out)
+	}
+	if run.Key != nil {
+		t.Fatalf("the run's document names one key (%q), and the run writes the records' own keys:\n%s", *run.Key, out)
+	}
+	if run.Version != 1 || run.Layer != settingsLayerLocal || run.Path != path || !run.Changed {
+		t.Fatalf("the run's document is %+v, want version 1, the local layer, the file it would write and a change:\n%s", run, out)
+	}
+	want := []secretsWriteDoc{
+		{Key: "secret_rotation_days", Layer: settingsLayerLocal, Changed: true, New: "30"},
+		{Key: "bitbucket_api_roots", Layer: settingsLayerLocal, Changed: true, New: "https://bitbucket.example.com"},
+	}
+	if !slices.Equal(run.Records, want) {
+		t.Fatalf("records = %+v, want %+v\n%s", run.Records, want, out)
+	}
+	if after := readFileString(t, path); after != before {
+		t.Fatalf("a dry run wrote the local config:\n%s", after)
+	}
+	if len(*hooked) != 0 {
+		t.Fatalf("a dry run told the hook %v", *hooked)
+	}
+
+	// One record is the document it has always been: the console draws its
+	// window from it, and a run of one is not a list.
+	single, _ := secretsDryRun(t, "secrets", "set", "--rotation-days", "30")
+	if single.Key != "secret_rotation_days" || single.New != "30" {
+		t.Fatalf("a one-flag run answered %+v, want the record's own document", single)
+	}
+
+	// The table shape carries the same facts: without --json the run prints one
+	// table per record, which is the whole of what a nested table cannot be.
+	table, errOut, err := execute(t, append(append([]string{}, args...), "--dry-run")...)
+	if err != nil {
+		t.Fatalf("stdout %q, stderr %q: %v", table, errOut, err)
+	}
+	if got := strings.Count(table, "FIELD"); got != 2 {
+		t.Fatalf("the run printed %d tables, want one per record:\n%s", got, table)
+	}
+	for _, key := range []string{"secret_rotation_days", "bitbucket_api_roots"} {
+		if !strings.Contains(table, key) {
+			t.Fatalf("the run's tables do not name %s:\n%s", key, table)
+		}
 	}
 }
 

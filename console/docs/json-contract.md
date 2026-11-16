@@ -2768,7 +2768,10 @@ the document and `writeSettingsWriteDoc` prints it. Cited by symbol, not by
 line, for §6.11's reason. **The console spawns it since the settings-edit plan's
 C3** (operation `settings.edit`, design §5.1 rule 12), and it is **not** the
 console's read of the settings: §6.19's document is the table the pencil is
-drawn from, and this one is about **one edit of one key**.
+drawn from, and this one is about **one edit of one key** — or, for the one
+command that writes more than one key in a run, about **a run of several**
+(`records` below, `fugaro secrets set`'s record flags), which is the one
+document that names no single key.
 
 **Why it exists: one edit, classified by the CLI's own code, before a window is
 shown or a byte is written.** The dry run writes nothing — no file, not even the
@@ -2781,7 +2784,7 @@ old value and shape come from this document and from nowhere else.
 | Key | Type | Absent | Null | Notes |
 | --- | --- | --- | --- | --- |
 | `version` | int | never | never | the document's version, `1` today (`settingsWriteDocVersion`, pinned by `schemas/settings-write.schema.json`). Members are only ever added within a version (D848) |
-| `key` | string | never | never | the key the edit is about, printed through `safetext.Field`. A consumer reads it to check that the document is about **the** edit it asked for: the window draws the key from here and writes the layer from the read's own row, so a document answering about another key is refused before any window exists |
+| `key` | string | **absent from a run of several records, and from no other document** | never | the key the edit is about, printed through `safetext.Field`. A consumer reads it to check that the document is about **the** edit it asked for: the window draws the key from here and writes the layer from the read's own row, so a document answering about another key is refused before any window exists. **A run writes several keys and names none of them here** — each is the `key` of its own record in `records` below — so the member is left out rather than set to one of them, and the console's own read refuses a document without it (`dryRunAt`, `settingsview.ts`), which is the fail-closed direction for a document its argv never produces. Where it is present it is never empty (`minLength`), so it still means exactly what it meant |
 | `layer` | string | never | never | the layer the edit would write, `local`, `project` or `repo` (`settingsWriteLayers`). A console cannot name it: it is §6.19's `target_layer`, and this member is the check that the child was aimed where the read said |
 | `path` | string | never | never | the file the edit would write, printed through `safetext.Field`. It is a path of the operator's machine: a consumer may show it and may never spawn anything built from it |
 | `changed` | bool | never | never | the write path's own comparison of the two byte strings — the same comparison that decides whether a write would happen at all — so the document cannot claim a change the write path did not see |
@@ -2794,6 +2797,7 @@ old value and shape come from this document and from nowhere else.
 | `entry_key` | string | unless the write is an entry write | never | **the field the entry is addressed by**, printed through `safetext.Field`: an object list's own key field — `name`, for `workflows.*.secrets`, the pair's only keyed list (`settingsEntryBlocks`) — and the member's own name for a map, whose entry *is* one member. It is an address, not a value a form is drawn from |
 | `entry_value` | string | unless the write is an entry write that carries one — absent for a map's `remove-entry` too | never | that field's value — the key field's value for an object list, the member's value for a map's add — printed through `safetext.Field`. **A map's `remove-entry` leaves it out**: its address is the member's name and nothing else, what the member held is in `old` as its own `field=value` pair, and a document omits a member it has no value for rather than writing an empty one |
 | `entry_fields` | `map[string]string` | unless the write is an object list's `add-entry` | never | the members the entry carries **beside** the field that names it, keyed by member name, both sides printed through `safetext.Field`. **Only an object list's `add-entry` has any**: a map's entry is one member and carries none, and no removal carries any. The table spells it the one way a cell carries an entry — the pairs sorted by field and joined with `, ` (`settingsEntryFieldsString`) — which is the same spelling `old` and `new` carry an entry in |
+| `records` | array of documents | unless the write is a run of several | never | **the records of a run: one document of this shape per key the invocation wrote, in the order its flags named them** (`secretsSettingsRunDoc`, `writeSecretsSettingsDryRun`). It holds **two or more** (`minItems: 2`): one write answers with its own document and makes no list of one. The command that produces it is `fugaro secrets set` with two or more of its four record flags — the ones that record what a machine knows about a secret rather than storing its value: when it lapses, the installation's rotation period, and the Bitbucket API roots a token may be sent to (S1, `secrets_expiry.go`) — and **the console's argv cannot ask for it**: `settings set KEY --layer <L>` names one key (`settingsedit.ts`), and a run document is refused by the console's own read for want of `key`. Each element is a document of this same shape about **one** of the run's keys, with its own `key`, `old` and `new`, so a consumer reads a record exactly where it reads a single edit. **The members beside it are the run's own**: `layer` and `path` are the file every record lands in (these are one command's local config keys, so a run cannot reach two files), `changed` and `widening` are whether **any** record changes the file or widens a limit, `why` is the first record's sentence for a widening, and `old` and `new` are empty because the run names no single key. **Nothing here is a secret's value** — a record is this machine's knowledge *about* a secret (D1171) |
 
 **Version 1 has grown four optional members, and a scalar write's document is
 the shape it has always had** (D1164, under D848's rule that a version gains
@@ -2819,7 +2823,12 @@ built.
 
 **The table shape carries the same facts.** Without `--json` the command prints
 one `FIELD`/`VALUE` row per member, in this document's own order, so the two
-shapes cannot drift into two contracts.
+shapes cannot drift into two contracts. **A run of several records is the one
+place the two shapes do not print the same number of things**: the document
+nests its records, because one value a consumer parses must be one document, and
+the table prints **one table per record** — a table inside a table is not a
+table, and each table is a member list of its own. The facts are the same on
+both sides: every record of the run, with the run's own layer, path and file.
 
 **The phase words are exclusive, and that is the command's own rule**
 (`settingsDryRunFlags`). `--json` without `--dry-run` is refused ("`--json` is

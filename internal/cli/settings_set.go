@@ -2475,6 +2475,12 @@ type settingsDryRun struct {
 	entryValue  string
 	entryFields map[string]string
 	jsonOut     bool
+	// collect, when it is not nil, is where this edit's document goes instead of
+	// the output: a run of several writes answers with one document that holds
+	// every record, and the document is built by the caller that knows the run
+	// (secrets set's records, secrets_expiry.go). The write path itself never
+	// sets it, so every other dry run prints its document as it always has.
+	collect *[]settingsWriteDoc
 }
 
 // document is the dry run's document for the edit it describes. changed is the
@@ -2520,9 +2526,16 @@ const settingsWriteDocVersion = 1
 // what a consumer branches on (D1106, D1112), so nothing ever sets this member:
 // it is written out because the shape is the contract, and a consumer reads it
 // by name.
+//
+// Key is the one member this type writes for a single edit and leaves out of a
+// run: a run of several records (Records) writes several keys, and a document
+// that named one of them would answer a consumer asking whether it is about the
+// edit it asked for with a key that is only one of what it did. Every document
+// about one edit carries it and it is never empty there — schema's minLength —
+// so the member means exactly what it always meant.
 type settingsWriteDoc struct {
 	Version  int    `json:"version"`
-	Key      string `json:"key"`
+	Key      string `json:"key,omitempty"`
 	Layer    string `json:"layer"`
 	Path     string `json:"path"`
 	Changed  bool   `json:"changed"`
@@ -2539,6 +2552,11 @@ type settingsWriteDoc struct {
 	EntryKey    string            `json:"entry_key,omitempty"`
 	EntryValue  string            `json:"entry_value,omitempty"`
 	EntryFields map[string]string `json:"entry_fields,omitempty"`
+	// Records is a run's own member (S1): one document per record, in the order
+	// the flags named them, and present only where a run of several writes
+	// answers with one document rather than several. A document that has it
+	// carries the run's own facts outside it and names no single key.
+	Records []settingsWriteDoc `json:"records,omitempty"`
 }
 
 // writeSettingsWriteDoc prints the dry run's document: the versioned JSON

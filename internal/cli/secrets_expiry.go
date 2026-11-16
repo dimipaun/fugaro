@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"net/url"
 	"strconv"
 	"strings"
@@ -73,10 +74,12 @@ func (c secretsSettingsChange) settingsKey() string {
 }
 
 // secretsSetSettings is the settings half of the command. Each flag given is a
-// settings write of its own — its own diff, its own backup, its own --dry-run
-// answer and its own after-write hook — so two flags in one invocation are two
-// writes of two keys and never one write of two, which is what the settings
-// write path is built for (one edit, one key, one document).
+// settings write of its own — its own diff, its own backup and its own
+// after-write hook — so two flags in one invocation are two writes of two keys
+// and never one write of two, which is what the settings write path is built
+// for (one edit, one key). The dry run is the exception and the reason the run
+// collects its documents: the answer to one run is one document, and the
+// records of the run are what is inside it (writeSecretsSettingsDryRun).
 func secretsSetSettings(cmd *cobra.Command, o secretsOptions, name string) error {
 	if err := settingsDryRunFlags(settingsWriteOptions{dryRun: o.dryRun, jsonOut: o.asJSON, yes: o.yes}); err != nil {
 		return err
@@ -107,23 +110,78 @@ func secretsSetSettings(cmd *cobra.Command, o secretsOptions, name string) error
 		// reaches this path names one of the record flags.
 		return userErr("--layer says where a settings write lands and goes with %s: a secret's own value is stored in Secret Manager, which has no layer", secretsRecordFlags)
 	}
-	sel, lc, err := settingsSelection()
+	sel, lc, err := o.aimedSelection()
 	if err != nil {
 		return err
 	}
 	command := secretsSettingsCommand(cmd, o, name)
+	var docs []settingsWriteDoc
 	for _, change := range changes {
-		if err := secretsSettingsRecord(cmd, o, change, sel, lc, command); err != nil {
+		if err := secretsSettingsRecord(cmd, o, change, sel, lc, command, &docs); err != nil {
+			return err
+		}
+	}
+	if o.dryRun {
+		return writeSecretsSettingsDryRun(cmd.OutOrStdout(), docs, o.asJSON)
+	}
+	return nil
+}
+
+// writeSecretsSettingsDryRun prints this run's dry-run answer: one record keeps
+// the document the dry run has always answered with, and a run of several
+// records prints one document that holds every one of them, because a consumer
+// reads one value and several objects printed one after the other are not one.
+// Without --json the run prints one table per record: the table is the human
+// shape, a nested table is not a table, and the two shapes of the document
+// itself are still one contract. docs holds a record for every change the run
+// made and is never empty — a run that names no record is refused before it
+// reaches here (secretsSetSettings' bare --layer refusal).
+func writeSecretsSettingsDryRun(w io.Writer, docs []settingsWriteDoc, jsonOut bool) error {
+	if len(docs) == 1 {
+		return writeSettingsWriteDoc(w, docs[0], jsonOut)
+	}
+	if jsonOut {
+		return writeSettingsWriteDoc(w, secretsSettingsRunDoc(docs), true)
+	}
+	for _, doc := range docs {
+		if err := writeSettingsWriteTable(w, doc); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
+// secretsSettingsRunDoc is the one document a run of several records prints:
+// the run's own facts, and every record in Records. Layer and Path are the
+// run's because the three rows are local config keys (the registry's own local
+// rows), so no run of them can reach two layers or two files; Changed, Widening
+// and Why are the run's answer to whether any of its records changes the file,
+// widens a limit, or says what it widens. The three members a record is
+// addressed by are the records' own and are not the run's: Key is left out,
+// because a run names no single key, Old and New are empty, because the values
+// are the records', and each record carries all three in Records.
+func secretsSettingsRunDoc(docs []settingsWriteDoc) settingsWriteDoc {
+	run := settingsWriteDoc{Version: settingsWriteDocVersion, Records: docs}
+	for _, doc := range docs {
+		run.Changed = run.Changed || doc.Changed
+		run.Widening = run.Widening || doc.Widening
+		if run.Layer == "" {
+			run.Layer = doc.Layer
+		}
+		if run.Path == "" {
+			run.Path = doc.Path
+		}
+		if run.Why == "" {
+			run.Why = doc.Why
+		}
+	}
+	return run
+}
+
 // secretsSettingsRecord writes one record: the row's own layer, the file the
 // settings resolver names for it, the edit the change carries, and then the
 // stages the write owes.
-func secretsSettingsRecord(cmd *cobra.Command, o secretsOptions, change secretsSettingsChange, sel localcfg.Selection, lc *localcfg.Config, command string) error {
+func secretsSettingsRecord(cmd *cobra.Command, o secretsOptions, change secretsSettingsChange, sel localcfg.Selection, lc *localcfg.Config, command string, collect *[]settingsWriteDoc) error {
 	row, ok := settings.Lookup(change.key)
 	if !ok {
 		// Unreachable: every change comes from a row this command registers
@@ -161,7 +219,7 @@ func secretsSettingsRecord(cmd *cobra.Command, o secretsOptions, change secretsS
 		Kind:    target.kind,
 		Command: command,
 		Yes:     o.yes,
-		DryRun:  secretsSettingsDryRun(o, target, change, old, next),
+		DryRun:  secretsSettingsDryRun(o, target, change, old, next, collect),
 	}); err != nil {
 		return err
 	}
@@ -355,8 +413,9 @@ func secretsAPIRootProblem(root string) string {
 }
 
 // secretsSettingsDryRun is the --dry-run answer for one record: the settings
-// write path's own document, for the key this record writes.
-func secretsSettingsDryRun(o secretsOptions, target settingsTarget, change secretsSettingsChange, old, next []byte) *settingsDryRun {
+// write path's own document, for the key this record writes, handed to the run
+// that prints it rather than printed per record (collect).
+func secretsSettingsDryRun(o secretsOptions, target settingsTarget, change secretsSettingsChange, old, next []byte, collect *[]settingsWriteDoc) *settingsDryRun {
 	if !o.dryRun {
 		return nil
 	}
@@ -366,6 +425,7 @@ func secretsSettingsDryRun(o secretsOptions, target settingsTarget, change secre
 		oldValue: settingsValueIn(old, target.keyPath),
 		newValue: settingsValueIn(next, target.keyPath),
 		jsonOut:  o.asJSON,
+		collect:  collect,
 	}
 }
 

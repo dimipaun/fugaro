@@ -135,6 +135,18 @@ func (o *secretsOptions) settingsWrite(cmd *cobra.Command) bool {
 		cmd.Flags().Changed("layer")
 }
 
+// aimedSelection is the project config the family's settings writes act on:
+// --config and --project are the aiming pair every cloud command of this family
+// takes (addCloudFlags), and the value path resolves through them (openCloud,
+// selectProject). The two halves that write settings have to resolve the same
+// way, or a record or a policy entry aimed at another installation lands in
+// whichever one this machine's environment selected — localcfg.Select's steps 1
+// and 2 are what the pair is, and settingsAimedSelection is how every other
+// family's writer reads them.
+func (o *secretsOptions) aimedSelection() (localcfg.Selection, *localcfg.Config, error) {
+	return settingsAimedSelection(settingsWriteOptions{project: o.cloud.project, config: o.cloud.config})
+}
+
 func (o *secretsOptions) addFlags(cmd *cobra.Command) {
 	addCloudFlags(cmd, &o.cloud)
 	// --repo is the flag that opts OUT of the project default (D2): it names
@@ -1001,7 +1013,7 @@ func secretsSetPolicy(cmd *cobra.Command, o secretsOptions, name string) error {
 	if (len(o.allowDataTo) > 0 || len(o.denyDataTo) > 0) && proxy {
 		return userErr("--allow-data-to and --proxy are two different edits: name one, and repeat the command for the other")
 	}
-	sel, lc, err := settingsSelection()
+	sel, lc, err := o.aimedSelection()
 	if err != nil {
 		return err
 	}
