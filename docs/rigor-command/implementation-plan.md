@@ -311,7 +311,7 @@ installation that has never had one.
   to seed from and nothing to publish, said in a sentence),
   `TestUpdateLayerStageRefusesAFileThatDoesNotParse`,
   `TestUpdateLayerStageRefusesExecutableChangesWithoutTheFlag` (the same banner and refusal
-  `config publish` gives), `TestUpdateLayerStageAppliesNothingInAnAgentSessionEvenWithYes`,
+  `config publish` gives), `TestUpdateLayerStageAppliesNothingInAnAgentSession`,
   `TestUpdateLayerStageRefusesWhenTheGenerationMovedSinceTheSeed` (the unconditional within-run
   guard above: a publish that landed between the seed and the write is a refusal, and the owner's
   file is left as it is — the write carries the generation the read returned, so no record is
@@ -501,14 +501,14 @@ It writes the key that decides how much review a whole project gets, and `unset`
 - **Red step:** `TestRigorSetRefusesHotfixInEveryForm` fails while the subcommand does not exist.
 - **Tests:** `TestRigorSetWritesTheProjectDefault`, `TestRigorSetRefusesAVocabularyNearMiss`,
   `TestRigorSetRefusesHotfixInEveryForm`, `TestRigorSetLoweringAsksForTheTypedProjectName` (and
-  `--yes` does not stand in), `TestRigorSetRaisingAsksYesNo`,
+  no flag stands in), `TestRigorSetRaisingAsksYesNo`,
   `TestRigorSetRefusesWithNoLocalFileWhileALayerIsPublished` (the message's remedy is **`fugaro
   update`**, which is the one documented command; it names no flag and no second command),
   `TestRigorSetCreatesTheFileWhenNoLayerIsPublished` (the created document carries the local
   config's anchors **and** `defaults.rigor.default: <mode>` — not three bare keys — and it parses
   through `config.ParseProjectLayer` against the same anchor the publisher uses, spec §3 step 4),
   `TestRigorSetRefusesInAnAgentSessionEvenWithYes` (in that session the command **prints the diff and
-  the command it would have run and writes nothing**, `--yes` included — SD9's wording, the same
+  the command it would have run and writes nothing**, SD9's wording, the same
   F15 pins for `update`'s own write), `TestRigorSetAreaAddsARuleAndRequiresAName`,
   `TestRigorSetAreaReplacesTheModeOfAnExistingGlob`, `TestRigorSetAreaRefusesATwinGlob`,
   `TestRigorSetAreaRefusesAGlobOutsideTheRepository`, `TestRigorUnsetRemovesTheKeyRatherThanWritingPro`,
@@ -747,13 +747,13 @@ closed as its duplicate, as above), and **R4**'s refusal of `hotfix` (D834) and 
 - **Non-interactive: `--rigor <mode>`, and without it the run is refused.** `--rigor` is the row's flag
   and the wizard's own spelling, registered with the flags `fugaro setup` and `fugaro update` already
   share (`internal/cli/init.go`, beside `--name` and `--gcp-project`), and its help names only the
-  reader's door (`TestNoDoorsFlagHelpNamesTheOtherDoor`). A run that cannot ask — `--non-interactive`,
-  a pipe, `--json`, `--yes`, or `--print-vars` (`initRun.canAsk`) — is **refused with the question's
+  reader's door (`TestNoDoorsFlagHelpNamesTheOtherDoor`). A run that cannot ask —
+  a pipe, `--json`, or `--print-vars` (`initRun.canAsk`) — is **refused with the question's
   own text**, `--rigor <mode>`, in the one error the loop builds from `InputStage.Missing()`
   (`wizardFlagsLeft`): the recommended answer is **not** taken for the caller, because a scripted setup
-  is where a silent default would be least visible. **`--yes` does not choose the mode either**: D12's
+  is where a silent default would be least visible. **No flag chooses the mode either**: D12's
   answer covers the ordinary steps a door owns, and this is a product decision the wizard asks, not a
-  step to confirm — so `fugaro setup --yes` with no `--rigor` is refused exactly as a run with no
+  step to confirm — so `fugaro setup` with no `--rigor` is refused exactly as a run with no
   terminal is. **`--rigor` is a first run's flag**: an installation that already has a project config
   converges as `fugaro update` does (`announceAlreadySetUp`, `internal/cli/setup.go`), where the mode
   is not asked and not written, and the flag there is refused naming **`fugaro rigor set`** — the one
@@ -812,7 +812,7 @@ closed as its duplicate, as above), and **R4**'s refusal of `hotfix` (D834) and 
 - **Tests:** `TestSetupAsksTheRigorModeWithNoSilentDefault` (the four lines, the recommendation first,
   and that an empty answer is not accepted), `TestSetupRigorAnswerRefusesANearMiss` (the vocabulary),
   `TestSetupRigorRefusesHotfix` (D834's sentence, naming `fugaro run --mode hotfix`),
-  `TestSetupWithoutATerminalIsRefusedWithTheRigorQuestion` (`--non-interactive`, `--yes`, `--json` and
+  `TestSetupWithoutATerminalIsRefusedWithTheRigorQuestion` (`--json` and
   a pipe: the one error names `--rigor <mode>`), `TestSetupYesNeverChoosesTheRigorMode` (the other half
   of the same rule, asserted on its own), `TestSetupWritesTheRigorAnswerAndPublishesItInTheSameRun`
   (one run: the file carries `defaults.rigor.default`, the object is published once, the fan-out runs —
@@ -825,7 +825,7 @@ closed as its duplicate, as above), and **R4**'s refusal of `hotfix` (D834) and 
   (an existing project: no prompt at all, `--rigor` refused naming `fugaro rigor set`, and
   `TestEveryWizardQuestionHasAFlag` still green with the new row), `TestUpdateSummaryShowsTheResolvedMode`
   (the summary line, `pro (project)` for a layer that writes it and the built-in default otherwise),
-  `TestSetupInACodingAgentsSessionWritesNothing` (the shared helper's refusal, `--yes` included, with
+  `TestSetupInACodingAgentsSessionWritesNothing` (the shared helper's refusal, with
   the diff and the command it would have run printed).
 - **Hermetic:** `t.TempDir()` config home for the layer file and the local project config,
   `internal/gcpfake` for the runs bucket, `internal/testutil`, `git init` for a fake checkout. No

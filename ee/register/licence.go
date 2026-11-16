@@ -690,9 +690,39 @@ func licenceSet(cmd *cobra.Command, o *licenceSetOptions) error {
 			return fcli.UserErr("key %s is the key this installation applies and the licence server has revoked it: a revoked key is Free however its term reads, and nothing here brings one back, so setting it again changes nothing and the renewal secret has not been written. A reissue is what restores everything (`fugaro licence set` with the key the licence server issues in its place)", safetext.Field(claims.KeyID))
 		}
 	}
-	// The secret is written before the key, and the key only after it landed: a
-	// key whose secret is not in the container is a key that cannot renew, and
-	// the other order would leave one behind on a failure between the two.
+	if err := licenceWriteBundle(ctx, lc, store, bundle,
+		"run `fugaro licence set` again with the same key and secret, which writes the key the secret was written for"); err != nil {
+		return err
+	}
+	w := cmd.OutOrStdout()
+	fmt.Fprintf(w, "key installed in project %s (%s)\n", safetext.Field(lc.Name), project.Object)
+	licenceWriteClaims(w, claims, state)
+	licenceWarnLine(cmd.ErrOrStderr(), licenceWarningTermsOfKey(claims, state), licenceNow())
+	if bundle.secret != "" {
+		fmt.Fprintf(w, "renewal secret written to Secret Manager container %s\n", safetext.Field(licenceRenewalSecretID(lc.Name)))
+	} else if claims.RenewalMode != licence.RenewalNone && claims.RenewalMode != "" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "note: this key renews itself (renewal_mode: %s) and no renewal secret was read: paste the secret that came with the key on line 2, or nothing can ask the licence server for the next key\n", safetext.Field(claims.RenewalMode))
+	}
+	fmt.Fprintln(w, "The next `fugaro update` applies the installation's renewal job.")
+	return nil
+}
+
+// licenceWriteBundle writes a verified bundle to the two places an
+// installation's licence lives: the renewal secret (when the bundle has one) as
+// a version of the installation's own container, and then the key into the
+// project's store.
+//
+// The order is the load-bearing part, and it is why this is one function rather
+// than the two callers' own copies of it: a key whose secret is not in the
+// container is a key that cannot renew at all, while the other order leaves a
+// container a version ahead — a state a person undoes by writing the pair again
+// (licenceHalfWritten) — so the secret goes first and the key only after it
+// landed. `set` (K3.2) and `login` (K3.3) install the same bundle and differ
+// only in where it came from, and remedy is the one sentence they do not share:
+// the way back to a pair, which is a paste for one and a second sign-in for the
+// other. Every error here is already mapped, and none of them carries a value
+// that was not redacted.
+func licenceWriteBundle(ctx context.Context, lc *localcfg.Config, store *project.Store, bundle licenceBundle, remedy string) error {
 	if bundle.secret != "" {
 		secrets, err := openLicenceSecrets(ctx, lc)
 		if err != nil {
@@ -711,20 +741,11 @@ func licenceSet(cmd *cobra.Command, o *licenceSetOptions) error {
 			// ahead of the project, and that is a state a person has to undo
 			// (licenceHalfWritten).
 			return fcli.UserErr("%s. The project write failed with: %s",
-				licenceHalfWritten(lc, "run `fugaro licence set` again with the same key and secret, which writes the key the secret was written for"),
+				licenceHalfWritten(lc, remedy),
 				licenceRedact(err.Error(), bundle.key, bundle.secret))
 		}
 		return licenceObjectErr(err, bundle.key)
 	}
-	w := cmd.OutOrStdout()
-	fmt.Fprintf(w, "key installed in project %s (%s)\n", safetext.Field(lc.Name), project.Object)
-	licenceWriteClaims(w, claims, state)
-	if bundle.secret != "" {
-		fmt.Fprintf(w, "renewal secret written to Secret Manager container %s\n", safetext.Field(licenceRenewalSecretID(lc.Name)))
-	} else if claims.RenewalMode != licence.RenewalNone && claims.RenewalMode != "" {
-		fmt.Fprintf(cmd.ErrOrStderr(), "note: this key renews itself (renewal_mode: %s) and no renewal secret was read: paste the secret that came with the key on line 2, or nothing can ask the licence server for the next key\n", safetext.Field(claims.RenewalMode))
-	}
-	fmt.Fprintln(w, "The next `fugaro update` applies the installation's renewal job.")
 	return nil
 }
 
@@ -768,8 +789,10 @@ server has revoked reads ` + "`expired`" + ` with ` + "`revoked: true`" + ` and 
 behaviour: nothing is deleted and a new key restores everything.
 
 --json prints {project, state, tier, seats, paid_through, kind, renewal_mode,
-source, revoked, last_check}, with paid_through null where no key is installed
-and last_check the last revocation check's own record.
+source, revoked, last_check, warning}, with paid_through null where no key is
+installed, last_check the last revocation check's own record and warning the
+windows the key's own policy has open now, each with the roles it reaches and
+the instant it opened (null while none is open).
 
 This is a read: it is not refused inside a coding agent's session.`,
 		Args: func(_ *cobra.Command, args []string) error {
@@ -810,6 +833,14 @@ type licenceStatusJSON struct {
 	// LastCheck is the last revocation check the installation ran, in the
 	// store's own record shape, and null where it never ran one.
 	LastCheck *project.Check `json:"last_check"`
+	// Warning is the windows of the key's own warning policy that are open now,
+	// each with the roles it reaches and since when, and the sentence it is
+	// shown as (K3.5); it is null while none is open. A reader outside this
+	// process picks the newest window that reaches its own reader's role rather
+	// than assuming the caller of the CLI: the console and the app know who is
+	// looking, and the windows of the default policy reach different roles at
+	// different instants (spec section 7.1).
+	Warning *licenceWarningJSON `json:"warning"`
 }
 
 func licenceStatus(cmd *cobra.Command, o *licenceStatusOptions) error {
@@ -861,6 +892,8 @@ func licenceStatus(cmd *cobra.Command, o *licenceStatusOptions) error {
 		check := view.Check
 		out.LastCheck = &check
 	}
+	terms := licenceWarningTermsOfView(view)
+	out.Warning = licenceStatusWarning(terms, licenceNow())
 	if o.asJSON {
 		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")
@@ -884,6 +917,9 @@ func licenceStatus(cmd *cobra.Command, o *licenceStatusOptions) error {
 	if err := tw.Flush(); err != nil {
 		return err
 	}
+	// The key's own policy, and not this build's: a window between these
+	// figures and the notes below, because it is the one line a person acts on.
+	licenceWarnLine(cmd.ErrOrStderr(), terms, licenceNow())
 	licenceStatusNotes(cmd.ErrOrStderr(), lc, view)
 	return nil
 }
@@ -1108,6 +1144,7 @@ func licenceRefresh(cmd *cobra.Command, o *licenceRefreshOptions) error {
 	w := cmd.OutOrStdout()
 	fmt.Fprintf(w, "renewed: the new key is installed in project %s (%s)\n", safetext.Field(lc.Name), project.Object)
 	licenceWriteClaims(w, next, state)
+	licenceWarnLine(cmd.ErrOrStderr(), licenceWarningTermsOfKey(next, state), licenceNow())
 	if answer.RenewalSecret == "" {
 		fmt.Fprintln(cmd.ErrOrStderr(), "note: the licence server answered no renewal secret with the new key, so this installation cannot renew again without one: paste it with `fugaro licence set`")
 	}
@@ -1126,9 +1163,23 @@ func licenceRefresh(cmd *cobra.Command, o *licenceRefreshOptions) error {
 // The order the two writes are made in is the one that leaves this state rather
 // than its mirror: a key whose secret is not in the container cannot renew at
 // all, while a container a version ahead is undone by writing the pair again.
+//
+// The sentence is the one a person's two commands need, and the job's own
+// failure says something else about the same state (licenceJobHalfWritten):
+// what the next run of the job does with it is not what `refresh` does.
 func licenceHalfWritten(lc *localcfg.Config, remedy string) string {
-	return fmt.Sprintf("the renewal secret is in the container %s and the key it belongs to is not in the project, so the two are not a pair yet and nothing can renew until they are: %s",
-		safetext.Field(licenceRenewalSecretID(lc.Name)), remedy)
+	return fmt.Sprintf("%s, so the two are not a pair yet and nothing can renew until they are: %s",
+		licencePairApart(lc), remedy)
+}
+
+// licencePairApart is the state above, named in one place so that both writers
+// of a pair say the state itself the same way: the renewal secret is a version
+// of the installation's container and the key it belongs to is not in the
+// project. What the state means for the next run is what each sentence adds
+// around it, and that is not the same for a person's command and for the job.
+func licencePairApart(lc *localcfg.Config) string {
+	return fmt.Sprintf("the renewal secret is in the container %s and the key it belongs to is not in the project",
+		safetext.Field(licenceRenewalSecretID(lc.Name)))
 }
 
 // licenceRenewRequest calls the licence server's renewal route once (K2.3's

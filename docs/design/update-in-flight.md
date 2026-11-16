@@ -52,7 +52,7 @@ release could observe or lose.
 | preflight | Reads the environment and the local config; no cloud write | None | Safe | `preflightStage` |
 | installation | Terraform root `installation`: the GCS bucket, the Artifact Registry, the credential containers, the history/coordinator/catalog-check jobs, the shared project jobs, the credentials service's own block (its image is moved by the credentials-service row below) | A create or an update, never a replace: `google_storage_bucket.runs`, the registries and the secret containers carry `prevent_destroy` (`deploy/terraform/gcp/modules/installation/bucket.tf`, `registry.tf`, `secrets.tf`, `credentials.tf`). A job whose *name* would change is ForceNew and is destroyed — see the job row below | Safe, with the job-name caveat | `newInstallationStage`, `deploy/terraform/gcp/roots/installation/main.tf` |
 | Firebase | The Realtime Database instance, the web API key, the token-signing service account | The run reaches the database with an ID token exchanged from a custom token minted by its own launcher: `token.Exchange`, `internal/budget/token/exchange.go`; the database identity is not an IAM identity (`deploy/terraform/gcp/modules/firebase/iam.tf`). A re-apply of the instance's own fields does not invalidate it | Safe | `newFirebaseStage`, `deploy/terraform/gcp/modules/firebase/firebase.tf` |
-| images | Pins `base_images.<kind>` by digest and mirrors the history image; never patches a job | A run's own execution already holds its image; the pin reaches the *next* execution | Safe | `imagesStage`, `internal/cli/init_images.go` |
+| images | Pins `base_images.<kind>` by digest, mirrors the history image, and rebuilds the catalog entries of this checkout whose recorded build was built FROM an older release base (naming the ones another checkout builds, never passing one over); never patches a job | A run's own execution already holds its image; the pin and the rebuilds reach the *next* execution | Safe | `imagesStage`, `internal/cli/init_images.go`, `internal/cli/init_images_catalog.go` |
 | installation, second apply | The history job and the catalog check job, which only the images stage makes deployable | Same as the first apply | Safe | `newInstallation2Stage` |
 | secrets | Secret containers and their IAM; no version is written | A job's mounts read `version = "latest"`, so a new version reaches the *next* execution (`docs/bitbucket-workspace-token/reconciliation.md`, F3) | Safe | `newSecretsStage`, `deploy/terraform/gcp/modules/repo/secrets.tf` |
 | plugin | The plugin pin and the Claude Code install on this machine | None: no run reads either | Safe | `newPluginStage`, `internal/cli/init_plugin_stage.go` |
@@ -123,10 +123,26 @@ the node at the version it found and says why (`credentialsMoveHeld`), which is
 the same question the service's own stage answers with its skip.
 
 **A job image older than the node is refused at the launch, not by the update.**
-The update rebuilds the derived images of the checkout it runs in and nothing
-else, so a repository of the project on another checkout's image keeps the image
-it had — and a run of that repository, started on it, would halt at bootstrap on
-a node its runner cannot read. The launcher refuses that launch before the
+The update rebuilds the derived images of the checkout it runs in, and — for a
+catalog project, whose catalog image *is* the image its jobs run (D1900) — the
+catalog entries of that checkout whose own build record says they were built
+FROM a base image older than this release's. A catalog entry is otherwise built
+by the daily check job and by `fugaro image build`, so an installation whose
+schedule is paused, or whose entry nobody pushed, kept an image the launcher
+refuses while the stage that had just pinned the new base reported nothing to
+do: that is the failure of 2026-11-14, and the record read is what closes it
+(`internal/cli/init_images_catalog.go`). What it does not rebuild is anything
+else: a repository of the project on another checkout's image keeps the image it
+had, and so does a catalog entry whose build runs as another repository's build
+account — a catalog build holds the submitting checkout's credential and
+secrets, so this run cannot submit it. That one is never passed over in silence:
+the images stage prints one line per such entry naming the entry, its checkout
+and the exact command (`fugaro image build <entry>`), ends with a line saying
+what it did not cover, and leaves the command as a step for the user (exit 1)
+rather than reporting a stage that skipped half of itself as done.
+
+A run of that repository, started on an image it kept, would halt at bootstrap
+on a node its runner cannot read. The launcher refuses that launch before the
 execution exists, from the same `*Since` gates every image lockstep uses
 (`internal/cli`'s `policyImageGate`), naming the operator's own move
 (`fugaro image refresh …`, or `fugaro update --base base`). What the update never
@@ -187,10 +203,10 @@ flight — so the update door no longer refuses, and it announces the runs once
 instead (`announceRunsInFlight`, `internal/cli/update_in_flight.go`, called from
 the converge before the first stage). The line is one sentence, it is not a
 question, and it never asks anybody to wait. What it claims is what holds
-whatever this update turns out to do — the update asks no run to finish first
-and rewrites nothing a run holds — and never the flat "the runs are unaffected",
-which the budget-mode raise below makes false; what it can still reach is named
-instead. It is absent when nothing runs, under `--json` and `--print-vars`
+whatever this update turns out to do — the update waits for no run and changes
+nothing a run holds — and never the flat "the runs are unaffected",
+which the budget-mode raise below makes false; that a step can still reach a
+run is said instead, and the update log names each step. It is absent when nothing runs, under `--json` and `--print-vars`
 (whose stdout is a document), and under `--plan-only` (which applies nothing).
 The refusal stays where it is not the update door's: `fugaro project policy publish --delete` /
 `fugaro project repos rm`, which are not the whole upgrade and are their own
@@ -198,7 +214,7 @@ commands. The other two doors that reach this stage through `initStages` —
 `fugaro setup`, and `fugaro accounts add` / `accounts rm` — are not the update
 door either, so they keep the answer they had before this ruling, which is the
 ruling of 2026-11-06: a managed project's own session is told the count as a note
-and writes, and every other session is refused without `--yes`
+and writes, and every other session is refused
 (`inflightManaged`, `policyMigrateStage.inflightAnswer`, which reads the answer
 off the door rather than taking it as a parameter). The one line above is the
 update door's and is not printed by those doors.

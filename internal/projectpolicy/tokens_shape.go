@@ -44,6 +44,21 @@ type BitbucketTokenNode struct {
 	// a record read off this node validates as it stands (R5, and the record's
 	// own comment for why one spelling and not two).
 	Coverage []string `json:"coverage"`
+	// ProjectUUID is the project a project token is scoped to, exactly as the
+	// operator's record states it and as Bitbucket spells it (braces included).
+	// Selection matches it against the UUID a repository's lookup answered
+	// (R2): the lookup is made with the candidate token itself, and the token
+	// serves the repository only when the two are the same project.
+	//
+	// It is the one fact of a project token that matching needs, and it is on
+	// the node for the reason Type is: the service reads the node and the
+	// bundle and nothing else, so a project token whose UUID the node left out
+	// is one whose record names no project — a record the record reader
+	// refuses, and so a token skipped in favour of a wider one for every
+	// request it was stored for, silently. A repository and a workspace token
+	// carry none, which is also what keeps the member out of the node of a
+	// project that holds neither.
+	ProjectUUID string `json:"project_uuid,omitempty"`
 	// Identity is the account UUID GET /2.0/user answered for the token, and
 	// it is empty for a repository token, which that endpoint refuses (R14,
 	// F20), so the set is partial by design.

@@ -1342,8 +1342,8 @@ added or removed without this sentence moving fails there:
     `hidden` elements, the skip link and the consent banner, sit outside it — so that rule
     is what stops a page that starts hiding a control from being counted for words nobody
     sees. `/docs/`, `/security/`,
-    `/changelog/`, `/legal/subscription-terms/` and `/compatibility/` are exempt, which is
-    D188's own list: `/docs/` and `/changelog/` render a
+    `/changelog/`, `/legal/subscription-terms/`, `/compatibility/` and `/features/` are exempt,
+    which is D188's own list: `/docs/` and `/changelog/` render a
     document of this repository, `/security/` renders two sections of the policy document
     and links to the rest of it, and `/legal/subscription-terms/` renders the agreement text
     of a document of this repository, so those carry text the repository wrote rather
@@ -1352,9 +1352,16 @@ added or removed without this sentence moving fails there:
     Task CM2, which names `test/lib/exempt.mjs`): its tables print
     `data/compatibility.yaml` — 46 rows of names, notes, statuses and editions, **1037
     words** on the build of 2026-11-10 — so the words a reader reads there are the matrix's
-    own and not a page's prose. It moved nothing else: D188's own number is untouched and
+    own and not a page's prose. `/features/` is the sixth, added on 2026-11-15, before the
+    page itself (the feature matrix's plan, Task T4c, which names `test/lib/exempt.mjs`): its
+    one table prints the feature matrix — a row per feature with its name, what it does in a
+    sentence or two, its status, and a checkmark under each of the three plans, since every
+    higher plan than the one a feature is mapped to includes it (D2440 and D2448) — so the words
+    a reader reads there, the explanations included, are the table's and not a
+    page's prose either, and the page's lead is still held to the 40-word lead ceiling like
+    every other page's. Neither addition moved anything else: D188's own number is untouched and
     the pages that are the site's are the pages it still holds. `/security/` is the one of the
-    five a reader might question — much shorter than the document it used to render whole, and
+    six a reader might question — much shorter than the document it used to render whole, and
     still well over this ceiling — so it stays on the list, and `test/security.mjs` holds it to
     a ceiling of its own. How many words a page carries is
     `budget.mjs`'s own reader's to say, over the built artifact; this list does not keep the
@@ -2298,16 +2305,34 @@ tests it with the tools stubbed on PATH, and `go test ./scripts/` runs that test
 The deploy workflow is still W2.1's and **not a Fugaro run's to write**: W2.1 stages a
 workflow under `docs/pending-workflows/` for the owner to copy in, and the owner runs it to
 deploy to the Firebase project created for the website only (D91, D109) — a run may not
-change `.github/workflows/`. `docs/pending-workflows/` now holds no pending workflow: the images workflow's nightly republish of the base image skipped when the published tags already name the build (issue #1745), and `ci.yml`'s root loop with `workspace` and the longer test timeout, were copied in on 2026-11-11 and their staged copies removed. Neither was this
-site's (the credentials service's image leg in `images.yml`, credentials-service plan task C1.14, was copied in on 2026-10-30, the shared package's test job, `shared-tests.yml`, was copied in on 2026-10-22, the
-mobile app's release workflow, `mobile-release.yml`, and the console's own release
-stream, `console-release-tag.yml`, were copied in on 2026-10-23, and all four are no longer
-staged, and Dependabot's watch over the console's npm dependencies was copied over
-`.github/dependabot.yml` the same day, and the console's Windows installer pack,
-`.github/workflows/console-windows.yml`, was copied in on 2026-11-10 and runs at release time
-only rather than on a pull request): the website's two manual
-workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the
-owner, and no deploy workflow is staged. The only other workflow files left there are the desktop
-console's `console-tests.yml` and `console-release.yml`, which the owner has copied in as well:
-their staged copies stay by design, because the console's docs tests assert each one is
-byte-identical to its copy under `.github/workflows/`, so neither is pending.
+change `.github/workflows/`. `docs/pending-workflows/` now holds three pending workflows,
+`docs/pending-workflows/portal-tests.yml`, `docs/pending-workflows/website-preview.yml` and
+`docs/pending-workflows/ci.yml`: the first is the portal's own tests in CI (the SPA's vitest
+suite, the key service's Go suite with the deploy script's own test, and the document
+store's Firestore suite against the emulator), the second is this site's preview
+workflow with the F40 gate added, so that a `firebase.json` naming a Hosting `site` or
+`target` is refused as well as one naming another public dir or a lifecycle hook — the
+portal has a site and a configuration of its own now — and the third is the `shard` job's
+matrix and steps, so that every `test-shard` runner finishes in under seven minutes. The
+first two were staged on 2026-11-14 and the third on 2026-11-15, the day its timings were
+read from a run of `main` whose longest runner, `scripts-live-0`, took 598s.
+
+Everything else staged here has been copied in and its staged copy removed, and none of it
+was this site's: the images workflow's nightly republish of the base image skipped when the
+published tags already name the build (issue #1745) and that copy of `ci.yml` — its root
+loop with `workspace` and the longer test timeout — were copied in on 2026-11-11, the file
+having been staged again since for the `shard` job; the credentials
+service's image leg in `images.yml` (credentials-service plan task C1.14) on 2026-10-30;
+the shared package's test job, `shared-tests.yml`, on 2026-10-22; the mobile app's release
+workflow, `mobile-release.yml`, and the console's own release stream,
+`console-release-tag.yml`, on 2026-10-23; Dependabot's watch over the console's npm
+dependencies over `.github/dependabot.yml` the same day; and the console's Windows
+installer pack, `.github/workflows/console-windows.yml`, on 2026-11-10, which runs at
+release time only rather than on a pull request. This site's two manual workflows,
+`website-preview.yml` and `website-promote.yml` (#566), were copied into
+`.github/workflows/` by the owner, and the only one of the two staged now is the preview
+workflow, staged again with the F40 gate rather than as a new file. The only other workflow
+files left there are the desktop console's `console-tests.yml` and `console-release.yml`,
+which the owner has copied in as well: their staged copies stay by design, because the
+console's docs tests assert each one is byte-identical to its copy under
+`.github/workflows/`, so neither is pending.

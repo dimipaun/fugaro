@@ -53,17 +53,18 @@ const (
 	// with the run's own permission set, and the operator's stop flag.
 	ClassRepository JobClass = "repository"
 	// ClassShared is a *coding* shared project job (gcp.ProjectServiceAccountID
-	// over the published policy's profiles): admitted to the model path and to
-	// the mint for the identity's own repository, when that repository is one
-	// its profile is bound to (G21), and refused everywhere else. It is the
-	// same shape the review half already pairs with, and for the reason F40
-	// gives: a shared account names no single repository the way a
-	// per-repository job's does, so the binding is the identity's own
-	// repository plus the two gates that admit it, the row's list and the
-	// project's own answer for the profile (pairShared). It is bound to the
-	// account Verify answered with, exactly as the review class is: the
-	// identity's profile comes from the verifier's own row and never from
-	// anything the caller sent.
+	// over the published policy's profiles): admitted to the model path, to
+	// the Bitbucket proxy route and to the mint for the identity's own
+	// repository, when that repository is one its profile is bound to (G21)
+	// and, on the proxy route, one the published block lists and proxies
+	// (B5.3), and refused everywhere else. It is the same shape the review
+	// half already pairs with, and for the reason F40 gives: a shared account
+	// names no single repository the way a per-repository job's does, so the
+	// binding is the identity's own repository plus the gates that admit it,
+	// the row's list and the project's own answer for the profile
+	// (pairShared). It is bound to the account Verify answered with, exactly
+	// as the review class is: the identity's profile comes from the verifier's
+	// own row and never from anything the caller sent.
 	ClassShared JobClass = "shared"
 	// ClassReview is the review-only variant of a project job, per
 	// (profile, account): admitted to the mint, the sign and the model path
@@ -177,9 +178,15 @@ type ReviewJobAccount struct {
 // implicitReviewVariant, the owner's requirement of 2026-11-13), whose triple no
 // published profile states — so the deployment admits a caller of that job and
 // this derivation, which reads profiles, cannot name it. What the row buys the
-// caller is one gate further in: the pairing still requires the account to be
-// admitted to the run identity's repository by the policy's own admissions
-// (pairReview), which is the half C1's piece 2 carries.
+// caller is one gate further in, and that gate is the whole of what the row is
+// worth: the pairing still requires the account to be admitted to the run
+// identity's repository by the policy's own admissions (pairReview), which the
+// runner places that job against and piece 2 of C1 carried
+// (TestPairReviewAdmitsTheDefaultAccountWithNoProfiles, and the runner's
+// implicitReviewCandidate for the placement). A profile-less project admits the
+// default account through the accounts block its own publish derives from the
+// repository's claude_accounts, so no row of this table ever admits a caller on
+// its own.
 func ReviewJobAccountsFor(p *projectpolicy.Policy, gcpProject string) []ReviewJobAccount {
 	if p == nil {
 		return nil

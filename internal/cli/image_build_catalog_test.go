@@ -7,13 +7,19 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/buildtoken"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -465,12 +471,12 @@ func TestCatalogBuildSubmitsTheContextIdentity(t *testing.T) {
 	if subs := catalogBuildSubs(t, fb); subs["_CONTEXT_DIR"] != "/workspace/src/ci" {
 		t.Errorf("_CONTEXT_DIR = %v, want the checkout's own context directory", subs["_CONTEXT_DIR"])
 	}
-	// The checkout step is made at the context's commit, which is what the
-	// build reads the context from.
-	if st := catalogBuildStep(t, fb, "catalog-context"); st == nil {
-		t.Error("the build has no context step")
+	// The clone step is made at the context's commit, which is what the build
+	// reads the context from.
+	if st := catalogBuildStep(t, fb, "catalog-clone"); st == nil {
+		t.Error("the build has no clone step")
 	} else if env, _ := st["env"].([]any); !slices.Contains(env, "COMMIT="+sha) {
-		t.Errorf("the context step's env is %v, want it to check out %s", env, sha)
+		t.Errorf("the clone step's env is %v, want it to check out %s", env, sha)
 	}
 	// The smoke's own spec is rendered from the commit the build bakes, which
 	// for a context entry is the commit its definition was read at: the smoke
@@ -1043,13 +1049,13 @@ func TestPrebuiltEntrySmoked(t *testing.T) {
 	}
 }
 
-// TestCatalogBuildBakesTheMappedReposCheckout: the bake step (IS8b) under the
-// owner's O3 reading (b). A project that maps a repository onto an entry gets
-// that repository's checkout baked into the entry's image — the definition the
-// bucket holds is the entry's own Dockerfile with one generated stage on the
-// end, cloned through the build's own credential — and the smoke the build
-// submits reads the checkout where the stage put it, so an image that bakes
-// is one the build verified rather than one it stopped looking at.
+// TestCatalogBuildBakesTheMappedReposCheckout: the bake step (IS8b) under
+// D2301. A project that maps a repository onto an entry gets that repository's
+// checkout baked into the entry's image — the definition the bucket holds is the
+// entry's own Dockerfile with one generated stage on the end, cloned through the
+// build's own credential — and the smoke the build submits reads the checkout
+// where the stage put it, so an image that bakes is one the build verified
+// rather than one it stopped looking at.
 func TestCatalogBuildBakesTheMappedReposCheckout(t *testing.T) {
 	fb, gcs, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
 	// The map is the project's (image_map, D1906) and the switch is on
@@ -1114,10 +1120,11 @@ func TestCatalogBuildBakesTheMappedReposCheckout(t *testing.T) {
 // spec it was, and no line about the bake is printed. A repository the map
 // does put on a quiet entry is baked (that is the default's own case). The
 // other two ways a build bakes nothing are the ones the map cannot answer for,
-// and TestCatalogBuildBakesNothingIntoASharedEntry and
-// TestCatalogBuildRefusesABakeTheMapDoesNotConfirm pin them: an entry other
-// repositories run, and a checkout that names this entry by its own workflow's
-// reference with no map to say who else runs it.
+// and TestCatalogBuildRefusesAnUnadmittedRepo and
+// TestCatalogBuildRefusesABakeTheMapDoesNotConfirm pin them: an entry the map
+// puts a repository the project does not admit on, and a checkout that names
+// this entry by its own workflow's reference with no map to say who else runs
+// it.
 //
 // This is the half of the HARD RULE that keeps `fugaro update` a one-command
 // upgrade: no path under it writes a definition at all (O1), so nothing about
@@ -1127,11 +1134,10 @@ func TestCatalogBuildBakesNothingWithoutTheMap(t *testing.T) {
 		// The previous release's installation, and one whose operator never
 		// mapped anything: the build says nothing at all about a bake.
 		"a project with no map": {},
-		// The switch is the operator's own answer, so a build that bakes
-		// nothing because of it says which setting did it.
+		// A switch written false is no ask for a bake, so there is nothing to
+		// explain.
 		"a project with bake off": {
 			yaml: "image_map:\n  acme/app: tools\nbake_repos: false\n",
-			note: "bake_repos",
 		},
 		// This entry is not the image the repository runs: the build of it has
 		// nothing to report, and saying why for every entry of a project would
@@ -1155,7 +1161,7 @@ func TestCatalogBuildBakesNothingWithoutTheMap(t *testing.T) {
 				t.Errorf("_CATALOG_TAG = %v, want the untouched definition's sha256", subs["_CATALOG_TAG"])
 			}
 			switch {
-			case tc.note == "" && strings.Contains(stderr, "bakes no checkout"):
+			case tc.note == "" && strings.Contains(stderr, "no checkout baked"):
 				t.Errorf("stderr = %q, want no bake line for a project that asks for none", stderr)
 			case tc.note != "" && !strings.Contains(stderr, tc.note):
 				t.Errorf("stderr = %q, want the reason the bake did not happen (%s)", stderr, tc.note)
@@ -1164,130 +1170,150 @@ func TestCatalogBuildBakesNothingWithoutTheMap(t *testing.T) {
 	}
 }
 
-// TestCatalogBuildBakesNothingIntoASharedEntry: the entry serves another
-// repository too, so its jobs can read whatever the image carries (F18). O3's
-// reading (b) bakes the repositories that share the image's own repository
-// grant, which for a shared image is none of the others — so nothing is
-// composed into it, and the build names the repositories that made it shared
-// rather than baking and warning. bake_repos: true does not change it: the
-// switch asks for a bake, and it is not the answer to O3's boundary.
-func TestCatalogBuildBakesNothingIntoASharedEntry(t *testing.T) {
-	shared := "image_map:\n  acme/app: tools\n  acme/other: tools\n"
-	for name, switchLine := range map[string]string{
-		"the project answered nothing":   "",
-		"the project asked for the bake": "bake_repos: true\n",
-	} {
-		t.Run(name, func(t *testing.T) {
-			_, gcs, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
-			f.appendConfig(t, shared+switchLine)
-
-			_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
-			if err != nil {
-				t.Fatalf("%v (%s)", err, stderr)
-			}
-			got, _ := catalogCopy(t, gcs, "tools")
-			if got != catalogBuildInline {
-				t.Errorf("the copy is %q, want the entry's own definition %q: nothing is baked into an image another repository runs", got, catalogBuildInline)
-			}
-			if !strings.Contains(stderr, "bakes no checkout") || !strings.Contains(stderr, "acme/other") {
-				t.Errorf("stderr = %q, want the repository that would have read the checkout named", stderr)
-			}
-		})
+// addRepoToProject adds a repository to the project's own `repos` in the config
+// the fixture wrote. The G4 fixture names one repository, and the map tests need
+// a second one: the map is read against the project's own list, so a key the
+// project does not admit and a key it does are two different answers
+// (imagebake.Decide).
+func addRepoToProject(t *testing.T, name string) {
+	t.Helper()
+	const appRepo = "  acme/app: { provider: bitbucket, base_branch: main, workflows: [web] }"
+	path := os.Getenv("FUGARO_CONFIG")
+	cfg := readFileString(t, path)
+	added := strings.Replace(cfg, appRepo, appRepo+"\n  "+name+": { provider: bitbucket, workflows: [web] }", 1)
+	if added == cfg {
+		t.Fatal("the fixture config's repos entry has changed shape")
 	}
-	t.Run("bake_repos false names the switch", func(t *testing.T) {
-		_, gcs, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
-		f.appendConfig(t, shared+"bake_repos: false\n")
+	if err := os.WriteFile(path, []byte(added), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestCatalogBuildRefusesAnUnadmittedRepo: the map is a config value and a
+// published node, and it is the build's own evidence about the repositories the
+// entry serves — the build reads one repository's config. So a key the project's
+// own list does not answer for is a repository this build holds no URL and no
+// provider for, and the bake is refused by name instead of composed from a URL
+// the build would have to guess (D2301). The same map with the repository in the
+// project's list is the bake D2301 asks for: every repository the map puts on
+// the entry, in one image, the build's own last.
+func TestCatalogBuildRefusesAnUnadmittedRepo(t *testing.T) {
+	const shared = "image_map:\n  acme/app: tools\n  acme/other: tools\nbake_repos: true\n"
+	_, gcs, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
+	f.appendConfig(t, shared)
+
+	_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
+	if err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	got, _ := catalogCopy(t, gcs, "tools")
+	if got != catalogBuildInline {
+		t.Errorf("the copy is %q, want the entry's own definition %q: the build clones no repository the project does not admit", got, catalogBuildInline)
+	}
+	if !strings.Contains(stderr, "no checkout baked (the map puts acme/other on it, which is not a repository this project admits)") {
+		t.Errorf("stderr = %q, want the refusal naming the repository the map puts on the entry and the project does not admit", stderr)
+	}
+
+	t.Run("the repository admitted", func(t *testing.T) {
+		fb, gcs, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
+		addRepoToProject(t, "acme/other")
+		f.appendConfig(t, shared)
 
 		_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
 		if err != nil {
 			t.Fatalf("%v (%s)", err, stderr)
 		}
 		got, _ := catalogCopy(t, gcs, "tools")
-		if got != catalogBuildInline {
-			t.Errorf("the copy is %q, want the entry's own definition %q: the operator turned baking off", got, catalogBuildInline)
+		appDir, err := imagebake.Path(mustSlug(gitprov.KindBitbucket, "acme/app"))
+		if err != nil {
+			t.Fatal(err)
 		}
-		if !strings.Contains(stderr, "bakes no checkout") || !strings.Contains(stderr, "bake_repos") {
-			t.Errorf("stderr = %q, want the switch named as why nothing was baked", stderr)
+		otherDir, err := imagebake.Path(mustSlug(gitprov.KindBitbucket, "acme/other"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		// One stage per repository — the marker each one opens with names the
+		// directory it bakes into — and the entry's other repository is the one
+		// whose URL the definition spells out: the build's own stage takes its
+		// URL and branch as ARGs (its commit is pinned), and acme/other has
+		// neither, so its stage carries them literally.
+		for _, want := range []string{
+			"# fugaro bake: " + appDir,
+			"# fugaro bake: " + otherDir,
+			"'https://bitbucket.org/acme/other.git' " + otherDir,
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("the copy has no stage with %q:\n%s", want, got)
+			}
+		}
+		// The definition still opens with the entry's own content, and the
+		// build's own repository is the last stage — the one the tag, the smoke
+		// and the nightly rebuild read the definition by (BakedDir).
+		if !strings.HasPrefix(got, catalogBuildInline) {
+			t.Errorf("the copy is %q, want the entry's own definition first", got)
+		}
+		if baked, ok := imagebake.BakedDir([]byte(got)); !ok || baked != appDir {
+			t.Errorf("the copy bakes its last checkout at %q, %v; want %s: the build's own repository is the last stage", baked, ok, appDir)
+		}
+		b64, _ := catalogBuildSubs(t, fb)["_SELFTEST_B64"].(string)
+		spec, err := base64.StdEncoding.DecodeString(b64)
+		if err != nil {
+			t.Fatalf("_SELFTEST_B64 = %q: %v", b64, err)
+		}
+		var smoke image.SelftestSpec
+		if err := json.Unmarshal(spec, &smoke); err != nil {
+			t.Fatal(err)
+		}
+		commit, _ := headCommit(t)
+		if smoke.RepoDir != appDir || smoke.Commit != commit || smoke.Origin != "https://bitbucket.org/acme/app.git" {
+			t.Errorf("the smoke's spec is %+v, want the baked checkout of the build's own repository at %s on %s", smoke, appDir, commit)
+		}
+		// Both repositories are named with the directory each was baked at: the
+		// operator asked for a bake of the entry, and what the image carries is
+		// every repository the project's map puts on it (D2301).
+		for _, want := range []string{"bakes the checkouts of", "acme/app at " + appDir, "acme/other at " + otherDir} {
+			if !strings.Contains(stderr, want) {
+				t.Errorf("stderr = %q, want the line about both baked checkouts to carry %q", stderr, want)
+			}
 		}
 	})
 }
 
-// TestCatalogBuildBakesNothingIntoTheDefaultEntry: the entry the project's
-// catalog marks as its default is the image every repository of the project
-// that names no entry of its own runs, and a job resolves that through
-// catalog.Choose without reading the map at all (internal/infra's
-// catalogJobImage) — so a map that puts this checkout alone on the default
-// entry does not make that image this repository's. A checkout composed into it
-// is source every other repository's jobs can read, which is F18's exposure and
-// not O3 (b)'s shared-image case: the map says nothing about those repositories
-// at all. bake_repos: true does not change it, for the same reason it does not
-// in a shared entry.
-func TestCatalogBuildBakesNothingIntoTheDefaultEntry(t *testing.T) {
-	def := strings.Replace(catalogBuildYAML, "    - name: tools\n", "    - name: tools\n      default: true\n", 1)
-	if def == catalogBuildYAML {
-		t.Fatal("the fixture catalog has changed shape")
-	}
-	_, gcs, f := catalogBuildCheckout(t, bitbucketYAML, def)
-	// A second repository of the project, which the map does not name: its jobs
-	// resolve by their own config, and the default entry is what one that names
-	// nothing runs. The repositories are rewritten rather than appended to,
-	// because the fixture's own config carries blocks after them.
-	const appRepo = "  acme/app: { provider: bitbucket, base_branch: main, workflows: [web] }"
-	path := os.Getenv("FUGARO_CONFIG")
-	cfg := readFileString(t, path)
-	two := strings.Replace(cfg, appRepo, appRepo+"\n  acme/other: { provider: bitbucket, workflows: [web] }", 1)
-	if two == cfg {
-		t.Fatal("the fixture config's repos entry has changed shape")
-	}
-	if err := os.WriteFile(path, []byte(two), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	f.appendConfig(t, "image_map:\n  acme/app: tools\nbake_repos: true\n")
-
-	_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
-	if err != nil {
-		t.Fatalf("%v (%s)", err, stderr)
-	}
-	got, _ := catalogCopy(t, gcs, "tools")
-	if got != catalogBuildInline {
-		t.Errorf("the copy is %q, want the entry's own definition %q: a checkout in the project's default image is source every repository's jobs can read", got, catalogBuildInline)
-	}
-	if !strings.Contains(stderr, "bakes no checkout") || !strings.Contains(stderr, "default") {
-		t.Errorf("stderr = %q, want the entry's being the project's default named as why nothing was baked", stderr)
-	}
-}
-
-// TestCatalogBuildBakesNothingWhileARepositoryIsUnmapped: the other half of the
-// same fact, and the one the default rule does not cover. A repository of the
-// project the map names no entry for resolves its image by its own config —
-// a reference, or the tags it needs — and a build reads neither, so it cannot
-// say whether that repository runs this entry. The map is the evidence the bake
-// rests on, and it is whole evidence only once it names every repository the
-// project has.
-func TestCatalogBuildBakesNothingWhileARepositoryIsUnmapped(t *testing.T) {
+// TestCatalogBuildClonesABakedRepoFromTheProjectsCloneURL: a repository's clone
+// URL is the project's to choose (`clone_urls`, SD5/D842) and not the provider's
+// to imply, so a stage composed for one of the entry's other repositories clones
+// from the URL the project gives it. The two blocks the URL is read out of are
+// keyed differently — `repos` and `image_map` by "acme/other", `clone_urls` by
+// "bitbucket/acme/other" (projectpolicy.Canonical) — and a lookup in the wrong
+// key space is silent: CloneURL answers the provider's usual host for a name the
+// project gives no URL, so the build would clone from a URL nobody chose and
+// nothing would fail.
+func TestCatalogBuildClonesABakedRepoFromTheProjectsCloneURL(t *testing.T) {
+	const shared = "image_map:\n  acme/app: tools\n  acme/other: tools\nbake_repos: true\n"
+	// The project's URL for acme/other, which is this repository on its own
+	// provider's host and spelled without the ".git" the usual one carries —
+	// the one spelling a clone_urls entry may differ by, since a URL on another
+	// host is refused by that block's own validation and by the one credential
+	// the build asks for (repourl.CloneURL, imagebake.Decide).
+	const urls = "clone_urls:\n  bitbucket/acme/other: https://bitbucket.org/acme/other\n"
 	_, gcs, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
-	const appRepo = "  acme/app: { provider: bitbucket, base_branch: main, workflows: [web] }"
-	path := os.Getenv("FUGARO_CONFIG")
-	cfg := readFileString(t, path)
-	two := strings.Replace(cfg, appRepo, appRepo+"\n  acme/other: { provider: bitbucket, workflows: [web] }", 1)
-	if two == cfg {
-		t.Fatal("the fixture config's repos entry has changed shape")
-	}
-	if err := os.WriteFile(path, []byte(two), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	f.appendConfig(t, "image_map:\n  acme/app: tools\nbake_repos: true\n")
+	addRepoToProject(t, "acme/other")
+	f.appendConfig(t, shared+urls)
 
 	_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
 	if err != nil {
 		t.Fatalf("%v (%s)", err, stderr)
 	}
 	got, _ := catalogCopy(t, gcs, "tools")
-	if got != catalogBuildInline {
-		t.Errorf("the copy is %q, want the entry's own definition %q: a build cannot say whether the repositories the map leaves out run this entry", got, catalogBuildInline)
+	otherDir, err := imagebake.Path(mustSlug(gitprov.KindBitbucket, "acme/other"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(stderr, "bakes no checkout") || !strings.Contains(stderr, "acme/other") {
-		t.Errorf("stderr = %q, want the repository the map leaves out named as why nothing was baked", stderr)
+	if want := "'https://bitbucket.org/acme/other' " + otherDir; !strings.Contains(got, want) {
+		t.Errorf("the copy has no stage with %q: a baked repository clones from the URL the project gives it (clone_urls)\n%s", want, got)
+	}
+	if strings.Contains(got, "'https://bitbucket.org/acme/other.git'") {
+		t.Errorf("the copy clones acme/other from the provider's usual URL, not from the project's clone_urls entry:\n%s", got)
 	}
 }
 
@@ -1304,7 +1330,8 @@ func TestCatalogBuildRefusesABakeTheMapDoesNotConfirm(t *testing.T) {
 	if repo == bitbucketYAML {
 		t.Fatal("the fixture workflow has changed shape")
 	}
-	_, gcs, _ := catalogBuildCheckoutFor(t, repo, catalogBuildYAML, gitprov.KindBitbucket, "")
+	_, gcs, f := catalogBuildCheckoutFor(t, repo, catalogBuildYAML, gitprov.KindBitbucket, "")
+	f.appendConfig(t, "bake_repos: true\n")
 
 	_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
 	if err != nil {
@@ -1314,8 +1341,13 @@ func TestCatalogBuildRefusesABakeTheMapDoesNotConfirm(t *testing.T) {
 	if got != catalogBuildInline {
 		t.Errorf("the copy is %q, want the entry's own definition %q: the map does not put this repository on the entry, so the readers cannot be named", got, catalogBuildInline)
 	}
-	if !strings.Contains(stderr, "bakes no checkout") || !strings.Contains(stderr, "image map set") {
+	if !strings.Contains(stderr, "no checkout baked (the image map doesn't list acme/app). To bake: fugaro image map set acme/app tools") {
 		t.Errorf("stderr = %q, want the refusal and the command that makes the readers knowable", stderr)
+	}
+	for _, line := range strings.Split(stderr, "\n") {
+		if strings.Contains(line, "no checkout baked") && len(line) >= 200 {
+			t.Errorf("the note is %d characters, want under 200: %q", len(line), line)
+		}
 	}
 	// The entry the checkout does not run is nobody's to bake: building it
 	// composes nothing (TestCatalogBuildBakesNothingWithoutTheMap).
@@ -1403,9 +1435,9 @@ func TestCatalogBuildSaysWhatItTookOffACopy(t *testing.T) {
 	// build composes nothing into tools.
 	f.appendConfig(t, "image_map:\n  acme/app: base\nbake_repos: true\n")
 	slug := mustSlug(gitprov.KindBitbucket, "acme/app")
-	stale, err := imagebake.Append([]byte(catalogBuildInline), imagebake.Plan{Baked: &imagebake.Repo{
+	stale, err := imagebake.Append([]byte(catalogBuildInline), imagebake.Plan{Baked: []imagebake.Repo{{
 		Repo: "acme/app", Slug: slug, URL: "https://bitbucket.org/acme/app.git", Branch: "main",
-	}})
+	}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1470,4 +1502,311 @@ func TestCatalogBuildSaysNothingAboutABakeItKeeps(t *testing.T) {
 	if got, _ := catalogCopy(t, gcs, "tools"); func() bool { _, ok := imagebake.BakedSlug([]byte(got)); return !ok }() {
 		t.Errorf("the copy is %q, want it to keep the bake it had", got)
 	}
+}
+
+// recitingBuildToken is the credentials service's build route as a test sees
+// it: it records the request it was handed and answers what the test gave it.
+// buildtoken.Stub answers the shape and reads nothing, which is all the rest of
+// this package needs, but the entry mode's own question is what it asks for — so
+// that test holds a client that can be wrong about it.
+type recitingBuildToken struct {
+	request buildtoken.Request
+	answer  buildtoken.Response
+	err     error
+}
+
+func (c *recitingBuildToken) Mint(_ context.Context, req buildtoken.Request) (buildtoken.Response, error) {
+	c.request = req
+	return c.answer, c.err
+}
+
+// installBuildToken points the entry mode at c for one test, and puts the
+// package's own value back afterwards: what ships leaves gitCredBuildToken nil,
+// so the global is a test's to set and not a running process's.
+func installBuildToken(t *testing.T, c buildtoken.Client) {
+	t.Helper()
+	prev := gitCredBuildToken
+	t.Cleanup(func() { gitCredBuildToken = prev })
+	gitCredBuildToken = func(*cobra.Command) (buildtoken.Client, error) { return c, nil }
+}
+
+// TestCredentialIsReadFromTheNamedEntrysRepos: the bake's credential is asked
+// for once, as one request for the entry being built, and what it names is the
+// repositories the build composes stages for — the entry, the build, the
+// provider, the repositories in the order the plan baked them (deduplicated and
+// canonicalised, because a config left a list and the service's key space is the
+// canonical name), and the lifetime the step needs. The credential written is
+// the answer's own, for the host the answer names and no other. And a build that
+// cannot make the request, or is answered something that is not one token for
+// the provider's host, writes no file at all: a credential file is what git
+// offers to whatever host its line names, so a placeholder or a second answer
+// would be a credential the build never had (D2301, F19).
+func TestCredentialIsReadFromTheNamedEntrysRepos(t *testing.T) {
+	gitCredentialEnv(t)
+	out := filepath.Join(t.TempDir(), "git-credentials")
+	answer := buildtoken.Response{Token: &buildtoken.Token{
+		Value: "ghs_fixture_token", User: "x-access-token", Host: "github.com",
+		ExpiresAt: time.Now().Add(time.Hour),
+	}}
+	// The shape of a Cloud Build id (internal/backend/gcp/build.go's buildIDRE),
+	// which is what the service keys the Bitbucket pairing on.
+	const buildID = "8f0c1a2e-1234-4abc-9def-0123456789ab"
+	// The flags one request is made of, with the cases below overriding whatever
+	// they are asking about (a repeated flag's last value is the one it takes).
+	entryArgs := func(out string, extra ...string) []string {
+		return append(append([]string{"image", "git-credential", "--provider", "github", "--entry", "tools",
+			"--build-id", buildID, "--ttl-seconds", "900"}, "--out", out), extra...)
+	}
+	run := func(extra ...string) (string, string, error) {
+		return execute(t, entryArgs(out, extra...)...)
+	}
+
+	c := &recitingBuildToken{answer: answer}
+	installBuildToken(t, c)
+	stdout, stderr, err := run("--repos", "Acme/Web", "--repos", "acme/app", "--repos", "acme/web")
+	if err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	// One request, and every field of it the build's own: the entry it composes
+	// a definition for, the build it runs as, the provider, the plan's
+	// repositories, and the lifetime the clone step asked for.
+	want := buildtoken.Request{
+		Entry: "tools", BuildID: buildID,
+		Provider: gitprov.KindGitHub, Repositories: []string{"acme/app", "acme/web"}, TTLSeconds: 900,
+	}
+	if !reflect.DeepEqual(c.request, want) {
+		t.Errorf("the build asked for %+v, want %+v", c.request, want)
+	}
+	if stdout != "" || stderr != "" {
+		t.Errorf("git-credential printed %q / %q: its output is a build log, and the request's fields and a token are not for one", stdout, stderr)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The answer's user, token and host, and nothing of the request: a step that
+	// wrote a request field into the line would be writing something other than
+	// the credential it was given.
+	if wantLine := "https://x-access-token:ghs_fixture_token@github.com\n"; string(data) != wantLine {
+		t.Errorf("the credential file holds %q, want %q", data, wantLine)
+	}
+	if fi, err := os.Stat(out); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v, %v, want 0600: the file is a credential the build clones with", fi.Mode(), err)
+	}
+
+	// A request the build cannot make is refused before anything is asked, and a
+	// request it can make is answered by a route that exists: a step that sent
+	// what it could and let the service sort it out would be asking the service
+	// to be the only thing between a build and a widening the build itself had
+	// no business asking for.
+	t.Run("a request the build cannot make", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			args func(out string) []string
+			want string
+		}{
+			{
+				"the entry mode's flags with no entry",
+				func(out string) []string {
+					return []string{"image", "git-credential", "--provider", "github", "--build-id", buildID,
+						"--ttl-seconds", "900", "--repos", "acme/app", "--out", out}
+				},
+				"--entry is not set",
+			},
+			{
+				"no build id",
+				func(out string) []string {
+					return entryArgs(out, "--build-id", "", "--repos", "acme/app")
+				},
+				"--build-id is required with --entry",
+			},
+			{
+				"no lifetime",
+				func(out string) []string { return entryArgs(out, "--ttl-seconds", "0", "--repos", "acme/app") },
+				"--ttl-seconds is required with --entry",
+			},
+			{
+				"no repositories",
+				func(out string) []string { return entryArgs(out, "--repos", "") },
+				"--repos is required with --entry",
+			},
+			{
+				"no out",
+				func(out string) []string { return entryArgs(out, "--out", "", "--repos", "acme/app") },
+				"--out is required",
+			},
+			{
+				// The one-repository mode's flag: a URL here would be a second,
+				// narrower request beside the entry's, and the build has one
+				// credential.
+				"a clone URL",
+				func(out string) []string {
+					return entryArgs(out, "--repo-url", "https://github.com/acme/app.git", "--repos", "acme/app")
+				},
+				"--repo-url is the one-repository mode's",
+			},
+			{
+				// A value a config left in a list: it is refused here and never
+				// reaches the request, because the service's key space is the
+				// canonical name (task.CanonicalRepo).
+				"a name that is not a repository",
+				func(out string) []string { return entryArgs(out, "--repos", "acme") },
+				"--repos",
+			},
+			{
+				"a name that walks out of the key space",
+				func(out string) []string { return entryArgs(out, "--repos", "acme/../../etc/passwd") },
+				"--repos",
+			},
+			{
+				"an entry that is not a catalog name",
+				func(out string) []string { return entryArgs(out, "--entry", "../tools", "--repos", "acme/app") },
+				"catalog entry",
+			},
+			{
+				"a provider that is not one",
+				func(out string) []string { return entryArgs(out, "--provider", "gitlab", "--repos", "acme/app") },
+				"--provider",
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				installBuildToken(t, &recitingBuildToken{answer: answer})
+				out := filepath.Join(t.TempDir(), "git-credentials")
+				stdout, stderr, err := execute(t, tc.args(out)...)
+				if ExitCode(err) != ExitUserError {
+					t.Fatalf("exit %d, err %v: the build's own mistake is the build's to fix", ExitCode(err), err)
+				}
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Errorf("err = %v, want it to say %q", err, tc.want)
+				}
+				if stdout != "" || stderr != "" {
+					t.Errorf("printed %q / %q, want nothing", stdout, stderr)
+				}
+				if _, err := os.Stat(out); !os.IsNotExist(err) {
+					t.Errorf("a credential file was written for a request the build cannot make")
+				}
+			})
+		}
+
+		// A build whose binary has no route to ask: the route is B1's and the
+		// client that calls it is I2's, and until they are joined the entry mode
+		// refuses rather than cloning with something this process can mint for
+		// itself, which would be a credential the project's build identity never
+		// granted.
+		t.Run("no route in this binary", func(t *testing.T) {
+			prev := gitCredBuildToken
+			gitCredBuildToken = nil
+			t.Cleanup(func() { gitCredBuildToken = prev })
+			out := filepath.Join(t.TempDir(), "git-credentials")
+			_, _, err := execute(t, entryArgs(out, "--repos", "acme/app")...)
+			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "not wired into this binary yet") {
+				t.Errorf("exit %d, err %v: want the build told it cannot ask", ExitCode(err), err)
+			}
+			if _, err := os.Stat(out); !os.IsNotExist(err) {
+				t.Errorf("a credential file was written with no route to ask")
+			}
+		})
+	})
+
+	// The service's own refusal is passed on as it is and never turned into a
+	// credential: the repository it names is the service's answer, and a step that
+	// retried or widened would be the reach this contract exists to bound (B1).
+	t.Run("the route refuses", func(t *testing.T) {
+		installBuildToken(t, &recitingBuildToken{err: errors.New("acme/other is not a repository of the entry tools")})
+		out := filepath.Join(t.TempDir(), "git-credentials")
+		_, _, err := execute(t, entryArgs(out, "--repos", "acme/app")...)
+		if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "acme/other is not a repository of the entry tools") {
+			t.Errorf("exit %d, err %v: want the service's refusal passed on", ExitCode(err), err)
+		}
+		if _, err := os.Stat(out); !os.IsNotExist(err) {
+			t.Errorf("a credential file was written for a request the service refused")
+		}
+	})
+
+	// An answer that is not exactly one token for the provider's own host is
+	// refused and nothing is written. A credential file is read by git for the
+	// host in its line, so a token written for a host the answer named would be
+	// offered to a server that never minted it; a Bitbucket build is answered a
+	// proxy grant and holds no token at all (R6), so there is nothing here to
+	// write for one; and the contract says exactly one shape, so an answer that is
+	// neither or both is not something a step may guess its way through.
+	t.Run("the answer is not one token", func(t *testing.T) {
+		for _, tc := range []struct {
+			name   string
+			answer buildtoken.Response
+			want   string
+		}{
+			{
+				"another host",
+				buildtoken.Response{Token: &buildtoken.Token{Value: "ghs_tok3n", User: "x-access-token", Host: "evil.example"}},
+				"clones from github.com",
+			},
+			{
+				"no host",
+				buildtoken.Response{Token: &buildtoken.Token{Value: "ghs_tok3n", User: "x-access-token"}},
+				"clones from github.com",
+			},
+			{
+				"a provider's other host",
+				buildtoken.Response{Token: &buildtoken.Token{Value: "ghs_tok3n", User: "x-access-token", Host: "bitbucket.org"}},
+				"clones from github.com",
+			},
+			{
+				"a proxy grant",
+				buildtoken.Response{Proxy: &buildtoken.ProxyGrant{URL: "https://creds.example/proxy", Repositories: []string{"acme/app"}}},
+				"proxy grant",
+			},
+			{
+				"a token and a grant",
+				buildtoken.Response{
+					Token: &buildtoken.Token{Value: "ghs_tok3n", User: "x-access-token", Host: "github.com"},
+					Proxy: &buildtoken.ProxyGrant{URL: "https://creds.example/proxy"},
+				},
+				"exactly one",
+			},
+			{
+				"neither",
+				buildtoken.Response{},
+				"neither a token nor a proxy grant",
+			},
+			{
+				"no user",
+				buildtoken.Response{Token: &buildtoken.Token{Value: "ghs_tok3n", Host: "github.com"}},
+				"incomplete",
+			},
+			{
+				"no token",
+				buildtoken.Response{Token: &buildtoken.Token{User: "x-access-token", Host: "github.com"}},
+				"incomplete",
+			},
+			{
+				"a control character in the token",
+				buildtoken.Response{Token: &buildtoken.Token{Value: "ghs_tok3n\nx", User: "x-access-token", Host: "github.com"}},
+				"control character",
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				installBuildToken(t, &recitingBuildToken{answer: tc.answer})
+				out := filepath.Join(t.TempDir(), "git-credentials")
+				stdout, stderr, err := execute(t, entryArgs(out, "--repos", "acme/app")...)
+				if ExitCode(err) != ExitUserError {
+					t.Fatalf("exit %d, err %v: an answer the build cannot use is refused", ExitCode(err), err)
+				}
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Errorf("err = %v, want it to say %q", err, tc.want)
+				}
+				// What is refused is never quoted back: the answer is where a
+				// credential is, and a refusal goes to the build log.
+				if err != nil && strings.Contains(err.Error(), "tok3n") {
+					t.Errorf("the refusal carries the token: %v", err)
+				}
+				if stdout != "" || stderr != "" {
+					t.Errorf("printed %q / %q, want nothing", stdout, stderr)
+				}
+				if _, err := os.Stat(out); !os.IsNotExist(err) {
+					t.Errorf("a credential file was written for an answer the build cannot use")
+				}
+			})
+		}
+	})
 }

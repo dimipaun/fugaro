@@ -1,0 +1,306 @@
+name: ci
+on:
+  # Pull requests are not merge-gated by CI (owner's ruling 2026-10-16: the
+  # in-run loop already runs the tests). Run it on demand against a branch with
+  # `gh workflow run ci --ref <branch>`; nothing runs it
+  # automatically (owner's ruling 2026-11-07: dispatch by hand, in batches); the release gate (scripts/release-gate.sh) requires it green on the tag's commit.
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  # A pull request that changes only documentation (docs/ and top-level
+  # Markdown files) skips test, rules and terraform: they cannot fail on it.
+  # A skipped job is not a failure, so the pull request merges as usual. Every
+  # push to main runs them all, so a documentation guard test (a link, a
+  # command name, a legacy name) that a docs-only change breaks is caught
+  # there; run the guards locally before merging a docs-only change
+  # (go test ./internal/cli ./internal/config ./images -run 'Docs|Migration|BaseImageDoc|Design|SecurityMd|RecipesGuide|NoLegacy|Website|CliRef').
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.diff.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - id: diff
+        run: |
+          docs_only=false
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            # The checked-out merge commit's first parent is the base branch.
+            files=$(git diff --name-only HEAD^1 HEAD)
+            if [ -n "$files" ] && ! printf '%s\n' "$files" | grep -qvE '^(docs/|[^/]+\.md$)'; then
+              docs_only=true
+            fi
+          fi
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+  check:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go vet ./...
+      - run: go vet -tags docker ./...
+      # Type-checks the live tests (never runs them), so they can't rot.
+      - run: go vet -tags live ./...
+      # The live gateway test needs both tags.
+      - run: go vet -tags 'live docker' ./...
+      # Type-checks the terraform-tagged tests (the real-terraform ones).
+      - run: go vet -tags terraform ./...
+      # Type-checks the emulator tests of the database rules (the rules job runs them).
+      - run: go vet -tags firebase ./...
+  # The Go tests run on parallel runners, and every runner here is under seven
+  # minutes on the 2026-11-15 run this matrix was measured against, where the
+  # longest, `scripts-live-0`, took 598s: three runners ran the whole live
+  # suite each because their -run filter matched no subtest, and `rest`,
+  # `issues` and four of the eight `cli` shards were over the line as well.
+  # A family is split by test name -- a stable
+  # hash of the name, mod the shard count, so a new test lands in a shard on
+  # its own and none is dropped or run twice -- by package path for everything
+  # else, and by LIVE_CHECK_SHARD for the live checks, whose filter cannot be
+  # spelled as a -run pattern (see that step). internal/cli is not split by the
+  # hash alone: its update tests hang when a subset of the package runs without
+  # the tests that precede them, so cli-update takes them whole and the other
+  # shards take everything else. A runner that is a whole package has of: 1.
+  #
+  # internal/backend/gcp, images and plugin have a runner each rather than
+  # taking a hash of the rest family's 138 packages: each holds one test that
+  # walks the whole repository (271s, 201s and 145s of test time), and a hash
+  # puts a shard of that length together whenever one of them lands beside
+  # anything else. They are excluded from that grep below and named in the
+  # matrix, so the pair can only move together.
+  shard:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    name: test-shard (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: cli-update, pkg: ./internal/cli, index: 0, of: 1, only: update}
+          - {name: cli-0, pkg: ./internal/cli, index: 0, of: 8, only: other}
+          - {name: cli-1, pkg: ./internal/cli, index: 1, of: 8, only: other}
+          - {name: cli-2, pkg: ./internal/cli, index: 2, of: 8, only: other}
+          - {name: cli-3, pkg: ./internal/cli, index: 3, of: 8, only: other}
+          - {name: cli-4, pkg: ./internal/cli, index: 4, of: 8, only: other}
+          - {name: cli-5, pkg: ./internal/cli, index: 5, of: 8, only: other}
+          - {name: cli-6, pkg: ./internal/cli, index: 6, of: 8, only: other}
+          - {name: cli-7, pkg: ./internal/cli, index: 7, of: 8, only: other}
+          - {name: scripts-live-0, pkg: ./scripts, index: 0, of: 3, only: live}
+          - {name: scripts-live-1, pkg: ./scripts, index: 1, of: 3, only: live}
+          - {name: scripts-live-2, pkg: ./scripts, index: 2, of: 3, only: live}
+          - {name: scripts-0, pkg: ./scripts, index: 0, of: 2, only: nonlive}
+          - {name: scripts-1, pkg: ./scripts, index: 1, of: 2, only: nonlive}
+          - {name: runner-0, pkg: ./internal/runner, index: 0, of: 2}
+          - {name: runner-1, pkg: ./internal/runner, index: 1, of: 2}
+          - {name: issues-0, pkg: ./internal/issues, index: 0, of: 2}
+          - {name: issues-1, pkg: ./internal/issues, index: 1, of: 2}
+          - {name: rest-0, pkg: rest, index: 0, of: 6}
+          - {name: rest-1, pkg: rest, index: 1, of: 6}
+          - {name: rest-2, pkg: rest, index: 2, of: 6}
+          - {name: rest-3, pkg: rest, index: 3, of: 6}
+          - {name: rest-4, pkg: rest, index: 4, of: 6}
+          - {name: rest-5, pkg: rest, index: 5, of: 6}
+          - {name: rest-gcp, pkg: ./internal/backend/gcp, index: 0, of: 1}
+          - {name: rest-images, pkg: ./images, index: 0, of: 1}
+          - {name: rest-plugin, pkg: ./plugin, index: 0, of: 1}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: go test -race
+        env:
+          PKG: ${{ matrix.pkg }}
+          INDEX: ${{ matrix.index }}
+          OF: ${{ matrix.of }}
+          ONLY: ${{ matrix.only }}
+        run: |
+          set -euo pipefail
+          if [ "$PKG" = rest ]; then
+            # The three packages with a runner of their own are left out here
+            # and named in the matrix above: a package can only be in one place.
+            go list ./... | grep -vE '/(internal/cli|scripts|internal/runner|internal/issues|internal/backend/gcp|images|plugin)$' | while read -r p; do
+              if [ $(( $(printf '%s' "$p" | cksum | cut -d' ' -f1) % OF )) -eq "$INDEX" ]; then
+                echo "$p"
+              fi
+            done > mine-pkgs.txt
+            test -s mine-pkgs.txt
+            go test -race -timeout 40m -json $(cat mine-pkgs.txt) | tee test.json | jq -rj 'select(.Action=="output").Output'
+            exit 0
+          fi
+          if [ "$OF" = 1 ] && [ -z "${ONLY:-}" ]; then
+            go test -race -timeout 40m -json "$PKG" | tee test.json | jq -rj 'select(.Action=="output").Output'
+            exit 0
+          fi
+          if [ "${ONLY:-}" = live ]; then
+            # TestLiveCheckScripts builds its items here and runs them through
+            # a worker pool, so they are not subtests and no -run pattern can
+            # choose between them: a top-level test whose name matches the
+            # first element of a multi-element pattern runs whatever its
+            # subtests do, and there are none. The split is the variable, read
+            # by the test itself; an unreadable value fails the runner rather
+            # than running everything (scripts/live_checks_test.go).
+            LIVE_CHECK_SHARD="$INDEX/$OF" \
+              go test -race -timeout 40m -json -run '^TestLiveCheckScripts$' "$PKG" | tee test.json | jq -rj 'select(.Action=="output").Output'
+            exit 0
+          fi
+          # -race, so that the run below finds this build rather than making a
+          # second one: without it the package is compiled twice per runner,
+          # once without the race detector and once with, and the two builds
+          # are most of what a cli runner's seven minutes hold.
+          go test -race -list '.*' "$PKG" | grep -E '^(Test|Example|Fuzz)' | sort > all.txt
+          case "${ONLY:-}" in
+            update) grep -E '^TestUpdate' all.txt > sel.txt || true; mv sel.txt all.txt ;;
+            other) grep -vE '^TestUpdate' all.txt > sel.txt || true; mv sel.txt all.txt ;;
+            nonlive) grep -vE '^TestLiveCheckScripts$' all.txt > sel.txt || true; mv sel.txt all.txt ;;
+          esac
+          total=$(wc -l < all.txt)
+          while read -r name; do
+            if [ $(( $(printf '%s' "$name" | cksum | cut -d' ' -f1) % OF )) -eq "$INDEX" ]; then
+              echo "$name"
+            fi
+          done < all.txt > mine.txt
+          echo "shard $INDEX of $OF: $(wc -l < mine.txt) of $total tests"
+          test -s mine.txt
+          run="^($(paste -sd'|' mine.txt))\$"
+          go test -race -timeout 40m -json -run "$run" "$PKG" | tee test.json | jq -rj 'select(.Action=="output").Output'
+      - name: timings
+        if: always()
+        env:
+          NAME: ${{ matrix.name }}
+        run: |
+          test -s test.json || exit 0
+          {
+            echo "### shard $NAME"
+            echo "package elapsed (s):"
+            jq -r 'select(.Test==null and (.Action=="pass" or .Action=="fail") and .Elapsed!=null) | "\(.Elapsed)\t\(.Package)"' test.json | sort -rn | head -20
+            echo "slowest 40 tests (s):"
+            jq -r 'select(.Test!=null and (.Action=="pass" or .Action=="fail")) | "\(.Elapsed)\t\(.Package) \(.Test)"' test.json | sort -rn | head -40
+          } | tee timings.txt >> "$GITHUB_STEP_SUMMARY"
+          jq -r 'select(.Test!=null and (.Action=="pass" or .Action=="fail")) | "\(.Elapsed)\t\(.Package)\t\(.Test)"' test.json | sort -rn > test-times.tsv
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: test-times-${{ matrix.name }}
+          path: test-times.tsv
+          if-no-files-found: ignore
+  # The one check name the release gate and branch rules know: it passes when
+  # every shard and the vet job passed, and when they were skipped for a
+  # documentation-only change.
+  test:
+    needs: [check, shard]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          CHECK: ${{ needs.check.result }}
+          SHARD: ${{ needs.shard.result }}
+        run: |
+          for r in "$CHECK" "$SHARD"; do
+            case "$r" in success|skipped) ;; *) echo "a test job ended $r"; exit 1;; esac
+          done
+  # The budget database rules are the only thing between a compromised run's
+  # token and every shared counter, so their tests run against the Realtime
+  # Database emulator: a firebase-tools pinned by
+  # internal/budget/rules/emulator/package-lock.json, Java 21 and Node 22. No
+  # step has a Firebase account or credential (the project id is a demo- id the
+  # emulator treats as local); the only network use is the package and
+  # emulator-jar downloads. FUGARO_REQUIRE_EMULATOR makes a missing emulator a
+  # failure instead of a skip, so this required check cannot pass vacuously.
+  rules:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      # The lockfile is written by npm 11.19.0; the npm that ships with Node
+      # 22 resolves the optional picomatch peer differently and refuses it.
+      - name: pin npm to the version that wrote the lockfile
+        run: npm install --global npm@11.19.0
+      - name: install the pinned firebase-tools
+        working-directory: internal/budget/rules/emulator
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: cache the emulator jar
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firebase-emulators-${{ hashFiles('internal/budget/rules/emulator/package-lock.json') }}
+      - name: the generated rules and the emulator suite
+        env:
+          FUGARO_REQUIRE_EMULATOR: "1"
+        run: go test -tags firebase -count=1 -timeout 15m -v ./internal/budget/rules/...
+  # Lints and tests the Terraform with a mock provider. No step has cloud
+  # credentials: init -backend=false only downloads the provider the lock
+  # file pins.
+  terraform:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.16.4
+          terraform_wrapper: false
+      - uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337 # v6.3.2
+        with:
+          tflint_version: v0.64.0
+      - run: terraform fmt -check -recursive deploy/terraform
+      # Terraform's data directory stays outside the tree: deploy/terraform
+      # embeds all of gcp/, so provider binaries under a root's .terraform
+      # would end up in the Go test binary of the last step.
+      - name: validate and test the roots
+        run: |
+          for r in installation firebase repo compute workspace; do
+            [ -d "deploy/terraform/gcp/roots/$r" ] || { echo "no Terraform root $r" >&2; exit 1; }
+            export TF_DATA_DIR="$RUNNER_TEMP/tf-$r"
+            terraform -chdir=deploy/terraform/gcp/roots/$r init -backend=false -lockfile=readonly -input=false
+            terraform -chdir=deploy/terraform/gcp/roots/$r validate
+            terraform -chdir=deploy/terraform/gcp/roots/$r test
+          done
+      # tflint --init asks the GitHub API for the plugin's release: with the
+      # workflow's read-only token it isn't held to the 60 requests an hour an
+      # anonymous caller on a shared runner gets.
+      - run: tflint --chdir=deploy/terraform/gcp --init && tflint --chdir=deploy/terraform/gcp --recursive
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      # The Trivy image images/scan.sh pins, over the Terraform.
+      - run: sh deploy/terraform/scan.sh
+      # The tf wrapper's tests against a real terraform binary.
+      - run: go test -tags terraform ./internal/infra/... ./deploy/terraform/...

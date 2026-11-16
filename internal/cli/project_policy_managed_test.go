@@ -341,7 +341,7 @@ func TestPolicyPublishManagedRefusesDelete(t *testing.T) {
 	before := nodeOf(t, f.db)
 	t.Setenv("CLAUDECODE", "1") // a coding agent's session
 
-	out, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+	out, _, err := execute(t, "project", "policy", "publish", "--delete")
 	if err == nil {
 		t.Fatalf("a coding agent's session deleted the policy of a managed project:\n%s", out)
 	}
@@ -825,6 +825,24 @@ func TestPolicyPublishManagedRefusesAChangedProfileSecrets(t *testing.T) {
 func TestPolicyPublishManagedRefusesChangedModelPrices(t *testing.T) {
 	refusedMemberChange(t, "model_prices", "", rewriteWith(
 		"model_prices:\n  deepseek/deepseek-v4-flash: { input_per_m: 0.02, output_per_m: 0.08 }\n"))
+}
+
+// binaries: the owner's grant of the paths a run may add a binary at and of the
+// cap a run is held to (D981–D983, AR1). No rule of this gate reads the block,
+// and the decider is where the member stays: a rule for it would be a rule
+// whose subject is the thing the gate exists to hold back — the run's own
+// agent, which reads this grant — and a rule narrow enough to be safe would
+// have to special-case the coder admitting its own payload (D986). What the
+// gate answers instead is the rule that closes over every member the others do
+// not read: the block is compared by the member map of the two nodes, so any
+// move a session makes with it is a change no rule judged and is refused by
+// name. The widened list below is one such move; the other direction — the
+// written empty block that takes the grant away — is refused by the same
+// comparison, because what is held to equality is the member and not the
+// direction it moved in.
+func TestAnAgentsPublishMayNotMoveTheBinariesBlock(t *testing.T) {
+	refusedMemberChange(t, "binaries", "binaries:\n  allow: [\"brand/*.png\"]\n  max_bytes: 1048576\n",
+		rewriteWith("binaries:\n  allow: [\"brand/*.png\", \"website/public/**\"]\n  max_bytes: 1048576\n"))
 }
 
 // The plan's §5 wiring property for this command: the gate is read BEFORE the

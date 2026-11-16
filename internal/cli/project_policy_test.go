@@ -370,7 +370,7 @@ func TestProjectPolicyPublishRefusesAVersionItCannotWrite(t *testing.T) {
 func TestProjectPolicyPublishDeleteRefusesANewerNode(t *testing.T) {
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), map[string]any{"version": projectpolicy.Version + 1, "allow_repos": []string{"github/acme/app"}})
-	_, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+	_, _, err := execute(t, "project", "policy", "publish", "--delete")
 	if err == nil {
 		t.Fatal("deleting a policy written by a newer Fugaro was allowed")
 	}
@@ -1035,7 +1035,8 @@ func TestProjectPolicyDeleteDeletesUnderTheETagItValidated(t *testing.T) {
 	budgetTransport = &policyChangedDuringDelete{rt: http.DefaultTransport, db: f.db, val: other}
 	t.Cleanup(func() { budgetTransport = nil })
 
-	out, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "aurora\n", "project", "policy", "publish", "--delete")
 	if err == nil {
 		t.Fatalf("a publish that landed while the deletion was being confirmed was deleted unconfirmed:\n%s", out)
 	}
@@ -1057,7 +1058,7 @@ func TestProjectPolicyDeleteRefusesWithoutTheRulesMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.db.Set(projectpolicy.PathRulesMarker(), nil)
-	_, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+	_, _, err := execute(t, "project", "policy", "publish", "--delete")
 	if err == nil {
 		t.Fatal("--delete without the rules marker was allowed")
 	}
@@ -1094,7 +1095,8 @@ func TestProjectPolicyDeleteRemovesChildrenThenTheSharedNode(t *testing.T) {
 	child := projectpolicy.PathRepo(slug)
 	f.db.Set(child, map[string]any{"allow_repos": []string{"github/acme/app"}})
 
-	out, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "aurora\n", "project", "policy", "publish", "--delete")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1132,7 +1134,8 @@ func TestProjectPolicyDeleteRemovesChildrenBeforeTheSharedNode(t *testing.T) {
 	f.db.Set(child, map[string]any{"allow_repos": []string{"github/acme/app"}})
 	f.db.Deny(projectpolicy.PathShared())
 
-	out, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "aurora\n", "project", "policy", "publish", "--delete")
 	if err == nil {
 		t.Fatalf("a refused delete of the shared node was reported as a success:\n%s", out)
 	}
@@ -1147,9 +1150,14 @@ func TestProjectPolicyDeleteRemovesChildrenBeforeTheSharedNode(t *testing.T) {
 	}
 }
 
-// TestProjectPolicyDeleteRefusesWithoutYesWhileARunIsInFlight: a repository
-// that is mid-run keeps the policy until it finishes (B5).
-func TestProjectPolicyDeleteRefusesWithoutYesWhileARunIsInFlight(t *testing.T) {
+// TestProjectPolicyDeleteRefusesWhileARunIsInFlight: a repository that is
+// mid-run keeps the policy until it finishes (B5). The gate is about the runs
+// and not about the session, so nothing gets past it: with a pipe for stdin the
+// `--delete` is refused in the sentence that names the runs and the wait, and
+// the policy stays. There is no second half any more — T11 of
+// docs/no-prompt-policy removed the flag that used to override the gate, so no
+// word of a run's own deletes a policy a run still holds.
+func TestProjectPolicyDeleteRefusesWhileARunIsInFlight(t *testing.T) {
 	f := newProjectFixture(t, "")
 	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
 		t.Fatal(err)
@@ -1162,31 +1170,26 @@ func TestProjectPolicyDeleteRefusesWithoutYesWhileARunIsInFlight(t *testing.T) {
 
 	_, _, err = execute(t, "project", "policy", "publish", "--delete")
 	if err == nil {
-		t.Fatal("--delete without --yes was allowed while a run is in flight")
+		t.Fatal("--delete was allowed while a run is in flight")
 	}
-	if !strings.Contains(err.Error(), "--yes") {
-		t.Errorf("the refusal does not name --yes: %v", err)
+	if !strings.Contains(err.Error(), "in flight") || !strings.Contains(err.Error(), "wait for them") {
+		t.Errorf("the refusal does not say the runs hold the policy and that waiting is the way through: %v", err)
+	}
+	if strings.Contains(err.Error(), "--yes") {
+		t.Errorf("the refusal names --yes, which no longer exists and would not get past the gate: %v", err)
 	}
 	if f.db.Value(projectpolicy.PathShared()) == nil {
-		t.Fatal("the policy was removed anyway")
-	}
-	if _, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes"); err != nil {
-		t.Fatalf("--yes must delete while a run is in flight: %v", err)
-	}
-	if f.db.Value(projectpolicy.PathShared()) != nil {
-		t.Fatal("--yes did not delete the policy")
+		t.Fatal("the policy was removed although a run is in flight")
 	}
 }
 
 // TestProjectPolicyDeleteRefusesTheTypedNameWhileARunIsInFlight is the same
-// gate at a terminal, which is where it can actually be walked past: with a
-// terminal, typing the project's name is what every other confirmation here
-// accepts, and --delete must still refuse while a run is in flight — a run
-// mid-flight keeps the policy until it finishes (B5). The test above cannot
-// see this: with stdin that is not a terminal, confirmRemovalStrict refuses
-// for its own reason, so deleting the in-flight gate there would pass it.
-// --yes is the way through, because the gate is about the runs, not about
-// whether the operator was asked.
+// gate at a terminal, the one session every other confirmation here is answered
+// at: typing the project's name is what confirmRemoval takes, and `--delete`
+// still refuses while a run is in flight — a run mid-flight keeps the policy
+// until it finishes (B5). No flag stands in for the wait either (T11 of
+// docs/no-prompt-policy), so this test and the one above say it between them:
+// nothing deletes the policy while a run is in flight.
 func TestProjectPolicyDeleteRefusesTheTypedNameWhileARunIsInFlight(t *testing.T) {
 	f := newProjectFixture(t, "")
 	typed(t)
@@ -1203,17 +1206,14 @@ func TestProjectPolicyDeleteRefusesTheTypedNameWhileARunIsInFlight(t *testing.T)
 	if err == nil {
 		t.Fatalf("--delete was allowed with the project's name typed while a run is in flight:\n%s", out)
 	}
-	if !strings.Contains(err.Error(), "--yes") {
-		t.Errorf("the refusal does not name --yes: %v", err)
+	if !strings.Contains(err.Error(), "in flight") || !strings.Contains(err.Error(), "wait for them") {
+		t.Errorf("the refusal does not say the runs hold the policy and that waiting is the way through: %v", err)
+	}
+	if strings.Contains(err.Error(), "--yes") {
+		t.Errorf("the refusal names --yes, which no longer exists and would not get past the gate: %v", err)
 	}
 	if f.db.Value(projectpolicy.PathShared()) == nil {
-		t.Fatal("the policy was removed anyway")
-	}
-	if _, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes"); err != nil {
-		t.Fatalf("--yes must delete while a run is in flight: %v", err)
-	}
-	if f.db.Value(projectpolicy.PathShared()) != nil {
-		t.Fatal("--yes did not delete the policy")
+		t.Fatal("the policy was removed although a run is in flight")
 	}
 }
 
@@ -1223,7 +1223,7 @@ func TestProjectPolicyDeleteRefusesTheTypedNameWhileARunIsInFlight(t *testing.T)
 func TestProjectPolicyDeleteRefusesANewerPolicy(t *testing.T) {
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), map[string]any{"version": projectpolicy.Version + 1, "allow_repos": []string{"github/acme/app"}})
-	_, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+	_, _, err := execute(t, "project", "policy", "publish", "--delete")
 	if err == nil {
 		t.Fatal("deleting a newer policy was allowed")
 	}
@@ -1331,7 +1331,8 @@ func TestProjectShowDoesNotCallAPatternEntryIdleWhileItsRepositoriesRun(t *testi
 	if _, _, err := execute(t, "project", "repos", "add", "github/acme/*"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := execute(t, "project", "repos", "rm", "github/acme/app", "--yes"); err != nil {
+	fakeTerminal(t)
+	if _, _, err := executeStdin(t, "aurora\n", "project", "repos", "rm", "github/acme/app"); err != nil {
 		t.Fatal(err)
 	}
 	// The pattern admits github/acme/app, and a run of it is in flight.
@@ -1420,7 +1421,8 @@ func TestProjectShowEnrolledIsTheAllowListNotTheSeed(t *testing.T) {
 	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := execute(t, "project", "repos", "rm", "bitbucket/acme/other", "--yes"); err != nil {
+	fakeTerminal(t)
+	if _, _, err := executeStdin(t, "aurora\n", "project", "repos", "rm", "bitbucket/acme/other"); err != nil {
 		t.Fatal(err)
 	}
 	js, _, err := execute(t, "project", "show", "--json")
@@ -1728,7 +1730,7 @@ func TestProjectReposEditOnlyTheAllowList(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.db.Set(budget.PathAgent(slug, "20261015-120000-aaaa"), map[string]any{"run_id": "20261015-120000-aaaa"})
-	_, _, err = execute(t, "project", "repos", "rm", "github/acme/new", "--yes")
+	_, _, err = execute(t, "project", "repos", "rm", "github/acme/new")
 	if err == nil {
 		t.Fatal("--yes removed an allowed repository while a run of it is in flight")
 	}
@@ -2899,7 +2901,7 @@ func TestPolicyNodeBytesTreatsANullRoutingMemberAsAbsent(t *testing.T) {
 		{"a null routing member, replaced by the config's switch", `{"version": 5, "routing": null}`, switchOn, false},
 		{"a null claude member, replaced by the config's switch", `{"version": 5, "routing": {"claude": null}}`, switchOn, false},
 	} {
-		node, err := policyNodeBytes(tc.pol, []byte(tc.old), true, tc.keep, true)
+		node, err := policyNodeBytes(tc.pol, []byte(tc.old), true, tc.keep, true, true)
 		if err != nil {
 			t.Errorf("%s: policyNodeBytes = %v, want the node written", tc.name, err)
 			continue
@@ -2945,12 +2947,12 @@ func TestPolicyNodeBytesRefusesCaseFoldedRoutingMembers(t *testing.T) {
 		"models twice":         `{"version": 5, "routing": {"claude": {"via": "direct", "models": ["claude-sonnet-5-5"], "models": []}}}`,
 		"a case-folded claude": `{"version": 5, "routing": {"CLAUDE": {"via": "direct"}}}`,
 	} {
-		if _, err := policyNodeBytes(pol, []byte(old), true, true, true); err == nil || !strings.Contains(err.Error(), "routing block") {
+		if _, err := policyNodeBytes(pol, []byte(old), true, true, true, true); err == nil || !strings.Contains(err.Error(), "routing block") {
 			t.Errorf("%s: policyNodeBytes = %v, want a refusal naming the block", name, err)
 		}
 	}
 	// The other side: a block this Fugaro reads as written is patched as before.
-	if _, err := policyNodeBytes(pol, []byte(`{"version": 5, "routing": {"claude": {"via": "direct"}}}`), true, true, true); err != nil {
+	if _, err := policyNodeBytes(pol, []byte(`{"version": 5, "routing": {"claude": {"via": "direct"}}}`), true, true, true, true); err != nil {
 		t.Errorf("a well-spelled block: policyNodeBytes = %v, want it written", err)
 	}
 }
@@ -2985,7 +2987,8 @@ func TestProjectPolicyPublishRefusesAnOlderNodeWithAWorkingRemedy(t *testing.T) 
 				t.Fatal("the node was removed by a refused publish")
 			}
 			// And the remedy it names works.
-			if _, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes"); err != nil {
+			fakeTerminal(t)
+			if _, _, err := executeStdin(t, "aurora\n", "project", "policy", "publish", "--delete"); err != nil {
 				t.Fatalf("the remedy the refusal names does not work: %v", err)
 			}
 			if f.db.Value(projectpolicy.PathShared()) != nil {
@@ -3464,7 +3467,7 @@ func TestPolicyRefusalsEscapeTheNodesKeyNames(t *testing.T) {
 		wantIn string
 	}{
 		{"policy show, which refuses the node it cannot read whole", []string{"project", "policy", "show"}, "never takes effect"},
-		{"the publish, which refuses to drop the keys it does not know", []string{"project", "policy", "publish", "--yes"}, "publishing would drop them"},
+		{"the publish, which refuses to drop the keys it does not know", []string{"project", "policy", "publish"}, "publishing would drop them"},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
 			_, _, err := execute(t, tc.args...)
@@ -3685,20 +3688,23 @@ func TestProjectPolicyPublishKeepsTheModelGrades(t *testing.T) {
 
 // TestPublishKeepsTheBinariesListWhenTheLocalFileSaysNothing: the binaries
 // block is the owner's grant of the paths a run may add a binary at and of the
-// cap it is held to, and no key of the operator's config states it (D986 keeps
-// it off `fugaro.yaml` and the shared config), so a publish keeps the node's —
-// the clone_urls and credentials rule.
+// cap it is held to, and the local config became its carrier in the release
+// that bumped the node to version 8 (AR1, D987) — so a publish from a machine
+// whose file says nothing about it keeps the node's block rather than writing
+// the block this file would give, which is none (the clone_urls and credentials
+// rule, and the review of the version-6 bump is where it was asked for).
 //
-// This is a review finding on the version-5 bump rather than a nicety. While
-// the key was unmodelled, a publish over a node carrying it was *refused*
-// (publishedPolicyOf's unknown-key refusal, "publishing would drop them"), so a
-// publish that rewrote such a node without the block would be a loosening this
-// release introduced: the allow list gone, and max_bytes back at the 2 MiB
-// ceiling the owner had lowered it from. Hand-writing the node is the only way
-// to state the block until AR1 gives the operator's config the key, which is
-// why the fixture writes the node and not the file — and the diff has to say
-// the block was kept, because nothing else in it would mention an unchanged
-// member.
+// This is a review finding rather than a nicety. While the key was unmodelled,
+// a publish over a node carrying it was *refused* (publishedPolicyOf's
+// unknown-key refusal, "publishing would drop them"), so a publish that rewrote
+// such a node without the block would be a loosening this release introduced:
+// the allow list gone, and max_bytes back at the 2 MiB ceiling the owner had
+// lowered it from. Silence is not the only spelling that reaches here and stays
+// the interesting one: a second machine whose file predates the key, an owner
+// who declined to set a list, and one whose file was tidied all say nothing,
+// and none of them asked for a grant to be withdrawn — the written empty block
+// below is how that is asked for. The diff has to say the block was kept,
+// because nothing else in it would mention an unchanged member.
 func TestPublishKeepsTheBinariesListWhenTheLocalFileSaysNothing(t *testing.T) {
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), map[string]any{
@@ -3770,6 +3776,46 @@ func TestPublishKeepsTheBinariesListWhenTheLocalFileSaysNothing(t *testing.T) {
 	}
 	if strings.Contains(out, "binaries") {
 		t.Errorf("the diff mentions a binaries block the node does not carry:\n%s", out)
+	}
+}
+
+// TestPublishClearsTheBinariesListOnAWrittenEmptyBlock is the other direction
+// of the keep above, and the reason the two spellings are told apart at all
+// (D987, AR1): the owner who wants a published grant taken away writes it —
+// `binaries: {}` — and the publish is what takes the block off the node. A file
+// that says nothing keeps it, so the written empty block is the only spelling
+// that can mean "no admission at all", and without it this release's new key
+// would have given the operator a way to state a list and none to withdraw one
+// (`fugaro project policy publish` is the node's only writer, D986).
+//
+// The node a written-empty block leaves is the node a project that never set
+// one has, member for member: the database keeps no member for an empty list
+// (the fold the test above spells out), and the cap is not carried on its own —
+// a lowered cap with no list admits nothing, which is not a state the block
+// describes.
+func TestPublishClearsTheBinariesListOnAWrittenEmptyBlock(t *testing.T) {
+	f := newProjectFixture(t, "binaries: {}\n")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"allow_repos": []string{"github/acme/app"},
+		"binaries":    map[string]any{"allow": []string{"brand/*.png"}, "max_bytes": 1048576},
+	})
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatalf("the publish refused a written empty binaries block: %v", err)
+	}
+	if p := publishedPolicy(t, f); p.Binaries != nil {
+		t.Errorf("the published node carries binaries %+v, and the file wrote an empty block: the publish kept a grant the owner took away", p.Binaries)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); strings.Contains(raw, "binaries") {
+		t.Errorf("the published node carries a binaries member:\n%s", raw)
+	}
+	// The diff says nothing about the block, and that is the correct silence
+	// rather than a gap: the operator's own file wrote this publish's answer,
+	// where the kept line above exists for the case where the node's block is
+	// what stands and no other line would mention it.
+	if strings.Contains(out, "binaries") {
+		t.Errorf("the diff reports a binaries block for a publish the operator's own file decided:\n%s", out)
 	}
 }
 

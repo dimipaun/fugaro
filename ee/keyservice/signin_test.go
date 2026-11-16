@@ -162,6 +162,15 @@ func (v licenceSignIn) Verify(ctx context.Context, idToken string) (Caller, erro
 	return Caller{UID: identity.UID, Email: identity.Email}, nil
 }
 
+// RequireSSO is the rule itself and not this double's, which is how
+// keyservice_test.go's spy answers it too: the flows this verifier is wired for
+// reach no route that applies one, and the caller Verify builds here carries no
+// provider — a rule that did reach it would refuse, which is the answer a
+// double that claims no sign-in method owes.
+func (v licenceSignIn) RequireSSO(caller Caller, rule SSORule) error {
+	return ssoRefuses(signInOf(caller), rule)
+}
+
 // signingIn is the fixture with the two doors these routes need wired: the
 // licence project's own verifier behind Deps.SignIn, and a v1 minter behind
 // Deps.MintsV1 — the same minter the fixture signs with, so a key a test reads
@@ -1509,5 +1518,468 @@ func (f *fixture) approveDevice(t *testing.T, userCode, token string) {
 	})
 	if done.Code != http.StatusOK {
 		t.Fatalf("the confirmation answered %d, want %d: %s", done.Code, http.StatusOK, done.Body.String())
+	}
+}
+
+// The portal's own two doors of the same flows (P3.5). K2.4's routes are the
+// CLI's and the pages this repository serves; the SPA's screens are served from
+// the portal's origin, where Hosting rewrites `/api/**` to this service and
+// nothing else (F21), so what those pages reach is the API's faces of the same
+// two steps. The tests below drive them the way the screens do: the authorize
+// page's one JSON call, which is answered with the address it navigates to, and
+// the device page's two JSON calls with the caller's ID token in a bearer
+// header.
+
+// apiAuthorize is the SPA's authorize page's one call: the four parameters the
+// terminal sent and the token the session answered, in the JSON body the page's
+// own client sends. No bearer header is set, because the token of this step is
+// the body's field on both faces (AuthorizeCall) — a case that also wanted to
+// pin that a header is ignored would be pinning an encoding rather than a
+// decision.
+func (f *fixture) apiAuthorize(call map[string]string) *httptest.ResponseRecorder {
+	f.t.Helper()
+	return f.apiAs("", RouteAPIAuthorize, call)
+}
+
+// handedOver reads what the API answers a sign-in that landed: the address the
+// page navigates to and the two things it carries, in the shape `redirected`
+// reads the page's own redirect in. Both faces send the terminal the same
+// address, and this is the one the SPA's page is given rather than sent to
+// (apiAuthorize).
+func handedOver(t *testing.T, rec *httptest.ResponseRecorder) (code, state, target string) {
+	t.Helper()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the sign-in answered %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != apiJSONType {
+		t.Errorf("the handover's content type is %q, want %q: the page navigates to a field of it", got, apiJSONType)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("the handover's Cache-Control is %q, want no-store: the answer carries a code", got)
+	}
+	var answer AuthorizeHandover
+	if err := json.Unmarshal(rec.Body.Bytes(), &answer); err != nil {
+		t.Fatalf("reading the handover %q: %v", rec.Body.String(), err)
+	}
+	address, err := url.Parse(answer.Redirect)
+	if err != nil {
+		t.Fatalf("parsing the handover's address %q: %v", answer.Redirect, err)
+	}
+	query := address.Query()
+	return query.Get("code"), query.Get("state"), address.Scheme + "://" + address.Host + address.Path
+}
+
+// apiAs is one of the API's two doors reached the way the SPA's own client
+// reaches it (P1.0, client.ts): a JSON body and the caller's ID token in the
+// Authorization header, never a field of the body.
+func (f *fixture) apiAs(token, path string, body any) *httptest.ResponseRecorder {
+	f.t.Helper()
+	raw, err := json.Marshal(body)
+	if err != nil {
+		f.t.Fatalf("marshalling the call: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, intakeOrigin+path, bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	req.RemoteAddr = applicantIP
+	rec := httptest.NewRecorder()
+	f.handler.ServeHTTP(rec, req)
+	return rec
+}
+
+// refusalBody is the API's one refusal shape read back (api.go's `apiError`).
+type refusalBody struct {
+	Error struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+// readAPIRefusal reads one of the API's refusals and answers the sentence: what
+// the SPA's client hands a screen is the message, and the status and the
+// sentence are the whole of what a caller is told.
+func readAPIRefusal(t *testing.T, rec *httptest.ResponseRecorder, wantStatus int, wantCode string) string {
+	t.Helper()
+	if rec.Code != wantStatus {
+		t.Fatalf("the API answered %d, want %d: %s", rec.Code, wantStatus, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != apiJSONType {
+		t.Errorf("the refusal's content type is %q, want %q: the SPA parses one shape", got, apiJSONType)
+	}
+	var fault refusalBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &fault); err != nil {
+		t.Fatalf("reading the refusal %q: %v", rec.Body.String(), err)
+	}
+	if fault.Error.Code != wantCode {
+		t.Errorf("the refusal's code is %q, want %q: %s", fault.Error.Code, wantCode, rec.Body.String())
+	}
+	if fault.Error.Message == "" {
+		t.Errorf("the refusal %q carries no sentence for a person to read", rec.Body.String())
+	}
+	return fault.Error.Message
+}
+
+// approveDeviceAPI is the SPA's page's two calls: the code read back, and then
+// the handover.
+func (f *fixture) approveDeviceAPI(t *testing.T, userCode, token string) {
+	f.t.Helper()
+	read := f.apiAs(token, RouteAPIDevice, map[string]string{"user_code": typedCode(userCode)})
+	if read.Code != http.StatusOK {
+		t.Fatalf("reading the code back answered %d, want %d: %s", read.Code, http.StatusOK, read.Body.String())
+	}
+	done := f.apiAs(token, RouteAPIDevice, map[string]any{"user_code": userCode, "confirm": true})
+	if done.Code != http.StatusNoContent {
+		t.Fatalf("the handover answered %d, want %d: %s", done.Code, http.StatusNoContent, done.Body.String())
+	}
+}
+
+// typedCode is a user code as a person types it: what the terminal is showing,
+// without the group separator and in whatever case they wrote it.
+func typedCode(shown string) string {
+	return strings.ToLower(strings.ReplaceAll(shown, "-", ""))
+}
+
+// TestTheSPAsDoorsAreTheAPIsOwn: the two screens reach these addresses from the
+// portal's origin, so a route outside the subtree Hosting rewrites to this
+// service is a route no screen of the SPA can ever reach, and a path under that
+// subtree that no area registered is answered `no_route` — which a screen reads
+// as the portal failing rather than as anything a person did.
+func TestTheSPAsDoorsAreTheAPIsOwn(t *testing.T) {
+	f, _ := subscribed(t)
+	for _, path := range []string{RouteAPIAuthorize, RouteAPIDevice} {
+		if !strings.HasPrefix(path, apiPrefix) {
+			t.Errorf("the SPA's door %s is not under %s, the subtree Hosting rewrites to this service", path, apiPrefix)
+		}
+		if _, known := apiRoutes.lookup(http.MethodPost, path); !known {
+			t.Errorf("the API's table holds no POST %s: the SPA's page is answered no_route", path)
+		}
+	}
+	// A method the route does not answer is the API's own refusal and not the
+	// subtree's missing path: what is registered is registered for its method.
+	if rec := f.api(http.MethodGet, RouteAPIDevice, ""); rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("a GET on %s answered %d, want %d: %s", RouteAPIDevice, rec.Code, http.StatusMethodNotAllowed, rec.Body.String())
+	}
+}
+
+// TestAPIAuthorizeIsTheSignInTheSPAsPageSubmits: §11.3 end to end on the SPA's
+// face. The page sends the callback, the state, the challenge and the token its
+// session answered, and the answer is the address of the terminal's listener
+// carrying a code the terminal really exchanges — a bundle at the end of it,
+// which is what a licence login is for.
+//
+// What the page does with that address is navigate to it, and that is the whole
+// reason this face answers an address instead of redirecting: the portal's own
+// policy is `form-action 'self'` and a browser checks it against where a
+// submission ends, so a page under it cannot be sent to a loopback listener by
+// one — the address it navigates to is not a submission and no policy of the
+// portal's governs it. Whatever the portal's policy narrows, this answer is
+// complete on its own.
+func TestAPIAuthorizeIsTheSignInTheSPAsPageSubmits(t *testing.T) {
+	f, spy := subscribed(t)
+	verifier := freshVerifier(t)
+	code, state, target := handedOver(t, f.apiAuthorize(map[string]string{
+		"redirect_uri":          loopbackTarget,
+		"state":                 signInState,
+		"code_challenge":        pkceChallengeOf(verifier),
+		"code_challenge_method": pkceMethod,
+		"id_token":              f.acceptedToken(t),
+	}))
+	if target != loopbackTarget || state != signInState {
+		t.Fatalf("the sign-in sent the terminal %q with state %q, want %q and %q", target, state, loopbackTarget, signInState)
+	}
+	f.exchanged(code, verifier)
+	if spy.minted() != 1 {
+		t.Errorf("the sign-in minted %d key(s) where the bundle is the exchange's, want 1", spy.minted())
+	}
+	// The other half of the same door: a page a person reloaded sends the code's
+	// exchange again and is refused, because a code is good once.
+	if again := f.exchanged(code, verifier); again.Code != http.StatusForbidden {
+		t.Errorf("a second exchange of the same code answered %d, want %d", again.Code, http.StatusForbidden)
+	}
+}
+
+// TestAPIAuthorizeRefusesInTheAPIsOwnShape: every refusal before a sign-in is
+// verified is one sentence in the API's own error shape (a screen shows the
+// sentence the API wrote, and a body it cannot parse is reported as the portal
+// failing), and the sentence says nothing — not the parameter that was wrong
+// and not whether the address is one this service knows — because a refusal is
+// reachable by anyone and an answer that narrowed a guess would be a lookup.
+func TestAPIAuthorizeRefusesInTheAPIsOwnShape(t *testing.T) {
+	f, _ := subscribed(t)
+	verifier := freshVerifier(t)
+	intact := func() map[string]string {
+		return map[string]string{
+			"redirect_uri":          loopbackTarget,
+			"state":                 signInState,
+			"code_challenge":        pkceChallengeOf(verifier),
+			"code_challenge_method": pkceMethod,
+			"id_token":              f.acceptedToken(t),
+		}
+	}
+	cases := map[string]func(map[string]string){
+		"a target that is not the listener": func(call map[string]string) { call["redirect_uri"] = hostileRedirect },
+		"no state":                          func(call map[string]string) { call["state"] = "" },
+		"a challenge method this service does not take": func(call map[string]string) {
+			call["code_challenge_method"] = "plain"
+		},
+		"a challenge that is too short": func(call map[string]string) { call["code_challenge"] = "short" },
+		"a token another project signed": func(call map[string]string) {
+			call["id_token"] = f.tokenWith(t, "aud", anotherProject)
+		},
+		"no token at all": func(call map[string]string) { call["id_token"] = "" },
+		// A field this step does not read is a body it cannot read at all, which
+		// is the same refusal: what a caller's mistake was is not something
+		// these routes tell (readCall).
+		"a field this step does not read": func(call map[string]string) { call["port"] = "53123" },
+	}
+	sentences := map[string]int{}
+	for _, spoil := range cases {
+		call := intact()
+		spoil(call)
+		sentences[readAPIRefusal(t, f.apiAuthorize(call), http.StatusForbidden, signInRefusedCode)]++
+	}
+	if len(sentences) != 1 || sentences[refuseSignIn] != len(cases) {
+		t.Errorf("the sign-in's refusals say %v, want the one uniform sentence %q for every one of them", sentences, refuseSignIn)
+	}
+	if held := f.codesHeld(); held.codes != 0 {
+		t.Errorf("the refused sign-ins left %d authorize code(s) behind, want none: a code is a bundle waiting to be collected", held.codes)
+	}
+}
+
+// TestAPIAuthorizeTellsAVerifiedAccountWithNoLicence: the one refusal a verified
+// caller is told plainly, in the API's shape and with a code of its own — what
+// the account holds and what the record says are the service's to repair, and
+// the person is told what to do about it.
+func TestAPIAuthorizeTellsAVerifiedAccountWithNoLicence(t *testing.T) {
+	f, _ := signingIn(t)
+	verifier := freshVerifier(t)
+	message := readAPIRefusal(t, f.apiAuthorize(map[string]string{
+		"redirect_uri":          loopbackTarget,
+		"state":                 signInState,
+		"code_challenge":        pkceChallengeOf(verifier),
+		"code_challenge_method": pkceMethod,
+		"id_token":              f.acceptedToken(t),
+	}), http.StatusForbidden, noLicenceRefusedCode)
+	if message != refuseNoLicence {
+		t.Errorf("the refusal says %q, want %q", message, refuseNoLicence)
+	}
+}
+
+// TestAPIDeviceIsTheFlowTheSPAsPageDrives: §11.4 end to end through the two
+// calls the SPA's page makes — the code typed and read back as the name the
+// installation gave, and then the handover, which is what the terminal's next
+// poll collects. The read approves nothing, the page shows the code as this
+// service read it rather than the text that was typed, and the same code is not
+// handed over twice.
+func TestAPIDeviceIsTheFlowTheSPAsPageDrives(t *testing.T) {
+	f, spy := subscribed(t)
+	start := f.startDevice(t, "acme-laptop")
+	token := f.acceptedToken(t)
+
+	lookup := f.apiAs(token, RouteAPIDevice, map[string]string{"user_code": typedCode(start.UserCode)})
+	if lookup.Code != http.StatusOK {
+		t.Fatalf("reading the code back answered %d, want %d: %s", lookup.Code, http.StatusOK, lookup.Body.String())
+	}
+	var ask DeviceAsk
+	if err := json.Unmarshal(lookup.Body.Bytes(), &ask); err != nil {
+		t.Fatalf("reading the answer %q: %v", lookup.Body.String(), err)
+	}
+	if ask.Installation != "acme-laptop" {
+		t.Errorf("the answer names %q, want the installation the code was started for", ask.Installation)
+	}
+	if ask.Organisation != signInOrg {
+		t.Errorf("the answer names the organisation %q, want the account's own %q", ask.Organisation, signInOrg)
+	}
+	if ask.UserCode != start.UserCode {
+		t.Errorf("the answer carries the code %q, want the code as this service read it %q: the page confirms what it is about and not what was typed", ask.UserCode, start.UserCode)
+	}
+
+	// A read is a read: the terminal is still told to wait, and no key has been
+	// minted for a code a person has only looked at.
+	f.advance(devicePollInterval)
+	if rec := f.pollDevice(t, start.DeviceCode); !strings.Contains(rec.Body.String(), DevicePending) {
+		t.Errorf("the poll answered %d %s after the code was only read back, want %s", rec.Code, rec.Body.String(), DevicePending)
+	}
+	if spy.minted() != 0 {
+		t.Errorf("reading a code back minted %d key(s), want none", spy.minted())
+	}
+
+	done := f.apiAs(token, RouteAPIDevice, map[string]any{"user_code": ask.UserCode, "confirm": true})
+	if done.Code != http.StatusNoContent {
+		t.Fatalf("the handover answered %d, want %d: %s", done.Code, http.StatusNoContent, done.Body.String())
+	}
+	if done.Body.Len() != 0 {
+		t.Errorf("the handover answered a body %q, want none: what the key is and who it is for is the terminal's answer, not this page's", done.Body.String())
+	}
+	f.advance(devicePollInterval)
+	f.pollBundle(t, start.DeviceCode)
+	if spy.minted() != 1 {
+		t.Errorf("the approved code minted %d key(s), want 1", spy.minted())
+	}
+	// The code is spent by the terminal's poll: the same page cannot hand the
+	// same code over again.
+	second := f.apiAs(token, RouteAPIDevice, map[string]any{"user_code": ask.UserCode, "confirm": true})
+	readAPIRefusal(t, second, http.StatusForbidden, deviceRefusedCode)
+}
+
+// TestAPIDeviceAnswersARepeatedConfirmFromTheSameApprover: the SPA's page
+// confirms the code and then binds the licence, and a binding that failed leaves
+// the person on the page with the button still there (`device.tsx`'s `approve`,
+// which says the click retries the binding). A page cannot tell a network
+// failure after the service acted from a refusal, so what that click sends is
+// the confirm again — and the same approver's second confirm is answered as the
+// first was rather than as a code this service is not holding, because a
+// refusal there would leave the binding never retried.
+//
+// Who may repeat it is only the approver: an account whose licence is another's
+// asks about a code that already carries one and is refused as an unknown code,
+// one person's approval never being overwritten by another's. And the repeat
+// outlives nothing — the terminal's poll takes the approved code out in the read
+// that finds it, so one approval still answers one key.
+func TestAPIDeviceAnswersARepeatedConfirmFromTheSameApprover(t *testing.T) {
+	f, spy := subscribed(t)
+	f.purchase("evt-other", "other.example", 5, 365)
+	start := f.startDevice(t, "acme-laptop")
+	token := f.acceptedToken(t)
+
+	read := f.apiAs(token, RouteAPIDevice, map[string]string{"user_code": typedCode(start.UserCode)})
+	if read.Code != http.StatusOK {
+		t.Fatalf("reading the code back answered %d, want %d: %s", read.Code, http.StatusOK, read.Body.String())
+	}
+	var ask DeviceAsk
+	if err := json.Unmarshal(read.Body.Bytes(), &ask); err != nil {
+		t.Fatalf("reading the answer %q: %v", read.Body.String(), err)
+	}
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		confirm := f.apiAs(token, RouteAPIDevice, map[string]any{"user_code": ask.UserCode, "confirm": true})
+		if confirm.Code != http.StatusNoContent {
+			t.Fatalf("confirm %d answered %d, want %d: clicking again is the page's retry and not a refusal: %s", attempt, confirm.Code, http.StatusNoContent, confirm.Body.String())
+		}
+	}
+
+	// The other account holds a licence of its own — the second purchase above
+	// — so what refuses it is the code's own approver and not a missing
+	// subscription: the refusal is the one a code this service is not holding
+	// gets, and the code stays the first account's.
+	other := f.tokenWith(t, "email", buyerAddress("other.example"))
+	readAPIRefusal(t,
+		f.apiAs(other, RouteAPIDevice, map[string]any{"user_code": ask.UserCode, "confirm": true}),
+		http.StatusForbidden, deviceRefusedCode)
+
+	// And the repeat outlived nothing: the terminal's poll collects the one key
+	// its person approved, and the code is gone with it.
+	f.pollBundle(t, start.DeviceCode)
+	f.advance(devicePollInterval)
+	if again := f.pollDevice(t, start.DeviceCode); again.Code != http.StatusForbidden {
+		t.Errorf("a second poll of the answered code answered %d, want %d: %s", again.Code, http.StatusForbidden, again.Body.String())
+	}
+	if spy.minted() != 1 {
+		t.Errorf("one approval minted %d key(s), want one", spy.minted())
+	}
+}
+
+// TestAPIDeviceRefusesWhatItWillNotApprove: the device step's refusals on the
+// API's face. A sign-in that does not verify is the uniform sentence whatever
+// was wrong with it; a request that is not the one this step reads and a code
+// this service is not holding are one uniform refusal over a code space small
+// enough that a probe must not narrow it.
+func TestAPIDeviceRefusesWhatItWillNotApprove(t *testing.T) {
+	f, _ := subscribed(t)
+	token := f.acceptedToken(t)
+	start := f.startDevice(t, "acme-laptop")
+	unknown, err := newUserCode()
+	if err != nil {
+		t.Fatalf("generating a code nothing is waiting on: %v", err)
+	}
+	cases := []struct {
+		name    string
+		token   string
+		body    any
+		code    string
+		message string
+	}{
+		{"no token at all", "", map[string]string{"user_code": start.UserCode}, signInRefusedCode, refuseSignIn},
+		{"a token another project signed", f.tokenWith(t, "aud", anotherProject), map[string]string{"user_code": start.UserCode}, signInRefusedCode, refuseSignIn},
+		{"a body that is not this shape", token, map[string]any{"user_code": start.UserCode, "organisation": "somewhere-else.example"}, deviceRefusedCode, refuseDevice},
+		{"a code that is not one", token, map[string]string{"user_code": "not-a-code"}, deviceRefusedCode, refuseDevice},
+		{"a code nothing is waiting on", token, map[string]string{"user_code": groupCode(unknown)}, deviceRefusedCode, refuseDevice},
+	}
+	for _, tc := range cases {
+		message := readAPIRefusal(t, f.apiAs(tc.token, RouteAPIDevice, tc.body), http.StatusForbidden, tc.code)
+		if message != tc.message {
+			t.Errorf("%s: the refusal says %q, want %q", tc.name, message, tc.message)
+		}
+	}
+	// Nothing above approved the terminal's code, and each refusal is a request
+	// the service read and acted on nothing of.
+	f.advance(devicePollInterval)
+	if rec := f.pollDevice(t, start.DeviceCode); !strings.Contains(rec.Body.String(), DevicePending) {
+		t.Errorf("the poll answered %d %s, want %s: a refusal approved the code", rec.Code, rec.Body.String(), DevicePending)
+	}
+}
+
+// TestAPIDeviceTellsAVerifiedAccountWithNoLicence: the device step's one plainly
+// told refusal, and it approves nothing — a code whose person holds no licence
+// stays waiting for somebody who does.
+func TestAPIDeviceTellsAVerifiedAccountWithNoLicence(t *testing.T) {
+	f, _ := signingIn(t)
+	start := f.startDevice(t, "acme-laptop")
+	message := readAPIRefusal(t,
+		f.apiAs(f.acceptedToken(t), RouteAPIDevice, map[string]string{"user_code": start.UserCode}),
+		http.StatusForbidden, noLicenceRefusedCode)
+	if message != refuseNoLicence {
+		t.Errorf("the refusal says %q, want %q", message, refuseNoLicence)
+	}
+	// And the approval is refused the same way rather than approved: what the
+	// account lacks is a licence, which is true of both of the step's requests.
+	readAPIRefusal(t,
+		f.apiAs(f.acceptedToken(t), RouteAPIDevice, map[string]any{"user_code": start.UserCode, "confirm": true}),
+		http.StatusForbidden, noLicenceRefusedCode)
+	f.advance(devicePollInterval)
+	if rec := f.pollDevice(t, start.DeviceCode); !strings.Contains(rec.Body.String(), DevicePending) {
+		t.Errorf("the poll answered %d %s, want %s: a refused account approved the code", rec.Code, rec.Body.String(), DevicePending)
+	}
+}
+
+// TestTheTwoDoorsOfAStepDecideAlike: the CLI's route and the SPA's are one flow
+// with two faces, and what a test can hold them to is that the same request gets
+// the same decision through either — a code the terminal exchanges, a code the
+// terminal's poll collects, and the same refusal for a fault neither takes. The
+// faces are what differ (a sentence in a page's body, the API's error object);
+// no decision is.
+func TestTheTwoDoorsOfAStepDecideAlike(t *testing.T) {
+	f, _ := subscribed(t)
+	token := f.acceptedToken(t)
+
+	pageVerifier, apiVerifier := freshVerifier(t), freshVerifier(t)
+	pageCode, _, _ := redirected(t, f.signedIn(t, token, pageVerifier))
+	apiCode, _, _ := handedOver(t, f.apiAuthorize(map[string]string{
+		"redirect_uri":          loopbackTarget,
+		"state":                 signInState,
+		"code_challenge":        pkceChallengeOf(apiVerifier),
+		"code_challenge_method": pkceMethod,
+		"id_token":              token,
+	}))
+	f.exchanged(pageCode, pageVerifier)
+	f.exchanged(apiCode, apiVerifier)
+
+	page := f.startDevice(t, "acme-laptop")
+	spa := f.startDevice(t, "acme-laptop")
+	f.approveDevice(t, page.UserCode, token)
+	f.approveDeviceAPI(t, spa.UserCode, token)
+	f.pollBundle(t, page.DeviceCode)
+	f.pollBundle(t, spa.DeviceCode)
+
+	// One fault, two faces: a code that is not one is refused by both, and the
+	// page's sentence and the API's are the same words.
+	pageRefusal := f.post(RouteDeviceApprove, url.Values{"user_code": {"not-a-code"}, "id_token": {token}})
+	if pageRefusal.Code != http.StatusForbidden || strings.TrimSpace(pageRefusal.Body.String()) != refuseDevice {
+		t.Errorf("the page answered %d %q for a code that is not one, want %d %q", pageRefusal.Code, strings.TrimSpace(pageRefusal.Body.String()), http.StatusForbidden, refuseDevice)
+	}
+	if message := readAPIRefusal(t, f.apiAs(token, RouteAPIDevice, map[string]string{"user_code": "not-a-code"}), http.StatusForbidden, deviceRefusedCode); message != refuseDevice {
+		t.Errorf("the API says %q for the same fault, and the page says %q: one refusal is one wording", message, refuseDevice)
 	}
 }

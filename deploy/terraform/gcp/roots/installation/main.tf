@@ -51,6 +51,7 @@ module "installation" {
   coordinator               = var.coordinator
   mcp_server                = var.mcp_server
   catalog_check             = var.catalog_check
+  reports                   = var.reports
   credentials_service       = var.credentials_service
   intake                    = var.intake
   project_secrets           = var.project_secrets

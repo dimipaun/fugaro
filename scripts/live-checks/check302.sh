@@ -855,7 +855,7 @@ phase_before() {
     stop "$SCRIPTS_DIR holds no file: name the directory the sweep, the watcher and the queue scripts live in (--scripts <dir>) and run this phase again"
   fi
   names=$(printf '%s\n' "$files" | sed -n '1,6p' | while IFS= read -r f; do printf '%s ' "${f##*/}"; done)
-  fact scripts PASS "$count file(s) are in $SCRIPTS_DIR, and the first of them are $names— the rollback re-arms these and nothing here writes or deletes one. T1 keeps them on disk for the window this phase starts"
+  fact scripts PASS "$count file(s) are in $SCRIPTS_DIR, and the first of them are ${names}— the rollback re-arms these and nothing here writes or deletes one. T1 keeps them on disk for the window this phase starts"
 
   if [ "$DRY_RUN" != yes ]; then
     guard_terminal
@@ -1123,7 +1123,7 @@ PY
     fact scripts FAIL "the directory 'before' recorded ($SCRIPTS_DIR) holds no file now: the rollback re-arms the sweep, the watcher and the queue scripts, and something removed them — the way back T1 keeps for $WINDOW_DAYS days is gone"
   else
     names=$(printf '%s\n' "$files" | sed -n '1,6p' | while IFS= read -r f; do printf '%s ' "${f##*/}"; done)
-    fact scripts PASS "the old scripts are still on disk at $SCRIPTS_DIR ($count file(s): $names— nothing this check ran writes or deletes one, and they stay for the whole window, which ends $(state_get window_end))"
+    fact scripts PASS "the old scripts are still on disk at $SCRIPTS_DIR ($count file(s): ${names}— nothing this check ran writes or deletes one, and they stay for the whole window, which ends $(state_get window_end))"
   fi
 
   state_keep "the rollback reads the window, the scripts' directory and the guardrails from it, and it is allowed at any point inside the $WINDOW_DAYS days"
@@ -1269,7 +1269,7 @@ PY
     stop "there is nothing to re-arm in $SCRIPTS_DIR: restore the sweep, the watcher and the queue scripts from wherever you keep them, then run this phase again"
   fi
   names=$(printf '%s\n' "$files" | sed -n '1,6p' | while IFS= read -r f; do printf '%s ' "${f##*/}"; done)
-  fact scripts PASS "the old scripts are on disk at $SCRIPTS_DIR ($count file(s): $names— every one of them untouched by this check, which is what makes the way back real)"
+  fact scripts PASS "the old scripts are on disk at $SCRIPTS_DIR ($count file(s): ${names}— every one of them untouched by this check, which is what makes the way back real)"
 
   fact rearm PASS "you confirmed, at this terminal, that the sweep, the Monitor watcher and the queue scripts are re-armed and their watching is back: from here the machine's work starts the way it did before the daemon, and the daemon is stopped (the rows above). Which entry starts the sweep is on your machine, so this reading is yours and the check records it as yours"
 

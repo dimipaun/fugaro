@@ -123,16 +123,20 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	// branch starts.
 	//
 	// The one thing that lifts the refusal is the managed gate's answer
-	// (D1012): a caller that read the gate and was admitted for THIS edit's
-	// class passes it in e.Managed, and the step proceeds as it would for a
-	// person. Every other value — the zero value every other caller passes, a
-	// class the gate does not cover, an edit whose class is Typed — keeps the
-	// refusal exactly as it was, and a caller that passes nothing changes
-	// nothing. The marker is the fence itself for a widening (D1552, D1555):
-	// the class rule is the second thing that refuses one, and a fence read off
-	// a class the same release deletes would leave the ceiling unfenced.
+	// (D1012): a caller that read the gate and was admitted for THIS edit passes
+	// it in e.Managed, and the step proceeds as it would for a person. Every
+	// other value — the zero value every other caller passes, a verdict that
+	// refused, an inventory that fell back — keeps the refusal exactly as it
+	// was, and a caller that passes nothing changes nothing. A widening is
+	// never lifted (D1552, D1555): no document a plan gate judges admits one
+	// (D1026), and the class that used to say so is gone with the class
+	// system, so the edit's own widening marker says it here — a fence read off
+	// a class the same release deletes would have left the ceiling unfenced.
+	// Everything the gate does not stand in for keeps the refusal beside it:
+	// --ask puts this step's own question back (GateStandsIn answers false
+	// under it), and a marker is asked for one, which is the refusal here.
 	conds := settingsEditConditions(cmd, e)
-	if marker := conds.Agent; marker != "" && (!e.insideRepo() || e.Typed) && !initflow.CanConfirmManaged(e.editClass(), conds, e.Managed) {
+	if marker := conds.Agent; marker != "" && (!e.insideRepo() || e.Typed) && (e.Typed || !initflow.GateStandsIn(conds, e.Managed)) {
 		fmt.Fprintf(out, "%s\n%s", e.Path, diff)
 		return userErr("refusing to write %s in a coding agent's session (%s is set): %s; run this yourself at your own terminal: %s; nothing was written",
 			e.Path, marker, e.What, e.Command)
@@ -153,8 +157,8 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	// ruling of 2026-11-01): the gate read this edit's document, admitted it, and
 	// its verdict IS what the write proceeds on — the diff above is the whole of
 	// what the owner reads. A widening reads what it widens (D1552, D1555):
-	// initflow.GateConfirms is false for one whatever the verdict was (D1026, and
-	// settingsEdit's own editClass). Every other edit reads the sentence naming
+	// the gate's sentence is not read for one whatever the verdict was (D1026,
+	// through the e.Typed below). Every other edit reads the sentence naming
 	// it, and the one question a write may still ask is the one --ask puts back
 	// (D1544). A project that is not managed, a mark that did not answer and an
 	// edit the gate refused all arrive here as the zero value every fence reads
@@ -166,7 +170,7 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	// GateProceeded, which says where the verdict was recorded. gateSentence is
 	// the one place that choice is made (update_managed.go), so this surface
 	// cannot be the one that prints the owner's line to a session.
-	if !e.Yes && initflow.GateConfirms(e.editClass(), conds, e.Managed) {
+	if !e.Yes && !e.Typed && initflow.GateStandsIn(conds, e.Managed) {
 		fmt.Fprintf(out, "  %s\n", gateSentence(conds.Agent))
 	} else if e.Typed {
 		// A widening is the owner's own step, and the owner's own terminal
@@ -215,20 +219,6 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 // (`--layer repo`), the one document an agent session may write.
 func (e settingsEdit) insideRepo() bool { return e.Kind == settingsDocRepo }
 
-// editClass is the confirmation class of this edit, which is the class the
-// managed gate reads: Typed is D846's widening form — a loosened ceiling, a
-// floor removed — and everything else is the ordinary y/N. It is derived here
-// and not passed beside Managed, because the two facts a write is decided
-// under have to agree: a caller that could name a class of its own
-// could name the one the gate covers for an edit that is Typed, and D1026's
-// rule is exactly that no plan gate admits one.
-func (e settingsEdit) editClass() initflow.ConfirmClass {
-	if e.Typed {
-		return initflow.Typed
-	}
-	return initflow.YesOrTyped
-}
-
 // readSettingsCurrent re-reads the file one edit is about to overwrite, for
 // the comparison that refuses an edit built on bytes that have moved. It reads
 // the document the way the caller's own read read it: a checkout's fugaro.yaml
@@ -248,7 +238,7 @@ func readSettingsCurrent(e settingsEdit) ([]byte, error) {
 // it runs in. It is read once per edit, so the fence above and the gate below
 // are decided under one struct rather than two readings that could disagree.
 func settingsEditConditions(cmd *cobra.Command, e settingsEdit) initflow.Conditions {
-	return initflow.Conditions{Terminal: stdinIsTerminal(cmd.InOrStdin()), Yes: e.Yes, Agent: agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())), Ask: e.Ask}
+	return initflow.Conditions{Terminal: stdinIsTerminal(cmd.InOrStdin()), Agent: agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())), Ask: e.Ask}
 }
 
 // announceSettingsWrite says what one settings write does and asks whether to
