@@ -41,6 +41,7 @@ Subcommands:
 - `fugaro creds` -- Set and list the credentials service's one bundle secret (the owner)
 - `fugaro diagnose` -- Explain how a run went: status, tests, review findings, the agent's last word, logs
 - `fugaro doctor` -- Check that Fugaro is set up and ready, without changing anything
+- `fugaro escalation` -- Read what the escalation ladder has done to the project's pull requests
 - `fugaro estimate` -- Reprice one run's recorded tokens on another model
 - `fugaro followups` -- File the findings a merged run deferred as follow-up tasks
 - `fugaro graph` -- Print the project's dependency graph
@@ -3061,6 +3062,98 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--security` | bool | `false` | no | also print the IAM and security sweep (who may read a credential, who may sign a budget token, what a launcher may start) |
 | `--strict` | bool | `false` | no | fail on a stale, unpinned or foreign plugin (CI mode); an un-wired checkout is information, not a failure |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro escalation`
+
+Read what the escalation ladder has done to the project's pull requests
+
+Read the project's escalation ladder: the rung each stalled pull request has
+reached, why it got there, how long it has been going, what it has cost and
+every rung transition it took (docs/outer-loop-escalation).
+
+ls lists every work item the ladder has acted on; show prints one of them in
+full, its transitions oldest first. A work item is the pull request the
+project's orchestrator is driving, so a row here is one pull request.
+
+Both commands only read: the ledger is the daemon's to write, and this command
+holds no lease, no ETag and no write path to the state node. The age and the
+cost are the item's own run records read out of the runs bucket, which is
+where the ladder's own reading of them comes from too; a run this machine
+cannot read leaves both unknown rather than short.
+
+Usage: `fugaro escalation`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for escalation |
+
+Subcommands:
+
+- `fugaro escalation ls` -- List the pull requests the escalation ladder has acted on
+- `fugaro escalation show` -- Show one pull request's escalation ledger and its transitions
+
+## `fugaro escalation ls`
+
+List the pull requests the escalation ladder has acted on
+
+List every work item of the project's orchestrator that carries an escalation
+ledger, with the rung it is at, the reason it entered it, how long it has been
+going, how many of the ladder's own runs it has spent and what its own runs
+have cost.
+
+--json prints a versioned document (schemas/escalation.schema.json). An item
+whose runs this machine cannot all read has no age and no cost, which the
+document writes as null and the table as unknown.
+
+Usage: `fugaro escalation ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro escalation show`
+
+Show one pull request's escalation ledger and its transitions
+
+Show the escalation ledger of one work item of the project's orchestrator,
+named by the id `fugaro orchestrator state` prints it under: the rung, the
+reason it entered it, how long it has been going, the ladder runs it has
+spent, what its own runs have cost, and every transition oldest first, with
+the head each one was decided at.
+
+--json prints a versioned document (schemas/escalation.schema.json). An item
+whose runs this machine cannot all read has no age and no cost, which the
+document writes as null and the table as unknown.
+
+Usage: `fugaro escalation show ITEM`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for show |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 

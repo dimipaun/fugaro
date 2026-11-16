@@ -17,6 +17,8 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -2855,5 +2857,88 @@ func TestServiceAccountRefusedAtIntakeAuth(t *testing.T) {
 	tok := f.jobToken(func(c map[string]any) { c["email"] = testJobSA })
 	if _, err := f.verifyLauncher(tok); !errors.Is(err, ErrUnverifiedJob) {
 		t.Fatalf("the launcher class answered a service account's token with %v, want ErrUnverifiedJob", err)
+	}
+}
+
+// buildIdentityAddress is the address of the build identity the installation
+// module creates in the fixture's project: the account_id its own source fixes,
+// in the shape a service account's email has.
+//
+// The module is read rather than restated here because this package cannot
+// import internal/infra — that package imports this one, so the agreement that
+// matters (the account the module creates IS the account the build class
+// admits) can only be held from this side by reading the deployment's own
+// words. internal/infra's BuildIdentityAccountID and TestProjectHasOneBuildIdentity
+// are the other half, and they read the module's account_id back the same way.
+func buildIdentityAddress(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile("../../deploy/terraform/gcp/modules/installation/build_identity.tf")
+	if err != nil {
+		t.Fatalf("the installation module's build identity file: %v", err)
+	}
+	m := regexp.MustCompile(`(?m)^\s*account_id\s*=\s*"([^"]+)"`).FindStringSubmatch(string(b))
+	if m == nil {
+		t.Fatal("the installation module creates no service account under a literal account_id, so the build identity's address is not a fact of the configuration and no class can be held to it")
+	}
+	return m[1] + "@" + testProject + ".iam.gserviceaccount.com"
+}
+
+// TestBuildIdentityIsInTheServicesBuildClass holds the build class to the
+// deployment that renders it (B5, D2301): the ONE account a project's catalog
+// builds run as — the account the installation module creates, under the ID its
+// own source fixes — is the identity the build route admits, the module hands
+// the service that same account's address as its build class, and the identity
+// is a class of that route and of no other.
+//
+// The rendering is read as well as the account, because the two are one value
+// in two places: credentials.tf writes the build class out of the very resource
+// the account above is, so a module that created a second account, or rendered
+// a list of anything else under that name, would be a build admitted as one
+// account and run as another — the failure this task exists to make impossible.
+// internal/cli's TestBuildAccountsReadFromEnv is the third side of it (that
+// name becomes AuthConfig.BuildAccounts) and internal/infra's
+// TestBuildIdentityIsRenderedIntoTheServicesEnvironment is the fourth (the
+// planned plan carries exactly that address).
+func TestBuildIdentityIsInTheServicesBuildClass(t *testing.T) {
+	address := buildIdentityAddress(t)
+	b, err := os.ReadFile("../../deploy/terraform/gcp/modules/installation/credentials.tf")
+	if err != nil {
+		t.Fatalf("the installation module's credentials service file: %v", err)
+	}
+	m := regexp.MustCompile(`(?s)name\s*=\s*"FUGARO_BUILD_ACCOUNTS"\s*(.*?)\n\s*\}`).FindStringSubmatch(string(b))
+	if m == nil {
+		t.Fatalf("credentials.tf renders no FUGARO_BUILD_ACCOUNTS: the service's build class would then be empty on every installation, and the build route admits nobody whatever the module creates")
+	}
+	if got, want := strings.Join(strings.Fields(m[1]), ""), `value=jsonencode([google_service_account.build_identity[0].email])`; got != want {
+		t.Errorf("the build class is written as %q, want %q: the account the module creates is the account the class admits, and a second spelling of the address is one that can drift from it", got, want)
+	}
+
+	f := newFixtureWith(t, func(cfg *AuthConfig) { cfg.BuildAccounts = []string{address} })
+	buildToken := f.jobToken(func(c map[string]any) { c["email"] = address })
+	got, err := f.auth.VerifyBuildCaller(context.Background(), buildToken)
+	if err != nil {
+		t.Fatalf("the build route refused the deployment's own build identity: %v", err)
+	}
+	if got != address {
+		t.Errorf("the build route answered %q, want the caller's own address %q: the class's answer is the account the build runs as", got, address)
+	}
+
+	// The class is the build route's and of no other route: the same identity,
+	// with a perfectly good caller's token, is no class of the shared parse —
+	// a build identity holds no run identity and is not a job of this
+	// installation, so every other route refusing it is what keeps a catalog
+	// build's reach off them.
+	if _, err := f.verify(f.runToken(), buildToken, f.job); !errors.Is(err, ErrUnverifiedJob) {
+		t.Errorf("the build identity was admitted by the shared parse: %v (it is the build route's one class)", err)
+	}
+	// ... and the class is that ONE account: another project's identity has the
+	// same shape and is refused, which is what makes this a project's identity
+	// rather than any service account that can present a token.
+	other := strings.Replace(address, "@"+testProject+".", "@other-project.", 1)
+	if other == address {
+		t.Fatalf("this test's own address %q is not in the fixture's project %s", address, testProject)
+	}
+	if _, err := f.auth.VerifyBuildCaller(context.Background(), f.jobToken(func(c map[string]any) { c["email"] = other })); !errors.Is(err, ErrUnverifiedJob) {
+		t.Errorf("the build class admitted %s: the class is the project's own identity (%s)", other, address)
 	}
 }

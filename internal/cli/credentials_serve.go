@@ -62,16 +62,21 @@ import (
 // audience its callers' ID tokens are minted for -- the service resource's own
 // uri) and FUGARO_JOB_ACCOUNTS (the installation's per-repository jobs as
 // {"provider","repo","workflow"} triples, from which the job service accounts
-// are derived). Five more names are read beside those seven, each OPTIONAL
+// are derived). Seven more names are read beside those seven, each OPTIONAL
 // because the module renders it only where it applies: FUGARO_VERIFIER_ACCOUNTS
 // (C3.9g2), FUGARO_PERSON_ACCOUNTS and FUGARO_COORDINATOR_ACCOUNT (the read
 // mint's two classes, BB4 and BB5), FUGARO_REVIEW_JOB_ACCOUNTS (the
 // review-only project jobs, C3.9a's class: {"profile","provider","account"}
 // triples the service derives each review job's account from, the same document
-// kind FUGARO_JOB_ACCOUNTS is) and FUGARO_LAUNCHER_ACCOUNTS (the launcher class
-// of D1938, the fifth: the addresses that may ask the service for a slip and
+// kind FUGARO_JOB_ACCOUNTS is), FUGARO_LAUNCHER_ACCOUNTS (the launcher class
+// of D1938: the addresses that may ask the service for a slip and
 // reach the intake, which is a class of those two routes and of none the seven
-// above serve). The names are held by a second thing:
+// above serve), FUGARO_SHARED_JOB_ACCOUNTS (the shared project jobs the coding
+// half of the review class runs in, B5.1: the same document kind again, over
+// the coding axis) and FUGARO_BUILD_ACCOUNTS (the build class,
+// B5: the addresses of the installation's build identities, one per project,
+// which are the one caller class of the build route and of nothing else). The
+// names are held by a second thing:
 // internal/infra/tf's credentialsServiceEnv is the allow-list init's cover
 // applies to the service's container, so a name outside it is refused at plan
 // time, and the two lists move together -- an environment variable is not a
@@ -289,6 +294,25 @@ const (
 	// this task. A value that is present and is not the document below is a
 	// deployment that is wrong, and is refused here rather than read as empty.
 	envSharedJobAccounts = "FUGARO_SHARED_JOB_ACCOUNTS"
+	// envBuildAccounts is the installation's build identities (B5, D2301): the
+	// service accounts a project's catalog builds run as, one per project, as a
+	// JSON array of bare addresses, which is what the module renders from the
+	// account it creates (modules/installation/build_identity.tf). It is the
+	// build route's one caller class (credsvc's AuthConfig.BuildAccounts) and
+	// it is the class of that route and of no other: a build is neither a run
+	// of this installation nor an operator of it, and credsvc.NewAuthenticator
+	// refuses an address that is on this list and on any other.
+	//
+	// It is read as an OPTIONAL value, the verifier list's own rule and for the
+	// same reason: the module renders the entry whenever the credentials
+	// service itself is deployed, so an installation whose module does not
+	// render it yet -- every release before this one -- must start the service
+	// it always did, with a build class that admits nobody, rather than refuse
+	// to bind a port. That empty class is fail-closed and not a gap: the build
+	// route answers every caller with the class's own refusal, and no run of
+	// this installation is a build (D143 is about a run halting, and a run
+	// never asks this route).
+	envBuildAccounts = "FUGARO_BUILD_ACCOUNTS"
 )
 
 // credentialsServiceEnvNames is the whole of this command's REQUIRED
@@ -297,9 +321,10 @@ const (
 // serving. The class-specific entries it reads beside them are OPTIONAL and
 // live outside this list, because the module renders each of those only where
 // it applies (envReviewJobAccounts, envSharedJobAccounts, envVerifierAccounts,
-// envPersonAccounts, envCoordinatorAccount and envLauncherAccounts).
+// envPersonAccounts, envCoordinatorAccount, envLauncherAccounts and
+// envBuildAccounts).
 // internal/infra/tf's credentialsServiceEnv is init's cover's allow-list, which
-// is these seven plus those six: a name outside it is a container the cover
+// is these seven plus those seven: a name outside it is a container the cover
 // refuses, which is what makes the module's list a boundary rather than a
 // convention. The lists are held together by tests
 // rather than by this comment: TestCredentialsServiceEnvIsTheDeploymentsOwn
@@ -497,6 +522,16 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 	if err != nil {
 		return credsvc.Config{}, userErr("%v", err)
 	}
+	// The build class (B5, D2301), read by the verifier list's own rule and for
+	// the same reason: the entry arrives with the deployment of the build
+	// identity the module creates beside the service, so a service deployed by
+	// a release that renders none starts with an empty class and refuses every
+	// caller of the build route rather than refusing to bind a port
+	// (`envBuildAccounts` states the direction and why it matters).
+	builds, err := credentialsServiceBuildAccounts(getenv(envBuildAccounts))
+	if err != nil {
+		return credsvc.Config{}, userErr("%v", err)
+	}
 	// The database's shape, then the database itself: a URL that is not a
 	// Firebase Realtime Database at all is a different refusal from one that
 	// names another installation's database.
@@ -587,9 +622,15 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		// renders no shared-job document starts in, and a caller of the class
 		// is then a caller no route is served for.
 		SharedJobAccounts: sharedAccounts,
-		Keys:              credsvc.NewGoogleKeys(),
-		JobKeys:           credsvc.NewGoogleKeys(credsvc.WithKeysEndpoint(credsvc.GoogleOAuthCertsURL)),
-		Outcomes:          credsvc.RTDBOutcomes{DB: db},
+		// The build class (B1, B5): the project's build identity, which is the
+		// account a catalog build runs as and the one caller class of the build
+		// route. Empty is the state a service deployed before the module
+		// rendered the entry starts in, and the route then answers every caller
+		// with the class's refusal.
+		BuildAccounts: builds,
+		Keys:          credsvc.NewGoogleKeys(),
+		JobKeys:       credsvc.NewGoogleKeys(credsvc.WithKeysEndpoint(credsvc.GoogleOAuthCertsURL)),
+		Outcomes:      credsvc.RTDBOutcomes{DB: db},
 	})
 	if err != nil {
 		return credsvc.Config{}, userErr("the credentials service cannot verify its callers, so it will not start: %v", err)
@@ -787,6 +828,32 @@ func credentialsServiceLaunchers(raw string) ([]string, error) {
 		return nil, fmt.Errorf("%s is not the installation's launcher list: it must be a JSON array of the bare email addresses a Google ID token carries, one per person who may ask the service to grant a run its secrets. Nothing was started and no credential was issued", envLauncherAccounts)
 	}
 	return launchers, nil
+}
+
+// credentialsServiceBuildAccounts turns FUGARO_BUILD_ACCOUNTS into the build
+// class (B5, D2301): a JSON array of bare addresses, which is what the module
+// renders from the build identity it creates — one address, because a project
+// has one build identity, in the same array shape every list of the class is
+// read in so that a project with more than one is a deployment the module can
+// state rather than a shape this process has to grow for.
+//
+// It is credentialsServiceVerifiers' rule word for word, and for the same
+// reason: an absent or empty value is an EMPTY class and not a refusal,
+// because a release before this one renders no such entry and must still
+// start — the build route then refuses every caller, which is the fail-closed
+// state rather than a service that will not bind a port — while a value that
+// is present and is not that array is a deployment that is wrong. The refusal
+// names the variable and never an entry, because the entries are service
+// accounts of the installation's own project.
+func credentialsServiceBuildAccounts(raw string) ([]string, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	var builds []string
+	if err := json.Unmarshal([]byte(raw), &builds); err != nil {
+		return nil, fmt.Errorf("%s is not the installation's build identity list: it must be a JSON array of the bare email addresses a Google ID token carries, one per project identity that may ask the service for a build's credential. Nothing was started and no credential was issued", envBuildAccounts)
+	}
+	return builds, nil
 }
 
 // credentialsServiceCoordinator turns FUGARO_COORDINATOR_ACCOUNT into the read

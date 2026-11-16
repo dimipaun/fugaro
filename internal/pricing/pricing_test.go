@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -177,6 +178,73 @@ func TestCostHugeUsageSaturates(t *testing.T) {
 	if got != math.MaxInt64 {
 		t.Fatalf("cost %d, want the saturated maximum", got)
 	}
+}
+
+// TestOverrideRowEndsEqualRates pins the band of a row no catalog tier
+// priced: an owner's override, and the embedded Claude rows beside it, are
+// one number rather than a range, so both ends are the row's own rates —
+// never the zero a field nobody set would leave, which a floor or a ceiling
+// read would take for free.
+func TestOverrideRowEndsEqualRates(t *testing.T) {
+	// flat fails the ids whose two ends are not the row's own rates. A row
+	// built by hand in a test carries none — the invariant is the package's
+	// own producers' — so nobody calls it for one.
+	flat := func(t *testing.T, name string, tb *Table, ids ...string) {
+		t.Helper()
+		for _, id := range ids {
+			m, ok := tb.Lookup(id)
+			if !ok {
+				t.Fatalf("%s: no row for %s", name, id)
+			}
+			if !reflect.DeepEqual(m.Lo, m.Rates) || !reflect.DeepEqual(m.Hi, m.Rates) {
+				t.Errorf("%s: %s carries Lo %+v and Hi %+v beside rates %+v: a row with one price has it at both ends",
+					name, id, m.Lo, m.Hi, m.Rates)
+			}
+		}
+	}
+	// Every embedded row, and the whole table after a clone: neither came
+	// from a catalog tier.
+	embedded := Embedded()
+	ids := make([]string, 0, len(embedded.Models))
+	for id := range embedded.Models {
+		ids = append(ids, id)
+	}
+	flat(t, "embedded", embedded, ids...)
+	flat(t, "cloned", mustWith(t, embedded, Overrides{}), ids...)
+
+	// An override replaces a row whole, and a model it adds is a row too.
+	replaced := Override{Rates: Rates{InputPerM: 4.4, OutputPerM: 22, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.1, WebSearchPer1k: 10}}
+	added := Override{Rates: Rates{InputPerM: 1, OutputPerM: 2, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.1, WebSearchPer1k: 10}}
+	// The tiered override is the one whose rates hide a pointer: its two ends
+	// must still be its own rates.
+	with := mustWith(t, testTable(), Overrides{"claude-alpha-1": replaced, "claude-beta-2": {Rates: tiered()}, "claude-new-9": added})
+	flat(t, "overridden", with, "claude-alpha-1", "claude-beta-2", "claude-new-9")
+	if m, _ := with.Lookup("claude-new-9"); !reflect.DeepEqual(m.Lo, added.Rates) {
+		t.Errorf("a model the table did not have has Lo %+v, want the override's rates", m.Lo)
+	}
+
+	// A provider row whose override leaves a cache multiplier at 0 has it
+	// raised to 1, and both ends are taken after that: an end keeping the 0
+	// would price a cache-read-only call at nothing and floor a settle there.
+	blank := mustWith(t, testTable(), Overrides{"vendor/model": {Rates: Rates{InputPerM: 1, OutputPerM: 2}}})
+	flat(t, "defaulted", blank, "vendor/model")
+	m, _ := blank.Lookup("vendor/model")
+	if m.Lo.CacheRead != 1 || m.Hi.CacheRead != 1 || m.Lo.CacheWrite5m != 1 || m.Hi.CacheWrite1h != 1 {
+		t.Errorf("a defaulted provider row's ends are %+v / %+v, want the raised multipliers the charge has", m.Lo, m.Hi)
+	}
+	if m.Lo.Cost(Usage{CacheRead: 1_000_000}) == 0 {
+		t.Error("a cache-read-only call at the row's cheapest end costs nothing")
+	}
+}
+
+// mustWith is Table.With for a test that has no error to report.
+func mustWith(t *testing.T, tb *Table, o Overrides) *Table {
+	t.Helper()
+	got, err := tb.With(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
 }
 
 func TestLookupExactAndAliasOnly(t *testing.T) {
