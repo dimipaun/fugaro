@@ -739,9 +739,18 @@ func NewServer(cfg Config) (*Server, error) {
 	// as it was, which is a service served by the bundle's legacy entry alone
 	// (Config.Selector): the behaviour of an installation between T8's route and
 	// this task, kept reachable so that no deployment is switched on by a build.
+	//
+	// The store is handed the hardened client and not cfg.Client as it stands,
+	// because the hardening is done below: a deployment sets no Client at all,
+	// and the project lookup would then run on http.DefaultClient, whose
+	// timeouts and compression are not this service's. Hardening here rather
+	// than moving the block is what keeps the type assertion on the store that
+	// was configured — the stateReads wrap below is a selection's reader and
+	// carries no token method — while giving the lookup the one client the
+	// service sends upstream with.
 	if cfg.Selector == nil {
 		if statuses, ok := cfg.State.(creds.TokenStatusStore); ok {
-			cfg.Selector = NewBitbucketTokenStore(statuses, cfg.Client)
+			cfg.Selector = NewBitbucketTokenStore(statuses, upstreamClient(cfg.Client))
 		}
 	}
 	// The state is read through this service's own reader (stateReads), which

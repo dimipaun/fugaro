@@ -83,10 +83,24 @@ func proxyTokenEntry(name, kind string, coverage []string, projectUUID, identity
 // proxyTokenNode is the project's published shared node: the shared coding
 // class's own document (the enrollment, the block and the profile admitting all
 // four repositories, as proxySharedCodingPolicyDoc's does for its two) with the
-// node's bitbucket_tokens key beside the block when the test names any entry
-// (R5). A project that names none publishes no key at all, which is the node
-// every installation of the release behind holds.
+// node's bitbucket_tokens key beside the legacy block when the test names any
+// entry (R5). A project that names none publishes no key at all, which is the
+// node every installation of the release behind holds.
 func proxyTokenNode(t *testing.T, entries ...projectpolicy.BitbucketTokenNode) string {
+	t.Helper()
+	return proxyTokenNodeDoc(t, true, entries...)
+}
+
+// proxyTokenTypedOnlyNode is proxyTokenNode's document without the legacy
+// bitbucket_token block: the node of the project that moved to typed tokens
+// entirely (R3), whose identity set names every account the run may write as
+// because no untyped record serves beside the entries.
+func proxyTokenTypedOnlyNode(t *testing.T, entries ...projectpolicy.BitbucketTokenNode) string {
+	t.Helper()
+	return proxyTokenNodeDoc(t, false, entries...)
+}
+
+func proxyTokenNodeDoc(t *testing.T, legacy bool, entries ...projectpolicy.BitbucketTokenNode) string {
 	t.Helper()
 	quoted := make([]string, 0, len(proxyTokenRepos()))
 	for _, repo := range proxyTokenRepos() {
@@ -108,8 +122,11 @@ func proxyTokenNode(t *testing.T, entries ...projectpolicy.BitbucketTokenNode) s
 			"` + testReviewAccount + `": {"allow_repos": ` + both + `}
 		},
 		"profiles": {` + profiles + `},
-		"credentials": {"fallback": "auto"},
+		"credentials": {"fallback": "auto"}`
+	if legacy {
+		doc += `,
 		"bitbucket_token": {"allow_repos": ` + both + `, "proxy": true}`
+	}
 	if len(entries) == 0 {
 		return doc + "\n\t}"
 	}
@@ -628,19 +645,25 @@ func TestProxyThrottleDoesNotStopOtherTokens(t *testing.T) {
 // entry a decode dropped, or a key the reader refused whole, is what this fails
 // on.
 //
-// The set is partial when any entry names no identity, which is a repository
-// access token's record (R14): the adapter must then still mark the accounts the
-// node does name, and must not claim it can tell the run's own comments apart
-// (SelfKnown), because a wider token may have written one the set does not name.
+// The set is partial when the node cannot name every account the run may write
+// as — an entry that names no identity (a repository access token's, R14) or the
+// legacy record serving beside the typed ones (R3) — and the adapter must then
+// still mark the accounts the node does name, while not claiming it can tell the
+// run's own comments apart (SelfKnown), because a wider token may have written
+// one the set does not name.
 func TestAdapterOwnIdentitySetEndToEnd(t *testing.T) {
 	db := gcpfake.NewRTDB(t)
 	client, err := rtdb.New(db.URL, rtdb.Auth{IDToken: func() string { return "" }})
 	if err != nil {
 		t.Fatalf("the fake database's client: %v", err)
 	}
-	read := func(t *testing.T, entries ...projectpolicy.BitbucketTokenNode) (projectpolicy.BitbucketTokenIdentities, bool) {
+	read := func(t *testing.T, legacy bool, entries ...projectpolicy.BitbucketTokenNode) (projectpolicy.BitbucketTokenIdentities, bool) {
 		t.Helper()
-		db.Set(projectpolicy.PathShared(), json.RawMessage(proxyTokenNode(t, entries...)))
+		node := proxyTokenNode(t, entries...)
+		if !legacy {
+			node = proxyTokenTypedOnlyNode(t, entries...)
+		}
+		db.Set(projectpolicy.PathShared(), json.RawMessage(node))
 		p, found, err := RTDBPolicy{DB: client}.Shared(context.Background())
 		if err != nil || !found {
 			t.Fatalf("the service's own reader of the published node: found=%v err=%v", found, err)
@@ -656,25 +679,40 @@ func TestAdapterOwnIdentitySetEndToEnd(t *testing.T) {
 
 	for _, tc := range []struct {
 		name      string
+		legacy    bool
 		entries   []projectpolicy.BitbucketTokenNode
 		want      []string
 		wantKnown bool
 	}{
 		{
+			// The node carries the legacy block beside its entries: the
+			// selector may still serve a call with the untyped record, whose
+			// account no entry names, so the set is partial (R3, R12).
 			name:      "two workspace tokens and their identities",
+			legacy:    true,
 			entries:   []projectpolicy.BitbucketTokenNode{tokenA, tokenB},
 			want:      []string{proxyTokenIdentityA, proxyTokenIdentityB},
-			wantKnown: true,
+			wantKnown: false,
 		},
 		{
 			name:      "a repository record beside them",
+			legacy:    true,
 			entries:   []projectpolicy.BitbucketTokenNode{tokenA, tokenB, repository},
 			want:      []string{proxyTokenIdentityA, proxyTokenIdentityB},
 			wantKnown: false,
 		},
+		{
+			// The installation that moved to typed tokens entirely: no legacy
+			// record serves beside the entries, so the set names every account
+			// the run may write as.
+			name:      "typed records alone",
+			entries:   []projectpolicy.BitbucketTokenNode{tokenA, tokenB},
+			want:      []string{proxyTokenIdentityA, proxyTokenIdentityB},
+			wantKnown: true,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			identities, partial := read(t, tc.entries...)
+			identities, partial := read(t, tc.legacy, tc.entries...)
 			if len(identities) != len(tc.want) {
 				t.Fatalf("the node's identity set is %v, want %v", identities, tc.want)
 			}
@@ -728,27 +766,19 @@ func TestAdapterOwnIdentitySetEndToEnd(t *testing.T) {
 // proxyTokenIdentities is the identity set the node carries, and whether it is
 // known to be partial.
 //
-// It is the runner's own rule, restated here because the READ is the service's
-// (RTDBPolicy) while the runner's is T16's
-// (internal/runner/projectpolicy.go's bitbucketOwnIdentities): the set is every
-// identity the key names, and it is partial when any entry of the key names none
-// — a repository access token has no identity to name (R14), so the set is
-// missing an account by design and the adapter may not claim to tell the run's
-// own comments apart.
+// It asks the rule's one home (projectpolicy.BitbucketOwnIdentities) for the
+// value it read back, so what this test pins is what the runner computes for the
+// same node (T16, internal/runner/projectpolicy.go's bitbucketOwnIdentities) and
+// not a copy of it that could answer differently.
 func proxyTokenIdentities(p *projectpolicy.Policy) (projectpolicy.BitbucketTokenIdentities, bool) {
-	if p == nil || p.BitbucketTokens == nil {
-		return nil, false
+	if p == nil {
+		return projectpolicy.BitbucketOwnIdentities(nil, nil)
 	}
-	var out projectpolicy.BitbucketTokenIdentities
-	partial := false
-	for _, entry := range p.BitbucketTokens.Entries {
-		if entry.Identity == "" {
-			partial = true
-			continue
-		}
-		out = append(out, entry.Identity)
+	var entries []projectpolicy.BitbucketTokenNode
+	if p.BitbucketTokens != nil {
+		entries = p.BitbucketTokens.Entries
 	}
-	return out, partial
+	return projectpolicy.BitbucketOwnIdentities(entries, p.BitbucketToken)
 }
 
 // proxyTokenAPI is the Bitbucket API as the adapter's own two reads see it
