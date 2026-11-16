@@ -69,9 +69,9 @@ const SharedVersion = 1
 // MergeShared unions this block's entries rather than taking it whole. What it
 // holds is the name and never the key — the key lives in the operator's OS
 // keychain and is never written to disk, so nothing published here is a secret.
-// The receiver is not modified. The copy is shallow except for repos: its other
-// maps, slices and pointers alias the receiver's, which is safe because the
-// result is only marshalled, and Marshal only reads.
+// The receiver is not modified. The copy is shallow except for repos and
+// model_prices: its other maps, slices and pointers alias the receiver's,
+// which is safe because the result is only marshalled, and Marshal only reads.
 func (c *Config) Shared() *Config {
 	s := *c
 	// The published document is version 1 whatever the file it was read from
@@ -303,7 +303,30 @@ func (c *Config) Shared() *Config {
 	s.WorkspaceMembers = nil
 	s.WorkspaceCap = nil
 	s.Repos = withoutRepoLocalKeys(c.Repos)
+	s.ModelPrices = withoutCacheSpellings(s.ModelPrices)
 	return &s
+}
+
+// withoutCacheSpellings is a copy of model_prices with the three per-million
+// keys and the three `_mult` keys cleared, leaving the old cache_read,
+// cache_write_5m and cache_write_1h keys: the published copy keeps the
+// multiplier under the name it has always had (D2646 as amended), so a
+// teammate's Fugaro — which may be older than this file and knows the old keys
+// alone — meets the document it knows. The multiplier field itself is left as
+// it is: the loader has already filled it from whichever spelling the owner
+// wrote, and MarshalYAML writes it under its old name.
+func withoutCacheSpellings(prices map[string]ModelPrice) map[string]ModelPrice {
+	if prices == nil {
+		return nil
+	}
+	out := make(map[string]ModelPrice, len(prices))
+	for id, mp := range prices {
+		mp.CacheWrite5mPerM, mp.CacheWrite5mMult = nil, nil
+		mp.CacheWrite1hPerM, mp.CacheWrite1hMult = nil, nil
+		mp.CacheReadPerM, mp.CacheReadMult = nil, nil
+		out[id] = mp
+	}
+	return out
 }
 
 // withoutRepoLocalKeys is a copy of repos with the two keys of an entry that
@@ -359,7 +382,7 @@ func MergeShared(published, local *Config) *Config {
 	}
 	out.Repos = withoutRepoLocalKeys(mergeRepoRecords(published.Repos, out.Repos))
 	out.BaseImages = unionMaps(published.BaseImages, local.BaseImages)
-	out.ModelPrices = unionMaps(published.ModelPrices, local.ModelPrices)
+	out.ModelPrices = unionMaps(published.ModelPrices, out.ModelPrices)
 	out.ComputePrices = unionMaps(published.ComputePrices, local.ComputePrices)
 	keep := func(dst *string, old string) {
 		if *dst == "" {
