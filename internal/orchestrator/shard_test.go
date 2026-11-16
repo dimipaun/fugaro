@@ -3,6 +3,7 @@ package orchestrator_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -142,6 +143,22 @@ func TestPlanNodeRoundTrip(t *testing.T) {
 	}())
 	if err := node.Save(ctx, same, backEtag); err != nil {
 		t.Fatalf("a plan item depending on an item of its own node: %v", err)
+	}
+
+	// And a plan's node keeps today's caps: D2735 gives each node the state's
+	// own State and the state's own bounds, so a plan node is refused the
+	// document the state node would be refused, and the refusal stops the same
+	// spawns (F34). Nothing is special-cased per node, and this is what says so.
+	over, overEtag, err := node.Load(ctx)
+	if err != nil {
+		t.Fatalf("loading the plan's node: %v", err)
+	}
+	over.WorkItems = make([]orchestrator.WorkItem, 0, orchestrator.MaxWorkItems+1)
+	for i := range orchestrator.MaxWorkItems + 1 {
+		over.WorkItems = append(over.WorkItems, shardItem(fmt.Sprintf("wi-%d", i), "b"))
+	}
+	if err := node.Save(ctx, over, overEtag); !errors.Is(err, orchestrator.ErrTooLarge) {
+		t.Fatalf("a plan node carrying %d items ended as %v, not ErrTooLarge: every node keeps the state's caps", orchestrator.MaxWorkItems+1, err)
 	}
 }
 
