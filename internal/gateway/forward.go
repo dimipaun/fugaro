@@ -1295,23 +1295,17 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, w pricing.Micros, p
 	// it is known because this call's usage was read.
 	o.usageRead = true
 	// The provider's own figure and the table's band over this call (F7,
-	// D2650), recorded only where the response carried a cost: a call the
-	// table settled itself is one whose charge a reader compares with the
-	// band, and putting that charge in the band would have it agree with
-	// itself. The band is the charge's own arithmetic at the row's ends --
-	// no route fee, the same multiple -- so a partial call's is taken over
-	// the usage the partial charge is, the reserved output included.
-	if t.acc.hasReported {
-		o.charge.report, o.charge.hasReport = t.acc.reported, true
-		o.charge.hasRow = haveRow
-	}
+	// D2650) are recorded where the charge records the report and not
+	// wherever the response carried one: a call the table settled itself, and
+	// a call on a route that reports no cost, are in no split the run's
+	// report total carries. The band is the charge's own arithmetic at the
+	// row's ends -- no route fee, the same multiple -- taken over the usage
+	// the report is over, which for a partial call is the usage the provider
+	// sent and not the output it reserved.
 	if !partial {
 		o.amount, o.settled = max(reported, floor), settledUsage
 		if pr != nil && t.acc.hasReported {
-			o.charge.reported = t.acc.reported // a record for comparison: it prices the call only where it floors a tier charge
-		}
-		if o.charge.hasRow {
-			o.charge.tableLo, o.charge.tableHi = satMul(lo.Cost(u), mult), satMul(hi.Cost(u), mult)
+			o.charge.recordReport(t.acc.reported, lo, hi, mult, u, haveRow) // a record for comparison: it prices the call only where it floors a tier charge
 		}
 		return o
 	}
@@ -1320,9 +1314,6 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, w pricing.Micros, p
 	o.amount = max(pricing.WithFee(satMul(rates.Cost(charged), mult), fee), floor)
 	o.unreconciled = max(o.amount-reported, 0)
 	o.settled = settledPartial
-	if o.charge.hasRow {
-		o.charge.tableLo, o.charge.tableHi = satMul(lo.Cost(charged), mult), satMul(hi.Cost(charged), mult)
-	}
 	if floor > 0 {
 		// A partial call whose charge the report floors records it exactly as
 		// a complete call's does: without it the stage's Reported, the run's
@@ -1331,7 +1322,7 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, w pricing.Micros, p
 		// where the record carries a report -- would go silent on the run
 		// that needs it. A partial call the floor does not price keeps
 		// recording nothing, as it always has.
-		o.charge.reported = t.acc.reported
+		o.charge.recordReport(t.acc.reported, lo, hi, mult, u, haveRow)
 	}
 	return o
 }

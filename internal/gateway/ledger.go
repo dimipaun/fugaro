@@ -204,23 +204,22 @@ type charge struct {
 	serviceTier string
 	route       string         // the provider route the call went to; "" is Anthropic
 	reported    pricing.Micros // the cost the provider reported: recorded for comparison, and the floor under a tier charge, but never the price of a call the table priced
-	// report and hasReport are the cost the provider's own response carried,
-	// with no route fee, and whether it carried one at all (F7, D2650). They
-	// are what the per-model report split and the band are built from, and
-	// they are gated on the response rather than on the route: a report is a
-	// fact about the answer. They are deliberately not `reported` above,
-	// which is the figure the run's own comparison records and which the
-	// gateway sets only where it has a use for it -- a provider route's
-	// complete call, and a partial call a report floors.
-	report    pricing.Micros
+	// hasReport says `reported` above is a figure the gateway records, and is
+	// what the per-model report split and the band are over (F7, D2650). It
+	// is set by recordReport, with `reported` itself and nowhere else, so the
+	// three agree by construction: a stage's ReportedBy is its Reported model
+	// by model, and its band is over exactly the calls its report is over.
 	hasReport bool
 	// tableLo and tableHi are what the price table would have charged this
 	// call at the cheapest and dearest end of the row it was priced at, with
 	// no route fee and the same multiple the charge carries (D2650, SA1.6).
-	// hasRow says the call has both ends: it is a call whose row the table
-	// knows, which a call priced at the table's maximum has only when its pin
-	// is known (RS7). A call with neither end is in no band and no drift
-	// alarm.
+	// They are taken over the usage the report is over, never the reserved
+	// output a partial call is charged for: the provider never produced that
+	// output, and pricing it into the band would put the call's report below
+	// the band for good. hasRow says the call has both ends: it is a call
+	// whose row the table knows, which a call priced at the table's maximum
+	// has only when its pin is known (RS7). A call with neither end is in no
+	// band and no drift alarm.
 	tableLo, tableHi pricing.Micros
 	hasRow           bool
 	// agentID is Claude Code's x-claude-code-agent-id for this call: the
@@ -259,6 +258,26 @@ type charge struct {
 	// redirect, a 2xx whose usage did not parse -- says nothing about what
 	// the run had cached, and that is not zero (F24).
 	usageRead bool
+}
+
+// recordReport takes the provider's own figure for this call into the charge,
+// with the two ends of the row the call's band is taken from (F7, D2650,
+// SA1.6). It is one function because the three figures must be over the same
+// calls: `reported` is the run's comparison total, the split by serving model
+// and the band are what a reader puts beside it, and a report recorded where
+// `reported` is not (a route that reports no cost, a partial call the report
+// does not floor) would leave the split and the band describing calls the
+// run's own report total leaves out.
+//
+// u is the usage the report is over: a partial call is charged for the output
+// it reserved, but the provider reported on what it sent, and a band over the
+// reserved output would sit above the report by the output that never came.
+func (c *charge) recordReport(rep pricing.Micros, lo, hi pricing.Rates, mult int64, u pricing.Usage, haveRow bool) {
+	c.reported, c.hasReport = rep, true
+	c.hasRow = haveRow
+	if haveRow {
+		c.tableLo, c.tableHi = satMul(lo.Cost(u), mult), satMul(hi.Cost(u), mult)
+	}
 }
 
 // settle releases a call's reservation w and charges it. An amount above
@@ -356,14 +375,17 @@ func (s *Server) settle(st *stageState, w pricing.Micros, c charge) {
 		r.TokensBy[c.model] = addUsage(r.TokensBy[c.model], c.usage)
 	}
 	r.Reported = satAdd(r.Reported, c.reported)
-	// The per-model report and the table's band are over the calls that
-	// carried a report, and a call that carried none is counted instead
-	// (F7, D2650): the two answer what the providers said their calls cost
-	// and what the table predicts for those same calls, so a call the table
-	// settled itself has no provider figure to put beside it. Only a call
-	// the gateway sent can carry one, which is the gate Calls has too.
+	// The per-model report and the table's band are over the calls the
+	// gateway recorded a report for, and a call it recorded none for is
+	// counted instead (F7, D2650): the two answer what the providers said
+	// their calls cost and what the table predicts for those same calls, so a
+	// call the table settled itself has no provider figure to put beside it,
+	// and a call whose response carried one the gateway does not record --
+	// one the Anthropic upstream served, a partial call no report floors --
+	// is in no split the run's own report total carries either. Only a call
+	// the gateway sent can be counted, which is the gate Calls has too.
 	if c.hasReport {
-		r.ReportedBy[c.model] = satAdd(r.ReportedBy[c.model], c.report)
+		r.ReportedBy[c.model] = satAdd(r.ReportedBy[c.model], c.reported)
 		if c.hasRow {
 			r.TableLoBy[c.model] = satAdd(r.TableLoBy[c.model], c.tableLo)
 			r.TableHiBy[c.model] = satAdd(r.TableHiBy[c.model], c.tableHi)
@@ -375,7 +397,7 @@ func (s *Server) settle(st *stageState, w pricing.Micros, c charge) {
 	// stages' reports: a call that settles after its stage's report was
 	// taken is in these and in no report at all (F24).
 	if c.hasReport {
-		s.reportedBy[c.model] = satAdd(s.reportedBy[c.model], c.report)
+		s.reportedBy[c.model] = satAdd(s.reportedBy[c.model], c.reported)
 		if c.hasRow {
 			s.tableLoBy[c.model] = satAdd(s.tableLoBy[c.model], c.tableLo)
 			s.tableHiBy[c.model] = satAdd(s.tableHiBy[c.model], c.tableHi)

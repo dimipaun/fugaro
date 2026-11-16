@@ -464,6 +464,16 @@ func TestUnpricedTierFloorOnAPartialCall(t *testing.T) {
 	if rep.Reported != 4_000 {
 		t.Errorf("stage reported %d, want the report %d the floor was made of", rep.Reported, 4_000)
 	}
+	// And the band is over the usage that report is over -- the input the
+	// call sent -- not over the output it reserved, which the provider never
+	// produced and which would put the report below the band for good.
+	band := satMul(cost(t, dsModel, pricing.Usage{Input: 10}), pricing.ConservativeTierMultiplier)
+	if rep.TableLoBy[dsModel] != band || rep.TableHiBy[dsModel] != band {
+		t.Errorf("band %v-%v, want %d each over the reported usage", rep.TableLoBy, rep.TableHiBy, band)
+	}
+	if rep.ReportedBy[dsModel] != 4_000 {
+		t.Errorf("reported by model %v, want the report 4000 the floor was made of", rep.ReportedBy)
+	}
 }
 
 // TestUnpricedTierReportedCostUnusableStaysConservative: a reported cost the
@@ -595,6 +605,16 @@ func TestCutProviderStreamChargesPartial(t *testing.T) {
 	}
 	if _, ok := call["reported_micros"]; ok {
 		t.Error("a cut stream's partial cost was recorded as the reported cost")
+	}
+	// And it is in none of the per-model figures that figure is the total of
+	// (SA1.2): a report recorded beside a band over the output the call
+	// reserved would put the run's report below its own band.
+	if rep.Reported != 0 || len(rep.ReportedBy) != 0 || len(rep.TableLoBy) != 0 || len(rep.TableHiBy) != 0 {
+		t.Errorf("a cut stream's partial cost reached the report split: %d %v %v-%v",
+			rep.Reported, rep.ReportedBy, rep.TableLoBy, rep.TableHiBy)
+	}
+	if rep.UnreportedCalls != 1 {
+		t.Errorf("unreported_calls %d, want the cut call counted as one with no recorded report", rep.UnreportedCalls)
 	}
 }
 
@@ -1182,7 +1202,9 @@ func TestTableBandOverReportedCallsOnly(t *testing.T) {
 // has no row of its own, so its band is the pin's row's ends (RS7) -- the
 // live shape, where a provider serves a model ID the catalog doesn't price --
 // and a call whose pin the table doesn't know either is in the report and in
-// neither end of the band.
+// neither end of the band. A call on the Anthropic upstream records no report
+// at all, whatever its response carries: the report split is of the figure
+// the run's own Reported holds.
 func TestBandFromPinWhenServingUnknown(t *testing.T) {
 	u := pricing.Usage{Input: 1000, Output: 2000}
 	served := "deepseek/deepseek-v4.1-flash"
@@ -1204,24 +1226,30 @@ func TestBandFromPinWhenServingUnknown(t *testing.T) {
 		t.Errorf("reported by model %v, want the serving model's 50000", rep.ReportedBy)
 	}
 
-	// The same call with a pin the table doesn't know: no row to take a band
-	// from, so no band at all -- the report is still recorded, and the call
-	// is not counted as unreported.
-	mystery := "claude-mystery-9"
-	h := newHarness(t, anthropicfake.Compat{Cost: 0.05}.StreamOK(mystery, u))
-	h.gw.BeginStage(Stage{Name: "implement", Model: mystery})
-	if resp, b := h.post(msg(mystery, 4000, `"stream":true`)); resp.StatusCode != http.StatusOK {
+	// A call the gateway sends to the Anthropic upstream, whose response
+	// carries a cost all the same: the report the gateway records is the one
+	// its own Reported total holds, and that is the figure a route reports
+	// for a call the table priced -- so this one is in no split, in no band,
+	// and counted as a call with no recorded report. Keeping it out is what
+	// makes a stage's reported calls and its report total the same set.
+	anthropic := "claude-mystery-9"
+	h := newHarness(t, anthropicfake.Compat{Cost: 0.05}.StreamOK(anthropic, u))
+	h.gw.BeginStage(Stage{Name: "implement", Model: anthropic})
+	if resp, b := h.post(msg(anthropic, 4000, `"stream":true`)); resp.StatusCode != http.StatusOK {
 		t.Fatalf("%d %s", resp.StatusCode, b)
 	}
-	unknown := h.gw.EndStage()
-	if unknown.ReportedBy[mystery] != 50_000 || unknown.UnreportedCalls != 0 {
-		t.Errorf("reported %v unreported %d, want the report and no unreported call",
-			unknown.ReportedBy, unknown.UnreportedCalls)
+	direct := h.gw.EndStage()
+	if direct.Reported != 0 || len(direct.ReportedBy) != 0 {
+		t.Errorf("an Anthropic call's cost reached the report: %d %v", direct.Reported, direct.ReportedBy)
 	}
-	if len(unknown.TableLoBy) != 0 || len(unknown.TableHiBy) != 0 {
-		t.Errorf("a call with no known pin has a band: %v-%v", unknown.TableLoBy, unknown.TableHiBy)
+	if len(direct.TableLoBy) != 0 || len(direct.TableHiBy) != 0 {
+		t.Errorf("a call in no report has a band: %v-%v", direct.TableLoBy, direct.TableHiBy)
 	}
-	if l := h.gw.Ledger(); len(l.TableLoBy) != 0 || l.ReportedBy[mystery] != 50_000 {
-		t.Errorf("ledger band %v report %v, want no band and the report", l.TableLoBy, l.ReportedBy)
+	if direct.UnreportedCalls != 1 || direct.Calls != 1 {
+		t.Errorf("unreported_calls %d of %d calls, want the call counted as one with no recorded report",
+			direct.UnreportedCalls, direct.Calls)
+	}
+	if l := h.gw.Ledger(); len(l.ReportedBy) != 0 || l.UnreportedCalls != 1 {
+		t.Errorf("ledger report %v unreported %d, want the call in neither", l.ReportedBy, l.UnreportedCalls)
 	}
 }
