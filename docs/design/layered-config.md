@@ -130,6 +130,8 @@ The table is `config.Scopes` in code; `docs/project-layer.md` prints it, and a d
 | `workflows.*.image.jdk` | | | yes | | refused on every base, as today |
 | `workflows.*.dockerfile`, `image.key_files` | | | yes | | they name files in the repository |
 | `workflows.*.secrets` | | | yes | | secrets belong to one repository's Secret Manager entries |
+| `workflows.*.needs` | | | yes | | it is a repository's own reference to an entry of the project's image catalog, and the entries themselves are the project's policy (D1155) |
+| `ab.rate` | | | yes | | it is the repository's own opt-out of sampling, and every other leaf of the `ab:` block is the project layer's: a repository author could name a challenger model and send that repository's code to a provider the owner opened only to others (D556) |
 | `followup.trusted`, `followup.allow_public` | | | yes | | they decide whose comments steer a run with the repository's credentials |
 | `rigor.default`, `rigor.areas` | yes | | yes | | the mode is a default and not a floor, so either layer may set it and a narrower layer may lower a wider one (D21); the two `areas` lists are a union, not a replacement, so a repository's own rules never switch off the project's (D20c) |
 | `planning.decoupling` | yes | | yes | | it is a preference and not a bound, so the ordinary rule holds and the narrower layer replaces the wider one: a repository may turn the pass back on where its project turned it off (D1813); there is no per-area and no per-task value |

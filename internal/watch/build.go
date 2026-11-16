@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -19,6 +20,13 @@ const (
 	maxText = 200
 	// DefaultBurnHours spreads the daily cap into the default burn alert.
 	DefaultBurnHours = 8
+	// DriftGapPercent is how far a model's reported cost may leave the
+	// table's band before watch says so, in either direction (R6, D2649).
+	DriftGapPercent = 10
+	// DriftMinSpend is the spend a model must have reached over the window
+	// before its drift is named: below it a ratio says more about a rounding
+	// error than about the price table (D2649).
+	DriftMinSpend = budget.Micros(1_000_000) // $1
 )
 
 // Config is what Build needs besides the state.
@@ -54,6 +62,47 @@ type Burn struct {
 	Known  bool // false for the first BurnWarmup after a (re)connect
 	PerMin budget.Micros
 	Fast   bool // above the alert
+}
+
+// Drift is one model whose reported cost has left the price table's band over
+// the window the counters cover: today and yesterday (R6; D2649 and D2650, and
+// F30 for why the window is those two days). Rep is what the provider reported
+// for the calls that came back with a report, and TLo and THi are the table's
+// charge over those same calls at the cheapest and the dearest end of the tier
+// that served them, neither of them carrying the route fee (ModelUse's leaves,
+// docs/spend-accuracy/day-leaves.md). High says which end it left: above THi,
+// or below TLo.
+type Drift struct {
+	Model    string
+	Rep      budget.Micros
+	TLo, THi budget.Micros
+	High     bool
+}
+
+// Factor is the reported cost against the end of the band it left: over THi
+// when it is above, over TLo when it is below. Past DriftGapPercent it is
+// above 1.1 or below 0.9 respectively, which is what makes it a drift.
+//
+// A band with no positive end to compare against is no ratio, and 0 is that
+// rather than an infinity: driftLines never builds one, and a document must
+// stay marshallable.
+func (d Drift) Factor() float64 {
+	end := d.TLo
+	if d.High {
+		end = d.THi
+	}
+	if end <= 0 {
+		return 0
+	}
+	return float64(d.Rep) / float64(end)
+}
+
+// Direction is which end of the band the report left, as --json spells it.
+func (d Drift) Direction() string {
+	if d.High {
+		return "above"
+	}
+	return "below"
 }
 
 // KillState is a kill switch as shown.
@@ -252,6 +301,12 @@ type View struct {
 	Conn    Connection
 	Project ProjectLine
 	Repos   []RepoBlock
+	// Drift is the models whose reported cost has left the price table's band
+	// (R6), one entry per model however many repositories serve it, ordered
+	// by model name so a frame that repaints does not move. It is empty when
+	// nothing drifted, when the caller read no previous day (State.Prev) and
+	// on a day whose counters predate the leaves.
+	Drift []Drift
 	// QueuedNote is a one-line, already-sanitised reason the runs bucket
 	// could not be read for queued rows; "" when it was, or when nobody
 	// asked (MergeQueued was never called).
@@ -425,7 +480,56 @@ func Build(s *State, now time.Time, cfg Config) View {
 	}
 
 	sort.SliceStable(v.Repos, func(i, j int) bool { return lessRepoBlock(v.Repos[i], v.Repos[j]) })
+	v.Drift = driftLines(s)
 	return v
+}
+
+// driftLines are the models whose reported cost left the price table's band
+// over the days the state holds: today's repository counters and yesterday's
+// (F30: the counters are per UTC day, so D2649's "a rolling day" can only be
+// read as those two). The leaves are summed per model across every repository,
+// since what is being checked is the price table's reading of a model and not
+// a repository's.
+//
+// It is quiet about a model under DriftMinSpend, and about one with no band at
+// all, which is a day written before the leaves existed and a model no call
+// brought a report back for (D2650: the band is over reported calls only).
+func driftLines(s *State) []Drift {
+	sums := map[string]budget.ModelUse{}
+	for _, t := range []*rtdb.Tree{&s.Repos, &s.Prev} {
+		for _, slug := range t.Keys("/") {
+			var c budget.Counters
+			if ok, err := t.Decode(slug, &c); !ok || err != nil {
+				continue // an unreadable counter holds no figure to read
+			}
+			for model, u := range c.Models() {
+				sum := sums[model]
+				sum.Micros += nonneg(u.Micros)
+				sum.Rep += nonneg(u.Rep)
+				sum.TLo += nonneg(u.TLo)
+				sum.THi += nonneg(u.THi)
+				sums[model] = sum
+			}
+		}
+	}
+	gap := float64(DriftGapPercent) / 100
+	var out []Drift
+	for model, u := range sums {
+		if u.Micros < DriftMinSpend || u.THi <= 0 {
+			continue
+		}
+		d := Drift{Model: dash(model), Rep: u.Rep, TLo: u.TLo, THi: u.THi}
+		switch {
+		case float64(u.Rep) > float64(u.THi)*(1+gap):
+			d.High = true
+		case u.TLo > 0 && float64(u.Rep) < float64(u.TLo)*(1-gap):
+		default:
+			continue
+		}
+		out = append(out, d)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Model < out[j].Model })
+	return out
 }
 
 func unkey(slug string) string {

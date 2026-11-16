@@ -103,7 +103,7 @@ func TestAccountsAddOpenRouterKey(t *testing.T) {
 	r := newAddRig(t)
 	writes := r.secretWrites(t)
 
-	out, errOut := r.add(t, "team-a", "--repos", "owner/repo-a", "--type", "openrouter")
+	out, errOut := r.addTyped(t, "team-a", "--repos", "owner/repo-a", "--type", "openrouter")
 
 	id := credentialSecretID("team-a")
 	if got := string(r.sm.Latest(id)); got != addToken() {
@@ -324,7 +324,8 @@ func TestTheAccountsDoorKeepsTheJobOfANameTheConfigNowDeclaresAKey(t *testing.T)
 	}
 
 	// A second converge, by a run that does not touch team-a at all.
-	r.add(t, "team-c", "--repos", "owner/repo-a")
+	// The retype loosens the shared node (craft_credentials team-a), so this publish confirms by the project name typed at a terminal.
+	r.addTyped(t, "team-c", "--repos", "owner/repo-a")
 
 	kept := r.projectJobs(t)
 	for name, want := range deployed {
@@ -406,7 +407,7 @@ func TestAccountsAddAnthropicKey(t *testing.T) {
 	r := newAddRig(t)
 	writes := r.secretWrites(t)
 
-	r.add(t, "team-key", "--repos", "owner/repo-a", "--type", "anthropic")
+	r.addTyped(t, "team-key", "--repos", "owner/repo-a", "--type", "anthropic")
 
 	id := credentialSecretID("team-key")
 	if got := string(r.sm.Latest(id)); got != addToken() {
@@ -480,6 +481,12 @@ func TestKeyValueAtTheHiddenPromptIsNotEchoed(t *testing.T) {
 
 	done := runOnTerminal(t, tty, "accounts", "add", "team-a", "--repos", "owner/repo-a", "--type", "openrouter")
 	pasteAtThePrompt(t, tty, config.CredentialSecret("team-a"), addToken())
+	// The publish after the store loosens the shared node and waits at this
+	// terminal for the project's name; without it the command never returns.
+	waitTerminal(t, tty, "Type "+initProjectName+" to confirm")
+	if _, err := tty.master.WriteString(initProjectName + "\n"); err != nil {
+		t.Fatal(err)
+	}
 	if err := waitCommand(t, done); err != nil {
 		t.Fatalf("accounts add --type openrouter: %v\nterminal:\n%s", err, tty.displayed())
 	}
@@ -554,7 +561,7 @@ func TestARerunWithoutTypeWritesOnlyTheCredentialsOwnSecret(t *testing.T) {
 	r := newAddRigWith(t, accountsAddKeyCredentialLocal)
 	writes := r.secretWrites(t)
 
-	out, errOut := r.add(t, "team-a", "--repos", "owner/repo-a")
+	out, errOut := r.addTyped(t, "team-a", "--repos", "owner/repo-a")
 
 	id := credentialSecretID("team-a")
 	if got := string(r.sm.Latest(id)); got != addToken() {
@@ -587,7 +594,7 @@ func TestARerunWithoutTypeWritesOnlyTheCredentialsOwnSecret(t *testing.T) {
 // not leave behind.
 func TestAccountsRmTakesAKeyCredentialsOwnContainer(t *testing.T) {
 	r := newAddRigWith(t, accountsAddKeyCredentialLocal)
-	r.add(t, "team-a", "--repos", "owner/repo-a")
+	r.addTyped(t, "team-a", "--repos", "owner/repo-a")
 	id := credentialSecretID("team-a")
 	if r.sm.Latest(id) == nil {
 		t.Fatalf("the fixture's %s holds no value, so the delete has nothing to take away", id)
