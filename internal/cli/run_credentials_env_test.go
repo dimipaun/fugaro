@@ -206,14 +206,16 @@ func TestACascadeRepositoryAppliedHeldOffIsNotHandedTheService(t *testing.T) {
 // and, for an `oauth` or `api-key` repository, the state it stays in, because
 // the service has no route that would serve it one.
 //
-// A SHARED PROJECT JOB is off whatever the config says, and that is the job
-// argument's whole job: the service refuses an account that belongs to one
-// (internal/credsvc/auth.go's verifyJob, Global Constraint 6, C3.9), so the
-// address would buy such a job nothing — and it would cost it its git
-// credentials, because the same variable is what opens the provider keyless
-// (internal/gitprov/providers/providers.go) and the mint that replaces the
-// key it still mounts would be refused. The shared jobs keep their own
-// credentials until C3.9 moves them.
+// A SHARED PROJECT JOB is judged on the same switch (B5.2, D505, D2078), and
+// the two rows that pin it are here rather than beside the launch they belong
+// to because this is the helper's own table: a shared job of a repository whose
+// record says on and whose document says cascade is handed the address, and one
+// whose repository the switch holds off — no record, or an auth the service
+// does not serve — is handed none. What it is NOT handed is the address on an
+// unreadable document: the repository's own job falls back to the record there
+// (below), and a shared job does not, because its mounts are still on (G17) and
+// a repository whose file says `vertex` would open its git provider keyless for
+// a mint the service refuses.
 //
 // The last rows are what answers where the document cannot be read, and the
 // fifth argument's whole job is one of the two: an empty auth is a document the
@@ -238,11 +240,11 @@ func TestCredentialsServiceLaunchEnv(t *testing.T) {
 		"no block":        {},
 		"a block, no url": {CredentialsService: &localcfg.CredentialsService{}},
 	} {
-		if got := credentialsServiceLaunchEnv(lc, "", "acme/app", config.AuthCascade, false); got != nil {
+		if got := credentialsServiceLaunchEnv(lc, "", "acme/app", config.AuthCascade, false, false); got != nil {
 			t.Errorf("%s: credentialsServiceLaunchEnv = %v, want nil", name, got)
 		}
 	}
-	got := credentialsServiceLaunchEnv(optedIn, "", "acme/app", config.AuthCascade, false)
+	got := credentialsServiceLaunchEnv(optedIn, "", "acme/app", config.AuthCascade, false, false)
 	if len(got) != 1 || got[0] != envCredentialsServiceURL+"="+launchCredsURL {
 		t.Errorf("credentialsServiceLaunchEnv = %v, want [%s=%s]", got, envCredentialsServiceURL, launchCredsURL)
 	}
@@ -262,7 +264,7 @@ func TestCredentialsServiceLaunchEnv(t *testing.T) {
 		},
 		"no service to hand": {lc: &localcfg.Config{}, deployed: true},
 	} {
-		if got := credentialsServiceLaunchEnv(tc.lc, "", "acme/app", tc.auth, tc.deployed); got != nil {
+		if got := credentialsServiceLaunchEnv(tc.lc, "", "acme/app", tc.auth, tc.deployed, false); got != nil {
 			t.Errorf("%s: credentialsServiceLaunchEnv = %v, want nil: the switch is the plan's own predicate (infra.CredentialsServiceServes), and a job told where the service is opens its git provider keyless (internal/gitprov/providers/providers.go) for a credential the service cannot hand back", name, got)
 		}
 	}
@@ -287,15 +289,51 @@ func TestCredentialsServiceLaunchEnv(t *testing.T) {
 			lc: optedIn,
 		},
 	} {
-		got := credentialsServiceLaunchEnv(tc.lc, "", "acme/app", "", tc.deployed)
+		got := credentialsServiceLaunchEnv(tc.lc, "", "acme/app", "", tc.deployed, false)
 		if len(got) != 1 || got[0] != envCredentialsServiceURL+"="+launchCredsURL {
 			t.Errorf("%s: credentialsServiceLaunchEnv = %v, want [%s=%s]", name, got, envCredentialsServiceURL, launchCredsURL)
 		}
 	}
-	for _, lc := range []*localcfg.Config{optedIn, nil} {
-		if got := credentialsServiceLaunchEnv(lc, "fugaro-standard-github", "acme/app", config.AuthCascade, false); got != nil {
-			t.Errorf("a launch on the shared project job put %v in the execution's plain Env, want none: the credentials service refuses a shared project job's account whole (internal/credsvc/auth.go's verifyJob), and telling that job where the service is would open its git provider keyless (internal/gitprov/providers/providers.go) for a mint the service refuses — every GitHub run of such a job would break", got)
+	// The shared job (B5.2): told on the switch a repository's own job is,
+	// judged on the record and the document the run will read, and never on
+	// this machine's tfvars of a repository root — a shared job's grant is the
+	// installation root's, made from that record wherever it was applied.
+	for name, tc := range map[string]struct {
+		lc       *localcfg.Config
+		auth     string
+		deployed bool
+		want     bool
+	}{
+		"a switched profile, the document read": {lc: optedIn, auth: config.AuthCascade, want: true},
+		"a switched profile with no readable document": {
+			lc:       optedIn,
+			deployed: true,
+			want:     false,
+		},
+		"a switched profile, an auth the service cannot serve": {lc: optedIn, auth: "oauth"},
+		"a record that says off": {
+			lc:   &localcfg.Config{CredentialsService: &localcfg.CredentialsService{URL: launchCredsURL}},
+			auth: config.AuthCascade,
+		},
+		"no service to hand": {lc: &localcfg.Config{}, auth: config.AuthCascade},
+	} {
+		got := credentialsServiceLaunchEnv(tc.lc, "fugaro-p-standard-github-abcdef", "acme/app", tc.auth, tc.deployed, false)
+		if tc.want {
+			if len(got) != 1 || got[0] != envCredentialsServiceURL+"="+launchCredsURL {
+				t.Errorf("%s: a launch on a shared project job put %v in the execution's plain Env, want [%s=%s]: a profile the service serves reaches it from the account the module granted roles/run.invoker to (deploy/terraform/gcp/modules/project/sa.tf)", name, got, envCredentialsServiceURL, launchCredsURL)
+			}
+			continue
 		}
+		if got != nil {
+			t.Errorf("%s: a launch on a shared project job put %v in the execution's plain Env, want none: the switch is the same predicate a repository's own job is judged with (infra.CredentialsServiceServes), and telling a job where the service is opens its git provider keyless (internal/gitprov/providers/providers.go) for a credential the service cannot hand back", name, got)
+		}
+	}
+	// A review launch is told nothing, whatever the job: the address is part of
+	// what the review-only variant is deployed with (internal/infra's
+	// reviewVariant), so a per-launch entry would be a value every execution
+	// object records and a slip asked for on a path that has never taken one.
+	if got := credentialsServiceLaunchEnv(optedIn, "fugaro-p-standard-github-abcdef", "acme/app", config.AuthCascade, false, true); got != nil {
+		t.Errorf("a review launch put %v in the execution's plain Env, want none: the variant carries the service's address from its deployment", got)
 	}
 }
 
@@ -411,41 +449,10 @@ func TestALaunchOutsideACheckoutReadsTheRecordOrTheDeployedRoot(t *testing.T) {
 	}
 }
 
-// TestASharedProjectJobIsNotToldAboutTheCredentialsService is the same rule
-// through the launch itself, because the helper's job argument is the
-// launcher's to get right and a helper test cannot see the call site: this is
-// the arm that would break an opted-in installation's shared project jobs.
-//
-// The fixture is a real shared-job launch (projectJobFixture: the profile, the
-// published policy, the job the installation deployed) with the opt-in on, and
-// the checkout selects the clone workflow that resolves it — asserted, so the
-// test cannot pass by launching the per-repository job instead. The repository
-// is switched on (a cascade checkout, the record written): what this test is
-// about is the job's own kind, so everything else the switch reads says yes and
-// the shared job is still handed nothing.
-//
-// Mutation (verified, run and restored): pass "" for job in run.go's launch
-// call — this fails on the credentials entry, and
-// TestTheCredentialsServiceURLReachesTheJobEnv still passes, which is why the
-// two exist together.
-func TestASharedProjectJobIsNotToldAboutTheCredentialsService(t *testing.T) {
-	f := newProjectJobFixture(t)
-	f.appendConfig(t, "credentials_service:\n  url: "+launchCredsURL+"\n")
-	projectJobCheckoutYAML(t, projectJobCascadeRepoYAML)
-	markRepoCredentialsServiceReady(t, f.cloudFixture)
-	env := memEnv(t, f.cloudFixture)
-	rec := &envRecorder{Backend: env.be}
-	env.be = rec
-	if _, err := launchRun(context.Background(), env, appSlug, raceSpec(t, env), time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	calls := f.run.RunRequests()
-	if len(calls) != 1 || calls[0].Job != f.job {
-		t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the shared job %s: without that this test says nothing about a shared project job", len(calls), calls, f.job)
-	}
-	for _, kv := range append(append([]string{}, rec.env...), rec.secretEnv...) {
-		if strings.HasPrefix(kv, envCredentialsServiceURL+"=") {
-			t.Fatalf("a launch on the shared project job %s carried %q: the service refuses a shared project job's account whole, so this entry is an address such a job can never use — and it is what opens the git provider keyless, for a mint the service refuses", f.job, kv)
-		}
-	}
-}
+// The launch-level half of the shared job's switch is in
+// project_job_test.go: TestLaunchHandsTheServiceURLToASwitchedProjectJob and
+// TestLaunchKeepsAnUnswitchedProjectJobOffTheService. It moved there with B5.2,
+// which is the task that hands the address to a shared job a repository's own
+// job has been handed since C1.24 — the rule this file's helper table above
+// spells for the shared arm, and TestTheCredentialsServiceURLReachesTheJobEnv
+// spells for a repository's own job.

@@ -260,9 +260,7 @@ func (e *cloudEnv) continuedJob(ctx context.Context, slug string, spec *task.Spe
 // that is not a project job is not this launch's job to reuse. Handing it to
 // the shared path would run it on a job this installation was never asked for
 // (a name the platform's list does not hold, or the previous account's job where
-// this launch names another): the credentials service's address is withheld
-// from a named job (credentialsServiceLaunchEnv), which is the fetch path a
-// cascade repository clones by, the token's window would be the platform's
+// this launch names another): the token's window would be the platform's
 // default rather than the job's own class, and the account axis the launch
 // derives would be pinned to the run being continued. A policy that is not
 // published, or cannot be read, leaves every name uncomputed, so a continuation
