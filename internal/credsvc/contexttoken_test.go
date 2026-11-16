@@ -21,6 +21,7 @@ package credsvc
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"maps"
 	"net/http"
@@ -308,6 +309,72 @@ func TestServiceRefusesContextRepoOutsidePolicy(t *testing.T) {
 	}
 	if n := gh.count(); n != 0 {
 		t.Errorf("the fake GitHub saw %d requests for a repository the policy does not admit, want none", n)
+	}
+}
+
+// TestServiceRefusesContextTokenWhenThePolicyIsUnreadable: the re-admission
+// against the project's policy is a GATE and not a decoration, so a policy node
+// the service cannot read refuses the call instead of falling back to the
+// launch-time claim alone.
+//
+// This is the direction the two can disagree in that nothing else would catch.
+// The claim is the launcher's answer and it already admitted every name it
+// carries, so a route that read the policy only when it could would still serve
+// exactly the right repositories on every healthy call — and would silently
+// keep serving them after `fugaro project repos rm`, which is the one thing the
+// re-read exists to stop. The repository in this test is admitted by the
+// fixture's policy, so only the node's absence can refuse it: what is being
+// pinned is that an unreadable node is a refusal at all.
+//
+// Both halves of the branch are here — the node is not there and the read
+// failed — because they are one condition in the code and an operator meets
+// them as one wire error. The refusal is the service's own state (503
+// state_unavailable) and not the caller's request, the App key is never read
+// and GitHub is never reached, and the call is audited once like every other
+// refusal of this route.
+func TestServiceRefusesContextTokenWhenThePolicyIsUnreadable(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*fakePolicy)
+	}{
+		{name: "the node is absent", mutate: func(p *fakePolicy) { p.sharedFound = false }},
+		{name: "the read failed", mutate: func(p *fakePolicy) { p.sharedErr = errors.New("the policy node could not be read") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, gh := contextSvc(t, func(s *svc, _ *Config) { tc.mutate(s.policy) })
+			resp, body := s.contextCall(t, []string{contextRepo}, contextBody(contextRepo))
+			if resp.StatusCode != StatusUnavailable {
+				t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
+			}
+			if e := refusal(t, resp.StatusCode, body); e.Error != ErrorStateUnavailable {
+				t.Errorf("the refusal's error is %q, want %q", e.Error, ErrorStateUnavailable)
+			}
+			if n := gh.count(); n != 0 {
+				t.Errorf("the fake GitHub saw %d requests, want none: no token is minted off a policy that could not be read", n)
+			}
+			if n := s.src.readCount(); n != 0 {
+				t.Errorf("the bundle was read %d times, want none: the policy comes first", n)
+			}
+			lines := mintAuditLines(t, s)
+			if len(lines) != 1 {
+				t.Fatalf("the refusal wrote %d audit lines, want exactly one: %v", len(lines), lines)
+			}
+			checkAuditShape(t, lines[0])
+			for field, want := range map[string]any{
+				"purpose":    PurposeContextToken,
+				"credential": config.GitHubAppKeySecret,
+				"status":     ErrorStateUnavailable,
+				"run":        s.run,
+				"repository": s.slug,
+				"job":        s.job,
+				"caller":     testJobSA,
+				"tier":       "",
+			} {
+				if got := lines[0][field]; got != want {
+					t.Errorf("the refusal's audit line %s = %v, want %q", field, got, want)
+				}
+			}
+		})
 	}
 }
 
