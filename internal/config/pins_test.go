@@ -373,8 +373,8 @@ func craftFixture() CraftAccess {
 // craft that names a route ID is admitted where the switch routes it and
 // nowhere else, as a pin is.
 //
-// Red step: this passes on the tree before MC15 with no problem reported, a
-// craft model nothing on the list covers reaching the gateway.
+// Red step: this fails on the tree before MC15, which reports no problem at
+// all — a craft model nothing on the list covers reaches the gateway.
 func TestCraftModelOutsideTheAllowListRefused(t *testing.T) {
 	a := pinnedAgent()
 	list := []string{"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"}
