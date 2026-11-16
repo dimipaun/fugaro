@@ -59,8 +59,11 @@ func jobsOfProfile(t *testing.T, jobs map[string]any, name string) map[string]an
 // document that keeps a job no profile of the config declares.
 //
 // Mutations (each run and restored): carry project_jobs alone, and the fast
-// profile's variants are missing below; carry every job the record holds rather
-// than the named profile's, and the counts below see the extra jobs.
+// profile's variants are missing below. Dropping the per-profile filter changes
+// nothing here: the fixture's only other jobs are the installation's implicit
+// review job, which this document composes itself under the same name, so the
+// name check skips it either way. What pins the filter is
+// TestCarriedProjectJobsTakesTheNamedProfilesJobsAlone.
 func TestCarriedProjectJobsKeepsTheCodingJobAndItsReviewVariants(t *testing.T) {
 	// The installation that deployed the profile's jobs, with a second profile
 	// beside it whose jobs the config below no longer composes either.
@@ -112,6 +115,80 @@ func TestCarriedProjectJobsKeepsTheCodingJobAndItsReviewVariants(t *testing.T) {
 	if gotReview := reviewJobsOf(t, got); !reflect.DeepEqual(gotReview, wantReview) {
 		t.Errorf("the carried document's project_review_jobs are %v, want %v: ProjectReviewJobs derives a profile's variants from the coding set, so a coding job the carry leaves out takes its own variants with it",
 			slices.Sorted(maps.Keys(gotReview)), slices.Sorted(maps.Keys(wantReview)))
+	}
+}
+
+// slowProfileLCBlock is implicitReviewProfileLCBlock with a second github
+// profile beside fast: two profiles the config can no longer compose a job for,
+// so that the carry below has one to take and one to leave behind.
+//
+// It is the shape of the installation S5's carry is about, one act further on
+// than the fixture above: `fugaro update` wrote profiles.standard, an operator
+// added fast and slow on the project's GitHub repositories, and the one App ID
+// the config composed every github job from is gone — while the state holds
+// both profiles' jobs, and installSpec names the profiles whose job the
+// installation holds and its own config can no longer compose.
+const slowProfileLCBlock = `  slow: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h }
+`
+
+// TestCarriedProjectJobsTakesTheNamedProfilesJobsAlone: the carry of one
+// profile leaves the record's other profiles where they are. A record holds
+// every job the installation deployed, and the caller names only the profiles
+// whose job this run's config can no longer compose (internal/cli's
+// heldDefaultProfiles): taking the record whole would put back the job of a
+// profile the config still describes — or that a person removed on purpose —
+// and the plan of the run after that is that job's destruction over again.
+//
+// Mutations (each run and restored): drop the per-profile filter (tfvars.go's
+// `if profile, _ := m["profile"].(string); !want[profile] { continue }`) and
+// this test fails: the carried document holds the slow profile's coding job and
+// its variants, which no profile of the config declares.
+func TestCarriedProjectJobsTakesTheNamedProfilesJobsAlone(t *testing.T) {
+	// The installation that deployed both github profiles' jobs, beside the
+	// bitbucket default it can compose no job for.
+	deployed := projectReviewJobsDocument(t, implicitReviewLC()+implicitReviewProfileLCBlock+slowProfileLCBlock)
+	coding, review := projectJobsOf(t, deployed), reviewJobsOf(t, deployed)
+	fastCoding, fastReview := jobsOfProfile(t, coding, "fast"), jobsOfProfile(t, review, "fast")
+	slowCoding, slowReview := jobsOfProfile(t, coding, "slow"), jobsOfProfile(t, review, "slow")
+	if len(fastCoding) == 0 || len(fastReview) == 0 || len(slowCoding) == 0 || len(slowReview) == 0 {
+		t.Fatalf("the fixture's installation deploys %v and %v, want a coding job and a review variant of each github profile", slices.Sorted(maps.Keys(coding)), slices.Sorted(maps.Keys(review)))
+	}
+
+	// The transition: the config declares the bitbucket default alone, so the
+	// set the spec composes holds no job of either github profile.
+	fresh := projectReviewJobsDocument(t, implicitReviewLC()+
+		"profiles:\n  standard: { provider: bitbucket, cpu: 2, memory: 8Gi, timeout_class: 6h }\n")
+	got, err := CarriedProjectJobs(fresh, deployed, []string{"fast"})
+	if err != nil {
+		t.Fatalf("the carry failed: %v", err)
+	}
+
+	wantCoding, wantReview := map[string]any{}, map[string]any{}
+	for name, job := range projectJobsOf(t, fresh) {
+		wantCoding[name] = job
+	}
+	for name, job := range fastCoding {
+		wantCoding[name] = job
+	}
+	for name, job := range reviewJobsOf(t, fresh) {
+		wantReview[name] = job
+	}
+	for name, job := range fastReview {
+		wantReview[name] = job
+	}
+	if gotCoding := projectJobsOf(t, got); !reflect.DeepEqual(gotCoding, wantCoding) {
+		t.Errorf("the carried document's project_jobs are %v, want %v: the fast profile's coding job and nothing else — the slow profile is not named, and its job stays where the config and the state have it",
+			slices.Sorted(maps.Keys(gotCoding)), slices.Sorted(maps.Keys(wantCoding)))
+	}
+	if gotReview := reviewJobsOf(t, got); !reflect.DeepEqual(gotReview, wantReview) {
+		t.Errorf("the carried document's project_review_jobs are %v, want %v: a variant of the slow profile's job is a job the carry put back for a profile nobody named",
+			slices.Sorted(maps.Keys(gotReview)), slices.Sorted(maps.Keys(wantReview)))
+	}
+	if got := jobsOfProfile(t, projectJobsOf(t, got), "slow"); len(got) != 0 {
+		t.Errorf("the carry took the slow profile's jobs %v: it carries the profiles the caller names and no other", slices.Sorted(maps.Keys(got)))
+	}
+	if got := jobsOfProfile(t, reviewJobsOf(t, got), "slow"); len(got) != 0 {
+		t.Errorf("the carry took the slow profile's variants %v: it carries the profiles the caller names and no other", slices.Sorted(maps.Keys(got)))
 	}
 }
 
