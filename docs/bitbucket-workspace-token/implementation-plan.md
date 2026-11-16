@@ -514,22 +514,26 @@ the block BW-T2.1 amended, so nothing in the text below is contradicted by the c
 ### T2.4: `fugaro doctor` warns about an own copy a shared job ignores (0.13.0)
 
 *Verdict 2026-11-10: **Kept, and it waits for B5.1 (S5)** with T2.2 — **D1982, answered 2026-11-10
-as recommended**. Its subject is a **shared** job's use of the project token, which the proxy does
-not change: on a proxied per-repository job the run spends no token of the job's, so there is none
-to be shadowed. **That is the one sentence its text still needs when it is written**, and it is
-recorded here because the text below does not carry it yet.*
+as recommended**. **Rewritten and approved to launch 2026-11-16** (the owner's ruling): a shared
+Bitbucket job holds **no token at all** and the credentials service's proxy serves it, paired by its
+profile (docs/shared-jobs-default S1 and S2, D2302), so the earlier text, which said the shared job
+mounts or uses the project token, was wrong about the job and is replaced below. What is left to
+warn about is the own copy that no job of the repository's shared path will ever read.*
 
 - **Files:** `internal/cli/doctor.go` and `internal/cli/doctor_bitbucket_shared_test.go` (new).
 - **Behaviour (D466):** "admitted" means admitted by the **published** node, read the way the
   launcher reads it. For each repository admitted to a profile that mounts the token, doctor checks
   whether the repository has an enabled version of its own `bitbucket-token` copy, reading metadata
-  only, as `doctorProjectSecrets` does. If it does, doctor warns: "its shared job uses the project
-  token; its own copy applies only to its per-repository jobs".
+  only, as `doctorProjectSecrets` does. If it does, doctor warns: "its shared job holds no token and
+  the proxy serves it from the project's token; its own copy applies only to its per-repository
+  jobs".
 - **Tests:** `TestDoctorWarnsABitbucketOwnCopyOnASharedProfile` and
   `TestDoctorIsQuietWithoutABitbucketOwnCopy`.
 - **Red step:** the warning test fails, because there is no warning today.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestDoctor.*Bitbucket' -count=1`
-- **Depends on:** T2.1, because it reads `SharedBitbucketProfile`. D466 = yes (2026-10-27).
+- **Depends on:** T2.1, because it reads `SharedBitbucketProfile`, and shared-jobs-default's S1 (the
+  deployer admits a Bitbucket profile with no secret mounted). D466 = yes (2026-10-27). **Approved to
+  launch 2026-11-16 with the text above.**
 - **Commit:** `doctor: a Bitbucket repository's own token is not what its shared job uses`
 - **Reviewer tier:** standard.
 
@@ -541,7 +545,10 @@ number is not reused.
 ### T2.6: Docs: phase 3 serves Bitbucket too (0.13.0)
 
 *Verdict 2026-11-10: **Kept in part — the sliver landed 2026-11-10 (D1983, answered as
-recommended).** The phase-3 half waits for S5 with T2.2. The three corrections below did not wait,
+recommended).** The phase-3 half waits for S5 with T2.2, and **is rewritten for the proxy and approved
+to launch 2026-11-16 (the owner's ruling)**: wherever it said a shared Bitbucket job mounts or uses
+the project token, it now says the shared job holds no token and the proxy serves it (docs/shared-jobs-default
+S1 and S2, D2302). The three corrections below did not wait,
 and all three are now in `docs/git-providers.md`: the `FUGARO_BITBUCKET_API_URL` variables-table row
 names `bitbucket_api_roots`; the section reads **0.14.0** for BW-T2.8's root lock, and the Data
 Center paragraph with it; and "Bitbucket stays on the per-repository path" carries a dated amendment
@@ -552,7 +559,8 @@ is the phase-3 half alone.***
 - **Files:**
   - `docs/git-providers.md`:
     - "Bitbucket stays on the per-repository path" (its shared-job claims only, since T1.1 already
-      rewrote the slice-1 sentence);
+      rewrote the slice-1 sentence), rewritten to say a shared Bitbucket job holds no token and the
+      proxy serves it, not that it mounts the project token;
     - the `FUGARO_BITBUCKET_API_URL` variables-table row (T2.8), with `bitbucket_api_roots` and the
       statement that a listed root must speak Bitbucket Cloud's API, because Data Center is not
       supported (D366, T2).
@@ -565,7 +573,7 @@ is the phase-3 half alone.***
     links to this folder instead.
   - `docs/plans/2026-10-14-project-centric.md`: a dated note.
   - `SECURITY.md` and `website/content/security.md` (regenerated): a shared Bitbucket job's
-    isolation (F12).
+    isolation (F12), stated as a job with no token behind a proxy that pairs it by profile (D2302).
   - `internal/cli/docs_project_centric_test.go`: a pin for the dated note.
   - `internal/cli/docs_project_wide_git_test.go`.
   - `internal/cli/docs_checks_180_181_test.go`: Check 181's registration.
