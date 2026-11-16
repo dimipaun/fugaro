@@ -128,21 +128,35 @@ func (d duplicateOf) what(planTask, repo string) string {
 // also inherits the chain's remainder from the ledgers the live run is still
 // spending against -- the two between them spending up to twice what one chain
 // holds. --pr is named only where a run of the task ended and left its pull
-// request behind: that is the one way a pull request's chain is continued
-// (chainFrom refuses a --continues of a run that is part of one), and resolvePR
-// refuses a follow-up while any run of that pull request is still live, so
-// naming it for a run in flight would be one more dead end.
+// request behind and no run of that pull request is going: continuing the pull
+// request is the one way its chain is continued (chainFrom refuses a --continues
+// of a run that is part of one), and resolvePR refuses a follow-up while any run
+// of the pull request is still live -- the run of the task itself, or one the
+// guard did not match at all, a --pr follow-up launched without --plan-task
+// (followup.go records o.planTask, so the command this refusal prints itself
+// leaves it empty) whose row carries the pull request and no task -- so naming
+// --pr in either case would be one more dead end, and the pull request's own
+// listing is the way out instead.
 func (d duplicateOf) refusal(planTask, repo string) string {
 	second := "launch a deliberate second attempt of the same task with --allow-duplicate"
 	var ways string
-	if d.live != "" {
+	switch {
+	case d.live != "":
 		// A run in flight is waited for, and the deliberate second attempt is
 		// the other thing the caller may do. Nothing else is named: --pr does
 		// not apply to a run that is going, as resolvePR refuses a follow-up
 		// while one of the pull request's runs is still live, and --retry and
 		// --continues are the dead ends the note above sets out.
 		ways = fmt.Sprintf("wait for that run (fugaro runs ls --repo %s), or %s", repo, second)
-	} else {
+	case d.prState == prStateLive:
+		// The pull request a run of the task left is itself being worked on: a
+		// run of it is going that this guard did not match, so a --pr of it
+		// would meet the very resolvePR refusal the run in flight above does
+		// (resolvePR reads one pull request's runs, whatever task they name).
+		// Waiting is the whole of the way out here too, read over that one pull
+		// request rather than the repository.
+		ways = fmt.Sprintf("wait for the run going on that pull request (fugaro runs ls --pr %d --repo %s), or %s", d.pr, repo, second)
+	default:
 		// The caveat belongs where the pull request is named and nowhere else:
 		// the records cannot see a merge, so one that is done with still
 		// refuses, and the caller has to hear that before it reaches for the

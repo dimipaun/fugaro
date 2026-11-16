@@ -106,6 +106,26 @@ func dupLiveFollowUpRun(t *testing.T, f *cloudFixture, id, planTask, root string
 	}
 }
 
+// dupLivePRRun stores a run that is in flight on pull request pr and names no
+// plan task: a --pr follow-up launched on its own, which is the command the
+// refusal itself prints (followup.go records o.planTask, empty). Its row
+// carries the pull request and no task, so the guard never matches the run --
+// and the pull request it is going on reads live for every row the guard does
+// see, the finished run that left that pull request among them.
+func dupLivePRRun(t *testing.T, f *cloudFixture, id, root string, pr int) {
+	t.Helper()
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	s := runstore.Open(b, appSlug, id)
+	if err := s.CreateTask(ctx, followUpSpec(id, root, root, pr)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: id, LaunchedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // dupFinishedRun stores a run of planTask that ended, leaving pull request pr
 // behind it, with the word the record has for what it left: runstore.OutcomeReady
 // for a pull request it left ready, OutcomeDraft for one it left a draft --
@@ -233,9 +253,11 @@ func TestRunRefusesADuplicatePlanTask(t *testing.T) {
 // takes the guard's own way out rather than meeting it (run.go's call site skips
 // the check) -- would start a second run of the very task the refusal just
 // stopped, on a chain whose remaining budget the live run is still spending
-// against. While a run is in flight --pr is missing too: resolvePR refuses a
-// follow-up whose pull request has a run still going, so it would be one more
-// dead end, and waiting is the whole of that shape. A way out that does nothing,
+// against. While a run is in flight --pr is missing too, and so is it where the
+// pull request a run of the task left is itself live, a run of it going that the
+// guard did not match: resolvePR refuses a follow-up whose pull request has a run
+// still going, so it would be one more dead end, and waiting -- over the
+// repository, or over that one pull request -- is the whole of both shapes. A way out that does nothing,
 // that is refused itself, or that starts the duplicate by another door, is worse
 // than none.
 func TestRunDuplicateRefusalNamesTheWaysOut(t *testing.T) {
@@ -301,6 +323,35 @@ func TestRunDuplicateRefusalNamesTheWaysOut(t *testing.T) {
 			}
 		}
 		for _, bad := range []string{"--retry", "--continues", "--pr "} {
+			if strings.Contains(msg, bad) {
+				t.Errorf("refusal names %s while a run of that pull request is still going, and that launch is refused too: %q", bad, msg)
+			}
+		}
+	})
+
+	t.Run("a run going on the pull request a run of the task left", func(t *testing.T) {
+		// A run of the task ended and left pull request 7, and a run of that
+		// pull request is going that this guard never matches: a --pr follow-up
+		// launched without --plan-task, which is the command the refusal itself
+		// prints. resolvePR reads one pull request's runs whatever task they
+		// name, so the --pr the refusal would print here is refused exactly as
+		// it is for a run of the task still going, and the pull request's own
+		// listing is the way out instead.
+		f := duplicateRig(t)
+		dupFinishedRun(t, f, dupLeft, duplicatePlan, 7, runstore.OutcomeReady)
+		dupLivePRRun(t, f, dupLive, dupLeft, 7)
+		msg := dupRefused(t, f, "already being worked on", "run", "--repo", "acme/app", "--run-id", dupNext, "--plan-task", duplicatePlan, "Add a feature")
+		for _, want := range []string{
+			"run " + task.ShortRun(dupLeft) + " left pull request #7 of acme/app",
+			"still being worked on",
+			"fugaro runs ls --pr 7 --repo acme/app",
+			"--allow-duplicate",
+		} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("refusal = %q, want %q in it", msg, want)
+			}
+		}
+		for _, bad := range []string{"fugaro run --pr", "--retry", "--continues"} {
 			if strings.Contains(msg, bad) {
 				t.Errorf("refusal names %s while a run of that pull request is still going, and that launch is refused too: %q", bad, msg)
 			}
