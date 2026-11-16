@@ -509,6 +509,98 @@ func TestLabelClientNeverFollowsARedirect(t *testing.T) {
 	}
 }
 
+// TestLabelClientAllowsBitbucketGetWithoutAppID: a Bitbucket client is built
+// with no App ID, and the `get` act is the one it asks for — which is what lets
+// an installation with Bitbucket alone reach the read at all (D2736, G5).
+//
+// Three facts are one design here and are asserted together: the client needs no
+// App ID, because that host has no GitHub App and the service mints its read
+// token from the installation's Bitbucket read consumer instead; it refuses an
+// App ID it is given, because the service refuses a Bitbucket call that carries
+// one and one round trip earlier is where the daemon can still see why; and the
+// four acts around the read are refused by the client itself, because that host
+// has no pull request labels, so a caller that asked for one would be spending a
+// request on a refusal. Supported() is false on such a client for the same
+// reason, which is what keeps the syncer's turn a no-op.
+func TestLabelClientAllowsBitbucketGetWithoutAppID(t *testing.T) {
+	f := newServiceFake(t)
+	f.answer = labelAnswer(LabelPullRequest{Number: 7, State: "merged"})
+	m := labelClient(t, f)
+	m.AppID, m.Bitbucket = "", true
+
+	if m.Supported() {
+		t.Error("a Bitbucket client reports a host with pull request labels, and that host has none")
+	}
+
+	// The read: one call, no App ID, and the state it answered with — no labels,
+	// because there are none to read.
+	before := len(f.seen())
+	state, labels, err := m.PRLabels(t.Context(), 7)
+	if err != nil {
+		t.Fatalf("a Bitbucket get with no App ID was refused: %v", err)
+	}
+	if state != "merged" {
+		t.Errorf("the read answered the state %q, want merged", state)
+	}
+	if len(labels) != 0 {
+		t.Errorf("the read answered the labels %v, and that host has none", labels)
+	}
+	calls := f.seen()[before:]
+	if len(calls) != 1 {
+		t.Fatalf("the read made %d calls, want one", len(calls))
+	}
+	var sent map[string]any
+	if err := json.Unmarshal([]byte(calls[0].body), &sent); err != nil {
+		t.Fatalf("the call's body is not JSON: %v (%q)", err, calls[0].body)
+	}
+	want := map[string]any{"repository": testRepo, "action": LabelActionGet, "app_id": "", "number": float64(7)}
+	if len(sent) != len(want) {
+		t.Fatalf("the call carried %d fields %v, want the %d this act takes", len(sent), sent, len(want))
+	}
+	for field, value := range want {
+		if sent[field] != value {
+			t.Errorf("the call's %s = %v, want %v", field, sent[field], value)
+		}
+	}
+
+	// The four acts a Bitbucket repository cannot answer, refused here with the
+	// service reached not at all.
+	for _, tc := range []struct {
+		name string
+		call func() error
+	}{
+		{name: "list", call: func() error { _, err := m.ListOpenPRLabels(t.Context()); return err }},
+		{name: "ensure", call: func() error { return m.EnsureLabel(t.Context(), labelRunningName, "1D76DB", "text") }},
+		{name: "add", call: func() error { return m.AddLabels(t.Context(), 7, labelRun, []string{labelRunningName}) }},
+		{name: "remove", call: func() error { return m.RemoveLabels(t.Context(), 7, labelRun, []string{labelFailedName}) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := len(f.seen())
+			err := tc.call()
+			if !errors.Is(err, ErrLabelIdentity) {
+				t.Fatalf("the %s act on a Bitbucket repository was refused with %v, want this client's own refusal", tc.name, err)
+			}
+			noSecret(t, err)
+			if n := len(f.seen()) - before; n != 0 {
+				t.Errorf("the client sent %d calls for an act the host cannot answer, want none", n)
+			}
+		})
+	}
+
+	// An App ID the client is given is refused, get included: a Bitbucket call
+	// names none, and a field quietly dropped would have the daemon believing it
+	// named an App whose key signed the read.
+	m.AppID = testAppID
+	minted := 0
+	m.IDToken = func(context.Context) (string, error) { minted++; return testIDToken, nil }
+	if _, _, err := m.PRLabels(t.Context(), 7); !errors.Is(err, ErrLabelIdentity) {
+		t.Errorf("a Bitbucket get carrying an App ID was refused with %v, want this client's own refusal", err)
+	}
+	if minted != 0 {
+		t.Errorf("the client minted the daemon's identity %d times for a call it refuses, want none", minted)
+	}
+}
+
 // TestLabelClientSatisfiesTheInterfaceTheDaemonHolds: the daemon and, through
 // T7, the provider depend on Labeler and not on the way a label is reached — and
 // the path and the acts it speaks are the ones the service serves, named here so
