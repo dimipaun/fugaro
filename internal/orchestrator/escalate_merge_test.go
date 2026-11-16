@@ -246,6 +246,7 @@ func newMergeHarness(t *testing.T, now time.Time, runs []string, items ...orches
 	node := mustNode(t, rtdbClient(t, f), nil)
 	ctx := context.Background()
 	s := o6Node(t, now, items...)
+	s.Intents = mergeAttempts(now, items)
 	_, etag, err := node.Load(ctx)
 	if err != nil {
 		t.Fatalf("reading the empty node: %v", err)
@@ -305,6 +306,45 @@ func (m *mergeHarness) item(id string) orchestrator.WorkItem {
 	return itemAt(m.t, m.state(), id)
 }
 
+// edit writes one change into the node's state, which is how a test puts an item
+// in a position whose only difference from mergeItem is one field: the approval
+// taken away, a spec edited since it, a rung's runs spent. It is the store's own
+// write, so what it leaves behind is a node the daemon could have written, and
+// whatever the write side refuses is refused here rather than by the gate.
+func (m *mergeHarness) edit(change func(*orchestrator.State)) {
+	m.t.Helper()
+	ctx := context.Background()
+	s, etag, err := m.node.Load(ctx)
+	if err != nil {
+		m.t.Fatalf("reading the node to edit it: %v", err)
+	}
+	change(&s)
+	if err := m.node.Save(ctx, s, etag); err != nil {
+		m.t.Fatalf("writing the edited node: %v", err)
+	}
+}
+
+// mergeChange is one field changed on one item of the state, which is what most
+// of these edits are.
+func mergeChange(s *orchestrator.State, id string, change func(*orchestrator.WorkItem)) {
+	for i := range s.WorkItems {
+		if s.WorkItems[i].ID == id {
+			change(&s.WorkItems[i])
+		}
+	}
+}
+
+// mergeDependsOn makes one item wait on a second item the same write puts in the
+// state, unfinished: an item waiting on work nobody has done is one no run of the
+// ladder's may start for, and the dependency has to be a real item for the write
+// side to take it at all.
+func mergeDependsOn(s *orchestrator.State, id, dep string) {
+	blocker := workItemOf(dep)
+	blocker.Phase = orchestrator.PhaseQueued
+	s.WorkItems = append(s.WorkItems, blocker)
+	mergeChange(s, id, func(w *orchestrator.WorkItem) { w.DependsOn = []string{dep} })
+}
+
 // question is the ladder's question about one item, which these tests expect to
 // be there: every refusal this file pins raises one.
 func (m *mergeHarness) question(id string) orchestrator.Decision {
@@ -362,13 +402,39 @@ func r3Ledger(now time.Time, head string, outer int) *orchestrator.Escalation {
 }
 
 // mergeItem is one of these tests' items: the item the ladder has walked to the
-// rung its ledger names, in the phase a stalled item is left in.
+// rung its ledger names, in the phase a stalled item is left in, and under the
+// approval that covers the ladder's launches on it — spent, both of its attempts
+// run, which is where a rung 3 item stands: the loop has failed twice and the
+// ladder is what is left (D2042, G15). A rung 3 review and a judge are runs of
+// another recipe under that approval's At, so the state the ladder reads them
+// through is the same one the rungs below read. The tests that take the approval
+// away are the ones about a launch the ladder may not make.
 func mergeItem(id string, e *orchestrator.Escalation) orchestrator.WorkItem {
 	w := workItemOf(id)
 	w.Phase = orchestrator.PhaseFailed
 	w.RunID = mergeRun
+	w.Attempts = orchestrator.ApprovalAttempts
+	at := e.EnteredAt
+	w.SpentApprovalAt = &at
 	w.Escalation = e
 	return w
+}
+
+// mergeAttempts are the intents a spent approval leaves behind: the item's own
+// failed runs, which are what the approval covered (G15). They are seeded for
+// every item these tests hand the harness, because that is the shape a rung 3
+// item reaches the merge gate in — and without them the state holds nothing
+// under the spent marker, so the digest the ladder is covered by cannot be read
+// (ladderCoveredDigest) and every launch in this file would be refused.
+func mergeAttempts(now time.Time, items []orchestrator.WorkItem) []orchestrator.Intent {
+	var out []orchestrator.Intent
+	for _, w := range items {
+		if w.SpentApprovalAt == nil {
+			continue
+		}
+		out = append(out, twoAttempts(w.ID, *w.SpentApprovalAt, now.Add(-100*time.Minute), w)...)
+	}
+	return out
 }
 
 // mergeRecord is the run behind the judged head: it ended, it pushed that head,
@@ -1309,6 +1375,119 @@ func TestR3RebasedHeadNeedsScoredReview(t *testing.T) {
 	m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
 	if !slices.Equal(m.host.merged, []string{headA}) {
 		t.Fatalf("the host merged %v, and a scored review of the head is what lets the gate pass", m.host.merged)
+	}
+}
+
+// TestR3LaunchNeedsTheApprovalTheRungsBelowNeed is G6, F21 and D2042 at the two
+// launches rung 3 makes. A review-only run and a judge are runs of the item's
+// own work under a person's approval, exactly as rung 0's rebase is, so the gate
+// that starts them is held to the same rules every other ladder launch is
+// (ladderLaunchable): the item is one an attempt may be declared from, nothing
+// it depends on is still open, the approval covers the spec as it now stands,
+// and the ladder has runs left. A launch is not this file's to loosen because it
+// is reached through the hook rather than through rung 0.
+//
+// The refusal is a person's question (G5): the ladder cannot start the run the
+// head needs, and no cycle of it ever will, so the item waits rather than
+// spending a run nothing approved.
+//
+// Mutation: drop the check from either launch clause and the case below starts a
+// review, or a judge, for an item no person's approval covers.
+func TestR3LaunchNeedsTheApprovalTheRungsBelowNeed(t *testing.T) {
+	now := o6Now()
+
+	for _, tc := range []struct {
+		name string
+		edit func(*orchestrator.State)
+	}{
+		{
+			// No approval at all is the position G6 closes: the merge is not
+			// the launch, so what this refuses is the run and not the landing.
+			"no approval on the item",
+			func(s *orchestrator.State) {
+				mergeChange(s, "wi-1", func(w *orchestrator.WorkItem) { w.Approved, w.SpentApprovalAt = nil, nil })
+			},
+		},
+		{
+			// A spent marker whose runs are not in the state: the spec the
+			// approval covered cannot be read, and the one thing not to do with
+			// a spec nobody can place is to escalate it.
+			"an approval with no runs under it",
+			func(s *orchestrator.State) {
+				mergeChange(s, "wi-1", func(w *orchestrator.WorkItem) {
+					at := w.SpentApprovalAt.Add(time.Hour)
+					w.SpentApprovalAt = &at
+				})
+			},
+		},
+		{
+			// The item was edited after the approval: what the ladder escalates
+			// is the work the person read, or nothing at all.
+			"a spec edited since the approval",
+			func(s *orchestrator.State) {
+				mergeChange(s, "wi-1", func(w *orchestrator.WorkItem) { w.Brief += "\nand one line more" })
+			},
+		},
+		{
+			// A run is moving through the item, and a review started beside it
+			// reads a head that run is still pushing to.
+			"an item a run is still moving",
+			func(s *orchestrator.State) {
+				mergeChange(s, "wi-1", func(w *orchestrator.WorkItem) { w.Phase = orchestrator.PhaseRunning })
+			},
+		},
+		{
+			// The item waits on work that is not done, and the head under
+			// judgement is one the work it waits for will move.
+			"an item still waiting on another",
+			func(s *orchestrator.State) { mergeDependsOn(s, "wi-1", "wi-2") },
+		},
+		{
+			// The ladder's own bound (G15), which the launch is what spends.
+			"every ladder run spent",
+			func(s *orchestrator.State) {
+				mergeChange(s, "wi-1", func(w *orchestrator.WorkItem) {
+					w.Escalation.OuterAttempts = orchestrator.MaxOuterAttempts
+				})
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, launch := range []struct {
+				name string
+				read func(string) orchestrator.MergeReading
+			}{
+				{
+					// The head of a rebase no review has read.
+					"the review",
+					func(head string) orchestrator.MergeReading {
+						r := mergePass(head)
+						r.Scored, r.ReviewRun = false, ""
+						return r
+					},
+				},
+				{
+					// The head the review scored and no judge has read.
+					"the judge",
+					func(head string) orchestrator.MergeReading {
+						r := mergePass(head)
+						r.JudgeRun = ""
+						return r
+					},
+				},
+			} {
+				m := landable(t, now, mergeReviewRun, mergeJudgeRun)
+				m.edit(tc.edit)
+				m.reader.reads["wi-1"] = launch.read(headA)
+
+				m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+
+				refusedAt(t, m, headA, "ladder-r3-wait-"+headA[:8], string(orchestrator.GateLaunchUncovered))
+				if len(m.stub.launched) != 0 {
+					t.Fatalf("the ladder launched %+v for %s, and this item is not one it may start a run for", m.stub.launched, launch.name)
+				}
+			}
+		})
 	}
 }
 

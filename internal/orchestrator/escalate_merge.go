@@ -309,6 +309,13 @@ const (
 	GateReviewSpent GateReason = "review_spent"
 	// GateJudgeAbsent is a head no judge has been asked about yet (E6).
 	GateJudgeAbsent GateReason = "judge_absent"
+	// GateLaunchUncovered is a rung 3 run the ladder may not start: an item no
+	// approval covers, one a dependency still holds, one a run is moving
+	// through, or one whose ladder runs are all spent. The rungs below leave
+	// such an item where it is, and rung 3 says so — a review-only run and a
+	// judge are runs of the item's own work, spent under a person's approval
+	// like every other (D2042, G15).
+	GateLaunchUncovered GateReason = "launch_uncovered"
 	// GateJudgeVeto is the judge's no: it blocked the merge, said something the
 	// reader could not place, or did not answer at all (D2031, D2044).
 	GateJudgeVeto GateReason = "judge_veto"
@@ -405,6 +412,10 @@ type MergeInput struct {
 	PR          *gitprov.PRInfo
 	CI          gitprov.CIState
 	ReadyDrafts bool
+	// Launchable is whether the ladder may start a run of this item at all:
+	// the same four questions every launch is held to (ladderLaunchable), read
+	// here because the two launch clauses below are launches.
+	Launchable bool
 	// Landed is whether the item's own ledger reached rung 3 at Head, and Said
 	// whether the log already carries a line for this head's landing or for its
 	// already-merged outcome. Together they are what tells a cycle re-entering a
@@ -468,6 +479,9 @@ func mergeGate(in MergeInput) MergeOutcome {
 	}
 	if !in.Read.Scored {
 		if in.Read.ReviewRun == "" && !in.Launches.Review {
+			if !in.Launchable {
+				return waitFact(GateLaunchUncovered)
+			}
 			return MergeOutcome{Kind: MergeLaunchReview, Launch: RecipeReviewOnly, Facts: []GateReason{GateUncovered}}
 		}
 		return waitFact(GateReviewSpent)
@@ -521,6 +535,9 @@ func mergeGate(in MergeInput) MergeOutcome {
 		return waitReason(blockingCode(in.Read.Findings.List))
 	}
 	if in.Read.JudgeRun == "" && !in.Launches.Judge {
+		if !in.Launchable {
+			return waitFact(GateLaunchUncovered)
+		}
 		return MergeOutcome{Kind: MergeLaunchJudge, Launch: RecipeMergeJudge, Facts: []GateReason{GateJudgeAbsent}}
 	}
 	if judgeVetoes(in.Read.Verdict) {
@@ -652,6 +669,7 @@ func (s MergeSeams) merge(ctx context.Context, item WorkItem, step escalation.St
 	in := MergeInput{
 		Item: item, Step: step, Head: read.HeadSHA, Read: mr, Launches: launches,
 		ReadyDrafts: s.ReadyDrafts, Landed: ladderLandedAt(item, read.HeadSHA), Said: said,
+		Launchable: ladderLaunchable(st, item),
 	}
 	if mr.Read && mr.Number != 0 {
 		// The pull request and its checks are read at the head under

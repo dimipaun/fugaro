@@ -342,11 +342,41 @@ func (c *cycle) ladderAct(ctx context.Context, w WorkItem, step escalation.Step,
 	}
 }
 
+// ladderLaunchable reports whether the ladder may start a run for this item at
+// all, in the state the cycle is holding: the loop's own two questions (the item
+// is one an attempt may be declared from, and nothing it depends on is still
+// open), the item's own approval (D2042, G15) — the standing one, or the one a
+// retry spent — and the ladder's count of the runs it has already spent.
+//
+// Every launch the ladder makes is held to this, whichever rung asks for it:
+// the rungs this file walks call it through ladderOuter, and the hook past rung
+// 2 calls it before it launches a review or a judge, which are runs of the
+// item's own work and are spent under a person's approval exactly as a rebase
+// is. Its own rung 3 balance is what the rule reads, so a launch the hook makes
+// is counted here and not only in the transition a rung below writes.
+func ladderLaunchable(s State, w WorkItem) bool {
+	if !startable(w.Phase) || !dependenciesDone(s, w) {
+		// A ladder run is a run: an item a run is moving through is not one to
+		// start beside it, and neither is one still waiting on work that is not
+		// done — the rebase would move a head under the item waiting on it.
+		return false
+	}
+	at, ok := ladderCoveredAt(w)
+	if !ok {
+		return false
+	}
+	covered, ok := ladderCoveredDigest(s, w, at)
+	if !ok || SpecDigest(w) != covered {
+		// The approval covers the spec it was given over, and an item edited
+		// since is another spec: what the ladder escalates is the work a person
+		// read, or nothing at all.
+		return false
+	}
+	return LadderRuns(s, w) < MaxOuterAttempts
+}
+
 // ladderOuter is the launch rungs 0 and 2 ask for, and false where the ladder
-// may not start one: the loop's own two questions (the item is one an attempt
-// may be declared from, and nothing it depends on is still open), the item's
-// own approval (D2042, G15) — the standing one, or the one a retry spent — and
-// the ladder's count of the runs it has already spent.
+// may not start one. See ladderLaunchable for the four questions it is held to.
 //
 // The cost ceiling is not read here. It is the decision's (D2038): the reading
 // carries the spend, escalation.Decide answers rung 3 for an item past the
@@ -354,24 +384,7 @@ func (c *cycle) ladderAct(ctx context.Context, w WorkItem, step escalation.Step,
 // past rung 2 is where that stop is carried out. The per-item ceiling a rung 1
 // resume is held by is RunView.Spend's (launch.go).
 func (c *cycle) ladderOuter(w WorkItem, step escalation.Step, read LadderReading) (LadderRequest, bool) {
-	if !startable(w.Phase) || !dependenciesDone(c.state, w) {
-		// A ladder run is a run: an item a run is moving through is not one to
-		// start beside it, and neither is one still waiting on work that is not
-		// done — the rebase would move a head under the item waiting on it.
-		return LadderRequest{}, false
-	}
-	at, ok := ladderCoveredAt(w)
-	if !ok {
-		return LadderRequest{}, false
-	}
-	covered, ok := ladderCoveredDigest(c.state, w, at)
-	if !ok || SpecDigest(w) != covered {
-		// The approval covers the spec it was given over, and an item edited
-		// since is another spec: what the ladder escalates is the work a person
-		// read, or nothing at all.
-		return LadderRequest{}, false
-	}
-	if LadderRuns(c.state, w) >= MaxOuterAttempts {
+	if !ladderLaunchable(c.state, w) {
 		return LadderRequest{}, false
 	}
 	recipe := RecipeRebase
