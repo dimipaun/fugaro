@@ -2778,6 +2778,24 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 			return nil, userErr("reading the installation's tfvars: %v", err)
 		}
 	}
+	// And the resident orchestrator's block, the fifth key this spec never
+	// carries: the account and the bindings of the mobile orchestrator design's
+	// section 4.3, which are the whole of what that account may hold (mobile plan
+	// task P5.1b). No writer in this tree composes the key yet — the variable has
+	// no CLI writer, so the one installation that has the block is one whose
+	// owner put it in terraform.tfvars.json by hand — and every document this
+	// function writes is rebuilt from a spec that does not carry it. Without the
+	// carry the next `fugaro update` of an installation that opted in hands
+	// Terraform a document with no orchestrator block: the plan is the account's
+	// and its bindings' removal, and the removal of a google_service_account is
+	// data-bearing under D1551, so the run is refused and the installation stops
+	// converging — the same shape as the four above, and the same one missed
+	// update.
+	for _, prev := range documents {
+		if vars, err = infra.CarriedOrchestrator(vars, prev); err != nil {
+			return nil, userErr("reading the installation's tfvars: %v", err)
+		}
+	}
 	if err := wd.WriteVars(vars); err != nil {
 		return nil, userErr("writing the tfvars: %v", err)
 	}

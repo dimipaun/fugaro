@@ -1455,6 +1455,70 @@ func CarriedManagedDeployerScoped(vars, prev []byte) ([]byte, error) {
 	return sortedJSON(doc)
 }
 
+// OrchestratorKey is the installation root's variable for the resident
+// orchestrator's block (mobile plan task P5.1b; the mobile orchestrator design's
+// section 4.3) — the account and its bindings — and it is the key
+// CarriedOrchestrator reads and keeps.
+const OrchestratorKey = "orchestrator"
+
+// CarriedOrchestrator returns vars with the orchestrator block the document prev
+// carried, when vars carry none of their own: prepare's fifth carry, beside the
+// credentials service's, the intake's, the implicit review job's and the
+// deployer's scope.
+//
+// The block is the design's section 4.3 table and nothing else — the account
+// fugaro-orch, the launcher's project role, the runs bucket's conditioned write
+// and its unconditioned read, the token-minter role on the budget signer ACCOUNT
+// and the job runner's role on each of the installation's jobs — and the
+// installation holds it as STATE. No writer in this tree composes it: the
+// variable has no CLI writer yet (infra.OrchestratorAccountID says so), so the
+// one installation that has the block is one whose owner put it in
+// terraform.tfvars.json by hand. Every path that re-serializes the root's tfvars
+// rebuilds the document from a spec that does not carry the key, so without this
+// carry the next `fugaro update` hands Terraform a document with no orchestrator
+// block at all, and the plan is the account's and its bindings' removal — a
+// google_service_account, which D1551 classifies as data-bearing ("an identity
+// whose keys and grants are lost with it") and the removal rule therefore
+// REFUSES (internal/infra/tf's RefusesRemovalType). An installation that opted
+// in by hand stops converging at its next update, and every update after it
+// repeats the same refusal.
+//
+// The block is taken WHOLE and not recomposed: it is the installation's own
+// record of what it opted into, and a run that rebuilt it from a spec would be a
+// run re-deciding the account's grants. It is carried as it is found, present or
+// absent, so an installation that never opted in is unchanged rather than given
+// a block by a run that decided nothing; and a document that carries the key of
+// its own stands, which is where the release that adds the writer will put the
+// caller's own answer.
+//
+// prev is the same pair of documents the carries beside it take —
+// infra.Workdir.PrevVars, the snapshot from before the run, and the tfvars the
+// workdir holds now.
+func CarriedOrchestrator(vars, prev []byte) ([]byte, error) {
+	if prev == nil {
+		return vars, nil // no document held one: nothing to carry
+	}
+	previous, err := varsDoc(prev)
+	if err != nil {
+		// A tfvars that cannot be read is not a reason to write a plan that
+		// deletes the account: fail rather than carry nothing forward.
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	block, ok := previous[OrchestratorKey]
+	if !ok || block == nil {
+		return vars, nil
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	if _, own := doc[OrchestratorKey]; own {
+		return vars, nil // the caller's own answer stands
+	}
+	doc[OrchestratorKey] = block
+	return sortedJSON(doc)
+}
+
 // varsDoc decodes an installation tfvars document, keeping numbers as
 // json.Number so that encoding it again writes the same digits.
 func varsDoc(vars []byte) (map[string]any, error) {
