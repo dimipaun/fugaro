@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -292,6 +293,147 @@ func TestDocsMobileOrchestratorNeverListIsWhole(t *testing.T) {
 	} {
 		if !strings.Contains(list, want) {
 			t.Errorf("%s's never-list lacks %q", path, want)
+		}
+	}
+}
+
+// mobileOrchestratorChecks are the four numbers the register text of Task
+// P5.1h took, in the order the register writes them. The design named 110 and
+// claimed none (TestDocsMobileOrchestratorClaimsNoCheckNumber); the number the
+// task takes is the first one free past every claim at the time it is written,
+// which is 660, and each thing the task's Files line names gets its own number
+// rather than a sub-letter -- the shape the mobile-auth allocation of
+// 2026-11-14 used for its eight (Checks 620 to 627).
+var mobileOrchestratorChecks = []string{"660", "661", "662", "663"}
+
+// mobileOrchestratorCheckRE reads a `## Check N` heading as the number it
+// carries, the way docs_check600_test.go's own reading does.
+var mobileOrchestratorCheckRE = regexp.MustCompile(`(?m)^## Check ([0-9]+)`)
+
+// TestDocsMobileOrchestratorChecksAreRegistered: the four checks P5.1h writes
+// are registered the register's own way -- a summary row and a `## Check N:`
+// section each, the two halves of one statement -- both halves say the check is
+// the owner's and has not been run, neither names an installation but a sandbox
+// one, and every step is the owner's: no agent runs any. The register-wide
+// backstop that would assert the pairing is deliberately absent
+// (TestChecklistChecksAreGuarded), so the work that takes the numbers carries
+// the assertion for them, and this is that assertion.
+func TestDocsMobileOrchestratorChecksAreRegistered(t *testing.T) {
+	register := readDoc(t, liveChecksDoc)
+	for _, number := range mobileOrchestratorChecks {
+		row := checkRow(register, number)
+		if row == "" {
+			t.Fatalf("%s has no `| %s |` row: Check %s's section is written below it, and the table is where a reader finds it", liveChecksDoc, number, number)
+		}
+		for _, want := range []string{
+			"OWNER-RUN, NOT RUN.",
+			"no agent runs any step of it",
+			"never `belong`",
+			`See "Check ` + number + `" below`,
+			// The work and the reading that took the number: a row that stopped
+			// naming either is a number a reader cannot check against the
+			// register's own numbering paragraph.
+			"P5.1h",
+			"2026-11-16",
+		} {
+			if !strings.Contains(row, want) {
+				t.Errorf("Check %s's row does not say %q: the row is half the registration, and the other half is the section it points at", number, want)
+			}
+		}
+
+		section := strings.ToLower(flattenDoc(checkSection(t, register, number)))
+		for _, want := range []string{
+			"**not run.**",
+			// The register's own rule for an owner-run check, and the sentence
+			// the four sections carry between them.
+			"no agent runs any step of it",
+			"never `belong`",
+			"p5.1h",
+			"mobile/implementation-plan.md",
+			"mobile/design/always-on-orchestrator.md",
+		} {
+			if !strings.Contains(section, want) {
+				t.Errorf("Check %s's section does not say %q: the section is where the owner reads what the check settles and how to run it", number, want)
+			}
+		}
+	}
+
+	// What each section settles, read off the sentence that carries it: a
+	// section that drifted back to another subject -- or to the design's own
+	// draft, which described a service this plan has not built -- would send its
+	// owner to read the wrong thing out of a real project.
+	for _, want := range []struct {
+		number  string
+		phrases []string
+	}{
+		{"660", []string{"minscale", "min-instances = 0", "empty mailbox", "scheduler"}},
+		{"661", []string{"with the laptop shut", "job execution", "internal/cli/mailbox.go", "p4.1"}},
+		{"662", []string{"destroyed", "2b", "reads a secret value"}},
+		{"663", []string{"var.launchers", "roles/firebasedatabase.viewer", "test-iam-permissions"}},
+	} {
+		section := strings.ToLower(flattenDoc(checkSection(t, register, want.number)))
+		for _, phrase := range want.phrases {
+			if !strings.Contains(section, phrase) {
+				t.Errorf("Check %s's section no longer says %q: it is what that number was taken to measure, and the task's Files line is what names the four", want.number, phrase)
+			}
+		}
+	}
+
+	// The four are appended where the register's written sections end, in
+	// ascending order: the register writes a work's sections after every section
+	// already there, and the numbering paragraph's reading -- the number free
+	// past every claim -- is a statement about a tree in which nothing was
+	// written above them.
+	first := strings.Index(register, "\n## Check "+mobileOrchestratorChecks[0]+":")
+	if first < 0 {
+		t.Fatalf("%s has no `## Check %s:` section", liveChecksDoc, mobileOrchestratorChecks[0])
+	}
+	highest := 0
+	for _, m := range mobileOrchestratorCheckRE.FindAllStringSubmatch(register[:first], -1) {
+		if n, err := strconv.Atoi(m[1]); err == nil && n > highest {
+			highest = n
+		}
+	}
+	if highest == 0 {
+		t.Fatalf("%s carries no `## Check` section above Check %s: this assertion would otherwise pass whatever the numbering paragraph says", liveChecksDoc, mobileOrchestratorChecks[0])
+	}
+	if highest >= 660 {
+		t.Errorf("Check 660 is written below a section numbered %d: the number is the first free past every claim, and a higher section already in the file makes that reading wrong", highest)
+	}
+	prev := first
+	for _, number := range mobileOrchestratorChecks[1:] {
+		at := strings.Index(register, "\n## Check "+number+":")
+		if at < 0 {
+			t.Fatalf("%s has no `## Check %s:` section: the row above it points at steps that have to be there", liveChecksDoc, number)
+		}
+		if at < prev {
+			t.Errorf("%s writes Check %s above an older one of the same block: the four are one appended block, and a reader takes a number written out of order for a live one", liveChecksDoc, number)
+		}
+		prev = at
+	}
+
+	// The numbering paragraph above the table is the record of the reading, and
+	// it is what a later work reads the register's claims from: it has to name
+	// the four, the number taken, and the design's 110 as named and unwritten
+	// rather than as this work's.
+	claim := strings.Index(register, "Checks 660 to 663 are the always-on orchestrator's")
+	table := strings.Index(register, "\n| 660 |")
+	if claim < 0 || table < 0 {
+		t.Fatalf("%s: the claim paragraph (%d) and the row (%d) are both part of the registration", liveChecksDoc, claim, table)
+	}
+	if claim > table {
+		t.Errorf("the 660–663 claim paragraph is below the table's first row: the paragraph is the record of the number taken and reads with the register's other numbering paragraphs, above the table")
+	}
+	para := flattenDoc(register[claim:table])
+	for _, want := range []string{
+		"660 is the first free number past every claim",
+		"660–663",
+		"110 is not this work's number",
+		"110 stays named and unwritten",
+		"no agent runs any step of any of them",
+	} {
+		if !strings.Contains(para, want) {
+			t.Errorf("%s's 660–663 claim paragraph does not say %q: the paragraph is the reading the four numbers rest on, and a later work takes the register's claims from it", liveChecksDoc, want)
 		}
 	}
 }

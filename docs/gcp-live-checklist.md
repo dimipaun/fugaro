@@ -731,6 +731,35 @@ so each is a section and a row here, written **now** rather than promised:
 **620** to **627** below, each **owner-run** on a real project, **never `belong`**, each **NOT RUN**,
 and **no agent runs any step of any of them**.
 
+**Checks 660 to 663 are the always-on orchestrator's, and they are the first four numbers free past every
+claim above them** ([`docs/mobile/`](mobile/implementation-plan.md) Task **P5.1h**, whose Files line sends
+the four here, and the design of record
+[design/always-on-orchestrator.md](mobile/design/always-on-orchestrator.md) §7, which names a number,
+**claims none** and **writes no check**). The reading is taken **on 2026-11-16, at `20e46ebc`**, the way
+the paragraphs above take theirs: the highest **written** `## Check` section in this file is **627** (the
+mobile-auth work's eight, allocated on 2026-11-14) and above it **628 to 632** are `docs/model-crafts`'
+(its activation plan's **MC26**: *"the five summary rows and their `## Check 628`–`## Check 632` sections,
+written under the number free at each merge"*), **640 to 649** are `docs/forge-labels`' (its README's
+*"**Numbers taken:** … **Checks 640-649 (640 used)**"*, and [docs/status.md](status.md) names its **owner
+Check 640**), and **650 to 659** are `docs/spend-accuracy`'s (*"Checks 650-659 (650-651 used)"* in its
+README, and in its plan *"Checks 650-651 come from the block this plan reserved (650-659)"* — a claim on an
+open pull request, which settles at its merge like every other claim). **Every open pull request's head was
+fetched and read for the numbers it writes**, and nothing above **659** is claimed by any document on
+`main` or on any of them — so **660 is the first free number past every claim** and this work takes
+**660–663**, one per thing the task's Files line names: the tick and what the service holds between wakes,
+a phone's message becoming a job execution with the laptop shut, the pairing key's cloud copy and what
+`pair revoke` does to it, and the `orch` account's own refusals. **Its design named 110**, as the register's
+reading of 2026-10-19 — the first free number *then* — and **110 is not this work's number**: it is named
+by that design and by [design/voice-evaluation-switch.md](mobile/design/voice-evaluation-switch.md)
+(P5.3's Q4, *"the number is already agreed (110)"*) and written by nobody, and the register's rule for a
+work that reserved none is the number free **past every claim**, not the lowest free number. **110 stays
+named and unwritten**, and **nothing above was renumbered**: 600 stays the accounts-add work's, 610–619
+stay `docs/review-job`'s, 620–627 stay the mobile-auth work's, 628–632, 640–649 and 650–659 stay the three
+works named above, **633 to 639 stay free** and **664 onward stays free**. Each of the four is
+**owner-run** — **no agent runs any step of any of them** — on a sandbox installation and its own project,
+**never `belong`**, each **NOT RUN**, and each written **now** rather than promised: **660** to **663**
+below.
+
 **That is the end of the register.** The paragraph below is not another
 reservation: it introduces the check that owns 57, whose row is in the table
 below.
@@ -1015,6 +1044,10 @@ probe account carries predefined grants only).
 | 380 | `fugaro update` with its stdin closed finishes **without a prompt** ([`docs/no-prompt-policy/`](no-prompt-policy/implementation-plan.md), its task **T7** — no command waits on stdin — and its **Check 380**; the HARD RULE that `fugaro update` is the whole upgrade is where that rule is worth most): the check runs `fugaro update` itself with its stdin on `/dev/null` and its whole transcript in files, under a deadline, and a run that **ended by itself and asked nothing** is the reading — a step it leaves for you and refuses to apply is a PASS too, because the policy's answer to a step nobody confirmed is that refusal and not a question (T7: removing a prompt is not the same as applying a step nobody asked for). What a PASS refuses is a **question**: `[y/N]` in any casing, `(y/n)`, `(yes/no)`, a `to confirm:` left open, an enter-prompt, or a question mark followed by a blank; a run still going at the deadline is **killed** and is the failure the check exists for, because a run waiting on a terminal looks exactly like that. The `⚠ CONFIRM` banner is **not** one of those shapes: the policy keeps the banner, which is the note of a step and not a read | See "Check 380" below; `bash scripts/live-checks/check-380-no-prompt-update.sh [--project <name>] [--fugaro-flags '<flags>'] [--deadline <seconds>]` is the whole of it, its sibling test `scripts/live-checks/check-380-no-prompt-update_test.sh` drives it against a fake `fugaro` only — a fake `update` that plays each transcript shape beside the real closed stdin it records, so a case says the check really closed it — and converges nothing, and **you** run it, on the **sandbox installation**, **never `belong`** (refused in what you type and in what `doctor` answers, and so is a coding agent's session); **no agent runs any step of it** | One `fugaro doctor --json` (read-only) and one real `fugaro update`, which is the command itself: it may build an image, apply Terraform and spend what a converge spends. No model call of this check's own and no run launched. It rolls nothing back — a converge is not something to undo, and the reading is only worth having on the release that is installed. **OWNER-RUN, NOT RUN.** |
 | 381 | An image build **over the cap** is refused, with the estimate, the cap, the day's figure and the one command that raises it ([`docs/no-prompt-policy/`](no-prompt-policy/implementation-plan.md), its task **T7** (the typed confirmation is gone from `fugaro image build`) and **T8**'s build lease, its **D1543** and its **Check 381**): the check lowers the repository's **own** caps to `$0.00` — a tightening, so nothing is asked (**D1542**) — reads them back, and then runs `fugaro image build --no-wait` from the checkout, which must exit **1 before the submission** with ONE sentence carrying all four parts: what the build **reserves** and where that price came from (the `N s` build timeout at the machine's rate, read from the Cloud Billing catalog), the **cap** it met, the **figure that cap compared** (the day's counted figure for the repository's daily cap, what the build holds for its per-run one) and the **one command that raises it**. A refusal that lost any part is a FAIL, and so is a build that was **not** refused — it may have been submitted, and the row carries the transcript's own last line. A budget mode that is not `enforce` is a **refusal to run** and not a measurement: in `observe` the over-cap decision comes back as an advisory and the build goes out anyway, which is money (**D1548**), and the mode is your own choice and never this check's to set | See "Check 381" below; `bash scripts/live-checks/check-381-over-cap-build.sh [--checkout <path>] [--project <name>] [--fugaro-flags '<flags>'] [--deadline <seconds>]` is the whole of it, its sibling test `scripts/live-checks/check-381-over-cap-build_test.sh` drives it against a fake `fugaro` — whose `budget set` really applies what it is handed, so the check's read-back of its own lowering and of its own putting back are readings of state that changed — beside a real git checkout and its origin, and **you** run it, in a **sandbox repository checkout** whose project is **never `belong`** (refused in what you type and in what `doctor` answers, and so is a coding agent's session); **no agent runs any step of it** | Four or five reads, two `budget set` (the lowering and the putting back) and one `image build --no-wait` that is refused before it is submitted: **no model call, no image and no Cloud Build** on a healthy installation, and nothing is counted for a build that was refused. It lowers ONE repository's own caps for the few seconds the build takes and puts them back from the exit trap, on every way out, reading them back to say so. **OWNER-RUN, NOT RUN.** |
 | 382 | A coding agent's `budget set` **raise** is refused, and the refusal carries the command its owner can run ([`docs/no-prompt-policy/`](no-prompt-policy/implementation-plan.md), its task **T3** (the fence on every raise form) and **D1542**, and its **Check 382**; **F8** — a cap the session it bounds can lift is not a limit — and **F20** — the fence is a courtesy, as strong as the markers and no stronger): `fugaro budget set --repo <this repository> --daily <more than it holds now>` is run with `CLAUDECODE=1` set **for the child alone**, and must exit **1** with one sentence carrying all of it — the act in its own words ("raising a cap is the owner's own step"), the marker it read, that **nothing was applied**, and the same invocation you would type at your own terminal. A command naming another repository, another value or another project, starting with another program or carrying a flag `budget set --help` does not name is a FAIL: an agent handed half that sentence has nothing to hand over. The caps read back must be exactly what was there before, and a raise that **landed** is the loudest FAIL the check has. The value is chosen so the call is always a raise: setting a cap where none existed is a raise as much as an increase is, and a no-op answers "nothing changed" instead of asking the fence | See "Check 382" below; `bash scripts/live-checks/check-382-agent-cannot-raise-a-cap.sh [--checkout <path>] [--project <name>] [--fugaro-flags '<flags>'] [--deadline <seconds>]` is the whole of it, its sibling test `scripts/live-checks/check-382-agent-cannot-raise-a-cap_test.sh` drives it against a fake `fugaro` whose fence refuses on the marker set in **its own** environment and can be told to bend the sentence each way, beside a real git checkout and its origin, and **you** run it, in a **sandbox repository checkout** whose project is **never `belong`** (refused in what you type and in what `doctor` answers, and so is a coding agent's session); **no agent runs any step of it** | **Nothing at all on a PASS**: five reads, one `budget set --help` and ONE `budget set` refused **before the write** — no model call, no build, no run and no cloud write. A FAIL where the raise landed, or a caps read-back that did not answer, leaves the teardown to put the caps back from the exit trap and read them back. **OWNER-RUN, NOT RUN.** |
+| 660 | The service wakes on its tick, and holds nothing between wakes ([`docs/mobile/`](mobile/implementation-plan.md), Task **P5.1h**, the number taken on 2026-11-16, and the design of record [design/always-on-orchestrator.md](mobile/design/always-on-orchestrator.md) §4.1 and §4.9; task **P5.1c** is the service and its tick and **P5.1b** the account it runs as): on the installation's own project the always-on module is applied, the Cloud Run **service** carries `min-instances = 0` with request-based billing, the Cloud Scheduler tick wakes it **with nothing in the mailbox**, and a pass that ends takes its instance with it — the instance count at a minute you choose with no tick in flight is **0**, the revision's `minScale` is **`0`**, and the next tick starts an instance that did not exist a minute before and still finds the state the last pass left, because the lease and the ledger are the durable ones and not memory. A service that answered from a warm instance is what this row catches, and `min-instances = 1` is the shape the design priced and did not take | See "Check 660" below; **you** run it, on a **sandbox installation** with the module applied and its own project, **never `belong`**, and **no agent runs any step of it** | The service's own request time and the ticks you read: **no model call, no run and nothing billable** — nothing here sends a message, launches anything or opens a pull request, and a scale-to-zero service bills nothing between ticks (Cloud Scheduler's free allowance is **per billing account and not per installation**, the design's U8, which an owner with more than one installation has to price). Every command above is a read: nothing is created, changed or deleted, and the restore is nothing. **OWNER-RUN, NOT RUN.** |
+| 661 | A phone's message becomes a job execution **with the laptop shut** ([`docs/mobile/`](mobile/implementation-plan.md), Task **P5.1h**, the number taken on 2026-11-16, and the design of record [design/always-on-orchestrator.md](mobile/design/always-on-orchestrator.md) §4.2 and §3.2; tasks **P5.1c**, **P5.1d**, **P5.1f** and **P5.1g** are the half built, and **P4.1** is the consumer it reuses): from a **real phone**, paired by `fugaro pair`, one **launch** message is acted on **once** by the installation's own service — the pass verifies the tag, takes the run's claim, mints the budget token and starts a **Cloud Run job execution** — and the run it starts ends as a laptop-launched run does: a record, a PR and the phone's own outbox answer and presence. The machine that paired is **shut and no `fugaro mailbox` runs anywhere**, which is the whole of what phase 2 claims; the agent runs in the **job**, never in the resident service, and the execution's own job id is where that is read | See "Check 661" below; **you** run it, with a **real phone** on a **sandbox installation** and the **sandbox repository**, **never `belong`**, and **no agent runs any step of it** | One sandbox run: **billable**, on the installation's own budget, which a phone-launchable installation must have published, **on and enforcing** (the plan's P5.1-Q3, without which no caps sentence of the design is true) and bounded by the per-device caps and the named recipe **P5.1g** publishes. The launch itself is a claim, a mint and a job start; the model spend is the run's own, and it is what a laptop-launched run of the same task costs. Restore: the run's own cleanup — decline its PR, delete its branch and the run's objects — and `fugaro pair revoke --uid <uid>` if you paired for this check alone. **OWNER-RUN, NOT RUN.** |
+| 662 | `pair revoke` deletes the pairing key's cloud copy, and the pairing's messages **stop verifying in the cloud** ([`docs/mobile/`](mobile/implementation-plan.md), Task **P5.1h**, the number taken on 2026-11-16, and the design of record [design/always-on-orchestrator.md](mobile/design/always-on-orchestrator.md) §4.7, its step **2b**; task **P5.1e** is the copy and the deletion, and **D111** and **Global Constraint 4** are the custody the copy widens): with the copy in place the pass acts on a message from the phone **once** — the positive half, without which "messages stop verifying" measures nothing — and after `fugaro pair revoke --uid <uid>` the Secret Manager version the service reads is **destroyed** (not merely disabled, and not merely rotated: a disabled version is still readable by a principal granted `versions.access` on the parent, which is the design's own sentence) and the phone's next message is **refused in the cloud, with no action taken and no execution started**. What it does not settle is said in its own section: deleting the copy un-reads nothing, so what it ends is the **service's** ability to verify and to forge, not a reader's | See "Check 662" below; **you** run it, with a **real phone** on a **sandbox installation** whose module is applied, **never `belong`**, and **no agent runs any step of it** | The positive half is **one message the pass acts on** — the launch Check 661 runs is the cheapest, and this check may be run directly after it — so at most **one run is billable**; every other step is a read or the revoke itself, and **no value is read on any path and no line of the check prints one**. The revoke is steps 1, 2, 2b and 3: the device node, the Auth user, **the Secret Manager version** and the laptop's keychain item. Restore is **re-pairing**: `fugaro pair` issues a new device uid and a new key, and the old pairing stays revoked. A launch already claimed continues — the caps, not the revocation, bound it. **OWNER-RUN, NOT RUN.** |
+| 663 | The `orch` account is refused the grants §4.3 does not list ([`docs/mobile/`](mobile/implementation-plan.md), Task **P5.1h**, the number taken on 2026-11-16, and the design of record [design/always-on-orchestrator.md](mobile/design/always-on-orchestrator.md) §4.3, §4.5's E4 and §6's never-list; task **P5.1b** writes the account and its **piecemeal** bindings): read from the project's actual IAM and then probed with a token **for that account** — the account is **not in `var.launchers`** (no `roles/firebasedatabase.viewer`, `roles/datastore.viewer` or `roles/serviceusage.serviceUsageConsumer`, and a read of another mailbox or of `config/admin/devices/**` over the RTDB API is **denied by the rules** rather than answered with a `null`, which is what that viewer role — an IAM read that bypasses the rules — would give it); `setIamPolicy` and `iam.roles.*` are refused and the deployer is **not impersonable**; a write at the **runs-bucket root** is refused (the launcher's condition is `runs/`, `tokens/` and `issues/` only, so the marker that permits a managed apply is unwritable) **while the read of it is not**, which the design says in its own words; `secretmanager.secrets.list` and `versions.list` succeed and `versions access` on a model, git or App secret is refused; and the same token **does** list the installation's jobs, which is the positive control a check of nothing but refusals would not have | See "Check 663" below; **you** run it, on a **sandbox installation** with the module applied and your own credential, **never `belong`**, and **no agent runs any step of it** | Reads and probes: **no model call, no run and nothing billable** — two IAM policy reads, one bucket listing, one RTDB `GET` and the refusals. The one write attempted at the bucket root is a **throwaway object of your own, never the marker itself**, because a probe that succeeds must not leave a marker behind. The probes run with a token minted for the account, which needs you to hold `roles/iam.serviceAccountTokenCreator` on it: that grant is **added by hand for the check and removed afterwards**, and deleting the throwaway object is the other half of the restore. **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -17992,3 +18025,291 @@ action queue's page size, the decision between the stored view as it stands and 
 repository, and whether `plan status` may be one of four reads started together or has to be asked for on
 demand. Nothing is blocked on the reading itself — the tasks are droppable and independent — but a figure
 in that table which the reading contradicts is corrected by C0, and the spec's own sentence says so.
+
+## Check 660: the service wakes on its tick and holds nothing between wakes (a sandbox installation carrying the always-on module, in its own project, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **P5.1h** of [mobile/implementation-plan.md](mobile/implementation-plan.md), from
+the design of record [mobile/design/always-on-orchestrator.md](mobile/design/always-on-orchestrator.md) §4.1 and
+§4.9, and its number is the first free past every claim on 2026-11-16. **No agent runs any step of it**: what it
+needs is a deployed service, a real tick and a real project, and every step below is yours.
+
+**What it settles.** That the resident orchestrator is **available rather than busy**. §4.1 chose one Cloud Run
+**service** per installation, `min-instances = 0`, request-based billing and a **Cloud Scheduler** tick, and it
+did not take `min-instances = 1` — the shape that buys sub-tick latency and a permanently listening socket for a
+fixed monthly charge per installation. Three readings make that a check rather than a claim: the deployed
+revision's own `autoscaling.knative.dev/minScale` annotation is **`0`**; the scheduler job that wakes the
+service exists, is **enabled**, and carries the cadence P5.1c ships; and a tick over an **empty mailbox**
+produces a pass that reads the state the previous pass left — the consumer lease (D1232's, fenced on an ETag and
+stamped from the server clock) and the ledger are read from the store and not from memory — starting no
+execution and writing no message. It is the reading that tells a scale-to-zero service from one that answered
+out of a warm instance, and it is the premise of §4.10's idle-cost sentence: with `min-instances = 0` "the
+service bills nothing between ticks" holds only while the instance really goes away. It measures the service's
+**existence and shape** and not its end-to-end behaviour — a phone's message is Check 661's.
+
+**What has to exist before it runs.** A **sandbox installation** — its own GCP project, **never `belong`** (F31:
+this check changes nothing, but it reads a project's own configuration and it is not the owner's) — carrying
+**P5.1b**'s `orch` account and its piecemeal grants and **P5.1c**'s service, its tick and the never-list as
+code, with the module in the installation root and the opt-in switch on, **applied by `fugaro update`**
+(P5.1-Q8: no release ships an operator step that is another command, so the module ships in the root the update
+already applies). Your own Google credential for the reads, `gcloud`, and the service's name, region and bucket
+from the module's own output. **None of P5.1b to P5.1g is built** — the tasks are approved and unbuilt — so this
+section is written now and run when they land: the plan writes a check into the register **before** anyone runs
+it, and writing one is not running it.
+
+**The commands.**
+
+```sh
+gcloud run services describe <service> --project <project> --region <region> \
+  --format="value(spec.template.metadata.annotations)"
+gcloud scheduler jobs list --project <project> --location <region>
+gcloud scheduler jobs run <job> --project <project> --location <region>   # one tick, mailbox empty
+gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="<service>"' \
+  --project <project> --limit 20 --format="value(timestamp,textPayload)"
+gcloud run jobs executions list --project <project> --region <region> --limit 5
+```
+
+The first command prints the revision template's annotations, and the value of `autoscaling.knative.dev/minScale`
+is what this check turns on. The third forces one tick with **nothing in the mailbox**: the pass runs, writes no
+message, starts no execution — the fifth command is the negative control, and the list must not have grown —
+and the generations it writes are the ones a pass over an empty mailbox writes, which the fourth command's log
+lines show. Record the
+annotation's value, the cron, the tick's own log lines, and the execution lists **before and after** — under
+Check 660 here.
+
+**What a run costs.** One forced tick and one pass over an empty mailbox: **no model call, no run and nothing
+billable**, and no job execution at all. The service's own request time is a few hundred milliseconds of a
+1-vCPU instance (§4.10); the scheduler job is a Cloud Scheduler job, whose free allowance is **per billing
+account and not per installation** (§11's U8 — an owner with several installations prices it once, not per
+installation). Every command above is a **read** except `scheduler jobs run`, which runs the job that is already
+there and creates nothing. Restore: **nothing** — the tick leaves the state as it found it, which is half of
+what the check asserts.
+
+**What waits on it.** **P5.1c**'s service and tick are what it measures, and its reading is what P5.1-Q1's
+cadence is confirmed against; §4.10's idle-cost sentence and §11's U8 are the two claims it grounds. Nothing
+downstream is blocked on the reading — no task consumes it — but a `minScale` of `1`, or a tick that started an
+execution from an empty mailbox, is a finding to raise rather than a number to record.
+
+## Check 661: a phone's message becomes a job execution with the laptop shut (a sandbox installation, a real paired phone and the sandbox repository, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **P5.1h** of [mobile/implementation-plan.md](mobile/implementation-plan.md), from
+the design of record [mobile/design/always-on-orchestrator.md](mobile/design/always-on-orchestrator.md) §4.2 and
+§3.2, and its number is the first free past every claim on 2026-11-16. It is the end-to-end check of phase 2,
+and **no agent runs any step of it**: it needs a real phone, a real installation and a machine that is really
+shut.
+
+**What it settles.** That a message from a phone becomes a **job execution** while no machine of the owner's is
+running anything — which is the whole of what phase 2 claims and the one thing no unit test can answer, because
+every piece of it is unit-tested already. The pass the tick wakes verifies the tag (`internal/mailbox/mac.go`'s
+`VerifyMAC`, over the canonical bytes of the direction), takes the launch claim, mints the budget token **after**
+the claim (§4.9's duplicated-launch row: only the claim's holder mints) and starts a Cloud Run **job
+execution**; the agent runs in that container and not in the resident service (§4.2's central decision: the
+long-lived process holds no model credential), and the run ends as a laptop-launched run does — a run record, a
+pull request, the phone's outbox answer and its presence heartbeat. Three things are read: the message is acted
+on **once** and not twice (§4.9's two-consumers row: the ledger keyed `(sender, id)`, the ten-minute consumer
+lease and the launch claim, in that order, at most one of which can win); the execution's own job id and
+revision are the **job's**, not the service's, which is where "the agent does not run in the resident service"
+is read; and the run's record and PR are the ones a laptop launch would have produced. The launch takes **no
+confirmation** (D162, answered against the recommendation) and is bounded by the caps and by P5.1g's envelope —
+which is why the budget must be on for this check to be runnable at all.
+
+**What has to exist before it runs.** A **sandbox installation** — its own project, **never `belong`** — with
+**P5.1b**'s account, **P5.1c**'s service and tick, **P5.1d**'s launcher half, **P5.1e**'s pairing-key copy
+(the pass cannot verify a tag without the key), **P5.1f**'s consumer wiring and **P5.1g**'s launch envelope
+(a per-device repository allow-list, a per-device rate and cost cap, and the named recipe an unconfirmed launch
+may run). **P5.1f and P5.1g wait on P4.1** — `internal/cli/mailbox.go` and the `fugaro mailbox` command are
+not in the tree, and the cloud consumer is that pass run elsewhere rather than a second implementation of it.
+Also required: the **sandbox repository**, admitted to the project (`allow_repos`) so the runner's admission
+check passes, and its `fugaro.yaml` carrying the workflow the launch names; a **real phone** paired with
+`fugaro pair` (`internal/cli/pair.go`, merged as #2572); and the installation's **budget published, on and
+enforcing** — P5.1-Q3's requirement, without which no caps sentence of the design is true and a phone-launchable
+installation does not exist.
+
+**The commands.**
+
+```sh
+# 1. on the desktop: pair the phone
+fugaro pair                    # the installation is the one this checkout's config names
+# 2. shut the laptop down. No `fugaro mailbox` may be running anywhere.
+# 3. from the phone: send the launch message for the sandbox repository and the task
+gcloud run jobs executions list --project <project> --region <region> --limit 5
+gcloud run jobs executions describe <execution> --project <project> --region <region>
+```
+
+Step 3 may be run from another machine; the laptop of step 1 must be **shut and no `fugaro
+mailbox` running anywhere** for the duration, which is the premise of the check and not a convenience. Record
+the execution's name, job name and revision, the run id it produced, the pull request it opened, the phone's
+own outbox answer and presence, and the count of executions for the same message — **under Check 661 here**.
+The last reading is the one that would catch a doubled launch: one message, one execution.
+
+**What a run costs.** One sandbox run: **billable**, on the installation's own budget, which is on and enforcing
+per P5.1-Q3 — the model spend is the run's own and is what a laptop-launched run of the same task costs, and the
+launch itself is a claim, a mint and a job start. The caps bound it as they bound any run: the per-run cap, the
+daily cap, the kill switch. Restore, and it is part of the check: decline the pull request, delete its branch
+and the run's objects the way the register's other sandbox runs are cleaned up, and `fugaro pair revoke --uid
+<uid>` if you paired a device for this check alone (which is Check 662's territory, not this one's).
+
+**What waits on it.** **P5.1f** and **P5.1g** are what make it runnable, and both wait on **P4.1**. The
+reading is what phase 2's own claim rests on: §4.2's "the agent does not run in the resident service" and §3.2's
+launch path are asserted in unit tests against fakes, and this is the one run that would show them against a
+phone. A second execution for one message, or a run whose agent is the service's own process, is a finding to
+raise and not a number to record.
+
+## Check 662: `pair revoke` destroys the pairing key's cloud copy, and the messages stop verifying in the cloud (a sandbox installation with the module applied, a real paired phone, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **P5.1h** of [mobile/implementation-plan.md](mobile/implementation-plan.md), from
+the design of record [mobile/design/always-on-orchestrator.md](mobile/design/always-on-orchestrator.md) §4.7 —
+its step **2b** — and §4.6, and its number is the first free past every claim on 2026-11-16. **No agent runs
+any step of it**, and **no command in it reads a secret value on any path**.
+
+**What it settles.** That revocation reaches the **third copy** of the pairing key. Under Q8's answer of
+2026-10-19 the key exists in three places — the phone's platform secure storage, the laptop's OS keychain, and a
+per-installation Secret Manager copy the service reads to verify a tag — and §4.7 says plainly that step 3 (the
+keychain item) no longer reaches the secret and that deleting one of two copies leaves the other verifying
+perfectly. The check has **two halves and both are needed**: the **positive** half, without which "messages stop
+verifying" measures nothing — with the copy in place the pass **acts on a message from the phone once** — and
+the **negative** half — after `fugaro pair revoke --uid <uid>`, the Secret Manager version the service reads is
+**destroyed** (*destroyed*, not merely disabled: a disabled version is still readable by any principal granted
+`versions.access` on the parent, which is the design's own sentence, and rotating the value is not enough
+unless the old version is destroyed), the device node and the Auth user are gone (steps 1 and 2), and the
+phone's next message is **refused in the cloud, with no action taken and no execution started**. What it does
+**not** settle is said in the design and repeated here so a reader does not take more from the reading than it
+gives: **deleting the copy un-reads nothing** — every principal in §4.3's reader set who held the value keeps it,
+and the basic Owner and Editor roles read any secret's value whatever its own policy says — so what the step
+ends is the **service's** ability to verify and to forge, not a reader's.
+
+**What has to exist before it runs.** The sandbox installation of Check 661 — **never `belong`** — with
+**P5.1b**, **P5.1c**, **P5.1d** and **P5.1f** built, **P5.1e**'s cloud copy in place and its revocation written
+as the command's behaviour (`fugaro pair revoke` deleting the copy is P5.1e's Files list), and **P5.1g**'s
+envelope, since the positive half is a message the pass acts on. **P5.1e** also carries the note D111 and
+Global Constraint 4 are owed for the third copy (P5.1-Q2), which is a prerequisite of a reader being able to
+tell what changed rather than of the check running. **P5.1f and P5.1g wait on P4.1**, so this check is
+runnable only once that pass exists. You need the project's own credential, the secret's name from the
+module's output, and a **real phone** paired by `fugaro pair`.
+
+**The commands.**
+
+```sh
+fugaro pair revoke --uid <uid>    # the installation is the one this checkout's config names
+gcloud secrets versions list <secret> --project <project>
+gcloud secrets versions describe <version> --secret <secret> --project <project> --format="value(state)"
+gcloud run jobs executions list --project <project> --region <region> --limit 5
+gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="<service>"' \
+  --project <project> --limit 20 --format="value(timestamp,textPayload)"
+# from the phone, send one more message; the pass must refuse it and start nothing
+```
+
+The first command is the whole revocation — the device node, the Auth user, the cloud copy and the laptop's
+keychain item — and the second and third read what it did: the version's state must read **`DESTROYED`**, and a
+version that reads `DISABLED` still in the list is the finding this check exists for. **No command here reads a
+secret's value**, and a run that prints one is not this check: if you want the strongest form of the negative
+half, `gcloud secrets versions access` with its output sent to `/dev/null` is a **refusal** to record as an exit
+status, never as bytes. Record the two version readings, the pass's own log lines for the phone's next message,
+the execution count before and after it, and the phone's own state — **under Check 662 here**. The restore is
+**re-pairing**: `fugaro pair` issues a new device uid and a new key (the old pairing stays revoked), and a new
+cloud copy is written by the same path that wrote the first.
+
+**What a run costs.** The positive half is **one message the pass acts on**, and the cheapest one is the launch
+Check 661 runs — this check may be run directly after it, and then the model spend is 661's and this one adds
+none. Every other step is a read or the revoke itself: **no model call, no run beyond that one, and nothing
+billable**. Destroying a Secret Manager version is free; it is also **irreversible**, which is why the restore is
+a re-pairing and not an un-destroy. A launch already claimed continues after the revoke — the budget token was
+minted and the job started — and the caps, not the revocation, bound what it spends; that is §4.7's own
+sentence and this check does not contradict it.
+
+**What waits on it.** **P5.1e** is the copy and its revocation, and this is that task's own end-to-end reading;
+the design's §4.5 E2 sentence ("the key never left the device" is false the day a cloud consumer exists) and
+§4.7's step 2b are the claims it grounds. No other task waits on the reading.
+
+## Check 663: the `orch` account is refused the grants §4.3 does not list (a sandbox installation with the module applied, your own credential, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **P5.1h** of [mobile/implementation-plan.md](mobile/implementation-plan.md), from
+the design of record [mobile/design/always-on-orchestrator.md](mobile/design/always-on-orchestrator.md) §4.3, its
+§4.5's **E4** and §6's never-list — rules 1, 2, 5 and 11 in particular — and its number is the first free past
+every claim on 2026-11-16. **No agent runs any step of it**: it reads a real project's IAM and probes it with a
+real token for that account.
+
+**What it settles.** That the account the service runs as is **the least-privilege set §4.3 wrote and not the
+list beside it**. Half of the design's envelope is what a compromise of the resident process *can* do (E4), and
+the other half — the half this check reads — is what the account was **given**. Two kinds of reading, and both
+are needed: **read from the project's actual IAM**, and then **probed with a token minted for that account**, so
+that a grant that would be refused by the rules rather than by IAM is not mistaken for a missing binding.
+
+*The IAM reads.*
+
+- The `orch` account is **not a member of the installation's `var.launchers` list**, and holds none of the
+  three project-level roles that list confers in `deploy/terraform/gcp/modules/firebase/iam.tf`:
+  `roles/firebasedatabase.viewer` (an IAM read that **bypasses the RTDB rules entirely**, reaching every
+  mailbox in the installation), `roles/datastore.viewer` and `roles/serviceusage.serviceUsageConsumer`. §6's
+  rule 11 and §4.3's "what the table does not list" both turn on this, and the module must grant §4.3's rows
+  **one binding at a time**.
+- It holds no `setIamPolicy` on the project or on any resource and no `iam.roles.*`, and it cannot reach the
+  deployer indirectly — no `iam.serviceAccounts.actAs` / `getAccessToken` on the deployer's own account — §6's
+  rule 1:
+  an orchestrator that could grant itself a role could widen its own envelope, and then none of E1–E4 is true.
+- It holds `secretmanager.secrets.list` and `versions.list` and **no `secretAccessor` on a model, git or App
+  secret** — §6's rule 5. The one exception the tag forces is the pairing key's copy (§4.7), and §4.3's reader
+  table is where the rest of that set is recorded: "the `orch` account alone" is not the reader set, and the
+  check does not pretend it is.
+
+*The probes, with a token minted for the account.*
+
+- A read of **another mailbox**, and of `config/admin/devices/**`, over the RTDB REST API is **denied by the
+  rules** — a 401/403 — and **not answered with a `null` or with data**, which is exactly what the
+  `firebasedatabase.viewer` role would give it: an IAM read that bypasses the rules. This is the one probe that
+  distinguishes the piecemeal grant from the list.
+- A **write at the runs-bucket root** is refused — the launcher's condition is `runs/`, `tokens/` and `issues/`
+  only (`gcp.LauncherBucketCondition`), so the marker that permits a managed apply (D56/D57) and
+  `fugaro/allow-delete.json` (D74) are unwritable — **while the read of the root is not**, which §4.3 says in
+  its own words: listing needs `storage.objects.list` and a condition on an object's *name* cannot grant it, so
+  the root is outside the **write** condition and not outside the read.
+- `gcloud projects test-iam-permissions` for `resourcemanager.projects.setIamPolicy` and `iam.roles.create`
+  answers **not held**, and `secretmanager.versions.access` on a model, git or App secret is **refused** on the
+  probe that actually attempts it.
+- **The positive controls**, because a check of nothing but refusals passes on an account that was never
+  created: the same token **does** list the installation's jobs (`run.jobs.get`/`list`), **does** list secrets
+  and versions by name, and **does** succeed at a write under `runs/` on a throwaway key of your own.
+
+**What has to exist before it runs.** A **sandbox installation** with **P5.1b** built — the `orch` account, its
+piecemeal bindings and the module applying them — and **never `belong`** (this check reads a project's IAM and
+probes its bucket; it is not the owner's project, F31). Your own credential, with
+`roles/iam.serviceAccountTokenCreator` **on the `orch` account** so a token for it can be minted: that grant is
+**added by hand for the check and removed afterwards**, and it is the one change the check makes. **P5.1b is
+unbuilt**, so this section is written now and run when it lands. The project's number, the account's address,
+the bucket and the names of the secrets come from the module's own output.
+
+**The commands.**
+
+```sh
+gcloud projects get-iam-policy <project> --format=json | grep -n '<orch-account>'
+gcloud iam service-accounts get-iam-policy <orch-account> --project <project>
+gcloud auth print-access-token --impersonate-service-account=<orch-account> > /tmp/orch-token
+# a read of another mailbox, and of the device node, through the RTDB rules:
+curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $(cat /tmp/orch-token)" \
+  "https://<project>-default-rtdb.<region>.firebasedatabase.app/config/admin/devices/<other-uid>.json"
+gcloud projects test-iam-permissions <project> --impersonate-service-account=<orch-account> \
+  --permissions=resourcemanager.projects.setIamPolicy,iam.roles.create,secretmanager.versions.access
+# the bucket root: the write is refused, the read is not. The object below is your own throwaway.
+printf '' | gcloud storage cp - gs://<bucket>/<throwaway-key>
+gcloud storage ls gs://<bucket>/
+# the positive controls
+gcloud run jobs list --project <project> --region <region> --impersonate-service-account=<orch-account>
+gcloud secrets list --project <project> --impersonate-service-account=<orch-account>
+rm -f /tmp/orch-token
+```
+
+The RTDB read's status code is the reading the whole check turns on: **403 or 401 is a pass**, and a `200` with
+`null` is a **failure**, because a `null` is what an IAM read that bypasses the rules answers a node the caller
+may not see. The one write attempted is the throwaway object at the root — **never the marker itself**: a probe
+that succeeded must not leave a marker behind, which is why the object is empty and named by you. Record the
+status code, the two IAM readings, the permission answers, the two storage results and the two positive
+controls — **under Check 663 here**.
+
+**What a run costs.** Reads and probes: **no model call, no run and nothing billable**. Nothing is created but
+the throwaway object, and deleting it is half the restore; the other half is removing the
+`serviceAccountTokenCreator` grant you added by hand. The token file is written mode-0600 by `gcloud` and removed
+by the last command.
+
+**What waits on it.** **P5.1b** is the account and its grants, and this is that task's own reading of what it
+produced; §4.3's table, §6's rules 1, 2, 5 and 11, and E4's "never `var.launchers`" sentence are the claims it
+grounds. A `roles/firebasedatabase.viewer` binding found here is not a number to record: it is the widening
+rule 11 exists to prevent, and it is raised as a finding.
