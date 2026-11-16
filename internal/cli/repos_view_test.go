@@ -207,6 +207,63 @@ func TestReposViewSeenIsNotEnrolment(t *testing.T) {
 	}
 }
 
+// A repository a published pattern admits is enrolled, and it has a row of its
+// own while the answer is about it (D2409, D2411): the rows are built from
+// concrete names, and `github/acme/*` names no repository — it admits them — so
+// the listing has none for it. An answer that read enrolment off row existence
+// alone would call such a repository not enrolled, with no state sentence,
+// which is what RE1 turns into "not enrolled" and a nonzero exit; and its
+// credential containers, the half a named repository is read for at all, would
+// never be read.
+//
+// Mutation (verified, run and restored): drop the row newReposView builds for a
+// named repository no row answers for — the named answer reads Enrolled:false
+// with no state sentence, and the listing's rows are the two this machine's
+// config holds. The credential member hangs off that row and cannot report
+// without it: reading credentials only for a row the allow-list names (the
+// `if found` arm gated on a concrete entry) leaves the row and reddens that
+// member on its own.
+func TestReposViewNamedPatternAdmittedIsEnrolled(t *testing.T) {
+	f := newProjectFixture(t, "")
+	// One pattern and no concrete entry, and the named repository is in no
+	// config: the allow-list is the only half that could know it.
+	viewCatalogNode(t, f.db, []string{"github/acme/*"})
+
+	v := viewOf(t, f.path, f.db, "github/acme/aaa")
+	if v.Named == nil {
+		t.Fatal("the named answer is missing")
+	}
+	if !v.Named.Enrolled || v.Named.State != "" {
+		t.Errorf("a repository the published pattern admits reads %+v, want it enrolled with no state sentence", v.Named)
+	}
+	// The named repository sorts between the two this machine's config holds, so
+	// its row is one of the listing's rows in name order and not an append.
+	want := []string{"bitbucket/acme/other", "github/acme/aaa", "github/acme/app"}
+	if got := canonicalsOf(v); !slices.Equal(got, want) {
+		t.Fatalf("rows are %v, want the named repository among them in name order (%v)", got, want)
+	}
+	row := viewRow(t, v, "github/acme/aaa")
+	if !row.Published.Admitted || row.Published.Pattern != "github/acme/*" {
+		t.Errorf("the row's published half is %+v, want the pattern that admits it", row.Published)
+	}
+	if row.Local.Present {
+		t.Errorf("a repository only the allow-list admits reads as this machine's: %+v", row.Local)
+	}
+	if row.ImageEntry == "" {
+		t.Errorf("the built row resolved no image, and it is the row every other repository gets: %+v", row)
+	}
+	// The credential member is the other half of what a name is for: this
+	// machine names no Secret Manager endpoint, so the member is the guard's own
+	// sentence with the empty list beside it — and nil is the read that never
+	// happened.
+	if row.Credentials == nil {
+		t.Fatal("the named repository's credential containers were not read")
+	}
+	if row.Credentials.State == "" {
+		t.Errorf("this machine names no Secret Manager endpoint and the credential member answered: %+v", row.Credentials)
+	}
+}
+
 // A member that could not be read carries the sentence that says so, and
 // never an empty object (F14, D2410): managedStatusDoc's rule, and for its
 // reason — an allow-list printed empty because the node did not answer draws a

@@ -130,10 +130,12 @@ type reposView struct {
 	// Project is the installation the read was aimed at.
 	Project string `json:"project"`
 	// Repos are the rows, one per repository, ordered by canonical name: the
-	// repositories this machine's config holds and the concrete names the
-	// published allow-list admits. A pattern (`github/acme/*`) is not one of
-	// them — it names no repository, it admits them — and a repository that
-	// only appears in Seen is not one either.
+	// repositories this machine's config holds, the concrete names the
+	// published allow-list admits, and — for a caller that named one — the
+	// repository it named where only a pattern admits it. A pattern
+	// (`github/acme/*`) is not itself one of them — it names no repository, it
+	// admits them — and a repository that only appears in Seen is not one
+	// either.
 	Repos []reposViewRepo `json:"repos"`
 	// Allow is the published allow-list and the image map and catalog it
 	// publishes, with the generation it was read at.
@@ -301,7 +303,8 @@ type reposViewNamed struct {
 	Canonical string `json:"canonical"`
 	// Enrolled is whether either half of the enrolment knows it: a row was
 	// built for it, which is to say this machine's config holds it or an
-	// allow-list entry admits it.
+	// allow-list entry admits it — by its own name, or as a pattern that admits
+	// it, for which the row is built here rather than in the listing.
 	Enrolled bool `json:"enrolled"`
 	// State is the sentence for an enrolment that could not be decided, and
 	// "" when it could. Enrolled false means "nothing enrolls it" only when
@@ -386,15 +389,28 @@ func newReposView(ctx context.Context, lc *localcfg.Config, db *rtdb.Client, can
 			return nil, err
 		}
 		v.Named = &reposViewNamed{Canonical: want}
-		row := slices.IndexFunc(v.Repos, func(r reposViewRepo) bool { return r.Canonical == want })
-		v.Named.Enrolled = row >= 0
+		row, found := slices.BinarySearchFunc(v.Repos, want, func(r reposViewRepo, want string) int {
+			return strings.Compare(r.Canonical, want)
+		})
+		// The rows are built from concrete names and a pattern is not one
+		// (reposViewRowNames), so a repository a wildcard admits has none — and
+		// the question a caller asks by name is where that admission becomes a
+		// row. Reading enrolment off row existence without this would answer
+		// "nothing enrolls it", with no state sentence, about a repository a
+		// published entry does enroll and whose credential containers were
+		// never read.
+		if !found && reposViewPublishedOf(allow, want).Admitted {
+			v.Repos = slices.Insert(v.Repos, row, reposViewRowOf(ctx, lc, cat, imap, projectBranch, want, keys[want], allow))
+			found = true
+		}
+		v.Named.Enrolled = found
 		// The two halves an absent row could have come from are the two whose
 		// reads can fail, and either of them failing makes "nothing enrolls
 		// it" a claim this answer cannot make.
-		if row < 0 && (allow.State != "" || local.State != "") {
+		if !found && (allow.State != "" || local.State != "") {
 			v.Named.State = "whether " + want + " is enrolled could not be decided: the repository is in none of the halves that were read, and a half that would have named it did not answer"
 		}
-		if row >= 0 {
+		if found {
 			v.Repos[row].Credentials = reposViewCredentialsOf(ctx, lc, v.Repos[row].Provider, reposViewLocalNameOf(want, v.Repos[row].Local.Key))
 		}
 	}
