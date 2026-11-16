@@ -770,6 +770,14 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	// which a record has to be able to store (design compute-backend.md
 	// §5.2, C17).
 	cost.ComputeSource = "Compute Engine VM list price, e2-standard family, us-central1 (2026-10-15, UNVERIFIED); boot disk and Cloud NAT are not in this figure (design C17)"
+	// And the spend-accuracy fields (SA1.0): the provider's own figure by
+	// serving model, the table's band under the calls that carried one, and
+	// the calls that carried none. They ride the fully-populated record for
+	// the reason the artifact fields do, cost's additionalProperties being
+	// false: a field the runner writes and the schema does not name is a
+	// record the schema rejects.
+	cost.ReportedBy = map[string]float64{"deepseek/deepseek-v4.1-flash": 4.04, "deepseek/deepseek-v4-pro": 0.02}
+	cost.TableLoUSD, cost.TableHiUSD, cost.UnreportedCalls = 3.6, 5.1, 2
 	rec := runstore.Record{
 		Version: 1, RunID: "20260927-100000-abcd", Repo: "acme/app", Workflow: "web",
 		Execution: "projects/p/locations/r/jobs/j/executions/e",
@@ -4052,6 +4060,62 @@ func TestResultSchemaAcceptsServiceTiers(t *testing.T) {
 		}
 	}
 	for _, lit := range []string{`,"service_tiers":"priority"`, `,"service_tiers":[7]`, `,"service_tiers":[""]`} {
+		if err := validate(lit); err == nil {
+			t.Errorf("schema accepts cost%s", lit)
+		}
+	}
+}
+
+// TestResultSchemaCostSpendFields (spend-accuracy SA1.0, F7, D2650): the run's
+// cost object carries the provider's own figure by serving model, the price
+// table's band under the calls that carried one, and the number of calls that
+// carried none. They are additive and optional -- a record written before them
+// has none, and so has a run whose calls reported no cost -- and pinned here,
+// beside the cache totals, for their reason: cost's additionalProperties is
+// false, so a field the runner writes and the schema does not name is a record
+// the schema rejects, and the runner's own record is where SA1.5 writes them.
+func TestResultSchemaCostSpendFields(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	head := `{"version":1,"run_id":"20261027-100000-abcd","status":"succeeded","stage":"writeback","outcome":"ready","cost_usd":1.23,"started_at":"2026-10-27T10:00:00Z","cost":{"model_usd":1.23,"compute_usd":0,"compute_estimated":false,"total_usd":1.23,"estimate":true,"model_basis":"api-list"`
+	validate := func(lit string) error {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(head + lit + `}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	for _, lit := range []string{
+		``, // a record written before the fields existed
+		`,"reported_by":{"deepseek/deepseek-v4.1-flash":4.04}`,
+		// A run whose calls reported nothing, and one model whose report is
+		// zero: an empty map and a zero are figures, not absences.
+		`,"reported_by":{}`,
+		`,"reported_by":{"deepseek/deepseek-v4.1-flash":0}`,
+		`,"table_lo_usd":3.6`,
+		`,"table_hi_usd":5.1`,
+		// A run whose every call carried a report, and one whose calls
+		// carried none: 0 is a count, not an absent field.
+		`,"unreported_calls":0`,
+		`,"unreported_calls":2`,
+		`,"reported_by":{"deepseek/deepseek-v4.1-flash":4.04,"deepseek/deepseek-v4-pro":0.02},"table_lo_usd":3.6,"table_hi_usd":5.1,"unreported_calls":2`,
+		// The band's ends are equal for a model the catalog does not price,
+		// which is what a record of one reports.
+		`,"table_lo_usd":0.3,"table_hi_usd":0.3`,
+	} {
+		if err := validate(lit); err != nil {
+			t.Errorf("schema rejects cost%s: %v", lit, err)
+		}
+	}
+	for _, lit := range []string{
+		`,"reported_by":{"deepseek/deepseek-v4.1-flash":-0.01}`,
+		`,"reported_by":{"deepseek/deepseek-v4.1-flash":"4.04"}`,
+		`,"reported_by":[4.04]`,
+		`,"table_lo_usd":-1`,
+		`,"table_hi_usd":"5.1"`,
+		`,"unreported_calls":-1`,
+		`,"unreported_calls":1.5`,
+		`,"unreported_calls":"2"`,
+	} {
 		if err := validate(lit); err == nil {
 			t.Errorf("schema accepts cost%s", lit)
 		}
