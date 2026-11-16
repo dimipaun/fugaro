@@ -335,9 +335,13 @@ func TestTheOpenSourceCheckRefusesWithoutProofs(t *testing.T) {
 		Owner:    f.owner,
 		Notifier: f.notifier,
 		// The seams the routes mounted in a test reach: this deployment serves
-		// them the way any deployment of the API does (api.go).
+		// them the way any deployment of the API does (api.go). The merchant is
+		// one of them because the checkout's route reaches it (P4.1), and a
+		// deployment that served no checkout would have to say so by not
+		// mounting that route rather than by this service's construction.
 		Docs:   f.docs,
 		SignIn: f.signIn,
+		Paddle: f.paddle,
 		Now:    f.clock,
 	})
 	if err != nil {

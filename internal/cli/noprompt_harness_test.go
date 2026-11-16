@@ -173,6 +173,12 @@ type closedStdinFixture struct {
 // because there the sentence is the proof the run got to the ask; elsewhere the
 // proof is the body having run at all, which the harness checks for every leaf.
 var closedStdinFixtures = map[string]closedStdinFixture{
+	// The backend name is the argument the command takes, and cloud-run is the
+	// one that reaches the body without a gate: the selection this world's
+	// config already makes (no backend: key reads as cloud-run) is answered
+	// with the "already runs on" line rather than a write, which is the whole
+	// of what the leaf does with a closed stdin.
+	"fugaro backends use": {args: []string{"cloud-run"}, reaches: "already runs on cloud-run"},
 	// The caps are unset in the fixture's database, so the run sets one from
 	// nothing — the loosening T3's owner-session fence is about. It asks nothing
 	// now, so the sentence is the write itself rather than a banner.
@@ -349,7 +355,24 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro models rm":      {args: []string{"claude-x"}},
 	"fugaro models search":  {args: []string{"x"}},
 	"fugaro models use":     {args: []string{"a", "b", "c"}},
-	"fugaro pair revoke":    {args: []string{"--uid", "uid-1"}},
+	// The two writers D2613 adds reach the write itself, in the world's own
+	// project config: the sentence naming what the entry carries now is the
+	// proof the run got past the selection and the splice, which is the part of
+	// a write a closed stdin could ever have stopped. Both work on an entry the
+	// file already carries — a provider is not one without the model IDs it
+	// serves, and no flag here writes that list — so both are seeded, and the
+	// set changes a leaf the seed leaves out.
+	"fugaro models provider set": {
+		args:    []string{"acme", "--price-policy", "highest"},
+		reaches: "set providers.acme in",
+		seed:    closedStdinSetProvider,
+	},
+	"fugaro models provider rm": {args: []string{"acme"}, reaches: "remove the provider acme from", seed: closedStdinSetProvider},
+	"fugaro models price set": {
+		args:    []string{"claude-sonnet-5-5", "--input-per-m", "3", "--output-per-m", "15"},
+		reaches: "set model_prices.claude-sonnet-5-5 in",
+	},
+	"fugaro pair revoke": {args: []string{"--uid", "uid-1"}},
 	"fugaro project profile add": {args: []string{"standard", "--provider", "github", "--cpu", "2",
 		"--memory", "4Gi", "--timeout-class", "6h"}},
 	"fugaro project profile rm": {args: []string{"standard"}},
@@ -444,7 +467,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro accounts ls":       "selects no project and names the two ways to (--repo, an origin remote)",
 	"fugaro accounts pool":     "is a name for ls, add and rm: a bare run prints its own usage and returns",
 	"fugaro accounts pool ls":  "reads the selected project's own config, which this world's has no pools in, and prints that none are defined",
-	"fugaro backends":          "is a name for its one subcommand: a bare run prints its own usage and returns",
+	"fugaro backends":          "is a name for ls and use: a bare run prints its own usage and returns",
 	"fugaro backends ls":       "lists every backend a project may name, which needs no project",
 	"fugaro backlog add":       "stops at its own D27 field checks, which this world has no values for",
 	"fugaro backlog index":     "reads docs/backlog, which this world has no checkout to hold",
@@ -522,6 +545,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro rigor floor show":       "reads the selected project's own config and prints the floor it carries, which is the whole of what a bare run does",
 	"fugaro runs digest":            "prints the no-project-config refusal",
 	"fugaro runs ls":                "prints the no-project-config refusal",
+	"fugaro runs reports":           "refuses from inside its body: it writes the project's stored reports only as the project's reports job, and a bare run says so and names fugaro runs digest",
 	"fugaro runs stats":             "prints the no-project-config refusal",
 	"fugaro runs summary":           "prints the no-project-config refusal",
 	"fugaro runs watch":             "prints the no-project-config refusal",
@@ -763,6 +787,15 @@ const closedStdinRetiredWhy = "is the tombstone: it prints the two commands that
 func closedStdinSetBaseBranch(t *testing.T, f *budgetFixture) {
 	t.Helper()
 	f.appendConfig(t, "base_branch: main\n")
+}
+
+// closedStdinSetProvider gives the world's project config the provider route
+// the removal takes away. Without it the leaf stops at "this project has no
+// provider named acme" and the fixture's sentence would never be reached — a
+// removal of an entry that is not there is a refusal, not a write.
+func closedStdinSetProvider(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	f.appendConfig(t, "providers:\n  acme:\n    kind: anthropic-compat\n    base_url: https://api.example.com\n    auth: bearer\n    secret: acme-key\n    models: [acme/model]\n")
 }
 
 // closedStdinCloneURLSeed gives the world's own project config the entry the

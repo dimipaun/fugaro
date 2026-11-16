@@ -248,6 +248,74 @@ type Config struct {
 	// shared config because a key naming a credential is a way around that
 	// credential's own allow_data_to, exactly as default_claude_account is.
 	Crafts config.Crafts `yaml:"crafts,omitempty"`
+	// CredentialCascade is the credentials cascade as the owner states it
+	// (D152, D153, D2607): the paid fallback, the wait-or-switch threshold, the
+	// backoff a credential is held for, and D142's two controls. It is the node
+	// member `credentials` under a name of its own here, and the name is the
+	// point (F23): this file's `credentials` key is already the list of typed
+	// credentials, so one key could not carry both without a reader having to
+	// guess which of the two it holds — and the two are different things, a
+	// list of secrets this installation may spend and a statement about how a
+	// run falls over when one is exhausted. The block itself is
+	// projectpolicy.Credentials, the node's own type, so a member written here
+	// is the member published there, exactly as the binaries block is AR1's
+	// type; its yaml tags spell those members the node's way.
+	//
+	// Before this key the block existed only on the published node, which no
+	// command of this release writes except by publishing a node that keeps it
+	// — a machine's file could not state the cascade at all (F5, F6). It is
+	// created where the credentials and pools are, and for their reason: the
+	// fallback decides whether a run may spend the project's money at all, so a
+	// launcher who could write it into the shared config would be choosing
+	// everyone's spending (Shared nils it and ParseShared refuses the key).
+	//
+	// A pointer, like the binaries block, so "this file says nothing about the
+	// cascade" is a fact of its own: silence keeps the node's block, and a
+	// written block is what this machine states (N4's merge of the two).
+	CredentialCascade *projectpolicy.Credentials `yaml:"credential_cascade,omitempty"`
+	// ModelGrades is the escalation ladder's two model grades as this file
+	// states them (E2, D2039, D2607): which model each rung runs and which
+	// credential or pool its calls go out on. The block is config.ModelGrades,
+	// the type the project layer's defaults.model_grades and the node's
+	// model_grades are decoded into, so a grade written here is the grade
+	// published there and is held to the same rules (ValidateModelGrades,
+	// asked at load below).
+	//
+	// The node's block is the only one a rung reads, and until this key no
+	// command of this release could write it: the project layer's
+	// defaults.model_grades is what the merge reads and the publisher wrote
+	// nothing from it, so a publish kept the node's block and nothing else
+	// could state one. It is local-only for the cascade's reason: a grade names
+	// a credential or pool, which is a grant, and the ladder's rungs are what
+	// decides how much a stalled pull request is worked.
+	//
+	// A pointer for the cascade's reason: silence keeps the node's grades, and
+	// a written block is this machine's statement of them.
+	ModelGrades *config.ModelGrades `yaml:"model_grades,omitempty"`
+	// NodeRemovals is the explicit-unset record (D2607, F22): the names this
+	// machine has taken out of the published node, per block, because silence
+	// in this file keeps the node's value — so a pool, a craft or a credential
+	// the owner removes here would otherwise stay served. It is written by the
+	// commands that remove one and cleared once the reconcile N4 runs finds the
+	// node no longer holds the name; a name the record holds is a name the next
+	// publish must delete.
+	//
+	// It is a record of names and not of values, and that is the whole of its
+	// shape: an entry is the name of one member of the block it is listed
+	// under, so what a removal takes away is named here and defined nowhere —
+	// the members of a removed pool, the model of a removed craft and the type
+	// of a removed credential are this file's to have dropped already, and a
+	// record that carried them would be a copy of a definition the owner has
+	// taken away. The node's own `credentials` block is the cascade and is
+	// never listed here: it has no names of its own, so removing it is a
+	// cascade stated without it (CredentialCascade) and not a removal (F23).
+	//
+	// Local-only, and this is the one block where publishing it would be
+	// destructive rather than a widened grant: a launcher who could write this
+	// key into the runs bucket's shared file would be deleting pools,
+	// credentials and crafts of the project's node from the file it can write.
+	// Shared nils it and ParseShared refuses the key.
+	NodeRemovals *NodeRemovals `yaml:"node_removals,omitempty"`
 	// DefaultClaudeAccount is the account every stage of a run uses when
 	// nothing more specific does (spec §11.1, D873). It names an account of
 	// claude_accounts, or "default" for the unsuffixed secret, and only this
@@ -728,6 +796,43 @@ type Config struct {
 	// notes are warnings added after parsing (AddWarning), such as a
 	// published shared config's dropped legacy base_images entries.
 	notes []string
+}
+
+// NodeRemovals is the explicit-unset record (D2607, F22), written in this
+// file's `node_removals` key: the names this machine has taken out of the
+// published policy node, per block. Silence in this file keeps the node's
+// value — the preserve half of D2607's rule — so a removal that reached the
+// node only by a name's disappearance from a block would never reach it at
+// all, and a pool the owner deleted would go on being served. A name here is
+// the removal the next publish makes; the record is cleared once the node no
+// longer holds it (N4), and until then it is this file's own statement of what
+// is gone.
+//
+// The three lists are the node's three named blocks: `pools` and
+// `crafts` are its craft_pools and crafts members by the names a person reads
+// (`fugaro accounts pool ls`, the four craft names), and `craft_credentials`
+// is its craft_credentials. The node's `credentials` member is deliberately
+// not one of them: on the node that member is the cascade, which has no names
+// of its own, so it is never removed by name — a cascade without the fallback
+// the owner dropped is a cascade written without it (F23).
+type NodeRemovals struct {
+	// Pools are the pool names taken out of the node.
+	Pools []string `yaml:"pools,omitempty"`
+	// Crafts are the craft names taken out of the node. A craft is one of
+	// config.CraftNames, so this list names crafts that exist rather than names
+	// no block holds.
+	Crafts []string `yaml:"crafts,omitempty"`
+	// CraftCredentials are the credential names taken out of the node.
+	CraftCredentials []string `yaml:"craft_credentials,omitempty"`
+}
+
+// IsZero reports whether the record names nothing removed, which is the state
+// of the record with nothing left to reconcile: a record that is there and
+// empty and a key that is absent are one statement — no removals — so the
+// writer that keeps this key up to date drops it rather than writing an empty
+// block.
+func (r NodeRemovals) IsZero() bool {
+	return len(r.Pools) == 0 && len(r.Crafts) == 0 && len(r.CraftCredentials) == 0
 }
 
 // WorkspacePin is one member's pin: what its own config records about the
@@ -1384,6 +1489,14 @@ type Batch struct {
 	TaskTimeout config.Duration `yaml:"task_timeout,omitempty"`
 }
 
+// ValidBatchImage reports whether ref is a reference a batch block's image may
+// be: the spelling validateBatch holds Batch.Image to. It is exported for the
+// one caller that FORMS such a reference instead of reading one -- the compute
+// stage's own block write (internal/cli/init_compute.go), which must not write
+// a block this parser would then refuse -- and validateBatch goes through it so
+// the formed value and the accepted one cannot come apart.
+func ValidBatchImage(ref string) bool { return ref != "" && batchImageRE.MatchString(ref) }
+
 // BatchTaskTimeout is the task timeout a Batch job gets when the launch names
 // none: the config's batch.task_timeout, or backend.MaxRunTime when this file
 // sets none (see Batch.TaskTimeout's comment for why the default is the
@@ -1407,7 +1520,7 @@ func validateBatch(bad func(string, ...any), c *Config) {
 	switch {
 	case b.Image == "":
 		bad("batch.image: the Cloud Batch backend needs the image a run's job runs; set it to the installation's registry image")
-	case !batchImageRE.MatchString(b.Image):
+	case !ValidBatchImage(b.Image):
 		bad("batch.image %q is not a container image reference (a lowercase registry path with a tag or a digest, such as <region>-docker.pkg.dev/<project>/fugaro/fugaro:1)", b.Image)
 	}
 	if b.MachineType != "" && !vmMachineTypeRE.MatchString(b.MachineType) {
@@ -2352,6 +2465,20 @@ func (c *Config) OrchestratorEffective(published *policy.Orchestrator) *policy.O
 	return c.Orchestrator
 }
 
+// craftNameProblem is why name may not stand in the explicit-unset record's
+// crafts list, and "" when it may. A craft is one of the four
+// config.CraftNames — the block is a closed set, so a name outside it is not a
+// craft the node could hold — where a pool's and a credential's names are held
+// to config.ValidCredentialRef. The refusal never repeats the name, for that
+// function's reason: the record is a list of names, and the entry that fails
+// this rule is the one most likely to be a value written where a name belongs.
+func craftNameProblem(name string) string {
+	if slices.Contains(config.CraftNames, name) {
+		return ""
+	}
+	return fmt.Sprintf("a craft is one of %s: an entry names the craft the node should no longer hold, and a name outside that list is not a craft it could carry", strings.Join(config.CraftNames, ", "))
+}
+
 func (c *Config) validate() error {
 	var errs []error
 	bad := func(f string, a ...any) { errs = append(errs, fmt.Errorf("local config: "+f, a...)) }
@@ -2534,6 +2661,74 @@ func (c *Config) validate() error {
 	for _, name := range config.CraftNames {
 		if msg := config.ModelIDProblem(c.Crafts.Of(name).Model); msg != "" {
 			bad("crafts.%s.model: %s", name, msg)
+		}
+	}
+	// The cascade this file carries is held to projectpolicy's own rule for the
+	// block, asked with this file's key as the block's path so the refusal
+	// names the key the operator wrote. A misspelt fallback is the case that
+	// matters: it would leave the cascade on oauth-only under a file that reads
+	// as `auto` to its author, and a publish would carry the typo to the node
+	// rather than stop at the file. What the rule does not ask is D152's budget
+	// rule, which is a property of the cascade and the budget block TOGETHER:
+	// the node's decode asks that pair where both are in hand
+	// (projectpolicy's validCredentials), and a carrier holding one half must
+	// not answer for the other.
+	if c.CredentialCascade != nil {
+		if err := projectpolicy.ValidCredentials(c.CredentialCascade, "credential_cascade"); err != nil {
+			bad("%v", err)
+		}
+	}
+	// The grades are held to the rule the node's own decode applies
+	// (projectpolicy's decodeModelGrades), so a file this loader accepts is a
+	// block the node can carry: a grade that names no model, or a model that is
+	// not a model ID, is refused here as it is there.
+	if c.ModelGrades != nil {
+		for _, p := range config.ValidateModelGrades(*c.ModelGrades, "model_grades") {
+			bad("%s: %s", p.Path, p.Message)
+		}
+	}
+	// The explicit-unset record names what is gone, so every entry is held to
+	// the shape a name of its block has: a craft is one of config.CraftNames,
+	// and a pool and a credential are held to the rule their names are written
+	// with where they are referenced, config.ValidCredentialRef. That is the
+	// only rule internal/config exports for a single name (the definition's own,
+	// credentialNameProblem, is that package's and unexported), and the one name
+	// the two disagree on — the built-in `vertex`, which the reference rule
+	// admits because a craft's access may name it and the definition rule
+	// refuses — is a name no block can hold, so such an entry matches no member
+	// of the node and the reconcile clears it with nothing to delete (N4). That
+	// rule is also the one that never echoes the entry — the record is a list of
+	// names, and a value pasted where one belongs (a credential's secret, a
+	// pool's members) is exactly the mistake this block can carry, so no refusal
+	// here repeats it. Naming which block is wrong is the sentence's job;
+	// printing the entry is how a secret reaches a terminal, a log and an issue
+	// report.
+	if r := c.NodeRemovals; r != nil {
+		for _, l := range []struct {
+			at    string
+			what  string
+			names []string
+			valid func(string) string
+		}{
+			{"node_removals.pools", "pool", r.Pools, config.ValidCredentialRef},
+			{"node_removals.craft_credentials", "credential", r.CraftCredentials, config.ValidCredentialRef},
+			{"node_removals.crafts", "craft", r.Crafts, craftNameProblem},
+		} {
+			seen := map[string]bool{}
+			for i, name := range l.names {
+				at := fmt.Sprintf("%s[%d]", l.at, i)
+				switch {
+				case name == "":
+					bad("%s is empty: an entry is the name of a %s the node should no longer hold, and an empty one names nothing — remove the entry", at, l.what)
+				case seen[name]:
+					bad("%s repeats a name above it: a removal is recorded once, and the entry is not repeated here because the record is a list of names while this one may be a value", at)
+				default:
+					if msg := l.valid(name); msg != "" {
+						bad("%s: %s", at, msg)
+					}
+				}
+				seen[name] = true
+			}
 		}
 	}
 	// The aliases the account-choice keys may hold (docs/account-aliases, D2090,

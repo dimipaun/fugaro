@@ -9,6 +9,9 @@
     },
     {
       "$ref": "#/$defs/mint"
+    },
+    {
+      "$ref": "#/$defs/list"
     }
   ],
   "$defs": {
@@ -179,6 +182,23 @@
             "null"
           ],
           "description": "How often the installation asks whether its key is still good, as an ISO 8601 duration of 1 to 30 days (`P1D` … `P30D`). Null is the air-gapped row and nothing else: a connected key that never checks in is one revocation cannot reach (F28)."
+        }
+      }
+    },
+    "list": {
+      "type": "object",
+      "description": "Every entitlement of the caller's own organisation, which is what GET /api/entitlements answers (P3.1). Superseded and ended grants are in it beside the active one: a workspace whose licence a purchase replaced still names that licence, because the key it minted runs to the end of the term it was granted for.",
+      "additionalProperties": false,
+      "required": [
+        "entitlements"
+      ],
+      "properties": {
+        "entitlements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/entitlement"
+          },
+          "description": "The organisation's grants, oldest first. It is empty for an organisation that holds nothing, which no organisation created by a sign-up is: sign-up grants the free seat (D2199)."
         }
       }
     }

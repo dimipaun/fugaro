@@ -99,6 +99,13 @@ func Summarize(s State) string {
 		if w.RunID != "" {
 			fmt.Fprintf(&b, "    run %s\n", safe(w.RunID))
 		}
+		// A spec is printed only for an item that carries one, so the summary
+		// of a project that uses none is the summary it always was, and a
+		// session reading this one sees which plan the item belongs to before
+		// it writes an upsert that would have to say it itself (D2438).
+		if w.Spec != "" {
+			fmt.Fprintf(&b, "    spec: %s\n", safe(w.Spec))
+		}
 		if len(w.DependsOn) > 0 {
 			fmt.Fprintf(&b, "    after %s\n", safe(strings.Join(w.DependsOn, ", ")))
 		}

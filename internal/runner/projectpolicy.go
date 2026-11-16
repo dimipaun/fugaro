@@ -156,21 +156,14 @@ func (r *run) projectPolicy(ctx context.Context) (*projectpolicy.Policy, bool, e
 // is either a set the node names incompletely or a set this run could not read
 // at all.
 //
-// A set the node names incompletely has two shapes. One is an entry whose
-// identity the node could not carry: a repository access token's, which
-// GET /user answers 403 (R14).
-// The other is the node's legacy untyped record beside typed ones (R3): the
-// selector ranks it after every typed record and may serve a call with it, and
-// its identity is on no node at all -- the legacy record is never an entry of
-// this key (contract, R5/R14), and R12 keeps an identity per token name in the
-// creds state store, which this key carries for the typed records alone. With
-// no typed record it is the only candidate and GET /user names it, which is
-// what R3's "the proxy behaves exactly as today" leaves the installation.
-//
-// In both GET /user naming an account of Fugaro's no longer says the run can
-// tell its own comments apart: an account outside the set may still be one of
-// this run's, and claiming otherwise is what shuts the markers-from-anyone
-// fallback the follow-up trust rules rest on.
+// What makes a set the node names incompletely partial is
+// projectpolicy.BitbucketOwnIdentities's rule, which this read applies rather
+// than restates: the identities of the entries, an entry that names none, and
+// the legacy record serving beside typed ones (R3, R14) all make it partial, and
+// in every one of them GET /user naming an account of Fugaro's no longer says
+// the run can tell its own comments apart -- an account outside the set may
+// still be one of this run's, and claiming otherwise is what shuts the
+// markers-from-anyone fallback the follow-up trust rules rest on.
 //
 // A set this run could not read at all is not an empty set but an unknown one,
 // and it is partial too: a node whose read failed, or a key that will not
@@ -216,41 +209,13 @@ func (r *run) bitbucketOwnIdentities(ctx context.Context) (projectpolicy.Bitbuck
 			"node", projectpolicy.PathShared(), "key", projectpolicy.BitbucketTokensKey)
 		return nil, true
 	}
-	var own projectpolicy.BitbucketTokenIdentities
-	seen := make(map[string]bool, len(tokens.Entries))
-	// The legacy record makes the set partial only beside typed records: with
-	// none, it is the selector's only candidate and GET /user names it, so the
-	// set is complete as it stands.
-	partial := len(tokens.Entries) > 0 && legacyRecordServes(pp)
-	for _, e := range tokens.Entries {
-		if e.Identity == "" {
-			partial = true
-			continue
-		}
-		if seen[e.Identity] {
-			continue
-		}
-		seen[e.Identity] = true
-		own = append(own, e.Identity)
-	}
-	return own, partial
-}
-
-// legacyRecordServes reports whether the node's legacy untyped record is one
-// the credentials service may serve this run's calls with (R3): the block an
-// installation that has not moved to typed tokens holds, which the service
-// forwards for the repositories it lists. The two conditions are
-// proxiedBitbucket's own: the block says the service forwards this token rather
-// than mounting it on the installation's jobs (D493, G3), and a block that
-// lists no repository reaches none of them.
-//
-// It is read off the decoded policy and not the raw node because this release
-// knows the block: its reader validates it, and the run's own admission already
-// decides on it, so the two readers cannot disagree about which installation
-// has a live legacy token.
-func legacyRecordServes(pp *projectpolicy.Policy) bool {
-	return pp != nil && pp.BitbucketToken != nil &&
-		pp.BitbucketToken.Proxy && len(pp.BitbucketToken.AllowRepos) > 0
+	// The entries are judged by the rule's one home, so this read and the
+	// adapter's own tests cannot answer the same node differently. The legacy
+	// half is read off the decoded policy and not the raw node because this
+	// release knows the block: its reader validates it, and the run's own
+	// admission already decides on it, so the two readers cannot disagree about
+	// which installation has a live legacy token.
+	return projectpolicy.BitbucketOwnIdentities(tokens.Entries, pp.BitbucketToken)
 }
 
 // readPolicy reads the project's policy through db, retrying a database that

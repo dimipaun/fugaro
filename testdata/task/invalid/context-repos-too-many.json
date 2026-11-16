@@ -1,0 +1,1 @@
+{ "version": 1, "run_id": "20261116-120001-a1b2", "repo": "acme/app", "ref": "main", "task": "Read six repositories", "context_repos": ["acme/one", "acme/two", "acme/three", "acme/four", "acme/five", "acme/six"] }

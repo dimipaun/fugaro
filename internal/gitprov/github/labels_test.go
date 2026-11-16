@@ -9,6 +9,7 @@ package github
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -54,6 +55,36 @@ func TestGitHubEnsureLabelCreates(t *testing.T) {
 	l := labelerOf(t, open(t, "labels_ensure_created.json"))
 	if err := l.EnsureLabel(ctx, "fugaro:running", "1D76DB", "A Fugaro job is working on this pull request"); err != nil {
 		t.Fatalf("EnsureLabel: %v", err)
+	}
+}
+
+// TestGitHubEnsureLabelRefused is the refusing half of D2440: 422 is also
+// GitHub's answer to a label it will not accept, so the status alone is not
+// the already_exists answer and a creation refused this way is an error the
+// daemon's tick reports rather than a success it hides. The error names the
+// label, so an operator reading it knows which one the host turned down.
+func TestGitHubEnsureLabelRefused(t *testing.T) {
+	l := labelerOf(t, open(t, "labels_ensure_refused.json"))
+	err := l.EnsureLabel(ctx, "fugaro:running", "1D76DB", "A Fugaro job is working on this pull request")
+	if err == nil {
+		t.Fatalf("EnsureLabel reported success although the host refused the creation with an invalid error code")
+	}
+	if want := `creating label "fugaro:running"`; !strings.Contains(err.Error(), want) {
+		t.Errorf("EnsureLabel error = %q, want it to carry %q", err.Error(), want)
+	}
+}
+
+// TestGitHubEnsureLabelForbidden is the same refusal one status down: an
+// installation whose token may not write labels answers 403 (U1, U2), which
+// is no more success than the 422 above. Only the already_exists code is.
+func TestGitHubEnsureLabelForbidden(t *testing.T) {
+	l := labelerOf(t, open(t, "labels_ensure_forbidden.json"))
+	err := l.EnsureLabel(ctx, "fugaro:running", "1D76DB", "A Fugaro job is working on this pull request")
+	if err == nil {
+		t.Fatalf("EnsureLabel reported success although the host refused the creation with 403")
+	}
+	if want := `creating label "fugaro:running"`; !strings.Contains(err.Error(), want) {
+		t.Errorf("EnsureLabel error = %q, want it to carry %q", err.Error(), want)
 	}
 }
 

@@ -92,6 +92,16 @@ const (
 	MACMax = 64
 	// BootMax bounds a heartbeat's holder id.
 	BootMax = 64
+	// TokenMax bounds a push registration's token (P5.2.1). It is a length
+	// bound and nothing else: the token is an opaque string the phone's push
+	// service minted, so the schema checks that it is a non-empty, bounded,
+	// speakable string and never that it is shaped like an FCM or an APNs one.
+	TokenMax = 256
+	// ZoneMax bounds a quiet-hours IANA zone name. The longest name in the
+	// database is 32 characters, so the bound is twice the widest real one.
+	ZoneMax = 64
+	// MinuteMax is the largest minute of the local day: 23:59.
+	MinuteMax = 1439
 )
 
 // KindMessage is the kind a message with no `kind` field is.
@@ -101,9 +111,22 @@ const KindMessage = "message"
 // module's order.
 var (
 	// Kinds is every kind of message the schema names.
-	Kinds = []string{"message", "prompt", "answer", "action"}
+	Kinds = []string{"message", "prompt", "answer", "action", "registration"}
 	// Actions is every verb an action record may carry.
 	Actions = []string{"cancel", "merge", "confirm"}
+	// Platforms is every platform a push registration may name.
+	Platforms = []string{"ios", "android"}
+	// PrefsFields is the exact field set of a registration's `prefs`.
+	PrefsFields = []string{
+		"kill_switch", "cap_reached", "consumer_offline", "cap_near", "prompt", "quiet_hours",
+	}
+	// PrefsRequired is the switch state a registration must carry: the whole of
+	// it but the window, whose absence is §3.8's default of off.
+	PrefsRequired = []string{
+		"kill_switch", "cap_reached", "consumer_offline", "cap_near", "prompt",
+	}
+	// QuietHoursFields is the exact field set of a quiet-hours window.
+	QuietHoursFields = []string{"zone", "start", "end"}
 	// Directions is every node a record can be stored in. It is covered as the
 	// field `direction` and it is never stored: the reader supplies it.
 	Directions = []string{"inbox", "outbox", "heartbeat"}
@@ -111,6 +134,7 @@ var (
 	Fields = []string{
 		"id", "sender", "text", "at", "mac", "acked",
 		"agent", "kind", "options", "reply_to", "action",
+		"token", "platform", "prefs",
 	}
 	// RequiredFields is the fields a message must have, in the order they are
 	// checked.
@@ -160,12 +184,19 @@ const (
 	CodeUnknownKind Code = "unknown-kind"
 	// CodeUnknownVerb: an action's verb is not one of the three.
 	CodeUnknownVerb Code = "unknown-verb"
+	// CodeUnknownPlatform: a registration's platform is not one of the two.
+	CodeUnknownPlatform Code = "unknown-platform"
 	// CodeFieldNotAllowed: a field is present on a kind that does not carry it.
 	CodeFieldNotAllowed Code = "field-not-allowed"
 	// CodeBadTarget: a target is not one of the two shapes its verb resolves to.
 	CodeBadTarget Code = "bad-target"
 	// CodeBadSHA: a head SHA is not a hex object name of either length.
 	CodeBadSHA Code = "bad-sha"
+	// CodeBadZone: a quiet-hours zone is not an IANA-shaped name.
+	CodeBadZone Code = "bad-zone"
+	// CodeBadWindow: a quiet-hours minute is outside the day, or the window's
+	// two ends are the same minute.
+	CodeBadWindow Code = "bad-window"
 	// CodeBadMAC: a mac is not 64 lowercase hex characters.
 	CodeBadMAC Code = "bad-mac"
 	// CodeDuplicateEntry: a list names the same id or option twice.
@@ -182,8 +213,8 @@ var Codes = []Code{
 	CodeNotAnObject, CodeUnknownField, CodeMissingField, CodeWrongType,
 	CodeEmptyString, CodeBadKey, CodeTooLong, CodeTooMany, CodeTooFew,
 	CodeBadCharacter, CodeBadTimestamp, CodeUnknownKind, CodeUnknownVerb,
-	CodeFieldNotAllowed, CodeBadTarget, CodeBadSHA, CodeBadMAC,
-	CodeDuplicateEntry,
+	CodeUnknownPlatform, CodeFieldNotAllowed, CodeBadTarget, CodeBadSHA,
+	CodeBadZone, CodeBadWindow, CodeBadMAC, CodeDuplicateEntry,
 }
 
 // Refusal is the schema's answer for a value it will not accept. Field is the
@@ -618,6 +649,39 @@ type Message struct {
 	HasReplyTo bool
 	// Action is the destructive command an action carries.
 	Action *Action
+	// Token is a registration's push token. It is opaque: the schema checks
+	// that it is a non-empty, bounded, speakable string and nothing about its
+	// shape.
+	Token    string
+	HasToken bool
+	// Platform is a registration's platform, "ios" or "android".
+	Platform    string
+	HasPlatform bool
+	// Prefs is a registration's §3.8 switch state, when it carried one. Absent
+	// is not the same as all-off: the message is the whole state, and a
+	// registration with no prefs leaves the node's as they are.
+	Prefs *Prefs
+}
+
+// Prefs is §3.8's user controls: D160's five category switches, each one
+// explicit, and the quiet-hours window when the app set one.
+type Prefs struct {
+	KillSwitch      bool
+	CapReached      bool
+	ConsumerOffline bool
+	CapNear         bool
+	Prompt          bool
+	QuietHours      *QuietHours
+}
+
+// QuietHours is a quiet-hours window: the IANA zone name the window is in and
+// its two ends as minutes since local midnight. The zone is a name and not an
+// offset, because a stored offset drifts onto the wrong hour at every DST
+// transition.
+type QuietHours struct {
+	Zone  string
+	Start int64
+	End   int64
 }
 
 // Action is D169's action record: the verb, the target it resolves to, the id
@@ -753,7 +817,7 @@ func ValidateMessage(r Record) (*Message, *Refusal) {
 	// The (kind, field) table, in the order that names the more useful fault
 	// first: a field the kind cannot carry at all, then one it must carry and
 	// does not, then the fields themselves.
-	for _, field := range []string{"options", "reply_to", "action"} {
+	for _, field := range []string{"options", "reply_to", "action", "token", "platform", "prefs"} {
 		if r.has(field) && !kindOptional[message.Kind][field] {
 			return nil, refuse(CodeFieldNotAllowed, field)
 		}
@@ -791,7 +855,138 @@ func ValidateMessage(r Record) (*Message, *Refusal) {
 		}
 		message.Acked, message.HasAcked = acked, true
 	}
+	if r.has("token") {
+		token := stringField(r["token"], "token", TokenMax, false)
+		if token.bad != nil {
+			return nil, token.bad
+		}
+		message.Token, message.HasToken = token.value, true
+	}
+	if r.has("platform") {
+		platform, isString := r["platform"].(string)
+		if !isString {
+			return nil, refuse(CodeWrongType, "platform")
+		}
+		if !contains(Platforms, platform) {
+			return nil, refuse(CodeUnknownPlatform, "platform")
+		}
+		message.Platform, message.HasPlatform = platform, true
+	}
+	if r.has("prefs") {
+		prefs := prefsField(r["prefs"])
+		if prefs.bad != nil {
+			return nil, prefs.bad
+		}
+		message.Prefs = prefs.value
+	}
 	return message, nil
+}
+
+// prefsField validates §3.8's controls. A present record carries every one of
+// the five category switches — the message is the whole state, so a partial one
+// would leave the consumer choosing a value the app never sent — and a
+// quiet-hours window if the app set one.
+func prefsField(value any) checked[*Prefs] {
+	prefs, isObject := asObject(value)
+	if !isObject {
+		return bad[*Prefs](CodeNotAnObject, "prefs")
+	}
+	for _, key := range sortedKeys(prefs) {
+		if !contains(PrefsFields, key) {
+			return bad[*Prefs](CodeUnknownField, "prefs."+key)
+		}
+	}
+	for _, key := range PrefsRequired {
+		if _, present := prefs[key]; !present {
+			return bad[*Prefs](CodeMissingField, "prefs."+key)
+		}
+	}
+	validated := &Prefs{}
+	for _, entry := range []struct {
+		name string
+		into *bool
+	}{
+		{"kill_switch", &validated.KillSwitch},
+		{"cap_reached", &validated.CapReached},
+		{"consumer_offline", &validated.ConsumerOffline},
+		{"cap_near", &validated.CapNear},
+		{"prompt", &validated.Prompt},
+	} {
+		flag, isBool := prefs[entry.name].(bool)
+		if !isBool {
+			return bad[*Prefs](CodeWrongType, "prefs."+entry.name)
+		}
+		*entry.into = flag
+	}
+	if window, present := prefs["quiet_hours"]; present {
+		quiet, refusal := quietHoursField(window)
+		if refusal != nil {
+			return bad[*Prefs](refusal.Code, refusal.Field)
+		}
+		validated.QuietHours = quiet
+	}
+	return ok(validated)
+}
+
+// quietHoursField validates a quiet-hours window: an IANA zone name and its two
+// ends, in minutes since local midnight.
+//
+// The ends must differ, and that is a refusal rather than a convention: with a
+// window that wraps midnight (22:00 to 07:00 is the ordinary one) an end equal
+// to its start is either the whole day or none of it, and a reader that guessed
+// would suppress the wrong hours in one of the two readings. Two right answers
+// is the ambiguity this schema refuses everywhere else, so it is refused here
+// too.
+func quietHoursField(value any) (*QuietHours, *Refusal) {
+	window, isObject := asObject(value)
+	if !isObject {
+		return nil, refuse(CodeNotAnObject, "prefs.quiet_hours")
+	}
+	for _, key := range sortedKeys(window) {
+		if !contains(QuietHoursFields, key) {
+			return nil, refuse(CodeUnknownField, "prefs.quiet_hours."+key)
+		}
+	}
+	for _, key := range QuietHoursFields {
+		if _, present := window[key]; !present {
+			return nil, refuse(CodeMissingField, "prefs.quiet_hours."+key)
+		}
+	}
+	zone := stringField(window["zone"], "prefs.quiet_hours.zone", ZoneMax, false)
+	if zone.bad != nil {
+		return nil, zone.bad
+	}
+	if !zonePattern.MatchString(zone.value) {
+		return nil, refuse(CodeBadZone, "prefs.quiet_hours.zone")
+	}
+	start, bad := minuteField(window["start"], "prefs.quiet_hours.start")
+	if bad != nil {
+		return nil, bad
+	}
+	end, bad := minuteField(window["end"], "prefs.quiet_hours.end")
+	if bad != nil {
+		return nil, bad
+	}
+	if start == end {
+		return nil, refuse(CodeBadWindow, "prefs.quiet_hours.end")
+	}
+	return &QuietHours{Zone: zone.value, Start: start, End: end}, nil
+}
+
+// minuteField validates one end of a quiet-hours window: an integer minute of
+// the local day, 0 through MinuteMax. A float, a string, a negative minute and
+// a minute past the day are each something else, and each is refused rather
+// than floored.
+func minuteField(value any, field string) (int64, *Refusal) {
+	number, isNumber := numericValue(value)
+	if !isNumber {
+		return 0, refuse(CodeWrongType, field)
+	}
+	minute, isInteger := safeInteger(number)
+	if !isInteger || minute < 0 || minute > MinuteMax {
+		return 0, refuse(CodeBadWindow, field)
+	}
+	return minute, nil
 }
 
 // IsMessage is ValidateMessage's verdict as a boolean, for a caller that needs
@@ -848,16 +1043,18 @@ func ValidateHeartbeat(r Record) (*Heartbeat, *Refusal) {
 // exactly the ambiguity this schema exists to refuse.
 var (
 	kindOptional = map[string]map[string]bool{
-		"message": {},
-		"prompt":  {"options": true},
-		"answer":  {"reply_to": true},
-		"action":  {"action": true, "reply_to": true},
+		"message":      {},
+		"prompt":       {"options": true},
+		"answer":       {"reply_to": true},
+		"action":       {"action": true, "reply_to": true},
+		"registration": {"token": true, "platform": true, "prefs": true},
 	}
 	kindRequired = map[string][]string{
-		"message": {},
-		"prompt":  {},
-		"answer":  {"reply_to"},
-		"action":  {"action"},
+		"message":      {},
+		"prompt":       {},
+		"answer":       {"reply_to"},
+		"action":       {"action"},
+		"registration": {"token", "platform"},
 	}
 )
 
@@ -1114,6 +1311,15 @@ var (
 	repoChars       = regexp.MustCompile(`^[A-Za-z0-9._:/-]+$`)
 	repoPattern     = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]*/[A-Za-z0-9_][A-Za-z0-9._-]*$`)
 	hexPattern      = regexp.MustCompile(`^[0-9a-f]+$`)
+	// zonePattern is a quiet-hours zone's SHAPE, and it is a shape and not a
+	// membership test: whether the name is one the tz database has is the
+	// reader's zone loader's question, exactly as a tag's value is not
+	// hexPattern's. What it refuses is a string that could not be a name — an
+	// empty segment, a leading digit or dot, a segment that is dots alone (a
+	// path step, so `UTC/../..` is refused for the segment and not only for the
+	// string's first character), a slash where none belongs, a separator or a
+	// metacharacter.
+	zonePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9._+-]*(/[A-Za-z0-9._+-]*[A-Za-z0-9_+-][A-Za-z0-9._+-]*)*$`)
 )
 
 // forbiddenKeyChars are the characters a database key may not contain.

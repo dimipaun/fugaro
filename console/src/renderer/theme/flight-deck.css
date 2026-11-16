@@ -595,6 +595,173 @@ span.live-fleet-waiting {
   color: var(--text-2);
 }
 
+/* The two cap bars: the day's spend against the day's cap, and the active runs
+ * against the installation's concurrent-run cap. Each is a caption over the
+ * same `div.live-bar` a repository row's percentage is drawn as (`screens.css`),
+ * so the fill, the tone and the `n/a` are the reading's own and this block
+ * carries the layout alone. */
+div.live-fleet-caps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+div.live-fleet-cap-bar {
+  display: grid;
+  gap: var(--space-3xs);
+  flex: 1 1 12ch;
+  min-width: 0;
+}
+
+div.live-fleet-cap-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2xs);
+}
+
+span.live-fleet-cap-word {
+  font-size: var(--text-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+/* The concurrent-run cap itself, beside the caption it belongs to: a figure of
+ * the panel's own, so it is drawn in the mono tone the other counts use, and
+ * `n/a` with its reason in the `title` on a document that carries no cap. */
+span.live-fleet-cap-limit {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+
+/* The spend-rate gauge: the fleet's rate in dollars per hour, and the day's own
+ * red zone under it. The zone and the needle are two positions on one
+ * 100-unit axis (`gaugeShares`), so the scale is shared and the styling is a
+ * fill per mark and never a length. */
+div.live-gauge {
+  display: grid;
+  gap: var(--space-3xs);
+}
+
+div.live-gauge-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2xs);
+}
+
+span.live-gauge-rate {
+  font-family: var(--font-mono);
+  font-size: var(--text-lg);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: var(--text);
+}
+
+span.live-gauge-unit {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+
+/* The sentence that says what the red zone is. It is drawn and not a tooltip:
+ * the threshold is computed from the day's headroom, so nothing on the screen
+ * says what the mark means except this line. */
+p.live-gauge-note {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+
+svg.live-gauge-bar {
+  display: block;
+  width: 100%;
+}
+
+rect.live-gauge-track {
+  fill: var(--track);
+}
+
+/* The red zone is the one mark on this panel that says "the day does not
+ * last at this rate", so it is painted in the palette's own alarm rather than
+ * in the live tone: the needle is where the rate is, and the ground it is
+ * heading into is what the tone is for. */
+rect.live-gauge-zone {
+  fill: var(--danger-bar);
+}
+
+rect.live-gauge-needle {
+  fill: var(--live);
+}
+
+/* The two histories, side by side in a repository's meters row: the five
+ * minutes `watch` measures its own burn rate over, and the console's hour
+ * (`HourHistory`). Each carries its window as a word, because two shapes told
+ * apart by colour alone are what the design forbids (section 6.1 rule 3). The
+ * bars themselves are `screens.css`'s `li.live-burn-bar`, which both lines
+ * draw: the two are one instrument at two scales, so they are one tick. */
+div.live-meter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+}
+
+span.live-meter-word {
+  font-size: var(--text-label);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+/* The hour line is drawn where `screens.css` draws the burn line's own `ol`,
+ * because the redesign's tokens are this file's: the height, the tick width and
+ * the gap's mark are the same three facts, in the palette the rest of the panel
+ * is painted on. */
+ol.live-hour {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: var(--row-height);
+}
+
+li.live-hour-bar {
+  flex: 1 1 0;
+  max-width: 12px;
+  height: 100%;
+  overflow: hidden;
+  background: var(--live-fill);
+}
+
+li.live-hour-bar[data-state='gap'] {
+  background: none;
+  border-top: var(--rule-width) solid var(--line);
+}
+
+/* **The gauge needs an arm and the bars do not.** Forced colors paints an
+ * author's background and fill in a system colour for the reader, which is
+ * enough for a shape whose whole message is "there is a mark here" -- the burn
+ * lines, the cap bar's segments, the percentage underlines. The gauge's message
+ * is *where two marks are*: a track, a zone and a needle all painted the same
+ * system colour are one solid bar, so the zone is painted in the reader's own
+ * "not the primary reading" and the needle in the primary one, which is the
+ * same two-tone the burn and hour lines are told apart by. */
+@media (forced-colors: active) {
+  li.live-hour-bar {
+    background: GrayText;
+  }
+
+  rect.live-gauge-track,
+  rect.live-gauge-zone {
+    fill: GrayText;
+  }
+
+  rect.live-gauge-needle {
+    fill: CanvasText;
+  }
+}
+
 /* ---------------------------------------------------------------------------
  * The project runs panel -- the Live view's repositories, their runs table and
  * the pipeline segments (console redesign, step 2b, `console/src/renderer/

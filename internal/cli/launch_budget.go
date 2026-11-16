@@ -987,7 +987,18 @@ func (e *cloudEnv) mintBudgetToken(ctx context.Context, slug string, spec *task.
 	// RB is the launcher's own, self-asserted name (config user or git
 	// email): attribution only, nothing in the rules trusts it.
 	claims := token.Claims{Slug: budget.Key(slug), Run: budget.Key(run), FX: token.ExpiryFX(time.Now(), jobTimeout), FP: e.lc.Name, RB: me,
-		Branch: branch, PRs: budgetPRs(spec)}
+		Branch: branch, PRs: budgetPRs(spec), ContextRepos: spec.ContextRepos}
+	// The identity's claims are bounded by the identity provider, and the
+	// refusal it makes is at the exchange — inside the run, long after this
+	// launcher was told the launch succeeded. So the set is measured here, in
+	// the person's own words, before a key is drawn and before a signature is
+	// asked for: a launch whose claims would be refused there is refused here,
+	// with nothing written (token.MintAt measures the same figure again, as the
+	// backstop for every other caller).
+	if n := token.ClaimsSize(claims); n > token.MaxClaimsBytes {
+		return nil, userErr("this run's identity would carry %d bytes of claims, over the %d a custom token may carry: the identity provider refuses such a token at the exchange, inside the run, after this launcher was told the launch had succeeded. Drop the read-only context repositories this launch names (--context, at most %d of them), or shorten the run id and the repository slug the identity carries",
+			n, token.MaxClaimsBytes, token.MaxContextRepos)
+	}
 	tok, err := token.Mint(ctx, signer, claims)
 	switch {
 	case errors.Is(err, token.ErrNotMinter):
