@@ -1,0 +1,10 @@
+{
+  "providers": [
+    "openrouter-audio"
+  ],
+  "direction": {
+    "stt": true,
+    "tts": false
+  },
+  "force_local": false
+}

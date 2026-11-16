@@ -1,0 +1,6 @@
+{
+  "providers": [
+    "deepseek-audio",
+    "openrouter-audio"
+  ]
+}
