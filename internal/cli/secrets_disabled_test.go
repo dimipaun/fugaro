@@ -297,9 +297,9 @@ func TestNoWorkflowSecretsRecordIsWrittenForAnIgnoredSecret(t *testing.T) {
 }
 
 // TestTheBuildReadsTheMountsTheDeploymentHas: the derived-image build a
-// repository is offered reads the containers its own deployment mounts, each
-// by the precedence the plan's merge takes, and no container of a name that
-// deployment does not mount (D2313).
+// repository is offered reads the containers the spec it is handed mounts, each
+// by the precedence the plan's merge takes, and nothing for a name that spec
+// does not mount (D2313).
 //
 // The mounts, and neither the file's list nor the ruling's name test, because
 // the three part company in both directions. A repository-level secret whose
@@ -310,15 +310,22 @@ func TestNoWorkflowSecretsRecordIsWrittenForAnIgnoredSecret(t *testing.T) {
 // repository, failing after the apply, before the deploy plan and every later
 // stage, on every attempt. A repository-level secret whose own container DOES
 // hold a version keeps its mount and its job reads the value — Readiness's
-// version check comes before the ruling's branch — so a build that dropped it
-// by the name's kind alone would build the image without a credential the job
-// is using.
+// version check comes before the ruling's branch, which
+// internal/infra's TestReadinessKeepsTheMountOfARepositorySecretThatHasAVersion
+// holds it to — so a build that dropped it by the name's kind alone would build
+// the image without a credential the job is using.
 //
 // The name the project covers is the third case, and the container beside it:
 // the copy its job mounts is the project's, whatever the file wrote and
 // whatever the repository's own container is. This is the layer nothing
 // reached before — the infra test stops at NeedsBuild, and no fake models an
 // available secret — so each container is asserted by name in the request.
+//
+// The spec here is Readiness's answer by construction, not by running it: the
+// fixture builds the pre-Readiness one and applies each decision Readiness
+// makes — the drop of the versionless name (the two maps its dropMount edits)
+// and the ProjectSecrets entry its resolveProject writes — so every case is a
+// state a deployment is really in.
 func TestTheBuildReadsTheMountsTheDeploymentHas(t *testing.T) {
 	cfg, problems := config.Parse([]byte(workflowSecretsYAML))
 	if len(problems) > 0 {

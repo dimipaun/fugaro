@@ -242,7 +242,7 @@ func TestCheckJobSubmitsBuild(t *testing.T) {
 	// fixture's workflow declares one secret of its own: the build reads it
 	// from the container this repository mounts for it — the repository's own,
 	// here, because nothing resolved the name project-wide
-	// (TestNoIgnoredSecretReachesTheBuildRequest is the same assertion where
+	// (TestTheBuildReadsTheMountsTheDeploymentHas is the same assertion where
 	// the ruling is what decides the answer).
 	want, err := gcp.BuildRequest("proj-1234", gcp.BuildSpec{
 		Slug: f.slug, GitProvider: "bitbucket", RepoURL: checkRepoURL, BaseBranch: "main", Workflow: "app", Base: checkBase,

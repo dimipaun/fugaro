@@ -196,6 +196,58 @@ func TestReadinessBringsUpARepositoryThatDeclaresASecret(t *testing.T) {
 	}
 }
 
+// TestReadinessKeepsTheMountOfARepositorySecretThatHasAVersion is the ruling's
+// other side, and the one a build's own answer stands on: D2313's door takes
+// nothing from a job whose container for the name holds a version —
+// Readiness's version check comes first — so the job mounts the value and reads
+// it, and the plan has nothing to say about ignoring the name.
+//
+// It is worth its own test because the mounts are what a build reads
+// (internal/cli's buildSecrets) and because the two states sit one branch apart
+// here: the name's kind alone decides nothing. A build that dropped the name by
+// that kind would build the image without a credential the job is using, which
+// internal/cli's TestTheBuildReadsTheMountsTheDeploymentHas asserts against
+// from the request side.
+func TestReadinessKeepsTheMountOfARepositorySecretThatHasAVersion(t *testing.T) {
+	repoSecretsOn(t)
+	ctx := context.Background()
+	f := newCloud(t)
+	spec := sandboxSpec(t)
+	f.gcs.AddBucket(spec.Installation.RunsBucket, testProjectNumber, managed)
+	// Every container has a version, the repository-level probe's included:
+	// the state the ruling's branch is never reached in.
+	versionedExcept(t, f, spec)
+	_, ex, err := DiscoverRepo(ctx, f.c, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	web := spec.Workflows["web"]
+	f.ar.AddRepository("proj-1234", "us-east5", spec.Registry.RepositoryID, with(managed, gcp.LabelRepo, spec.Label))
+	f.ar.SetTag("proj-1234", "us-east5", spec.Registry.RepositoryID, strings.TrimSuffix(strings.TrimPrefix(web.Image, spec.RegistryPath+"/"), ":latest"), "latest")
+
+	got, missing, err := Readiness(ctx, f.c, spec, ex, false, "update")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got.Workflows["web"].SecretEnv["SANDBOX_PROBE"]; !ok {
+		t.Errorf("the job does not mount SANDBOX_PROBE (%v): its own container holds a version, and the version check comes before the ruling's branch", got.Workflows["web"].SecretEnv)
+	}
+	if id := got.Workflows["web"].SecretIDs[ignoredProbe]; id != spec.Secrets[ignoredProbe] {
+		t.Errorf("the mount's container is %q, want %q", id, spec.Secrets[ignoredProbe])
+	}
+	// Nothing was ignored, so the job states nothing: the variable here would
+	// tell the runner to stop requiring a value of a name the job really mounts
+	// (B3.8).
+	if stated := got.Workflows["web"].Env[runner.IgnoredSecretsVar]; stated != "" {
+		t.Errorf("the job states %s=%q about a name it mounts", runner.IgnoredSecretsVar, stated)
+	}
+	for _, m := range missing {
+		if m.Kind == MissingSecret || (m.Kind == MissingNote && strings.Contains(m.Reason, ignoredProbe)) {
+			t.Errorf("Readiness still reports %s: %v", ignoredProbe, m)
+		}
+	}
+}
+
 // TestProjectCoveredWorkflowSecretIsStillAStep is ignoredRepoSecret's other
 // half, and the one that must not become collateral damage: a name the project
 // holds — a `workflow_secrets` entry allow-listing this repository, a

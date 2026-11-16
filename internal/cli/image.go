@@ -529,6 +529,24 @@ func cloudBuildSpec(rs infra.RepoSpec, cfg *config.Config, name, base, machineTy
 // else the repository's own). The file's (slug, name) would be the
 // repository's own for a name Readiness resolved to the project's copy, which
 // is not the container the job mounts.
+//
+// The mounts are the deployment's answer, so what is read here has to be a
+// spec Readiness produced, and only the converge's first image build is handed
+// one (planRepo's spec, through offerBuilds to buildImages). Every other path
+// that builds a workflow — `fugaro image build`, the daily check's rebuild and
+// `fugaro update`'s image refresh — hands this a spec built from a file, and
+// none of them has Readiness's. The check job runs as this repository's own
+// build account, which holds an accessor on the secrets the repository mounts
+// and nothing wider (modules/repo/build.tf), where answering needs every
+// declared name's versions, the containers' live policies, the jobs that exist
+// and the project's grants; and the two commands read the checkout they were
+// pointed at, because a command that ran the apply's discovery and its
+// refusals would be making the apply's decision rather than building the
+// workflow it was asked for. Such a spec mounts every name its workflow
+// declares, resolved to the repository's own container, so a build of it names
+// what the same command named before the ruling: a versionless name — one the
+// project covers, or one D2313's door ignores — reaches the request, and Cloud
+// Build refuses that build.
 func buildSecrets(rs infra.RepoSpec, name string, declared []config.Secret) []gcp.BuildSecret {
 	mounted := make(map[string]bool, len(rs.Workflows[name].SecretEnv))
 	for _, logical := range rs.Workflows[name].SecretEnv {
