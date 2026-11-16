@@ -52,9 +52,22 @@ import (
 // state every installation that never opted in plans is byte for byte the
 // document the release before this one wrote, which is what makes a converge of
 // such an installation a no-op (TestUpdateAddsTheRenewalJobAndLeavesARunInFlightRunning).
+//
+// Both answers are recorded on the run as they are made, and that is the other
+// half of the completion rather than bookkeeping: the plan review reads the
+// block off the run (init_review.go's cover), because the review is asked
+// inside installRoot and installRoot holds a COPY of the spec — so the engine's
+// own spec, which internal/infra's door filled in whenever the coordinator's
+// opt-in is on, is not the spec this plan is written from. It differs on
+// exactly the installations whose block is dropped above, where a review
+// reading the engine's spec would announce as its own a binding to the renewal
+// account that no job of this installation holds
+// (TestTheReviewRefusesABindingWithNoJobToHoldIt), and where the block is
+// filled it is the same answer either way.
 func (r *initRun) licenceJob(lc *localcfg.Config, spec infra.InstallationSpec) (infra.InstallationSpec, error) {
 	if spec.Coordinator == nil || !spec.Coordinator.DeployJob {
 		spec.Licence = nil
+		r.licence = nil
 		return spec, nil
 	}
 	if spec.Licence == nil {
@@ -64,5 +77,6 @@ func (r *initRun) licenceJob(lc *localcfg.Config, spec infra.InstallationSpec) (
 		}
 		spec.Licence = &l
 	}
+	r.licence = spec.Licence
 	return spec, nil
 }

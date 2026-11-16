@@ -607,6 +607,17 @@ type initRun struct {
 	printed          bool // the --json result has been printed
 	anchorNoted      bool // update --repo's pointer at --anchor has been said
 	ideNoted         bool // the IDE-terminal notice has been said, once per run
+	// licence is the licence renewal job as the installation root's last
+	// completion decided it (licenceJob): the block that root's plan is written
+	// from, and nil where this installation deploys no coordinator job. It is
+	// recorded on the run because the plan review reads it — the cover the
+	// stages are judged by is built off the run's own facts (init_review.go's
+	// cover) — and the completion happens on installRoot's COPY of the spec the
+	// engine holds, so the engine's own spec is not where the answer is: that
+	// one carries the block internal/infra's door filled in whether or not the
+	// job is deployed, and the two differ on exactly the installations
+	// licenceJob drops it for.
+	licence *infra.LicenceSpec
 	// notedOpenProviders is the once-per-run guard on the note about the
 	// providers every repository may use: the converge's repository stage
 	// runs the repo engine too, and the note belongs once.

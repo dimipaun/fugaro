@@ -469,17 +469,20 @@ type Cover struct {
 	// LicenceRenewalSecret is the ID of the installation's renewal secret
 	// container (internal/infra.LicenceRenewalSecretID): the one container
 	// licenceSecretGrant accepts a binding on, and empty where the caller has
-	// none to name. The caller derives it from the Fugaro project's name — the
-	// same derivation internal/infra.Licence puts in the plan's tfvars — rather
-	// than reading the licence block, which the plan's own module decides from
-	// cloud facts no review of the plan can see.
+	// none to name. The caller names the container of the block the plan under
+	// review is WRITTEN FROM — internal/cli records it on the run as its
+	// licenceJob completes the spec, the completion happening on installRoot's
+	// copy of that spec and so never on the engine's own — rather than deriving
+	// it again at the review: an installation whose licence job is not deployed
+	// has no block in the plan, so a binding to this account in that plan is one
+	// the module never wrote, whatever container it names.
 	//
-	// It is carried rather than derived in this package because the caller that
-	// knows the Fugaro project's name is internal/infra, which imports this
-	// package and so cannot be called from it. An empty one refuses every
-	// binding — a caller that forgets to fill it cannot open the hole — which is
-	// the fail-closed direction, since the container of a plan with no licence
-	// block is one no grant of this class should name.
+	// It is carried rather than derived in this package because the derivation
+	// that produces it is internal/infra's (LicenceRenewalSecretID), which
+	// imports this package and so cannot be called from it. An empty one refuses
+	// every binding — a caller that forgets to fill it cannot open the hole —
+	// which is the fail-closed direction, since the container of a plan with no
+	// licence block is one no grant of this class should name.
 	LicenceRenewalSecret string
 }
 

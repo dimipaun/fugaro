@@ -8,6 +8,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -174,6 +175,146 @@ func TestNoCoordinatorJobMeansNoLicenceJob(t *testing.T) {
 	if v, ok := r.tfvars(t)["licence"]; ok {
 		t.Errorf("an installation whose coordinator job is not deployed planned a licence job: %v\nthe licence job's image is the coordinator's, so it is created under that job's own condition and nowhere else (TN5)", v)
 	}
+}
+
+// TestTheReviewCoversTheRenewalBindingTheUpdatePlans is the plan review's half
+// of the licence renewal job (plan K4.2), on the door that plans it: the update
+// that creates the job also plans its secret binding, and the run's own review
+// has to admit that binding rather than report the step as one it did not
+// announce.
+//
+// What it pins: the review reads the licence block off the RUN, where the
+// completion recorded it (initRun.licence, licenceJob), because that is the
+// block the plan being judged is written from. installRoot completes a COPY of
+// the spec — it takes the spec by value — so the run's own record, and not the
+// spec the engine holds, is what says what the stages put in this plan:
+// licenceJob makes two decisions there (fill, and drop for an installation that
+// deploys no job) and only the first of them is invisible, since
+// infra.Installation already hands the door a block whenever the coordinator's
+// opt-in is on.
+//
+// The plan is scripted, because the fake terraform runs no module: one change,
+// the binding the module writes, whose container is the one the run's own
+// licence spec derived (infra.LicenceRenewalSecretID — the same function
+// TestUpdateAddsTheRenewalJobAndLeavesARunInFlightRunning reads the tfvars
+// back with, so the fixture cannot drift from the plan).
+//
+// This fixture's own state is the one where the door's spec and the completed
+// one agree: an installation whose coordinator's job is deployed is handed a
+// licence block by infra.Installation and keeps it through licenceJob, so
+// reading the engine's spec here would name the same container. What this test
+// pins is that the binding the run itself planned is admitted at all — it fails
+// the moment the cover carries another container, or none
+// (TestTheReviewRefusesABindingWithNoJobToHoldIt is the half that fails when
+// the cover reads the engine's spec instead of the completed one).
+func TestTheReviewCoversTheRenewalBindingTheUpdatePlans(t *testing.T) {
+	r := convergeRigWithTheCoordinator(t)
+	// The runs bucket's mark names this project, so the run's one confirmation
+	// is the review's own (owner(), runCovers): without it every step asks its
+	// own banner and a plan the review did not announce is asked about rather
+	// than noted, which is the case the assertion below is not about.
+	r.markedRuns(t, initProjectName, initProject)
+	// The rig's own document answers the state reads under "show -json" while
+	// the plan answers under "show@installation": without the first, the
+	// fallback the fake documents (a script naming only "show" answers the
+	// state too) would let this stage's plan be read as the installation's
+	// state, which manages nothing (update_converge_test.go's own fixture).
+	// The plan is read at all only because the installation root reports
+	// changes: a plan that reports none is never read, and a review is never
+	// asked about it.
+	r.script["show -json"] = r.script["show"]
+	r.script["plan@installation"] = map[string]any{"exit": 2}
+	r.setPlanAt(t, "installation", renewalBindingChange())
+	r.save(t)
+	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	// The review admits the binding, or refuses it by the one reason
+	// licenceSecretGrant exists to give (tf.Cover): its target is not the
+	// container this installation's licence renewal job writes into. The
+	// refusal is a CONTENT finding (the grant table is D1545's record-and-warn
+	// half), so the run would print it as a note and apply the plan anyway —
+	// which is why this test reads the transcript rather than an exit code: a
+	// binding the run itself planned must draw no such note.
+	if i := strings.Index(out, "not this installation's renewal container"); i >= 0 {
+		line := out[i:]
+		if j := strings.IndexByte(line, '\n'); j >= 0 {
+			line = line[:j]
+		}
+		t.Errorf("the review refused the renewal job's own secret binding:\n%s", line)
+	}
+	// The fixture's own check: the review really was taken, so the assertion
+	// above is about a step the review judged rather than about a run that
+	// asked each step separately.
+	if !strings.Contains(out, "covered by the run confirmation") {
+		t.Errorf("no step of this update read as covered by the run's one confirmation, so this fixture is not the review's own case:\n%s", out)
+	}
+}
+
+// TestTheReviewRefusesABindingWithNoJobToHoldIt is the half of the review's
+// licence block that a cover read off the ENGINE's spec gets wrong, and it is
+// the reason the run records licenceJob's answer rather than leaving the review
+// to read the spec: the completion's two decisions are not the same decision.
+//
+// The installation here is one whose coordinator is opted in and whose job is
+// not deployed — the state TestNoCoordinatorJobMeansNoLicenceJob pins from the
+// plan's side: no tagged history image, so internal/cli's coordinatorJob says
+// the job is not to be deployed and its licenceJob DROPS the block
+// (infra.Installation had handed the door one, the opt-in being on). The plan
+// this run writes therefore carries no licence binding, and a plan that carries
+// one anyway — a state Terraform wrote under an earlier release, or a plan
+// somebody edited — is a binding this installation has no job to hold: the
+// cover has no container to match it against, and licenceSecretGrant says so
+// ("a cover with no container in it ... every binding to this account is
+// refused"). It is a content finding (the grant table is D1545's record-and-
+// warn half), so the run says it in one note and applies the plan anyway at an
+// ordinary terminal; what the note's presence is the evidence of is that the
+// finding was made at all.
+//
+// A cover read off e.spec.Licence answers the other way, and that is the bug
+// this test exists for: the engine's spec still carries the block
+// infra.Installation put there, so the container matches, the binding is
+// admitted, no note is printed, and the run announces as its own a grant to the
+// renewal account that nothing in this installation renews.
+func TestTheReviewRefusesABindingWithNoJobToHoldIt(t *testing.T) {
+	r := newConvergeRig(t, v3Node(nil))
+	// The coordinator's opt-in without its image: this is the state the drop
+	// branch of licenceJob is about, and TestNoCoordinatorJobMeansNoLicenceJob
+	// is the same rig read from the plan's side.
+	r.appendConfig(t, "terraform: { budget_backend: true, coordinator: true }\n")
+	registerInstallation(t, r.initRig)
+	r.markedRuns(t, initProjectName, initProject)
+	r.script["show -json"] = r.script["show"]
+	r.script["plan@installation"] = map[string]any{"exit": 2}
+	r.setPlanAt(t, "installation", renewalBindingChange())
+	r.save(t)
+	currentRelease(t)
+	fakeTerminal(t)
+
+	out, errOut, err := executeStdin(t, "", "update")
+	whole := out + errOut
+	// The refusal is a CONTENT finding, not an integrity one: the grant table
+	// is what D1545 records and warns about, so the run carries on and applies
+	// the plan at an ordinary terminal — what must not happen is the finding
+	// never being made. The empty container in the refusal is the whole point:
+	// the cover has NOTHING to match the binding against, which is the block
+	// the completion dropped, where the engine's spec still has one to offer.
+	if !strings.Contains(whole, "not this installation's renewal container ()") {
+		t.Errorf("the review admitted a binding to the renewal container on an installation that deploys no licence job (exit %d, and the step's own confirmation printed above it):\nthe binding is one this installation's plan does not write, so the run has to record it as a step the review did not announce, by a cover holding no container — one read off the engine's spec would still carry the block infra.Installation put there and admit the grant:\n%s", ExitCode(err), whole)
+	}
+}
+
+// renewalBindingChange is the renewal job's secret binding as the installation
+// root's plan carries it: the module's own resource, the container its tfvars
+// derived from the Fugaro project's name, the custom role written as the
+// literal the review needs (a computed role is refused, so the plan must name
+// it), and the job's own account.
+func renewalBindingChange() planChange {
+	return created("module.installation.google_secret_manager_secret_iam_member.licence_renewal[0]",
+		"google_secret_manager_secret_iam_member", map[string]any{
+			"project":   initProject,
+			"secret_id": infra.LicenceRenewalSecretID(initProjectName),
+			"role":      "projects/" + initProject + "/roles/" + tf.LicenceRenewalRole,
+			"member":    "serviceAccount:" + tf.LicenceAccountID + "@" + initProject + ".iam.gserviceaccount.com",
+		})
 }
 
 // convergeRigWithTheCoordinator is the update door's rig with the coordinator
