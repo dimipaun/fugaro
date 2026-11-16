@@ -62,6 +62,8 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { spawnSync } from 'node:child_process'
+import { PLANS as MATRIX_PLANS, STATUSES as MATRIX_STATUSES, validateSnapshot } from './lib/feature-matrix-model.mjs'
+import { buildSnapshot } from './lib/feature-matrix-stub.mjs'
 
 /**
  * The site's own directory: `website/`.
@@ -1629,6 +1631,84 @@ export function loadCompatibility(): CompatibilityFacts {
   }
 
   return { asOf: stamp, neverSay, groups }
+}
+
+// ---------------------------------------------------------------------------------------
+// The feature matrix — the rows the /features/ page renders (the feature matrix's plan,
+// Task T4a; the owner's answers D2440, D2443 and D2448).
+// ---------------------------------------------------------------------------------------
+
+/**
+ * The three statuses a row may carry, and nothing else (D2443).
+ *
+ * They are the contract's own closed set — `src/lib/feature-matrix-model.mjs`, which the
+ * generator and the page are both written against — read here rather than written a second
+ * time: the page draws a legend of three marks and three words, and a row whose status the
+ * contract admits and this file did not would render as a status a reader cannot read.
+ */
+export const FEATURE_STATUSES: string[] = MATRIX_STATUSES
+
+/**
+ * The three plans, in the order the page draws its three columns (D2440), from the contract
+ * for the same reason the statuses are.
+ */
+export const FEATURE_PLANS: string[] = MATRIX_PLANS
+
+/** One row of the feature matrix: the feature, how far it has got, and the plans it is in. */
+export interface FeatureRow {
+  /** The feature's slug, which is public: it is the row's key in the snapshot and in FEATURES.md. */
+  id: string
+  /** The feature's name, in the words a reader reads. */
+  name: string
+  /** What the feature does, in a sentence or two. */
+  explanation: string
+  /** How far it has got — one of the three, and the page's legend has a mark and a word for each. */
+  status: string
+  /**
+   * The plans the feature is in: every plan at or above the lowest one it is offered in, which
+   * is the rule the contract's `validateSnapshot` holds the snapshot to (D2440). The page draws
+   * one column per plan and marks the row where its own snapshot says true.
+   */
+  plans: Record<string, boolean>
+}
+
+/** The feature matrix as the `/features/` page renders it. */
+export interface FeatureMatrixFacts {
+  /**
+   * The release the matrix was read against, as `vX.Y.Z`. It is a version and not a date: the
+   * schedule of anything unbuilt is the owner's, and a date is one of the facts R1 keeps off
+   * this page and off FEATURES.md alike.
+   */
+  asOf: string
+  /** One row per feature, in the snapshot's own order. */
+  rows: FeatureRow[]
+}
+
+/**
+ * The feature matrix: every row the page renders, with its status and its plans.
+ *
+ * **The snapshot is the whole of what the page prints, and this function is the page's only way
+ * to it.** The page writes no cell of its own (the feature matrix's plan, "Conventions every task
+ * follows"): a row that is wrong is a row to fix in `docs/feature-matrix/mapping.yaml` or in
+ * `docs/status.md`, not a line to rewrite on the page, and a status the snapshot stops carrying
+ * is a status the page stops printing.
+ *
+ * **The snapshot is read through the stub for now.** `buildSnapshot` is
+ * `website/src/lib/feature-matrix-stub.mjs`, which answers with the contract's fixture
+ * (`website/test/fixtures/feature-matrix/snapshot.json`) and reads none of its four arguments —
+ * so the call passes none, and this is the one line task I1 changes: it deletes the stub, hands
+ * the real builder status.md's text, the parsed mapping, the previous snapshot block and the
+ * release being stamped, and reads FEATURES.md's own block as this page's rows. Until then the
+ * stub's signature is the real one, so nothing about the page or its test moves with that change.
+ *
+ * **`validateSnapshot` is what makes an unreadable matrix a failed build rather than a page with
+ * a hole in it** — an unknown status, a plan that is set while the plan below it is not, a row
+ * with no plan at all — and it returns the snapshot, so nothing below reads a field it has not
+ * had checked (the same reading `loadCompatibility()` gives its file).
+ */
+export function loadFeatures(): FeatureMatrixFacts {
+  const snapshot = validateSnapshot(buildSnapshot({}))
+  return { asOf: snapshot.as_of, rows: snapshot.rows }
 }
 
 // website/data/why-gcp.yaml — the claims the "Why GCP" page renders.

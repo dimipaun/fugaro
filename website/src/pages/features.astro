@@ -1,0 +1,416 @@
+---
+/**
+ * website/src/pages/features.astro — the features page
+ * (`docs/feature-matrix/implementation-plan.md`, Task T4a; the owner's answers D2440, D2443 and
+ * D2448 of 2026-11-15).
+ *
+ * **The page is the matrix, and it writes no claim of its own.** Every row it prints — the name,
+ * the explanation, the status and the three plan columns — comes out of the snapshot
+ * `src/content.ts`'s `loadFeatures()` answers with, and that snapshot is the whole of what the
+ * page says about the product (the plan's "Conventions every task follows": the page writes no
+ * claim of its own, and every row comes from the mapping through the snapshot). A row that is
+ * wrong is a row to fix in `docs/feature-matrix/mapping.yaml` rather than a sentence to rewrite
+ * here. The only words this file holds are the legend (the three statuses' marks and their
+ * English), the three plan labels — the vocabulary a reader needs to read the table's own words —
+ * the lead, and one line pointing at the compatibility page.
+ *
+ * **What the page deliberately does not say.** The Community column's empty cells can mislead
+ * (the Community Plan includes development and testing use of every feature, Terms §4.2), and a
+ * sentence about that is legal wording this page may not write without the owner's own words
+ * (reconciliation O1): the column ships bare, the owner reads it at the preview, and a footnote
+ * is a contract change of its own if it is wanted. The page also carries no price, no date, no
+ * spec name and no task id (R1): the one version-shaped fact on it is the stamp under the legend,
+ * `vX.Y.Z`, which the contract's leak check admits and every date fails.
+ *
+ * **Why a plan cell is a mark and why an empty one is empty.** The snapshot's own rule is that a
+ * row lists its lowest plan and every plan above it (D2440), so a column's cell is a check or
+ * nothing at all: nothing is printed where the snapshot says false rather than a word the page
+ * would have to choose, which is what keeps the three columns the matrix's data rather than the
+ * page's opinion of it. The check is the cell's whole content and is not `aria-hidden`, because
+ * beside it there is no word saying what the status words say for a status: a reader who cannot
+ * see the mark hears the glyph's own name, and a reader who can see it reads the column's
+ * heading.
+ *
+ * **The legend is the page's key to the status column.** Every status is its own word with its
+ * own mark beside it, and the mark sits in a fixed-width column so the column of marks in the
+ * table is something to scan down — the shape `compatibility.astro` gives its own legend (F1).
+ * The mark is decoration beside a word that always says the same thing, so it is `aria-hidden`
+ * and a screen reader hears the status once.
+ *
+ * **Where the page is reached from.** The Product menu carries it after "How it works" — task
+ * T4b's change, the owner's approval D2442, recorded in `src/layouts/Base.astro`. The
+ * compatibility page links it from T7. This task adds neither.
+ */
+import Base from '../layouts/Base.astro'
+import { loadFeatures, FEATURE_PLANS, FEATURE_STATUSES } from '../content.ts'
+
+/**
+ * The lead: the page's own two sentences and the whole of the prose between the headline and the
+ * legend. It says what the page answers and claims nothing about the product — every claim below
+ * it is a row out of the snapshot. It is also the page's `<meta name="description">`, so a search
+ * result carries the words a reader meets at the top of the page rather than a second, unread
+ * sentence.
+ */
+const LEAD = 'What Fugaro does today, and what is still to come. Every row says how far along it is.'
+
+/** The page's own title, which is also the menu's label for the route (D2442). */
+const TITLE = 'Features'
+
+/**
+ * The three statuses in the order a reader reads them: what is here, what is next, and what is
+ * planned. The snapshot's own set is the contract's closed one (`FEATURE_STATUSES`, D2443), and
+ * the reader below refuses this list the moment the two stop holding the same three — a legend
+ * that covers four statuses or three others is a key a reader cannot look a row up in.
+ */
+const STATUS_ORDER = ['available', 'coming-soon', 'planned'] as const
+
+/** The status, in the words a reader reads. */
+const STATUS_LABEL: Record<string, string> = {
+  available: 'Available',
+  'coming-soon': 'Coming soon',
+  planned: 'Planned',
+}
+
+/**
+ * The status, as a mark: one monochrome glyph per status, and the shape says how much of it
+ * exists — filled for what is here, an open outline for what is named and not built, and a plain
+ * shape for what is planned rather than drawn. The site draws no emoji anywhere: the marks are
+ * the vocabulary `compatibility.astro` already prints for the same three meanings (D1520), so a
+ * reader who has met one page has met both. The mark is decoration beside a word that always says
+ * the same thing, so it is `aria-hidden`.
+ */
+const STATUS_MARK: Record<string, string> = {
+  available: '✓',
+  'coming-soon': '○',
+  planned: '◇',
+}
+
+/**
+ * The three plans, in the words a reader reads, and the page's three column headings (D2440).
+ * The labels carry what the snapshot's keys would not: a reader who has never met this project's
+ * plans reads "Community", "Team" and "Enterprise" over the columns and knows what they are —
+ * which is also why the page needs no sentence of its own about them (reconciliation O1).
+ */
+const PLAN_LABEL: Record<string, string> = {
+  community: 'Community',
+  team: 'Team',
+  enterprise: 'Enterprise',
+}
+
+/** The heading over the page's one table. */
+const TABLE_HEADING = 'All features'
+
+const { asOf, rows } = loadFeatures()
+
+/**
+ * The whole of the schema the page depends on, checked once at the top rather than inside the
+ * markup: a status the legend has no mark or word for would render as an empty cell — a row
+ * whose status a reader cannot read at all, which is the one defect this page exists to avoid —
+ * so the build stops here, naming the status, instead of printing it. `validateSnapshot`
+ * refuses a status outside the contract's three, so this is the page's own belt to that
+ * function's braces: the two will disagree only if one of them is edited alone.
+ */
+for (const row of rows) {
+  if (STATUS_MARK[row.status] === undefined || STATUS_LABEL[row.status] === undefined) {
+    throw new Error(
+      `website/src/pages/features.astro: the snapshot gives the feature ${JSON.stringify(row.name)} the status ${JSON.stringify(row.status)}, and this page's legend has no mark or no word for it. The legend is what makes a status readable, so a row it cannot render is a row this page may not print.`,
+    )
+  }
+}
+
+// The two closed sets, held to this page's own lists: a status the contract gained and this page
+// has no mark for, and a plan it gained with no label, are both an empty cell in the table. The
+// sets are the page's key to the columns, so the page is what has to answer for them.
+if (STATUS_ORDER.join(',') !== [...FEATURE_STATUSES].join(',')) {
+  throw new Error(
+    `website/src/pages/features.astro: the legend's order is ${JSON.stringify([...STATUS_ORDER])} and the contract's statuses are ${JSON.stringify([...FEATURE_STATUSES])}: the legend is the key to the status column, and a status it does not list is a mark a reader cannot look up.`,
+  )
+}
+for (const plan of FEATURE_PLANS) {
+  if (PLAN_LABEL[plan] === undefined) {
+    throw new Error(`website/src/pages/features.astro: the plan ${JSON.stringify(plan)} has no label on this page, and the label is the column's heading.`)
+  }
+}
+---
+
+<Base title={TITLE} description={LEAD}>
+  <article class="feat" data-features-page>
+    {/* The page's first screen: the one word, then the lead. **No word stands between the `h1`
+        and the lead** — D188 reads a page's lead as the text between its `h1` and its first `h2`
+        (`budget.mjs`), and the legend below is the first heading, so anything added here is a
+        word the lead ceiling counts. The band is a `<div>` and not a `<header>`: it is the page's
+        opening, not a landmark, and the site's landmarks are the layout's (`website/test/a11y.mjs`). */}
+    <div class="feat-hero">
+      <h1 class="feat-title display-xl">
+        <span class="gradient-text">{TITLE}</span>
+      </h1>
+      <p class="feat-lead">{LEAD}</p>
+    </div>
+
+    {/* The legend: the three statuses' marks and words, and the one line that stamps the whole
+        page. It is a list rather than a line of words, so a screen reader reads three items and
+        so `website/test/features-page.mjs` can hold the marks below to it. Its items carry the
+        same `data-status` the rows do, so the tone of a mark is written once in the stylesheet
+        rather than twice. */}
+    <section class="feat-section" aria-labelledby="features-legend">
+      <h2 class="display-md feat-heading" id="features-legend">Legend</h2>
+
+      <ul class="feat-legend">
+        {
+          STATUS_ORDER.map((status) => (
+            <li class="feat-legend-item" data-status={status}>
+              <span class="feat-mark" aria-hidden="true">{STATUS_MARK[status]}</span>
+              {STATUS_LABEL[status]}
+            </li>
+          ))
+        }
+      </ul>
+
+      <p class="feat-as-of">Read against the CLI at {asOf}.</p>
+    </section>
+
+    {/* The page's one table, and the whole of what it prints: the snapshot's rows in the
+        snapshot's order, each with the feature's name, its explanation, its status and a mark
+        under each of the three plans. The plan cells are the matrix's own data — a mark where
+        the snapshot says the row is in the plan and nothing where it says it is not — so the
+        page chooses no word for the state that is not a mark (reconciliation O1). */}
+    <section class="feat-section" aria-labelledby="features-table">
+      <h2 class="display-md feat-heading" id="features-table">{TABLE_HEADING}</h2>
+
+      <table class="feat-table">
+        <thead>
+          <tr>
+            <th scope="col">Feature</th>
+            <th scope="col" class="feat-status-head">Status</th>
+            {FEATURE_PLANS.map((plan) => <th scope="col" class="feat-plan-head">{PLAN_LABEL[plan]}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {
+            rows.map((row) => (
+              <tr>
+                {/* The feature's name, and its explanation under it in the same cell: the name is
+                    what a reader scans and the explanation is what they read once they stopped,
+                    and the two in one cell keeps the table five columns wide at its widest — which
+                    is what a phone needs, because `base.css` narrows a table to the viewport
+                    instead of pushing the page sideways. */}
+                <th scope="row" class="feat-what">
+                  <span class="feat-name">{row.name}</span>
+                  <span class="feat-explanation">{row.explanation}</span>
+                </th>
+                <td>
+                  <span class="feat-status" data-status={row.status}>
+                    <span class="feat-mark" aria-hidden="true">{STATUS_MARK[row.status]}</span>
+                    {STATUS_LABEL[row.status]}
+                  </span>
+                </td>
+                {FEATURE_PLANS.map((plan) => (
+                  <td class="feat-plan">{row.plans[plan] ? <span class="feat-check">✓</span> : null}</td>
+                ))}
+              </tr>
+            ))
+          }
+        </tbody>
+      </table>
+    </section>
+
+    {/* The one link off the page, and the whole of it: what runs where is the compatibility
+        matrix's question, and the page that answers it is `/compatibility/` (T7 adds the link
+        back). It is a sentence about where the other answer is, not a claim about the product. */}
+    <p class="feat-more">
+      What runs where is on the <a href="/compatibility/">compatibility page</a>.
+    </p>
+  </article>
+</Base>
+
+<style>
+  /* Tokens only (W1.2): every colour below is the palette in force, so the contrast the site's
+     accessibility check computes is the contrast a reader gets. The page adds no colour of its
+     own and no `z-index`, and it moves nothing: the two statuses that are not here today take the
+     quieter tone and the mark keeps the tone of the status it belongs to. */
+
+  /* The opening band: the room above the headline and the room under the lead, which is the
+     page's own vertical rhythm rather than `main`'s padding, which the layout gives every page. */
+  .feat-hero {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    padding-top: var(--space-2xl);
+    padding-bottom: var(--space-2xl);
+  }
+
+  /* The headline: `base.css`'s `.display-xl` — the display scale's largest step — with the
+     page's own measure, so the one word does not run the width of a wide window. */
+  .feat-title {
+    max-width: 20ch;
+  }
+
+  /* The lead: one step up the type scale, the quieter tone, and the measure — the shape the
+     site's other pages set their lead in. */
+  .feat-lead {
+    margin: 0;
+    max-width: var(--measure);
+    color: var(--text-muted);
+    font-size: var(--font-size-xl);
+    line-height: var(--leading-snug);
+  }
+
+  /* One section: the legend, and then the table, each with the same room above it, so the page
+     reads as one key and one table rather than two drawings. */
+  .feat-section {
+    padding-top: var(--space-xl);
+  }
+
+  .feat-heading {
+    margin: 0 0 var(--space-sm);
+  }
+
+  /* The legend: the three marks in a row that wraps, the marks aligned in a column of their own
+     the way the rows' marks are, so the legend and the table read as the same shape. */
+  .feat-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2xs) var(--space-md);
+    margin: 0 0 var(--space-sm);
+    padding: 0;
+    list-style: none;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .feat-legend-item {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2xs);
+  }
+
+  /* The line that stamps the page: the smallest step, the quieter tone, under the legend and
+     above the table. It is the only version a reader meets before the rows. */
+  .feat-as-of {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  /* The table: the site's own table defaults (`base.css`), with the room a table needs above it
+     when it follows a sentence rather than a heading, and the explanations set as the quieter
+     second line of their cell. */
+  .feat-table {
+    margin-top: var(--space-sm);
+  }
+
+  /* One column grid for the table: the Feature column is the width that is left after the
+     Status column and the three plan columns, so a mark sits under its own plan's heading at
+     every width. A phone keeps the browser's own sizing, since `base.css` narrows a table to
+     the viewport there and fixed columns would leave the feature no room. */
+  @media (min-width: 48rem) {
+    .feat-table {
+      table-layout: fixed;
+      width: 100%;
+    }
+
+    .feat-table thead th:first-child {
+      width: calc(100% - 26rem);
+    }
+
+    .feat-table .feat-what {
+      max-width: none;
+    }
+
+    .feat-table .feat-status-head {
+      width: 11rem;
+    }
+
+    .feat-table .feat-plan-head {
+      width: 5rem;
+    }
+  }
+
+  .feat-what {
+    /* The Feature column is the widest of the five, and the browser's own column sizing gives
+       it whatever the explanations need: this is the ceiling that keeps a one-word name's row
+       from being squeezed to one word per line by a long explanation beside it. */
+    max-width: 42rem;
+  }
+
+  .feat-name {
+    display: block;
+    font-weight: var(--weight-semibold);
+  }
+
+  /* The row's explanation, under its name: not a heading's type, whatever the cell it sits in —
+     the header cell's weight, tone and fill are the site's, and the explanation is the row's
+     prose. The `display: block` is also what `website/test/spacing.mjs` reads as the boundary
+     between the name above it and the explanation below, which the markup writes no space
+     for. */
+  .feat-explanation {
+    display: block;
+    color: var(--text-muted);
+    font-weight: var(--weight-normal);
+  }
+
+  /* A status: the mark and the word, in the row's cell and in the legend alike. `white-space`
+     keeps "Coming soon" on one line, so a status is never something a reader has to reassemble
+     from a wrapped line. */
+  .feat-status {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--space-2xs);
+    white-space: nowrap;
+  }
+
+  /* A status mark: a glyph in a column of its own — the same width in the legend and in every
+     row, so the marks line up down the table and beside each legend's word. It is a mark and not
+     text, so it carries no contrast pair of its own beyond the ones the palette already covers
+     for a UI mark; the word beside it is the status, and it is the table's own text. */
+  .feat-mark {
+    display: inline-block;
+    flex: none;
+    width: 1em;
+    text-align: center;
+  }
+
+  /* A plan cell's mark: the same 1em column, centred under its own column's heading, and the
+     whole of what the cell holds. It is not `aria-hidden`, because nothing beside it says what
+     it is: a reader who cannot see the glyph hears its own name, which is what the status word
+     does for a status. */
+  .feat-plan-head,
+  .feat-plan {
+    text-align: center;
+  }
+
+  .feat-check {
+    display: inline-block;
+    width: 1em;
+  }
+
+  /* The tone of a mark, in one place for the legend and the rows both, because both carry the
+     same `data-status`: what is here in the success tone, what is next in the accent, and what is
+     planned in the quieter tone. The word beside every mark says the status; this is what a
+     reader sees first and what a reader who cannot see it does not depend on, and the plan
+     column's check is the body's own tone because it is not a status. */
+  [data-status='available'] .feat-mark {
+    color: var(--ok);
+  }
+
+  [data-status='coming-soon'] .feat-mark {
+    color: var(--accent-on-dark);
+  }
+
+  [data-status='planned'] .feat-mark {
+    color: var(--text-muted);
+  }
+
+  /* The status that is not here today in the quieter tone: a table whose three statuses shout
+     equally loudly is a table a reader has to read line by line. */
+  .feat-status[data-status='planned'] {
+    color: var(--text-muted);
+  }
+
+  /* The one line under the table: the way to the other answer, in the body's tone because it is
+     a sentence a reader acts on rather than a caption. */
+  .feat-more {
+    margin: var(--space-xl) 0 0;
+    max-width: var(--measure);
+  }
+</style>
