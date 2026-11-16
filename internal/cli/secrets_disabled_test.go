@@ -296,26 +296,30 @@ func TestNoWorkflowSecretsRecordIsWrittenForAnIgnoredSecret(t *testing.T) {
 	}
 }
 
-// TestNoIgnoredSecretReachesTheBuildRequest: the derived-image build a
-// repository is offered reads the containers its own job mounts, and no other
-// (D2313).
+// TestTheBuildReadsTheMountsTheDeploymentHas: the derived-image build a
+// repository is offered reads the containers its own deployment mounts, each
+// by the precedence the plan's merge takes, and no container of a name that
+// deployment does not mount (D2313).
 //
-// The build's list used to be the file's `secrets:` with each container
-// derived from it — (slug, name), the repository's own — which is exactly the
-// container the ruling leaves empty: var.repo.secrets still declares it and no
-// store may put a version in it. Cloud Build refuses a secret with no version,
-// so the build `fugaro update` newly offers such a repository could only fail,
-// after the apply, before the deploy plan and every later stage, on every
-// attempt. This is the layer nothing reached before: the infra test stops at
-// NeedsBuild, and no fake models an available secret.
+// The mounts, and neither the file's list nor the ruling's name test, because
+// the three part company in both directions. A repository-level secret whose
+// own container holds no version has no mount — Readiness drops it, and the
+// container it was declared with is left versionless for good — so a build
+// naming it asks Cloud Build for a version no store may ever put there, which
+// Cloud Build refuses: that is the build `fugaro update` newly offers such a
+// repository, failing after the apply, before the deploy plan and every later
+// stage, on every attempt. A repository-level secret whose own container DOES
+// hold a version keeps its mount and its job reads the value — Readiness's
+// version check comes before the ruling's branch — so a build that dropped it
+// by the name's kind alone would build the image without a credential the job
+// is using.
 //
-// The name that resolves project-wide is the control beside it: what a build
-// reads is the mounts its job has, not "no secrets at all", and the project's
-// copy is one of them — the container the record the credentials service reads
-// names for the same name (workflowSecretMountID is both answers). With the
-// door off the pre-ruling list is what the same spec gives, which is the
-// machinery the ruling keeps.
-func TestNoIgnoredSecretReachesTheBuildRequest(t *testing.T) {
+// The name the project covers is the third case, and the container beside it:
+// the copy its job mounts is the project's, whatever the file wrote and
+// whatever the repository's own container is. This is the layer nothing
+// reached before — the infra test stops at NeedsBuild, and no fake models an
+// available secret — so each container is asserted by name in the request.
+func TestTheBuildReadsTheMountsTheDeploymentHas(t *testing.T) {
 	cfg, problems := config.Parse([]byte(workflowSecretsYAML))
 	if len(problems) > 0 {
 		t.Fatal(problems)
@@ -328,6 +332,9 @@ func TestNoIgnoredSecretReachesTheBuildRequest(t *testing.T) {
 	repoID, projectID := gcp.SecretID(spec.Slug, "npm-token"), gcp.ProjectSecretID("aurora", "deploy-token")
 	if got := spec.Secrets["npm-token"]; got != repoID {
 		t.Fatalf("the spec's own container for npm-token is %q, want %q: the fixture is not the state this case is about", got, repoID)
+	}
+	if _, mounted := spec.Workflows["app"].SecretEnv["NPM_TOKEN"]; !mounted {
+		t.Fatalf("the fixture does not build the file's own secret into the job (%v): there would be no mount to read", spec.Workflows["app"].SecretEnv)
 	}
 	// Readiness's own decision for the name the project covers (resolveProject):
 	// this repository may mount the project's copy, so that copy is the one its
@@ -355,6 +362,26 @@ func TestNoIgnoredSecretReachesTheBuildRequest(t *testing.T) {
 	// reads the token (cloudbuild.yaml's own variable, rewritten by
 	// BuildRequest).
 	gitVersion := "GITHUB_APP_KEY=projects/proj-1234/secrets/" + appliedGitSecretID(spec) + "/versions/latest"
+	both := gitVersion +
+		" NPM_TOKEN=projects/proj-1234/secrets/" + repoID + "/versions/latest" +
+		" DEPLOY_TOKEN=projects/proj-1234/secrets/" + projectID + "/versions/latest" +
+		" | _SECRET_ENVS=NPM_TOKEN DEPLOY_TOKEN"
+
+	// Both mounts stand: the repository-level secret the deployment keeps
+	// (Readiness's version check passed it), by the container its job reads,
+	// and the project's copy for the name the project covers.
+	if got := request(t); got != both {
+		t.Errorf("the build reads\n%s\nwant\n%s", got, both)
+	}
+
+	// The mount the ruling takes away, in the two maps Readiness's dropMount
+	// edits (the job's mounts, and the containers the repository root holds):
+	// the build names no container for the name then, and the versionless one
+	// appears nowhere in the request.
+	ws := spec.Workflows["app"]
+	delete(ws.SecretEnv, "NPM_TOKEN")
+	delete(ws.SecretIDs, "npm-token")
+	spec.Workflows["app"] = ws
 	got := request(t)
 	want := gitVersion +
 		" DEPLOY_TOKEN=projects/proj-1234/secrets/" + projectID + "/versions/latest" +
@@ -363,17 +390,14 @@ func TestNoIgnoredSecretReachesTheBuildRequest(t *testing.T) {
 		t.Errorf("the build reads\n%s\nwant\n%s\nthe repository's own container for npm-token has no version and no store may give it one", got, want)
 	}
 	if strings.Contains(got, repoID) || strings.Contains(got, "NPM_TOKEN") {
-		t.Errorf("the request names the ignored secret at all:\n%s", got)
+		t.Errorf("the request names the unmounted secret at all:\n%s", got)
 	}
-	// The door off is the answer before the ruling, unchanged.
+
+	// The door decides the mounts, not this: a build reads the same deployment
+	// with the ruling on and off, so nothing here is a second copy of it.
 	config.RepoSecretsOff = false
-	got = request(t)
-	want = gitVersion +
-		" NPM_TOKEN=projects/proj-1234/secrets/" + repoID + "/versions/latest" +
-		" DEPLOY_TOKEN=projects/proj-1234/secrets/" + projectID + "/versions/latest" +
-		" | _SECRET_ENVS=NPM_TOKEN DEPLOY_TOKEN"
-	if got != want {
-		t.Errorf("with the door off the build reads\n%s\nwant\n%s", got, want)
+	if again := request(t); again != got {
+		t.Errorf("with the door off the build reads\n%s\nwant\n%s", again, got)
 	}
 }
 

@@ -500,36 +500,46 @@ func cloudBuildSpec(rs infra.RepoSpec, cfg *config.Config, name, base, machineTy
 		Image:       gcp.ImageName(rs.RegistryPath, rs.Slug, name),
 		GitSecretID: gitSecretID, GitUser: rs.GitUser, GitHubAppID: rs.GitHubAppID,
 		ServiceAccount: rs.BuildServiceAccountEmail, MachineType: machineType,
-		WorkflowSecrets:    buildSecrets(rs, cfg.Workflows[name].Secrets),
+		WorkflowSecrets:    buildSecrets(rs, name, cfg.Workflows[name].Secrets),
 		Bucket:             bucket,
 		ProjectLayerSHA256: layerSHAOf(cfg),
 	}, nil
 }
 
-// buildSecrets are the workflow secrets a build of this repository may read:
-// one entry per declared secret whose container a job of this repository
-// mounts, and no entry at all for a name no job mounts.
+// buildSecrets are the workflow secrets a build of workflow name may read: one
+// entry per secret declared for it that the workflow's own deployment mounts,
+// and no entry at all for a name it does not.
 //
-// The container is resolved here rather than left to the build request, which
-// used to name the repository's own container of (slug, name) for every
-// declared secret. That is not the container a job mounts whenever Readiness
-// resolved the name to the project's copy, and under D2313 it is not the
-// container a job mounts at all: the repository's own is kept with no version
-// in it (var.repo.secrets, prevent_destroy — the ruling's own text), so a
-// build naming it asks Cloud Build for a version nothing has, which Cloud
-// Build refuses. `fugaro update` would then build the image of a repository
-// the ruling says is brought up, fail every attempt, and take every later
-// stage with it — after the apply has landed.
+// The mounts are the answer, and not the file's list, because D2313 makes the
+// two differ in both directions. A repository-level secret whose own container
+// holds no version has no mount — Readiness drops it, a secret_key_ref on a
+// container with no version being a job Cloud Run refuses to create — and a
+// build naming that container asks Cloud Build for a version no store may ever
+// put there, which Cloud Build refuses: `fugaro update` would build the image
+// of a repository the ruling says is brought up, fail every attempt, and take
+// every later stage with it, after the apply has landed. A repository-level
+// secret whose own container DOES hold a version keeps its mount, and its job
+// reads the value — Readiness's version check comes before the ruling's branch
+// — so a build that dropped it by the name's kind alone, which is what asking
+// workflowSecretMountID does, would build the image without a credential the
+// job is using.
 //
-// workflowSecretMountID is the one answer to which container this repository
-// mounts for a name, and the one the credentials service's record is written
-// from: the same ruling, asked once, so the two cannot name different
-// containers for the same name — a value the service would serve the build
-// reads, or the reverse.
-func buildSecrets(rs infra.RepoSpec, declared []config.Secret) []gcp.BuildSecret {
+// MountSecretID is the container of a mount, resolved by the precedence the
+// plan's own merge takes (modules/repo/workflows.tf: the project's copy first,
+// else the repository's own). The file's (slug, name) would be the
+// repository's own for a name Readiness resolved to the project's copy, which
+// is not the container the job mounts.
+func buildSecrets(rs infra.RepoSpec, name string, declared []config.Secret) []gcp.BuildSecret {
+	mounted := make(map[string]bool, len(rs.Workflows[name].SecretEnv))
+	for _, logical := range rs.Workflows[name].SecretEnv {
+		mounted[logical] = true
+	}
 	out := make([]gcp.BuildSecret, 0, len(declared))
 	for _, s := range declared {
-		if id := workflowSecretMountID(rs, s.Name); id != "" {
+		if !mounted[s.Name] {
+			continue
+		}
+		if id := rs.MountSecretID(s.Name); id != "" {
 			out = append(out, gcp.BuildSecret{Name: s.Name, Env: s.Env, ID: id})
 		}
 	}
