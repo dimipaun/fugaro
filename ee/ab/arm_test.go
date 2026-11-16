@@ -81,11 +81,29 @@ func (f *armFixture) store() *runstore.Store {
 // about.
 func (f *armFixture) seed(rec runstore.Record) {
 	f.t.Helper()
+	f.seedTask(armChampionTask(), rec)
+}
+
+// seedTask writes the champion's own task and record, for the cases where the
+// task the champion ran is not the one the fixture's launch carries: the arm is
+// built from the champion's stored task, so a test that wants another workflow,
+// another review_levels block or another strongest-review request writes it
+// here rather than on the launch.
+func (f *armFixture) seedTask(spec *task.Spec, rec runstore.Record) {
+	f.t.Helper()
 	ctx := context.Background()
-	if err := f.store().WriteTask(ctx, armChampionTask()); err != nil {
+	if err := f.store().WriteTask(ctx, spec); err != nil {
 		f.t.Fatal(err)
 	}
 	if err := f.store().WriteRecord(ctx, &rec); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// record writes the champion's record alone, with no task under its prefix.
+func (f *armFixture) record(rec runstore.Record) {
+	f.t.Helper()
+	if err := f.store().WriteRecord(context.Background(), &rec); err != nil {
 		f.t.Fatal(err)
 	}
 }
@@ -487,34 +505,37 @@ func (f *armFixture) armWith(level task.ABSlot, edit func(run *fcli.PlannedRun))
 // and never a caller's argument (the owner's ruling of 2026-11-16, O12), so a
 // launch whose workflow asks for no arm — no block at all, or a key that names
 // the coder — is refused rather than answered with an arm nobody asked for, and
-// a launch whose task names a workflow the configuration does not define is
-// refused too: there is no key to read the ask off.
+// a champion whose own task names a workflow the configuration does not define
+// is refused too: there is no key to read the ask off. The workflow is the
+// champion's and not the launch's, and the launch's task is read for nothing.
 func TestABReviewerArmAsksThroughTheWorkflowsOwnKey(t *testing.T) {
 	f := newArmFixture(t)
-	f.seed(championRecord(f.store(), task.ABSlotL2))
 	f.putPatch(armDiff)
 	for _, tc := range []struct {
 		name string
 		edit func(run *fcli.PlannedRun)
+		task func(spec *task.Spec)
 		want string
 	}{
 		{"a workflow with no ab block", func(run *fcli.PlannedRun) {
 			run.Config.Workflows[armWorkflow] = config.Workflow{}
-		}, "asks for no A/B reviewer arm"},
+		}, nil, "asks for no A/B reviewer arm"},
 		{"a workflow asking for the coder", func(run *fcli.PlannedRun) {
 			run.Config.Workflows[armWorkflow] = config.Workflow{AB: &config.WorkflowAB{ReviewerArm: "coder"}}
-		}, "not a review level"},
-		{"a task naming no workflow the file defines", func(run *fcli.PlannedRun) {
-			run.Spec.Workflow = "api"
+		}, nil, "not a review level"},
+		{"the champion's task naming no workflow the file defines", func(*fcli.PlannedRun) {}, func(spec *task.Spec) {
+			spec.Workflow = "api"
 		}, "names no workflow this configuration defines"},
-		{"a launch with no task at all", func(run *fcli.PlannedRun) {
-			run.Spec = nil
-		}, "no task"},
 		{"a launch with no configuration", func(run *fcli.PlannedRun) {
 			run.Config = nil
-		}, "no configuration"},
+		}, nil, "no configuration"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			spec := armChampionTask()
+			if tc.task != nil {
+				tc.task(spec)
+			}
+			f.seedTask(spec, championRecord(f.store(), task.ABSlotL2))
 			arm, why, err := f.armWith(task.ABSlotL2, tc.edit)
 			if err == nil || arm != nil || why != "" {
 				t.Fatalf("spec = %v, why = %q, err = %v, want an error and no arm", arm, why, err)
@@ -524,6 +545,41 @@ func TestABReviewerArmAsksThroughTheWorkflowsOwnKey(t *testing.T) {
 			}
 		})
 	}
+
+	// A launch whose task moved on is not the champion's task and asks nothing
+	// of the arm: the champion's own stored one is what the level is read off,
+	// and it is the one the fixture's launch happens to carry beside it. The
+	// launch's workflow is the other's, which the file defines with no ask at
+	// all, and the arm is answered all the same.
+	t.Run("a launch carrying another workflow's task", func(t *testing.T) {
+		f.seedTask(armChampionTask(), championRecord(f.store(), task.ABSlotL2))
+		other := armChampionTask()
+		other.Workflow = "api"
+		arm, why, err := f.armWith(task.ABSlotL2, func(run *fcli.PlannedRun) {
+			run.Spec = other
+			run.Config.Workflows["api"] = config.Workflow{}
+		})
+		if err != nil || why != "" || arm == nil {
+			t.Fatalf("spec = %v, why = %q, err = %v, want the champion's own ask answered", arm, why, err)
+		}
+		if arm.Workflow != armWorkflow {
+			t.Errorf("the arm's workflow is %q, want the champion's %q", arm.Workflow, armWorkflow)
+		}
+	})
+
+	// A champion whose own prefix holds no task is refused: the arm is the task
+	// its champion ran, and there is none to replay.
+	t.Run("a champion that wrote no task", func(t *testing.T) {
+		g := newArmFixture(t)
+		g.record(championRecord(g.store(), task.ABSlotL2))
+		arm, why, err := g.arm(task.ABSlotL2)
+		if err == nil || arm != nil || why != "" {
+			t.Fatalf("spec = %v, why = %q, err = %v, want an error and no arm", arm, why, err)
+		}
+		if !strings.Contains(err.Error(), "wrote no task") || !strings.Contains(err.Error(), armChampion) {
+			t.Errorf("the refusal %q does not name the champion whose task is missing", err)
+		}
+	})
 }
 
 // TestABReviewerArmRefusesARunThatIsNoPairsChampion: the arm replays the
@@ -674,19 +730,20 @@ func TestABReviewerArmJudgesTheSlotItVaries(t *testing.T) {
 	})
 }
 
-// TestABReviewerArmJudgesTheLevelAStrongestReviewRequestRaises: a launch that
-// asks for the strongest review — the task's own security field, or the
-// project layer's always_level_3 — runs review level 3 whatever the layers
-// around it say (SC10/D1517; internal/runner's securityForcedLevels raises the
+// TestABReviewerArmJudgesTheLevelAStrongestReviewRequestRaises: a champion's run
+// that asked for the strongest review — its task's own security field, or the
+// project layer's always_level_3 — ran review level 3 whatever the layers
+// around it said (SC10/D1517; internal/runner's securityForcedLevels raises the
 // level and clears its off-switch, and the launch's own gate resolves the same
 // way), so an arm at l3 is judged against the model level 3 then runs, and a
 // file that writes `l3: none` does not turn the level off under it. The
 // champion's pair varies l3, which outside critical is the level a mode's own
 // row leaves out: a resolution made without the request answers "the l3 level
-// does not run" for a run that runs it.
+// does not run" for a run that ran it. The request is the champion's own and not
+// the launch's: the arm replays the champion's run, so the task that carries it
+// is the stored one.
 func TestABReviewerArmJudgesTheLevelAStrongestReviewRequestRaises(t *testing.T) {
 	f := newArmFixture(t)
-	f.seed(championRecord(f.store(), task.ABSlotL3))
 	f.putPatch(armDiff)
 
 	// raise is a launch whose reviewer model is model and whose file turns l3
@@ -696,20 +753,29 @@ func TestABReviewerArmJudgesTheLevelAStrongestReviewRequestRaises(t *testing.T) 
 		return func(run *fcli.PlannedRun) {
 			run.Config.Agent.Model = model
 			run.Config.Agent.Levels = config.ReviewLevels{L3: &config.LevelSetting{Model: config.NoneModel}}
-			ask(run)
+			if ask != nil {
+				ask(run)
+			}
 		}
 	}
+	noop := func(*fcli.PlannedRun) {}
 
 	for _, tc := range []struct {
 		name string
+		task func(spec *task.Spec)
 		ask  func(run *fcli.PlannedRun)
 	}{
-		{"the task's own security field", func(run *fcli.PlannedRun) { run.Spec.Security = true }},
-		{"the layer's always_level_3", func(run *fcli.PlannedRun) {
+		{"the champion's own security field", func(spec *task.Spec) { spec.Security = true }, noop},
+		{"the layer's always_level_3", nil, func(run *fcli.PlannedRun) {
 			run.Config.Layer.Security = &config.LayerSecurity{AlwaysLevel3: true}
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			spec := armChampionTask()
+			if tc.task != nil {
+				tc.task(spec)
+			}
+			f.seedTask(spec, championRecord(f.store(), task.ABSlotL3))
 			arm, why, err := f.armWith(task.ABSlotL3, raise(armLevelModel, tc.ask))
 			if err != nil || why != "" || arm == nil {
 				t.Fatalf("spec = %v, why = %q, err = %v, want the arm", arm, why, err)
@@ -725,11 +791,101 @@ func TestABReviewerArmJudgesTheLevelAStrongestReviewRequestRaises(t *testing.T) 
 		// challenger may not be: judging it against anything else — the
 		// coder's, or the model the level would have run with the level off —
 		// would admit a pair whose two arms ran the same review.
-		arm, why, err := f.armWith(task.ABSlotL3, raise(abLaunchChallenger, func(run *fcli.PlannedRun) {
-			run.Spec.Security = true
-		}))
+		spec := armChampionTask()
+		spec.Security = true
+		f.seedTask(spec, championRecord(f.store(), task.ABSlotL3))
+		arm, why, err := f.armWith(task.ABSlotL3, raise(abLaunchChallenger, noop))
 		if err != nil || why != ReasonChampionModel || arm != nil {
 			t.Fatalf("spec = %v, why = %q, err = %v, want %q and no task", arm, why, err, ReasonChampionModel)
+		}
+	})
+}
+
+// TestABReviewerArmJudgesTheChampionsOwnTask: everything the arm is decided by
+// is the task the champion ran, and the launch's own task is read for nothing.
+// A launch whose task disagrees with the champion's stored one is neither what
+// the ask is read from nor what the levels resolve from, so the three fields a
+// launch could otherwise smuggle in are refused or ignored where they would
+// make the arm something other than the champion's run replayed: a stored
+// review_levels block naming the challenger as the level's own model is the
+// champion-model pair O12 refuses (both arms would run the same model, and the
+// launch's own block — which names another model — is not the one that
+// decides), a strongest-review request the launch carries raises nothing in the
+// champion's run, and a task under the champion's prefix that names another run
+// is refused outright.
+func TestABReviewerArmJudgesTheChampionsOwnTask(t *testing.T) {
+	f := newArmFixture(t)
+	f.putPatch(armDiff)
+	// launchLevels is the launch's own task naming model as the level's own: a
+	// launch whose block agrees with the champion's, and one whose block names
+	// the challenger where the champion's names the level's model, are the same
+	// question — the task that decides is the stored one.
+	launchLevels := func(model string) func(run *fcli.PlannedRun) {
+		return func(run *fcli.PlannedRun) {
+			run.Spec.ReviewLevels = &config.ReviewLevels{L2: &config.LevelSetting{Model: model}}
+		}
+	}
+	championLevels := func(model string) *task.Spec {
+		spec := armChampionTask()
+		spec.ReviewLevels = &config.ReviewLevels{L2: &config.LevelSetting{Model: model}}
+		return spec
+	}
+
+	// The launch's task names the level's model and the champion's own task
+	// names the challenger: the challenger is the model the level the arm
+	// replays runs, so the pair O12 refuses is refused here too.
+	t.Run("the champion's review_levels name the challenger", func(t *testing.T) {
+		f.seedTask(championLevels(abLaunchChallenger), championRecord(f.store(), task.ABSlotL2))
+		arm, why, err := f.armWith(task.ABSlotL2, launchLevels(armLevelModel))
+		if err != nil || why != ReasonChampionModel || arm != nil {
+			t.Fatalf("spec = %v, why = %q, err = %v, want %q and no task: the level the champion's own task runs is the challenger's model", arm, why, err, ReasonChampionModel)
+		}
+	})
+
+	// The same two tasks the other way round: the launch's task names the
+	// challenger and the champion's names the level's model, and the arm is
+	// admitted, since the task the arm replays is the champion's.
+	t.Run("the launch's review_levels name the challenger", func(t *testing.T) {
+		f.seedTask(championLevels(armLevelModel), championRecord(f.store(), task.ABSlotL2))
+		arm, why, err := f.armWith(task.ABSlotL2, launchLevels(abLaunchChallenger))
+		if err != nil || why != "" || arm == nil {
+			t.Fatalf("spec = %v, why = %q, err = %v, want the arm", arm, why, err)
+		}
+		if arm.AB.Challenger != abLaunchChallenger {
+			t.Errorf("the arm's challenger is %q, want %q", arm.AB.Challenger, abLaunchChallenger)
+		}
+	})
+
+	// The launch's task asks for the strongest review and the champion's run
+	// did not: the request is the champion's own (SC10/D1517), so level 3 stays
+	// off under the file's `l3: none` and an arm at it would vary a review the
+	// champion's run never made.
+	t.Run("the launch asks for the strongest review", func(t *testing.T) {
+		f.seedTask(armChampionTask(), championRecord(f.store(), task.ABSlotL3))
+		arm, why, err := f.armWith(task.ABSlotL3, func(run *fcli.PlannedRun) {
+			run.Spec.Security = true
+			run.Config.Agent.Levels = config.ReviewLevels{L3: &config.LevelSetting{Model: config.NoneModel}}
+		})
+		if err == nil || arm != nil || why != "" {
+			t.Fatalf("spec = %v, why = %q, err = %v, want an error and no arm", arm, why, err)
+		}
+		if !strings.Contains(err.Error(), string(task.ABSlotL3)+" level does not run") {
+			t.Errorf("the refusal %q does not name the level that does not run for the champion", err)
+		}
+	})
+
+	t.Run("the champion's prefix holds another run's task", func(t *testing.T) {
+		spec := armChampionTask()
+		spec.RunID = "20261109-090000-bbbb"
+		f.seedTask(spec, championRecord(f.store(), task.ABSlotL2))
+		arm, why, err := f.armWith(task.ABSlotL2, launchLevels(armLevelModel))
+		if err == nil || arm != nil || why != "" {
+			t.Fatalf("spec = %v, why = %q, err = %v, want an error and no arm", arm, why, err)
+		}
+		for _, want := range []string{armChampion, spec.RunID} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal %q does not name %s", err, want)
+			}
 		}
 	})
 }
