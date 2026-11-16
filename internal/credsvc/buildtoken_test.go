@@ -27,6 +27,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"maps"
 	"net/http"
@@ -1211,6 +1212,82 @@ func TestBuildProxyServesOnlyThePairing(t *testing.T) {
 		}
 		if n := up.count(); n != 0 {
 			t.Errorf("the upstream saw %d calls, and a call of a shape neither half has reaches no forge", n)
+		}
+	})
+}
+
+// TestBuildProxyKillSwitch: the operator's stop switches stop the build half of
+// this route exactly as they stop the run's half and the build route itself
+// (F34: the switch covers every route, and a build's git is forwarded with the
+// installation's own Bitbucket token).
+//
+// The switch is turned on here AFTER a real grant, which is the state the gap
+// was about and the one the switch matters most in: the build holds a live
+// pairing, the credential this route would forward with is in the bundle, and
+// the operator has stopped the service since. The refusal is taken before the
+// pairing is read and before the call is classified, so the answer carries no
+// credential, no repository and no purpose of a call's own.
+func TestBuildProxyKillSwitch(t *testing.T) {
+	fetch := proxyPath(proxyGitPath("info/refs") + "?service=git-upload-pack")
+
+	t.Run("the switches are on", func(t *testing.T) {
+		s, up, _ := buildProxySvc(t)
+		buildGrant(t, s)
+		s.kills.global = true
+		// The pairing the API call above recorded is live, so nothing but the
+		// switch stands between this build and the forge.
+		if pair, found, err := s.pairs.BuildPair(context.Background(), testBuildSA, buildBuildID); err != nil || !found || !pair.Live(s.now) {
+			t.Fatalf("the fixture's build holds no live pairing to be served with: found=%v pair=%+v err=%v", found, pair, err)
+		}
+		reads := s.kills.readCount()
+
+		resp, body := s.buildProxyCall(t, http.MethodGet, fetch, nil)
+		proxyRefused(t, resp, body, http.StatusServiceUnavailable, ErrorStateUnavailable, "kill switch")
+		if n := up.count(); n != 0 {
+			t.Errorf("a stopped service made %d upstream calls, and a build's git reaches no forge while the switch is on: %+v", n, up.calls())
+		}
+		if got := s.kills.readCount() - reads; got != 1 {
+			t.Errorf("the build's call read the stop switches %d times, want the one read every route of this service makes", got)
+		}
+
+		line := s.onlyAuditLine(t)
+		for field, want := range map[string]string{
+			"purpose": PurposeBuildProxy, "status": ErrorStateUnavailable, "caller": testBuildSA,
+			// Taken above the classification and above the pairing: no
+			// credential was chosen and no repository was named for it.
+			"credential": "", "repository": "", "run": "", "job": "", "tier": "",
+		} {
+			if got := auditField(line, field); got != want {
+				t.Errorf("the line's %s is %q, want %q: %v", field, got, want, line)
+			}
+		}
+		if logged := s.logs.String(); !strings.Contains(logged, "class="+refusalBuildStopped) {
+			t.Errorf("the operator's line does not name the class %q: %s", refusalBuildStopped, logged)
+		}
+	})
+
+	// And a switch that cannot be read is not an off switch (budget's own rule):
+	// the build is served nothing, and the incident is the operator's — which is
+	// what the class beside the cause on that line tells them apart for.
+	t.Run("the switches cannot be read", func(t *testing.T) {
+		s, up, _ := buildProxySvc(t)
+		buildGrant(t, s)
+		s.kills.err = errors.New("the database could not be reached")
+
+		resp, body := s.buildProxyCall(t, http.MethodGet, fetch, nil)
+		proxyRefused(t, resp, body, http.StatusServiceUnavailable, ErrorStateUnavailable, "could not be read")
+		if n := up.count(); n != 0 {
+			t.Errorf("a call whose stop switches could not be read made %d upstream calls, and an unreadable switch is not an off switch", n)
+		}
+		line := s.onlyAuditLine(t)
+		if got := auditField(line, "purpose"); got != PurposeBuildProxy {
+			t.Errorf("the line's purpose is %q, want %q", got, PurposeBuildProxy)
+		}
+		if got := auditField(line, "status"); got != ErrorStateUnavailable {
+			t.Errorf("the line's status is %q, want %q", got, ErrorStateUnavailable)
+		}
+		if got := auditField(line, "repository"); got != "" {
+			t.Errorf("the line's repository is %q, and a call refused on the switch named none", got)
 		}
 	})
 }

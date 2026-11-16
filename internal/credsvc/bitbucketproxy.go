@@ -208,6 +208,14 @@ const (
 	// be read: the build has nothing this route may serve, and the cause names
 	// which of the three it was.
 	refusalBuildPairing = "build_pairing"
+	// refusalBuildStopped is a call of this half taken while the operator's stop
+	// switches are on, or while they could not be read — which is one refusal to
+	// the caller and two incidents to the operator, exactly as it is on the run's
+	// half (the two are told apart by the cause on the service's own line). It is
+	// a class of its own and not one of the pairing's three: a stopped service
+	// serves nothing at all, whatever a build's pairing says, so an operator who
+	// greps this class is reading the operator's own act and not a build's.
+	refusalBuildStopped = "stopped"
 )
 
 // pairingCovers reports whether a build's pairing reaches the repository a
@@ -520,6 +528,31 @@ func (s *Server) buildProxy(ctx context.Context, w http.ResponseWriter, r *http.
 	if !buildIDRE.MatchString(id.BuildID) {
 		s.refuseBuildProxy(ctx, w, id, refusalBuildID, StatusRequestRefused, ErrorRequestRefused,
 			requestRefused+"the call names no build id of the shape a build has, and the repositories a build may reach are recorded under the build id that asked for them", nil)
+		return
+	}
+	// The operator's stop switches, read here as every other route of this
+	// service reads them and at the build route's own point: after the call's
+	// shape is settled and before anything this service holds is read (there the
+	// policy, here the pairing). A build's git is traffic this service forwards
+	// with the installation's own Bitbucket token, so a stopped service forwards
+	// none of it — not even for a build holding a live pairing, which is the
+	// state a switch turned on after a grant leaves it in.
+	//
+	// The scope is the global one, which is the build route's: a build names no
+	// repository of its own, and the repository this call is about is the
+	// pairing's answer, read after this.
+	on, which, err := s.cfg.Kills.Stop(ctx, "")
+	if err != nil {
+		// An unreadable switch is not an off switch (budget's own rule), so the
+		// call is refused rather than served. The cause reaches the service's own
+		// log line and nothing else.
+		s.refuseBuildProxy(ctx, w, id, refusalBuildStopped, StatusUnavailable, ErrorStateUnavailable,
+			"the operator's stop switches could not be read", err)
+		return
+	}
+	if on {
+		s.refuseBuildProxy(ctx, w, id, refusalBuildStopped, StatusUnavailable, ErrorStateUnavailable,
+			"the credentials service is stopped by the "+which+" kill switch", nil)
 		return
 	}
 	if s.cfg.BuildPairs == nil {
