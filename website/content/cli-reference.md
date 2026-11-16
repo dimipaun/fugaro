@@ -4556,7 +4556,7 @@ Subcommands:
 - `fugaro models ls` -- Show this project's routes, its models and what each repository runs
 - `fugaro models rm` -- Stop letting this project run a model: drop its claim, price and allow-list entry
 - `fugaro models search` -- Find a model in the built-in price catalog and the Claude table
-- `fugaro models use` -- Point one repository's own config at a model, in its working tree
+- `fugaro models use` -- Point a role or a model key at a model, in a repository or in the project layer
 
 ## `fugaro models add`
 
@@ -4697,30 +4697,42 @@ This command has no subcommands.
 
 ## `fugaro models use`
 
-Point one repository's own config at a model, in its working tree
+Point a role or a model key at a model, in a repository or in the project layer
 
-Prepare the change to a repository's own fugaro.yaml that makes one role run
-a model, in the checkout's working tree for the owner to review and commit.
+Write the key that makes a role, a level, a recipe or the project's own model
+run what is named, and nothing else in the file: every comment, every other
+byte and the key order are kept.
 
-The switch is judged the way a launch judges it: a route of the project config
-must claim the model and its allow_data_to must name the repository, the model
-must be priced, budget.allowed_models must admit it, and the repository's own
+A role name is the shorthand for agent.models.<role> — coder, reviewer,
+background, vision and diagnose — and a key may be named in full
+(agent.model, agent.recipe, agent.levels.l2.model, agent.levels.l2.effort).
+--layer repo, the default, writes the repository's own fugaro.yaml in the
+checkout's working tree for the owner to review and commit; --layer project
+writes this machine's project layer file, where the key is the
+layer.defaults.agent.<same> one and applies to every repository of the
+project. layer.claude_models, the Claude models a project's routes may
+serve, is written as provider=anthropic/<id> at --layer project alone.
+
+A switch is judged the way a launch judges it: a route of the project config
+must claim the model and its allow_data_to must name the repository (every
+repository the project onboards, for a project-layer write), the model must
+be priced, budget.allowed_models must admit it, and the repository's own
 agent.auth and budget must support a provider model. A failure is a refusal
 with nothing written, and the message names the `fugaro models add` that would
 fix a missing claim or price.
 
-Only agent.models.<role> changes: every comment and every other byte of the
-file is kept. The command never commits, pushes or opens a pull request — the
+The command never commits, pushes or opens a pull request — a repository's
 change reaches runs when the owner's own branch is merged to the base branch,
 which is what every run reads.
 
-Usage: `fugaro models use <repo> <coder|reviewer|background|vision> <id>`
+Usage: `fugaro models use [<repo>] <role|key> <id>`
 
 Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for use |
+| `--layer` | string | "" | no | where the write lands: repo (a repository's own fugaro.yaml, the default), project (this machine's project layer file) or local |
 
 Subcommands:
 
