@@ -395,6 +395,40 @@ type IntakeSpec struct {
 	URL string `json:"url,omitempty"`
 }
 
+// VoiceServiceSpec is the installation root's var.voice_service (P5.3.3): the
+// voice hop's own account and Cloud Run service, and the image it runs.
+//
+// One release, one pin, three services: the hop is a subcommand of the
+// released binary (`voice serve`, internal/cli), so its image is the same
+// digest-pinned reference the credentials service's block and the intake's
+// carry and no resolve of its own — the module's own container sets the args
+// that pick the subcommand and no command of its own, which is how the one
+// image serves all three.
+//
+// There is deliberately no URL member, and that is the one real difference
+// from both of them: the hop's callers are phones, whose ID tokens are minted
+// for the installation's Firebase project and not for the service's own
+// address, so nothing reads a URL back from the module and no second apply
+// exists for it. What the process is CONFIGURED with — the Firebase project it
+// verifies against and the database whose device nodes and policy it reads —
+// is not here either: the module reads credentials_service's own two members
+// (voice.tf), because the same run writes both blocks from one config and a
+// second copy of one fact could be pulled apart by a hand edit.
+//
+// The block is written by `fugaro update`'s own installation stage
+// (internal/cli's deployCredentialsService, carriedVoiceService and
+// moveCredentialsImage), never composed from the local config the way
+// CredentialsServiceSpec is: the hop holds no bundle and no database
+// of its own — its account holds one role with one permission — so the
+// installation facts the credentials service refuses over are not its, and
+// every run of init rewrites the root's tfvars from a spec that carries this
+// key none, which is why prepare carries it forward (CarriedVoiceService).
+type VoiceServiceSpec struct {
+	AccountID string `json:"account_id"`
+	Service   string `json:"service"`
+	Image     string `json:"image"`
+}
+
 // CredentialsJob is one job of the installation as the credentials service
 // names it: the git provider, the repository and the workflow, where
 // workflow is the JOB's own name — a repository that runs one workflow under
@@ -473,6 +507,25 @@ const (
 	// creates for it.
 	IntakeAccountID   = "fugaro-intake"
 	IntakeServiceName = "fugaro-intake"
+	// VoiceAccountID and VoiceServiceName are the voice hop's own two names
+	// (P5.3.3): the account that verifies a phone's ID token and reads the one
+	// database, and the Cloud Run service that runs it. The service's name is
+	// what the hop's hostname is built from, and a phone paired against that
+	// address reaches the same service across a re-apply, so it is one literal
+	// and not a per-installation choice. internal/infra/tf's VoiceAccountID is
+	// the same literal on the cover's side, which is what lets the cover hold
+	// the account the plan creates for it.
+	//
+	// Nothing in Go reads an address back for it: the one service of the three
+	// whose callers mint their ID tokens for the Firebase project rather than
+	// for the service's own URL (VoiceServiceSpec), so the hop is the one that
+	// carries no url member.
+	//
+	// fugaro- is not reserved against these: that prefix is reserved by the
+	// *job* listings (HistoryJob), and a Cloud Run service is not one of them
+	// (CredentialsServiceName's own note).
+	VoiceAccountID   = "fugaro-voice"
+	VoiceServiceName = "fugaro-voice"
 )
 
 // credsImageRE is the image form the module's own validation admits
@@ -1289,6 +1342,105 @@ func CarriedIntake(vars, prev []byte) ([]byte, error) {
 		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
 	}
 	doc["intake"] = block
+	return sortedJSON(doc)
+}
+
+// Voice is the voice hop's block for an installation that has none: the
+// module's own account and service names, running image.
+//
+// The image is the release's, and it is the one the credentials service's
+// block and the intake's carry: see VoiceServiceSpec — one pin, three
+// services, and the digest form is the module's own rule (var.voice_service's
+// validation), so a caller that hands in a tag writes a document the plan
+// refuses.
+func Voice(image string) VoiceServiceSpec {
+	return VoiceServiceSpec{AccountID: VoiceAccountID, Service: VoiceServiceName, Image: image}
+}
+
+// SetVoiceService returns the installation root's tfvars vars with
+// voice_service set to spec, and every other entry byte-for-byte what it was.
+// It is SetIntake's read-modify-write of the ONE key and for the same reason:
+// the document on disk carries the run's discovery — the live project secrets
+// it found, its legacy registry, its imports — and rebuilding it from a spec
+// would plan that discovery away.
+func SetVoiceService(vars []byte, spec VoiceServiceSpec) ([]byte, error) {
+	raw, err := json.Marshal(spec)
+	if err != nil {
+		return nil, err
+	}
+	return setVarsKey(vars, "voice_service", raw)
+}
+
+// VoiceServiceOf returns the block the installation root's tfvars carry for
+// the voice hop, and false when they carry none (the variable is off), an
+// empty one, or one whose service or image is missing — a block that names no
+// service is not one a revision could be created from.
+//
+// It is what tells an ordinary run whether this installation has the hop at
+// all, which is a question the run's own config cannot answer: the block is
+// the record of what the earlier apply created, exactly as IntakeOf's answer
+// is for the intake.
+func VoiceServiceOf(vars []byte) (VoiceServiceSpec, bool, error) {
+	if vars == nil {
+		return VoiceServiceSpec{}, false, nil
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return VoiceServiceSpec{}, false, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	block, _ := doc["voice_service"].(map[string]any)
+	if block == nil {
+		return VoiceServiceSpec{}, false, nil
+	}
+	spec := VoiceServiceSpec{}
+	spec.AccountID, _ = block["account_id"].(string)
+	spec.Service, _ = block["service"].(string)
+	spec.Image, _ = block["image"].(string)
+	if spec.Service == "" || spec.Image == "" {
+		return VoiceServiceSpec{}, false, nil
+	}
+	return spec, true, nil
+}
+
+// CarriedVoiceService returns vars with the voice_service entry the document
+// prev carried, when vars carry none of their own — CarriedIntake's carry, on
+// the third variable this side writes and the spec never holds.
+//
+// The block is taken exactly as it is found, and here that is the whole of
+// it: unlike the intake's it carries no URL, so there is nothing in it a
+// rebuild from this side would know better. Carrying it is still what keeps
+// the hop alive across an ordinary run, and the consequence of not doing it is
+// sharper than the other two keys' — the block plans the hop's service, its
+// account, its one role binding and its invoker grants away, and with them the
+// only process that enforces the project's published voice policy, so a run
+// that dropped it would leave every paired phone refused until the next
+// release happened to put it back.
+//
+// prev is that document — infra.Workdir.PrevVars, or the tfvars the workdir
+// holds now, which is where the installation stage's own writes a few steps
+// before prepare rewrites the file. An entry is carried forward present or
+// absent: an installation that has the hop keeps it across an ordinary run's
+// rewrite, and one that never had it is unchanged rather than given one by a
+// run that resolved no image for it.
+func CarriedVoiceService(vars, prev []byte) ([]byte, error) {
+	if prev == nil {
+		return vars, nil // no workdir held one: nothing to carry
+	}
+	previous, err := varsDoc(prev)
+	if err != nil {
+		// A tfvars that cannot be read is not a reason to write a plan that
+		// drops the hop: fail rather than carry nothing forward.
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	block, ok := previous["voice_service"]
+	if !ok || block == nil {
+		return vars, nil
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	doc["voice_service"] = block
 	return sortedJSON(doc)
 }
 
