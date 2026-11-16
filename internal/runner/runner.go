@@ -4470,6 +4470,20 @@ type stageOpts struct {
 	// under review in reach is what the empty tool list and the empty
 	// setting sources are there to prevent (F25).
 	Dir string
+	// Ordinal is which of the run's triage rounds this stage's call serves: the
+	// triage stage is the one today, and it reaches the record on each of the
+	// stage's attempt rows so that the report pairs a row with its round's
+	// failure by a key and not by position (runstore.StageTiming.Ordinal,
+	// D1846). It is the row's key where Round and Level are not: a level numbers
+	// its own rounds from 1 and a bounce starts that numbering again (D727,
+	// D1847), so the pair repeats where this does not. 0 for every stage that is
+	// not tied to a round.
+	Ordinal int
+	// Round is the review round this stage's call serves, and Level is the
+	// level that round belongs to; both are set wherever Ordinal is. They say
+	// which review round a row is for a reader, and not which triage round.
+	Round int
+	Level policy.Level
 }
 
 // transientRetries is the run's own bound on the retry a closed model stream
@@ -4992,7 +5006,11 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	// and repeats, for every auth mode (task-governance T1.3, T1.4).
 	res.SubAgents = relay.SubAgents
 	res.Repeats = relay.Repeats
-	r.rec.Stages = append(r.rec.Stages, r.stageTiming(name, started, res.CostUSD, res.SubAgents, res.Repeats))
+	st := r.stageTiming(name, started, res.CostUSD, res.SubAgents, res.Repeats)
+	st.Ordinal = opts.Ordinal
+	st.Round = opts.Round
+	st.Level = opts.Level
+	r.rec.Stages = append(r.rec.Stages, st)
 	var errText any // the agent's error may carry a key an upstream echoed
 	if err != nil {
 		errText = r.redact(err.Error())
