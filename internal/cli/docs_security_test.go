@@ -517,7 +517,15 @@ func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
 		// the MOUNT: a switched `api-key` or `oauth` repository's job keeps its
 		// credential and its accessor until the flip (B2.7, D2072).
 		"the service is wired as of 0.10.1",
-		"as of this release every `agent.auth` reaches it",
+		// The auths the switch admits, named rather than "every `agent.auth`":
+		// `vertex` — the default — is the one it never admits, and the launcher
+		// puts no address on such a repository's job at all (the switch,
+		// infra.CredentialsServiceServes; internal/cli's credentialsServiceLaunchEnv),
+		// so "every `agent.auth` reaches it" told a `vertex` repository's owner
+		// that a credential the service never sees was brokered.
+		"every `agent.auth` the switch admits — `cascade`, `api-key` and `oauth` — reaches it",
+		"`vertex` is the one it does not admit at all",
+		"its calls go to Vertex AI on the job's own service account",
 		"what has not landed is the mount drop",
 		"FUGARO_CREDENTIALS_SERVICE_URL",
 		"a switched `api-key` or `oauth` repository's job still declares its model credential and its account still holds `secretAccessor` on it",
