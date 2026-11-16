@@ -220,6 +220,17 @@ const (
 // the block into the shared file would be admitting its own payload to every
 // teammate's runs (D986).
 //
+// R1 of docs/config-ownership/ is the last mover, by eight rows and by
+// thirteen: the registry gains the repository's `ab.rate` opt-out, its
+// `workflows.*.needs` key and the policy node's own cascade block (six rows),
+// and the thirteen scalars and flags D2603 hands the generic path take the owner
+// `settings set` in place of a family that does not write them (the six
+// orchestrator ceilings, the two nudge thresholds, `triage`, `verifier_accounts`,
+// the two `layer.jobs.*.paused` switches and `planning.decoupling`). The cascade
+// rows are the eight that move the registry and not the allowlist: their owner
+// is the `accounts` family, which settingsFamilyCommands maps, so the generic
+// path refuses them by name.
+//
 // N1 of docs/config-ownership/ is the last mover, by nine rows and by none: the
 // local config gains the carriers of the two node-only blocks — the cascade's
 // six leaves under `credential_cascade` (F23: the node's `credentials` member
@@ -230,9 +241,16 @@ const (
 // (D2613), so the generic path carries none of them: the fallback is a word
 // whose second answer spends the project's money, and a removal is a name held
 // to the rule of the block it names.
+//
+// SA4.1 of docs/spend-accuracy/ is the last mover, by six rows and by none: a
+// model price gains the three cache prices in dollars per million and the three
+// keys that name the multiplier beside the old cache_read, cache_write_5m and
+// cache_write_1h (D2646, R4). All six name the `models` family, which is where
+// `fugaro models price set` writes an entry's prices (D2613), so the generic
+// path carries none of them.
 const (
-	cfmRegistryRows   = 458
-	cfmAllowlistNamed = 105
+	cfmRegistryRows   = 478
+	cfmAllowlistNamed = 118
 )
 
 func TestDocsConfigManagementIsWritten(t *testing.T) {

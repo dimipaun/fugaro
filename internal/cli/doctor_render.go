@@ -306,6 +306,11 @@ var doctorActionableInfoIDs = map[string]bool{
 	// filing one is a command the reader runs and the pointer line alone
 	// would hide it (T-IS13 of docs/troubleshoot-issue).
 	"issues-pending": true,
+	// The repositories still on their per-repository jobs, each named with the
+	// shared project job that replaces it (M3, R3): the jobs are being retired
+	// and one `fugaro update` moves them, so the reader has to see the line —
+	// but nothing is broken, which is why it is info and never a failure.
+	"repo-bound-jobs": true,
 }
 
 // doctorClassOf is the classification, and it is the only place a class is

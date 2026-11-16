@@ -74,8 +74,11 @@ serves them.
 
 An OpenRouter or Vertex member is served by a run's own gateway; a Claude OAuth
 or Anthropic-key member by the credentials service, which selects by tier
-(OAuth before key: D154). A pool whose members need both is one that can only
-fail over where the credential is chosen again, at a stage boundary.
+(OAuth before key: D154). A pool is served on one of those halves and may not
+list members of both: a gateway holds one upstream per stage and the service
+selects by tier, so neither can walk an order that spans them, and a pool that
+names both is refused when it is declared. Name two pools, one per half, and let
+each craft's access name the one its stages need.
 
 The read is offline: it reads the selected project's config file and reaches no
 bucket, no database and no host.`,
@@ -132,10 +135,12 @@ func writeAccountsPoolLs(w interface {
 }
 
 // accountsPoolServingText is the path a pool's members are served by, as a
-// person reads it: the two paths by name, and the boundary a pool of both kinds
-// fails over at (D1634). A pool with no members at all — a document the loader
-// refuses, which this read still renders rather than hiding — says nothing is
-// served.
+// person reads it. A pool this release writes is served on one path, because a
+// pool that lists members of both is refused where it is written (D1668); a
+// config an earlier release wrote may still hold one that names both, and both
+// names are joined for it, with the boundary its failover is left at, rather
+// than hidden from the person reading the file. A pool with no members at all
+// says nothing is served.
 func accountsPoolServingText(paths []string) string {
 	var out []string
 	for _, p := range paths {
@@ -173,6 +178,13 @@ starts from the first. A credential the config does not define, a repeated
 member, a name this command may not use and a strategy that is not failover or
 round-robin are all refused before the file is touched.
 
+A pool is served on one half of a run — the credentials service for a Claude
+OAuth or Anthropic-key member, a run's own gateway for an OpenRouter route or
+the built-in vertex — and neither half can walk an order that spans them, so a
+list naming both halves is refused too: name two pools, one per half, and let
+each craft's access name the one its stages need. A pool a config already holds
+that names both is left as it is and declared beside, not rewritten here.
+
 --strategy failover (the default) or round-robin. A pool that already exists
 keeps the strategy it has when the flag is left out, and this command replaces
 its members with the list on the command line: it is the whole list every time,
@@ -207,7 +219,19 @@ func runAccountsPoolAdd(cmd *cobra.Command, name string, members []string, o acc
 	// with a pool are one rule, and its sentences are the ones the loader
 	// prints for the same block, so the two cannot part company.
 	pool := config.Pool{Name: name, Strategy: o.strategy, Members: members}
-	if ps := config.ValidatePools(accountsPoolNext(lc, pool), lc.Credentials); len(ps) > 0 {
+	pools := accountsPoolNext(lc, pool)
+	if ps := config.ValidatePools(pools, lc.Credentials); len(ps) > 0 {
+		return userErr("%s", ps[0].Message)
+	}
+	// And the rule no reader of a pool holds, because a pool an earlier release
+	// wrote may already break it: this command is the one door a NEW member list
+	// comes through, so it is the door that refuses to write a crossing
+	// (config.ValidatePoolPaths, D1668). It judges the pool being written and not
+	// the block it lands in: a pool 0.25.0 already wrote stays exactly as it is —
+	// the split that converges it is MC21's — and a refusal over the whole block
+	// would leave an installation holding one unable to declare the two pools the
+	// sentence tells it to.
+	if ps := config.ValidatePoolPaths([]config.Pool{pool}, lc.Credentials); len(ps) > 0 {
 		return userErr("%s", ps[0].Message)
 	}
 	command := accountsPoolAddCommand(name, members, o.strategy)
@@ -282,10 +306,10 @@ func newAccountsPoolRmCmd() *cobra.Command {
 access names it is cleared with it rather than left pointing at nothing.
 
 It removes the pool from the installation's config only. A repository that
-selected the pool keeps its own file untouched, and this release's fugaro update
-leaves the pools the policy node already carries as they are: it never publishes
-this config's pools, which is MC4's job, so the removal withdraws nothing from
-the node.
+selected the pool keeps its own file untouched, and the published policy node
+keeps what it holds: fugaro update publishes the pools this file states — a pool
+with no owner is named and skipped — and never deletes a definition the file no
+longer states, so removing a pool here withdraws nothing from the node.
 
 Run it at your own terminal: a pool decides where a project's calls may be
 spent, so a coding agent's session is refused.`,

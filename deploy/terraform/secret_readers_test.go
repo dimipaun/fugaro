@@ -143,9 +143,20 @@ var secretReaderExceptions = []struct {
 	// version counts, and no way to a value, because the role carries the two
 	// list permissions and not secretmanager.versions.access.
 	{
-		id:   "E27",
+		id:   "E28",
 		keys: []string{"deploy/terraform/gcp/modules/installation/orchestrator.tf google_project_iam_member.orchestrator_launcher"},
 	},
+	// The enrolment view (repos-management RE0, `internal/cli/repos_view.go`):
+	// the fourth member of the group's reads that answers "what is this
+	// repository made of". It reads the same four things doctor's rotation
+	// check reads and one fewer than E23 — the containers carrying a
+	// repository's `fugaro_repo` label, each one's name and labels, whether it
+	// holds an enabled version, and that version's creation time, which is the
+	// rotation age D2415 lets a row print — and no value on any path: a
+	// listing of metadata and a listing of versions, never `versions.access`.
+	// The guard keys on the import, so it is a row of this table for the same
+	// reason E22 is.
+	{id: "E27", keys: []string{"internal/cli/repos_view.go"}},
 }
 
 // A key under this prefix names a rule the scan enforces rather than a hit it

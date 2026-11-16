@@ -179,6 +179,21 @@ type JSONRun struct {
 	WaitingUntil string `json:"waiting_until,omitempty"`
 }
 
+// JSONDrift is one model whose reported cost left the price table's band over
+// the window this document's counters cover -- today and yesterday, UTC (R6;
+// D2649, D2650, F30): the reported cost against the band's two ends, both of
+// them over the calls that carried a report and neither carrying the route
+// fee. Above means the report is above `table_hi_usd`, below that it is below
+// `table_lo_usd`, and `factor` is the report over the end it left.
+type JSONDrift struct {
+	Model       string  `json:"model"`
+	ReportedUSD float64 `json:"reported_usd"`
+	TableLoUSD  float64 `json:"table_lo_usd"`
+	TableHiUSD  float64 `json:"table_hi_usd"`
+	Factor      float64 `json:"factor"`
+	Direction   string  `json:"direction"` // above or below
+}
+
 // JSONFinished is a finished run (design generic-tool §10.1 and §10.3): a
 // result.json already exists, so it is read from the runs bucket, not RTDB.
 type JSONFinished struct {
@@ -219,6 +234,11 @@ type JSONDoc struct {
 	Total      JSONTotal  `json:"total"`
 	Repos      []JSONRepo `json:"repos"`
 	Runs       []JSONRun  `json:"runs"`
+	// Drift is the models whose reported cost has left the price table's band
+	// (R6, View.Drift): one entry per model, ordered by model name. It is
+	// absent rather than empty when nothing drifted, so a document the reader
+	// has always decoded is unchanged by the field's arrival.
+	Drift []JSONDrift `json:"drift,omitempty"`
 	// Finished and Ready are unfiltered (design generic-tool §10.3): every
 	// finished run, and the ones among them whose Outcome is "ready", are
 	// listed regardless of age or count; --all, --keep and --keep-count only
@@ -327,6 +347,10 @@ func BuildJSON(project string, v View) JSONDoc {
 		for _, f := range r.Finished {
 			d.Finished = append(d.Finished, jsonFinished(jr.Slug, r.Name, f))
 		}
+	}
+	for _, dr := range v.Drift {
+		d.Drift = append(d.Drift, JSONDrift{Model: dr.Model, ReportedUSD: dr.Rep.USD(),
+			TableLoUSD: dr.TLo.USD(), TableHiUSD: dr.THi.USD(), Factor: dr.Factor(), Direction: dr.Direction()})
 	}
 	for _, item := range ReadyRowsOf(v) {
 		d.Ready = append(d.Ready, jsonFinished(safetext.Strip(item.Run.Slug), item.Repo, item.Run))

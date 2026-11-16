@@ -273,6 +273,22 @@ func TestCoverNamesAreTheCodes(t *testing.T) {
 	if OrchestratorAccountID != tf.OrchestratorAccountID || has(tf.FugaroAccounts, OrchestratorAccountID) {
 		t.Errorf("the resident orchestrator %s must be tf.OrchestratorAccountID (%s), its own kind, and not one of tf.FugaroAccounts", OrchestratorAccountID, tf.OrchestratorAccountID)
 	}
+	// The project's build identity (B5, D2301) is one literal in two packages
+	// for the reason the coordinator's is: the module creates the account under
+	// this ID, this package derives the address from it, and the cover reads a
+	// grant's member against its own constant — so a change on one side alone
+	// would hand a catalog build an account the cover reads as a stranger. And
+	// it is its own kind: the two packages read it as one, which is what keeps
+	// a toAccounts row's role (a job's write, here) from reaching it.
+	if BuildIdentityAccountID != tf.BuildIdentityAccountID || has(tf.FugaroAccounts, BuildIdentityAccountID) {
+		t.Errorf("the project's build identity %s must be tf.BuildIdentityAccountID (%s), its own kind, and not one of tf.FugaroAccounts", BuildIdentityAccountID, tf.BuildIdentityAccountID)
+	}
+	buildIdentity := tf.Cover{Projects: []string{"proj-1"}}
+	grant := &tf.Plan{ResourceChanges: []tf.ResourceChange{{Address: "m.google_project_iam_member.x", Type: "google_project_iam_member",
+		Change: tf.Change{Actions: []string{"create"}, After: map[string]any{"member": "serviceAccount:" + BuildIdentityEmail("proj-1"), "role": "roles/logging.logWriter"}, AfterUnknown: map[string]any{}}}}}
+	if got := buildIdentity.NotCovered(grant, nil); len(got) == 0 {
+		t.Error("a project role to the build identity is covered: its whole reach is the credentials service's invoker bit, and every other row's role is refused")
+	}
 	c := tf.Cover{Projects: []string{"proj-1"}}
 	for _, id := range []string{gcp.ServiceAccountID("acme-web", "web"), gcp.BuildServiceAccountID("acme-web")} {
 		if p := &(tf.Plan{ResourceChanges: []tf.ResourceChange{{Address: "m.google_project_iam_member.x", Type: "google_project_iam_member",

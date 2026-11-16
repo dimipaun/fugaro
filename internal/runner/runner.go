@@ -401,6 +401,18 @@ type run struct {
 	reported     pricing.Micros
 	unreconciled pricing.Micros
 	unparsed     int
+	// reportedBy, tableLoBy and tableHiBy are the run's provider reports and
+	// the price table's band behind them, by serving model, and
+	// unreportedCalls counts the settled calls that came back with none:
+	// the ledger's figures, taken when the gateway closes (F24, D2650).
+	// They are the ledger's and never a sum of the stage reports, which do
+	// not hold a call that settled after its stage's wait ran out -- such a
+	// call is in the ledger's figures and in no report, so adding the two
+	// would count it twice (SA1.5).
+	reportedBy      map[string]pricing.Micros
+	tableLoBy       map[string]pricing.Micros
+	tableHiBy       map[string]pricing.Micros
+	unreportedCalls int
 	// serviceTiers are the service tiers the run's calls came back at that
 	// the price table has no multiplier for, from every stage's report:
 	// those calls were charged conservatively rather than failing the
@@ -2670,6 +2682,27 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if r.follow == nil && recipe.UsesRebase(rcp) {
 		return fmt.Errorf("recipe %s puts the branch of an existing pull request back on its base, and this task continues no pull request, so there is no branch to rebase: launch it on the pull request it rebases (--pr N)", rrec.Name)
 	}
+	// A merge judge recipe (E6) judges one thing: the brief its launch left
+	// under the run's own prefix — the diff at a pull request's head, the
+	// findings the ladder still has open there and the head they belong to
+	// (MergeJudgeInput, runstore.MergeJudgeInputName). Without one the run
+	// would start, resolve this recipe and die at its first step on a missing
+	// object, as a config error rather than as the launch that was wrong;
+	// refused here by name instead, at this run's base and before any stage, as
+	// the rebase arm above is. The test is the brief itself and not the recipe,
+	// because the launcher that writes one is the escalation ladder's (E10a,
+	// E10b): a launch it serves carries the brief and passes here, and one it
+	// could not write is refused with the object named rather than halfway
+	// through a run.
+	if recipe.UsesMergeJudge(rcp) {
+		_, err := r.d.Store.ReadFile(ctx, runstore.MergeJudgeInputName)
+		if errors.Is(err, runstore.ErrNotFound) {
+			return fmt.Errorf("recipe %s holds the merge_judge step, whose whole work is one read of a brief left under the run's own prefix — the diff at a pull request's head, the findings the ladder still has open there and the head they belong to — and this launch left none at %s: the launcher that writes one is the escalation ladder's, so a merge judge run is launched by the ladder rather than by hand", rrec.Name, runstore.MergeJudgeInputName)
+		}
+		if err != nil {
+			return fmt.Errorf("the brief a merge judge run reads at %s could not be read: %w", runstore.MergeJudgeInputName, err)
+		}
+	}
 	switch {
 	case r.review && rcp.Mode != recipe.ModeReview:
 		return fmt.Errorf("recipe %s is not mode: review, but the task names pull requests to review", rrec.Name)
@@ -3098,7 +3131,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	for k, v := range gitops.IdentityFor(r.identity) {
 		set[k] = v
 	}
-	if r.follow == nil && !r.review && !r.artifact && !r.shadow {
+	if r.follow == nil && !r.review && !r.artifact && !r.evaluate && !r.shadow {
 		// A follow-up's agent gets no git credentials and no GH_TOKEN
 		// (design §6.1): the runner fetched the branch and pushes it, and
 		// the comments arrive in the prompt. A review run's agent gets
@@ -3109,7 +3142,12 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// deliverable is uploaded by the runner. A challenger arm's gets
 		// none because the arm pushes nothing at all (A2.1): the token in
 		// this environment would be one an agent could push with, which is
-		// exactly what no challenger may hold.
+		// exactly what no challenger may hold. A mode: evaluate run's gets
+		// none for the same reason again, and the merge judge is why it
+		// matters (E6, G1): its whole input is a diff anybody who opened
+		// the pull request wrote, the run checks out no branch and pushes
+		// none, and a judge that could push would be a veto with a
+		// credential behind it — the one thing rung 3 may never be.
 		agentAuthVars, err := r.authVars()
 		if err != nil {
 			return fmt.Errorf("building git credentials: %w", err)
@@ -4834,11 +4872,12 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	sw := agent.NewRedactor(io.MultiWriter(NewLineWriter(log, "agent"), stderrTail), r.secretList())
 	req.Dir, req.Env, req.Transcript, req.Stderr = r.d.WorkDir, stageEnv, tw, sw
 	if opts.Dir != "" {
-		// The stage's own directory rather than the checkout: the one stage
-		// that asks for it is the triage judge, which must have nothing of the
-		// run in reach (F25). Everything the stage's own environment names —
-		// the state directory, the home it runs with, the git credentials — is
-		// an absolute path, so nothing else moves with the working directory.
+		// The stage's own directory rather than the checkout: the stages that
+		// ask for it are the two judges — internal/triage's (F25) and the merge
+		// judge's (E6, mergejudge.go) — which must have nothing of the run in
+		// reach. Everything the stage's own environment names — the state
+		// directory, the home it runs with, the git credentials — is an
+		// absolute path, so nothing else moves with the working directory.
 		req.Dir = opts.Dir
 	}
 	req.Model, req.MaxBudgetUSD = r.stageModel(name), r.cfg.Agent.MaxBudgetUSD
@@ -5569,7 +5608,10 @@ func (r *run) finalize(ctx context.Context) error {
 	}
 	// A build's artifact the run left in the tree is never this commit's
 	// (stray.go): it is refused by name, and held out of the commit, so what
-	// the branch carries is the run's work and no compiled file beside it.
+	// the branch carries is the run's work and no compiled file beside it. A
+	// binary the run's own policy admits at that path and size is not one —
+	// the check reads the policy the run resolved, and no file in the checkout
+	// may widen it (D986) — so a task whose work is an asset ships it.
 	//
 	// The refusal is a failure and not a stop, like every other failure at this
 	// point of a run: finalize carries on, and what a refused run leaves is the

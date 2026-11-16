@@ -137,9 +137,11 @@ func credentialsServiceEnvOf(t *testing.T, rc ResourceChange) (plain map[string]
 // D1068), the ninth, the read mint's admitted people (BB4), the tenth, the
 // read mint's coordinator class (BB5), which arrives with the installation's
 // coordinator account, the eleventh, the review-only jobs (C3.9a), which
-// arrive with the installation's review variants, and the twelfth, the
+// arrive with the installation's review variants, the twelfth, the
 // launcher class (D1938, F25; DS2.2), which arrives with the roster's own
-// people. So a variable the Go side
+// people, and the thirteenth, the project's build identity (B5, D2301), which
+// arrives with the account the module creates beside the service and is the
+// build route's one caller class. So a variable the Go side
 // computes and the module drops — or one the module sets from a value the
 // fixture does not carry — is a service that never answers a job, or a verify
 // route that admits nobody, on an installation whose init reports success.
@@ -196,6 +198,15 @@ func TestGoldenCredentialsServiceCarriesItsNames(t *testing.T) {
 	// account the module creates from these two inputs — the same derivation
 	// the service's own revision runs as (below).
 	coordinator := f.Coordinator.AccountID + "@" + f.Project + ".iam.gserviceaccount.com"
+	// The build class's one address (B5, D2301), spelled the same way from the
+	// account ID build_identity.tf fixes in its own source: this is the whole
+	// reason the ID is a literal rather than derived, since the module renders
+	// the account's own email into the entry and this test can name it without
+	// planning anything.
+	builds, err := json.Marshal([]string{BuildIdentityAccountID + "@" + f.Project + ".iam.gserviceaccount.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := map[string]string{
 		"FUGARO_PROJECT":                 f.FugaroProject,
 		"FUGARO_GCP_PROJECT":             f.Project,
@@ -209,6 +220,7 @@ func TestGoldenCredentialsServiceCarriesItsNames(t *testing.T) {
 		"FUGARO_PERSON_ACCOUNTS":         string(people),
 		"FUGARO_COORDINATOR_ACCOUNT":     coordinator,
 		"FUGARO_LAUNCHER_ACCOUNTS":       string(launchers),
+		"FUGARO_BUILD_ACCOUNTS":          string(builds),
 	}
 	// The map's keys are the allow-list the cover holds the service to, and the
 	// two are equal rather than nested: a name here that the allow-list does not

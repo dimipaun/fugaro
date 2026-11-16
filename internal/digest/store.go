@@ -61,6 +61,20 @@ func (s *Store) Prefix() string { return s.prefix }
 // listing to agree on where the report is.
 func (s *Store) Object(key string) string { return s.prefix + PeriodPath(key) }
 
+// KeyPeriod is the period a report's key names, in the dimension its own shape
+// gives: ReportName's reading of the key alone, for a caller handed a key and
+// no path -- fugaro runs digest --stored <period>. A key of no shape this
+// layout writes is refused here rather than addressed as an object, because
+// Object takes any key it is given and a key shorter than a year directory has
+// no object it could name.
+func KeyPeriod(key string) (Period, error) {
+	dim, ok := periodDim(key)
+	if !ok {
+		return Period{}, fmt.Errorf("%s is not a period key of the reports layout", key)
+	}
+	return PeriodOfKey(dim, key)
+}
+
 // Rows is the reports this store's prefix holds, oldest period first: one row
 // per object whose name is D321's shape, carrying the summary block it holds
 // when that can be read at all.

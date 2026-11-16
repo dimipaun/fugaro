@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/escalation.schema.json",
+  "title": "fugaro escalation --json documents (ls, show)",
+  "description": "The two documents `fugaro escalation ls` and `fugaro escalation show` print with --json (docs/outer-loop-escalation, E13). They are the read-only view of the ladder's ledger: the rung each stalled pull request has reached, the reason it entered it, the ladder runs it has spent and every transition it took, with the item's own runs read as its age and its cost. The ledger is the daemon's alone to write (G12), so nothing here is a write and no field of these documents makes the command act as anything but the person whose credentials it runs under. Members are only ever added within a version, so a renamed or re-meant member is a new member under a new name and the old one is kept, and removing or retyping one bumps version. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's document, which the same version promises to keep readable. Two figures are the item's own run records and not the ledger's — `age_seconds` and `cost_usd` (D2038, F7: cost and time per pull request come from the sum of the item's own run records, and the ledger keeps only the rung, its reason and the counters the records cannot give) — so both are null, never a smaller figure, when a run of the item's could not be read: a sum missing one of its terms reads as a cheaper, younger item than the one a person is looking at, which is the one wrong answer this view could give (D1049, D1051). A reason is a code of escalation.Reasons and never a sentence, so a finding, a prompt or a diff has nowhere to sit here any more than in the ledger (G8). Every timestamp is second-precision UTC RFC 3339, and `now` is the database server's clock the ages were measured against rather than this machine's (D1230).",
+  "oneOf": [
+    { "$ref": "#/$defs/ls" },
+    { "$ref": "#/$defs/show" }
+  ],
+  "$defs": {
+    "version": {
+      "const": 1,
+      "$comment": "escalationDocVersion in internal/cli/escalation.go"
+    },
+    "stamp": {
+      "type": "string",
+      "description": "A second-precision UTC RFC 3339 instant. Where it is a stamp of the ledger it is the database server's clock (D1230): a laptop's own clock is not what the age of an escalated pull request may depend on.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "rung": {
+      "enum": ["R0", "R1", "R2", "R3", "R4"],
+      "description": "One rung of the ladder, cheapest first: rebase, resume, one stronger single pass, merge with follow-ups, split (escalation.Rungs). It is \"rung\" and not \"tier\" because internal/tier already means trivial/small/medium/large (D2033)."
+    },
+    "reason": {
+      "enum": ["age", "attempts", "cost", "churn_new", "churn_same", "hotfix", "critical_path", "rebase", "r2_clean", "r2_findings"],
+      "description": "Why the ladder entered the rung, as one of escalation.Reasons: a code and never a sentence, so this document holds no finding text and no model (G8)."
+    },
+    "transition": {
+      "type": "object",
+      "required": ["to", "reason", "at"],
+      "description": "One rung move of the ledger: the rung the item left, the one it entered, why, when and the head it was decided at.",
+      "properties": {
+        "from": {
+          "allOf": [{ "$ref": "#/$defs/rung" }],
+          "description": "The rung the item left. Absent on the first transition, which is an item entering the ladder: the zero rung is how the ledger spells \"none\"."
+        },
+        "to": { "$ref": "#/$defs/rung" },
+        "reason": { "$ref": "#/$defs/reason" },
+        "at": {
+          "allOf": [{ "$ref": "#/$defs/stamp" }],
+          "description": "When it happened, on the database server's clock."
+        },
+        "head_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,64}$",
+          "description": "The head the ladder was looking at, lower-hex and possibly abbreviated as a provider reports it. It is what rung 0 is spent by, so it is what says which heads have had their rebase. Absent when the rung has no head of its own."
+        }
+      }
+    },
+    "item": {
+      "type": "object",
+      "required": ["id", "repo", "rung", "reason", "entered_at", "age_seconds", "outer_attempts", "cost_usd", "transitions"],
+      "description": "One work item the ladder has acted on — the pull request the project's orchestrator is driving — as both documents carry it. The members the ledger holds are the item's own: the rung, the reason it entered it and the transitions. The two figures are the item's own run records' (D2038) and are null when a run of the item's could not be read.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The work item's id, which is the name `fugaro orchestrator state` prints it under and the name `fugaro escalation show` takes.",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+        },
+        "repo": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The repository the item's pull request is in, as the item records it."
+        },
+        "rung": { "$ref": "#/$defs/rung" },
+        "reason": {
+          "allOf": [{ "$ref": "#/$defs/reason" }],
+          "description": "The reason the item entered the rung it is at: the last transition's own reason, so the two cannot disagree. Every reason before it is in the transitions."
+        },
+        "entered_at": {
+          "allOf": [{ "$ref": "#/$defs/stamp" }],
+          "description": "When the item entered that rung, on the database server's clock."
+        },
+        "age_seconds": {
+          "oneOf": [
+            { "type": "integer", "minimum": 0 },
+            { "type": "null" }
+          ],
+          "description": "How long the item has been going: the server's now minus the earliest start among the item's own run records, floored at zero so a record whose start sits ahead of the server's clock holds no time. Null when one of those records could not be read, and null when none of them carries a start — nothing measured, and a zero would read as an item that just began. Never a smaller figure than the item's own (D2038, D1049)."
+        },
+        "outer_attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16,
+          "description": "How many of the ladder's own runs the item has spent — rung 0's rebases, the one rung 2 pass, the review of a rebased head and the judge — and never a normal run of the item's recipe, which the approval counts (orchestrator.MaxOuterAttempts, D2042)."
+        },
+        "cost_usd": {
+          "oneOf": [
+            { "type": "number", "minimum": 0 },
+            { "type": "null" }
+          ],
+          "description": "What the item's own run records billed, summed: each record's cost breakdown total, or its one model figure for a run that died before its cost settled and has no breakdown. Null when one of those records could not be read, and never a smaller sum (D2038, D1046)."
+        },
+        "transitions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "description": "The ladder's history for the item, oldest first, which is the ledger's own order (orchestrator.MaxEscalationTransitions).",
+          "items": { "$ref": "#/$defs/transition" }
+        }
+      }
+    },
+    "ls": {
+      "type": "object",
+      "required": ["version", "kind", "project", "now", "items"],
+      "description": "Every work item of the project's orchestrator that carries an escalation ledger, by id: the pull requests the ladder has acted on. It is written on every run, empty list included, so a consumer reads it without a nil check, and an item no rung has touched is not in it — the ladder is what this listing is of.",
+      "properties": {
+        "version": { "$ref": "#/$defs/version" },
+        "kind": { "const": "ls" },
+        "project": {
+          "type": "string",
+          "description": "The orchestrator id, which is the selected project's name: this family takes no id of its own (D1358 puts one orchestrator per project).",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+        },
+        "now": {
+          "allOf": [{ "$ref": "#/$defs/stamp" }],
+          "description": "The database server's clock every age in the document was measured against, written so a reader can check the figures rather than trust them (D1230)."
+        },
+        "items": {
+          "type": "array",
+          "description": "The items, ordered by id so two reads of one node print one listing.",
+          "items": { "$ref": "#/$defs/item" }
+        }
+      }
+    },
+    "show": {
+      "type": "object",
+      "required": ["version", "kind", "project", "now", "item"],
+      "description": "One work item's ledger in full, with every transition it took. The command refuses an item the node does not hold and one no rung has touched, so the document always carries a ledger rather than an empty one.",
+      "properties": {
+        "version": { "$ref": "#/$defs/version" },
+        "kind": { "const": "show" },
+        "project": {
+          "type": "string",
+          "description": "The orchestrator id, which is the selected project's name: this family takes no id of its own (D1358 puts one orchestrator per project).",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+        },
+        "now": {
+          "allOf": [{ "$ref": "#/$defs/stamp" }],
+          "description": "The database server's clock the age was measured against (D1230)."
+        },
+        "item": { "$ref": "#/$defs/item" }
+      }
+    }
+  }
+}

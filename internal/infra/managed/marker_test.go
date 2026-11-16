@@ -1909,6 +1909,15 @@ var runAccountGrants = setOf(
 	// the right to send a request to a Cloud Run service — and the target is
 	// the service, not a job and not the runs bucket.
 	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.name | google_service_account.job.member | for_each= | perms=`,
+	// ... and the same grant in the project module's own terms (B5.2): a shared
+	// project job's account invokes the credentials service its profile is
+	// served by (modules/project/sa.tf), on the profile's own switch. It is the
+	// row above in every respect — the right to send a request to that one
+	// Cloud Run service, no storage permission, nothing that grants itself a
+	// role and no actAs or token minting — to an account THIS module creates,
+	// and its target is the service and not the runs bucket. The service's own
+	// class check is what decides what the account is served (B5.1, G21).
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.job.credentials_service.name | google_service_account.job.member | for_each= | perms=`,
 	// Reviewed for CSR14 (the verifier account, D1068): the account's whole
 	// reach, and it is these two rows. The first is the job's row above again —
 	// the same role on the same service, to an account THIS module creates on
@@ -1938,6 +1947,17 @@ var runAccountGrants = setOf(
 	// the operators already hold the runs bucket's own grants, the rows above,
 	// so the impersonation adds nothing to what they can reach.
 	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | google_service_account.fugaro_verifier[0].member | for_each= | perms=`,
+	// Reviewed for B5 (the project's build identity, D2301): the job's row once
+	// more — the same role on the same service, to the account THIS module
+	// creates beside it (modules/installation/build_identity.tf), which is the
+	// one identity a shared repository's catalog build runs as. roles/run.invoker
+	// carries no storage permission, no permission to grant a role, no actAs and
+	// no token minting; the target is that one Cloud Run service. The account's
+	// registry roles — the writer and tag-mover the per-repository build account
+	// held, which B6 moves onto this identity — are not written yet, so its whole
+	// reach here is this row, and it can reach neither the runs bucket's root nor
+	// any repository's registry through it.
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | google_service_account.build_identity[0].member | for_each= | perms=`,
 	`google_service_account_iam_member | "roles/iam.serviceAccountTokenCreator" | service_account_id="projects/${var.project}/serviceAccounts/fugaro-verifier@${var.project}.iam.gserviceaccount.com" | each.value | for_each=local.credentials_service_on ? toset(var.operators) : toset([]) [local.credentials_service_on=var.credentials_service != null] | perms=`,
 	// Reviewed for M4 (the coordinator's front door): D920 makes the front
 	// door public, and this is therefore the one grant in the tree whose

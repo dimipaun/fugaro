@@ -611,6 +611,12 @@ type initRun struct {
 	// providers every repository may use: the converge's repository stage
 	// runs the repo engine too, and the note belongs once.
 	notedOpenProviders bool
+	// notedCatalogSecrets is the once-per-run guard on the warning about a
+	// published catalog entry that asks for a secret of its own (D2311): the
+	// fact is the entry's and not a repository's, and a converge that reaches
+	// several repositories that run one entry says it once
+	// (doctor_catalog.go's warnCatalogSecrets).
+	notedCatalogSecrets map[string]bool
 
 	// buildsLeft is the workflows whose first image build was not offered
 	// because this run cannot take a typed confirmation (--yes, --json, a pipe
@@ -720,16 +726,21 @@ type initRun struct {
 	// their confirmation is the ruling of 2026-11-01 rather than a verdict.
 	refresh *refreshManaged
 
-	// credsRead, credsReady and credsRecord are the credentials service's
-	// bundle as this run read it (credentialsBundleReady, init_credentials.go):
-	// whether it holds a model credential, read once and recorded on the
-	// repository entry the run writes. Read once because it is one
-	// installation's bundle and one secret read; a read that FAILED answers
-	// nothing at all — the entry keeps the record the last reading left on it,
-	// and credsRecord is what carries that answer to this run's second door —
-	// and the warning it prints is why.
+	// credsRead, credsNames and credsRecord are the credentials service's
+	// bundle as this run read it (readCredentialsBundle, init_credentials.go):
+	// the model credentials it holds, by the name each is served under, read
+	// once and judged for the repository entry the run writes. Names rather
+	// than one yes/no answer because the question is per repository — an
+	// `api-key` repository needs the Anthropic key and an `oauth` one every
+	// account its runs may go out on (credentialsBundleServes) — while the
+	// READING is one, and the run's two doors (the installation's backfill
+	// and the repository stage) must answer from it rather than read it twice.
+	// A read that FAILED answers nothing at all — the entry keeps the record
+	// the last reading left on it, and credsRecord is what carries that answer
+	// to this run's second door — and the warning it prints is why.
 	credsRead   bool
-	credsReady  bool
+	credsNames  map[string]bool
+	credsAppKey bool
 	credsRecord bool
 
 	// managed is true once this run read that the project it installs into
@@ -1006,7 +1017,7 @@ func runInit(r *initRun) error {
 		fmt.Fprintf(r.stageDetail(), "published the shared config to %s/%s\n", lc.BucketURL(), infra.SharedConfigObject)
 		return r.printResult()
 	}
-	spec, err := installOptions(o, lc)
+	spec, err := installSpec(o, lc, r.warn)
 	if err != nil {
 		return err
 	}
@@ -1043,6 +1054,14 @@ func runInit(r *initRun) error {
 				// be a reading the owner cannot trust.
 				if data, err = infra.CarriedProjectReviewJobs(data, prev); err != nil {
 					return err
+				}
+				// And the shared jobs of the default profiles this config can
+				// no longer compose, which installSpec decided from this same
+				// record and for the same reason.
+				if len(spec.CarriedProjectJobs) > 0 {
+					if data, err = infra.CarriedProjectJobs(data, prev, spec.CarriedProjectJobs); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -1921,11 +1940,21 @@ func newProjectConfig(name, gcpProject, region string) (*localcfg.Config, error)
 // installOptions is the installation's spec from the local config and the
 // flags. Discovery sets whether the legacy registry is adopted.
 func installOptions(o *initOptions, lc *localcfg.Config) (infra.InstallationSpec, error) {
+	return installOptionsCarrying(o, lc, nil)
+}
+
+// installOptionsCarrying is installOptions with the named profiles' shared jobs
+// left to the installation's own document: the spec composes no job for them
+// (infra.InstallOptions.CarriedJobProfiles), and the carry puts the deployed job
+// back into the document the plan is made from. installSpec is the one caller
+// that passes any.
+func installOptionsCarrying(o *initOptions, lc *localcfg.Config, carried []string) (infra.InstallationSpec, error) {
 	opts := infra.InstallOptions{
-		StateBucket:     o.stateBucket,
-		AlertEmail:      o.alertEmail,
-		RegistryCleanup: cmp.Or(o.registryCleanup, lc.Terraform.RegistryCleanup),
-		NoLogIsolation:  o.noLogIsolation || lc.Terraform.NoLogIsolation,
+		CarriedJobProfiles: carried,
+		StateBucket:        o.stateBucket,
+		AlertEmail:         o.alertEmail,
+		RegistryCleanup:    cmp.Or(o.registryCleanup, lc.Terraform.RegistryCleanup),
+		NoLogIsolation:     o.noLogIsolation || lc.Terraform.NoLogIsolation,
 	}
 	if o.operatorsChanged {
 		opts.Launchers = append([]string{}, o.operators...)
@@ -2757,6 +2786,26 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 			return nil, userErr("reading the installation's tfvars: %v", err)
 		}
 	}
+	// And the shared job of a default profile this run could not compose,
+	// which is the same case one step further on: the profile is one the
+	// update itself wrote into the local config (createDefaultProfiles, S5 of
+	// docs/shared-jobs-default), and the fact that composed its job — the one
+	// GitHub App ID the github repositories record — is one that config can
+	// lose afterwards. CarriedProjectJobs keeps the job, whole, from the
+	// record the run that deployed it left, so that a project whose last
+	// github repository moves to Bitbucket, or that adds a repository on a
+	// second App, keeps converging instead of stopping on a job's deletion it
+	// cannot undo ("retiring a project job is not supported yet",
+	// RefuseProjectJobDeletes). The names are the ones heldDefaultProfiles
+	// decided from the same documents, and they are empty on every run that
+	// composes its jobs itself.
+	if len(spec.CarriedProjectJobs) > 0 {
+		for _, prev := range documents {
+			if vars, err = infra.CarriedProjectJobs(vars, prev, spec.CarriedProjectJobs); err != nil {
+				return nil, userErr("reading the installation's tfvars: %v", err)
+			}
+		}
+	}
 	// The other key this spec never carries, and for a sharper reason than the
 	// opt-in above: it is the deployer's scope, which is what creates the seven
 	// scoped roles and their seven conditioned bindings, and a document that
@@ -2915,6 +2964,19 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 			spec.Launchers, spec.Operators = operators, admins
 		}
 	}
+	// The shared project jobs' switch, derived again here for the same reason
+	// the lists above are read again: the records it is read from move inside a
+	// run that applies this root — the upgrade backfill writes them after this
+	// run's first apply (install), and the repository stage writes the entry of
+	// the checkout it converges — and the plan below is what makes the
+	// roles/run.invoker grant those records are a statement about. The launcher
+	// reads the same records live, so it hands a shared job the service's
+	// address the moment its profile's record says so; an apply left behind the
+	// records would leave that job's account refused at the service's front
+	// door, with nothing for the run to fall back to (D143). It touches one
+	// field and no other (RefreshProjectJobCredentialsService, G17), and it is
+	// a no-op for every run whose records have not moved.
+	spec.ProjectJobs = infra.RefreshProjectJobCredentialsService(spec.ProjectJobs, lc)
 	backend, err := prepare(wd, spec, im, verifiers, false)
 	if err != nil {
 		return outs, false, err
@@ -4339,7 +4401,13 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 			return err
 		}
 	}
-	inst, err := installOptions(o, lc)
+	// The run's own reading of the installation's spec, not installOptions: a
+	// config that can no longer compose the job of the default profile this
+	// update wrote — its last GitHub repository moved to Bitbucket, or one
+	// added on a second App — is refused by that function, and the repository
+	// stage is where every later update of such an installation would stop
+	// (installSpec).
+	inst, err := installSpec(o, lc, r.warn)
 	if err != nil {
 		return err
 	}
@@ -4457,11 +4525,16 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// held-off root and only the NEXT run's plan switched on (the review of
 	// 2026-11-07's fourth round). On main one run sufficed, and one run still
 	// does.
-	r.recordCredentialsServiceReady(ctx, lc, outs, repo, cfg.Git.Provider, cfg.Agent.Auth)
+	// The accounts are infra.WorkflowAccounts' own answer for this repository
+	// and not the document's agent.oauth_token alone: they are the accounts its
+	// jobs go out on and the ones the record below names, so a launch on any of
+	// them (`--token`, D2070 (a)) is a run this bundle reading has to cover.
+	r.recordCredentialsServiceReady(ctx, lc, outs, repo, cfg.Git.Provider, cfg.Agent.Auth, infra.WorkflowAccounts(cfg, lc, repo), policyBudgetMode(in.Policy))
 	if spec, err = infra.Repo(in); err != nil {
 		return initErr(err)
 	}
 	printWorkflowWarnings(r, spec)
+	r.warnCatalogSecrets(ctx, lc, spec)
 	if err := t.Init(ctx, backend); err != nil {
 		return remote(err)
 	}
@@ -4493,6 +4566,12 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// workflow secrets is read from is the one THIS plan mounts, and `ready`
 	// is the decision MountSecretID reads back (update_workflowsecrets.go).
 	r.writeWorkflowSecrets(ctx, lc, ready, cfg)
+	// The repository auth record is written from the same spec, and for the
+	// same reason, one step later (D2070 (a), R7): it is what narrows this
+	// repository's calls at the service to the auth and the accounts its own
+	// configuration names, and `cfg` is the document a run of this repository
+	// checks out rather than this working tree (update_repoauth.go).
+	r.writeRepoAuth(ctx, lc, ready, cfg)
 	versions, err := infra.SecretVersions(ctx, c, ready)
 	if err != nil {
 		return r.retireLeftover(spec, initErr(err))
