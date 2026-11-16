@@ -25,15 +25,18 @@ Three things it deliberately does **not** claim:
   queue, `PROMPT_TTL_MS`, the interrupt table) and **P6.6** (`internal/cli/pair.go` and
   `internal/budget/sweep.go` — the pairing command with the wait that binds the phone's key and the
   delivery that seals the configuration to it, and the `m~…` rule in the history sweeper's
-  `deleteUsers`). **Approved and not built:**
-  **P6.7** (the
-  consumer's enforcement of the D128 amendment — this command's inbound gate, the action record,
-  the ledger and the expiry), **P6.12** (the phone's spoken confirmation, which consumes the merged
-  confirmation machine) and **P6.13** (the sweeper's rule for stored prompts). So the MAC **can** be
+  `deleteUsers`). **Partly built:** **P6.7** — the consumer's enforcement of the D128 amendment is
+  half here, because `internal/cli/mailbox.go` (this plan's T5) runs the merged inbound gate, the
+  ledger and the refusal at the action seam, while the action runner and the allow-list that refusal
+  consults are still to come, in `internal/mailbox/action.go` — and **P6.13** — the command the
+  sweeper hides behind is in the tree, and the sweeper's own rule for stored prompts
+  (`internal/mailbox/expiry.go`) is not. **Approved and not built:** **P6.12** (the phone's spoken
+  confirmation, which consumes the merged confirmation machine). So the MAC **can** be
   computed today and the **key can** too: the pairing command's wait and its delivery landed with the
   pairing CLI plan's T2b and T3, so a phone that has paired holds a per-pairing MAC key. What that means for
   this command's startup is §8.3's first row, and §8.4 says **which half of the MAC work is
-  P4.1's and which is P6.7's**. A module existing and a task being *built* are not the same claim,
+  P4.1's and which belongs to the consumer enforcement that is partly built above**. A module
+  existing and a task being *built* are not the same claim,
   and this bullet is held to the tree by the pin (`TestMailboxPlanPhaseSixStatusIsTrue`).
 - **`shared/`'s tests have no CI job *running* — the job itself is written and staged.** P4.3 is
   owner-made (no agent edits `.github/workflows/`, Global Constraint 8), so the job is committed as
