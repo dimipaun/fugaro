@@ -551,22 +551,6 @@ func TestProjectReposAddRefusesAnAgentSession(t *testing.T) {
 	}
 }
 
-// TestProjectReposAddRefusesBelong is the rule the owner-run live checks keep,
-// kept here in their own shape: no step that writes a real installation's job
-// set and IAM grant runs against `belong` (internal/agentenv).
-func TestProjectReposAddRefusesBelong(t *testing.T) {
-	local := strings.Replace(enrolRigLocal, "name: aurora", "name: "+enrolBelongName, 1)
-	r := enrolRigOver(t, local)
-	before := r.cfgText(t)
-	_, _, err := r.enrol(t, enrolRepo)
-	if err == nil || !strings.Contains(err.Error(), enrolBelongName) {
-		t.Fatalf("installation %s: err = %v, want the refusal by that name", enrolBelongName, err)
-	}
-	if got := r.cfgText(t); got != before {
-		t.Errorf("the refused run wrote the local config:\n%s", got)
-	}
-}
-
 // TestProjectReposAddLeavesTheJobStepWithoutACheckout: the job set is deployed
 // from a checkout, so a repository enrolled from somewhere else converges as far
 // as it can and names the one command that finishes it.

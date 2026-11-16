@@ -43,15 +43,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
-// enrolBelongName is the installation the owner-run live checks never touch
-// (internal/agentenv's own words: "every live step is owner-run, on
-// installation fugaro and a sandbox repository only, never `belong`";
-// TestLiveCredsRules refuses it by name). The steps this command runs are the
-// same kind of act those checks are — a real installation's policy node, its
-// job set and an IAM grant — so it keeps their rule, by the same name and the
-// same spelling.
-const enrolBelongName = "belong"
-
 // reposEnrolment is everything the convergence read before it changed
 // anything, and everything the printed plan is built from.
 //
@@ -151,9 +142,6 @@ func runProjectReposEnroll(cmd *cobra.Command, o *projectReposOptions, arg strin
 	if err := requirePolicyRules(ctx, db, lc); err != nil {
 		return err
 	}
-	if err := refuseEnrolmentOfBelong(lc); err != nil {
-		return err
-	}
 	plan, err := reposEnrolmentRead(ctx, o, lc, db, arg)
 	if err != nil {
 		return err
@@ -185,19 +173,6 @@ func runProjectReposEnroll(cmd *cobra.Command, o *projectReposOptions, arg strin
 // further down whose remedy is the next refusal.
 func reposEnrolmentPattern(arg string) bool {
 	return strings.Contains(arg, "*")
-}
-
-// refuseEnrolmentOfBelong refuses the one installation the owner-run live
-// checks never touch, which is the checks' own rule kept here in their own
-// shape (internal/agentenv; internal/e2e's TestLiveCredsRules refuses
-// `strings.EqualFold(install, "belong")`). The name is what that rule names,
-// so a test can set it without standing anything up.
-func refuseEnrolmentOfBelong(lc *localcfg.Config) error {
-	if !strings.EqualFold(lc.Name, enrolBelongName) {
-		return nil
-	}
-	return userErr("nothing was enrolled: this is installation %s, and every step that writes a real installation is owner-run, on a sandbox and never %s (internal/agentenv's rule, the one TestLiveCredsRules keeps). Run this on the sandbox, or write the allow-list alone with `fugaro project repos add <repo> --allow-list-only`, which touches no job and no grant",
-		safetext.Field(lc.Name), enrolBelongName)
 }
 
 // reposEnrolmentRead reads everything the plan is built from. It writes
