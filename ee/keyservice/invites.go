@@ -279,18 +279,30 @@ func invitationMail(origin, organisation string, invitation WireInvite, ttl time
 // reads the operations team makes everywhere and it asks for no role (P2.1's
 // apiListMembers' own reading, and the read is audited like every other), while
 // inviting somebody into an organisation and withdrawing an invitation there are
-// decisions D2186/D2195 give that organisation's owners and admins. Operations
-// reads across organisations; it does not decide for another organisation's
-// people, so an operations membership that is a plain member decides nothing
-// there either — a membership's role is the whole of the standing it carries,
-// wherever the records it acts on live.
+// decisions D2186/D2195 give that organisation's owners and admins.
+//
+// **An act through the operations membership is refused whatever role it
+// holds.** Operations reads across organisations (F5, D2187); it does not decide
+// for another organisation's people, and the operations membership is not a
+// standing inside the organisation it reaches — it is what got the caller to the
+// read. An invitation written through it is worse than a wrong decision: the
+// membership it becomes is filed under the accepting account (F40), so an
+// operations account that invited itself as an owner would hold an owner
+// membership of a customer's organisation, cross F5's line, and make every later
+// act of theirs through that membership — the customer's own, and unwritten to
+// the log (D456, F9). The operations organisation's own invitations are not this
+// case: a caller in it is answered by ownMembership and reaches it as its own
+// member, so its owners and admins invite into it as any other organisation's do.
 func (s *Service) inviteAccess(ctx context.Context, actor Caller, organisationID, action string, readsAcross bool) (organisationAccess, error) {
 	held, err := s.accessTo(ctx, actor, organisationID, action)
 	if err != nil {
 		return organisationAccess{}, err
 	}
-	if held.Operations && readsAcross {
-		return held, nil
+	if held.Operations {
+		if readsAcross {
+			return held, nil
+		}
+		return organisationAccess{}, errInviteNotPermitted
 	}
 	if held.Membership.Role != roleOwner && held.Membership.Role != roleAdmin {
 		return organisationAccess{}, errInviteNotPermitted

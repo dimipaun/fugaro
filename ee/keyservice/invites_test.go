@@ -328,9 +328,12 @@ func TestInvitationIsBoundToItsAddress(t *testing.T) {
 	if stored, _ := f.invitation(invitation.ID); stored.State != inviteAccepted {
 		t.Errorf("the store holds the invitation %q, want it %q: the state is what makes it single use", stored.State, inviteAccepted)
 	}
-	// Who joined which organisation, and when, is the line the log is read for
-	// (D456): an acceptance nobody can read months later is an acceptance nobody
-	// can account for.
+	// Who invited whom into which organisation, who joined when, and what was
+	// withdrawn are the lines the log is read for (D456): an invitation nobody
+	// can account for months later is an invitation nobody can account for.
+	if !f.auditedInvitation(actionInvitationCreate, org.ID, invitation.ID) {
+		t.Error("the invitation left no audit line, and every invitation action is written to the log (D456)")
+	}
 	if !f.auditedInvitation(actionInvitationAccept, org.ID, invitation.ID) {
 		t.Error("the acceptance left no audit line, and every invitation action is written to the log (D456)")
 	}
@@ -644,11 +647,14 @@ func TestAnotherOrgsInvitationsAreRefused(t *testing.T) {
 // a read the operations team makes everywhere and it is written to the log
 // (D456, F9). Inviting somebody into another organisation and withdrawing an
 // invitation there are not reads: they are decisions D2186 and D2195 give that
-// organisation's owners and admins, and an operations membership that is a plain
-// member is a plain member — the role that decides is the one held in the
-// membership the request uses, whichever organisation's records it names. An
-// operations owner is admitted the same two routes, so what refuses is the role
-// and not the operations membership as such.
+// organisation's owners and admins, and the operations membership is not a
+// standing inside the organisation it reaches, so it carries neither act — a
+// plain member decides nothing there, and neither does an operations owner. The
+// owner is the case that matters, because the membership an accepted invitation
+// becomes is the accepting account's (F40): an operations account that invited
+// its own address as an owner would hold an owner membership of a customer's
+// organisation, cross F5's line, and make its later acts through that membership
+// — the customer's own, and unwritten to the log (D456, F9).
 func TestAnOperationsMemberReadsButDecidesNothing(t *testing.T) {
 	f := newFixture(t)
 	customer := f.signedUp(danaUID, danaEmail, "Example Ltd")
@@ -658,32 +664,45 @@ func TestAnOperationsMemberReadsButDecidesNothing(t *testing.T) {
 	operations := f.seededOrganisation("org_operations", "Operations", orgTypeOperations, opsUID, opsEmail, roleMember)
 	f.actsAs(opsUID, opsEmail, signInGoogle)
 
-	rec := f.apiAsCaller(http.MethodGet, apiOrgInvitesPathOf(customer.ID), "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("an operations member reading another organisation's invitations answered %d (%s), want them: reading across organisations is what the operations membership is for", rec.Code, rec.Body)
-	}
-	if listed := readAnswer[WireInviteList](f, rec).Invites; len(listed) != 1 || listed[0].ID != invitation.ID {
-		t.Errorf("the operations read answered %+v, want the invitation that organisation holds", listed)
-	}
+	// Neither role decides anything in another organisation, and the owner is
+	// the one that matters: the operations membership is what got the caller to
+	// the read and is not a standing inside the organisation it reaches, so an
+	// operations owner is refused there exactly as a plain member is. What an
+	// admitted act would do is the reason — the invitation's membership is filed
+	// under the accepting account (F40), so an operations account that invited
+	// its own address as an owner would hold an owner membership of a customer's
+	// organisation (F5) and make every later act of theirs through it, which is
+	// that organisation's own membership and leaves no audit line (D456, F9).
+	for _, role := range []string{roleMember, roleOwner} {
+		f.setRole(operations.ID, opsUID, role)
 
-	for _, tc := range []struct {
-		name   string
-		method string
-		path   string
-		body   string
-	}{
-		{name: "inviting somebody", method: http.MethodPost, path: apiOrgInvitesPathOf(customer.ID), body: `{"email":"new@example.com","role":"owner"}`},
-		{name: "withdrawing an invitation", method: http.MethodDelete, path: apiOrgInvitePathOf(customer.ID, invitation.ID)},
-	} {
-		t.Run(tc.name+" as an operations member", func(t *testing.T) {
-			rec := f.apiAsCaller(tc.method, tc.path, tc.body)
-			if rec.Code != http.StatusForbidden {
-				t.Fatalf("%s as an operations member answered %d (%s), want 403: reading across organisations is not deciding for them", tc.name, rec.Code, rec.Body)
-			}
-			if code := refusal(f, rec); code != "not_permitted" {
-				t.Errorf("the refusal carries the code %q, want not_permitted", code)
-			}
-		})
+		rec := f.apiAsCaller(http.MethodGet, apiOrgInvitesPathOf(customer.ID), "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("an operations %s reading another organisation's invitations answered %d (%s), want them: reading across organisations is what the operations membership is for", role, rec.Code, rec.Body)
+		}
+		if listed := readAnswer[WireInviteList](f, rec).Invites; len(listed) != 1 || listed[0].ID != invitation.ID {
+			t.Errorf("the operations read answered %+v, want the invitation that organisation holds", listed)
+		}
+
+		for _, tc := range []struct {
+			name   string
+			method string
+			path   string
+			body   string
+		}{
+			{name: "inviting somebody", method: http.MethodPost, path: apiOrgInvitesPathOf(customer.ID), body: `{"email":"new@example.com","role":"owner"}`},
+			{name: "withdrawing an invitation", method: http.MethodDelete, path: apiOrgInvitePathOf(customer.ID, invitation.ID)},
+		} {
+			t.Run(tc.name+" as an operations "+role, func(t *testing.T) {
+				rec := f.apiAsCaller(tc.method, tc.path, tc.body)
+				if rec.Code != http.StatusForbidden {
+					t.Fatalf("%s as an operations %s answered %d (%s), want 403: reading across organisations is not deciding for them", tc.name, role, rec.Code, rec.Body)
+				}
+				if code := refusal(f, rec); code != "not_permitted" {
+					t.Errorf("the refusal carries the code %q, want not_permitted", code)
+				}
+			})
+		}
 	}
 	if held, _ := f.invitation(invitation.ID); held.State != invitePending {
 		t.Errorf("the refused withdrawal left the invitation %q, want it %q", held.State, invitePending)
@@ -691,27 +710,15 @@ func TestAnOperationsMemberReadsButDecidesNothing(t *testing.T) {
 	if held := f.invitationsOf(customer.ID); len(held) != 1 || held[0].ID != invitation.ID {
 		t.Errorf("the refused invitation wrote %+v, want the one invitation that was already there", held)
 	}
-	// A refused act is not an act: the log holds what happened, so neither
-	// refusal left the operations member an invitation line (D456).
+	if _, member := f.membership(customer.ID, opsUID); member {
+		t.Error("an operations account holds a membership of the customer's organisation, and admitting an invitation act through the operations membership is how that membership is made (F5)")
+	}
+	// A refused act is not an act: the log holds what happened, so no refusal
+	// left the operations account an invitation line (D456).
 	for _, entry := range f.auditEntries() {
 		if entry.ActorUID == opsUID && (entry.Action == actionInvitationCreate || entry.Action == actionInvitationRevoke) {
-			t.Errorf("the refused operations member left an %s line: %+v", entry.Action, entry)
+			t.Errorf("the refused operations account left an %s line: %+v", entry.Action, entry)
 		}
-	}
-
-	f.setRole(operations.ID, opsUID, roleOwner)
-	created := f.invited(customer.ID, "another@example.com", roleMember)
-	if created.OrganisationID != customer.ID {
-		t.Errorf("an operations owner's invitation names %q, want the organisation the request named", created.OrganisationID)
-	}
-	if !f.auditedInvitation(actionInvitationCreate, customer.ID, created.ID) {
-		t.Error("an operations owner inviting somebody into another organisation left no audit line, and every operations act in a customer's organisation is written to the log (D456, F9)")
-	}
-	if rec := f.apiAsCaller(http.MethodDelete, apiOrgInvitePathOf(customer.ID, invitation.ID), ""); rec.Code != http.StatusNoContent {
-		t.Errorf("an operations owner withdrawing the invitation answered %d (%s), want 204", rec.Code, rec.Body)
-	}
-	if !f.auditedInvitation(actionInvitationRevoke, customer.ID, invitation.ID) {
-		t.Error("an operations owner withdrawing another organisation's invitation left no audit line, and the withdrawal is what the customer's log has to show (D456, F9)")
 	}
 }
 
