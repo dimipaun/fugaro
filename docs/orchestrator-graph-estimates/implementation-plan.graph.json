@@ -15,7 +15,8 @@
           "internal/orchestrator/store.go",
           "internal/orchestrator/shard.go",
           "internal/orchestrator/shard_test.go",
-          "internal/orchestrator/tick.go"
+          "internal/orchestrator/tick.go",
+          "internal/budget/rules/emulator_orchestrator_test.go"
         ]
       }
     },
@@ -70,14 +71,15 @@
     },
     {
       "id": "R1",
-      "title": "the orchestrator_enabled policy key",
+      "title": "the orchestrator_enabled and issue_sync policy keys",
       "run": null,
       "version": null,
-      "size": 1,
+      "size": 1.5,
       "footprint": {
         "prediction": true,
         "paths": [
           "internal/projectpolicy/policy.go",
+          "internal/projectpolicy/issuesync.go",
           "internal/projectpolicy/policy_test.go",
           "internal/settings/registry.go",
           "schemas/settings.schema.json"
@@ -96,8 +98,7 @@
           "internal/cli/update_unit_stage.go",
           "internal/cli/update_unit_stage_test.go",
           "internal/cli/managed_test.go",
-          "internal/cli/docs_stateless_orchestrator_test.go",
-          "docs/stateless-orchestrator/implementation-plan.md"
+          "internal/cli/orchestrator_install.go"
         ]
       }
     },
@@ -114,6 +115,20 @@
           "plugin/update_skill_test.go",
           "internal/cli/docs_check301_302_test.go",
           "docs/gcp-live-checklist.md"
+        ]
+      }
+    },
+    {
+      "id": "R8",
+      "title": "the stateless-orchestrator plan records that D2700 supersedes T7",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/stateless-orchestrator/implementation-plan.md",
+          "internal/cli/docs_stateless_orchestrator_test.go"
         ]
       }
     },
@@ -143,7 +158,8 @@
         "prediction": true,
         "paths": [
           "internal/orchestrator/adopt.go",
-          "internal/orchestrator/adopt_test.go"
+          "internal/orchestrator/adopt_test.go",
+          "internal/orchestrator/escalate_launch.go"
         ]
       }
     },
@@ -474,21 +490,6 @@
       }
     },
     {
-      "id": "B6",
-      "title": "the adapter's config in the project layer",
-      "run": null,
-      "version": null,
-      "size": 1,
-      "footprint": {
-        "prediction": true,
-        "paths": [
-          "internal/localcfg/issues.go",
-          "internal/localcfg/issues_test.go",
-          "schemas/project-layer.schema.json"
-        ]
-      }
-    },
-    {
       "id": "B7",
       "title": "the launcher passes plan_task and the external id",
       "run": null,
@@ -519,6 +520,21 @@
           "internal/cli/orchestrator_mergeread.go",
           "internal/cli/orchestrator_runlister.go",
           "internal/orchestrator/plan_e2e_test.go"
+        ]
+      }
+    },
+    {
+      "id": "B9",
+      "title": "an issue item's brief at launch, pinned to the approved body",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/orchestrator_launcher.go",
+          "internal/cli/orchestrator_launcher_issue.go",
+          "internal/cli/orchestrator_launcher_issue_test.go"
         ]
       }
     }
@@ -606,13 +622,8 @@
     },
     {
       "task": "B4",
-      "needs": "B6",
-      "reason": "reads the adapter config B6 adds; B6 is smaller than a contract would be"
-    },
-    {
-      "task": "B5",
-      "needs": "X1",
-      "reason": "the external field the launcher passes on"
+      "needs": "R1",
+      "reason": "reads the issue_sync key R1 adds; smaller than a contract would be"
     },
     {
       "task": "W1",
@@ -743,6 +754,56 @@
       "task": "B4",
       "needs": "E3",
       "reason": "one file: both edit internal/orchestrator/tick.go"
+    },
+    {
+      "task": "G1",
+      "needs": "X1",
+      "reason": "the import writes plan_task, which X1 adds"
+    },
+    {
+      "task": "S5",
+      "needs": "X0",
+      "reason": "the brief reads the plan and backlog nodes"
+    },
+    {
+      "task": "E1",
+      "needs": "X0",
+      "reason": "the daemon streams the nodes X0 adds"
+    },
+    {
+      "task": "R4",
+      "needs": "X1",
+      "reason": "the adopted mark and plan_task are X1's fields"
+    },
+    {
+      "task": "R8",
+      "needs": "R2",
+      "reason": "the plan's note says what R2's code does"
+    },
+    {
+      "task": "B9",
+      "needs": "B3",
+      "reason": "the launch reads one issue through the route"
+    },
+    {
+      "task": "B9",
+      "needs": "B7",
+      "reason": "one file: both edit internal/cli/orchestrator_launcher.go"
+    },
+    {
+      "task": "B9",
+      "needs": "X1",
+      "reason": "the issue body digest is stored on the item"
+    },
+    {
+      "task": "W1",
+      "needs": "B9",
+      "reason": "the end-to-end launch of an issue item reads its brief"
+    },
+    {
+      "task": "R4",
+      "needs": "X0",
+      "reason": "an adopted plan run is written into its plan's node"
     }
   ]
 }

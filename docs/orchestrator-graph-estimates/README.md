@@ -7,8 +7,8 @@ Owner: Dimi Paun. Spec dated 2026-11-16 ("Fugaro design decisions — Nov 16, 20
 | File | Role |
 | --- | --- |
 | [`spec.md`](spec.md) | The spec, verbatim. No typo was fixed. |
-| [`reconciliation.md`](reconciliation.md) | The amended spec: the capability map, assumptions A1–A8, findings F1–F43, decisions D2700–D2739 with the owner's answers, open items, UNVERIFIED. **Where it disagrees with `spec.md`, it wins.** |
-| [`implementation-plan.md`](implementation-plan.md) | 33 tasks in five modules (`daemon-release`, `graph-import`, `run-events`, `estimates`, `backlog`), four levels; two contract breaks weighed and undone as no gain. Nothing in it is approved. |
+| [`reconciliation.md`](reconciliation.md) | The amended spec: the capability map, assumptions A1–A8, findings F1–F51, decisions D2700–D2739 with the owner's answers, open items, UNVERIFIED. **Where it disagrees with `spec.md`, it wins.** |
+| [`implementation-plan.md`](implementation-plan.md) | 34 tasks in five modules (`daemon-release`, `graph-import`, `run-events`, `estimates`, `backlog`), five levels; two contract breaks weighed and undone as no gain. Nothing in it is approved. |
 | [`implementation-plan.graph.json`](implementation-plan.graph.json) | The plan's tasks as the graph `fugaro plan graph` reads. |
 
 Number blocks taken: decisions **D2700–D2739** (all used) and checks **700–709** (700–703 used, 704–709 reserved).
