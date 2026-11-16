@@ -51,13 +51,20 @@ import {
   ID_MAX,
   KINDS,
   MAC_MAX,
+  MINUTE_MAX,
   OPTIONS_MAX,
   OPTION_MAX,
+  PLATFORMS,
+  PREFS_FIELDS,
+  PREFS_REQUIRED,
+  QUIET_HOURS_FIELDS,
   REFUSALS,
   REQUIRED_FIELDS,
   SENDER_MAX,
   TARGET_MAX,
   TEXT_MAX,
+  TOKEN_MAX,
+  ZONE_MAX,
   canonicalBytes,
   isMessage,
   validateHeartbeat,
@@ -122,6 +129,31 @@ function aHeartbeat(over = {}) {
     boot: 'boot-01',
     agents: [{ id: 'orchestrator', name: 'Orchestrator' }],
     mac: FAKE_MAC,
+    ...over,
+  };
+}
+
+// aRegistration returns a fresh well-formed registration: §3.5(b)'s message,
+// the only path a phone's push registration travels (P5.2.1). It carries the
+// whole switch state and no `mac` of its own — the caller adds one, as every
+// kind does.
+function aRegistration(over = {}) {
+  return {
+    id: 'm-0002',
+    sender: 'phone',
+    text: 'registered',
+    at: 1_700_000_000_000,
+    mac: FAKE_MAC,
+    kind: 'registration',
+    token: 'not-a-real-registration-token',
+    platform: 'ios',
+    prefs: {
+      kill_switch: true,
+      cap_reached: true,
+      consumer_offline: true,
+      cap_near: false,
+      prompt: true,
+    },
     ...over,
   };
 }
@@ -361,6 +393,13 @@ test('every refusal family has its own code', () => {
     refusal(good({ mac: 'F'.repeat(MAC_MAX) }), REFUSALS.BAD_MAC).code,
     refusal(good({ kind: 'prompt', options: ['one', 'one'] }), REFUSALS.DUPLICATE_ENTRY).code,
     refusal(withAction({ verb: 'merge', head_sha: 'short' }), REFUSALS.BAD_SHA).code,
+    // P5.2.1's three: a platform outside the two the design writes down is not
+    // a wrong type, a zone name that is not one is not an oversize string, and
+    // a window whose ends are the same minute is neither a missing nor a
+    // malformed field — each is its own answer to the sender.
+    refusal(aRegistration({ platform: 'web' }), REFUSALS.UNKNOWN_PLATFORM).code,
+    refusal(aRegistration({ prefs: { ...aRegistration().prefs, quiet_hours: { zone: 'not a zone', start: 1, end: 2 } } }), REFUSALS.BAD_ZONE).code,
+    refusal(aRegistration({ prefs: { ...aRegistration().prefs, quiet_hours: { zone: 'UTC', start: 1, end: 1 } } }), REFUSALS.BAD_WINDOW).code,
   ];
   assert.equal(new Set(codes).size, codes.length, `codes are distinct: ${codes.join(', ')}`);
   assert.deepEqual(new Set(codes), new Set(Object.values(REFUSALS)), 'and no code is unused');
@@ -408,13 +447,14 @@ test('the schema is not the redactor: redaction happens before it (P1.3)', () =>
 // ---------------------------------------------------------------------------
 
 test('the kind vocabulary is closed, and an absent kind is the ordinary message', () => {
-  assert.deepEqual([...KINDS], ['message', 'prompt', 'answer', 'action']);
+  assert.deepEqual([...KINDS], ['message', 'prompt', 'answer', 'action', 'registration']);
   const { message } = validateMessage(good());
   assert.equal(Object.hasOwn(message, 'kind'), false, 'an absent kind adds no field');
   for (const kind of KINDS) {
     const value = good({ kind });
     if (kind === 'answer') value.reply_to = 'm-0000';
     if (kind === 'action') value.action = anAction();
+    if (kind === 'registration') Object.assign(value, { token: aRegistration().token, platform: 'ios', prefs: aRegistration().prefs });
     assert.equal(validateMessage(value).ok, true, `kind ${kind} is accepted`);
   }
   refusal(good({ kind: 'gossip' }), REFUSALS.UNKNOWN_KIND, 'kind');
@@ -653,6 +693,132 @@ test('a merge carries the head SHA it was confirmed against, and only a merge', 
   for (const head_sha of ['', 'b'.repeat(39), 'b'.repeat(41), 'B'.repeat(40), 'z'.repeat(40), 1, null]) {
     refusal(withAction({ verb: 'merge', head_sha }), REFUSALS.BAD_SHA, 'action.head_sha');
   }
+});
+
+// ---------------------------------------------------------------------------
+// The registration (mobile plan P5.2.1; design §3.4, §3.5(b), §3.8). §3.5(b)
+// makes this message the ONLY path a phone's push registration travels: the
+// principal reads the token, the platform and the switch state out of it and
+// writes §3.4's node, and nothing else — not the phone — may write that node.
+// So the message carries the token, the platform and the whole switch state,
+// and the schema refuses a registration missing any of them rather than
+// leaving the principal to guess what a partial one meant.
+// ---------------------------------------------------------------------------
+
+test('a registration carries a token, a platform and the switches', () => {
+  const verdict = validateMessage(aRegistration());
+  assert.equal(verdict.ok, true, 'a registration is well formed');
+  assert.equal(verdict.message.kind, 'registration');
+  assert.equal(verdict.message.token, 'not-a-real-registration-token');
+  assert.equal(verdict.message.platform, 'ios');
+  assert.equal(verdict.message.prefs.cap_near, false, 'a switch off travels as an explicit false');
+  assert.equal(Object.isFrozen(verdict.message.prefs), true, 'the copy is deep: the prefs are frozen too');
+  assert.equal(validateMessage(aRegistration({ platform: 'android' })).ok, true, 'the other platform');
+  // The window is optional and, when it is there, it is the whole window.
+  const quiet = aRegistration({ prefs: { ...aRegistration().prefs, quiet_hours: { zone: 'Europe/Berlin', start: 1320, end: 420 } } });
+  assert.equal(validateMessage(quiet).ok, true, 'a quiet-hours window is accepted');
+});
+
+test('a registration is refused when a field it must carry is not there', () => {
+  for (const field of ['token', 'platform']) {
+    const value = aRegistration();
+    delete value[field];
+    refusal(value, REFUSALS.MISSING_FIELD, field);
+  }
+  // The five switches are the whole state: one absent is one the principal
+  // would have to invent, and §3.8's default belongs to the design, not to a
+  // reader guessing at a short message.
+  for (const field of PREFS_REQUIRED) {
+    const prefs = aRegistration().prefs;
+    delete prefs[field];
+    refusal(aRegistration({ prefs }), REFUSALS.MISSING_FIELD, `prefs.${field}`);
+  }
+  const prefs = aRegistration().prefs;
+  delete prefs.quiet_hours; // the one optional part, and its absence is the default
+  assert.equal(validateMessage(aRegistration({ prefs })).ok, true, 'a window that is not there is off');
+});
+
+test('a registration is a kind like any other: its fields are its own, and no others', () => {
+  // The (kind, field) table is two-sided: a registration without its token and
+  // an ordinary message carrying one are both refused, because a token read
+  // out of a `text` field is the ambiguity §3.5(b) exists to close.
+  refusal(aRegistration({ options: ['one'] }), REFUSALS.FIELD_NOT_ALLOWED, 'options');
+  refusal(aRegistration({ reply_to: 'm-0000' }), REFUSALS.FIELD_NOT_ALLOWED, 'reply_to');
+  refusal(good({ token: 'not-a-real-registration-token' }), REFUSALS.FIELD_NOT_ALLOWED, 'token');
+  refusal(good({ kind: 'prompt', options: ['merge it'], platform: 'ios' }), REFUSALS.FIELD_NOT_ALLOWED, 'platform');
+  refusal({ ...withAction({ verb: 'cancel' }), prefs: aRegistration().prefs }, REFUSALS.FIELD_NOT_ALLOWED, 'prefs');
+  refusal(good({ kind: 'registration' }), REFUSALS.MISSING_FIELD, 'token');
+});
+
+test('a registration token is a non-empty bounded string', () => {
+  assert.equal(validateMessage(aRegistration({ token: 'x'.repeat(TOKEN_MAX) })).ok, true, 'exactly the bound');
+  refusal(aRegistration({ token: 'x'.repeat(TOKEN_MAX + 1) }), REFUSALS.TOO_LONG, 'token');
+  refusal(aRegistration({ token: '' }), REFUSALS.EMPTY_STRING, 'token');
+  for (const token of [1, null, true, ['x'], { token: 'x' }]) {
+    refusal(aRegistration({ token }), REFUSALS.WRONG_TYPE, 'token');
+  }
+  refusal(aRegistration({ token: 'a\u0000b' }), REFUSALS.BAD_CHARACTER, 'token');
+});
+
+test('a platform is one of the two §3.4 writes down', () => {
+  assert.deepEqual([...PLATFORMS], ['ios', 'android']);
+  for (const platform of ['iOS', 'Android', 'web', 'fcm', '', 1, null]) {
+    const code = typeof platform === 'string' ? REFUSALS.UNKNOWN_PLATFORM : REFUSALS.WRONG_TYPE;
+    refusal(aRegistration({ platform }), code, 'platform');
+  }
+});
+
+test('the prefs are the switches §3.8 names, and nothing else', () => {
+  const prefs = aRegistration().prefs;
+  assert.deepEqual([...PREFS_FIELDS], ['kill_switch', 'cap_reached', 'consumer_offline', 'cap_near', 'prompt', 'quiet_hours']);
+  // A switch is a boolean, and a value that is not one is refused rather than
+  // read as "on": the whole point of the message is that the two ends agree
+  // about what the phone asked for.
+  refusal(aRegistration({ prefs: { ...prefs, cap_near: 'yes' } }), REFUSALS.WRONG_TYPE, 'prefs.cap_near');
+  refusal(aRegistration({ prefs: { ...prefs, prompt: 0 } }), REFUSALS.WRONG_TYPE, 'prefs.prompt');
+  refusal(aRegistration({ prefs: { ...prefs, sound: true } }), REFUSALS.UNKNOWN_FIELD, 'prefs.sound');
+  for (const value of [null, [], 'on', 1, true]) {
+    refusal(aRegistration({ prefs: value }), REFUSALS.NOT_AN_OBJECT, 'prefs');
+  }
+});
+
+test('a quiet-hours window is an IANA zone name and two minutes of the day', () => {
+  const withWindow = (quiet_hours) => aRegistration({ prefs: { ...aRegistration().prefs, quiet_hours } });
+  assert.equal(validateMessage(withWindow({ zone: 'UTC', start: 0, end: MINUTE_MAX })).ok, true, 'the whole day');
+  assert.equal(validateMessage(withWindow({ zone: 'America/Argentina/Buenos_Aires', start: 1, end: 2 })).ok, true, 'a nested zone name');
+  assert.equal(validateMessage(withWindow({ zone: 'Etc/GMT+5', start: 1, end: 2 })).ok, true, 'the plus sign is part of a name');
+  // §3.8 stores the zone NAME, not an offset: a stored offset drifts onto the
+  // wrong hour at the next DST transition, silently. The pattern is a SHAPE —
+  // `Europe/Berlin` and `America/Argentina/Buenos_Aires` are names, and whether
+  // the name is one the tz database has is the consumer's zone loader's
+  // question, the way HEX_PATTERN's shape is not a hash's value.
+  for (const zone of ['1Europe/Berlin', 'Europe//Berlin', '/Berlin', 'Europe/', 'Europe /Berlin', 'Europe/Berlin;rm -rf', 1, null]) {
+    const code = typeof zone === 'string' ? REFUSALS.BAD_ZONE : REFUSALS.WRONG_TYPE;
+    refusal(withWindow({ zone, start: 1, end: 2 }), code, 'prefs.quiet_hours.zone');
+  }
+  // A segment of dots alone is a path step and not a name, and the letter-first
+  // rule does not catch it: that rule guards the string's own first character,
+  // so `UTC/../../etc/passwd` and `Etc/../passwd` would pass a pattern whose
+  // only dot rule is the leading one — and the consumer hands this value to a
+  // zone loader. Every segment must carry something that is not a dot.
+  for (const zone of ['Europe/.', 'Europe/..', 'Europe/...', 'Etc/../passwd', 'UTC/../../etc/passwd', 'America/New_York/..']) {
+    refusal(withWindow({ zone, start: 1, end: 2 }), REFUSALS.BAD_ZONE, 'prefs.quiet_hours.zone');
+  }
+  refusal(withWindow({ zone: '', start: 1, end: 2 }), REFUSALS.EMPTY_STRING, 'prefs.quiet_hours.zone');
+  refusal(withWindow({ zone: 'z'.repeat(ZONE_MAX + 1), start: 1, end: 2 }), REFUSALS.TOO_LONG, 'prefs.quiet_hours.zone');
+  // Minutes since local midnight, and the ends are the two ends of one window:
+  // equal ends are a window that is either empty or the whole day, which is the
+  // two-answer ambiguity the schema refuses rather than resolves.
+  for (const [field, value] of [['start', -1], ['start', MINUTE_MAX + 1], ['end', 24 * 60], ['end', 1.5]]) {
+    refusal(withWindow({ zone: 'UTC', start: 1, end: 2, [field]: value }), REFUSALS.BAD_WINDOW, `prefs.quiet_hours.${field}`);
+  }
+  refusal(withWindow({ zone: 'UTC', start: 420, end: 420 }), REFUSALS.BAD_WINDOW, 'prefs.quiet_hours.end');
+  refusal(withWindow({ zone: 'UTC', end: 420 }), REFUSALS.MISSING_FIELD, 'prefs.quiet_hours.start');
+  refusal(withWindow({ zone: 'UTC', start: 1 }), REFUSALS.MISSING_FIELD, 'prefs.quiet_hours.end');
+  refusal(withWindow({ zone: 'UTC', start: 1, end: 2, tz: 'UTC' }), REFUSALS.UNKNOWN_FIELD, 'prefs.quiet_hours.tz');
+  refusal(withWindow(null), REFUSALS.NOT_AN_OBJECT, 'prefs.quiet_hours');
+  refusal(withWindow({ zone: 'UTC', start: '1', end: 2 }), REFUSALS.WRONG_TYPE, 'prefs.quiet_hours.start');
+  assert.deepEqual([...QUIET_HOURS_FIELDS], ['zone', 'start', 'end']);
 });
 
 test('a mac is required on every message, and it is a SHA-256 tag in lowercase hex', () => {
@@ -1096,6 +1262,7 @@ test('every field the schema names is covered by the tag, or excluded by name', 
   const maximal = [
     good({ kind: 'prompt', agent: 'orchestrator', options: ['merge it', 'leave it'], acked: true }),
     { ...withAction({ verb: 'merge' }), reply_to: 'm-0000', acked: false },
+    aRegistration(),
   ];
   for (const m of maximal) assert.equal(validateMessage(m).ok, true, JSON.stringify(m));
   const carried = new Set(maximal.flatMap((m) => Object.keys(m)));
@@ -1116,6 +1283,7 @@ test('the tag is required on every kind, and a wrong-length one is refused on ev
     prompt: good({ kind: 'prompt', options: ['merge it'] }),
     answer: good({ kind: 'answer', reply_to: 'm-0000' }),
     action: withAction({ verb: 'merge' }),
+    registration: aRegistration(),
     absent: good(),
   };
   for (const [name, m] of Object.entries(kinds)) {
@@ -1145,6 +1313,13 @@ test('the vectors carry the schema refusals both ends must agree on', () => {
   const names = vectors.refusals.map((c) => c.name).join(' | ');
   for (const required of [
     'unsigned message', 'unsigned prompt', 'unsigned answer', 'unsigned action', 'unsigned heartbeat',
+    'unsigned registration', 'registration without a token', 'registration without a platform',
+    'a token on a plain message', 'options on a registration', 'a token one code unit past its bound',
+    'an unknown platform', 'a zone that is not an IANA zone name', 'a zone whose later segment is a path step',
+    'a quiet-hours minute outside the day', 'a quiet-hours minute that is not a whole number',
+    'a quiet-hours window missing one of its ends', 'an unknown field inside a quiet-hours window',
+    'a quiet-hours window whose ends are the same minute', 'prefs without one of the switches',
+    'a switch that is not a boolean', 'an unknown field inside prefs',
     'short mac', 'long mac', 'uppercase mac', 'unknown verb', 'short head SHA', 'uppercase head SHA',
     'too many options', 'unknown field', '__proto__ field',
   ]) {

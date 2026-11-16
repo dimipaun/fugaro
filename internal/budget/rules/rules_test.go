@@ -1196,6 +1196,15 @@ func schemaCatalog(t *testing.T) (consts map[string]int64, fields, required []st
 // schema does not name fails there too, because the rules may gate fewer
 // fields than the schema, never one it does not have.
 //
+// P5.2.1 grew the schema again, and P5.2.2 is the generation that grows the
+// template with it: `token`, `platform` and `prefs` are the registration
+// kind's, and until generation 6 the rules do not gate them — a registration
+// message is refused at the database, which is fail-closed rather than wrong,
+// because no writer of one exists before the consumer (P5.2.4) and the app's
+// registration path (P5.2.8). The gap is pinned below as exactly those three
+// fields, so a fourth one the schema gains without a rules generation fails
+// here instead of hiding in the difference.
+//
 // What this test cannot pin is the rest of the schema's judgement, and §6.4
 // says where the rules are looser rather than claiming they are the same: the
 // id's key rule (no `%`, no control character, no lone surrogate — all of
@@ -1245,7 +1254,7 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 	if want := []string{"id", "sender", "text", "at", "mac"}; !slices.Equal(required, want) {
 		t.Errorf("the schema's REQUIRED_FIELDS = %v, want %v", required, want)
 	}
-	if want := []string{"id", "sender", "text", "at", "mac", "acked", "agent", "kind", "options", "reply_to", "action"}; !slices.Equal(fields, want) {
+	if want := []string{"id", "sender", "text", "at", "mac", "acked", "agent", "kind", "options", "reply_to", "action", "token", "platform", "prefs"}; !slices.Equal(fields, want) {
 		t.Errorf("the schema's FIELDS = %v, want %v", fields, want)
 	}
 
@@ -1359,6 +1368,7 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 	// the schema names. An inbox message has the required P6.3 fields plus the
 	// optional ones (`acked` is the phone's ack of a message it spoke, which
 	// lives on an outbox message), and an outbox message has all of them.
+	gated := map[string]bool{}
 	for _, c := range []struct {
 		path string
 		want []string
@@ -1385,10 +1395,25 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 			t.Errorf("/%s holds %v, the shared schema's field set for it is %v", c.path, got, want)
 		}
 		for _, field := range got {
+			gated[field] = true
 			if !slices.Contains(fields, field) {
 				t.Errorf("/%s gates %q, which the shared schema does not name: the rules may gate fewer fields than the schema, never one it does not have", c.path, field)
 			}
 		}
+	}
+
+	// The fields the schema names and the rules do not gate: P5.2.1's three,
+	// which P5.2.2 gates. Pinned rather than tolerated, so that the licence to
+	// lag by one generation is not a licence to lag by any field.
+	var ungated []string
+	for _, field := range fields {
+		if !gated[field] {
+			ungated = append(ungated, field)
+		}
+	}
+	slices.Sort(ungated)
+	if want := []string{"platform", "prefs", "token"}; !slices.Equal(ungated, want) {
+		t.Errorf("the rules gate every field of the shared schema but %v; the registration's own three (%v) are the only ones a later generation may still owe", ungated, want)
 	}
 }
 
