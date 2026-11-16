@@ -32,19 +32,31 @@ const (
 	// optional, and no craft key turns it on: the switch is the review levels'
 	// (F14).
 	CraftSecurityReview = "security-review"
+	// CraftMergeJudge is the merge judge (E6, D2031): the stage a judge run
+	// charges its one call to. It follows the coder, and both halves of a craft
+	// have to answer for one model: the judge stage runs the coder's role slot
+	// (config.StageRole knows no merge_judge case, and the ladder's grade is
+	// written into the coder's slot, E4), so a judge that took the senior
+	// review's access while running the coder's model would be served by a pool
+	// whose members are judged against a model it does not run (F23,
+	// poolMember) — a project whose senior review goes out on a pool of its own
+	// would then refuse every judge stage, and a refused judge is a veto on
+	// every head.
+	CraftMergeJudge = "merge-judge"
 )
 
-// CraftNames are the four crafts, in the order a reader meets them.
-var CraftNames = []string{CraftCoder, CraftReview, CraftSeniorReview, CraftSecurityReview}
+// CraftNames are the five crafts, in the order a reader meets them.
+var CraftNames = []string{CraftCoder, CraftReview, CraftSeniorReview, CraftSecurityReview, CraftMergeJudge}
 
 // craftParent is the craft a craft follows when it sets no model or access of
-// its own: the first-line review follows the coder and the security review
-// follows the senior review. The coder and the senior review follow nobody —
-// the spec makes both required — and a craft no key of this table names is no
-// craft at all, so an unknown name inherits nothing.
+// its own: the first-line review and the merge judge follow the coder, and the
+// security review follows the senior review. The coder and the senior review
+// follow nobody — the spec makes both required — and a craft no key of this
+// table names is no craft at all, so an unknown name inherits nothing.
 var craftParent = map[string]string{
 	CraftReview:         CraftCoder,
 	CraftSecurityReview: CraftSeniorReview,
+	CraftMergeJudge:     CraftCoder,
 }
 
 // CraftParent is the craft name follows: the craft whose model and access it
@@ -71,9 +83,9 @@ type Craft struct {
 }
 
 // Crafts is fugaro.yaml's `agent.crafts` and the project layer's
-// `defaults.agent.crafts`: the four crafts by name.
+// `defaults.agent.crafts`: the crafts by name.
 //
-// It is a struct with four fields rather than a map for config.ModelRoles'
+// It is a struct with a field per craft rather than a map for config.ModelRoles'
 // reason — the crafts are a closed set, so a file that misspells one is
 // refused by the strict decoder instead of quietly setting nothing — and each
 // field is a block rather than a scalar because a craft sets its model and its
@@ -83,6 +95,7 @@ type Crafts struct {
 	Review         Craft `yaml:"review,omitempty" json:"review,omitempty"`
 	SeniorReview   Craft `yaml:"senior-review,omitempty" json:"senior-review,omitempty"`
 	SecurityReview Craft `yaml:"security-review,omitempty" json:"security-review,omitempty"`
+	MergeJudge     Craft `yaml:"merge-judge,omitempty" json:"merge-judge,omitempty"`
 }
 
 // Of is the craft name's own settings, with nothing inherited: the zero Craft
@@ -97,6 +110,8 @@ func (c Crafts) Of(name string) Craft {
 		return c.SeniorReview
 	case CraftSecurityReview:
 		return c.SecurityReview
+	case CraftMergeJudge:
+		return c.MergeJudge
 	}
 	return Craft{}
 }
@@ -396,6 +411,33 @@ func SupportedCredentialTypes() []string {
 	return []string{CredentialTypeOpenRouter, CredentialTypeAnthropic, CredentialTypeClaudeOAuth}
 }
 
+// KeyCredentialType reports whether a credential of this type authenticates with
+// a key the installation stores under the credential's own derived secret name
+// (CredentialSecret): the two types whose key a call sends to a provider's API.
+// claude-oauth is not one — its token is a named Claude account's, stored under
+// that account's own name — and neither is the built-in vertex, which carries no
+// key at all.
+//
+// It is the one place "which type's value lives under CredentialSecret" is
+// decided, so the command that stores such a value (fugaro accounts add --type),
+// the store path's own eligibility rules and anything that reads the value back
+// cannot name two containers for one credential.
+func KeyCredentialType(typ string) bool {
+	return typ == CredentialTypeOpenRouter || typ == CredentialTypeAnthropic
+}
+
+// CredentialNamed is the credential of creds named name, and whether the block
+// defines one. A block that defines two entries under one name cannot reach a
+// caller (ValidateCredentials refuses it), so the first is the answer.
+func CredentialNamed(creds []Credential, name string) (Credential, bool) {
+	for _, c := range creds {
+		if c.Name == name {
+			return c, true
+		}
+	}
+	return Credential{}, false
+}
+
 // ValidatePools reports every rule a pools block breaks. creds is the
 // credentials block of the same document: a pool's members name credentials of
 // it, or the built-in vertex, so a pool that names a credential the document
@@ -407,12 +449,7 @@ func SupportedCredentialTypes() []string {
 // that name meaning two things.
 func ValidatePools(pools []Pool, creds []Credential) []Problem {
 	var ps []Problem
-	defined := map[string]bool{CredentialVertex: true}
-	for _, c := range creds {
-		if c.Name != "" {
-			defined[c.Name] = true
-		}
-	}
+	defined := definedCredentialNames(creds)
 	poolNames := map[string]bool{}
 	for i, p := range pools {
 		at := fmt.Sprintf("pools[%d]", i)
@@ -455,6 +492,135 @@ func ValidatePools(pools []Pool, creds []Credential) []Problem {
 		ps = append(ps, poolAccessProblems(at, p)...)
 	}
 	return ps
+}
+
+// ValidatePoolPaths reports D1668's rule for the pools a command is about to
+// WRITE: every member of a pool is served by one half of a run, so a member
+// list naming both is refused rather than written, its sentence naming the two
+// members, the half each is served by and the fix. `fugaro accounts pool add` is
+// its one caller, and it hands it the pool it would write alone rather than the
+// block it would write it into: a pool that already exists is not this
+// function's business — poolCrossingProblem says why the config's own load
+// leaves one to the split that converges it — and a crossing an earlier release
+// wrote elsewhere in the block must not stand in the way of the next
+// declaration.
+func ValidatePoolPaths(pools []Pool, creds []Credential) []Problem {
+	return pathCrossingProblems(pools, creds)
+}
+
+// pathCrossingProblems is D1668's rule, applied to a whole block: the two doors
+// that hold it — the one a pool is WRITTEN through (ValidatePoolPaths) and the
+// one a PUBLISHED node is read through (ValidatePublishedPools) — ask it here so
+// the sentence and the path it is reported at cannot be two.
+func pathCrossingProblems(pools []Pool, creds []Credential) []Problem {
+	defined := definedCredentialNames(creds)
+	var ps []Problem
+	for i, p := range pools {
+		at := fmt.Sprintf("pools[%d]", i)
+		if p.Name != "" {
+			at = "pools." + pluginwire.Printable(p.Name)
+		}
+		if prob, ok := poolCrossingProblem(at, p, creds, defined); ok {
+			ps = append(ps, prob)
+		}
+	}
+	return ps
+}
+
+// definedCredentialNames is the names a pool may list: the credentials block of
+// the same document, and the built-in vertex.
+func definedCredentialNames(creds []Credential) map[string]bool {
+	defined := map[string]bool{CredentialVertex: true}
+	for _, c := range creds {
+		if c.Name != "" {
+			defined[c.Name] = true
+		}
+	}
+	return defined
+}
+
+// poolCrossingProblem is D1668's rule: every member of a pool is served by one
+// path. Its listed order is what failover walks (D1632), and only one half of a
+// run can walk a list — the credentials service selects by tier and the listed
+// order only breaks a tie (F7, D154), while a run's own gateway holds one
+// upstream per stage and never retries a call across a secret (F20, D1635) — so
+// a pool that names members of both halves is a pool whose order can mean
+// nothing, and it is refused where it is written rather than resolved to one of
+// them. It is refused rather than failed over inside a stage because the fix
+// for that is a rewrite of the gateway's one-upstream-per-stage model, bought
+// for a case two pools express exactly.
+//
+// It is the same one sentence wherever it is said — `fugaro accounts pool add`,
+// and the read of a published node — because the operator meets it at whichever
+// door a pool was written through, and it has to name the fix there.
+//
+// The two members the sentence names are named in path order, the credentials
+// service's first, so it reads the same whichever way the pool listed them, and
+// the path it is reported at is where the pool's own order crosses: the first
+// member whose half is not the half the first member is on, which is the pair
+// the operator has to separate.
+//
+// A member this document does not define is left out of the crossing: the
+// member's own problem reports it, and a name no layer places is not a half
+// either. The built-in vertex is not one of those — being built in is what
+// defines it — so a subscription beside vertex is refused like any other
+// crossing.
+//
+// It is the one rule of this file that a pool an earlier release wrote cannot
+// satisfy, so it is not one of the rules the READERS of a pool hold: 0.25.0's
+// `accounts pool add` wrote a pool naming both halves and its `accounts pool ls`
+// read it as valid, so a config or a node that carries one is a document no
+// validation can repair, and refusing it at a read would leave an installation
+// that cannot read its own config — the broken installation CLAUDE.md's HARD
+// RULE forbids, `fugaro update` reading the project config through the same
+// load. A pool that already crosses is therefore CONVERGED and not refused
+// (D1668, D1673): `fugaro update` splits it in the installation's own config
+// (internal/cli's derivePathPools, on every write of that file) and in the
+// published node, through a step of the policy chain
+// (internal/projectpolicy's migrateV8ToV9, which is the version bump this rule
+// ships with). The rule itself is held at two doors, and the two are the
+// activation plan's MC20 and MC21 together: the door a NEW pool is written
+// through (ValidatePoolPaths, whose one caller is `fugaro accounts pool add`)
+// and the read of a PUBLISHED node (ValidatePublishedPools, which
+// projectpolicy.Decode runs), so a node that already carries a crossing is
+// refused by the runner's Read, the credentials service's re-read, `doctor` and
+// `update` itself rather than served to a selector whose listed order it cannot
+// honour.
+//
+// It is deliberately NOT a rule of ValidatePools, which is the load of an
+// installation's own config: localcfg's validate asks it on every read of that
+// file, so a rule there would make `fugaro update` unable to read the very
+// config its own split is written into — the installation that cannot start,
+// for the length of the update. The config side is protected by the door a new
+// pool is written through and converged by derivePathPools instead.
+func poolCrossingProblem(at string, p Pool, creds []Credential, defined map[string]bool) (Problem, bool) {
+	members := PoolMembers(p, creds)
+	credsvc, runner, crossed, first := -1, -1, -1, ""
+	for i, m := range members {
+		if m.Path == "" || !defined[m.Name] {
+			continue
+		}
+		if first == "" {
+			first = m.Path
+		} else if crossed < 0 && m.Path != first {
+			crossed = i
+		}
+		if m.Path == CredentialPathCredsvc && credsvc < 0 {
+			credsvc = i
+		}
+		if m.Path == CredentialPathRunner && runner < 0 {
+			runner = i
+		}
+	}
+	if credsvc < 0 || runner < 0 || crossed < 0 {
+		return Problem{}, false
+	}
+	svc, run := pluginwire.Printable(members[credsvc].Name), pluginwire.Printable(members[runner].Name)
+	return Problem{
+		Path: fmt.Sprintf("%s.members[%d]", at, crossed),
+		Message: fmt.Sprintf("members %s and %s are served by different halves of a run (%s's type is served by the credentials service, %s's by the run's own gateway), and a pool's order can therefore mean nothing: name two pools, one per half, and let each craft's access name the one its stages need",
+			svc, run, svc, run),
+	}, true
 }
 
 // poolAccessProblems reports the rules a pool's owner block is held to wherever
@@ -511,9 +677,10 @@ func poolEmailProblem(email string) string {
 }
 
 // ValidatePublishedPools reports every rule a policy node's craft_pools block
-// breaks: ValidatePools' rules and the one only a PUBLISHED pool is held to —
-// it names an owner, or it carries the marker the migration wrote (D1936,
-// D1942, F37).
+// breaks: ValidatePools' rules, D1668's one-path rule (pathCrossingProblems,
+// which the node's own version-8 step converges a crossing pool with before this
+// read ever sees one) and the one only a PUBLISHED pool is held to — it names an
+// owner, or it carries the marker the migration wrote (D1936, D1942, F37).
 //
 // The two functions exist because the two documents are not the same thing. The
 // installation's own config is the owner's own pools and survives an upgrade
@@ -524,6 +691,7 @@ func poolEmailProblem(email string) string {
 // pool is refused rather than served.
 func ValidatePublishedPools(pools []Pool, creds []Credential) []Problem {
 	ps := ValidatePools(pools, creds)
+	ps = append(ps, pathCrossingProblems(pools, creds)...)
 	for _, p := range pools {
 		if p.Name == "" || p.LegacyOpen || p.Owner != "" {
 			continue

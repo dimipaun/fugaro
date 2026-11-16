@@ -544,6 +544,21 @@ func claudeOAuthAccountRefusal(name, repo string) error {
 		pluginwire.Printable(name), pluginwire.Printable(repo))
 }
 
+// keyCredentialSecretRefusal is the one message a repository-scoped store under
+// a key credential's own derived secret name gets. It names the flag rather
+// than the field alone, because the project-wide store is the one a credential's
+// value has: `fugaro accounts add --type openrouter|anthropic` is the command
+// that stores it whole, and this is the spelling for a key that run could not
+// finish.
+func keyCredentialSecretRefusal(name string) error {
+	field := "claude_accounts.<credential>.allow_data_to"
+	if cred, ok := config.CredentialBySecret(name); ok {
+		field = "claude_accounts." + pluginwire.Printable(cred) + ".allow_data_to"
+	}
+	return userErr("%s is a key credential's own secret, and a credential's value is stored once for the project — its reach is %s, not the repository a copy was stored for: store it with '%s secrets set %s --project-wide'",
+		pluginwire.Printable(name), field, selfCommand(), quoteWord(name))
+}
+
 // declares reports whether some workflow of cfg lists secret name.
 func declares(cfg *config.Config, name string) bool {
 	for _, wf := range cfg.Workflows {
@@ -753,6 +768,14 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 		if !claudeOAuthAccountAllowed(env.lc.ClaudeAccounts, name, r.repo) {
 			return claudeOAuthAccountRefusal(name, r.repo)
 		}
+	} else if config.KeyCredentialSecret(name) {
+		// A key credential's value is the project's, in one copy: the
+		// credential is declared once in this project's config, its reach is
+		// claude_accounts.<credential>.allow_data_to, and the half that serves
+		// it reads that one container — so a repository's own copy would be a
+		// value nothing reads, stored for a repository the allow-list does not
+		// name. The refusal names the store that does work.
+		return keyCredentialSecretRefusal(name)
 	} else if p, ok := config.ProviderBySecret(env.lc.Providers, name); ok && !reserved {
 		// The owner's, from the local config, so any checkout will do. The
 		// key is only ever mounted for a repository the provider may see.
@@ -1477,7 +1500,36 @@ func projectWideAccepted(lc *localcfg.Config, name string) bool {
 	if account, ok := config.ClaudeAccountBySecret(lc.ClaudeAccounts, name); ok && account != config.DefaultClaudeAccount {
 		return len(lc.ClaudeAccounts[account].AllowDataTo) > 0
 	}
+	// A key credential's own derived secret (MC22): gated by the same field a
+	// named Claude account's is, because a credential is bounded as an account
+	// is — claude_accounts.<credential>.allow_data_to names the repositories
+	// the credential's key may be sent to, and it is what `fugaro accounts add
+	// --type openrouter|anthropic` writes before the value is stored here. A
+	// name in the namespace whose credential is not declared with a key type
+	// is not one (keyCredentialBySecret), so a claude-oauth credential's
+	// derived key name cannot collect a copy nothing reads.
+	if cred, ok := keyCredentialBySecret(lc, name); ok {
+		return len(lc.ClaudeAccounts[cred].AllowDataTo) > 0
+	}
 	return false
+}
+
+// keyCredentialBySecret is CredentialBySecret's second half: the credential a
+// derived key name belongs to, when the config declares that credential as one
+// of the two key types. A name merely shaped like one belongs to no credential
+// — nothing would read that container — and a name whose credential is declared
+// another type is not one either: a claude-oauth credential's value is the
+// Claude account's own token, under the family claude_accounts already owns.
+func keyCredentialBySecret(lc *localcfg.Config, secret string) (string, bool) {
+	name, ok := config.CredentialBySecret(secret)
+	if !ok {
+		return "", false
+	}
+	cred, declared := config.CredentialNamed(lc.Credentials, name)
+	if !declared || !config.KeyCredentialType(cred.Type) {
+		return "", false
+	}
+	return name, true
 }
 
 // projectWideRefusal is what `secrets set name --project-wide` reports when
@@ -1498,6 +1550,23 @@ func projectWideRefusal(lc *localcfg.Config, name string) error {
 	}
 	if account, ok := config.ClaudeAccountBySecret(lc.ClaudeAccounts, name); ok && account != config.DefaultClaudeAccount {
 		return projectSecretRefusal(name, "claude_accounts."+pluginwire.Printable(account)+".allow_data_to")
+	}
+	// Read in the same position as projectWideAccepted's branch, so the two
+	// answer for the same names: a name in the key credential namespace that
+	// reached this sentence is one whose credential is not declared as a key
+	// type, and the sentence says which of the two reasons it is rather than
+	// naming a field the owner could fill in and still not store under.
+	if cred, ok := config.CredentialBySecret(name); ok {
+		declared, isKey := config.CredentialNamed(lc.Credentials, cred)
+		switch {
+		case !isKey:
+			return userErr("%s is a key credential's own secret name, and this project declares no credential %s: declare one with '%s accounts add %s --type openrouter' (or --type anthropic), which stores its key under this name itself",
+				pluginwire.Printable(name), pluginwire.Printable(cred), selfCommand(), pluginwire.Printable(cred))
+		case !config.KeyCredentialType(declared.Type):
+			return userErr("%s is a key credential's own secret name, and %s is declared %s: a credential of that type stores its value under its Claude account's name (%s), so nothing would read this one — its type is changed in the file, where a type is a decision",
+				pluginwire.Printable(name), pluginwire.Printable(cred), pluginwire.Printable(declared.Type), pluginwire.Printable(config.ClaudeAccountSecret(cred)))
+		}
+		return projectSecretRefusal(name, "claude_accounts."+pluginwire.Printable(cred)+".allow_data_to")
 	}
 	if p, ok := config.ReservedProviderSecret(lc.Providers, name); ok {
 		// Reserved for a configured provider's key and not that provider's own
@@ -1971,6 +2040,13 @@ func projectSecretAllowed(lc *localcfg.Config, logical string) []string {
 		return []string{"any repository"}
 	}
 	if name, ok := config.ClaudeAccountBySecret(lc.ClaudeAccounts, logical); ok {
+		return slices.Clone(lc.ClaudeAccounts[name].AllowDataTo)
+	}
+	// A key credential's own derived secret is bounded by the same field a
+	// named Claude account's is (MC22): its key may be sent only to the
+	// repositories claude_accounts.<credential>.allow_data_to names, so that
+	// list is this column's honest answer for it.
+	if name, ok := keyCredentialBySecret(lc, logical); ok {
 		return slices.Clone(lc.ClaudeAccounts[name].AllowDataTo)
 	}
 	if name, ok := config.ProviderBySecret(lc.Providers, logical); ok {

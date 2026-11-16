@@ -801,3 +801,102 @@ func TestMixedStageAccountRungFourIsOneAccount(t *testing.T) {
 		t.Errorf("WorkflowAccounts = %v, want the stage key's account alone: a second account is what the rule refuses", got)
 	}
 }
+
+// keyCredentialLC is the installation the case below varies: one repository
+// whose workflow builds its own image (a baked workflow, so the spec needs no
+// catalog entry), one account of its own the repository may use, and a second
+// name admitted the same way — the one whose credentials entry the case writes.
+const keyCredentialLC = `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+registry_host: us-east5-docker.pkg.dev/proj-1234
+base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc}
+repos:
+  acme/webapp: { provider: github, base_branch: main, workflows: [go], github_app_id: "123456" }
+claude_accounts:
+  bmb: { allow_data_to: [acme/webapp] }
+  team-a: { allow_data_to: [acme/webapp] }
+`
+
+// TestAKeyCredentialDeploysNoJobMountingAnEmptyToken is MC22 (D1670) at the
+// job set: `fugaro accounts add team-a --type openrouter` bounds the credential
+// in claude_accounts, whose allow_data_to is what admits the repositories its
+// key may be sent to, and stores the value under the credential's OWN derived
+// secret — never under the account's claude-oauth-token-team-a. A job built for
+// the name would mount that container as CLAUDE_CODE_OAUTH_TOKEN and nothing
+// ever writes a version to it: the run launched on the variant would fail in
+// the credential, `fugaro secrets ls` would flag a MISSING name no `claude
+// setup-token` step could fill (SecretCommands), and the command's own last
+// line ("a run cannot authenticate with it") would contradict the job the same
+// converge deployed. The two controls are what keeps this about the
+// credential's TYPE and not about the name: a credential served by the
+// account's own token, and a name no credentials entry defines, each keep the
+// variant and the mount they have always had.
+func TestAKeyCredentialDeploysNoJobMountingAnEmptyToken(t *testing.T) {
+	cfg := parseCfg(t, []byte(originCfg(`agent: { auth: oauth }`)))
+	specOf := func(t *testing.T, lc *localcfg.Config) RepoSpec {
+		t.Helper()
+		out := installationOutputs()
+		out.Operators = []string{originMember}
+		out.Launchers = []string{originMember}
+		spec, err := Repo(Inputs{LC: lc, Repo: "acme/webapp", Cfg: cfg, Installation: out})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return spec
+	}
+	for _, c := range []struct {
+		what, creds string
+		served      bool
+	}{
+		{"declared a key credential", "credentials:\n  - { name: team-a, type: openrouter }\n", false},
+		{"declared the Claude account's own token", "credentials:\n  - { name: team-a, type: claude-oauth }\n", true},
+		{"an account no credentials entry defines", "", true},
+	} {
+		t.Run(c.what, func(t *testing.T) {
+			lc := parseLC(t, keyCredentialLC+c.creds)
+			spec := specOf(t, lc)
+			token := config.ClaudeAccountSecret("team-a")
+			variant := gcp.WorkflowVariant("go", "team-a")
+			// The direct statement, over every job the repository deploys: a
+			// job mounts team-a's token container exactly when team-a is an
+			// account whose token something writes (c.served) — and for a key
+			// credential, whose value is config.CredentialSecret, no job
+			// mounts it at all.
+			var mounting []string
+			for name, ws := range spec.Workflows {
+				if _, ok := ws.SecretIDs[token]; ok {
+					mounting = append(mounting, name)
+				}
+			}
+			switch {
+			case !c.served && len(mounting) > 0:
+				t.Errorf("the job set mounts %s on %v, and nothing ever writes a version to it for a key credential: its value is %s", token, slices.Sorted(slices.Values(mounting)), config.CredentialSecret("team-a"))
+			case c.served && !slices.Equal(mounting, []string{variant}):
+				t.Errorf("the job set mounts %s on %v, want %s alone: the account's token is what its own variant exists for", token, slices.Sorted(slices.Values(mounting)), variant)
+			}
+			if _, ok := spec.Workflows[variant]; ok != c.served {
+				t.Errorf("the job set holds a %s variant: %v, want %v (%v)", variant, ok, c.served, slices.Sorted(maps.Keys(spec.Workflows)))
+			}
+			// The set is not emptied by the rule: the base variant and the
+			// account this repository already had stay where they were.
+			for _, want := range []string{gcp.WorkflowVariant("go", ""), gcp.WorkflowVariant("go", "bmb")} {
+				if _, ok := spec.Workflows[want]; !ok {
+					t.Errorf("the job set lost %s: %v", want, slices.Sorted(maps.Keys(spec.Workflows)))
+				}
+			}
+			// RequiredSecrets reads the same list, so `secrets ls` flags
+			// exactly the containers a deployed job mounts: an empty token
+			// under a key credential's name is not one of them.
+			required, err := RequiredSecrets(cfg, lc, "acme/webapp")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := slices.Contains(required, token); got != c.served {
+				t.Errorf("RequiredSecrets names %s: %v, want %v (%v)", token, got, c.served, required)
+			}
+		})
+	}
+}

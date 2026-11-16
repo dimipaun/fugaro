@@ -51,13 +51,27 @@ type ProjectJob struct {
 	// or replace a queued run's token (budget-token-channel.md §7.2, D16).
 	TokenCondition Condition `json:"token_condition"`
 	Vertex         bool      `json:"vertex"`
+	// CredentialsService is the installation's credentials service, as the
+	// module reads it (name and region, no URL: repoCredentialsService), and
+	// null for a job whose profile the service does not serve. It is the whole
+	// of the switch on this side — the module turns it into the job account's
+	// one roles/run.invoker grant on that service (modules/project/sa.tf) and
+	// otherwise changes nothing about the job, which keeps every mount it has
+	// (G17: the drop is B5.7's flip, behind the owner's check). Absent when
+	// null, so the document of a job the service does not serve is byte for
+	// byte what it was. See projectJobServesTheCredentialsService for what
+	// "served" means here.
+	CredentialsService *CredentialsService `json:"credentials_service,omitempty"`
 }
 
 // ProjectJobs is the installation's project jobs, by job name: one job and
 // one job service account per (profile, provider, account) of the local
-// config's profiles (design §4.1). An installation whose local config names
-// no profile gets none — the map is nil, the tfvars key is left out and the
-// root creates nothing, so an existing installation's plan is unchanged.
+// config's profiles (design §4.1), less the names the local config declares a
+// key credential — those get no job at all (config.ClaudeAccountTokenNames,
+// the rule the per-repository set is built with too). An installation whose
+// local config names no profile gets none — the map is nil, the tfvars key is
+// left out and the root creates nothing, so an existing installation's plan is
+// unchanged.
 //
 // bucket and vertex are the installation's, computed by Installation, so the
 // jobs' bucket condition, FUGARO_* env and Vertex grant are the ones the
@@ -67,6 +81,74 @@ type ProjectJob struct {
 // asserts (plan step 6).
 func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]ProjectJob, error) {
 	return projectJobs(lc, bucket, vertex, nil)
+}
+
+// ProjectJobAccount is one point of the shared jobs' account axis: the
+// (profile, provider, account) triple a job of ProjectJobs or ProjectReviewJobs
+// is deployed for, which that job states in its own entry (ProjectJob's first
+// three fields).
+//
+// It is a value of its own because one rule is about a triple rather than about
+// a job: the accounts this installation declares a KEY credential are composed
+// into no job at all (ProjectKeyAccountJobs), and the run that composes the
+// installation's spec names them so that the carry can keep the job an earlier
+// release deployed for one (CarriedProjectJobAccounts).
+type ProjectJobAccount struct {
+	Profile  string
+	Provider string
+	Account  string
+}
+
+// ProjectKeyAccountJobs is the shared jobs' account axis with the names this
+// installation declares a KEY credential left IN: the (profile, provider,
+// account) triples ProjectJobs composes no job for.
+//
+// It is the very filter that drops them, read to NAME what it drops
+// (config.ClaudeAccountTokenNames over config.ProjectJobAccounts, the two
+// functions the composer applies), because a run that composes a spec has to
+// carry the job an earlier release deployed for such a name from the
+// installation's own tfvars (CarriedProjectJobAccounts). That job is one the
+// installation holds, and a document rewritten without it is the plan of its
+// destruction: RefuseProjectJobDeletes stops the whole `fugaro update` on that
+// plan, with "restore the profile as it was" as the only remedy it can print —
+// and here that remedy does not exist, because putting the name back into the
+// profile's claude_accounts is exactly what the filter drops again. The
+// installation would stop converging for good (CLAUDE.md's HARD RULE).
+//
+// The profiles a carry holds whole (projectJobs' carried, which is
+// InstallOptions.CarriedJobProfiles) are not named here: every job of such a
+// profile, a key credential's included, is the deployed one CarriedProjectJobs
+// keeps, so naming its accounts again would be a second answer to one question.
+// A profile no shared job serves is not named either, and for the filter's own
+// reason: no job of its axis is composed, so none was deployed for a carry to
+// keep.
+func ProjectKeyAccountJobs(lc *localcfg.Config, carried []string) []ProjectJobAccount {
+	var out []ProjectJobAccount
+	for name, pr := range lc.Profiles {
+		if !SharedJobProvider(pr.Provider) || slices.Contains(carried, name) {
+			continue
+		}
+		axis := config.ProjectJobAccounts(pr)
+		kept := config.ClaudeAccountTokenNames(lc.Credentials, axis)
+		for _, account := range axis {
+			if slices.Contains(kept, account) {
+				continue
+			}
+			out = append(out, ProjectJobAccount{Profile: name, Provider: pr.Provider, Account: account})
+		}
+	}
+	// Sorted, so that the note a run computes is the same list on every run:
+	// the order the profiles and the axis arrive in is a map's.
+	slices.SortFunc(out, func(a, b ProjectJobAccount) int {
+		if c := strings.Compare(a.Profile, b.Profile); c != 0 {
+			return c
+		}
+		if c := strings.Compare(a.Provider, b.Provider); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Account, b.Account)
+	})
+	return out
 }
 
 // projectJobs is ProjectJobs with the named profiles carried: no job is
@@ -263,14 +345,42 @@ func projectJobs(lc *localcfg.Config, bucket string, vertex bool, carried []stri
 		// deployer skipped is a review the launcher would ask Cloud Run for
 		// and never find. The loop is the axis itself, so the two are
 		// deployed without this function naming them: it builds one job per
-		// value config.ProjectJobAccounts yields, whichever value that is.
+		// value the axis yields, whichever value that is, less the names the
+		// paragraph below filters out of it.
 		//
 		// Each account's job gets its own copy of the profile's mounts — the
 		// token of one account must never ride on another's job — its own copy
 		// of the profile's environment (the redaction list below is per job),
 		// and its own service account, which is the only thing that may read
 		// that account's token (D2).
-		for _, account := range config.ProjectJobAccounts(pr) {
+		//
+		// The axis is the profile's own, less the names this installation
+		// declares a KEY credential (config.ClaudeAccountTokenNames, the one
+		// function WorkflowAccounts applies to the per-repository set): every
+		// job this loop builds exists to carry its account's Claude token —
+		// projectAccountMount mounts config.ClaudeAccountSecret(account) as
+		// CLAUDE_CODE_OAUTH_TOKEN — and a key credential's value is stored under
+		// the credential's own derived secret instead (config.CredentialSecret,
+		// D1670), so nothing ever writes a version to that container and a job
+		// built for the name would mount an empty token: its runs would fail in
+		// the credential, and `fugaro secrets ls` would flag a MISSING name no
+		// `claude setup-token` step could fill. What such a name keeps is its
+		// claude_accounts entry — the reach its allow_data_to bounds, which
+		// DeriveAccounts and CheckProfiles judged above and this does not move —
+		// and what it does not get is a job. `fugaro accounts add` refuses to
+		// put one in a profile's list (accounts_add.go, MC22), so the config
+		// that reaches this is one written by hand.
+		// The credentials service, when it serves this profile: every job of
+		// the profile then carries it, and the module grants each account
+		// roles/run.invoker on it. Computed once per profile and not per
+		// account, because it is a fact about the repositories a profile
+		// serves and not about the credential one of its jobs holds — and
+		// through repoCredentialsService, because the module reads the same
+		// two values a repository root hands its own module (name and region,
+		// the URL left behind: an object conversion in Terraform drops an
+		// extra attribute silently).
+		credentials := repoCredentialsService(installationCredentialsService(lc), projectJobServesTheCredentialsService(lc, pr))
+		for _, account := range config.ClaudeAccountTokenNames(lc.Credentials, config.ProjectJobAccounts(pr)) {
 			jobSecrets := maps.Clone(secretEnv)
 			if err := projectAccountMount(lc, name, pr, account, jobSecrets, env); err != nil {
 				return nil, err
@@ -310,7 +420,8 @@ func projectJobs(lc *localcfg.Config, bucket string, vertex bool, carried []stri
 					Title:      gcp.ProjectTokenBucketConditionTitle(saID),
 					Expression: gcp.ProjectTokenBucketCondition(bucket),
 				},
-				Vertex: vertex,
+				Vertex:             vertex,
+				CredentialsService: credentials,
 			}); err != nil {
 				return nil, err
 			}
@@ -775,6 +886,165 @@ func recordedGitHubAppID(lc *localcfg.Config) (string, error) {
 // forgotten line here.
 func SharedJobProvider(provider string) bool {
 	return slices.Contains(sharedJobProviders, provider)
+}
+
+// installationCredentialsService is the installation's credentials service as
+// THIS package knows it while it builds the installation root's own tfvars: the
+// name the root creates it under (CredentialsServiceName, the one literal
+// internal/backend/gcp writes into var.credentials_service.service, and the name
+// the deployment derives rather than a second spelling of it) and the
+// installation's region. The URL is not built here: Cloud Run assigns it, the
+// module's variable carries no such attribute, and the deployer never needs it —
+// a job is told the address at launch, from the local config's own record of the
+// service (internal/cli's credentialsServiceLaunchEnv).
+//
+// nil for an installation whose local config carries no block, which is the
+// opt-in (D147, and the same gate implicitReviewVariant reads): with no service
+// there is nothing to grant an account roles/run.invoker on.
+func installationCredentialsService(lc *localcfg.Config) *CredentialsService {
+	if lc == nil || lc.CredentialsService == nil {
+		return nil
+	}
+	return &CredentialsService{Name: CredentialsServiceName, Region: lc.Region}
+}
+
+// projectJobServesTheCredentialsService is the profile's switch: whether this
+// profile's shared jobs reach the installation's credentials service, and
+// therefore whether the module grants each of their accounts roles/run.invoker
+// on it (B5.2, D505, G17 — the grant alone; the mounts stay until B5.7's flip).
+//
+// Two conditions, and the second is what a profile's auth is on this side of
+// the wire. There is no auth in a profile's own declaration — a profile names a
+// provider, a size, a timeout and its mounts, and WHICH auth its runs use is a
+// fact about each repository's fugaro.yaml — so the deployer reads it where the
+// installation records it: localcfg.Repo.CredentialsServiceReady, the record a
+// repository's own root is applied under, written as
+// CredentialsServiceServes(installed, bundle is ready, that repository's auth)
+// (internal/cli's recordCredentialsServiceReady) and backfilled for every entry
+// from the installation's own state on each `fugaro update`. A record that says
+// on is therefore a repository whose auth is one the service serves AND whose
+// root an apply built for it, which is the same pair the launcher judges a
+// launch with; a record that says off, or no record at all, is a repository the
+// service does not serve.
+//
+// The installation "has the service" as the block's presence and not as a URL:
+// the config records the block on the apply that creates the service, and Cloud
+// Run assigns the URL on that same apply, so an entry can hold the block with an
+// empty URL for the length of one run — and the grant this predicate drives
+// needs the name and the region alone. The launcher's own answer needs the URL
+// and withholds the address until it is there, so the two never disagree in the
+// direction that matters (a launch told about a service its job has no grant on).
+//
+// Which repositories are this profile's is the policy's own admission read
+// against the config's entries: a repository of the profile's provider — one
+// job serves one provider, so a repository of another provider is never
+// admitted to it (projectpolicy.Admits) — that the profile's own allow_repos
+// admits when it names one, and that the project's enrollment admits, which is
+// what the config's own entries are (they are what the published allow_repos is
+// seeded from, internal/cli's seedAllowRepos).
+//
+// One repository the profile serves being on is enough, and it is deliberately
+// the wider answer of the two a reader might expect. The narrower one — every
+// repository of the profile on — would leave a `cascade` repository of a
+// profile that also serves an `oauth` one without the grant its launch needs:
+// the launch hands such a repository the service's address (the launcher reads
+// ITS record, live), and a job account without the invoker bit fails every one
+// of its calls at the front door. A grant on a job whose other repositories are
+// not switched is inert: nothing hands those runs the address, and the service
+// refuses a caller it does not admit whatever IAM says (Q6).
+//
+// It is one impure function on purpose — it is the only place the deployer
+// reads the installation's own records — and ProjectJobs' "nothing here reads a
+// repository" stays true of it: it reads what the config RECORDS about the
+// repositories, never a repository's files, and the job set (one job per
+// profile, provider and account) does not move with the answer.
+func projectJobServesTheCredentialsService(lc *localcfg.Config, pr config.JobProfile) bool {
+	if lc == nil || lc.CredentialsService == nil {
+		return false
+	}
+	for _, key := range slices.Sorted(maps.Keys(lc.Repos)) {
+		entry := lc.Repos[key]
+		if entry.Provider != pr.Provider || !entry.CredentialsServiceOn() {
+			continue
+		}
+		canonical, err := projectpolicy.Canonical(entry.Provider, key)
+		if err != nil {
+			continue
+		}
+		if len(pr.AllowRepos) > 0 && !projectpolicy.AdmitRepo(pr.AllowRepos, canonical) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// RefreshProjectJobCredentialsService re-derives every job's
+// credentials_service — and nothing else about it — from the config as it
+// stands now, and returns the set carrying that answer.
+//
+// It exists because the answer is not a fact of the run's inputs alone: it is
+// read off the local config's per-repository records
+// (projectJobServesTheCredentialsService), and those records MOVE inside a run
+// that applies the installation root. Two writers do that, and both are later
+// than the moment the run's options were read: the upgrade backfill, which
+// writes the entries the field did not exist for at the end of the installation
+// stage (internal/cli's install), and the repository stage, which writes the
+// entry of the checkout it converges before it plans that checkout's root.
+//
+// A set derived once is therefore behind the records the moment either has
+// written, and the apply that follows would deploy the shared job of a profile
+// the records have just switched with no roles/run.invoker grant on the
+// service — while the launcher, which reads the same records live, hands that
+// job the service's address. The service refuses a caller without the grant at
+// its front door and a cascade run has nothing to fall back to (D143), so the
+// two have to converge in ONE run (CLAUDE.md's HARD RULE): the callers
+// re-derive immediately before the tfvars that plan the root.
+//
+// The set's KEYS never move — this is the same jobs, one per (profile,
+// provider, account), with one field re-read — so G17's mounts and every other
+// field stay exactly what the first derivation built. A job whose profile the
+// config no longer declares is answered off: there is no profile left for a
+// repository to be served through.
+func RefreshProjectJobCredentialsService(jobs map[string]ProjectJob, lc *localcfg.Config) map[string]ProjectJob {
+	if len(jobs) == 0 || lc == nil {
+		return jobs
+	}
+	out := maps.Clone(jobs)
+	for name, job := range out {
+		pr, declared := lc.Profiles[job.Profile]
+		job.CredentialsService = repoCredentialsService(installationCredentialsService(lc), declared && projectJobServesTheCredentialsService(lc, pr))
+		out[name] = job
+	}
+	return out
+}
+
+// ProjectJobsCredentialsServiceStale reports whether the switch on these jobs
+// answers differently from what the config now derives — whether a set derived
+// before a record moved is still what a run holds, and the grant the records ask
+// for has therefore not been applied.
+//
+// It is the credentials stage's own question (internal/cli): that stage is the
+// run's last apply of the installation root, so it is where a grant a mid-run
+// record write made necessary either lands or waits for a second `fugaro
+// update` — which is the command the owner is not asked to run twice.
+func ProjectJobsCredentialsServiceStale(jobs map[string]ProjectJob, lc *localcfg.Config) bool {
+	refreshed := RefreshProjectJobCredentialsService(jobs, lc)
+	for name, job := range jobs {
+		if credentialsServiceKey(job.CredentialsService) != credentialsServiceKey(refreshed[name].CredentialsService) {
+			return true
+		}
+	}
+	return false
+}
+
+// credentialsServiceKey is the switch as one comparable value: the two fields
+// the module reads off it, or "" for a job the service does not serve.
+func credentialsServiceKey(s *CredentialsService) string {
+	if s == nil {
+		return ""
+	}
+	return s.Name + "\x00" + s.Region
 }
 
 // sharedJobProviders are the provider kinds a shared project job serves

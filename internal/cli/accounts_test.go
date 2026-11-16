@@ -3,9 +3,11 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -132,6 +134,45 @@ func TestAccountsLsDefaultFirstThenNamedSorted(t *testing.T) {
 	}
 	if !doc.Complete || doc.Note != "" {
 		t.Fatalf("doc = %+v, want complete=true with no note (selection succeeded)", doc)
+	}
+}
+
+// TestAccountsLsLeavesAKeyCredentialOut is the listing half of the reader this
+// command and init's secrets stage share: a name the credentials block declares
+// a key credential is not a Claude account token, so it is not a name
+// `fugaro run --token` may be given — the whole of what this command lists
+// (its own Short) — and printing it beside the accounts that are leaves the
+// operator with a name whose only two answers are a refusal and a job that
+// mounts nothing. Its declaration is the account's entry, written by
+// `accounts add --type` and bounded by allow_data_to.
+//
+// The two readings are one output and may not be confused for one another
+// (MC24): the name is not an account line, and it IS a line of the credentials
+// block, which says what it is — its type and the half that serves it
+// (TestAccountsLsNamesTheServingPath) — so leaving the name out of the accounts
+// costs the operator nothing.
+func TestAccountsLsLeavesAKeyCredentialOut(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, claudeAccountsConfig+"credentials:\n  - { name: acme-overflow, type: openrouter }\n")
+	out, _, err := execute(t, "accounts", "ls", "--repo", "acme/other", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc accountsListDoc
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("unmarshal %q: %v", out, err)
+	}
+	want := []string{"default", "acme-personal"}
+	if fmt.Sprint(doc.Accounts) != fmt.Sprint(want) {
+		t.Errorf("accounts = %v, want %v: a key credential is not an account a --token run may name, and the name it is declared under is not one either", doc.Accounts, want)
+	}
+	text, _, err := execute(t, "accounts", "ls", "--repo", "acme/other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	if got := []string{"default", "acme-personal", "acme-overflow (openrouter, served by a run's own gateway)"}; !slices.Equal(lines, got) {
+		t.Errorf("the text output is %v, want %v: the account names alone, then the credential as what it is", lines, got)
 	}
 }
 

@@ -744,12 +744,17 @@ const settingsProbeItem = "probe-item"
 
 // settingsProbeItems are the items of the list keys whose validator is
 // stricter than "any string": budget.allowed_models refuses a name that is not
-// an explicit model ID (config.CheckModelID) and followup.trusted refuses
-// anything but a GitHub numeric user ID. The probe writes the item its key
-// needs, and every other key takes settingsProbeItem.
+// an explicit model ID (config.CheckModelID), followup.trusted refuses
+// anything but a GitHub numeric user ID, and verifier_accounts refuses anything
+// but the bare address a Google ID token's email claim carries
+// (policy.ValidVerifierAccounts). A plain item is refused by those loaders
+// whatever the list says, which is a probe that measures the validator rather
+// than the key. The probe writes the item its key needs, and every other key
+// takes settingsProbeItem.
 var settingsProbeItems = map[string]string{
 	"budget.allowed_models": "claude-probe-9-9",
 	"followup.trusted":      "100000002",
+	"verifier_accounts":     "verifier@example.invalid",
 }
 
 // settingsAddLands reports whether `--add` lands on key, in the layer the row
@@ -947,10 +952,13 @@ func TestSettingsSetRefusesEveryKeyOutsideSpec44(t *testing.T) {
 	for _, key := range []string{
 		"endpoints.compute", "terraform.state_bucket", "policy_generation", "layer_generation",
 		"credentials_service.url", "budget.rtdb_url", "name", "runs_bucket", "bucket_url",
-		// The two schedules (R13): the layer keys the generic path refuses
-		// until someone says otherwise, because paused: false is the one
-		// direction here that starts a job and it is the owner's own edit of
-		// the layer file (the refusal itself is asserted below).
+		// The two schedules (R13): the spellings without the layer prefix are
+		// refused, because the layer key is the row the generic path writes —
+		// `layer.jobs.reports.paused` and `layer.jobs.catalog_check.paused` are
+		// its rows since R1 of docs/config-ownership (D2603), and
+		// `jobs.reports.paused` names no row at all. `paused: false` is still
+		// the one direction here that starts a job, which is the layer write's
+		// own question and not this refusal's.
 		"jobs.reports.paused", "jobs.catalog_check.paused",
 	} {
 		t.Run(key, func(t *testing.T) {
@@ -995,9 +1003,11 @@ func TestSettingsSetRefusesASensitiveKeyAndNeverPrintsItsValue(t *testing.T) {
 
 // TestSettingsCeilingKeyCoversTheCapsAndTheLayerSpellings: D846's prefix test
 // is `budget.*` and `governance.*`, the agent block's two caps are the same
-// boundary under their own names, and the project layer is the same setting
-// under the `layer.` prefix (SD14) — its own block and its `defaults.` block,
-// which is the cap every repository the layer templates runs with.
+// boundary under their own names, the orchestrator daemon's guardrails are that
+// boundary again (D1239, O4) — a raise of one bounds how much work the whole
+// project's orchestrator sets going at once — and the project layer is the same
+// setting under the `layer.` prefix (SD14): its own block and its `defaults.`
+// block, which is the cap every repository the layer templates runs with.
 func TestSettingsCeilingKeyCoversTheCapsAndTheLayerSpellings(t *testing.T) {
 	for _, key := range []string{
 		"budget.per_run_usd", "budget.mode", "budget.allowed_models",
@@ -1005,6 +1015,8 @@ func TestSettingsCeilingKeyCoversTheCapsAndTheLayerSpellings(t *testing.T) {
 		"layer.governance.review_ratio",
 		"agent.max_budget_usd", "agent.max_run_tokens",
 		"layer.defaults.agent.max_budget_usd",
+		"orchestrator.max_running", "orchestrator.spawn_per_day",
+		"orchestrator.decision_model_per_class",
 	} {
 		if !settingsCeilingKey(key) {
 			t.Errorf("settingsCeilingKey(%q) = false, and D846 makes it a ceiling", key)
@@ -2667,5 +2679,178 @@ func TestSettingsSelectionReadsTheCheckoutsProject(t *testing.T) {
 	t.Chdir(t.TempDir())
 	if _, _, err := settingsSelection(); err == nil || !strings.Contains(err.Error(), "several project configs") {
 		t.Fatalf("outside a checkout nothing selects one of two project configs, got %v", err)
+	}
+}
+
+// TestSettingsSetAddToAWideningListRowIsTyped: a row whose TypedWhy names the
+// widening direction of a list (verifier_accounts) is marked by `--add` as well
+// as by a truthy `set`, so the dry run says widening and the sentence it carries
+// is the row's own. The real write carries the same pair: a person who does not
+// run --dry-run first reads the sentence the row states, and nothing else about
+// the edit is asked of them (D1540, D1552).
+func TestSettingsSetAddToAWideningListRowIsTyped(t *testing.T) {
+	_, localPath := settingsWriteHome(t)
+	settingsWriteCheckout(t, settingsRepoYAML(""))
+	noTerminal(t)
+	row, ok := settings.Lookup("verifier_accounts")
+	if !ok || row.TypedWhy == "" {
+		t.Fatal("verifier_accounts carries no TypedWhy")
+	}
+	item := settingsProbeItems["verifier_accounts"]
+	doc := settingsDryRunDoc(t, "settings", "set", "verifier_accounts", "--add", item)
+	if !doc.Widening || doc.Why != row.TypedWhy {
+		t.Errorf("--add on verifier_accounts says widening=%v why=%q, want true and the row's TypedWhy", doc.Widening, doc.Why)
+	}
+
+	out, _, err := execute(t, "settings", "set", "verifier_accounts", "--add", item, "--layer", "local")
+	if err != nil {
+		t.Fatalf("--add on a widening list row did not write: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, row.TypedWhy) {
+		t.Errorf("the write does not print the row's own sentence saying what it widens:\n%s", out)
+	}
+	if got := readFileString(t, localPath); !strings.Contains(got, item) {
+		t.Errorf("the local config does not carry the account:\n%s", got)
+	}
+}
+
+// TestSettingsTypedAddCoversTheMobileAllowRows: the three `mobile_allow.*` rows
+// a person declares a phone with are marked TypedWhy exactly as
+// verifier_accounts is (D231, D1165), so the widening classification is the
+// same one — asked of settingsTypedWrite directly, because the rows' own
+// spelling carries a `*` and no write lands on one: the literal `*` meets the
+// map rule, a concrete spelling meets the unknown-key answer, and W3's allowlist
+// is what reaches their concrete spellings. What the test pins is the half that
+// is true today and the half that has to hold the day it is not: the row's
+// TypedWhy is the sentence `--add` and a truthy `set` both carry.
+func TestSettingsTypedAddCoversTheMobileAllowRows(t *testing.T) {
+	for _, key := range []string{"mobile_allow.*.uid", "mobile_allow.*.address", "mobile_allow.*.role"} {
+		row, ok := settings.Lookup(key)
+		if !ok {
+			t.Errorf("%s: no registry row (D231)", key)
+			continue
+		}
+		if row.TypedWhy == "" {
+			t.Errorf("%s: no TypedWhy, so growing the declared allowlist is written unasked", key)
+			continue
+		}
+		if typed, why := settingsTypedWrite(row, "", "operator", "add"); !typed || why != row.TypedWhy {
+			t.Errorf("settingsTypedWrite(%s, add) = %v %q, want true and the row's own sentence", key, typed, why)
+		}
+		if typed, why := settingsTypedWrite(row, "", "true", "set"); !typed || why != row.TypedWhy {
+			t.Errorf("settingsTypedWrite(%s, set true) = %v %q, want true and the row's own sentence", key, typed, why)
+		}
+		// `--remove` and `--remove-entry` take an entry away, which narrows the
+		// allowlist: neither is the typed form, the same way a ceiling's remove
+		// is not.
+		if typed, _ := settingsTypedWrite(row, "operator", "", "remove"); typed {
+			t.Errorf("settingsTypedWrite(%s, remove) is the widening, and taking an entry away narrows the list", key)
+		}
+	}
+
+	// Neither spelling is a write today, and each refusal is the one it should
+	// be: the literal `*` meets the map rule, and the concrete name is one the
+	// lookup does not resolve — the allowlist carries no `mobile_allow.` prefix
+	// and no wildcard row of it by name, so a concrete spelling has no row to
+	// land on and W3's task is what gives it one (D1162). It is the writer
+	// table that registers the concrete form, which is why all three are
+	// testdata/writer_gaps.golden's until then.
+	if _, err := settingsWriteRow("mobile_allow.*.uid"); err == nil {
+		t.Error("the literal mobile_allow.*.uid is writable, and a key with a `*` is a map entry the generic path never writes")
+	} else if !strings.Contains(err.Error(), "a key with a * is a map entry") {
+		t.Errorf("the literal spelling is refused with %v, want the map rule's own words", err)
+	}
+	if _, err := settingsWriteRow("mobile_allow.operator.uid"); err == nil {
+		t.Error("mobile_allow.operator.uid is writable, and the allowlist carries no row of the declared allowlist: W3's task is what registers one (D1162)")
+	} else if !strings.Contains(err.Error(), "no setting has that name") {
+		t.Errorf("the concrete spelling is refused with %v, want the unknown-key answer the allowlist's silence gives", err)
+	}
+}
+
+// TestSettingsOrchestratorGuardrailsAreMeasuredAgainstTheDaemonBlock: the
+// orchestrator's counts are the daemon's project-wide guardrails (D1239, O4),
+// and the write that raises them takes the typed name however the layers above
+// the file are pinned — because the machine's own block REPLACES the published
+// one when it states any key of it (localcfg.OrchestratorEffective), so a file
+// that starts stating a figure is a raise whatever the node says. The figure a
+// write is measured against is therefore the one a run gets today: the block's
+// own value where the file states one, and the guardrails Fugaro ships — with
+// this machine's own max_parallel filling the running cap — where it does not.
+//
+// Every direction that is not a raise is an ordinary write, which is the half
+// the fence may not swallow: a person lowering a cap is doing what the block is
+// for.
+func TestSettingsOrchestratorGuardrailsAreMeasuredAgainstTheDaemonBlock(t *testing.T) {
+	_, localPath := settingsWriteHome(t)
+	settingsWriteCheckout(t, settingsRepoYAML(""))
+	noTerminal(t)
+	for _, tc := range []struct {
+		widening bool
+		args     []string
+	}{
+		{true, []string{"settings", "set", "orchestrator.spawn_per_day", "600", "--layer", "local"}},
+		{false, []string{"settings", "set", "orchestrator.spawn_per_day", "30", "--layer", "local"}},
+		{true, []string{"settings", "set", "orchestrator.max_running", "40", "--layer", "local"}},
+		{false, []string{"settings", "set", "orchestrator.max_running", "5", "--layer", "local"}},
+		{false, []string{"settings", "set", "orchestrator.spawn_per_minute", "1", "--layer", "local"}},
+		{true, []string{"settings", "set", "orchestrator.decision_model_per_class", "--add-entry", "routine=haiku", "--layer", "local"}},
+	} {
+		doc := settingsDryRunDoc(t, tc.args...)
+		if doc.Widening != tc.widening {
+			t.Errorf("%v: widening = %v (why %q), want %v", tc.args, doc.Widening, doc.Why, tc.widening)
+		}
+	}
+
+	// The same block once the file states it: the value a run gets is the file's
+	// own, so a write raising that figure is the typed one and one lowering it is
+	// not — the node is not consulted and no clamp stands under these keys.
+	if out, _, err := execute(t, "settings", "set", "orchestrator.spawn_per_day", "30", "--layer", "local"); err != nil {
+		t.Fatalf("lowering a guardrail did not write: %v\n%s", err, out)
+	}
+	if got := readFileString(t, localPath); !strings.Contains(got, "spawn_per_day: 30") {
+		t.Fatalf("the local config does not carry the lowered cap:\n%s", got)
+	}
+	doc := settingsDryRunDoc(t, "settings", "set", "orchestrator.spawn_per_day", "600", "--layer", "local")
+	if !doc.Widening {
+		t.Errorf("raising the file's own 30 to 600 is not widening (why %q): the daemon gets the file's block", doc.Why)
+	}
+	// Removing it hands the daemon the guardrail Fugaro ships, which is a looser
+	// figure than the 30 the file states.
+	if doc := settingsDryRunDoc(t, "settings", "unset", "orchestrator.spawn_per_day", "--layer", "local"); !doc.Widening {
+		t.Errorf("removing the file's own guardrail is not widening (why %q): the daemon then runs on the shipped one", doc.Why)
+	}
+}
+
+// TestSettingsTypedWriteCoversTheEntryBlocksThatWiden: an entry write is
+// classified by the block it lands in and not by a row (D1165), so the two
+// blocks R1 hands the generic path — the orchestrator's decision-model map and
+// the declared mobile allowlist — carry the sentence the fence prints for an
+// entry added to them. The mobile block's writer is W3's (`settingsWriteRow`
+// refuses the bare block name today: the registry holds the three leaf rows and
+// no row for the block), and registering the widening before the writer is what
+// makes the guard hold the day the writer lands rather than a release later.
+func TestSettingsTypedWriteCoversTheEntryBlocksThatWiden(t *testing.T) {
+	for _, key := range []string{"orchestrator.decision_model_per_class", "mobile_allow"} {
+		block, ok := settingsEntryBlocks[key]
+		if !ok || !block.widens || block.widensWhy == "" {
+			t.Errorf("%s: block = %+v, want a registered block whose entries widen with a sentence of its own", key, block)
+			continue
+		}
+		if typed, why := settingsTypedWrite(settings.Row{Key: key}, "", "haiku", "add-entry"); !typed || why != block.widensWhy {
+			t.Errorf("settingsTypedWrite(%s, add-entry) = %v %q, want true and the block's own sentence", key, typed, why)
+		}
+	}
+	// Taking an entry away narrows a block and is no widening, the way a
+	// ceiling's own remove is not. It is asked of the mobile list rather than of
+	// the decision-model map because that map is a ceiling row as well, and a
+	// ceiling's `remove-entry` is typed on its own rule (remove-entry hands the
+	// member back to the layer below).
+	if typed, _ := settingsTypedWrite(settings.Row{Key: "mobile_allow"}, "operator", "", "remove-entry"); typed {
+		t.Error("removing a mobile_allow entry is the widening, and taking one away narrows the list")
+	}
+	// The workflow's secrets widen for their own reason, and the sentence they
+	// carried before the table held it is the sentence they still carry.
+	if typed, why := settingsTypedWrite(settings.Row{Key: "workflows.deploy.secrets"}, "", "TOKEN", "add-entry"); !typed || why != settingsEntryBlocks["workflows.*.secrets"].widensWhy {
+		t.Errorf("settingsTypedWrite(workflows.deploy.secrets, add-entry) = %v %q, want the block's own sentence", typed, why)
 	}
 }

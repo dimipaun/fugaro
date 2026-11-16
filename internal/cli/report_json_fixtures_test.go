@@ -308,6 +308,20 @@ var jsonCases = map[string]jsonCase{
 			return []string{"models", "ls"}
 		},
 	},
+	"escalation ls": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			escalationRig(t)
+			return []string{"escalation", "ls"}
+		},
+	},
+	"escalation show": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			escalationRig(t)
+			return []string{"escalation", "show", escalationItemID}
+		},
+	},
 	"models search": {
 		reads: true,
 		run: func(t *testing.T) []string {
