@@ -797,8 +797,8 @@ func (r *run) bakedProjectCheckout() string {
 // holding their own directories and files, not all of them repositories — so a
 // local run removes nothing at all. Deps.Local is that distinction and the one
 // place it is read: its zero value means the run is in the cloud, in a job the
-// platform placed, whose work directory the job's image chose and no caller
-// did. That is where this removal and D2309's read are about.
+// platform placed, whose work directory the job's image chose and no caller did.
+// That is the layout this removal and D2309's read are about.
 func (r *run) removeOtherBakedRepos() error {
 	if r.d.Local {
 		return nil
