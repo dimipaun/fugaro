@@ -921,6 +921,40 @@ func (r *Repo) OwnCommits(ctx context.Context, runBranch string) ([]string, erro
 	return strings.Fields(out), nil
 }
 
+// CommitSubjects lists, newest first, the subjects of the commits in
+// since...HEAD: the run's own work, and not the commits a person put on the
+// branch before the run started (since is origin/<base> for a first run and
+// the commit a follow-up started from — the runner's workBase). ChangedFiles
+// is its sibling over the same range: the paths, where this is the words.
+//
+// Subjects only, one line each: a commit's body is where a message runs long,
+// and `%s` is git's own folding of the first line into one. since is validated
+// the way checkRange validates one — a full commit SHA or a plain ref name,
+// never something git could read as an option or a revision expression — and
+// --end-of-options keeps it out of the option position whatever the validation
+// ever comes to allow. Replacement refs are ignored as OwnCommits ignores them:
+// a refs/replace/<sha> planted in the checkout the agent writes would otherwise
+// change what the run's own commits say they are.
+//
+// A range that holds no commit is an empty list rather than a nil one, so a
+// caller can tell "none" from a read that failed.
+func (r *Repo) CommitSubjects(ctx context.Context, since string) ([]string, error) {
+	if !IsFullSHA(since) && !plainRef(since) {
+		return nil, fmt.Errorf("refusing to read the commit subjects since %q: not a full commit SHA or a plain ref name", since)
+	}
+	out, err := r.gitRaw(ctx, "--no-replace-objects", "log", "--format=%s", "-z", "--end-of-options", since+"...HEAD")
+	if err != nil {
+		return nil, err
+	}
+	subjects := []string{}
+	for _, s := range strings.Split(string(out), "\x00") {
+		if s != "" {
+			subjects = append(subjects, s)
+		}
+	}
+	return subjects, nil
+}
+
 // GitVersion is `git --version` as git prints it ("git version 2.47.3").
 func (r *Repo) GitVersion(ctx context.Context) (string, error) {
 	return r.git(ctx, "--version")

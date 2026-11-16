@@ -7,6 +7,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // The checkpoint stage (plan T7.3, T6.1, D329, G7). A governance stop leaves a
@@ -91,8 +92,13 @@ func (r *run) checkpointStage(ctx context.Context) {
 	r.mu.Lock()
 	stopped := r.rec.Stage
 	r.mu.Unlock()
+	// What the run itself had done, read before the call and not by it: the
+	// session this call starts has no tools and no checkout of its own, so the
+	// only facts the answer can rest on are the ones the prompt carries
+	// (checkpointPromptFor).
+	commits, files := r.checkpointWork(stageCtx)
 	req := agent.Request{
-		Prompt:    checkpointPromptFor(r.spec.Task, stopped, *h),
+		Prompt:    checkpointPromptFor(r.spec.Task, stopped, *h, commits, files),
 		SessionID: agent.NewSessionID(),
 		Model:     r.stageModel(name),
 		// The run's own agent.max_budget_usd, the figure every stage's call is
@@ -150,14 +156,24 @@ func (r *run) checkpointStage(ctx context.Context) {
 }
 
 // checkpointPromptFor is the checkpoint prompt plus the runner's own summary of
-// the stop: the task, the stage the run stopped in, and why it is over. A fresh
-// session knows nothing of any of them — it was started for this one call — so
-// all three have to be here or the answer is a guess.
+// the stop: the task, the stage the run stopped in, why it is over, and what the
+// run itself had done by then. A fresh session knows nothing of any of them — it
+// was started for this one call — so all of them have to be here or the answer
+// is a guess, and the guess is written into the record and the pull request a
+// person reads to decide whether to continue the run.
+//
+// commits and files are that last part, read from the run's own branch
+// (checkpointWork): the subjects of the commits it made and the paths it
+// changed. They are what the answer's "what the work had finished" rests on. A
+// nil list is a read the runner could not make and the prompt says nothing about
+// it; an empty one is a run that had made no commit, or changed no path, when it
+// stopped — a fact the answer may rest on, and the reason the two are not the
+// same value.
 //
 // The task is the person's own text, as it is in every other prompt this runner
 // builds, and the summary is the runner's own words for the halt
 // (haltReasonText) with the tripwire's detail beside them.
-func checkpointPromptFor(task, stage string, h runstore.Halt) string {
+func checkpointPromptFor(task, stage string, h runstore.Halt, commits, files []string) string {
 	var b strings.Builder
 	b.WriteString(checkpointPrompt)
 	b.WriteString("\n\nYour task was:\n\n")
@@ -167,7 +183,116 @@ func checkpointPromptFor(task, stage string, h runstore.Halt) string {
 		fmt.Fprintf(&b, " (%s)", h.Detail)
 	}
 	b.WriteString(".\n")
+	b.WriteString(checkpointWorkSection(commits, files))
 	return b.String()
+}
+
+// checkpointCommitsShown, checkpointFilesShown and checkpointItemRunes bound
+// what the checkpoint prompt carries of the run's own work. The three fields the
+// answer fills are wanted in a prompt rather than in a file the call could page
+// through, and a run that made two hundred commits or changed a thousand paths
+// would spend the call's input bound on the list of them. The count is the
+// honest half — a list that stopped silently would read as the whole of the
+// work — so the section says how many it left out.
+const (
+	checkpointCommitsShown = 20
+	checkpointFilesShown   = 40
+	checkpointItemRunes    = 200
+)
+
+// checkpointWorkSection is what the run itself had done when it stopped, as its
+// own branch has it: the subjects of its commits and the paths it changed. It is
+// "" when neither list was read, and a list the runner has nothing for is named
+// as such rather than left blank — the answer to "what the work had finished"
+// rests on these facts, so a blank where a list belongs has to read as "none"
+// and never as the runner having kept quiet.
+func checkpointWorkSection(commits, files []string) string {
+	if commits == nil && files == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\nWhat this run itself had done when it stopped, read from its branch:")
+	b.WriteString(checkpointItems("Commits it made, newest first", commits, checkpointCommitsShown, "commit"))
+	b.WriteString(checkpointItems("Paths it changed", files, checkpointFilesShown, "path"))
+	return b.String()
+}
+
+// checkpointItems is one list of checkpointWorkSection: its heading, one line
+// per item, and a line naming what did not fit. A nil list is a read that could
+// not be made and says nothing at all; a list that was read and is empty is
+// answered "none". Each item is clipped and folded onto one line: a subject and
+// a path are the run's own agent's words, and neither may pass for a line of
+// this prompt's own.
+func checkpointItems(heading string, items []string, shown int, noun string) string {
+	if items == nil {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n\n%s:", heading)
+	if len(items) == 0 {
+		return b.String() + " none.\n"
+	}
+	b.WriteString("\n")
+	for i, item := range items {
+		if i == shown {
+			break
+		}
+		fmt.Fprintf(&b, "- %s\n", safetext.Clip(safetext.OneLine(item), checkpointItemRunes))
+	}
+	if n := len(items) - shown; n > 0 {
+		fmt.Fprintf(&b, "%s not shown.\n", Plural(n, noun))
+	}
+	return b.String()
+}
+
+// checkpointWork reads what the run itself had done, for the checkpoint prompt:
+// the subjects of the commits it made, newest first, and the paths it changed
+// (gitops.CommitSubjects, gitops.ChangedFiles), both read from the revision its
+// own work starts at (checkpointBase) and so both the run's own work rather than
+// what the branch already carried when it started.
+//
+// Best-effort, like everything else about this stage: a read that fails leaves
+// that list nil and warns, and the prompt then says nothing about it rather than
+// reporting a run that had done nothing. That is the line agent.Request draws
+// for the flags it passes, and the one the record's own changed-paths field
+// draws between a run that recorded none and an empty set.
+func (r *run) checkpointWork(ctx context.Context) (commits, files []string) {
+	if r.repo == nil {
+		return nil, nil
+	}
+	base := r.checkpointBase(ctx)
+	if list, err := r.repo.CommitSubjects(ctx, base); err != nil {
+		r.d.Log.Warn("the commits this run made could not be read; the checkpoint prompt goes without them", "err", r.redact(err.Error()))
+	} else {
+		commits = list
+	}
+	paths, err := r.repo.ChangedFiles(ctx, base)
+	switch {
+	case err != nil:
+		r.d.Log.Warn("the paths this run changed could not be read; the checkpoint prompt goes without them", "err", r.redact(err.Error()))
+	case paths == nil:
+		// A run that changed nothing reads as none rather than as unread: only
+		// the error above leaves the paths out of the prompt.
+		files = []string{}
+	default:
+		files = paths
+	}
+	return commits, files
+}
+
+// checkpointBase is the revision the checkpoint prompt's own facts are read
+// from: the commit the run's own range was narrowed to while it still leads to
+// HEAD (narrowedLeading), and the commit the run was cut from otherwise
+// (workBase). Both are the commit this run's own commits start after, so what
+// the prompt carries is the run's own work and not a person's commits that were
+// already on the branch — and the narrowed commit is the same one in every case
+// but a run whose work was cut from a ref other than the one it was launched
+// with.
+func (r *run) checkpointBase(ctx context.Context) string {
+	if nb := r.narrowedLeading(ctx); nb != "" {
+		return nb
+	}
+	return r.workBase()
 }
 
 // checkpointAnswer reads the three labelled lines the checkpoint prompt asks

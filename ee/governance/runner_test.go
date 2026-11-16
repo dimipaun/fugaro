@@ -825,6 +825,11 @@ func aCall() anthropicfake.Reply {
 // the shape the runner has to turn into a halt and a checkpoint.
 func implementOverItsBudget(t *testing.T, _ context.Context, req agent.Request) (agent.Result, error) {
 	t.Helper()
+	// The run has work of its own by the time the stage is stopped: the
+	// checkpoint prompt is the only place the stopping agent can learn what it
+	// was, and the answer below is one a session with no checkout could give
+	// only because the prompt carries it (checkpoint_stage.go).
+	runnertest.Script(t, req, "echo the feature > feature.txt && git add -A && git commit -qm 'Add the feature'")
 	if code, body := runnertest.Post(t, req, sonnet, 4000); code != http.StatusForbidden {
 		t.Fatalf("the call was answered %d, want the stage budget's 403: %s", code, body)
 	}
@@ -885,6 +890,18 @@ func TestGatewayStageHaltBecomesCheckpoint(t *testing.T) {
 	if got := calls[1].Prompt; !strings.Contains(got, "Your task was:") || !strings.Contains(got, "Add a feature") ||
 		!strings.Contains(got, "run stopped in stage implement") {
 		t.Errorf("the checkpoint prompt does not carry the task and the stop:\n%s", got)
+	}
+	// The run's own work, and not just the task: the session is fresh and has no
+	// tools, so the commit the run made and the path it changed reach it only
+	// here, and without them "what the work had finished" is a guess the record
+	// and the pull request then carry as fact (checkpoint_stage.go).
+	for _, want := range []string{
+		"Commits it made, newest first:", "- Add the feature",
+		"Paths it changed:", "- feature.txt",
+	} {
+		if !strings.Contains(calls[1].Prompt, want) {
+			t.Errorf("the checkpoint prompt does not carry %q:\n%s", want, calls[1].Prompt)
+		}
 	}
 	// A fresh session, not the stopped stage's: the agent that was stopped is
 	// the one thing this call must not reach.
