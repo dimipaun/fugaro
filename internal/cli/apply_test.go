@@ -507,6 +507,59 @@ func TestApplyKeepsAStepOwedWhenItsStageSkipsWithoutDoingTheWork(t *testing.T) {
 	}
 }
 
+// TestApplyKeepsAWorkspaceStepOwedWhenItsStageSkipsWithoutDoingTheWork: the
+// workspace record stage skips in three states, and not one of them publishes
+// anything — a config that names no database to publish the record in, a
+// database this installation never adopted, and a workspace that lists no
+// member. All three are read off the same answer (update_workspace.go's
+// workspaceSkip), and all three are a step still owed rather than a step
+// answered (D1563, D1567, D1575): the record stage's own half of the policy
+// stage's rule.
+//
+// The config here is the first of the three, and the one an installation
+// reaches first: the owner's half of a membership declared (workspace_members
+// and workspace_cap) on a project that has no budget backend yet.
+func TestApplyKeepsAWorkspaceStepOwedWhenItsStageSkipsWithoutDoingTheWork(t *testing.T) {
+	r := updateRig(t)
+	updating(t, r)
+	r.appendConfig(t, wsOwnerTable+wsOwnerCap)
+	owed(t, initflow.Workspace, apply.Change{Kind: apply.Setting, Key: "workspace_cap.monthly"})
+
+	out, errOut, err := executeStdin(t, "", "apply")
+	if err == nil {
+		t.Fatalf("a workspace step whose stage published nothing exited 0:\n%s", out+errOut)
+	}
+	got := out + errOut + ErrorText(err)
+	if !strings.Contains(got, "saved, not live yet: "+initflow.Workspace+" still owed") {
+		t.Errorf("the answer does not keep the workspace step owed:\n%s", got)
+	}
+	if !strings.Contains(got, "no Firebase budget backend") {
+		t.Errorf("the run did not skip on the state this test is about — a config that names no database to publish the record in:\n%s", got)
+	}
+	if strings.Contains(got, "applied "+initflow.Workspace) {
+		t.Errorf("the answer reports the workspace step as applied, and nothing was published:\n%s", got)
+	}
+
+	out, errOut, err = executeStdin(t, "", "apply", "--json")
+	if err == nil {
+		t.Fatalf("the run answered a step its stage never did:\n%s", out+errOut)
+	}
+	doc := applyDocOf(t, out)
+	if !slices.Equal(applySteps(doc.Pending), []string{initflow.Workspace}) {
+		t.Errorf("the document owes %v, want the workspace step: nothing was published", applySteps(doc.Pending))
+	}
+	if len(doc.Applied) != 0 {
+		t.Errorf("the document reports %v as applied, and the stage published nothing", doc.Applied)
+	}
+	applySchemaCheck(t, []string{"apply", "--json"}, out)
+	if p := record(t); !slices.Equal(pendingSteps(p), []string{initflow.Workspace}) {
+		t.Errorf("the record after the run is %v, want the workspace step still owed", pendingSteps(p))
+	}
+	if p := record(t); p.LastApply != "" {
+		t.Error("the run that answered nothing stamped the config as applied")
+	}
+}
+
 // TestUpdateLeavesAStepOwedWhenItsStageSkipsWithoutDoingTheWork: the rule is
 // one rule for both doors (D1567). `update` clears the entries of the stages it
 // ran successfully, and a stage that skipped because the bucket it publishes

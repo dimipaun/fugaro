@@ -199,6 +199,14 @@ func TestWorkspaceProjectStageSkipsAnInstallationThatIsNotAWorkspace(t *testing.
 			if st.State != initflow.Skipped {
 				t.Fatalf("state = %v (%s), want a skip", st.State, st.Detail)
 			}
+			// Nothing to do, and not work left undone: there is no account to
+			// create and no grant to make in a project that has no workspace of
+			// its own, so a step that asked for this stage is answered by this
+			// check rather than left owed (initflow.Status.Undone, read by
+			// applyAnswered).
+			if st.Undone {
+				t.Errorf("a skip that has no work to leave undone reads Undone: %s", st.Detail)
+			}
 			for _, want := range []string{"workspace_members", "workspace_cap", "spec §5", wsProjectName} {
 				if !strings.Contains(st.Detail, want) {
 					t.Errorf("the skip's reason does not name %q: %s", want, st.Detail)
@@ -252,6 +260,15 @@ func TestWorkspaceProjectStageSkipsAWorkspaceWhoseFirebaseIsAnotherProject(t *te
 	st := g.check(t)
 	if st.State != initflow.Skipped {
 		t.Fatalf("check = %v (%s), want the skip a split installation takes", st.State, st.Detail)
+	}
+	// This skip is the other half of the rule the test above pins: THIS
+	// project is the workspace's own, and the account and the single grant this
+	// stage converges are the whole of what it is here for. Neither is created
+	// on a database the workspace does not use, so the stage's work is undone
+	// and a step that asked for this stage stays owed rather than being read as
+	// answered (initflow.Status.Undone).
+	if !st.Undone {
+		t.Errorf("a skip that created no account and made no grant does not read Undone: %s", st.Detail)
 	}
 	for _, want := range []string{
 		"budget.firebase_project", "proj-9999", "docs/workspaces/spec.md §3",

@@ -135,20 +135,29 @@ func workspaceAccount(project string) string {
 // operator reads is the skip's own detail, and `fugaro doctor` carries the same
 // state as a check of its own (doctorWorkspaceSplitCheck), so the owner meets it
 // on doctor's day rather than only in one run's output.
-func (s *workspaceProjectStage) declared() (bool, string, error) {
+//
+// The second return is what the caller answers Skipped with and the third
+// whether that skip left this stage's own work undone — the fact that tells a
+// plan row from a step a machine still owes (initflow.Status.Undone, read by
+// internal/cli's applyAnswered). The split installation's skip is the one that
+// leaves it: this IS a workspace's own project, and the account and the grant
+// this stage converges are the whole of what its own project is for, so a step
+// run for it stays owed. A config that declares no workspace is nothing to do
+// instead: there is no account to create and no grant to make here at all.
+func (s *workspaceProjectStage) declared() (bool, string, bool, error) {
 	if !workspaceDeclared(s.e.lc) {
-		return false, workspaceProjectSkip(s.e.lc), nil
+		return false, workspaceProjectSkip(s.e.lc), false, nil
 	}
 	if why := workspaceSplitFirebase(s.e.lc); why != "" {
-		return false, why, nil
+		return false, why, true, nil
 	}
 	if _, err := workspaceRecordOf(s.e.lc); err != nil {
 		var notOurs *workspacePublishNotOurs
 		if !errors.As(err, &notOurs) {
-			return false, "", err
+			return false, "", false, err
 		}
 	}
-	return true, "", nil
+	return true, "", false, nil
 }
 
 // workspaceSplitFirebase is why a workspace's own installation cannot converge
@@ -205,14 +214,15 @@ func workspaceSplitFirebase(lc *localcfg.Config) string {
 // not a workspace's own, which is most of them. A workspace's own project whose
 // Firebase is another project's is the other skip (workspaceSplitFirebase, in
 // declared): this stage converges nothing there, and the stages behind it still
-// run.
+// run — but nothing it was run for was done, so a step that asked for this stage
+// stays owed (declared's third return, initflow.Status.Undone).
 func (s *workspaceProjectStage) Check(ctx context.Context) (initflow.Status, error) {
-	ok, why, err := s.declared()
+	ok, why, undone, err := s.declared()
 	if err != nil {
 		return initflow.Status{}, userErr("%v", err)
 	}
 	if !ok {
-		return initflow.Status{State: initflow.Skipped, Detail: why}, nil
+		return initflow.Status{State: initflow.Skipped, Detail: why, Undone: undone}, nil
 	}
 	plan, _, err := s.readPlan(ctx, false)
 	if err == nil && plan == nil {
@@ -248,7 +258,7 @@ func workspaceProjectSkip(lc *localcfg.Config) string {
 
 // Plan shows the real plan and guards it, and changes nothing.
 func (s *workspaceProjectStage) Plan(ctx context.Context, _ initflow.Env) (initflow.Plan, error) {
-	ok, why, err := s.declared()
+	ok, why, _, err := s.declared()
 	if err != nil {
 		return initflow.Plan{}, userErr("%v", err)
 	}
@@ -275,7 +285,7 @@ func (s *workspaceProjectStage) Plan(ctx context.Context, _ initflow.Env) (initf
 // answer of a stage nothing should have asked — and if something ever does ask,
 // no grant is made on the wrong project.
 func (s *workspaceProjectStage) Apply(ctx context.Context, _ initflow.Env) (initflow.Outcome, error) {
-	ok, why, err := s.declared()
+	ok, why, _, err := s.declared()
 	if err != nil {
 		return initflow.Outcome{}, userErr("%v", err)
 	}

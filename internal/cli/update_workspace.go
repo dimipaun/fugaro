@@ -664,10 +664,18 @@ func workspaceSkip(err error) (string, bool) {
 // Check reports what the published node is. A refusal here is the run's: a
 // document this Fugaro cannot read is not something the operator finishes by
 // hand, and the message says which of the two it is.
+//
+// The skip workspaceSkip answers with — no database named to publish in, a
+// database this installation never adopted, a workspace that lists no member —
+// is this stage's work left undone and never a state with nothing to do: not one
+// of the three publishes anything, so a step run for this stage stays owed
+// (initflow.Status.Undone, the policy stage's own rule for its parallel skips).
+// The other skip below, p == nil, is nothing to do: a config that declares no
+// workspace publishes no record anywhere, and Check, Plan and Apply all say so.
 func (s *workspaceStage) Check(ctx context.Context) (initflow.Status, error) {
 	p, err := s.plan(ctx)
 	if reason, skip := workspaceSkip(err); skip {
-		return initflow.Status{State: initflow.Skipped, Detail: reason}, nil
+		return initflow.Status{State: initflow.Skipped, Detail: reason, Undone: true}, nil
 	}
 	if err != nil {
 		return initflow.Status{}, err
