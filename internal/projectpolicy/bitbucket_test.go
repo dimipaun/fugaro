@@ -579,8 +579,15 @@ func TestNodeWithoutTokensKeyReadsAsBefore(t *testing.T) {
 			t.Errorf("a policy carrying no key marshals one:\n%s", b)
 		}
 	}
-	if Version != 7 {
-		t.Errorf("Version = %d, want 7: this key moves no version (R5)", Version)
+	// R5's claim is that this key moved no version: it shipped into a
+	// version-7 node and it left the number where it found it. The absolute
+	// number is version.go's and later carriers move it for reasons of their
+	// own (the binaries block's carrier in the project's config is version 8,
+	// AR1), so what is asserted here is the floor the key itself set — a
+	// number at or above the version this key arrived at, never the one number
+	// it happened to be that day, which no later bump could keep true.
+	if Version < 7 {
+		t.Errorf("Version = %d, want at least 7: the tokens key arrived at version 7 and moved no number (R5)", Version)
 	}
 	// The block beside the key is untouched by it: bitbucket_token reads the
 	// same members, with the same meanings, in a node that carries the key and
