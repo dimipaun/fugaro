@@ -12,9 +12,12 @@ import (
 
 // newModelsCmd is `fugaro models`: what a run of this project can name, where
 // each model is served, what it costs and which repositories may use it
-// (D794). Every subcommand here only reads, so the group runs anywhere, a
-// coding agent's session included (spec §8); the writes that change a route or
-// a price are their own commands.
+// (D794). The reads — `models ls`, `models search` — only read, so they run
+// anywhere, a coding agent's session included (spec §8); the writes that change
+// what a model is, a route or its price are their own subcommands
+// (`models add`, `models rm`, `models use`, `models provider`, `models price`,
+// D2613), and the four leaves that widen a route are refused in that session
+// whatever the gate says (D2617).
 func newModelsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "models",
@@ -30,7 +33,8 @@ and a model a repository pins.
 Both reads are offline: they touch no bucket, no database and no host. What
 they print about the cloud is what the local files already say.`,
 	}
-	cmd.AddCommand(newModelsLsCmd(), newModelsSearchCmd(), newModelsAddCmd(), newModelsRmCmd(), newModelsUseCmd())
+	cmd.AddCommand(newModelsLsCmd(), newModelsSearchCmd(), newModelsAddCmd(), newModelsRmCmd(), newModelsUseCmd(),
+		newModelsProviderCmd(), newModelsPriceCmd())
 	return cmd
 }
 

@@ -4554,6 +4554,8 @@ Subcommands:
 
 - `fugaro models add` -- Let this project run a model: claim it on a route and price it
 - `fugaro models ls` -- Show this project's routes, its models and what each repository runs
+- `fugaro models price` -- Write the price of one model in this project's config
+- `fugaro models provider` -- Write and remove the provider routes of this project's config
 - `fugaro models rm` -- Stop letting this project run a model: drop its claim, price and allow-list entry
 - `fugaro models search` -- Find a model in the built-in price catalog and the Claude table
 - `fugaro models use` -- Point one repository's own config at a model, in its working tree
@@ -4624,6 +4626,175 @@ Flags:
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro models price`
+
+Write the price of one model in this project's config
+
+Write the model_prices entry this project prices a model by.
+
+A price is what a run charges a model's calls at, dollars per million tokens,
+and the entry replaces the built-in catalog's row for that model whole — which
+is what a model the catalog does not price needs at all. `models ls` shows
+what each model is priced at today.
+
+Usage: `fugaro models price`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for price |
+
+Subcommands:
+
+- `fugaro models price set` -- Write the price leaves of one model in this project's config
+
+## `fugaro models price set`
+
+Write the price leaves of one model in this project's config
+
+Set the fields of one model_prices entry.
+
+Only the flags you pass are written: every other leaf of the entry, every
+comment and every other key of the file is kept.
+
+An entry that is not there yet needs both --input-per-m and --output-per-m:
+a model_prices entry states the two rates it is billed at, and the cache and
+search rates default from them. On an entry the file already carries, any one
+of the six leaves can be changed on its own.
+
+Only the model_prices block is written: a model a provider route does not
+serve yet is claimed by `fugaro models add`. `fugaro update` publishes the
+policy node, which is what a run reads prices from.
+
+Usage: `fugaro models price set <id>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--cache-read` | float64 | `0` | no | cache-read price, as a multiple of the input price |
+| `--cache-write-1h` | float64 | `0` | no | cache-write price for the 1-hour TTL, as a multiple of the input price |
+| `--cache-write-5m` | float64 | `0` | no | cache-write price for the 5-minute TTL, as a multiple of the input price |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--input-per-m` | float64 | `0` | no | input price, US dollars per million tokens |
+| `--layer` | string | "" | no | the layer to write (local, project, repo) |
+| `--output-per-m` | float64 | `0` | no | output price, US dollars per million tokens |
+| `--web-search-per-1k` | float64 | `0` | no | web-search price, US dollars per 1,000 searches |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro models provider`
+
+Write and remove the provider routes of this project's config
+
+Write or remove one entry of the project config's providers block.
+
+A route is what a repository's code goes down: its endpoint, the credential it
+is sent with, the repositories whose code may be sent there and the fee added to
+its calls. `models provider set` writes the leaves of one entry and
+`models provider rm` takes one away whole; `models ls` shows the
+routes this project has.
+
+The change reaches a run through `fugaro update --repo .` in each
+repository whose code should go down the route: a run routes by the copy of the
+providers block in its own job's environment, and that command writes it.
+
+Usage: `fugaro models provider`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for provider |
+
+Subcommands:
+
+- `fugaro models provider rm` -- Remove a provider route from this project's config
+- `fugaro models provider set` -- Write the leaves of one provider route in this project's config
+
+## `fugaro models provider rm`
+
+Remove a provider route from this project's config
+
+Remove one entry of the project config's providers block whole.
+
+The route, its claim on the models it served, its fee and the repositories
+it allowed go together: what is left of the entry is the entry.
+
+A repository that pins a model only this route served is not refused (D783
+is about a model, and this is the route behind one). Each such repository's
+next run fails at launch with no provider for the model, until the model is
+claimed elsewhere or the pin is changed with `fugaro models use`.
+
+Only the key it removes is rewritten: every comment and every other key of
+the file is kept. `fugaro update --repo .` in a repository's own checkout is
+what takes the route out of that repository's runs.
+
+Usage: `fugaro models provider rm <name>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--layer` | string | "" | no | the layer to write (local, project, repo) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro models provider set`
+
+Write the leaves of one provider route in this project's config
+
+Set the fields of one entry of the project config's providers block.
+
+Only the flags you pass are written: every other leaf of the entry, every
+comment and every other key of the file is kept. A name the config does not
+carry yet is created, and the file's own rules are what it is held to — an
+entry needs a kind, an endpoint, an auth and a secret name before it reads
+back.
+
+--secret names a stored secret and never carries the key itself: the value
+belongs in Secret Manager (`fugaro secrets set <name>`), and what lands in
+the file is that name. A value that looks like a key is refused, and the
+refusal never repeats it.
+
+--allow-data-to is the whole list of repositories (owner/name, or `*` for
+every repository) whose code may be sent down the route: the names it gives
+replace the ones the file carries.
+
+Four of these leaves widen the route — --base-url, --allow-data-to,
+--require-zdr and --route-fee-pct — so they are the owner's own step and a
+coding agent's session is refused them (D2617).
+
+`fugaro update --repo .` in a repository's own checkout is what puts the
+route in that repository's runs.
+
+Usage: `fugaro models provider set <name>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--allow-data-to` | string | "" | no | the repositories whose code may be sent down this route (owner/name, comma-separated; `*` is every repository) |
+| `--auth` | string | "" | no | how the credential is sent: bearer or x-api-key |
+| `--base-url` | string | "" | no | the endpoint this route's calls go to (https) |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--kind` | string | "" | no | the provider kind the endpoint speaks (anthropic-compat) |
+| `--layer` | string | "" | no | the layer to write (local, project, repo) |
+| `--price-policy` | string | "" | no | which end of the price range is charged: cheapest or highest |
+| `--require-zdr` | bool | `true` | no | price the route at the endpoints that hold no data (a boolean: --require-zdr=false turns it off) |
+| `--route-fee-pct` | float64 | `0` | no | the percentage added to every charge this route makes (0 is none) |
+| `--secret` | string | "" | no | the NAME of the secret holding the key (fugaro secrets set <name>), never the key |
 
 Subcommands:
 

@@ -349,6 +349,23 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro models rm":      {args: []string{"claude-x"}},
 	"fugaro models search":  {args: []string{"x"}},
 	"fugaro models use":     {args: []string{"a", "b", "c"}},
+	// The two writers D2613 adds reach the write itself, in the world's own
+	// project config: the sentence naming what the entry carries now is the
+	// proof the run got past the selection and the splice, which is the part of
+	// a write a closed stdin could ever have stopped. Both work on an entry the
+	// file already carries — a provider is not one without the model IDs it
+	// serves, and no flag here writes that list — so both are seeded, and the
+	// set changes a leaf the seed leaves out.
+	"fugaro models provider set": {
+		args:    []string{"acme", "--price-policy", "highest"},
+		reaches: "set providers.acme in",
+		seed:    closedStdinSetProvider,
+	},
+	"fugaro models provider rm": {args: []string{"acme"}, reaches: "remove the provider acme from", seed: closedStdinSetProvider},
+	"fugaro models price set": {
+		args:    []string{"claude-sonnet-5-5", "--input-per-m", "3", "--output-per-m", "15"},
+		reaches: "set model_prices.claude-sonnet-5-5 in",
+	},
 	"fugaro pair revoke":    {args: []string{"--uid", "uid-1"}},
 	"fugaro project profile add": {args: []string{"standard", "--provider", "github", "--cpu", "2",
 		"--memory", "4Gi", "--timeout-class", "6h"}},
@@ -763,6 +780,15 @@ const closedStdinRetiredWhy = "is the tombstone: it prints the two commands that
 func closedStdinSetBaseBranch(t *testing.T, f *budgetFixture) {
 	t.Helper()
 	f.appendConfig(t, "base_branch: main\n")
+}
+
+// closedStdinSetProvider gives the world's project config the provider route
+// the removal takes away. Without it the leaf stops at "this project has no
+// provider named acme" and the fixture's sentence would never be reached — a
+// removal of an entry that is not there is a refusal, not a write.
+func closedStdinSetProvider(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	f.appendConfig(t, "providers:\n  acme:\n    kind: anthropic-compat\n    base_url: https://api.example.com\n    auth: bearer\n    secret: acme-key\n    models: [acme/model]\n")
 }
 
 // closedStdinCloneURLSeed gives the world's own project config the entry the
