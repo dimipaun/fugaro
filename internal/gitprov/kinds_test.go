@@ -84,6 +84,7 @@ var forgeKindGoSites = map[string]string{
 	"internal/projectpolicy/profiles.go":       "the profiles' Bitbucket-only validation",
 	"internal/projectpolicy/tokens_shape.go":   "the reach one Bitbucket token's coverage may name: the provider segment itself (ValidBitbucketTokenCoverage), which a second forge's tokens would spell the same way",
 	"internal/repourl/cloneurl.go":             "the host a clone URL is built on per kind",
+	"internal/runner/context_repos.go":         "the kind a read-only context repository has to be on: a task that names one for another provider is refused (D613)",
 	"internal/runner/prflow.go":                "the PR flow's Bitbucket form",
 	"internal/runner/project.go":               "the runner's kind for a slug, and the list the refusal names",
 	"internal/runner/projectjob.go":            "the provider the implicit review-only job's candidate is named for, which internal/infra deploys for github alone",

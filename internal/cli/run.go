@@ -484,7 +484,7 @@ func newRunCmd() *cobra.Command {
 	f.StringArrayVar(&o.attach, "attach", nil, "attach a file to the run: repeatable, uploaded to the run's own inputs/ and downloaded by a mode: artifact run into the checkout's inputs/ (needs a mode: artifact recipe; refused on a run ID that already has a task)")
 	f.StringVar(&o.rigor, "mode", "", "the rigor mode to ask for: "+rigor.ModeList()+"; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it, and takes no hotfix; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps")
 	f.StringArrayVar(&o.paths, "path", nil, "declare a path this run will touch, matched against the rigor.areas rules in effect (the repository's, and the project layer's beside them): repeatable; a run that declares none matches no area rule")
-	f.StringArrayVar(&o.contextRepos, "context", nil, "a repository this run reads and never writes, as owner/name: repeatable, at most "+fmt.Sprint(task.MaxContextRepos)+", each admitted by the project's allow_repos. The list is recorded on the task and in the run's own identity, which is what the release that reads it fetches with — this release's runner does not clone a context repository yet. Refused for a Bitbucket repository and where the installation's credentials service does not serve the repository")
+	f.StringArrayVar(&o.contextRepos, "context", nil, "a repository this run reads and never writes, as owner/name: repeatable, at most "+fmt.Sprint(task.MaxContextRepos)+", each admitted by the project's allow_repos. The list goes into the task and into the run's own identity, and the run clones each one read-only, outside its working tree, as reference the prompt points it at: nothing in one is committed or pushed, and the read-only token a context repository is cloned with is the installation's credentials service's, which needs the GitHub App installed on it. Refused for a Bitbucket repository and where the installation's credentials service does not serve the repository")
 	f.StringVar(&o.tier, "tier", "", "the expectation tier to dispatch this run at: "+tier.List()+". It is what the run is expected to cost and take (governance.tiers in fugaro.yaml and the project layer), and never a cap: the run's own budget cap stays the ceiling. A --pr follow-up keeps the tier its PR's runs recorded; without this flag a run carries no expectation at all")
 	f.StringVar(&o.reviewLevelsPath, "review-levels", "", "read the run's own review levels from this YAML file, or - for stdin: the block the task stores as review_levels (l1, l2, l3, each of model, effort, none and focus), decoded strictly, with no key on no level meaning the configuration decides it. Asking for levels needs a job image whose runner acts on them, so a launch on an older one is refused and names fugaro image refresh; without the flag the run resolves its levels from its configuration and its mode alone")
 	// Hidden: see the field's own note on the generated reference.
@@ -2370,16 +2370,19 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	if err := launchPolicyGates(ctx, env, slug, spec, kind, clone, shared, warn); err != nil {
 		return config.Inputs{}, err
 	}
-	// The list is recorded and not yet read: the token it is fetched with
-	// (plan task C5b) and the runner's own clone (C5c) are the releases that
-	// read it, and this launch writes it into the task and into the run's own
-	// identity for them. Said once, after the last gate that can refuse, so a
-	// launch that is not starting a run prints nothing about one — and said
-	// at all, because a flag that only records a list is a gap a person has
-	// to hear about, not one this command may leave them to discover.
+	// The list is recorded and read: this launch writes it into the task and
+	// into the run's own identity, the token the run fetches the repositories
+	// with is minted from that identity (plan task C5b), and the runner clones
+	// each of them read-only (C5c). Said once, after the last gate that can
+	// refuse, so a launch that is not starting a run prints nothing about one —
+	// and said at all, because the one thing the read needs that no gate here
+	// reads is GitHub-side state: the installation's App has to be installed on
+	// every repository named, since that installation is where the read-only
+	// token's repositories come from, and a person has to hear about it rather
+	// than discover it when a run ends.
 	if n := len(spec.ContextRepos); n > 0 {
-		fmt.Fprintf(warn, "warning: this launch records the read-only context repositories %s on %s's task and in its run identity, and this release's runner does not clone them yet: the run reads no file of them until the release that reads the list ships\n",
-			strings.Join(spec.ContextRepos, ", "), spec.Repo)
+		fmt.Fprintf(warn, "warning: this run reads the read-only context repositories %s with a read-only token the installation's credentials service mints for them, and that mint is scoped to what the installation's GitHub App covers: install the App on each of them, or the run has no read-only token for that one and ends at bootstrap\n",
+			strings.Join(spec.ContextRepos, ", "))
 	}
 	return caps, nil
 }

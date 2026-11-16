@@ -2649,6 +2649,26 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// gate refuses a digest launch against a release image that predates the
 	// step (digestSince, internal/cli/recipes_skew.go).
 	r.digest = recipe.UsesDigest(rcp)
+	// The diagnose step is a model stage this build's runner does not execute
+	// yet (T-TC4 lands it), and artifactMode runs the recipe's plan stage, if
+	// it has one, and then always commands.render (artifact.go) — so a run of
+	// a recipe holding the step would run the repository's render command in
+	// the step's place and end succeeded/artifacts having diagnosed nothing:
+	// no error, and no answer either. The catalog's troubleshoot names
+	// out/diagnosis.md and out/diagnosis.json, which no repository's render
+	// writes, so its own run would even end with an empty artifact set.
+	// Refused here, right after the recipe is resolved and before any stage,
+	// the way the digest step was refused until T3.2 dispatched it, and for
+	// the reason internal/recipe's RegisterStepKind gives: a step the parser
+	// accepts and the run drops may never happen. The launcher's image gate
+	// cannot make this refusal yet — the *Since constant for the step is
+	// T-TC6's — so this is the one a launch of a diagnosis meets. It names no
+	// way out: no release's runner runs the stage yet, so a refreshed job image
+	// would refuse the recipe again, and the release that runs it is T-TC4's to
+	// carry — not a step a person is sent to take here.
+	if recipe.UsesDiagnose(rcp) {
+		return fmt.Errorf("recipe %s holds a diagnose step, which this job image's runner does not execute yet: the run would run the repository's commands.render in the step's place and end succeeded with no diagnosis in it. No Fugaro release runs the diagnose step yet, so there is no job image to move to", rrec.Name)
+	}
 	// The rebase step is the runner's own work plus one model stage for the
 	// conflicts (rebase.go, E5): its run's step is the whole plan, it reviews
 	// nothing and it opens no pull request — what it delivers is a branch put
@@ -3234,6 +3254,18 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err := r.haltedErr(); err != nil {
 		return err
 	}
+	// The read-only context repositories this task was launched with, cloned
+	// outside the work tree (C5c, D613; context_repos.go). Last, because the
+	// clone spends a mint at the credentials service and a read of somebody
+	// else's repositories, and every refusal that can end this run — an
+	// admission, a halt, a checkout that is not this run's repository — has
+	// been made by now: a run that was going to be refused gets away without
+	// either. Before the record is saved below, because a run whose context is
+	// not in place has not bootstrapped, and the record is what the next
+	// execution and the follow-up read.
+	if err := r.cloneContextRepos(ctx); err != nil {
+		return err
+	}
 	r.save(ctx)
 	return nil
 }
@@ -3436,7 +3468,8 @@ func (r *run) readRepoFile(rel string) (string, error) {
 // from: the run's own state decides each conditional rule.
 func (r *run) systemPromptData() PromptData {
 	pd := PromptData{Branch: r.rec.Branch, Base: r.cfg.Git.BaseBranch, StateDir: r.d.StateDir,
-		NoWorkflows: r.providerKind == gitprov.KindGitHub, Checkpoints: r.checkpointsOn(),
+		ContextRepos: r.contextRepoLines(),
+		NoWorkflows:  r.providerKind == gitprov.KindGitHub, Checkpoints: r.checkpointsOn(),
 		LintConfigured: strings.TrimSpace(r.wf.Commands.Lint) != "",
 		// The brief is the coder's, and "implement" is one of its stages: the
 		// answer is the coder's own model, never a review stage's, which is

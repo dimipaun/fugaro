@@ -4,6 +4,8 @@ package cli
 
 import (
 	"maps"
+	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -260,6 +262,95 @@ func TestAKeyCredentialTakesNoServingProfile(t *testing.T) {
 				t.Errorf("the refusal printed the value:\n%s\n%s", out, errOut)
 			}
 		})
+	}
+}
+
+// TestTheAccountsDoorKeepsTheJobOfANameTheConfigNowDeclaresAKey: the state the
+// refusal above prevents is one a FILE can hold all the same — the refusal is
+// this command's, and the config is the operator's — and the installation that
+// file describes has the job already.
+//
+// The half MC22 left open is what a converge does with it. No command writes
+// the pair below, and the record of an installation that met it holds the job
+// the release behind composed for team-a: profiles.standard lists the name and
+// claude-oauth-token-team-a is a project-wide container, which is exactly what
+// projectAccountMount needs to build a job for it. This release's composer
+// leaves the name out of the set (D1670, config.ClaudeAccountTokenNames), so a
+// document written without that job is the plan of its destruction:
+// RefuseProjectJobDeletes stops the whole update on it, and the remedy it
+// prints — "restore the profile as it was" — is putting back the very name the
+// rule drops the job for, so the installation never converges again
+// (CLAUDE.md's HARD RULE, broken for exactly the config this rule is about).
+// The door keeps the job, whole, from the record the run that deployed it left
+// (infra.CarriedProjectJobAccounts).
+//
+// Mutation (run, restore): drop the CarriedProjectJobAccounts carry from
+// init.go's installationVars, and the second converge writes a record without
+// team-a's job.
+func TestTheAccountsDoorKeepsTheJobOfANameTheConfigNowDeclaresAKey(t *testing.T) {
+	r := newAddRigWith(t, accountsAddKeyCredentialServedLocal)
+	// The file's own installation, converged once: team-a is served by
+	// profiles.standard and its project-wide container is there, so the record
+	// holds the job.
+	r.add(t, "team-b", "--repos", "owner/repo-a")
+	deployed := r.projectJobs(t)
+	job := gcp.ProjectJobName("standard", "github", "team-a")
+	if _, ok := deployed[job]; !ok {
+		t.Fatalf("the fixture deployed no %s, so this test has no record to keep: %v", job, slices.Sorted(maps.Keys(deployed)))
+	}
+
+	// The hand-written act: team-a is retyped a KEY credential, which is the
+	// entry `fugaro accounts add --type openrouter` writes — refused while a
+	// profile lists the name (TestAKeyCredentialTakesNoServingProfile, above),
+	// and so written into the file. The config goes through its own reader and
+	// writer, so what this leaves is the file the run above left, one type
+	// further on.
+	lc := r.addLocal(t)
+	retyped := false
+	for i := range lc.Credentials {
+		if lc.Credentials[i].Name == "team-a" {
+			lc.Credentials[i].Type, retyped = config.CredentialTypeOpenRouter, true
+		}
+	}
+	if !retyped {
+		t.Fatalf("the run above declared no credential for team-a, so this test would not be retyping one: %v", lc.Credentials)
+	}
+	data, err := lc.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.cfg, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// A second converge, by a run that does not touch team-a at all.
+	// The retype loosens the shared node (craft_credentials team-a), so this publish confirms by the project name typed at a terminal.
+	r.addTyped(t, "team-c", "--repos", "owner/repo-a")
+
+	kept := r.projectJobs(t)
+	for name, want := range deployed {
+		got, ok := kept[name]
+		if !ok {
+			t.Errorf("the record the second converge wrote holds %v, want %s among them: the document is what the next plan is made from, so a job the installation holds and this document does not is that job's destruction — which RefuseProjectJobDeletes stops the whole update on, over a remedy (put the name back into the profile's list) that this release's filter drops the job for",
+				slices.Sorted(maps.Keys(kept)), name)
+			continue
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("the second converge wrote the job %s as\n%+v\nwant the record's own entry\n%+v: a job the installation holds is stated exactly as it holds it, or the plan that follows proposes a change to it", name, got, want)
+		}
+	}
+	// And the door's own work is beside them, undiminished: the job of the
+	// account this run added.
+	if _, ok := kept[gcp.ProjectJobName("standard", "github", "team-c")]; !ok {
+		t.Errorf("the door deployed no job for the account it added: %v", slices.Sorted(maps.Keys(kept)))
+	}
+	// The file's own declaration is where the carry found the name, and it stays
+	// where it is: a key credential keeps the claude_accounts entry whose
+	// allow_data_to is the reach its key may be sent to (D1670), and the carry
+	// moves a JOB and never an account.
+	if _, ok := r.addLocal(t).ClaudeAccounts["team-a"]; !ok {
+		t.Errorf("the claude_accounts entry is gone from the local config: %v, want team-a's — a key credential keeps the entry whose allow_data_to is the reach its key may be sent to",
+			slices.Sorted(maps.Keys(r.addLocal(t).ClaudeAccounts)))
 	}
 }
 

@@ -422,7 +422,16 @@
     "buildleases": { ".read": false, ".write": false },
     "orchestrator": {
       ".read": "USER",
-      ".write": false
+      ".write": false,
+      "$id": {
+        "state": {
+          "work_items": {
+            "$item": {
+              "escalation": { ".read": "REPORTSJOB" }
+            }
+          }
+        }
+      }
     }
   }
 }
