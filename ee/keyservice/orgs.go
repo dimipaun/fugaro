@@ -201,16 +201,19 @@ func membershipID(organisationID, uid string) string {
 }
 
 // recordGetter is the read the store and one of its transactions both answer:
-// one document, by id. Everything here that reads inside a transaction goes
-// through it, and the store's transactions read by id and nothing else (api.go's
-// Tx holds no query) — which is why the day's count is not taken inside the
-// sign-up's transaction and the sign-up is serialised instead (signUpMu).
+// one document, by id. It is the narrower of the two below, and what a read that
+// asks for one record takes.
 type recordGetter interface {
 	Get(ctx context.Context, collection, id string) (Doc, error)
 }
 
-// recordReader is the same read plus the one-field query, which the store itself
-// answers and a transaction does not.
+// recordReader is the same read plus the one-field query, which both the store
+// and one of its transactions answer (api.go's Tx). A query is a read of the
+// collection as much as a document is, which is what a uniqueness check inside a
+// transaction is made of (P3.1) and also why the day's count is not taken inside
+// the sign-up's transaction: a count of a collection is a query, and every other
+// sign-up of the day would be a conflict with it. The sign-up is serialised
+// instead (signUpMu).
 type recordReader interface {
 	recordGetter
 	Query(ctx context.Context, collection string, where Where) ([]Doc, error)
@@ -574,8 +577,9 @@ func (s *Service) signUp(ctx context.Context, actor Caller, name string) (WireOr
 // about.
 //
 // The count is taken before the sign-up's transaction and not inside it, because
-// the memberships are QUERIED and api.go's Tx reads by id alone (signUpMu's own
-// comment holds the rest).
+// the memberships are QUERIED: a query inside that transaction would make every
+// other sign-up of the day a conflict with the one that writes beside it, so the
+// count is serialised instead (signUpMu's own comment holds the rest).
 func (s *Service) refuseAnotherOrganisation(ctx context.Context, uid string, now time.Time) error {
 	held, err := membershipsOf(ctx, s.docs, uid)
 	if err != nil {

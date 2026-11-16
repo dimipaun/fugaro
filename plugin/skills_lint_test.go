@@ -910,7 +910,13 @@ func (ci *commandIndex) resolve(args []string) fugaroCmd {
 // foreignFlags are flags of tools a skill may name that are not fugaro's.
 var foreignFlags = []string{"--plugin-dir", "--scope", "--head", "--base", "--json", "--version", "--help", "--no-pager", "--rm", "--platform", "--tag", "--file", "--target",
 	// npm, yarn, pnpm, playwright and node, named in the setup skill's tables.
-	"--ignore-scripts", "--with-deps", "--max-old-space-size", "--immutable", "--frozen-lockfile", "--maxworkers"}
+	"--ignore-scripts", "--with-deps", "--max-old-space-size", "--immutable", "--frozen-lockfile", "--maxworkers",
+	// BuildKit's build flags, named in the images skill to forbid them: an
+	// entry's Dockerfile may ask for no secret of its own (B9, D2311), so the
+	// skill writes the flag's own name to say what the catalog refuses — and a
+	// lint that read it as a fugaro flag would forbid the one sentence the rule
+	// is stated in.
+	"--secret", "--mount"}
 
 var bareFlagRE = regexp.MustCompile(`(?i)^(--[a-z][a-z0-9-]*)(=\S*|\s+<[^>]+>|\s+[A-Za-z0-9._-]+)?$`)
 

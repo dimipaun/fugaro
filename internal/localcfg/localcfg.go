@@ -248,6 +248,74 @@ type Config struct {
 	// shared config because a key naming a credential is a way around that
 	// credential's own allow_data_to, exactly as default_claude_account is.
 	Crafts config.Crafts `yaml:"crafts,omitempty"`
+	// CredentialCascade is the credentials cascade as the owner states it
+	// (D152, D153, D2607): the paid fallback, the wait-or-switch threshold, the
+	// backoff a credential is held for, and D142's two controls. It is the node
+	// member `credentials` under a name of its own here, and the name is the
+	// point (F23): this file's `credentials` key is already the list of typed
+	// credentials, so one key could not carry both without a reader having to
+	// guess which of the two it holds — and the two are different things, a
+	// list of secrets this installation may spend and a statement about how a
+	// run falls over when one is exhausted. The block itself is
+	// projectpolicy.Credentials, the node's own type, so a member written here
+	// is the member published there, exactly as the binaries block is AR1's
+	// type; its yaml tags spell those members the node's way.
+	//
+	// Before this key the block existed only on the published node, which no
+	// command of this release writes except by publishing a node that keeps it
+	// — a machine's file could not state the cascade at all (F5, F6). It is
+	// created where the credentials and pools are, and for their reason: the
+	// fallback decides whether a run may spend the project's money at all, so a
+	// launcher who could write it into the shared config would be choosing
+	// everyone's spending (Shared nils it and ParseShared refuses the key).
+	//
+	// A pointer, like the binaries block, so "this file says nothing about the
+	// cascade" is a fact of its own: silence keeps the node's block, and a
+	// written block is what this machine states (N4's merge of the two).
+	CredentialCascade *projectpolicy.Credentials `yaml:"credential_cascade,omitempty"`
+	// ModelGrades is the escalation ladder's two model grades as this file
+	// states them (E2, D2039, D2607): which model each rung runs and which
+	// credential or pool its calls go out on. The block is config.ModelGrades,
+	// the type the project layer's defaults.model_grades and the node's
+	// model_grades are decoded into, so a grade written here is the grade
+	// published there and is held to the same rules (ValidateModelGrades,
+	// asked at load below).
+	//
+	// The node's block is the only one a rung reads, and until this key no
+	// command of this release could write it: the project layer's
+	// defaults.model_grades is what the merge reads and the publisher wrote
+	// nothing from it, so a publish kept the node's block and nothing else
+	// could state one. It is local-only for the cascade's reason: a grade names
+	// a credential or pool, which is a grant, and the ladder's rungs are what
+	// decides how much a stalled pull request is worked.
+	//
+	// A pointer for the cascade's reason: silence keeps the node's grades, and
+	// a written block is this machine's statement of them.
+	ModelGrades *config.ModelGrades `yaml:"model_grades,omitempty"`
+	// NodeRemovals is the explicit-unset record (D2607, F22): the names this
+	// machine has taken out of the published node, per block, because silence
+	// in this file keeps the node's value — so a pool, a craft or a credential
+	// the owner removes here would otherwise stay served. It is written by the
+	// commands that remove one and cleared once the reconcile N4 runs finds the
+	// node no longer holds the name; a name the record holds is a name the next
+	// publish must delete.
+	//
+	// It is a record of names and not of values, and that is the whole of its
+	// shape: an entry is the name of one member of the block it is listed
+	// under, so what a removal takes away is named here and defined nowhere —
+	// the members of a removed pool, the model of a removed craft and the type
+	// of a removed credential are this file's to have dropped already, and a
+	// record that carried them would be a copy of a definition the owner has
+	// taken away. The node's own `credentials` block is the cascade and is
+	// never listed here: it has no names of its own, so removing it is a
+	// cascade stated without it (CredentialCascade) and not a removal (F23).
+	//
+	// Local-only, and this is the one block where publishing it would be
+	// destructive rather than a widened grant: a launcher who could write this
+	// key into the runs bucket's shared file would be deleting pools,
+	// credentials and crafts of the project's node from the file it can write.
+	// Shared nils it and ParseShared refuses the key.
+	NodeRemovals *NodeRemovals `yaml:"node_removals,omitempty"`
 	// DefaultClaudeAccount is the account every stage of a run uses when
 	// nothing more specific does (spec §11.1, D873). It names an account of
 	// claude_accounts, or "default" for the unsuffixed secret, and only this
@@ -730,6 +798,43 @@ type Config struct {
 	notes []string
 }
 
+// NodeRemovals is the explicit-unset record (D2607, F22), written in this
+// file's `node_removals` key: the names this machine has taken out of the
+// published policy node, per block. Silence in this file keeps the node's
+// value — the preserve half of D2607's rule — so a removal that reached the
+// node only by a name's disappearance from a block would never reach it at
+// all, and a pool the owner deleted would go on being served. A name here is
+// the removal the next publish makes; the record is cleared once the node no
+// longer holds it (N4), and until then it is this file's own statement of what
+// is gone.
+//
+// The three lists are the node's three named blocks: `pools` and
+// `crafts` are its craft_pools and crafts members by the names a person reads
+// (`fugaro accounts pool ls`, the four craft names), and `craft_credentials`
+// is its craft_credentials. The node's `credentials` member is deliberately
+// not one of them: on the node that member is the cascade, which has no names
+// of its own, so it is never removed by name — a cascade without the fallback
+// the owner dropped is a cascade written without it (F23).
+type NodeRemovals struct {
+	// Pools are the pool names taken out of the node.
+	Pools []string `yaml:"pools,omitempty"`
+	// Crafts are the craft names taken out of the node. A craft is one of
+	// config.CraftNames, so this list names crafts that exist rather than names
+	// no block holds.
+	Crafts []string `yaml:"crafts,omitempty"`
+	// CraftCredentials are the credential names taken out of the node.
+	CraftCredentials []string `yaml:"craft_credentials,omitempty"`
+}
+
+// IsZero reports whether the record names nothing removed, which is the state
+// of the record with nothing left to reconcile: a record that is there and
+// empty and a key that is absent are one statement — no removals — so the
+// writer that keeps this key up to date drops it rather than writing an empty
+// block.
+func (r NodeRemovals) IsZero() bool {
+	return len(r.Pools) == 0 && len(r.Crafts) == 0 && len(r.CraftCredentials) == 0
+}
+
 // WorkspacePin is one member's pin: what its own config records about the
 // workspace it joined, and the whole of what its exchange trusts. Every value
 // is the member's own, written by `fugaro workspace add` and read by W4 (the
@@ -1075,13 +1180,32 @@ type Budget struct {
 // field left out takes the list default (cache_write_5m 1.25, cache_write_1h
 // 2, cache_read 0.1, web_search_per_1k 10), never 0; input_per_m and
 // output_per_m are required.
+//
+// Each of the three cache prices may be written three ways: the old
+// cache_read, cache_write_5m and cache_write_1h keys, which have always meant
+// a multiple of input_per_m; the same number under cache_read_mult,
+// cache_write_5m_mult and cache_write_1h_mult, which says so; and
+// cache_read_per_m, cache_write_5m_per_m and cache_write_1h_per_m, in dollars
+// per million tokens, which is how the list price an override is copied from
+// is printed and needs no arithmetic (D2646). A file writes one of the three
+// per dimension; the loader folds whichever it is into the multiplier field
+// above, which is what everything below this package reads.
 type ModelPrice struct {
-	InputPerM      *float64 `yaml:"input_per_m"`
-	OutputPerM     *float64 `yaml:"output_per_m"`
-	CacheWrite5m   *float64 `yaml:"cache_write_5m,omitempty"`
-	CacheWrite1h   *float64 `yaml:"cache_write_1h,omitempty"`
-	CacheRead      *float64 `yaml:"cache_read,omitempty"`
-	WebSearchPer1k *float64 `yaml:"web_search_per_1k,omitempty"`
+	InputPerM    *float64 `yaml:"input_per_m"`
+	OutputPerM   *float64 `yaml:"output_per_m"`
+	CacheWrite5m *float64 `yaml:"cache_write_5m,omitempty"`
+	CacheWrite1h *float64 `yaml:"cache_write_1h,omitempty"`
+	CacheRead    *float64 `yaml:"cache_read,omitempty"`
+	// The three per-million spellings, then the three that name the
+	// multiplier. They are held so that a write back out keeps the spelling
+	// the owner chose, and only MarshalYAML reads them.
+	CacheWrite5mPerM *float64 `yaml:"cache_write_5m_per_m,omitempty"`
+	CacheWrite1hPerM *float64 `yaml:"cache_write_1h_per_m,omitempty"`
+	CacheReadPerM    *float64 `yaml:"cache_read_per_m,omitempty"`
+	CacheWrite5mMult *float64 `yaml:"cache_write_5m_mult,omitempty"`
+	CacheWrite1hMult *float64 `yaml:"cache_write_1h_mult,omitempty"`
+	CacheReadMult    *float64 `yaml:"cache_read_mult,omitempty"`
+	WebSearchPer1k   *float64 `yaml:"web_search_per_1k,omitempty"`
 	// ImageTokens is the per-image token ceiling an image block is reserved
 	// at, and it is the whole of what makes a model able to take an image
 	// (D2000): a model with no ceiling is refused the call. Left out, the
@@ -1092,6 +1216,129 @@ type ModelPrice struct {
 	// for a model with a long-context tier; an override without it
 	// replaces the model's tier with none.
 	LongContext *LongContext `yaml:"long_context,omitempty"`
+}
+
+// modelPriceYAML is ModelPrice without its marshaller: yaml would call
+// MarshalYAML again on a ModelPrice and never finish.
+type modelPriceYAML ModelPrice
+
+// MarshalYAML writes one spelling per cache dimension: the per-million key
+// the owner wrote, else the multiplier key he wrote, else the old key the
+// multiplier field came in under. Writing the field as well would put two
+// spellings of one price in the document, which is what Parse refuses.
+func (m ModelPrice) MarshalYAML() (any, error) {
+	w := modelPriceYAML(m)
+	w.CacheWrite5mPerM, w.CacheWrite5mMult, w.CacheWrite5m = oneCacheSpelling(m.CacheWrite5mPerM, m.CacheWrite5mMult, m.CacheWrite5m)
+	w.CacheWrite1hPerM, w.CacheWrite1hMult, w.CacheWrite1h = oneCacheSpelling(m.CacheWrite1hPerM, m.CacheWrite1hMult, m.CacheWrite1h)
+	w.CacheReadPerM, w.CacheReadMult, w.CacheRead = oneCacheSpelling(m.CacheReadPerM, m.CacheReadMult, m.CacheRead)
+	return w, nil
+}
+
+// oneCacheSpelling is the one of a dimension's three keys to write: the
+// per-million price when it is there, else the named multiplier, else the old
+// key — and nothing else, so the document holds one spelling of one price.
+func oneCacheSpelling(perM, mult, old *float64) (p, m, o *float64) {
+	switch {
+	case perM != nil:
+		return perM, nil, nil
+	case mult != nil:
+		return nil, mult, nil
+	default:
+		return nil, nil, old
+	}
+}
+
+// cacheKey is one of the names a cache price may be written under, with the
+// field it decodes into.
+type cacheKey struct {
+	key   string
+	field **float64
+}
+
+// cachePrice is one cache dimension's three spellings.
+type cachePrice struct {
+	old, mult, perM cacheKey
+}
+
+// cachePrices are the three dimensions, in the order a message lists them.
+func (m *ModelPrice) cachePrices() []cachePrice {
+	return []cachePrice{
+		{
+			cacheKey{"cache_read", &m.CacheRead},
+			cacheKey{"cache_read_mult", &m.CacheReadMult},
+			cacheKey{"cache_read_per_m", &m.CacheReadPerM},
+		},
+		{
+			cacheKey{"cache_write_5m", &m.CacheWrite5m},
+			cacheKey{"cache_write_5m_mult", &m.CacheWrite5mMult},
+			cacheKey{"cache_write_5m_per_m", &m.CacheWrite5mPerM},
+		},
+		{
+			cacheKey{"cache_write_1h", &m.CacheWrite1h},
+			cacheKey{"cache_write_1h_mult", &m.CacheWrite1hMult},
+			cacheKey{"cache_write_1h_per_m", &m.CacheWrite1hPerM},
+		},
+	}
+}
+
+// foldCacheSpellings reads every cache price an entry writes into the
+// multiplier field the rest of the binary reads — pricing.Overrides, and so
+// the policy node, the shared copy and FUGARO_MODEL_PRICES, know the three
+// old names only — and refuses an entry that writes two spellings of one
+// price. A per-million price needs the entry's input price to be read
+// against, so an entry that writes one without input_per_m is refused too,
+// naming the key rather than letting the division decide. ownerFile is where
+// the old key's note goes: into the config's own warnings for the owner's own
+// file, and nowhere for the published copy, which keeps those keys by design.
+func (c *Config) foldCacheSpellings(ownerFile bool) error {
+	note := func(string) {}
+	if ownerFile {
+		note = c.AddWarning
+	}
+	var errs []error
+	for _, id := range slices.Sorted(maps.Keys(c.ModelPrices)) {
+		mp := c.ModelPrices[id]
+		for _, p := range mp.cachePrices() {
+			if err := foldCachePrice(id, p, mp.InputPerM, note); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		c.ModelPrices[id] = mp
+	}
+	return errors.Join(errs...)
+}
+
+// foldCachePrice folds one dimension's one spelling into its multiplier field
+// and, for the old key, sets the note. note is the caller's, because only the
+// caller knows whether this document may draw one at all.
+func foldCachePrice(id string, p cachePrice, inputPerM *float64, note func(string)) error {
+	var written []string
+	for _, k := range []cacheKey{p.old, p.mult, p.perM} {
+		if *k.field != nil {
+			written = append(written, k.key)
+		}
+	}
+	switch {
+	case len(written) == 0:
+		return nil
+	case len(written) > 1:
+		return fmt.Errorf("model_prices.%s: %s are spellings of one price: write one of %s",
+			id, strings.Join(written, " and "), p.old.key+", "+p.mult.key+", "+p.perM.key)
+	case *p.perM.field != nil:
+		if inputPerM == nil || *inputPerM <= 0 {
+			return fmt.Errorf("model_prices.%s.%s is dollars per million tokens and it is read as a multiple of input_per_m: this entry must set a positive input_per_m, or write %s instead",
+				id, p.perM.key, p.mult.key)
+		}
+		v := **p.perM.field / *inputPerM
+		*p.old.field = &v
+	case *p.mult.field != nil:
+		v := **p.mult.field
+		*p.old.field = &v
+	default:
+		note(fmt.Sprintf("model_prices.%s.%s is a multiple of input_per_m: write %s for the same number, or %s in dollars per million tokens",
+			id, p.old.key, p.mult.key, p.perM.key))
+	}
+	return nil
 }
 
 // LongContext is a long-context price tier.
@@ -2100,6 +2347,10 @@ func Parse(data []byte) (*Config, error) {
 	if err := dec.Decode(&c); err != nil {
 		return nil, fmt.Errorf("local config: %w", err)
 	}
+	// The document's own version, read before the fills below overwrite it:
+	// it is the one thing at this depth that tells the owner's file from the
+	// published copy (see the note under the version stamp).
+	fileVersion := c.Version
 	if c.Version == 0 {
 		c.Version = 1 // the first spelling: a document that says nothing is version 1's
 	}
@@ -2111,6 +2362,19 @@ func Parse(data []byte) (*Config, error) {
 		return nil, fmt.Errorf("local config: version %d is newer than the %d this Fugaro writes: upgrade Fugaro (brew upgrade dimipaun/tap/fugaro), then run fugaro update", c.Version, ConfigVersion)
 	}
 	c.Version = ConfigVersion
+	// The old cache keys draw their note in the owner's own file and nowhere
+	// else: the published copy keeps them as the multipliers they are by
+	// design (D2646 as amended), so a note on every read of it would be noise
+	// about a document nobody may edit. What tells the two apart here is the
+	// version: every shared document is SharedVersion, because Shared stamps
+	// it and every reader of a published copy (internal/cli's ParseShared,
+	// which is also how the cached one is read) takes nothing else, while a
+	// local file this release has written is ConfigVersion. A local file still
+	// at version 1 reads as the published copy and stays quiet: SA4.2's
+	// migration renames its key and prints its own line for it.
+	if err := c.foldCacheSpellings(fileVersion != SharedVersion); err != nil {
+		return &c, err
+	}
 	if c.MaxParallel == 0 {
 		c.MaxParallel = DefaultMaxParallel
 	}
@@ -2360,6 +2624,20 @@ func (c *Config) OrchestratorEffective(published *policy.Orchestrator) *policy.O
 	return c.Orchestrator
 }
 
+// craftNameProblem is why name may not stand in the explicit-unset record's
+// crafts list, and "" when it may. A craft is one of the four
+// config.CraftNames — the block is a closed set, so a name outside it is not a
+// craft the node could hold — where a pool's and a credential's names are held
+// to config.ValidCredentialRef. The refusal never repeats the name, for that
+// function's reason: the record is a list of names, and the entry that fails
+// this rule is the one most likely to be a value written where a name belongs.
+func craftNameProblem(name string) string {
+	if slices.Contains(config.CraftNames, name) {
+		return ""
+	}
+	return fmt.Sprintf("a craft is one of %s: an entry names the craft the node should no longer hold, and a name outside that list is not a craft it could carry", strings.Join(config.CraftNames, ", "))
+}
+
 func (c *Config) validate() error {
 	var errs []error
 	bad := func(f string, a ...any) { errs = append(errs, fmt.Errorf("local config: "+f, a...)) }
@@ -2542,6 +2820,74 @@ func (c *Config) validate() error {
 	for _, name := range config.CraftNames {
 		if msg := config.ModelIDProblem(c.Crafts.Of(name).Model); msg != "" {
 			bad("crafts.%s.model: %s", name, msg)
+		}
+	}
+	// The cascade this file carries is held to projectpolicy's own rule for the
+	// block, asked with this file's key as the block's path so the refusal
+	// names the key the operator wrote. A misspelt fallback is the case that
+	// matters: it would leave the cascade on oauth-only under a file that reads
+	// as `auto` to its author, and a publish would carry the typo to the node
+	// rather than stop at the file. What the rule does not ask is D152's budget
+	// rule, which is a property of the cascade and the budget block TOGETHER:
+	// the node's decode asks that pair where both are in hand
+	// (projectpolicy's validCredentials), and a carrier holding one half must
+	// not answer for the other.
+	if c.CredentialCascade != nil {
+		if err := projectpolicy.ValidCredentials(c.CredentialCascade, "credential_cascade"); err != nil {
+			bad("%v", err)
+		}
+	}
+	// The grades are held to the rule the node's own decode applies
+	// (projectpolicy's decodeModelGrades), so a file this loader accepts is a
+	// block the node can carry: a grade that names no model, or a model that is
+	// not a model ID, is refused here as it is there.
+	if c.ModelGrades != nil {
+		for _, p := range config.ValidateModelGrades(*c.ModelGrades, "model_grades") {
+			bad("%s: %s", p.Path, p.Message)
+		}
+	}
+	// The explicit-unset record names what is gone, so every entry is held to
+	// the shape a name of its block has: a craft is one of config.CraftNames,
+	// and a pool and a credential are held to the rule their names are written
+	// with where they are referenced, config.ValidCredentialRef. That is the
+	// only rule internal/config exports for a single name (the definition's own,
+	// credentialNameProblem, is that package's and unexported), and the one name
+	// the two disagree on — the built-in `vertex`, which the reference rule
+	// admits because a craft's access may name it and the definition rule
+	// refuses — is a name no block can hold, so such an entry matches no member
+	// of the node and the reconcile clears it with nothing to delete (N4). That
+	// rule is also the one that never echoes the entry — the record is a list of
+	// names, and a value pasted where one belongs (a credential's secret, a
+	// pool's members) is exactly the mistake this block can carry, so no refusal
+	// here repeats it. Naming which block is wrong is the sentence's job;
+	// printing the entry is how a secret reaches a terminal, a log and an issue
+	// report.
+	if r := c.NodeRemovals; r != nil {
+		for _, l := range []struct {
+			at    string
+			what  string
+			names []string
+			valid func(string) string
+		}{
+			{"node_removals.pools", "pool", r.Pools, config.ValidCredentialRef},
+			{"node_removals.craft_credentials", "credential", r.CraftCredentials, config.ValidCredentialRef},
+			{"node_removals.crafts", "craft", r.Crafts, craftNameProblem},
+		} {
+			seen := map[string]bool{}
+			for i, name := range l.names {
+				at := fmt.Sprintf("%s[%d]", l.at, i)
+				switch {
+				case name == "":
+					bad("%s is empty: an entry is the name of a %s the node should no longer hold, and an empty one names nothing — remove the entry", at, l.what)
+				case seen[name]:
+					bad("%s repeats a name above it: a removal is recorded once, and the entry is not repeated here because the record is a list of names while this one may be a value", at)
+				default:
+					if msg := l.valid(name); msg != "" {
+						bad("%s: %s", at, msg)
+					}
+				}
+				seen[name] = true
+			}
 		}
 	}
 	// The aliases the account-choice keys may hold (docs/account-aliases, D2090,

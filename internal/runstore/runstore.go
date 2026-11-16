@@ -746,13 +746,13 @@ const (
 	TriageSourceCap TriageSource = "cap"
 )
 
-// The two causes a failed triage round records that are not a service's own
-// words (TriageRound.Cause). They are the record's vocabulary and not
+// The causes a triage round records that are not a service's own words
+// (TriageRound.Cause). They are the record's vocabulary and not
 // internal/triage's or internal/runner's, because every reader of the record
 // has to be able to tell a call that never got through from a judge whose
 // answer was unusable without guessing at a service's phrasing: the first is
 // what an auth or upstream failure looks like once the service's text is
-// clipped to its first line, and this pair is what the run itself knows.
+// clipped to its first line, and this triple is what the run itself knows.
 const (
 	// TriageCauseUnreadable is a round whose call answered something shaped
 	// like a verdict that internal/triage's reader refused: a word outside the
@@ -765,6 +765,22 @@ const (
 	// its first token. It is the cause of last resort, so a failed round says
 	// something rather than carrying an empty line beside Failed.
 	TriageCauseNoAnswer = "the call answered nothing"
+	// TriageCauseNoAccount is the one cause a *skipped* round carries rather
+	// than a failed one (TriageRound.Skipped): the triage stage resolved to no
+	// Claude account and the model it would run is one only Anthropic serves
+	// that no provider route claims, so the run's api-key gateway would refuse
+	// the call for the key it does not hold. The call is not made — in that
+	// shape it used to be a stage failure that ended the run, with no round
+	// recorded at all — and the fail-safe stands in for it exactly as it does
+	// for a failure: every finding the mode's table blocks blocks (D1846).
+	//
+	// It names the fix a reader can act on and not the diagnosis alone: a
+	// stage's account reaches it through the published policy's
+	// claude_account_stages key or its default_claude_account, and the triage
+	// key is held out of the published node until the release after the one
+	// that added the stage (config.AccountStageHeldBack), so the operator's
+	// two steps are the ones written here.
+	TriageCauseNoAccount = "no account for triage: the published policy names none (set default_claude_account, then run fugaro update)"
 )
 
 // TriageFailureClause is one failed triage round as one clause of the sentence
@@ -773,7 +789,7 @@ const (
 //
 // It is here, beside the two causes that are the record's own vocabulary and
 // not internal/runner's or internal/cli's, because two readers say it — the
-// pull request's status section (internal/runner's triageFailureLine) and
+// pull request's status section (internal/runner's triageStatusLine) and
 // `fugaro diagnose` (internal/cli's triageFlag) — and one cause read two ways is
 // the drift this exists to prevent. What it says is what the record knows and
 // no more: TriageCauseUnreadable is a judge that ran and whose answer the
@@ -805,10 +821,7 @@ const (
 // the CLI, so a caller that has to escape or clip it does so before calling:
 // the clause is the record's own words and nothing else.
 func TriageFailureClause(level policy.Level, round int, cause string) string {
-	where := fmt.Sprintf("round %d", round)
-	if policy.KnownLevel(level) {
-		where = fmt.Sprintf("round %d of level %s", round, strings.TrimPrefix(string(level), "l"))
-	}
+	where := triageRoundWhere(level, round)
 	switch cause {
 	case TriageCauseUnreadable:
 		return fmt.Sprintf("the judge's answer for %s could not be read", where)
@@ -816,6 +829,44 @@ func TriageFailureClause(level policy.Level, round int, cause string) string {
 		return fmt.Sprintf("the judge did not answer for %s", where)
 	}
 	return fmt.Sprintf("the judge did not answer for %s: %s", where, cause)
+}
+
+// TriageSkipClause is TriageFailureClause's other half: one round the run did
+// not ask at all (TriageRound.Skipped) as one clause of the same sentence, for
+// the same two readers and for the same reason — one fact read two ways is the
+// drift this pair exists to prevent.
+//
+// It is a second function and not a word in the first, because the two rounds
+// are two facts a reader acts on differently: a failed round is a call that
+// went out and bought no verdict, which an installation has to repair, and a
+// skipped one is a call this run knew it could not serve and never made. A
+// reader who saw "the judge did not answer" over a round no call was made for
+// would go looking for an answer that does not exist.
+//
+// The round is named exactly as the failure clause names it, level and all,
+// for the reason stated there. The cause is the record's own words after the
+// colon — for the one cause a skip carries (TriageCauseNoAccount) that is the
+// sentence naming the two steps that give the stage its account — and a skip
+// carrying none (a hand-edited record) says only that triage did not run,
+// which is the most such a record says.
+func TriageSkipClause(level policy.Level, round int, cause string) string {
+	where := triageRoundWhere(level, round)
+	if cause == "" {
+		return "triage did not run for " + where
+	}
+	return fmt.Sprintf("triage did not run for %s: %s", where, cause)
+}
+
+// triageRoundWhere names one triage round for either clause above: its number
+// and the level it belongs to, since the number alone does not say which
+// level's round it is (each level numbers its own from 1, D1847), and the bare
+// number is what a level outside the vocabulary — a hand-edited record — falls
+// back to.
+func triageRoundWhere(level policy.Level, round int) string {
+	if policy.KnownLevel(level) {
+		return fmt.Sprintf("round %d of level %s", round, strings.TrimPrefix(string(level), "l"))
+	}
+	return fmt.Sprintf("round %d", round)
 }
 
 // TriageRecord is what a run's triage decided (docs/post-review-triage, D1850):
@@ -867,13 +918,30 @@ type TriageRound struct {
 	// the flag is what makes that visible rather than a round that looks like
 	// any other.
 	Failed bool `json:"failed,omitempty"`
-	// Cause is why a failed round failed, one line, and empty for a round that
-	// did not. It is the call's own first line where the call answered nothing
-	// a verdict could be read from — an auth or upstream failure, a stream cut
-	// before the answer — and TriageCauseUnreadable where it answered
-	// something shaped like a verdict that the reader refused. Clipped to
-	// MaxTriageLine and dropped for a round that is not failed (NewTriage),
-	// and redacted with both passes where it is written (internal/runner): a
+	// Skipped marks a round no call was made for at all: the triage stage
+	// resolved to no Claude account and the model it would run is one only
+	// Anthropic serves that no provider route claims, so the run's api-key
+	// gateway would refuse the call for the key it does not hold
+	// (TriageCauseNoAccount). It is not Failed — nothing failed, the run chose
+	// not to ask — and it is not an answered round either, which is why it is
+	// a flag of its own: a reader telling "the judge ran and its answer was
+	// unusable" from "the judge was never asked" reads the two off different
+	// members, and the fail-safe stands in for both (D1846).
+	//
+	// It is additive, so a record written before it existed reads false here,
+	// and that is the reading such a record always had: its round either
+	// answered or failed, or — in the shape the skip exists for — the run
+	// ended at the judge's own stage refusal before any round was written.
+	Skipped bool `json:"skipped,omitempty"`
+	// Cause is why a round failed or was skipped, one line, and empty for a
+	// round that neither. It is the call's own first line where the call
+	// answered nothing a verdict could be read from — an auth or upstream
+	// failure, a stream cut before the answer — and TriageCauseUnreadable
+	// where it answered something shaped like a verdict that the reader
+	// refused, and TriageCauseNoAccount for a skipped round, which is the one
+	// cause no call of the run ever wrote. Clipped to MaxTriageLine and
+	// dropped for a round that neither failed nor was skipped (NewTriage), and
+	// redacted with both passes where it is written (internal/runner): a
 	// service's auth error quotes the credential it refused, and this line
 	// reaches the pull request's body.
 	Cause string `json:"cause,omitempty"`
@@ -919,15 +987,15 @@ type TriageEntry struct {
 // MaxTriageEntries — each round's Total is set here, from the entries the
 // caller gave it, so a round the cap cut says how many verdicts it wrote
 // instead of looking like one that read only the first hundred — the reason,
-// the group key and a failed round's cause are clipped to MaxTriageLine, the
-// cause of a round that did not fail is dropped, and a round or an entry a
-// reader
+// the group key and a failed or skipped round's cause are clipped to
+// MaxTriageLine, the cause of a round that neither failed nor was skipped is
+// dropped, and a round or an entry a reader
 // cannot place is dropped: a round with no number, a mode or a level outside
 // its vocabulary, and an entry at a negative index, with no key, no reason, a
 // word outside the two or a source outside the four — an index below 0 names no
 // position in any round, which is the same refusal internal/triage's own reader
 // makes of a verdict. A round whose every entry was dropped is still kept when
-// it is failed, because that is the fact the round carries.
+// it failed or was skipped, because that is the fact the round carries.
 func NewTriage(rounds []TriageRound) *TriageRecord {
 	if len(rounds) == 0 {
 		return nil
@@ -953,10 +1021,11 @@ func NewTriage(rounds []TriageRound) *TriageRecord {
 			entries = append(entries, e)
 		}
 		r.Entries = entries
-		// The cause belongs to a failed round and to no other: a round that
-		// answered a verdict did not fail, and a record whose cause outlived
-		// its flag would read as a failure beside a flag that says otherwise.
-		if !r.Failed {
+		// The cause belongs to a round that failed or was skipped and to no
+		// other: a round that answered a verdict did neither, and a record
+		// whose cause outlived its flags would read as a failure beside flags
+		// that say otherwise.
+		if !r.Failed && !r.Skipped {
 			r.Cause = ""
 		}
 		r.Cause = clipRunes(r.Cause, MaxTriageLine)
@@ -1056,6 +1125,163 @@ func knownSource(s TriageSource) bool {
 		return true
 	}
 	return false
+}
+
+// MergeJudgeVerdict is the word a merge judge answered, one of the two the
+// spec names (docs/outer-loop-escalation spec, "Merge judge"): the pull request
+// may merge with the leftovers filed as follow-ups, or it is blocked.
+type MergeJudgeVerdict string
+
+const (
+	// MergeJudgeMergeWithFollowUps is the judge's yes: the change may merge and
+	// what it leaves open is filed. It is advisory and never a merge of its own
+	// — the deterministic gate decides (D2031, D2047).
+	MergeJudgeMergeWithFollowUps MergeJudgeVerdict = "merge_with_follow_ups"
+	// MergeJudgeBlocked is the judge's no, and the only word that does
+	// anything: it stops the ladder's merge for this head.
+	MergeJudgeBlocked MergeJudgeVerdict = "blocked"
+)
+
+// MergeJudgeImportance is how a leftover finding the judge named is filed: one
+// of the two words of D2040. It is a fact a reader sorts by and never an
+// approval (D2040, G6): an important follow-up is prioritised above new work,
+// and nothing but the owner's own decision lets a pull request merge.
+type MergeJudgeImportance string
+
+const (
+	// MergeJudgeImportant is a follow-up that has to be done, ahead of new work.
+	MergeJudgeImportant MergeJudgeImportance = "important"
+	// MergeJudgeMinor is one that goes into the ordinary queue.
+	MergeJudgeMinor MergeJudgeImportance = "minor"
+)
+
+// MaxMergeJudgeFollowUps bounds the follow-ups a verdict may name, for the
+// reason MaxTolerated bounds the tolerated findings: the list is a model's
+// output and the block is a small object every listing reads.
+const MaxMergeJudgeFollowUps = 32
+
+// MaxMergeJudgeBlocker bounds the fundamental issue a blocked verdict names, in
+// runes. The text becomes rung 4's scope (the split is scoped to it), so it is
+// one paragraph and not a report: a longer answer is clipped rather than
+// refused, because the merge is blocked either way.
+const MaxMergeJudgeBlocker = 500
+
+// MergeJudge is the merge judge's answer, as the judge run recorded it (E6,
+// D2031, D2044): the verdict, the short reason beside it, the fundamental issue
+// a blocked verdict names, and the follow-ups a merge leaves behind, each with
+// the importance D2040 gives it.
+//
+// It is the record's own block and not a file beside it because the reader is
+// the ladder's launcher, and the ladder reads records: a verdict written
+// anywhere else would be a second thing to find and to prove. Absent — never an
+// empty block — for every run that judged nothing, which is every run of a
+// recipe that holds no judge step and every record written before this field
+// existed, so an old reader sees the record it always saw and the format's
+// version stays 1.
+type MergeJudge struct {
+	Verdict MergeJudgeVerdict `json:"verdict"`
+	// Reason is the judge's one-line why, clipped to MaxTriageLine runes.
+	Reason string `json:"reason"`
+	// Blocker is the fundamental issue a blocked verdict names, clipped to
+	// MaxMergeJudgeBlocker runes, and the scope rung 4 splits to. Absent on a
+	// merge, which blocks nothing.
+	Blocker string `json:"blocker,omitempty"`
+	// FollowUps are the leftovers a merge leaves behind, one per finding the
+	// judge classified. Never null, so a reader can range over it.
+	FollowUps []MergeJudgeFollowUp `json:"follow_ups"`
+	// Model is the model the judge ran on, from the stage's own resolution.
+	// Absent when the run could not name one, as a stage timing's model is.
+	Model string `json:"model,omitempty"`
+	// Unreadable is set when the judge answered nothing this build could read.
+	// The verdict beside it is blocked — D2044's rule that an answer nobody can
+	// read is a veto, and the record says which of the two it was: a judge that
+	// said blocked, or a judge that said nothing usable.
+	Unreadable bool `json:"unreadable,omitempty"`
+}
+
+// MergeJudgeFollowUp is one leftover finding a merge leaves behind: the key it
+// is known by, so a follow-up task can be filed from it (`fugaro followups`,
+// T-TR4), and D2040's word for how urgent it is.
+type MergeJudgeFollowUp struct {
+	// Key is the finding's opaque key, the same one the verdict that raised it
+	// and the record's own deferral carry (DeferredFinding.Key, D1850).
+	Key string `json:"key"`
+	// Importance is D2040's word: important or minor.
+	Importance MergeJudgeImportance `json:"importance"`
+}
+
+// NewMergeJudge bounds the block a judge run records and returns what to store,
+// or nil when there is nothing to store — a run that judged nothing carries no
+// block at all, rather than an empty one.
+//
+// A verdict outside the two words is refused here as it is refused by the
+// reader that produced it (knownMergeJudgeVerdict): a third word is a block no
+// reader can act on and, read as a merge, one that would put a word the judge
+// never said into the record. Everything else a reader cannot use is dropped
+// rather than stored — a follow-up with no key or a word outside the two, over
+// the cap — and the text is clipped, so a block this function answers is always
+// one the schema and the readers accept.
+func NewMergeJudge(v MergeJudge) *MergeJudge {
+	if !knownMergeJudgeVerdict(v.Verdict) {
+		return nil
+	}
+	v.Reason = clipRunes(v.Reason, MaxTriageLine)
+	v.Blocker = clipRunes(v.Blocker, MaxMergeJudgeBlocker)
+	if v.Verdict == MergeJudgeBlocked && v.Blocker == "" && !v.Unreadable {
+		// A blocked verdict names the fundamental issue, and that issue is
+		// rung 4's scope (D2031, spec §"Merge judge"): a block with nothing to
+		// name is a block rung 4 cannot act on, and the reader that produced
+		// this block refuses such an answer as unreadable — so the fact is
+		// recorded rather than left looking like a judgment it never made.
+		v.Unreadable = true
+	}
+	followUps := []MergeJudgeFollowUp{}
+	for _, f := range v.FollowUps {
+		if len(followUps) >= MaxMergeJudgeFollowUps {
+			break
+		}
+		if !ValidFindingKey(f.Key) || !knownMergeJudgeImportance(f.Importance) {
+			continue
+		}
+		followUps = append(followUps, f)
+	}
+	v.FollowUps = followUps
+	return &v
+}
+
+// knownMergeJudgeVerdict reports whether v is one of the two words, as
+// knownVerdict is for triage's.
+func knownMergeJudgeVerdict(v MergeJudgeVerdict) bool {
+	return v == MergeJudgeMergeWithFollowUps || v == MergeJudgeBlocked
+}
+
+// knownMergeJudgeImportance reports whether i is one of D2040's two words.
+func knownMergeJudgeImportance(i MergeJudgeImportance) bool {
+	return i == MergeJudgeImportant || i == MergeJudgeMinor
+}
+
+// ValidFindingKey reports whether key is a finding key this tree writes: the
+// lowercase hex digest internal/runner's findingKey builds, which is what the
+// schema's own pattern states (16 to 64 characters). A key outside it names no
+// finding, so a follow-up built from it would be a task about nothing.
+//
+// It is exported because the judge's reader states the same rule as the
+// document it answers (runner.DecodeMergeJudgeVerdict): a key that is not one
+// this tree writes is a malformed member of the answer and refused there, while
+// a key that is well formed and names no finding of the brief is dropped later
+// — that second rule needs the brief and so belongs to the caller. One
+// definition serves both sides, which is why this is the tree's only predicate
+// for the shape of a key.
+func ValidFindingKey(key string) bool {
+	if len(key) < 16 || len(key) > 64 {
+		return false
+	}
+	for _, c := range key {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // MaxOwnerDecisions bounds the pending owner decisions a record stores, for
@@ -1650,6 +1876,16 @@ type Record struct {
 	// never an empty block — for every run that deferred nothing, which is
 	// every record written before this field existed (F21).
 	Deferred *DeferredFindings `json:"deferred,omitempty"`
+	// MergeJudge is the merge judge's answer (E6, D2031): what rung 3 decided
+	// about the head this run read — merge with follow-ups, or blocked with the
+	// fundamental issue rung 4 splits to. A block of its own and never a
+	// replacement for Reviews: those are the reviewers' verdicts, and this one
+	// is the judge's, which the ladder reads as a veto and never as an approval.
+	// Absent — never an empty block — for every run that judged nothing, which
+	// is every run that is not a merge judge run and every record written before
+	// this field existed: the field is additive, so an old reader sees the
+	// record it always saw and the format's version stays 1.
+	MergeJudge *MergeJudge `json:"merge_judge,omitempty"`
 	// OwnerDecisions is what the run's review left for the repository's owner
 	// to settle (OD1): the findings a reviewer marked needs_owner, which no
 	// code change can fix, so the run spent no fix round on them — it stopped
@@ -1756,6 +1992,18 @@ func PatchKey(prefix string) string { return prefix + PatchName }
 // rather than recomputed at the judge — and writer and reader spell the leaf
 // once, as PatchName is.
 const ManifestName = "ab/manifest.json"
+
+// MergeJudgeInputName is the brief a merge judge run reads, written by its
+// launcher under the run's own prefix:
+// runs/<repo-slug>/<judge-run-id>/merge-judge/input.json. The launcher writes it
+// before the run's task exists and the judge stage reads it back, so what the
+// judge was shown is fixed at the launch rather than recomputed at the judge —
+// and writer and reader spell the leaf once, as ManifestName is.
+//
+// It is a leaf of its own and not ManifestName, which is the A/B judge's: the
+// two are different documents read by different steps, and one name for both
+// would be a reader that found the other's manifest.
+const MergeJudgeInputName = "merge-judge/input.json"
 
 // VerdictsName is where a judge run writes what it decided, under its own
 // prefix and nowhere else: runs/<repo-slug>/<judge-run-id>/ab/verdicts.json.

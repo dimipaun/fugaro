@@ -12,8 +12,8 @@ import (
 //
 // The label follows the row's own Owner token, which G12 already made the
 // read's table (F11): `setup` and `update` are the installation's own
-// bookkeeping, `config`, `config init` and `config local` are the keys a person
-// states in a named file. The single place the probe moved a row off its token
+// bookkeeping, `config` and `config init` are the keys a person states in a named
+// file. The single place the probe moved a row off its token
 // is the `endpoints` block: the registry calls it `setup`'s, and nothing
 // outside a test assigns a localcfg.Endpoints field — `fugaro setup` carries
 // the block through untouched — so every endpoint carries `fake-endpoint` and
@@ -50,15 +50,15 @@ type settingsLabelRow struct {
 
 // settingsUnwrittenOwners are the registry Owner tokens that name no command:
 // the installation's own bookkeeping (`setup`, `update`), and the keys a person
-// states in the file the token names (`config`, `config init`, `config local`).
-// Every other token is a command family's, and a row it owns is that family's
-// to register.
+// states in the file the token names (`config`, `config init`). Every other token
+// is a command family's, and a row it owns is that family's to register. The
+// machine's own config had a token of its own (`config local`) until R1 moved its
+// last two rows — the nudge thresholds — onto `settings set` (D2603).
 var settingsUnwrittenOwners = map[string]bool{
-	"setup":        true,
-	"update":       true,
-	"config":       true,
-	"config init":  true,
-	"config local": true,
+	"setup":       true,
+	"update":      true,
+	"config":      true,
+	"config init": true,
 }
 
 // settingsUnwrittenKeys are the rows no command writes although their Owner
@@ -74,12 +74,11 @@ var settingsUnwrittenKeys = map[string]bool{
 // settingsLabelledElsewhere names the rows of those tokens another task of the
 // plan gives a writer, with the task. They stay T1's golden gap until it lands,
 // and a label here would be the same row registered twice.
+//
+// R1's five rows left this table when it landed: `settings set` writes them, so
+// the ratchet registers their writer and the golden loses their lines. M4's five
+// stay until `fugaro rigor security` exists.
 var settingsLabelledElsewhere = map[string]string{
-	"layer.jobs.catalog_check.paused":    "R1 hands the row to `settings set` (`update` is not a writer)",
-	"layer.jobs.reports.paused":          "R1 hands the row to `settings set` (`update` is not a writer)",
-	"planning.decoupling":                "R1 hands the row to `settings set`",
-	"issues.nudge_after_days":            "R1 hands the row to `settings set`",
-	"issues.nudge_recurrence":            "R1 hands the row to `settings set`",
 	"security.patterns":                  "M4 registers `fugaro rigor security` for it",
 	"layer.security.always_level_3":      "M4 registers `fugaro rigor security` for it",
 	"layer.security.patterns.*.name":     "M4 registers `fugaro rigor security` for it",

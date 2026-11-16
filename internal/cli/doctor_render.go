@@ -306,6 +306,11 @@ var doctorActionableInfoIDs = map[string]bool{
 	// filing one is a command the reader runs and the pointer line alone
 	// would hide it (T-IS13 of docs/troubleshoot-issue).
 	"issues-pending": true,
+	// The repositories still on their per-repository jobs, each named with the
+	// shared project job that replaces it (M3, R3): the jobs are being retired
+	// and one `fugaro update` moves them, so the reader has to see the line —
+	// but nothing is broken, which is why it is info and never a failure.
+	"repo-bound-jobs": true,
 }
 
 // doctorClassOf is the classification, and it is the only place a class is
@@ -958,17 +963,23 @@ var doctorShorts = map[string]doctorShort{
 	"secret-rotation-age":          {"a stored secret is past the rotation period or the expiry the local config records for it.", ""},
 	"bundle-bitbucket-token":       {"the credentials service's bundle holds no Bitbucket token, or could not be read.", ""},
 	"bitbucket-token-valid":        {"Bitbucket refuses the bundle's Bitbucket token, or could not be asked about it.", ""},
-	"bitbucket-direct":             {"a job of a proxied Bitbucket repository still mounts its own token, or that could not be read.", ""},
-	"model-key-in-agent":           {"a model credential reaches a workflow's agent's own environment.", ""},
-	"launcher-jobs":                {"which Cloud Run jobs a launcher can start could not be checked.", ""},
-	"launcher-jobs-public":         {"a Cloud Run job can be started by allUsers or allAuthenticatedUsers, which is anyone.", ""},
-	"launcher-jobs-unread":         {"the IAM policy of some Cloud Run jobs could not be read, so whether a launcher can start them is unknown.", ""},
-	"batch-launcher-iam":           {"the launchers' roles/batch.jobsEditor grant in this project is not the one Fugaro writes, or could not be read.", ""},
-	"allow-list-uncovered":         {"the published policy does not admit a repository this machine's config names.", ""},
-	"creds-broken":                 {"a Claude account's token was refused, and no work routes to it until an operator clears the mark.", ""},
-	"creds-unknown-state":          {"a credential mark carries a state this Fugaro does not read, so the account is held rather than available.", ""},
-	"creds-rules":                  {"the deployed budget rules do not carry the credentials family this Fugaro writes, or could not be read.", ""},
-	"token-signers":                {"who can sign the budget database's sign-in tokens could not be read.", ""},
+	// T10's three other token lines. The per-token half of
+	// bitbucket-token-valid is the prefix below: doctor emits one line per typed
+	// token and the ID carries the token's name.
+	"bitbucket-tokens-uncovered": {"a proxied repository no stored Bitbucket token covers is refused before its first git call.", ""},
+	"bitbucket-token-broken":     {"a stored Bitbucket token was refused with 401 and the credential state holds it as broken.", ""},
+	"bitbucket-token-expiry":     {"a stored Bitbucket token's recorded expiry is near or past.", ""},
+	"bitbucket-direct":           {"a job of a proxied Bitbucket repository still mounts its own token, or that could not be read.", ""},
+	"model-key-in-agent":         {"a model credential reaches a workflow's agent's own environment.", ""},
+	"launcher-jobs":              {"which Cloud Run jobs a launcher can start could not be checked.", ""},
+	"launcher-jobs-public":       {"a Cloud Run job can be started by allUsers or allAuthenticatedUsers, which is anyone.", ""},
+	"launcher-jobs-unread":       {"the IAM policy of some Cloud Run jobs could not be read, so whether a launcher can start them is unknown.", ""},
+	"batch-launcher-iam":         {"the launchers' roles/batch.jobsEditor grant in this project is not the one Fugaro writes, or could not be read.", ""},
+	"allow-list-uncovered":       {"the published policy does not admit a repository this machine's config names.", ""},
+	"creds-broken":               {"a Claude account's token was refused, and no work routes to it until an operator clears the mark.", ""},
+	"creds-unknown-state":        {"a credential mark carries a state this Fugaro does not read, so the account is held rather than available.", ""},
+	"creds-rules":                {"the deployed budget rules do not carry the credentials family this Fugaro writes, or could not be read.", ""},
+	"token-signers":              {"who can sign the budget database's sign-in tokens could not be read.", ""},
 	// The managed deployer's own grants, the sweep's one warning that is the
 	// module's own binding: it carries no remove command, so its own sentence
 	// is the one the default view must print, and the sentence above is the
@@ -1003,6 +1014,12 @@ var doctorShortsByPrefix = []doctorPrefixShort{
 	// image is never built, so a line that offered only a build's states
 	// would name a problem the check cannot report for it at all.
 	{prefix: "image-catalog-", short: doctorShort{problem: "its project image catalog entry has no build or smoke of what its jobs start on, or one of another definition or reference."}},
+	// The per-token half of bitbucket-token-valid (T10): doctor emits one line
+	// per typed Bitbucket token, the ID carries the token's own name, and the
+	// sentence is the same for every one of them — refused, or a question
+	// Bitbucket did not answer. No short fix: the check's own names the token's
+	// document key, which is what `creds set` takes.
+	{prefix: "bitbucket-token-valid--", short: doctorShort{problem: "Bitbucket refuses this typed Bitbucket token, or could not be asked about it."}},
 	// The sweep's per-instance warnings, one for a member and one for a job
 	// account: doctor numbers their IDs (runs-bucket-iam-1, job-token-grant-2,
 	// token-signers-3) and their own sentence carries the whole triple, so each

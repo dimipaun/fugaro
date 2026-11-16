@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -29,6 +30,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/bbtokens"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -301,8 +303,19 @@ NAME is the name in the document's own spelling — the name fugaro creds set
 takes. A named Claude account's row is ` + config.ClaudeOAuthTokenPrefix + `<account>, where <account>
 is the account the policy's accounts block speaks.
 
+A Bitbucket token carries more, because a name and a PRESENT answer are the
+same for a token that serves every call of its repository and for one Bitbucket
+refuses: its type, what it covers, the expiry the operator recorded, when the
+add-time check last proved it, the state the credential state store holds
+(available, exhausted, backed_off or broken), the time a hold ends when it has
+one, and how many requests it has served in the current window. ` + config.BitbucketSecret + `
+is the legacy key: the implicit untyped token, whose coverage is the
+project_secrets entry's allow_data_to list and whose expiry is the
+secret_expires entry of the same name.
+
 Nothing else is printed: never a value, never a prefix of one, never a length
-that would narrow a guess. --json carries the same shape.
+that would narrow a guess. --json carries the same shape, with those facts as
+fields of the row.
 
 The listing needs the container to exist, and it needs its newest version to be
 one the service could read: an absent container, a container with no version, an
@@ -310,6 +323,12 @@ unreadable payload, a document the service's own loader refuses, and a version
 that is DISABLED are each a named failure, never an empty list — a listing that
 answered nothing for any of them would read as "the bundle holds no credential"
 while the service is in fact issuing from one this command could not read.
+
+A document holding a Bitbucket token also needs the project's credential state,
+and a state store that does not answer is a named failure too, for the same
+reason: the row would say nothing about a token the store holds something
+about. A project with no Firebase backend has no such store, and its rows carry
+the record's facts alone.
 
 It is refused from a coding agent's session and from a run's process, before
 anything is read.`,
@@ -1851,8 +1870,153 @@ func credsLs(cmd *cobra.Command, o credsOptions) error {
 	if err != nil {
 		return credsDocRefusal(store.id, err)
 	}
-	return printCreds(cmd.OutOrStdout(), lc.Name, store.id, doc, b, meta, o.asJSON)
+	bb, err := bitbucketTokenRows(ctx, lc, b)
+	if err != nil {
+		return userErr("nothing was printed: the Bitbucket tokens' status could not be read from project %s's credential state, and a listing that showed a token without it would read as a token nothing is recorded about: %v", safetext.Field(lc.Name), err)
+	}
+	return printCreds(cmd.OutOrStdout(), lc.Name, store.id, doc, b, meta, bb, o.asJSON)
 }
+
+// bitbucketBundleTokens is every Bitbucket credential the document holds, each
+// under its DOCUMENT KEY (R5): the legacy key when the document carries it, and
+// then the family's named tokens.
+//
+// The two halves are joined here and nowhere else, because the legacy key is
+// deliberately not among BitbucketTokens() — it is R3's implicit untyped record
+// and not a member with an empty name — while "the bundle's Bitbucket tokens"
+// is one question everywhere else it is asked.
+func bitbucketBundleTokens(b *credsvc.Bundle) []credsvc.Entry {
+	out := make([]credsvc.Entry, 0, len(b.BitbucketTokens())+1)
+	if legacy, held := b.BitbucketToken(); held {
+		out = append(out, legacy)
+	}
+	return append(out, b.BitbucketTokens()...)
+}
+
+// bitbucketTokenRecords are the operator's typed token records by the bundle
+// KEY each is spoken of by (R5): the key the document holds the token under,
+// which is also the key the state store writes its status under (T6).
+func bitbucketTokenRecords(lc *localcfg.Config) map[string]config.BitbucketToken {
+	out := make(map[string]config.BitbucketToken, len(lc.BitbucketTokens))
+	for _, rec := range lc.BitbucketTokens {
+		if key := config.BitbucketTokenKey(rec.Name); key != "" {
+			out[key] = rec
+		}
+	}
+	return out
+}
+
+// bitbucketTokenRows is the Bitbucket half of every row the document's keys
+// name: what the operator recorded per token, and the status the installation's
+// credential state store holds for it (T6).
+//
+// A document holding no Bitbucket token at all is answered with nothing and
+// asks the store nothing: the state is read for the rows that carry it, and the
+// listing of an installation that holds none is what it always was.
+//
+// The second return of bitbucketTokenStatuses says whether there was a store to
+// read at all, and it is not the same answer as "nothing is recorded": a
+// project with no Firebase backend cannot hold a status for a token — the
+// service writes into that database and an installation without one has no
+// service — so its rows carry the record's facts and no state, while a store
+// that answered carries the state of every token, the zero status included.
+func bitbucketTokenRows(ctx context.Context, lc *localcfg.Config, b *credsvc.Bundle) (map[string]bitbucketRow, error) {
+	tokens := bitbucketBundleTokens(b)
+	if len(tokens) == 0 {
+		return nil, nil
+	}
+	statuses, answered, err := bitbucketTokenStatuses(ctx, lc)
+	if err != nil {
+		return nil, err
+	}
+	records := bitbucketTokenRecords(lc)
+	out := make(map[string]bitbucketRow, len(tokens))
+	for _, e := range tokens {
+		out[e.Key] = bitbucketRowFor(lc, records, statuses, answered, e.Key)
+	}
+	return out, nil
+}
+
+// bitbucketTokenStatuses is every stored Bitbucket token's status, read from
+// the project's own credential state store (creds/tokens, T6). The first return
+// is nil when there is no store to read, and the second is false there: a
+// project whose config records no Firebase backend has nowhere a status could
+// have been written.
+//
+// The read is the operator's, as the person (ADC), like `fugaro accounts ls`'s
+// read of the model marks: what the service writes is what an operator is meant
+// to see. A store that IS there and did not answer is the caller's error rather
+// than a missing field, because the subtree read is all-or-nothing — one node
+// this release cannot decode fails it for every token — and a listing that
+// dropped the state over that would print tokens nothing is recorded about
+// while the store holds something it could not read.
+func bitbucketTokenStatuses(ctx context.Context, lc *localcfg.Config) (map[string]creds.TokenStatus, bool, error) {
+	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
+		return nil, false, nil
+	}
+	_, db, err := budgetDBFor(ctx, lc)
+	if err != nil {
+		return nil, true, err
+	}
+	if err := checkDBProject(ctx, db, lc); err != nil {
+		return nil, true, err
+	}
+	statuses, err := (&creds.RTDBStore{DB: db}).TokenStatuses(ctx)
+	if err != nil {
+		return nil, true, err
+	}
+	return statuses, true, nil
+}
+
+// bitbucketRowFor is one token's half of a row, from the operator's record for
+// it and the status the store answered.
+//
+// A family key the config records no token for carries no record's fields: a
+// token has to be in both documents to serve anything (R14), so the entry alone
+// reaches nothing and the row says only what the store holds about it.
+func bitbucketRowFor(lc *localcfg.Config, records map[string]config.BitbucketToken, statuses map[string]creds.TokenStatus, answered bool, key string) bitbucketRow {
+	var out bitbucketRow
+	switch rec, recorded := records[key]; {
+	case key == config.BitbucketSecret:
+		// R3: the legacy key is the implicit UNTYPED record — the one word this
+		// listing has for a token no record types — and what it reaches is the
+		// operator's allow_data_to list, which is the allow_repos the published
+		// node carries. R6: its expiry is the secret_expires entry keyed by the
+		// same name.
+		out.Type = bitbucketUntypedType
+		out.Coverage = lc.ProjectSecrets[config.BitbucketSecret].AllowDataTo
+		out.Expires = lc.SecretExpires[config.BitbucketSecret]
+	case recorded:
+		out.Type = rec.Type
+		out.Coverage = rec.Coverage
+		out.Expires = rec.Expires
+	}
+	if !answered {
+		return out
+	}
+	st := statuses[key]
+	out.State = string(cmp.Or(st.State, creds.StateAvailable))
+	if !st.VerifiedAt.IsZero() {
+		out.VerifiedAt = st.VerifiedAt.UTC().Format(time.RFC3339)
+	}
+	// The hold, for the two states that have one: a broken token waits for the
+	// operator rather than for its clock (C1.21), and Break writes no Until.
+	if st.State == creds.StateExhausted || st.State == creds.StateBackedOff {
+		if !st.Until.IsZero() {
+			out.ThrottledUntil = st.Until.UTC().Format(time.RFC3339)
+		}
+	}
+	count := st.Count
+	out.RequestsInWindow = &count
+	return out
+}
+
+// bitbucketUntypedType is the type this listing shows for the legacy key: the
+// word the plan's own record shape has for a token no record types (R3), and
+// not the empty string the contract's Type carries for it — a JSON field that
+// is absent and a token that is untyped are two different statements, and only
+// the second is true of a token the bundle holds.
+const bitbucketUntypedType = "untyped"
 
 // credsRow is one row of `creds ls`: a credential the document holds, its
 // presence and the document version's time. There is no field here a value
@@ -1863,6 +2027,42 @@ type credsRow struct {
 	Name    string `json:"name"`
 	Present bool   `json:"present"`
 	Changed string `json:"changed"`
+	bitbucketRow
+}
+
+// bitbucketRow is the half of a row only a Bitbucket token has (T10, R7): what
+// the operator recorded for it (T2) and what the installation's credential
+// state store holds about it (T6).
+//
+// Every field is a string, an integer or a list of the operator's own coverage
+// patterns, so a value has nowhere to travel in this half either. Every field
+// is omitempty, and that is what R7's "no existing field changes meaning" is
+// read as here: a row of any other credential marshals exactly the three keys
+// it always did, and a Bitbucket token carries the keys that are true of it and
+// no others — a token with no recorded hold has no `throttled_until`, because
+// an empty one would read as a hold that ended.
+type bitbucketRow struct {
+	// Type and Coverage are the record's (R1's type, and the coverage in the
+	// operator's own spelling). The legacy key has no record: R3 makes it the
+	// implicit untyped token, so its coverage is the allow_data_to list the
+	// published node carries and its type is the one word for it.
+	Type     string   `json:"type,omitempty"`
+	Coverage []string `json:"coverage,omitempty"`
+	// Expires is the day the operator recorded for the token, in the config's
+	// own spelling (localcfg.SecretExpiryLayout for the legacy key's
+	// secret_expires entry, the record's own expires otherwise).
+	Expires string `json:"expires,omitempty"`
+	// VerifiedAt is when the add-time check last proved the token (R12), and
+	// State is the store's own word for what it holds now.
+	VerifiedAt string `json:"verified_at,omitempty"`
+	State      string `json:"state,omitempty"`
+	// ThrottledUntil is when a hold ends, for the two states that have one
+	// (R7's first new field). RequestsInWindow is how many requests the token
+	// served in the window the store keeps (R7's second, D2356): a pointer, so
+	// that a token the store answered for and that served none reads as the
+	// zero it is rather than as an absent field.
+	ThrottledUntil   string `json:"throttled_until,omitempty"`
+	RequestsInWindow *int   `json:"requests_in_window,omitempty"`
 }
 
 // credsList is `creds ls --json`'s shape: the container, the version the names
@@ -1876,15 +2076,21 @@ type credsList struct {
 }
 
 // printCreds prints the listing. Every field it writes comes from the document's
-// KEYS (never a value) and from the container's version metadata; the values
+// KEYS (never a value), from the container's version metadata, from the
+// operator's own records and from the credential state store; the values
 // themselves are parsed and then dropped, which is what makes "never a value,
 // never a prefix, never a length" a property of the shape rather than of a
 // redaction.
-func printCreds(w io.Writer, project, id string, doc bundleDoc, b *credsvc.Bundle, meta versionMeta, asJSON bool) error {
+//
+// bb is the Bitbucket half, by document key, and nil for a document that holds
+// no Bitbucket token (bitbucketTokenRows). It reaches the JSON rows and the
+// lines under the text table, and it is where a token's type, its coverage, its
+// expiry and its state are read from.
+func printCreds(w io.Writer, project, id string, doc bundleDoc, b *credsvc.Bundle, meta versionMeta, bb map[string]bitbucketRow, asJSON bool) error {
 	changed := meta.created.UTC().Format(time.RFC3339)
 	rows := make([]credsRow, 0, b.Len())
 	for _, e := range b.Entries() {
-		rows = append(rows, credsRow{Name: e.Key, Present: true, Changed: changed})
+		rows = append(rows, credsRow{Name: e.Key, Present: true, Changed: changed, bitbucketRow: bb[e.Key]})
 	}
 	slices.SortFunc(rows, func(a, b credsRow) int { return strings.Compare(a.Name, b.Name) })
 	if asJSON {
@@ -1904,7 +2110,53 @@ func printCreds(w io.Writer, project, id string, doc bundleDoc, b *credsvc.Bundl
 			return err
 		}
 	}
-	return tw.Flush()
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	return printBitbucketTokenLines(w, rows, bb)
+}
+
+// printBitbucketTokenLines says, under the table, what a Bitbucket token's row
+// cannot: a name and a PRESENT answer are the same for a token that serves
+// every call of its repository and for one Bitbucket refuses, and a listing
+// that left that to --json would make an operator read JSON to learn whether
+// their git proxy works.
+//
+// One line per token the document holds under a Bitbucket key, and none for a
+// document that holds none: the facts are the record's own (type, coverage,
+// expiry) and the store's (the state, when the token was last verified, the
+// hold and the count of R7), and never a value.
+func printBitbucketTokenLines(w io.Writer, rows []credsRow, bb map[string]bitbucketRow) error {
+	for _, r := range rows {
+		if _, held := bb[r.Name]; !held {
+			continue
+		}
+		var parts []string
+		for _, p := range []struct{ label, value string }{
+			{"type", r.Type},
+			{"coverage", strings.Join(r.Coverage, " ")},
+			{"expires", r.Expires},
+			{"verified", r.VerifiedAt},
+			{"state", r.State},
+			{"throttled until", r.ThrottledUntil},
+		} {
+			if p.value != "" {
+				parts = append(parts, p.label+" "+safetext.Field(p.value))
+			}
+		}
+		if r.RequestsInWindow != nil {
+			parts = append(parts, fmt.Sprintf("%d request(s) in the window", *r.RequestsInWindow))
+		}
+		if len(parts) == 0 {
+			// A family key with no record and no status: it serves nothing,
+			// which is worth saying rather than leaving a bare name.
+			parts = append(parts, "no record and no status: a token has to be in both documents to serve anything")
+		}
+		if _, err := fmt.Fprintf(w, "%s: %s\n", safetext.Field(r.Name), strings.Join(parts, ", ")); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func presentCell(present bool) string {

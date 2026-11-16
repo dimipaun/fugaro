@@ -189,7 +189,21 @@ function answer(state: Portal, method: string, path: string, body: unknown): unk
   if (method === 'GET' && pathname === '/api/keys/licence') {
     return { key_id: 'key_1', licence: LICENCE, paid_through: '2026-03-10T11:00:00Z' }
   }
-  if (method === 'POST' && (pathname === '/api/trial' || pathname === '/api/opensource')) {
+  // The two asks, at the paths and with the bodies the API registers
+  // (ee/keyservice's `RouteTrial` and `RouteAPIOpenSource`): a screen that
+  // reached another path or named another field is answered 404 here, which is
+  // what it would meet against the real service.
+  if (method === 'POST' && pathname === '/api/trial') {
+    const trial = body as { workspace_id: string }
+    if (trial.workspace_id !== 'example-portal') {
+      throw new ApiError(422, {
+        code: 'invalid_project_id',
+        message: 'A Firebase project id is 6 to 30 characters of lower-case letters, digits and dashes.',
+      })
+    }
+    return undefined
+  }
+  if (method === 'POST' && pathname === '/api/open-source') {
     return undefined
   }
   throw new ApiError(404, {
@@ -598,26 +612,33 @@ describe('the workspace screen', () => {
     expect(await screen.findByText('the router is at /workspaces')).toBeDefined()
   })
 
-  it('offers a trial to a workspace with nothing granted', async () => {
+  it('offers a trial to a workspace with nothing granted, in the project id it asks for', async () => {
     const { client, calls } = portal({
       workspaces: [{ ...unbound(), entitlement_id: null }],
       entitlements: [],
     })
     show(client)
 
+    // What the ask carries is the Firebase project id and never the portal's
+    // own workspace id: `ws_example` is this app's record, and the intake reads
+    // `workspace_id` as a project's (K2.7's `TrialCall`). The fake answers 422
+    // for anything else, which is what the API would answer.
     const workspace = await screen.findByRole('region', { name: 'Example portal' })
+    fireEvent.change(within(workspace).getByLabelText('Firebase project id'), {
+      target: { value: 'example-portal' },
+    })
     fireEvent.click(within(workspace).getByRole('button', { name: 'Start a trial' }))
 
     await waitFor(() => {
       expect(calls).toContainEqual({
         path: '/api/trial',
         method: 'POST',
-        body: { workspace_id: 'ws_example' },
+        body: { workspace_id: 'example-portal' },
       })
     })
   })
 
-  it('offers an open-source request to a workspace with nothing granted', async () => {
+  it('offers an open-source request to a workspace with nothing granted, in the repository lines', async () => {
     const { client, calls } = portal({
       workspaces: [{ ...unbound(), entitlement_id: null }],
       entitlements: [],
@@ -625,13 +646,47 @@ describe('the workspace screen', () => {
     show(client)
 
     const workspace = await screen.findByRole('region', { name: 'Example portal' })
+    // A pasted list, with the blank line a paste carries: the line the API reads
+    // is the repository, and the blank one is dropped on the way there.
+    fireEvent.change(within(workspace).getByLabelText('Repositories'), {
+      target: { value: 'https://code.example/acme/widget\n\nhttps://code.example/acme/gadget\n' },
+    })
     fireEvent.click(within(workspace).getByRole('button', { name: 'Request an open-source licence' }))
 
     await waitFor(() => {
       expect(calls).toContainEqual({
-        path: '/api/opensource',
+        path: '/api/open-source',
         method: 'POST',
-        body: { workspace_id: 'ws_example' },
+        body: {
+          repositories: ['https://code.example/acme/widget', 'https://code.example/acme/gadget'],
+        },
+      })
+    })
+  })
+
+  it('offers the project’s binding to a licence whose workspace has none yet', async () => {
+    // A trial's licence is granted for a project and claims none of it: the
+    // project id is attached by the binding, which is what probes the
+    // installation (D2204, D2205, TN-P1). So the card that draws such a licence
+    // offers the binding, named for what it does rather than as a rebind — and
+    // the licence is not in "Not bound yet", because its key has been minted.
+    const { client, calls } = portal({
+      workspaces: [{ ...unbound(), bound_at: BOUND_AT }],
+      entitlements: [{ ...paid(), source: 'trial', row: 'trial', bound_at: BOUND_AT }],
+    })
+    show(client)
+
+    const workspace = await screen.findByRole('region', { name: 'Example portal' })
+    fireEvent.change(within(workspace).getByLabelText('Firebase project id'), {
+      target: { value: 'example-portal' },
+    })
+    fireEvent.click(within(workspace).getByRole('button', { name: 'Bind' }))
+
+    await waitFor(() => {
+      expect(calls).toContainEqual({
+        path: '/api/workspaces/bind',
+        method: 'POST',
+        body: { entitlement_id: 'ent_1', project_id: 'example-portal' },
       })
     })
   })

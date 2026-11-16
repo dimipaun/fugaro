@@ -25,8 +25,9 @@ import (
 // already states. The rest of a catalog build's steps are that file's own,
 // reused by id (prep, credential, build, smoke, promote, untag): a catalog
 // image is built the way a derived image is, from the same base, with the
-// same file-secret handling (_SECRET_ENVS) and the same smoke, and only
-// where its definition comes from differs (PIC3's copy, not a checkout).
+// same smoke, and only where its definition comes from differs (PIC3's copy,
+// not a checkout, and B8's clone step in place of the credential the derived
+// build's own step hands its Dockerfile).
 const (
 	// catalogPinStepID is the step that stands in for render: it pins the
 	// copy the build read and writes what the later steps need.
@@ -91,9 +92,10 @@ type CatalogBuildSpec struct {
 	// copied definition (config.CatalogDockerfileKey) and the record
 	// (CatalogRecordKey). It is never taken as a key from the caller.
 	Entry string
-	// Slug is the repository whose build account runs the build, holds its
-	// provider credential and whose workflow secrets the entry mounts. Its
-	// grant covers builds/<Slug>/ (the record) and, read-only, the copied
+	// Slug is the repository whose build account runs the build and holds the
+	// provider credential the clone step clones with; the entry's own build
+	// is handed that checkout and no secret of the repository's (B9, D2311).
+	// Its grant covers builds/<Slug>/ (the record) and, read-only, the copied
 	// catalog definitions (CatalogReadCondition).
 	Slug string
 	// GitProvider, RepoURL, BaseBranch, GitSecretID, GitUser and
@@ -156,8 +158,6 @@ type CatalogBuildSpec struct {
 	// (BuildServiceAccountID), which the build runs as.
 	ServiceAccount string
 	MachineType    string
-	// WorkflowSecrets become env BuildKit file secrets of the build step.
-	WorkflowSecrets []config.Secret
 	// Bucket is the runs bucket as gs://<name>: it holds the copied
 	// definition and the record.
 	Bucket string
@@ -309,7 +309,7 @@ func CatalogBuildRequest(project string, s CatalogBuildSpec) (*cloudbuild.Build,
 	if err := catalogEntryBuildStep(build); err != nil {
 		return nil, err
 	}
-	if err := s.check(project, reservedEnv(build)); err != nil {
+	if err := s.check(project); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrBadBuildSpec, err)
 	}
 	// PIC3's step derives the key from the entry's name and refuses one that
@@ -349,13 +349,6 @@ func CatalogBuildRequest(project string, s CatalogBuildSpec) (*cloudbuild.Build,
 	b.AvailableSecrets.SecretManager[0].VersionName = version(s.GitSecretID)
 	cred.SecretEnv = []string{credentialSecretEnv[s.GitProvider]}
 	cred.Env = slices.Clone(credentialEnv[s.GitProvider])
-	envs := make([]string, 0, len(s.WorkflowSecrets))
-	for _, ws := range s.WorkflowSecrets {
-		b.AvailableSecrets.SecretManager = append(b.AvailableSecrets.SecretManager,
-			&cloudbuild.SecretManagerSecret{Env: ws.Env, VersionName: version(SecretID(s.Slug, ws.Name))})
-		build.SecretEnv = append(build.SecretEnv, ws.Env)
-		envs = append(envs, ws.Env)
-	}
 	// Cloud Build refuses a substitution the request doesn't reference, so
 	// each provider sends only its own.
 	b.Substitutions = map[string]string{
@@ -363,7 +356,18 @@ func CatalogBuildRequest(project string, s CatalogBuildSpec) (*cloudbuild.Build,
 		"_BASE_BRANCH": s.BaseBranch,
 		"_FUGARO_BASE": s.Base,
 		"_IMAGE":       s.Image,
-		"_SECRET_ENVS": strings.Join(envs, " "),
+		// Empty, always: the template's build step mounts the variables this
+		// names as BuildKit file secrets, and it names none for a catalog
+		// entry. The repository's own workflow secrets reached a catalog
+		// build's entry step until B9 — the step is the derived build's, and
+		// its loop is why the empty value is written out rather than the
+		// substitution dropped — and D2311 (rule 4 of
+		// docs/shared-jobs-default/contract-build-token.md) leaves an entry's
+		// build no secret of the entry's at all: not a mount its definition
+		// asks for and not one it could ask for under another spelling, since
+		// what a build is handed is what decides that, not what its text
+		// happens to say.
+		"_SECRET_ENVS": "",
 		// The content tag a rebuild moves (D1152): the definition's own
 		// sha256, so the tag names the definition the image was built from.
 		"_CATALOG_TAG": s.Definition.SHA256,
@@ -738,9 +742,12 @@ echo "recorded $$KEY"`},
 }
 
 // check refuses a spec that is incomplete or would put an unsafe value in
-// the build of project. reserved are the variables a workflow secret may
-// not reuse.
-func (s CatalogBuildSpec) check(project string, reserved map[string]bool) error {
+// the build of project.
+//
+// It takes no set of reserved variables, where the derived build's own check
+// does: the only variables a catalog build used to name were the repository's
+// workflow secrets, and no catalog build names one any more (B9, D2311).
+func (s CatalogBuildSpec) check(project string) error {
 	for _, f := range []struct{ name, v string }{
 		{"catalog entry", s.Entry}, {"repository slug", s.Slug}, {"repository URL", s.RepoURL},
 		{"base branch", s.BaseBranch}, {"base image", s.Base}, {"image", s.Image},
@@ -836,19 +843,6 @@ func (s CatalogBuildSpec) check(project string, reserved map[string]bool) error 
 	if !ok || m == nil || m[2] != project || s.Image != host+"/"+SharedRegistryRepoID()+"/catalog-"+s.Entry {
 		return fmt.Errorf("the image %s is not the catalog image of entry %s in the installation's shared registry of project %s", s.Image, s.Entry, project)
 	}
-	seen := map[string]bool{}
-	for _, ws := range s.WorkflowSecrets {
-		if !secretEnvRE.MatchString(ws.Env) {
-			return fmt.Errorf("workflow secret %s: variable %q is not [A-Z_][A-Z0-9_]*", ws.Name, ws.Env)
-		}
-		if reserved[ws.Env] || config.ReservedEnv(ws.Env) {
-			return fmt.Errorf("workflow secret %s: variable %s is one the image build sets or uses itself; rename it", ws.Name, ws.Env)
-		}
-		if seen[ws.Env] {
-			return fmt.Errorf("workflow secret %s: variable %s is already used in the build", ws.Name, ws.Env)
-		}
-		seen[ws.Env] = true
-	}
 	return nil
 }
 
@@ -883,9 +877,8 @@ func (s CatalogBuildSpec) checkSmokeSpec() error {
 // checkPrebuilt refuses a spec whose run smokes a prebuilt reference
 // (Prebuilt) the way check refuses a build's, and refuses the rest of what a
 // build is: a smoke-only run that also named a base, a shared-registry image,
-// a copied definition, a context or workflow secrets would be a build whose
-// steps ignore them, since no step of this request could read, mount or push
-// any of it.
+// a copied definition or a context would be a build whose steps ignore them,
+// since no step of this request could read or push any of it.
 //
 // It repeats the entry-level checks rather than sharing check's, because
 // check's are interleaved with a build's own in the order its errors are
@@ -926,8 +919,8 @@ func (s CatalogBuildSpec) checkPrebuilt(project string) error {
 	if s.TemplateSalt != "" && !sha256HexRE.MatchString(s.TemplateSalt) {
 		return fmt.Errorf("the template salt %q is not 64 hex digits", s.TemplateSalt)
 	}
-	if s.Base != "" || s.Image != "" || s.Context != "" || s.Definition != (CatalogDefinition{}) || len(s.WorkflowSecrets) > 0 {
-		return fmt.Errorf("the entry's run smokes the prebuilt image %s and builds nothing, yet the request names a build's inputs: base %q, image %q, context %q, definition %+v, %d workflow secrets", s.Prebuilt, s.Base, s.Image, s.Context, s.Definition, len(s.WorkflowSecrets))
+	if s.Base != "" || s.Image != "" || s.Context != "" || s.Definition != (CatalogDefinition{}) {
+		return fmt.Errorf("the entry's run smokes the prebuilt image %s and builds nothing, yet the request names a build's inputs: base %q, image %q, context %q, definition %+v", s.Prebuilt, s.Base, s.Image, s.Context, s.Definition)
 	}
 	if s.NoSmoke {
 		return fmt.Errorf("the entry's run is the smoke of the prebuilt image %s and nothing else, so there is nothing for --no-smoke to leave out", s.Prebuilt)

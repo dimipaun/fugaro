@@ -23,10 +23,12 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/digest"
+	"github.com/dimipaun/fugaro/internal/escalation"
 	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/imagesurvey"
+	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/orchestrator/sensitivity"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/recipe"
@@ -770,6 +772,14 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	// which a record has to be able to store (design compute-backend.md
 	// §5.2, C17).
 	cost.ComputeSource = "Compute Engine VM list price, e2-standard family, us-central1 (2026-10-15, UNVERIFIED); boot disk and Cloud NAT are not in this figure (design C17)"
+	// And the spend-accuracy fields (SA1.0): the provider's own figure by
+	// serving model, the table's band under the calls that carried one, and
+	// the calls that carried none. They ride the fully-populated record for
+	// the reason the artifact fields do, cost's additionalProperties being
+	// false: a field the runner writes and the schema does not name is a
+	// record the schema rejects.
+	cost.ReportedBy = map[string]float64{"deepseek/deepseek-v4.1-flash": 4.04, "deepseek/deepseek-v4-pro": 0.02}
+	cost.TableLoUSD, cost.TableHiUSD, cost.UnreportedCalls = 3.6, 5.1, 2
 	rec := runstore.Record{
 		Version: 1, RunID: "20260927-100000-abcd", Repo: "acme/app", Workflow: "web",
 		Execution: "projects/p/locations/r/jobs/j/executions/e",
@@ -1197,6 +1207,14 @@ func TestResultSchemaAcceptsTriage(t *testing.T) {
 		// rejects.
 		{Ordinal: 2, Round: 2, Mode: rigor.Pro, Level: policy.LevelL3, Failed: true, Cause: "Invalid API key · Fix external API key",
 			Entries: []runstore.TriageEntry{}},
+		// And the round the run did not ask at all, whose call the gateway would
+		// have refused for the key the run does not hold: it carries a cause the
+		// same way and stays out of `failed`, because nothing failed — the run
+		// chose not to ask. Marshalled from the record like the failure above,
+		// so a `skipped` the schema does not carry is an unknown key this test
+		// rejects.
+		{Ordinal: 3, Round: 3, Mode: rigor.Pro, Level: policy.LevelL2, Skipped: true, Cause: runstore.TriageCauseNoAccount,
+			Entries: []runstore.TriageEntry{}},
 	})
 	rec.Deferred = runstore.NewDeferred([]runstore.DeferredFinding{
 		{Key: "9f2a1c", Summary: "a long comment restates the function", Reason: "doc drift, not the main path", Group: "docs", Source: runstore.TriageSourceAgent},
@@ -1222,7 +1240,9 @@ func TestResultSchemaAcceptsTriage(t *testing.T) {
 		{"a round with no entries list", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":0}]}`},
 		{"a round with no total", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","entries":[]}]}`},
 		{"a failed that is not a boolean", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","failed":"yes","total":0,"entries":[]}]}`},
+		{"a skipped that is not a boolean", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","skipped":"yes","total":0,"entries":[]}]}`},
 		{"an empty cause", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","failed":true,"cause":"","total":0,"entries":[]}]}`},
+		{"a skip with an empty cause", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","skipped":true,"cause":"","total":0,"entries":[]}]}`},
 		{"a cause longer than the bound", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","failed":true,"cause":"` + strings.Repeat("x", runstore.MaxTriageLine+1) + `","total":0,"entries":[]}]}`},
 		{"a member the round does not carry", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","verdict":"defer","total":0,"entries":[]}]}`},
 		{"more rounds than the bound", `,"triage":{"rounds":[` + strings.TrimSuffix(strings.Repeat(`{"round":1,"mode":"pro","level":"l2","total":0,"entries":[]},`, runstore.MaxTriageRounds+1), ",") + `]}`},
@@ -3741,6 +3761,179 @@ func TestTaskSchemaRefusesReservedAccountName(t *testing.T) {
 //
 // Mutation (rename the property to `compressionOff` in schemas/task.schema.json):
 // the document carrying the field is rejected as an unknown key and this fails.
+// TestTaskSchemaContextReposMatchesTheGoRule ties the task schema's
+// `context_repos` property to the Go rules it mirrors (task.MaxContextRepos
+// and task.ContextReposProblem): the bounds are separate copies, so without
+// this a change to either would drift from the published schema with only the
+// corpus fixtures noticing — and a task.json the launcher writes is exactly
+// what this schema is for. The two are compared on instances rather than on
+// the pattern's text: the rule is task.CanonicalRepo's, which the pattern
+// cannot carry whole (a "." or ".." element is outside it, as the property's
+// own description says), so what must agree is which lists each side lets
+// through.
+//
+// There is no row for an empty list, and there cannot be one: Spec.ContextRepos
+// is omitempty, so the writer this test marshals with drops the key and both
+// sides see no context_repos at all. A hand-written `"context_repos": []` is
+// refused by the schema's minItems and by Spec.Validate alike, and that half is
+// pinned where the Go rule lives (internal/task's TestValidateContextRepos).
+func TestTaskSchemaContextReposMatchesTheGoRule(t *testing.T) {
+	data, err := os.ReadFile("task.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]struct {
+			MinItems    int  `json:"minItems"`
+			MaxItems    int  `json:"maxItems"`
+			UniqueItems bool `json:"uniqueItems"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	p, ok := doc.Properties["context_repos"]
+	if !ok {
+		t.Fatal("task.schema.json has no context_repos property: a launch with --context writes a task.json this schema refuses (additionalProperties: false)")
+	}
+	if p.MaxItems != task.MaxContextRepos || p.MinItems != 1 || !p.UniqueItems {
+		t.Errorf("context_repos carries minItems %d, maxItems %d, uniqueItems %v; want 1, task.MaxContextRepos (%d) and true",
+			p.MinItems, p.MaxItems, p.UniqueItems, task.MaxContextRepos)
+	}
+	sch := compile(t, "task.schema.json")
+	for _, tc := range []struct {
+		name  string
+		repos []string
+	}{
+		{"one", []string{"acme/lib"}},
+		{"five", []string{"acme/1", "acme/2", "acme/3", "acme/4", "acme/5"}},
+		{"six", []string{"acme/1", "acme/2", "acme/3", "acme/4", "acme/5", "acme/6"}},
+		{"the same repository twice", []string{"acme/lib", "acme/lib"}},
+		{"not a repository", []string{"acme"}},
+		{"a trailing slash", []string{"acme/"}},
+		{"a .git suffix", []string{"acme/lib.git"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := task.Spec{Version: 1, RunID: "20261116-093000-abcd", Repo: "acme/app", Ref: "main", Task: "x", ContextRepos: tc.repos}
+			body, err := json.Marshal(spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			schemaErr := sch.Validate(inst)
+			goErr := spec.Validate()
+			if (schemaErr == nil) != (goErr == nil) {
+				t.Errorf("schema and task.Validate disagree about %v:\n schema: %v\n go:     %v", tc.repos, schemaErr, goErr)
+			}
+		})
+	}
+}
+
+// TestTaskSchemaChangeSetMatchesTheGoRule ties the task schema's `change_set`
+// property to the Go rules it mirrors (task.MaxChangeSetMembers and the two
+// patterns task.Spec.Validate applies): the bounds and patterns are separate
+// copies, so without this a change to either would drift from the published
+// schema with only the corpus fixtures noticing — and a task.json the launcher
+// writes is exactly what this schema is for (plan task D1).
+//
+// The comparison is on instances rather than on the document, and it covers
+// only what both sides can judge. Three of task.Validate's change-set rules
+// are not here because a JSON Schema cannot carry them — no repository twice,
+// the ID naming the first member's run, and this run's own repository in the
+// list, each of which compares one item of the array against another or
+// against a sibling property. They are pinned where the Go rule lives
+// (internal/task's TestValidateChangeSet). uniqueItems is the schema's nearest
+// reading of the first: it refuses two identical members, which is a subset of
+// the repository rule, so it never refuses a list the Go rule accepts.
+func TestTaskSchemaChangeSetMatchesTheGoRule(t *testing.T) {
+	data, err := os.ReadFile("task.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]struct {
+			MinItems    int  `json:"minItems"`
+			MaxItems    int  `json:"maxItems"`
+			UniqueItems bool `json:"uniqueItems"`
+			Properties  map[string]struct {
+				MinItems    int  `json:"minItems"`
+				MaxItems    int  `json:"maxItems"`
+				UniqueItems bool `json:"uniqueItems"`
+			} `json:"properties"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	p, ok := doc.Properties["change_set"]
+	if !ok {
+		t.Fatal("task.schema.json has no change_set property: a launch with --change-set writes a task.json this schema refuses (additionalProperties: false)")
+	}
+	if _, ok := p.Properties["id"]; !ok {
+		t.Error("change_set carries no id property")
+	}
+	members, ok := p.Properties["members"]
+	if !ok {
+		t.Fatal("change_set carries no members property")
+	}
+	if members.MinItems != 2 || members.MaxItems != task.MaxChangeSetMembers || !members.UniqueItems {
+		t.Errorf("change_set.members carries minItems %d, maxItems %d, uniqueItems %v; want 2, task.MaxChangeSetMembers (%d) and true",
+			members.MinItems, members.MaxItems, members.UniqueItems, task.MaxChangeSetMembers)
+	}
+	sch := compile(t, "task.schema.json")
+	member := func(repo, run string) task.ChangeSetMember {
+		return task.ChangeSetMember{Repo: repo, RunID: run}
+	}
+	for _, tc := range []struct {
+		name string
+		set  *task.ChangeSet
+	}{
+		{"two", &task.ChangeSet{ID: "20261116-140000-abcd", Members: []task.ChangeSetMember{
+			member("acme/app", "20261116-140000-abcd"), member("acme/lib", "20261116-140001-beef")}}},
+		{"five", &task.ChangeSet{ID: "20261116-140000-abcd", Members: []task.ChangeSetMember{
+			member("acme/app", "20261116-140000-abcd"), member("a/1", "20261116-140001-beef"),
+			member("b/2", "20261116-140002-beef"), member("c/3", "20261116-140003-beef"),
+			member("d/4", "20261116-140004-beef")}}},
+		{"one member", &task.ChangeSet{ID: "20261116-140000-abcd", Members: []task.ChangeSetMember{
+			member("acme/app", "20261116-140000-abcd")}}},
+		{"six members", &task.ChangeSet{ID: "20261116-140000-abcd", Members: []task.ChangeSetMember{
+			member("acme/app", "20261116-140000-abcd"), member("a/1", "20261116-140001-beef"),
+			member("b/2", "20261116-140002-beef"), member("c/3", "20261116-140003-beef"),
+			member("d/4", "20261116-140004-beef"), member("e/5", "20261116-140005-beef")}}},
+		{"an empty member list", &task.ChangeSet{ID: "20261116-140000-abcd", Members: []task.ChangeSetMember{}}},
+		{"an id that is not a run id", &task.ChangeSet{ID: "cs-1", Members: []task.ChangeSetMember{
+			member("acme/app", "20261116-140000-abcd"), member("acme/lib", "20261116-140001-beef")}}},
+		{"a member that is not a repository", &task.ChangeSet{ID: "20261116-140000-abcd", Members: []task.ChangeSetMember{
+			member("acme/app", "20261116-140000-abcd"), member("acme", "20261116-140001-beef")}}},
+		{"a member with a trailing slash", &task.ChangeSet{ID: "20261116-140000-abcd", Members: []task.ChangeSetMember{
+			member("acme/app", "20261116-140000-abcd"), member("acme/", "20261116-140001-beef")}}},
+		{"a member with a bad run id", &task.ChangeSet{ID: "20261116-140000-abcd", Members: []task.ChangeSetMember{
+			member("acme/app", "20261116-140000-abcd"), member("acme/lib", "run-1")}}},
+		{"the same member twice", &task.ChangeSet{ID: "20261116-140000-abcd", Members: []task.ChangeSetMember{
+			member("acme/app", "20261116-140000-abcd"), member("acme/app", "20261116-140000-abcd")}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := task.Spec{Version: 1, RunID: "20261116-140000-abcd", Repo: "acme/app", Ref: "main", Task: "x", ChangeSet: tc.set}
+			body, err := json.Marshal(spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			schemaErr := sch.Validate(inst)
+			goErr := spec.Validate()
+			if (schemaErr == nil) != (goErr == nil) {
+				t.Errorf("schema and task.Validate disagree about %+v:\n schema: %v\n go:     %v", tc.set, schemaErr, goErr)
+			}
+		})
+	}
+}
+
 func TestTaskSchemaCompressionOffMatchesTheGoField(t *testing.T) {
 	sch := compile(t, "task.schema.json")
 	validate := func(s task.Spec) error {
@@ -3981,6 +4174,62 @@ func TestResultSchemaAcceptsServiceTiers(t *testing.T) {
 		}
 	}
 	for _, lit := range []string{`,"service_tiers":"priority"`, `,"service_tiers":[7]`, `,"service_tiers":[""]`} {
+		if err := validate(lit); err == nil {
+			t.Errorf("schema accepts cost%s", lit)
+		}
+	}
+}
+
+// TestResultSchemaCostSpendFields (spend-accuracy SA1.0, F7, D2650): the run's
+// cost object carries the provider's own figure by serving model, the price
+// table's band under the calls that carried one, and the number of calls that
+// carried none. They are additive and optional -- a record written before them
+// has none, and so has a run whose calls reported no cost -- and pinned here,
+// beside the cache totals, for their reason: cost's additionalProperties is
+// false, so a field the runner writes and the schema does not name is a record
+// the schema rejects, and the runner's own record is where SA1.5 writes them.
+func TestResultSchemaCostSpendFields(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	head := `{"version":1,"run_id":"20261027-100000-abcd","status":"succeeded","stage":"writeback","outcome":"ready","cost_usd":1.23,"started_at":"2026-10-27T10:00:00Z","cost":{"model_usd":1.23,"compute_usd":0,"compute_estimated":false,"total_usd":1.23,"estimate":true,"model_basis":"api-list"`
+	validate := func(lit string) error {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(head + lit + `}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	for _, lit := range []string{
+		``, // a record written before the fields existed
+		`,"reported_by":{"deepseek/deepseek-v4.1-flash":4.04}`,
+		// A run whose calls reported nothing, and one model whose report is
+		// zero: an empty map and a zero are figures, not absences.
+		`,"reported_by":{}`,
+		`,"reported_by":{"deepseek/deepseek-v4.1-flash":0}`,
+		`,"table_lo_usd":3.6`,
+		`,"table_hi_usd":5.1`,
+		// A run whose every call carried a report, and one whose calls
+		// carried none: 0 is a count, not an absent field.
+		`,"unreported_calls":0`,
+		`,"unreported_calls":2`,
+		`,"reported_by":{"deepseek/deepseek-v4.1-flash":4.04,"deepseek/deepseek-v4-pro":0.02},"table_lo_usd":3.6,"table_hi_usd":5.1,"unreported_calls":2`,
+		// The band's ends are equal for a model the catalog does not price,
+		// which is what a record of one reports.
+		`,"table_lo_usd":0.3,"table_hi_usd":0.3`,
+	} {
+		if err := validate(lit); err != nil {
+			t.Errorf("schema rejects cost%s: %v", lit, err)
+		}
+	}
+	for _, lit := range []string{
+		`,"reported_by":{"deepseek/deepseek-v4.1-flash":-0.01}`,
+		`,"reported_by":{"deepseek/deepseek-v4.1-flash":"4.04"}`,
+		`,"reported_by":[4.04]`,
+		`,"table_lo_usd":-1`,
+		`,"table_hi_usd":"5.1"`,
+		`,"unreported_calls":-1`,
+		`,"unreported_calls":1.5`,
+		`,"unreported_calls":"2"`,
+	} {
 		if err := validate(lit); err == nil {
 			t.Errorf("schema accepts cost%s", lit)
 		}
@@ -6659,6 +6908,169 @@ func TestRunsShowSchema(t *testing.T) {
 	}
 }
 
+// TestEscalationSchemaAgreesWithGo: the escalation documents' contract, and the
+// code that contract is for. `fugaro escalation ls|show --json` prints the
+// ladder's ledger (docs/outer-loop-escalation, E13), and every member of it is
+// a value this release already names: the rung and the reason are
+// escalation.Rungs and escalation.Reasons, the ladder-run bound is
+// orchestrator.MaxOuterAttempts and the transition bound
+// orchestrator.MaxEscalationTransitions, and the version is the constant the
+// command itself writes under (escalationDocVersion, read out of the file by
+// name rather than guessed at).
+//
+// The two figures the ledger does not hold — the age and the cost, which come
+// from the item's own run records (D2038, F7) — are each a figure or null and
+// never a bare zero: a command that could not read one of those records has an
+// unknown figure, and a zero there is the one wrong answer a person would act
+// on (D1049, D1051).
+//
+// Mutation (add a rung to escalation.Rungs, or a reason to escalation.Reasons,
+// without the schema; drop either null branch; or move MaxOuterAttempts): this
+// test fails naming the side that has it.
+func TestEscalationSchemaAgreesWithGo(t *testing.T) {
+	raw, err := os.ReadFile("escalation.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	sch := compile(t, "escalation.schema.json")
+
+	consts := goConstValues(t, "../internal/cli/escalation.go")
+	version := nodeOf(t, doc, "$defs", "version")
+	if version["const"] != float64(1) {
+		t.Errorf("$defs.version: const = %v, and the documents' first version is 1", version["const"])
+	}
+	if got, _ := version["$comment"].(string); !strings.Contains(got, "escalationDocVersion") || consts["escalationDocVersion"] != "1" {
+		t.Errorf("$defs.version: $comment = %q, and escalationDocVersion in internal/cli/escalation.go is %q", got, consts["escalationDocVersion"])
+	}
+
+	rungs := make([]string, 0, len(escalation.Rungs))
+	for _, r := range escalation.Rungs {
+		rungs = append(rungs, string(r))
+	}
+	if got := stringsOf(t, doc, "$defs", "rung", "enum"); !slices.Equal(got, rungs) {
+		t.Errorf("$defs.rung: the enum is %v, and escalation.Rungs is %v", got, rungs)
+	}
+	reasons := make([]string, 0, len(escalation.Reasons))
+	for _, r := range escalation.Reasons {
+		reasons = append(reasons, string(r))
+	}
+	if got := stringsOf(t, doc, "$defs", "reason", "enum"); !slices.Equal(got, reasons) {
+		t.Errorf("$defs.reason: the enum is %v, and escalation.Reasons is %v", got, reasons)
+	}
+
+	// Every member of an item is required: the two figures are null rather than
+	// absent when they are unknown, so a document that left one out would leave
+	// a consumer unable to tell an unknown figure from an older document.
+	itemReq := stringsOf(t, doc, "$defs", "item", "required")
+	for _, key := range []string{"id", "repo", "rung", "reason", "entered_at", "age_seconds", "outer_attempts", "cost_usd", "transitions"} {
+		if !slices.Contains(itemReq, key) {
+			t.Errorf("$defs.item.required is %v, and every item carries %q", itemReq, key)
+		}
+	}
+	for _, key := range []string{"age_seconds", "cost_usd"} {
+		branches, _ := nodeOf(t, doc, "$defs", "item", "properties", key)["oneOf"].([]any)
+		var figure, nul bool
+		for _, b := range branches {
+			m, _ := b.(map[string]any)
+			figure = figure || m["type"] == "integer" || m["type"] == "number"
+			nul = nul || m["type"] == "null"
+		}
+		if !figure || !nul {
+			t.Errorf("$defs.item.%s: oneOf is %v, and the member is either its own figure or null", key, branches)
+		}
+	}
+	attempts := nodeOf(t, doc, "$defs", "item", "properties", "outer_attempts")
+	if attempts["maximum"] != float64(orchestrator.MaxOuterAttempts) {
+		t.Errorf("$defs.item.outer_attempts: maximum = %v, and orchestrator.MaxOuterAttempts is %d", attempts["maximum"], orchestrator.MaxOuterAttempts)
+	}
+	transitions := nodeOf(t, doc, "$defs", "item", "properties", "transitions")
+	if transitions["maxItems"] != float64(orchestrator.MaxEscalationTransitions) {
+		t.Errorf("$defs.item.transitions: maxItems = %v, and orchestrator.MaxEscalationTransitions is %d", transitions["maxItems"], orchestrator.MaxEscalationTransitions)
+	}
+	// A ledger carries at least one transition: an item no rung has touched has
+	// no ledger at all, and `show` refuses it rather than printing an empty one.
+	if transitions["minItems"] != float64(1) {
+		t.Errorf("$defs.item.transitions: minItems = %v, want 1", transitions["minItems"])
+	}
+	// The first transition leaves the rung no rung is: the zero Rung is how the
+	// ledger spells an item that had entered none, and it is why `from` is not
+	// required.
+	if from := stringsOf(t, doc, "$defs", "transition", "required"); slices.Contains(from, "from") {
+		t.Errorf("$defs.transition.required is %v, and the first transition carries no `from`", from)
+	}
+
+	// The two documents' own members, and what each is about.
+	lsReq := stringsOf(t, doc, "$defs", "ls", "required")
+	for _, key := range []string{"version", "kind", "project", "now", "items"} {
+		if !slices.Contains(lsReq, key) {
+			t.Errorf("$defs.ls.required is %v, and the listing carries %q", lsReq, key)
+		}
+	}
+	showReq := stringsOf(t, doc, "$defs", "show", "required")
+	for _, key := range []string{"version", "kind", "project", "now", "item"} {
+		if !slices.Contains(showReq, key) {
+			t.Errorf("$defs.show.required is %v, and the single item's document carries %q", showReq, key)
+		}
+	}
+	if kind := nodeOf(t, doc, "$defs", "ls", "properties", "kind")["const"]; kind != "ls" {
+		t.Errorf("$defs.ls.kind: const = %v, want \"ls\"", kind)
+	}
+	if kind := nodeOf(t, doc, "$defs", "show", "properties", "kind")["const"]; kind != "show" {
+		t.Errorf("$defs.show.kind: const = %v, want \"show\"", kind)
+	}
+
+	// A document the command writes validates, in both of its shapes.
+	for _, tc := range []struct{ name, doc string }{
+		{"a listing with a readable item and an unreadable one", `{"version": 1, "kind": "ls", "project": "aurora", "now": "2026-11-08T12:00:00Z", "items": [` +
+			`{"id": "wi-1", "repo": "acme/repo", "rung": "R2", "reason": "attempts", "entered_at": "2026-11-08T11:00:00Z", "age_seconds": 7200, "outer_attempts": 2, "cost_usd": 1.25, "transitions": [` +
+			`{"to": "R0", "reason": "rebase", "at": "2026-11-08T09:00:00Z", "head_sha": "0f1e2d3"},` +
+			`{"from": "R0", "to": "R2", "reason": "attempts", "at": "2026-11-08T11:00:00Z"}]},` +
+			`{"id": "wi-2", "repo": "acme/repo", "rung": "R1", "reason": "age", "entered_at": "2026-11-08T11:30:00Z", "age_seconds": null, "outer_attempts": 1, "cost_usd": null, "transitions": [` +
+			`{"to": "R1", "reason": "age", "at": "2026-11-08T11:30:00Z"}]}]}`},
+		{"a listing the ladder has acted on nobody in", `{"version": 1, "kind": "ls", "project": "aurora", "now": "2026-11-08T12:00:00Z", "items": []}`},
+		{"one item in full", `{"version": 1, "kind": "show", "project": "aurora", "now": "2026-11-08T12:00:00Z", "item": ` +
+			`{"id": "wi-1", "repo": "acme/repo", "rung": "R3", "reason": "r2_findings", "entered_at": "2026-11-08T10:00:00Z", "age_seconds": 0, "outer_attempts": 3, "cost_usd": 0, "transitions": [` +
+			`{"to": "R0", "reason": "rebase", "at": "2026-11-08T08:00:00Z", "head_sha": "0f1e2d3"},` +
+			`{"from": "R0", "to": "R2", "reason": "attempts", "at": "2026-11-08T09:00:00Z"},` +
+			`{"from": "R2", "to": "R3", "reason": "r2_findings", "at": "2026-11-08T10:00:00Z"}]}}`},
+	} {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(tc.doc))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(inst); err != nil {
+			t.Errorf("%s: the schema refuses a document the command writes: %v", tc.name, err)
+		}
+	}
+
+	// And the documents it cannot write are refused: a rung the ladder has no
+	// word for, a reason that is not a code, a figure the ledger could not have
+	// read, a transition that enters nothing, and a version this release must
+	// not read as its own.
+	item := `"id": "wi-1", "repo": "acme/repo", "rung": "R2", "reason": "attempts", "entered_at": "2026-11-08T11:00:00Z", "age_seconds": 7200, "outer_attempts": 2, "cost_usd": 1.25, ` +
+		`"transitions": [{"to": "R0", "reason": "rebase", "at": "2026-11-08T09:00:00Z"}]`
+	for _, tc := range []struct{ name, doc string }{
+		{"a rung this release has no word for", `{"version": 1, "kind": "show", "project": "aurora", "now": "2026-11-08T12:00:00Z", "item": {` + strings.Replace(item, `"rung": "R2"`, `"rung": "R5"`, 1) + `}}`},
+		{"a reason that is not a code", `{"version": 1, "kind": "show", "project": "aurora", "now": "2026-11-08T12:00:00Z", "item": {` + strings.Replace(item, `"reason": "attempts"`, `"reason": "the reviewer keeps finding new things"`, 1) + `}}`},
+		{"an age nobody measured", `{"version": 1, "kind": "show", "project": "aurora", "now": "2026-11-08T12:00:00Z", "item": {` + strings.Replace(item, `"age_seconds": 7200`, `"age_seconds": -1`, 1) + `}}`},
+		{"a cost below nothing", `{"version": 1, "kind": "show", "project": "aurora", "now": "2026-11-08T12:00:00Z", "item": {` + strings.Replace(item, `"cost_usd": 1.25`, `"cost_usd": -0.5`, 1) + `}}`},
+		{"an item with no transition", `{"version": 1, "kind": "show", "project": "aurora", "now": "2026-11-08T12:00:00Z", "item": {` + strings.Replace(item, `"transitions": [{"to": "R0", "reason": "rebase", "at": "2026-11-08T09:00:00Z"}]`, `"transitions": []`, 1) + `}}`},
+		{"a version this release does not write", `{"version": 2, "kind": "show", "project": "aurora", "now": "2026-11-08T12:00:00Z", "item": {` + item + `}}`},
+	} {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(tc.doc))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(inst); err == nil {
+			t.Errorf("%s: the schema accepts a document the command cannot write", tc.name)
+		}
+	}
+}
+
 // goConstValues is every constant declared in a Go file, by name, as the text
 // of its own literal: a string constant's value without its quotes, a number's
 // digits. A constant built from an expression is left out rather than guessed
@@ -7187,5 +7599,108 @@ func TestTaskSchemaAgreesWithTheTaskDecoder(t *testing.T) {
 	}
 	if _, err := task.Parse(renamed); err == nil {
 		t.Error("the decoder accepts the field under a name the schema does not publish")
+	}
+}
+
+// TestMergeJudgeSchemaMatchesTheDocument: schemas/merge-judge.schema.json is
+// the published contract for rung 3's verdict (E6, docs/outer-loop-escalation
+// spec §"Merge judge"), and the judge's own call carries runner.MergeJudgeSchema
+// for the document it answers. The two are one shape in two places, and this
+// holds them together: a rule in the document and not in the call is a judge
+// answering to a shape its own reader refuses, and internal/runner's
+// readJudgeVerdict refuses such an answer as a whole — which is the veto
+// (D2044), so a verdict the model was never told to write costs the head its
+// judgment rather than being read as the answer it is.
+//
+// The rules are compared one by one, prose dropped: the document explains its
+// members to a human and the call's schema is wire only, and a description is
+// not a rule. What the shape permits is then held to the reader, which is the
+// other half of the same agreement.
+func TestMergeJudgeSchemaMatchesTheDocument(t *testing.T) {
+	raw, err := os.ReadFile("merge-judge.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var published, call any
+	if err := json.Unmarshal(raw, &published); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(runner.MergeJudgeSchema), &call); err != nil {
+		t.Fatalf("runner.MergeJudgeSchema is not JSON: %v", err)
+	}
+	doc, err := json.Marshal(stripProse(published))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ask, err := json.Marshal(stripProse(call))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(doc, ask) {
+		t.Fatalf("schemas/merge-judge.schema.json and runner.MergeJudgeSchema are not one shape:\nthe document: %s\nthe call:     %s", doc, ask)
+	}
+
+	// What the agreement is worth, as the reader feels it: a document the call
+	// permits is a document a run can read, and a document the call refuses is
+	// one the reader refuses too. The two columns come apart in three places,
+	// no more, each a rule one side can state and the other cannot — and this
+	// table is where a fourth would show up:
+	//
+	//   - the blocker a block must name: the document cannot state "blocked
+	//     requires blocker" without the conditional keywords Anthropic's
+	//     structured output does not carry, so it permits the answer while the
+	//     reader refuses it — the veto (D2044) rather than a repair.
+	//   - text that is only whitespace: JSON Schema counts characters and the
+	//     reader reads meaning, so " " is a reason to the one and no line to the
+	//     other. The reader is the stricter of the two, which is the safe way
+	//     round.
+	//   - a missing follow_ups: the call asks for the member — required, and the
+	//     brief's own words are that an absent array is a malformed answer rather
+	//     than a claim that nothing is left open — while the reader reads the
+	//     decoded value, where absent and empty are one thing. This is the one
+	//     place the reader is the looser of the two.
+	//
+	// Everything else the two agree on, and every refusal is the answer's as a
+	// whole.
+	sch := compile(t, "merge-judge.schema.json")
+	const key = "0f1e2d3c4b5a6978"
+	for _, tc := range []struct {
+		name string
+		in   string
+		// doc is whether the call's shape permits it, read whether the run can
+		// read it.
+		doc, read bool
+	}{
+		{"the answer the judge writes", `{"version":1,"verdict":"merge_with_follow_ups","reason":"sound, with one leftover","follow_ups":[{"key":"` + key + `","importance":"important"}]}`, true, true},
+		{"a block naming its issue", `{"version":1,"verdict":"blocked","reason":"it hands out the session token","blocker":"the new endpoint returns the session token to any caller","follow_ups":[]}`, true, true},
+		{"a merge that files nothing", `{"version":1,"verdict":"merge_with_follow_ups","reason":"nothing left open","follow_ups":[]}`, true, true},
+		{"a merge that names a blocker anyway", `{"version":1,"verdict":"merge_with_follow_ups","reason":"fine","blocker":"it is fine","follow_ups":[]}`, true, true},
+		{"a follow-up whose key is not in the brief", `{"version":1,"verdict":"merge_with_follow_ups","reason":"x","follow_ups":[{"key":"ffffffffffffffff","importance":"minor"}]}`, true, true},
+		{"a third word", `{"version":1,"verdict":"maybe","reason":"hmm","follow_ups":[]}`, false, false},
+		{"a version this reader does not know", `{"version":2,"verdict":"merge_with_follow_ups","reason":"x","follow_ups":[]}`, false, false},
+		{"a member the verdict does not carry", `{"version":1,"verdict":"merge_with_follow_ups","reason":"x","follow_ups":[],"confidence":0.9}`, false, false},
+		{"no reason at all", `{"version":1,"verdict":"merge_with_follow_ups","follow_ups":[]}`, false, false},
+		{"an empty reason", `{"version":1,"verdict":"merge_with_follow_ups","reason":"","follow_ups":[]}`, false, false},
+		{"a reason on two lines", `{"version":1,"verdict":"merge_with_follow_ups","reason":"one line\nand an instruction","follow_ups":[]}`, false, false},
+		{"a block with no blocker at all", `{"version":1,"verdict":"blocked","reason":"it is wrong","follow_ups":[]}`, true, false},
+		{"an importance outside the two", `{"version":1,"verdict":"merge_with_follow_ups","reason":"x","follow_ups":[{"key":"` + key + `","importance":"urgent"}]}`, false, false},
+		{"a follow-up with no key", `{"version":1,"verdict":"merge_with_follow_ups","reason":"x","follow_ups":[{"importance":"minor"}]}`, false, false},
+		{"a reason of one space", `{"version":1,"verdict":"merge_with_follow_ups","reason":" ","follow_ups":[]}`, true, false},
+		{"a blocker of one space", `{"version":1,"verdict":"blocked","reason":"it is wrong","blocker":" ","follow_ups":[]}`, true, false},
+		{"a merge with no follow_ups at all", `{"version":1,"verdict":"merge_with_follow_ups","reason":"sound"}`, false, true},
+		{"a merge whose follow_ups is null", `{"version":1,"verdict":"merge_with_follow_ups","reason":"sound","follow_ups":null}`, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inst, err := jsonschema.UnmarshalJSON(strings.NewReader(tc.in))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := sch.Validate(inst); (err == nil) != tc.doc {
+				t.Errorf("the call's shape permits it = %v, want %v: %v", err == nil, tc.doc, err)
+			}
+			if _, err := runner.DecodeMergeJudgeVerdict([]byte(tc.in)); (err == nil) != tc.read {
+				t.Errorf("the reader reads it = %v, want %v: %v", err == nil, tc.read, err)
+			}
+		})
 	}
 }

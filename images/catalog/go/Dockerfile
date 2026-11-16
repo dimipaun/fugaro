@@ -5,41 +5,24 @@
 #
 # It is the definition images/derived/Dockerfile.tmpl used to render for this
 # workflow, written out by hand because the renderer is what the removal takes
-# away (D1208): the entry's own Dockerfile does the clone, the dependency
-# warm-up and the finalize-checkout call, and the engine gains no bake mode.
+# away (D1208): the entry's own Dockerfile finishes the checkout and warms what
+# the job would otherwise pay for, and the engine gains no bake mode.
 #
-# Build arguments and secrets, exactly what the derived build handed the
-# rendered Dockerfile (images/derived/cloudbuild.yaml, the `build` step):
-#   FUGARO_BASE    the Fugaro base image; Cloud Build passes it by digest
-#   REPO_URL       this repository's https clone URL, without credentials
-#   BASE_BRANCH    the branch to clone
-#   FUGARO_COMMIT  the commit the catalog copy was taken from, which is the
-#                  commit the checkout is reset to
-#   git-credentials  a git credential-store file for REPO_URL, mounted as a
-#                  BuildKit file secret and never written into a layer
+# The checkout arrives as the named build context `fugaro-checkout`: the catalog
+# build's clone step clones this repository in a build of Fugaro's own, from the
+# pinned base digest, and exports the checkout there (B8), so this definition
+# never clones with a credential of its own — a definition that mounts one is
+# refused by name, with the line it is written on (B9, D2311). The step resets
+# the checkout to the commit the copied definition was taken from, so a push to
+# the branch after the copy cannot change what this image bakes.
 ARG FUGARO_BASE
 FROM ${FUGARO_BASE}
-ARG REPO_URL
-ARG BASE_BRANCH
-ARG FUGARO_COMMIT=""
 
+# The whole checkout, at that commit. The step that used to stand here cloned it
+# with the git credential mounted as a BuildKit file secret; that is the
+# definition B9 refuses today, by name and by line.
 WORKDIR /work/repo
-# The clone is reset to FUGARO_COMMIT by itself, so a push to the branch after
-# the definition was copied cannot change what this image bakes. A commit no
-# longer on the branch (a force-push) is fetched by its own ID; when it cannot
-# be fetched either, the build fails rather than baking the branch head.
-RUN --mount=type=secret,id=git-credentials,uid=1000,required=false \
-    case "$FUGARO_COMMIT" in *[!0-9a-f]*) echo "FUGARO_COMMIT is not a commit ID" >&2; exit 1 ;; esac \
- && GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
-      -c credential.helper='store --file=/run/secrets/git-credentials' \
-      clone --quiet --branch "$BASE_BRANCH" --single-branch -- "$REPO_URL" /work/repo \
- && commit="${FUGARO_COMMIT:-HEAD}" \
- && { git -C /work/repo cat-file -e "$commit^{commit}" 2>/dev/null \
-      || GIT_TERMINAL_PROMPT=0 git -C /work/repo -c credential.helper= \
-           -c credential.helper='store --file=/run/secrets/git-credentials' \
-           fetch --quiet origin "$commit" \
-      || { echo "commit $commit is no longer reachable: the branch was force-pushed; re-run the build" >&2; exit 1; }; } \
- && git -C /work/repo reset --quiet --hard "$commit"
+COPY --from=fugaro-checkout --chown=1000:1000 / /work/repo
 
 # This repository's own tools, from its mise.toml (Go, Terraform, tflint,
 # Trivy): the base image installs no toolchain of its own. The download cache
