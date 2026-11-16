@@ -383,6 +383,57 @@ func TestReposLsRowImageIsTheProjectsOwnOnAnUncuratedCatalog(t *testing.T) {
 	}
 }
 
+// TestReposLsRefusesAPolicyNodeItCannotRead: a node that ANSWERED and that this
+// build refuses is the command's failure, with nothing printed in either form —
+// §6.26's exit status, and the half `TestReposLsUnreadablePolicyIsAStateNotAnEmptyList`
+// beside it does not cover.
+//
+// The two are different states and neither is the other's exception. A read that
+// FAILED (or found nothing) is one member of the answer: the rows and the bucket
+// are still there, and the sentence says which member is missing. A node that
+// answered with a key or a version this build does not read is the whole of the
+// subject being unreadable — every reader of that node refuses it
+// (refuseUnknownPolicyKeys, P8) — and a listing drawn from the half that decoded
+// draws a membership claim the policy may not make: `published: not admitted`,
+// per row, off a policy nobody could read. The tolerant path is main's
+// (`fileOnly`), which is why this is pinned here rather than left to the node's
+// own readers.
+//
+// Mutation (verified, run and restored): let the `publishedPolicyOf` failure
+// take the tolerant path (`return fileOnly(...)`) — this test fails in both
+// subtests, the listing printed with nothing refused.
+func TestReposLsRefusesAPolicyNodeItCannotRead(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		node map[string]any
+	}{
+		{"an unknown top-level key", map[string]any{
+			"version": projectpolicy.Version, "budget": map[string]any{"mode": "enforce"}, "per_run_usdc": 5,
+		}},
+		{"a version this build does not read", map[string]any{
+			"version": projectpolicy.Version + 1, "budget": map[string]any{"mode": "enforce"},
+			"allow_repos": []string{"github/acme/app"},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newProjectFixture(t, "")
+			f.db.Set(projectpolicy.PathShared(), tc.node)
+			for _, args := range [][]string{
+				{"project", "repos", "ls"},
+				{"project", "repos", "ls", "--json"},
+			} {
+				out, _, err := execute(t, args...)
+				if err == nil || ExitCode(err) == ExitOK {
+					t.Fatalf("fugaro %s read a policy node this build refuses:\n%s", strings.Join(args, " "), out)
+				}
+				if out != "" {
+					t.Errorf("fugaro %s printed a listing off a policy node it refuses:\n%s", strings.Join(args, " "), out)
+				}
+			}
+		})
+	}
+}
+
 // TestReposLsImageCellReadsTheSourceNotTheEntry: the three sources whose image
 // is not a catalog entry's carry an empty entry, and an empty entry is not a
 // refusal. catalog.Selection.Entry is the zero value whenever its Source is not
