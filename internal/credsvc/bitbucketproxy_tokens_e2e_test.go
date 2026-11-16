@@ -19,6 +19,7 @@ package credsvc
 // here with the store this build wires.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -175,6 +176,9 @@ type proxyTokensWorld struct {
 	db     *gcpfake.RTDB
 	store  *creds.RTDBStore
 	values map[string]string
+	// clock is the bundle loader's own, so that a test can let the parsed
+	// document lapse without moving the service's clock or the process's.
+	clock time.Time
 }
 
 // proxyTokensWorldOf builds the installation: a shared project job's caller of
@@ -206,7 +210,9 @@ func proxyTokensWorldOf(t *testing.T, node string, doc []byte, values map[string
 		repos[bitbucketSlug(t, repo)] = testCanonical(t, repo)
 	}
 	store := &creds.RTDBStore{DB: client}
+	var loader *BundleLoader
 	s := newSvcWith(t, func(s *svc, cfg *Config) {
+		loader = cfg.Bundles
 		cfg.Policy = RTDBPolicy{DB: client}
 		cfg.State = store
 		cfg.Repos = repos
@@ -225,7 +231,12 @@ func proxyTokensWorldOf(t *testing.T, node string, doc []byte, values map[string
 	// agree, so the mark a 429 leaves is a mark the next request meets.
 	s.now = time.Now().UTC().Truncate(time.Second)
 
-	w := &proxyTokensWorld{t: t, s: s, up: up, db: db, store: store, values: values}
+	w := &proxyTokensWorld{t: t, s: s, up: up, db: db, store: store, values: values, clock: s.now}
+	// The bundle loader's own clock, and not the service's: a test that rotates
+	// a value has to let the loader's parsed document lapse (rotate), and doing
+	// that by moving the service's clock would be moving every hold and every
+	// expiry this installation dates at the same time.
+	loader.Now = func() time.Time { return w.clock }
 	w.answers(projects)
 	return w
 }
@@ -268,6 +279,32 @@ func (w *proxyTokensWorld) hold(repo string, retryAfter int) {
 		}
 		return previous(r)
 	}
+}
+
+// rotate replaces one bundle entry's value, as an operator rotating a token
+// does: `creds set` writes the container, and the next request that reads it is
+// served the new value. The document is rewritten whole and the loader's clock
+// is moved past BundleCacheTTL, because the loader serves the document it
+// parsed for that long and no read before it (C1.25's rotation is picked up
+// quickly and not sooner) — a test that changed the container and kept asking
+// would be asking which token the OLD document holds.
+//
+// values is updated with the document, so what a test compares bitbucket.org's
+// own answers against is the value the bundle holds now.
+func (w *proxyTokensWorld) rotate(key, value string) {
+	w.t.Helper()
+	old, ok := w.values[key]
+	if !ok {
+		w.t.Fatalf("the bundle holds no %s entry to rotate", key)
+	}
+	was := w.s.src.docs[0]
+	rotated := bytes.Replace(was, []byte(key+": "+old+"\n"), []byte(key+": "+value+"\n"), 1)
+	if bytes.Equal(rotated, was) {
+		w.t.Fatalf("the bundle's document holds no %s entry, so this rotation changed nothing", key)
+	}
+	w.values[key] = value
+	w.s.src.docs = [][]byte{rotated}
+	w.clock = w.clock.Add(BundleCacheTTL + time.Second)
 }
 
 // unauthorized makes the fake refuse this installation's every call with 401:
@@ -551,6 +588,53 @@ func TestProxyMixedTokensEndToEnd(t *testing.T) {
 			t.Errorf("the upstream saw %d calls, and a refused request forwards no byte", len(calls))
 		}
 	})
+}
+
+// TestProxyRotatedValueReplacesTheLookup is the rotation half of the memoized
+// lookup: the instance a selection's project answers are kept on is keyed by
+// the two documents the selection is made from — the node's records AND the
+// bundle's values (documentsKey) — because the lookup HOLDS a credential.
+//
+// An instance that survived a rotation would present a token's retired value to
+// bitbucket.org for as long as its answers live (ProjectLookupTTL), and a
+// retired value is answered 403: the lookup reads that as "this token does not
+// reach the repository", the selection drops the project token for a wider one
+// or, with none left, refuses the call — for ten minutes, with nothing else
+// failing and no line saying why. The value is hashed into the key and never
+// held in it, so the key is the whole of what a test can ask about: this makes
+// the value change and asks what the next request's lookup does.
+func TestProxyRotatedValueReplacesTheLookup(t *testing.T) {
+	projectToken := config.BitbucketTokenKey("proj")
+	node := proxyTokenNode(t, proxyTokenEntry(projectToken, "project",
+		[]string{"bitbucket/" + testWorkspace + "/*"}, proxyTokenProjectUUID, proxyTokenIdentityA))
+	doc, values := proxyTokenBundle(t, false, "proj")
+	w := proxyTokensWorldOf(t, node, doc, values, map[string]string{proxySiblingRepo: proxyTokenProjectUUID})
+
+	call, line := w.fetch(proxySiblingRepo)
+	w.served(proxySiblingRepo, projectToken, call, line)
+	first := w.lookups(0)
+	if len(first) != 1 || first[0].auth != "Bearer "+values[projectToken] {
+		t.Fatalf("the fetch asked %+v, want exactly the project lookup, made with the token itself (R2)", first)
+	}
+
+	rotated := fakeCred(t, "proj-rotated")
+	w.rotate(projectToken, rotated)
+
+	// The answer the OLD instance holds — this repository's project, held for
+	// ProjectLookupTTL — must not be served under the new value either: an
+	// answer read off a credential that is gone is no answer about the one the
+	// next call carries, and the operator's rotation has to take effect at the
+	// next request rather than in ten minutes.
+	since := w.up.count()
+	call, line = w.fetch(proxySiblingRepo)
+	w.served(proxySiblingRepo, projectToken, call, line)
+	asked := w.lookups(since)
+	if len(asked) != 1 {
+		t.Fatalf("the fetch after the rotation asked %+v, want exactly one lookup: the instance holding the retired value must not answer for the rotated one", asked)
+	}
+	if asked[0].auth != "Bearer "+rotated {
+		t.Errorf("the lookup after the rotation was shown %q, want the value the bundle holds now", asked[0].auth)
+	}
 }
 
 // TestProxyOnlyLegacyTokenEndToEnd is the other half of the acceptance: an
