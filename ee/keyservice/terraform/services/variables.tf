@@ -87,6 +87,12 @@ variable "minter_service" {
   default     = "fugaro-key-minter"
 }
 
+variable "seed_job" {
+  description = "The Cloud Run job P0.5's seed runs as. It carries the API's own environment (local.api_env), which is what makes the seed startable at all: the loader refuses an environment that is short one variable, and no terminal holds them."
+  type        = string
+  default     = "fugaro-portal-seed"
+}
+
 variable "api_image" {
   description = "The API's image, built from ee/keyservice (S3.2) and pushed by the deploy (P9.2, S3.7). No default: a service pointing at an image nobody built would be a revision that never becomes ready."
   type        = string

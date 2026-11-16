@@ -461,6 +461,98 @@ resource "google_cloud_run_v2_service" "minter" {
   depends_on = [google_cloud_run_v2_service.intake]
 }
 
+# The seed (P0.5, P2.2). `seed-operations <address>` — the API program's one
+# subcommand — writes the operations organisation and its first invitation, once
+# per installation, and **no terminal can run it**: the program's loader requires
+# the whole of what the API requires (ee/keyservice/config.go, twenty-odd
+# variables and five secrets), because it builds the service the API serves from
+# before it seeds, and an owner's own credentials carry none of them. So the seed
+# is this job: the API's image, the API's account and **the API's own environment,
+# `local.api_env`** — one set and not a second copy of it, so a variable added to
+# the service is on the job in the same apply.
+#
+# Its identity is the API's account and no other, for the same reason the service
+# is: the seed reads the portal's documents, the deployment's secrets and the
+# handover key, which is exactly that account's list (api_reads, api_datastore,
+# api_seals) and no part of the minter's.
+#
+# The args below name the subcommand and no address, and that is the safe default
+# rather than a working invocation: a job executed with no override refuses in the
+# program's own words and seeds nothing, so an operator who runs this from the
+# console gets a refusal that names the address instead of an organisation nobody
+# asked for. The deploy passes both (scripts/deploy-portal.sh's
+# `--seed-operations`, `gcloud run jobs execute --args=seed-operations,<address>`).
+resource "google_cloud_run_v2_job" "seed" {
+  project  = var.project
+  location = var.region
+  name     = var.seed_job
+
+  deletion_protection = false
+
+  template {
+    task_count = 1
+
+    template {
+      # One execution, one task, one organisation. A retry would run the seed
+      # again against a deployment it has already written to — the program refuses
+      # that (errOperationsSeeded) — so a failure is one execution an operator
+      # reads rather than three of them in a log.
+      max_retries = 0
+
+      # Longer than the program's own bound on the seed (cmd/portal-api's
+      # seedTimeout, two minutes), so a seed that hangs ends with the program's
+      # own line in the log rather than as a task the platform killed.
+      timeout = "300s"
+
+      service_account = google_service_account.api.email
+
+      # Every other Cloud Run job in the tree sets this (deploy/terraform's
+      # reaper.tf and the jobs beside it), and this one is the API's program as
+      # well: a second-generation sandbox is what the services' own revisions get.
+      execution_environment = "EXECUTION_ENVIRONMENT_GEN2"
+
+      # The API's egress route, for the API's reason: the mint call is not made
+      # here — the seed reaches no route — but the mail the invitation is goes out
+      # through the same NAT (see the network at the top of this file), and a
+      # deployment that changed the API's egress would otherwise have a seed that
+      # fails on the one thing it does differently from a service.
+      vpc_access {
+        egress = "ALL_TRAFFIC"
+
+        network_interfaces {
+          network    = google_compute_network.portal.id
+          subnetwork = google_compute_subnetwork.portal.id
+        }
+      }
+
+      containers {
+        image = var.api_image
+        args  = ["seed-operations"]
+
+        dynamic "env" {
+          for_each = local.api_env
+
+          content {
+            name  = env.key
+            value = env.value
+          }
+        }
+
+        resources {
+          limits = {
+            cpu    = "1"
+            memory = "512Mi"
+          }
+        }
+      }
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [client, client_version]
+  }
+}
+
 # The API alone is public: roles/run.invoker to allUsers, on the API and on
 # nothing else in this file.
 resource "google_cloud_run_v2_service_iam_member" "api_public" {

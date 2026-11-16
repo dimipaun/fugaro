@@ -64,7 +64,12 @@ func TestTheServicesSetEveryVariableTheProgramsRead(t *testing.T) {
 	// the minter's three on the minter. The two services are told apart by their
 	// resource headers, so a set moved from one to the other is this check rather
 	// than a pair of lists that still match.
-	api, minter := splitServices(t, source)
+	//
+	// The seed job is read here as a third container and it is on the API's side
+	// of the boundary on purpose (P0.5): it runs the API's own program one time,
+	// to write the operations organisation, and it needs the whole of the API's
+	// environment to start at all. What it must never carry is the minter's.
+	api, minter, seed := splitServices(t, source)
 	for _, one := range []struct {
 		service string
 		body    string
@@ -73,6 +78,7 @@ func TestTheServicesSetEveryVariableTheProgramsRead(t *testing.T) {
 	}{
 		{service: "the API", body: api, set: "local.api_env", other: "local.minter_env"},
 		{service: "the minter", body: minter, set: "local.minter_env", other: "local.api_env"},
+		{service: "the seed job", body: seed, set: "local.api_env", other: "local.minter_env"},
 	} {
 		if !strings.Contains(one.body, "dynamic \"env\"") || !strings.Contains(one.body, "for_each = "+one.set) {
 			t.Errorf("%s's container takes no `for_each = %s`: the variables above are set nowhere else, and a container declared without them is the revision that never becomes ready", one.service, one.set)
@@ -195,15 +201,35 @@ func secretRoleNames(t *testing.T, source string) []string {
 	return roles
 }
 
-// splitServices answers the two services' declarations of main.tf, split at their
-// resource headers: what is read below is the container each one declares, and a
-// set written into the other service's is then visible here.
-func splitServices(t *testing.T, source string) (api, minter string) {
+// splitServices answers the three Cloud Run containers' declarations of main.tf —
+// the API, the minter and the seed job — and each is one resource's own body, so
+// that what is read above is the container that resource declares and a set moved
+// from one to another is this check rather than a pair of lists that still match.
+//
+// The body ends at the resource's own closing brace and not at the next resource's
+// header: the comments between two resources discuss these very sets by name, and a
+// body read with the next one's comment in it would make this case about prose.
+func splitServices(t *testing.T, source string) (api, minter, seed string) {
 	t.Helper()
-	apiAt := strings.Index(source, `resource "google_cloud_run_v2_service" "api"`)
-	minterAt := strings.Index(source, `resource "google_cloud_run_v2_service" "minter"`)
-	if apiAt < 0 || minterAt < 0 || minterAt < apiAt {
-		t.Fatal("terraform/services/main.tf does not declare the two services in the order this case reads them")
+	api = resourceBody(t, source, `resource "google_cloud_run_v2_service" "api"`)
+	minter = resourceBody(t, source, `resource "google_cloud_run_v2_service" "minter"`)
+	seed = resourceBody(t, source, `resource "google_cloud_run_v2_job" "seed"`)
+	return api, minter, seed
+}
+
+// resourceBody answers one top-level resource's declaration, from its header to
+// the `}` that closes it at the start of a line. Every resource in this root is
+// written that way, so that brace is the end of it and nothing else is.
+func resourceBody(t *testing.T, source, header string) string {
+	t.Helper()
+	start := strings.Index(source, header)
+	if start < 0 {
+		t.Fatalf("terraform/services/main.tf holds no %s, so this case is not reading the container it means to hold", header)
 	}
-	return source[apiAt:minterAt], source[minterAt:]
+	rest := source[start:]
+	end := strings.Index(rest, "\n}\n")
+	if end < 0 {
+		t.Fatalf("%s is never closed by a `}` at the start of a line", header)
+	}
+	return rest[:end]
 }
