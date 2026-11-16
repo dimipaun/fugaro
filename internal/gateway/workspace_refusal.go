@@ -130,7 +130,16 @@ func WorkspaceRefusal(h http.Header) (string, bool) {
 func ValidWorkspaceRefusalHalt(marker, reason, scope, detail string) bool {
 	switch marker {
 	case WorkspaceRefusalStop, WorkspaceRefusalCap, WorkspaceRefusalSettle:
-		return reason == ReasonBudgetUnavailable && scope == "run" && detail == refusalDetail(ErrorStateUnavailable)
+		wantReason, wantScope, wantDetail := WorkspaceRefusalHalt()
+		return reason == wantReason && scope == wantScope && detail == wantDetail
 	}
 	return false
+}
+
+// WorkspaceRefusalHalt is that halt as the three fields a reader compares: the
+// one spelling of the shape, so the predicate above and a caller that states
+// the shape — ee/orchestrator's tests, which are the other half of the
+// corroboration — cannot drift from the halt haltServiceMarked writes.
+func WorkspaceRefusalHalt() (reason, scope, detail string) {
+	return ReasonBudgetUnavailable, "run", refusalDetail(ErrorStateUnavailable)
 }
