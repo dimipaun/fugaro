@@ -552,14 +552,17 @@ var branchRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
 // that declaration resolves to, folded the way the covered set is: the host, the
 // owner and the name, lower-cased, with a trailing "/" and ".git" off. Two
 // things follow from that fold and both are the point of it. A URL that carries
-// a credential cannot put it in the build log, because everything before the
-// last "@" is off the text a refusal prints, as is everything from a "?" or a
-// "#" — a token in a userinfo, a query or a fragment is a spelling a repository
-// committed to .gitmodules, and the line the refusal prints is a build log (the
-// fold also drops control characters, so nothing in that URL can rewrite the log
-// it appears in). And a repository on another host
-// is not this build's to fetch whatever its owner and name are: the covered set
-// holds the host, because the credential is for one host (rule 5 of
+// a credential cannot put it in the build log, because everything from a "?" or
+// a "#" is off the text a refusal prints, and so is a userinfo — the text before
+// the URL's first "/" is its host, and only there does the fold drop everything
+// up to the last "@", so a token in a userinfo, a query or a fragment is off a
+// build log line (the fold also drops control characters, so nothing in that URL
+// can rewrite the log it appears in). And a repository on another host is not
+// this build's to fetch whatever its owner and name are: what the shell compares
+// is the host the URL names — the part before its first "/", with the userinfo
+// off it and the path kept whole — so a URL that puts a covered repository's
+// path behind another host's name is refused rather than read as that
+// repository, because the credential is for one host (rule 5 of
 // contract-build-token.md) and this stage's clone is the one place a submodule
 // URL would be followed with it.
 //
@@ -569,6 +572,14 @@ var branchRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
 // refusal is fail-closed in the direction that matters, since a fold that
 // matched more than the URL really names would fetch source the credential does
 // not cover.
+//
+// What it returns is one brace group and not a list of commands, because a stage
+// joins it to the steps around it with "&&" and "&&" binds tighter than ";". The
+// guard's first command is an assignment and its last is a `for`, so as a bare
+// list the assignment would join the commit pin ahead of it and the final step
+// behind it would join the `for` alone: a `git reset --hard` that failed would
+// be swallowed and the image would bake the branch head with every check
+// passing (TestStageFailsWhenTheResetDoes).
 func submoduleGuard(dir string, covered []Repo) string {
 	folded := make([]string, 0, len(covered))
 	for _, r := range covered {
@@ -576,7 +587,7 @@ func submoduleGuard(dir string, covered []Repo) string {
 			folded = append(folded, id)
 		}
 	}
-	return "submodules='';" +
+	return "{ submodules='';" +
 		// A checkout with no .gitmodules is the ordinary case and declares nothing.
 		// One that is there and that git cannot read is not the same answer: the
 		// declarations would go unread, and a guard that passed over them would be
@@ -592,16 +603,26 @@ func submoduleGuard(dir string, covered []Repo) string {
 		" [ \"$st\" -le 1 ] || exit 1;" +
 		" submodules=$(printf '%s\\n' \"$submodules\" | cut -d' ' -f2-);" +
 		" fi;" +
-		" for url in $submodules; do" +
+		// The loop splits $submodules on whitespace, which is how a line of the
+		// substitution becomes one URL, and it must not glob: a declaration holding
+		// "*", "?" or "[" would otherwise be expanded against the build's filesystem
+		// and read as whatever it matched rather than as the URL it is.
+		" set -f; for url in $submodules; do" +
 		// The fold, and the one thing it does beyond submoduleID's: the URL is text
 		// from the checkout, and this shell's refusal is a build log line, so the
-		// scheme, the userinfo, a query, a fragment and control characters come off
-		// it before anything is compared or printed.
+		// scheme, a query, a fragment, a userinfo and control characters come off it
+		// before anything is compared or printed. The userinfo comes off the host
+		// alone — the text before the first "/" — because dropping everything up to
+		// the last "@" of the whole URL would read a path's own "@" as a userinfo's
+		// and fold "https://evil.example/x@github.com/acme/app" to a repository the
+		// credential covers, which is a host this build would never contact.
 		" repo=$(printf '%s' \"$url\" | tr 'A-Z' 'a-z' | tr -d '\\000-\\037\\177');" +
-		" repo=${repo#*://}; repo=${repo##*@}; repo=${repo%%[?]*}; repo=${repo%%[#]*}; repo=${repo%/}; repo=${repo%%.git};" +
+		" repo=${repo#*://}; repo=${repo%%[?]*}; repo=${repo%%[#]*};" +
+		" auth=${repo%%/*}; rest=${repo#\"$auth\"}; repo=${auth##*@}$rest;" +
+		" repo=${repo%/}; repo=${repo%%.git};" +
 		" case \" " + strings.Join(folded, " ") + " \" in *\" $repo \"*) [ -n \"$repo\" ] && continue ;; esac;" +
 		" echo \"a submodule of this checkout is ${repo:-a repository this build cannot read}, which this build's credential does not cover: it covers the repositories of the entry being built and no others\" >&2; exit 1;" +
-		" done"
+		" done; set +f; }"
 }
 
 // submoduleID is the repository a clone URL names, as submoduleGuard's own
