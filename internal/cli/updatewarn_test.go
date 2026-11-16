@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/updatecheck"
 )
 
@@ -777,5 +779,131 @@ func TestStderrRedirectedToDevNullNeverChecksOrPrints(t *testing.T) {
 	e := updatecheck.Load(os.Getenv)
 	if e.Warned != "" {
 		t.Fatalf("cache Warned = %q after a /dev/null run, want \"\": the real terminal never saw the line today, so it must not be spent", e.Warned)
+	}
+}
+
+// updateWarnConfig is the local config these tests write: one GitHub
+// repository of project aurora, and whatever profile block the case adds.
+func updateWarnConfig(extra string) string {
+	return "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: fugaro-runs-proj-1234\n" +
+		"user: someone@example.com\n" +
+		"repos:\n  acme/app: { provider: github, workflows: [app] }\n" + extra
+}
+
+// updateWarnCmd is the command cmd/fugaro/main.go hands WarnUpdateAvailable
+// after `fugaro update`: its context carries the disabled state PersistentPreRun
+// resolves (a bare command has none, and WarnUpdateAvailable fails closed
+// without it), and its stderr is a buffer this test reads.
+func updateWarnCmd(t *testing.T) (*cobra.Command, *bytes.Buffer) {
+	t.Helper()
+	cmd, errBuf := cmdNamed("update")
+	cmd.SetContext(withUpdateCheckDisabled(context.Background(), false))
+	return cmd, errBuf
+}
+
+// TestUpdateWarnsOnARepoBoundJob is M3's red step: a repository whose provider
+// the config resolves no shared job for still runs on its per-repository job,
+// and `fugaro update` must say so once, naming the shared project job that
+// replaces it — the profile R8 gives that provider, whose job S5 deploys. A
+// config that carries that profile is the state the warning exists to end, and
+// there it says nothing.
+//
+// Mutation: dropping warnRepoBoundJobs from WarnUpdateAvailable leaves stderr
+// empty in the first case; dropping its cmd.Name() check prints the line for
+// every command; dropping the ProjectJobDefaultProfile gate prints it for the
+// second case too.
+func TestUpdateWarnsOnARepoBoundJob(t *testing.T) {
+	withVersion(t, "0.6.1")
+	t.Setenv(noUpdateCheckEnv, "")
+	t.Setenv("CLOUD_RUN_EXECUTION", "")
+	oldTTY := stderrIsTerminal
+	stderrIsTerminal = func(io.Writer) bool { return true }
+	t.Cleanup(func() { stderrIsTerminal = oldTTY })
+
+	want := repoBoundJobLine(repoBoundJob{Repo: "acme/app", Profile: "standard",
+		Job: gcp.ProjectJobName("standard", "github", "")})
+	cases := []struct {
+		name  string
+		extra string
+		want  string
+	}{
+		{"no profile serves the provider", "", want},
+		{"the provider's default profile is there", "profiles:\n  standard: { provider: github, cpu: 4, memory: 8Gi, timeout_class: long }\n", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := isolateProjects(t, t.TempDir())
+			if err := os.WriteFile(path, []byte(updateWarnConfig(c.extra)), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cmd, errBuf := updateWarnCmd(t)
+			WarnUpdateAvailable(cmd)
+			got := errBuf.String()
+			if c.want == "" {
+				if got != "" {
+					t.Fatalf("stderr = %q, want nothing: the config defines the profile whose job serves the repository, so the launcher sends it to a shared job and there is nothing to warn about", got)
+				}
+				return
+			}
+			if got != c.want+"\n" {
+				t.Fatalf("stderr = %q, want %q: a repository still on its per-repository job is named once, with its replacement", got, c.want+"\n")
+			}
+		})
+	}
+}
+
+// TestDoctorNamesTheSharedReplacement is doctor's half of M3: the same
+// repository is named once, in the same sentence the update nag prints, with
+// the same replacement — and the line is informational, so it changes no exit
+// code with or without --strict, and nothing is said once the profile's job
+// serves the repository.
+func TestDoctorNamesTheSharedReplacement(t *testing.T) {
+	want := repoBoundJobLine(repoBoundJob{Repo: "acme/app", Profile: "standard",
+		Job: gcp.ProjectJobName("standard", "github", "")})
+	cases := []struct {
+		name  string
+		extra string
+	}{
+		{"no profile serves the provider", ""},
+		{"the provider's default profile is there", "profiles:\n  standard: { provider: github, cpu: 4, memory: 8Gi, timeout_class: long }\n"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := newDoctorRig(t)
+			cfg := r.cfg + "repos:\n  acme/app: { provider: github, workflows: [app] }\n" + c.extra
+			if err := os.WriteFile(r.cfgPath, []byte(cfg), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			out, _, err := execute(t, "doctor", "--json", "--dir", t.TempDir())
+			if err != nil {
+				t.Fatalf("doctor = %v, want no error: this line is informational and never fails doctor, --strict or not", err)
+			}
+			var o doctorOutput
+			if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+				t.Fatalf("doctor --json is not JSON: %v\n%s", jerr, out)
+			}
+			check, ok := doctorCheckByID(o.Checks, "repo-bound-jobs")
+			if c.extra != "" {
+				if ok {
+					t.Fatalf("doctor named a repository a shared job already serves: %+v", check)
+				}
+				return
+			}
+			if !ok {
+				t.Fatalf("no repo-bound-jobs check for a repository no profile serves:\n%s", out)
+			}
+			if check.Severity != "info" || check.OK {
+				t.Errorf("check = %+v, want an info line that is not a failure", check)
+			}
+			if check.Class != doctorClassActionable {
+				t.Errorf("check class = %q, want %q: the default view prints the line, it does not count it", check.Class, doctorClassActionable)
+			}
+			if check.Problem != want {
+				t.Errorf("problem = %q, want %q: doctor and the update nag print one sentence", check.Problem, want)
+			}
+			if !strings.Contains(check.Fix, "update") {
+				t.Errorf("fix = %q, want it to name the command that moves the repository", check.Fix)
+			}
+		})
 	}
 }
