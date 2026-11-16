@@ -565,8 +565,17 @@ func reposRemovalCloud(ctx context.Context, cmd *cobra.Command, out io.Writer, l
 	for _, w := range warnings {
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", w)
 	}
+	// The split is the retirement's own (RetireSplit), and the group taken here
+	// is the one it hands the API delete: the jobs no apply can finish. It is
+	// asked with no state addresses, because this command has no plan of the
+	// repository's root and no Terraform state to read addresses out of — and it
+	// needs none: every job Orphans returns is Protected (out of the
+	// configuration, so no apply can lower its deletion_protection any more),
+	// which is the case apiDeleted answers the API delete to whatever the state
+	// holds.
+	api, _, _ := infra.RetireSplit(nil, spec, rets)
 	deleted := 0
-	for _, ret := range rets {
+	for _, ret := range api {
 		want, ok := infra.JobDeleteLabels(spec, ret)
 		if !ok {
 			continue
