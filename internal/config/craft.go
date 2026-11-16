@@ -473,9 +473,10 @@ func ValidatePools(pools []Pool, creds []Credential) []Problem {
 // members, the half each is served by and the fix. `fugaro accounts pool add` is
 // its one caller, and it hands it the pool it would write alone rather than the
 // block it would write it into: a pool that already exists is not this
-// function's business — poolCrossingProblem says why a reader leaves one to the
-// step that converges it — and a crossing an earlier release wrote elsewhere in
-// the block must not stand in the way of the next declaration.
+// function's business — poolCrossingProblem says why the config's own load
+// leaves one to the split that converges it — and a crossing an earlier release
+// wrote elsewhere in the block must not stand in the way of the next
+// declaration.
 func ValidatePoolPaths(pools []Pool, creds []Credential) []Problem {
 	return pathCrossingProblems(pools, creds)
 }
