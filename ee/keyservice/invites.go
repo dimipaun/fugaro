@@ -394,7 +394,9 @@ func invitedMember(address string, actor Caller) bool {
 // organisation's own invitation rate (F35). The invitation is written before the
 // mail is sent, so a mail path that fails leaves an invitation that stands and can be withdrawn rather than a link
 // to a record nothing holds; the failure is the caller's answer and never a
-// silent success.
+// silent success. Its `invitation.create` line is written with the invitation
+// and before the mail, for the reason the line stands for: what the log records
+// is the invitation this request created.
 func (s *Service) createInvitation(ctx context.Context, actor Caller, organisationID string, asked WireInviteCreate) (WireInvite, error) {
 	held, err := s.inviteAccess(ctx, actor, organisationID, actionOrganisationRead, false)
 	if err != nil {
@@ -466,15 +468,22 @@ func (s *Service) createInvitation(ctx context.Context, actor Caller, organisati
 	if err := s.putInvitation(ctx, invitation); err != nil {
 		return WireInvite{}, err
 	}
-	if err := s.mail.Send(ctx, invitationMail(origin, held.Organisation.Name, invitation, inviteTTL)); err != nil {
-		return WireInvite{}, err
-	}
+	// The line follows the write and not the mail, because the write is what
+	// makes an invitation: an invitation that stands — pending, withdrawable,
+	// acceptable by the person it names — is one somebody created, and the mail
+	// is the invitation's delivery and not its existence. Written after the send
+	// it was a line a mail path that failed or timed out never got to write, so
+	// the log held no record of who asked for an invitation the organisation
+	// could then see in its list (D456, F9).
 	if err := s.recordAudit(ctx, actor, auditEntry{
 		Action:         actionInvitationCreate,
 		OrganisationID: &invitation.OrganisationID,
 		TargetID:       &invitation.ID,
 		Detail:         &invitation.Email,
 	}); err != nil {
+		return WireInvite{}, err
+	}
+	if err := s.mail.Send(ctx, invitationMail(origin, held.Organisation.Name, invitation, inviteTTL)); err != nil {
 		return WireInvite{}, err
 	}
 	return invitation, nil

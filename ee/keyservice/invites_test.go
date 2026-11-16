@@ -1042,6 +1042,63 @@ func TestSeedRefusesAnAddressThatIsNoMember(t *testing.T) {
 	}
 }
 
+// TestInvitationRefusesAnAddressThatIsNoMember: the address on the invite form
+// is a value a caller chooses, and it is the only thing between that body and an
+// invitation the store holds and the deployment's own sender mails. An address
+// that is no member of this tree is refused before anything is written, before
+// the organisation's rate is spent and before the mail path is reached — an
+// invitation bound to a value access.Member refuses is one nobody can be
+// compared against, so it could never be accepted by the person it was sent to
+// (F31's fail-closed half).
+func TestInvitationRefusesAnAddressThatIsNoMember(t *testing.T) {
+	f := newFixture(t)
+	org := f.signedUp(danaUID, danaEmail, "Example Ltd")
+	f.actsAs(danaUID, danaEmail, signInGoogle)
+
+	rec := f.inviteAs(org.ID, "not an address", roleMember)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("an invitation to an address access.Member refuses answered %d (%s), want the refusal", rec.Code, rec.Body)
+	}
+	if code := refusal(f, rec); code != "invalid_email" {
+		t.Errorf("the refusal carries the code %q, want invalid_email", code)
+	}
+	if held := f.invitationsOf(org.ID); len(held) != 0 {
+		t.Errorf("the store holds %+v, want nothing: an invitation that cannot be accepted is one this deployment must not mail", held)
+	}
+	if len(f.mail.sent) != 0 {
+		t.Error("the refused invitation was mailed, and its address is the thing nothing here could compare")
+	}
+}
+
+// TestInvitationIsRecordedWhenTheMailFails: an invitation is written before it
+// is mailed, so a mail path that fails leaves one that stands — pending,
+// withdrawable, and acceptable by the person it names once they are told of it
+// by other means. What the log records is that invitation and the account that
+// asked for it, so the `invitation.create` line follows the write and not the
+// send: written after the send, it was a line the failure returned before, and
+// the organisation's list then held an invitation no record named (D456, F9).
+func TestInvitationIsRecordedWhenTheMailFails(t *testing.T) {
+	f := newFixture(t)
+	org := f.signedUp(danaUID, danaEmail, "Example Ltd")
+	f.actsAs(danaUID, danaEmail, signInGoogle)
+	f.mail.err = errors.New("the mail provider refused the message")
+
+	rec := f.inviteAs(org.ID, samEmail, roleMember)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("an invitation whose mail the provider refused answered %d (%s), want the failure: a link nobody received must not read as one that was sent", rec.Code, rec.Body)
+	}
+	held := f.invitationsOf(org.ID)
+	if len(held) != 1 || held[0].State != invitePending {
+		t.Fatalf("the store holds %+v, want the one invitation the request wrote and left pending", held)
+	}
+	if !f.auditedInvitation(actionInvitationCreate, org.ID, held[0].ID) {
+		t.Error("the invitation the request wrote left no invitation.create line, and an invitation that stands is one somebody created (D456)")
+	}
+	if len(f.mail.sent) != 0 {
+		t.Error("the failed send recorded a message anyway")
+	}
+}
+
 // TestResendMailerSendsNoKey: the mail path hands the provider a message and
 // nothing else. The key it authenticates with is the provider's own API key,
 // carried in the Authorization header and nowhere else — not in the URL, not in
