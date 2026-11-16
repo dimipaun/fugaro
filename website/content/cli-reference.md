@@ -5169,8 +5169,11 @@ its next request on.
 The order is the command (M4): the device node under config/admin/devices
 goes first, because the node's existence is what the rules read and its
 deletion revokes at once, without waiting for an ID token to expire; then
-this laptop's OS keychain item for that pairing's MAC key. Two deletions,
-and both are here.
+the account's push node under config/admin/push, the sibling that holds
+the one registration this installation made for it, so the phone's token
+goes with the pairing rather than outliving it (push design §3.4); then
+this laptop's OS keychain item for that pairing's MAC key. Three
+deletions, and all three are here.
 
 The pairing session's own node is not one of them. Its key is the p~ uid
 the session drew, and nothing on this laptop records that uid, so a revoke
