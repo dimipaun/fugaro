@@ -269,15 +269,19 @@ func TestImageCatalogGateIsNotThePriceCatalogGate(t *testing.T) {
 	if imageCatalogSince != "0.17.0" {
 		t.Errorf("imageCatalogSince = %q, want 0.17.0, the release these build tasks ship in (D1158)", imageCatalogSince)
 	}
-	// The two gates are two documents' states, and only the image catalog's
-	// moves for this work: a release that publishes image_catalog flips
-	// imageCatalogShipped and leaves catalogShipped where it is. What must not
-	// happen here is shipping this key by flipping the price catalog's instead.
+	// The price catalog's pair names the release that reads the two route
+	// switches (0.7.5) and says so is tagged; the image catalog's names its own,
+	// later one. The two pairs are two documents' states and move on their own
+	// schedules, so what this checks is that each is its own constant and that
+	// each says what its own document's state is.
+	if catalogSince != "0.7.5" {
+		t.Errorf("catalogSince = %q, want 0.7.5, the release whose runner reads require_zdr and price_policy", catalogSince)
+	}
+	if !catalogShipped {
+		t.Errorf("catalogShipped is false although catalogSince names %q, a tagged release whose runner reads both route switches: fugaro update --repo refuses a route that sets either, which is the deploy bug spend-accuracy F3 records", catalogSince)
+	}
 	if !imageCatalogShipped {
 		t.Errorf("imageCatalogShipped is false although imageCatalogSince names %q, a tagged release: readiness holds back every job a catalog entry gives its image to (issue 1659)", imageCatalogSince)
-	}
-	if catalogShipped {
-		t.Errorf("catalogShipped is true while catalogSince still names %q: the price catalog's gate moved with the image catalog's", catalogSince)
 	}
 }
 
