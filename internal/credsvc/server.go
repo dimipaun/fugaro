@@ -706,6 +706,13 @@ type Server struct {
 	// reason: what it bounds is a daemon looping on one endpoint, and a node
 	// under creds/ would be a second writer of a fact nothing else reads.
 	mergeMints *mergeMintRate
+	// labels is the label route's own state (F22, D2439): the installation
+	// tokens it has minted for itself and the two rate windows it counts its
+	// acts in, one for the reads and one for the writes. It is this service's
+	// own memory for the merge mint's reason, and the tokens are in it rather
+	// than the store because a token this route mints never leaves the process
+	// that mints it.
+	labels *labelState
 }
 
 // NewServer validates cfg and returns the service.
@@ -800,7 +807,7 @@ func NewServer(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, log: cfg.Log, now: cfg.Now, jobs: make(map[string]JobAccount, len(cfg.JobAccounts)), review: make(map[string]ReviewJobAccount, len(cfg.ReviewAccounts)), shared: make(map[string]SharedJobAccount, len(cfg.SharedAccounts)), audit: audit, slips: newSlipCache(), mergeMints: newMergeMintRate(cfg.Now)}
+	s := &Server{cfg: cfg, log: cfg.Log, now: cfg.Now, jobs: make(map[string]JobAccount, len(cfg.JobAccounts)), review: make(map[string]ReviewJobAccount, len(cfg.ReviewAccounts)), shared: make(map[string]SharedJobAccount, len(cfg.SharedAccounts)), audit: audit, slips: newSlipCache(), mergeMints: newMergeMintRate(cfg.Now), labels: newLabelState(cfg.Now)}
 	for _, ja := range cfg.JobAccounts {
 		if ja.Email == "" || ja.Slug == "" || ja.Repo == "" {
 			return nil, errors.New("credsvc: a job account with no email, slug or repository binds nothing")
