@@ -807,8 +807,42 @@ func reposEnrolmentStages(ctx context.Context, cmd *cobra.Command, o *projectRep
 	if err != nil {
 		return err
 	}
+	if err := reposEnrolmentDeployed(plan, stages); err != nil {
+		return err
+	}
 	reposEnrolmentReport(cmd, lc, plan, stages)
 	return nil
+}
+
+// reposEnrolmentDeployed refuses a run whose last step did not happen. The
+// report below says "enrolled … fugaro run --repo … is ready", and that claim is
+// step 6's: the repository's job set and its roles/run.invoker grant, which the
+// Repository stage deploys. A stage that neither applied nor found the work
+// already done — skipped, will-do, needs-you, blocked — leaves the repository
+// enrolled in the project and unable to run, and a run that printed success over
+// it would be the worst of the two outcomes: the operator reads "ready" and
+// finds out at the first `fugaro run --repo`.
+//
+// The stage's own sentence is the fix (a checkout with no default branch to read
+// says which ref to fetch and which door to rerun), and every step above has
+// already landed, so what this adds is where to pick up — the wording the loop's
+// own failure line uses.
+func reposEnrolmentDeployed(plan reposEnrolment, stages map[string]initflow.StageResult) error {
+	st := stages[initflow.Repository]
+	switch st.State {
+	case initflow.Changed, initflow.Done:
+		return nil
+	}
+	detail := oneLine(st.Detail)
+	if detail == "" {
+		detail = "the stage reported no detail"
+	}
+	state := string(st.State)
+	if state == "" {
+		state = "no result"
+	}
+	return userErr("nothing was deployed for %s: step 6 of this enrolment is the repository's job set and its roles/run.invoker grant, and the repository stage reported %s (%s), so it did not happen. Fix what that says and rerun `fugaro project repos add %s`: it resumes at the repository step, and everything before it is already written",
+		pluginwire.Printable(plan.canonical), state, detail, plan.ownerName)
 }
 
 // reposEnrolmentRunStages invokes the Policy, Installation and Repository

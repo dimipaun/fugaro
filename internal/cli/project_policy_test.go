@@ -3277,6 +3277,11 @@ func TestProjectReposEditRefusesTheSharedConfig(t *testing.T) {
 	t.Chdir(gitCheckout(t, filepath.Join(f.dir, "app"), "version: 1\nproject: aurora\ngcp_project: proj-1234\n"))
 	for _, args := range [][]string{
 		{"project", "repos", "add", "github/acme/app", "--allow-list-only"},
+		// The converge path is the command's default and the same writer, so it
+		// asks the same question of the same opener: the refusal is
+		// openProjectBudget's, which is above every read, every plan and the one
+		// question.
+		{"project", "repos", "add", "github/acme/app"},
 		{"project", "repos", "rm", "github/acme/app"},
 	} {
 		_, _, err := execute(t, args...)

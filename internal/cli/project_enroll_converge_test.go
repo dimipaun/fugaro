@@ -26,6 +26,8 @@ import (
 	"strings"
 	"testing"
 
+	accesslib "github.com/dimipaun/fugaro/internal/access"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/testutil"
 	"github.com/dimipaun/fugaro/internal/yamledit"
@@ -71,6 +73,10 @@ const (
 	enrolMapKey = "owner/repo-b"
 )
 
+// enrolCheckoutYAML is the repository's own fugaro.yaml, which is where its
+// workflow list and its base branch are read from.
+const enrolCheckoutYAML = "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n  web: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+
 // enrolRig is newAddRigWith over enrolRigLocal, standing in a checkout of
 // enrolRepo: the working directory IS that checkout, which is how checkoutRoot
 // finds one, and it is where the converge reads the workflows and the base
@@ -82,20 +88,97 @@ func enrolRig(t *testing.T) *addRig {
 
 func enrolRigOver(t *testing.T, local string) *addRig {
 	t.Helper()
+	return enrolRigWith(t, local, true)
+}
+
+// enrolRigWithoutADefaultBranch is the same world with one thing missing: the
+// checkout has no origin/HEAD, origin/main or origin/master ref, so the
+// Repository stage has no default branch to read its fugaro.yaml from and skips
+// — the state every fixture of this file was in before step 6 was pinned, and
+// the one that must not be reported as a finished enrolment.
+func enrolRigWithoutADefaultBranch(t *testing.T) *addRig {
+	t.Helper()
+	return enrolRigWith(t, enrolRigLocal, false)
+}
+
+// enrolRigWith is the world both of them stand in: an installation that exists
+// (its state object is in the bucket) and a checkout of enrolRepo standing in
+// the working directory, which is what makes step 6 more than a line in a plan —
+// the Repository stage reads the installation's outputs out of that state and
+// converges the checkout's own root.
+//
+// The state object alone is not enough for that read: the fake terraform has to
+// answer it with a state that holds resources, and a root whose state manages
+// nothing is refused as an installation that was forgotten
+// (installationOutputs). The rig's own script answers every state read with a
+// plan, which carries none.
+func enrolRigWith(t *testing.T, local string, defaultBranch bool) *addRig {
+	t.Helper()
 	r := newAddRigWith(t, local)
-	enrolCheckout(t, "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
+	r.installationState(t)
+	r.script["show -json@installation"] = map[string]any{"stdout": `{"format_version":"1.0","values":{"root_module":{"resources":[{"address":"module.installation.google_project.this"}]}}}`}
+	r.script["output@installation"] = map[string]any{"stdout": outputsJSON(t)}
+	r.save(t)
+	enrolCheckoutAt(t, enrolCheckoutYAML, defaultBranch)
 	return r
+}
+
+// enrolLanded commits the gcp_project line the Repository stage wrote into this
+// checkout and moves the remote-tracking ref onto it, as pushing the edit and
+// fetching would: the stage reads the working tree's fugaro.yaml and refuses one
+// that is not the default branch's (resolveRepoTarget), so the second run of a
+// fixture is a run over a checkout whose onboarding is merged. What it is not is
+// a fixture detail: the engine leaves the anchor in the working tree of the run
+// that onboarded the repository, and its own words are "review it with git diff
+// and commit it like any change".
+func enrolLanded(t *testing.T) {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, dir, "add", "fugaro.yaml")
+	testutil.Git(t, dir, "commit", "-q", "-m", "the anchor the enrolment wrote")
+	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/main", "HEAD")
+}
+
+// enrolCheckoutFile is the fugaro.yaml of the checkout this run stands in. It is
+// where the Repository stage's anchor lands, which is the one write in the whole
+// of step 6 that a test can read back: nothing else of the checkout's root is on
+// this machine.
+func enrolCheckoutFile(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(dir, "fugaro.yaml")
 }
 
 // enrolCheckout makes the working directory a checkout of enrolRepo with yaml
 // as its fugaro.yaml and the origin remote that says which repository it is.
 func enrolCheckout(t *testing.T, yaml string) string {
 	t.Helper()
+	return enrolCheckoutAt(t, yaml, true)
+}
+
+// enrolCheckoutAt is enrolCheckout with the remote-tracking ref the Repository
+// stage reads its default branch through, for the fixtures that are about a
+// checkout without one.
+func enrolCheckoutAt(t *testing.T, yaml string, defaultBranch bool) string {
+	t.Helper()
 	dir := filepath.Join(t.TempDir(), "checkout-b")
 	gitCheckout(t, dir, yaml)
 	testutil.Git(t, dir, "remote", "add", "origin", "https://github.com/owner/repo-b.git")
 	testutil.Git(t, dir, "add", "fugaro.yaml")
 	testutil.Git(t, dir, "commit", "-q", "-m", "fugaro.yaml")
+	if defaultBranch {
+		// The ref the repository stage reads the default branch's fugaro.yaml
+		// through (defaultBranchRef): origin/main at the commit that carries
+		// the file, which is what a checkout of a repository whose default
+		// branch is main has once it has fetched.
+		testutil.Git(t, dir, "update-ref", "refs/remotes/origin/main", "HEAD")
+	}
 	t.Chdir(dir)
 	return dir
 }
@@ -247,6 +330,150 @@ func TestReposAddRefusesWithTheFixingCommand(t *testing.T) {
 	})
 }
 
+// TestReposAddConvergesTheRepositoryRoot is step 6 where it is real: the plan's
+// last step is the repository's job set and its roles/run.invoker grant, the
+// stage that deploys them is `fugaro update`'s Repository stage, and what says
+// the stage applied rather than stood aside is the anchor it writes into the
+// checkout once the engine has converged it — the one write of that step that
+// lands on this machine.
+func TestReposAddConvergesTheRepositoryRoot(t *testing.T) {
+	r := enrolRig(t)
+	if strings.Contains(readFileString(t, enrolCheckoutFile(t)), "gcp_project") {
+		t.Fatalf("the fixture's checkout already carries the anchor:\n%s", readFileString(t, enrolCheckoutFile(t)))
+	}
+	out, errOut, err := r.enrol(t, enrolRepo)
+	if err != nil {
+		t.Fatalf("project repos add %s: %v\nstdout:\n%s\nstderr:\n%s", enrolRepo, err, out, errOut)
+	}
+	if !strings.Contains(out, "the checkout's own root was converged and deployed") {
+		t.Errorf("the report does not say the checkout's own root was converged:\n%s", out)
+	}
+	if got := readFileString(t, enrolCheckoutFile(t)); !strings.Contains(got, "gcp_project: proj-1234") {
+		t.Errorf("the repository stage did not write the checkout's anchor, so its engine never converged the root:\n%s", got)
+	}
+}
+
+// TestReposAddDoesNotReportAnEnrolmentTheRepositoryStageSkipped: the command's
+// answer is `fugaro run --repo … is ready`, and that claim is step 6's — the
+// repository's job set and its roles/run.invoker grant, which only the
+// Repository stage deploys. A stage that neither applied nor found the work
+// already done leaves the repository on the allow-list, in this machine's
+// config and with no job of its own, and a run that answered "ready" over it
+// would be read by the operator and found out at the first `fugaro run --repo`.
+//
+// The stage's own fix is what the refusal carries, and it is the stage's to
+// write: a checkout with no default branch to read says which fetch it wants.
+// What this adds is where the run picks up — every step before it has landed.
+func TestReposAddDoesNotReportAnEnrolmentTheRepositoryStageSkipped(t *testing.T) {
+	r := enrolRigWithoutADefaultBranch(t)
+	// The entry the config is asserted to hold below is the run's own step 2 and
+	// not the fixture's: a fixture that carried it already would pass that
+	// assertion without the run having written anything.
+	before := readFileString(t, r.cfg)
+	if strings.Contains(before, enrolRepo) {
+		t.Fatalf("the fixture's config already lists %s:\n%s", enrolRepo, before)
+	}
+	out, _, err := r.enrol(t, enrolRepo)
+	if err == nil {
+		t.Fatalf("project repos add %s over a checkout with no default branch reported success:\n%s", enrolRepo, out)
+	}
+	text := ErrorText(err)
+	// The stage's own sentence, which is the fix.
+	if !strings.Contains(text, "run git fetch origin, then rerun fugaro setup --repo") {
+		t.Errorf("the refusal does not carry the stage's own fix:\n%s", text)
+	}
+	// And where to pick up, with the work that is already done.
+	if !strings.Contains(text, "resumes at the repository step") || !strings.Contains(text, "already written") {
+		t.Errorf("the refusal does not say that a rerun resumes at the repository step:\n%s", text)
+	}
+	// The claim it may not make, and the step it would have claimed.
+	if strings.Contains(out, "fugaro run --repo") {
+		t.Errorf("the run answered that the repository is ready:\n%s", out)
+	}
+	if strings.Contains(readFileString(t, enrolCheckoutFile(t)), "gcp_project") {
+		t.Errorf("the skipped stage wrote the checkout's anchor:\n%s", readFileString(t, enrolCheckoutFile(t)))
+	}
+	// Steps 1 to 4 did land before it, and they are what a rerun resumes from:
+	// the local config and the published list are not rolled back.
+	if got, ok := r.addLocal(t).Repos[enrolRepo]; !ok || got.Provider != "github" {
+		t.Errorf("repos.%s = %v (present %v), want the entry step 2 wrote", enrolRepo, got, ok)
+	}
+	if p := r.policy(t); !slices.Contains(p.AllowRepos, enrolEntry) {
+		t.Errorf("allow_repos = %v, want %s from step 4", p.AllowRepos, enrolEntry)
+	}
+}
+
+// TestReposAddGuardsHoldOnTheConvergePath is the default path's own guards: the
+// converge asks the same questions `repos add` asked before it converged — the
+// access gate, the ownership of the database, the deployed rules — and every one
+// of them lands before the plan is printed and before the one question, so a
+// refused run writes nothing and asks nothing.
+func TestReposAddGuardsHoldOnTheConvergePath(t *testing.T) {
+	for _, tc := range []struct {
+		what  string
+		world func(t *testing.T, r *addRig)
+		want  []string
+	}{
+		{
+			what: "an all-repos admin at the terminal",
+			world: func(t *testing.T, r *addRig) {
+				accessAs(t, r.db, accessAdminAddr,
+					userStored(t, accessMember(t, accessAdminAddr), accesslib.RoleAdmin, "all-repos"))
+			},
+			want: []string{"nothing was enrolled", "admin at project scope", "(user:admin@example.com) hold admin at all-repos"},
+		},
+		{
+			what:  "another installation's database",
+			world: func(t *testing.T, r *addRig) { r.db.Set(budget.PathMark, birchMark()) },
+			want:  []string{"nothing was enrolled", "one Firebase project serves one installation"},
+		},
+		{
+			what:  "a database with no mark at all",
+			world: func(t *testing.T, r *addRig) { r.db.Set(budget.PathMark, nil) },
+			want:  []string{"nothing was enrolled", "no Fugaro mark"},
+		},
+		{
+			what:  "a deployment whose rules carry no marker",
+			world: func(t *testing.T, r *addRig) { r.db.Set(projectpolicy.PathRulesMarker(), nil) },
+			want:  []string{"carry no policy marker", "run 'fugaro update'"},
+		},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			r := enrolRig(t)
+			tc.world(t, r)
+			beforeCfg, beforeNode := readFileString(t, r.cfg), r.nodeText(t)
+			out, _, err := r.enrol(t, enrolRepo)
+			if err == nil {
+				t.Fatalf("project repos add %s with %s was allowed:\n%s", enrolRepo, tc.what, out)
+			}
+			if got := ExitCode(err); got != ExitUserError {
+				t.Fatalf("exit %d, want %d — a refusal, not a failure: %v", got, ExitUserError, err)
+			}
+			text := ErrorText(err)
+			for _, want := range tc.want {
+				if !strings.Contains(text, want) {
+					t.Errorf("the refusal of %s does not say %q:\n%s", tc.what, want, text)
+				}
+			}
+			// Nothing was written and nothing was asked: the guard is above the
+			// plan, so the operator never read a plan of steps that were not
+			// going to happen either.
+			if got := readFileString(t, r.cfg); got != beforeCfg {
+				t.Errorf("the refused run wrote this machine's config:\n--- before\n%s\n--- after\n%s", beforeCfg, got)
+			}
+			if got := r.nodeText(t); got != beforeNode {
+				t.Errorf("the refused run rewrote the published node:\n--- before\n%s\n--- after\n%s", beforeNode, got)
+			}
+			if strings.Contains(out, "⚠ CONFIRM") {
+				t.Errorf("the refused run asked the one question:\n%s", out)
+			}
+			if strings.Contains(out, "1. the repository's own fugaro.yaml:") {
+				t.Errorf("the refused run printed the plan it was never going to run:\n%s", out)
+			}
+		})
+	}
+}
+
 // TestReposAddIsIdempotentOverACompletedEnrolment is D2402's first reading: a
 // repository already enrolled converges to the same state, so a second run
 // writes nothing and says so — with the sentence `runProjectReposEdit` already
@@ -256,6 +483,11 @@ func TestReposAddIsIdempotentOverACompletedEnrolment(t *testing.T) {
 	if _, _, err := r.enrol(t, enrolRepo); err != nil {
 		t.Fatal(err)
 	}
+	// The checkout as the first run left it is a checkout with an uncommitted
+	// edit, and a second run over that is refused by the Repository stage before
+	// it reaches any of the sentences below: landing the anchor is the operator's
+	// own step between the two runs.
+	enrolLanded(t)
 	before, node := r.addLocal(t), r.nodeText(t)
 	asked := len(r.db.Requests())
 
@@ -287,12 +519,15 @@ func TestReposAddIsIdempotentOverACompletedEnrolment(t *testing.T) {
 	if got := r.nodeText(t); got != node {
 		t.Errorf("the second run rewrote the published node:\n--- before\n%s\n--- after\n%s", node, got)
 	}
-	// No writer was reached: the database recorded no write after the first
-	// run, which is the claim the sentence above makes and the one a byte
-	// comparison alone cannot make (a write of the same bytes leaves none).
+	// No writer reached the published policy node: that is what the sentence
+	// above claims, and it is the half a byte comparison alone cannot make (a
+	// write of the same bytes leaves none). What the second run does write is
+	// step 6's, which is `fugaro update`'s own Repository stage and deploys the
+	// repository's job set again — the credential nodes on that path are the
+	// stage's, and the enrolment is not what put them there.
 	for _, req := range r.db.Requests()[asked:] {
-		if req.Method != http.MethodGet {
-			t.Errorf("%s %s reached the database over an enrolment that is already complete: the run has nothing to write", req.Method, req.Path)
+		if req.Method != http.MethodGet && strings.Contains(req.Path, "/config/policy/") {
+			t.Errorf("%s %s reached the published policy over an enrolment that is already complete: the run has nothing to write there", req.Method, req.Path)
 		}
 	}
 }
