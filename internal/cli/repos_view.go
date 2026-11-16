@@ -113,6 +113,11 @@ const (
 // could not be read as one that holds nothing draws a machine that does not
 // know the repository.
 //
+// Every list member is [] and never null, the state sentence or not: the two
+// documents are read outside this binary, and a contract where one member says
+// [] for an absence and the member beside it says null for the same one makes
+// each reader special-case members it cannot tell apart.
+//
 // The seen list is a member of its own and is never merged into the rows
 // (D2409). It is a reading of what has RUN here, not of what is enrolled: a
 // repository seen running and no longer admitted would read as enrolled, and
@@ -362,6 +367,7 @@ func newReposView(ctx context.Context, lc *localcfg.Config, db *rtdb.Client, can
 	for _, name := range reposViewRowNames(allow, keys) {
 		v.Repos = append(v.Repos, reposViewRowOf(ctx, lc, cat, imap, projectBranch, name, keys[name], allow))
 	}
+	v.Repos = nonNil(v.Repos)
 
 	seen, notes, err := seenRepos(ctx, lc, budgetNow())
 	if err != nil {
@@ -369,9 +375,10 @@ func newReposView(ctx context.Context, lc *localcfg.Config, db *rtdb.Client, can
 	} else {
 		v.Seen.Notes = notes
 		for _, r := range seen {
-			v.Seen.Entries = append(v.Seen.Entries, reposViewSeenRepo{Name: r.Name, Provider: r.Provider, Sources: r.Sources})
+			v.Seen.Entries = append(v.Seen.Entries, reposViewSeenRepo{Name: r.Name, Provider: r.Provider, Sources: nonNil(r.Sources)})
 		}
 	}
+	v.Seen.Entries, v.Seen.Notes = nonNil(v.Seen.Entries), nonNil(v.Seen.Notes)
 
 	if canonical != "" {
 		want, err := reposViewCanonicalOf(canonical)
@@ -429,7 +436,7 @@ func reposViewCanonicalOf(canonical string) (string, error) {
 // is the half an empty list loses.
 func reposViewAllowOf(ctx context.Context, lc *localcfg.Config, db *rtdb.Client) (reposViewAllow, *config.Catalog, map[string]string, string) {
 	fileOnly := func(state string) (reposViewAllow, *config.Catalog, map[string]string, string) {
-		return reposViewAllow{State: state}, lc.ImageCatalogEffective(nil), lc.ImageMapEffective(nil), ""
+		return reposViewAllow{Entries: []string{}, State: state}, lc.ImageCatalogEffective(nil), lc.ImageMapEffective(nil), ""
 	}
 	etag, found, raw, err := readPolicyNode(ctx, db, lc)
 	switch {
@@ -473,6 +480,7 @@ func reposViewLocalOf(lc *localcfg.Config) (reposViewLocal, map[string]string) {
 	// the file's would make two machines holding the same repositories print
 	// two different documents.
 	slices.Sort(out.Repos)
+	out.Repos = nonNil(out.Repos)
 	if len(unreadable) > 0 {
 		out.State = fmt.Sprintf("this machine's config holds %s without a git provider, so whether it holds those repositories is not in this answer: name the provider there, or run this from a checkout of the repository",
 			strings.Join(unreadable, ", "))
@@ -539,6 +547,7 @@ func reposViewRowOf(ctx context.Context, lc *localcfg.Config, cat *config.Catalo
 	// answer for the repository where it states none. A repository whose
 	// workflows disagree is a state its per-workflow entries carry.
 	row.ImageEntry, row.ImageSource = reposViewRowImage(lc, cat, imap, localName, row.Workflows)
+	row.Workflows, row.ClaudeAccounts = nonNil(row.Workflows), nonNil(row.ClaudeAccounts)
 	return row
 }
 
@@ -660,7 +669,10 @@ func reposViewLocalNameOf(canonical, localKey string) string {
 // rotated container is as old as its first value — so the versions are listed
 // through newestEnabledVersion, the same reader doctor's rotation check uses.
 func reposViewCredentialsOf(ctx context.Context, lc *localcfg.Config, provider, localName string) *reposViewCredentials {
-	out := &reposViewCredentials{}
+	// The list member is empty from the start, so every path out of here — each
+	// of the state sentences below as much as the listing — carries [] and not
+	// null beside a sibling member that did answer.
+	out := &reposViewCredentials{Entries: []reposViewCredential{}}
 	if lc.Endpoints.NoAuth && lc.Endpoints.SecretManager == "" {
 		// The guard the other reads behind a fake use: an empty endpoint under
 		// no_auth would send the call to Google.

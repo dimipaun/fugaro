@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/yamledit"
 )
 
 // viewOf builds the enrolment view over the fixture, the way a command does:
@@ -285,6 +287,139 @@ func TestReposViewAbsentMembersCarryTheirState(t *testing.T) {
 	if _, ok := doc["named"]; ok {
 		t.Errorf("a view built without a named repository carries one: %s", b)
 	}
+}
+
+// listMember fails unless the member the path names is a list in the marshalled
+// document, descending into a list of rows so that a member of every row is
+// checked at once. doc is the document decoded, and label is how the member is
+// written in a failure.
+func listMember(t *testing.T, b []byte, doc any, label string, path ...string) {
+	t.Helper()
+	if len(path) == 0 {
+		switch v := doc.(type) {
+		case nil:
+			t.Errorf("%s is null, and an empty member of the document is []: %s", label, b)
+		case []any:
+		default:
+			t.Errorf("%s is %T, and a member of the document is a list: %s", label, v, b)
+		}
+		return
+	}
+	switch v := doc.(type) {
+	case map[string]any:
+		listMember(t, b, v[path[0]], label, path[1:]...)
+	case []any:
+		for _, e := range v {
+			listMember(t, b, e, label, path...)
+		}
+	default:
+		// A member a list of rows would have to be walked through is not a
+		// list, which is the failure this test is for: the other members are
+		// still worth reporting, so this reports rather than stops.
+		t.Errorf("%s: the path to it is not a list of rows: %s", label, b)
+	}
+}
+
+// Every list member of the document is a list, [] for the one that read nothing
+// and never null (D2410). The two documents are read outside this binary, so a
+// contract that says [] for one absence and null for the absence beside it
+// makes every reader special-case members it cannot tell apart — which is what
+// allow.entries, wrapped, did beside claude_accounts, which was not.
+//
+// The state sentence is not a substitute: an empty list is a true answer here
+// (a machine that records no Claude account records none) as much as a failed
+// read is, and both arrive in a member of the same kind.
+//
+// Mutation (verified, run and restored): drop the nonNil wraps in newReposView,
+// reposViewRowOf, reposViewLocalOf and reposViewCredentialsOf, and the empty
+// literal in reposViewAllowOf's fileOnly. This fails on seen.entries,
+// allow.entries, repos[].workflows, repos[].claude_accounts and the named row's
+// credentials.entries in the first document, and on repos, seen.entries,
+// allow.entries and local.repos in the second. seen.notes is the one member the
+// mutation leaves alone, and rightly: this machine's Firestore holds no history
+// mark, so the note that says so fills the list and it was never empty here.
+func TestReposViewEmptyListMembersAreLists(t *testing.T) {
+	// One repository of this machine's states no workflow and no Claude
+	// account, nothing is published, nothing has run, and the one repository
+	// the caller names reaches the credential member's own guard: the lists
+	// below are empty in this one document.
+	f := newProjectFixture(t, "  acme/bare: { provider: github }\n")
+
+	check := func(v *reposView) map[string]any {
+		t.Helper()
+		b, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(b, &doc); err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range []struct {
+			label string
+			path  []string
+		}{
+			{"repos", []string{"repos"}},
+			{"repos[].workflows", []string{"repos", "workflows"}},
+			{"repos[].claude_accounts", []string{"repos", "claude_accounts"}},
+			{"allow.entries", []string{"allow", "entries"}},
+			{"seen.entries", []string{"seen", "entries"}},
+			{"seen.notes", []string{"seen", "notes"}},
+			{"local.repos", []string{"local", "repos"}},
+		} {
+			listMember(t, b, doc, m.label, m.path...)
+		}
+		return doc
+	}
+
+	v := viewOf(t, f.path, f.db, "github/acme/bare")
+	if v.Allow.State == "" || v.Seen.State != "" {
+		t.Fatalf("the fixture is not the one this test is about: allow=%q seen=%q", v.Allow.State, v.Seen.State)
+	}
+	doc := check(v)
+
+	// The one row the document carries a credential member for: a listing reads
+	// none, and this machine names no Secret Manager endpoint, so the member is
+	// the guard's own state sentence with the empty list beside it.
+	var bare map[string]any
+	for _, r := range doc["repos"].([]any) {
+		if m := r.(map[string]any); m["canonical"] == "github/acme/bare" {
+			bare = m
+		}
+	}
+	if bare == nil {
+		t.Fatalf("the named repository has no row: %v", doc["repos"])
+	}
+	creds, _ := bare["credentials"].(map[string]any)
+	if creds == nil {
+		t.Fatalf("the named row carries no credential member: %v", bare)
+	}
+	if state, _ := creds["state"].(string); state == "" {
+		t.Errorf("the credential member answered, and this machine names no Secret Manager endpoint: %v", creds)
+	}
+	if _, ok := creds["entries"].([]any); !ok {
+		t.Errorf("credentials.entries is %v, want the empty list it read: %v", creds["entries"], creds)
+	}
+
+	// A machine that holds no repository, which is the only document that can
+	// empty the two members a project with a repository always fills: the
+	// rows, and the config's own list.
+	src, err := os.ReadFile(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := yamledit.SetEmptyMapping(src, []string{"repos"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(f.path, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	none := viewOf(t, f.path, f.db, "")
+	if len(none.Repos) != 0 {
+		t.Fatalf("a config that holds no repository built rows: %v", canonicalsOf(none))
+	}
+	check(none)
 }
 
 // The credential member carries presence, a name, a version's state and a
