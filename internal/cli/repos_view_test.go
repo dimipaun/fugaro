@@ -339,7 +339,7 @@ func listMember(t *testing.T, b []byte, doc any, label string, path ...string) {
 // mutation leaves alone, and rightly: this machine's Firestore holds no history
 // mark, so the note that says so fills the list and it was never empty here.
 func TestReposViewEmptyListMembersAreLists(t *testing.T) {
-	// One repository of this machine's states no workflow and no Claude
+	// One repository of this machine's config states no workflow and no Claude
 	// account, nothing is published, nothing has run, and the one repository
 	// the caller names reaches the credential member's own guard: the lists
 	// below are empty in this one document.
