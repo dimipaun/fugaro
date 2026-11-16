@@ -213,6 +213,27 @@ func TestChecklistHasCheck52(t *testing.T) {
 			t.Errorf("the Check 52 U1 step still carries the dead probe (%q): it is a record of the ruling, with no commands", dead)
 		}
 	}
+
+	// T2.6's dated note, under §2 (2026-11-16), and the shape it has to have.
+	// The section's own bans above are why the note cannot restate what changed:
+	// it names the rulings and points at the work's own folder instead. What it
+	// must not do is leave the record reading as the live one — the 2026-10-15
+	// ruling was amended on 2026-11-16, the later rulings are D460–D462 and
+	// D2302, and the shared job those settled is Check 181.
+	flatU1 := strings.Join(strings.Fields(u1), " ")
+	for _, want := range []string{
+		"**Amended 2026-11-16: the ruling's second half has moved, and the first has not.**",
+		"the rulings **D460–D462**",
+		"**D2302**",
+		"(bitbucket-workspace-token/reconciliation-secrets-brokering.md)",
+		"(shared-jobs-default/spec.md)",
+		"**Check 181**",
+		"no project-wide credential is scoped to a set of repositories",
+	} {
+		if !strings.Contains(flatU1, strings.Join(strings.Fields(want), " ")) {
+			t.Errorf("Check 52's U1 step does not carry T2.6's dated note (%q): the ruling this step records was amended on 2026-11-16, and a section that still reads as the live one is how a reader takes the 2026-10-15 reading for the current one", want)
+		}
+	}
 	// And no command anywhere in the section is a git command: the check reads
 	// and writes no repository, so the whole credential-helper machinery
 	// (K1) is gone with the probe it protected.
