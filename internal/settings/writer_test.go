@@ -9,7 +9,8 @@ import (
 // These tests are C1's, the contract the writer registry and the after-write
 // hook are built against (docs/config-ownership/implementation-plan.md §3,
 // D2609, D2610, D2611), plus CR1's revision of it: the segment placeholders,
-// the overlap refusal, and the copies in and out. They register under the
+// the overlap refusal, the copies in and out, and the `Node` fact that says the
+// published node serves a key whose store is somewhere else. They register under the
 // `writertest.` namespace or a `wtest`-prefixed one, so that no pattern a family
 // registers can collide with one of theirs, and so that a pattern left in the
 // table by a test matches no registry row. Each registration is dropped again by
@@ -207,6 +208,16 @@ func TestLabelIsOneOfTheThree(t *testing.T) {
 			writer: Writer{Label: LabelFakeEndpoint, Store: StoreLocal},
 			why:    "a row no command writes lands nowhere: the store of a labelled row is `none`, not the file a person's own edit touches (T5)",
 		},
+		{
+			name: "a labelled row the node is said to serve", pattern: "writertest.shape.labelnode",
+			writer: Writer{Label: LabelPlumbing, Store: StoreNone, Node: true},
+			why:    "the node fact is what the after-write hook runs the policy stage from, and a labelled row has no write for a stage to follow (T5, D2615)",
+		},
+		{
+			name: "a row whose store is the node and whose node flag is set too", pattern: "writertest.shape.nodestore",
+			writer: Writer{Command: "fugaro settings set", Argv: []string{"settings", "set", KeyPlaceholder, "<value>"}, Store: StoreNode, Node: true},
+			why:    "the node is not a second place beside itself: the policy stage is owed for a store of `node` on its own, and the flag beside it states a place the write never left (D2615)",
+		},
 	}
 	for _, tc := range refused {
 		if err := RegisterWriter(tc.pattern, tc.writer); err == nil {
@@ -387,11 +398,40 @@ func TestWriterOfClonesTheArgv(t *testing.T) {
 	}
 }
 
+// TestWriterStoreSaysTheNodeServesAPool pins the fact the stage choice cannot be
+// read from a key's registry row: a pool's row is stated at the pattern
+// `pools.*.*` and carries one layer, the local config, so `Lookup` answers
+// nothing for the concrete key a command writes and no row says the node serves
+// it either. The writer that answers `pools.team.owner` is therefore the only
+// place the node half of D2615's two facts is stated, and this is the case a
+// hook reading the store alone gets wrong: store `local`, and the `policy` stage
+// owed all the same.
+func TestWriterStoreSaysTheNodeServesAPool(t *testing.T) {
+	pools := Writer{
+		Command: "fugaro accounts pool add",
+		Argv:    []string{"accounts", "pool", "add", "<1>", "--owner", ValuePlaceholder},
+		Store:   StoreLocal,
+		Node:    true,
+	}
+	registerForTest(t, "pools.*.*", pools)
+
+	got, ok := WriterOf("pools.team.owner")
+	if !ok {
+		t.Fatalf("WriterOf(pools.team.owner) found no writer: the registry's row is the pattern pools.*.*, and the key is the one a command writes and the refusal prints")
+	}
+	if got.Store != StoreLocal || !got.Node {
+		t.Errorf("WriterOf(pools.team.owner) = store %s, node %v, want store %s with node true: the write lands in the local config while the node serves the pool, so the policy stage is owed for it (D2615)", got.Store, got.Node, StoreLocal)
+	}
+	if _, found := Lookup("pools.team.owner"); found {
+		t.Errorf("Lookup(pools.team.owner) found a row: the key is answered by the pattern pools.*.* and not by a row of its own, which is why the stage choice is read through WriterOf")
+	}
+}
+
 // TestWriterStoreIsOneOfTheSix is the store vocabulary's own pin: the
 // constants are the six the acceptance names, and a store whose value is none
 // of them is refused (the third case of the refusals above). D2615 makes the
-// store the input of the stage choice the after-write hook makes, so a store
-// nobody defined would be a write no stage is ever run for.
+// store one of the two facts the after-write hook reads the stage choice from,
+// so a store nobody defined would be a write no stage is ever run for.
 func TestWriterStoreIsOneOfTheSix(t *testing.T) {
 	for got, want := range map[Store]string{
 		StoreLocal:   "local",

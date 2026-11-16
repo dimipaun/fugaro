@@ -17,7 +17,7 @@ strict. No command writes through either half yet.
 
 | Half | File | What a caller uses |
 | --- | --- | --- |
-| The writer registry | `internal/settings/writer.go` | `RegisterWriter(pattern, Writer) error`, `WriterOf(key) (Writer, bool)`, `Writer{Command, Argv, Store, Label, Reason}`, `KeyPlaceholder`, `ValuePlaceholder`, `Writer.ArgvFor(key)` |
+| The writer registry | `internal/settings/writer.go` | `RegisterWriter(pattern, Writer) error`, `WriterOf(key) (Writer, bool)`, `Writer{Command, Argv, Store, Node, Label, Reason}`, `KeyPlaceholder`, `ValuePlaceholder`, `Writer.ArgvFor(key)` |
 | The after-write hook | `internal/cli/after_write.go` | `runAfterWrite`, of type `afterWriteFunc`; its arguments are `context.Context`, `*cobra.Command` and `afterWriteChange{Key, Store}` |
 
 `Writer` is what writes a settings row's key, as a value rather than a token
@@ -71,10 +71,23 @@ type.
   the local config and served from the published node: its store is `local`.
   It is what the conformance test asserts the key changed in (D2610). A key
   with more than one layer registers the writer whose argv names the layer it
-  wrote; a command writing another layer hands the hook the store it actually
-  wrote in and never this row's (see §4). It is **not** the stage choice — the
-  key's registry row layers are (§3) — so one pattern answers for every layer a
-  key has, and no second registration is needed for a key the node also serves.
+  wrote; a command writing another layer hands the hook the store it wrote in
+  rather than this row's (see §4). It is **one of the two facts** the hook reads
+  for the stages a write owes and not the whole of them (§3): a store of
+  `project` is a write that touched the project layer and owes the `layer`
+  stage, a store of `node` owes the `policy` stage, and the other fact is
+  `Writer.Node`, which is how a key the node serves is stated — a pool's store
+  is `local` and no one store says that the node serves it too. One pattern
+  therefore answers for every key it matches, whatever place the write landed
+  in, and no second registration is needed for a key the node also serves.
+- **`Node` says the published node serves the key besides its store.** It is
+  `true` for a key the node carries to every run although the argv writes
+  somewhere else — `pools.*.*` is the case: the write lands in the local config
+  and the node serves the pool. It is the fact `Store` cannot state, because
+  `afterWriteChange` carries one key and one store and a pool needs two places.
+  It is `false` for the ordinary key one place serves, `RegisterWriter` refuses
+  it on a labelled row (no write, no stage) and refuses it beside a store of
+  `node` (one place cannot also be the second place).
 - **The registered template is the table's.** `RegisterWriter` stores a copy of
   the `Argv` it is handed and `WriterOf` answers a copy of the stored one, so
   neither a family's own template slice nor a caller's copy of the answer is a
@@ -121,21 +134,39 @@ type.
   sentence. A refusal never sends the reader to `fugaro update` as a step.
 - **The hook (N3, every family).** A semantic command calls `runAfterWrite`
   once, after its write has landed and before it returns, with the key as
-  `fugaro settings` spells it and the store it wrote in. **The stages the write
-  owes come from the key's registry row** — `settings.Lookup(key).Layers`: the
-  `policy` stage for a row whose layers include the node, the `layer` stage for a
-  row with the project layer, both for a row that has both — run in
-  `stagesNamed` order (D2615). `afterWriteChange.Store` is not that choice: it is
-  where the write landed, which is the fact the conformance test asserts (D2610),
-  and one `{Key, Store}` cannot say what the layers say. A pool is the case that
-  settled it: its store is `local`, because that is where its argv writes, while
-  the published node is what serves it, so a hook reading the store alone runs no
-  stage and a pool the owner added never reaches a run. A caller that handed the
-  hook a store of its own still states where its write landed, and the stages
-  still come from the row. The caller encodes no stage name, so a stage renamed
-  in `initflow` moves here with no caller edited. On a stage failure the local
-  change stays, the command exits non-zero, and one sentence says the change is
-  saved and not yet live (composite D1563).
+  `fugaro settings` spells it and the store it wrote in. **The stages a write
+  owes are the ones the layers it touched need**, and that is two facts, not
+  one, because one store cannot say a key the node serves (D2615):
+  - **The store the write landed in** — `afterWriteChange.Store` — says which
+    layer the write touched. `project`, the project layer file, owes the `layer`
+    stage, the stage `fugaro update` runs for that file. `node` owes the `policy`
+    stage. `repo`, `local` and `budget` name no stage of their own: a checkout's
+    `fugaro.yaml` and the local config are files the next run reads, so a write
+    that touched only one of them owes nothing for touching it — a write to a
+    `[project repo]` key with `--layer repo` is a repo write, and the `layer`
+    stage's own refusal in an agent session must not be run for a write that
+    never touched the project layer.
+  - **`Writer.Node`** says the published node serves the key besides its store,
+    and that is what a pool needs: its write lands in the local config and the
+    node carries it to every run, so a pool write owes the `policy` stage with a
+    store of `local`, and a hook reading the store alone would run no stage and
+    a pool the owner added would never reach one.
+
+  So the `layer` stage runs exactly when the store the write landed in is
+  `project`, and the `policy` stage exactly when that store is `node` or the
+  key's writer says `Node`; a write neither fact reaches owes no stage at all,
+  and a write both reach — one that landed in the project layer file for a key
+  the node also serves, which is the "both" D2615 names — owes both, in
+  `stagesNamed` order. The key is answered by **the same wildcard rule the
+  writer registry uses** (`WriterOf`, §2): `settings.Lookup("pools.team.owner")`
+  finds no row, because the registry's row is the pattern `pools.*.owner` and
+  `Lookup` matches a key spelling and not the patterns a key falls under, so
+  only `WriterOf` can say a pool write is one the node serves. A write of a key
+  no writer answers for (`WriterOf` false) owes what its store owes and nothing
+  more. The caller encodes no stage name, so a stage renamed in `initflow` moves
+  here with no caller edited. On a stage failure the local change stays, the
+  command exits non-zero, and one sentence says the change is saved and not yet
+  live (composite D1563).
 - **The hook is inert until N3.** `runAfterWrite` is the stub's no-op, which
   returns `nil` and runs nothing, so a family built against this contract
   changes no behaviour a user sees until the stage lands.
@@ -198,10 +229,13 @@ the right one rather than growing a second layer.
 
 The flag changes the store a write lands in, so the command passes the store it
 actually wrote in rather than assuming the row's: the store is where the write
-landed and what the conformance test asserts (D2610). It is not what picks the
-stages — the hook takes those from the key's registry row layers, the node
-included (§3, D2615) — so which layer a write landed in never changes what the
-write owes.
+landed and what the conformance test asserts (D2610). It is also what says which
+layer the write touched, and only that layer's stage is owed for it (§3,
+D2615): `--layer project` owes the `layer` stage, and `--layer repo` on a key
+that has a project layer too owes it nothing, so a repo write never meets the
+`layer` stage's refusal in a session that would refuse a project-layer write.
+The one stage the store does not decide is `policy`, which `Writer.Node` adds
+for a key the node serves wherever the write landed.
 
 ## 7. The not-yet-live sentence (D2614)
 
@@ -248,6 +282,7 @@ stated on its own path; CR1 did not need one.
 | `<key>`, `<1>`, `<2>` … and `<value>`, and a `<n>` with no `*` to name | `TestArgvForFillsTheKeyAndItsSegments`, `TestArgvForLeavesAPlaceholderItDoesNotOwn` |
 | The registered template is the table's: copied in, copied out | `TestWriterOfClonesTheArgv` |
 | The three labels, a `file` row's reason, the store vocabulary | `TestLabelIsOneOfTheThree`, `TestWriterStoreIsOneOfTheSix` |
+| A pool's write: `local` store, and the node serves the key so the `policy` stage is owed | `TestWriterStoreSaysTheNodeServesAPool` |
 | Every row has a runnable writer or a label, and the owner writes the key | T1's `TestWriterConformanceEveryRowHasAWriterOrALabel`, `TestWriterConformanceTheOwnerWritesTheKey` |
 | Every unwritten row carries a label and a reason | L1's `TestEveryUnwrittenRowCarriesALabelAndAReason` |
 | The hook runs the stage, and the sentence is one helper's | N3's `TestAfterWritePublishesThePolicyStage`, `TestAfterWriteSentenceIsOneHelper` |

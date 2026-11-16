@@ -28,10 +28,12 @@ import (
 // Store is where a writer's value lands — the file or the database the write
 // itself touches, and not the place the value is served from (a pool is
 // written in the local config and served from the published node; its store is
-// local). It is what the conformance test asserts the key changed in (D2610).
-// It is not what chooses the stages a write owes: the hook takes them from the
-// registry row's layers for the key, including the node, because one store
-// cannot say that a write it landed locally is one the node serves
+// local). It is what the conformance test asserts the key changed in (D2610),
+// and it is one of the two facts the after-write hook reads for the stages a
+// write owes: a write that landed in the project layer file owes the layer
+// stage and one that landed in the node owes the policy stage. It cannot be the
+// whole of that choice — a pool's store is local and the node serves it, and no
+// one store says both — which is what Writer.Node states
 // (docs/contracts/config-ownership.md §3, D2615).
 type Store string
 
@@ -93,11 +95,11 @@ func segmentPlaceholder(n int) string {
 // Writer is what writes a settings row's key.
 //
 // Exactly one of its two shapes is stated. A row a command writes carries
-// Command, Argv and the Store the value lands in, with no Label — that is the
-// shape the conformance test runs and a refusal prints (D2610). A row no
-// command of this plan writes carries a Label and says StoreNone — that is the
-// shape item 8 allows in place of a writer, and the label with its reason is
-// the pinned fact (T5).
+// Command, Argv, the Store the value lands in and whether the node serves the
+// key besides it, with no Label — that is the shape the conformance test runs
+// and a refusal prints (D2610). A row no command of this plan writes carries a
+// Label and says StoreNone — that is the shape item 8 allows in place of a
+// writer, and the label with its reason is the pinned fact (T5).
 type Writer struct {
 	// Command is the command family that writes the key, as the refusal and
 	// the settings read name it: "fugaro accounts pool add". Empty for a row
@@ -113,9 +115,17 @@ type Writer struct {
 	// test asserts the key changed in. A key with more than one layer is
 	// registered under the writer whose argv names the layer it writes; a
 	// command writing another layer hands the hook the store it wrote in
-	// rather than this row's, and which stages the write owes is the registry
-	// row's layers either way (docs/contracts/config-ownership.md §3, D2615).
+	// rather than this row's (docs/contracts/config-ownership.md §4).
 	Store Store
+	// Node says the published node serves this key besides the store the argv
+	// writes, so that the after-write hook runs the policy stage for it: a
+	// pool's write lands in the local config and the node carries it to every
+	// run, which is the case one store cannot state (D2615). It is the fact
+	// that makes a write's stages the two facts of the contract and not the
+	// store alone, and it is false for the ordinary key one place serves. A
+	// labelled row states it false, and a writer whose store is already the
+	// node states it false too: the node is not a second place beside itself.
+	Node bool
 	// Label is why the row has no runnable writer, or "" for a row that has
 	// one.
 	Label Label
@@ -180,8 +190,9 @@ var (
 // one with the same number of varying segments, for a store or a label outside
 // the two vocabularies above, for a `file` row that states no reason, and for a
 // writer that does not state exactly one of the two shapes: a row a command
-// writes carries a Command, a non-empty Argv and a store other than none, and a
-// labelled row carries neither an Argv nor a store.
+// writes carries a Command, a non-empty Argv, a store other than none and a
+// Node that does not repeat that store, and a labelled row carries neither an
+// Argv, a store nor a Node.
 //
 // Registration happens in the family's package init, where the error is a
 // programming error rather than a user's mistake: the family panics on it, so
@@ -263,7 +274,7 @@ func checkWriter(w Writer) error {
 	switch w.Store {
 	case StoreLocal, StoreProject, StoreRepo, StoreNode, StoreBudget, StoreNone:
 	default:
-		return fmt.Errorf("the store %q is not one of %s, %s, %s, %s, %s, %s: the store is where the value lands and what the conformance test asserts (D2610), and a store nobody defined is a write no reader can place", w.Store, StoreLocal, StoreProject, StoreRepo, StoreNode, StoreBudget, StoreNone)
+		return fmt.Errorf("the store %q is not one of %s, %s, %s, %s, %s, %s: the store is where the value lands, what the conformance test asserts (D2610) and one of the two facts the after-write hook reads for the stages a write owes (D2615), and a store nobody defined is a write no reader can place", w.Store, StoreLocal, StoreProject, StoreRepo, StoreNode, StoreBudget, StoreNone)
 	}
 	switch w.Label {
 	case "", LabelPlumbing, LabelFakeEndpoint, LabelFile:
@@ -280,6 +291,9 @@ func checkWriter(w Writer) error {
 		if w.Store == StoreNone {
 			return fmt.Errorf("a row a command writes lands in a store and this one says %s: the %s store is for a row no command writes, and a writer with an Argv that lands nowhere is a write the conformance test can assert nothing about (D2610)", w.Store, StoreNone)
 		}
+		if w.Node && w.Store == StoreNode {
+			return fmt.Errorf("a writer whose store is already %s says the node serves the key beside it: one place cannot be the store and the second place too, and the hook reads the %s store as the policy stage on its own (D2615)", StoreNode, StoreNode)
+		}
 		return nil
 	}
 	if len(w.Argv) > 0 {
@@ -287,6 +301,9 @@ func checkWriter(w Writer) error {
 	}
 	if w.Store != StoreNone {
 		return fmt.Errorf("a row registered with the %s label says the %s store, and a row no command writes lands nowhere (%s): setup converging a file is not this row being written by a command (T5)", w.Label, w.Store, StoreNone)
+	}
+	if w.Node {
+		return fmt.Errorf("a row registered with the %s label says the node serves it: the label stands in for a runnable writer, so there is no write for the after-write hook to run a stage after (T5, D2615)", w.Label)
 	}
 	if w.Label == LabelFile && w.Reason == "" {
 		return fmt.Errorf("the %s label needs its one-line reason: a key in a named file nobody edits states why it is not a settings row, or it becomes one (D2611, T5)", LabelFile)
