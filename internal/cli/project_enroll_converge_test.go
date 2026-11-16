@@ -253,6 +253,35 @@ func TestProjectReposAddSecondRunChangesNothing(t *testing.T) {
 	}
 }
 
+// TestProjectReposAddPublishesWhenTheFileRecordsTheGeneration is the state
+// every machine that has published a policy before is in — the file records the
+// generation of the node it was written from — and the one no fixture had.
+//
+// Step 3 writes the node and records the generation it published, so the config
+// the stages are given has to be the file as it stands AFTER that write: the one
+// steps 1 and 2 left still names the generation from before, and the policy
+// stage reads that as "the node has moved past this file" and takes D854's
+// re-seed path — under the confirmation this command already had — instead of
+// publishing the config (step 2's image map included) that it has just written.
+func TestProjectReposAddPublishesWhenTheFileRecordsTheGeneration(t *testing.T) {
+	r := enrolRig(t)
+	r.recordGeneration(t, enrolNodeGeneration(t, r))
+	out, errOut, err := r.enrol(t, enrolRepo)
+	if err != nil {
+		t.Fatalf("project repos add %s from a file recording the node's generation: %v\nstdout:\n%s\nstderr:\n%s", enrolRepo, err, out, errOut)
+	}
+	if all := out + errOut; strings.Contains(all, "re-seeded") {
+		t.Errorf("the run re-seeded this machine's config from the node instead of publishing it:\n--- stdout\n%s\n--- stderr\n%s", out, errOut)
+	}
+	// Step 2's map is in the file still, and the publish carried it to the node.
+	if got := r.addLocal(t).ImageMap[enrolEntry]; got != "base" {
+		t.Errorf("image_map[%s] = %q in the local config, want the entry this enrolment wrote:\n%s", enrolEntry, got, r.cfgText(t))
+	}
+	if got := r.policy(t).ImageMap[enrolEntry]; got != "base" {
+		t.Errorf("the published node's image_map[%s] = %q, want the entry this machine's config states: the publish did not land\n%s", enrolEntry, got, r.nodeText(t))
+	}
+}
+
 // TestProjectReposAddMergesThePublishedImageMap is the trap the task names: a
 // local config that names no repo-to-image map would, under the keep rule
 // (D1906), state the project's WHOLE map when this step writes one — and take
@@ -589,4 +618,37 @@ func (r *addRig) nodeText(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// enrolNodeGeneration is the generation the published node is at, read the way
+// the command reads it: the ETag the node's own read answers, which is what a
+// machine that published it records in its file.
+func enrolNodeGeneration(t *testing.T, r *addRig) string {
+	t.Helper()
+	db, err := newBudgetClient(t.Context(), r.db.URL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	etag, found, _, err := readPolicyNode(t.Context(), db, r.addLocal(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatalf("the rig holds no policy node at %s", projectpolicy.PathShared())
+	}
+	return etag
+}
+
+// recordGeneration writes that generation into the file the way the publisher
+// does (recordPublishedGeneration), which is the state every machine that has
+// published a policy before is in and the fixtures otherwise never reach.
+func (r *addRig) recordGeneration(t *testing.T, etag string) {
+	t.Helper()
+	text := r.cfgText(t)
+	if strings.Contains(text, "policy_generation:") {
+		t.Fatalf("the fixture's config already records a generation:\n%s", text)
+	}
+	if err := os.WriteFile(r.cfg, []byte(text+"\npolicy_generation: "+etag+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }

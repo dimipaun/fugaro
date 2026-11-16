@@ -717,12 +717,22 @@ func reposEnrolmentWhat(lc *localcfg.Config, plan reposEnrolment) string {
 // than writing the same bytes again.
 func reposEnrolmentApply(ctx context.Context, cmd *cobra.Command, o *projectReposOptions, lc *localcfg.Config, db *rtdb.Client, configPath string, plan reposEnrolment) error {
 	out := cmd.OutOrStdout()
-	cur, err := reposEnrolmentWriteLocal(out, plan)
-	if err != nil {
+	if err := reposEnrolmentWriteLocal(out, plan); err != nil {
 		return err
 	}
 	if err := reposEnrolmentWriteAllow(ctx, out, configPath, lc, db, plan); err != nil {
 		return err
+	}
+	// Step 3 writes the node and records the generation it published in this
+	// machine's file (putAllowRepos), so the stages are given the file as it
+	// stands AFTER it: a config read before that write still names the
+	// generation from before it, and the policy stage reads that as a node that
+	// has moved past this file — answering with D854's re-seed of the file step
+	// 2 has just written, under the confirmation this command already had,
+	// instead of publishing what it wrote.
+	cur, err := localcfg.Load(plan.path)
+	if err != nil {
+		return userErr("reading back %s: %v", safetext.Field(plan.path), err)
 	}
 	return reposEnrolmentStages(ctx, cmd, o, cur, plan)
 }
@@ -732,10 +742,13 @@ func reposEnrolmentApply(ctx context.Context, cmd *cobra.Command, o *projectRepo
 // second write is made from the file the first one left, and a step with
 // nothing to change writes nothing at all (userSave is not reached).
 //
-// It answers the config the file holds when the steps are done, which is what
-// the stages below read: they are `fugaro update`'s, and that command reads
-// the file.
-func reposEnrolmentWriteLocal(out io.Writer, plan reposEnrolment) (*localcfg.Config, error) {
+// The file is read back here, before the published write rather than after it:
+// that is the read which says the document is what this command thinks it is,
+// and it has to come before the node moves — a config the loader refuses leaves
+// the allow-list entry unpublished instead of admitting a repository this
+// machine's file cannot state. What the stages read is the file after step 3
+// (reposEnrolmentApply), because that write records the generation it published.
+func reposEnrolmentWriteLocal(out io.Writer, plan reposEnrolment) error {
 	cur, old := plan.local, plan.old
 	changed := false
 	if !plan.entryKnown || !reposEntryEqual(plan.entryNow, plan.entry) {
@@ -746,7 +759,7 @@ func reposEnrolmentWriteLocal(out io.Writer, plan reposEnrolment) (*localcfg.Con
 		}
 		next.Repos[plan.ownerName] = plan.entry
 		if err := userSave(out, plan.path, old, &next); err != nil {
-			return nil, err
+			return err
 		}
 		cur, changed = &next, true
 		fmt.Fprintf(out, "repos.%s: %s\n", plan.ownerName, reposEntryLine(plan.entry))
@@ -759,10 +772,10 @@ func reposEnrolmentWriteLocal(out io.Writer, plan reposEnrolment) (*localcfg.Con
 		// parsed value is not the same bytes as the document it was parsed from.
 		data, err := os.ReadFile(plan.path)
 		if err != nil {
-			return nil, userErr("reading %s: %v", safetext.Field(plan.path), err)
+			return userErr("reading %s: %v", safetext.Field(plan.path), err)
 		}
 		if err := userSave(out, plan.path, data, &next); err != nil {
-			return nil, err
+			return err
 		}
 		cur, changed = &next, true
 		fmt.Fprintf(out, "image_map[%s] = %s\n", plan.canonical, pluginwire.Printable(plan.imageEntry))
@@ -773,14 +786,10 @@ func reposEnrolmentWriteLocal(out io.Writer, plan reposEnrolment) (*localcfg.Con
 	if !changed {
 		fmt.Fprintf(out, "%s is already as this enrolment wants it\n", safetext.Field(plan.path))
 	}
-	// The stages read the file, not this value, and they read it through the
-	// loader: the one read that says the document is what this command thinks
-	// it is.
-	written, err := localcfg.Load(plan.path)
-	if err != nil {
-		return nil, userErr("reading back %s: %v", safetext.Field(plan.path), err)
+	if _, err := localcfg.Load(plan.path); err != nil {
+		return userErr("reading back %s: %v", safetext.Field(plan.path), err)
 	}
-	return written, nil
+	return nil
 }
 
 // reposEnrolmentWriteAllow is step 3: one entry in the published allow-list,
