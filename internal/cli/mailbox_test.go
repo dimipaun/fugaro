@@ -337,11 +337,11 @@ func TestMailboxASecondConsumerReadsNothing(t *testing.T) {
 }
 
 // TestMailboxHoldsTheLeaseItTook: the loop takes a mailbox's lease **once** and
-// holds it, which is the module's rule — a fresh claim is refused a second take
-// "whatever its holder string", so a pass that re-took the lease on every
-// iteration would act on nothing until the claim went stale ten minutes later.
-// Two passes of one consumer therefore both hold it, and the second one refuses
-// the delivery it already consumed as a duplicate.
+// renews it on every pass after that, which is the module's rule — a fresh claim
+// is refused a second take "whatever its holder string", so a pass that re-took
+// the lease on every iteration would act on nothing until the claim went stale
+// ten minutes later. Two passes of one consumer therefore both hold it, and the
+// second one refuses the delivery it already consumed as a duplicate.
 func TestMailboxHoldsTheLeaseItTook(t *testing.T) {
 	f := newMailboxFixture(t, "")
 	f.writeMessage(t, "msg-1", mailboxNowMs())
@@ -378,6 +378,122 @@ func TestMailboxHoldsTheLeaseItTook(t *testing.T) {
 			t.Fatalf("duplicates = %d, want %d", pass.verdict.duplicates, want.duplicates)
 		}
 	}
+}
+
+// TestMailboxRenewsTheHeartbeatEveryPass is M1(c) and §7's "the heartbeat,
+// every renewal": the heartbeat **is** the lease, and it is also the value the
+// phone reads to decide whether this consumer is present (§4.2). A loop that
+// wrote it once and left it alone would tell the phone the consumer had gone
+// offline a couple of presence intervals after its first pass, and the claim
+// that write took would stop being fresh `ClaimTTL` after it — at which point
+// the next pass reads its inbox and then stops acting on what it read, because
+// the holder's own re-read honours a fresh claim only (Confirm, ActionBound).
+//
+// The database's clock is moved past ClaimTTL between the two passes, which is
+// the whole of the case: the second pass must renew the heartbeat at the new
+// instant and go on to act on the delivery it read, rather than report a lease
+// it no longer holds. A pass decides at this machine's clock corrected by the
+// `Date` of the most recent answer (D117, internal/rtdb), so the moved clock is
+// made visible with one read before the second pass — the answer to it carries
+// the new instant, exactly as the answer to some request in a real interval
+// would; without it the pass would decide at the offset its last pass left
+// behind, which is a torn reading rather than the ten minutes this case is
+// about.
+func TestMailboxRenewsTheHeartbeatEveryPass(t *testing.T) {
+	f := newMailboxFixture(t, "")
+	// One clock for the whole case, and it is the database's: the one a pass
+	// decides at (D117). It is this machine's clock rather than a fixed date,
+	// because the deliveries are stamped at it and the gate refuses a message
+	// dated further ahead of the local clock than its future tolerance — a case
+	// that also had to move the messages would be one about the gate.
+	at := time.Now().UTC().Truncate(time.Second)
+	f.db.SetClock(func() time.Time { return at })
+	msgAt := at.UnixMilli()
+	f.writeMessage(t, "msg-1", msgAt)
+	ctx := context.Background()
+	lc, db, err := openBudget(ctx, cloudOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pairings, _, err := mailboxKeyring(ctx, lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := mailbox.OpenLedger(mailbox.LedgerOptions{Project: lc.Name, PromptTtlMs: mailboxPromptTtlMs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := &strings.Builder{}
+	c := &mailboxConsumer{
+		lc: lc, db: db, ledger: ledger, pairings: pairings,
+		held: map[string]mailbox.LeaseRun{}, holder: "boot-renew-test", out: out,
+	}
+	first, err := c.pass(ctx, pairings[0])
+	if err != nil {
+		t.Fatalf("the first pass: %v", err)
+	}
+	if first.lease.State != string(mailbox.LeaseHeld) || first.verdict.read != 1 ||
+		first.verdict.refused != 1 || first.verdict.actionRefused != 1 {
+		t.Fatalf("the first pass = %+v, want a held lease over one delivery it refused at the action seam", first)
+	}
+	took := heartbeatAt(t, f.heartbeat())
+	if took != at.UnixMilli() {
+		t.Fatalf("the take wrote the heartbeat at %d, want %d", took, at.UnixMilli())
+	}
+
+	// Past the claim's own TTL: the module's freshness is `at - claim.at < ttl`,
+	// so the claim the take wrote no longer protects this consumer here — which
+	// is what another consumer's take and this holder's own re-read both key on.
+	// A second delivery is left in the inbox, dated like the first, so the pass
+	// has one reading that is new to the ledger and one it has already consumed.
+	at = at.Add(mailbox.ClaimTTL*time.Millisecond + time.Second)
+	f.db.SetClock(func() time.Time { return at })
+	var heartbeat json.RawMessage
+	if _, err := db.Get(ctx, "mailbox/"+mailboxUID+"/heartbeat", &heartbeat); err != nil {
+		t.Fatalf("placing the second pass after the database's clock moved: %v", err)
+	}
+	f.writeMessage(t, "msg-2", msgAt)
+
+	second, err := c.pass(ctx, pairings[0])
+	if err != nil {
+		t.Fatalf("the second pass: %v", err)
+	}
+	if second.lease.State != string(mailbox.LeaseHeld) {
+		t.Fatalf("the second pass's lease = %q, want held: the pass renewed the heartbeat it holds", second.lease.State)
+	}
+	// Two refusals, as §7's loop counts them: the second delivery refused at the
+	// action seam, and the first one refused again as the duplicate it is — a
+	// pass that did not renew would have acted on neither, and its refusals
+	// would be empty.
+	if second.verdict.read != 2 || second.verdict.duplicates != 1 ||
+		second.verdict.refused != 2 || second.verdict.actionRefused != 1 {
+		t.Fatalf("the second pass = %+v, want the delivery it had not seen refused at the action seam and the one it had seen refused as a duplicate: a stale claim stops the pass acting and refuses nothing", second.verdict)
+	}
+	if renewed := heartbeatAt(t, f.heartbeat()); renewed < at.UnixMilli() || renewed == took {
+		t.Fatalf("the heartbeat is at %d after the second pass, want the renewal's own instant (%d or later) in place of the take's %d: the loop renews it every pass, and the phone's presence reading is what it renews", renewed, at.UnixMilli(), took)
+	}
+	for _, note := range second.notes {
+		if strings.Contains(note, "no longer this consumer's") {
+			t.Fatalf("the second pass stopped acting on a lease it renewed: %q", note)
+		}
+	}
+}
+
+// heartbeatAt is the instant the fixture's database holds in the heartbeat, read
+// through the module's own validator: what the test reads is the node the
+// consumer wrote, and a node that is not a heartbeat is a failure here rather
+// than a zero.
+func heartbeatAt(t *testing.T, node any) int64 {
+	t.Helper()
+	record, ok := node.(map[string]any)
+	if !ok {
+		t.Fatalf("the heartbeat is %T, want the object the consumer wrote", node)
+	}
+	hb, refusal := mailbox.ValidateHeartbeat(mailbox.Record(record))
+	if refusal != nil {
+		t.Fatalf("the heartbeat the consumer wrote is not one this schema accepts (%s)", refusal.Code)
+	}
+	return hb.At
 }
 
 // TestRefusedMessageStillExitsZero is §4.4's first row, and the red step T5

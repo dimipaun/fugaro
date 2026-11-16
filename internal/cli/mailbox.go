@@ -31,12 +31,12 @@ import (
 // startup checks, the pass, and what it prints. Everything the pass does with a
 // message it does through a merged package — the inbound gate, the outbound
 // signer and the keychain are internal/mailbox's and internal/mailbox/
-// keychain's (T2, T2a), the lease on the heartbeat is mailbox.Take (T3), the
-// dedupe ledger and its commit-before-acting fence are mailbox.Perform (T4) —
-// so there is no second reader here and no second tag function. What this file
-// decides is which node is read, in which order, and what a pass is reported
-// as. It writes the outbox and the heartbeat and nothing else, under the
-// operator's own ADC (C0).
+// keychain's (T2, T2a), the lease on the heartbeat is mailbox.Take and
+// mailbox.Renew (T3), the dedupe ledger and its commit-before-acting fence are
+// mailbox.Perform (T4) — so there is no second reader here and no second tag
+// function. What this file decides is which node is read, in which order, and
+// what a pass is reported as. It writes the outbox and the heartbeat and
+// nothing else, under the operator's own ADC (C0).
 //
 // **The action runner is the one seam left open, and T5 refuses at it.**
 // §9's allow-list and the argv shape of each action are T6's, and so is P6.7's
@@ -195,6 +195,13 @@ func newMailboxCmd() *cobra.Command {
 			"every pass until an operator removes the node with their own credential.\n" +
 			"Every reply and every heartbeat is signed before it is written, so a value\n" +
 			"the signer refuses is not written at all.\n" +
+			"\n" +
+			"The heartbeat IS the lease, and the loop renews it on every pass: it is\n" +
+			"rewritten with the current instant under the same compare-and-swap a take\n" +
+			"uses, which is what tells the phone this consumer is present and what keeps\n" +
+			"the lease fresh. A renewal that finds the mailbox held by someone else writes\n" +
+			"nothing, and the next pass takes the lease rather than acting on one it has\n" +
+			"lost.\n" +
 			"\n" +
 			"The command stops at startup when there is no pairing key at the keychain\n" +
 			"items its project config names, rather than looping over a mailbox it could\n" +
@@ -409,8 +416,9 @@ type mailboxConsumer struct {
 	ledger   *mailbox.Ledger
 	pairings []mailboxPairing
 	// held is the one lease this consumer holds per pairing, keyed by the
-	// mailbox it was taken on: the loop takes it on its first pass and keeps it
-	// (leaseFor), which is what the module's own take rule requires.
+	// mailbox it was taken on: the loop takes it on its first pass and renews
+	// it on every pass after that (leaseFor), which is what the module's own
+	// take rule requires and what keeps the phone's presence reading fresh.
 	held        map[string]mailbox.LeaseRun
 	holder      string
 	noHeartbeat bool
@@ -593,23 +601,41 @@ func (c *mailboxConsumer) pass(ctx context.Context, pairing mailboxPairing) (mai
 }
 
 // leaseFor is the lease this pass runs under. **A consumer takes a mailbox's
-// lease once and holds it**, which is the module's own rule rather than a
-// shortcut: `takeLease` answers `already-claimed` to a fresh claim "whatever
-// its holder string — a lease is renewed by releasing it, not by re-taking
-// it", and §7's loop passes over a mailbox every `--interval` (five seconds by
-// default). A pass that took the lease again on every iteration would be
-// refused its own claim and would act on nothing until the claim went stale ten
+// lease once and renews it on every pass after that.**
+//
+// The take is once because the module's own rule refuses a take of a fresh
+// claim to everyone, its holder included: `takeLease` answers `already-claimed`
+// "whatever its holder string", so a pass that took again each iteration would
+// be refused its own claim and would act on nothing until it went stale ten
 // minutes later — a consumer that stopped serving its mailbox after its first
 // pass.
 //
-// So the take happens on the first pass for a pairing and every pass after it
-// reuses what it holds; past `ActionBound(claim, ttl)` the holder re-reads the
-// lease before it acts (deliver's own check), and a re-read that comes back not
-// held drops the claim here so the next pass takes it afresh, which is the
-// module's caller obligation for a stale claim.
+// The renewal is every pass because the heartbeat IS the lease and it is also
+// what the phone reads for presence (M1(c), §4.2): a consumer that wrote it
+// once and left it alone would look offline within a minute or two of presence
+// intervals, its claim would stop being fresh `ClaimTTL` after it was written,
+// and the pass that followed would read a message and then stop acting on it —
+// the holder's own re-read honours a fresh claim only. `mailbox.Renew` writes
+// the fresh `{at, boot, mac}` under the same ETag fence a take uses, and a
+// renewal that comes back not held is the truth about a mailbox this consumer
+// no longer holds: the claim is dropped here, so the next pass takes it afresh
+// rather than reporting a lease it has lost.
+//
+// Past `ActionBound(claim, ttl)` the holder re-reads the lease before it acts
+// as well (deliver's own check, T3's caller obligation for a pass that outlives
+// its renewal).
 func (c *mailboxConsumer) leaseFor(ctx context.Context, pairing mailboxPairing, now int64) (mailbox.LeaseRun, error) {
-	if run, holds := c.held[pairing.uid]; holds {
-		return run, nil
+	if _, holds := c.held[pairing.uid]; holds {
+		renewed, err := mailbox.Renew(ctx, c.db, c.leaseOptions(pairing, now))
+		if err != nil {
+			return renewed, err
+		}
+		if renewed.Verdict == mailbox.LeaseHeld {
+			c.held[pairing.uid] = renewed
+		} else {
+			delete(c.held, pairing.uid)
+		}
+		return renewed, nil
 	}
 	run, err := mailbox.Take(ctx, c.db, c.leaseOptions(pairing, now))
 	if err == nil && run.Lease != nil {

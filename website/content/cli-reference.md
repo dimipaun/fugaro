@@ -4272,6 +4272,13 @@ every pass until an operator removes the node with their own credential.
 Every reply and every heartbeat is signed before it is written, so a value
 the signer refuses is not written at all.
 
+The heartbeat IS the lease, and the loop renews it on every pass: it is
+rewritten with the current instant under the same compare-and-swap a take
+uses, which is what tells the phone this consumer is present and what keeps
+the lease fresh. A renewal that finds the mailbox held by someone else writes
+nothing, and the next pass takes the lease rather than acting on one it has
+lost.
+
 The command stops at startup when there is no pairing key at the keychain
 items its project config names, rather than looping over a mailbox it could
 do nothing with. The pairing key is read from the OS keychain by item name
