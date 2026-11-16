@@ -3,6 +3,7 @@ package settings
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -27,9 +28,11 @@ import (
 // Store is where a writer's value lands — the file or the database the write
 // itself touches, and not the place the value is served from (a pool is
 // written in the local config and served from the published node; its store is
-// local). It is the input of the stage choice the after-write hook makes
-// (D2615): the hook reads the store and runs the stages that key needs, so a
-// store nobody defined is a write no stage is ever run for.
+// local). It is what the conformance test asserts the key changed in (D2610).
+// It is not what chooses the stages a write owes: the hook takes them from the
+// registry row's layers for the key, including the node, because one store
+// cannot say that a write it landed locally is one the node serves
+// (docs/contracts/config-ownership.md §3, D2615).
 type Store string
 
 const (
@@ -68,11 +71,24 @@ const (
 )
 
 // KeyPlaceholder is the word an Argv template writes where the concrete
-// settings key goes: `{"settings", "set", KeyPlaceholder, "<value>"}`. A
-// wildcard row has no single key to name (`workflows.*.commands.test` is
+// settings key goes: `{"settings", "set", KeyPlaceholder, ValuePlaceholder}`.
+// A wildcard row has no single key to name (`workflows.*.commands.test` is
 // written at `workflows.web.commands.test`), so the template is what is
 // registered and ArgvFor fills it.
 const KeyPlaceholder = "<key>"
+
+// ValuePlaceholder is the word an Argv template writes where the value goes.
+// ArgvFor leaves it as written: the value is the caller's, and the conformance
+// test fills it with one it chooses per row (T1).
+const ValuePlaceholder = "<value>"
+
+// segmentPlaceholder is the word an Argv template writes for the segment a
+// pattern's nth `*` stands for, counting the stars left to right from 1: a
+// `pools.*.owner` template writes `<1>` where the pool's name goes, because
+// the whole key there is not a name the command accepts.
+func segmentPlaceholder(n int) string {
+	return "<" + strconv.Itoa(n) + ">"
+}
 
 // Writer is what writes a settings row's key.
 //
@@ -88,15 +104,17 @@ type Writer struct {
 	// registered with a label.
 	Command string
 	// Argv is the command line the row is written by, in words, without the
-	// leading `fugaro` and with KeyPlaceholder where the concrete key goes.
-	// The conformance test runs it against a hermetic config and asserts the
-	// key changed in Store (T1); a refusal prints it (W3).
+	// leading `fugaro` and with the placeholders ArgvFor fills where the
+	// concrete key, its segments and the value go. The conformance test runs it
+	// against a hermetic config and asserts the key changed in Store (T1); a
+	// refusal prints it (W3).
 	Argv []string
 	// Store is where this Argv's write lands, and the store the conformance
 	// test asserts the key changed in. A key with more than one layer is
 	// registered under the writer whose argv names the layer it writes; a
 	// command writing another layer hands the hook the store it wrote in
-	// rather than this row's (docs/contracts/config-ownership.md §4).
+	// rather than this row's, and which stages the write owes is the registry
+	// row's layers either way (docs/contracts/config-ownership.md §3, D2615).
 	Store Store
 	// Label is why the row has no runnable writer, or "" for a row that has
 	// one.
@@ -104,16 +122,39 @@ type Writer struct {
 	// Reason is the one line saying what the label means for this row. It is
 	// required for LabelFile and unused by the other two.
 	Reason string
+	// pattern is the registry row pattern this Writer was registered under,
+	// which ArgvFor reads to know which segments its `<n>` words name. It is
+	// set by RegisterWriter and read by no other caller: stated on the Writer
+	// it would be a second spelling of the registration key, free to disagree
+	// with it.
+	pattern string
 }
 
 // ArgvFor is the Argv of a Writer with the key filled in: the command line the
-// conformance test runs and a refusal prints. It is a copy, so a caller cannot
+// conformance test runs and a refusal prints. `<key>` becomes the whole key and
+// `<n>` the key's segment at the pattern's nth `*`, counting left to right;
+// `<value>` is left for the caller, and a `<n>` this Writer cannot place is
+// left as written rather than dropped or refused
+// (docs/contracts/config-ownership.md §2). It is a copy, so a caller cannot
 // edit the registered template.
 func (w Writer) ArgvFor(key string) []string {
+	segments := strings.Split(key, ".")
+	filled := map[string]string{KeyPlaceholder: key}
+	star := 0
+	for i, segment := range strings.Split(w.pattern, ".") {
+		if segment != "*" {
+			continue
+		}
+		star++
+		if i >= len(segments) {
+			break
+		}
+		filled[segmentPlaceholder(star)] = segments[i]
+	}
 	out := slices.Clone(w.Argv)
 	for i, word := range out {
-		if word == KeyPlaceholder {
-			out[i] = key
+		if value, ok := filled[word]; ok {
+			out[i] = value
 		}
 	}
 	return out
@@ -135,11 +176,12 @@ var (
 )
 
 // RegisterWriter registers w as the writer of every key the pattern matches.
-// It answers an error for a pattern that is already registered, for a store or
-// a label outside the two vocabularies above, for a `file` row that states no
-// reason, and for a writer that does not state exactly one of the two shapes:
-// a row a command writes carries a Command, a non-empty Argv and a store other
-// than none, and a labelled row carries neither an Argv nor a store.
+// It answers an error for a pattern that is already registered or that overlaps
+// one with the same number of varying segments, for a store or a label outside
+// the two vocabularies above, for a `file` row that states no reason, and for a
+// writer that does not state exactly one of the two shapes: a row a command
+// writes carries a Command, a non-empty Argv and a store other than none, and a
+// labelled row carries neither an Argv nor a store.
 //
 // Registration happens in the family's package init, where the error is a
 // programming error rather than a user's mistake: the family panics on it, so
@@ -153,11 +195,16 @@ func RegisterWriter(pattern string, w Writer) error {
 	if err := checkWriter(w); err != nil {
 		return fmt.Errorf("settings: the writer of %s: %w", pattern, err)
 	}
+	w.Argv = slices.Clone(w.Argv)
+	w.pattern = pattern
 	writerMu.Lock()
 	defer writerMu.Unlock()
 	for _, r := range writerRows {
 		if r.pattern == pattern {
 			return fmt.Errorf("settings: %s is already registered by %s, and one pattern has one registrant: two families naming one row is a diff to settle, not a registration to win (docs/contracts/config-ownership.md)", pattern, describe(r.writer))
+		}
+		if varyingSegments(r.pattern) == varyingSegments(pattern) && patternsOverlap(r.pattern, pattern) {
+			return fmt.Errorf("settings: %s (registered by %s) and %s overlap with the same number of varying segments, and which of the two answered a common key would be the table's order rather than the more specific row: one of the two is a diff to settle (docs/contracts/config-ownership.md)", r.pattern, describe(r.writer), pattern)
 		}
 	}
 	writerRows = append(writerRows, writerRow{pattern: pattern, writer: w})
@@ -165,19 +212,48 @@ func RegisterWriter(pattern string, w Writer) error {
 	return nil
 }
 
+// unregisterWriter drops a pattern's row. Nothing in the binary calls it: it is
+// what a test's t.Cleanup runs, so that a second run of this package's tests
+// meets no registration it made itself.
+func unregisterWriter(pattern string) {
+	writerMu.Lock()
+	defer writerMu.Unlock()
+	writerRows = slices.DeleteFunc(writerRows, func(r writerRow) bool { return r.pattern == pattern })
+}
+
 // WriterOf is the writer of key: the row registered under the key itself, or
 // the most specific pattern that matches it. false: no row and no pattern
 // answers for the key, which is a key whose refusal keeps its family sentence
-// (W3).
+// (W3). The Argv is a copy, so a caller cannot edit the registered template.
 func WriterOf(key string) (Writer, bool) {
 	writerMu.RLock()
 	defer writerMu.RUnlock()
 	for _, r := range writerRows {
 		if patternMatches(r.pattern, key) {
-			return r.writer, true
+			w := r.writer
+			w.Argv = slices.Clone(w.Argv)
+			return w, true
 		}
 	}
 	return Writer{}, false
+}
+
+// patternsOverlap says whether one key can match both patterns: they must have
+// the same segments, and no segment where the two state different words with
+// neither varying. Patterns of a different segment count match no common key at
+// all.
+func patternsOverlap(a, b string) bool {
+	x, y := strings.Split(a, "."), strings.Split(b, ".")
+	if len(x) != len(y) {
+		return false
+	}
+	for i := range x {
+		if x[i] == "*" || y[i] == "*" || x[i] == y[i] {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // checkWriter is the vocabulary a registration is held to, and the two shapes
@@ -187,7 +263,7 @@ func checkWriter(w Writer) error {
 	switch w.Store {
 	case StoreLocal, StoreProject, StoreRepo, StoreNode, StoreBudget, StoreNone:
 	default:
-		return fmt.Errorf("the store %q is not one of %s, %s, %s, %s, %s, %s: the store is where the value lands, and the after-write hook reads it to choose the stages the write owes (D2615)", w.Store, StoreLocal, StoreProject, StoreRepo, StoreNode, StoreBudget, StoreNone)
+		return fmt.Errorf("the store %q is not one of %s, %s, %s, %s, %s, %s: the store is where the value lands and what the conformance test asserts (D2610), and a store nobody defined is a write no reader can place", w.Store, StoreLocal, StoreProject, StoreRepo, StoreNode, StoreBudget, StoreNone)
 	}
 	switch w.Label {
 	case "", LabelPlumbing, LabelFakeEndpoint, LabelFile:
@@ -202,7 +278,7 @@ func checkWriter(w Writer) error {
 			return fmt.Errorf("a row a command writes names the command that writes it, and this one names none: the settings read and the refusal say which command owns the key (D2609)")
 		}
 		if w.Store == StoreNone {
-			return fmt.Errorf("a row a command writes lands in a store and this one says %s: the %s store is for a row no command writes, and a writer with an Argv that lands nowhere is a write the hook runs no stage for (D2615)", w.Store, StoreNone)
+			return fmt.Errorf("a row a command writes lands in a store and this one says %s: the %s store is for a row no command writes, and a writer with an Argv that lands nowhere is a write the conformance test can assert nothing about (D2610)", w.Store, StoreNone)
 		}
 		return nil
 	}
@@ -231,9 +307,11 @@ func describe(w Writer) string {
 }
 
 // comparePatterns orders the table so that the most specific row answers
-// first: the fewest varying segments, then the pattern itself, so that the
-// answer for a key never depends on the order two families happened to
-// register in.
+// first: the fewest varying segments, then the pattern itself. Two patterns of
+// equal specificity that could match one key are refused at registration, so
+// the text tie-break only orders rows that match no common key: it is kept for
+// a table order that is the same in every binary, not because an answer depends
+// on it.
 func comparePatterns(a, b string) int {
 	if d := varyingSegments(a) - varyingSegments(b); d != 0 {
 		return d
