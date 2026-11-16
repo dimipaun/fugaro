@@ -63,6 +63,7 @@ func Embedded() *Table {
 	}
 	t := &Table{Source: source, CheckedAt: checkedAt, Models: make(map[string]Model, len(models))}
 	for _, m := range models {
+		m.flatEnds()
 		t.Models[m.ID] = m
 	}
 	return t

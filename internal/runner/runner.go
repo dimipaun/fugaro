@@ -401,6 +401,18 @@ type run struct {
 	reported     pricing.Micros
 	unreconciled pricing.Micros
 	unparsed     int
+	// reportedBy, tableLoBy and tableHiBy are the run's provider reports and
+	// the price table's band behind them, by serving model, and
+	// unreportedCalls counts the settled calls that came back with none:
+	// the ledger's figures, taken when the gateway closes (F24, D2650).
+	// They are the ledger's and never a sum of the stage reports, which do
+	// not hold a call that settled after its stage's wait ran out -- such a
+	// call is in the ledger's figures and in no report, so adding the two
+	// would count it twice (SA1.5).
+	reportedBy      map[string]pricing.Micros
+	tableLoBy       map[string]pricing.Micros
+	tableHiBy       map[string]pricing.Micros
+	unreportedCalls int
 	// serviceTiers are the service tiers the run's calls came back at that
 	// the price table has no multiplier for, from every stage's report:
 	// those calls were charged conservatively rather than failing the
@@ -5616,7 +5628,10 @@ func (r *run) finalize(ctx context.Context) error {
 	}
 	// A build's artifact the run left in the tree is never this commit's
 	// (stray.go): it is refused by name, and held out of the commit, so what
-	// the branch carries is the run's work and no compiled file beside it.
+	// the branch carries is the run's work and no compiled file beside it. A
+	// binary the run's own policy admits at that path and size is not one —
+	// the check reads the policy the run resolved, and no file in the checkout
+	// may widen it (D986) — so a task whose work is an asset ships it.
 	//
 	// The refusal is a failure and not a stop, like every other failure at this
 	// point of a run: finalize carries on, and what a refused run leaves is the

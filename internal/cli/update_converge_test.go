@@ -1262,6 +1262,147 @@ func TestUpdateConvergesTheRegistrationKindFromThePreviousGeneration(t *testing.
 	}
 }
 
+// TestUpdateConvergesTheSpendLeavesFromThePreviousGeneration: an installation
+// whose deployed rules predate the four day-counter leaves a run's stage report
+// writes per model reaches them with `fugaro update` alone, and the one run
+// writes both halves — the generation marker and the document the marker names
+// — so the writer the stage report grows is written against a database that
+// admits what it writes (spend-accuracy tasks SA5.0 and SA5.1; D2648 as amended
+// by D2650).
+//
+// The fixture is the deployed generation-6 document itself
+// (internal/budget/rules/testdata/rules.generation6.json, the frozen copy of the
+// golden main carried before this generation), not a stand-in: the assertion
+// below is about what a document an installation is really running carries, and
+// `rules.generation3.json` is the same kind of fixture one generation's worth of
+// distance further back. The marker is the release behind's (RulesVersion-1),
+// which is the state the atomicity argument is about: a stage report is one
+// multi-path update, so under this document the *whole* report is refused rather
+// than the four leaves (F10).
+//
+// The run is in flight across the update because that is the state the owner's
+// rule of 2026-11-09 is about, and its later writes are the ones this generation
+// must not disturb: under a document that only adds, the lease, the ledger and
+// the counters the run holds before the update still land after it. The four
+// leaves are the client's — a run's own report, not the update's — so what this
+// test can assert of the deployed document is the grant, and the writer that
+// really writes them is SA5.1's (TestUpdateLeavesARunInFlightRunning is the test
+// that runs a report through the client the run uses).
+func TestUpdateConvergesTheSpendLeavesFromThePreviousGeneration(t *testing.T) {
+	// The fixture is read before the rig is built: newConvergeRig chdirs into
+	// the checkout it makes, and the path below is this package's own.
+	previous := previousGenerationRulesDocument(t)
+	r := newConvergeRig(t, v8Node())
+	currentRelease(t)
+	r.db.SetRules(previous)
+	if got := r.db.Value(projectpolicy.PathRulesMarker()); fmt.Sprint(got) != fmt.Sprint(projectpolicy.RulesVersion-1) {
+		t.Fatalf("the fixture carries %s = %v, want the previous generation %d: it is not an installation whose rules predate the spend leaves",
+			projectpolicy.PathRulesMarker(), got, projectpolicy.RulesVersion-1)
+	}
+	if infra.SameJSON(r.db.Rules(), generatedRules(t)) {
+		t.Fatal("the fixture's deployed rules are already the document this binary generates, so nothing has to converge")
+	}
+	// The fixture is genuinely the generation behind, or the assertions after the
+	// update say nothing about a difference: the document must carry the
+	// registration kind's fields (generation 6's own addition, the mobile plan's
+	// P5.2.2) and must not carry one of the leaves this generation adds.
+	inbox := deployedNodeOf(t, deployedRulesOf(t, r.db.Rules()), "mailbox", "$mb", "inbox", "$msg")
+	if _, ok := inbox["token"]; !ok {
+		t.Fatalf("the fixture's document has no /mailbox/$mb/inbox/$msg/token: it is not the generation 6 the release behind deploys")
+	}
+	byModel := deployedNodeOf(t, deployedRulesOf(t, r.db.Rules()), "spend", "$day", "repos", "$slug", "byModel", "$model")
+	for _, leaf := range []string{"notional", "rep", "tlo", "thi"} {
+		if _, ok := byModel[leaf]; ok {
+			t.Fatalf("the fixture's document already carries /%s/%s, so nothing has to converge", rules.PathByModel, leaf)
+		}
+	}
+
+	run := startRunInFlight(t, r)
+
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	if got := r.db.Value(projectpolicy.PathRulesMarker()); fmt.Sprint(got) != fmt.Sprint(projectpolicy.RulesVersion) {
+		t.Errorf("after one fugaro update, %s = %v, want %d", projectpolicy.PathRulesMarker(), got, projectpolicy.RulesVersion)
+	}
+	if !infra.SameJSON(r.db.Rules(), generatedRules(t)) {
+		t.Errorf("the update did not leave this binary's document deployed, so the run below is not under the rules this test reads it against:\n%s", r.db.Rules())
+	}
+	// The four leaves, each granted as `micros` is: the run token's own predicate
+	// bound to this project, the day's bound, and a write that may only raise the
+	// figure it finds and by no more than one write's worth. The two are read
+	// together because the leaves are a stage report's own group — a document
+	// that carried one without the others would refuse the report the same way
+	// the old one does (SA5.1's writer writes all four in one update).
+	after := deployedNodeOf(t, deployedRulesOf(t, r.db.Rules()), "spend", "$day", "repos", "$slug", "byModel", "$model")
+	micros, ok := after["micros"].(map[string]any)
+	if !ok {
+		t.Fatalf("the deployed /%s carries no `micros` leaf to compare the four against", rules.PathByModel)
+	}
+	for _, leaf := range []string{"notional", "rep", "tlo", "thi"} {
+		node, ok := after[leaf].(map[string]any)
+		if !ok {
+			t.Errorf("the deployed /%s carries no %s leaf: the stage report that writes it is refused at the database, whole (a multi-path update is atomic)", rules.PathByModel, leaf)
+			continue
+		}
+		write, _ := node[".write"].(string)
+		wantWrite, _ := micros[".write"].(string)
+		if write != wantWrite {
+			t.Errorf("the deployed /%s/%s .write = %q, want `micros`'s own (%q)", rules.PathByModel, leaf, write, wantWrite)
+		}
+		if !strings.Contains(write, "auth.token.fs == $slug") {
+			t.Errorf("the deployed /%s/%s .write = %q, want the run token's predicate bound to this project (`TOKEN && auth.token.fs == $slug && DAYOK && newData.exists()`)", rules.PathByModel, leaf, write)
+		}
+		if strings.Contains(write, "auth.token.mu") || strings.Contains(write, "auth.token.mc") {
+			t.Errorf("the deployed /%s/%s .write = %q and carries a user or consumer claim: the leaves are the run token's alone", rules.PathByModel, leaf, write)
+		}
+		validate, _ := node[".validate"].(string)
+		wantValidate, _ := micros[".validate"].(string)
+		if validate != wantValidate {
+			t.Errorf("the deployed /%s/%s .validate = %q, want `micros`'s own (%q)", rules.PathByModel, leaf, validate, wantValidate)
+		}
+		for _, want := range []string{"newData.val() >= (data.exists() ? data.val() : 0)", "root.child('config/limits/maxReserveMicros').val()"} {
+			if !strings.Contains(validate, want) {
+				t.Errorf("the deployed /%s/%s .validate = %q, want it bounded by %q (a write may raise the figure and by no more than one write's worth, which is what the rules' own MAXRES is)", rules.PathByModel, leaf, validate, want)
+			}
+		}
+	}
+
+	run.laterWrites(t, r)
+}
+
+// previousGenerationRulesDocument is the document the release before this one
+// deployed: the frozen copy of the golden this generation's leaves were added
+// to (internal/budget/rules/testdata/rules.generation6.json). It is read from
+// the rules package's own testdata rather than derived from Generate(), because
+// what the converge test is about is the document an installation is really
+// running — a fixture derived by deleting this generation's leaves would be
+// testing a document nobody deployed, which is the reading
+// rules.generation3.json exists for.
+func previousGenerationRulesDocument(t *testing.T) []byte {
+	t.Helper()
+	raw, err := os.ReadFile("../budget/rules/testdata/rules.generation6.json")
+	if err != nil {
+		t.Fatalf("reading the generation-6 fixture: %v", err)
+	}
+	return raw
+}
+
+// deployedRulesOf is the `rules` object of a deployed document, which is the
+// shape the database serves and the one deployedNodeOf walks.
+func deployedRulesOf(t *testing.T, doc []byte) map[string]any {
+	t.Helper()
+	var root struct {
+		Rules map[string]any `json:"rules"`
+	}
+	if err := json.Unmarshal(doc, &root); err != nil {
+		t.Fatalf("the deployed rules are not JSON: %v", err)
+	}
+	if root.Rules == nil {
+		t.Fatal("the deployed rules carry no `rules` object")
+	}
+	return root.Rules
+}
+
 // deployedNodeOf walks the deployed document to the named node, one key at a
 // time, and fails the test rather than returning an empty node for a path that
 // is not there: a subtree a marker claims and the document does not carry is

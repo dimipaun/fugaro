@@ -1,0 +1,8 @@
+version: 1
+project: aurora
+gcp_project: proj-1234
+git: { provider: github }
+agent: { auth: oauth }
+workflows:
+  app: { commands: { build: sh build.sh, test: sh test.sh } }
+  api: { commands: { build: sh build.sh, test: sh test.sh } }

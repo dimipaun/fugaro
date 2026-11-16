@@ -19,6 +19,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,6 +28,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
@@ -465,6 +467,75 @@ func TestAuthIdentityWithoutBranchClaim(t *testing.T) {
 		if !errors.Is(err, ErrUnverified) {
 			t.Errorf("fpr %s: err = %v, want ErrUnverified", name, err)
 		}
+	}
+}
+
+// TestAuthIdentityCarriesTheContextRepos: the run identity's fcr claim (C5a,
+// D613) is the boundary a context mint is held to, and it is read HERE — in the
+// verification every run call already goes through — rather than by the route
+// that needs it.
+//
+// The reason it is a claim at all is that this service cannot read the run's
+// task (reconciliation F17): the repositories a run may READ are the
+// launcher's answer, and the launcher's only way to hand this service an answer
+// is the identity it signs. So the claim is read like the branch and the pull
+// requests beside it, and it is held to the same rule: a claim that is present
+// but malformed is refused rather than treated as absent, because a run whose
+// launch recorded a context list and whose identity's list this service could
+// not read must not be served as a run with no context at all.
+//
+// What the claim is held to is its SHAPE and not its content: the entries are
+// owner/name in the canonical form the task and the published policy are read
+// in (task.CanonicalRepo's own answer, so the two cannot be read differently),
+// and there are at most token.MaxContextRepos of them, which is the bound the
+// task's own flag enforces. Whether they are repositories the project admits is
+// not this reader's question: that is the policy's answer, re-read on each call
+// (Server.admitContextRepos).
+func TestAuthIdentityCarriesTheContextRepos(t *testing.T) {
+	f := newFixture(t)
+
+	// Absent: an identity minted before the launcher wrote the claim, or one
+	// the launcher minted for a run with no context at all. It is admitted and
+	// carries none, which is the state every run was in before C5a.
+	if id := f.verifyOK(); id.ContextRepos != nil {
+		t.Fatalf("an identity with no fcr carries %v, want none", id.ContextRepos)
+	}
+
+	// Present: the repositories in the order the launcher wrote them, because
+	// the mint's answer is matched to the caller's list and a reader that
+	// reordered would make the two disagree.
+	id := f.verifyOK(func(c map[string]any) { c["fcr"] = []string{"acme/borealis", "kepler/nowhere"} })
+	if want := []string{"acme/borealis", "kepler/nowhere"}; !slices.Equal(id.ContextRepos, want) {
+		t.Fatalf("the identity's context repositories = %v, want %v", id.ContextRepos, want)
+	}
+
+	// The bound is the task's own (token.MaxContextRepos, MaxContextRepos): a
+	// claim naming more is not a list any launcher mints, and serving it would
+	// be serving a reach no `--context` could have asked for.
+	tooMany := make([]string, token.MaxContextRepos+1)
+	for i := range tooMany {
+		tooMany[i] = "acme/repo" + strconv.Itoa(i)
+	}
+	for name, fcr := range map[string]any{
+		"more than the bound":             tooMany,
+		"not an array":                    "acme/borealis",
+		"an entry that is not a string":   []any{"acme/borealis", 7},
+		"an entry that is not owner/name": []string{"borealis"},
+		"an entry with no owner":          []string{"/borealis"},
+		"an entry with no repository":     []string{"acme/"},
+		"an entry that is not canonical":  []string{"Acme/Borealis"},
+	} {
+		_, err := f.verify(f.runToken(func(c map[string]any) { c["fcr"] = fcr }), f.jobToken(), f.job)
+		if !errors.Is(err, ErrUnverified) {
+			t.Errorf("fcr %s: err = %v, want ErrUnverified", name, err)
+		}
+	}
+	// The refusal is this service's own sentence and never a copy of the
+	// entry: a claim is a caller's text, and one refused for being unreadable
+	// must not be echoed into a log or a halt message.
+	_, err := f.verify(f.runToken(func(c map[string]any) { c["fcr"] = []string{"Acme/Borealis"} }), f.jobToken(), f.job)
+	if err == nil || strings.Contains(err.Error(), "Acme/Borealis") {
+		t.Errorf("the refusal is %v, want a sentence that names no part of the entry", err)
 	}
 }
 
