@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The project's reports job (E1): one run of the project's own Cloud Run job
@@ -123,6 +124,82 @@ func (f *reportsJob) reportKey(repo, period string) string {
 	return "reports/" + f.slugs[repo] + "/" + digest.PeriodPath(period)
 }
 
+// aggregateKey is the project's own report of one period: the layout's own path
+// with no slug in it, which is the document R8 adds beside the repositories'.
+func (f *reportsJob) aggregateKey(period string) string {
+	return "reports/" + digest.PeriodPath(period)
+}
+
+// seedHalt writes one halted run of repo into the bucket: a record carrying a
+// halt reason raises the period's halt flag, which is a flag the rules read.
+func (f *reportsJob) seedHalt(t *testing.T, repo, id string, fin time.Time) {
+	t.Helper()
+	rec := &runstore.Record{
+		Version: 1, RunID: id, Repo: repo, Workflow: "web",
+		Status:    runstore.StatusHalted,
+		Halt:      &runstore.Halt{Reason: runstore.HaltBudgetUnavailable, At: fin},
+		StartedAt: fin.Add(-time.Hour), FinishedAt: &fin,
+	}
+	if err := runstore.Open(f.gcs.Bucket(t, reportsBucket).Bucket, f.slugs[repo], id).WriteRecord(context.Background(), rec); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// launch writes one run's launch and task records: the identity its launcher
+// recorded and the task it was handed. Both sit in the bucket beside the
+// records a report is built from, and neither is a report's own (G1, D323).
+func (f *reportsJob) launch(t *testing.T, repo, id, by, taskText string) {
+	t.Helper()
+	store := runstore.Open(f.gcs.Bucket(t, reportsBucket).Bucket, f.slugs[repo], id)
+	ctx := context.Background()
+	if err := store.WriteLaunch(ctx, &runstore.Launch{LaunchedBy: by, LaunchedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.WriteTask(ctx, &task.Spec{Version: 1, RunID: id, Repo: repo, Task: taskText}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// putAggregate stores one project aggregate carrying s's summary block, as a
+// run before this one would have left it: the stored series a year's aggregate
+// adds up, and the series the rules would read if an aggregate rendered them.
+// It returns the block as a reader of the stored object gets it back.
+func (f *reportsJob) putAggregate(t *testing.T, dim digest.Dim, period string, s digest.Summary) digest.Summary {
+	t.Helper()
+	return f.putBlock(t, f.aggregateKey(period), dim, period, s)
+}
+
+// putBlock is putAggregate at any path: one stored report whose whole body is
+// s's summary block, which is all a later reader of a series reads.
+func (f *reportsJob) putBlock(t *testing.T, key string, dim digest.Dim, period string, s digest.Summary) digest.Summary {
+	t.Helper()
+	p, err := digest.PeriodOfKey(dim, period)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Period, s.Start, s.End = p.Key, p.Start, p.End
+	block, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := []byte("```json\n" + string(block) + "\n```\n")
+	f.put(t, key, file)
+	got, err := digest.ReadSummary(file)
+	if err != nil {
+		t.Fatalf("the fixture's own report at %s is not one this package reads: %v", key, err)
+	}
+	return got
+}
+
+// sums is a fixture summary this package reads back: the counts a test sets,
+// and the figures a block must carry to be one at all.
+func sums(runs int, flags map[string]int) digest.Summary {
+	return digest.Summary{
+		Runs: runs, Shown: runs, Billed: "1.000000", Notional: "2.000000", Review: "0.000000",
+		Flags: flags,
+	}
+}
+
 // TestRunsReportsWritesEachRepositorysReportIntoTheBucket is the headline: one
 // run of the job writes each repository's report of the closed period into its
 // own prefix of the runs bucket, at the layout's path, from the records under
@@ -161,10 +238,11 @@ func TestRunsReportsWritesEachRepositorysReportIntoTheBucket(t *testing.T) {
 			t.Errorf("%s holds other than the %d runs of %s:\n%s", key, want, repo, body)
 		}
 	}
-	// No aggregate: the project's own document beside these is R8's, a step of
-	// its own.
-	if _, _, ok := f.object(t, "reports/2026/2026-11-01.md"); ok {
-		t.Error("the run wrote a project aggregate, which is not its work")
+	// The project's own document of the period is written beside them, after
+	// the loop: which repositories it names and what it adds up is the
+	// aggregate's own test.
+	if _, _, ok := f.object(t, f.aggregateKey("2026-11-01")); !ok {
+		t.Errorf("the run wrote no project aggregate: %q", out)
 	}
 }
 
@@ -536,4 +614,263 @@ func cmdAnswers(t *testing.T, path ...string) bool {
 	t.Helper()
 	found, _, err := NewRootCmd().Find(path)
 	return err == nil && found != nil && found.Name() == path[len(path)-1]
+}
+
+// The project's own report (R8): one document per period beside the
+// repositories' reports, which names every repository of the document and adds
+// the figures of their stored reports up, and names no rule of its own (E2,
+// E7).
+
+// TestRunsReportsWritesTheProjectAggregateBesideTheRepositoryReports: the run's
+// own step after the loop is the period's document at reports/<YYYY>/<key>.md
+// -- D321's path with no slug in it -- naming every repository the document
+// names and carrying their runs added up.
+func TestRunsReportsWritesTheProjectAggregateBesideTheRepositoryReports(t *testing.T) {
+	f := newReportsJob(t, []string{"acme/app", "acme/other"}, string(digest.ByDay))
+	digestClock(t, "2026-11-02") // the closed day is 2026-11-01
+	f.seed(t, "acme/app", "20261101-090000-aaaa", time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC))
+	f.seed(t, "acme/other", "20261101-100000-bbbb", time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC))
+	f.seed(t, "acme/other", "20261101-110000-cccc", time.Date(2026, 11, 1, 11, 0, 0, 0, time.UTC))
+	// A record of a repository the document does not name, who ran there and
+	// how much: what the aggregate adds up is the document's repositories and
+	// never whatever the bucket happens to hold (D1433, D1448).
+	f.slugs["acme/elsewhere"] = mustSlug("github", "acme/elsewhere")
+	f.seed(t, "acme/elsewhere", "20261101-120000-dddd", time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC))
+
+	out, errOut, err := execute(t, "runs", "reports", "--job")
+	if err != nil {
+		t.Fatalf("fugaro runs reports --job: %v\nstderr: %s", err, errOut)
+	}
+	key := f.aggregateKey("2026-11-01")
+	if !strings.Contains(out, "wrote "+key+"\n") {
+		t.Errorf("the run printed no line for %s: %q", key, out)
+	}
+	data, _, ok := f.object(t, key)
+	if !ok {
+		t.Fatalf("the run wrote no project aggregate at %s: %q", key, out)
+	}
+	body := string(data)
+	// The header names the period the report closed (D1434).
+	if !strings.Contains(body, "# Project digest: 2026-11-01") {
+		t.Errorf("%s does not name the period it closed:\n%s", key, body)
+	}
+	// One line per repository, with that repository's own runs: the two are not
+	// the same line twice, so the figures are the reports read back rather than
+	// a total divided up.
+	for repo, want := range map[string]int{"acme/app": 1, "acme/other": 2} {
+		if !strings.Contains(body, "| "+f.slugs[repo]+" | "+itoa(want)+" |") {
+			t.Errorf("%s does not carry %s's own %d runs:\n%s", key, repo, want, body)
+		}
+	}
+	summary, err := digest.ReadSummary(data)
+	if err != nil {
+		t.Fatalf("the aggregate is not one this package reads back: %v", err)
+	}
+	if summary.Period != "2026-11-01" {
+		t.Errorf("the aggregate's block says the period is %q, want 2026-11-01", summary.Period)
+	}
+	if summary.Runs != 3 {
+		t.Errorf("the aggregate counts %d runs, want the 3 of the two repositories of the document:\n%s", summary.Runs, body)
+	}
+	// The reports it added up are beside it: the aggregate is written after
+	// them and is no substitute for one of them.
+	for _, repo := range []string{"acme/app", "acme/other"} {
+		if _, _, ok := f.object(t, f.reportKey(repo, "2026-11-01")); !ok {
+			t.Errorf("the run wrote no report for %s, and the aggregate names it as one of the period's", repo)
+		}
+	}
+}
+
+// TestTheAggregateNamesEveryRepositoryAndNoPerson: the one document that names
+// every repository names nothing else -- no person, no address, no task's own
+// words (E2, G1, D323). The records the period's reports are built from carry
+// all three.
+func TestTheAggregateNamesEveryRepositoryAndNoPerson(t *testing.T) {
+	f := newReportsJob(t, []string{"acme/app", "acme/other"}, string(digest.ByDay))
+	digestClock(t, "2026-11-02")
+	for i, repo := range []string{"acme/app", "acme/other"} {
+		id := fmt.Sprintf("20261101-1%d0000-abcd", i)
+		fin := time.Date(2026, 11, 1, 10+i, 0, 0, 0, time.UTC)
+		f.seed(t, repo, id, fin)
+		f.launch(t, repo, id, "ada@example.com", taskTextFor(repo))
+	}
+
+	out, errOut, err := execute(t, "runs", "reports", "--job")
+	if err != nil {
+		t.Fatalf("fugaro runs reports --job: %v\nstderr: %s", err, errOut)
+	}
+	data, _, ok := f.object(t, f.aggregateKey("2026-11-01"))
+	if !ok {
+		t.Fatalf("the run wrote no project aggregate: %q", out)
+	}
+	body := string(data)
+	for _, repo := range []string{"acme/app", "acme/other"} {
+		if !strings.Contains(body, f.slugs[repo]) {
+			t.Errorf("the aggregate does not name %s, and naming every repository is the one thing it adds:\n%s", repo, body)
+		}
+	}
+	for _, leak := range []string{"ada@example.com", "grace@example.com", "@", "flux capacitor", "wm_gadget"} {
+		if strings.Contains(body, leak) {
+			t.Errorf("the aggregate carries %q, which is a person or a task's own words (G1, D323):\n%s", leak, body)
+		}
+	}
+	// The launch and the task are in the bucket beside the records, which is
+	// what makes this the aggregate's own property and not one of a bucket
+	// nobody wrote them into.
+	if _, _, ok := f.object(t, f.reportKey("acme/app", "2026-11-01")); !ok {
+		t.Fatal("no report was written, so the aggregate was built from nothing")
+	}
+}
+
+// taskTextFor is one repository's task brief for the fixture: two words no
+// report may carry, one of them a value of no closed vocabulary.
+func taskTextFor(repo string) string {
+	if repo == "acme/app" {
+		return "# Task: fix the flux capacitor\n\nIt is the one in acme/app.\n"
+	}
+	return "# Task: rename wm_gadget\n\nIt is the one in acme/other.\n"
+}
+
+// TestTheAggregateCarriesNoPatternRules: the aggregate keeps no rule and shows
+// no pattern (E7) -- there is no threshold for a series across repositories, so
+// the document holds no Patterns section and names no rule. A repository's
+// report of the same period is the control: the same series, read by the writer
+// that does render the rules.
+func TestTheAggregateCarriesNoPatternRules(t *testing.T) {
+	f := newReportsJob(t, []string{"acme/app"}, string(digest.ByWeek))
+	digestClock(t, "2026-11-02")
+	closed, err := digest.NewPeriod(digest.ByWeek, "2026-11-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The weeks before the closed one, each of them a report of the repository
+	// carrying the halt flag: four weeks running with it raised is what the
+	// flag_recurs rule fires over.
+	var prev []digest.Summary
+	for i := 3; i >= 1; i-- {
+		back := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, -7*i)
+		w, err := digest.NewPeriod(digest.ByWeek, back.Format("2006-01-02"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		prev = append(prev, f.putBlock(t, f.reportKey("acme/app", w.Key), digest.ByWeek, w.Key, sums(1, map[string]int{digest.FlagHalt: 1})))
+	}
+	// The closed week's own run, halted: the fourth week of the series.
+	f.seedHalt(t, "acme/app", "20261028-090000-aaaa", time.Date(2026, 10, 28, 9, 0, 0, 0, time.UTC))
+
+	out, errOut, err := execute(t, "runs", "reports", "--job")
+	if err != nil {
+		t.Fatalf("fugaro runs reports --job: %v\nstderr: %s", err, errOut)
+	}
+	key := f.aggregateKey(closed.Key)
+	data, _, ok := f.object(t, key)
+	if !ok {
+		t.Fatalf("the run wrote no project aggregate at %s: %q", key, out)
+	}
+	repoReport, _, ok := f.object(t, f.reportKey("acme/app", closed.Key))
+	if !ok {
+		t.Fatalf("the run wrote no report for acme/app: %q", out)
+	}
+	// The control first, so a series that fires no rule at all fails this test
+	// rather than passing it for the wrong reason.
+	cur, err := digest.ReadSummary(repoReport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fired := digest.Patterns(prev, cur)
+	if len(fired) == 0 {
+		t.Fatal("the series beside the aggregate fires no rule, so this test would pass with the rules rendered too")
+	}
+	if !strings.Contains(string(repoReport), "## Patterns") {
+		t.Errorf("the repository's report of %s renders no Patterns section, and its series fires %d rules:\n%s", closed.Key, len(fired), repoReport)
+	}
+	body := string(data)
+	if strings.Contains(body, "## Patterns") || strings.Contains(body, "No pattern rule fired.") {
+		t.Errorf("%s carries a Patterns section, and the project's aggregate names no rule (E7):\n%s", key, body)
+	}
+	for _, rule := range digest.RuleNames {
+		if strings.Contains(body, rule) {
+			t.Errorf("%s names the rule %s (E7):\n%s", key, rule, body)
+		}
+	}
+}
+
+// TestTheAggregateIsSkippedWhenItIsUnchanged: the aggregate is written by the
+// same comparison a repository's report is, so a rerun of one night leaves it
+// exactly as it is and writes no object at all.
+func TestTheAggregateIsSkippedWhenItIsUnchanged(t *testing.T) {
+	f := newReportsJob(t, []string{"acme/app", "acme/other"}, string(digest.ByDay))
+	digestClock(t, "2026-11-02")
+	f.seed(t, "acme/app", "20261101-090000-aaaa", time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC))
+	f.seed(t, "acme/other", "20261101-100000-bbbb", time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC))
+
+	if _, _, err := execute(t, "runs", "reports", "--job"); err != nil {
+		t.Fatal(err)
+	}
+	key := f.aggregateKey("2026-11-01")
+	first, gen, ok := f.object(t, key)
+	if !ok {
+		t.Fatalf("the first run wrote no aggregate at %s", key)
+	}
+
+	out, _, err := execute(t, "runs", "reports", "--job")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, gen2, _ := f.object(t, key)
+	if gen2 != gen {
+		t.Errorf("the second run wrote %s again (generation %d -> %d), and its bytes were already there", key, gen, gen2)
+	}
+	if string(second) != string(first) {
+		t.Errorf("the second run changed the aggregate's bytes:\n%s", second)
+	}
+	if !strings.Contains(out, "unchanged "+key+"\n") {
+		t.Errorf("the second run did not say the aggregate was left as it is: %q", out)
+	}
+}
+
+// TestRunsReportsWritesTheYearAggregateFromTheStoredMonthlyAggregates: a year
+// has no runs of its own to read -- the records are kept 90 days -- so the
+// project's yearly aggregate is the stored monthly aggregates of that year
+// added up, which is the shape a repository's yearly report already has (F24,
+// D1443). Which months it added up is the report's own answer, so a partial
+// year is not read as a whole one.
+func TestRunsReportsWritesTheYearAggregateFromTheStoredMonthlyAggregates(t *testing.T) {
+	f := newReportsJob(t, []string{"acme/app"}, string(digest.ByYear))
+	digestClock(t, "2027-01-01") // the closed year is 2026
+	for _, m := range []struct {
+		key  string
+		runs int
+	}{{"2026-01", 2}, {"2026-02", 3}, {"2027-01", 4}} {
+		f.putAggregate(t, digest.ByMonth, m.key, sums(m.runs, nil))
+	}
+
+	out, errOut, err := execute(t, "runs", "reports", "--job")
+	if err != nil {
+		t.Fatalf("fugaro runs reports --job: %v\nstderr: %s", err, errOut)
+	}
+	key := f.aggregateKey("2026")
+	data, _, ok := f.object(t, key)
+	if !ok {
+		t.Fatalf("the run wrote no yearly project aggregate at %s: %q", key, out)
+	}
+	body := string(data)
+	if !strings.Contains(body, "# Project digest: 2026") || !strings.Contains(body, "A yearly aggregate is the monthly aggregates of 2026") {
+		t.Errorf("%s is not the year's aggregate:\n%s", key, body)
+	}
+	for _, month := range []string{"| 2026-01 | 2 |", "| 2026-02 | 3 |"} {
+		if !strings.Contains(body, month) {
+			t.Errorf("%s does not carry the stored month %q:\n%s", key, month, body)
+		}
+	}
+	if strings.Contains(body, "2027-01") {
+		t.Errorf("%s added up a month of another year:\n%s", key, body)
+	}
+	summary, err := digest.ReadSummary(data)
+	if err != nil {
+		t.Fatalf("the yearly aggregate is not one this package reads back: %v", err)
+	}
+	if summary.Runs != 5 || summary.Months != 2 {
+		t.Errorf("the yearly aggregate holds %d runs over %d months, want the stored 5 over 2:\n%s", summary.Runs, summary.Months, body)
+	}
 }
