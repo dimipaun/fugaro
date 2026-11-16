@@ -671,6 +671,23 @@ func (s *secretsStage) Left() initflow.Left {
 		}
 		set := selfCommand() + " secrets set " + quoteWord(name)
 		if !s.projectScopeLocal(name) {
+			// The line this branch spells is a repository-scope store, and a
+			// repository-level secret is disabled for now (D2313): the command
+			// would answer the notice and change nothing. Its bare form is no
+			// better -- `secrets set` decides the scope from the local config
+			// alone, which is the answer asked just above, so a name with no
+			// project-wide meaning there has none in either spelling. The one
+			// store that still has it is this stage's own, and the run's own
+			// door is how a person reaches it: at a terminal the door's prompt
+			// is take's, which writes the value into the container this
+			// repository's root already creates.
+			if repoSecretsDisabledName(s.e.lc, name) {
+				door := selfCommand() + " " + s.e.r.o.doorName()
+				if !slices.Contains(cmds, door) {
+					cmds = append(cmds, door)
+				}
+				continue
+			}
 			set += " --repo " + quoteWord(s.tg.repo)
 		}
 		switch {
@@ -858,8 +875,22 @@ func (s *secretsStage) take(ctx context.Context, st secretStore, f *os.File, w i
 	// projectReach is handed it too, and the sentence names the node's list
 	// where this machine's local config carries none.
 	if s.projectScope(name) {
-		fmt.Fprintf(w, "%s for %s on %s (stored project-wide in project %s's Secret Manager, where %s; for this repository's own copy instead, press Ctrl-C here and run '%s secrets set %s --repo %s' in your own terminal, then start this again):\n",
-			name, pluginwire.Printable(s.origin.Repo), pluginwire.Printable(s.origin.Host), pluginwire.Printable(s.e.lc.GCPProject), projectReach(s.e.lc, name, s.node), selfCommand(), quoteWord(name), quoteWord(s.tg.repo))
+		// The way out is a repository-scope store, and for a repository-level
+		// secret there is no such store left to offer (D2313): the command it
+		// would name answers the notice and changes nothing, so it would hand a
+		// person a step that does nothing. What it names instead is the store
+		// that works and does store the same thing answering here stores — the
+		// project's copy, in the user's own terminal rather than at this prompt
+		// — which is the bare form Left() hands the same name for the same
+		// reason.
+		wayOut := fmt.Sprintf("for this repository's own copy instead, press Ctrl-C here and run '%s secrets set %s --repo %s' in your own terminal, then start this again",
+			selfCommand(), quoteWord(name), quoteWord(s.tg.repo))
+		if repoSecretsDisabledName(s.e.lc, name) {
+			wayOut = fmt.Sprintf("its repository-level copy is disabled for now (D2313), so this project's copy is the only one it is stored in: answer here, or press Ctrl-C here and run '%s secrets set %s' in your own terminal, then start this again",
+				selfCommand(), quoteWord(name))
+		}
+		fmt.Fprintf(w, "%s for %s on %s (stored project-wide in project %s's Secret Manager, where %s; %s):\n",
+			name, pluginwire.Printable(s.origin.Repo), pluginwire.Printable(s.origin.Host), pluginwire.Printable(s.e.lc.GCPProject), projectReach(s.e.lc, name, s.node), wayOut)
 	} else {
 		fmt.Fprintf(w, "%s for %s on %s (stored in project %s's Secret Manager, in this repository's own copy):\n", name, pluginwire.Printable(s.origin.Repo), pluginwire.Printable(s.origin.Host), pluginwire.Printable(s.e.lc.GCPProject))
 	}

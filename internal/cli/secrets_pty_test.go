@@ -286,3 +286,49 @@ func TestInitPromptStatesTheReachOfAProjectWorkflowSecret(t *testing.T) {
 	}
 	noLeak(t, tokenValue, shown, r.out.String())
 }
+
+// TestSecretsStagePromptNamesAStoreThatStillWorks: the prompt's way out is a
+// command the person runs in their own terminal, so it must be one that stores
+// something. For a repository-level secret it was not (D2313): `secrets set
+// NAME --repo OWNER/NAME` answers the notice and writes nothing, so the prompt
+// named a step that does nothing. What it names instead is the store that
+// still exists for the name — the project's copy, which is the same store
+// answering the prompt stores — and it says why the repository-level copy is
+// not on offer.
+func TestSecretsStagePromptNamesAStoreThatStillWorks(t *testing.T) {
+	repoSecretsOn(t)
+	tty := newTTY(t)
+	r := newSecretsRig(t, bitbucketOrigin, tty.tty)
+	r.workflowSecretConfig(t, "app-signing-key")
+	r.e.lc.WorkflowSecrets = map[string]config.ProjectSecret{
+		"app-signing-key": {AllowDataTo: []string{"acme/app"}},
+	}
+	r.stage.resolve(context.Background())
+	if !r.stage.projectScope("app-signing-key") {
+		t.Fatal("the stage does not read the entry as a project-wide one: the prompt under test would not fire")
+	}
+	// The other two names are stored, so the workflow secret is the one
+	// prompted for and this test's line is the one the prompt reads.
+	slug := mustSlug("bitbucket", "acme/app")
+	r.store.seed(slug, "bitbucket-token", tokenValue)
+	r.store.seed(slug, "claude-oauth-token", tokenValue)
+	if _, err := tty.master.WriteString(tokenValue + "\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.run(t); err != nil {
+		t.Fatalf("%v (prompts %q)", err, r.errOut.String())
+	}
+	shown := r.errOut.String()
+	if strings.Contains(shown, "app-signing-key --repo") {
+		t.Errorf("the prompt offers a store the ruling answers with the notice:\n%s", shown)
+	}
+	for _, want := range []string{
+		"its repository-level copy is disabled for now (D2313), so this project's copy is the only one it is stored in",
+		"'fugaro secrets set app-signing-key'",
+	} {
+		if !strings.Contains(shown, want) {
+			t.Errorf("the prompt does not say %q:\n%s", want, shown)
+		}
+	}
+	noLeak(t, tokenValue, shown, r.out.String())
+}

@@ -6,12 +6,13 @@ package cli
 // containers and their values left alone, the code kept so the feature can
 // return.
 //
-// The ruling has four surfaces, and one test here is about each: the warning a
+// The ruling has five surfaces, and one test here is about each: the warning a
 // person reads (validate; `fugaro update` prints the same text from M7), the
 // repository-scope forms of the secrets commands, which answer the notice
 // instead of writing, the credentials service's record, which names no
-// repository-level container, and the Terraform input, which does not move at
-// all.
+// repository-level container, the Terraform input, which does not move at
+// all, and the secrets stage, whose own line for a name no job mounts
+// project-wide is a command that works, never the store the notice answers.
 //
 // Every other test in this package drives the machinery the ruling keeps with
 // the door open, exactly as they did before it (main_test.go, TestMain), so
@@ -19,6 +20,7 @@ package cli
 // has for D1900's images.
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"testing"
@@ -288,6 +290,39 @@ func TestNoWorkflowSecretsRecordIsWrittenForAnIgnoredSecret(t *testing.T) {
 	}
 	if rec := workflowSecretsRecord(rs, cfg); !slices.Equal(rec.Workflows["app"], want) {
 		t.Errorf("with the door off the record holds %v, want %v", rec.Workflows["app"], want)
+	}
+}
+
+// TestSecretsStageLeavesTheDoorForARepositoryLevelSecret: the line the stage
+// leaves a person is one they run in their own terminal, and under D2313 the
+// repository-scope store it used to spell — `secrets set NAME --repo
+// OWNER/NAME` — answers the notice and changes nothing; the bare form is no
+// better, because `secrets set` decides the scope from the same local config
+// this stage just read, so a name with no project-wide meaning there has none
+// in either spelling. What still stores such a name is the stage's own prompt,
+// and the run's own door is how a person reaches it.
+func TestSecretsStageLeavesTheDoorForARepositoryLevelSecret(t *testing.T) {
+	repoSecretsOn(t)
+	r := newSecretsRig(t, bitbucketOrigin, strings.NewReader(""))
+	r.workflowSecretConfig(t, "app-signing-key")
+	r.stage.resolve(context.Background())
+	if r.stage.projectScope("app-signing-key") || r.stage.projectScopeLocal("app-signing-key") {
+		t.Fatal("the fixture is not the state this case is about: the secret has a project-wide meaning")
+	}
+	res, err := r.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var left []string
+	for _, l := range res.Left {
+		left = append(left, l.Commands...)
+	}
+	joined := strings.Join(left, "\n")
+	if strings.Contains(joined, "secrets set app-signing-key") {
+		t.Fatalf("the stage left a command the ruling answers with the notice:\n%s", joined)
+	}
+	if !strings.Contains(joined, "fugaro setup") {
+		t.Fatalf("the stage left no run's own door for the repository-level secret:\n%s", joined)
 	}
 }
 

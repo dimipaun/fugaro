@@ -599,6 +599,17 @@ func repoSecretsDisabled(w io.Writer) error {
 	return nil
 }
 
+// repoSecretsDisabledName reports whether name is one D2313 disables: a
+// repository's own secret (config.RepoLevelSecret) that is not a credential
+// Fugaro's own scope machinery decides (platformSecretName). It is the
+// predicate every reader of the ruling asks, so the three surfaces cannot
+// disagree about which names it is about: `secrets set`'s repository-scope
+// form and `secrets rm` answer the notice on it, and the secrets stage reads it
+// to know which store it may still print a line for.
+func repoSecretsDisabledName(lc *localcfg.Config, name string) bool {
+	return config.RepoSecretsOff && config.RepoLevelSecret(name) && !platformSecretName(lc, name)
+}
+
 func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 	if _, reserved := config.ReservedSecrets[name]; !reserved && !config.SecretNameRE.MatchString(name) {
 		// The name is not quoted: a value typed in its place must not be echoed.
@@ -783,7 +794,7 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 			return userErr("no workflow in this checkout's fugaro.yaml declares that secret NAME; add it under a workflow's secrets: first")
 		}
 	}
-	if config.RepoSecretsOff && config.RepoLevelSecret(name) && !platformSecretName(env.lc, name) {
+	if repoSecretsDisabledName(env.lc, name) {
 		// D2313: a repository-level secret is disabled for now, and everything
 		// below this line is a write into one repository's own container — the
 		// store, the notes about which copy wins and the step that files a log.
