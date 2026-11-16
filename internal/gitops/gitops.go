@@ -1375,7 +1375,9 @@ func (r *Repo) BakedGitOrigin(ctx context.Context) (string, error) {
 // A configuration or a hook directory under .git/modules is a submodule's own,
 // read by git for that submodule: what such a configuration says (a URL to
 // fetch from, a hook to run) is the image's and no reset of the top-level .git
-// reaches it. A submodule's WORKING DIRECTORY is the fifth shape, and it is the
+// reaches it — and a symbolic link there hides one of those outside the
+// checkout, which git follows and no walk of the directory does. A submodule's
+// WORKING DIRECTORY is the fifth shape, and it is the
 // same statement one step out: git keeps a submodule's git directory elsewhere
 // and the .git file in that directory names where — normally under this
 // checkout's own .git/modules — so a .git file naming any other directory keeps
@@ -1486,13 +1488,30 @@ func inDir(dir, path string) bool {
 // non-empty hook directory under modules, at any depth: a submodule's git
 // directory can hold both, and both are read by git for that submodule rather
 // than for the checkout this package resets.
+//
+// A symbolic link at modules or anywhere under it is refused as well, and it is
+// the same statement: git reads the directory a link names — that is how a
+// submodule's .git file finds its git directory in the first place — so an
+// image that leaves one here has its configuration read by the run's git while
+// that configuration sits outside the checkout. Neither this walk nor the
+// worktree check below would see it: a walk does not follow a link, and a .git
+// file naming a path under .git/modules reads as one this checkout holds, the
+// link being what puts it elsewhere. Git writes no link there itself, so what is
+// refused is only a shape no checkout it wrote can hold.
 func refuseSubmoduleState(modules string) error {
-	if _, err := os.Lstat(modules); errors.Is(err, os.ErrNotExist) {
+	info, statErr := os.Lstat(modules)
+	if errors.Is(statErr, os.ErrNotExist) {
 		return nil
+	}
+	if statErr == nil && info.Mode()&fs.ModeSymlink != 0 {
+		return fmt.Errorf("%s is a symbolic link, so the configuration git reads through it is outside the checkout this reset reaches", modules)
 	}
 	return filepath.WalkDir(modules, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("%s is a symbolic link, so the configuration git reads through it is outside the checkout this reset reaches", path)
 		}
 		if !d.IsDir() {
 			if d.Name() == "config" {

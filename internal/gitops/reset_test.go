@@ -17,6 +17,18 @@ import (
 // Both entry points are asked: the read of the origin that a caller makes before
 // it decides anything (BakedGitOrigin) and the reset itself refuse, so a caller
 // that forgot the first cannot reach a git command through the second.
+//
+// The last two rows are the shape a link makes: git follows a symbolic link, so
+// a .git/modules — or a .git/modules/<name> a submodule's .git file names — that
+// is one keeps the configuration it names outside the checkout, where neither
+// the walk of .git/modules nor the check of a submodule's worktree (which reads
+// that very path as one the checkout holds) reaches it, and the run's own git
+// runs its core.fsmonitor all the same: a top-level status runs the submodule's
+// own status.
+//
+// Mutation (run, restored), for the last two rows alone: drop the symlink
+// refusal from refuseSubmoduleState. Both are accepted, and the run's git finds
+// the linked configuration.
 func TestBakedCheckoutResetRefusesAGitdirFileAlternatesOrSubmoduleHooks(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -40,6 +52,25 @@ func TestBakedCheckoutResetRefusesAGitdirFileAlternatesOrSubmoduleHooks(t *testi
 		}},
 		{"a submodule's hooks", "a submodule's hook directory", func(t *testing.T, repo *Repo) {
 			writeAt(t, filepath.Join(repo.Dir, ".git", "modules", "sub", "hooks", "pre-commit"), "#!/bin/sh\n")
+		}},
+		{"a symlinked .git/modules", "is a symbolic link", func(t *testing.T, repo *Repo) {
+			external := t.TempDir()
+			writeAt(t, filepath.Join(external, "sub", "config"), "[core]\n\tfsmonitor = /bin/true\n")
+			if err := os.Symlink(external, filepath.Join(repo.Dir, ".git", "modules")); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"a submodule's worktree behind a symlinked .git/modules/dep", "is a symbolic link", func(t *testing.T, repo *Repo) {
+			external := t.TempDir()
+			writeAt(t, filepath.Join(external, "config"), "[core]\n\tfsmonitor = /bin/true\n")
+			plantGitlink(t, repo, "vendor/dep")
+			writeAt(t, filepath.Join(repo.Dir, "vendor", "dep", ".git"), "gitdir: ../../.git/modules/dep\n")
+			if err := os.MkdirAll(filepath.Join(repo.Dir, ".git", "modules"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(external, filepath.Join(repo.Dir, ".git", "modules", "dep")); err != nil {
+				t.Fatal(err)
+			}
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
