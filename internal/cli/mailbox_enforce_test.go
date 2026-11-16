@@ -1086,6 +1086,45 @@ func TestMailboxDestructiveFreeTextIsRefused(t *testing.T) {
 	}
 }
 
+// TestMailboxDestructiveFreeTextInAnAnswerIsRefused is the same fence asked of
+// the other kind that carries free text. An `answer` is a sentence by another
+// name, and it is the path to the orchestrator that the message kind's check does
+// not cover — so without this, "yes, merge acme/app#41 and delete the branch"
+// reaches the orchestrator as the answer to any harmless question, which is D128's
+// fence walked around. The refusal is an action refusal (M12's exit 1 when it is
+// all the pass read), and the prompt is **left waiting**: what was refused is the
+// sentence, not the question, so an answer that is an answer still settles it.
+func TestMailboxDestructiveFreeTextInAnAnswerIsRefused(t *testing.T) {
+	for _, text := range []string{
+		"yes, merge acme/app#41 and delete the branch",
+		"go ahead and cancel " + mailboxRunID,
+	} {
+		t.Run(text, func(t *testing.T) {
+			f := newMailboxFixture(t, "")
+			offers := f.offers(t)
+			cancelled := f.cancels(t)
+			now := mailboxNowMs()
+			f.holdPrompt(t, mailbox.ConfirmPrompt{ID: "p-1", At: now, Mailbox: mailboxUID, Safe: "carry on"}, now)
+			f.writeAnswer(t, "msg-1", "p-1", text, now)
+
+			out, _, err := execute(t, "mailbox", "--once", "--json")
+			mailboxNothingRan(t, err)
+			if code := mailboxRefusedCode(t, mailboxJSON(t, out), 0); code != string(mailboxCodeActionRefused) {
+				t.Fatalf("refused[0].code = %q, want %s", code, mailboxCodeActionRefused)
+			}
+			if len(*offers) != 0 {
+				t.Fatalf("%q reached the orchestrator as an answer: destructive free text is refused, never handed on", text)
+			}
+			if len(*cancelled) != 0 {
+				t.Fatalf("an answer ran an action: %v", *cancelled)
+			}
+			if _, waiting, held := f.promptMemory(t).Prompt(mailboxUID, "p-1"); !held || !waiting {
+				t.Fatal("a refused answer settled the prompt: the question is owed an answer still")
+			}
+		})
+	}
+}
+
 // TestMailboxOtherDestructiveVerbsAreRefusedEvenConfirmed is the closed verb
 // set: the kill switch and a budget write are not in `shared/mailbox-schema`'s
 // ACTIONS, so a record asking for one is refused **before** any confirmation is

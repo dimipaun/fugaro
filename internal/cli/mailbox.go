@@ -1352,6 +1352,12 @@ func (c *mailboxConsumer) runMessage(ctx context.Context, pairing mailboxPairing
 // (D169, §3.5), never as free text. An answer to a prompt this machine is not
 // holding, or is not holding any more, is the same answer to the same question
 // — there is nothing left to settle — and is reported as such.
+//
+// An answer is free text by another name, and what is handed over is the
+// answer's own words, so the fence the message kind gets is the fence this kind
+// gets: without it, "yes, merge acme/app#41" reaches the orchestrator as the
+// answer to any harmless question, which is D128's fence walked around through
+// the one path `runMessage` does not cover.
 func (c *mailboxConsumer) runAnswer(ctx context.Context, pairing mailboxPairing, message *mailbox.Message, entry mailbox.LedgerEntry, pass *mailboxPass) error {
 	now := c.now()
 	prompt, waiting, held := c.memory.Prompt(pairing.uid, message.ReplyTo)
@@ -1361,6 +1367,12 @@ func (c *mailboxConsumer) runAnswer(ctx context.Context, pairing mailboxPairing,
 	}
 	if prompt.Destructive {
 		pass.refuse(entry.ID, mailbox.CodeConfirmNotAConfirmation, true)
+		return nil
+	}
+	if mailboxReadsAsDestructive(message.Text) {
+		// The prompt stays waiting: what was refused is the sentence, not the
+		// question, so an answer that is an answer still settles it.
+		pass.refuse(entry.ID, mailboxCodeActionRefused, true)
 		return nil
 	}
 	expiry, settled, err := c.memory.AnswerPrompt(pairing.uid, message.ReplyTo, message.Text, now)
