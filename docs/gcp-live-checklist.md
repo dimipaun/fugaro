@@ -18066,10 +18066,16 @@ gcloud scheduler jobs run <job> --project <project> --location <region>   # one 
 gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="<service>"' \
   --project <project> --limit 20 --format="value(timestamp,textPayload)"
 gcloud run jobs executions list --project <project> --region <region> --limit 5
+# the instance count between ticks, which is the annotation's own consequence (paste an
+# RFC3339 timestamp ten minutes back for --interval-start-time):
+gcloud monitoring time-series list --project <project> \
+  --filter='metric.type="run.googleapis.com/container/instance_count" AND resource.labels.service_name="<service>"' \
+  --interval-start-time <rfc3339-10-minutes-ago>
 ```
 
 The first command prints the revision template's annotations, and the value of `autoscaling.knative.dev/minScale`
-is what this check turns on. The third forces one tick with **nothing in the mailbox**: the pass runs, writes no
+is what this check turns on; the last read is that value's consequence — with `0` and no tick in flight, the
+series' last point is `0`, which is the instance really going away rather than the annotation alone. The third forces one tick with **nothing in the mailbox**: the pass runs, writes no
 message, starts no execution — the fifth command is the negative control, and the list must not have grown —
 and the generations it writes are the ones a pass over an empty mailbox writes, which the fourth command's log
 lines show. Record the
@@ -18198,8 +18204,8 @@ gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.serv
 # from the phone, send one more message; the pass must refuse it and start nothing
 ```
 
-The first command is the whole revocation — the device node, the Auth user, the cloud copy and the laptop's
-keychain item — and the second and third read what it did: the version's state must read **`DESTROYED`**, and a
+The first command is this work's whole revocation as **P5.1e** writes it — the device node, the Auth user, the
+cloud copy and the laptop's keychain item — and the second and third read what it did: the version's state must read **`DESTROYED`**, and a
 version that reads `DISABLED` still in the list is the finding this check exists for. **No command here reads a
 secret's value**, and a run that prints one is not this check: if you want the strongest form of the negative
 half, `gcloud secrets versions access` with its output sent to `/dev/null` is a **refusal** to record as an exit
@@ -18262,9 +18268,10 @@ that a grant that would be refused by the rules rather than by IAM is not mistak
   `fugaro/allow-delete.json` (D74) are unwritable — **while the read of the root is not**, which §4.3 says in
   its own words: listing needs `storage.objects.list` and a condition on an object's *name* cannot grant it, so
   the root is outside the **write** condition and not outside the read.
-- `gcloud projects test-iam-permissions` for `resourcemanager.projects.setIamPolicy` and `iam.roles.create`
-  answers **not held**, and `secretmanager.versions.access` on a model, git or App secret is **refused** on the
-  probe that actually attempts it.
+- `gcloud projects test-iam-permissions` — the `projects:testIamPermissions` REST call is the same reading if
+  your `gcloud` is older — for `resourcemanager.projects.setIamPolicy` and `iam.roles.create` answers **not
+  held**, and `secretmanager.versions.access` on a model, git or App secret is **refused** on the probe that
+  actually attempts it.
 - **The positive controls**, because a check of nothing but refusals passes on an account that was never
   created: the same token **does** list the installation's jobs (`run.jobs.get`/`list`), **does** list secrets
   and versions by name, and **does** succeed at a write under `runs/` on a throwaway key of your own.
@@ -18282,19 +18289,22 @@ the bucket and the names of the secrets come from the module's own output.
 ```sh
 gcloud projects get-iam-policy <project> --format=json | grep -n '<orch-account>'
 gcloud iam service-accounts get-iam-policy <orch-account> --project <project>
-gcloud auth print-access-token --impersonate-service-account=<orch-account> > /tmp/orch-token
+TOKEN=$(gcloud auth print-access-token --impersonate-service-account=<orch-account>)
 # a read of another mailbox, and of the device node, through the RTDB rules:
-curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $(cat /tmp/orch-token)" \
+curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $TOKEN" \
   "https://<project>-default-rtdb.<region>.firebasedatabase.app/config/admin/devices/<other-uid>.json"
 gcloud projects test-iam-permissions <project> --impersonate-service-account=<orch-account> \
   --permissions=resourcemanager.projects.setIamPolicy,iam.roles.create,secretmanager.versions.access
+# the value read is attempted with its output thrown away: the refusal is the reading, never bytes
+gcloud secrets versions access latest --secret=<model-secret> --project <project> \
+  --impersonate-service-account=<orch-account> >/dev/null
 # the bucket root: the write is refused, the read is not. The object below is your own throwaway.
 printf '' | gcloud storage cp - gs://<bucket>/<throwaway-key>
 gcloud storage ls gs://<bucket>/
 # the positive controls
 gcloud run jobs list --project <project> --region <region> --impersonate-service-account=<orch-account>
 gcloud secrets list --project <project> --impersonate-service-account=<orch-account>
-rm -f /tmp/orch-token
+unset TOKEN
 ```
 
 The RTDB read's status code is the reading the whole check turns on: **403 or 401 is a pass**, and a `200` with
@@ -18306,8 +18316,9 @@ controls — **under Check 663 here**.
 
 **What a run costs.** Reads and probes: **no model call, no run and nothing billable**. Nothing is created but
 the throwaway object, and deleting it is half the restore; the other half is removing the
-`serviceAccountTokenCreator` grant you added by hand. The token file is written mode-0600 by `gcloud` and removed
-by the last command.
+`serviceAccountTokenCreator` grant you added by hand. The token lives in one shell variable for the length of the
+check and is unset at the end; the value read that is refused never reaches stdout, because
+`>/dev/null` is what makes it a refusal with an exit status rather than bytes.
 
 **What waits on it.** **P5.1b** is the account and its grants, and this is that task's own reading of what it
 produced; §4.3's table, §6's rules 1, 2, 5 and 11, and E4's "never `var.launchers`" sentence are the claims it
