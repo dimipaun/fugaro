@@ -767,7 +767,7 @@ const (
 // The answer is the door's and not this function's (inflightAnswer): the update
 // door passes inflightQuiet, which reads no count at all and returns before the
 // write, so `fugaro update` neither refuses nor tells anybody to wait. What it
-// does instead — the one line it prints, and the one step of it that can still
+// does instead — the note it prints, and the one step of it that can still
 // bind a run in flight — is update_in_flight.go's. inflightManaged is the other
 // ruling (2026-11-06), kept for the doors that are not the update door: a
 // managed project's own session is told the count and writes.

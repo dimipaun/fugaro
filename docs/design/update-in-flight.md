@@ -107,7 +107,7 @@ stage's apply lands, the process in the project is the one the release behind
 deployed, and that binary refuses a node above its own version. The window is
 one apply — the two stages are adjacent, and this stage builds no image — and
 the binary that reads it was released, so it cannot be taught anything, and it is
-named in the update's own line about the runs in flight (`credentialsWindowOpens`)
+named in the update's own note about the runs in flight (`credentialsWindowOpens`)
 rather than left to be discovered by a refused call. A later bump that changes
 the shape has to solve the same window again: the reader can only be taught to
 accept a predecessor whose members it reads verbatim.
@@ -202,13 +202,34 @@ told the operator to wait (`refuseRunsInFlight`). The owner's requirement of
 2026-11-09 makes that unacceptable — a team of ten or twenty always has runs in
 flight — so the update door no longer refuses, and it announces the runs once
 instead (`announceRunsInFlight`, `internal/cli/update_in_flight.go`, called from
-the converge before the first stage). The line is one sentence, it is not a
-question, and it never asks anybody to wait. What it claims is what holds
-whatever this update turns out to do — the update waits for no run and changes
-nothing a run holds — and never the flat "the runs are unaffected",
-which the budget-mode raise below makes false; that a step can still reach a
-run is said instead, and the update log names each step. It is absent when nothing runs, under `--json` and `--print-vars`
+the converge before the first stage). The count is a step of the run like any
+other, so the wait it can cost is named while it happens — `Checking for runs in
+flight`, the CLI's own spinner and its one line per step — because the owner met
+it with fourteen runs going and no output at all (the feedback of 2026-11-15).
+What it prints after that is the count's own line: how many runs are in flight,
+that the update waits for none of them and changes nothing they hold. Then one
+short line per step that can still reach one, indented under it, or a single line
+saying no step does (`inFlightSteps`). The note is exactly as long as that count
+and no longer: the same feedback could not find what it was after in the
+paragraph this used to be, and what each line stands for — the question its
+step is gated on — is written where that step's own code and gate are. It never
+asks anybody to wait, and it never claims the flat "the runs are unaffected",
+which the budget-mode raise below makes false. It is absent when nothing runs, under `--json` and `--print-vars`
 (whose stdout is a document), and under `--plan-only` (which applies nothing).
+
+The one question the door asks is asked after the note, and only where a question
+can be answered at all: at the owner's own terminal, under `--ask` (`asksBack` —
+the same condition the update's other confirmations come back under). Going on is
+the answer it defaults to, and return pressed is it: a run in flight is never a
+reason to stop, so the person who presses it gets the update they would have had
+without the flag. Stopping is theirs alone, and choosing it ends the run at exit 0
+before any write is made, with one line saying that nothing was written
+(`TestUpdateAskStopsOverARunInFlight`, `TestUpdateAskGoesOnWhenTheAnswerIsNotStop`,
+`internal/cli/update_in_flight_test.go`). Where the no-prompt policy applies — a
+pipe, `--json`, a coding agent's session, a project whose marks did not answer
+managed — nothing is asked and the update proceeds exactly as it did before this
+question existed, printing the note only (`docs/no-prompt-policy/spec.md`).
+
 The refusal stays where it is not the update door's: `fugaro project policy publish --delete` /
 `fugaro project repos rm`, which are not the whole upgrade and are their own
 commands. The other two doors that reach this stage through `initStages` —
@@ -217,10 +238,10 @@ door either, so they keep the answer they had before this ruling, which is the
 ruling of 2026-11-06: a managed project's own session is told the count as a note
 and writes, and every other session is refused
 (`inflightManaged`, `policyMigrateStage.inflightAnswer`, which reads the answer
-off the door rather than taking it as a parameter). The one line above is the
-update door's and is not printed by those doors.
+off the door rather than taking it as a parameter). The note and the question are
+the update door's and neither is printed by those doors.
 
-The rows that are not simply safe are the ones the line has to own, and they are
+The rows that are not simply safe are the ones the note has to own, and they are
 six (`inFlightSteps`, `internal/cli/update_in_flight.go`): the budget-mode
 raise, which can bound a run that bootstrapped under `observe` from its next
 lease and is the operator's own caps becoming effective rather than the update
@@ -238,7 +259,7 @@ running on it.
 Each clause is the question its own step is gated on rather than the whole of its
 decision (`budgetModeBindsRuns`, `policyReadsLive`, `credentialsWindowOpens`,
 `tokensPublishReachesRuns`, `markerConverges`, `retireTakesExecutions`), so the
-line errs towards naming a step that may not end up doing anything over claiming
+note errs towards naming a step that may not end up doing anything over claiming
 the update cannot reach a run when it can; the budget raise's shape for the owner
 is in the pull request.
 
@@ -249,7 +270,7 @@ and that run's later writes — its lease, the ledger and the counters the repor
 settles, the outcome it ends with, its record and its review session — still
 land under the new rules and the migrated policy.
 `TestUpdateInFlightLineNamesEveryStepThatCanReachARun` turns each step on alone
-and asserts the clause is there and the others are not, so a step
+and asserts its one short line is there and the others are not, so a step
 that can reach a run and is not named fails the suite;
 `TestUpdateInFlightLineNamesTheBitbucketTokensPublish` does the same for the
 typed tokens a proxied call re-reads.
