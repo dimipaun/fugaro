@@ -28,6 +28,12 @@ import (
 // orchestratorTF is the file that carries the account and its bindings.
 const orchestratorTF = "orchestrator.tf"
 
+// orchestratorMemberExpr is the account's address as every binding in the file
+// writes it out. The header comment says why it is written rather than read off
+// the account resource: a computed member reaches the plan unknown, and the
+// cover reads a principal's kind off the plan's member string.
+const orchestratorMemberExpr = `"serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com"`
+
 // orchestratorResources is every resource that file declares, in the order the
 // file declares them, and the test fails on any other: a resource added to this
 // file is a grant the design's table does not have a row for, and a resource
@@ -92,15 +98,13 @@ func TestOrchestratorModuleGrantsTheDesignsTable(t *testing.T) {
 		t.Errorf("%s: the account's ID is not var.orchestrator.account_id, which is the account `fugaro doctor` looks for and the one internal/infra/tf's cover reads a member of that project as:\n%s", orchestratorTF, account)
 	}
 
-	// The member every binding below names, and why it is written out rather
-	// than read off the account resource: the local in this file says it at
-	// length, and what this checks is that the bindings USE it — a binding that
-	// named google_service_account.orchestrator[0].member would reach the plan
-	// as an unknown member, which the cover reads as an ordinary account.
-	if !strings.Contains(src, `member  = local.orchestrator_member`) && !strings.Contains(src, `member = local.orchestrator_member`) {
-		t.Errorf("%s: no binding uses local.orchestrator_member: the address has to be in the plan for the review to read it as this account's own kind, and a member read off the account resource is computed (orchestrator.tf's own comment)", orchestratorTF)
-	}
-
+	// Every binding names the account with the written-out expression, and none
+	// of them reads it off the account resource: google_service_account
+	// .orchestrator[0].member is computed, so a grant using it would reach the
+	// plan as an unknown member — which internal/infra/tf's cover reads as an
+	// ordinary account, the one kind the never-list's eleventh rule keeps this
+	// account out of. The four rows below each carry the expression in `need`
+	// for that reason, and the computed form in `absent`.
 	for _, c := range []struct {
 		what   string
 		block  string
@@ -114,7 +118,9 @@ func TestOrchestratorModuleGrantsTheDesignsTable(t *testing.T) {
 				`role    = "projects/${var.project}/roles/fugaroLauncher"`,
 				`project = var.project`,
 				`depends_on = [google_project_iam_custom_role.launcher]`,
+				`member  = ` + orchestratorMemberExpr,
 			},
+			absent: []string{"orchestrator[0].member"},
 		},
 		{
 			what:  "the runs bucket's write: objectUser under the launchers' own condition",
@@ -122,9 +128,11 @@ func TestOrchestratorModuleGrantsTheDesignsTable(t *testing.T) {
 			need: []string{
 				`bucket = google_storage_bucket.runs.name`,
 				`role   = "roles/storage.objectUser"`,
+				`member = ` + orchestratorMemberExpr,
 				`title      = var.launcher_bucket_condition.title`,
 				`expression = var.launcher_bucket_condition.expression`,
 			},
+			absent: []string{"orchestrator[0].member"},
 		},
 		{
 			what:  "the runs bucket's read: objectViewer, unconditioned (D683)",
@@ -132,20 +140,22 @@ func TestOrchestratorModuleGrantsTheDesignsTable(t *testing.T) {
 			need: []string{
 				`bucket = google_storage_bucket.runs.name`,
 				`role   = "roles/storage.objectViewer"`,
+				`member = ` + orchestratorMemberExpr,
 			},
-			absent: []string{"condition", "objectAdmin"},
+			absent: []string{"condition", "objectAdmin", "orchestrator[0].member"},
 		},
 		{
 			what:  "the token-minter role on the budget signer, in the Firebase project",
 			block: tfBlock(src, "google_service_account_iam_member", "orchestrator_token_minter"),
 			need: []string{
-				`service_account_id = "projects/${var.orchestrator.firebase_project}/serviceAccounts/${var.orchestrator.token_signer}"`,
+				`service_account_id = "projects/${var.orchestrator.firebase_project}/serviceAccounts/${var.orchestrator.signer_account_id}@${var.orchestrator.firebase_project}.iam.gserviceaccount.com"`,
 				`role               = "projects/${var.orchestrator.firebase_project}/roles/fugaroTokenMinter"`,
+				`member             = ` + orchestratorMemberExpr,
 			},
 			// roles/iam.serviceAccountTokenCreator's holder mints ACCESS TOKENS
 			// as the signer, which is a reach section 4.3's row is not: the row
 			// is iam.serviceAccounts.signJwt and nothing beside it.
-			absent: []string{"serviceAccountTokenCreator", "roles/owner", "roles/editor"},
+			absent: []string{"orchestrator[0].member", "serviceAccountTokenCreator", "roles/owner", "roles/editor"},
 		},
 	} {
 		if c.block == "" {
@@ -202,17 +212,17 @@ func TestOrchestratorIsNeverALauncher(t *testing.T) {
 		}
 	}
 
-	// The member is granted by this file and nowhere else in the module: the
-	// table is one file, and a second file grant is one no reader of this table
-	// would look for. outputs.tf is the one other file that names the account,
-	// and it names its EMAIL to publish the identity rather than binding
-	// anything with it.
+	// The account's address is bound by this file and nowhere else in the
+	// module: the table is one file, and a second file's grant is one no reader
+	// of this table would look for. outputs.tf is the one other file that names
+	// the account, and it names its EMAIL to publish the identity rather than
+	// binding anything with it.
 	for name, text := range tfFiles(t) {
 		if name == orchestratorTF {
 			continue
 		}
-		if strings.Contains(text, "orchestrator_member") {
-			t.Errorf("%s uses the member local: section 4.3's table is orchestrator.tf's alone, and a grant written in a second file is one the table's own test cannot see", name)
+		if strings.Contains(text, orchestratorMemberExpr) {
+			t.Errorf("%s names the orchestrator's address as a member: section 4.3's table is orchestrator.tf's alone, and a grant written in a second file is one the table's own test cannot see", name)
 		}
 		if strings.Contains(text, "google_service_account.orchestrator") && name != "outputs.tf" {
 			t.Errorf("%s names the orchestrator's account resource: the table is orchestrator.tf's, and outputs.tf is the one other file that may name it — to publish the identity rather than to bind anything with it", name)

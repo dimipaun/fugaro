@@ -146,9 +146,9 @@ func TestOrchestratorGrantsAreTheDesignsTableRows(t *testing.T) {
 
 	_, off := installationPlan(t, spec)
 	plan, on := installationPlanWith(t, spec, map[string]any{"orchestrator": map[string]any{
-		"account_id":       OrchestratorAccountID,
-		"firebase_project": fp,
-		"token_signer":     signer,
+		"account_id":        OrchestratorAccountID,
+		"firebase_project":  fp,
+		"signer_account_id": SignerAccountID,
 	}})
 
 	const (

@@ -138,18 +138,20 @@ module "project_review" {
 # names.role_ids.job_runner the project module hands each job's launchers
 # above, so the two grants of that role name one role.
 #
-# The two attributes are spelled from the tfvars rather than read off the
-# resources they name, and for the reason orchestrator.tf's member local gives
-# at length: module.installation.role_ids.job_runner and
-# module.installation.orchestrator are both COMPUTED (a custom role's name and a
-# service account's email), so reading them would reach the plan as unknown, and
-# internal/infra/tf's cover reads a grant's role and its principal off the plan
-# — unknown, the role is one no reader can name and the member is one whose kind
-# is unknowable, which is what the design's eleventh never-rule exists to keep
-# this account out of. Spelled, the plan says fugaroJobRunner on this project to
-# this account, and
-# internal/infra's TestOrchestratorGrantsAreTheDesignsTableRows pins both
-# strings to the account and the custom role the same plan creates.
+# The two attributes are written out rather than read off the resources they
+# name, and for the reason orchestrator.tf's header gives at length:
+# module.installation.role_ids.job_runner and module.installation.orchestrator
+# are both COMPUTED (a custom role's name and a service account's email), so
+# reading them would reach the plan as unknown, and internal/infra/tf's cover
+# reads a grant's role and its principal off the plan — unknown, the role is one
+# no reader can name and the member is one whose kind is unknowable, which is
+# what the design's eleventh never-rule exists to keep this account out of. The
+# role is the ID literal and not `${var.names.role_ids.job_runner}` for the
+# reason state_read.tf's and orchestrator.tf's own role literals give: a
+# project's custom role named in a binding is named by its ID, and
+# internal/infra's TestOrchestratorGrantsAreTheDesignsTableRows pins the literal
+# to the role_id of the role the same plan creates, so a drift between this
+# spelling and the tfvars' fails rather than binding a role that does not exist.
 #
 # for_each is empty for an installation that has not opted in, which is what
 # keeps the whole table off: a null var.orchestrator creates no account, no
@@ -169,7 +171,7 @@ resource "google_cloud_run_v2_job_iam_member" "orchestrator_runner" {
   project  = var.project
   location = var.region
   name     = module.project[each.key].job
-  role     = "projects/${var.project}/roles/${var.names.role_ids.job_runner}"
+  role     = "projects/${var.project}/roles/fugaroJobRunner"
   member   = "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com"
 
   depends_on = [module.installation]

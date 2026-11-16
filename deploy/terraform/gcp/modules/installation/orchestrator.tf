@@ -35,6 +35,22 @@
 # installation step). It is credentials_service.tf's and intake.tf's shape,
 # one file over.
 #
+# The member string is WRITTEN OUT in every binding below rather than read off
+# google_service_account.orchestrator[0].member, which is what a service
+# account's other grants in this module do (state_read.tf's, coordinator.tf's).
+# That attribute is computed, so reading it reaches the plan as an UNKNOWN
+# member, and the member is the one thing every guard this file has rests on:
+# internal/infra/tf's cover reads a principal's KIND off its address, and an
+# unknown member of a plan that creates an account in the same module is an
+# ordinary account (checkGrant's first case) — exactly the kind the design's
+# eleventh never-rule keeps this account out of. Written from the account's own
+# account_id and the project, the plan names the address, the cover reads it as
+# toOrchestrator, and each binding below is held to section 4.3's table rather
+# than to the table's toAccounts row. It is not a local either: the sweep that
+# reads this tree (deploy/terraform/terraform_test.go) holds a member to its own
+# reviewed list and says in as many words that a grant cannot hide behind a
+# local.
+#
 # The token-minter row's ordering, stated here because it is the one row this
 # file cannot make safe on its own: the signer account and the
 # fugaroTokenMinter role belong to the FIREBASE root's project, and `fugaro
@@ -54,24 +70,10 @@
 # installation's nodes (one project, one account).
 
 locals {
+  # The switch, credentials.tf's and intake.tf's shape: a null variable is an
+  # installation that has not opted in, and every resource below is counted on
+  # it.
   orchestrator_on = var.orchestrator != null
-
-  # The account's member string, written out here rather than read off
-  # google_service_account.orchestrator[0].member. That attribute is computed,
-  # so reading it would reach the plan as an UNKNOWN member, and the member is
-  # the one thing every guard this file has rests on: internal/infra/tf's cover
-  # reads a principal's KIND off its address, and an unknown member of a plan
-  # that creates an account in the same module reads as an ordinary account
-  # (checkGrant's first case) — which is exactly the kind the design's eleventh
-  # never-rule keeps this account out of. Written from the account's own
-  # account_id and the project, the plan names the address, the cover reads it
-  # as this account's own kind, and the four bindings below are checked against
-  # section 4.3's table rather than against a toAccounts row.
-  #
-  # The ternary is credentials.tf's shape and it is not decoration: the account
-  # is counted, so the index exists only when the installation has opted in, and
-  # the branch that would read it is not evaluated when it has not.
-  orchestrator_member = local.orchestrator_on ? "serviceAccount:${google_service_account.orchestrator[0].account_id}@${var.project}.iam.gserviceaccount.com" : ""
 }
 
 # The identity itself. Nothing is granted actAs on it: executing the service
@@ -110,7 +112,7 @@ resource "google_project_iam_member" "orchestrator_launcher" {
 
   project = var.project
   role    = "projects/${var.project}/roles/fugaroLauncher"
-  member  = local.orchestrator_member
+  member  = "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com"
 
   depends_on = [google_project_iam_custom_role.launcher]
 }
@@ -145,7 +147,7 @@ resource "google_storage_bucket_iam_member" "orchestrator_runs_launcher" {
 
   bucket = google_storage_bucket.runs.name
   role   = "roles/storage.objectUser"
-  member = local.orchestrator_member
+  member = "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com"
 
   condition {
     title      = var.launcher_bucket_condition.title
@@ -172,7 +174,7 @@ resource "google_storage_bucket_iam_member" "orchestrator_runs_reader" {
 
   bucket = google_storage_bucket.runs.name
   role   = "roles/storage.objectViewer"
-  member = local.orchestrator_member
+  member = "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com"
 }
 
 # The token-minter row: `iam.serviceAccounts.signJwt` on the budget signer, which
@@ -194,7 +196,7 @@ resource "google_storage_bucket_iam_member" "orchestrator_runs_reader" {
 resource "google_service_account_iam_member" "orchestrator_token_minter" {
   count = local.orchestrator_on ? 1 : 0
 
-  service_account_id = "projects/${var.orchestrator.firebase_project}/serviceAccounts/${var.orchestrator.token_signer}"
+  service_account_id = "projects/${var.orchestrator.firebase_project}/serviceAccounts/${var.orchestrator.signer_account_id}@${var.orchestrator.firebase_project}.iam.gserviceaccount.com"
   role               = "projects/${var.orchestrator.firebase_project}/roles/fugaroTokenMinter"
-  member             = local.orchestrator_member
+  member             = "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com"
 }
