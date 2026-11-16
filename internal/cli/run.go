@@ -974,6 +974,26 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	if len(o.contextRepos) > 0 {
 		spec.ContextRepos = o.contextRepos
 	}
+	// Whatever list the task is about to carry — the flag's, or the stored
+	// task's that a --retry replays — is carried in the canonical form every
+	// allow-list entry and every repository this program compares is reduced to
+	// (task.CanonicalRepo): the admission below judges that form and the run's
+	// identity is minted from this list, so a launch that typed "Acme/Lib.git"
+	// must not put a spelling of one repository on a task and a claim that its
+	// own reader would have to canonicalise again — or that two readers could
+	// reduce differently. A --retry rewrites no stored byte (createTask does not
+	// run for one) and still mints its claim from the list here.
+	if len(spec.ContextRepos) > 0 {
+		repos := make([]string, 0, len(spec.ContextRepos))
+		for _, repo := range spec.ContextRepos {
+			canonical, err := task.CanonicalRepo(repo)
+			if err != nil {
+				return launchResult{}, userErr("the context repository %q cannot be named on a task: %v", repo, err)
+			}
+			repos = append(repos, canonical)
+		}
+		spec.ContextRepos = repos
+	}
 	// The four --max-* chain limits (docs/run-limit-carry-over §2, D1042), on
 	// every launch shape below as --review-levels is, and refused here rather
 	// than dropped: the policy this launch resolves is merged first and a
@@ -2586,17 +2606,21 @@ func tierFlag(o *runOptions) error {
 
 // contextReposFlag is the shape and the count of --context, validated once for
 // every launch shape that accepts it, before openCloud and before any write:
-// at most task.MaxContextRepos repositories, each of them CanonicalRepo's form
-// (task.ContextReposProblem, the same rule the runner applies to a stored
-// task), and none of them twice.
+// at most task.MaxContextRepos repositories, each of them a name CanonicalRepo
+// accepts (task.ContextReposProblem, the same rule the runner applies to a
+// stored task), and none of them twice. Two names are one repository here when
+// their canonical forms are equal, which is the form the count, the task and
+// the claim are all in (finishLaunch).
 //
 // What it does not decide is whether the launch may carry them at all — the
-// allow-list, the provider and the credentials service are questions about this
-// installation and this repository, and they are asked at the gates that can
-// read those (launchPolicyGates, contextReposRefusal). This one is the
-// caller's own text, and a near miss — "owner", a full URL, a name pasted with
-// its ".git" — is refused here rather than carried into a task.json the runner
-// refuses at bootstrap.
+// allow-list, the role, the provider and the credentials service are questions
+// about this installation and this repository, and they are asked at the gates
+// that can read those (launchPolicyGates, contextReposRefusal). This one is the
+// caller's own text, and a name that is not owner/name at all — "owner" alone, a
+// full URL, a "." or ".." element — is refused here rather than carried into a
+// task.json the runner refuses at bootstrap. A "".git"" suffix or a capital
+// letter is not refused: CanonicalRepo normalises both, and that is the form
+// the task and the claim carry.
 func contextReposFlag(o *runOptions) error {
 	if len(o.contextRepos) > task.MaxContextRepos {
 		return userErr("--context: at most %d repositories may be named, got %d; drop the ones this run does not read", task.MaxContextRepos, len(o.contextRepos))

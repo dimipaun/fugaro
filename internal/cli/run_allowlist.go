@@ -124,6 +124,18 @@ func launchPolicyGates(ctx context.Context, env *cloudEnv, slug string, spec *ta
 		return err
 	}
 	if !found {
+		// A context repository is admitted by the project's published
+		// allow_repos (plan task C5a), and this installation has published no
+		// policy: there is no list that could admit one. The absent node is
+		// read as no policy rather than as an empty allow-list, which is what
+		// keeps a launch naming no context repository possible here (the
+		// return below) — so what is refused is the launch that names one,
+		// and it is refused before the task is written and before the claim
+		// that would carry the repository is minted.
+		if len(spec.ContextRepos) > 0 {
+			return userErr("--context needs the project's published policy: no policy is published for this project, so no allow_repos admits %s, and a run may not read a repository the project's own list does not name. Run '%s project policy publish' to publish this machine's list, and '%s project repos add github/<owner>/<name>' where it does not carry one — or drop --context",
+				strings.Join(spec.ContextRepos, ", "), selfCommand(), selfCommand())
+		}
 		// No policy published here (no marker, or a marker and no node): there
 		// is no allow-list to check, and reading this as an empty one would
 		// refuse every launch of an installation that has published nothing.
@@ -132,20 +144,30 @@ func launchPolicyGates(ctx context.Context, env *cloudEnv, slug string, spec *ta
 	if err := allowListRefusal(p, kind, spec.Repo); err != nil {
 		return err
 	}
-	// Every read-only context repository is admitted by the same list, and
-	// refused with the same message: allow_repos is what decides which
-	// repositories a run may touch, and a run that may *read* a repository is a
-	// wider grant than one that only pushes its own. The canonical is built
-	// with the launch's own kind, which is the kind a context repository is
-	// held to (contextReposRefusal refuses a launch whose repository is not
-	// GitHub's, and a context repository is GitHub's alone until the
-	// credentials service brokers another provider's fetch). Where no policy is
-	// published at all this is not reached, exactly as the repository's own
-	// admission is not (the `!found` return above).
+	// Every read-only context repository is admitted the way the run's own
+	// repository is: by the project's published allow_repos, and by the
+	// credential's own roles. allow_repos decides which repositories a run may
+	// touch, and a run that may *read* a repository is a wider grant than one
+	// that only pushes its own — while the roles are what the claim being
+	// minted for that repository rests on: this launcher signs the list into
+	// the run's identity, and a reader of that identity (the credentials
+	// service, plan task C5b) holds the signature, not a role, so a repository
+	// the caller holds no role in must be refused here or a launch grants a
+	// read the person was never given. ActionViewRepo rather than ActionLaunch
+	// is the role that read takes: nothing of the context repository is
+	// launched, written or pushed, only read.
+	//
+	// The canonical is built with the launch's own kind, which is the kind a
+	// context repository is held to (contextReposRefusal refuses a launch whose
+	// repository is not GitHub's, and a context repository is GitHub's alone
+	// until the credentials service brokers another provider's fetch).
 	for _, repo := range spec.ContextRepos {
 		canonical, err := projectpolicy.Canonical(kind, repo)
 		if err != nil {
 			return userErr("the context repository %q cannot be named in the project's allow-list: %v", repo, err)
+		}
+		if err := requireAccess(ctx, env, accesslib.ActionViewRepo, canonical, "nothing was launched"); err != nil {
+			return err
 		}
 		if !projectpolicy.AdmitRepo(p.AllowRepos, canonical) {
 			return userErr("--context %s: %s. The launch stops before any execution exists", repo, projectpolicy.NotAdmitted(p.AllowRepos, canonical))

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -244,6 +245,116 @@ func TestRunContextReposGateTheJobImage(t *testing.T) {
 	writeBuildRecord(t, plain.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, contextReposSince, -1))
 	if _, _, err := runBudget(t); err != nil {
 		t.Fatalf("a launch naming no context repository was gated on the image: %v", err)
+	}
+}
+
+// TestRunContextReposNeedARole: the launcher mints the run's identity with the
+// context repositories in it, and what reads that identity holds the signature
+// rather than a role (the credentials service, plan task C5b), so a repository
+// the caller holds no role in must be refused here — a launch that recorded one
+// would hand a run a read the person was never given. ActionViewRepo is the
+// role that read takes: nothing of a context repository is launched, written or
+// pushed, only read, so a viewer of it is enough where the run's own repository
+// takes operator.
+func TestRunContextReposNeedARole(t *testing.T) {
+	f := contextLaunchFixture(t)
+	publishAllowOnly(t, f, "github/acme/*")
+	accessRunNode(t, f, userStored(t, accessOperator, accesslib.RoleOperator, accessRepoA))
+	accessRunAs(t, accessOperator)
+	_, _, err := contextRun(t, f, "acme/other")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("a context repository the credential holds no role in: err = %v (exit %d), want a refusal", err, ExitCode(err))
+	}
+	for _, want := range []string{
+		"nothing was launched",
+		"reading " + accessRepoB,
+		"needs the role viewer",
+		"holds no role",
+		accessOperator,
+		"user grant " + accessOperator + " --role viewer --scope " + accessRepoB,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if launchedAny(f) {
+		t.Fatal("a refused launch started an execution")
+	}
+	if storedTask(t, f.cloudFixture) {
+		t.Error("the refused launch stored its task")
+	}
+	// The role is the read's and not the launch's: the same credential with a
+	// viewer's role in the context repository is launched.
+	viewer := contextLaunchFixture(t)
+	publishAllowOnly(t, viewer, "github/acme/*")
+	accessRunNode(t, viewer,
+		userStored(t, accessOperator, accesslib.RoleOperator, accessRepoA),
+		userStored(t, accessOperator, accesslib.RoleViewer, accessRepoB))
+	if _, _, err := contextRun(t, viewer, "acme/other"); err != nil {
+		t.Fatalf("a viewer of the context repository was refused: %v", err)
+	}
+	if !launchedAny(viewer) {
+		t.Fatal("the launch that was not refused started no execution")
+	}
+}
+
+// TestRunContextRefusedWithNoPolicy: a context repository is admitted by the
+// project's published allow_repos (plan task C5a), and an installation that has
+// published no policy has no list that could admit one — the absent node is
+// read as no policy rather than as an empty list, which is what keeps a launch
+// that names no context repository possible there (launchPolicyGates' own
+// `!found` return). So the launch that names one is refused, before the task is
+// stored and before the claim that would name the repository is minted.
+func TestRunContextRefusedWithNoPolicy(t *testing.T) {
+	f := contextLaunchFixture(t)
+	_, _, err := contextRun(t, f, "acme/lib")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("a context repository with no policy published: err = %v (exit %d), want a refusal", err, ExitCode(err))
+	}
+	for _, want := range []string{"no policy is published", "project policy publish", "project repos add", "drop --context"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if launchedAny(f) {
+		t.Fatal("a refused launch started an execution")
+	}
+	if storedTask(t, f.cloudFixture) {
+		t.Error("the refused launch stored its task")
+	}
+	// The same installation launches a run naming no context repository, so the
+	// refusal above is the list's and not the absent policy's.
+	plain := contextLaunchFixture(t)
+	if _, _, err := runBudget(t); err != nil {
+		t.Fatalf("a launch naming no context repository on an installation with no policy was refused: %v", err)
+	}
+	if !launchedAny(plain) {
+		t.Fatal("the launch that was not refused started no execution")
+	}
+}
+
+// TestRunContextReposAreStoredCanonical: the list a launch carries is written in
+// the one form the allow-list, the task and the claim are all judged in
+// (task.CanonicalRepo). A person who types a spelling of a repository — a
+// capital, a ".git" suffix — gets the repository's canonical name on the task
+// and in the identity, so no reader of either has to canonicalise the value it
+// was handed, and two spellings of one repository cannot become two entries.
+func TestRunContextReposAreStoredCanonical(t *testing.T) {
+	f := contextLaunchFixture(t)
+	publishAllowOnly(t, f, "github/acme/*")
+	var env map[string]string
+	f.run.OnRun = func(c gcpfake.RunCall) { env = c.Env }
+	if _, _, err := contextRun(t, f, "Acme/Lib.git"); err != nil {
+		t.Fatal(err)
+	}
+	spec := readSpec(t, f.cloudFixture, budgetRun)
+	if len(spec.ContextRepos) != 1 || spec.ContextRepos[0] != "acme/lib" {
+		t.Fatalf("the stored task names %v, want [acme/lib]", spec.ContextRepos)
+	}
+	claims := claimsOf(t, f, unsealed(t, markerKey(t, env), []byte(readToken(t, f.cloudFixture, budgetRun)), budgetRun))
+	repos, ok := claims[token.ClaimContextRepos].([]any)
+	if !ok || len(repos) != 1 || repos[0] != "acme/lib" {
+		t.Fatalf("the identity's %s = %v, want [acme/lib]", token.ClaimContextRepos, claims[token.ClaimContextRepos])
 	}
 }
 
