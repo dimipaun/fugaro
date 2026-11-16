@@ -3741,6 +3741,77 @@ func TestTaskSchemaRefusesReservedAccountName(t *testing.T) {
 //
 // Mutation (rename the property to `compressionOff` in schemas/task.schema.json):
 // the document carrying the field is rejected as an unknown key and this fails.
+// TestTaskSchemaContextReposMatchesTheGoRule ties the task schema's
+// `context_repos` property to the Go rules it mirrors (task.MaxContextRepos
+// and task.ContextReposProblem): the bounds are separate copies, so without
+// this a change to either would drift from the published schema with only the
+// corpus fixtures noticing — and a task.json the launcher writes is exactly
+// what this schema is for. The two are compared on instances rather than on
+// the pattern's text: the rule is task.CanonicalRepo's, which the pattern
+// cannot carry whole (a "." or ".." element is outside it, as the property's
+// own description says), so what must agree is which lists each side lets
+// through.
+//
+// There is no row for an empty list, and there cannot be one: Spec.ContextRepos
+// is omitempty, so the writer this test marshals with drops the key and both
+// sides see no context_repos at all. A hand-written `"context_repos": []` is
+// refused by the schema's minItems and by Spec.Validate alike, and that half is
+// pinned where the Go rule lives (internal/task's TestValidateContextRepos).
+func TestTaskSchemaContextReposMatchesTheGoRule(t *testing.T) {
+	data, err := os.ReadFile("task.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]struct {
+			MinItems    int  `json:"minItems"`
+			MaxItems    int  `json:"maxItems"`
+			UniqueItems bool `json:"uniqueItems"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	p, ok := doc.Properties["context_repos"]
+	if !ok {
+		t.Fatal("task.schema.json has no context_repos property: a launch with --context writes a task.json this schema refuses (additionalProperties: false)")
+	}
+	if p.MaxItems != task.MaxContextRepos || p.MinItems != 1 || !p.UniqueItems {
+		t.Errorf("context_repos carries minItems %d, maxItems %d, uniqueItems %v; want 1, task.MaxContextRepos (%d) and true",
+			p.MinItems, p.MaxItems, p.UniqueItems, task.MaxContextRepos)
+	}
+	sch := compile(t, "task.schema.json")
+	for _, tc := range []struct {
+		name  string
+		repos []string
+	}{
+		{"one", []string{"acme/lib"}},
+		{"five", []string{"acme/1", "acme/2", "acme/3", "acme/4", "acme/5"}},
+		{"six", []string{"acme/1", "acme/2", "acme/3", "acme/4", "acme/5", "acme/6"}},
+		{"the same repository twice", []string{"acme/lib", "acme/lib"}},
+		{"not a repository", []string{"acme"}},
+		{"a trailing slash", []string{"acme/"}},
+		{"a .git suffix", []string{"acme/lib.git"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := task.Spec{Version: 1, RunID: "20261116-093000-abcd", Repo: "acme/app", Ref: "main", Task: "x", ContextRepos: tc.repos}
+			body, err := json.Marshal(spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			schemaErr := sch.Validate(inst)
+			goErr := spec.Validate()
+			if (schemaErr == nil) != (goErr == nil) {
+				t.Errorf("schema and task.Validate disagree about %v:\n schema: %v\n go:     %v", tc.repos, schemaErr, goErr)
+			}
+		})
+	}
+}
+
 func TestTaskSchemaCompressionOffMatchesTheGoField(t *testing.T) {
 	sch := compile(t, "task.schema.json")
 	validate := func(s task.Spec) error {

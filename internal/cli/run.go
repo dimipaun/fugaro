@@ -30,6 +30,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/craft"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gitops"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -332,6 +333,15 @@ type runOptions struct {
 	// lower: areas are defaults, not floors (docs/project-layer.md §2), and
 	// finalize resolves again from the paths the run really changed.
 	paths []string
+	// contextRepos is --context, repeated: the repositories this run reads
+	// and never writes (plan task C5a; D613), as owner/name. Nil (the
+	// default) is no context repository at all, and the launch writes no
+	// task field and mints the claim set it always minted. The list is
+	// validated once (contextReposFlag) before the cloud is opened — at
+	// most MaxContextRepos of them, each of them ContextReposProblem's
+	// shape — and each entry is admitted by the project's published
+	// allow_repos where the run's own repository is (launchPolicyGates).
+	contextRepos []string
 	// reviewLevelsPath is --review-levels: a YAML document naming the review
 	// levels this run asks for (D724), or - for stdin. Empty (the default)
 	// is no request at all: the launch writes no field and the run resolves
@@ -453,6 +463,7 @@ func newRunCmd() *cobra.Command {
 	f.StringArrayVar(&o.attach, "attach", nil, "attach a file to the run: repeatable, uploaded to the run's own inputs/ and downloaded by a mode: artifact run into the checkout's inputs/ (needs a mode: artifact recipe; refused on a run ID that already has a task)")
 	f.StringVar(&o.rigor, "mode", "", "the rigor mode to ask for: "+rigor.ModeList()+"; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it, and takes no hotfix; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps")
 	f.StringArrayVar(&o.paths, "path", nil, "declare a path this run will touch, matched against the rigor.areas rules in effect (the repository's, and the project layer's beside them): repeatable; a run that declares none matches no area rule")
+	f.StringArrayVar(&o.contextRepos, "context", nil, "a repository this run reads and never writes, as owner/name: repeatable, at most "+fmt.Sprint(task.MaxContextRepos)+", each admitted by the project's allow_repos. The list is recorded on the task and in the run's own identity, which is what the release that reads it fetches with — this release's runner does not clone a context repository yet. Refused for a Bitbucket repository and where the installation's credentials service does not serve the repository")
 	f.StringVar(&o.tier, "tier", "", "the expectation tier to dispatch this run at: "+tier.List()+". It is what the run is expected to cost and take (governance.tiers in fugaro.yaml and the project layer), and never a cap: the run's own budget cap stays the ceiling. A --pr follow-up keeps the tier its PR's runs recorded; without this flag a run carries no expectation at all")
 	f.StringVar(&o.reviewLevelsPath, "review-levels", "", "read the run's own review levels from this YAML file, or - for stdin: the block the task stores as review_levels (l1, l2, l3, each of model, effort, none and focus), decoded strictly, with no key on no level meaning the configuration decides it. Asking for levels needs a job image whose runner acts on them, so a launch on an older one is refused and names fugaro image refresh; without the flag the run resolves its levels from its configuration and its mode alone")
 	// Hidden: see the field's own note on the generated reference.
@@ -469,7 +480,7 @@ func newRunCmd() *cobra.Command {
 }
 
 // taskFlags are the flags --retry excludes: the stored task.json supplies them.
-var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "title", "plan-task", "allow-duplicate", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path", "tier", "security", "no-compression", "review-levels", "review-run", "max-usd", "max-tokens", "max-time", "max-review-rounds", "continues", "used-usd", "used-tokens", "used-time", "used-review-rounds"}
+var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "title", "plan-task", "allow-duplicate", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path", "context", "tier", "security", "no-compression", "review-levels", "review-run", "max-usd", "max-tokens", "max-time", "max-review-rounds", "continues", "used-usd", "used-tokens", "used-time", "used-review-rounds"}
 
 // prFlags are the flags --pr excludes: the previous run on the PR supplies them.
 var prFlags = []string{"ref", "workflow"}
@@ -562,6 +573,14 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		// --tier, resolved the same way and for the same reason: the
 		// vocabulary is closed, and a launch that names none writes no field.
 		if err = tierFlag(o); err != nil {
+			return err
+		}
+		// --context, validated here with the two above and for the same
+		// reason: the repositories are the caller's own text, and both a
+		// near miss and a sixth one are refused before the cloud is opened
+		// (contextReposFlag). Whether this launch may carry them at all is
+		// the gates' question, not this one's.
+		if err = contextReposFlag(o); err != nil {
 			return err
 		}
 		// The four --max-* chain limits, parsed once for every launch shape
@@ -941,6 +960,39 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	// and a launch that passes no --security carries no field at all.
 	if o.security {
 		spec.Security = true
+	}
+	// --context writes the task's own list, on every launch shape below as
+	// --security does, and only when the flag named one: a launch with no
+	// --context carries no field and its task is byte-identical to what the
+	// previous release wrote, which is what keeps it readable by a runner
+	// older than the field. Written before createTask and before the gates
+	// that read the task, so a repeated --run-id with repositories the
+	// stored task does not carry is refused as a different task rather than
+	// silently dropped, and freshLaunchGates judges the image on the list
+	// this wrote. A --retry takes no such flag (taskFlags), so a stored task
+	// keeps the repositories it was launched with.
+	if len(o.contextRepos) > 0 {
+		spec.ContextRepos = o.contextRepos
+	}
+	// Whatever list the task is about to carry — the flag's, or the stored
+	// task's that a --retry replays — is carried in the canonical form every
+	// allow-list entry and every repository this program compares is reduced to
+	// (task.CanonicalRepo): the admission below judges that form and the run's
+	// identity is minted from this list, so a launch that typed "Acme/Lib.git"
+	// must not put a spelling of one repository on a task and a claim that its
+	// own reader would have to canonicalise again — or that two readers could
+	// reduce differently. A --retry rewrites no stored byte (createTask does not
+	// run for one) and still mints its claim from the list here.
+	if len(spec.ContextRepos) > 0 {
+		repos := make([]string, 0, len(spec.ContextRepos))
+		for _, repo := range spec.ContextRepos {
+			canonical, err := task.CanonicalRepo(repo)
+			if err != nil {
+				return launchResult{}, userErr("the context repository %q cannot be named on a task: %v", repo, err)
+			}
+			repos = append(repos, canonical)
+		}
+		spec.ContextRepos = repos
 	}
 	// The four --max-* chain limits (docs/run-limit-carry-over §2, D1042), on
 	// every launch shape below as --review-levels is, and refused here rather
@@ -1633,6 +1685,12 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	if err := cascadeLaunchRefusal(ctx, env, spec); err != nil {
 		return config.Inputs{}, err
 	}
+	// The context repositories' own gate, beside the cascade's and for the
+	// same reason: a launch whose context repositories this installation
+	// could not read is refused here rather than started (contextReposRefusal).
+	if err := contextReposRefusal(ctx, env, slug, spec); err != nil {
+		return config.Inputs{}, err
+	}
 	// --attach, before the gates below: its recipe refusal, its caps,
 	// D9's line and its image gate (design §4, plan P7/P9). It uploads
 	// nothing here — attachUpload does that below, after the last gate
@@ -1757,6 +1815,19 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if chainLimitsAsk(spec) {
 			if err := checkCloneImageSince(env.lc, spec, launchLimitsSince,
 				chainLimitsSubject, chainLimitsKnows, chainLimitsAlt, warn); err != nil {
+				return config.Inputs{}, err
+			}
+		}
+		// The context repositories' own gate, for the same reason as the
+		// block above: a runner older than contextReposSince refuses a task
+		// carrying context_repos outright (task.Parse decodes with
+		// DisallowUnknownFields), and the run would die at bootstrap over a
+		// field that changes nothing about what it does. A launch that names
+		// none carries none, and is never gated: the check is the field's,
+		// not the flag's.
+		if len(spec.ContextRepos) > 0 {
+			if err := checkCloneImageSince(env.lc, spec, contextReposSince,
+				contextReposSubject, contextReposKnows, contextReposAlt, warn); err != nil {
 				return config.Inputs{}, err
 			}
 		}
@@ -1946,6 +2017,14 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if chainLimitsAsk(spec) {
 			if err := checkImageSince(ctx, env, slug, spec, kind, launchLimitsSince,
 				chainLimitsSubject, chainLimitsKnows, chainLimitsAlt, warn); err != nil {
+				return config.Inputs{}, err
+			}
+		}
+		// The same gate as the clone branch's above, and for the same reason:
+		// see contextReposSince.
+		if len(spec.ContextRepos) > 0 {
+			if err := checkImageSince(ctx, env, slug, spec, kind, contextReposSince,
+				contextReposSubject, contextReposKnows, contextReposAlt, warn); err != nil {
 				return config.Inputs{}, err
 			}
 		}
@@ -2191,6 +2270,17 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	// admit never gets its inputs into the bucket either.
 	if err := launchPolicyGates(ctx, env, slug, spec, kind, clone, shared, warn); err != nil {
 		return config.Inputs{}, err
+	}
+	// The list is recorded and not yet read: the token it is fetched with
+	// (plan task C5b) and the runner's own clone (C5c) are the releases that
+	// read it, and this launch writes it into the task and into the run's own
+	// identity for them. Said once, after the last gate that can refuse, so a
+	// launch that is not starting a run prints nothing about one — and said
+	// at all, because a flag that only records a list is a gap a person has
+	// to hear about, not one this command may leave them to discover.
+	if n := len(spec.ContextRepos); n > 0 {
+		fmt.Fprintf(warn, "warning: this launch records the read-only context repositories %s on %s's task and in its run identity, and this release's runner does not clone them yet: the run reads no file of them until the release that reads the list ships\n",
+			strings.Join(spec.ContextRepos, ", "), spec.Repo)
 	}
 	return caps, nil
 }
@@ -2510,6 +2600,41 @@ func rigorFlags(o *runOptions) error {
 func tierFlag(o *runOptions) error {
 	if o.tier != "" && !tier.Known(tier.Tier(o.tier)) {
 		return userErr("--tier %q: use %s, or leave it off to dispatch the run with no expectation", o.tier, tier.List())
+	}
+	return nil
+}
+
+// contextReposFlag is the shape and the count of --context, validated once for
+// every launch shape that accepts it, before openCloud and before any write:
+// at most task.MaxContextRepos repositories, each of them a name CanonicalRepo
+// accepts (task.ContextReposProblem, the same rule the runner applies to a
+// stored task), and none of them twice. Two names are one repository here when
+// their canonical forms are equal, which is the form the count, the task and
+// the claim are all in (finishLaunch).
+//
+// What it does not decide is whether the launch may carry them at all — the
+// allow-list, the role, the provider and the credentials service are questions
+// about this installation and this repository, and they are asked at the gates
+// that can read those (launchPolicyGates, contextReposRefusal). This one is the
+// caller's own text, and a name that is not owner/name at all — "owner" alone, a
+// full URL, a "." or ".." element — is refused here rather than carried into a
+// task.json the runner refuses at bootstrap. A "".git"" suffix or a capital
+// letter is not refused: CanonicalRepo normalises both, and that is the form
+// the task and the claim carry.
+func contextReposFlag(o *runOptions) error {
+	if len(o.contextRepos) > task.MaxContextRepos {
+		return userErr("--context: at most %d repositories may be named, got %d; drop the ones this run does not read", task.MaxContextRepos, len(o.contextRepos))
+	}
+	seen := map[string]bool{}
+	for _, repo := range o.contextRepos {
+		if p := task.ContextReposProblem(repo); p != "" {
+			return userErr("--context %q: the repository %s", repo, p)
+		}
+		c, _ := task.CanonicalRepo(repo)
+		if seen[c] {
+			return userErr("--context %s is named twice; a run reads a repository once", c)
+		}
+		seen[c] = true
 	}
 	return nil
 }
@@ -3946,6 +4071,95 @@ func printRecipeNote(warn io.Writer, rr *resolvedRecipe, explicit bool) {
 		return
 	}
 	io.WriteString(warn, noteLine(rr.Note))
+}
+
+// contextReposRefusal is the launcher's own half of --context (plan task C5a):
+// the two questions a list of context repositories cannot be asked at the flag
+// (contextReposFlag), because they are about this installation and this
+// repository rather than about the text a person typed. It is called where the
+// cascade's own refusal is, first of a new launch's gates: before the claim,
+// before the mint and before any write, so a launch it refuses leaves no task,
+// no token and no execution behind.
+//
+// Both refusals answer the same question — could the run this launch starts
+// read the repositories at all — and both answers are no until the read-only
+// token (plan task C5b) and the runner's own clone (C5c) ship:
+//
+//   - the repository must be GitHub's. The credentials service brokers a fetch
+//     against the run's own repository and its App installation (secrets-
+//     brokering D496), so a context repository can be read there only for a
+//     GitHub run; a Bitbucket run's would be a repository nothing could fetch.
+//   - the installation must have opted into the credentials service, and this
+//     repository with it, on the job *this launch* runs on: the address the
+//     launch hands the job is what makes the service reachable at all, and the
+//     in-job mint path (an agent.auth that mounts its own credential) is
+//     deliberately not extended to context repositories — a run on that path
+//     would hold a token for its own repository and nothing else. Both halves
+//     are asked of the functions the launch itself judges with — the job of
+//     launchProjectJobFor, which is the decision launchRun starts the
+//     execution on, and credentialsServiceLaunchEnv, which is the only place
+//     the switch and the job's identity are decided (proxiedRepo's last
+//     question too) — so this gate and the execution cannot disagree about
+//     whether the job was handed the service. Deciding the job here is what
+//     makes the pair one, and it puts the job decision's own refusals (a
+//     policy this CLI cannot read, profileAdmissionRefusal, the account axis)
+//     on this gate as well, a moment earlier than the launch makes them and
+//     still before the claim and before any write: what a gate refuses leaves
+//     no more behind than what the launch refuses.
+//
+// io.Discard is the reader's warning writer, the way proxiedRepo's and the
+// planner's are: the launch reads the same two documents and words the one
+// warning this read can report (repoServiceAuth) once.
+func contextReposRefusal(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) error {
+	if len(spec.ContextRepos) == 0 {
+		return nil
+	}
+	kind, ok := runner.ProviderForSlug(slug, spec.Repo)
+	if !ok {
+		// The slug and the repository disagree about the provider, which is
+		// the policy gate's refusal to word (launchPolicyGates): there is no
+		// kind here to judge, and no launch reaches this state.
+		return nil
+	}
+	if kind != gitprov.KindGitHub {
+		return userErr("--context needs a GitHub repository, and %s is on %s: the credentials service brokers a fetch against the run's own repository and its installation (secrets-brokering D496), a path that serves GitHub alone, so a %s run could not read the repositories it was launched with. Drop --context, or run the task in the repository whose files it needs",
+			spec.Repo, kind, kind)
+	}
+	// The job this launch runs on, decided by the function the launch itself
+	// decides it with (project_job.go's launchProjectJobFor): a shared project
+	// job is never handed the service's address, so the question below is about
+	// this launch's job and not about the repository alone. A gate that asked
+	// it of the repository's own job for a launch that lands on a shared one
+	// would pass a launch whose run is handed no address at all.
+	//
+	// A review launch is not one of those: its execution runs on the
+	// review-only variant, which its own deployment tells the address
+	// (internal/infra's reviewVariant — the service is where a review's
+	// read-only token and its model calls come from), so a review launch is
+	// judged by the repository's own question, exactly as it was before the
+	// job was part of this one.
+	job, err := env.launchProjectJobFor(ctx, slug, spec)
+	if err != nil {
+		return err
+	}
+	jobName := ""
+	if job != nil && spec.Mode != recipe.ModeReview {
+		jobName = job.Name
+	}
+	auth, deployed := env.repoServiceAuth(ctx, spec, io.Discard)
+	if len(credentialsServiceLaunchEnv(env.lc, jobName, spec.Repo, auth, deployed)) == 0 {
+		if jobName != "" {
+			// A shared project job is never told the address whatever the
+			// installation's switch says, so the sentence below would be false
+			// there — and its remedy would be no remedy: the operator can deploy
+			// the service this launch already has and still be handed nothing.
+			return userErr("--context needs the credentials service's address on the job this launch runs on, and this launch runs on %s, a shared project job: the service refuses an account that belongs to one whole, before any route (that is the job class, not this repository or this installation), and the address is therefore never written on one — a shared project job told about the service would stop reading the App key it still mounts, because the same variable is what opens the git provider keyless, which breaks every GitHub run on it. So no launch on a shared project job is told about the service, a run of one could read no context repository, and this launch stops before any execution exists: run the task in the repository whose files it needs, with no --context, until a shared project job is moved onto the service (C3.9)",
+				pluginwire.Printable(jobName))
+		}
+		return userErr("--context needs a credentials service that serves %s, and this installation's does not: the service is what would read a context repository for a run, and the address it is reached at is written on the job only where the installation carries the service and this repository's runs use an auth it serves (today agent.auth: cascade alone). Run '%s update' in your own terminal to deploy the service where the installation can carry it, then set agent.auth: cascade in %s's fugaro.yaml and run '%s update --repo %s' to apply that repository's root with the switch on — or drop --context",
+			spec.Repo, selfCommand(), spec.Repo, selfCommand(), spec.Repo)
+	}
+	return nil
 }
 
 // cascadeLaunchRefusal is the launcher's own side of the cascade's rules
