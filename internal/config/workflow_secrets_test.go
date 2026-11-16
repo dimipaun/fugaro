@@ -17,6 +17,7 @@ func TestWorkflowSecretRefusesAReservedName(t *testing.T) {
 		ClaudeOAuthTokenPrefix+"x", // a named Claude account's derived secret
 		CodexOAuthToken,            // the Codex harness's bare credential
 		CodexOAuthTokenPrefix+"y",  // and that credential's namespace
+		CredentialSecret("acme"),   // a typed credential's own derived secret
 		CredentialsBundleSecret,    // the credentials service's own container
 	)
 	for _, name := range names {

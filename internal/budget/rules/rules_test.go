@@ -219,7 +219,8 @@ func TestWritesOnlyAtNumericLeaves(t *testing.T) {
 			}
 			leaf := path[len(path)-1]
 			isLeaf := map[string]bool{"reserved": true, "released": true, "spent": true, "notional": true, "overrun": true, "tokens": true,
-				"exp": true, "counted": true, "calls": true, "micros": true, "in": true, "out": true, "cr": true, "cw": true}[leaf]
+				"exp": true, "counted": true, "calls": true, "micros": true, "in": true, "out": true, "cr": true, "cw": true,
+				"rep": true, "tlo": true, "thi": true}[leaf]
 			if has && !isLeaf {
 				t.Errorf("%s has a .write above a leaf: %v", where, w)
 			}
@@ -665,6 +666,12 @@ func TestRunTokenWritesSurviveThePolicyEdit(t *testing.T) {
 		"spend/$day/repos/" + slugForPath + "/byModel/$model/out",
 		"spend/$day/repos/" + slugForPath + "/byModel/$model/cr",
 		"spend/$day/repos/" + slugForPath + "/byModel/$model/cw",
+		// the four spend leaves a stage report writes per model (D2648,
+		// D2650): granted exactly as micros is
+		"spend/$day/repos/" + slugForPath + "/byModel/$model/notional",
+		"spend/$day/repos/" + slugForPath + "/byModel/$model/rep",
+		"spend/$day/repos/" + slugForPath + "/byModel/$model/tlo",
+		"spend/$day/repos/" + slugForPath + "/byModel/$model/thi",
 		// the by-tier split of real spend (C1.3 rule 3, D140): tier B and
 		// tier C under each of the four $spent locations above
 		"runs/" + slugForPath + "/$run/byTier/$tier/spent",
@@ -2169,6 +2176,12 @@ func TestRulesPreexistingPathsUnchanged(t *testing.T) {
 	if _, ok := after[PathOrchestrator]; !ok {
 		t.Errorf("the generated rules carry no /%s node: O2's addition to this document is the whole of what this branch changes", PathOrchestrator)
 	}
+	// E12's node is the same check one level down: the loop above would pass a
+	// document that never gained it, because a path that is absent is not a
+	// path that is unnamed.
+	if _, ok := after[escalationLedgerPath]; !ok {
+		t.Errorf("the generated rules carry no /%s node: the reports job's read of the ledger's escalation block is what E12 adds", escalationLedgerPath)
+	}
 }
 
 // outcomeStatusPath is the one existing rule this branch changes, spelled as
@@ -2333,15 +2346,160 @@ func withoutValidate(m map[string]any) map[string]any {
 // /coordinator is a change to what the family contains — the shape a grant
 // hidden under it takes — and belongs here as a diff a reviewer reads rather
 // than as a match this test waves through. M3's and T8's nodes are refused
-// whole, so a path under either is the same shape. O2's is the same again, and
-// it is the one that matters most: the subtree carries a single `.read` at the
-// top and no rule under it, so a `$child` with a grant of its own is a widening
-// hidden one level down — and one a `USER` read at the top would otherwise make
-// look legitimate.
+// whole, so a path under either is the same shape. O2's was the same again
+// until E12, and it is the one that matters most: the subtree carried a single
+// `.read` at the top and no rule under it, so a `$child` with a grant of its
+// own is a widening hidden one level down — and one a `USER` read at the top
+// would otherwise make look legitimate. E12 (F27) makes exactly that change,
+// deliberately and for the reports job alone, so its five nodes are named in
+// isNewEscalationReadPath and the diff is what a reviewer reads.
 func isNamedAddition(p string) bool {
 	return isNewCredsPath(p) || p == coordpath.PathRoot || p == PathMCPAuth ||
 		p == PathBuildLeases || p == PathOrchestrator || isNewWorkspacePath(p) || isNewVoicePath(p) ||
-		isNewRegistrationPath(p)
+		isNewRegistrationPath(p) || isNewEscalationReadPath(p) || isNewSpendAccuracyPath(p)
+}
+
+// escalationLedgerPath is the ladder's ledger node as the rules spell it (E7,
+// E12): one work item's escalation block, under the state document of
+// orchestrator id `$id`. The report's section is built from it and nothing
+// else of the database (F27).
+const escalationLedgerPath = PathOrchestrator + "/$id/state/work_items/$item/escalation"
+
+// isNewEscalationReadPath reports whether p is one of the five nodes the
+// reports job's read adds under /orchestrator (E12, F27,
+// docs/outer-loop-escalation): the four containers that reach the ledger's
+// escalation block, and the block itself. The block is the one node that
+// carries a grant; the four above it carry none and are in the list because
+// the generated document spells them, which is what makes an edit that puts a
+// grant on one of them a diff this test shows.
+//
+// They are equalities and not prefixes, for isNewCredsPath's reason: a path
+// *under* the block is a change to what it contains, and the fields a work
+// item's escalation carries are not this task's to grant.
+func isNewEscalationReadPath(p string) bool {
+	for _, path := range []string{
+		escalationLedgerPath,
+		PathOrchestrator + "/$id",
+		PathOrchestrator + "/$id/state",
+		PathOrchestrator + "/$id/state/work_items",
+		PathOrchestrator + "/$id/state/work_items/$item",
+	} {
+		if p == path {
+			return true
+		}
+	}
+	return false
+}
+
+// TestRulesReportsJobReadsEscalationOnly: the reports job's identity reads the
+// ladder's ledger escalation block and nothing else of the database (E12,
+// F27). The document the test walks is the generated one, so the grant and the
+// node it is written on are held together: the block carries one read and no
+// write, the four nodes between it and /orchestrator carry no rule of their
+// own, the subtree's own rule is where O2 put it, and the claim is the reports
+// job's alone — not the phone's `mu`, not a run's `fs`/`fr`, not a pairing
+// session's `pu`.
+//
+// Hand mutation this fails on: dropping the `rj != null` conjunct from the
+// claim (the guard asserted below, which is what keeps the rule shut where
+// /fugaro/project is absent — the golden is the only other test that notices,
+// and its message tells a reader to regenerate it), moving the grant up one
+// node (the widening this test exists for — a read on `state` or on
+// `work_items` reaches every work item's every field), granting the block to
+// `USER` or to a run token, adding a write beside the read, or writing a rule
+// for the reports job onto a sibling under /orchestrator.
+func TestRulesReportsJobReadsEscalationOnly(t *testing.T) {
+	got := map[string]map[string]any{}
+	walk(rulesTree(t), nil, func(path []string, attrs map[string]any) {
+		got[strings.Join(path, "/")] = attrs
+	})
+
+	block, ok := got[escalationLedgerPath]
+	if !ok {
+		t.Fatalf("the generated rules carry no /%s: E12's grant is not in the document", escalationLedgerPath)
+	}
+	if len(block) != 1 || block[".read"] != reportsJobClaim {
+		t.Errorf("/%s = %v, want exactly the reports job's read (%q) and nothing beside it", escalationLedgerPath, block, reportsJobClaim)
+	}
+
+	// The path down to the block carries no grant of its own. This is the half
+	// that makes the read narrow: a `.read` on any of these reaches the whole
+	// state document, which is what the reports job may not have.
+	for _, p := range []string{
+		PathOrchestrator + "/$id",
+		PathOrchestrator + "/$id/state",
+		PathOrchestrator + "/$id/state/work_items",
+		PathOrchestrator + "/$id/state/work_items/$item",
+	} {
+		attrs, ok := got[p]
+		if !ok {
+			t.Errorf("the generated rules carry no /%s: the grant is written on a path the document does not have", p)
+			continue
+		}
+		if len(attrs) != 0 {
+			t.Errorf("/%s = %v, want no rule of its own: a grant here reaches every work item's every field, and the reports job may read the escalation block only", p, attrs)
+		}
+	}
+
+	// And the subtree's own rule is O2's, unchanged: the person reads it, no
+	// client writes it.
+	if attrs := got[PathOrchestrator]; len(attrs) != 2 || attrs[".read"] != userClaim || attrs[".write"] != false {
+		t.Errorf("/%s = %v, want the `USER` read (%q) and the false write O2 shipped", PathOrchestrator, attrs, userClaim)
+	}
+
+	// The null guard is asserted as a conjunct of its own rather than left to
+	// the golden, whose message tells a reader to regenerate it. Without it the
+	// rule is fail-open: `/fugaro/project` is absent until an installation
+	// writes it (the generation-0 state check 82 documents), and the equality
+	// alone then compares null to null and admits any signed-in client to every
+	// work item's escalation block.
+	if !strings.Contains(reportsJobClaim, "auth.token.rj != null && ") {
+		t.Errorf("the reports job's read is %q, want the `auth.token.rj != null` conjunct before the project equality: without it the block is readable by any signed-in client wherever /fugaro/project is absent", reportsJobClaim)
+	}
+
+	// The claim names no other identity. Every one of these is a token some
+	// client of this installation holds, and the ledger is not theirs.
+	for _, claim := range []string{
+		"auth.token.mu", "auth.token.mc", "auth.token.pu",
+		"auth.token.fs", "auth.token.fr", "auth.token.fp", "auth.token.rb",
+	} {
+		if strings.Contains(reportsJobClaim, claim) {
+			t.Errorf("the reports job's read names %s: the escalation block is granted to the reports job's own claim and to no identity that already exists", claim)
+		}
+	}
+
+	// Nothing else under /orchestrator gained a rule: the whole of E12's
+	// widening is the one node above.
+	for p, attrs := range got {
+		if p == escalationLedgerPath || !strings.HasPrefix(p, PathOrchestrator+"/") {
+			continue
+		}
+		if len(attrs) != 0 {
+			t.Errorf("/%s = %v: E12 adds the escalation block's read and no other rule under /%s", p, attrs, PathOrchestrator)
+		}
+	}
+}
+
+// isNewSpendAccuracyPath reports whether p is one of the four day-counter leaves
+// a run's stage report writes per model (spend-accuracy D2648 as amended by
+// D2650, docs/spend-accuracy/day-leaves.md): the subscription part of the
+// model's dollars, the cost the provider reported for the calls that carried
+// one, and the table's charge over those same calls at the two ends of the tier
+// that served them. They are equalities and not prefixes, for isNewCredsPath's
+// reason: a path *under* one of them is a change to what the leaf holds, which
+// is the shape a rule hidden one level down takes.
+//
+// The four are granted exactly as `micros` is, and the emulator case
+// (new_leaves_emulator_test.go, build tag firebase) is what proves the bounds
+// rather than this list: what this function does is make the diff that adds
+// them a diff a reviewer reads.
+func isNewSpendAccuracyPath(p string) bool {
+	for _, leaf := range []string{"notional", "rep", "tlo", "thi"} {
+		if p == "spend/$day/repos/"+slugForPath+"/byModel/$model/"+leaf {
+			return true
+		}
+	}
+	return false
 }
 
 // isNewRegistrationPath reports whether p is one of the field nodes a
@@ -2483,23 +2641,32 @@ func isNewCredsPath(p string) bool {
 //     holds, which is what the marker records — and the widening folds into the
 //     same stage: `fugaro update`'s rules deploy is the migration, and it is
 //     the same stage every generation is met through, safe while runs are in
-//     flight.
+//     flight. SA5.0 moves it to 7 for the registration kind's reason again: the
+//     four spend leaves a stage report writes per model (`notional`, `rep`,
+//     `tlo` and `thi` under `spend/$day/repos/$slug/byModel/$model`, D2648 as
+//     amended by D2650) are a reach a *client* holds, and RTDB applies a
+//     multi-path update atomically, so under the document behind the whole
+//     stage report is refused rather than one leaf of it.
 //   - projectpolicy.PolicyRulesVersion gates the policy nodes, which neither
 //     change touches. It stays 1.
 //   - rules.CredsRulesVersion is the credentials family's own generation, at 1,
 //     which a cascade launch, the init stage and doctor read (C1.19-C1.21).
 //   - rules.OrchestratorRulesVersion is the orchestrator family's own
-//     generation, at 1 (marker.go), which the daemon and the CLI read before
+//     generation, at 2 (marker.go), which the daemon and the CLI read before
 //     they write the state node (O2, O3, O5). It is a marker of its own rather
 //     than a bump of the first number for C1.3's reason: a bump drops every
 //     published policy on an installation whose owner has not redeployed the
-//     rules yet, and nothing gates the subtree on the document generation.
+//     rules yet, and nothing gates the subtree on the document generation. E12
+//     (F27) moves it to 2 because it adds a rule *under* the subtree — the
+//     reports job's read of the escalation block — and generation 1's document
+//     refuses that read, so a job running against it reads nothing there: the
+//     two documents are not interchangeable, which is what the marker records.
 //
 // Hand mutation this fails on: bumping any of the four (or lowering one of the
 // family versions), which is what a reviewer must see argued for.
 func TestRulesVersionUnchanged(t *testing.T) {
-	if projectpolicy.RulesVersion != 6 {
-		t.Errorf("projectpolicy.RulesVersion = %d, want 6: the generation that carries the registration kind's fields in the mailbox (mobile plan task P5.2.2)", projectpolicy.RulesVersion)
+	if projectpolicy.RulesVersion != 7 {
+		t.Errorf("projectpolicy.RulesVersion = %d, want 7: the generation that carries the four day-counter leaves a stage report writes per model (spend-accuracy D2648, D2650)", projectpolicy.RulesVersion)
 	}
 	if projectpolicy.PolicyRulesVersion != 1 {
 		t.Errorf("projectpolicy.PolicyRulesVersion = %d, want 1: this change does not touch the policy nodes", projectpolicy.PolicyRulesVersion)
@@ -2513,8 +2680,8 @@ func TestRulesVersionUnchanged(t *testing.T) {
 	if PathCredsRulesMarker() == projectpolicy.PathRulesMarker() {
 		t.Errorf("the credentials marker is the rules marker: %q", PathCredsRulesMarker())
 	}
-	if OrchestratorRulesVersion != 1 {
-		t.Errorf("OrchestratorRulesVersion = %d, want 1: the first generation that carries the /%s subtree", OrchestratorRulesVersion, PathOrchestrator)
+	if OrchestratorRulesVersion != 2 {
+		t.Errorf("OrchestratorRulesVersion = %d, want 2: the generation that adds the reports job's read of the ledger's escalation block under /%s (E12, F27)", OrchestratorRulesVersion, PathOrchestrator)
 	}
 	if PathOrchestratorRulesMarker() != "config/limits/orchestratorRules" {
 		t.Errorf("PathOrchestratorRulesMarker() = %q, want config/limits/orchestratorRules", PathOrchestratorRulesMarker())

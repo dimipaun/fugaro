@@ -411,6 +411,18 @@ type run struct {
 	reported     pricing.Micros
 	unreconciled pricing.Micros
 	unparsed     int
+	// reportedBy, tableLoBy and tableHiBy are the run's provider reports and
+	// the price table's band behind them, by serving model, and
+	// unreportedCalls counts the settled calls that came back with none:
+	// the ledger's figures, taken when the gateway closes (F24, D2650).
+	// They are the ledger's and never a sum of the stage reports, which do
+	// not hold a call that settled after its stage's wait ran out -- such a
+	// call is in the ledger's figures and in no report, so adding the two
+	// would count it twice (SA1.5).
+	reportedBy      map[string]pricing.Micros
+	tableLoBy       map[string]pricing.Micros
+	tableHiBy       map[string]pricing.Micros
+	unreportedCalls int
 	// serviceTiers are the service tiers the run's calls came back at that
 	// the price table has no multiplier for, from every stage's report:
 	// those calls were charged conservatively rather than failing the
@@ -2191,9 +2203,17 @@ func BakedDir(workDir, slug string) string {
 // will open (credentialVars). bootstrap therefore calls this before it asks
 // where the run clones from.
 //
-// Only a per-repository job looks. A project job's image bakes no checkout and
-// the run refuses any it finds (checkProjectCheckoutOrigin), so there is nothing
-// for it to adopt. And the run must be able to name the repository its task
+// Only a per-repository job looks here, and returns below for the other class:
+// a project job's image bakes the project's repositories, and the run settles
+// the checkout it works on in checkProjectCheckoutOrigin instead — the reset,
+// the verification and the removal of the rest that D2308 and D2309 put there.
+// What this class shares with that one is D2309, and it is done here: the other
+// repositories the image baked are removed before this function adopts the
+// per-slug directory, because that read is a property of the image's layout and
+// not of the job class — this class runs the same shared image (D1900). So
+// whichever class a run is in, the checkout it works on is settled under this
+// binding, and the image's other repositories are gone, before anything of the
+// run reads one. And the run must be able to name the repository its task
 // names under the kind its own slug derives (providerForSlug): a slug no
 // provider kind produces — what `--provider fake` gives a local invocation —
 // names no repository to call a baked directory after and no remote to hold the
@@ -2212,6 +2232,17 @@ func (r *run) openBakedCheckout(ctx context.Context) error {
 	}
 	if _, project := r.projectJob(); project {
 		return nil
+	}
+	// The other repositories the image baked go before anything of this run
+	// reads one (D2309, review F23): this class runs the same shared image a
+	// project job does (D1900), so the image bakes the project's repositories
+	// and not just this run's. Here rather than after the adoption below, which
+	// rewrites r.d.WorkDir: the directories are found by their position beside
+	// the work directory the job started in — the image's own, which is why a
+	// local invocation, whose work directory is its caller's, removes nothing
+	// there at all (review F24, removeOtherBakedRepos).
+	if err := r.removeOtherBakedRepos(); err != nil {
+		return err
 	}
 	repo, err := gitops.Open(r.d.WorkDir, nil)
 	if err != nil {
@@ -2445,10 +2476,12 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// fetch, the agent's git and the final push would all run with no git
 	// credential at all (the review finding on this change).
 	//
-	// It is also the other half of checkProjectCheckoutOrigin's question, for
-	// the job that may hold a baked checkout: which repository the one in the
-	// image is a checkout of, and whether this run may work on it at all (a
-	// shared image bakes several). Here rather than in openCheckout, which is
+	// It is also the per-repository half of checkProjectCheckoutOrigin's
+	// question, for the job that may hold a baked checkout: which repository the
+	// one in the image is a checkout of, and whether this run may work on it at
+	// all (a shared image bakes several; the project job's half is that
+	// function's, which resets this run's own and removes the rest, D2308,
+	// D2309). Here rather than in openCheckout, which is
 	// called once the provider below has minted this run's git credential, so a
 	// refusal is still a run that requested nothing.
 	if err := r.openBakedCheckout(ctx); err != nil {
@@ -2659,6 +2692,26 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// gate refuses a digest launch against a release image that predates the
 	// step (digestSince, internal/cli/recipes_skew.go).
 	r.digest = recipe.UsesDigest(rcp)
+	// The diagnose step is a model stage this build's runner does not execute
+	// yet (T-TC4 lands it), and artifactMode runs the recipe's plan stage, if
+	// it has one, and then always commands.render (artifact.go) — so a run of
+	// a recipe holding the step would run the repository's render command in
+	// the step's place and end succeeded/artifacts having diagnosed nothing:
+	// no error, and no answer either. The catalog's troubleshoot names
+	// out/diagnosis.md and out/diagnosis.json, which no repository's render
+	// writes, so its own run would even end with an empty artifact set.
+	// Refused here, right after the recipe is resolved and before any stage,
+	// the way the digest step was refused until T3.2 dispatched it, and for
+	// the reason internal/recipe's RegisterStepKind gives: a step the parser
+	// accepts and the run drops may never happen. The launcher's image gate
+	// cannot make this refusal yet — the *Since constant for the step is
+	// T-TC6's — so this is the one a launch of a diagnosis meets. It names no
+	// way out: no release's runner runs the stage yet, so a refreshed job image
+	// would refuse the recipe again, and the release that runs it is T-TC4's to
+	// carry — not a step a person is sent to take here.
+	if recipe.UsesDiagnose(rcp) {
+		return fmt.Errorf("recipe %s holds a diagnose step, which this job image's runner does not execute yet: the run would run the repository's commands.render in the step's place and end succeeded with no diagnosis in it. No Fugaro release runs the diagnose step yet, so there is no job image to move to", rrec.Name)
+	}
 	// The rebase step is the runner's own work plus one model stage for the
 	// conflicts (rebase.go, E5): its run's step is the whole plan, it reviews
 	// nothing and it opens no pull request — what it delivers is a branch put
@@ -2691,6 +2744,27 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// whose branch it rebases (--pr N, E10a).
 	if r.follow == nil && recipe.UsesRebase(rcp) {
 		return fmt.Errorf("recipe %s puts the branch of an existing pull request back on its base, and this task continues no pull request, so there is no branch to rebase: launch it on the pull request it rebases (--pr N)", rrec.Name)
+	}
+	// A merge judge recipe (E6) judges one thing: the brief its launch left
+	// under the run's own prefix — the diff at a pull request's head, the
+	// findings the ladder still has open there and the head they belong to
+	// (MergeJudgeInput, runstore.MergeJudgeInputName). Without one the run
+	// would start, resolve this recipe and die at its first step on a missing
+	// object, as a config error rather than as the launch that was wrong;
+	// refused here by name instead, at this run's base and before any stage, as
+	// the rebase arm above is. The test is the brief itself and not the recipe,
+	// because the launcher that writes one is the escalation ladder's (E10a,
+	// E10b): a launch it serves carries the brief and passes here, and one it
+	// could not write is refused with the object named rather than halfway
+	// through a run.
+	if recipe.UsesMergeJudge(rcp) {
+		_, err := r.d.Store.ReadFile(ctx, runstore.MergeJudgeInputName)
+		if errors.Is(err, runstore.ErrNotFound) {
+			return fmt.Errorf("recipe %s holds the merge_judge step, whose whole work is one read of a brief left under the run's own prefix — the diff at a pull request's head, the findings the ladder still has open there and the head they belong to — and this launch left none at %s: the launcher that writes one is the escalation ladder's, so a merge judge run is launched by the ladder rather than by hand", rrec.Name, runstore.MergeJudgeInputName)
+		}
+		if err != nil {
+			return fmt.Errorf("the brief a merge judge run reads at %s could not be read: %w", runstore.MergeJudgeInputName, err)
+		}
 	}
 	switch {
 	case r.review && rcp.Mode != recipe.ModeReview:
@@ -3134,7 +3208,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	for k, v := range gitops.IdentityFor(r.identity) {
 		set[k] = v
 	}
-	if r.follow == nil && !r.review && !r.artifact && !r.shadow {
+	if r.follow == nil && !r.review && !r.artifact && !r.evaluate && !r.shadow {
 		// A follow-up's agent gets no git credentials and no GH_TOKEN
 		// (design §6.1): the runner fetched the branch and pushes it, and
 		// the comments arrive in the prompt. A review run's agent gets
@@ -3145,7 +3219,12 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// deliverable is uploaded by the runner. A challenger arm's gets
 		// none because the arm pushes nothing at all (A2.1): the token in
 		// this environment would be one an agent could push with, which is
-		// exactly what no challenger may hold.
+		// exactly what no challenger may hold. A mode: evaluate run's gets
+		// none for the same reason again, and the merge judge is why it
+		// matters (E6, G1): its whole input is a diff anybody who opened
+		// the pull request wrote, the run checks out no branch and pushes
+		// none, and a judge that could push would be a veto with a
+		// credential behind it — the one thing rung 3 may never be.
 		agentAuthVars, err := r.authVars()
 		if err != nil {
 			return fmt.Errorf("building git credentials: %w", err)
@@ -3230,6 +3309,18 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// A kill switch or the grace may have halted the run while bootstrap
 	// was busy: nothing is pushed yet, so it ends as a bootstrap halt.
 	if err := r.haltedErr(); err != nil {
+		return err
+	}
+	// The read-only context repositories this task was launched with, cloned
+	// outside the work tree (C5c, D613; context_repos.go). Last, because the
+	// clone spends a mint at the credentials service and a read of somebody
+	// else's repositories, and every refusal that can end this run — an
+	// admission, a halt, a checkout that is not this run's repository — has
+	// been made by now: a run that was going to be refused gets away without
+	// either. Before the record is saved below, because a run whose context is
+	// not in place has not bootstrapped, and the record is what the next
+	// execution and the follow-up read.
+	if err := r.cloneContextRepos(ctx); err != nil {
 		return err
 	}
 	r.save(ctx)
@@ -3434,7 +3525,8 @@ func (r *run) readRepoFile(rel string) (string, error) {
 // from: the run's own state decides each conditional rule.
 func (r *run) systemPromptData() PromptData {
 	pd := PromptData{Branch: r.rec.Branch, Base: r.cfg.Git.BaseBranch, StateDir: r.d.StateDir,
-		NoWorkflows: r.providerKind == gitprov.KindGitHub, Checkpoints: r.checkpointsOn(),
+		ContextRepos: r.contextRepoLines(),
+		NoWorkflows:  r.providerKind == gitprov.KindGitHub, Checkpoints: r.checkpointsOn(),
 		LintConfigured: strings.TrimSpace(r.wf.Commands.Lint) != "",
 		// The brief is the coder's, and "implement" is one of its stages: the
 		// answer is the coder's own model, never a review stage's, which is
@@ -4870,11 +4962,12 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	sw := agent.NewRedactor(io.MultiWriter(NewLineWriter(log, "agent"), stderrTail), r.secretList())
 	req.Dir, req.Env, req.Transcript, req.Stderr = r.d.WorkDir, stageEnv, tw, sw
 	if opts.Dir != "" {
-		// The stage's own directory rather than the checkout: the one stage
-		// that asks for it is the triage judge, which must have nothing of the
-		// run in reach (F25). Everything the stage's own environment names —
-		// the state directory, the home it runs with, the git credentials — is
-		// an absolute path, so nothing else moves with the working directory.
+		// The stage's own directory rather than the checkout: the stages that
+		// ask for it are the two judges — internal/triage's (F25) and the merge
+		// judge's (E6, mergejudge.go) — which must have nothing of the run in
+		// reach. Everything the stage's own environment names — the state
+		// directory, the home it runs with, the git credentials — is an
+		// absolute path, so nothing else moves with the working directory.
 		req.Dir = opts.Dir
 	}
 	req.Model, req.MaxBudgetUSD = r.stageModel(name), r.cfg.Agent.MaxBudgetUSD
@@ -5605,7 +5698,10 @@ func (r *run) finalize(ctx context.Context) error {
 	}
 	// A build's artifact the run left in the tree is never this commit's
 	// (stray.go): it is refused by name, and held out of the commit, so what
-	// the branch carries is the run's work and no compiled file beside it.
+	// the branch carries is the run's work and no compiled file beside it. A
+	// binary the run's own policy admits at that path and size is not one —
+	// the check reads the policy the run resolved, and no file in the checkout
+	// may widen it (D986) — so a task whose work is an asset ships it.
 	//
 	// The refusal is a failure and not a stop, like every other failure at this
 	// point of a run: finalize carries on, and what a refused run leaves is the

@@ -14,6 +14,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/escalation"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The two heads these tests write into a ledger, as a provider reports them:
@@ -366,6 +367,73 @@ func TestStateV1MigratesToV2(t *testing.T) {
 	}
 }
 
+// TestStateV3MigratesToV4 is the raise the reports job's read needed (E12,
+// F27): the release that gave the ledger the item's repository and the run its
+// last move was about wrote schema version 4, and a version 3 node — a ledger
+// carrying the four fields the block had until then — comes back with those
+// two names filled in from the item the block sits on. Nothing else of the
+// ledger moves, and a block that already names either value keeps it.
+//
+// Mutation: drop the 3 -> 4 step from Migrate and a version 3 node is refused
+// as a version this release does not read; drop fillEscalationV3 and the two
+// names stay empty, which is a ledger the reports job cannot place.
+func TestStateV3MigratesToV4(t *testing.T) {
+	if orchestrator.SchemaVersion < 4 {
+		t.Fatalf("this release writes schema version %d, and the ledger's two names were added in 4", orchestrator.SchemaVersion)
+	}
+	current, err := orchestrator.DecodeState(readFixture(t))
+	if err != nil {
+		t.Fatalf("the fixture is not a state this release reads: %v", err)
+	}
+	doc := document(t, readFixture(t))
+	doc["schema_version"] = 3
+	block := escalationAt(t, doc, 0)
+	delete(block, "repo")
+	delete(block, "run_id")
+
+	raised, err := orchestrator.DecodeState(remarshal(t, doc))
+	if err != nil {
+		t.Fatalf("a node from the release before this one did not decode: %v", err)
+	}
+	if raised.SchemaVersion != orchestrator.SchemaVersion {
+		t.Fatalf("the node came back at schema version %d, want %d", raised.SchemaVersion, orchestrator.SchemaVersion)
+	}
+	w := raised.WorkItems[0]
+	if w.Escalation == nil {
+		t.Fatal("the raise dropped the ledger")
+	}
+	if e := w.Escalation; e.Repo != w.Repo || e.RunID != w.RunID {
+		t.Fatalf("the raised ledger is on %q and names the run %q; the item it sits on says %q and %q",
+			e.Repo, e.RunID, w.Repo, w.RunID)
+	}
+	if e := w.Escalation; e.Rung != escalation.R2 || e.OuterAttempts != 2 || len(e.Transitions) != 2 {
+		t.Fatalf("the raise changed the ledger itself: rung %s, %d ladder runs, %d transitions", e.Rung, e.OuterAttempts, len(e.Transitions))
+	}
+	// The ledger is bookkeeping (G12): filling the two names does not move the
+	// spec digest, so a standing approval survives the update.
+	if got, want := orchestrator.SpecDigest(w), orchestrator.SpecDigest(current.WorkItems[0]); got != want {
+		t.Fatalf("the migrated item digests to %s and the one it came from to %s", got, want)
+	}
+	if w.Approved == nil {
+		t.Fatal("the raise dropped the approval the item carried")
+	}
+
+	// A block that already names either value keeps it: this release's own
+	// ledger has both, and neither is overwritten with a guess.
+	doc = document(t, readFixture(t))
+	doc["schema_version"] = 3
+	block = escalationAt(t, doc, 0)
+	block["repo"] = "owner/other"
+	block["run_id"] = "20261107-074500-5c0d"
+	kept, err := orchestrator.DecodeState(remarshal(t, doc))
+	if err != nil {
+		t.Fatalf("a version 3 node that already names them did not decode: %v", err)
+	}
+	if e := kept.WorkItems[0].Escalation; e == nil || e.Repo != "owner/other" || e.RunID != "20261107-074500-5c0d" {
+		t.Fatalf("the raise overwrote a name the ledger already carried: %+v", e)
+	}
+}
+
 // TestOldDaemonStopsOnNewerVersion is the direction that must stop rather than
 // guess. A node written by a release after this one is refused — the daemon
 // reports an update being due and writes nothing — and the same is true of a
@@ -528,28 +596,40 @@ func TestAgentActorCannotWriteEscalation(t *testing.T) {
 // TestLedgerHoldsNoPromptOrDiff is G8: the ledger is a record of moves, not a
 // place text sits. Its shape is the first half — there is no field a prompt, a
 // finding or a diff could be written into — and its values are the second:
-// every string is a value of a closed vocabulary, a server time or a git
-// object name, and anything else is refused rather than stored.
+// every string is a value of a closed vocabulary, a server time, a git object
+// name, an owner/name repository or a run id, and anything else is refused
+// rather than stored. The last two are the names the reports job's read made
+// necessary (E12, F27), and they are held to their shapes for the same reason
+// as the rest.
 //
 // Mutation: add a free-text field to Transition (say a summary) and the shape
 // check fails; drop KnownReason from the validator and a finding is stored in
-// the reason field.
+// the reason field; drop the repository or the run-id check and the two cases
+// below store a sentence and a path.
 func TestLedgerHoldsNoPromptOrDiff(t *testing.T) {
 	if got, want := jsonNames(reflect.TypeOf(orchestrator.Transition{})), []string{"at", "from", "head_sha", "reason", "to"}; !slices.Equal(got, want) {
 		t.Fatalf("a transition writes %v, and the ledger's fields are %v: nothing else may sit in one", got, want)
 	}
-	if got, want := jsonNames(reflect.TypeOf(orchestrator.Escalation{})), []string{"entered_at", "outer_attempts", "rung", "transitions"}; !slices.Equal(got, want) {
+	if got, want := jsonNames(reflect.TypeOf(orchestrator.Escalation{})), []string{"entered_at", "outer_attempts", "repo", "run_id", "rung", "transitions"}; !slices.Equal(got, want) {
 		t.Fatalf("a ledger writes %v, and its fields are %v", got, want)
 	}
 
 	// The fixture's ledger is walked value by value: a string that is none of
-	// the four kinds would be text this document has nowhere to put.
+	// the kinds below would be text this document has nowhere to put.
 	e := escalationAt(t, document(t, readFixture(t)), 0)
 	if rung, _ := e["rung"].(string); !escalation.KnownRung(escalation.Rung(rung)) {
 		t.Errorf("the ledger is at %q, which is not a rung", rung)
 	}
 	if at, _ := e["entered_at"].(string); !isServerTime(at) {
 		t.Errorf("the ledger entered its rung at %q, which is not a server time", at)
+	}
+	if repo, _ := e["repo"].(string); repo != "" {
+		if _, err := task.CanonicalRepo(repo); err != nil {
+			t.Errorf("the ledger is on %q, which is not an owner/name repository", repo)
+		}
+	}
+	if id, _ := e["run_id"].(string); id != "" && !task.ValidRunID(id) {
+		t.Errorf("the ledger names the run %q, which is not a run id", id)
 	}
 	for i, raw := range e["transitions"].([]any) {
 		tr := raw.(map[string]any)
@@ -581,6 +661,12 @@ func TestLedgerHoldsNoPromptOrDiff(t *testing.T) {
 		}},
 		{"a head that is a branch name", func(t *testing.T, e map[string]any) {
 			lastTransition(t, e)["head_sha"] = "refs/heads/retry-loop"
+		}},
+		{"a repository that is a sentence", func(_ *testing.T, e map[string]any) {
+			e["repo"] = "the repository the reviewer was looking at"
+		}},
+		{"a run id that is a path", func(_ *testing.T, e map[string]any) {
+			e["run_id"] = "../../runs/20261107-090000-abcd"
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -45,8 +45,9 @@ import (
 // refuses a field it does not model — so an older reader meets a field it
 // cannot see as an unknown one rather than as an addition it may ignore, and
 // the version is what tells it to stop instead (F20 of docs/outer-loop-
-// escalation, where the ladder's ledger bought the same bump).
-const SchemaVersion = 3
+// escalation, where the ladder's ledger bought the same bump, and E12 of the
+// same plan, where the block's repo and run id did).
+const SchemaVersion = 4
 
 // ApprovalAttempts is what one approval covers: the attempt the person
 // approved and at most one automatic retry of that same spec (the owner's
@@ -288,10 +289,22 @@ type Approval struct {
 // already approved (D2042). Only the daemon writes it, and the patch appends
 // to it rather than replacing it.
 //
-// Nothing here is free text (G8). A rung, a reason code, a count, times and a
-// head: every string is a value of a closed vocabulary or a git object name,
-// so a prompt, a finding or a diff has nowhere to sit.
+// Nothing here is free text (G8). A rung, a reason code, a count, times, a
+// head, a repository name and a run id: every string is a value of a closed
+// vocabulary, a git object name or a name of a known shape, so a prompt, a
+// finding or a diff has nowhere to sit.
 type Escalation struct {
+	// Repo is the item's repository and RunID is the run this block's last move
+	// was about — the ladder's own where it launched one, the item's where the
+	// rung starts nothing — both copied from the item the block sits on. They
+	// are here because the block is what a reader outside the daemon may read
+	// (E12, F27): the reports job's grant covers this block and nothing above
+	// it, so a per-repository digest filters on Repo, and RunID is the join to
+	// the run record that carries the chain's pull request, hours and cost.
+	// Both are the daemon's: a patch that names neither writes a block without
+	// them, and only the daemon's own ladder writes these.
+	Repo  string `json:"repo,omitempty"`
+	RunID string `json:"run_id,omitempty"`
 	// Rung is the rung the item is at, and it is the highest it has entered:
 	// the ladder does not walk back down, and Apply refuses a patch that tries.
 	Rung escalation.Rung `json:"rung"`
@@ -713,6 +726,13 @@ var digestRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 //     that way is an approval that never launches again (nextAttempt refuses
 //     it, recovery abandons the intent as an edited spec, and the ladder has
 //     nothing to stand on). redigestV2 rewrites exactly those and nothing else.
+//   - 3 is the node from before the ladder's ledger named the item it is on.
+//     The block is what the reports job may read and the item beside it is what
+//     that reader is refused (E12, F27), so a ledger written before `repo` and
+//     `run_id` joined it is a ledger a per-repository digest cannot place. Both
+//     values are already on the item, so fillEscalationV3 copies them across;
+//     the ladder rewrites the whole block at the item's next move anyway, and
+//     this step is what covers an item that has stopped moving.
 //
 // A state newer than this release is left exactly as it is and reported as
 // unchanged: the caller's validator refuses it, which is the fail-closed
@@ -728,6 +748,9 @@ func Migrate(s State) (State, bool) {
 		case 2:
 			s.SchemaVersion = 3
 			redigestV2(&s)
+		case 3:
+			s.SchemaVersion = 4
+			fillEscalationV3(&s)
 		default:
 			// A version with no step of its own is one this release cannot
 			// place — the chain has a hole in it, which is a bug here rather
@@ -774,6 +797,33 @@ func redigestV2(s *State) {
 			continue
 		}
 		s.Intents[i].SpecDigest = SpecDigest(w)
+	}
+}
+
+// fillEscalationV3 gives every ledger on the node the two names the reports
+// job's read needs and the item beside it holds: the item's repository, and a
+// run for the chain (E12, F27). What this node records is the item's own run —
+// its last transition names no run, so the transition the block's EnteredAt is
+// the `at` of carries nothing finer to copy — which is the same value a block
+// written today carries when the rung that entered it launched nothing. An
+// item with no run keeps an empty RunID, which is the absence the reader
+// already handles; the ladder rewrites the whole block at the item's next move
+// anyway, and this step is what covers an item that has stopped moving.
+//
+// A block that already names either one is left as it is: this release's own
+// ledger has them, and a guess never overwrites a value.
+func fillEscalationV3(s *State) {
+	for i := range s.WorkItems {
+		w := &s.WorkItems[i]
+		if w.Escalation == nil {
+			continue
+		}
+		if w.Escalation.Repo == "" {
+			w.Escalation.Repo = w.Repo
+		}
+		if w.Escalation.RunID == "" {
+			w.Escalation.RunID = w.RunID
+		}
 	}
 }
 

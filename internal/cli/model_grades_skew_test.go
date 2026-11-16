@@ -375,7 +375,7 @@ func TestValidateWarnsWhenTheProjectLayerSetsModelGrades(t *testing.T) {
 func TestPolicyPreviousVersionConverges(t *testing.T) {
 	r := newConvergeRigYAML(t, v7Node(), refreshYAML+
 		"model_grades:\n  strong: { model: anthropic/claude-sonnet-5.5, access: ai-gateway-main }\n")
-	if got := convergeNode(t, r).Version; got != 7 {
+	if got := storedNodeVersion(t, r); got != 7 {
 		t.Fatalf("the fixture's node is version %d, want the release before this one's 7: this is not the installation the test is about", got)
 	}
 
