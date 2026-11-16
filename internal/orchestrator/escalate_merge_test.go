@@ -1126,11 +1126,10 @@ func TestR3RebasedHeadNeedsScoredReview(t *testing.T) {
 
 	read = mergePass(headA)
 	m.reader.reads["wi-1"] = read
-	h := m.seams.Host.(*mergeHostStub)
 	m.host.state = gitprov.PROpen
 	m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
-	if !slices.Equal(h.merged, []string{headA}) {
-		t.Fatalf("the host merged %v, and a scored review of the head is what lets the gate pass", h.merged)
+	if !slices.Equal(m.host.merged, []string{headA}) {
+		t.Fatalf("the host merged %v, and a scored review of the head is what lets the gate pass", m.host.merged)
 	}
 }
 
