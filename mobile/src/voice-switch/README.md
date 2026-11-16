@@ -99,6 +99,13 @@ will stop it is here, and `switch.test.js` is where it is proved.
 - A stored value the shared rule cannot read — an engine that is not one of the
   two, a consent with no date, a field the record does not have — is refused
   rather than half-read. The field set **is** the version.
+- **The three edits take turns, per account.** Each of them reads the record,
+  waits for the store and writes the whole record back, so two at once would
+  each write from the same reading — and the one holding the consent the other
+  removed would put it back, with nothing on screen to say so. They run on one
+  queue per account (`serialize` in `switch.js`, keyed by the store and the
+  account id, so two switches for one account take turns too); reads
+  (`read`, `indicator`) do not queue, because they change nothing.
 - A **call in flight** is what the badge shows, and `send` stays false: the
   shared module's `inFlight` is what tells a caller not to start a second call.
   A **failed** call falls to local with the call's own reason (§4.5).
@@ -122,12 +129,12 @@ will stop it is here, and `switch.test.js` is where it is proved.
 ## The mutation proof
 
 ```sh
-mobile/src/voice-switch/mutation-proof.sh    # 28 guards, one planted bug each
+mobile/src/voice-switch/mutation-proof.sh    # 29 guards, one planted bug each
 ```
 
 Every mutation disables exactly one guard and must make that guard's own suite
-fail: `switch.js` with `switch.test.js` for the consent and per-direction
-guards, `consent.js` with `consent.test.js` (one entry per name, the date the
+fail: `switch.js` with `switch.test.js` for the consent, per-direction and
+one-at-a-time guards, `consent.js` with `consent.test.js` (one entry per name, the date the
 caller gave, the list judged before it is edited, and the name that is not a
 name), `settings.js` with `settings.test.js` (the default, the key that cannot
 be composed, the field set, and the round-trip) and `indicator.js` with

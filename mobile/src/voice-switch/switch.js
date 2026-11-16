@@ -42,6 +42,56 @@ const ENGINES = Object.freeze([ENGINE.LOCAL, ENGINE.REMOTE]);
 /** The store methods this module calls: `read` needs the first, `set` the second. */
 const STORE_METHODS = Object.freeze(['get', 'set']);
 
+/**
+ * The tail of each account's queue.
+ *
+ * Keyed by the settings store and then by the account id, and **not** held on
+ * the instance: `createVoiceSwitch` is called where the app is wired, so two
+ * switches over one store for one account are two doors onto one record, and a
+ * queue per instance would let them interleave. The store is the WeakMap key so
+ * a store that is dropped takes its queues with it, and the inner map holds one
+ * entry per account id ever used over that store -- the app builds one store
+ * and holds a handful of accounts, so it is bounded by the accounts, not by the
+ * calls.
+ */
+const QUEUES = new WeakMap();
+
+/**
+ * Run `work` after every mutation queued for this account before it, and before
+ * any queued after it -- the shape `AccountStore`'s own `#serial` has, for the
+ * same reason (`../accounts/store.js`).
+ *
+ * **The three mutating methods await a store between reading the record and
+ * writing it**, so two of them could each pass the other's read: `revokeConsent`
+ * and `set` at once would write the record twice, the second write built on the
+ * record the first one replaced, and the consent the user just took back would
+ * come back with it -- `send` true for a provider the device no longer holds an
+ * agreement for, which is the one thing this module exists to prevent. Running
+ * them one at a time makes each read-and-write one step.
+ *
+ * `read` and `indicator` do not queue: they change nothing, and a read that
+ * races a write sees one record or the other. What `work` answers -- a refusal
+ * included -- is passed through unchanged, and a rejection of its own does not
+ * stall the queue: the next mutation runs either way.
+ */
+function serialize(settings, accountId, work) {
+  let byAccount = QUEUES.get(settings);
+  if (byAccount === undefined) {
+    byAccount = new Map();
+    QUEUES.set(settings, byAccount);
+  }
+  const previous = byAccount.get(accountId) ?? Promise.resolve();
+  const run = previous.then(work, work);
+  byAccount.set(
+    accountId,
+    run.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return run;
+}
+
 /** A frozen refusal, in the shape this repository's modules use. */
 function refuse(code, field) {
   return Object.freeze({ ok: false, code, field });
@@ -115,11 +165,13 @@ class VoiceSwitch {
   async set(direction, engine) {
     if (!DIRECTIONS.includes(direction)) return refuse(REFUSAL.UNKNOWN_DIRECTION, 'direction');
     if (!ENGINES.includes(engine)) return refuse(REFUSAL.UNKNOWN_ENGINE, 'engine');
-    const record = await this.read();
-    if (!record.ok) return record;
-    return writeVoiceRecord(this.#settings, this.#accountId, {
-      settings: { ...record.settings, [direction]: engine },
-      consent: record.consent,
+    return serialize(this.#settings, this.#accountId, async () => {
+      const record = await this.read();
+      if (!record.ok) return record;
+      return writeVoiceRecord(this.#settings, this.#accountId, {
+        settings: { ...record.settings, [direction]: engine },
+        consent: record.consent,
+      });
     });
   }
 
@@ -131,20 +183,24 @@ class VoiceSwitch {
    * name the device has already agreed to keeps one entry with the new date.
    */
   async recordConsent(provider, at) {
-    const record = await this.read();
-    if (!record.ok) return record;
-    const agreed = withConsent(record.consent, provider, at);
-    if (!agreed.ok) return agreed;
-    return writeVoiceRecord(this.#settings, this.#accountId, { settings: record.settings, consent: agreed.consent });
+    return serialize(this.#settings, this.#accountId, async () => {
+      const record = await this.read();
+      if (!record.ok) return record;
+      const agreed = withConsent(record.consent, provider, at);
+      if (!agreed.ok) return agreed;
+      return writeVoiceRecord(this.#settings, this.#accountId, { settings: record.settings, consent: agreed.consent });
+    });
   }
 
   /** Take one name back. A name the record does not hold is already revoked. */
   async revokeConsent(provider) {
-    const record = await this.read();
-    if (!record.ok) return record;
-    const kept = withoutConsent(record.consent, provider);
-    if (!kept.ok) return kept;
-    return writeVoiceRecord(this.#settings, this.#accountId, { settings: record.settings, consent: kept.consent });
+    return serialize(this.#settings, this.#accountId, async () => {
+      const record = await this.read();
+      if (!record.ok) return record;
+      const kept = withoutConsent(record.consent, provider);
+      if (!kept.ok) return kept;
+      return writeVoiceRecord(this.#settings, this.#accountId, { settings: record.settings, consent: kept.consent });
+    });
   }
 
   /**

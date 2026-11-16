@@ -99,6 +99,58 @@ test('the consent sheet records one name and takes it back', async () => {
   assert.equal(off.send, false);
 });
 
+test('a revoke and a switch turned on at once do not bring the consent back', async () => {
+  // Both methods read the record, await the store and write the whole record,
+  // so an unserialized pair writes twice from the same reading: the second
+  // write carries the consent the first one removed, and the user's revocation
+  // is gone with nothing on screen to say so -- `send` true for a provider the
+  // device no longer holds an agreement for (design §4.3).
+  const { voice } = makeSwitch();
+  await voice.recordConsent(NAME, AT);
+  const [revoked, turned] = await Promise.all([voice.revokeConsent(NAME), voice.set('stt', ENGINE.REMOTE)]);
+  assert.equal(turned.ok, true);
+  assert.equal(revoked.ok, true);
+  const record = await voice.read();
+  assert.deepEqual([...record.consent], [], 'the revocation is not lost to the switch beside it');
+  assert.deepEqual({ ...record.settings }, { stt: 'remote', tts: 'local' }, 'and the switch it was raced with did land');
+  const badge = await voice.indicator({ direction: 'stt', status: admits });
+  assert.equal(badge.state, STATE.LOCAL);
+  assert.equal(badge.reason, REASON.NO_CONSENT);
+  assert.equal(badge.send, false);
+});
+
+test('two switches for one account take turns over the record', async () => {
+  // `createVoiceSwitch` is called where the app is wired, so one account can
+  // have two switches over one store: the queue is per account, not per
+  // instance, or the two doors onto one record could interleave.
+  const port = new MemorySettingsStore();
+  const settings = new SettingsStore(port);
+  const one = createVoiceSwitch({ settings, accountId: ACCOUNT });
+  const two = createVoiceSwitch({ settings, accountId: ACCOUNT });
+  await one.recordConsent(NAME, AT);
+  const [revoked, turned] = await Promise.all([one.revokeConsent(NAME), two.set('stt', ENGINE.REMOTE)]);
+  assert.equal(revoked.ok, true);
+  assert.equal(turned.ok, true);
+  const record = await two.read();
+  assert.deepEqual([...record.consent], [], 'one switch\'s revocation is not the other\'s to undo');
+  const badge = await two.indicator({ direction: 'stt', status: admits });
+  assert.equal(badge.send, false);
+});
+
+test('a mutation that is queued behind a refusal still lands', async () => {
+  // The queue is a chain, not a lock: what one edit answers -- a refusal
+  // included -- is passed through, and the next edit runs all the same.
+  const { voice } = makeSwitch();
+  await voice.recordConsent(NAME, AT);
+  const [refused, revoked] = await Promise.all([
+    voice.recordConsent('https://provider.example', AT),
+    voice.revokeConsent(NAME),
+  ]);
+  assert.equal(refused.ok, false);
+  assert.equal(revoked.ok, true);
+  assert.deepEqual([...(await voice.read()).consent], []);
+});
+
 test('a consent the app cannot judge is refused, and the record it holds is untouched', async () => {
   const { voice } = makeSwitch();
   await voice.recordConsent(NAME, AT);

@@ -220,6 +220,9 @@ run "an engine that is not one of the two is refused before anything is written"
 run "and so is a direction the app does not have" \
   "    if (!DIRECTIONS.includes(direction)) return refuse(REFUSAL.UNKNOWN_DIRECTION, 'direction');" \
   "    if (false) return refuse(REFUSAL.UNKNOWN_DIRECTION, 'direction');"
+run "a revoke and a set at once take turns over the record (the queue is a chain)" \
+  "  const run = previous.then(work, work);" \
+  "  const run = Promise.resolve().then(work);"
 
 # ---------------------------------------------------------------------------
 # The consent list: one entry per name, judged by the shared rule
