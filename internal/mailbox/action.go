@@ -1658,10 +1658,18 @@ func (m *ConfirmMemory) Prompts() []ConfirmPrompt {
 // this does not depend on when the owner-run sweeper runs, and the memory is
 // committed **before** the caller hands anything back, so a process killed in
 // between does not deliver the same answer twice.
-func (m *ConfirmMemory) ExpirePrompts(now, ttlMs int64) ([]ConfirmExpiry, error) {
+//
+// `mailbox` narrows it to one pairing's prompts, and it is what a pass takes:
+// the answers it hands back are reported per pairing, and a prompt of a pairing
+// this pass is not serving is left for the pass that serves it. An empty
+// `mailbox` is every prompt, which is what a sweeper or a diagnosis wants.
+func (m *ConfirmMemory) ExpirePrompts(mailbox string, now, ttlMs int64) ([]ConfirmExpiry, error) {
 	expired := []ConfirmExpiry{}
 	for _, prompt := range m.state.Prompts {
 		if prompt.Done || now-prompt.At < ttlMs {
+			continue
+		}
+		if mailbox != "" && prompt.Mailbox != mailbox {
 			continue
 		}
 		expired = append(expired, confirmExpiryOf(prompt))
@@ -1715,10 +1723,57 @@ func (m *ConfirmMemory) DropPrompts(mailbox string, now int64) ([]ConfirmExpiry,
 	return dropped, nil
 }
 
+// Prompt answers the prompt one pairing is holding under an id, and whether it
+// is still waiting. A prompt whose answer has been handed back is answered too,
+// with `waiting` false: a second answer to it is a replay, and the caller has to
+// tell that apart from an id it never held.
+func (m *ConfirmMemory) Prompt(mailbox, id string) (ConfirmPrompt, bool, bool) {
+	for _, prompt := range m.state.Prompts {
+		if prompt.ID == id && prompt.Mailbox == mailbox {
+			return prompt, !prompt.Done, true
+		}
+	}
+	return ConfirmPrompt{}, false, false
+}
+
+// AnswerPrompt settles one prompt with the owner's own answer, and answers what
+// the orchestrator is owed: the answer, once. The prompt is marked done and the
+// memory is committed **before** the caller hands the answer back -- the same
+// fence an expiry takes -- so a process killed in between does not answer the
+// same question twice, and a second answer to a settled prompt answers nothing.
+//
+// A settled prompt is never answered twice, whether it was settled by the
+// owner, by its TTL or by a revoke: `Done` is the one flag all three set, which
+// is what makes "exactly once" true of the conversation rather than of each way
+// it can end.
+func (m *ConfirmMemory) AnswerPrompt(mailbox, id, answer string, now int64) (ConfirmExpiry, bool, error) {
+	prompt, waiting, held := m.Prompt(mailbox, id)
+	if !held || !waiting {
+		return ConfirmExpiry{}, false, nil
+	}
+	next := m.state
+	next.Now = now
+	for i := range next.Prompts {
+		if next.Prompts[i].ID == id && next.Prompts[i].Mailbox == mailbox {
+			next.Prompts[i].Done = true
+		}
+	}
+	next = m.prune(next, now)
+	if err := m.commit(next); err != nil {
+		return ConfirmExpiry{}, false, err
+	}
+	m.state = next
+	return ConfirmExpiry{Prompt: prompt, Reply: answer}, true, nil
+}
+
 // confirmExpiryOf is what one prompt's expiry hands back: its non-destructive
-// answer, or a stop when it has none.
+// answer, or a stop when it has none. **A destructive prompt is not special**:
+// what it carries as `Safe` is the non-destructive answer the orchestrator named
+// when it asked, and handing that back is the whole of D168's default. The stop
+// is for the prompt that named no answer at all (P6.5's `expiryOf`: `stop` is
+// `safe === null`), never for one whose question was destructive.
 func confirmExpiryOf(prompt ConfirmPrompt) ConfirmExpiry {
-	if prompt.Destructive || prompt.Safe == "" {
+	if prompt.Safe == "" {
 		return ConfirmExpiry{Prompt: prompt, Stop: true, Reply: ConfirmExpiredReply}
 	}
 	return ConfirmExpiry{Prompt: prompt, Reply: prompt.Safe}

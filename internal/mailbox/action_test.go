@@ -244,11 +244,11 @@ func TestConfirmMemoryExpiresAPromptExactlyOnce(t *testing.T) {
 	}
 
 	// One millisecond before the TTL there is nothing to hand back.
-	early, err := m.ExpirePrompts(start+ttl-1, ttl)
+	early, err := m.ExpirePrompts("", start+ttl-1, ttl)
 	if err != nil || len(early) != 0 {
 		t.Fatalf("before the TTL: expired=%v err=%v", early, err)
 	}
-	at, err := m.ExpirePrompts(start+ttl, ttl)
+	at, err := m.ExpirePrompts("", start+ttl, ttl)
 	if err != nil {
 		t.Fatalf("at the TTL: %v", err)
 	}
@@ -257,7 +257,7 @@ func TestConfirmMemoryExpiresAPromptExactlyOnce(t *testing.T) {
 	}
 	// A second process reads the same file: the answer is not owed twice.
 	restarted := openTestMemory(t, path, ConfirmMaxPrompts)
-	again, err := restarted.ExpirePrompts(start+ttl+1, ttl)
+	again, err := restarted.ExpirePrompts("", start+ttl+1, ttl)
 	if err != nil || len(again) != 0 {
 		t.Fatalf("after a restart: expired=%v err=%v", again, err)
 	}
@@ -273,12 +273,68 @@ func TestConfirmMemoryStopsWhenThereIsNoSafeAnswer(t *testing.T) {
 	if _, _, err := m.NotePrompt(ConfirmPrompt{ID: "pr_1", At: start, Mailbox: "m~a", Destructive: true}, start); err != nil {
 		t.Fatalf("noting a prompt: %v", err)
 	}
-	expired, err := m.ExpirePrompts(start+ttl, ttl)
+	expired, err := m.ExpirePrompts("", start+ttl, ttl)
 	if err != nil {
 		t.Fatalf("at the TTL: %v", err)
 	}
 	if len(expired) != 1 || !expired[0].Stop || expired[0].Reply != ConfirmExpiredReply {
 		t.Fatalf("a destructive prompt expired to %v, want a stop", expired)
+	}
+}
+
+// TestConfirmMemoryHandsBackTheSafeAnswerOfADestructivePrompt: what expiry hands
+// the orchestrator is the prompt's **non-destructive** answer, and a destructive
+// prompt that named one gets it too (P6.5's `expiryOf`: the stop is for the
+// prompt with no safe answer, never for the one whose question was destructive).
+// The alternative -- stopping every destructive prompt -- would turn a refusal
+// the owner never gave into a stop the orchestrator reads as one.
+func TestConfirmMemoryHandsBackTheSafeAnswerOfADestructivePrompt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pending.json")
+	start := int64(1_700_000_000_000)
+	ttl := testPromptTtlMs
+	m := openTestMemory(t, path, ConfirmMaxPrompts)
+	prompt := ConfirmPrompt{ID: "pr_1", At: start, Mailbox: "m~a", Destructive: true, Safe: "leave it alone"}
+	if _, _, err := m.NotePrompt(prompt, start); err != nil {
+		t.Fatalf("noting a prompt: %v", err)
+	}
+	expired, err := m.ExpirePrompts("", start+ttl, ttl)
+	if err != nil {
+		t.Fatalf("at the TTL: %v", err)
+	}
+	if len(expired) != 1 || expired[0].Stop || expired[0].Reply != "leave it alone" {
+		t.Fatalf("a destructive prompt with a non-destructive answer expired to %v, want that answer", expired)
+	}
+}
+
+// TestConfirmMemoryAnswersAPromptOnce: the owner's own answer settles the prompt
+// exactly once, and the second answer -- or a restart's second delivery of the
+// first -- answers nothing.
+func TestConfirmMemoryAnswersAPromptOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pending.json")
+	now := int64(1_700_000_000_000)
+	m := openTestMemory(t, path, ConfirmMaxPrompts)
+	if _, _, err := m.NotePrompt(ConfirmPrompt{ID: "pr_1", At: now, Mailbox: "m~a", Safe: "yes"}, now); err != nil {
+		t.Fatalf("noting a prompt: %v", err)
+	}
+	settled, ok, err := m.AnswerPrompt("m~a", "pr_1", "no, not yet", now+1)
+	if err != nil || !ok || settled.Reply != "no, not yet" || settled.Stop {
+		t.Fatalf("answering: settled=%v ok=%v err=%v", settled, ok, err)
+	}
+	restarted := openTestMemory(t, path, ConfirmMaxPrompts)
+	if _, ok, err := restarted.AnswerPrompt("m~a", "pr_1", "no, not yet", now+2); err != nil || ok {
+		t.Fatalf("the same answer after a restart: ok=%v err=%v, want nothing to hand over", ok, err)
+	}
+	// An id this pairing never held is not a prompt, and neither is one of
+	// another pairing's.
+	if _, ok, err := restarted.AnswerPrompt("m~a", "pr_absent", "hi", now+3); err != nil || ok {
+		t.Fatalf("an unknown prompt: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := restarted.AnswerPrompt("m~b", "pr_1", "hi", now+4); err != nil || ok {
+		t.Fatalf("another pairing's prompt: ok=%v err=%v", ok, err)
+	}
+	// And the settled prompt is never expired a second time either.
+	if expired, err := restarted.ExpirePrompts("", now+testPromptTtlMs, testPromptTtlMs); err != nil || len(expired) != 0 {
+		t.Fatalf("a settled prompt expired to %v (err=%v), want nothing", expired, err)
 	}
 }
 
