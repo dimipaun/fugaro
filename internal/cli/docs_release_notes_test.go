@@ -676,6 +676,50 @@ func TestReleaseFilesCarryNoMarkdownLinks(t *testing.T) {
 	}
 }
 
+// The release that carries the typed Bitbucket tokens' publisher, and the one
+// whose notes state the rule about it without being able to publish the key.
+const (
+	typedTokensRelease  = "docs/releases/v0.26.0.md"
+	preTypedTokensNotes = "docs/releases/v0.25.0.md"
+)
+
+// TestReleaseNotesForTheTypedBitbucketTokens: the three operator-facing docs
+// that cite the CLI-upgrade step (SECURITY.md's proxy section,
+// docs/git-providers.md and runbook §11) name the release that carries the
+// publisher as the place the step is written and v0.25.0's own notes as the
+// place the same rule is recorded as a known limit. This holds the citation's
+// target, which those three pins cannot: the review found them attributing the
+// step to v0.25.0's `### For operators` section, which does not carry it, and
+// naming v0.25.0 as the release whose `fugaro update` publishes the key, which
+// it cannot -- T12 is not in that release's tag, so the sentence in its notes
+// is the forward-looking limit that this release is the other half of.
+//
+// Mutation (verified, planted and reverted): delete the `### For operators`
+// item from v0.26.0.md and this fails on four of its pins, and nothing else --
+// which is the state the third review found the three docs citing.
+func TestReleaseNotesForTheTypedBitbucketTokens(t *testing.T) {
+	operators := flattenDoc(docSection(t, typedTokensRelease, readDoc(t, typedTokensRelease), "### For operators"))
+	for _, want := range []string{
+		"**Per installation, before a typed Bitbucket token's coverage is published**",
+		"upgrade the CLI **before** the `fugaro update` that publishes it. The policy node gains `bitbucket_tokens`, a new top-level member",
+		"a CLI of the release behind refuses a top-level key it does not know and cannot launch against the project until it is upgraded",
+		"v0.25.0's notes recorded that limit, and its own `fugaro update` cannot write the key — the publisher lands here",
+	} {
+		if !strings.Contains(operators, want) {
+			t.Errorf("%s's `### For operators` section does not say %q: the three docs that cite the step name this section, and a citation whose target does not carry the step is the finding this pin closes", typedTokensRelease, want)
+		}
+	}
+	known := flattenDoc(docSection(t, preTypedTokensNotes, readDoc(t, preTypedTokensNotes), "### Known limits"))
+	for _, want := range []string{
+		"**A CLI of an earlier release refuses a policy node that carries the new `bitbucket_tokens` key.**",
+		"Upgrade the CLI before the `fugaro update` that publishes a typed Bitbucket token's coverage",
+	} {
+		if !strings.Contains(known, want) {
+			t.Errorf("%s's `### Known limits` section does not say %q: that release's notes are where the rule is recorded, and the release that carries the publisher is where the step is written", preTypedTokensNotes, want)
+		}
+	}
+}
+
 // releaseLinkIsExcused reports whether a line carrying a link is one of the
 // links a published release file is allowed to keep.
 func releaseLinkIsExcused(excused []string, line string) bool {
