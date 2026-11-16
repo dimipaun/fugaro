@@ -983,3 +983,14 @@ const patternZone = `/^[A-Za-z][A-Za-z0-9._+-]*(\/[A-Za-z0-9._+-]*[A-Za-z0-9_+-]
 func macOK(at string) string {
 	return fmt.Sprintf("(%s.isString() && %s.val().length == %d && %s.val().matches(%s))", at, at, MaxMacLength, at, patternHex)
 }
+
+// PathByModel is the parent of one model's counters under a repository's day
+// counter: `spend/<day>/repos/<slug>/byModel/<model>`, whose leaves are the
+// dollars and the tokens of that model on that day (internal/budget's
+// PathByModel renders the same path for a concrete day, slug and model). The
+// four leaves generation 7 adds hang here, and doctor's sentence for a marker
+// below that generation names them, so the path is written once.
+//
+// It sits at the end of the file for PathMCPAuth's reason: a constant added
+// above those citations moves the lines the tests that resolve them read.
+const PathByModel = "spend/$day/repos/$slug/byModel/$model"

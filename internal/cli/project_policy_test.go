@@ -1328,7 +1328,7 @@ func TestProjectShowDoesNotCallAPatternEntryIdleWhileItsRepositoriesRun(t *testi
 	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := execute(t, "project", "repos", "add", "github/acme/*"); err != nil {
+	if _, _, err := execute(t, "project", "repos", "add", "github/acme/*", "--allow-list-only"); err != nil {
 		t.Fatal(err)
 	}
 	fakeTerminal(t)
@@ -1376,7 +1376,7 @@ func TestProjectShowDoesNotCallAPatternEntryIdleWhileItsRepositoriesRun(t *testi
 	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := execute(t, "project", "repos", "add", "github/acme/*"); err != nil {
+	if _, _, err := execute(t, "project", "repos", "add", "github/acme/*", "--allow-list-only"); err != nil {
 		t.Fatal(err)
 	}
 	js, _, err = execute(t, "project", "show", "--json")
@@ -1461,7 +1461,7 @@ func TestProjectShowRefusesAnUnknownPolicyKey(t *testing.T) {
 		{"project", "show", "--json"},
 		{"project", "policy", "show"},
 		{"project", "repos", "ls"},
-		{"project", "repos", "add", "github/acme/app"},
+		{"project", "repos", "add", "github/acme/app", "--allow-list-only"},
 	} {
 		_, _, err := execute(t, args...)
 		if err == nil {
@@ -1547,7 +1547,7 @@ func TestProjectReposEditKeepsTheKeysItDoesNotKnow(t *testing.T) {
 	}
 	check("the fixture")
 
-	if _, _, err := execute(t, "project", "repos", "add", "github/acme/new"); err != nil {
+	if _, _, err := execute(t, "project", "repos", "add", "github/acme/new", "--allow-list-only"); err != nil {
 		t.Fatal(err)
 	}
 	check("repos add")
@@ -1607,7 +1607,7 @@ func TestProjectReposEditRefusesWithoutTheRulesMarker(t *testing.T) {
 			f.db.Set(projectpolicy.PathRulesMarker(), tc.marker)
 
 			for _, args := range [][]string{
-				{"project", "repos", "add", "github/acme/new"},
+				{"project", "repos", "add", "github/acme/new", "--allow-list-only"},
 				{"project", "repos", "rm", "github/acme/app"},
 			} {
 				_, _, err := execute(t, args...)
@@ -1637,7 +1637,7 @@ func TestProjectReposEditRefusesAMisspeltProviderKey(t *testing.T) {
 	node["providers"].(map[string]any)["openrouter"].(map[string]any)["allow_data_tp"] = []string{"acme/app"}
 	f.db.Set(projectpolicy.PathShared(), node)
 
-	_, _, err := execute(t, "project", "repos", "add", "github/acme/new")
+	_, _, err := execute(t, "project", "repos", "add", "github/acme/new", "--allow-list-only")
 	if err == nil {
 		t.Fatalf("the edit was accepted: %s", nodeJSON(t, f, projectpolicy.PathShared()))
 	}
@@ -1687,7 +1687,7 @@ func TestProjectReposEditOnlyTheAllowList(t *testing.T) {
 	}
 	before := publishedPolicy(t, f)
 
-	out, _, err := execute(t, "project", "repos", "add", "GitHub/Acme/New")
+	out, _, err := execute(t, "project", "repos", "add", "GitHub/Acme/New", "--allow-list-only")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1707,14 +1707,14 @@ func TestProjectReposEditOnlyTheAllowList(t *testing.T) {
 		t.Errorf("the edit changed more than allow_repos: %+v", got)
 	}
 	// A bare owner/name takes its provider from this machine's config.
-	if _, _, err := execute(t, "project", "repos", "add", "acme/app"); err != nil {
+	if _, _, err := execute(t, "project", "repos", "add", "acme/app", "--allow-list-only"); err != nil {
 		t.Fatal(err)
 	}
 	if got := publishedPolicy(t, f).AllowRepos; len(got) != 3 {
 		t.Fatalf("allow_repos = %v: adding an entry already on the list changed it", got)
 	}
 	// A repository whose provider the config does not know is refused.
-	if _, _, err := execute(t, "project", "repos", "add", "acme/stranger"); err == nil {
+	if _, _, err := execute(t, "project", "repos", "add", "acme/stranger", "--allow-list-only"); err == nil {
 		t.Fatal("a bare owner/name the config does not list was accepted")
 	}
 	// rm asks for the project's name.
@@ -1770,7 +1770,7 @@ func TestProjectReposEditRefusesAConcurrentWrite(t *testing.T) {
 		args  []string
 		stdin string
 	}{
-		{"add", []string{"project", "repos", "add", "github/acme/new"}, ""},
+		{"add", []string{"project", "repos", "add", "github/acme/new", "--allow-list-only"}, ""},
 		{"rm", []string{"project", "repos", "rm", "github/acme/app"}, "aurora\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1823,7 +1823,7 @@ func TestProjectReposAddRefusesUnicodeLookalikes(t *testing.T) {
 		"githuKb/acme/app", // the same, as the provider
 		"github/acme/İapp", // a dotted capital I (U+0130)
 	} {
-		if _, _, err := execute(t, "project", "repos", "add", arg); err == nil {
+		if _, _, err := execute(t, "project", "repos", "add", arg, "--allow-list-only"); err == nil {
 			t.Errorf("%q was accepted; it is not a name Canonical can produce", arg)
 		}
 	}
@@ -1848,7 +1848,7 @@ func TestProjectReposAddRefusesAProviderKindNothingCanMatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, arg := range []string{"githubb/acme/app", "gitlab/acme/app", "gce/acme/app"} {
-		_, _, err := execute(t, "project", "repos", "add", arg)
+		_, _, err := execute(t, "project", "repos", "add", arg, "--allow-list-only")
 		if err == nil {
 			t.Errorf("%q was accepted; no repository's git.provider can be that kind", arg)
 			continue
@@ -1863,7 +1863,7 @@ func TestProjectReposAddRefusesAProviderKindNothingCanMatch(t *testing.T) {
 		t.Fatalf("allow_repos = %v: a refused argument was written", got)
 	}
 	for _, arg := range []string{"github/acme/app", "bitbucket/acme/app", "*/acme/*"} {
-		if _, _, err := execute(t, "project", "repos", "add", arg); err != nil {
+		if _, _, err := execute(t, "project", "repos", "add", arg, "--allow-list-only"); err != nil {
 			t.Errorf("%q is a provider kind and was refused: %v", arg, err)
 		}
 	}
@@ -2024,7 +2024,7 @@ func TestProjectReposRmWithAPatternStillOnTheListSaysSo(t *testing.T) {
 	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := execute(t, "project", "repos", "add", "github/acme/*"); err != nil {
+	if _, _, err := execute(t, "project", "repos", "add", "github/acme/*", "--allow-list-only"); err != nil {
 		t.Fatal(err)
 	}
 	typed(t)
@@ -2064,7 +2064,7 @@ func TestProjectReposRmOfAPatternWithAPartialWildcardLeftSaysSo(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, p := range []string{"github/ac*/*", "github/acme/*"} {
-		if _, _, err := execute(t, "project", "repos", "add", p); err != nil {
+		if _, _, err := execute(t, "project", "repos", "add", p, "--allow-list-only"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -2140,7 +2140,7 @@ func TestProjectReposRmTheWildcardSaysWhatIsLeft(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, p := range []string{"github/acme/*", "*"} {
-		if _, _, err := execute(t, "project", "repos", "add", p); err != nil {
+		if _, _, err := execute(t, "project", "repos", "add", p, "--allow-list-only"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -2191,7 +2191,7 @@ func TestProjectReposEditTheWildcard(t *testing.T) {
 	if allow := publishedPolicy(t, f).AllowRepos; slices.Contains(allow, "*") {
 		t.Fatalf("the fixture's published list already holds the wildcard: %v", allow)
 	}
-	out, _, err := execute(t, "project", "repos", "add", "*")
+	out, _, err := execute(t, "project", "repos", "add", "*", "--allow-list-only")
 	if err != nil {
 		t.Fatalf("repos add '*' = %v", err)
 	}
@@ -2261,7 +2261,7 @@ func TestProjectReposEditANestedRepository(t *testing.T) {
 	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
 		t.Fatal(err)
 	}
-	out, _, err := execute(t, "project", "repos", "add", nested)
+	out, _, err := execute(t, "project", "repos", "add", nested, "--allow-list-only")
 	if err != nil {
 		t.Fatalf("repos add %s = %v", nested, err)
 	}
@@ -2315,7 +2315,7 @@ func TestProjectReposEditFoldsTheConfigLookupToo(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, arg := range []string{"Acme/Mixed", "acme/mixed", "ACME/MIXED"} {
-		out, _, err := execute(t, "project", "repos", "add", arg)
+		out, _, err := execute(t, "project", "repos", "add", arg, "--allow-list-only")
 		if err != nil {
 			t.Fatalf("repos add %s = %v: the config lookup is folded like the rest of the argument", arg, err)
 		}
@@ -2333,7 +2333,7 @@ func TestProjectReposEditFoldsTheConfigLookupToo(t *testing.T) {
 	}
 	// The fully canonical spelling of the same repository is the same entry,
 	// not a second one: whatever the spelling, what is written is canonical.
-	if _, _, err := execute(t, "project", "repos", "add", "GITHUB/Acme/Mixed"); err != nil {
+	if _, _, err := execute(t, "project", "repos", "add", "GITHUB/Acme/Mixed", "--allow-list-only"); err != nil {
 		t.Fatal(err)
 	}
 	allow := publishedPolicy(t, f).AllowRepos
@@ -3116,7 +3116,7 @@ func TestProjectReposRmOfAPatternWithABroaderPatternLeftSaysSo(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, p := range []string{"github/*/*", "github/acme/*"} {
-		if _, _, err := execute(t, "project", "repos", "add", p); err != nil {
+		if _, _, err := execute(t, "project", "repos", "add", p, "--allow-list-only"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -3159,7 +3159,7 @@ func TestProjectReposRmOfAPatternWhoseNameCarriesAStarSaysSo(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, p := range []string{"github/*/*", "github/acme/*-web"} {
-		if _, _, err := execute(t, "project", "repos", "add", p); err != nil {
+		if _, _, err := execute(t, "project", "repos", "add", p, "--allow-list-only"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -3198,7 +3198,7 @@ func TestProjectReposRmOfANameOnlyAPatternAdmitsSaysThePatternKeepsIt(t *testing
 	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := execute(t, "project", "repos", "add", "github/acme/*"); err != nil {
+	if _, _, err := execute(t, "project", "repos", "add", "github/acme/*", "--allow-list-only"); err != nil {
 		t.Fatal(err)
 	}
 	before := publishedPolicy(t, f).AllowRepos
@@ -3229,7 +3229,7 @@ func TestProjectReposEditPrintsTheNewListOnlyAfterTheWrite(t *testing.T) {
 		args  []string
 		stdin string
 	}{
-		{"add", []string{"project", "repos", "add", "github/acme/new"}, ""},
+		{"add", []string{"project", "repos", "add", "github/acme/new", "--allow-list-only"}, ""},
 		{"rm", []string{"project", "repos", "rm", "github/acme/app"}, "aurora\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -3276,6 +3276,11 @@ func TestProjectReposEditRefusesTheSharedConfig(t *testing.T) {
 	f := sharedEnd2End(t)
 	t.Chdir(gitCheckout(t, filepath.Join(f.dir, "app"), "version: 1\nproject: aurora\ngcp_project: proj-1234\n"))
 	for _, args := range [][]string{
+		{"project", "repos", "add", "github/acme/app", "--allow-list-only"},
+		// The converge path is the command's default and the same writer, so it
+		// asks the same question of the same opener: the refusal is
+		// openProjectBudget's, which is above every read, every plan and the one
+		// question.
 		{"project", "repos", "add", "github/acme/app"},
 		{"project", "repos", "rm", "github/acme/app"},
 	} {
