@@ -44,6 +44,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/gitproxy"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // buildPath is the build route's path, spelled as B1 names it. It is a literal
@@ -91,6 +92,13 @@ const (
 	// service refuses the entry rather than minting half of what was asked.
 	buildSecondOwnerRepo      = "kepler/nowhere"
 	buildSecondOwnerOtherRepo = "acme/nowhere"
+	// buildSiblingEntry is the catalog entry the fixture's Bitbucket sibling
+	// runs (proxySiblingRepo, the proxy fixture's second repository). It is an
+	// entry of its own and deliberately not the one the build-proxy tests are
+	// paired for: a repository on the PAIRED entry is in the pairing too (the
+	// grant records the entry's whole set), so only a repository on another
+	// entry can be one the pairing alone keeps a build out of.
+	buildSiblingEntry = "sibling"
 )
 
 // buildRequestBody is a build call's body, in internal/buildtoken's own field
@@ -250,11 +258,25 @@ func testBuildPairs(t *testing.T) *creds.RTDBStore {
 // Bitbucket repository reads ONE published node, so the entry's map and the
 // proxied repository's admission have to be the same document here as they are
 // in a deployment.
+//
+// The map gains proxySiblingRepo on ANOTHER entry of its own, and the block
+// admits it, which is the state the pairing's own case needs: an installation
+// that SERVES the sibling and whose operator PROXIES it, so a build paired to
+// the store entry can reach it through nothing but the pairing (B1, rule 9).
+// Without either of the two, the call would be refused by the table or by the
+// policy and the case would say nothing about pairingCovers.
 func buildProxyPolicyDoc(t *testing.T) string {
 	t.Helper()
 	doc := strings.TrimSuffix(strings.TrimSpace(buildPolicyDoc()), "}")
+	// The map is extended by replacing the one repository that is already on
+	// another entry, so this stays ONE document — the build fixture's own — and
+	// not a second image map that could drift from the one the route fixtures
+	// publish.
+	doc = strings.Replace(doc,
+		`"`+buildElsewhereRepo+`": "other"`,
+		`"`+buildElsewhereRepo+`": "other", "`+proxySiblingRepo+`": "`+buildSiblingEntry+`"`, 1)
 	return doc + `,
-		"bitbucket_token": {"allow_repos": ["` + testCanonical(t, testBitbucketRepo) + `"], "proxy": true}}`
+		"bitbucket_token": {"allow_repos": ["` + testCanonical(t, testBitbucketRepo) + `", "` + testCanonical(t, proxySiblingRepo) + `"], "proxy": true}}`
 }
 
 // buildProxySvc is the fixture for a BUILD's Bitbucket traffic: buildSvc's
@@ -275,6 +297,11 @@ func buildProxySvc(t *testing.T, mutate ...func(*svc, *Config)) (*svc, *proxyUps
 	s, _ := buildSvc(t, func(s *svc, cfg *Config) {
 		s.slug = bitbucketSlug(t, testBitbucketRepo)
 		cfg.Client = up.client()
+		// The sibling is in the installation's own table as well as in the
+		// block, and it is on another catalog entry (buildProxyPolicyDoc): the
+		// pairing is then the only thing that keeps a build paired to the store
+		// entry out of it.
+		cfg.Repos[bitbucketSlug(t, proxySiblingRepo)] = testCanonical(t, proxySiblingRepo)
 		s.policy.shared = decodeTestPolicy(t, buildProxyPolicyDoc(t))
 		s.src.docs = [][]byte{doc}
 		for _, m := range mutate {
@@ -996,6 +1023,32 @@ func TestBuildProxyServesOnlyThePairing(t *testing.T) {
 	t.Run("a repository the pairing does not hold", func(t *testing.T) {
 		s, up, _ := buildProxySvc(t)
 		buildGrant(t, s)
+
+		// The sibling is a repository this installation SERVES, this operator
+		// PROXIES and this project puts on ANOTHER catalog entry, and the
+		// assertions below are what makes this case a case about the pairing:
+		// where the table does not hold the sibling, or the block does not admit
+		// it, or the map puts it on the entry this build is paired for, the call
+		// is refused by something else and a route that never read the pairing
+		// would pass this case.
+		sibling, siblingCanonical := bitbucketSlug(t, proxySiblingRepo), testCanonical(t, proxySiblingRepo)
+		if got := s.server.cfg.Repos[sibling]; got != siblingCanonical {
+			t.Fatalf("the installation's table holds %q for %q, want %q: the call below is refused by the pairing and not by the table", got, sibling, siblingCanonical)
+		}
+		admitted := false
+		for _, pattern := range s.policy.shared.BitbucketToken.AllowRepos {
+			admitted = admitted || projectpolicy.MatchRepo(pattern, siblingCanonical)
+		}
+		if !admitted {
+			t.Fatalf("the published block does not admit %s (%v), so the call below would be refused by the policy and not by the pairing", siblingCanonical, s.policy.shared.BitbucketToken.AllowRepos)
+		}
+		if entry := s.policy.shared.ImageMap[proxySiblingRepo]; entry != buildSiblingEntry {
+			t.Fatalf("the sibling runs the catalog entry %q, want %q: a repository on the PAIRED entry is in the pairing too (the grant records the entry's whole set)", entry, buildSiblingEntry)
+		}
+		if entry := s.policy.shared.ImageMap[testBitbucketRepo]; entry == buildSiblingEntry {
+			t.Fatalf("the repository this build is paired for runs the entry %q, which is the sibling's own", entry)
+		}
+
 		resp, body := s.buildProxyCall(t, http.MethodGet, proxyPath(proxySiblingRepo+".git/info/refs?service=git-upload-pack"), nil)
 		proxyRefused(t, resp, body, http.StatusBadRequest, ErrorRequestRefused, gitproxy.ReasonOtherRepository)
 		if n := up.count(); n != 0 {
