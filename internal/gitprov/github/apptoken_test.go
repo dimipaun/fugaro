@@ -218,6 +218,55 @@ func TestMintInstallationTokenBuildPermissions(t *testing.T) {
 	}
 }
 
+// TestMintRepositoriesToken: one token over two repositories (D2301). The
+// fixture pins the whole of the mint — the installation found through one of
+// the repositories, and ONE access_tokens request whose repositories are
+// exactly the two asked for — so a body that covered one repository, or the
+// owner's every repository, fails here rather than at a build that cloned
+// something it was not given.
+func TestMintRepositoriesToken(t *testing.T) {
+	now := time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
+	srv := httpfixture.Serve(t, filepath.Join("testdata", "build_repositories_token.json"))
+	tok, exp, err := MintRepositoriesToken(context.Background(), Options{
+		Owner: "acme", AppID: "1234", PrivateKey: key(t), BaseURL: srv.URL,
+		HTTP: &http.Client{Transport: jwtCheck{t, &key(t).PublicKey}}, Now: func() time.Time { return now },
+	}, []string{"web", "api"}, BuildTokenPermissions())
+	if err != nil || tok != "ghs_fixture_build_token" || !exp.Equal(now.Add(time.Hour)) {
+		t.Fatalf("MintRepositoriesToken = %q %s %v", tok, exp, err)
+	}
+	// The three shapes this function refuses rather than sending to GitHub: a
+	// name that is an owner/name pair (the endpoint takes names within one
+	// owner), the same repository twice, and no repository at all. Each is a
+	// call whose answer would not be the reach the caller asked for.
+	for _, tc := range []struct {
+		name  string
+		repos []string
+	}{
+		{name: "owner/name is not a name", repos: []string{"acme/web"}},
+		{name: "the same repository twice", repos: []string{"web", "web"}},
+		{name: "no repository", repos: nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, _, err := MintRepositoriesToken(context.Background(), Options{
+				Owner: "acme", AppID: "1234", PrivateKey: key(t), BaseURL: srv.URL,
+				HTTP: &http.Client{Transport: jwtCheck{t, &key(t).PublicKey}}, Now: func() time.Time { return now },
+			}, tc.repos, BuildTokenPermissions()); err == nil {
+				t.Error("a request that names no mintable repository was minted")
+			}
+		})
+	}
+	if _, _, err := MintRepositoriesToken(context.Background(), Options{
+		Owner: "acme", AppID: "1234", PrivateKey: key(t), BaseURL: srv.URL, Now: func() time.Time { return now },
+	}, []string{"web"}, nil); err == nil {
+		t.Error("minted without permissions")
+	}
+	if _, _, err := MintRepositoriesToken(context.Background(), Options{
+		AppID: "1234", PrivateKey: key(t), BaseURL: srv.URL, Now: func() time.Time { return now },
+	}, []string{"web"}, BuildTokenPermissions()); err == nil {
+		t.Error("minted with no owner")
+	}
+}
+
 // TestRevokeInstallationToken: the token's own end. GitHub revokes an
 // installation token at DELETE /installation/token, authenticated with the
 // token itself -- the App's JWT is not needed, and the endpoint revokes the
