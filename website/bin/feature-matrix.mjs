@@ -19,11 +19,10 @@
 // and reported as the one that was asked for (a builder that ignores its `asOf` is exactly the
 // case that would otherwise pass silently).
 //
-// **`main` takes the builder as a parameter.** The real one is T1's `buildSnapshot`; until it
-// lands the default is the contract's stub (`src/lib/feature-matrix-stub.mjs`), which answers
-// with the fixture and reads none of its arguments. I1 swaps the import and deletes the stub,
-// and the tests pass a builder of their own — which is how a refusal is exercised without a
-// status.md that has one in it.
+// **`main` takes the builder as a parameter.** The default is T1's `buildSnapshot`
+// (`src/lib/feature-matrix.mjs`), the repository's one reader of status.md; the tests pass a
+// builder of their own — which is how a refusal is exercised without a status.md that has one in
+// it.
 //
 // `repo` is the tree to read and write, the repository root by default: the command is run from
 // `website/` and the file it writes is the repository's, so neither is taken from the working
@@ -35,7 +34,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { parseYAML } from '../src/content.ts'
 import { readSnapshotBlock } from '../src/lib/feature-matrix-model.mjs'
 import { renderMarkdown } from '../src/lib/feature-matrix-markdown.mjs'
-import { buildSnapshot } from '../src/lib/feature-matrix-stub.mjs'
+import { buildSnapshot } from '../src/lib/feature-matrix.mjs'
 
 /** The tree this file lives in: `website/bin/` up two directories. */
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
