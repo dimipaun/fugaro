@@ -319,9 +319,11 @@ credential adds a second way for a call to name that route, not a second route.
 Credentials group into **pools**: a name, a strategy (`failover`, the default, or `round-robin`) and
 an ordered list of members, declared with `fugaro accounts pool add <name> <member>...` and read
 with `fugaro accounts pool ls` ([project-claude-accounts.md](project-claude-accounts.md) §13). **A
-pool that mixes the two halves can fail over only where the credential is chosen again, which is a
-stage boundary** and not mid-call: a run that is served by its own gateway cannot hand one call to
-the credentials service, and the other way round.
+pool's members are all served by one half**: a run that is served by its own gateway cannot hand one
+call to the credentials service, and the other way round, so a pool that names a member of each is
+**refused** where it is written: `fugaro accounts pool add` will not declare it. Name two pools, one
+per half, and let each craft's access name the one its stages need. A pool an earlier release wrote
+is still read, and is split into one pool per half by the step that ships with this rule.
 
 A run's five **crafts** — coder, first-line review, senior review, security review and the escalation
 ladder's merge judge — each name a model and an **access**, the credential or pool their calls go out

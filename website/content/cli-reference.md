@@ -565,6 +565,13 @@ starts from the first. A credential the config does not define, a repeated
 member, a name this command may not use and a strategy that is not failover or
 round-robin are all refused before the file is touched.
 
+A pool is served on one half of a run — the credentials service for a Claude
+OAuth or Anthropic-key member, a run's own gateway for an OpenRouter route or
+the built-in vertex — and neither half can walk an order that spans them, so a
+list naming both halves is refused too: name two pools, one per half, and let
+each craft's access name the one its stages need. A pool a config already holds
+that names both is left as it is and declared beside, not rewritten here.
+
 --strategy failover (the default) or round-robin. A pool that already exists
 keeps the strategy it has when the flag is left out, and this command replaces
 its members with the list on the command line: it is the whole list every time,
@@ -596,8 +603,11 @@ serves them.
 
 An OpenRouter or Vertex member is served by a run's own gateway; a Claude OAuth
 or Anthropic-key member by the credentials service, which selects by tier
-(OAuth before key: D154). A pool whose members need both is one that can only
-fail over where the credential is chosen again, at a stage boundary.
+(OAuth before key: D154). A pool is served on one of those halves and may not
+list members of both: a gateway holds one upstream per stage and the service
+selects by tier, so neither can walk an order that spans them, and a pool that
+names both is refused when it is declared. Name two pools, one per half, and let
+each craft's access name the one its stages need.
 
 The read is offline: it reads the selected project's config file and reaches no
 bucket, no database and no host.
