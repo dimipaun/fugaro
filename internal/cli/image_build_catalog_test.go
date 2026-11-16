@@ -1515,9 +1515,9 @@ func TestCatalogBuildSaysNothingAboutABakeItKeeps(t *testing.T) {
 
 // recitingBuildToken is the credentials service's build route as a test sees
 // it: it records the request it was handed and answers what the test gave it.
-// buildtoken.Stub answers the shape and reads nothing, which is all the rest of
-// this package needs, but the entry mode's own question is what it asks for — so
-// that test holds a client that can be wrong about it.
+// What ships asks the real service and records nothing, so the entry mode's own
+// question — the entry, the build, the repositories and the lifetime it names —
+// is held here by a client that can be wrong about it.
 type recitingBuildToken struct {
 	request buildtoken.Request
 	answer  buildtoken.Response
