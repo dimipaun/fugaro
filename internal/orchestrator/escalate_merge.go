@@ -260,9 +260,9 @@ type MergeKind string
 const (
 	// MergeAlready is a pull request the host answers as merged. Nothing merges
 	// it again and no clause of the gate is read for it — except one: where the
-	// item's own ladder reached rung 3 at this head and nothing has said so
-	// yet, the cycle is re-entering a landing whose write did not land, and
-	// what a landing owes is carried out here (see Replay).
+	// ladder's own landing is behind this head's merge (landed) and nothing has
+	// said so yet, the cycle is re-entering a landing whose write did not land,
+	// and what a landing owes is carried out here (see Replay).
 	MergeAlready MergeKind = "already-merged"
 	// MergeLaunchReview is D2043's first step: a `review-only` run at the head
 	// under judgement, because a rebase run is an agent and can push anything.
@@ -375,9 +375,10 @@ type MergeOutcome struct {
 	// merged (D2041).
 	Ready bool
 	// Replay is an already-merged outcome that is this cycle's to finish: the
-	// item's ladder landed this head and the cycle that merged it did not get
-	// as far as filing what the landing left behind, so the findings are filed
-	// and the person a Pro or Hotfix merge is owed is told here instead.
+	// ladder's own landing is behind this head's merge and the cycle that made
+	// it did not get as far as filing what the landing left behind, so the
+	// findings are filed and the person a Pro or Hotfix merge is owed is told
+	// here instead.
 	Replay bool
 	// Refusal is the closed code of a merge a host refused, and "" otherwise.
 	Refusal string
@@ -418,11 +419,12 @@ type MergeInput struct {
 	// the same four questions every launch is held to (ladderLaunchable), read
 	// here because the two launch clauses below are launches.
 	Launchable bool
-	// Landed is whether the item's own ledger reached rung 3 at Head, and Said
-	// whether the log already carries a line for this head's landing or for its
-	// already-merged outcome. Together they are what tells a cycle re-entering a
-	// landing whose write was lost from a cycle reading a pull request somebody
-	// else merged and has already been accounted for (see Replay).
+	// Landed is whether this ladder is behind the merge at Head, read from the
+	// marker a landing writes before it asks the host to merge (landed), and
+	// Said whether the log already carries a line for this head's landing or for
+	// its already-merged outcome. Together they are what tells a cycle
+	// re-entering a landing whose write was lost from a cycle reading a pull
+	// request a person merged while the item stood at the rung (see Replay).
 	Landed bool
 	Said   bool
 }
@@ -457,14 +459,15 @@ func mergeGate(in MergeInput) MergeOutcome {
 	case in.Read.Number == 0 || in.PR == nil:
 		return waitFact(GateNoPullRequest)
 	case in.PR.State == gitprov.PRMerged:
-		// A merge that already stands. Where the item's own rung 3 reached this
-		// head and nothing has said so, the cycle is finishing a landing whose
-		// write was lost between the host's merge and the node — the findings
-		// the landing did not block are filed and the person is told, which is
-		// what D2040 owes and what no later cycle would ever do. What is not
-		// readable is not invented: a findings read that failed or that found a
-		// severity nothing can place files nothing, and the head still waits for
-		// nobody because the merge is the host's fact, not the ladder's.
+		// A merge that already stands. Where the ladder's own landing is behind
+		// this head's merge and nothing has said so, the cycle is finishing a
+		// landing whose write was lost between the host's merge and the node —
+		// the findings the landing did not block are filed and the person is
+		// told, which is what D2040 owes and what no later cycle would ever do.
+		// What is not readable is not invented: a findings read that failed or
+		// that found a severity nothing can place files nothing, and the head
+		// still waits for nobody because the merge is the host's fact, not the
+		// ladder's.
 		if in.Landed && !in.Said && findingsReadable(in.Read.Findings) {
 			return MergeOutcome{
 				Kind:      MergeAlready,
@@ -668,9 +671,13 @@ func (s MergeSeams) merge(ctx context.Context, item WorkItem, step escalation.St
 	if err != nil {
 		return err
 	}
+	landed, err := s.landed(ctx, item.ID, read.HeadSHA)
+	if err != nil {
+		return err
+	}
 	in := MergeInput{
 		Item: item, Step: step, Head: read.HeadSHA, Read: mr, Launches: launches,
-		ReadyDrafts: s.ReadyDrafts, Landed: ladderLandedAt(item, read.HeadSHA), Said: said,
+		ReadyDrafts: s.ReadyDrafts, Landed: landed, Said: said,
 		Launchable: ladderLaunchable(st, item),
 	}
 	if mr.Read && mr.Number != 0 {
@@ -701,6 +708,18 @@ func (s MergeSeams) merge(ctx context.Context, item WorkItem, step escalation.St
 		}
 		runID, launched = id, true
 	case MergeLand:
+		// The marker goes down before the host is asked for anything, which is
+		// what makes it the record of a landing whose outcome line never
+		// reached the log: a cycle that finds this head's pull request merged
+		// reads the marker and finishes the landing's work, where the ledger it
+		// replaced cannot tell this ladder's merge from a person's (see landed).
+		if err := s.Log.Append(ctx, Entry{
+			Subject:    item.ID,
+			Transition: mergeLandingTransition(in.Head),
+			Text:       "escalation: " + mergeLandingPhase,
+		}); err != nil {
+			return err
+		}
 		code, err := s.land(ctx, in)
 		if err != nil {
 			return err
@@ -754,8 +773,9 @@ func (s MergeSeams) merge(ctx context.Context, item WorkItem, step escalation.St
 		// was never told about: the cycle that merged it did not reach the
 		// notification. What a replay says is the state of things rather than
 		// this cycle's act — the host holds the merge, and the findings are
-		// being filed now — so a merge a person made themselves is never
-		// reported as one this ladder made.
+		// being filed now — and it is said only where the ladder's own landing
+		// is behind the merge, so a pull request nobody's ladder touched is
+		// never reported as one this ladder merged.
 		text := mergeSaid(item, out)
 		if out.Replay {
 			text = mergeAlreadySaid(item, out)
@@ -849,23 +869,46 @@ func (s MergeSeams) said(ctx context.Context, itemID, head string) (bool, error)
 	return s.Log.Logged(ctx, EntryID(itemID, mergeTransition(escalation.R3, MergeAlready, head)))
 }
 
-// ladderLandedAt reports whether the item's own ledger reached rung 3 at the
-// head under judgement. The transition that put the item at rung 3 names the
-// head it was made at, and the ladder merges no other head than that one — the
-// gate refuses a head the pull request has moved past — so this is what tells a
-// landing of this ladder's from a pull request somebody else merged while the
-// item stood at the rung.
-func ladderLandedAt(item WorkItem, head string) bool {
-	h := recordableHead(head)
-	if h == "" || item.Escalation == nil {
-		return false
+// landed is whether this ladder's own landing is behind a pull request the host
+// reports merged at this head, read from the marker a landing writes before it
+// asks the host for anything (mergeLandingTransition). It is a log line and not
+// a fact of the item's ledger because the ledger cannot answer this question:
+// the transition that put the item at rung 3 names the head it was made at and
+// says nothing about who merged, so it reads the same whether the ladder merged
+// that head, or the gate refused it and a person merged it by hand afterwards.
+// Nor is the ledger's head always the head under judgement — the gate compares
+// the host's head with the head it read — so a landing at a later head whose
+// line was lost is one only the marker points at.
+//
+// The write happens before the merge, so a head the host refused also leaves a
+// marker standing, and a person who then merges that head themselves is read as
+// finishing what this ladder started. That is the direction to fail in: the
+// work a landing owes is filed and the person is told, where the other reading
+// loses D2040's follow-ups to a merge that really happened.
+func (s MergeSeams) landed(ctx context.Context, itemID, head string) (bool, error) {
+	if recordableHead(head) == "" {
+		return false, nil
 	}
-	for _, t := range item.Escalation.Transitions {
-		if t.To == escalation.R3 && t.HeadSHA == h {
-			return true
-		}
+	return s.Log.Logged(ctx, EntryID(itemID, mergeLandingTransition(head)))
+}
+
+// mergeLandingPhase is the word the marker is recorded and written under.
+const mergeLandingPhase = "landing"
+
+// mergeLandingTransition is the audit id's transition half for the marker, under
+// the head it names for the same reason an outcome line is: one marker per head,
+// so a retry of the same landing rewrites the key rather than adding a line, and
+// a second head is a marker of its own.
+//
+// It is deliberately not one of MergeKind's outcomes. The gate has reached
+// nothing by writing it — the host has not been asked yet — and a reader that
+// took it for an outcome would read a landing that may never have happened.
+func mergeLandingTransition(head string) string {
+	name := "ladder-r3-" + mergeLandingPhase
+	if h := recordableHead(head); h != "" {
+		name += "-" + h[:min(len(h), questionHashHex)]
 	}
-	return false
+	return name
 }
 
 // mergeLedgerOp is the daemon's own write of the move: the rung, the count of
@@ -956,10 +999,10 @@ func mergeSaid(item WorkItem, out MergeOutcome) string {
 }
 
 // mergeAlreadySaid is what a Pro or Hotfix cycle tells a person about a landing
-// it found already made: that the merge is in the host, that the ladder's own
-// rung 3 reached this head, and how much the landing left open. It claims no
-// merge this cycle did not make, because the cycle that made it is not the one
-// saying this.
+// it found already made: that the merge is in the host, that this ladder's own
+// landing is behind it, and how much the landing left open. It claims no merge
+// this cycle did not make, because the cycle that made it is not the one saying
+// this.
 func mergeAlreadySaid(item WorkItem, out MergeOutcome) string {
 	text := "the pull request of " + item.ID + " is already merged, and the ladder's rung 3 was on it at this head"
 	switch n := len(out.FollowUps); {

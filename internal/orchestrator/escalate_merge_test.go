@@ -345,6 +345,15 @@ func mergeDependsOn(s *orchestrator.State, id, dep string) {
 	mergeChange(s, id, func(w *orchestrator.WorkItem) { w.DependsOn = []string{dep} })
 }
 
+// mergeMarker is the line a landing writes before it asks the host to merge, as
+// the log holds it when the outcome line never arrived: the window the replay
+// tests below cover begins there, and it is the only thing that says the merge
+// at that head is this ladder's.
+func (m *mergeHarness) mergeMarker(id, head string) {
+	m.t.Helper()
+	m.stub.written[orchestrator.EntryID(id, "ladder-r3-landing-"+head[:8])] = true
+}
+
 // question is the ladder's question about one item, which these tests expect to
 // be there: every refusal this file pins raises one.
 func (m *mergeHarness) question(id string) orchestrator.Decision {
@@ -971,11 +980,12 @@ func TestR3FollowUpsFiledWithImportance(t *testing.T) {
 // by nobody and the person a Pro merge is owed is told nothing at all.
 //
 // What tells a lost landing from a pull request somebody else merged is the
-// item's own ledger: the transition that put it at rung 3 names the head the
-// ladder reached that rung at, and the ladder merges no other head. The log's
-// lines are the second half — a cycle that finds either of them has already done
-// this — so a replay happens once and a landing that landed properly is never
-// replayed on top of itself.
+// marker the landing writes before it asks the host to merge, and never the
+// item's ledger: the item reaches rung 3 at a head it refused just as it does at
+// a head it merged, so the ledger reads the same either way
+// (TestR3ALandingIsTheLaddersOwn). The log's lines are the second half — a cycle
+// that finds either of them has already done this — so a replay happens once and
+// a landing that landed properly is never replayed on top of itself.
 //
 // Mutation: drop the replay and the first case below merges nothing, files
 // nothing and tells nobody.
@@ -986,6 +996,7 @@ func TestR3ReplayFinishesALostLanding(t *testing.T) {
 	lost := func(t *testing.T) *mergeHarness {
 		t.Helper()
 		m := newMergeHarness(t, now, nil, mergeItem("wi-1", r3Ledger(now, headA, 2)))
+		m.mergeMarker("wi-1", headA)
 		read := mergePass(headA)
 		read.Findings.List = []orchestrator.Finding{
 			{Severity: orchestrator.SeverityHigh, Path: mergeRoutinePath, Key: mergeFinding},
@@ -1044,10 +1055,11 @@ func TestR3ReplayFinishesALostLanding(t *testing.T) {
 		}
 	})
 
-	t.Run("a merge the ladder never reached files nothing", func(t *testing.T) {
-		// The item reached rung 3 at another head, so this head is none of its
-		// landing's: the ladder has no landing to finish and nothing to say.
+	t.Run("a marker at another head is not this head's landing", func(t *testing.T) {
+		// The ladder landed another head, so this head is none of its landing's:
+		// it has no landing to finish and nothing to say.
 		m := newMergeHarness(t, now, nil, mergeItem("wi-1", r3Ledger(now, headB, 2)))
+		m.mergeMarker("wi-1", headB)
 		read := mergePass(headA)
 		read.Findings.List = []orchestrator.Finding{{Severity: orchestrator.SeverityHigh, Path: mergeRoutinePath, Key: mergeFinding}}
 		m.reader.reads["wi-1"] = read
@@ -1074,6 +1086,50 @@ func TestR3ReplayFinishesALostLanding(t *testing.T) {
 		}
 		if len(m.sink.got) != 0 {
 			t.Fatalf("the sink was told %+v, and a replay with nothing to file says nothing", m.sink.got)
+		}
+	})
+}
+
+// TestR3ALandingIsTheLaddersOwn is what a replay must not do: read a person's
+// own merge as the ladder's. The gate refusing at a head is the case that shows
+// why the item's ledger cannot answer the question — the item reaches rung 3 at
+// the head it refused exactly as it does at the head it merged, so its
+// transitions read the same either way — and a cycle that read the landing from
+// them files follow-ups for a merge this ladder never made, under a brief that
+// says the ladder made it.
+//
+// Mutation: read Landed from the ledger's rung 3 transition again and the first
+// case below files an item and tells the sink about a merge a person made.
+func TestR3ALandingIsTheLaddersOwn(t *testing.T) {
+	now := o6Now()
+
+	t.Run("the gate refuses and a person merges the head it refused", func(t *testing.T) {
+		m := landable(t, now)
+		read := m.reader.reads["wi-1"]
+		read.Findings.List = []orchestrator.Finding{{Severity: orchestrator.SeverityCritical, Path: mergeRoutinePath, Key: mergeFinding}}
+		m.reader.reads["wi-1"] = read
+		m.act("wi-1", r3Step(escalation.CeilingAutoMergeNotify), escalation.ReasonR2Clean, r3Read(headA))
+		refusedAt(t, m, headA, "ladder-r3-wait-"+headA[:8], string(orchestrator.ReasonCriticalFinding))
+
+		// The person reads the question and merges that head themselves, which
+		// is a landing the ladder had nothing to do with.
+		m.host.state = gitprov.PRMerged
+		told := len(m.sink.got)
+		m.act("wi-1", r3Step(escalation.CeilingAutoMergeNotify), escalation.ReasonR2Clean, r3Read(headA))
+
+		if got := len(m.state().WorkItems); got != 1 {
+			t.Fatalf("the node carries %d items, and a landing the gate refused files nothing", got)
+		}
+		if got := m.sink.got[told:]; len(got) != 0 {
+			t.Fatalf("the cycle of the person's merge told the sink %+v, and the ladder has nothing to say about a merge it refused", got)
+		}
+		if len(m.host.merged) != 0 {
+			t.Fatalf("the host merged %v, and a pull request a person merged is not merged again", m.host.merged)
+		}
+		for _, e := range m.stub.lines {
+			if strings.HasPrefix(e.Transition, "ladder-r3-landing-") {
+				t.Fatalf("the log carries %q, and a landing the gate refused never wrote its marker", e.Transition)
+			}
 		}
 	})
 }
