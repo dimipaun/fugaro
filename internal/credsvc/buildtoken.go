@@ -46,6 +46,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/buildtoken"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/gitprov/httpjson"
@@ -517,10 +518,39 @@ func (s *Server) answerBuildGrant(ctx context.Context, w http.ResponseWriter, ca
 	for _, r := range entry {
 		repos = append(repos, r.name)
 	}
+	expires := s.now().Add(clampBuildTTL(req.TTLSeconds))
+	// The pairing is RECORDED before the grant is answered (rule 9), and this is
+	// what makes the grant an answer rather than a promise: what bounds a build's
+	// git is the record the proxy's own admission reads (creds.BuildPair,
+	// bitbucketproxy.go's buildProxy), so a pairing that was not written is a
+	// grant naming a proxy that would refuse every call the build makes. That is
+	// BaseURL's rule one paragraph up, and the same fail-closed reading of it: an
+	// answer that would send a build's git at a fence it cannot pass is a lie
+	// rather than a refusal.
+	if s.cfg.BuildPairs == nil {
+		s.refuseBuild(ctx, w, caller, PurposeBuildGrant, "", StatusUnavailable, ErrorStateUnavailable,
+			"this installation's credentials service cannot record the pairing a build's grant describes, so it cannot answer one")
+		return
+	}
+	if err := s.cfg.BuildPairs.PutBuildPair(ctx, creds.BuildPair{
+		Identity:     caller,
+		BuildID:      req.BuildID,
+		Entry:        req.Entry,
+		Repositories: repos,
+		Expires:      expires,
+	}); err != nil {
+		// The cause reaches the service's own log line and nothing else: a store
+		// that could not answer is not the caller's refusal, and the refusals
+		// above the credential's issuance are the operator's to see either way.
+		s.log.Error("credsvc: a build's pairing was not recorded", "error", err)
+		s.refuseBuild(ctx, w, caller, PurposeBuildGrant, "", StatusUnavailable, ErrorStateUnavailable,
+			"the pairing a build's git reaches the entry's repositories through could not be recorded, and a grant this service cannot record is one it will not answer")
+		return
+	}
 	s.answerBuild(ctx, w, caller, req.BuildID, buildtoken.Response{Proxy: &buildtoken.ProxyGrant{
 		URL:          base + BitbucketProxyPrefix,
 		Repositories: repos,
-		ExpiresAt:    s.now().Add(clampBuildTTL(req.TTLSeconds)),
+		ExpiresAt:    expires,
 	}})
 }
 

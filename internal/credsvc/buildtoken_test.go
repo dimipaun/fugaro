@@ -23,6 +23,9 @@ package credsvc
 // document projectpolicy.Decode accepts.
 
 import (
+	"bytes"
+	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"maps"
@@ -35,7 +38,11 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/buildtoken"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
+	"github.com/dimipaun/fugaro/internal/gitproxy"
 )
 
 // buildPath is the build route's path, spelled as B1 names it. It is a literal
@@ -59,6 +66,10 @@ const (
 	buildEntry      = "web"
 	buildStoreEntry = "store"
 	buildBuildID    = "b1c2d3e4-0000-4000-8000-000000000001"
+	// buildOtherID is a second build id of the same shape: the key a call can
+	// name that no grant of the fixture's installation recorded, which is what
+	// a build's pairing has to be read by (and not merely to be a build id).
+	buildOtherID = "b1c2d3e4-0000-4000-8000-000000000002"
 )
 
 // The repositories the fixture's image map names beside the two the rest of
@@ -220,6 +231,103 @@ func (s *svc) buildToken(mutate ...func(map[string]any)) string {
 func (s *svc) buildCall(t *testing.T, body, tok string, mutate ...func(*http.Request)) (*http.Response, []byte) {
 	t.Helper()
 	return s.callPerson(t, buildPath, body, tok, mutate...)
+}
+
+// testBuildPairs is the fixture's build-pair store (B1, rule 9), over a
+// database of its own: what a Bitbucket build's grant writes and what the
+// proxy's build half reads back. It is slipStore's body — the same real store
+// over the same fake database — because the two records are written and read
+// the same way, and it is wired for every test's Config because a grant that
+// cannot be recorded is refused rather than answered.
+func testBuildPairs(t *testing.T) *creds.RTDBStore {
+	t.Helper()
+	return slipStore(t, gcpfake.NewRTDB(t))
+}
+
+// buildProxyPolicyDoc is buildPolicyDoc with the block the proxy's own
+// admission reads (proxyPolicyDoc) added: a build that clones the entry's
+// Bitbucket repository reads ONE published node, so the entry's map and the
+// proxied repository's admission have to be the same document here as they are
+// in a deployment.
+func buildProxyPolicyDoc(t *testing.T) string {
+	t.Helper()
+	doc := strings.TrimSuffix(strings.TrimSpace(buildPolicyDoc()), "}")
+	return doc + `,
+		"bitbucket_token": {"allow_repos": ["` + testCanonical(t, testBitbucketRepo) + `"], "proxy": true}}`
+}
+
+// buildProxySvc is the fixture for a BUILD's Bitbucket traffic: buildSvc's
+// installation — the build class, the image map, the build-pair store — with
+// the Bitbucket half of the route wired, which is the published block that
+// admits the fixture's Bitbucket repository with the proxy switch on, the
+// bundle holding the upstream token, and the fake upstream behind the
+// service's client.
+//
+// The two fixtures are one installation and not two, and that is the point: a
+// build asks the build route for the entry whose repositories its git then
+// reaches through the proxy, so the class list, the map and the store are the
+// same ones in both halves of this file.
+func buildProxySvc(t *testing.T, mutate ...func(*svc, *Config)) (*svc, *proxyUpstream, string) {
+	t.Helper()
+	up := newProxyUpstream(t)
+	doc, token := proxyBundleDoc(t)
+	s, _ := buildSvc(t, func(s *svc, cfg *Config) {
+		s.slug = bitbucketSlug(t, testBitbucketRepo)
+		cfg.Client = up.client()
+		s.policy.shared = decodeTestPolicy(t, buildProxyPolicyDoc(t))
+		s.src.docs = [][]byte{doc}
+		for _, m := range mutate {
+			m(s, cfg)
+		}
+	})
+	return s, up, token
+}
+
+// buildProxyCall sends one call of the proxy route as the project's build
+// identity: the build identity's own ID token in Authorization — which is the
+// contract's own answer to what a build's git presents, because the grant is
+// not a secret — and the build id in its own header. Those two are the whole
+// of the build half's admission, and nothing of a run is presented with them.
+func (s *svc) buildProxyCall(t *testing.T, method, path string, body []byte, mutate ...func(*http.Request)) (*http.Response, []byte) {
+	t.Helper()
+	req, err := http.NewRequest(method, s.http.URL+path, bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("building the call: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+s.buildToken())
+	req.Header.Set(HeaderBuild, buildBuildID)
+	for _, m := range mutate {
+		m(req)
+	}
+	resp, err := s.http.Client().Do(req)
+	if err != nil {
+		t.Fatalf("the call failed: %v", err)
+	}
+	defer resp.Body.Close()
+	ans, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading the answer: %v", err)
+	}
+	return resp, ans
+}
+
+// buildGrant asks the build route for the fixture's Bitbucket entry and
+// answers the grant it was given, failing the test on any other answer: what
+// the tests below are about is what happens AFTER a build holds a grant.
+func buildGrant(t *testing.T, s *svc) buildtoken.ProxyGrant {
+	t.Helper()
+	resp, body := s.buildCall(t, buildBody(t, buildRequestBody{
+		Entry: buildStoreEntry, BuildID: buildBuildID, Provider: gitprov.KindBitbucket,
+		Repositories: []string{testBitbucketRepo}, TTLSeconds: 600,
+	}), s.buildToken())
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the build route refused an admitted Bitbucket build: HTTP %d %s", resp.StatusCode, body)
+	}
+	ans := buildAnswer(t, body)
+	if ans.Proxy == nil {
+		t.Fatalf("a Bitbucket build was answered no grant: %s", body)
+	}
+	return *ans.Proxy
 }
 
 // buildAnswer reads an answer as the contract's own shape: the two sides share
@@ -748,6 +856,366 @@ func TestBitbucketBuildGetsAProxyGrantAndNoToken(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// The pairing, and the data plane it opens
+// ---------------------------------------------------------------------------
+
+// TestBitbucketBuildGrantRecordsThePairing is rule 9's first clause held at the
+// seam between the grant and the git it describes: the grant the build route
+// answers and the record the proxy's own admission reads are ONE act, and a
+// grant whose pairing was never written names a proxy that refuses every call
+// the build makes.
+//
+// It is one test because the two halves are one fact — the record is written as
+// the answer is built (answerBuildGrant) and read on the data plane
+// (bitbucketproxy.go's buildProxy) — so what is held here is the whole round:
+// the call asks the build route for the entry, the store holds the pairing
+// under the identity and the build id the caller named, and the SAME store,
+// read by the proxy, serves the build's own fetch through the fixture's
+// upstream.
+//
+// The repository the build's proxy line names is the INSTALLATION's key for the
+// repository the call was served for, and not the caller's canonical spelling:
+// an audit line's repository is one path segment (token.ValidSegment refuses a
+// "/"), so the pairing's answer is resolved through the installation's table —
+// which is the same slug every other line of this log is grepped by.
+func TestBitbucketBuildGrantRecordsThePairing(t *testing.T) {
+	s, up, token := buildProxySvc(t)
+	grant := buildGrant(t, s)
+
+	pair, found, err := s.pairs.BuildPair(context.Background(), testBuildSA, buildBuildID)
+	if err != nil {
+		t.Fatalf("the pairing could not be read back: %v", err)
+	}
+	if !found {
+		t.Fatal("the grant answered a proxy URL and recorded no pairing: a build's git would reach a proxy that refuses every call it makes")
+	}
+	if pair.Entry != buildStoreEntry {
+		t.Errorf("the pairing names the entry %q, want the one the call asked for %q", pair.Entry, buildStoreEntry)
+	}
+	if want := grant.Repositories; !slices.Equal(pair.Repositories, want) {
+		t.Errorf("the pairing holds %v, want the repositories the grant answered %v", pair.Repositories, want)
+	}
+	if !pair.Expires.Equal(grant.ExpiresAt) {
+		t.Errorf("the pairing ends %s, want the grant's own instant %s: the record and the answer are one life", pair.Expires, grant.ExpiresAt)
+	}
+	if !pair.Live(s.now) {
+		t.Errorf("the pairing ends %s, which is not after this service's own clock %s", pair.Expires, s.now)
+	}
+
+	// The data plane, presented the one way a build's git presents it: the
+	// build identity's own ID token — a grant is not a secret, so this is what
+	// the generated clone step holds — and the build id the grant was asked
+	// with.
+	up.answerWith(http.StatusOK, "001e# service=git-upload-pack\n0000")
+	resp, body := s.buildProxyCall(t, http.MethodGet, proxyPath(proxyGitPath("info/refs")+"?service=git-upload-pack"), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("a build's fetch under its own pairing was answered %d, want 200: %s", resp.StatusCode, body)
+	}
+	if string(body) != "001e# service=git-upload-pack\n0000" {
+		t.Errorf("the answer = %q, and the upstream's bytes must be relayed unchanged", body)
+	}
+	got := up.only(t)
+	if got.host != "bitbucket.org" || got.scheme != "https" {
+		t.Errorf("the fetch was addressed to %s://%s, want https://bitbucket.org", got.scheme, got.host)
+	}
+	if want := "/" + proxyGitPath("info/refs"); got.path != want {
+		t.Errorf("the fetch's upstream path = %q, want %q", got.path, want)
+	}
+	wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(bitbucket.GitUsername+":"+token))
+	if got.auth != wantAuth {
+		t.Errorf("the upstream was shown %q as its credential, want the bundle's token as git's own x-token-auth Basic", got.auth)
+	}
+	// Nothing of a run travels with a build's call, and the build id is this
+	// contract's header exactly as the two a run presents are: this contract's
+	// own headers never leave the process (dropRequestHeaders is the belt to
+	// this brace).
+	for _, h := range []string{HeaderRunIdentity, HeaderRunJob, HeaderBuild} {
+		if v := got.header.Get(h); v != "" {
+			t.Errorf("the upstream was shown %s: %q, and this contract's own headers never leave the process", h, v)
+		}
+	}
+
+	line := s.onlyAuditLine(t)
+	if got := auditField(line, "purpose"); got != PurposeBuildGit {
+		t.Errorf("the line's purpose is %q, want %q: the call was git's and not the Bitbucket API's", got, PurposeBuildGit)
+	}
+	if got := auditField(line, "credential"); got != config.BitbucketSecret {
+		t.Errorf("the line's credential is %q, want the bundle's Bitbucket token %q", got, config.BitbucketSecret)
+	}
+	if got := auditField(line, "status"); got != StatusOK {
+		t.Errorf("the line's status is %q, want %q", got, StatusOK)
+	}
+	if got := auditField(line, "caller"); got != testBuildSA {
+		t.Errorf("the line's caller is %q, want the build identity %q", got, testBuildSA)
+	}
+	if got := auditField(line, "repository"); got != s.slug {
+		t.Errorf("the line's repository is %q, want the installation's own key %q for the repository the call was served for", got, s.slug)
+	}
+	// A build holds no run identity and is not a job of this installation, so
+	// the line names neither — and its credential has no tier, which is what a
+	// tier on it would be inventing (credentialWithoutTier).
+	for _, field := range []string{"run", "job", "tier"} {
+		if got := auditField(line, field); got != "" {
+			t.Errorf("the line carries %s = %q, and a build holds no run, no job and no tier", field, got)
+		}
+	}
+}
+
+// TestBuildProxyServesOnlyThePairing is the fence around the build's data
+// plane: a build's git is served the repositories the grant recorded, read
+// only, for as long as the pairing lives, and nothing else.
+//
+// Each case is one way that fence answers no:
+//
+//   - a repository the pairing does not hold is refused as another repository,
+//     which is the class the rules answer a run with when it asks for one that
+//     is not its own;
+//   - a push is refused read-only. It is the class that keeps a build from
+//     writing with the installation's own token at all (proxyIdentity), and it
+//     is taken before any byte of a pack is forwarded, exactly as a run's ref
+//     refusal is;
+//   - a build id no grant recorded, and a pairing that has ended, are refused
+//     as a pairing this build does not have: a build's credential is
+//     short-lived, and a build that needs it longer asks for another;
+//   - an installation that cannot read a pairing at all is refused as
+//     unavailable, which is the fail-closed half of the same rule — a service
+//     that cannot say what a build's git may reach serves it nothing;
+//   - a call presenting a run identity, and a caller that is not the build at
+//     all, are refused before the pairing is read: this half takes no run
+//     identity, and the build id header is not a credential.
+//
+// Every refusal a VERIFIED build gets writes exactly one line — an act this
+// service answered without saying so would be the audit rule's own hole — and
+// the two taken before the caller was verified write none, because nothing is
+// verified to name.
+func TestBuildProxyServesOnlyThePairing(t *testing.T) {
+	fetch := proxyPath(proxyGitPath("info/refs") + "?service=git-upload-pack")
+	push := proxyPath(proxyGitPath("git-receive-pack"))
+
+	t.Run("a repository the pairing does not hold", func(t *testing.T) {
+		s, up, _ := buildProxySvc(t)
+		buildGrant(t, s)
+		resp, body := s.buildProxyCall(t, http.MethodGet, proxyPath(proxySiblingRepo+".git/info/refs?service=git-upload-pack"), nil)
+		proxyRefused(t, resp, body, http.StatusBadRequest, ErrorRequestRefused, gitproxy.ReasonOtherRepository)
+		if n := up.count(); n != 0 {
+			t.Errorf("the upstream saw %d calls, and a repository outside the pairing reaches no forge", n)
+		}
+		line := s.onlyAuditLine(t)
+		if got := auditField(line, "purpose"); got != PurposeBuildGit {
+			t.Errorf("the line's purpose is %q, want %q", got, PurposeBuildGit)
+		}
+		if got := auditField(line, "caller"); got != testBuildSA {
+			t.Errorf("the line's caller is %q, want the build identity %q", got, testBuildSA)
+		}
+		// The repository is the pairing's own answer for the call, and this
+		// call reached none: the line names the caller this refusal was about
+		// and no repository, because which repository a build was served is
+		// what the pairing would have said.
+		if got := auditField(line, "repository"); got != "" {
+			t.Errorf("the line's repository is %q, and the call was refused before any pairing named it", got)
+		}
+	})
+
+	t.Run("a push", func(t *testing.T) {
+		s, up, _ := buildProxySvc(t)
+		buildGrant(t, s)
+		// The ref is the one a run of this installation may move, and that is
+		// the point: what refuses a build's push is the class it is served as
+		// and not the ref it names.
+		body := proxyUpdateRequest("refs/heads/"+s.proxyBranch()) + "PACK"
+		resp, ans := s.buildProxyCall(t, http.MethodPost, push, []byte(body))
+		proxyRefused(t, resp, ans, http.StatusBadRequest, ErrorRequestRefused, gitproxy.ReasonReadOnly)
+		if n := up.count(); n != 0 {
+			t.Fatalf("the upstream saw %d calls, and a refused push must forward no byte: %+v", n, up.calls())
+		}
+		line := s.onlyAuditLine(t)
+		if got := auditField(line, "purpose"); got != PurposeBuildGit {
+			t.Errorf("the line's purpose is %q, want %q", got, PurposeBuildGit)
+		}
+		if got := auditField(line, "status"); got != ErrorRequestRefused {
+			t.Errorf("the line's status is %q, want %q", got, ErrorRequestRefused)
+		}
+		if got := auditField(line, "repository"); got != s.slug {
+			t.Errorf("the line's repository is %q, want the installation's own key %q for the repository the call was served for", got, s.slug)
+		}
+	})
+
+	t.Run("a build id no grant recorded", func(t *testing.T) {
+		s, up, _ := buildProxySvc(t)
+		buildGrant(t, s)
+		resp, body := s.buildProxyCall(t, http.MethodGet, fetch, nil, func(r *http.Request) {
+			r.Header.Set(HeaderBuild, buildOtherID)
+		})
+		proxyRefused(t, resp, body, http.StatusBadRequest, ErrorRequestRefused, "no pairing is recorded")
+		if n := up.count(); n != 0 {
+			t.Errorf("the upstream saw %d calls, and a build with no pairing reaches no forge", n)
+		}
+		if logged := s.logs.String(); !strings.Contains(logged, "class="+refusalBuildPairing) {
+			t.Errorf("the operator's line does not name the class %q: %s", refusalBuildPairing, logged)
+		}
+		if got := auditField(s.onlyAuditLine(t), "caller"); got != testBuildSA {
+			t.Errorf("the line's caller is %q, want the build identity %q", got, testBuildSA)
+		}
+	})
+
+	t.Run("a pairing that has ended", func(t *testing.T) {
+		s, up, _ := buildProxySvc(t)
+		grant := buildGrant(t, s)
+		// The clock is this service's own and the pairing is short-lived: a
+		// build that outlives the credential it asked for is served nothing,
+		// and it asks for another rather than reaching a forge with a record
+		// that has lapsed.
+		s.fixture.now = grant.ExpiresAt
+		resp, body := s.buildProxyCall(t, http.MethodGet, fetch, nil)
+		proxyRefused(t, resp, body, http.StatusBadRequest, ErrorRequestRefused, "has ended")
+		if n := up.count(); n != 0 {
+			t.Errorf("the upstream saw %d calls, and a lapsed pairing reaches no forge", n)
+		}
+		if got := auditField(s.onlyAuditLine(t), "caller"); got != testBuildSA {
+			t.Errorf("the line's caller is %q, want the build identity %q", got, testBuildSA)
+		}
+	})
+
+	t.Run("an installation that cannot read a pairing", func(t *testing.T) {
+		s, up, _ := buildProxySvc(t, func(_ *svc, cfg *Config) { cfg.BuildPairs = nil })
+		// The grant itself is refused first, and refused for the same reason:
+		// this service will not answer a proxy URL it cannot record a pairing
+		// for (answerBuildGrant).
+		resp, body := s.buildCall(t, buildBody(t, buildRequestBody{
+			Entry: buildStoreEntry, BuildID: buildBuildID, Provider: gitprov.KindBitbucket,
+			Repositories: []string{testBitbucketRepo}, TTLSeconds: 600,
+		}), s.buildToken())
+		if resp.StatusCode != StatusUnavailable {
+			t.Fatalf("a Bitbucket build was answered %d by a service that cannot record a pairing, want %d: %s", resp.StatusCode, StatusUnavailable, body)
+		}
+		if n := up.count(); n != 0 {
+			t.Errorf("the upstream saw %d calls, and a service that cannot pair a build serves it nothing", n)
+		}
+		granted := s.onlyAuditLine(t)
+		if got := auditField(granted, "purpose"); got != PurposeBuildGrant {
+			t.Errorf("the refusal's purpose is %q, want %q", got, PurposeBuildGrant)
+		}
+
+		// And a build that holds a grant this installation can no longer read
+		// is served nothing either, which is what fail-closed means on this
+		// path: the refusal is the unavailable one and not the caller's.
+		resp, body = s.buildProxyCall(t, http.MethodGet, fetch, nil)
+		if resp.StatusCode != StatusUnavailable {
+			t.Fatalf("a build's call was answered %d with no store, want %d: %s", resp.StatusCode, StatusUnavailable, body)
+		}
+		if e := refusal(t, resp.StatusCode, body); e.Error != ErrorStateUnavailable {
+			t.Errorf("the refusal is %q, want %q", e.Error, ErrorStateUnavailable)
+		}
+		if n := up.count(); n != 0 {
+			t.Errorf("the upstream saw %d calls, and a build's call is served nothing when the pairing cannot be read", n)
+		}
+		// Two acts, two lines: the grant that was refused and the build's call
+		// that found no pairing to be served under.
+		lines := s.auditLines(t)
+		if len(lines) != 2 {
+			t.Fatalf("the two refusals wrote %d audit lines, want exactly 2: %v", len(lines), lines)
+		}
+		line := lines[1]
+		if got := auditField(line, "purpose"); got != PurposeBuildProxy {
+			t.Errorf("the call's line carries purpose %q, want %q", got, PurposeBuildProxy)
+		}
+		if got := auditField(line, "status"); got != ErrorStateUnavailable {
+			t.Errorf("the call's line carries status %q, want %q", got, ErrorStateUnavailable)
+		}
+		if got := auditField(line, "caller"); got != testBuildSA {
+			t.Errorf("the line's caller is %q, want the build identity %q", got, testBuildSA)
+		}
+	})
+
+	t.Run("a call presenting a run identity", func(t *testing.T) {
+		s, up, _ := buildProxySvc(t)
+		buildGrant(t, s)
+		resp, body := s.buildProxyCall(t, http.MethodGet, fetch, nil, func(r *http.Request) {
+			r.Header.Set(HeaderRunIdentity, s.runToken())
+		})
+		if resp.StatusCode != StatusUnverified {
+			t.Fatalf("a build presenting a run identity was answered %d, want %d: %s", resp.StatusCode, StatusUnverified, body)
+		}
+		if e := refusal(t, resp.StatusCode, body); e.Error != ErrorUnverifiedRunIdentity {
+			t.Errorf("the refusal is %q, want %q", e.Error, ErrorUnverifiedRunIdentity)
+		}
+		if n := up.count(); n != 0 {
+			t.Errorf("the upstream saw %d calls, and a call of a shape this route does not have reaches no forge", n)
+		}
+		if got := auditField(s.onlyAuditLine(t), "caller"); got != testBuildSA {
+			t.Errorf("the line's caller is %q, want the build identity %q", got, testBuildSA)
+		}
+	})
+
+	t.Run("a caller that is not the build", func(t *testing.T) {
+		s, up, _ := buildProxySvc(t)
+		buildGrant(t, s)
+		req, err := http.NewRequest(http.MethodGet, s.http.URL+fetch, nil)
+		if err != nil {
+			t.Fatalf("building the call: %v", err)
+		}
+		// The build id header is not a credential: a run that sets it is a run
+		// whose token this half cannot verify, and one class's own credential
+		// buys nothing on another's route (every class-route refusal's rule).
+		req.Header.Set("Authorization", "Bearer "+s.jobToken())
+		req.Header.Set(HeaderBuild, buildBuildID)
+		resp, err := s.http.Client().Do(req)
+		if err != nil {
+			t.Fatalf("the call failed: %v", err)
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("reading the answer: %v", err)
+		}
+		if resp.StatusCode != StatusUnverified {
+			t.Fatalf("a run's token was answered %d on the build's half, want %d: %s", resp.StatusCode, StatusUnverified, body)
+		}
+		if e := refusal(t, resp.StatusCode, body); e.Error != ErrorUnverifiedJobIdentity {
+			t.Errorf("the refusal is %q, want %q", e.Error, ErrorUnverifiedJobIdentity)
+		}
+		if n := up.count(); n != 0 {
+			t.Errorf("the upstream saw %d calls, and nothing was verified to serve", n)
+		}
+		// A refusal above the class has no name to write and writes no line.
+		if lines := s.auditLines(t); len(lines) != 0 {
+			t.Errorf("a refused class left %d audit lines, want none: nothing was verified to name", len(lines))
+		}
+	})
+
+	t.Run("a call that names no build", func(t *testing.T) {
+		s, up, _ := buildProxySvc(t)
+		buildGrant(t, s)
+		req, err := http.NewRequest(http.MethodGet, s.http.URL+fetch, nil)
+		if err != nil {
+			t.Fatalf("building the call: %v", err)
+		}
+		// The build's own credential and no build id: the call is not this
+		// half's — the pairing is keyed by the id — and the half it does reach
+		// takes no caller without a run identity.
+		req.Header.Set("Authorization", "Bearer "+s.buildToken())
+		resp, err := s.http.Client().Do(req)
+		if err != nil {
+			t.Fatalf("the call failed: %v", err)
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("reading the answer: %v", err)
+		}
+		if resp.StatusCode == http.StatusOK {
+			t.Fatalf("a build's call naming no build was served: %s", body)
+		}
+		if e := refusal(t, resp.StatusCode, body); e.Error != ErrorUnverifiedRunIdentity {
+			t.Errorf("the refusal is %q, want %q: the call reached the run's half, which takes a run identity", e.Error, ErrorUnverifiedRunIdentity)
+		}
+		if n := up.count(); n != 0 {
+			t.Errorf("the upstream saw %d calls, and a call of a shape neither half has reaches no forge", n)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
 // The class
 // ---------------------------------------------------------------------------
 
@@ -855,11 +1323,12 @@ func TestEveryOtherClassRefusedOnTheBuildRoute(t *testing.T) {
 // test is not which sentence comes back but that NO route answers a build
 // anything but a refusal.
 //
-// The Bitbucket proxy's rows are here too and they are refusals: what a call
-// presents there is the build identity's ID token AND the pairing the grant
-// recorded, and the pairing a grant describes is read by the proxy's own
-// admission (S2, N1) — the build's data plane. What this test holds is that the
-// credential alone opens nothing.
+// The Bitbucket proxy is the one route a build's credential does open, and it is
+// deliberately NOT in this list: what serves a build's git is the credential
+// AND the pairing the grant recorded, read by that route's own admission (S2,
+// N1) — and this test is about the credential alone, which opens nothing. The
+// pairing's own half is held by TestBitbucketBuildGrantRecordsThePairing and
+// TestBuildProxyServesOnlyThePairing.
 func TestBuildIdentityRefusedOnEveryOtherRoute(t *testing.T) {
 	s, _ := buildSvc(t, nil)
 	digest, signature := testDigest(t, "build-identity"), strings.Repeat("0", 64)
@@ -888,28 +1357,11 @@ func TestBuildIdentityRefusedOnEveryOtherRoute(t *testing.T) {
 		{"the grant route", SlipPath, body},
 		{"the claim route", SlipClaimPath, body},
 		{"the workflow secrets", WorkflowSecretsPath, body},
-		// The proxy is rule 9's ONE exception, and it is in this list because
-		// the exception is not reachable yet: the build's pairing is DERIVED
-		// from the pair the shared parse holds (pairShared), and this route
-		// records none — a build has no run identity, so no pair exists for it
-		// and the proxy refuses it exactly as it refuses any caller with no
-		// binding. That is the fail-closed half of contract isolation option 1
-		// (nothing a build sends reaches a forge) with the store still
-		// missing; the tests below the grant's answer hold the grant itself.
-		// When the pairing is recorded, the three rows leave this list, and
-		// leaving them is the change that says a build's proxy traffic serves.
-		{"the proxy: a fetch", BitbucketProxyPrefix + testBitbucketRepo + ".git/info/refs?service=git-upload-pack", ""},
-		{"the proxy: a push", BitbucketProxyPrefix + testBitbucketRepo + ".git/git-receive-pack", ""},
-		{"the proxy: an LFS batch", BitbucketProxyPrefix + testBitbucketRepo + ".git/lfs/objects/batch", ""},
 	}
 	for _, tc := range routes {
 		t.Run(tc.name, func(t *testing.T) {
 			fresh, _ := buildSvc(t, nil)
-			method := http.MethodPost
-			if strings.HasPrefix(tc.path, BitbucketProxyPrefix) {
-				method = http.MethodGet
-			}
-			req, err := http.NewRequest(method, fresh.http.URL+tc.path, strings.NewReader(tc.body))
+			req, err := http.NewRequest(http.MethodPost, fresh.http.URL+tc.path, strings.NewReader(tc.body))
 			if err != nil {
 				t.Fatalf("building the call: %v", err)
 			}

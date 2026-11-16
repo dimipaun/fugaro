@@ -218,6 +218,22 @@ type Identity struct {
 	// than from the request a second time.
 	AuthMode    string
 	AuthAccount string
+	// BuildID and BuildRepositories are what a BUILD's proxy call carries
+	// instead of the run identity above (B1, rule 9): the build id the call
+	// named and the repositories the pairing recorded for that id. A build is
+	// not a run of this installation and is a job of no repository, so Run,
+	// Job, Branch and PRs are empty on such an Identity — and Slug is not a
+	// claim either: the proxy's own admission fills it with the canonical
+	// repository THIS call is served for, out of BuildRepositories, before the
+	// rules see the request.
+	//
+	// BuildID is not a boundary and is never treated as one: a project has one
+	// build identity (B5), so every build of it holds the same ID token and can
+	// name another build's id. What bounds the call is BuildRepositories —
+	// which the service wrote from the entry's own published map — and the
+	// read-only class a build is served as (proxyIdentity).
+	BuildID           string
+	BuildRepositories []string
 }
 
 // KeySource returns the RSA public key a token's kid names. A kid that is not

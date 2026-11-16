@@ -487,6 +487,21 @@ type Config struct {
 	// start for a value no route of it reads would break a service this build
 	// has nothing against.
 	BaseURL string
+	// BuildPairs is what a Bitbucket build's grant recorded and what the
+	// proxy's own admission reads back for a build's call (B1, rule 9): the
+	// repositories of the entry one build is baking, keyed on the project's
+	// build identity and the build id (creds.PathBuildPair).
+	//
+	// It may be nil, and a nil one is a service that answers no Bitbucket build
+	// at all: the grant refuses rather than naming a proxy whose every call
+	// would be refused — a pairing that cannot be written is a grant that
+	// serves nothing — and the proxy's build path refuses a call it cannot look
+	// up. It is not required at construction, for BaseURL's reason: an
+	// installation whose repositories are GitHub's needs no pairing and is a
+	// service this build has nothing against, while a service that started
+	// without one is the state of a deployment whose database client is not
+	// wired for this node. *creds.RTDBStore is one.
+	BuildPairs creds.BuildPairStore
 	// Signs is the create-only write the one-signature mark is taken with
 	// (C3.9e, D1074): the sign route's own node, which is why it is neither
 	// DB's business nor State's. It may be nil, and a nil one is a service
@@ -1030,6 +1045,27 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// (readBuildRequest below), and the run-identity headers are refused by
 		// name inside the handler.
 		s.buildToken(ctx, w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, BitbucketProxyPrefix) && r.Header.Get(HeaderBuild) != "" {
+		// The Bitbucket proxy's BUILD half (B1, rule 9): the data plane of the
+		// identity the build route paired, and the one route of the build class
+		// that is not the build route itself. It is answered ahead of the
+		// shared parse for the build route's own reason — a build holds no run
+		// identity, so RequestFromHTTP would refuse the call for the missing
+		// identity headers before anything looked at its token — and the parse
+		// is replaced by this route's own admission: the build's ID token
+		// (VerifyBuildCaller, the same class list the build route reads), the
+		// build id it names, and the pairing that id was recorded under.
+		//
+		// The gate is the header and not the token, and that is deliberate: a
+		// RUN's proxy traffic never carries it (the run's forwarder adds the
+		// two identity headers and nothing else, B1.6), so a run's call keeps
+		// the admission below it — the parse, Verify and the pairing — with
+		// nothing added to that path and no second verification of its token.
+		// A caller that sets this header and holds no build identity is refused
+		// here and never reaches the run's half.
+		s.buildProxy(ctx, w, r)
 		return
 	}
 	if r.URL.Path == SlipPath {
