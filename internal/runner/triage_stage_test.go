@@ -1001,12 +1001,18 @@ func TestTriageWithNoAccountAndNoKeyIsSkippedNotAsked(t *testing.T) {
 // nothing else. A published node that names the account for the triage stage's
 // own key gives the stage one, the run holds the token for it, and the judge is
 // asked exactly as it was before the skip existed — the same two calls, the
-// same answer read, and a round with neither flag. The mutation it fails on is
-// a skip keyed on the stage's model or on the gateway's key alone: the account
-// is what serves the call, and the gateway never sees it.
+// same answer read, and a round with neither flag.
+//
+// The run is keyless on purpose (ANTHROPIC_API_KEY filtered out, as
+// TestTriageWithNoAccountAndNoKeyIsSkippedNotAsked does it): the stage's
+// account is then the *only* fact that keeps this call alive, since the
+// gateway's key is the other condition the skip reads. Deleting the account
+// guard in triageUnserved (stageAccount) turns both rounds into skips and fails
+// here; leaving the key in the environment would keep the call alive through
+// that guard instead and this test would pass with the account guard gone.
 func TestTriageWithAnAccountStillCalls(t *testing.T) {
 	g := newGW(t, budgetedTriageCfg(t, 2, ""), "enforce", "50", out4k())
-	g.deps.Env = append(filterEnv(g.deps.Env, "CLAUDE_CODE_OAUTH_TOKEN"), "CLAUDE_CODE_OAUTH_TOKEN="+accountToken)
+	g.deps.Env = append(filterEnv(filterEnv(g.deps.Env, "ANTHROPIC_API_KEY"), "CLAUDE_CODE_OAUTH_TOKEN"), "CLAUDE_CODE_OAUTH_TOKEN="+accountToken)
 	b := publishPolicy(t, g, triageAccountNode("acme-overflow"))
 	rec, err := b.run(t,
 		implement("feature"),
@@ -1044,5 +1050,61 @@ func TestTriageWithAnAccountStillCalls(t *testing.T) {
 	got := runner.Report(rec, "runs/acme-app/"+rec.RunID+"/", nil)
 	if strings.Contains(got, "skipped") {
 		t.Errorf("the report calls a served round skipped:\n%s", got)
+	}
+}
+
+// TestTriageOnARoutedClaudeModelStillCalls: the skip is about a call only an
+// Anthropic key can serve, so a Claude model a provider route claims is not one
+// — the model is the route's own ID ("anthropic/<id>", the one spelling a route
+// may claim, config.CheckClaudeClaim), the gateway sends the call to the route
+// on the route's credential, and the judge is asked as it was before the skip
+// existed.
+//
+// The run is keyless and names no triage account, which is exactly the shape
+// TestTriageWithNoAccountAndNoKeyIsSkippedNotAsked skips on: the route is the
+// one fact that keeps this call alive. Deleting the route guard in
+// triageUnserved (config.ProviderFor) turns both rounds into skips and fails
+// here.
+func TestTriageOnARoutedClaudeModelStillCalls(t *testing.T) {
+	cfg := budgetedTriageCfg(t, 2, "")
+	// The triage stage runs on the senior reviewer's model, so the claim has to
+	// be that role's pin: the claimed ID is a Claude one by IsClaudeModel and
+	// one the route names by ProviderFor, which is the crossing this case is.
+	cfg = strings.Replace(cfg, "reviewer: "+opus, "reviewer: "+claimedSenior, 1)
+	if !strings.Contains(cfg, "reviewer: "+claimedSenior) {
+		t.Fatal("the fixture has no reviewer line to put on the claimed ID")
+	}
+	g := newGW(t, cfg, "enforce", "50", out4k())
+	wireRoutes(t, g, claimedRoutes(), claimPricesJSON, nil)
+	g.deps.Env = filterEnv(g.deps.Env, "ANTHROPIC_API_KEY")
+	b := attachBackend(t, g, "enforce")
+	rec, err := b.run(t,
+		implement("feature"),
+		reviewScored("changes", blockingFinding()),
+		triageStep("block"),
+		fixStep,
+		review("ship", 0),
+		triageStep("defer"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls := triageCalls(b.agent.calls); len(calls) != 2 {
+		t.Fatalf("the fake claude was asked %d triage questions, want both rounds: the route serves the stage", len(calls))
+	}
+	tr := rec.Triage
+	if tr == nil || len(tr.Rounds) != 2 {
+		t.Fatalf("the record's triage block = %+v, want one round per review round", tr)
+	}
+	for _, rnd := range tr.Rounds {
+		if rnd.Skipped || rnd.Failed {
+			t.Errorf("the round = %+v, want an answered round: the route claims the model", rnd)
+		}
+	}
+	if e := tr.Rounds[0].Entries[0]; e.Source != runstore.TriageSourceAgent {
+		t.Errorf("the answered round's entry = %+v, want the judge's own placement", e)
+	}
+	if got := runner.Report(rec, "runs/acme-app/"+rec.RunID+"/", nil); strings.Contains(got, "skipped") {
+		t.Errorf("the report calls a routed round skipped:\n%s", got)
 	}
 }
