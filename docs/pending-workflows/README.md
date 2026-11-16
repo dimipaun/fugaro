@@ -6,10 +6,10 @@ the document store's Firestore suite against the emulator -- staged on
 **2026-11-14** by the portal plan's P9.2) and `website-preview.yml` (the website's
 preview workflow with the F40 gate added: a `firebase.json` naming a
 `.hosting.site` or a `.hosting.target` is refused as well as one naming another
-public dir or a lifecycle hook, staged the same day). `ci.yml` (the `shard`
-job's matrix and steps, so that every `test-shard` runner finishes in under
-seven minutes; staged from **2026-11-15**) was copied in on **2026-11-16** and its
-staged copy removed; `## ci.yml` below keeps the record.** `images.yml` (the images workflow with
+public dir or a lifecycle hook, staged the same day).** The `shard`
+job's matrix and steps (`ci.yml`), so that every `test-shard` runner finishes in under
+seven minutes, were staged from 2026-11-15, copied in on 2026-11-16 and the staged
+copy removed; `## ci.yml` below keeps the record. `images.yml` (the images workflow with
 the nightly's republish of an unchanged base skipped, 2026-11-05, issue #1745)
 was copied in on 2026-11-11 and its staged copy
 removed; see `## images.yml` below.
