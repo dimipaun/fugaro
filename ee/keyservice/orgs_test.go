@@ -216,15 +216,18 @@ func (f *fixture) signedUp(uid, email, name string) WireOrganisation {
 	return readAnswer[WireOrganisation](f, rec)
 }
 
-// seed writes one record into the fixture's store, which is how a case stands up
-// an organisation no route of this area creates.
+// seed writes one record into the store the service is reached over, which is
+// how a case stands up an organisation no route of this area creates. It is
+// Deps.Docs and not the spy behind it: a case that wires its own store behind
+// that seam (workspaces_test.go's one-store case) seeds into the store its
+// service will read.
 func (f *fixture) seed(collection, id string, record any) {
 	f.t.Helper()
 	doc, err := storedDoc(record)
 	if err != nil {
 		f.t.Fatalf("building the record %s/%s: %v", collection, id, err)
 	}
-	if err := f.docs.Put(context.Background(), collection, id, doc); err != nil {
+	if err := f.deps.Docs.Put(context.Background(), collection, id, doc); err != nil {
 		f.t.Fatalf("writing the record %s/%s: %v", collection, id, err)
 	}
 }

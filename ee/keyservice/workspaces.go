@@ -383,9 +383,10 @@ func (s *Service) bindEntitlement(ctx context.Context, actor Caller, entitlement
 		// were read before the probe, and every guard above has re-read the state
 		// that read decided on, so a rebind that has lost the race returns there and
 		// revokes nothing at all — which is the whole of what keeps a winner's key
-		// live.
+		// live. Each withdrawal is made through this transaction, so it lands with
+		// the binding or not at all.
 		if rebinding {
-			if err := s.revokeReplacedBindingKeys(ctx, replacing, now); err != nil {
+			if err := s.revokeReplacedBindingKeys(ctx, tx, replacing, now); err != nil {
 				return err
 			}
 		}
@@ -530,31 +531,44 @@ func (s *Service) bindingKeys(ctx context.Context, entitlementID string) ([]stri
 	return keys, nil
 }
 
-// revokeReplacedBindingKeys puts the keys one rebind read into the store's
-// revocation list (D2198). The key a rebind replaces is the key of a workspace
-// the licence has moved away from, and the installation holding it is one nobody
-// is looking at any more: it is revoked rather than left to run, which is what
-// makes a leaked installation's key stop at the rebind.
+// revokeReplacedBindingKeys withdraws the keys one rebind read, through the
+// transaction that makes the rebind (D2198). The key a rebind replaces is the key
+// of a workspace the licence has moved away from, and the installation holding it
+// is one nobody is looking at any more: it is revoked rather than left to run,
+// which is what makes a leaked installation's key stop at the rebind.
 //
-// It is called from inside the transaction that moves the licence, after every
-// guard there has re-read the state this list was read against, which is the one
-// thing that keeps it from withdrawing a key that belongs to a binding another
-// request made in between: the list holds the keys this rebind read, and the
-// store may have added to them since. A key that was already on the list is
-// revoked again rather than looked up, which is what makes a retry of a failed
-// rebind finish the same list, and why repeating this call — a store that runs
-// the transaction again, a person who tries again — changes nothing.
+// The withdrawal goes through the transaction and not through the store's own
+// Revoke (store.go). The two seams are one document store — the deploy hands
+// NewDocStore (firestore_store.go) the database this seam is reached over — so the
+// store's Revoke would run a transaction inside this one, which the backend
+// refuses (docstore's errNestedTransaction); and on a deployment that reached the
+// two seams over two stores it would commit the withdrawal even when the binding
+// it belongs to never landed.
+//
+// It is called after every guard in the transaction has re-read the state this
+// list was read against, which is the one thing that keeps it from withdrawing a
+// key that belongs to a binding another request made in between: the list holds
+// the keys this rebind read, and the store may have added to them since. A key
+// that was already withdrawn keeps the entry it has, which is what makes a retry
+// of a failed rebind finish the same list, and why repeating this call — a store
+// that runs the transaction again, a person who tries again — changes nothing.
+//
+// The whole list goes in one call, before the transaction writes the binding it
+// belongs to: a transaction reads before it writes (docstore's ErrReadAfterWrite),
+// and what the call reads is which of these keys are withdrawn already.
 //
 // What the list is read by is §8's renewal and status, so a revoked key's
 // renewal secret fetches nothing at all — no successor and no answer about where
 // the licence went.
-func (s *Service) revokeReplacedBindingKeys(ctx context.Context, keyIDs []string, at time.Time) error {
-	for _, keyID := range keyIDs {
-		if err := s.store.Revoke(ctx, Revocation{KeyID: keyID, Reason: ReasonRebind, At: at}); err != nil {
-			return err
-		}
+func (s *Service) revokeReplacedBindingKeys(ctx context.Context, tx Tx, keyIDs []string, at time.Time) error {
+	if len(keyIDs) == 0 {
+		return nil
 	}
-	return nil
+	revocations := make([]Revocation, 0, len(keyIDs))
+	for _, keyID := range keyIDs {
+		revocations = append(revocations, Revocation{KeyID: keyID, Reason: ReasonRebind, At: at})
+	}
+	return tx.Revoke(ctx, revocations)
 }
 
 // keepLicenceFile writes the file an air-gapped licence is issued as (D2206),

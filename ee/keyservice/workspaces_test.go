@@ -23,6 +23,7 @@ package keyservice
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1036,6 +1037,14 @@ func (t *readBeforeWriteTx) Delete(ctx context.Context, collection, id string) e
 	return t.Tx.Delete(ctx, collection, id)
 }
 
+// The withdrawal a rebind makes is a write of this transaction as much as a Put
+// is: the key store's records are in the same document store the backend runs
+// the transaction over, so a read after one is what the backend refuses.
+func (t *readBeforeWriteTx) Revoke(ctx context.Context, revocations []Revocation) error {
+	t.written = true
+	return t.Tx.Revoke(ctx, revocations)
+}
+
 // refusingDocs is the fixture's store with the other failure these cases have to
 // be able to make: a transaction that cannot commit. Everything else is the
 // store it wraps, so a request runs exactly as far as the commit.
@@ -1096,6 +1105,149 @@ func (f *bindingFixture) racer(t *testing.T) *racingDocs {
 	}
 	return store
 }
+
+// docsOnDocstore is the portal's seam over a real document store
+// (ee/keyservice/docstore), which is the one thing no other case here has: the
+// deployment's own two seams are two faces of one database — NewDocStore is
+// handed the store the portal's documents live in — and the fixture's spy is a
+// map that cannot tell a nested transaction from a committed one. A case that
+// wires both seams over one store therefore puts this behind Deps.Docs and a
+// NewDocStore over the same behind Deps.Store, and what it then reads back is
+// what the deploy's backend would have left.
+//
+// The deploy's own adapter is written with the rest of P1.2, so this is the only
+// implementation of that seam in the repository today, and the cases over it are
+// what hold the seam's contract meanwhile.
+type docsOnDocstore struct {
+	db docstore.Store
+	// refuse is the one collection this store's transactions fail to write,
+	// which is how a case makes a transaction stop after it has staged
+	// something: RunTransaction commits nothing of a function that returned an
+	// error, so what is read back afterwards is what the transaction would have
+	// left if its commit had been refused.
+	refuse string
+}
+
+func (d *docsOnDocstore) Get(ctx context.Context, collection, id string) (Doc, error) {
+	var held map[string]any
+	found, err := d.db.Get(ctx, collection, id, &held)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, ErrNoDocument
+	}
+	return Doc(held), nil
+}
+
+func (d *docsOnDocstore) Put(ctx context.Context, collection, id string, doc Doc) error {
+	return d.db.Put(ctx, collection, id, doc)
+}
+
+func (d *docsOnDocstore) Query(ctx context.Context, collection string, where Where) ([]Doc, error) {
+	q := docstore.Query{}
+	if where.Field != "" {
+		q.Where = []docstore.Where{{Field: where.Field, Equals: where.Value}}
+	}
+	found, err := d.db.Query(ctx, collection, q)
+	if err != nil {
+		return nil, err
+	}
+	docs := make([]Doc, 0, len(found))
+	for _, doc := range found {
+		docs = append(docs, Doc(doc.Fields))
+	}
+	return docs, nil
+}
+
+func (d *docsOnDocstore) Update(ctx context.Context, fn func(context.Context, Tx) error) error {
+	return d.db.RunTransaction(ctx, func(ctx context.Context, tx docstore.Transaction) error {
+		return fn(ctx, &docstoreTx{tx: tx, refuse: d.refuse})
+	})
+}
+
+// docstoreTx is one of those transactions. The document store's own transaction
+// has no Delete — the portal's seam has one for the records §7 keeps — and a
+// case that needed it would be a case about a record this seam has not reached.
+type docstoreTx struct {
+	tx     docstore.Transaction
+	refuse string
+}
+
+func (t *docstoreTx) Get(ctx context.Context, collection, id string) (Doc, error) {
+	var held map[string]any
+	found, err := t.tx.Get(ctx, collection, id, &held)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, ErrNoDocument
+	}
+	return Doc(held), nil
+}
+
+func (t *docstoreTx) Query(ctx context.Context, collection string, where Where) ([]Doc, error) {
+	q := docstore.Query{}
+	if where.Field != "" {
+		q.Where = []docstore.Where{{Field: where.Field, Equals: where.Value}}
+	}
+	found, err := t.tx.Query(ctx, collection, q)
+	if err != nil {
+		return nil, err
+	}
+	docs := make([]Doc, 0, len(found))
+	for _, doc := range found {
+		docs = append(docs, Doc(doc.Fields))
+	}
+	return docs, nil
+}
+
+func (t *docstoreTx) Put(ctx context.Context, collection, id string, doc Doc) error {
+	if t.refuse != "" && collection == t.refuse {
+		return errStoreRefused
+	}
+	return t.tx.Put(ctx, collection, id, doc)
+}
+
+func (t *docstoreTx) Delete(_ context.Context, collection, id string) error {
+	return fmt.Errorf("keyservice: this case's document store has no delete (%s/%s)", collection, id)
+}
+
+// Revoke withdraws keys inside this transaction, which is what store.go's own
+// Revoke does in a transaction of its own: the records go to the revocations
+// collection of the store this transaction runs in, as the documents store.go's
+// DocStore writes there, and a key already withdrawn keeps the reason and the
+// instant of the entry that withdrew it.
+//
+// Every read comes before every write because the document store refuses one
+// after the other (docstore's ErrReadAfterWrite), which is why the caller hands
+// over the whole list at once rather than calling this once per key.
+func (t *docstoreTx) Revoke(ctx context.Context, revocations []Revocation) error {
+	withdrawn := make([]bool, len(revocations))
+	for i, r := range revocations {
+		if r.KeyID == "" {
+			return ErrRevocationUnnamed
+		}
+		held, err := t.tx.Get(ctx, revocationCollection, r.KeyID, nil)
+		if err != nil {
+			return err
+		}
+		withdrawn[i] = held
+	}
+	for i, r := range revocations {
+		if withdrawn[i] {
+			continue
+		}
+		if err := t.tx.Put(ctx, revocationCollection, r.KeyID, r); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// errStoreRefused is the write a case's own store refuses, which stands for the
+// commit the deployment's backend does not make.
+var errStoreRefused = errors.New("keyservice: the store refused the write")
 
 // racedStore is the key store with one read of its issuance list handed back
 // after somebody else has bound: the list a rebind reads the keys it replaces
@@ -1200,6 +1352,88 @@ func TestARebindThatCannotCommitHasRevokedNothing(t *testing.T) {
 	}
 	if withdrawn, found, err := f.store.Revocation(context.Background(), replaced); err != nil || !found || withdrawn.Reason != ReasonRebind {
 		t.Errorf("the key the retry replaces is %+v (found=%v err=%v), want it withdrawn as a rebind", withdrawn, found, err)
+	}
+}
+
+// TestARebindOverTheOneStoreBothSeamsShare: the same two halves over what the
+// deploy wires — a portal and a key store that are one document store, since
+// NewDocStore is handed the database the portal's documents live in. The
+// withdrawal D2198 makes has to go through the transaction the binding commits
+// in: the key store's own Revoke opens a transaction of its own, which the
+// backend refuses from inside one (docstore's errNestedTransaction), and a
+// deployment that reached the two seams over two stores would commit the
+// withdrawal even when the binding it belongs to never landed.
+//
+// The fixture's own spy cannot tell either apart — it is a map that commits
+// whatever a transaction staged — so both seams here are over a real document
+// store, and what this case reads is what that store holds: the withdrawal out
+// of the key store's own reader, the binding out of the portal's collection.
+func TestARebindOverTheOneStoreBothSeamsShare(t *testing.T) {
+	portal := &docsOnDocstore{}
+	f := newBindingFixtureWith(t, func(f *fixture) {
+		db := docstore.NewMemory()
+		portal.db = db
+		f.deps.Store = NewDocStore(db)
+		f.deps.Docs = readBeforeWrite{Docs: portal}
+	})
+	ctx := context.Background()
+	_, workspace, held := f.licensingWorkspace(t)
+	if rec := f.bind(t, held.ID, exampleProject); rec.Code != http.StatusOK {
+		t.Fatalf("binding answered %d: %s", rec.Code, rec.Body)
+	}
+	replaced := f.claimsOf(t, 0, exampleProject).KeyID
+
+	// A rebind whose transaction cannot commit leaves nothing behind: the
+	// withdrawal is staged in the transaction and goes with it, and the licence
+	// is still where it was. The write is refused late — after the withdrawal —
+	// so what is read back is the state the store keeps when the commit is not
+	// made.
+	portal.refuse = workspacesCollection
+	if rec := f.bind(t, held.ID, secondProject); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("a rebind whose transaction could not commit answered %d (%s), want this service's own failure", rec.Code, rec.Body)
+	}
+	portal.refuse = ""
+	if withdrawn, found, err := f.deps.Store.Revocation(ctx, replaced); err != nil || found {
+		t.Errorf("the key of a rebind that did not commit is %+v (found=%v err=%v) with both seams over one store, want it live",
+			withdrawn, found, err)
+	}
+	// The key that failed rebind minted is withdrawn all the same: the store's
+	// own Revoke is a call outside any transaction (withdrawUnrecorded), and the
+	// nesting this case is about is not what stops one.
+	if len(f.mints.answers) != 2 {
+		t.Fatalf("the rebind minted %d keys in all, want the one it could not record", len(f.mints.answers))
+	}
+	unrecorded := f.mints.answers[1].Record.KeyID
+	if withdrawn, found, err := f.deps.Store.Revocation(ctx, unrecorded); err != nil || !found || withdrawn.Reason != ReasonUnrecorded {
+		t.Errorf("the key the uncommitted rebind minted is %+v (found=%v err=%v), want it withdrawn as unrecorded",
+			withdrawn, found, err)
+	}
+
+	// The retry commits, and everything it decided is in the one store: the
+	// replaced key withdrawn as a rebind, the licence moved to the new project.
+	if rec := f.bind(t, held.ID, secondProject); rec.Code != http.StatusOK {
+		t.Fatalf("the retry answered %d: %s", rec.Code, rec.Body)
+	}
+	withdrawn, found, err := f.deps.Store.Revocation(ctx, replaced)
+	if err != nil || !found {
+		t.Fatalf("the key the rebind replaces is not in the key store both seams share (found=%v err=%v): %+v", found, err, withdrawn)
+	}
+	if withdrawn.Reason != ReasonRebind {
+		t.Errorf("the replaced key's reason is %q, want %q", withdrawn.Reason, ReasonRebind)
+	}
+	if !withdrawn.At.Equal(f.now) {
+		t.Errorf("the revocation is recorded at %s, want the rebind's instant %s", withdrawn.At, f.now)
+	}
+	fresh := f.claimsOf(t, 2, secondProject).KeyID
+	if _, found, err := f.deps.Store.Revocation(ctx, fresh); err != nil || found {
+		t.Errorf("the key the rebind minted is itself revoked (found=%v err=%v)", found, err)
+	}
+	bound, found, err := getRecord[WireWorkspace](ctx, portal, workspacesCollection, workspace.ID)
+	if err != nil || !found {
+		t.Fatalf("the workspace the binding wrote is not in the shared store (found=%v err=%v)", found, err)
+	}
+	if bound.ProjectID == nil || *bound.ProjectID != secondProject {
+		t.Errorf("the workspace both seams share is bound to %v, want %s", bound.ProjectID, secondProject)
 	}
 }
 
