@@ -979,6 +979,17 @@ var localRows = []Row{
 	locLocal("crafts.senior-review.access", "required: the senior review's calls go out on a credential or a pool", "accounts", docCrafts),
 	locLocal("crafts.security-review.model", "the senior review's model", "models", docCrafts),
 	locLocal("crafts.security-review.access", "the senior review's access", "accounts", docCrafts),
+	// The explicit-unset record (F22, D2607). A name here is what tells the
+	// reconcile that the owner took a pool, a craft or a typed credential away:
+	// a publish keeps a node member the local config says nothing about, so
+	// without the record a removal would never reach the node and a revoked
+	// grant would stay served. `accounts pool rm` writes the pools list and
+	// `accounts rm` the other two. The node's `credentials` block is the
+	// cascade, which holds no names and is never listed (F23), which is why
+	// there is no row beside these for it.
+	locLocal("node_removals.pools", "empty: no pool has been removed from this config", "accounts", docCrafts),
+	locLocal("node_removals.crafts", "empty: no craft has been removed from this config", "accounts", docCrafts),
+	locLocal("node_removals.craft_credentials", "empty: no typed credential has been removed from this config", "accounts", docCrafts),
 
 	loc("project_secrets.*.allow_data_to", "nobody", "secrets", docSetup),
 	loc("project_secrets.*.proxy", "none", "secrets", docSetup),

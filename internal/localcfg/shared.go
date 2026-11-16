@@ -109,6 +109,13 @@ func (c *Config) Shared() *Config {
 	s.Credentials = nil
 	s.Pools = nil
 	s.Crafts = config.Crafts{}
+	// NodeRemovals is the other half of the three blocks above and is dropped
+	// with them: a name in it says which pool, craft or typed credential the
+	// owner took away, so a launcher who could publish one into the shared
+	// file could take a teammate's pool out of the node's hands (F22, D2607).
+	// ParseShared refuses the key besides, because a shared config carrying it
+	// was not written by the converge.
+	s.NodeRemovals = nil
 	s.ProjectSecrets = nil
 	s.WorkflowSecrets = nil
 	// BitbucketAPIRoots is the owner's policy as well, and it travels the same

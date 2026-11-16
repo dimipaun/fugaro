@@ -334,6 +334,14 @@ func accountsPoolAddEdit(old []byte, name string, members []string, o accountsPo
 			return nil, userErr("pools.%s.allowed_users: %v", pluginwire.Printable(name), err)
 		}
 	}
+	// A pool declared here is not a removed one: the record a removal left is
+	// cleared on the same bytes, or the reconcile would go on taking the pool
+	// off the node the owner has just declared it for (F22). Nothing is
+	// removed where the record does not name the pool.
+	if next, err = yamledit.RemoveListItemWithOptions(next, []string{"node_removals", "pools"}, name,
+		yamledit.RemoveOptions{DropEmptyParents: true}); err != nil {
+		return nil, userErr("node_removals.pools: %v", err)
+	}
 	return next, nil
 }
 
@@ -385,8 +393,11 @@ func newAccountsPoolRmCmd() *cobra.Command {
 access names it is cleared with it rather than left pointing at nothing.
 
 A pool is declared in this installation's own config, and this command removes
-the declaration from that file. A repository that selected the pool keeps its
-own file untouched.
+the declaration from that file. The removal is recorded beside it, because the
+published node keeps a pool the config says nothing about: the record is what
+says the pool was taken away rather than never stated, and it is what a
+reconcile acts on. A repository that selected the pool keeps its own file
+untouched.
 
 --layer picks the layer the removal lands in. A pool is declared in this
 installation's own config, so the only layer it has is local, and --layer with
@@ -449,13 +460,21 @@ func runAccountsPoolRm(cmd *cobra.Command, name string, o accountsPoolWriteOptio
 		}
 		next = n
 	}
+	// The removal is recorded on the same bytes (F22, D2607): a publish keeps a
+	// node member the local config says nothing about, so a pool taken away
+	// without the record would go on being served by the node and the
+	// credentials it walks would go on being spent. The record is the only
+	// statement that the pool was removed rather than never declared.
+	if next, err = yamledit.AddListItem(next, []string{"node_removals", "pools"}, name); err != nil {
+		return userErr("node_removals.pools: %v", err)
+	}
 	if _, err := localcfg.Parse(next); err != nil {
 		return userErr("the local config this would write does not read back: %v", err)
 	}
 	if err := settingsLayerGate(cmd, target, wo, key, old, next); err != nil {
 		return err
 	}
-	what := fmt.Sprintf("remove pools.%s (members %s)", pluginwire.Printable(name), strings.Join(pool.Members, ", "))
+	what := fmt.Sprintf("remove pools.%s (members %s) and record it as removed, for the reconcile that takes it off the node", pluginwire.Printable(name), strings.Join(pool.Members, ", "))
 	if len(cleared) > 0 {
 		what += fmt.Sprintf("; clear %s, which named it and would have nothing to spend without it", craftAccessKeys(cleared))
 	}

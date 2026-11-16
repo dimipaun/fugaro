@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -445,41 +445,53 @@ func TestPoolWriteRefusedInAnAgentSessionUnderAnAdmittingGate(t *testing.T) {
 	}
 }
 
-// accountsPoolHasNodeRemovals reports whether the local config carries the list
-// a removal is recorded in (N1's carrier). It is asked of the type rather than
-// of a constant, so the test below starts running the moment the field lands.
-func accountsPoolHasNodeRemovals() bool {
-	t := reflect.TypeOf(localcfg.Config{})
-	for i := range t.NumField() {
-		if strings.Split(t.Field(i).Tag.Get("yaml"), ",")[0] == "node_removals" {
-			return true
-		}
-	}
-	return false
-}
-
 // TestPoolRmWritesTheExplicitUnset is F22's storage half: a pool the config no
 // longer declares has to be withdrawn from the node as well, and the node is
 // reconciled from what the config says — so the removal leaves the name in the
-// list the reconcile reads, and not merely an absence the reconcile cannot tell
-// from a config it has never seen.
-//
-// It needs N1, which owns the carrier: the local config has no node_removals
-// list yet, and this branch may not add one — the field, the shared-file
-// exclusion and the registry row are three other tasks' files. The skip is
-// detected rather than unconditional, so the test runs by itself once N1 lands.
+// record the reconcile reads, and not merely an absence it cannot tell from a
+// config it has never seen (D2607).
 func TestPoolRmWritesTheExplicitUnset(t *testing.T) {
-	if !accountsPoolHasNodeRemovals() {
-		t.Skip("needs N1: the local config carries no node_removals list yet, so a removal has nowhere to be recorded and the node keeps serving the pool (F22)")
-	}
 	path := accountsPoolOwnerHome(t)
 
 	if _, _, err := execute(t, "accounts", "pool", "rm", "claude"); err != nil {
 		t.Fatalf("accounts pool rm: %v", err)
 	}
 	after := readFileString(t, path)
-	if !strings.Contains(after, "node_removals:") || !strings.Contains(after, "claude") {
-		t.Errorf("the removal left no explicit unset for the reconcile to carry to the node:\n%s", after)
+	lc, err := localcfg.Parse([]byte(after))
+	if err != nil {
+		t.Fatalf("the config this command wrote does not read back: %v", err)
+	}
+	if lc.NodeRemovals == nil || !slices.Contains(lc.NodeRemovals.Pools, "claude") {
+		t.Errorf("the removal left no explicit unset for the reconcile to carry to the node: node_removals = %+v\n%s", lc.NodeRemovals, after)
+	}
+	if len(lc.Pools) != 0 {
+		t.Errorf("the pool is still declared after the removal: %+v", lc.Pools)
+	}
+}
+
+// TestPoolAddClearsARecordedRemoval: a pool declared again is not a removed one.
+// The record a removal left would otherwise go on taking the pool off the node
+// the owner has just declared it for (F22), so the declaration clears it on the
+// same bytes, and the block goes with the name when it holds nothing.
+func TestPoolAddClearsARecordedRemoval(t *testing.T) {
+	path := accountsPoolOwnerHome(t)
+
+	if _, _, err := execute(t, "accounts", "pool", "rm", "claude"); err != nil {
+		t.Fatalf("accounts pool rm: %v", err)
+	}
+	if _, _, err := execute(t, "accounts", "pool", "add", "claude", "oauth-one"); err != nil {
+		t.Fatalf("accounts pool add: %v", err)
+	}
+	after := readFileString(t, path)
+	lc, err := localcfg.Parse([]byte(after))
+	if err != nil {
+		t.Fatalf("the config these commands wrote does not read back: %v", err)
+	}
+	if lc.NodeRemovals != nil && slices.Contains(lc.NodeRemovals.Pools, "claude") {
+		t.Errorf("the pool is declared and still recorded as removed, so the reconcile would take it off the node: %+v", lc.NodeRemovals)
+	}
+	if strings.Contains(after, "node_removals") {
+		t.Errorf("the record was left behind holding nothing:\n%s", after)
 	}
 }
 
@@ -553,6 +565,16 @@ func TestPoolWritersAreRegisteredAndDisjoint(t *testing.T) {
 	// some other leaf would be a writer that lies.
 	if w, ok := settings.WriterOf("pools.team.legacy_open"); ok {
 		t.Errorf("pools.team.legacy_open is registered (%+v), and no command writes it", w)
+	}
+	// The removal record is registered under its own key, because a command does
+	// write it: the name goes in through `accounts pool rm`, which is the argv a
+	// refusal for that key prints.
+	w, ok := settings.WriterOf("node_removals.pools")
+	if !ok {
+		t.Fatal("node_removals.pools: no registered writer, so the removal record names no command")
+	}
+	if w.Command != "fugaro accounts pool rm" || w.Store != settings.StoreLocal {
+		t.Errorf("node_removals.pools: %+v, want the pool family's removal in the local config", w)
 	}
 }
 

@@ -640,8 +640,11 @@ Remove pools.<NAME> from this project's config: the pool goes, and a craft whose
 access names it is cleared with it rather than left pointing at nothing.
 
 A pool is declared in this installation's own config, and this command removes
-the declaration from that file. A repository that selected the pool keeps its
-own file untouched.
+the declaration from that file. The removal is recorded beside it, because the
+published node keeps a pool the config says nothing about: the record is what
+says the pool was taken away rather than never stated, and it is what a
+reconcile acts on. A repository that selected the pool keeps its own file
+untouched.
 
 --layer picks the layer the removal lands in. A pool is declared in this
 installation's own config, so the only layer it has is local, and --layer with

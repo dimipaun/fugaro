@@ -248,6 +248,15 @@ type Config struct {
 	// shared config because a key naming a credential is a way around that
 	// credential's own allow_data_to, exactly as default_claude_account is.
 	Crafts config.Crafts `yaml:"crafts,omitempty"`
+	// NodeRemovals is the explicit-unset record: the names this config has
+	// removed, per block, and the only way a removal reaches the policy node.
+	// A publish keeps a node member this file is silent about (D2607), so
+	// silence cannot mean removal — without this record a pool the owner
+	// removed would go on being served by the node, and a grant the owner
+	// revoked would stay live (F22). It is written by the commands that remove
+	// a pool, a craft or a typed credential, and the reconcile clears a name
+	// once the node no longer holds it.
+	NodeRemovals *NodeRemovals `yaml:"node_removals,omitempty"`
 	// DefaultClaudeAccount is the account every stage of a run uses when
 	// nothing more specific does (spec §11.1, D873). It names an account of
 	// claude_accounts, or "default" for the unsuffixed secret, and only this
@@ -728,6 +737,24 @@ type Config struct {
 	// notes are warnings added after parsing (AddWarning), such as a
 	// published shared config's dropped legacy base_images entries.
 	notes []string
+}
+
+// NodeRemovals is the explicit-unset record a removal reaches the policy node
+// through (F22, D2607): one list per block whose members are named, holding the
+// names this config has taken away. A block is listed here rather than in the
+// node's own shape because the node keeps what this config says nothing about,
+// so the absence of a pool is not a statement that the pool is gone.
+//
+// The node's `credentials` block is the cascade, which holds no names and is
+// never listed (F23); the typed credentials a run may use are listed under
+// craft_credentials, which is the node's name for the local `credentials` list.
+type NodeRemovals struct {
+	// Pools are the pools `accounts pool rm` took away.
+	Pools []string `yaml:"pools,omitempty"`
+	// Crafts are the crafts `accounts rm` took away.
+	Crafts []string `yaml:"crafts,omitempty"`
+	// CraftCredentials are the typed credentials `accounts rm` took away.
+	CraftCredentials []string `yaml:"craft_credentials,omitempty"`
 }
 
 // WorkspacePin is one member's pin: what its own config records about the

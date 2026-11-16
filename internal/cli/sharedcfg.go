@@ -322,7 +322,14 @@ type SharedAnchor struct {
 // member table are dropped with it, because a shared file that could name a
 // workspace would be one that could join this project to a group nobody here
 // chose. localcfg.Config.Shared nils all four.
-var sharedForbidden = []string{"terraform", "backend", "user", "commit_name", "commit_email", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "workflow_secrets", "bitbucket_api_roots", "bitbucket_tokens", "clone_urls", "update_check", "issues", "escalation", "mobile_allow", "secret_rotation_days", "secret_expires", "review_floor", "verifier_accounts", "image_catalog", "image_map", "bake_repos", "triage", "orchestrator", "default_claude_account", "stages", "claude_account_auto", "claude_account_aliases", "credentials", "pools", "subscription_spread", "crafts", "workspace", "workspace_pin", "workspace_members", "workspace_cap", "binaries"}
+//
+// node_removals is the explicit-unset record the pool, craft and credential
+// blocks above reach the node through (F22, D2607): a name in it says the owner
+// took that pool, craft or typed credential away, so a launcher who could
+// publish one into the runs bucket's shared file could take a pool out of the
+// node's hands and stop serving the teammates it was declared for.
+// localcfg.Config.Shared nils it for that reason.
+var sharedForbidden = []string{"terraform", "backend", "user", "commit_name", "commit_email", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "workflow_secrets", "bitbucket_api_roots", "bitbucket_tokens", "clone_urls", "update_check", "issues", "escalation", "mobile_allow", "secret_rotation_days", "secret_expires", "review_floor", "verifier_accounts", "image_catalog", "image_map", "bake_repos", "triage", "orchestrator", "default_claude_account", "stages", "claude_account_auto", "claude_account_aliases", "credentials", "pools", "subscription_spread", "crafts", "node_removals", "workspace", "workspace_pin", "workspace_members", "workspace_cap", "binaries"}
 
 // ParseShared validates a published shared config against its anchor and
 // returns it (docs/design/shared-config.md §5). Anyone holding objectAdmin

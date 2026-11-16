@@ -219,8 +219,15 @@ const (
 // write makes -- and both are local-only, because a launcher who could write
 // the block into the shared file would be admitting its own payload to every
 // teammate's runs (D986).
+//
+// The removal record of docs/config-ownership/ (F22, plan task A1) is the mover
+// after it, by three rows and by none: `node_removals` holds one list per block
+// whose members are named, so the local config gains `node_removals.pools`,
+// `node_removals.crafts` and `node_removals.craft_credentials`, and all three
+// belong to the `accounts` family -- `accounts pool rm` and `accounts rm` are
+// the doors that write them -- so the generic path reaches none of them.
 const (
-	cfmRegistryRows   = 449
+	cfmRegistryRows   = 452
 	cfmAllowlistNamed = 105
 )
 

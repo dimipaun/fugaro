@@ -19,7 +19,7 @@ project config** — a sentence it prints and exits on — so the figures below
 are counted from the registry in this tree through the same predicate the write path uses, which is
 what the guard at the end of this section re-runs.
 
-- **F1 — the registry is 449 rows and the generic writer carries 193 of them.** 105 by name
+- **F1 — the registry is 452 rows and the generic writer carries 193 of them.** 105 by name
   (`internal/cli/settings_set.go:106`), made of the thirteen §4.4 names (the four budget scalars,
   `base_branch`, `max_parallel`, `update_check`, `commit_name`, `commit_email`, `layer.default_profile`,
   and D873's three account keys — `default_claude_account`, `claude_account_auto` and the wildcard
@@ -41,7 +41,7 @@ what the guard at the end of this section re-runs.
   `layer.defaults.`, `layer.governance.`, `credentials.`, `clone_urls.`, `escalation.`):
   13 + 7 + 2 + 1 + 37 + 36 + 1 + 4 + 4 = 105, the last four being the ladder's per-mode override rows
   below.
-  **256 rows have no generic writer**, and the audit's whole subject is which of them are a defect and
+  **259 rows have no generic writer**, and the audit's whole subject is which of them are a defect and
   which are the installation's own plumbing (F13, D1182). The count moved from 390 by the image setup
   skill's two rows: the map (D1906) is the `image map` family's and one row, so it is not carried here,
   and the bake switch above is — and it moved again by the stop rule's two rows,
@@ -95,7 +95,12 @@ what the guard at the end of this section re-runs.
   project config gains the `binaries` block, whose two members are the paths a run may add a binary
   at and the cap one is held to (D981–D983), and both name the `project` family — `fugaro project
   policy publish` is the door that carries the block onto the policy node, which is where a run
-  reads it — so the rows without a generic writer are two more for them.
+  reads it — so the rows without a generic writer are two more for them. The removal record of
+  docs/config-ownership/ (F22, plan task A1) moved the registry once more, by three rows to 452 and by
+  none: `node_removals` holds one list per block whose members are named, so the local config gains
+  `node_removals.pools`, `node_removals.crafts` and `node_removals.craft_credentials`, and all three
+  name the `accounts` family — `accounts pool rm` and `accounts rm` are the doors that write them — so
+  the rows without a generic writer are three more for them.
 - **F2 — `fugaro rigor` does not exist.** There is no `newRigorCmd` in `internal/cli`, no `rigor` cobra
   command and no `floor` subcommand, while the registry names `rigor` (`internal/settings/registry.go:266`)
   and `rigor floor` (`:682`) as the owners of keys. Two of the registry's owner strings name a command a

@@ -5,12 +5,13 @@ import (
 	"github.com/dimipaun/fugaro/internal/settings"
 )
 
-// This file registers the pool leaves `fugaro accounts pool` writes
+// This file registers the leaves `fugaro accounts pool` writes
 // (docs/contracts/config-ownership.md §2, D2609). A pool is a list item of the
 // local config and its leaves are held under the item's own key, so each leaf
 // is registered under its pattern with the pool's name as the pattern's varying
 // segment — `pools.*.owner` is written at `pools.team.owner`, and `<1>` is
-// where the name goes.
+// where the name goes. The removal record beside the block is the one row here
+// that is not a leaf of a pool, and it carries no varying segment of its own.
 //
 // The store of every one of them is local: `accounts pool` writes the
 // installation's own config and nothing else, and the node a pool is served
@@ -60,6 +61,16 @@ var accountsPoolWriters = []struct {
 	{"pools.*.allowed_users", settings.Writer{
 		Command: "fugaro accounts pool add",
 		Argv:    []string{"accounts", "pool", "add", "<1>", "--allow-user", "<value>"},
+		Store:   settings.StoreLocal,
+	}},
+	// The removal record a pool's name is written into (F22, D2607). It is not
+	// a pool leaf — the name is an item of a list beside the pools block, not a
+	// field of the pool — so it is registered under its own key, and the value
+	// the template leaves is the name to take away, exactly as `pools.*.members`
+	// leaves the name of a member to add.
+	{"node_removals.pools", settings.Writer{
+		Command: "fugaro accounts pool rm",
+		Argv:    []string{"accounts", "pool", "rm", "<value>"},
 		Store:   settings.StoreLocal,
 	}},
 }
