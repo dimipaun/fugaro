@@ -247,13 +247,6 @@ func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v 
 	}
 	mode := r.reachedRigor()
 	in, findings := triageInputs(v.Findings)
-	// The judge is asked from a directory that holds nothing of the run: the
-	// brief carries the round's findings and the task's goal as text, and a
-	// stage whose working directory were the checkout would be a stage with the
-	// artifact under review in reach — the very thing the empty tool list and
-	// the empty setting sources take away (F25). A failure to make it is not
-	// worth a model call with the checkout as its cwd, so the round is recorded
-	// as failed.
 	// A round whose call the run knows it cannot serve is skipped instead of
 	// asked (triageUnserved): the call is not made, the round says so with the
 	// one cause that names the fix, and the fail-safe settles it exactly as it
@@ -269,6 +262,13 @@ func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v 
 		return triageOutcomeOf(v, out), true
 	}
 
+	// The judge is asked from a directory that holds nothing of the run: the
+	// brief carries the round's findings and the task's goal as text, and a
+	// stage whose working directory were the checkout would be a stage with the
+	// artifact under review in reach — the very thing the empty tool list and
+	// the empty setting sources take away (F25). A failure to make it is not
+	// worth a model call with the checkout as its cwd, so the round is recorded
+	// as failed.
 	dir, err := os.MkdirTemp("", "fugaro-triage-")
 	if err != nil {
 		cause := r.triageCause(agent.Result{}, err)
