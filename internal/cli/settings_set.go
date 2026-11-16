@@ -995,6 +995,18 @@ func settingsValueIn(data []byte, path []string) string {
 		return strconv.Itoa(v)
 	case float64:
 		return strconv.FormatFloat(v, 'f', -1, 64)
+	case time.Time:
+		// A value the file spells as a date (`secret_expires.bitbucket-token:
+		// 2026-12-01`) is a plain scalar to this program's own writer and a
+		// timestamp to the YAML reader, so a dry run without this case answers
+		// "2026-12-01 00:00:00 +0000 UTC" for a value the file holds as one
+		// date. The date is what the file says, and a value carrying a clock
+		// time keeps it: both are the bytes the document holds, whichever the
+		// write path is asking about.
+		if v.Hour() == 0 && v.Minute() == 0 && v.Second() == 0 && v.Nanosecond() == 0 {
+			return v.Format(localcfg.SecretExpiryLayout)
+		}
+		return v.Format(time.RFC3339)
 	case []any:
 		// A sequence is the model list, and it is rendered the one way the
 		// widening check reads a list — comma-separated members, which is what

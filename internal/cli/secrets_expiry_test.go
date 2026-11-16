@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"slices"
@@ -172,13 +174,29 @@ func TestSecretsSetRefusesANegativeRotation(t *testing.T) {
 	if !strings.Contains(err.Error(), "negative one is not a period") {
 		t.Fatalf("the refusal does not name what is wrong: %v", err)
 	}
+	// And it names a route that works for what the person was reaching for: the
+	// generic settings path refuses this family's keys, so the remedy has to be
+	// one of this command's own flags.
+	if !strings.Contains(err.Error(), "fugaro secrets set --rotation-days 0") {
+		t.Fatalf("the refusal names no route to record none: %v", err)
+	}
 	if lc := secretsLocalConfig(t); lc.SecretRotationDays != 0 {
 		t.Fatalf("a refused period was written: %d", lc.SecretRotationDays)
 	}
 	// Zero is not negative: it is the registry row's own "no rotation period is
-	// recorded", so it is written like any other period.
+	// recorded", so it is written like any other period — and it is the way the
+	// period is cleared once one is recorded.
+	if _, _, err := execute(t, "secrets", "set", "--rotation-days", "30"); err != nil {
+		t.Fatalf("a period was refused: %v", err)
+	}
+	if got := secretsLocalConfig(t).SecretRotationDays; got != 30 {
+		t.Fatalf("secret_rotation_days = %d, want 30", got)
+	}
 	if _, _, err := execute(t, "secrets", "set", "--rotation-days", "0"); err != nil {
 		t.Fatalf("a zero period was refused: %v", err)
+	}
+	if got := secretsLocalConfig(t).SecretRotationDays; got != 0 {
+		t.Fatalf("secret_rotation_days = %d, want the row's own none", got)
 	}
 }
 
@@ -288,7 +306,7 @@ func TestSecretsSetRefusesALayerTheKeyLacks(t *testing.T) {
 	// --layer on its own names no record: refusing is what keeps it from reading
 	// as a flag that did something.
 	_, _, err = execute(t, "secrets", "set", "bitbucket-token", "--layer", "local")
-	if err == nil || !strings.Contains(err.Error(), "goes with --expires, --rotation-days or --bitbucket-api-root") {
+	if err == nil || !strings.Contains(err.Error(), "goes with the record flags (--expires, --rotation-days, --bitbucket-api-root, --remove-bitbucket-api-root)") {
 		t.Fatalf("a bare --layer is not refused: %v", err)
 	}
 }
@@ -382,6 +400,293 @@ func TestSecretsWritersNeverCarryAValueOnArgv(t *testing.T) {
 		if got := w.ArgvFor(key); slices.Contains(got, secretsTestSentinel) {
 			t.Fatalf("%s: ArgvFor produced a value: %v", key, got)
 		}
+	}
+}
+
+// secretsWriteDoc is the dry run's document as a consumer reads it: the members
+// this test asserts are named here, so a renamed member is a failure here and
+// not a test that follows the command.
+type secretsWriteDoc struct {
+	Key     string `json:"key"`
+	Layer   string `json:"layer"`
+	Changed bool   `json:"changed"`
+	Old     string `json:"old"`
+	New     string `json:"new"`
+}
+
+// secretsDryRun answers the document a --dry-run --json run printed.
+func secretsDryRun(t *testing.T, args ...string) (secretsWriteDoc, string) {
+	t.Helper()
+	out, errOut, err := execute(t, append(append([]string{}, args...), "--dry-run", "--json")...)
+	if err != nil {
+		t.Fatalf("%v: stdout %q, stderr %q: %v", args, out, errOut, err)
+	}
+	var doc secretsWriteDoc
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("%v printed no document: %v\n%s", args, err, out)
+	}
+	return doc, out
+}
+
+// TestSecretsSetDryRunAnswersTheRecord: the record path's dry run is the
+// settings write path's own document (D1106), and the values it carries are the
+// ones the file holds and would hold. `secret_expires.NAME: 2026-12-01` is one
+// date to the loader and a timestamp to the YAML reader, and the document a
+// console draws its confirmation from may not answer with that instant: the
+// date the file spells is the value, old and new alike.
+func TestSecretsSetDryRunAnswersTheRecord(t *testing.T) {
+	settingsFixture(t, "bitbucket_api_roots: [\"https://api.bitbucket.org\"]\n")
+	secretsClock(t, secretsTestToday)
+	hooked := secretsHookRecord(t)
+	path := os.Getenv("FUGARO_CONFIG")
+	if _, _, err := execute(t, "secrets", "set", "bitbucket-token", "--expires", "2026-12-01"); err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The write above is the one that owed a stage; what the hook is read for
+	// from here is the dry runs, which owe none.
+	*hooked = nil
+
+	doc, out := secretsDryRun(t, "secrets", "set", "bitbucket-token", "--expires", "2026-12-02")
+	if doc.Key != "secret_expires.bitbucket-token" || doc.Layer != settingsLayerLocal {
+		t.Fatalf("key/layer = %q/%q, want the record's own key in the local config", doc.Key, doc.Layer)
+	}
+	if !doc.Changed || doc.Old != "2026-12-01" || doc.New != "2026-12-02" {
+		t.Fatalf("changed/old/new = %t/%q/%q, want the two dates the file holds and the write would hold:\n%s", doc.Changed, doc.Old, doc.New, out)
+	}
+	for _, instant := range []string{"00:00:00", "UTC", "+0000"} {
+		if strings.Contains(out, instant) {
+			t.Fatalf("the document reports the date as an instant (%q):\n%s", instant, out)
+		}
+	}
+
+	// The period and the list are answered the same way, and the removal's new
+	// value is empty because the key goes with the last root.
+	if doc, _ := secretsDryRun(t, "secrets", "set", "--rotation-days", "30"); doc.Key != "secret_rotation_days" || doc.Old != "" || doc.New != "30" {
+		t.Fatalf("the period's document is %+v", doc)
+	}
+	if doc, _ := secretsDryRun(t, "secrets", "set", "--bitbucket-api-root", "https://bitbucket.example.com"); doc.Old != "https://api.bitbucket.org" || doc.New != "https://api.bitbucket.org,https://bitbucket.example.com" {
+		t.Fatalf("the list's document is %+v", doc)
+	}
+	if doc, _ := secretsDryRun(t, "secrets", "set", "--remove-bitbucket-api-root", "https://api.bitbucket.org"); doc.Old != "https://api.bitbucket.org" || doc.New != "" {
+		t.Fatalf("the removal's document is %+v", doc)
+	}
+
+	// A dry run wrote nothing and owes no stage, whichever record it answered.
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(written, after) {
+		t.Fatalf("a dry run wrote the local config:\nbefore:\n%s\nafter:\n%s", written, after)
+	}
+	if len(*hooked) != 0 {
+		t.Fatalf("a dry run told the hook %v", *hooked)
+	}
+}
+
+// TestSecretsSetRefusesARecordBesideAPolicyFlag: a record and a policy entry
+// are two writes, and this command makes one per run. Neither flag set is the
+// other's to drop: --allow-data-to beside --rotation-days would leave the
+// repository list the person asked for silently unwritten, which is the one
+// outcome a run may not report as success. The refusal names both halves and
+// nothing is written.
+func TestSecretsSetRefusesARecordBesideAPolicyFlag(t *testing.T) {
+	settingsFixture(t, "")
+	secretsClock(t, secretsTestToday)
+	hooked := secretsHookRecord(t)
+	before, err := os.ReadFile(os.Getenv("FUGARO_CONFIG"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, args := range [][]string{
+		{"secrets", "set", "bitbucket-token", "--rotation-days", "30", "--allow-data-to", "acme/other"},
+		{"secrets", "set", "bitbucket-token", "--expires", "2026-12-01", "--proxy"},
+		{"secrets", "set", "--bitbucket-api-root", "https://api.bitbucket.org", "--allow-data-to", "acme/other"},
+		{"secrets", "set", "--remove-bitbucket-api-root", "https://api.bitbucket.org", "--proxy"},
+	} {
+		out, errOut, err := execute(t, args...)
+		if err == nil {
+			t.Fatalf("%v was accepted: stdout %q, stderr %q", args, out, errOut)
+		}
+		for _, want := range []string{"--allow-data-to and --proxy", "one write per run", "--expires, --rotation-days, --bitbucket-api-root, --remove-bitbucket-api-root"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("%v: the refusal does not say %q:\n%v", args, want, err)
+			}
+		}
+	}
+	after, err := os.ReadFile(os.Getenv("FUGARO_CONFIG"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatalf("a refused run wrote the local config:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+	if len(*hooked) != 0 {
+		t.Fatalf("a refused run told the hook %v", *hooked)
+	}
+	// One of the two, alone, is the write it says it is: the refusal is about
+	// the combination and not about either half.
+	if _, _, err := execute(t, "secrets", "set", "bitbucket-token", "--rotation-days", "30"); err != nil {
+		t.Fatalf("the record alone was refused: %v", err)
+	}
+	if got := secretsLocalConfig(t).SecretRotationDays; got != 30 {
+		t.Fatalf("secret_rotation_days = %d, want 30", got)
+	}
+}
+
+// TestSecretsRemoveBitbucketAPIRootTakesItBackOut: the other direction of the
+// list, which is the route the help names for taking a root away — the generic
+// settings path refuses this family's keys (the row's owner is `secrets`,
+// D853), so an add-only flag would leave an owner's own allow-list uneditable.
+// It takes the last root's key with it, an empty list and an absent one being
+// different records to the loader, and a root the list does not hold is left
+// alone.
+func TestSecretsRemoveBitbucketAPIRootTakesItBackOut(t *testing.T) {
+	t.Run("a block list", func(t *testing.T) {
+		settingsFixture(t, "")
+		hooked := secretsHookRecord(t)
+		const root = "https://api.bitbucket.org"
+		if _, _, err := execute(t, "secrets", "set", "--bitbucket-api-root", root); err != nil {
+			t.Fatal(err)
+		}
+
+		// A root the list does not hold changes nothing, and a write that
+		// changed nothing owes no stage.
+		*hooked = nil
+		if _, _, err := execute(t, "secrets", "set", "--remove-bitbucket-api-root", "https://bitbucket.example.com"); err != nil {
+			t.Fatal(err)
+		}
+		if got := secretsLocalConfig(t).BitbucketAPIRoots; !slices.Equal(got, []string{root}) {
+			t.Fatalf("removing a root the list does not hold changed it: %v", got)
+		}
+		if len(*hooked) != 0 {
+			t.Fatalf("a write that changed nothing told the hook %v", *hooked)
+		}
+
+		out, errOut, err := execute(t, "secrets", "set", "--remove-bitbucket-api-root", root)
+		if err != nil {
+			t.Fatalf("stdout %q, stderr %q: %v", out, errOut, err)
+		}
+		if !strings.Contains(out, "bitbucket_api_roots") {
+			t.Fatalf("the write does not name the key it changed: %q", out)
+		}
+		if got := secretsLocalConfig(t).BitbucketAPIRoots; len(got) != 0 {
+			t.Fatalf("bitbucket_api_roots = %v, want the last root gone", got)
+		}
+		if want := []afterWriteChange{{Key: "bitbucket_api_roots", Store: settings.StoreLocal}}; !slices.Equal(*hooked, want) {
+			t.Fatalf("the write told the hook %v, want %v", *hooked, want)
+		}
+		// The key is gone rather than left empty: the loader tells the two
+		// apart, and "no roots" is what the person asked for.
+		data, err := os.ReadFile(os.Getenv("FUGARO_CONFIG"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(data, []byte("bitbucket_api_roots")) {
+			t.Fatalf("the key was left behind:\n%s", data)
+		}
+	})
+
+	t.Run("a flow list", func(t *testing.T) {
+		settingsFixture(t, "bitbucket_api_roots: [\"https://api.bitbucket.org\", \"https://bitbucket.example.com\"]\n")
+		if _, _, err := execute(t, "secrets", "set", "--remove-bitbucket-api-root", "https://api.bitbucket.org"); err != nil {
+			t.Fatal(err)
+		}
+		if got := secretsLocalConfig(t).BitbucketAPIRoots; !slices.Equal(got, []string{"https://bitbucket.example.com"}) {
+			t.Fatalf("bitbucket_api_roots = %v, want the other root alone", got)
+		}
+	})
+}
+
+// TestSecretsBitbucketAPIRootsFlagReachesAFlowList: a flow-style list is a
+// shape the loader accepts and this program's own fixtures write, and it is the
+// one shape the editor's item operations refuse. The flag writes the list again
+// in the block style this program writes one in — the roots the file already
+// names, plus the one asked for — rather than refusing to reach the list the
+// help names, which is what the family's policy lists already do.
+func TestSecretsBitbucketAPIRootsFlagReachesAFlowList(t *testing.T) {
+	settingsFixture(t, "bitbucket_api_roots: [\"https://api.bitbucket.org\"]\n")
+	hooked := secretsHookRecord(t)
+
+	out, errOut, err := execute(t, "secrets", "set", "--bitbucket-api-root", "https://bitbucket.example.com")
+	if err != nil {
+		t.Fatalf("stdout %q, stderr %q: %v", out, errOut, err)
+	}
+	want := []string{"https://api.bitbucket.org", "https://bitbucket.example.com"}
+	if got := secretsLocalConfig(t).BitbucketAPIRoots; !slices.Equal(got, want) {
+		t.Fatalf("bitbucket_api_roots = %v, want %v", got, want)
+	}
+	if wantHook := []afterWriteChange{{Key: "bitbucket_api_roots", Store: settings.StoreLocal}}; !slices.Equal(*hooked, wantHook) {
+		t.Fatalf("the write told the hook %v, want %v", *hooked, wantHook)
+	}
+	// The reformatting is not silent: the block style is what the diff shows.
+	data, err := os.ReadFile(os.Getenv("FUGARO_CONFIG"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte("- https://api.bitbucket.org")) || !bytes.Contains(data, []byte("- https://bitbucket.example.com")) {
+		t.Fatalf("the list was not written in the block style this program writes:\n%s", data)
+	}
+	// A root the flow list already holds is still no change, and the second run
+	// reaches the block list the first one wrote.
+	*hooked = nil
+	if _, _, err := execute(t, "secrets", "set", "--bitbucket-api-root", "https://api.bitbucket.org"); err != nil {
+		t.Fatal(err)
+	}
+	if len(*hooked) != 0 {
+		t.Fatalf("a repeated root told the hook %v", *hooked)
+	}
+}
+
+// TestSecretsHelpNamesRoutesThatWork: the help's remedies for the three records
+// are commands this binary really runs. The first review found the sentence
+// pointing at `settings set bitbucket_api_roots --remove` and `settings unset
+// secret_rotation_days`, and the generic path refuses both for keys this family
+// owns (the row's owner is `secrets`, D853) — a help that names a refused
+// command is how a person learns the CLI lies. Each route the help names is run
+// here.
+func TestSecretsHelpNamesRoutesThatWork(t *testing.T) {
+	settingsFixture(t, "")
+	secretsClock(t, secretsTestToday)
+	help := newSecretsSetCmd().Long
+	for _, dead := range []string{"settings set bitbucket_api_roots", "settings unset secret_rotation_days"} {
+		if strings.Contains(help, dead) {
+			t.Errorf("the help still names %q, which this family's own keys refuse", dead)
+		}
+	}
+	for _, live := range []string{
+		"fugaro secrets set --remove-bitbucket-api-root URL",
+		"fugaro secrets set --rotation-days 0",
+	} {
+		if !strings.Contains(help, live) {
+			t.Errorf("the help names no route for this: %q is not in it", live)
+		}
+	}
+
+	// And both are routes that work: the root goes back out, and the period is
+	// recorded as none.
+	if _, _, err := execute(t, "secrets", "set", "--bitbucket-api-root", "https://api.bitbucket.org"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := execute(t, "secrets", "set", "--remove-bitbucket-api-root", "https://api.bitbucket.org"); err != nil {
+		t.Fatalf("the route the help names for taking a root away: %v", err)
+	}
+	if got := secretsLocalConfig(t).BitbucketAPIRoots; len(got) != 0 {
+		t.Fatalf("the named route left %v", got)
+	}
+	if _, _, err := execute(t, "secrets", "set", "--rotation-days", "30"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := execute(t, "secrets", "set", "--rotation-days", "0"); err != nil {
+		t.Fatalf("the route the help names for clearing the period: %v", err)
+	}
+	if got := secretsLocalConfig(t).SecretRotationDays; got != 0 {
+		t.Fatalf("secret_rotation_days = %d, want the row's own none", got)
 	}
 }
 

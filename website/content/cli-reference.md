@@ -7704,19 +7704,27 @@ config, and read no value at all:
                                roots a run may send the Bitbucket token to: an
                                https origin, with no userinfo, query or
                                fragment, and never a credential
+  --remove-bitbucket-api-root URL
+                               take one of those roots out again: the same
+                               value the flag above takes, and the key goes
+                               with the last root, because a list with no
+                               roots is the absent key
 
 NAME goes with --expires alone — a date is recorded for one secret, while the
-other two are records of the installation. --layer names the document such a
+others are records of the installation. --layer names the document such a
 record is written in (local, project or repo), and these are local config keys,
 so --layer project is refused with the layers the key has (local, shared). Each
 flag is a settings write of its own: one diff, one backup and one --dry-run
-answer each, so two flags in one command are two writes. The flag adds to
-bitbucket_api_roots rather than writing the key whole, so no run of it can drop
-a root you put there: taking one away is
-`fugaro settings set bitbucket_api_roots --remove URL`, and clearing
-the period is `fugaro settings unset secret_rotation_days`. --repo and
---project-wide are refused beside these flags: a record has no repository's
-copy.
+answer each, so two flags in one command are two writes. The add flag writes
+into bitbucket_api_roots rather than writing the key whole, so no run of it can
+drop a root you put there:
+`fugaro secrets set --remove-bitbucket-api-root URL`
+takes one back out, and clearing the rotation period is
+`fugaro secrets set --rotation-days 0`, which records "no period" —
+the value the row itself reads as none. --repo and --project-wide are refused
+beside these flags, and so are --allow-data-to and --proxy: a record has no
+repository's copy, and the policy entry is a write of its own run — run the
+command twice to change both.
 
 A value is not a setting: it has no row, it is never in a diff, and no dry
 run of this command prints one. secrets set with neither the policy flags nor
@@ -7734,7 +7742,7 @@ Flags:
 | `--allow-data-to` | stringSlice | `[]` | no | add a repository (owner/name) to NAME's allow_data_to — project_secrets.NAME.allow_data_to, or workflow_secrets.NAME.allow_data_to for a workflow secret — the list of repositories the value is stored for; comma-separated or repeated |
 | `--bitbucket-api-root` | stringSlice | `[]` | no | add an API root (https://host, no userinfo, query or fragment) to bitbucket_api_roots, the roots a run may send the Bitbucket token to; comma-separated or repeated, and never a credential |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
-| `--dry-run` | bool | `false` | no | print what the write would do — the policy entry, or one of the records --expires, --rotation-days and --bitbucket-api-root write — and write nothing |
+| `--dry-run` | bool | `false` | no | print what the write would do — the policy entry, or one of the records the settings flags write — and write nothing |
 | `--expires` | string | "" | no | record secret_expires.NAME, the day this secret lapses, as YYYY-MM-DD (today or later); writes the local config and reads no value |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for set |
@@ -7744,6 +7752,7 @@ Flags:
 | `--project-wide` | bool | `false` | no | the default for a name that has a project-wide meaning, accepted as a synonym so existing scripts keep working (cannot be combined with --repo) |
 | `--proxy` | bool | `false` | no | set project_secrets.NAME.proxy, the Bitbucket token's switch for the credentials service (--proxy=false turns it off) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--remove-bitbucket-api-root` | stringSlice | `[]` | no | take an API root out of bitbucket_api_roots, the same value the add flag takes; the key goes with the last root, and removing a root the list does not hold changes nothing |
 | `--repo` | string | "" | no | work on one repository's own copy, given as owner/name or a path inside its checkout (no value: this checkout's origin); without it, a name that has a project-wide meaning is stored and listed project-wide |
 | `--rotation-days` | int | `0` | no | record secret_rotation_days, the period this installation means to go between rotations, in days; writes the local config and reads no value |
 

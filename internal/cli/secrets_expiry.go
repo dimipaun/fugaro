@@ -46,6 +46,12 @@ var secretsSettingsNow = time.Now
 // is that it carries no value must not become a way to print one.
 const secretsNoEcho = "The value given is not printed: a token pasted into the wrong flag must not be echoed, and no flag of this command takes a secret on the command line."
 
+// secretsRecordFlags names the four flags this file writes, in the order the
+// help lists them, and every sentence below that has to name them reads them
+// from here: a refusal that named three of four is how a person reads a rule
+// this command no longer has.
+const secretsRecordFlags = "the record flags (--expires, --rotation-days, --bitbucket-api-root, --remove-bitbucket-api-root)"
+
 // secretsSettingsChange is one record this run writes: the registry row, the
 // map member when the row is keyed by a secret's name, the sentence naming the
 // write, and the edit itself. The edit takes the path the resolver built and
@@ -80,7 +86,17 @@ func secretsSetSettings(cmd *cobra.Command, o secretsOptions, name string) error
 	// repository owns one and the project-wide copy has none, so either flag
 	// beside them would be read as narrowing a write it cannot narrow.
 	if cmd.Flags().Changed("repo") || cmd.Flags().Changed("project-wide") {
-		return userErr("--repo and --project-wide say where a secret's value is stored, and --expires, --rotation-days and --bitbucket-api-root record what this machine knows about secrets in its own local config: a record has no repository's copy and no project-wide one — drop the flag")
+		return userErr("--repo and --project-wide say where a secret's value is stored, and %s record what this machine knows about secrets in its own local config: a record has no repository's copy and no project-wide one — drop the flag", secretsRecordFlags)
+	}
+	// The policy flags write the entry that decides who may mount a value, and
+	// this run writes the records instead. Both are decided from the flags
+	// alone and neither reads a value, so a run naming both would take the
+	// settings branch and leave the policy write the person asked for plainly
+	// undone — which is the one outcome no sentence of this command may leave
+	// unsaid (the value path's own "to store a value and change its policy, run
+	// the command twice" is the same rule, D1171).
+	if o.policyWrite(cmd) {
+		return userErr("--allow-data-to and --proxy write the entry that decides who may mount a secret's value, and %s write this machine's own records about secrets: this command does one write per run — pass one of the two, then repeat it with the other", secretsRecordFlags)
 	}
 	changes, err := secretsSettingsChanges(cmd, o, name)
 	if err != nil {
@@ -88,8 +104,8 @@ func secretsSetSettings(cmd *cobra.Command, o secretsOptions, name string) error
 	}
 	if len(changes) == 0 {
 		// The only way here is a bare --layer: every other spelling that
-		// reaches this path names one of the three flags.
-		return userErr("--layer says where a settings write lands and goes with --expires, --rotation-days or --bitbucket-api-root: a secret's own value is stored in Secret Manager, which has no layer")
+		// reaches this path names one of the record flags.
+		return userErr("--layer says where a settings write lands and goes with %s: a secret's own value is stored in Secret Manager, which has no layer", secretsRecordFlags)
 	}
 	sel, lc, err := settingsSelection()
 	if err != nil {
@@ -180,7 +196,7 @@ func secretsSettingsChanges(cmd *cobra.Command, o secretsOptions, name string) (
 	}
 	if cmd.Flags().Changed("rotation-days") {
 		if o.rotationDays < 0 {
-			return nil, userErr("--rotation-days takes the period in days this installation means to go between rotations, and a negative one is not a period: pass the number of days (30 for a month, 90 for a quarter), or `fugaro settings unset secret_rotation_days` to record none")
+			return nil, userErr("--rotation-days takes the period in days this installation means to go between rotations, and a negative one is not a period: pass the number of days (30 for a month, 90 for a quarter), or `fugaro secrets set --rotation-days 0` to record none")
 		}
 		days := strconv.Itoa(o.rotationDays)
 		out = append(out, secretsSettingsChange{
@@ -197,14 +213,96 @@ func secretsSettingsChanges(cmd *cobra.Command, o secretsOptions, name string) (
 			key:  "bitbucket_api_roots",
 			what: fmt.Sprintf("add %s to bitbucket_api_roots, the roots a run may send the Bitbucket token to", pluginwire.Printable(root)),
 			// A root already in the list is left alone and the run answers "no
-			// change": the key is the owner's list, and the flag adds to it
+			// change": the key is the owner's list, and this flag adds to it
 			// rather than writing it whole, so no invocation of this command
-			// can drop a root the owner put there. Taking one away is
-			// `fugaro settings set bitbucket_api_roots --remove URL`.
-			set: func(path []string, old []byte) ([]byte, error) { return yamledit.AddListItem(old, path, root) },
+			// can drop a root the owner put there. --remove-bitbucket-api-root
+			// is the other direction, and the two are the whole of what this
+			// command does to the list.
+			set: func(path []string, old []byte) ([]byte, error) { return secretsAddAPIRoot(old, path, root) },
+		})
+	}
+	for _, root := range o.removeBitbucketAPIRoots {
+		if problem := secretsAPIRootProblem(root); problem != "" {
+			return nil, userErr("--remove-bitbucket-api-root takes an API root out of the list, so it takes the same values --bitbucket-api-root does — an https origin such as https://api.bitbucket.org, with no userinfo, no query and no fragment — and the value given %s. %s", problem, secretsNoEcho)
+		}
+		out = append(out, secretsSettingsChange{
+			key:  "bitbucket_api_roots",
+			what: fmt.Sprintf("take %s out of bitbucket_api_roots, the roots a run may send the Bitbucket token to", pluginwire.Printable(root)),
+			set:  func(path []string, old []byte) ([]byte, error) { return secretsRemoveAPIRoot(old, path, root) },
 		})
 	}
 	return out, nil
+}
+
+// secretsAddAPIRoot adds one root to bitbucket_api_roots, and
+// secretsRemoveAPIRoot takes one out; both are the rules below. AddListItem and
+// RemoveListItemWithOptions come first in each: those are the edits that keep
+// the file's comments and the shape the owner gave the list, and a root the list does not
+// hold (in either direction) is left alone rather than rewritten. The removal
+// takes the key away with the last root, which is how this program spells a
+// list with no items — an empty one is a different record, and the loader tells
+// the two apart.
+//
+// A flow-style list is the one shape the editor refuses: bitbucket_api_roots:
+// ["https://api.bitbucket.org"] is a shape the loader accepts, this program's
+// own fixtures write and the operator's hand writes, and a refusal here would
+// leave the two flags unable to reach the list the help names. It is the
+// answer the family's policy lists already give (secretsPolicyAddRepos,
+// secretsPolicyRemoveRepos): the list is written again in the block style this
+// program writes one in, from the roots the file already names, so nothing the
+// owner put there is lost with the shape it was written in; the diff shows the
+// reformatting, so it is never silent.
+func secretsAddAPIRoot(old []byte, path []string, root string) ([]byte, error) {
+	next, err := yamledit.AddListItem(old, path, root)
+	if err == nil {
+		return next, nil
+	}
+	// The refusal is kept under its own name: the fallback reads it, and a nil
+	// one (the parse below overwrites err) is the caller's to report rather
+	// than a flow collection's to rewrite.
+	refusal := err
+	if yamledit.ReasonOf(refusal) != yamledit.ReasonFlowCollection {
+		return nil, refusal
+	}
+	have, err := secretsAPIRootsIn(old)
+	if err != nil {
+		return nil, err
+	}
+	return settingsSetListFallback(old, path, append(have, root), refusal)
+}
+
+// secretsRemoveAPIRoot takes one root out of the list, under the rules above.
+func secretsRemoveAPIRoot(old []byte, path []string, root string) ([]byte, error) {
+	next, err := yamledit.RemoveListItemWithOptions(old, path, root, yamledit.RemoveOptions{DropEmptyParents: true})
+	if err == nil {
+		return next, nil
+	}
+	refusal := err
+	if yamledit.ReasonOf(refusal) != yamledit.ReasonFlowCollection {
+		return nil, refusal
+	}
+	have, err := secretsAPIRootsIn(old)
+	if err != nil {
+		return nil, err
+	}
+	want := make([]string, 0, len(have))
+	for _, held := range have {
+		if held != root {
+			want = append(want, held)
+		}
+	}
+	return settingsSetListFallback(old, path, want, refusal)
+}
+
+// secretsAPIRootsIn is the list as the file holds it, which is what a rewrite
+// of a flow-style list is built from: the shape is being replaced, the roots
+// are not.
+func secretsAPIRootsIn(old []byte) ([]string, error) {
+	lc, err := localcfg.Parse(old)
+	if err != nil {
+		return nil, fmt.Errorf("the local config does not read back: %w", err)
+	}
+	return lc.BitbucketAPIRoots, nil
 }
 
 // secretsSettingsExpiry is --expires read as the date the record holds: the
@@ -289,6 +387,9 @@ func secretsSettingsCommand(cmd *cobra.Command, o secretsOptions, name string) s
 	}
 	for _, root := range o.bitbucketAPIRoots {
 		parts = append(parts, "--bitbucket-api-root", quoteWord(root))
+	}
+	for _, root := range o.removeBitbucketAPIRoots {
+		parts = append(parts, "--remove-bitbucket-api-root", quoteWord(root))
 	}
 	if o.layer != "" {
 		parts = append(parts, "--layer", o.layer)

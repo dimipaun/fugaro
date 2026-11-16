@@ -58,7 +58,7 @@ func newSecretsCmd() *cobra.Command {
 	// pflag quotes an unknown flag, and a value pasted in the wrong place
 	// could be one (`-sk-ant-…`); every secrets command gets a fixed message.
 	cmd.SetFlagErrorFunc(func(*cobra.Command, error) error {
-		return userErr("unknown or malformed flag; secrets commands take --repo, --project-wide, --json, --config, --project, --gcp-project, --region, --allow-data-to, --proxy, --dry-run, --expires, --rotation-days, --bitbucket-api-root and --layer, and never the value")
+		return userErr("unknown or malformed flag; secrets commands take --repo, --project-wide, --json, --config, --project, --gcp-project, --region, --allow-data-to, --proxy, --dry-run, --expires, --rotation-days, --bitbucket-api-root, --remove-bitbucket-api-root and --layer, and never the value")
 	})
 	// Two families, and they write different things: set, allow, deny, ls and rm
 	// are the repository's and the project's Secret Manager containers, written
@@ -97,14 +97,16 @@ type secretsOptions struct {
 	// on the one line every settings write ends on (secretsSetPolicy). Empty is
 	// `secrets set`, whose output has never carried that line.
 	form string
-	// expires, rotationDays, bitbucketAPIRoots and layer are the settings half
-	// of `secrets set` (S1): the records ABOUT secrets, which are written to the
-	// local config and are never a value (secrets_expiry.go). Each is a
-	// settings write of its own, and none of them is read by the value path.
-	expires           string
-	rotationDays      int
-	bitbucketAPIRoots []string
-	layer             string
+	// expires, rotationDays, bitbucketAPIRoots, removeBitbucketAPIRoots and
+	// layer are the settings half of `secrets set` (S1): the records ABOUT
+	// secrets, which are written to the local config and are never a value
+	// (secrets_expiry.go). Each is a settings write of its own, and none of
+	// them is read by the value path.
+	expires                 string
+	rotationDays            int
+	bitbucketAPIRoots       []string
+	removeBitbucketAPIRoots []string
+	layer                   string
 	// yes answers the typed confirmation outside a coding agent's session
 	// (D1107), and dryRun is the policy write's own document.
 	yes    bool
@@ -122,13 +124,15 @@ func (o *secretsOptions) policyWrite(cmd *cobra.Command) bool {
 }
 
 // settingsWrite reports whether the run is the family's settings half (S1):
-// --expires, --rotation-days and --bitbucket-api-root record what this machine
-// knows about secrets, and --layer says where a settings write lands. None of
-// them carries a value, and none is read by the value path — the three are the
-// records of secrets_expiry.go and nothing else.
+// --expires, --rotation-days, --bitbucket-api-root and
+// --remove-bitbucket-api-root record what this machine knows about secrets, and
+// --layer says where a settings write lands. None of them carries a value, and
+// none is read by the value path — the four are the records of
+// secrets_expiry.go and nothing else.
 func (o *secretsOptions) settingsWrite(cmd *cobra.Command) bool {
 	return o.expires != "" || cmd.Flags().Changed("rotation-days") ||
-		len(o.bitbucketAPIRoots) > 0 || cmd.Flags().Changed("layer")
+		len(o.bitbucketAPIRoots) > 0 || len(o.removeBitbucketAPIRoots) > 0 ||
+		cmd.Flags().Changed("layer")
 }
 
 func (o *secretsOptions) addFlags(cmd *cobra.Command) {
@@ -438,19 +442,27 @@ config, and read no value at all:
                                roots a run may send the Bitbucket token to: an
                                https origin, with no userinfo, query or
                                fragment, and never a credential
+  --remove-bitbucket-api-root URL
+                               take one of those roots out again: the same
+                               value the flag above takes, and the key goes
+                               with the last root, because a list with no
+                               roots is the absent key
 
 NAME goes with --expires alone — a date is recorded for one secret, while the
-other two are records of the installation. --layer names the document such a
+others are records of the installation. --layer names the document such a
 record is written in (local, project or repo), and these are local config keys,
 so --layer project is refused with the layers the key has (local, shared). Each
 flag is a settings write of its own: one diff, one backup and one --dry-run
-answer each, so two flags in one command are two writes. The flag adds to
-bitbucket_api_roots rather than writing the key whole, so no run of it can drop
-a root you put there: taking one away is
-` + "`fugaro settings set bitbucket_api_roots --remove URL`" + `, and clearing
-the period is ` + "`fugaro settings unset secret_rotation_days`" + `. --repo and
---project-wide are refused beside these flags: a record has no repository's
-copy.
+answer each, so two flags in one command are two writes. The add flag writes
+into bitbucket_api_roots rather than writing the key whole, so no run of it can
+drop a root you put there:
+` + "`fugaro secrets set --remove-bitbucket-api-root URL`" + `
+takes one back out, and clearing the rotation period is
+` + "`fugaro secrets set --rotation-days 0`" + `, which records "no period" —
+the value the row itself reads as none. --repo and --project-wide are refused
+beside these flags, and so are --allow-data-to and --proxy: a record has no
+repository's copy, and the policy entry is a write of its own run — run the
+command twice to change both.
 
 A value is not a setting: it has no row, it is never in a diff, and no dry
 run of this command prints one. secrets set with neither the policy flags nor
@@ -461,10 +473,10 @@ a value no plan shows.`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			switch {
 			case len(args) == 0:
-				// The two records that are not about one secret are the whole
+				// The records that are not about one secret are the whole
 				// command line, which is what makes their registered argv
 				// (writers_secrets.go) runnable as written.
-				if cmd.Flags().Changed("rotation-days") || len(o.bitbucketAPIRoots) > 0 {
+				if cmd.Flags().Changed("rotation-days") || len(o.bitbucketAPIRoots) > 0 || len(o.removeBitbucketAPIRoots) > 0 {
 					return nil
 				}
 				return userErr("secrets set needs the secret's NAME")
@@ -485,10 +497,11 @@ a value no plan shows.`,
 	f := cmd.Flags()
 	f.StringSliceVar(&o.allowDataTo, "allow-data-to", nil, "add a repository (owner/name) to NAME's allow_data_to — project_secrets.NAME.allow_data_to, or workflow_secrets.NAME.allow_data_to for a workflow secret — the list of repositories the value is stored for; comma-separated or repeated")
 	f.BoolVar(&o.proxy, "proxy", false, "set project_secrets.NAME.proxy, the Bitbucket token's switch for the credentials service (--proxy=false turns it off)")
-	f.BoolVar(&o.dryRun, "dry-run", false, "print what the write would do — the policy entry, or one of the records --expires, --rotation-days and --bitbucket-api-root write — and write nothing")
+	f.BoolVar(&o.dryRun, "dry-run", false, "print what the write would do — the policy entry, or one of the records the settings flags write — and write nothing")
 	f.StringVar(&o.expires, "expires", "", "record secret_expires.NAME, the day this secret lapses, as YYYY-MM-DD (today or later); writes the local config and reads no value")
 	f.IntVar(&o.rotationDays, "rotation-days", 0, "record secret_rotation_days, the period this installation means to go between rotations, in days; writes the local config and reads no value")
 	f.StringSliceVar(&o.bitbucketAPIRoots, "bitbucket-api-root", nil, "add an API root (https://host, no userinfo, query or fragment) to bitbucket_api_roots, the roots a run may send the Bitbucket token to; comma-separated or repeated, and never a credential")
+	f.StringSliceVar(&o.removeBitbucketAPIRoots, "remove-bitbucket-api-root", nil, "take an API root out of bitbucket_api_roots, the same value the add flag takes; the key goes with the last root, and removing a root the list does not hold changes nothing")
 	f.StringVar(&o.layer, "layer", "", "the layer a record is written in ("+strings.Join(settingsWriteLayers, ", ")+"); these records are the local config's, so local is the layer they take")
 	return cmd
 }
