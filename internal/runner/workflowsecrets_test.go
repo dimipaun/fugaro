@@ -33,6 +33,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
@@ -197,10 +198,16 @@ func secretsConfig(t *testing.T, extra string) string {
 
 // secretsRun is the whole run these tests are about: the fixture repository's
 // job run whose environment carries the credentials service's URL (so the run
-// is on the switch and its model path is the service, B2.2) and no mounted
-// value for the fixture's declared secret. extra is inserted under the
-// fixture's `agent:` block, spec the task (nil for the fixture's own) and svc
-// the service's stand-in.
+// is on the switch and its model path is the service, B2.2), its own account of
+// the secrets it mounts — which does not name the fixture's declared secret, the
+// shape the flip leaves a switched job in — and no mounted value for that
+// secret. extra is inserted under the fixture's `agent:` block, spec the task
+// (nil for the fixture's own) and svc the service's stand-in.
+//
+// The list is what makes every fetch case here a case about it too: the
+// fixture's own secret is left out of it, so a reader that took it for
+// everything the run needs drops the declared name, and the run fails on the
+// empty variable where the fetch is what answers for it.
 func secretsRun(t *testing.T, extra string, spec *task.Spec, svc *secretsService) *bk {
 	t.Helper()
 	h := newHarnessFiles(t, secretsConfig(t, extra), spec, nil)
@@ -232,9 +239,18 @@ func secretsRun(t *testing.T, extra string, spec *task.Spec, svc *secretsService
 	// The job carries no mounted value for the fixture's secret: that is the
 	// state S3's flip leaves a switched repository's job in, and the one the
 	// fetch exists for.
+	//
+	// Its own account of its mounts is the whole of that state, and it is the
+	// account every switched job has: the list is present and names a variable
+	// the job does carry — the git credential a flip keeps mounting — and the
+	// workflow's own secret is not in it, because the flip mounts none of a
+	// workflow's secrets: FUGARO_SECRET_ENVS stops being the complete list of
+	// what the run needs and the fetch answers for the rest (B3.8). A reader
+	// that took it for that list drops this secret and never asks.
 	h.deps.Env = append(filterEnv(h.deps.Env, secretEnvVar),
 		runner.CredentialsServiceURLEnv+"="+srv.URL,
-		runner.MetadataHostEnv+"="+strings.TrimPrefix(meta.URL, "http://"))
+		runner.MetadataHostEnv+"="+strings.TrimPrefix(meta.URL, "http://"),
+		runner.SecretEnvsVar+"="+config.ReservedSecrets[config.GitHubAppKeySecret])
 	mode := map[string]string{runner.BudgetModeEnv: "observe"}
 	spend, err := runner.SpendFromEnv(func(k string) (string, bool) { v, ok := mode[k]; return v, ok })
 	if err != nil {

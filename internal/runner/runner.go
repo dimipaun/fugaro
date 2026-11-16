@@ -1093,6 +1093,26 @@ func (r *run) addSecret(v string) {
 // runner's environment either way, where the agent can read them.
 const SecretEnvsVar = "FUGARO_SECRET_ENVS"
 
+// IgnoredSecretsVar is set on the Cloud Run job to the comma-separated NAMES
+// of the repository-level secrets D2313 ignores for this repository: the ones
+// the plan that deployed the job left out of its mounts, no store being
+// writable for a name the ruling disables (config.RepoSecretsOff).
+//
+// The plan STATES them, and the runner does not infer them from SecretEnvsVar,
+// because the mounts cannot answer that question: a job the credentials service
+// serves mounts none of its workflow's secrets — the flip puts the values in
+// the run's environment from the service instead (workflowsecrets.go) — so a
+// name absent from that list is not the ruling's answer about it, and a reader
+// that took it for one dropped every workflow secret of every switched
+// repository, fetching nothing and starting the run with the variable empty
+// where it used to fail closed.
+//
+// A job that carries no such variable is one whose plan ignored no name, or one
+// no plan wrote at all (a local `fugaro exec --task-file`, a job deployed
+// before this release): the two are told apart by the same rule the mounts are,
+// and neither drops anything on a guess.
+const IgnoredSecretsVar = "FUGARO_IGNORED_SECRETS"
+
 // minSecretLen is the shortest value redacted; agent.BuildEnv refuses a
 // shorter declared secret for the same reason.
 const minSecretLen = 4
@@ -1144,18 +1164,35 @@ func (r *run) addMountedSecrets() {
 // that mounts no secret) and an environment nobody described (a local `fugaro
 // exec --task-file`) are different answers, and the callers read them apart.
 func (r *run) mountedEnvs() ([]string, bool) {
-	// Last one wins, as envLookup reads every other variable: a list a test or
-	// a launcher appends must override the one already there, and the value
-	// addMountedSecrets redacts from has to be the value this parses.
+	return r.envList(SecretEnvsVar)
+}
+
+// ignoredSecrets are the names IgnoredSecretsVar lists: the repository-level
+// secrets the plan that deployed this job left out of its mounts (D2313), which
+// are the ones this run must not require a value of. The second return is
+// mountedEnvs's: a job whose plan ignored no name carries no variable, and that
+// is a different fact from a list the plan wrote empty, so the callers here too
+// read the two apart.
+func (r *run) ignoredSecrets() ([]string, bool) {
+	return r.envList(IgnoredSecretsVar)
+}
+
+// envList is a comma-separated list of names out of the run's environment: the
+// one parser behind every such list a job carries, so a list is split one way
+// and its absence is read one way. Last one wins, as envLookup reads every
+// other variable: a list a test or a launcher appends must override the one
+// already there, and the value addMountedSecrets redacts from has to be the
+// value this parses.
+func (r *run) envList(name string) ([]string, bool) {
 	for i := len(r.d.Env) - 1; i >= 0; i-- {
-		name, value, ok := strings.Cut(r.d.Env[i], "=")
-		if !ok || name != SecretEnvsVar {
+		k, value, ok := strings.Cut(r.d.Env[i], "=")
+		if !ok || k != name {
 			continue
 		}
 		var out []string
-		for _, env := range strings.Split(value, ",") {
-			if env = strings.TrimSpace(env); env != "" {
-				out = append(out, env)
+		for _, v := range strings.Split(value, ",") {
+			if v = strings.TrimSpace(v); v != "" {
+				out = append(out, v)
 			}
 		}
 		return out, true
@@ -1164,39 +1201,55 @@ func (r *run) mountedEnvs() ([]string, bool) {
 }
 
 // declaredSecrets are the secrets this run's workflow declares in the checkout
-// and its own job mounts. The two are not the same list under D2313
-// (config.RepoSecretsOff): a repository-level secret is accepted and ignored,
-// the plan leaves the name out of the job it deploys (internal/infra's
-// Readiness drops the mount, which rebuilds SecretEnvsVar without it), and no
-// store may be written for it — so a bootstrap that demanded its value would
-// refuse every run of a repository the ruling says is brought up, failing at
-// the agent's own start in a job that was deployed exactly as the ruling
-// intends.
+// and its own job can still supply a value for. The two are not the same list
+// under D2313 (config.RepoSecretsOff): a repository-level secret is accepted and
+// ignored, and no store may be written for it — so a bootstrap that demanded
+// its value would refuse every run of a repository the ruling says is brought
+// up, failing at the agent's own start in a job that was deployed exactly as the
+// ruling intends.
 //
-// The answer is the DEPLOYMENT's and not the file's, which is what keeps the
-// two from drifting apart in either direction: a name the job does mount is
-// required whatever the ruling says of the file, so a job deployed before the
-// ruling — or a name the project covers, which the file does not decide —
-// keeps refusing without its value exactly as it did before, and a name the
-// job does not mount is not required, because nothing can supply it.
+// Which names those are is the DEPLOYMENT's answer and not the file's, and it is
+// three facts rather than one:
 //
-// A job that carries no list at all is not read as one mounting nothing: no
-// plan computed that environment (a local `fugaro exec --task-file`, a shell a
-// person assembled), so there is no deployment to trust here and the
-// pre-ruling answer stands — the declared name is required. Every job this
-// release deploys carries the list, the empty one included, so the ruling's
-// own deployment is never the ambiguous case.
+//   - The plan that deployed this job states them (IgnoredSecretsVar, written by
+//     internal/infra's Readiness as it drops each mount). That is the ruling's
+//     own answer and it is read first, because it is the one that survives the
+//     credentials service's flip: a switched job mounts none of its workflow's
+//     secrets, so its SecretEnvsVar names none of them whatever the plan decided
+//     about the file (B3.8).
+//   - A job the credentials service serves is therefore required to hold every
+//     declared name: its mounts say nothing about the workflow's secrets, and
+//     each value comes from the service instead (workflowsecrets.go), so a
+//     name dropped here is a variable the run starts with empty. A local run is
+//     never this case (D149), and the service's URL is the fact the fetch
+//     itself reads (gateway.go's credentialsServiceURLEnv).
+//   - Every other job's mounts ARE the plan's decision about its workflow's
+//     secrets, so a repository-level name absent from them is one the plan left
+//     out (the pre-ruling deployment, a shared job that mounts only the
+//     project's secrets) and demanding it would refuse a run nothing can
+//     supply. A name the job does mount is required whatever the ruling says of
+//     the file — a name the project covers included, which the file does not
+//     decide.
+//
+// A job that carries no list at all is not read as one mounting nothing: no plan
+// computed that environment (a local `fugaro exec --task-file`, a shell a person
+// assembled), so there is no deployment to trust here and the pre-ruling answer
+// stands — the declared name is required. Every job this release deploys carries
+// the list, the empty one included, so the ruling's own deployment is never the
+// ambiguous case.
 func (r *run) declaredSecrets(wf config.Workflow) []config.Secret {
 	if !config.RepoSecretsOff {
 		return wf.Secrets
 	}
+	ignored, stated := r.ignoredSecrets()
 	mounted, described := r.mountedEnvs()
-	if !described {
-		return wf.Secrets
-	}
+	switched := !r.d.Local && envLookup(r.d.Env, credentialsServiceURLEnv) != ""
 	out := make([]config.Secret, 0, len(wf.Secrets))
 	for _, s := range wf.Secrets {
-		if config.RepoLevelSecret(s.Name) && !slices.Contains(mounted, s.Env) {
+		if stated && slices.Contains(ignored, s.Name) {
+			continue
+		}
+		if !switched && described && config.RepoLevelSecret(s.Name) && !slices.Contains(mounted, s.Env) {
 			continue
 		}
 		out = append(out, s)

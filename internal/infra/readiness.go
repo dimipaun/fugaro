@@ -315,6 +315,13 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 		}
 		var reasons []gate
 		var unresolved []string
+		// The names D2313 ignores for THIS workflow's job, which the job's own
+		// environment states below (runner.IgnoredSecretsVar): the runner is the
+		// last reader that could still demand a value for one of them, and its
+		// mounts cannot tell it which they are — a job the credentials service
+		// serves mounts none of its workflow's secrets (B3.8) — so the plan
+		// says it rather than leaving it to be inferred.
+		var ignoredHere []string
 		for _, logical := range uniqueSecrets(ws) {
 			ok, err := hasVersion(logical)
 			if err != nil {
@@ -351,6 +358,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 			if ignoredRepoSecret(spec, logical) {
 				dropMount(ws, logical)
 				ignored = append(ignored, logical)
+				ignoredHere = append(ignoredHere, logical)
 				continue
 			}
 			if OptionalSecret(logical) {
@@ -382,6 +390,17 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 			}
 			unresolved = append(unresolved, logical)
 			reasons = append(reasons, gate{MissingSecret, fmt.Sprintf("secret %s has no version: %s", logical, fix)})
+		}
+		// The job's own environment states which of its workflow's secrets the
+		// ruling ignored (D2313), for the runner's reader
+		// (runner.IgnoredSecretsVar): the value is the names and not the
+		// variables, because the name is the file's own identity for the secret
+		// and the one this loop decided about. Written only when there is one: a
+		// job whose plan ignored no name carries no such variable and the runner
+		// reads its mounts instead, so nothing here claims the plan had spoken
+		// where it had nothing to say.
+		if len(ignoredHere) > 0 && ws.Env != nil {
+			ws.Env[runner.IgnoredSecretsVar] = strings.Join(ignoredHere, ",")
 		}
 		// D11: project-centric mode requires the Firebase backend, and there
 		// is no other way to detect the mode (plan task 1.4 step 2). The

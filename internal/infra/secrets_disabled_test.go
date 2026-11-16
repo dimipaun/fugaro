@@ -27,6 +27,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/runner"
 )
 
 // ignoredProbe is the name these tests are about: the secret
@@ -107,6 +108,14 @@ func TestReadinessBringsUpARepositoryThatDeclaresASecret(t *testing.T) {
 	if got.Secrets[ignoredProbe] != spec.Secrets[ignoredProbe] {
 		t.Errorf("the container moved to %q, want %q: the ruling leaves every container and its value where it is", got.Secrets[ignoredProbe], spec.Secrets[ignoredProbe])
 	}
+	// And the job says which name it is about, in its own environment: the
+	// mounts are not a complete account once the credentials service serves a
+	// job — the flip mounts none of a workflow's secrets, so a name absent from
+	// that list is not the ruling's answer about it — and the runner reads this
+	// one for the names it may not require a value of (B3.8).
+	if stated := got.Workflows["web"].Env[runner.IgnoredSecretsVar]; stated != ignoredProbe {
+		t.Errorf("the job's environment states %s=%q, want %q: nothing else in the deployment tells the runner which declared name the ruling ignored", runner.IgnoredSecretsVar, stated, ignoredProbe)
+	}
 	for _, m := range missing {
 		if m.Kind == MissingSecret {
 			t.Errorf("the job is still held back for a secret: %v", m)
@@ -171,6 +180,9 @@ func TestReadinessBringsUpARepositoryThatDeclaresASecret(t *testing.T) {
 	}
 	if _, ok := before.Workflows["web"].SecretEnv["SANDBOX_PROBE"]; !ok {
 		t.Errorf("with the door off the job does not mount SANDBOX_PROBE: %v", before.Workflows["web"].SecretEnv)
+	}
+	if stated := before.Workflows["web"].Env[runner.IgnoredSecretsVar]; stated != "" {
+		t.Errorf("with the door off the job states %s=%q: the plan ignored no name, so it has nothing to say and the runner is left to read the mounts", runner.IgnoredSecretsVar, stated)
 	}
 	// The build gate too: with the door off the name is required and missing, so
 	// no build is offered for a job that could not run -- the machinery the
