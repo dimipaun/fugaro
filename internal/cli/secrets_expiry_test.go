@@ -311,6 +311,52 @@ func TestSecretsSetRefusesALayerTheKeyLacks(t *testing.T) {
 	}
 }
 
+// TestSecretsSetRecordRefusesAnAgentSession: these records are this machine's
+// own file — the local config, the document a coding agent's session may not
+// write (spec §5) — and the kind of document a record lands in is the whole of
+// that fence: applySettingsEdit reads it (insideRepo, settings_write.go) and
+// refuses every document but a checkout's own fugaro.yaml. Each of the four
+// record flags is run in a session here, and each is refused with nothing
+// written: the file the test ends on is the one it started with, byte for byte,
+// and no stage is owed.
+func TestSecretsSetRecordRefusesAnAgentSession(t *testing.T) {
+	secretsRmFugaro(t)
+	// The list already holds the root the removal below takes out, and neither
+	// direction is given a value that would leave it as it is: a write the file
+	// already answers — removing an absent root, adding one it holds — is the "no
+	// change" applySettingsEdit returns before the fence, so a case built on one
+	// would pin an empty diff rather than the refusal.
+	settingsFixture(t, "bitbucket_api_roots:\n  - https://bitbucket.example.com\n")
+	secretsClock(t, secretsTestToday)
+	hooked := secretsHookRecord(t)
+	path := os.Getenv("FUGARO_CONFIG")
+	before := readFileString(t, path)
+	t.Setenv(accountsAddAgent, "1") // a coding agent's session
+
+	for _, args := range [][]string{
+		{"secrets", "set", "bitbucket-token", "--expires", "2026-12-01"},
+		{"secrets", "set", "--rotation-days", "30"},
+		{"secrets", "set", "--bitbucket-api-root", "https://bitbucket.example.net"},
+		{"secrets", "set", "--remove-bitbucket-api-root", "https://bitbucket.example.com"},
+	} {
+		_, _, err := execute(t, args...)
+		if err == nil {
+			t.Fatalf("%s wrote a record in a coding agent's session", strings.Join(args, " "))
+		}
+		for _, want := range []string{accountsAddAgent, "fugaro secrets set", "nothing was written"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: the refusal does not carry %q:\n%v", strings.Join(args, " "), want, err)
+			}
+		}
+	}
+	if after := readFileString(t, path); after != before {
+		t.Fatalf("the session wrote the config:\n%s", after)
+	}
+	if len(*hooked) != 0 {
+		t.Fatalf("a refused record told the hook %v", *hooked)
+	}
+}
+
 // TestSecretsWritersArgvWriteTheirKey runs what writers_secrets.go registers:
 // the three rows' own templates, with the placeholders filled, against a
 // hermetic config. It is the proof that each registration is a command this
