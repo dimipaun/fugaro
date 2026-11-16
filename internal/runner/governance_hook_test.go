@@ -2,15 +2,20 @@ package runner_test
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/tier"
 )
 
 // TestHooksDefaultToTheUntaggedBuild: the stage hook's default set is the one
@@ -242,5 +247,115 @@ func TestAStageHookCannotLeaveAHaltReasonTheRunnerCannotRecord(t *testing.T) {
 	}
 	if rec.Status != runstore.StatusFailed || !strings.Contains(rec.Reason, "invented_stop") {
 		t.Fatalf("record = %+v, want the stage failed over the reason the hook left", rec)
+	}
+}
+
+// stageStopLimit is a gateway stage limit that stops the first call of every
+// stage, the way a stage budget does: the test's own limit, installed through
+// the seam ee/register sets in a tagged build (T7.2), so the core's own answer
+// to a stop the gateway made is reached without an ee/ build.
+type stageStopLimit struct{ detail string }
+
+func (stageStopLimit) Begin(gateway.StageLimitView) {}
+
+func (l stageStopLimit) Stop(gateway.StageLimitView) gateway.StageStop {
+	return gateway.StageStop{Reason: string(runstore.HaltStageBudget), Detail: l.detail}
+}
+
+// stoppedStage is the implement stage of a run whose first call the gateway's
+// stage limit stops: it answers the refusal the way a real agent's client does
+// — the call returns, the stage does not — which is the shape the runner has to
+// turn into a halt.
+func stoppedStage(t *testing.T, _ context.Context, req agent.Request) (agent.Result, error) {
+	t.Helper()
+	if code, body := post(t, req, sonnet, 4000); code != http.StatusForbidden {
+		t.Fatalf("the stage's call was answered %d, want the stage limit's 403: %s", code, body)
+	}
+	return agent.Result{CostUSD: 0.1}, nil
+}
+
+// TestAGatewayStopOutsideTheVocabularyKeepsTheGatewaysOwnHalt: the stop the
+// gateway's stage limit made is real whatever the stage hook makes of it, so a
+// hook that names a reason outside the vocabulary records no halt of its own
+// and the gateway's own is recorded instead — a run is never left running by a
+// hook that misbehaved (governance_hook.go, gatewayStop). It is the check the
+// stage's own bound makes (TimedOut), on the stop the gateway made rather than
+// the one the runner's clock made, and the run log says which halt was taken.
+//
+// The checkpoint allowance is not opened for it either: an invented reason is
+// not a governance stop, and a stop the core cannot account for buys no report.
+func TestAGatewayStopOutsideTheVocabularyKeepsTheGatewaysOwnHalt(t *testing.T) {
+	runner.ResetGatewayStageLimitHook(t)
+	if err := runner.SetGatewayStageLimitHook(func(policy.Governance, tier.Tier, pricing.Micros) gateway.StageLimit {
+		return stageStopLimit{detail: "implement stage budget"}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h := newGW(t, gwConfig(t, ""), "enforce", "5", out4k())
+	runner.ResetStageHook(t)
+	no := func(runner.StageView) runner.StageDecision { return runner.StageDecision{} }
+	if err := runner.SetStageHook(runner.StageFuncs{
+		Timeout:  func(runner.StageView) time.Duration { return 0 },
+		TimedOut: no,
+		Stopped: func(runner.StageView) runner.StageDecision {
+			return runner.StageDecision{Halt: true, Reason: runstore.HaltReason("invented_stop"), Detail: "invented"}
+		},
+		Before: no,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := h.run(t, stoppedStage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Halt == nil {
+		t.Fatalf("record = %+v, halt = %+v: the reason a hook invented left the run running", rec, rec.Halt)
+	}
+	if rec.Halt.Reason != runstore.HaltStageBudget {
+		t.Errorf("halt = %+v, want the gateway's own reason: the stop is real whatever the hook made of it", rec.Halt)
+	}
+	if !strings.Contains(rec.Halt.Detail, "implement stage budget") {
+		t.Errorf("halt detail = %q, want the gateway's own sentence about the stop", rec.Halt.Detail)
+	}
+	if rec.Checkpoint != nil {
+		t.Errorf("checkpoint = %+v, want none: a reason outside the vocabulary is not a governance stop", rec.Checkpoint)
+	}
+	if !strings.Contains(h.logs.String(), "outside the vocabulary the record carries") {
+		t.Errorf("the run log does not say the hook's reason was left out:\n%s", h.logs.String())
+	}
+}
+
+// TestAReviewStopOutsideTheVocabularyFailsTheStage: the review-scope stop is
+// the one decision taken before a round rather than at a stage's end, and a
+// hook that names a reason outside the vocabulary there fails the stage named
+// instead of writing a halt result.schema.json's enum and haltReasonText
+// between them cannot account for (governance_hook.go, beforeReview; D521,
+// D529). The round is not bought: the run ends failed and not halted, and no
+// checkpoint report is left for it.
+func TestAReviewStopOutsideTheVocabularyFailsTheStage(t *testing.T) {
+	cfg := stageTimeoutCfg(t,
+		"timeouts: { total: 5m, stage: 2m, verify: 5s, finalize_reserve: 2m }", "")
+	h := newHarness(t, cfg, nil)
+	runner.ResetStageHook(t)
+	no := func(runner.StageView) runner.StageDecision { return runner.StageDecision{} }
+	if err := runner.SetStageHook(runner.StageFuncs{
+		Timeout:  func(runner.StageView) time.Duration { return 0 },
+		TimedOut: no,
+		Stopped:  no,
+		Before: func(runner.StageView) runner.StageDecision {
+			return runner.StageDecision{Halt: true, Reason: runstore.HaltReason("invented_stop"), Detail: "scope"}
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Halt != nil || rec.Checkpoint != nil {
+		t.Fatalf("a reason outside the vocabulary halted the run: halt = %+v, checkpoint = %+v", rec.Halt, rec.Checkpoint)
+	}
+	if rec.Status != runstore.StatusFailed || !strings.Contains(rec.Reason, "invented_stop") {
+		t.Fatalf("record = %+v, want the review stage failed over the reason the hook left", rec)
 	}
 }

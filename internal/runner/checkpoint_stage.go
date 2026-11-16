@@ -95,8 +95,10 @@ func (r *run) checkpointStage(ctx context.Context) {
 		Prompt:    checkpointPromptFor(r.spec.Task, stopped, *h),
 		SessionID: agent.NewSessionID(),
 		Model:     r.stageModel(name),
-		// The report is worth one call and no more: Claude Code's own budget
-		// for it is the same small figure the gateway admits the call at.
+		// The run's own agent.max_budget_usd, the figure every stage's call is
+		// launched with (runner.go). It is the agent's own accounting and not
+		// what bounds this call: the checkpoint stage is admitted one call, at
+		// the small output limit it is pinned to (checkpointMaxOutputTokens).
 		MaxBudgetUSD: r.cfg.Agent.MaxBudgetUSD,
 		// The posture is the triage judge's (F25, F29): this call writes a
 		// report and touches nothing else. The one-call allowance bounds the
