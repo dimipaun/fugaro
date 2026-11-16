@@ -13,6 +13,12 @@
 // and rendered, which is what makes "leaves the file untouched" structural rather than a
 // promise to be careful.
 //
+// **And the stamp is the one the caller asked for, or nothing is written.** `--as-of` is the
+// release the file claims to be read against, and it is what `scripts/release.sh` greps for, so
+// a snapshot stamped with another release is refused here — naming both — rather than written
+// and reported as the one that was asked for (a builder that ignores its `asOf` is exactly the
+// case that would otherwise pass silently).
+//
 // **`main` takes the builder as a parameter.** The real one is T1's `buildSnapshot`; until it
 // lands the default is the contract's stub (`src/lib/feature-matrix-stub.mjs`), which answers
 // with the fixture and reads none of its arguments. I1 swaps the import and deletes the stub,
@@ -43,8 +49,8 @@ const AS_OF = /^v\d+\.\d+\.\d+$/
 
 /**
  * Write `FEATURES.md` for `asOf` into `repo`, and answer with the exit code: 0 when the file was
- * written, 1 when the snapshot could not be built, in which case the refusal is printed and the
- * file is left as it was.
+ * written, 1 when the snapshot could not be built or is stamped with another release, in which
+ * case the refusal is printed and the file is left as it was.
  */
 export function main({ asOf, builder = buildSnapshot, repo = REPO_ROOT } = {}) {
   const file = path.join(repo, FEATURES_FILE)
@@ -60,7 +66,14 @@ export function main({ asOf, builder = buildSnapshot, repo = REPO_ROOT } = {}) {
     const mapping = parseYAML(readFileSync(mappingFile, 'utf8'), mappingFile)
     const previous = existsSync(file) ? readSnapshotBlock(readFileSync(file, 'utf8')) : null
 
-    const markdown = renderMarkdown(builder({ statusMarkdown, mapping, previous, asOf }))
+    const snapshot = builder({ statusMarkdown, mapping, previous, asOf })
+    if (snapshot.as_of !== asOf) {
+      throw new Error(
+        `the builder stamped the snapshot ${JSON.stringify(snapshot.as_of)} and --as-of asked for ${JSON.stringify(asOf)}: the file's stamp is the release it was built for, and the release procedure greps for it`,
+      )
+    }
+
+    const markdown = renderMarkdown(snapshot)
     writeFileSync(file, markdown)
     process.stdout.write(`${FEATURES_FILE} written, as of ${asOf}\n`)
     return 0

@@ -3,8 +3,9 @@
 //
 // The fixture is the contract's, rendered here rather than built: what this file holds is the
 // three-column shape D2440 chose, the block that comes back equal to the snapshot it was written
-// from (R5), the leak check over the whole rendered document (R1, R8) and the command's promise
-// that a refusal leaves the file as it was. The builder the command uses is passed in, so the
+// from (R5), the leak check over the whole rendered document (R1, R8), the stamp's agreement
+// with the release the command was asked for, and the command's promise that a refusal leaves
+// the file as it was. The builder the command uses is passed in, so the
 // refusal case needs no status.md that has one in it — and the real builder (T1) and the stub it
 // replaces are both out of this file's reach.
 
@@ -132,6 +133,16 @@ test('a refusal from the builder names what it refused and leaves FEATURES.md by
   assert.equal(readFileSync(file, 'utf8'), before)
   assert.match(printed, /compute-backend/)
   assert.match(printed, /voice-module/)
+})
+
+test('a snapshot stamped for another release is refused, naming both, and nothing is written', () => {
+  const repo = scratch()
+  const printed = captureStderr(() => {
+    assert.notEqual(main({ asOf: 'v0.30.0', builder: () => fixture(), repo }), 0)
+  })
+  assert.match(printed, /"v0\.24\.0"/)
+  assert.match(printed, /"v0\.30\.0"/)
+  assert.ok(!existsSync(path.join(repo, 'FEATURES.md')), 'a refused run wrote FEATURES.md')
 })
 
 test('the command refuses without a release to stamp, and writes nothing', () => {
