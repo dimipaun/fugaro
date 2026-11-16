@@ -175,18 +175,41 @@ func printReposLs(out io.Writer, v *reposView, sources map[string]string) {
 // repository's own name where the list names it and the wildcard otherwise, so
 // an operator reading a row can tell which of the two admitted it.
 func reposLsRowLine(r reposViewRepo) string {
-	image := "image unresolved (no answer chose one)"
-	if r.ImageEntry != "" {
-		image = fmt.Sprintf("image %s (%s)", safetext.Field(r.ImageEntry), r.ImageSource)
-	}
 	return "  " + printableName(r.Canonical) +
 		"  [" + safetext.Field(r.Provider) + "]" +
 		"  base " + safetext.Field(r.BaseBranch) +
-		"  " + image +
+		"  " + reposLsImageCell(r) +
 		"  workflows: " + reposLsListCell(reposLsWorkflowNames(r.Workflows)) +
 		"  claude accounts: " + reposLsListCell(r.ClaudeAccounts) +
 		"  published: " + reposLsPublishedCell(r.Published) +
 		"  local: " + reposLsLocalCell(r.Local)
+}
+
+// reposLsImageCell is a row's image cell: what its job runs and which of the
+// seven answers chose it.
+//
+// It is written from the source and never from the entry alone, because the
+// three sources whose image is not a catalog entry's — `repo`, `base` and
+// `shared` — have no entry to name: catalog.Selection.Entry is the zero value
+// whenever its Source is not SourceCatalog (catalog/select.go), so the row's
+// ImageEntry is "" there too, and reading that "" as the resolver's refusal
+// would draw the ordinary case — the image this project builds for the
+// repository — as a row whose image nothing resolved. The `""` is a fact about
+// the job and not a read that did not answer (D2410, and §6.26 of
+// console/docs/json-contract.md states the member that way); ImageSource is what
+// tells the two apart, and it is what this cell reads.
+func reposLsImageCell(r reposViewRepo) string {
+	switch r.ImageSource {
+	case reposViewImageRepo:
+		return "image this project builds for the repository (repo)"
+	case reposViewImageBase:
+		return "image the installation ships as its base (base)"
+	case reposViewImageShared:
+		return "image the shared dependency layer (shared)"
+	case reposViewImageUnresolved:
+		return "image unresolved (no answer chose one)"
+	}
+	return fmt.Sprintf("image %s (%s)", safetext.Field(r.ImageEntry), r.ImageSource)
 }
 
 // reposLsWorkflowNames is a row's workflow names, in the view's own order.

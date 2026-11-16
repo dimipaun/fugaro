@@ -352,3 +352,66 @@ func TestReposLsUnreadablePolicyIsAStateNotAnEmptyList(t *testing.T) {
 		t.Errorf("allow.entries = %v, want an empty list and not null: the state sentence is what tells it apart from a policy that admits nothing", doc.Allow.Entries)
 	}
 }
+
+// TestReposLsRowImageIsTheProjectsOwnOnAnUncuratedCatalog: the ordinary
+// installation. A project that publishes no `image_catalog` answers `repo` for
+// every repository — the image this project builds for it — and the resolver's
+// Selection.Entry is the zero value for that source, so the row's ImageEntry is
+// "": a text row written from the entry alone prints the refusal its own
+// resolver never made, on the one installation that has not curated a catalog
+// yet, which is where a listing is read most.
+//
+// Mutation (verified, run and restored): print the cell from `r.ImageEntry != ""`
+// alone, the pre-review rule — this test fails, the row printed as unresolved.
+func TestReposLsRowImageIsTheProjectsOwnOnAnUncuratedCatalog(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"github/acme/app"},
+	})
+	out, _, err := execute(t, "project", "repos", "ls")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if strings.Contains(out, "unresolved") {
+		t.Errorf("a project that publishes no catalog is printed as one whose images nothing resolved:\n%s", out)
+	}
+	line := listLine(t, out, "github/acme/app")
+	if !strings.Contains(line, "this project builds for the repository (repo)") {
+		t.Errorf("the row for the admitted repository does not name the image the project builds for it:\n%s", line)
+	}
+}
+
+// TestReposLsImageCellReadsTheSourceNotTheEntry: the three sources whose image
+// is not a catalog entry's carry an empty entry, and an empty entry is not a
+// refusal. catalog.Selection.Entry is the zero value whenever its Source is not
+// SourceCatalog, so `repo` — the image this project builds for the repository,
+// which is what an installation that has not curated its catalog runs — arrives
+// with no entry to name, exactly as the resolver's refusal does.
+//
+// Mutation (verified, run and restored): write the cell from
+// `r.ImageEntry != ""` alone, the pre-review rule — this test fails, the three
+// ordinary sources printed as the refusal.
+func TestReposLsImageCellReadsTheSourceNotTheEntry(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		source reposViewImageSource
+		entry  string
+		want   string
+	}{
+		{"the image this project builds for the repository", reposViewImageRepo, "", "this project builds for the repository (repo)"},
+		{"the installation's base image", reposViewImageBase, "", "the installation ships as its base (base)"},
+		{"the shared dependency layer", reposViewImageShared, "", "the shared dependency layer (shared)"},
+		{"a catalog entry the map chose", reposViewImageMap, "acme/app", "image acme/app (map)"},
+		{"the resolver's refusal", reposViewImageUnresolved, "", "image unresolved (no answer chose one)"},
+	} {
+		got := reposLsImageCell(reposViewRepo{ImageEntry: tc.entry, ImageSource: tc.source})
+		if !strings.Contains(got, tc.want) {
+			t.Errorf("%s: the cell is %q, want it to say %q", tc.name, got, tc.want)
+		}
+		if tc.source != reposViewImageUnresolved && strings.Contains(got, "unresolved") {
+			t.Errorf("%s: the cell is %q, want no refusal: the entry is empty because no catalog entry is what the job runs, and the source is what tells the two apart", tc.name, got)
+		}
+	}
+}
