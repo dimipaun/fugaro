@@ -2030,9 +2030,10 @@ func launchLevelCopy(b *config.LevelSetting) *config.LevelSetting {
 // launchCatalogDefault is whether the recipe the run will follow is the
 // catalog's own `default`, the one whose first_line step runs only when
 // agent.first_line_review turns it on (config.LevelInputs.CatalogDefault): the
-// run's own r.derived read off the task, since the launcher embedded every
-// recipe it could read and the recipe a task carries no text for is that
-// default (recipes_resolve.go's taskRecipe, launchRecipeForLevels).
+// run's own r.derived read off the task, since the launcher carries every recipe
+// it resolved (recipes_resolve.go's taskRecipeEmbedding) and a task that carries
+// none names nothing else — launchRecipeOf's own answer for the recipe of a
+// launch, which reads absent-and-not-chosen as this default.
 func launchCatalogDefault(spec *task.Spec) bool {
 	if spec.Recipe == nil {
 		return true
