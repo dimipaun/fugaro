@@ -998,10 +998,13 @@ of a line instead, as the `task.Spec` row above does. Neither the field's name n
 a repository, which is what the **0** claims.
 
 Amended 2026-11-15: `reportsSince` — the release whose CLI answers the project's
-reports job command (`internal/cli/runs_reports.go`, R11), declared beside
-`digestSince` because a release can ship the stored writer without the terminal
-digest step and the other way round — added one more image-skew `Since` constant
-and left the image-skew row at 45, so it moves to 46.
+reports job command, which is 0.26.0 and not the 0.25.0 it was first written as
+(`internal/cli/runs_reports.go`, R11): v0.25.0 is tagged and its tree carries no
+`runs_reports.go`, with its own notes saying the command lands in a later
+release. Declared beside `digestSince` because a release can ship the stored
+writer without the terminal digest step and the other way round, it added one
+more image-skew `Since` constant and left the image-skew row at 45, so it moves
+to 46.
 
 The **67** is the convention this folder follows: there is no registry test over
 `docs/`, so a folder that wants its documents pinned writes its own file, and

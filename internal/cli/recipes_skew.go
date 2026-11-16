@@ -370,7 +370,7 @@ const digestSince = "0.13.0"
 //
 // docs/release.md's ("Before you tag") checklist verifies it equals the
 // release that ships the command.
-const reportsSince = "0.25.0"
+const reportsSince = "0.26.0"
 
 // adversarialSince is the first fugaro release whose runner acts on the
 // adversarial step, review level 3 (D720): it runs the step after the senior

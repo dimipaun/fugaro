@@ -516,10 +516,12 @@ func TestReportsJobSpecRoundTripsThroughItsReader(t *testing.T) {
 // TestReportsSinceIsTheReleaseThatShipsTheCommand pins the constant a skill or
 // recipe that names fugaro runs reports is gated at: the release that ships it,
 // which is not digestSince's -- the two are the two halves of one series and
-// neither implies the other.
+// neither implies the other. It is the release after the 0.25.0 cut: v0.25.0 is
+// tagged with no internal/cli/runs_reports.go in its tree, and its own notes
+// say the command the reports job runs lands in a later release.
 func TestReportsSinceIsTheReleaseThatShipsTheCommand(t *testing.T) {
-	if reportsSince != "0.25.0" {
-		t.Errorf("reportsSince = %q, want 0.25.0, the release the reports job's command ships in", reportsSince)
+	if reportsSince != "0.26.0" {
+		t.Errorf("reportsSince = %q, want 0.26.0, the release the reports job's command ships in -- not 0.25.0, which is tagged with no such command in it", reportsSince)
 	}
 	if reportsSince == digestSince {
 		t.Errorf("reportsSince = digestSince = %q: one constant for the job's command and the digest step, so a release can no longer ship one without the other", reportsSince)
