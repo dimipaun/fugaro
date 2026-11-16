@@ -342,7 +342,10 @@ func TestTheOpenSourceCheckRefusesWithoutProofs(t *testing.T) {
 		Docs:   f.docs,
 		SignIn: f.signIn,
 		Paddle: f.paddle,
-		Now:    f.clock,
+		// P7.1's reminder run reaches the Scheduler's verifier, which is the
+		// second seam a deployment serving the whole API holds.
+		Scheduler: f.scheduler,
+		Now:       f.clock,
 	})
 	if err != nil {
 		t.Fatalf("building an intake with no proof check: %v", err)
