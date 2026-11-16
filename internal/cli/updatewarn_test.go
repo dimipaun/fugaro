@@ -904,6 +904,13 @@ func TestDoctorNamesTheSharedReplacement(t *testing.T) {
 			if !strings.Contains(check.Fix, "update") {
 				t.Errorf("fix = %q, want it to name the command that moves the repository", check.Fix)
 			}
+			// And the default view prints it: the line's class is the
+			// actionable one, so a reader who never passes --all still learns
+			// which repositories have a shared job waiting for them.
+			human, _, _ := execute(t, "doctor", "--dir", t.TempDir())
+			if !strings.Contains(human, "repo-bound-jobs: acme/app still runs its workflows on a per-repository job") {
+				t.Errorf("the default view does not print the deprecation line:\n%s", human)
+			}
 		})
 	}
 }
