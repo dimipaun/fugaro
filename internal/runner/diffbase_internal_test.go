@@ -2,6 +2,7 @@ package runner
 
 import (
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 
@@ -185,5 +186,54 @@ func TestReviewPromptNamesTheCommitTheRunsOwnRangeStartsAfter(t *testing.T) {
 	}
 	if strings.Contains(ReviewPrompt("", "", "origin/main", DiffSize{}, false), "own commits start after") {
 		t.Error("a branch range carries the own-range note")
+	}
+}
+
+// TestTheTwoReadingsPairByPath: the binary rule's second reading pairs two
+// separate git invocations — `--raw` for which paths a range added and
+// `--numstat` for which git calls binary — and pairs them by path, never by
+// index (F14).
+//
+// The two streams below are the same two readings with their rows in different
+// orders, which is what an index pairing cannot survive: it would call `b.txt`
+// the binary file and `a.bin` the text one, and answer about both backwards
+// with nothing in the output to show it. No shape was found in which this
+// repository's git does order them differently — a plain add, a typechange, a
+// symlink and a gitlink were all tried — which is exactly why the pairing is
+// pinned here rather than left to a range that happens to agree: the guarantee
+// is the pairing, not the ordering.
+//
+// The third row is the other half: a path `--raw` added that `--numstat` does
+// not name at all is one nothing read, and it is listed as added but absent
+// from the map — which the caller refuses rather than trusting.
+func TestTheTwoReadingsPairByPath(t *testing.T) {
+	const (
+		none  = "0000000000000000000000000000000000000000"
+		blobA = "1111111111111111111111111111111111111111"
+		blobB = "2222222222222222222222222222222222222222"
+		blobC = "3333333333333333333333333333333333333333"
+	)
+	raw, err := parseRawDiff(":000000 100644 " + none + " " + blobA + " A\x00a.bin\x00" +
+		":000000 100644 " + none + " " + blobB + " A\x00b.txt\x00" +
+		":000000 100644 " + none + " " + blobC + " A\x00c.bin\x00")
+	if err != nil {
+		t.Fatal(err)
+	}
+	numstat, _, err := parseNumstat("1\t0\tb.txt\x00-\t-\ta.bin\x00")
+	if err != nil {
+		t.Fatal(err)
+	}
+	added, binary := addedBinaries(raw, numstat)
+	if want := []string{"a.bin", "b.txt", "c.bin"}; !slices.Equal(added, want) {
+		t.Fatalf("added = %v; want %v (the raw reading's own order)", added, want)
+	}
+	if !binary["a.bin"] {
+		t.Errorf("binary[a.bin] = false; want the numstat row that names a.bin")
+	}
+	if b, named := binary["b.txt"]; !named || b {
+		t.Errorf("binary[b.txt] = %v (named %v); want the text row that names b.txt: paired by index this is the binary one", b, named)
+	}
+	if _, named := binary["c.bin"]; named {
+		t.Error("binary[c.bin] is named; want a path no numstat row read to be absent from the map, which the caller refuses")
 	}
 }

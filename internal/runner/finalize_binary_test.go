@@ -192,14 +192,25 @@ func commitIntentToAddBinary(t *testing.T, req agent.Request, name string) {
 	shell(t, req, "git add -N "+name+" && git commit -qam 'Add a vendored tool'")
 }
 
-// implementCommitting is implement where the agent commits a payload itself:
-// the work implementLeaving leaves for finalize's own commit, committed before
-// the suite runs, so the run's verified test is the one it earned and the
-// binary rule is the only thing that can end it.
-func implementCommitting(name string, commit commitPayload) step {
+// selfCommitImage is the same commit at a path the project's policy admits and
+// over its cap: the payload is the run's own asset, and the size is the one the
+// rule refuses it for.
+func selfCommitImage(size int) commitPayload {
+	return func(t *testing.T, req agent.Request, name string) {
+		t.Helper()
+		writeImage(t, req, name, size)
+		shell(t, req, "git add -A && git commit -qm 'Add an asset'")
+	}
+}
+
+// committing is implement's own shape — the run does its work, commits it, runs
+// the suite, writes its pull request — with one change of the case's own made
+// before the suite runs, so the run's verified test is the one it earned and
+// the binary rule is the only thing that can end it.
+func committing(change func(t *testing.T, req agent.Request)) step {
 	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
-		shell(t, req, "echo feature > feature.txt && git add -A && git commit -qm 'Add feature'")
-		commit(t, req, name)
+		shell(t, req, "echo feature > feature.txt")
+		change(t, req)
 		verifyTest(t, ctx, req)
 		pr := filepath.Join(envValue(req.Env, "FUGARO_STATE_DIR"), "pr.md")
 		if err := os.WriteFile(pr, []byte("# Add feature\n"), 0o644); err != nil {
@@ -207,6 +218,47 @@ func implementCommitting(name string, commit commitPayload) step {
 		}
 		return agent.Result{CostUSD: 1}, nil
 	}
+}
+
+// implementCommitting is committing with the payload the case commits.
+func implementCommitting(name string, commit commitPayload) step {
+	return committing(func(t *testing.T, req agent.Request) { commit(t, req, name) })
+}
+
+// implementReplacingBinary is a run that rewrites a binary the base commit
+// already holds: the modification §2.1 leaves alone, whatever its bytes are.
+func implementReplacingBinary(path string, size int) step {
+	return committing(func(t *testing.T, req agent.Request) {
+		writeImage(t, req, path, size)
+		shell(t, req, "git add -A && git commit -qm 'Replace the image'")
+	})
+}
+
+// implementMovingBinary is a run that moves a tracked binary to another path:
+// under --no-renames that reads as a delete and an add, and the two blob ids
+// say it is the same file moved.
+func implementMovingBinary(from, to string) step {
+	return committing(func(t *testing.T, req agent.Request) {
+		shell(t, req, "mkdir -p "+filepath.Dir(to)+" && git mv "+from+" "+to+" && git add -A && git commit -qm 'Move the image'")
+	})
+}
+
+// implementAddingThenDeletingBinary is §4.2's deliberate hole: the agent adds a
+// payload, commits it, then takes it out again in a later commit.
+func implementAddingThenDeletingBinary(path string) step {
+	return committing(func(t *testing.T, req agent.Request) {
+		compiledBinary(t, req, path)
+		shell(t, req, "git add -A && git commit -qm 'Add a vendored tool' && git rm -q "+path+" && git commit -qm 'Remove it again'")
+	})
+}
+
+// binaryBytes is the content of a binary file of size bytes, for a fixture that
+// carries one in its base commit: an image header's NULs inside the window git
+// reads, whatever the file's size.
+func binaryBytes(size int) string {
+	b := make([]byte, size)
+	copy(b, "\x89PNG\r\n\x1a\n\x00\x00")
+	return string(b)
 }
 
 // TestFinalizeCommitsAnUntrackedScript: what the rule deliberately leaves

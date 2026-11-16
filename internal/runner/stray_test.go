@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // binariesNode is the project's published policy carrying the binaries rule the
@@ -160,6 +161,13 @@ func TestAnUnadmittedBinaryIsStillRefused(t *testing.T) {
 	}
 }
 
+// The run's own diff (AR4, D997): the second reading of the same rule, over
+// `<reviewRev>...HEAD`. What #1476 added reads the working tree — the untracked
+// files and the ones the agent staged — and a path the agent committed is in
+// neither listing, so a binary it committed reached the branch with the run
+// ending ready. Every test below is about that range: what it refuses, what it
+// deliberately leaves alone, and what its two readings are paired by.
+
 // TestASelfCommittedBinaryFailsTheRun: the residual the untracked check cannot
 // see, and the reason AR4 exists (D997, spec.md §4.2). #1476's reading lists
 // what a commit would carry and no commit has; a payload the agent committed
@@ -221,5 +229,245 @@ func TestAnAdmittedPathOutsideItsPatternIsRefused(t *testing.T) {
 		if f == "website/public/deep/logo.png" || f == "website/public/logo.webp" {
 			t.Errorf("the branch carries a file finalize refused: %v", branchFiles(t, b.harness, rec.Branch))
 		}
+	}
+}
+
+// TestAGitAddIntentToAddBinaryFailsTheRun: F4's narrower bypass, closed. `git
+// add -N` puts the path in the index without its content, which hides it from
+// both of #1476's listings, and the commit that follows carries the bytes
+// anyway — so the file is in a commit, and the run's own diff is what reads it.
+// The path is the same one the untracked tests use, at an admitted path's
+// neighbour: nothing the project published admits it.
+func TestAGitAddIntentToAddBinaryFailsTheRun(t *testing.T) {
+	const path = "test_dup_case2"
+	b := policyRun(t, gwConfig(t, ""), "off", "", binariesNode(`"website/public/**"`, "1048576"))
+	rec, err := b.run(t, implementCommitting(path, commitIntentToAddBinary), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("record = status %s, outcome %s, reason %q; want a draft: the commit carries the bytes `git add -N` hid", rec.Status, rec.Outcome, rec.Reason)
+	}
+	if !strings.Contains(rec.Reason, path) {
+		t.Errorf("reason = %q; want it to name %q", rec.Reason, path)
+	}
+	if !slices.Contains(branchFiles(t, b.harness, rec.Branch), path) {
+		t.Errorf("the branch does not carry the commit the agent made: %v", branchFiles(t, b.harness, rec.Branch))
+	}
+}
+
+// TestAModifiedTrackedBinaryIsNotRefused: §2.1's deliberate tolerance, read
+// from the committed side. `M` on a tracked binary is the repository's own file
+// being replaced, and what reaches the branch is bytes the pull request's
+// reviewer already had; refusing it would refuse a run for editing an icon. The
+// case is at a path no list admits, so the tolerance is the only reason it
+// passes.
+func TestAModifiedTrackedBinaryIsNotRefused(t *testing.T) {
+	const path = "assets/logo.webp"
+	h := newHarnessFiles(t, gwConfig(t, ""), nil, map[string]string{path: binaryBytes(1024)})
+	rec, err := h.run(t, implementReplacingBinary(path, 4096), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("record = status %s, outcome %s, reason %q; want the ordinary ending: a modified tracked binary is not an addition", rec.Status, rec.Outcome, rec.Reason)
+	}
+	if !slices.Contains(branchFiles(t, h, rec.Branch), path) {
+		t.Errorf("the branch does not carry the file the run replaced: %v", branchFiles(t, h, rec.Branch))
+	}
+}
+
+// TestTheRefusalNamesThePathAndTheSize: the refusal has to be actionable by
+// somebody who was not there. The path says which file, and the size says which
+// of the rule's two answers refused it — the path is admitted and the file is
+// over the cap — with the cap beside it, since a project that names no cap gets
+// the shipped one.
+//
+// The size is the blob's at HEAD (`git ls-tree -l`), not the working tree's:
+// the file the refusal is about is the one the branch carries.
+func TestTheRefusalNamesThePathAndTheSize(t *testing.T) {
+	const path = "website/public/images/hero.webp"
+	const size, cap = 4096, 1024
+	b := policyRun(t, gwConfig(t, ""), "off", "", binariesNode(`"website/public/**"`, strconv.Itoa(cap)))
+	rec, err := b.run(t, implementCommitting(path, selfCommitImage(size)), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("record = status %s, outcome %s, reason %q; want a draft: the file is over the project's cap", rec.Status, rec.Outcome, rec.Reason)
+	}
+	for _, want := range []string{path, strconv.Itoa(size), strconv.Itoa(cap)} {
+		if !strings.Contains(rec.Reason, want) {
+			t.Errorf("reason = %q; want it to name %q", rec.Reason, want)
+		}
+	}
+}
+
+// TestAMovedBinaryIsNotRefused: a move is not an addition, and it is the false
+// refusal D997's cost column is about. --no-renames reports the move of a
+// tracked file as a delete and an add, and the two rows' blob ids are the same
+// one, so the add is the same bytes at another path rather than new bytes
+// nothing admits — which is what §2.1 leaves alone either way.
+//
+// Nothing here is admitted (there is no policy node at all), so the blob ids
+// are the only reason the run is not refused.
+func TestAMovedBinaryIsNotRefused(t *testing.T) {
+	const from, to = "assets/logo.webp", "assets/images/logo.webp"
+	h := newHarnessFiles(t, gwConfig(t, ""), nil, map[string]string{from: binaryBytes(1024)})
+	rec, err := h.run(t, implementMovingBinary(from, to), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("record = status %s, outcome %s, reason %q; want the ordinary ending: the bytes are the tracked file's own, moved", rec.Status, rec.Outcome, rec.Reason)
+	}
+	files := branchFiles(t, h, rec.Branch)
+	if !slices.Contains(files, to) || slices.Contains(files, from) {
+		t.Errorf("the branch's files = %v; want the moved path and not the old one", files)
+	}
+}
+
+// TestAnAddedThenDeletedBinaryIsNotRefused is the hole §4.2 names and keeps:
+// the reading takes the two ends of the range and the `A` statuses among them,
+// and a path the agent added and later deleted is at neither end — so no row
+// names it and the run is not refused, while the bytes stay reachable in the
+// branch's history. That is a deliberate limit and not an oversight: seeing it
+// means reading every commit of the range, and a reviewer already sees the add
+// in the pull request's own commit list.
+//
+// This test pins the answer rather than the hole, which is what the plan asks
+// for: a later task that decides to close it changes this test on purpose
+// instead of discovering it by accident. The history assertion below is the
+// half that says what the residual costs.
+func TestAnAddedThenDeletedBinaryIsNotRefused(t *testing.T) {
+	const path = "test_dup_case2"
+	h := newHarnessFiles(t, gwConfig(t, ""), nil, nil)
+	rec, err := h.run(t, implementAddingThenDeletingBinary(path), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("record = status %s, outcome %s, reason %q; want the ordinary ending: the path is at neither end of the range", rec.Status, rec.Outcome, rec.Reason)
+	}
+	files := branchFiles(t, h, rec.Branch)
+	if slices.Contains(files, path) {
+		t.Errorf("the branch's tip carries the deleted path: %v", files)
+	}
+	if adds := testutil.Git(t, h.remote, "log", "--format=%s", "--diff-filter=A", rec.Branch); !strings.Contains(adds, "Add a vendored tool") {
+		t.Errorf("the branch's history does not carry the commit that added %s (%q), so this case no longer pins the residual it is about", path, adds)
+	}
+}
+
+// reportRunWithAPayload is a report run's work directory with a payload in it
+// that survives the checkout: the job's image left it in the directory the run
+// opens, an excludes file hides it from `git clean -fd` (which removes
+// untracked files and keeps ignored ones), and the clean removes the excludes
+// file itself — so the digest step's own `git add -A` stages the payload into
+// its commit, and nothing the run's stages do put it there.
+func reportRunWithAPayload(t *testing.T, h *harness, path string) {
+	t.Helper()
+	testutil.Git(t, filepath.Dir(h.deps.WorkDir), "clone", "--quiet", h.remote, h.deps.WorkDir)
+	writeImage(t, agent.Request{Dir: h.deps.WorkDir}, path, 4096)
+	excl := filepath.Join(h.deps.WorkDir, "excl")
+	if err := os.WriteFile(excl, []byte(path+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, h.deps.WorkDir, "config", "core.excludesFile", excl)
+}
+
+// TestTheDigestStepCommitIsChecked: the third of the five ways a file reaches a
+// branch (gate.go's autofix commit and digest.go's report step among them, F3).
+// A report run's branch is the commit the digest step made, so a payload that
+// commit carries is on the branch with no stage having written it and with the
+// agent never having run: the run's own diff is the only reading that sees it,
+// and the step's commit is the one the run is refused over.
+//
+// The payload is planted in the run's own work directory before it starts, the
+// way a job whose image baked a build product leaves one.
+func TestTheDigestStepCommitIsChecked(t *testing.T) {
+	const own, path = "20261101-120000-d1a6", "test_dup_case2"
+	spec := digestSpec(own)
+	h := newHarnessFiles(t, gwConfig(t, ""), spec, nil)
+	digestGCSBucket(t, h, spec)
+	clk := digestClock(h)
+	digestRecord(t, h.bucket, repoSlug, own, clk.Now().AddDate(0, 0, -1), 1.5, nil)
+	reportRunWithAPayload(t, h, path)
+
+	rec, err := h.run(t, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("record = status %s, outcome %s, reason %q; want a draft: the digest step's own commit carries a binary", rec.Status, rec.Outcome, rec.Reason)
+	}
+	if !strings.Contains(rec.Reason, path) {
+		t.Errorf("reason = %q; want it to name %q", rec.Reason, path)
+	}
+	if !slices.Contains(branchFiles(t, h, rec.Branch), path) {
+		t.Errorf("the branch does not carry the commit the digest step made: %v", branchFiles(t, h, rec.Branch))
+	}
+	if shown := testutil.Git(t, h.remote, "show", "--name-only", "--format=", digestStepCommitAt(t, h, rec.Branch)); !strings.Contains(shown, path) {
+		t.Errorf("the digest step's own commit does not carry %s (%q), so this case no longer pins the commit it is about", path, shown)
+	}
+}
+
+// TestTheAutofixCommitIsChecked: the fourth, and the one that needs no agent
+// commit at all. A check step with autofix runs commands.fix and commits what
+// it finds (gate.go), implement is skipped because the gate fixed the tree, and
+// a fix command that writes a build product leaves it in a commit the run's own
+// diff is the only reader of.
+func TestTheAutofixCommitIsChecked(t *testing.T) {
+	const path = "fixed.bin"
+	cfg := gateCfg(t, "lint-fix", 1, "true", "test -f "+path, `printf 'the fix wrote\000\000' > `+path)
+	h := newHarnessFiles(t, cfg, nil, gateFiles("lint-fix", lintFixRecipe))
+	rec, err := h.run(t, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("record = status %s, outcome %s, reason %q; want a draft: the autofix commit carries a binary", rec.Status, rec.Outcome, rec.Reason)
+	}
+	if !strings.Contains(rec.Reason, path) {
+		t.Errorf("reason = %q; want it to name %q", rec.Reason, path)
+	}
+	if lastCommitMsg(t, h.remote, rec.Branch) != "fugaro: autofix (commands.fix)" {
+		t.Errorf("the branch's tip is %q, not the autofix commit, so this case no longer pins the path it is about",
+			lastCommitMsg(t, h.remote, rec.Branch))
+	}
+	if !slices.Contains(branchFiles(t, h, rec.Branch), path) {
+		t.Errorf("the branch does not carry what the autofix committed: %v", branchFiles(t, h, rec.Branch))
+	}
+}
+
+// TestTheChallengerArmIsChecked: the fifth committer is a challenger arm's own
+// leftover commit (shadow.go), and the arm reads the rule exactly as its
+// champion does. Nothing of the arm's reaches the developer, so the bytes are
+// not the risk; what is, is a pair whose two records disagree about what the
+// run did — one arm refused and the other reading clean is two scorers reading
+// two runs of the same work (D559). Both arms are run here, and what this pins
+// is that they name the same refusal.
+func TestTheChallengerArmIsChecked(t *testing.T) {
+	const path = "test_dup_case2"
+	champ, _ := armGWSpec(t, armCfg(t), "50", champTask(), armLayer)
+	champion, err := champ.run(t, implementCommitting(path, selfCommitBinary), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	arm, _ := armGW(t, armCfg(t), "50", challengerModel, armLayer)
+	rec, err := arm.run(t, implementCommitting(path, selfCommitBinary), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = status %s, outcome %s, reason %q; want the arm failed with nothing published", rec.Status, rec.Outcome, rec.Reason)
+	}
+	if rec.Reason != champion.Reason {
+		t.Errorf("the arm's reason = %q; want the champion's %q: the two arms read the same rule over the same range", rec.Reason, champion.Reason)
+	}
+	if len(publishes(arm.harness)) != 0 {
+		t.Errorf("the refused arm published something: %v", publishes(arm.harness))
+	}
+	if remoteHasBranch(t, arm.harness) {
+		t.Error("the refused arm pushed its branch")
 	}
 }
