@@ -240,6 +240,13 @@ func TestRegistryOwnerNamesACommand(t *testing.T) {
 		// rule, so `fugaro project clone-url` is where the two are checked
 		// against each other (settings spec §5.6, D842).
 		"project clone-url",
+		// The security paths' family (D2613, M4 of docs/config-ownership): the
+		// project's list and the layer's own rows are entries added and removed
+		// by their key field, which is `fugaro rigor security add|rm`, and the
+		// token exists here before that command does — the reason the family
+		// commands are one list in the write's own map and this vocabulary
+		// beside it.
+		"rigor security",
 	}
 	for _, r := range Rows() {
 		ok := false
@@ -272,6 +279,11 @@ var (
 		"providers.*.secret":              "a Secret Manager name",
 		"project_secrets.*.allow_data_to": "a list of destinations, not a credential",
 		"project_secrets.*.proxy":         "a Secret Manager name",
+		// The cascade's cap on how many runs may hold one shared credential at
+		// a time (projectpolicy.Credentials.ConcurrencyPerToken): the word is
+		// the credential's, the value is a count of runs, and the read prints
+		// the figure the node holds.
+		"credentials.concurrency_per_token": "a count of runs, not a credential",
 	}
 )
 
