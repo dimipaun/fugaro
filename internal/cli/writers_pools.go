@@ -24,9 +24,10 @@ import (
 //
 // The removal record is the same fact one step further out (F22, D2607): the
 // node keeps a pool this config says nothing about, so the name written beside
-// the block is what says the pool was taken away and what the next publish acts
-// on. The write lands locally and the node's content is what changes, which is
-// why that row states Node too.
+// the block is what says the pool was taken away rather than never stated. The
+// node's copy is what the reconcile changes, which is why that row states Node
+// too — and no reconcile is in this release, so the record is a fact in the
+// file and the node goes on serving the pool until one lands.
 //
 // A template carries the two words ArgvFor fills: settings.ValuePlaceholder
 // where the value the caller supplies goes, and `<1>` where the key's own
