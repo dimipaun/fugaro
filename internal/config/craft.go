@@ -452,9 +452,69 @@ func ValidatePools(pools []Pool, creds []Credential) []Problem {
 				ps = append(ps, Problem{Path: mAt, Message: fmt.Sprintf("no credential of this name is defined in this block: a pool may list only the credentials the same document defines, or the built-in %s", CredentialVertex)})
 			}
 		}
+		if prob, ok := poolCrossingProblem(at, p, creds, defined); ok {
+			ps = append(ps, prob)
+		}
 		ps = append(ps, poolAccessProblems(at, p)...)
 	}
 	return ps
+}
+
+// poolCrossingProblem is D1668's rule: every member of a pool is served by one
+// path. Its listed order is what failover walks (D1632), and only one half of a
+// run can walk a list — the credentials service selects by tier and the listed
+// order only breaks a tie (F7, D154), while a run's own gateway holds one
+// upstream per stage and never retries a call across a secret (F20, D1635) — so
+// a pool that names members of both halves is a pool whose order can mean
+// nothing, and it is refused where it is written rather than resolved to one of
+// them. It is refused rather than failed over inside a stage because the fix
+// for that is a rewrite of the gateway's one-upstream-per-stage model, bought
+// for a case two pools express exactly.
+//
+// It is the same one sentence in every reader that has to say it — the config's
+// load, `fugaro accounts pool add`, `fugaro validate` and the published node's
+// own read — because the operator meets it in whichever of those a pool was
+// written through, and it has to name the fix there.
+//
+// The two members the sentence names are named in path order, the credentials
+// service's first, so it reads the same whichever way the pool listed them, and
+// the path it is reported at is where the pool's own order crosses: the first
+// member whose half is not the half the first member is on, which is the pair
+// the operator has to separate.
+//
+// A member this document does not define is left out of the crossing: the
+// member's own problem reports it, and a name no layer places is not a half
+// either. The built-in vertex is not one of those — being built in is what
+// defines it — so a subscription beside vertex is refused like any other
+// crossing.
+func poolCrossingProblem(at string, p Pool, creds []Credential, defined map[string]bool) (Problem, bool) {
+	members := PoolMembers(p, creds)
+	credsvc, runner, crossed, first := -1, -1, -1, ""
+	for i, m := range members {
+		if m.Path == "" || !defined[m.Name] {
+			continue
+		}
+		if first == "" {
+			first = m.Path
+		} else if crossed < 0 && m.Path != first {
+			crossed = i
+		}
+		if m.Path == CredentialPathCredsvc && credsvc < 0 {
+			credsvc = i
+		}
+		if m.Path == CredentialPathRunner && runner < 0 {
+			runner = i
+		}
+	}
+	if credsvc < 0 || runner < 0 || crossed < 0 {
+		return Problem{}, false
+	}
+	svc, run := pluginwire.Printable(members[credsvc].Name), pluginwire.Printable(members[runner].Name)
+	return Problem{
+		Path: fmt.Sprintf("%s.members[%d]", at, crossed),
+		Message: fmt.Sprintf("members %s and %s are served by different halves of a run (%s's type is served by the credentials service, %s's by the run's own gateway), and a pool's order can therefore mean nothing: name two pools, one per half, and let each craft's access name the one its stages need",
+			svc, run, svc, run),
+	}, true
 }
 
 // poolAccessProblems reports the rules a pool's owner block is held to wherever

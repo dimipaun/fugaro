@@ -74,8 +74,11 @@ serves them.
 
 An OpenRouter or Vertex member is served by a run's own gateway; a Claude OAuth
 or Anthropic-key member by the credentials service, which selects by tier
-(OAuth before key: D154). A pool whose members need both is one that can only
-fail over where the credential is chosen again, at a stage boundary.
+(OAuth before key: D154). A pool is served on one of those halves and may not
+list members of both: a gateway holds one upstream per stage and the service
+selects by tier, so neither can walk an order that spans them, and a pool that
+names both is refused when it is declared. Name two pools, one per half, and let
+each craft's access name the one its stages need.
 
 The read is offline: it reads the selected project's config file and reaches no
 bucket, no database and no host.`,
@@ -132,9 +135,10 @@ func writeAccountsPoolLs(w interface {
 }
 
 // accountsPoolServingText is the path a pool's members are served by, as a
-// person reads it: the two paths by name, and the boundary a pool of both kinds
-// fails over at (D1634). A pool with no members at all — a document the loader
-// refuses, which this read still renders rather than hiding — says nothing is
+// person reads it. A pool this read can load is served on one path, because a
+// pool that lists members of both is refused where it is written (D1668); both
+// names are joined for a document the loader refuses, which this read still
+// renders rather than hiding, and a pool with no members at all says nothing is
 // served.
 func accountsPoolServingText(paths []string) string {
 	var out []string
@@ -154,7 +158,7 @@ func accountsPoolServingText(paths []string) string {
 	case 1:
 		return out[0]
 	default:
-		return strings.Join(out, " and ") + ": failover at a stage boundary"
+		return strings.Join(out, " and ")
 	}
 }
 
