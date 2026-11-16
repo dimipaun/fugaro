@@ -1383,7 +1383,7 @@ func (r *Repo) refuseUnresettableBakedGit() error {
 		return fmt.Errorf("%s has no .git: %w", r.Dir, err)
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("%s is a file naming a git directory outside the checkout, so the configuration and hooks git reads for it are not the ones in it", git)
+		return fmt.Errorf("%s is a file or a link naming a git directory outside the checkout, so the configuration and hooks git reads for it are not the ones in it", git)
 	}
 	if _, err := os.Lstat(filepath.Join(git, "commondir")); err == nil {
 		return fmt.Errorf("%s names another repository's git directory as the one shared by this checkout", filepath.Join(git, "commondir"))
