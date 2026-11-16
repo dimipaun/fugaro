@@ -12159,19 +12159,34 @@ S3's runner reaches git only through it (`internal/runner`'s `TestSharedBitbucke
 while the three that would put a working job in front of a user are not. `internal/infra`'s
 `sharedJobProviders` still admits `github` alone, the one-line change docs/shared-jobs-default calls
 **I1**; S5, which would have `fugaro update` write the default profile a shared Bitbucket job is
-deployed from, has not shipped; and **no deployment names a shared job's account to the credentials
-service**. That last one is the one to know before step 5: the service's shared class is its table of
+deployed from, has not shipped; and **no deployment lets a shared job's account reach the credentials
+service at all** — which is two facts, and both of them are absent.
+
+The first is the one to know before step 5: the service's shared class is its table of
 `FUGARO_SHARED_JOB_ACCOUNTS` rows, nothing under `deploy/terraform/` renders that name
 (`internal/infra/tf`'s `CredentialsServiceEnvAwaitingTheModule` records it as the name the module does
 not carry yet), and an installation whose entry is absent starts with the empty set and **refuses the
 whole class** — the caller falls through to the per-repository table and is refused there
 (`internal/cli`'s `credentialsServiceSharedJobAccounts` and `internal/credsvc`'s authenticator) — so
 the runs of step 5 would be refused by the service before they cloned anything, on a job that holds no
-credential to fall back on. So **no shared job serves a Bitbucket profile today**, step 4 below is
-where that shows: the profile it deploys a job for is one you write by hand, and with that entry
-unrendered the job's runs have no service to reach. Run this section once all three have landed, and
-read the documents that say so as of 2026-11-16 — [git-providers.md](git-providers.md) and
-[project-layer.md](project-layer.md).
+credential to fall back on.
+
+The second is the one to know before step 6, and it is the *earlier* of the two a caller meets: the
+deployment owes the shared job's service account **`roles/run.invoker` on the credentials service**,
+and `deploy/terraform/gcp/modules/project` writes no such member on any profile's account — the
+per-repository path's grant lives in `deploy/terraform/gcp/modules/workflow/sa.tf` (D135), and
+docs/secrets-brokering is where the project module gets its own — task **B5.2**, which names "the
+shared job account's `roles/run.invoker` on the service" among its parts and has not shipped. The
+service is IAM-only (its front end states `invoker_iam_disabled = false` and no `allUsers` member is
+written anywhere), so a caller without that bit is refused **403 by Cloud Run's own front end**,
+before the container starts — the request never reaches the proxy, the pairing or the allow-list step
+6 is about. An owner who lands I1, S5 and the table's rendering and launches anyway meets that 403
+first; it is **not** this section's refusal, and it is not a pass of step 6.
+
+So **no shared job serves a Bitbucket profile today**, step 4 below is where that shows: the profile
+it deploys a job for is one you write by hand, and with that entry unrendered the job's runs have no
+service to reach. Run this section once all of them have landed, and read the documents that say so
+as of 2026-11-16 — [git-providers.md](git-providers.md) and [project-layer.md](project-layer.md).
 
 **What the check settles** (**D460**–**D462**, **D466**, **D2302**; and F11 and F12 of the
 [reconciliation](bitbucket-workspace-token/reconciliation-secrets-brokering.md)): the shape a shared
@@ -12206,8 +12221,10 @@ and a fake deployment, and the deployer's refusal is a plan, not a project.
    says so is `internal/projectpolicy`'s `CheckSharedJobProfile`, and both doors ask it: the publish
    and, one step later, the deployer (step 3 reads the refusal it makes). `fugaro project policy show`
    is how you read back what the publish writes. The profile is the boundary a shared job is built
-   from — its service account and its bucket condition are the profile's, so every run it serves
-   shares them (SECURITY.md, "The Bitbucket git proxy").
+   from — one service account serves every repository it admits, while the bucket condition on that
+   account is the same whole-prefix one every project job account carries, whatever its profile,
+   because a profile separates secrets and not bucket objects (SECURITY.md, "The Bitbucket git
+   proxy", and its "Known limits").
 3. **The lists, and the third repository's three readings** (D2302, and F11 of the
    [reconciliation](bitbucket-workspace-token/reconciliation-secrets-brokering.md)). All three use
    the same third sandbox repository — one the token's block does **not** name.
@@ -12245,7 +12262,11 @@ and a fake deployment, and the deployer's refusal is a plan, not a project.
    service account, and no second job's name anywhere in the run's own record. Each has to get as
    far as cloning, committing, pushing and opening its pull request, and that the push lands on a
    job with no `bitbucket-token` in it is the reading: the credential on the wire is the service's,
-   paired to the repository the run's own profile admits.
+   paired to the repository the run's own profile admits. A run that never reached its clone has
+   skipped the reading rather than passed it, and the case to tell apart at once is a run halted by
+   a **403** — that is Cloud Run's front end refusing a caller without `roles/run.invoker`, the
+   missing grant the paragraph above names, and it says nothing about this profile: the service was
+   never asked.
 6. **The third repository, refused at the proxy.** Now launch a run of the repository that is not in
    the allow-list, by hand and against the same shared job — `fugaro run --repo <owner/name>`, with
    that repository already on the published node, which is what makes the run resolve the shared job
@@ -12253,10 +12274,20 @@ and a fake deployment, and the deployer's refusal is a plan, not a project.
    the pairing resolves its identity against the published node and the repositories that profile is
    bound to, and the runner holds no Bitbucket credential of its own to fall back on; the run halts
    on that refusal instead of finding a way around it (S3's
-   `TestSharedBitbucketJobHaltsWhenTheProxyRefusesARepository` is that behaviour, offline). Record
-   the refusal's own words and the run's final row. **This is the step to be sure of**: if that run
-   clones, the allow-list is not the boundary the design says it is, and that is a finding no other
-   check of the block would show.
+   `TestSharedBitbucketJobHaltsWhenTheProxyRefusesARepository` is that behaviour, offline). **Read
+   the refusal before you record it, because two different refusals end a run here and only one of
+   them is this step's.** The one this step is about is the **service's own**, after the pairing:
+   its words name the repository and the identity it resolved, it is answered by the proxy's code
+   with the audit line a refusal is recorded as, and it is the allow-list doing its job. The other
+   is **Cloud Run's front end**, a bare **403** with no repository in it — an account that holds no
+   `roles/run.invoker` on the service, or one the service's own table does not admit at all, is
+   stopped there before the container runs, so the request never reaches the proxy, the pairing or
+   the block. That 403 is the state the paragraph above describes, not a reading: **record it as
+   this step not having run**, not as the refusal, because a check recorded on it would claim the
+   allow-list held when nothing of the allow-list was ever asked. Record the refusal's own words
+   and the run's final row. **This is the step to be sure of**: if that run clones, the allow-list
+   is not the boundary the design says it is, and that is a finding no other check of the block
+   would show.
 7. **What is left behind.** The two pull requests of step 5 are the runs' own; they are the one
    thing to look at afterwards, and nothing here approves or merges anything.
 

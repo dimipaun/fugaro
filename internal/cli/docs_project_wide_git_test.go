@@ -460,13 +460,15 @@ func TestDocsStateBitbucketSharedJobIsolation(t *testing.T) {
 	}
 
 	// SECURITY.md's half is the isolation stated plainly (F12), in the section
-	// a reader meets the proxy in: the boundary is the profile, the job's
-	// service account and bucket condition are the profile's, and the flip that
-	// would put a real credential in the job is not this model's — there is
-	// none to put there.
+	// a reader meets the proxy in: the boundary is the profile, the runs share
+	// the profile's service account while the bucket condition on it is the
+	// same whole-prefix one every project job account carries ("Known limits"
+	// below says why: a profile separates secrets, not bucket objects), and the
+	// flip that would put a real credential in the job is not this model's —
+	// there is none to put there.
 	for _, want := range []string{
 		"**The profile is the boundary, and the job holds no Bitbucket credential at all**",
-		"its service account and its bucket condition are the profile's, so every run the profile serves shares them",
+		"its service account is the profile's, so every run the profile serves shares it, while the condition on that account is the one whole-prefix condition every project job account carries, whatever its profile, because a profile separates secrets and not bucket objects",
 		"there is no Bitbucket credential in the job for the flip to take away",
 	} {
 		if !strings.Contains(sec, strings.Join(strings.Fields(want), " ")) {
