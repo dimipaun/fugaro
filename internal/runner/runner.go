@@ -1125,11 +1125,8 @@ func (r *run) addSealKey() {
 // skipped; one too short to redact safely is skipped with a warning that
 // names only the variable.
 func (r *run) addMountedSecrets() {
-	for _, name := range strings.Split(envLookup(r.d.Env, SecretEnvsVar), ",") {
-		name = strings.TrimSpace(name)
-		if name == "" {
-			continue
-		}
+	names, _ := r.mountedEnvs()
+	for _, name := range names {
 		switch v := envLookup(r.d.Env, name); {
 		case v == "":
 		case len(v) < minSecretLen:
@@ -1138,6 +1135,73 @@ func (r *run) addMountedSecrets() {
 			r.addSecret(v)
 		}
 	}
+}
+
+// mountedEnvs are the variable names SecretEnvsVar lists: the secrets the job
+// this run is in mounts, which is the fugaro.yaml it was deployed from and not
+// necessarily the one the run's ref declares. The second return says whether
+// the job carries the list at all — an empty list the deployment wrote (a job
+// that mounts no secret) and an environment nobody described (a local `fugaro
+// exec --task-file`) are different answers, and the callers read them apart.
+func (r *run) mountedEnvs() ([]string, bool) {
+	// Last one wins, as envLookup reads every other variable: a list a test or
+	// a launcher appends must override the one already there, and the value
+	// addMountedSecrets redacts from has to be the value this parses.
+	for i := len(r.d.Env) - 1; i >= 0; i-- {
+		name, value, ok := strings.Cut(r.d.Env[i], "=")
+		if !ok || name != SecretEnvsVar {
+			continue
+		}
+		var out []string
+		for _, env := range strings.Split(value, ",") {
+			if env = strings.TrimSpace(env); env != "" {
+				out = append(out, env)
+			}
+		}
+		return out, true
+	}
+	return nil, false
+}
+
+// declaredSecrets are the secrets this run's workflow declares in the checkout
+// and its own job mounts. The two are not the same list under D2313
+// (config.RepoSecretsOff): a repository-level secret is accepted and ignored,
+// the plan leaves the name out of the job it deploys (internal/infra's
+// Readiness drops the mount, which rebuilds SecretEnvsVar without it), and no
+// store may be written for it — so a bootstrap that demanded its value would
+// refuse every run of a repository the ruling says is brought up, failing at
+// the agent's own start in a job that was deployed exactly as the ruling
+// intends.
+//
+// The answer is the DEPLOYMENT's and not the file's, which is what keeps the
+// two from drifting apart in either direction: a name the job does mount is
+// required whatever the ruling says of the file, so a job deployed before the
+// ruling — or a name the project covers, which the file does not decide —
+// keeps refusing without its value exactly as it did before, and a name the
+// job does not mount is not required, because nothing can supply it.
+//
+// A job that carries no list at all is not read as one mounting nothing: no
+// plan computed that environment (a local `fugaro exec --task-file`, a shell a
+// person assembled), so there is no deployment to trust here and the
+// pre-ruling answer stands — the declared name is required. Every job this
+// release deploys carries the list, the empty one included, so the ruling's
+// own deployment is never the ambiguous case.
+func (r *run) declaredSecrets(wf config.Workflow) []config.Secret {
+	if !config.RepoSecretsOff {
+		return wf.Secrets
+	}
+	mounted, described := r.mountedEnvs()
+	if !described {
+		return wf.Secrets
+	}
+	out := make([]config.Secret, 0, len(wf.Secrets))
+	for _, s := range wf.Secrets {
+		if config.RepoLevelSecret(s.Name) && !slices.Contains(mounted, s.Env) {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // redactRecords returns records with the text the agent can influence
@@ -3029,10 +3093,11 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// code. The model credential it still needs (cfg.Agent.Auth, below)
 	// is the one exception, and stays reachable by a trusted author's own
 	// prompt injection: that is the residual risk the design accepts.
+	declared := r.declaredSecrets(wf)
 	var secretEnvs []string
 	if !r.review {
-		secretEnvs = make([]string, len(wf.Secrets))
-		for i, s := range wf.Secrets {
+		secretEnvs = make([]string, len(declared))
+		for i, s := range declared {
 			secretEnvs[i] = s.Env
 		}
 	} else {
@@ -3053,8 +3118,11 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// review mode; failing here, the same as BuildEnv would for every
 		// other run, is this registration's whole point: a secret that
 		// silently isn't here to redact is exactly the "last line of
-		// defense" the comment above describes failing open.
-		for _, s := range wf.Secrets {
+		// defense" the comment above describes failing open. The one list
+		// this does not catch is declaredSecrets' own: a repository-level
+		// secret the job does not mount (D2313) has no value here to
+		// redact, because it has no value anywhere.
+		for _, s := range declared {
 			v := envLookup(r.d.Env, s.Env)
 			if v == "" {
 				return fmt.Errorf("secret %s is not set in the runner environment", s.Env)
