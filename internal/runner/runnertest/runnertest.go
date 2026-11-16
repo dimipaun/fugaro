@@ -163,6 +163,12 @@ func shell(t *testing.T, req agent.Request, script string) {
 	}
 }
 
+// StateDir is the state directory the stage was handed, which is where a step
+// that verifies its own work writes the record (verify.Run), the way Implement
+// does. A step that rewrites the commit an earlier verify was made on has to
+// make one of its own, and this is the lookup it needs to.
+func StateDir(req agent.Request) string { return envValue(req.Env, "FUGARO_STATE_DIR") }
+
 // envValue is one variable of the environment a stage is handed.
 func envValue(env []string, key string) string {
 	for _, kv := range env {

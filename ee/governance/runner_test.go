@@ -1013,22 +1013,11 @@ func movedOntoTheRecordedBase(t *testing.T, ctx context.Context, req agent.Reque
 	// The rebase rewrote the commit implement's own verify was made on, and the
 	// readiness rule wants a passing record for the commit the run ends on, so
 	// the fix verifies what it leaves — what Implement does for its own commit.
-	if _, err := verify.Run(ctx, verify.Options{StateDir: stateDirOf(req), Kind: verify.KindTest,
+	if _, err := verify.Run(ctx, verify.Options{StateDir: runnertest.StateDir(req), Kind: verify.KindTest,
 		Env: req.Env, Stdout: io.Discard, Stderr: io.Discard}); err != nil {
 		t.Fatal(err)
 	}
 	return agent.Result{CostUSD: 0.5}, nil
-}
-
-// stateDirOf is the state directory the stage was handed, which is where a
-// verify record is written (runnertest.Implement makes the same lookup).
-func stateDirOf(req agent.Request) string {
-	for _, kv := range req.Env {
-		if v, ok := strings.CutPrefix(kv, "FUGARO_STATE_DIR="); ok {
-			return v
-		}
-	}
-	return ""
 }
 
 // TestReviewScopeMismatchHaltsBeforeReview: a review round about to be handed
