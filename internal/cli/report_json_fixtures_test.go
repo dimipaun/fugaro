@@ -406,6 +406,18 @@ var jsonCases = map[string]jsonCase{
 			return []string{"project", "profile", "show"}
 		},
 	},
+	"project repos status": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			// The enrolment's own fixture: a published allow-list admitting one
+			// repository and the container its run mounts. The command names
+			// the repository rather than walking every one, so the pin reads
+			// the nine rows of one screen.
+			_, sm := statusFixture(t)
+			seedGitHubAppKey(t, sm)
+			return []string{"project", "repos", "status", "github/acme/app"}
+		},
+	},
 	"project routing show": {
 		reads: true,
 		run: func(t *testing.T) []string {
