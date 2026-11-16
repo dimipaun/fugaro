@@ -432,12 +432,20 @@ func (s *secretsStage) resolve(ctx context.Context) {
 	p, found, err := s.e.r.policy.read(ctx, lc)
 	s.node = repoPolicyInput(lc, p, found, err)
 	// A repository-level secret (D2313) is one no shared job mounts, so it is
-	// not a name this stage may take. The only store a prompt here could write
-	// is the repository's own container, the run's job carries no variable for
-	// it, and find() would then count that copy as covering the name and never
-	// ask again: a success message over a step that stores nothing a run can
-	// read, which is what the ruling's "disabled for now" must not become. The
-	// commands that would store one answer the notice instead, so there is no
+	// not a name this stage may take. The ruling closed the stores that would
+	// write one — both repository-scope forms of `fugaro secrets set` answer
+	// its notice and write nothing — and the only store a prompt here could
+	// write is that same repository container, through this stage's own
+	// Secret Manager write rather than the command's: leaving the name in
+	// would make one prompt the way around the ruling, and find() would then
+	// count the copy as covering the name and never ask again, so the stage's
+	// "stored" would be the last word over a name no shared job carries a
+	// variable for. The value a repository's OWN job still mounts (a
+	// repository a profile does not admit yet keeps one until M2 retires it)
+	// is the one already in the container, which the ruling leaves where it
+	// is: what it may not get is a new value, and that is what this drops.
+	//
+	// The commands that would store one answer the notice too, so there is no
 	// line to leave either. The name is therefore dropped here, once, before
 	// anything asks: what a person is told about it is the ruling's own
 	// sentence, which Check and Plan print (config.RepoSecretsIgnoredNotice).

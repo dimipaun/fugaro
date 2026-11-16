@@ -290,10 +290,11 @@ func TestInitPromptStatesTheReachOfAProjectWorkflowSecret(t *testing.T) {
 // TestSecretsStageNeverPromptsForARepositoryLevelSecret: at a real terminal,
 // with lines already waiting in stdin, a repository-level secret no job mounts
 // project-wide is never asked for. The prompt it would reach is take's else
-// arm, which stores the repository's own copy — a copy no shared job mounts and
-// the run's job carries no variable for, so find() would then count the name
-// covered and a later run would never ask again, with nothing a run can read
-// ever stored. The two platform names are seeded, so the stage has nothing to
+// arm, which stores the repository's own copy through this stage's own Secret
+// Manager write — the store D2313 closed at the command, reached here by
+// another route, and one no shared job mounts — so find() would then count the
+// name covered and a later run would never ask again, with nothing a shared job
+// reads ever stored. The two platform names are seeded, so the stage has nothing to
 // ask for at all: the run ends done, the store is untouched and the waiting
 // lines are still waiting. (TestSecretsStageDoesNotAskForARepositoryLevelSecret
 // pins the same name's absence from the line and its presence in the ruling's

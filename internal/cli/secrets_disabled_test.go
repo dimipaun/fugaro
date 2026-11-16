@@ -302,9 +302,11 @@ func TestNoWorkflowSecretsRecordIsWrittenForAnIgnoredSecret(t *testing.T) {
 // — `secrets set NAME` decides its scope from this same local config and finds
 // no project-wide meaning, and `--repo` is the notice — so a line for one
 // would be a step that stores nothing, while a prompt for one would write the
-// repository's own copy: find() would then count that copy as covering the
-// name, and the run's job carries no variable for it, so a later run would
-// never ask again and the last "stored" would be over a value nothing reads.
+// repository's own copy through this stage's own Secret Manager write — the
+// store the ruling closed at the command, reached here by another route — so
+// find() would then count that copy as covering the name, a later run would
+// never ask again, and the last "stored" would be over a value no shared job
+// reads.
 // What the stage does instead is say the ruling's fact, in the sentence
 // `validate` warns a file's block with.
 func TestSecretsStageDoesNotAskForARepositoryLevelSecret(t *testing.T) {

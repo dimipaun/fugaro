@@ -602,10 +602,12 @@ func repoSecretsDisabled(w io.Writer) error {
 // repoSecretsDisabledName reports whether name is one D2313 disables: a
 // repository's own secret (config.RepoLevelSecret) that is not a credential
 // Fugaro's own scope machinery decides (platformSecretName). It is the
-// predicate every reader of the ruling asks, so the three surfaces cannot
-// disagree about which names it is about: `secrets set`'s repository-scope
-// form and `secrets rm` answer the notice on it, and the secrets stage reads it
-// to know which store it may still print a line for.
+// predicate every reader of the ruling asks, so the surfaces cannot disagree
+// about which names it is about: `secrets set`'s repository-scope form and
+// `secrets rm` answer the notice on it, and the secrets stage reads it to know
+// which names it may not take at all — no prompt and no line, because the one
+// store a prompt there could write is the repository's own container
+// (initsecrets.go), which is the store the ruling closed.
 func repoSecretsDisabledName(lc *localcfg.Config, name string) bool {
 	return config.RepoSecretsOff && config.RepoLevelSecret(name) && !platformSecretName(lc, name)
 }
