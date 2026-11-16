@@ -320,6 +320,10 @@ logs)
     # probe at all — its check step ran something else — and `probe-unavailable`
     # is the probe stopping on one of its own guards, which reports all seven
     # as attempts it could not make rather than reporting six of seven.
+    # `served-empty` is the one a git call the proxy SERVED leaves: git prints
+    # nothing when it succeeds, so the probe's own line carries no token after
+    # `answer=` at all (test_the_probe_reports_an_attempt_the_proxy_served pins
+    # that at the probe's level).
     if [ "$mode" != no-probe ]; then
       for attempt in other-repository other-ref tag ref-delete other-pull-request merge workspaces; do
         refused=yes
@@ -331,6 +335,10 @@ logs)
         if [ "$mode" = unreported ] && [ "$attempt" = tag ]; then
           refused=no
           answer=200
+        fi
+        if [ "$mode" = served-empty ] && [ "$attempt" = other-ref ]; then
+          refused=no
+          answer=""
         fi
         echo "CHK191 attempt=$attempt refused=$refused answer=$answer"
       done
@@ -1716,6 +1724,29 @@ test_a_forbidden_attempt_the_run_did_not_report_is_a_failure() {
   expect_contains "$out" "FACT refusal-tag-ref: FAIL" "an unreported refusal: the fact names the attempt the run reported as served"
 }
 
+# The one shape of the probe's line a refusal does NOT carry: a git call the
+# proxy SERVED prints nothing when it succeeds, so the probe's own line leaves
+# the answer field empty (check191-probe.sh's words_of, pinned at the probe's
+# level by test_the_probe_reports_an_attempt_the_proxy_served). The check must
+# read that line as the finding it is — the call was answered instead of
+# refused — and not as a probe that differs: a reader that required a token
+# after `answer=` dropped the line, and the row then reported "the working run
+# reported NO line for the other-ref attempt", which sends its reader to the
+# probe instead of to the proxy.
+test_a_served_attempt_with_no_status_is_a_failure() {
+  local dir=$work/servedempty
+  prepare "$dir"
+  run_check "$dir" "$script" FAKE_FUGARO_MODE=served-empty
+  expect_status "$status" 1 "an attempt served with no status"
+  expect_contains "$out" "FACT refusal-other-ref: FAIL" "an attempt served with no status: the fact names the attempt"
+  expect_contains "$out" "the working run made the other-ref attempt and was SERVED" \
+    "an attempt served with no status: the row is the served finding"
+  expect_absent "$out" "reported NO line for the other-ref attempt" \
+    "an attempt served with no status: the row is not read as a probe that differs"
+  expect_contains "$out" "FACT refusal-tag-ref: PASS" \
+    "an attempt served with no status: the attempts that carry a refusal are still read"
+}
+
 # A repository whose own test command is not the probe reports no CHK191 line at
 # all, and that is ONE fact about the installation rather than seven findings
 # about the proxy: the working run's check step passed, so the run ends with no
@@ -2322,6 +2353,7 @@ t test_a_refusal_the_service_wrote_no_class_line_for_is_a_failure
 t test_a_refusal_that_was_not_audited_is_a_failure
 t test_a_log_that_lags_is_waited_for
 t test_a_forbidden_attempt_the_run_did_not_report_is_a_failure
+t test_a_served_attempt_with_no_status_is_a_failure
 t test_a_repository_with_no_probe_is_refused_rather_than_failed
 t test_an_attempt_the_probe_could_not_make_is_unmeasured
 t test_the_probe_makes_the_seven_attempts_through_the_forwarder
