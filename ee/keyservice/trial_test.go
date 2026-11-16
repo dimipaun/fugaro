@@ -717,6 +717,102 @@ func TestTrialIsRefusedForAProjectBoundBetweenTheReadAndTheWrite(t *testing.T) {
 	}
 }
 
+// trialForProject is the trial licence whose workspace is named for one project,
+// which is how a case holding two of them — the trial an organisation really took
+// and the decoy it asked for after it — tells them apart (trialLicence writes one
+// workspace per trial, named for the project the ask named).
+func (f *fixture) trialForProject(t *testing.T, projectID string) WireEntitlement {
+	t.Helper()
+	for _, held := range f.trialEntitlements() {
+		if held.WorkspaceID == nil {
+			continue
+		}
+		if workspace, present := heldRecord[WireWorkspace](f, workspacesCollection, *held.WorkspaceID); present && workspace.Name == projectID {
+			return held
+		}
+	}
+	t.Fatalf("the store holds no trial licence naming %s: %+v", projectID, f.trialEntitlements())
+	return WireEntitlement{}
+}
+
+// TestATrialIsBoundOnlyToTheProjectItWasAskedFor is §14's rule against the act
+// that could walk around it.
+//
+// A trial writes its workspace bound and with no project id on it (trialLicence:
+// the id is the claim a binding makes, D2201, F37), which is what leaves the
+// card offering that licence its binding — and a trial licence bindable to *any*
+// project would let an organisation refused a trial for a project ask for a decoy
+// one, which is a fresh organisation-and-project pair and is served, and then
+// attach that licence to the project it was refused. What that mints is a
+// trial-row key for the refused installation, and the organisation repeats it for
+// every owner or admin it adds — §14's "one per installation and account" as a
+// formality. The project the trial was asked for is what the trial wrote into
+// this licence's own workspace (its name), so that is what the binding reads
+// (`bindEntitlement`).
+func TestATrialIsBoundOnlyToTheProjectItWasAskedFor(t *testing.T) {
+	f := newBindingFixture(t)
+	org := f.signedUp(danaUID, danaEmail, "Dana Ltd")
+	// The trial the organisation really took, for the project it runs.
+	if rec := f.ask(trialBody(exampleProject)); rec.Code != http.StatusNoContent {
+		t.Fatalf("the organisation's trial ask answered %d (%s), want 204", rec.Code, rec.Body.String())
+	}
+	// A second admin asks for a decoy project and is served: the account half of
+	// §14's rule is why the same account cannot ask twice, and another account of
+	// the organisation asking about another project is a pair the rule has not
+	// counted.
+	f.joinsAs(org, "uid-second", "second@dana.example", roleAdmin)
+	if rec := f.ask(trialBody(secondProject)); rec.Code != http.StatusNoContent {
+		t.Fatalf("the decoy ask answered %d (%s), want 204: another project is another pair and §14 counts the account beside it (D2201)", rec.Code, rec.Body.String())
+	}
+	decoy := f.trialForProject(t, secondProject)
+	minted, asked := len(f.mintedKeys()), len(f.probe.saw())
+
+	// The decoy licence is bound to the project the organisation was refused a
+	// trial for, and what answers is the rule: a trial may be bound to the project
+	// it was asked for and to nothing else.
+	rec := f.bind(t, decoy.ID, exampleProject)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("binding the decoy licence to %s answered %d (%s), want 409: a trial is the trial of the project it was asked for (§14, D2201)", exampleProject, rec.Code, rec.Body.String())
+	}
+	if code := f.refused(rec); code != "trial_for_another_project" {
+		t.Errorf("the refusal carries the code %q, want %q", code, "trial_for_another_project")
+	}
+	if now := len(f.mintedKeys()); now != minted {
+		t.Errorf("the refused binding minted %d key(s) where the trials had minted %d, want none: a trial-row key for an installation the rule refused is the whole of what this act would buy", now, minted)
+	}
+	if now := f.probe.saw(); len(now) != asked {
+		t.Errorf("the refused binding asked a database about %v, want no call: the rule is read before the probe (D2205)", now[asked:])
+	}
+	if held, _ := f.workspace(*decoy.WorkspaceID); held.ProjectID != nil {
+		t.Errorf("the decoy's workspace is %+v after the refusal, want it still claiming no project: the binding wrote nothing", held)
+	}
+
+	// The project that trial *is* for is bound as any licence's is, so what the
+	// refusal above is about is the project and not a trial licence nobody can
+	// bind, and the key it mints names that project and no other (TN2).
+	if rec := f.bind(t, decoy.ID, secondProject); rec.Code != http.StatusOK {
+		t.Fatalf("binding the decoy licence to its own project answered %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	if now := f.probe.saw(); len(now) != asked+1 || now[asked] != secondProject {
+		t.Errorf("the bindings asked about %v, want the one probe of %s that the binding which was served makes (D2205)", now, secondProject)
+	}
+	claims := f.claimsOf(t, minted, secondProject)
+	if claims.WorkspaceID != secondProject || claims.Kind != licence.KindTrial {
+		t.Errorf("the key the binding minted is %s for %q, want a %s key for %s: the decoy's trial is that project's licence and a key it mints names it (§14, TN2)",
+			claims.Kind, claims.WorkspaceID, licence.KindTrial, secondProject)
+	}
+	if held, _ := f.workspace(*decoy.WorkspaceID); held.ProjectID == nil || *held.ProjectID != secondProject {
+		t.Errorf("the decoy's workspace is %+v after its own binding, want it bound to %s", held, secondProject)
+	}
+	// The trial the organisation took for the other project is untouched: what the
+	// refusal above kept away from is a second key for an installation whose trial
+	// was already taken.
+	took := f.trialForProject(t, exampleProject)
+	if held, _ := f.workspace(*took.WorkspaceID); held.ProjectID != nil {
+		t.Errorf("the organisation's own trial workspace is %+v, want it claiming no project: a trial is the licence of that project's card, and the claim on the project is a binding's (D2201, F37)", held)
+	}
+}
+
 // TestTrialIsRefusedForAnAccountWithNoOrganisation: the half of D2201's pair
 // that is not the project id is a portal organisation (P3.3, D2185), and an
 // account that is a member of none has none for the trial to be counted against

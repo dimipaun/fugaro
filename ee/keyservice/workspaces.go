@@ -115,6 +115,11 @@ var (
 	// and never rebound, because a second issue of it is a second live copy of a
 	// key nothing can revoke.
 	errAirGappedRebind = errors.New("keyservice: an air-gapped licence is issued once and never rebound")
+	// errTrialForAnotherProject is a trial asked to be attached to a project its
+	// trial was not for: §14's trial is the trial of the project it was asked for
+	// (D2201's keying, D2185) and a licence that could be moved to another one
+	// would mint a trial-row key for an installation the rule refused.
+	errTrialForAnotherProject = errors.New("keyservice: a trial is bound to the project it was asked for")
 )
 
 // The refusals D2205's check owns, kept beside the read that makes them.
@@ -289,6 +294,32 @@ func (s *Service) bindEntitlement(ctx context.Context, actor Caller, entitlement
 	workspace, err := s.bindingWorkspace(ctx, entitlement, projectID, now)
 	if err != nil {
 		return WireWorkspace{}, err
+	}
+	// §14's trial is the trial of one project and of no other (D2201's keying,
+	// D2185), so a trial-sourced licence may be attached to the project its trial
+	// was asked for and never to a second one. That project is what the trial
+	// wrote into this licence's own workspace: `trialLicence` names the workspace
+	// for the project the ask named and writes no project id onto it — a trial
+	// that wrote one would bar the project's real owner from binding it for as
+	// long as operations had not transferred it (D2201, F37, TN-P1) — so the name
+	// is the whole of what the trial claimed, and it is the licence's own record
+	// of it rather than a second rule read against the trials store.
+	//
+	// Without this the rule is a formality. An organisation refused a trial for a
+	// project asks for a decoy id, which is a fresh organisation-and-project pair
+	// and is served, and then binds that licence — written bound (BoundAt) and so
+	// rebindable at once (D2198) — to the project it was refused: what is minted
+	// is a trial-row key for an installation §14's rule refused, and the
+	// organisation repeats it for every owner or admin it adds.
+	//
+	// The workspace this reads is the one the licence names and never one this
+	// request made: a trial licence without the workspace its trial wrote is not a
+	// shape this service writes, and a workspace named by this request would be
+	// no check at all. That no route renames a workspace is what makes its name
+	// the record here — a route that came to rename one is a route that has to
+	// keep this clause in view.
+	if entitlement.Source == entitlementSourceTrial && (entitlement.WorkspaceID == nil || workspace.Name != projectID) {
+		return WireWorkspace{}, errTrialForAnotherProject
 	}
 	// The cheap half of D2204's check: it answers a project somebody already
 	// bound without a probe and a mint, and the transaction's own query is the
