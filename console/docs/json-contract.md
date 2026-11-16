@@ -3608,7 +3608,6 @@ control is the drift the compatibility rule above exists to prevent.
 | `seen` | object | never | never | what has run here, **a member of its own and never a column of a row**: the table below |
 | `local` | object | never | never | this machine's own config's half; the table below |
 | `named` | object | **always** | never | never present in this document, and its absence is the command's argv: `ls` names no repository, so the view is built without one. The member exists for the group's `status`, which takes `[REPO]` and prints that repository's own name, whether anything `enrolled` it, and the `state` of an enrolment that could not be decided; a reader of this document never sees it |
-| `credentials` | object | **always** | never | never present here, for the reason the row table's own `credentials` member gives below: the credential rows are read for the one repository a caller named, and this command names none |
 
 **A row is one repository, and its two enrolment halves are two members and
 never one boolean** (D2409): a repository the allow-list admits that this machine
@@ -3712,17 +3711,19 @@ can arrive unnoticed.
 | `repos` | array | never | never | the canonical names this machine's project config holds, in name order. **`[]` is a true answer** — this machine's config holds nothing — and never null |
 | `state` | string | never | never | the sentence for a config whose entries **could not all be read as canonical names**, and `""` when every one was. An entry recorded without a provider is the case: its provider is the checkout's `fugaro.yaml` to decide, and a read that listed the rest silently would draw a machine that does not hold the repository (`reposViewLocalOf`) |
 
-**Exit status.** Zero for a listing, whether or not a member carries a state
-sentence — a policy nobody could read and a history nobody could read are
-answers, and the document says so. Non-zero, with **no document and no listing
-at all**, for the three cases the read cannot be made into one: the project
-cannot be resolved or the cloud cannot be opened; the read of what has run here
-was **refused** (a config pointed at another project's bucket or Firebase
-project — the identity checks of `checkCloudName` and `spendRepos` — or a
-`bucket_url` this machine cannot reach without credentials); and the published
-node answered with a key or a version this build refuses. Nothing is printed
-before the refusal, in either form: a listing that printed half of itself and
-then refused would read as one that had finished.
+**Exit status.** Zero for a listing, whether or not the allow-list or this
+machine's config carries a state sentence — a policy nobody could read and a
+config whose entries could not all be spelled as canonical names are answers,
+and the document says so. Non-zero, with **no document and no listing at all**,
+for the four ways the read cannot be made into one: the project cannot be
+resolved or the cloud cannot be opened; the read of what has run here was
+**refused** (a config pointed at another project's bucket or Firebase project —
+the identity checks of `checkCloudName` and `spendRepos` — or a `bucket_url`
+this machine cannot reach without credentials); that read **did not answer at
+all**, which this command refuses rather than carrying as a shorter list; and the
+published node answered with a key or a version this build refuses. Nothing is
+printed before the refusal, in either form: a listing that printed half of
+itself and then refused would read as one that had finished.
 
 **Flags** (`newProjectReposLsCmd`): `--json`, and the aiming pair `--project
 <name>` and `--config <path>` every project read carries; `--gcp-project <id>`
