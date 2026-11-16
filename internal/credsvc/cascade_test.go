@@ -1444,3 +1444,231 @@ func TestServiceServesUnderAPolicyWithNoCredentialsBlock(t *testing.T) {
 		}
 	})
 }
+
+// ---------------------------------------------------------------------------
+// MC19: the published pool is what serves a call
+// ---------------------------------------------------------------------------
+
+// TestPublishedPoolFailsOverToItsNextMember is MC19's second pin on this path:
+// a call a published pool serves moves to the pool's NEXT member when the member
+// that answered cannot serve it, and the run is told which member answered and
+// which one took the call.
+//
+// What moves a call is what the answer MEANS and never its status: a usage limit
+// (429) and a credential that answered 401 are the two the cascade retries on
+// another member (usageLimitStatus, unauthorizedStatus; ReasonExhausted and
+// ReasonBroken), and the third sub-case is the boundary — an answer about the
+// request, an overloaded 529, is the client's own and moves nothing, so the pool
+// fails over on a credential and never on an upstream's mood. The plan's own
+// wording for this test lists 429/402/529 together, inherited from the runner
+// side's list; on this path 402 and 529 are the client's answer by the code's
+// own rule, and it is that rule this test holds.
+//
+// The member that serves is asserted on the wire (HeaderCredential and the
+// switch header) rather than in the run's record: the record's craft_credentials
+// field, which the plan's sentence names, does not exist in this tree (F15's
+// field is the one that names what served a stage), so the two wire facts are
+// what a run reads.
+func TestPublishedPoolFailsOverToItsNextMember(t *testing.T) {
+	block := `"credentials": {"fallback": "auto"},
+		` + poolCraftBlock(
+		`{"name": "`+testPoolAccount+`", "type": "claude-oauth"},
+			{"name": "`+testAccount+`", "type": "claude-oauth"}`,
+		testPoolAccount, testAccount) + `,
+		"subscription_spread": true`
+
+	t.Run("a usage limit moves the call to the pool's next member", func(t *testing.T) {
+		s := poolSvc(t, block)
+		s.up.Script = []anthropicfake.Reply{
+			{
+				Status: http.StatusTooManyRequests,
+				Header: http.Header{"Retry-After": []string{"3600"}},
+				Body:   `{"type":"error","error":{"type":"` + rateLimitEventType + `","message":"usage limit reached"}}`,
+			},
+			anthropicfake.MessageOK(testModel, testUsage),
+		}
+
+		resp, body := s.call(t, callBody("published-pool-429"))
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("the answer is %d, want the pool's next member's 200: %s", resp.StatusCode, body)
+		}
+		if got := resp.Header.Get(HeaderCredential); got != testAccount {
+			t.Errorf("%s = %q, want %q: the pool's first member answered the usage limit, so its next one serves", HeaderCredential, got, testAccount)
+		}
+		sw, ok, err := SwitchHeader(resp.Header)
+		if err != nil || !ok {
+			t.Fatalf("the answer carries no readable switch header (err %v): the run is not told the pool moved", err)
+		}
+		if sw.From != testPoolAccount || sw.To != testAccount || sw.Reason != ReasonExhausted {
+			t.Errorf("switch = %+v, want %s -> %s because it was exhausted", sw, testPoolAccount, testAccount)
+		}
+		if strings.Contains(string(body), rateLimitEventType) {
+			t.Error("the usage limit reached the client: it is about a credential the run does not hold")
+		}
+		if n := s.up.Count(); n != 2 {
+			t.Fatalf("the upstream saw %d requests, want 2: the pool's next member is tried once", n)
+		}
+		if m, ok := s.state.mark(testPoolAccount); !ok || m.State != creds.StateExhausted {
+			t.Errorf("the answering member's mark is %q/%v, want the exhaustion its answer named", m.State, ok)
+		}
+	})
+
+	t.Run("a dead member moves the call to the pool's next member", func(t *testing.T) {
+		s := poolSvc(t, block)
+		s.up.Script = []anthropicfake.Reply{
+			{Status: http.StatusUnauthorized, Body: `{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}`},
+			anthropicfake.MessageOK(testModel, testUsage),
+		}
+
+		resp, body := s.call(t, callBody("published-pool-401"))
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("the answer is %d, want the pool's next member's 200: %s", resp.StatusCode, body)
+		}
+		if got := resp.Header.Get(HeaderCredential); got != testAccount {
+			t.Errorf("%s = %q, want %q", HeaderCredential, got, testAccount)
+		}
+		sw, ok, err := SwitchHeader(resp.Header)
+		if err != nil || !ok {
+			t.Fatalf("the answer carries no readable switch header (err %v)", err)
+		}
+		if sw.From != testPoolAccount || sw.To != testAccount || sw.Reason != ReasonBroken {
+			t.Errorf("switch = %+v, want %s -> %s because it answered 401", sw, testPoolAccount, testAccount)
+		}
+		if m, ok := s.state.mark(testPoolAccount); !ok || m.State != creds.StateBroken {
+			t.Errorf("the answering member's mark is %q, want %q: only an operator clears that", m.State, creds.StateBroken)
+		}
+	})
+
+	t.Run("an answer about the request moves nothing", func(t *testing.T) {
+		s := poolSvc(t, block)
+		s.up.Script = []anthropicfake.Reply{
+			{Status: http.StatusServiceUnavailable, Body: `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`},
+		}
+
+		resp, body := s.call(t, callBody("published-pool-529"))
+		if resp.StatusCode != http.StatusServiceUnavailable {
+			t.Fatalf("the answer is %d, want the upstream's own (%d): a retry is for a credential that cannot serve the call", resp.StatusCode, http.StatusServiceUnavailable)
+		}
+		if got := resp.Header.Get(HeaderCredential); got != testPoolAccount {
+			t.Errorf("%s = %q, want %q: the member that answered keeps the call", HeaderCredential, got, testPoolAccount)
+		}
+		if !strings.Contains(string(body), "overloaded_error") {
+			t.Errorf("the client's answer is not the upstream's own: %s", body)
+		}
+		if _, ok, _ := SwitchHeader(resp.Header); ok {
+			t.Error("the answer carries a switch header: the pool moved on an answer that is the client's own")
+		}
+		if n := s.up.Count(); n != 1 {
+			t.Errorf("the upstream saw %d requests, want 1: an overloaded answer is not retried on another member", n)
+		}
+		if m, ok := s.state.mark(testPoolAccount); ok {
+			t.Errorf("the answering member holds the mark %q, want none: a 529 says nothing about the credential", m.State)
+		}
+	})
+}
+
+// TestARepositoryNotAdmittedToAMemberIsSkippedNotRefused is F10 and D1627 on the
+// published pool: a member the repository may not be served by is skipped — the
+// call is served by the pool's next member, in this path's own words "skipped
+// and recorded" — and a pool every member of which leaves this repository out is
+// what refuses the stage.
+//
+// The admission is an intersection, and the three sub-cases walk two of its
+// three legs as this service reads them (admittedAccounts): the repository's own
+// node under the published one (its RepoPolicy.Credentials.Accounts) and each
+// account's own allow_repos. The third leg — a shared caller's profile — is the
+// account walk's (internal/runner's stageAccountCandidates, and its
+// TestAutoReviewStageWalksOnlyReviewClassAccounts), because a repository-class
+// caller carries no profile.
+//
+// The pool lists the member it may not be served by FIRST, which is what makes
+// the served member evidence: the tie inside tier A is broken by the pool's
+// listed order, so a service that never consulted the admission would answer bob
+// on both calls below.
+func TestARepositoryNotAdmittedToAMemberIsSkippedNotRefused(t *testing.T) {
+	block := `"credentials": {"fallback": "auto"},
+		` + poolCraftBlock(
+		`{"name": "`+testPoolAccount+`", "type": "claude-oauth"},
+			{"name": "`+testAccount+`", "type": "claude-oauth"}`,
+		testPoolAccount, testAccount) + `,
+		"subscription_spread": true`
+
+	t.Run("the repository's own node does not name the member", func(t *testing.T) {
+		s := poolSvcAdmitted(t, block, config.DefaultClaudeAccount, testAccount)
+		assertTheAdmittedMemberServes(t, s)
+	})
+
+	t.Run("the member's own allow_repos does not admit the repository", func(t *testing.T) {
+		s := newSvcWith(t, func(s *svc, _ *Config) {
+			s.src.docs = [][]byte{poolBundleDoc(t)}
+			s.policy.shared = decodeTestPolicy(t, poolNodeAccounts(
+				`"`+config.DefaultClaudeAccount+`": {"allow_repos": ["`+testRepo+`", "`+testOtherRepo+`"]},
+				"`+testAccount+`": {"allow_repos": ["`+testRepo+`", "`+testOtherRepo+`"]},
+				"`+testPoolAccount+`": {"allow_repos": ["`+testOtherRepo+`"]}`,
+				block))
+			// The repository's own node names all three: this sub-case is the
+			// second leg alone, so the first one must admit every member.
+			s.policy.admissions[s.slug] = decodeTestChild(t,
+				testChildDoc(config.DefaultClaudeAccount, testAccount, testPoolAccount))
+		})
+		assertTheAdmittedMemberServes(t, s)
+	})
+
+	t.Run("the skipped member is recorded", func(t *testing.T) {
+		s := poolSvcAdmitted(t, block, config.DefaultClaudeAccount, testAccount)
+		// The member this repository IS admitted to is held for as long as the
+		// pool can be waited for, so nothing serves this call and the answer is
+		// the typed wait — which carries what was considered and why each one was
+		// skipped (refuseSelection).
+		s.hold(testAccount, s.now, s.now.Add(time.Hour))
+		resp, body := s.call(t, callBody("not-admitted-recorded"))
+		if resp.StatusCode != StatusExhaustedUntil {
+			t.Fatalf("the answer is %d, want the typed wait (%d): %s", resp.StatusCode, StatusExhaustedUntil, body)
+		}
+		e := refusal(t, resp.StatusCode, body)
+		found := false
+		for _, tr := range e.Tried {
+			if tr.Name != testPoolAccount {
+				continue
+			}
+			found = true
+			if tr.Reason != ReasonNotAdmitted {
+				t.Errorf("the skipped member is reported as %q, want %q: the admission is what left it out", tr.Reason, ReasonNotAdmitted)
+			}
+		}
+		if !found {
+			t.Errorf("the skipped member %q is in none of the answer's tried list (%+v): an operator reading the halt cannot see that the pool held a member this repository may not be served by", testPoolAccount, e.Tried)
+		}
+		if lines := auditLines(t, s.audit); len(lines) != 1 {
+			t.Errorf("the refusal wrote %d audit lines, want exactly one", len(lines))
+		}
+		if n := s.up.Count(); n != 0 {
+			t.Errorf("the upstream saw %d requests, want none: every member of the pool was skipped or held", n)
+		}
+	})
+}
+
+// assertTheAdmittedMemberServes is the two sub-cases' own assertion: the call is
+// served, and it is served by the member the repository IS admitted to — the
+// skipped one is never tried, which the outbound credential proves rather than
+// the absence of an answer.
+func assertTheAdmittedMemberServes(t *testing.T, s *svc) {
+	t.Helper()
+	resp, body := s.call(t, callBody("not-admitted-member"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the call is %d, want the member the repository is admitted to to serve it: %s", resp.StatusCode, body)
+	}
+	if got := resp.Header.Get(HeaderCredential); got != testAccount {
+		t.Errorf("%s = %q, want %q: the pool lists bob first and this repository may not be served by him", HeaderCredential, got, testAccount)
+	}
+	if got := resp.Header.Get(HeaderTier); got != TierA {
+		t.Errorf("%s = %q, want %q", HeaderTier, got, TierA)
+	}
+	seen := s.up.Seen()
+	if len(seen) != 1 {
+		t.Fatalf("the upstream saw %d requests, want 1: a skipped member is never tried", len(seen))
+	}
+	if got, want := seen[0].Header.Get("Authorization"), "Bearer "+fakeCred(t, testAccount); got != want {
+		t.Error("the request did not go out on the admitted member's credential: the skipped member was tried")
+	}
+}
