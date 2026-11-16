@@ -335,9 +335,11 @@ type craftLsServe struct {
 	// priced is whether a price row is required of a craft's model at all: a
 	// run prices its calls only with the gateway on, which is the mode being
 	// observe or enforce, and never under agent.auth oauth, where there is no
-	// gateway. It is the gate budgetProblems applies to the pins, and asking
-	// it of a craft under a mode that never prices would refuse a model the
-	// run serves.
+	// gateway. It is validate's own gate (cfg.Agent.Auth beside the mode,
+	// budgetProblems' caller), and the auth it reads is the resolved one: a
+	// run's auth is what the project answers with, not what one document of
+	// the two says. Asking it of a craft under a mode that never prices would
+	// refuse a model the run serves.
 	priced bool
 }
 
@@ -362,6 +364,12 @@ func craftLsServes(cmd *cobra.Command, f craftLsFiles) craftLsServe {
 		// alone and judges no craft by a config no run would start on.
 		if cfg, _, ps := config.Resolve(f.data, f.layer); len(ps) == 0 {
 			ceiling, file = runCeiling(f.lc, cfg), runner.FileLayer(cfg)
+			// And the agent a run reads with it: the resolved one, never the
+			// checkout's own block. The project layer's defaults.agent.auth is
+			// the project's answer, and it is what the price gate below turns
+			// on — a file naming api-key under a project whose auth is oauth
+			// would otherwise price a craft no run charges for.
+			s.agent = cfg.Agent
 		}
 	}
 	s.e = policy.Merge(ceiling, file)

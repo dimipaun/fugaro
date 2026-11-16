@@ -77,6 +77,23 @@ defaults:
       review: {model: claude-sonnet-5-5}
 `
 
+// craftProjectOAuthLayer is craftProjectLayer under the project's own
+// `defaults.agent.auth: oauth`: an oauth run has no gateway, so nothing its
+// crafts name is priced (validate's own gate, cfg.Agent.Auth beside the mode).
+// The auth is written here and not in the checkout's file because the project
+// layer is where a project answers the question, and the two documents
+// disagreeing is what the arm using this layer is about.
+const craftProjectOAuthLayer = `version: 1
+project: aurora
+gcp_project: aurora-gcp
+defaults:
+  git: { provider: github }
+  agent:
+    auth: oauth
+    crafts:
+      review: {model: claude-sonnet-5-5}
+`
+
 // craftFixture is the three-layer world every craft test reads: project aurora
 // in a config home of its own, with the crafts, credentials and pools appended
 // to its config, a cached project layer, and the test standing in a real
@@ -112,12 +129,7 @@ func craftFixtureWith(t *testing.T, extra string) string {
 		t.Fatal(err)
 	}
 	t.Setenv("FUGARO_CONFIG", path)
-	if err := localcfg.SaveLayerCache(os.Getenv, "aurora", localcfg.SharedCacheEntry{
-		GCPProject: "aurora-gcp", Bucket: "fugaro-runs-aurora-gcp",
-		CheckedAt: time.Now(), YAML: craftProjectLayer,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	writeCraftLayer(t, craftProjectLayer)
 	testutil.IsolateGit(t)
 	dir := filepath.Join(home, "checkout")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -127,6 +139,21 @@ func craftFixtureWith(t *testing.T, extra string) string {
 	testutil.Git(t, dir, "init", "-q", "-b", "main")
 	t.Chdir(dir)
 	return orig
+}
+
+// writeCraftLayer caches the project layer file the read resolves, in the
+// config home the fixture isolated: the fixture's own layer, or another a test
+// hands the same world — a project answers the crafts' models, the auth its
+// runs are under and the rest of its defaults there, so an arm about one of
+// those answers writes this file.
+func writeCraftLayer(t *testing.T, layer string) {
+	t.Helper()
+	if err := localcfg.SaveLayerCache(os.Getenv, "aurora", localcfg.SharedCacheEntry{
+		GCPProject: "aurora-gcp", Bucket: "fugaro-runs-aurora-gcp",
+		CheckedAt: time.Now(), YAML: layer,
+	}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // craftRows is the document the fixture resolves to, spelled once so the two
@@ -436,6 +463,24 @@ agent:
     security-review: {model: claude-opus-4-1}
 `
 
+// craftRepoUnpricedModelYAML is the same accepted file without an agent.auth of
+// its own -- the project layer answers that, which is the arm's subject -- under
+// a mode that prices (observe) and naming a model no price row covers. It is
+// the one shape in which the price gate is visible: a run under a mode that
+// prices and an auth with a gateway would refuse this model, and a run whose
+// project answered oauth would charge nothing for it.
+const craftRepoUnpricedModelYAML = `version: 1
+project: aurora
+gcp_project: aurora-gcp
+git: { provider: github }
+workflows:
+  go: { commands: { build: go build ./..., test: go test ./... } }
+budget: { mode: observe }
+agent:
+  crafts:
+    coder: {model: deepseek/deepseek-v9}
+`
+
 // craftRowRaw is one row of the document as it was printed, keyed by member, so
 // a test can tell an absent member from a member that says false: a struct's
 // zero value would make the two the same answer, and "the member is there and
@@ -567,6 +612,42 @@ func TestCraftLsRowNamesWhyAModelCannotBeServed(t *testing.T) {
 			if !strings.Contains(problem, want) {
 				t.Errorf("the sentence does not name %q: %q", want, problem)
 			}
+		}
+	})
+
+	t.Run("the project answers oauth, so nothing is priced", func(t *testing.T) {
+		// The auth the price gate reads is the resolved one, and it is the
+		// project's to write: this checkout's file names no auth at all, and
+		// the layer answers oauth -- no gateway, nothing charged, so no price
+		// row is required of a craft. The file names the same model the arm
+		// above refuses, under a mode that prices, so a gate read off the
+		// checkout's own block (api-key by default) reports a refusal where a
+		// run would charge nothing. The file is one config.Resolve accepts
+		// because a refused file contributes no layer and there would be no
+		// resolved auth to read at all.
+		craftFixture(t)
+		writeCraftLayer(t, craftProjectOAuthLayer)
+		testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": craftRepoUnpricedModelYAML})
+		out, _, err := execute(t, "craft", "ls", "--json")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		servable, problem := craftRowServes(t, out, config.CraftCoder)
+		if !servable {
+			t.Errorf("the coder row refuses deepseek/deepseek-v9 (%s), and this project's auth is oauth: no call of its goes through a gateway, so none of its crafts is priced: %s", problem, out)
+		}
+		// The control: the same model under a project whose auth has a gateway
+		// is refused, which is the arm above's answer and the one this arm is
+		// the exception to.
+		writeCraftLayer(t, craftProjectLayer)
+		out, _, err = execute(t, "craft", "ls", "--json")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if servable, problem := craftRowServes(t, out, config.CraftCoder); servable {
+			t.Errorf("the coder row says deepseek/deepseek-v9 is servable under an api-key project with a mode that prices, and no price row covers it: %s", out)
+		} else if !strings.Contains(problem, "no price") {
+			t.Errorf("the control's sentence is not the price rule's: %q", problem)
 		}
 	})
 
