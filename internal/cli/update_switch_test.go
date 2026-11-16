@@ -35,12 +35,12 @@ import (
 // (internal/gitprov/providers/providers.go returns before it reads appKey), for
 // a credential the service cannot hand back. That is the release blocker §1.4
 // states, and it is what the switch exists for: a repository is served only
-// when the installation HAS the block,
-// the record `fugaro update` wrote from the bundle says the service holds the
-// credential THIS repository's runs need, the repository's own agent.auth is
-// one the service serves — the cascade, and since B2.3 an `api-key` or `oauth`
-// one — and, for those two, the project's published budget mode is `observe` or
-// `enforce`, the modes the gateway that reaches the service exists in (D2071,
+// when the installation HAS the block, the record `fugaro update` wrote from
+// the bundle says the credentials every account THIS repository's runs may go
+// out on are held in it, the repository's own agent.auth is one the service
+// serves — the cascade, and since B2.3 an `api-key` or `oauth` one — and, for
+// those two, the project's published budget mode is `observe` or `enforce`, the
+// modes the gateway that reaches the service exists in (D2071,
 // infra.CredentialsServiceServes).
 //
 // The tests here are the CLI's half of that — what `fugaro update` records and
@@ -765,7 +765,7 @@ func recordForRepoDoc(t *testing.T, r *initRig, yaml, mode string, outs infra.In
 	if cfg == nil {
 		t.Fatalf("the fixture's fugaro.yaml does not parse: %v", problems)
 	}
-	e.r.recordCredentialsServiceReady(t.Context(), e.lc, outs, "acme/sandbox", cfg.Git.Provider, cfg.Agent.Auth, cfg.Agent.OAuthToken, mode)
+	e.r.recordCredentialsServiceReady(t.Context(), e.lc, outs, "acme/sandbox", cfg.Git.Provider, cfg.Agent.Auth, infra.WorkflowAccounts(cfg, e.lc, "acme/sandbox"), mode)
 	spec := infra.RepoSpec{Name: "acme/sandbox", Provider: "bitbucket", BaseBranch: "master"}
 	if err := e.r.writeRepoConfig(t.Context(), e.lc, spec, cfg, r.cfg, e.old); err != nil {
 		t.Fatalf("the repository stage's config write failed: %v", err)
@@ -970,35 +970,72 @@ func oauthRepoYAML(account string) string {
 		"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 }
 
+// oauthAccountAllowed adds account to the rig's allow-list for acme/sandbox,
+// which is what makes it an account this repository's runs may go out on
+// (config.AllowedClaudeAccounts, through infra.WorkflowAccounts): a name a
+// document carries that the allow-list does not admit is no job of this
+// repository's, and the launch refuses it before the service is asked anything.
+func oauthAccountAllowed(t *testing.T, r *initRig, account string) {
+	t.Helper()
+	r.appendConfig(t, "claude_accounts:\n  "+account+": { allow_data_to: [\"acme/sandbox\"] }\n")
+}
+
 // TestUpdateSwitchRecordsReadyForTheNamedOAuthAccount is the readiness this
 // task sharpens (B2.3): the bundle reading a repository's record is written
-// from is the credential ITS runs go out on — the account its workflows name,
-// which is what the service will hand that run — and no longer "the bundle
-// holds some model credential", which says nothing about this repository.
+// from is the credentials EVERY account its runs may go out on is held under —
+// the accounts its allow-list admits, which is the list the record this same
+// run writes names (repoAuthRecord) — and no longer "the bundle holds some
+// model credential", which says nothing about this repository.
 //
-// Both halves run over one rig, each with its own bundle, and the two documents
-// differ in one field: a repository that names no account goes out on the
-// default one, whose token rides the unsuffixed claude-oauth-token.
+// The two halves differ in the account their document names: a repository whose
+// file names an account it may use goes out on that one AND on the default, both
+// being allowed, so the bundle has to hold both; a repository that names none
+// goes out on the default alone, whose token rides the unsuffixed
+// claude-oauth-token.
 func TestUpdateSwitchRecordsReadyForTheNamedOAuthAccount(t *testing.T) {
 	const account = "acme-personal"
 	r := switchRig(t)
-	putSwitchBundle(t, r, []byte(config.ClaudeAccountSecret(account)+": "+credsValue(t, "account")+"\n"))
+	oauthAccountAllowed(t, r, account)
+	putSwitchBundle(t, r, []byte(config.ClaudeAccountSecret("")+": "+credsValue(t, "default")+"\n"+
+		config.ClaudeAccountSecret(account)+": "+credsValue(t, "account")+"\n"))
 	if !recordForRepoDoc(t, r, oauthRepoYAML(account), config.BudgetEnforce, switchOutputs()).Repos["acme/sandbox"].CredentialsServiceOn() {
-		t.Errorf("the record is false for an oauth repository whose own document names %s, over a bundle holding that account's token and a project whose budget is enforced: the plan this run applies is built from this value, so the root is deployed held off — mounts kept, no roles/run.invoker — and the launch withholds the address from a run the service would have served", account)
+		t.Errorf("the record is false for an oauth repository whose own document names %s, over a bundle holding that account's token and the default account's, and a project whose budget is enforced: the plan this run applies is built from this value, so the root is deployed held off — mounts kept, no roles/run.invoker — and the launch withholds the address from a run the service would have served", account)
 	}
 
-	putSwitchBundle(t, r, []byte(config.ClaudeAccountSecret("")+": "+credsValue(t, "default")+"\n"))
-	if !recordForRepoDoc(t, r, oauthRepoYAML(""), config.BudgetEnforce, switchOutputs()).Repos["acme/sandbox"].CredentialsServiceOn() {
-		t.Errorf("the record is false for an oauth repository that names no account, over a bundle holding the default account's token: a repository that names none goes out on the default one, and a record that missed it would hold off the commonest oauth repository there is")
+	r2 := switchRig(t)
+	putSwitchBundle(t, r2, []byte(config.ClaudeAccountSecret("")+": "+credsValue(t, "default")+"\n"))
+	if !recordForRepoDoc(t, r2, oauthRepoYAML(""), config.BudgetEnforce, switchOutputs()).Repos["acme/sandbox"].CredentialsServiceOn() {
+		t.Errorf("the record is false for an oauth repository that names no account, over a bundle holding the default account's token and a config that admits no other: a repository that names none goes out on the default one, and a record that missed it would hold off the commonest oauth repository there is")
 	}
 }
 
-// TestUpdateSwitchHoldsOffAnOAuthRepoWhoseAccountIsNotInTheBundle is the other
-// direction, and the one the sharper reading exists for: the bundle holds AN
-// account's token — so the old "holds a model credential" question would answer
-// yes — and it is not the account this repository's runs go out on. The service
-// would refuse the run at its door with no candidate for that account, while
-// the record vouched for it and the root was applied with the mounts dropped.
+// TestUpdateSwitchHoldsOffAnOAuthRepoWhenAnAccountItMayUseIsNotInTheBundle is
+// the finding this reading was corrected for (B2.3's review): the bundle holds
+// the account the DOCUMENT names — which is what the one-account reading asked
+// — and nothing under the default account, which is an account this
+// repository's runs may be launched on (`--token`, D2070 (a): the account is
+// per workflow and per run) and which the record this same run writes names.
+// Such a launch is handed the service's address, declares that account, and is
+// refused at the door with no candidate for it — with no fallback to the token
+// its job still mounts, so a run that went out on its own subscription before
+// this release would halt instead (D143).
+func TestUpdateSwitchHoldsOffAnOAuthRepoWhenAnAccountItMayUseIsNotInTheBundle(t *testing.T) {
+	const account = "acme-personal"
+	r := switchRig(t)
+	oauthAccountAllowed(t, r, account)
+	putSwitchBundle(t, r, []byte(config.ClaudeAccountSecret(account)+": "+credsValue(t, "account")+"\n"))
+	if got := recordForRepoDoc(t, r, oauthRepoYAML(account), config.BudgetEnforce, switchOutputs()).Repos["acme/sandbox"].CredentialsServiceOn(); got {
+		t.Errorf("the record says the service is ready for an oauth repository that may go out on the default account too, over a bundle holding %s's token alone: the record names the default account, so a `--token default` launch would be handed the address and refused (no_candidate_credentials) while its job still mounts the token it can no longer read (D143)", account)
+	}
+}
+
+// TestUpdateSwitchHoldsOffAnOAuthRepoWhoseAccountIsNotInTheBundle is the same
+// rule from the other side: the bundle holds AN account's token — so the old
+// "holds a model credential" question would answer yes — while the account this
+// repository's runs go out on, the default one, is one the document does not
+// name and the allow-list does not replace. The service would refuse the run at
+// its door with no candidate for that account, while the record vouched for it
+// and the root was applied with the mounts dropped.
 //
 // The held-off direction costs this repository nothing today: its mounts are
 // all still there (D2072, G17), so its runs go out on their own subscription
@@ -1006,8 +1043,8 @@ func TestUpdateSwitchRecordsReadyForTheNamedOAuthAccount(t *testing.T) {
 func TestUpdateSwitchHoldsOffAnOAuthRepoWhoseAccountIsNotInTheBundle(t *testing.T) {
 	r := switchRig(t)
 	putSwitchBundle(t, r, []byte(config.ClaudeAccountSecret("acme-personal")+": "+credsValue(t, "account")+"\n"))
-	if got := recordForRepoDoc(t, r, oauthRepoYAML("acme-other"), config.BudgetEnforce, switchOutputs()).Repos["acme/sandbox"].CredentialsServiceOn(); got {
-		t.Errorf("the record says the service is ready for an oauth repository that goes out on acme-other, over a bundle holding acme-personal's token alone: the bundle holding SOME model credential is not the question — this run's own account is — and a record that answered the first would vouch for a root whose job mounts are gone and whose calls the service then refuses (no_candidate_credentials)")
+	if got := recordForRepoDoc(t, r, oauthRepoYAML("acme-personal"), config.BudgetEnforce, switchOutputs()).Repos["acme/sandbox"].CredentialsServiceOn(); got {
+		t.Errorf("the record says the service is ready for an oauth repository whose runs go out on the default account, over a bundle holding another Claude account's token alone: the bundle holding SOME model credential is not the question — the accounts this run may go out on are — and a record that answered the first would vouch for a root whose job mounts are gone and whose calls the service then refuses (no_candidate_credentials)")
 	}
 }
 
@@ -1227,7 +1264,7 @@ func TestAFailedReadIsNotAnsweredByTheRunsSecondDoor(t *testing.T) {
 		t.Fatalf("the run's first door did not leave the records this test judges the second door against (sandbox %v, other %v): the backfill reads the bundle once and writes nothing from a read that failed",
 			e.lc.Repos["acme/sandbox"].CredentialsServiceOn(), e.lc.Repos["acme/other"].CredentialsServiceOn())
 	}
-	e.r.recordCredentialsServiceReady(t.Context(), e.lc, switchOutputs(), "acme/sandbox", "bitbucket", config.AuthCascade, "", "")
+	e.r.recordCredentialsServiceReady(t.Context(), e.lc, switchOutputs(), "acme/sandbox", "bitbucket", config.AuthCascade, nil, "")
 	spec := infra.RepoSpec{Name: "acme/sandbox", Provider: "bitbucket", BaseBranch: "master"}
 	cfg, problems := config.Parse([]byte(checkoutYAML("bitbucket", config.AuthCascade, "aurora", "")))
 	if cfg == nil {

@@ -725,10 +725,10 @@ type initRun struct {
 	// the model credentials it holds, by the name each is served under, read
 	// once and judged for the repository entry the run writes. Names rather
 	// than one yes/no answer because the question is per repository — an
-	// `api-key` repository needs the Anthropic key and an `oauth` one the
-	// account its runs use (credentialsBundleServes) — while the READING is
-	// one, and the run's two doors (the installation's backfill and the
-	// repository stage) must answer from it rather than read the bundle twice.
+	// `api-key` repository needs the Anthropic key and an `oauth` one every
+	// account its runs may go out on (credentialsBundleServes) — while the
+	// READING is one, and the run's two doors (the installation's backfill
+	// and the repository stage) must answer from it rather than read it twice.
 	// A read that FAILED answers nothing at all — the entry keeps the record
 	// the last reading left on it, and credsRecord is what carries that answer
 	// to this run's second door — and the warning it prints is why.
@@ -4444,7 +4444,11 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// held-off root and only the NEXT run's plan switched on (the review of
 	// 2026-11-07's fourth round). On main one run sufficed, and one run still
 	// does.
-	r.recordCredentialsServiceReady(ctx, lc, outs, repo, cfg.Git.Provider, cfg.Agent.Auth, cfg.Agent.OAuthToken, policyBudgetMode(in.Policy))
+	// The accounts are infra.WorkflowAccounts' own answer for this repository
+	// and not the document's agent.oauth_token alone: they are the accounts its
+	// jobs go out on and the ones the record below names, so a launch on any of
+	// them (`--token`, D2070 (a)) is a run this bundle reading has to cover.
+	r.recordCredentialsServiceReady(ctx, lc, outs, repo, cfg.Git.Provider, cfg.Agent.Auth, infra.WorkflowAccounts(cfg, lc, repo), policyBudgetMode(in.Policy))
 	if spec, err = infra.Repo(in); err != nil {
 		return initErr(err)
 	}

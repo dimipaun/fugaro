@@ -279,11 +279,14 @@ type IntakeService struct {
 //     installation root's outputs where a repository root's spec is built,
 //     the local config's own record of them where a launch decides.
 //
-//   - ready: the bundle holds at least one MODEL credential, which is the
-//     condition that makes the switch safe: the mount it removes is exactly
-//     the credential the service must then hand back, and a `cascade` run
-//     has no credential of its own to fall back to (D143). It is read from
-//     localcfg.Repo.CredentialsServiceReady, the per-repository record
+//   - ready: the bundle holds what THIS repository's runs need the service to
+//     hand back — a model credential for the cascade, and, for an `api-key` or
+//     `oauth` repository, the credential its auth calls for under EVERY account
+//     those runs may go out on, beside the git credential its provider needs
+//     (internal/cli's credentialsBundleServes judges it). That is the condition
+//     that makes the switch safe: the mount it removes is exactly the credential
+//     the service must then hand back, and a `cascade` run has no credential of
+//     its own to fall back to (D143). It is read from the per-repository record
 //     `fugaro update` writes from the bundle AND the auth its plan was built
 //     with — a record of an apply, so it carries the auth that apply was made
 //     for, and an owner who applies a root before committing the cascade

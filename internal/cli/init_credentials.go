@@ -254,12 +254,19 @@ func (r *initRun) credentialsBundleReady(ctx context.Context, lc *localcfg.Confi
 //     serves under config.AnthropicSecret: a bundle holding only an account's
 //     token would serve an `api-key` repository nothing, and its job would
 //     still mount the key it was told to stop using.
-//   - `oauth` goes out on one Claude account — the one its workflows name
-//     (agent.oauth_token, config.DefaultClaudeAccount when they name none) and
-//     in the bundle that account IS its credential's name. The name is
-//     resolved through this machine's aliases first: the bundle is keyed by
-//     the account a name stands for, and a file that names an alias would
-//     otherwise be held off the switch for an account the bundle does hold.
+//   - `oauth` goes out on EVERY account its runs may be launched on, which is
+//     infra.WorkflowAccounts' answer for this repository — the accounts its
+//     allow-list admits, which is exactly the list the record this same run
+//     writes names (repoAuthRecord). All of them and not the one its
+//     fugaro.yaml happens to name: a launch may name another allow-listed
+//     account with `--token` (D2070 (a), the account being per workflow and
+//     per run), and the service refuses a run that declares an account the
+//     bundle holds no credential under — with no fallback to the token the
+//     job still mounts (D143), so a run that went out on its own mount before
+//     this release would halt instead. In the bundle an account IS its
+//     credential's name, resolved through this machine's aliases first: the
+//     bundle is keyed by the account a name stands for, and a name that is an
+//     alias would otherwise be held off for an account the bundle does hold.
 //
 // The git credential is the second half, and it is why the URL is not inert
 // (F29): a job handed the service's address opens its git provider KEYLESS
@@ -272,10 +279,12 @@ func (r *initRun) credentialsBundleReady(ctx context.Context, lc *localcfg.Confi
 // away.
 //
 // auth is read from the repository's own document and never from the record,
-// exactly as the switch reads it (CredentialsServiceServes). An auth the
-// switch does not serve answers false, and so does `vertex`: no release hands
-// those a model credential.
-func (r *initRun) credentialsBundleServes(ctx context.Context, lc *localcfg.Config, auth, account, provider string) (ready, record bool) {
+// exactly as the switch reads it (CredentialsServiceServes), and accounts is
+// infra.WorkflowAccounts' answer for this repository — the accounts its jobs
+// exist for and its record names, so a launch on any of them is a run this
+// switch has to be able to serve. An auth the switch does not serve answers
+// false, and so does `vertex`: no release hands those a model credential.
+func (r *initRun) credentialsBundleServes(ctx context.Context, lc *localcfg.Config, auth string, accounts []string, provider string) (ready, record bool) {
 	names, record := r.readCredentialsBundle(ctx, lc)
 	if !record {
 		return false, false
@@ -286,13 +295,21 @@ func (r *initRun) credentialsBundleServes(ctx context.Context, lc *localcfg.Conf
 	case config.AuthAPIKey:
 		ready = names[config.AnthropicSecret]
 	case config.AuthOAuth:
-		if account == "" {
-			account = config.DefaultClaudeAccount
+		// Every account and not any one of them: the record this run writes
+		// names them all, so the service would accept a run on the ones the
+		// bundle cannot serve — and hand it nothing where it holds its own
+		// mounted token (D143). An empty set answers no, which is the one
+		// answer a repository whose jobs name no account deserves.
+		ready = len(accounts) > 0
+		for _, account := range accounts {
+			if resolved, _ := lc.ResolveAccount(account); resolved != "" {
+				account = resolved
+			}
+			if !names[account] {
+				ready = false
+				break
+			}
 		}
-		if resolved, _ := lc.ResolveAccount(account); resolved != "" {
-			account = resolved
-		}
-		ready = names[account]
 	}
 	if ready && provider == gitprov.KindGitHub {
 		ready = r.credsAppKey
@@ -428,11 +445,14 @@ func (e *initEngine) makeOnboardingRepoEntry() {
 // document the spec below is built from and not this working tree's
 // (deploymentConfig, repoEngine): the record has to be the answer the plan was
 // made with, and a record judged on a working tree the runs never see is the
-// same disagreement one edit away. account is the same document's
-// agent.oauth_token (empty for a repository that names none, which is the
-// default account) and mode is the node's own budget mode as B1.8b reads it:
-// the bundle reading of an `api-key` or `oauth` repository is the credential
-// its auth calls for, and the switch itself turns on the mode (D2071).
+// same disagreement one edit away. accounts is infra.WorkflowAccounts' answer
+// for this repository — the accounts its jobs go out on, which is the same
+// list the record this run goes on to write names (repoAuthRecord), so the
+// bundle has to hold every one of them and not the one the document happens to
+// name: a launch may declare any of them (`--token`, D2070 (a)). mode is the
+// node's own budget mode as B1.8b reads it: the bundle reading of an `api-key`
+// or `oauth` repository is the credential its auth calls for, and the switch
+// itself turns on the mode (D2071).
 //
 // Nothing is written where the bundle was not read (credentialsBundleServes's
 // second answer): in a coding agent's session or in a run's own process, whose
@@ -463,7 +483,7 @@ func (e *initEngine) makeOnboardingRepoEntry() {
 // PRESENCE is read for that — the bundle's container is derived from the
 // project and the installation's name (openBundleStore) — so a URL the first
 // apply could not know yet is not a reason to answer false.
-func (r *initRun) recordCredentialsServiceReady(ctx context.Context, lc *localcfg.Config, outs infra.InstallationOutputs, repo, provider, auth, account, mode string) {
+func (r *initRun) recordCredentialsServiceReady(ctx context.Context, lc *localcfg.Config, outs infra.InstallationOutputs, repo, provider, auth string, accounts []string, mode string) {
 	if lc == nil {
 		return
 	}
@@ -505,7 +525,7 @@ func (r *initRun) recordCredentialsServiceReady(ctx context.Context, lc *localcf
 		// no App key serves a GitHub repository nothing it can push with, and
 		// one that holds only an account's token serves an `api-key`
 		// repository nothing it was told to stop mounting.
-		ready, record = r.credentialsBundleServes(ctx, credentialsServiceProbe(lc, outs), auth, account, provider)
+		ready, record = r.credentialsBundleServes(ctx, credentialsServiceProbe(lc, outs), auth, accounts, provider)
 	}
 	if !record {
 		// Nowhere the bundle was not read — a coding agent's session, a run's
