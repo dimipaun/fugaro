@@ -17,7 +17,7 @@ One document per project, in the project's Firebase Realtime Database, under `or
 
 - `schema_version` and `rev` — the version of the shape, and the revision a patch is built against.
 - `goal` — the standing aim the loop measures its work against. Only a person sets it.
-- `work_items` — the things to do, each with a title, the repository, the recipe, the rigor tier, the brief, its dependencies, its `phase`, and the bookkeeping of its attempts (run id, approval, attempts, intents).
+- `work_items` — the things to do, each with a title, the repository, the recipe, the rigor tier, the brief, its `spec`, its dependencies, its `phase`, and the bookkeeping of its attempts (run id, approval, attempts, intents). An item's `spec` is the plan folder under `docs/` the daemon labels its pull requests from, and an item that carries none gets no `spec:` label.
 - `decisions` — the questions in the air, each with the class it waits on and, once closed, the answer and who gave it.
 - `facts` — what the loop learned, as key and value, each with the class that wrote it.
 - `archived` — what finished, with how it ended. Aging history out is the loop's, not a reader's: the retention rule keeps the document bounded, so a reader sees the work and the recent past rather than the whole story.
@@ -28,7 +28,7 @@ One patch is `{"base_rev": N, "ops": [...]}`, at most 64 ops, and the ops apply 
 
 | Op | Payload | Who may send it |
 |---|---|---|
-| `work_item_upsert` | `work_item`: `id` and any of `title`, `repo`, `recipe`, `rigor_tier`, `brief`, `depends_on`, `note`. A new item carries a title, a repository, a recipe, a rigor tier and a brief. | a person, a session, the daemon |
+| `work_item_upsert` | `work_item`: `id` and any of `title`, `repo`, `recipe`, `rigor_tier`, `brief`, `spec`, `depends_on`, `note`. A new item carries a title, a repository, a recipe, a rigor tier and a brief. `spec` is a plan folder name — letters, digits and dashes, starting with a letter or a digit, at most 44 characters, lower-cased on the way in — and an upsert that omits it leaves the item's alone. | a person, a session, the daemon |
 | `work_item_approve` | `approve`: `id`, `spec_digest` | a person only |
 | `work_item_archive` | `archive`: `id`, `outcome` | a person, a session, the daemon |
 | `decision_add` | `decision`: `id`, `question`, `waiting_on` (`person`, `session` or `daemon`) | a person, a session, the daemon — the breaker's own question belongs to the daemon |

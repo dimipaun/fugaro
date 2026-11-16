@@ -1,6 +1,6 @@
 # Review levels, A/B for every slot, job max, crash reports, console graph and gauges
 
-**Status as of 2026-11-10: in progress, about 24/40 merged; see [docs/status.md](../status.md) for the current table.** The owner answered D720–D737 on
+**Ruling 2026-11-16: the orchestrator (`fugaro:orchestrator`) replaces `/jobmax`; J1.2, J1.3 and T1.1–T1.3 are closed as superseded (no `jobmax.auto_launch` is built), T3.1 and V1.3 wait on a re-plan against the orchestrator and the config-ownership registry, V1.2 is unchanged (see [implementation-plan.md](implementation-plan.md)).** **Status as of 2026-11-10: in progress, about 24/40 merged; see [docs/status.md](../status.md) for the current table.** The owner answered D720–D737 on
 2026-10-30, every one as recommended except **D730** (fully automatic `/jobmax` launches, not the
 recommendation; ruled the same day with guardrails and a per-project opt-in, off by default). The answers approve no task. The open items O7, O9, O10 and O11 were ruled the same day (reconciliation §4). Still open: the crash-report processor's name (**O4**; the console tasks stay draft until then) and counsel's review of Terms §7.3 and the EU opt-out question (**O1**, **O2**).
 

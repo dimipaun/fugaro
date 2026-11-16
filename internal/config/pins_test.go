@@ -353,6 +353,209 @@ func TestCheckAllowedQuotesModelNames(t *testing.T) {
 	}
 }
 
+// craftFixture is the access half's documents, as an installation that writes
+// them holds them: one Claude account, one provider entry, and a pool over the
+// two. Neither entry admits acme/app, which is the repository every case below
+// judges; the cases that need an admitting half say so by name.
+func craftFixture() CraftAccess {
+	return CraftAccess{
+		Repo:        "acme/app",
+		Credentials: []Credential{{Name: "bmb", Type: CredentialTypeClaudeOAuth}, {Name: "acme", Type: CredentialTypeOpenRouter}},
+		Pools:       []Pool{{Name: "shared", Members: []string{"bmb", "acme"}}},
+		Accounts:    map[string]ClaudeAccount{"bmb": {AllowDataTo: []string{"other/repo"}}},
+		Providers:   map[string]ModelProvider{"acme": {Kind: ModelProviderKind, BaseURL: "https://acme.example/api", Auth: "bearer", Secret: "acme-api-key", Models: []string{"acme/*"}, AllowDataTo: []string{"other/repo"}}},
+	}
+}
+
+// TestCraftModelOutsideTheAllowListRefused (D1665, MC15): a craft's model is
+// bounded by budget.allowed_models exactly as a role pin is, at the key of the
+// document that wrote it, and the same `allowed` predicate answers both — so a
+// craft that names a route ID is admitted where the switch routes it and
+// nowhere else, as a pin is.
+//
+// Red step: this fails on the tree before MC15, which reports no problem at
+// all — a craft model nothing on the list covers reaches the gateway.
+func TestCraftModelOutsideTheAllowListRefused(t *testing.T) {
+	a := pinnedAgent()
+	list := []string{"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"}
+	e := policy.Merge(policy.Layer{AllowedModels: list})
+	off := []CraftModel{{Craft: CraftCoder, Model: "claude-fable-5-1"}}
+	ps := CheckAllowed(a, e, list, nil, nil, off...)
+	if paths(ps) != "agent.crafts.coder.model" {
+		t.Fatalf("problems: %v", ps)
+	}
+	if m := ps[0].Message; !strings.Contains(m, "claude-fable-5-1") || !strings.Contains(m, "not an allowed model") || !strings.Contains(m, "claude-haiku-4-5") {
+		t.Errorf("message %q", m)
+	}
+	// A craft on the list passes, and the three pins are untouched by the
+	// parameter: one problem, for the craft.
+	if ps := CheckAllowed(a, e, list, nil, nil, []CraftModel{{Craft: CraftReview, Model: "claude-haiku-4-5"}}...); len(ps) != 0 {
+		t.Fatalf("a craft on the list: %v", ps)
+	}
+	// The path is the key in the document that wrote it (craft.Layer.CraftKey),
+	// which is the project layer's for a craft it set.
+	layer := []CraftModel{{Craft: CraftSeniorReview, Model: "claude-fable-5-1", Path: "defaults.agent.crafts.senior-review.model"}}
+	if got := paths(CheckAllowed(a, e, list, nil, nil, layer...)); got != "defaults.agent.crafts.senior-review.model" {
+		t.Fatalf("problems reported at %q, want the project layer's key", got)
+	}
+	// The allow-list's own admission is the one the pins use: a craft whose
+	// model the switch routes is admitted by the canonical ID on the list,
+	// where a pin naming the route ID is, and refused where the switch routes
+	// nothing — at the craft's key, beside the same craft's own list refusal.
+	routed := []CraftModel{{Craft: CraftCoder, Model: "anthropic/claude-sonnet-5.5"}}
+	if ps := CheckAllowed(a, e, list, routedSwitch(), routedRoutes(), routed...); len(ps) != 0 {
+		t.Fatalf("a routed craft model under the list that names it: %v", ps)
+	}
+	ps = CheckAllowed(a, e, list, routedSwitch(), nil, routed...)
+	if !strings.Contains(paths(ps), "agent.crafts.coder.model") {
+		t.Fatalf("a routed craft model with no route claiming it: %v", ps)
+	}
+}
+
+// TestCraftModelWithNoRouteOrNoPriceRefused (D1665, MC15): the two checks a
+// craft's model passes that the role pins pass — a route carries it, and a
+// price row covers it. The route half is judged whether or not the run has an
+// allow-list, because the run's own bootstrap halts on a craft model no route
+// resolves (internal/runner/routing.go's applyRouting) and the point of the
+// panel is to say so before the task is written.
+func TestCraftModelWithNoRouteOrNoPriceRefused(t *testing.T) {
+	a := pinnedAgent()
+	noList := policy.Merge(policy.Layer{})
+	// A provider model no provider entry claims: the pin rule's own refusal.
+	ps := CheckAllowed(a, noList, nil, nil, nil, CraftModel{Craft: CraftCoder, Model: "qwen/qwen3-coder"})
+	if paths(ps) != "agent.crafts.coder.model" || !strings.Contains(ps[0].Message, "no provider serves it") {
+		t.Fatalf("a craft model no provider carries: %v", ps)
+	}
+	// A Claude ID the switch names and this configuration cannot resolve: the
+	// switch routes nothing rather than sending the call direct (D1b).
+	ps = CheckAllowed(a, noList, nil, routedSwitch(), nil, CraftModel{Craft: CraftReview, Model: "claude-sonnet-5-5"})
+	if paths(ps) != "agent.crafts.review.model" || !strings.Contains(ps[0].Message, "cannot resolve its route") {
+		t.Fatalf("a craft model the switch names with no route: %v", ps)
+	}
+	// The same model under the switch that routes it, and a Claude ID the
+	// switch does not name (which goes direct): neither is a problem.
+	if ps := CheckAllowed(a, noList, nil, routedSwitch(), routedRoutes(), CraftModel{Craft: CraftReview, Model: "claude-sonnet-5-5"}); len(ps) != 0 {
+		t.Fatalf("a routed craft model: %v", ps)
+	}
+	if ps := CheckAllowed(a, noList, nil, routedSwitch(), routedRoutes(), CraftModel{Craft: CraftReview, Model: "claude-opus-5-5"}); len(ps) != 0 {
+		t.Fatalf("a craft model the switch does not name: %v", ps)
+	}
+	// The price half: the table CheckPins already takes covers a craft's model
+	// too, and the alias rule is the pins' own.
+	ps = CheckPins(a, pricing.Embedded(), CraftModel{Craft: CraftReview, Model: "qwen/qwen3-coder"})
+	if paths(ps) != "agent.crafts.review.model" || !strings.Contains(ps[0].Message, "no price") {
+		t.Fatalf("an unpriced craft model: %v", ps)
+	}
+	if ps := CheckPins(a, providerPrices(t), CraftModel{Craft: CraftReview, Model: "deepseek/deepseek-v4-flash"}); len(ps) != 0 {
+		t.Fatalf("a priced craft model: %v", ps)
+	}
+	ps = CheckPins(a, pricing.Embedded(), CraftModel{Craft: CraftCoder, Model: "sonnet"})
+	if paths(ps) != "agent.crafts.coder.model" || !strings.Contains(ps[0].Message, "alias") {
+		t.Fatalf("an alias craft model: %v", ps)
+	}
+}
+
+// TestCraftModelOnAnAccessThatDoesNotAdmitTheRepoRefused (F10, D1627, MC15):
+// a craft's model cannot be served by an access that admits this repository to
+// nothing. A pool is admitted when at least one of its members is — the
+// members that do not admit it are skipped and recorded, and only a pool with
+// no admitting member leaves the stage with nothing — and a credential by its
+// own list.
+func TestCraftModelOnAnAccessThatDoesNotAdmitTheRepoRefused(t *testing.T) {
+	docs := craftFixture()
+	craft := func(access string) []CraftModel {
+		return []CraftModel{{Craft: CraftCoder, Model: "claude-sonnet-5-5", Access: access}}
+	}
+	ps := CheckCraftAccess(craft("shared"), docs)
+	if paths(ps) != "agent.crafts.coder.model" {
+		t.Fatalf("a pool no member of which admits the repository: %v", ps)
+	}
+	for _, want := range []string{"shared", "acme/app", "allow_data_to", "allow_repos", "D1627"} {
+		if !strings.Contains(ps[0].Message, want) {
+			t.Errorf("the pool refusal does not name %q: %s", want, ps[0].Message)
+		}
+	}
+	// A credential of its own that does not admit it: the same verdict, in the
+	// sentence that names the fix that applies to one credential.
+	ps = CheckCraftAccess(craft("bmb"), docs)
+	if paths(ps) != "agent.crafts.coder.model" || !strings.Contains(ps[0].Message, "the credential") {
+		t.Fatalf("a credential that does not admit the repository: %v", ps)
+	}
+	// One admitting member is enough, whichever kind it is (D1627's skip), and
+	// the built-in vertex admits every repository because there is no provider
+	// to be admitted to (D1624).
+	admitting := craftFixture()
+	admitting.Accounts["bmb"] = ClaudeAccount{AllowDataTo: []string{"acme/app"}}
+	if ps := CheckCraftAccess(craft("shared"), admitting); len(ps) != 0 {
+		t.Fatalf("a pool with one admitting member: %v", ps)
+	}
+	if ps := CheckCraftAccess(craft(CredentialVertex), docs); len(ps) != 0 {
+		t.Fatalf("the built-in vertex: %v", ps)
+	}
+	// A provider entry that admits the repository, and one the document does
+	// not carry at all: the second is refused, which is the run's own
+	// fail-closed answer for a member whose provider it does not have.
+	admitting.Providers["acme"] = ModelProvider{Kind: ModelProviderKind, BaseURL: "https://acme.example/api", Auth: "bearer", Secret: "acme-api-key", Models: []string{"acme/*"}, AllowDataTo: []string{"acme/app"}}
+	if ps := CheckCraftAccess(craft("acme"), admitting); len(ps) != 0 {
+		t.Fatalf("an admitting provider: %v", ps)
+	}
+	ghost := craftFixture()
+	ghost.Credentials = append(ghost.Credentials, Credential{Name: "ghost", Type: CredentialTypeOpenRouter})
+	if ps := CheckCraftAccess(craft("ghost"), ghost); len(ps) != 1 {
+		t.Fatalf("an openrouter credential with no provider entry: %v", ps)
+	}
+	// A name no document holds is the built-in vertex (D1624), which admits
+	// every repository: that it resolves to nothing at all is the resolver's
+	// own problem, reported at the access key and not here.
+	if ps := CheckCraftAccess(craft("unheld"), docs); len(ps) != 0 {
+		t.Fatalf("a name no document holds: %v", ps)
+	}
+	// The key in the document that wrote the craft is where the refusal lands.
+	layer := []CraftModel{{Craft: CraftReview, Model: "claude-haiku-4-5", Path: "crafts.review.model", Access: "shared"}}
+	if got := paths(CheckCraftAccess(layer, docs)); got != "crafts.review.model" {
+		t.Fatalf("the refusal was reported at %q, want the installation config's key", got)
+	}
+}
+
+// TestUnsetCraftModelsChangeNoVerdict (F17, MC15): a craft that names no model
+// anywhere adds no problem and changes no verdict, on every one of the four
+// checks — so an installation that writes no craft model is judged exactly as
+// it was before this parameter existed. The last case is the control: the same
+// access with a craft that does name a model is refused, so the emptiness
+// above is the F17 rule and not a check that never runs.
+func TestUnsetCraftModelsChangeNoVerdict(t *testing.T) {
+	a := pinnedAgent()
+	list := []string{"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"}
+	e := policy.Merge(policy.Layer{AllowedModels: list})
+	unset := []CraftModel{
+		{Craft: CraftCoder},
+		{Craft: CraftReview, Path: "defaults.agent.crafts.review.model"},
+		{Craft: CraftSeniorReview},
+		{Craft: CraftSecurityReview, Path: "crafts.security-review.model"},
+	}
+	if got, want := paths(CheckAllowed(a, e, list, nil, nil, unset...)), paths(CheckAllowed(a, e, list, nil, nil)); got != want {
+		t.Errorf("an unset craft changed the allow-list verdict: %q, want %q", got, want)
+	}
+	if ps := CheckPins(a, pricing.Embedded(), unset...); len(ps) != 0 {
+		t.Errorf("an unset craft is judged by the price rule: %v", ps)
+	}
+	// An unset craft is not "required with a budget" either: the role slot
+	// below it is what serves its stages, and that slot the pins loop judges.
+	if got, want := paths(CheckPins(a, pricing.Embedded(), unset...)), paths(CheckPins(a, pricing.Embedded())); got != want {
+		t.Errorf("an unset craft changed the price verdict: %q, want %q", got, want)
+	}
+	docs := craftFixture()
+	if ps := CheckCraftAccess(unset, docs); len(ps) != 0 {
+		t.Errorf("an unset craft is refused for its access: %v", ps)
+	}
+	// The control: one of those crafts with a model on the same access is
+	// refused, so the three verdicts above are F17 and not a dead check.
+	named := []CraftModel{{Craft: CraftCoder, Model: "claude-sonnet-5-5", Access: "shared"}}
+	if ps := CheckCraftAccess(named, docs); len(ps) != 1 {
+		t.Errorf("the control: %v", ps)
+	}
+}
+
 func providerAgent(coder string) Agent {
 	return Agent{Models: ModelRoles{Coder: coder, Reviewer: "claude-sonnet-5-5", Background: coder}}
 }

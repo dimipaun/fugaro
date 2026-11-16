@@ -3,12 +3,16 @@
 Task **C2** of [implementation-plan.md](implementation-plan.md). The rules it states are **F19** of
 [reconciliation.md](reconciliation.md) and the two answers are **R6**; the decisions behind them are D2301 (one
 build may bake several repositories) and D2311 (no catalog entry carries a credential of its own). The shapes are
-`internal/buildtoken`: `Request`, `Response`, `Token`, `ProxyGrant` and `Client`, and `internal/buildtoken/stub.go`
-returns the shape and does nothing else.
+`internal/buildtoken`: `Request`, `Response`, `Token`, `ProxyGrant` and `Client`; the stub this package shipped
+while the route and its caller were built side by side is deleted, and the caller that stands in its place is the
+credential step's client, `internal/cli/gitcred_build.go`.
 
 **B1** (the credentials service's build route), **B2** (the catalog build bakes several repositories) and **B8**
 (the generated clone step) are written against this document in parallel; **I2** deletes the stub and wires the
-build to the route. A side that finds this contract wrong or incomplete raises a change request
+credential step to the route. What hands that step to a **running** build — the step the template carries and the
+environment `internal/backend/gcp/catalog.go` composes for it — is **B3**'s and **B6**'s, which write that file
+after **B8**, so until they do a submitted bake runs the one-repository mode. A side that finds this contract
+wrong or incomplete raises a change request
 ([docs/contract-first-decoupling](../contract-first-decoupling/spec.md)) rather than working around it; **CR2** is
 the one already anticipated, if B1's review finds the time-to-live cap belongs in the request.
 

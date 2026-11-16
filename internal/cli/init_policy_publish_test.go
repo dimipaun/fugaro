@@ -1188,7 +1188,7 @@ func accountChoiceFixture(t *testing.T) *projectFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, _, _, err := policyNodeForPublish(t.Context(), lc, nil, nil, false, true, false)
+	body, _, _, err := policyNodeForPublish(t.Context(), lc, nil, nil, false, true, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1773,7 +1773,7 @@ func TestPolicyConfigDriftSeesTheDerivedAccounts(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var got []string
-			for _, d := range policyConfigDrift(lc(), tc.node) {
+			for _, d := range policyConfigDrift(lc(), tc.node, nil) {
 				got = append(got, d.Member)
 			}
 			if !slices.Equal(got, tc.want) {
@@ -1878,7 +1878,7 @@ func TestPolicyConfigDriftSeesTheAccountChoiceKeys(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var got []string
-			for _, d := range policyConfigDrift(tc.lc, tc.node) {
+			for _, d := range policyConfigDrift(tc.lc, tc.node, nil) {
 				got = append(got, d.Member)
 			}
 			if !slices.Equal(got, tc.want) {
@@ -1949,7 +1949,7 @@ func TestPolicyConfigDriftRefusesToCompareAnUnpublishableAccount(t *testing.T) {
 		Profiles: map[string]config.JobProfile{"standard": {Provider: "github", ClaudeAccounts: []string{"team-a"}}},
 	}
 	var got []string
-	for _, d := range policyConfigDrift(lc, &projectpolicy.Policy{Budget: projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5}}) {
+	for _, d := range policyConfigDrift(lc, &projectpolicy.Policy{Budget: projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5}}, nil) {
 		got = append(got, d.Member)
 	}
 	if want := []string{"accounts"}; !slices.Equal(got, want) {
@@ -2221,7 +2221,7 @@ func TestPolicyPublishRefusesACatalogContextMember(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, _, _, err := policyNodeForPublish(t.Context(), lc, &projectpolicy.Policy{}, nil, false, false, false)
+	body, _, _, err := policyNodeForPublish(t.Context(), lc, &projectpolicy.Policy{}, nil, false, false, false, nil)
 	if err == nil {
 		t.Fatalf("the publish built the node from a config naming a context: %s", body)
 	}
@@ -2240,7 +2240,7 @@ func TestPolicyPublishRefusesACatalogContextMember(t *testing.T) {
 		t.Fatal(err)
 	}
 	carried := contextCatalogPolicy("ci/")
-	body, _, _, err = policyNodeForPublish(t.Context(), lc, carried, nil, false, false, false)
+	body, _, _, err = policyNodeForPublish(t.Context(), lc, carried, nil, false, false, false, nil)
 	if err == nil {
 		t.Fatalf("the publish kept a node carrying a context member: %s", body)
 	}
@@ -2255,7 +2255,7 @@ func TestPolicyPublishRefusesACatalogContextMember(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := policyNodeForPublish(t.Context(), lc, &projectpolicy.Policy{}, nil, false, false, false); err != nil {
+	if _, _, _, err := policyNodeForPublish(t.Context(), lc, &projectpolicy.Policy{}, nil, false, false, false, nil); err != nil {
 		t.Fatalf("the same catalog with no context member was refused: %v", err)
 	}
 }
@@ -2380,7 +2380,7 @@ func TestPolicyConfigDriftSeesTheImageMapAndTheSwitches(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var got []string
-			for _, d := range policyConfigDrift(tc.file, tc.node) {
+			for _, d := range policyConfigDrift(tc.file, tc.node, nil) {
 				got = append(got, d.Member)
 			}
 			if !slices.Equal(got, tc.want) {
@@ -2774,7 +2774,7 @@ func TestImageTokensInAPolicyIsRefusedForAnOlderImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, _, _, err := policyNodeForPublish(t.Context(), lc, &projectpolicy.Policy{}, nil, false, false, false)
+	body, _, _, err := policyNodeForPublish(t.Context(), lc, &projectpolicy.Policy{}, nil, false, false, false, nil)
 	if err == nil {
 		t.Fatalf("the publish built the node from a config pricing images: %s", body)
 	}
@@ -2793,7 +2793,7 @@ func TestImageTokensInAPolicyIsRefusedForAnOlderImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := policyNodeForPublish(t.Context(), lc, &projectpolicy.Policy{}, nil, false, false, false); err != nil {
+	if _, _, _, err := policyNodeForPublish(t.Context(), lc, &projectpolicy.Policy{}, nil, false, false, false, nil); err != nil {
 		t.Fatalf("the publish of a current installation was refused: %v", err)
 	}
 }
