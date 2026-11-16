@@ -19,6 +19,28 @@ func sameWriter(a, b Writer) bool {
 		a.Reason == b.Reason && slices.Equal(a.Argv, b.Argv)
 }
 
+// registerWriters registers rows and puts the table back as it found it when
+// the test ends. The table is package state and `-count` re-runs a test in the
+// same process, where a second registration of a pattern is refused: restoring
+// it is what lets every repeat register from the same slice instead of
+// inheriting the order an earlier repeat left behind.
+func registerWriters(t *testing.T, rows []writerRow) {
+	t.Helper()
+	writerMu.Lock()
+	saved := slices.Clone(writerRows)
+	writerMu.Unlock()
+	t.Cleanup(func() {
+		writerMu.Lock()
+		writerRows = saved
+		writerMu.Unlock()
+	})
+	for _, r := range rows {
+		if err := RegisterWriter(r.pattern, r.writer); err != nil {
+			t.Fatalf("%s: %v", r.pattern, err)
+		}
+	}
+}
+
 // TestWriterOfMatchesWildcardRows pins the lookup's wildcard rule to the one
 // the registry's own rows are addressed by (settingsPatternMatch,
 // internal/cli/settings_set.go): the same number of dot-separated segments, a
@@ -33,18 +55,27 @@ func TestWriterOfMatchesWildcardRows(t *testing.T) {
 	wild := Writer{Command: "fugaro writertest wild", Argv: []string{"writertest", "wild", KeyPlaceholder}, Store: StoreLocal}
 	specific := Writer{Command: "fugaro writertest specific", Argv: []string{"writertest", "specific", KeyPlaceholder}, Store: StoreNode}
 	broad := Writer{Command: "fugaro writertest broad", Argv: []string{"writertest", "broad", KeyPlaceholder}, Store: StoreProject}
+	tieFirst := Writer{Command: "fugaro writertest tiefirst", Argv: []string{"writertest", "tiefirst", KeyPlaceholder}, Store: StoreNode}
+	tieLast := Writer{Command: "fugaro writertest tielast", Argv: []string{"writertest", "tielast", KeyPlaceholder}, Store: StoreBudget}
 
-	for pattern, w := range map[string]Writer{
-		"wtesta.exact.leaf":  exact,
-		"wtesta.*.leaf":      broad,
-		"wtestb.*.leaf":      wild,
-		"wtestc.wide.*.leaf": specific,
-		"wtestc.*.*.leaf":    broad,
-	} {
-		if err := RegisterWriter(pattern, w); err != nil {
-			t.Fatalf("%s: %v", pattern, err)
-		}
-	}
+	// The registrations are a slice and not a map: a lookup answers from the
+	// table's own order (comparePatterns sorts it), and an order a Go map
+	// happened to iterate in is an answer nothing pins. Each pattern is
+	// registered AFTER the one that must beat it, so a lookup that stopped
+	// sorting — or sorted by something other than the rule under test — fails
+	// here rather than passing by luck: the broad pattern of each specificity
+	// pair comes first, and the equal-specificity pair below is registered with
+	// the LATER text first, because with those two neither is the more specific
+	// and the tie-break is the pattern's own text.
+	registerWriters(t, []writerRow{
+		{pattern: "wtesta.*.leaf", writer: broad},
+		{pattern: "wtesta.exact.leaf", writer: exact},
+		{pattern: "wtestb.*.leaf", writer: wild},
+		{pattern: "wtestc.*.*.leaf", writer: broad},
+		{pattern: "wtestc.wide.*.leaf", writer: specific},
+		{pattern: "wteste.x.*", writer: tieLast},
+		{pattern: "wteste.*.leaf", writer: tieFirst},
+	})
 
 	for _, tc := range []struct {
 		key   string
@@ -79,6 +110,14 @@ func TestWriterOfMatchesWildcardRows(t *testing.T) {
 		{
 			key: "wtestc.other.name.leaf", want: broad, found: true,
 			why: "the pattern with two varying segments is the only one that matches, so it is the writer however specific it is not",
+		},
+		{
+			key: "wteste.x.leaf", want: tieFirst, found: true,
+			why: "two patterns of equal specificity match this key — a `*` in one segment and the key's own word in the other — so the pattern's own text decides, and `wteste.*.leaf` sorts before `wteste.x.*`",
+		},
+		{
+			key: "wteste.x.leaf.deeper",
+			why: "the key has one segment more than either pattern, and a * never spans a dot",
 		},
 		{
 			key: "wtestb.name.leaf.deeper",

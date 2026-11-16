@@ -263,7 +263,12 @@ function installPathNote(id) {
  * reader that stopped at the two website plans would refuse the menu on the homepage for
  * linking a route a plan does write. That plan writes its line as a bullet (`- **Files:**`),
  * which the reader below accepts beside the two at the start of a line: the marker is what
- * makes a line a Files line, and a plan that lists its tasks bullets them.
+ * makes a line a Files line, and a plan that lists its tasks bullets them. **And a fourth
+ * plan joins them**: the feature matrix's
+ * (`docs/feature-matrix/implementation-plan.md`) writes `/features/` in Task T4a and the
+ * menu's entry for it in T4b, so the route is in this list before the entry that links it
+ * exists — a nav entry checked against a list its own plan had not reached yet would be a
+ * refusal about the order two tasks were merged in rather than about a 404.
  *
  * **The name has to be the whole last segment of a backticked path**, and that is a fix to
  * this reader rather than a tightening of it: the loose form it was written with — any run of
@@ -280,6 +285,7 @@ function plannedRoutes() {
     'docs/website/implementation-plan.md',
     'docs/website/zoom-diagrams/implementation-plan.md',
     'docs/compatibility-matrix/implementation-plan.md',
+    'docs/feature-matrix/implementation-plan.md',
   ]
   for (const plan of plans) {
     for (const line of repoFile(plan).split('\n')) {
