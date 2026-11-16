@@ -1187,10 +1187,16 @@ func TestResultSchemaAcceptsTriage(t *testing.T) {
 				{Index: 0, Key: "9f2a1c", Verdict: runstore.VerdictDefer, Reason: "doc drift, not the main path", Group: "docs", Source: runstore.TriageSourceAgent},
 				{Index: 1, Key: "3b7e05", Verdict: runstore.VerdictBlock, Reason: "the build breaks on the new import", Source: runstore.TriageSourceAgent},
 			}},
-		// A round whose call failed keeps its round, its mode and its level
-		// and carries no entries at all (D1846): the block is the run's log,
-		// so the failure is a fact in it rather than a round that vanished.
-		{Round: 2, Mode: rigor.Pro, Level: policy.LevelL3, Failed: true, Entries: []runstore.TriageEntry{}},
+		// A round whose call failed keeps its round, its mode and its level,
+		// carries no entries at all and says why the call bought no verdict
+		// (D1846): the block is the run's log, so the failure is a fact in it
+		// rather than a round that vanished, and the cause is the one line a
+		// reader tells an expired credential from an answer that was refused
+		// by. It is marshalled from the record and not written out here, so a
+		// `cause` the schema does not carry is an unknown key this test
+		// rejects.
+		{Round: 2, Mode: rigor.Pro, Level: policy.LevelL3, Failed: true, Cause: "Invalid API key · Fix external API key",
+			Entries: []runstore.TriageEntry{}},
 	})
 	rec.Deferred = runstore.NewDeferred([]runstore.DeferredFinding{
 		{Key: "9f2a1c", Summary: "a long comment restates the function", Reason: "doc drift, not the main path", Group: "docs", Source: runstore.TriageSourceAgent},
@@ -1214,6 +1220,8 @@ func TestResultSchemaAcceptsTriage(t *testing.T) {
 		{"a round with no entries list", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":0}]}`},
 		{"a round with no total", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","entries":[]}]}`},
 		{"a failed that is not a boolean", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","failed":"yes","total":0,"entries":[]}]}`},
+		{"an empty cause", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","failed":true,"cause":"","total":0,"entries":[]}]}`},
+		{"a cause longer than the bound", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","failed":true,"cause":"` + strings.Repeat("x", runstore.MaxTriageLine+1) + `","total":0,"entries":[]}]}`},
 		{"a member the round does not carry", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","verdict":"defer","total":0,"entries":[]}]}`},
 		{"more rounds than the bound", `,"triage":{"rounds":[` + strings.TrimSuffix(strings.Repeat(`{"round":1,"mode":"pro","level":"l2","total":0,"entries":[]},`, runstore.MaxTriageRounds+1), ",") + `]}`},
 		{"an entry with no key", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":1,"entries":[{"index":0,"verdict":"defer","reason":"why","source":"agent"}]}]}`},

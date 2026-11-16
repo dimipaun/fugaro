@@ -604,6 +604,32 @@ func TestNewTriageBoundsWhatItStores(t *testing.T) {
 	}
 }
 
+// TestNewTriageKeepsACauseOnlyForAFailedRound: the cause is why a round failed
+// and the field is the round's own, so the two cannot disagree in the record —
+// a round the constructor did not store as failed carries no cause whatever the
+// caller passed with it, and a cause longer than MaxTriageLine is clipped like
+// the reason and the group are. It is clipped here as well as where it is read
+// off the call (internal/runner's triageCause) because this constructor is what
+// writes the record: a caller that handed it a paragraph would otherwise put
+// one in the run's own document, which every listing reads.
+func TestNewTriageKeepsACauseOnlyForAFailedRound(t *testing.T) {
+	answered := NewTriage([]TriageRound{{Round: 1, Mode: rigor.Pro, Level: policy.LevelL2, Cause: "a cause on a round that answered"}})
+	if answered == nil || answered.Rounds[0].Cause != "" {
+		t.Errorf("NewTriage = %+v, want the cause dropped for a round that is not failed", answered)
+	}
+	long := strings.Repeat("x", MaxTriageLine+50)
+	failed := NewTriage([]TriageRound{{Round: 1, Mode: rigor.Pro, Level: policy.LevelL2, Failed: true, Cause: long}})
+	if failed == nil {
+		t.Fatal("NewTriage dropped a round whose call failed")
+	}
+	if got := len([]rune(failed.Rounds[0].Cause)); got != MaxTriageLine {
+		t.Errorf("cause length = %d, want %d", got, MaxTriageLine)
+	}
+	if !failed.Rounds[0].Failed {
+		t.Errorf("the round = %+v, want the failure it was given kept", failed.Rounds[0])
+	}
+}
+
 // TestTriageSourcesCoverTheStagesVocabulary: the record's four sources hold
 // internal/triage's three, spelled the same way, and add the cap's. The two
 // vocabularies are separate declarations — the record restates the stage's
