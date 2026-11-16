@@ -318,7 +318,7 @@ account=none
 if [ -n "$config" ]; then
   token=$(sed -n 's/^header = "Authorization: Bearer \(.*\)"$/\1/p' "$config" | head -n 1)
   printf '%s\n' "$token" >>"$FAKE_LOG_DIR/curl.tokens"
-  chmod_check=$(stat -c '%a' "$config" 2>/dev/null || echo '?')
+  chmod_check=$(stat -c '%a' "$config" 2>/dev/null || stat -f '%Lp' "$config" 2>/dev/null || echo '?')
   printf '%s %s\n' "$chmod_check" "$config" >>"$FAKE_LOG_DIR/curl.configs"
   case "$token" in
   "$FAKE_SENTINEL_PREFIX"*) account=${token#"$FAKE_SENTINEL_PREFIX"} ;;
