@@ -737,13 +737,23 @@ func recordForRepo(t *testing.T, r *initRig, auth string) *localcfg.Config {
 // what pins the record's first condition: the installation the SPEC is built
 // for is the one these outputs describe.
 func recordForRepoOutputs(t *testing.T, r *initRig, auth string, outs infra.InstallationOutputs) *localcfg.Config {
+	return recordForRepoDoc(t, r, checkoutYAML("bitbucket", auth, "aurora", ""), "", outs)
+}
+
+// recordForRepoDoc is recordForRepoOutputs over the checkout's own document,
+// which is where the door reads the switch's two remaining conditions from: the
+// account an `oauth` repository's runs go out on (agent.oauth_token) and the
+// node's budget mode, passed here as the door passes what repoPolicyRead gave
+// it. The rigs of these tests hold no published node, so every other caller
+// passes "" — the mode a repository is held off under.
+func recordForRepoDoc(t *testing.T, r *initRig, yaml, mode string, outs infra.InstallationOutputs) *localcfg.Config {
 	t.Helper()
 	e := rigEngine(t, r, &initOptions{yes: true})
-	cfg, problems := config.Parse([]byte(checkoutYAML("bitbucket", auth, "aurora", "")))
+	cfg, problems := config.Parse([]byte(yaml))
 	if cfg == nil {
 		t.Fatalf("the fixture's fugaro.yaml does not parse: %v", problems)
 	}
-	e.r.recordCredentialsServiceReady(t.Context(), e.lc, outs, "acme/sandbox", cfg.Git.Provider, cfg.Agent.Auth)
+	e.r.recordCredentialsServiceReady(t.Context(), e.lc, outs, "acme/sandbox", cfg.Git.Provider, cfg.Agent.Auth, cfg.Agent.OAuthToken, mode)
 	spec := infra.RepoSpec{Name: "acme/sandbox", Provider: "bitbucket", BaseBranch: "master"}
 	if err := e.r.writeRepoConfig(t.Context(), e.lc, spec, cfg, r.cfg, e.old); err != nil {
 		t.Fatalf("the repository stage's config write failed: %v", err)
@@ -1119,7 +1129,7 @@ func TestAFailedReadIsNotAnsweredByTheRunsSecondDoor(t *testing.T) {
 		t.Fatalf("the run's first door did not leave the records this test judges the second door against (sandbox %v, other %v): the backfill reads the bundle once and writes nothing from a read that failed",
 			e.lc.Repos["acme/sandbox"].CredentialsServiceOn(), e.lc.Repos["acme/other"].CredentialsServiceOn())
 	}
-	e.r.recordCredentialsServiceReady(t.Context(), e.lc, switchOutputs(), "acme/sandbox", "bitbucket", config.AuthCascade)
+	e.r.recordCredentialsServiceReady(t.Context(), e.lc, switchOutputs(), "acme/sandbox", "bitbucket", config.AuthCascade, "", "")
 	spec := infra.RepoSpec{Name: "acme/sandbox", Provider: "bitbucket", BaseBranch: "master"}
 	cfg, problems := config.Parse([]byte(checkoutYAML("bitbucket", config.AuthCascade, "aurora", "")))
 	if cfg == nil {

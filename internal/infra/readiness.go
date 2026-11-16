@@ -113,16 +113,27 @@ func dropMount(ws WorkflowSpec, logical string) {
 	}
 }
 
-// dropModelMounts removes from a job's mounts every variable that carries a
-// model credential (config.IsModelSecretEnv: the Claude OAuth token, the
-// Anthropic key, a provider's key). It is what an installation that has opted
-// in to the credentials service (D146, D147) gets: the service holds those
-// credentials and reads them as its own account, modules/workflow/sa.tf drops
-// the job account's accessor on each, and a job that still MOUNTED one would
-// not deploy at all — Cloud Run checks the mounting account's read access on
-// every secret it is given, so the mount and the grant have to go together
-// (C1.20; the module's local.job_secret_names is the other half of the same
-// rule).
+// dropModelMounts removes from a job's mounts the variables that carry the
+// model credentials the credentials service serves to it — served is
+// ModelSecretsServed's answer for this repository, and it is the same value
+// the tfvars carry (RepoSpec.ModelSecretsServed), so the mount this drops and
+// the accessor modules/workflow/sa.tf takes away are one answer:
+//
+//   - all: every variable config.IsModelSecretEnv names — the Claude OAuth
+//     token, the Anthropic key, each provider key.
+//   - anthropic: the two named model credentials (config.ModelSecretEnvs) and
+//     never a provider key: a provider's key is FORWARDED rather than
+//     attached by the route that spends it, so the service hands back no
+//     provider credential, and a mount taken away for one would leave the
+//     run's own route with nothing to spend (R6, D1634).
+//   - none: nothing, which is a call this function never gets from its one
+//     caller — the empty case is answered before the call, in workflow().
+//
+// A job whose account keeps its accessor while a mount goes, or the reverse,
+// is a job Cloud Run refuses to create: it checks the mounting account's read
+// access on every secret it is given, so the mount and the grant have to go
+// together (C1.20; the module's local.job_secret_names is the other half of the
+// same rule).
 //
 // It is deliberately not dropMount: that one also deletes the name from
 // SecretIDs, and here the CONTAINER has to stay. The job's model secret is
@@ -132,9 +143,13 @@ func dropMount(ws WorkflowSpec, logical string) {
 // its destruction (which prevent_destroy refuses, failing the whole plan) and
 // make Retirements report a live container as retired. Only the mount goes;
 // the container is left exactly where it is.
-func dropModelMounts(ws *WorkflowSpec) {
+func dropModelMounts(ws *WorkflowSpec, served string) {
+	held := config.IsModelSecretEnv
+	if served == config.ModelSecretServedAnthropic {
+		held = func(env string) bool { return slices.Contains(config.ModelSecretEnvs, env) }
+	}
 	for env := range ws.SecretEnv {
-		if config.IsModelSecretEnv(env) {
+		if held(env) {
 			delete(ws.SecretEnv, env)
 		}
 	}

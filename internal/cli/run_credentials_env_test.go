@@ -238,17 +238,18 @@ func TestCredentialsServiceLaunchEnv(t *testing.T) {
 		"no block":        {},
 		"a block, no url": {CredentialsService: &localcfg.CredentialsService{}},
 	} {
-		if got := credentialsServiceLaunchEnv(lc, "", "acme/app", config.AuthCascade, false); got != nil {
+		if got := credentialsServiceLaunchEnv(lc, "", "acme/app", config.AuthCascade, "", false); got != nil {
 			t.Errorf("%s: credentialsServiceLaunchEnv = %v, want nil", name, got)
 		}
 	}
-	got := credentialsServiceLaunchEnv(optedIn, "", "acme/app", config.AuthCascade, false)
+	got := credentialsServiceLaunchEnv(optedIn, "", "acme/app", config.AuthCascade, "", false)
 	if len(got) != 1 || got[0] != envCredentialsServiceURL+"="+launchCredsURL {
 		t.Errorf("credentialsServiceLaunchEnv = %v, want [%s=%s]", got, envCredentialsServiceURL, launchCredsURL)
 	}
 	for name, tc := range map[string]struct {
 		lc       *localcfg.Config
 		auth     string
+		mode     string
 		deployed bool
 	}{
 		"no record yet": {
@@ -262,7 +263,7 @@ func TestCredentialsServiceLaunchEnv(t *testing.T) {
 		},
 		"no service to hand": {lc: &localcfg.Config{}, deployed: true},
 	} {
-		if got := credentialsServiceLaunchEnv(tc.lc, "", "acme/app", tc.auth, tc.deployed); got != nil {
+		if got := credentialsServiceLaunchEnv(tc.lc, "", "acme/app", tc.auth, tc.mode, tc.deployed); got != nil {
 			t.Errorf("%s: credentialsServiceLaunchEnv = %v, want nil: the switch is the plan's own predicate (infra.CredentialsServiceServes), and a job told where the service is opens its git provider keyless (internal/gitprov/providers/providers.go) for a credential the service cannot hand back", name, got)
 		}
 	}
@@ -287,13 +288,13 @@ func TestCredentialsServiceLaunchEnv(t *testing.T) {
 			lc: optedIn,
 		},
 	} {
-		got := credentialsServiceLaunchEnv(tc.lc, "", "acme/app", "", tc.deployed)
+		got := credentialsServiceLaunchEnv(tc.lc, "", "acme/app", "", "", tc.deployed)
 		if len(got) != 1 || got[0] != envCredentialsServiceURL+"="+launchCredsURL {
 			t.Errorf("%s: credentialsServiceLaunchEnv = %v, want [%s=%s]", name, got, envCredentialsServiceURL, launchCredsURL)
 		}
 	}
 	for _, lc := range []*localcfg.Config{optedIn, nil} {
-		if got := credentialsServiceLaunchEnv(lc, "fugaro-standard-github", "acme/app", config.AuthCascade, false); got != nil {
+		if got := credentialsServiceLaunchEnv(lc, "fugaro-standard-github", "acme/app", config.AuthCascade, "", false); got != nil {
 			t.Errorf("a launch on the shared project job put %v in the execution's plain Env, want none: the credentials service refuses a shared project job's account whole (internal/credsvc/auth.go's verifyJob), and telling that job where the service is would open its git provider keyless (internal/gitprov/providers/providers.go) for a mint the service refuses — every GitHub run of such a job would break", got)
 		}
 	}

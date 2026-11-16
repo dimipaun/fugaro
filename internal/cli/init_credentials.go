@@ -11,6 +11,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/mirror"
@@ -81,11 +82,18 @@ const credentialsKind = "credentials"
 // the gates that name what to upgrade to.
 const credsServiceSince = "0.10.0"
 
-// credentialsBundleReady is whether the installation's credentials service
-// holds at least one MODEL credential: the readiness half of the switch
-// (infra.CredentialsServiceServes, docs/credentials-service/default-on.md
-// §1.5), read once for the run and recorded per repository by
-// writeRepoConfig.
+// readCredentialsBundle is the installation's credentials service's bundle as
+// this run read it: the NAME of every model credential it holds, or record
+// false where there was no reading at all. It is the readiness half of the
+// switch (infra.CredentialsServiceServes, docs/credentials-service/default-on.md
+// §1.5), read once for the run and judged per repository by
+// recordCredentialsServiceReady.
+//
+// It answers names rather than one yes/no because the question is each
+// repository's own (credentialsBundleServes, credentialsBundleReady): the
+// bundle holds every model credential of the installation, and which of them a
+// repository's runs may be served is its agent.auth's to say. One reading
+// answers all of them, and that is what the memo is for.
 //
 // It is the service's OWN loader and never a second reading of the secret: the
 // same store `fugaro creds set` writes through (openBundleStore), the same
@@ -139,35 +147,35 @@ const credsServiceSince = "0.10.0"
 // model credential" out of a memo the first door wrote as "there was no
 // reading": a false no read produced, written into the entry and published for
 // the installation, which is the one write this function exists to refuse.
-func (r *initRun) credentialsBundleReady(ctx context.Context, lc *localcfg.Config) (ready, record bool) {
+func (r *initRun) readCredentialsBundle(ctx context.Context, lc *localcfg.Config) (names map[string]bool, record bool) {
 	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
 		r.warn(fmt.Sprintf("the credentials service's bundle was not read (%s is set, so this is a coding agent's session) and the switch's record is left as this machine last wrote it: the bundle holds every model credential the service issues, and a person's own %s reads it", m, selfCommand()))
-		return false, false
+		return nil, false
 	}
 	if m := managedFlagRunMarker(os.Getenv); m != "" {
 		r.warn(fmt.Sprintf("the credentials service's bundle was not read (%s is set, so this process is a Fugaro run's) and the switch's record is left as this machine last wrote it: the bundle holds every model credential the service issues, and a person's own %s reads it", m, selfCommand()))
-		return false, false
+		return nil, false
 	}
 	if r.credsRead {
-		return r.credsReady, r.credsRecord
+		return r.credsNames, r.credsRecord
 	}
 	r.credsRead = true
 	// answer is the three states that ARE readings, and it memoizes the switch
 	// with them: the reading is spent, so every later door of this run reads it
 	// here rather than deciding again from a memo that answered nothing.
-	answer := func(holds bool) (bool, bool) {
-		r.credsReady, r.credsRecord = holds, true
-		return holds, true
+	answer := func(names map[string]bool) (map[string]bool, bool) {
+		r.credsNames, r.credsRecord = names, true
+		return names, true
 	}
 	if lc == nil || lc.CredentialsService == nil {
 		// No service, nothing to serve a run with — and no read to spend:
 		// the block's absence is the answer (the installation could not
 		// deploy the service, or its owner removed it).
-		return answer(false)
+		return answer(nil)
 	}
-	unreadable := func(err error) (bool, bool) {
+	unreadable := func(err error) (map[string]bool, bool) {
 		r.warn(fmt.Sprintf("the credentials service's bundle was not read (%s) and the switch's record is left as the last reading wrote it: nothing was read, so there is no answer to write, and a false published here would switch the service off for every machine of this installation", oneLineCLI(err.Error())))
-		return false, false
+		return nil, false
 	}
 	store, err := openBundleStore(ctx, lc)
 	if err != nil {
@@ -181,13 +189,13 @@ func (r *initRun) credentialsBundleReady(ctx context.Context, lc *localcfg.Confi
 		// An empty container is a state and not a failure: the service was
 		// deployed and nothing has been stored in it yet, which is exactly
 		// the installation a fresh deploy leaves behind.
-		return answer(false)
+		return answer(nil)
 	}
 	if err != nil {
 		return unreadable(err)
 	}
 	if meta.state == "DISABLED" {
-		return answer(false)
+		return answer(nil)
 	}
 	doc, err := store.access(ctx, meta.number)
 	if err != nil {
@@ -197,7 +205,99 @@ func (r *initRun) credentialsBundleReady(ctx context.Context, lc *localcfg.Confi
 	if err != nil {
 		return unreadable(err)
 	}
-	return answer(len(b.Credentials()) > 0)
+	// Two facts and not one, because two questions are asked of them
+	// (credentialsBundleServes): the model credentials, by the name each is
+	// served under — the account's for tier A, config.AnthropicSecret for the
+	// paid key — and the GitHub App's private key, which a repository on
+	// GitHub needs the service to mint with and which is no model credential
+	// at all.
+	creds := b.Credentials()
+	names = make(map[string]bool, len(creds))
+	for _, c := range creds {
+		names[c.Name] = true
+	}
+	_, r.credsAppKey = b.AppKey()
+	return answer(names)
+}
+
+// credentialsBundleReady is whether the bundle holds at least one MODEL
+// credential: the readiness half of the switch as the installation door's
+// backfill reads it (backfillCredentialsServiceReady), for the entries whose
+// auth that door cannot know.
+//
+// It is the question every reader asked before B2.3 and it is still the right
+// one there: the backfill repairs records for roots an EARLIER release applied
+// with the switch on, and those applies are all cascade ones — the switch
+// admitted nothing else — so "holds a model credential" is exactly what their
+// grants were made behind. The repository door, which has the repository's own
+// fugaro.yaml, asks the sharper question (credentialsBundleServes).
+func (r *initRun) credentialsBundleReady(ctx context.Context, lc *localcfg.Config) (ready, record bool) {
+	names, record := r.readCredentialsBundle(ctx, lc)
+	if !record {
+		return false, false
+	}
+	return len(names) > 0, true
+}
+
+// credentialsBundleServes is whether the bundle holds what a run of THIS
+// repository needs the service to hand it: the credential its agent.auth calls
+// for, and the git credential its provider needs to open at all. It is the
+// readiness half of the switch (infra.CredentialsServiceServes) for the
+// repository door, which knows both.
+//
+// The auth's own credential, and not "some model credential" (B2.3):
+//
+//   - the cascade may settle on any model credential the bundle holds, so one
+//     of them is enough — the run has nothing of its own to fall back on
+//     (D143).
+//   - `api-key` goes out on the project's Anthropic key, which the bundle
+//     serves under config.AnthropicSecret: a bundle holding only an account's
+//     token would serve an `api-key` repository nothing, and its job would
+//     still mount the key it was told to stop using.
+//   - `oauth` goes out on one Claude account — the one its workflows name
+//     (agent.oauth_token, config.DefaultClaudeAccount when they name none) and
+//     in the bundle that account IS its credential's name. The name is
+//     resolved through this machine's aliases first: the bundle is keyed by
+//     the account a name stands for, and a file that names an alias would
+//     otherwise be held off the switch for an account the bundle does hold.
+//
+// The git credential is the second half, and it is why the URL is not inert
+// (F29): a job handed the service's address opens its git provider KEYLESS
+// (internal/gitprov/providers/providers.go), so a GitHub repository whose
+// bundle holds no App key would lose the mint it needs to push and comment at
+// all — its job keeps the App key's mount, and reading the key itself is what
+// the address stops it doing. A Bitbucket repository needs nothing here: its
+// job reads its own token from its own mount, whatever the address says, and
+// the proxied path (B1.8, the node's own fact) is the one that takes the token
+// away.
+//
+// auth is read from the repository's own document and never from the record,
+// exactly as the switch reads it (CredentialsServiceServes). An auth the
+// switch does not serve answers false, and so does `vertex`: no release hands
+// those a model credential.
+func (r *initRun) credentialsBundleServes(ctx context.Context, lc *localcfg.Config, auth, account, provider string) (ready, record bool) {
+	names, record := r.readCredentialsBundle(ctx, lc)
+	if !record {
+		return false, false
+	}
+	switch auth {
+	case config.AuthCascade:
+		ready = len(names) > 0
+	case config.AuthAPIKey:
+		ready = names[config.AnthropicSecret]
+	case config.AuthOAuth:
+		if account == "" {
+			account = config.DefaultClaudeAccount
+		}
+		if resolved, _ := lc.ResolveAccount(account); resolved != "" {
+			account = resolved
+		}
+		ready = names[account]
+	}
+	if ready && provider == gitprov.KindGitHub {
+		ready = r.credsAppKey
+	}
+	return ready, true
 }
 
 // makeOnboardingRepoEntry makes the entry of the repository this run is about
@@ -328,9 +428,13 @@ func (e *initEngine) makeOnboardingRepoEntry() {
 // document the spec below is built from and not this working tree's
 // (deploymentConfig, repoEngine): the record has to be the answer the plan was
 // made with, and a record judged on a working tree the runs never see is the
-// same disagreement one edit away.
+// same disagreement one edit away. account is the same document's
+// agent.oauth_token (empty for a repository that names none, which is the
+// default account) and mode is the node's own budget mode as B1.8b reads it:
+// the bundle reading of an `api-key` or `oauth` repository is the credential
+// its auth calls for, and the switch itself turns on the mode (D2071).
 //
-// Nothing is written where the bundle was not read (credentialsBundleReady's
+// Nothing is written where the bundle was not read (credentialsBundleServes's
 // second answer): in a coding agent's session or in a run's own process, whose
 // bundle is a secret they may not open, and on a read that FAILED, whose error
 // is an answer about this machine and not about the bundle — the record travels
@@ -359,7 +463,7 @@ func (e *initEngine) makeOnboardingRepoEntry() {
 // PRESENCE is read for that — the bundle's container is derived from the
 // project and the installation's name (openBundleStore) — so a URL the first
 // apply could not know yet is not a reason to answer false.
-func (r *initRun) recordCredentialsServiceReady(ctx context.Context, lc *localcfg.Config, outs infra.InstallationOutputs, repo, provider, auth string) {
+func (r *initRun) recordCredentialsServiceReady(ctx context.Context, lc *localcfg.Config, outs infra.InstallationOutputs, repo, provider, auth, account, mode string) {
 	if lc == nil {
 		return
 	}
@@ -394,7 +498,14 @@ func (r *initRun) recordCredentialsServiceReady(ctx context.Context, lc *localcf
 		// without one would be a cloud call about a resource that does not
 		// exist — and its answer could not move the record anyway, the plan
 		// this run applies being held off by the same outputs.
-		ready, record = r.credentialsBundleReady(ctx, credentialsServiceProbe(lc, outs))
+		//
+		// What it is read FOR is this repository's own run: the credential its
+		// auth calls for and the git credential its provider needs
+		// (credentialsBundleServes). A bundle that holds the whole cascade and
+		// no App key serves a GitHub repository nothing it can push with, and
+		// one that holds only an account's token serves an `api-key`
+		// repository nothing it was told to stop mounting.
+		ready, record = r.credentialsBundleServes(ctx, credentialsServiceProbe(lc, outs), auth, account, provider)
 	}
 	if !record {
 		// Nowhere the bundle was not read — a coding agent's session, a run's
@@ -405,25 +516,26 @@ func (r *initRun) recordCredentialsServiceReady(ctx context.Context, lc *localcf
 		return
 	}
 	// The one predicate, not a second copy of its conjunction: installed is
-	// read here exactly as the spec reads it, and ready is this run's reading
-	// of the bundle — which the probe answers false for, without a read, when
-	// no block is known — so the record cannot come out differently from the
-	// plan it is the record of.
-	entry.CredentialsServiceReady = localcfg.RecordSwitch(infra.CredentialsServiceServes(installed, ready, auth))
+	// read here exactly as the spec reads it, ready is this run's reading of
+	// the bundle — which the probe answers false for, without a read, when no
+	// block is known — and mode is the node's own, the one the spec reads out
+	// of Inputs.Policy for the `api-key` and `oauth` arm (D2071). So the record
+	// cannot come out differently from the plan it is the record of.
+	entry.CredentialsServiceReady = localcfg.RecordSwitch(infra.CredentialsServiceServes(installed, ready, auth, mode))
 	if lc.Repos == nil {
 		lc.Repos = map[string]localcfg.Repo{}
 	}
 	lc.Repos[key] = entry
 }
 
-// credentialsServiceProbe is the config credentialsBundleReady is read over:
+// credentialsServiceProbe is the config the bundle reading is made over:
 // lc itself, with the installation's block taken from its own outputs when the
 // local config does not carry one yet. That is the run which deploys the
 // service — the config is written by a step after the one that reads the
 // bundle — and the outputs are the only place the service's existence is known
 // there. A nil block leaves the probe as it is: with no service anywhere the
-// answer is false without a read, which is what credentialsBundleReady says of
-// a config that has no block.
+// answer is false without a read, which is what the reading says of a config
+// that has no block.
 func credentialsServiceProbe(lc *localcfg.Config, outs infra.InstallationOutputs) *localcfg.Config {
 	if lc == nil || lc.CredentialsService != nil {
 		return lc
