@@ -1128,9 +1128,10 @@ the field. **It needs no second command**, which is the owner's own constraint: 
   because the failure it catches is a Terraform expression and a Go predicate disagreeing);
   `TestTheSwitchTurnsOnForACascadeRepositoryWithAReadyBundle` (a `cascade` repository of an installation
   whose bundle holds a model credential plans the drop, the invoker grant and the URL — all three
-  flips, from the one predicate); `TestTheSwitchStaysOffForANonCascadeRepositoryWithAReadyBundle` (the
-  same installation, `agent.auth: oauth`, **every one of the three flips still off** — the condition the
-  review's finding is about); `TestEditingTheAuthModeTakesEffectWithoutAnotherUpdate` (a record that
+  flips, from the one predicate); `TestTheSwitchStaysOffForANonCascadeRepositoryWhereTheBudgetIsOff` (the
+  same installation, `agent.auth: oauth` or `api-key` and a project whose published budget mode is `off`
+  or unpublished, **every one of the three flips still off** — the condition the review's finding is
+  about, and since B2.3 the one that holds those two auths off rather than the auth itself); `TestEditingTheAuthModeTakesEffectWithoutAnotherUpdate` (a record that
   says on, a `fugaro.yaml` that now says `oauth`, and the spec holds the switch off — the live read of
   condition 3); `TestTheRecordIsWrittenFalseWhenTheBundleIsEmptied` (the fail-safe direction);
   `TestTheRecordFollowsTheAuthTheRunsRead` (the record is the switch: one ready bundle, two auths, and

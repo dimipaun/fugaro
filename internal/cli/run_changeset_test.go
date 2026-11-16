@@ -1,0 +1,226 @@
+package cli
+
+import (
+	"context"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/task"
+)
+
+// changeSetRepos are the two repositories a change set launch names, in the
+// order --repo names them: the first is the one whose run ID is the set's own.
+var changeSetRepos = []string{"acme/app", "acme/other"}
+
+// changeSetRunIDs are the run IDs the fixture's generator hands the two
+// members, in launch order: fixed here because a change set's ID is its first
+// member's run, so a test that reads the set back has to know which run that
+// is.
+var changeSetRunIDs = []string{"20261116-140000-a1b2", "20261116-140001-c3d4"}
+
+// changeSetFixture is the launch fixture with a second repository enrolled: a
+// change set launches one run per repository, so a fixture with one repository
+// cannot tell a set from an ordinary launch.
+func changeSetFixture(t *testing.T) *launchBudgetFixture {
+	t.Helper()
+	f := newLaunchBudget(t, "enforce")
+	enrollLaunchRepo(t, "acme/other")
+	slug := mustSlug("github", "acme/other")
+	f.run.AddJob(gcp.JobName(slug, "web"), "2", "4Gi")
+	// The second repository's image is a current release's, as the first
+	// repository's is (newLaunchBudget): the launch gates a member's task on the
+	// job image (changeSetSince), and an image older than this release would
+	// refuse the set rather than judge what this test is about.
+	writeBuildRecord(t, f.cloudFixture, slug, "web", releasePolicy)
+	return f
+}
+
+// enrollLaunchRepo writes a repository into the fixture's own repos block. It
+// inserts rather than appends: the block is not the file's last key -- the
+// budget's is, which newLaunchBudget appends after it -- so an appended entry
+// would land inside the budget block and the config would not decode.
+func enrollLaunchRepo(t *testing.T, repo string) {
+	t.Helper()
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const key = "repos:\n"
+	at := strings.Index(string(data), key)
+	if at < 0 {
+		t.Fatal("the fixture's config has no repos block to enroll a repository in")
+	}
+	at += len(key)
+	entry := "  " + repo + ": { provider: github, workflows: [web] }\n"
+	if err := os.WriteFile(path, []byte(string(data)[:at]+entry+string(data)[at:]), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// fixedRunIDs makes the fixture's launch mint changeSetRunIDs in order, and
+// fails the test on a third call: a change set mints exactly one run ID per
+// member, and a launcher that asked for another would be launching something
+// this test does not know about.
+func fixedRunIDs(t *testing.T) {
+	t.Helper()
+	orig := runIDGenerator
+	calls := 0
+	runIDGenerator = func() (string, error) {
+		if calls >= len(changeSetRunIDs) {
+			return orig()
+		}
+		id := changeSetRunIDs[calls]
+		calls++
+		return id, nil
+	}
+	t.Cleanup(func() { runIDGenerator = orig })
+}
+
+// launchChangeSet runs the change-set launch of changeSetFixture in this
+// process, below the refusal every build makes at the flag itself
+// (changeSetRefusal): the launch shape is what this file judges, and it is what
+// the release that lifts the refusal reaches unchanged.
+func launchChangeSet(t *testing.T, f *launchBudgetFixture, repos ...string) error {
+	t.Helper()
+	env, err := openCloud(context.Background(), cloudOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(env.Close)
+	cmd := newRunCmd()
+	return runChangeSet(context.Background(), cmd, env, &runOptions{repos: repos}, "Add a feature", 0)
+}
+
+// TestChangeSetMembersFixedAtLaunch: membership is fixed by the one launch that
+// created the members (D642), so the whole member list is written into every
+// member's task at launch and no later launch can join a set: the block is what
+// a settle step reads to know which runs are the set, and a member that could
+// add one would be a member widening a set nobody agreed to. The set's own ID
+// is its first member's run, so a set is named by a run that exists.
+func TestChangeSetMembersFixedAtLaunch(t *testing.T) {
+	f := changeSetFixture(t)
+	setMaxParallel(t, 5)
+	fixedRunIDs(t)
+	var calls []string
+	f.run.OnRun = func(c gcpfake.RunCall) { calls = append(calls, c.Job) }
+
+	if err := launchChangeSet(t, f, changeSetRepos...); err != nil {
+		t.Fatalf("change set launch: %v", err)
+	}
+	if len(calls) != len(changeSetRepos) {
+		t.Fatalf("%d executions were started, want %d (one run per repository)", len(calls), len(changeSetRepos))
+	}
+	specs := make([]*task.Spec, len(changeSetRepos))
+	for i, repo := range changeSetRepos {
+		specs[i] = readSpecOf(t, f.cloudFixture, mustSlug("github", repo), changeSetRunIDs[i])
+		if specs[i].Repo != repo {
+			t.Fatalf("member %d's task is of %s, want %s", i, specs[i].Repo, repo)
+		}
+		if specs[i].RunID != changeSetRunIDs[i] {
+			t.Fatalf("member %d's task is run %s, want %s", i, specs[i].RunID, changeSetRunIDs[i])
+		}
+	}
+	want := &task.ChangeSet{ID: changeSetRunIDs[0], Members: []task.ChangeSetMember{
+		{Repo: changeSetRepos[0], RunID: changeSetRunIDs[0]},
+		{Repo: changeSetRepos[1], RunID: changeSetRunIDs[1]},
+	}}
+	for i, spec := range specs {
+		cs := spec.ChangeSet
+		if cs == nil {
+			t.Fatalf("member %d's task carries no change set: a member that names none is a run no settle step can find", i)
+		}
+		if cs.ID != want.ID || len(cs.Members) != len(want.Members) {
+			t.Fatalf("member %d's change set = %+v, want %+v", i, cs, want)
+		}
+		for j, m := range want.Members {
+			if cs.Members[j] != m {
+				t.Fatalf("member %d's change set names %+v at %d, want %+v", i, cs.Members[j], j, m)
+			}
+		}
+		if m, ok := cs.Member(spec.Repo); !ok || m.RunID != spec.RunID {
+			t.Fatalf("member %d's own repository is not in its set's member list as its own run: %+v", i, cs.Members)
+		}
+	}
+}
+
+// TestChangeSetRefusesOneRepositoryTwice: a change set is one run per
+// repository, and two --repo values that reduce to one repository are one
+// member named twice — which would write a task whose own member list repeats
+// it (task.Validate refuses that), after the members before it had already
+// launched. The refusal is the launcher's, before anything is launched.
+func TestChangeSetRefusesOneRepositoryTwice(t *testing.T) {
+	f := changeSetFixture(t)
+	setMaxParallel(t, 5)
+	fixedRunIDs(t)
+	err := launchChangeSet(t, f, "acme/app", "Acme/App.git")
+	if err == nil {
+		t.Fatal("a change set naming one repository twice was launched")
+	}
+	for _, want := range []string{"acme/app", "twice"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions were started, want none: the duplicate is judged before the first member launches", n)
+	}
+	if storedTaskFor(t, f.cloudFixture, appSlug) {
+		t.Error("a refused change set stored a task")
+	}
+}
+
+// TestChangeSetGateTheJobImage: a member's task carries the set (change_set),
+// a field an older runner refuses outright (task.Parse decodes with
+// DisallowUnknownFields), so the launch is judged against the job image it
+// would start on rather than started on a job that dies at bootstrap
+// (changeSetSince). The gate is the field's and never the flag's: a launch that
+// is in no set carries none, and is judged by nothing here.
+func TestChangeSetGateTheJobImage(t *testing.T) {
+	f := changeSetFixture(t)
+	setMaxParallel(t, 5)
+	fixedRunIDs(t)
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, changeSetSince, -1))
+	err := launchChangeSet(t, f, changeSetRepos...)
+	if err == nil {
+		t.Fatal("a change set was launched onto a job image older than the release that reads the field")
+	}
+	for _, want := range []string{"change set", changeSetSince, "acme/app"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions were started, want none: the gate is judged before the task is written", n)
+	}
+	if storedTaskFor(t, f.cloudFixture, appSlug) {
+		t.Error("a gated change set stored a task")
+	}
+}
+
+// TestChangeSetRefusedUntilSettleExists: nothing in this release flips a change
+// set's pull requests ready, and the draft hold is the whole point of creating
+// one (D614) — so a build that HAS the code still refuses the flag, in its own
+// words, rather than creating a set whose pull requests nothing can lift
+// (D616). The two answers are judged here together because only one of them is
+// reachable through the command in any one build: a test binary of this package
+// never loads ee/register (only cmd/fugaro does), so Edition() is core whatever
+// tag the binary carries.
+func TestChangeSetRefusedUntilSettleExists(t *testing.T) {
+	core := changeSetRefusal(Edition())
+	if !strings.Contains(core, "Subscription Edition") {
+		t.Fatalf("the refusal an untagged build prints = %q, want D522's paid-feature sentence", core)
+	}
+	tagged := changeSetRefusal(EditionEE)
+	if tagged == core {
+		t.Fatal("a tagged build prints the untagged build's refusal")
+	}
+	for _, want := range []string{"--change-set", "settle", "draft"} {
+		if !strings.Contains(tagged, want) {
+			t.Errorf("the refusal a tagged build prints does not say %q: %q", want, tagged)
+		}
+	}
+}

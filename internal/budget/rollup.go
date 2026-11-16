@@ -68,10 +68,17 @@ type RollupInput struct {
 	Runs     []RunFact
 }
 
-// ModelTotals is one model's usage in a DayRecord.
+// ModelTotals is one model's usage in a DayRecord. Notional, Rep, TLo and THi
+// are ModelUse's four spend leaves (SA5.6) and NotionalSet says whether the
+// day had the notional leaf at all, so a reader can tell a gateway-only
+// model's recorded 0 from a day written before the leaf existed (RS8).
 type ModelTotals struct {
 	Micros          Micros
 	In, Out, CR, CW int64
+	Notional        Micros
+	Rep             Micros
+	TLo, THi        Micros
+	NotionalSet     bool
 }
 
 // PersonTotals is one requester's spend in a DayRecord.
@@ -257,6 +264,12 @@ func Rollup(in RollupInput) []DayRecord {
 			t.Micros = satAdd(t.Micros, u.Micros)
 			t.In, t.Out = satAddN(t.In, u.In), satAddN(t.Out, u.Out)
 			t.CR, t.CW = satAddN(t.CR, u.CR), satAddN(t.CW, u.CW)
+			t.Notional, t.Rep = satAdd(t.Notional, u.Notional), satAdd(t.Rep, u.Rep)
+			t.TLo, t.THi = satAdd(t.TLo, u.TLo), satAdd(t.THi, u.THi)
+			// A leaf any node of the row carried is a leaf the row has: the
+			// reader's fallback is for a day that predates the leaves, not for
+			// one node of an escaped duplicate.
+			t.NotionalSet = t.NotionalSet || u.NotionalSet
 			r.ByModel[key] = t
 		}
 	}
@@ -417,11 +430,18 @@ func contains(s []string, v string) bool {
 
 // ToFields encodes the record as Firestore document fields: string, int64,
 // float64, bool, time.Time and map[string]any only. Map keys are already
-// Key-escaped. A zero ArchivedAt or WrittenAt and a nil cap are omitted.
+// Key-escaped. A zero ArchivedAt or WrittenAt and a nil cap are omitted, and
+// so are a model's four spend leaves on a day that did not record them: the
+// notional leaf's presence is what a reader reads as "recorded" (RS8).
 func (r DayRecord) ToFields() map[string]any {
 	models := map[string]any{}
 	for k, m := range r.ByModel {
-		models[k] = map[string]any{"micros": int64(m.Micros), "in": m.In, "out": m.Out, "cr": m.CR, "cw": m.CW}
+		mf := map[string]any{"micros": int64(m.Micros), "in": m.In, "out": m.Out, "cr": m.CR, "cw": m.CW}
+		if m.NotionalSet {
+			mf["notional"], mf["rep"] = int64(m.Notional), int64(m.Rep)
+			mf["tlo"], mf["thi"] = int64(m.TLo), int64(m.THi)
+		}
+		models[k] = mf
 	}
 	people := map[string]any{}
 	for k, p := range r.ByPerson {
@@ -557,7 +577,14 @@ func FromFields(f map[string]any) (DayRecord, error) {
 	}
 	for k := range fr.sub(f, "byModel") {
 		m := fr.sub(fr.sub(f, "byModel"), k)
-		r.ByModel[k] = ModelTotals{Micros: Micros(fr.int(m, "micros")), In: fr.int(m, "in"), Out: fr.int(m, "out"), CR: fr.int(m, "cr"), CW: fr.int(m, "cw")}
+		mt := ModelTotals{Micros: Micros(fr.int(m, "micros")), In: fr.int(m, "in"), Out: fr.int(m, "out"), CR: fr.int(m, "cr"), CW: fr.int(m, "cw"),
+			Notional: Micros(fr.int(m, "notional")), Rep: Micros(fr.int(m, "rep")), TLo: Micros(fr.int(m, "tlo")), THi: Micros(fr.int(m, "thi"))}
+		// The notional leaf's presence is the signal, so a row written before
+		// the leaf existed must not come back as a recorded zero (RS8).
+		if v, ok := m["notional"]; ok && v != nil {
+			mt.NotionalSet = true
+		}
+		r.ByModel[k] = mt
 	}
 	for k := range fr.sub(f, "byPerson") {
 		p := fr.sub(fr.sub(f, "byPerson"), k)

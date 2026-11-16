@@ -176,7 +176,7 @@ func (m *ServiceMergeMint) MintMerge(ctx context.Context, repo string, pr int, h
 	// daemon's own ID token, which is a bearer credential, and over plain http
 	// it would travel in cleartext. https, or http on a loopback address, is the
 	// rule the run's own mint holds its service URL to.
-	if err := checkMergeServiceURL(m.URL); err != nil {
+	if err := checkServiceURL(m.URL, ErrMergeMint); err != nil {
 		return MergeToken{}, err
 	}
 	id, err := m.IDToken(ctx)
@@ -197,7 +197,7 @@ func (m *ServiceMergeMint) MintMerge(ctx context.Context, repo string, pr int, h
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+id)
-	resp, err := mergeMintClient(m.HTTP).Do(req)
+	resp, err := serviceCallClient(m.HTTP).Do(req)
 	if err != nil {
 		return MergeToken{}, fmt.Errorf("%w: the credentials service could not be reached", ErrMergeMint)
 	}
@@ -241,17 +241,23 @@ func (m *ServiceMergeMint) MintMerge(ctx context.Context, repo string, pr int, h
 // a time and a repository name.
 const maxMergeAnswerBytes = 8 << 10
 
-// checkMergeServiceURL refuses a service URL this code will not send the
-// daemon's identity to: https, or http on a loopback address. It is
-// internal/gitprov/github's checkServiceURL for the run's mint, respelled here
-// because that package does not export it and this one cannot import the
-// service's (credsvc imports this package).
+// checkServiceURL refuses a service URL this code will not send the daemon's
+// identity to: https, or http on a loopback address, with no user, path, query
+// or fragment. It is internal/gitprov/github's checkServiceURL for the run's
+// mint, respelled here because that package does not export it and this one
+// cannot import the service's (credsvc imports this package).
+//
+// refusal is the caller's own sentinel, because the two clients of this package
+// that carry the daemon's identity to the service — the merge mint and the label
+// client — take different routes and a caller reading errors.Is must not be told
+// the wrong one refused. The rule itself is one function: a credential rule
+// respelled per caller is a rule that drifts.
 //
 // The refusal carries the URL's shape and never the URL.
-func checkMergeServiceURL(raw string) error {
+func checkServiceURL(raw string, refusal error) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
-		return fmt.Errorf("%w: the credentials service URL must be a scheme and a host only", ErrMergeMint)
+		return fmt.Errorf("%w: the credentials service URL must be a scheme and a host only", refusal)
 	}
 	switch u.Scheme {
 	case "https":
@@ -261,15 +267,16 @@ func checkMergeServiceURL(raw string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("%w: the credentials service URL must be https, or http on a loopback address", ErrMergeMint)
+	return fmt.Errorf("%w: the credentials service URL must be https, or http on a loopback address", refusal)
 }
 
-// mergeMintClient is the client a mint is made with: it never follows a
-// redirect, never keeps a cookie jar, and — when this code builds the transport
-// rather than being handed one — never waits on an answer forever. A redirect
-// is the one thing a credential-bearing call must not follow, because the
-// destination would be chosen by the answer rather than by the configuration.
-func mergeMintClient(c *http.Client) *http.Client {
+// serviceCallClient is the client a call is made with, both of this package's
+// (the merge mint's and the label client's): it never follows a redirect, never
+// keeps a cookie jar, and — when this code builds the transport rather than
+// being handed one — never waits on an answer forever. A redirect is the one
+// thing a credential-bearing call must not follow, because the destination would
+// be chosen by the answer rather than by the configuration.
+func serviceCallClient(c *http.Client) *http.Client {
 	if c == nil {
 		c = &http.Client{}
 	}

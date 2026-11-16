@@ -407,10 +407,13 @@ esac
 // its build step is not in this request's build step at all — nor is the volume
 // that holds it, which no step after the clone mounts.
 //
-// Only the credential is taken out here. The repository's workflow secrets are
-// its own, declared in its fugaro.yaml, and an entry that may mount no secret at
-// all is B9's answer to D2311 and not this step's: until it lands, an entry that
-// installed from a private registry keeps the secret it declared.
+// Only the credential is taken out here, and no other secret is left to take
+// out: the repository's workflow secrets, declared in its fugaro.yaml, reached a
+// catalog build until B9 answered D2311, and the request now states an empty
+// _SECRET_ENVS — the build step's loop over it mounts nothing, and the catalog
+// refuses an entry whose own bytes ask for a secret when it reads them. A
+// dependency behind a private registry is served by an `--image` entry instead,
+// which the catalog runs and never builds.
 func catalogEntryBuildStep(build *cloudbuild.BuildStep) error {
 	for i, arg := range build.Args {
 		if !strings.Contains(arg, catalogTemplateCredentialArg) {

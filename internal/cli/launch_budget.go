@@ -292,6 +292,50 @@ func (p *policyReadOnce) read(ctx context.Context, lc *localcfg.Config) (*projec
 	return p.p, p.found, p.err
 }
 
+// policyMode is the budget mode the published node carries, "" where no node
+// was published, none could be read, or there is no local config to read one
+// over. It is the switch's fourth condition, read by the launch and handed to
+// credentialsServiceLaunchEnv (D2071): the credentials service is reached
+// through the gateway, and the gateway exists only in `observe` and `enforce`,
+// so a repository on a project whose mode is `off` is handed no address and
+// keeps the mounts it has.
+//
+// It is the NODE's mode and not the local config's (lc.BudgetMode), and the
+// two differ exactly where it matters: a run's mode is the node's (the
+// runner's policyCeiling writes the node's mode over the deploy-time one), so
+// a project that lowered it after the last apply would be handed an address
+// its own runner refuses to use. A read that failed or found nothing answers
+// "" deliberately rather than falling back to the local mode: every published
+// node carries a mode (buildProjectPolicy refuses one without it), so a
+// missing node is a project that has not published, and its runs are the ones
+// the launch already refuses or runs on the environment ceiling. The
+// fail-closed direction costs a switched `api-key` repository its address and
+// nothing else — its mounts are all still there (config.ServiceServedAuths is
+// empty until B2.7) — and `fugaro doctor` is where an operator reads why.
+func (e *cloudEnv) policyMode(ctx context.Context) string {
+	if e.lc == nil {
+		return ""
+	}
+	p, found, err := e.policy.read(ctx, e.lc)
+	if err != nil || !found || p == nil {
+		return ""
+	}
+	return policyBudgetMode(p)
+}
+
+// policyBudgetMode is the mode a node carries, "" for the nil policy that
+// stands for a node nobody read — the same reading internal/infra makes of its
+// Inputs.Policy (D2071). It is here rather than beside each caller because the
+// switch's fourth condition is read in two places of the same run: the launch
+// (policyMode) and the repository door's record (recordCredentialsServiceReady,
+// init.go), which must answer as the spec below them does.
+func policyBudgetMode(p *projectpolicy.Policy) string {
+	if p == nil {
+		return ""
+	}
+	return p.Budget.Mode
+}
+
 // exists is read in the CLI's wording, for the callers that only ask whether
 // the project has published a policy (Readiness's D11 gate). A node written in
 // an older version is one of those: it is there, and the policy stage of the
@@ -845,7 +889,7 @@ func (e *cloudEnv) proxiedRepo(ctx context.Context, slug string, spec *task.Spec
 	// io.Discard because the launch reads the same two documents and words the
 	// one warning this read can report (repoServiceAuth).
 	auth, deployed := e.repoServiceAuth(ctx, spec, io.Discard)
-	return len(credentialsServiceLaunchEnv(e.lc, "", spec.Repo, auth, deployed)) > 0
+	return len(credentialsServiceLaunchEnv(e.lc, "", spec.Repo, auth, e.policyMode(ctx), deployed, false)) > 0
 }
 
 // proxiedOnBatchMessage is the Batch arm of G14's launch check, built with the

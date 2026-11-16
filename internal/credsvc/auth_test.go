@@ -17,6 +17,9 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,6 +28,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
@@ -463,6 +467,75 @@ func TestAuthIdentityWithoutBranchClaim(t *testing.T) {
 		if !errors.Is(err, ErrUnverified) {
 			t.Errorf("fpr %s: err = %v, want ErrUnverified", name, err)
 		}
+	}
+}
+
+// TestAuthIdentityCarriesTheContextRepos: the run identity's fcr claim (C5a,
+// D613) is the boundary a context mint is held to, and it is read HERE — in the
+// verification every run call already goes through — rather than by the route
+// that needs it.
+//
+// The reason it is a claim at all is that this service cannot read the run's
+// task (reconciliation F17): the repositories a run may READ are the
+// launcher's answer, and the launcher's only way to hand this service an answer
+// is the identity it signs. So the claim is read like the branch and the pull
+// requests beside it, and it is held to the same rule: a claim that is present
+// but malformed is refused rather than treated as absent, because a run whose
+// launch recorded a context list and whose identity's list this service could
+// not read must not be served as a run with no context at all.
+//
+// What the claim is held to is its SHAPE and not its content: the entries are
+// owner/name in the canonical form the task and the published policy are read
+// in (task.CanonicalRepo's own answer, so the two cannot be read differently),
+// and there are at most token.MaxContextRepos of them, which is the bound the
+// task's own flag enforces. Whether they are repositories the project admits is
+// not this reader's question: that is the policy's answer, re-read on each call
+// (Server.admitContextRepos).
+func TestAuthIdentityCarriesTheContextRepos(t *testing.T) {
+	f := newFixture(t)
+
+	// Absent: an identity minted before the launcher wrote the claim, or one
+	// the launcher minted for a run with no context at all. It is admitted and
+	// carries none, which is the state every run was in before C5a.
+	if id := f.verifyOK(); id.ContextRepos != nil {
+		t.Fatalf("an identity with no fcr carries %v, want none", id.ContextRepos)
+	}
+
+	// Present: the repositories in the order the launcher wrote them, because
+	// the mint's answer is matched to the caller's list and a reader that
+	// reordered would make the two disagree.
+	id := f.verifyOK(func(c map[string]any) { c["fcr"] = []string{"acme/borealis", "kepler/nowhere"} })
+	if want := []string{"acme/borealis", "kepler/nowhere"}; !slices.Equal(id.ContextRepos, want) {
+		t.Fatalf("the identity's context repositories = %v, want %v", id.ContextRepos, want)
+	}
+
+	// The bound is the task's own (token.MaxContextRepos, MaxContextRepos): a
+	// claim naming more is not a list any launcher mints, and serving it would
+	// be serving a reach no `--context` could have asked for.
+	tooMany := make([]string, token.MaxContextRepos+1)
+	for i := range tooMany {
+		tooMany[i] = "acme/repo" + strconv.Itoa(i)
+	}
+	for name, fcr := range map[string]any{
+		"more than the bound":             tooMany,
+		"not an array":                    "acme/borealis",
+		"an entry that is not a string":   []any{"acme/borealis", 7},
+		"an entry that is not owner/name": []string{"borealis"},
+		"an entry with no owner":          []string{"/borealis"},
+		"an entry with no repository":     []string{"acme/"},
+		"an entry that is not canonical":  []string{"Acme/Borealis"},
+	} {
+		_, err := f.verify(f.runToken(func(c map[string]any) { c["fcr"] = fcr }), f.jobToken(), f.job)
+		if !errors.Is(err, ErrUnverified) {
+			t.Errorf("fcr %s: err = %v, want ErrUnverified", name, err)
+		}
+	}
+	// The refusal is this service's own sentence and never a copy of the
+	// entry: a claim is a caller's text, and one refused for being unreadable
+	// must not be echoed into a log or a halt message.
+	_, err := f.verify(f.runToken(func(c map[string]any) { c["fcr"] = []string{"Acme/Borealis"} }), f.jobToken(), f.job)
+	if err == nil || strings.Contains(err.Error(), "Acme/Borealis") {
+		t.Errorf("the refusal is %v, want a sentence that names no part of the entry", err)
 	}
 }
 
@@ -2784,5 +2857,88 @@ func TestServiceAccountRefusedAtIntakeAuth(t *testing.T) {
 	tok := f.jobToken(func(c map[string]any) { c["email"] = testJobSA })
 	if _, err := f.verifyLauncher(tok); !errors.Is(err, ErrUnverifiedJob) {
 		t.Fatalf("the launcher class answered a service account's token with %v, want ErrUnverifiedJob", err)
+	}
+}
+
+// buildIdentityAddress is the address of the build identity the installation
+// module creates in the fixture's project: the account_id its own source fixes,
+// in the shape a service account's email has.
+//
+// The module is read rather than restated here because this package cannot
+// import internal/infra — that package imports this one, so the agreement that
+// matters (the account the module creates IS the account the build class
+// admits) can only be held from this side by reading the deployment's own
+// words. internal/infra's BuildIdentityAccountID and TestProjectHasOneBuildIdentity
+// are the other half, and they read the module's account_id back the same way.
+func buildIdentityAddress(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile("../../deploy/terraform/gcp/modules/installation/build_identity.tf")
+	if err != nil {
+		t.Fatalf("the installation module's build identity file: %v", err)
+	}
+	m := regexp.MustCompile(`(?m)^\s*account_id\s*=\s*"([^"]+)"`).FindStringSubmatch(string(b))
+	if m == nil {
+		t.Fatal("the installation module creates no service account under a literal account_id, so the build identity's address is not a fact of the configuration and no class can be held to it")
+	}
+	return m[1] + "@" + testProject + ".iam.gserviceaccount.com"
+}
+
+// TestBuildIdentityIsInTheServicesBuildClass holds the build class to the
+// deployment that renders it (B5, D2301): the ONE account a project's catalog
+// builds run as — the account the installation module creates, under the ID its
+// own source fixes — is the identity the build route admits, the module hands
+// the service that same account's address as its build class, and the identity
+// is a class of that route and of no other.
+//
+// The rendering is read as well as the account, because the two are one value
+// in two places: credentials.tf writes the build class out of the very resource
+// the account above is, so a module that created a second account, or rendered
+// a list of anything else under that name, would be a build admitted as one
+// account and run as another — the failure this task exists to make impossible.
+// internal/cli's TestBuildAccountsReadFromEnv is the third side of it (that
+// name becomes AuthConfig.BuildAccounts) and internal/infra's
+// TestBuildIdentityIsRenderedIntoTheServicesEnvironment is the fourth (the
+// planned plan carries exactly that address).
+func TestBuildIdentityIsInTheServicesBuildClass(t *testing.T) {
+	address := buildIdentityAddress(t)
+	b, err := os.ReadFile("../../deploy/terraform/gcp/modules/installation/credentials.tf")
+	if err != nil {
+		t.Fatalf("the installation module's credentials service file: %v", err)
+	}
+	m := regexp.MustCompile(`(?s)name\s*=\s*"FUGARO_BUILD_ACCOUNTS"\s*(.*?)\n\s*\}`).FindStringSubmatch(string(b))
+	if m == nil {
+		t.Fatalf("credentials.tf renders no FUGARO_BUILD_ACCOUNTS: the service's build class would then be empty on every installation, and the build route admits nobody whatever the module creates")
+	}
+	if got, want := strings.Join(strings.Fields(m[1]), ""), `value=jsonencode([google_service_account.build_identity[0].email])`; got != want {
+		t.Errorf("the build class is written as %q, want %q: the account the module creates is the account the class admits, and a second spelling of the address is one that can drift from it", got, want)
+	}
+
+	f := newFixtureWith(t, func(cfg *AuthConfig) { cfg.BuildAccounts = []string{address} })
+	buildToken := f.jobToken(func(c map[string]any) { c["email"] = address })
+	got, err := f.auth.VerifyBuildCaller(context.Background(), buildToken)
+	if err != nil {
+		t.Fatalf("the build route refused the deployment's own build identity: %v", err)
+	}
+	if got != address {
+		t.Errorf("the build route answered %q, want the caller's own address %q: the class's answer is the account the build runs as", got, address)
+	}
+
+	// The class is the build route's and of no other route: the same identity,
+	// with a perfectly good caller's token, is no class of the shared parse —
+	// a build identity holds no run identity and is not a job of this
+	// installation, so every other route refusing it is what keeps a catalog
+	// build's reach off them.
+	if _, err := f.verify(f.runToken(), buildToken, f.job); !errors.Is(err, ErrUnverifiedJob) {
+		t.Errorf("the build identity was admitted by the shared parse: %v (it is the build route's one class)", err)
+	}
+	// ... and the class is that ONE account: another project's identity has the
+	// same shape and is refused, which is what makes this a project's identity
+	// rather than any service account that can present a token.
+	other := strings.Replace(address, "@"+testProject+".", "@other-project.", 1)
+	if other == address {
+		t.Fatalf("this test's own address %q is not in the fixture's project %s", address, testProject)
+	}
+	if _, err := f.auth.VerifyBuildCaller(context.Background(), f.jobToken(func(c map[string]any) { c["email"] = other })); !errors.Is(err, ErrUnverifiedJob) {
+		t.Errorf("the build class admitted %s: the class is the project's own identity (%s)", other, address)
 	}
 }

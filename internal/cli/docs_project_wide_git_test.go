@@ -387,6 +387,96 @@ func TestDocsStateTheBitbucketProjectTokenReach(t *testing.T) {
 	}
 }
 
+// TestDocsStateBitbucketSharedJobIsolation (plan T2.6's phase-3 half, 2026-11-16):
+// a shared Bitbucket job's isolation, which is the opposite of what the same
+// pages said until D460 and D2302. The owner ruled on 2026-10-15 that a
+// Bitbucket credential cannot be scoped to one project's repositories, so the
+// phase-3 pages then read "Bitbucket stays on the per-repository path" and
+// "phase 3's shared project jobs serve GitHub repositories"; the owner ruled on
+// 2026-10-27 that Bitbucket repositories run in shared project jobs too (D460),
+// and on 2026-11-13 that such a job holds no token at all (D2302), the
+// credentials service's Bitbucket proxy serving it and pairing the run to the
+// repositories the job's own profile admits (`internal/credsvc`'s `pairShared`,
+// `internal/gitproxy/rules.go` behind it).
+//
+// The pin is written twice over for the same reason T1.1's is: the page an
+// operator reads (docs/git-providers.md) and the security record (SECURITY.md)
+// have to say the same thing, and a reader who found the model on one and the
+// old ruling on the other would take the weaker reading.
+//
+// What it deliberately does NOT pin is a claim about the tree's own behaviour:
+// the mechanism is on `main` (S1's deployer path, S2's pairing, S4's launcher
+// path — docs/shared-jobs-default), while `internal/infra`'s `sharedJobProviders`
+// still admits `github` alone, so no shared job serves a Bitbucket profile yet.
+// Both halves of that are pinned below, because a page that told a reader the
+// move had shipped would be the lie this test exists to prevent — and one that
+// claimed the flip had landed would fail on the next commit that makes it so.
+// The sentences wrap in the files, so the assertions are made against the
+// whitespace-normalized text.
+func TestDocsStateBitbucketSharedJobIsolation(t *testing.T) {
+	providers := strings.Join(strings.Fields(readDoc(t, "docs/git-providers.md")), " ")
+	sec := strings.Join(strings.Fields(readDoc(t, "SECURITY.md")), " ")
+
+	// The model, in both documents: the job holds no token, and the proxy
+	// serves it by pairing the run to the profile's repositories.
+	for _, doc := range []struct {
+		path string
+		text string
+	}{{"docs/git-providers.md", providers}, {"SECURITY.md", sec}} {
+		for _, want := range []string{
+			"A shared Bitbucket job holds no token at all",
+			"the credentials service's Bitbucket proxy",
+			"pairs the verified run identity to the repositories the job's own profile admits",
+		} {
+			if !strings.Contains(doc.text, strings.Join(strings.Fields(want), " ")) {
+				t.Errorf("%s does not say %q: D2302 settled that a shared Bitbucket job holds nothing and the proxy serves it, and the page must not read as the project token moving into the job", doc.path, want)
+			}
+		}
+	}
+
+	// docs/git-providers.md is the page that carried the ruling the owner has
+	// since moved, so it carries the amendment, the credential that is now the
+	// service's, the shape of the refusal a profile that mounts the token meets,
+	// and — the half a reader must not have to infer — that the move has not
+	// shipped: the provider list still admits GitHub alone.
+	for _, want := range []string{
+		"**Amended 2026-11-16 (D460, D2302): a shared Bitbucket job holds no token, and the credentials service's Bitbucket proxy serves it.**",
+		"no new Fugaro-issued token and no mounted `bitbucket-token`",
+		"`projectpolicy.CheckSharedJobProfile`",
+		"asked by the deployer and by `fugaro project policy publish`",
+		"`internal/infra`'s `sharedJobProviders` still admits `github` alone",
+		"docs/shared-jobs-default calls I1",
+		"no shared job serves a Bitbucket profile today",
+	} {
+		if !strings.Contains(providers, strings.Join(strings.Fields(want), " ")) {
+			t.Errorf("docs/git-providers.md does not say %q: it is the page that carried the 2026-10-15 ruling, and T2.6's amendment is where a reader learns what replaced it", want)
+		}
+	}
+	// And the reason the old ruling gave is gone rather than left standing
+	// beside the amendment: "the shared job ... has no Bitbucket credential to
+	// carry" is the sentence D2302 replaced.
+	if strings.Contains(providers, "the shared job the phase-3 design assumed has no Bitbucket credential to carry") {
+		t.Error("docs/git-providers.md still says the phase-3 design's shared job has no Bitbucket credential to carry: D460 put Bitbucket repositories on shared jobs and D2302 said what the job holds — nothing, with the proxy serving it")
+	}
+
+	// SECURITY.md's half is the isolation stated plainly (F12), in the section
+	// a reader meets the proxy in: the boundary is the profile, the runs share
+	// the profile's service account while the bucket condition on it is the
+	// same whole-prefix one every project job account carries ("Known limits"
+	// below says why: a profile separates secrets, not bucket objects), and the
+	// flip that would put a real credential in the job is not this model's —
+	// there is none to put there.
+	for _, want := range []string{
+		"**The profile is the boundary, and the job holds no Bitbucket credential at all**",
+		"its service account is the profile's, so every run the profile serves shares it, while the condition on that account is the one whole-prefix condition every project job account carries, whatever its profile, because a profile separates secrets and not bucket objects",
+		"there is no Bitbucket credential in the job for the flip to take away",
+	} {
+		if !strings.Contains(sec, strings.Join(strings.Fields(want), " ")) {
+			t.Errorf("SECURITY.md does not say %q: F12 is the isolation of a shared Bitbucket job, and D2302 changed what it is", want)
+		}
+	}
+}
+
 // The three Bitbucket token types as docs/git-providers.md states them (T14 of
 // docs/bitbucket-token-types/implementation-plan.md, D2350, D2355). SECURITY.md's
 // own pins for the same round live in docs_security_test.go's

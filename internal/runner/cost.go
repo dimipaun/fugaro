@@ -149,6 +149,18 @@ func (r *run) updateCost() {
 		c.Unreconciled = r.unreconciled.USD()
 		c.ModelBy = modelByUSD(r.modelBy, model)
 		c.ReportedUSD = r.reported.USD()
+		// The provider reports and the table band behind them, by serving
+		// model, are the ledger's figures and never a sum of the stage
+		// reports: a call that settled after its stage's wait ran out is in
+		// the ledger's and in no report's, so a figure built by adding the
+		// two would count that call twice (F24, D2650, SA1.5). The band's
+		// ends are sums over the models that reported a cost, with no route
+		// fee, so a reader comparing a report against them compares the same
+		// quantity the charge is measured in.
+		c.ReportedBy = microsByUSD(r.reportedBy)
+		c.TableLoUSD = sumMicros(r.tableLoBy).USD()
+		c.TableHiUSD = sumMicros(r.tableHiBy).USD()
+		c.UnreportedCalls = r.unreportedCalls
 		c.RouteBy = routeByUSD(r.routeBy, r.modelBy, model, r.routed)
 		// The run's prompt-cache token totals, which only the gateway can
 		// count: they are of its per-call usage and of nothing else (P12).
@@ -343,6 +355,34 @@ func (r *run) usdMicros(usd float64) pricing.Micros {
 // carried: a call that settled after its stage's wait ran out is in the
 // ledger's total but in no stage's split.
 const unattributedModel = "unattributed"
+
+// microsByUSD is a per-model figure as the record's maps carry it: no
+// residual and no model added, because the ledger's keys are the whole of
+// what the figure covers -- the "unattributed" entry modelByUSD adds is a
+// fact about a split of a total, and a report or a band has no such total
+// to fall short of. nil for an empty map, so the record omits the key
+// rather than writing the empty map a reader would have to know to read as
+// none.
+func microsByUSD(by map[string]pricing.Micros) map[string]float64 {
+	if len(by) == 0 {
+		return nil
+	}
+	out := make(map[string]float64, len(by))
+	for m, v := range by {
+		out[m] = v.USD()
+	}
+	return out
+}
+
+// sumMicros is a per-model figure's run total: what the record's band ends
+// carry, which are one figure each rather than a split.
+func sumMicros(by map[string]pricing.Micros) pricing.Micros {
+	var sum pricing.Micros
+	for _, v := range by {
+		sum += v
+	}
+	return sum
+}
 
 // modelByUSD is the split of total by model in USD, with what the stage
 // reports don't account for under "unattributed", so the split adds up to

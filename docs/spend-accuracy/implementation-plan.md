@@ -134,7 +134,7 @@ Task ids are `SA<slice>.<n>`. Checks 650-651 come from the block this plan reser
 ### SA1.1: price_policy can be deployed (RS1)
 - Acceptance:
   - `catalogShipped` is `true`; `catalogSince` stays `0.7.5`.
-  - `fugaro update --repo` and `init --repo` deploy a route that sets `price_policy: highest`.
+  - `fugaro update --repo` and `fugaro setup --repo` deploy a route that sets `price_policy: highest`.
   - `modelsCatalogPriceNote` no longer says the switch is not accepted.
   - The README OpenRouter section, `docs/release.md`'s `catalogSince` bullet, `docs/multi-model.md`'s "neither key is
     accepted by `fugaro update --repo` yet" sentence and `docs/gcp-live-checklist.md`'s Check 44 line all say the keys
