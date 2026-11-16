@@ -221,23 +221,26 @@ off the door rather than taking it as a parameter). The one line above is the
 update door's and is not printed by those doors.
 
 The rows that are not simply safe are the ones the line has to own, and they are
-five (`inFlightSteps`, `internal/cli/update_in_flight.go`): the budget-mode
+six (`inFlightSteps`, `internal/cli/update_in_flight.go`): the budget-mode
 raise, which can bound a run that bootstrapped under `observe` from its next
 lease and is the operator's own caps becoming effective rather than the update
 stopping a run — recorded here rather than deferred, the alternative being the
 update asking a person to stop work for it; the published policy, which a
-cascade project's every model call re-reads; the Bitbucket tokens that same write
-carries, which a proxied call re-reads per request, so the call after the publish
-may be served by a different token than the call before it; the window between
-that write and the credentials service's own replacement, which is the release
-behind's service meeting a node its own binary does not understand; and a
-retirement, which deletes an orphaned job and takes the executions running on it.
+cascade project's every model call re-reads; the window between that write and
+the credentials service's own replacement, which is the release behind's service
+meeting a node its own binary does not understand; the Bitbucket tokens that same
+write carries, which a proxied call re-reads per request, so the call after the
+publish may be served by a different token than the call before it; the creation
+fact, which a run of the release behind re-reads per command and refuses once it
+is rewritten, so that run keeps the typed confirmation it would have applied
+without; and a retirement, which deletes an orphaned job and takes the executions
+running on it.
 Each clause is the question its own step is gated on rather than the whole of its
-decision (`budgetModeBindsRuns`, `policyReadsLive`, `tokensPublishReachesRuns`,
-`credentialsWindowOpens`, `retireTakesExecutions`), so the line
-errs towards naming a step that may not end up doing anything over claiming the
-update cannot reach a run when it can; the budget raise's shape for the owner is
-in the pull request.
+decision (`budgetModeBindsRuns`, `policyReadsLive`, `credentialsWindowOpens`,
+`tokensPublishReachesRuns`, `markerConverges`, `retireTakesExecutions`), so the
+line errs towards naming a step that may not end up doing anything over claiming
+the update cannot reach a run when it can; the budget raise's shape for the owner
+is in the pull request.
 
 The tests are `TestUpdateLeavesARunInFlightRunning` and its siblings
 (`internal/cli/update_in_flight_test.go`): an installation one release behind
