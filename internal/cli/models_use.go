@@ -414,8 +414,8 @@ func modelsUseClaimCheck(lc *localcfg.Config, value string) error {
 		if len(names) > 0 {
 			instead = "this project defines " + strings.Join(names, ", ")
 		}
-		return userErr("claude_models.%s: the route %s is not defined here — %s. A project layer adds a Claude model to a route the owner already opened and never creates one (base_url, auth, secret and allow_data_to are the owner's), so open the route first with `fugaro models add %s --provider %s`; nothing was written",
-			config.CodeSpan(provider), config.CodeSpan(provider), instead, entry, provider)
+		return userErr("claude_models.%s: the route %s is not defined here — %s. No command creates a route: providers.%s is a hand edit of the project config (base_url, auth, secret and allow_data_to are the owner's), and `fugaro models add` adds a model to a route that exists and refuses a Claude ID (D785); open the route by hand and run this again; nothing was written",
+			config.CodeSpan(provider), config.CodeSpan(provider), instead, provider)
 	}
 	if msg := config.CheckClaudeClaim(entry); msg != "" {
 		return userErr("claude_models.%s: %s", config.CodeSpan(provider), msg)
@@ -452,8 +452,8 @@ func modelsUseModelCheck(lc *localcfg.Config, cfg *config.Config, target setting
 		}
 		if len(missing) > 0 {
 			if scope.repo == "" {
-				return userErr("%s is served by route %s, whose allow_data_to does not name every repository this project onboards: it misses %s. A project-layer default is what every repository of the project runs with, so a run of one the route does not list is refused at the launch — widen the route with `fugaro models add %s --repos %s`, or set the key in the repositories that may use it; nothing was written",
-					config.CodeSpan(id), name, strings.Join(missing, ", "), id, strings.Join(missing, ","))
+				return userErr("%s is served by route %s, whose allow_data_to does not name every repository this project onboards: it misses %s. A project-layer default is what every repository of the project runs with, so a run of one the route does not list is refused at the launch — add the missing repositories to providers.%s.allow_data_to in the project config, or set the key in the repositories that may use it; nothing was written",
+					config.CodeSpan(id), name, strings.Join(missing, ", "), name)
 			}
 			return userErr("%s is served by route %s, whose allow_data_to does not name %s: the owner adds the repository to providers.%s.allow_data_to in the project config before its code may be sent there", config.CodeSpan(id), name, config.CodeSpan(scope.repo), name)
 		}
