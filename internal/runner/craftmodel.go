@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/craft"
@@ -31,7 +32,19 @@ import (
 // 1's own answer is read off the coder's and the reviewer's models
 // (config.Agent.FirstLineOn, agent.first_line_review: auto), so the crafts'
 // role models have to be in place before the levels are asked whether they run.
-func (r *run) applyCrafts(ctx context.Context) {
+//
+// A challenger arm is the one run this write refuses rather than performs, and
+// the refusal is the coder craft's alone: an arm is compared by the coder model
+// it names, so a craft that names one is a second answer to the question the
+// arm exists to ask (applyChallenger refuses a model grade for the same reason,
+// D555/D556/D559). Letting the craft win would not settle it either: the arm's
+// champion coder is read off the configuration before the crafts resolve
+// (championCoder), and the champion's own run — the one this arm is compared
+// with — would run the craft's model, so the pair would be derived from, and
+// reported on, a model neither run ran. The write's other slots are not this
+// refusal's business: the reviewer's model and the levels are the same on both
+// runs of a pair, because the crafts are the repository's and not the task's.
+func (r *run) applyCrafts(ctx context.Context) error {
 	crafts := r.stageCrafts(ctx)
 	// The coder craft's model is the coder role's and the senior review's is
 	// the reviewer's (D1661). The first-line review runs the coder's model on
@@ -40,6 +53,9 @@ func (r *run) applyCrafts(ctx context.Context) {
 	// review's model where it names none, and a security review that names one
 	// must not move the senior review's calls onto it.
 	if m, _ := craft.ModelFor(crafts, "plan"); m != "" {
+		if r.shadow {
+			return r.refuseArm(fmt.Sprintf("this task is a challenger arm and the coder craft names the model %q (%s): an arm is compared by the coder model it names, and a craft's model would be the model this run's calls go out on while the record and the champion's own coder — read off the configuration before the crafts resolve — name another one. Launch the arm on a repository whose crafts name no coder model, or the run without an ab: block", m, crafts[config.CraftCoder].ModelFrom))
+		}
 		r.cfg.Agent.Models.Coder = m
 		// A recipe may map the reviewer onto the coder (roles: {reviewer:
 		// coder}), which bootstrap applied to the coder's model as it stood
@@ -69,6 +85,7 @@ func (r *run) applyCrafts(ctx context.Context) {
 			r.setLevelModel(level, m)
 		}
 	}
+	return nil
 }
 
 // craftLevelsRunning is which of the three review levels run with the run's

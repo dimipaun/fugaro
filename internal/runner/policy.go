@@ -242,8 +242,14 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	// The crafts' models are written first: a craft's model is the model its
 	// stages run (applyCrafts), and every rewrite below either beats it (the
 	// grade) or has to judge it (the switch, which is applied to the models
-	// the run was configured with).
-	r.applyCrafts(ctx)
+	// the run was configured with). The one run the write refuses rather than
+	// performs is a challenger arm whose coder craft names a model, and it is
+	// refused here because only here is the crafts' own answer resolved: the
+	// layers a craft reads are the repository's file and the published node,
+	// and the node is read earlier in this function.
+	if err := r.applyCrafts(ctx); err != nil {
+		return err
+	}
 	// The task's grade is applied first of the three it is one of, before the
 	// switch and before the levels: it writes a pin, and a pin written after
 	// the switch would be one the switch never judged (an owner who routes the

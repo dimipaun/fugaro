@@ -69,6 +69,15 @@ func bootstrap(t *testing.T, r *run) {
 	}
 }
 
+// applyCraftsOrFail is the write on its own, for a test that steps the
+// rewrites by hand rather than through resolvePolicy.
+func applyCraftsOrFail(t *testing.T, r *run) {
+	t.Helper()
+	if err := r.applyCrafts(context.Background()); err != nil {
+		t.Fatalf("applyCrafts: %v", err)
+	}
+}
+
 // TestCraftModelReachesTheStageSlot is the red step this task was written from:
 // a run whose coder craft names a model runs it, in all four places a stage's
 // model is read.
@@ -177,7 +186,7 @@ func TestAModelGradeBeatsACraftModel(t *testing.T) {
 	r.policy = policy.Effective{Grades: policy.Grades{
 		config.GradeStrong: {Model: anotherCraftModel},
 	}}
-	r.applyCrafts(context.Background())
+	applyCraftsOrFail(t, r)
 	if got := r.stageModel("implement"); got != theCraftModel {
 		t.Fatalf("the coder runs %q before the grade, want the craft's %q", got, theCraftModel)
 	}
