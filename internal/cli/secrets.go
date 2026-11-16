@@ -546,10 +546,10 @@ func claudeOAuthAccountRefusal(name, repo string) error {
 
 // keyCredentialSecretRefusal is the one message a repository-scoped store under
 // a key credential's own derived secret name gets. It names the flag rather
-// than the field, because the project-wide store is what a credential's value
-// is: `fugaro accounts add --type openrouter|anthropic` is the command that
-// does it whole, and this is the store for a key that command's own run was
-// unable to finish.
+// than the field alone, because the project-wide store is the one a credential's
+// value has: `fugaro accounts add --type openrouter|anthropic` is the command
+// that stores it whole, and this is the spelling for a key that run could not
+// finish.
 func keyCredentialSecretRefusal(name string) error {
 	field := "claude_accounts.<credential>.allow_data_to"
 	if cred, ok := config.CredentialBySecret(name); ok {

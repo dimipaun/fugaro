@@ -189,18 +189,24 @@ silently is what that rule exists to prevent.
 --type declares the name as a typed credential as well, in this prefix's
 credentials block: the entry that lets a pool list the name as a member
 (fugaro accounts pool add). claude-oauth is the type this command's token step
-serves. vertex is built in and is never defined, and the two types the spec
-lists as future work are refused in words that say so. A type whose key no
-command stores yet is refused too: the entry would name a credential no run
-could authenticate with. Without the flag nothing but claude_accounts and the
-profile is written, which is what this command has always done.
+serves; openrouter and anthropic are the two key types, and a key is read the
+same way the token is — from stdin, or at the hidden prompt on your terminal —
+and stored project-wide under the credential's own derived secret name
+(credential-<name>-key) rather than the account's. vertex is built in and is
+never defined, and the two types the spec lists as future work are refused in
+words that say so. What carries a key credential's key to a model call is not
+installed by this command yet: the credential is declared and its key stored,
+and a run serves it once that half ships. Without the flag nothing but
+claude_accounts and the profile is written, which is what this command has
+always done.
 
 Then it converges, in one command and behind the one sentence it prints: the
-token is stored project-wide as a new version of the account's own secret, the
-account's broken mark is cleared, and the publisher, the job set and this
-checkout's repository root are converged — the same stages fugaro update runs,
-invoked here rather than forked. It ends on the line that says what is left,
-which is a fugaro run and never an update.
+value is stored project-wide as a new version of the secret the name derives
+(the account's own Claude OAuth token, or, with --type, the credential's own
+key), the account's broken mark is cleared, and the publisher, the job set and
+this checkout's repository root are converged — the same stages fugaro update
+runs, invoked here rather than forked. It ends on the line that says what is
+left, which is a fugaro run and never an update.
 
 --claude runs Anthropic's own claude setup-token on your own terminal first,
 so the login is the one you would have run yourself: it gets your stdin, stdout
@@ -234,7 +240,7 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for add |
 | `--profile` | string | "" | no | the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one) |
 | `--repos` | string | "" | no | the repositories the token may be used by, as owner/name,owner/name (default: this checkout's origin) |
-| `--type` | string | "" | no | declare the name as a typed credential too, so a craft or a pool may spend it: claude-oauth, the one type this command's token step serves (without it, the name is declared in claude_accounts alone, as it always was) |
+| `--type` | string | "" | no | declare the name as a typed credential too, so a craft or a pool may spend it: claude-oauth (this command's OAuth token step), or a key type (openrouter or anthropic), whose value is read the same way and stored under the credential's own derived secret name (without it, the name is declared in claude_accounts alone, as it always was) |
 
 Subcommands:
 

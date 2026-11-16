@@ -38,6 +38,60 @@ func credentialSecretID(name string) string {
 	return gcp.ProjectSecretID(initProjectName, config.CredentialSecret(name))
 }
 
+// TestAKeyCredentialsSecretStoresWhereItsDeclarationBoundsIt is the store path
+// itself, on the name this command writes under: `fugaro secrets set
+// credential-<name>-key --project-wide` is accepted exactly when the config
+// declares that credential as a key type and bounds where its key may be sent,
+// which is the state --type leaves behind — and refused in the states where
+// nothing would read what it stored. The name is reserved everywhere, so the
+// store is the one door it has, and it is the door this command re-runs.
+func TestAKeyCredentialsSecretStoresWhereItsDeclarationBoundsIt(t *testing.T) {
+	// The declared state: a key type, and an allow_data_to that names a
+	// repository.
+	sm := secretsFixture(t)
+	appendConfig(t, "credentials:\n  - { name: team-a, type: openrouter }\nclaude_accounts:\n  team-a: { allow_data_to: [acme/app] }\n")
+	if _, _, err := executeStdin(t, addToken(), "secrets", "set", config.CredentialSecret("team-a"), "--project-wide"); err != nil {
+		t.Fatalf("storing a declared key credential's own secret was refused: %v", err)
+	}
+	if got := string(sm.Latest(credentialSecretID("team-a"))); got != addToken() {
+		t.Errorf("%s holds %q, want the value the command read", credentialSecretID("team-a"), got)
+	}
+
+	// No credential of that name: the container would be an orphan nothing
+	// reads, and the refusal names the command that declares one.
+	sm = secretsFixture(t)
+	appendConfig(t, "claude_accounts:\n  team-a: { allow_data_to: [acme/app] }\n")
+	out, errOut, err := executeStdin(t, addToken(), "secrets", "set", config.CredentialSecret("team-a"), "--project-wide")
+	if err == nil || !strings.Contains(err.Error(), "declares no credential") {
+		t.Fatalf("storing under a name no credential owns: err = %v", err)
+	}
+	if got := string(sm.Latest(credentialSecretID("team-a"))); got != "" {
+		t.Errorf("the refused store wrote %q", got)
+	}
+	if strings.Contains(out+errOut, addToken()) {
+		t.Errorf("the refusal printed the value:\n%s\n%s", out, errOut)
+	}
+
+	// Declared as the OAuth type: that credential's value is its Claude
+	// account's own token, under the account family, so a value here would be
+	// a second container for one credential.
+	secretsFixture(t)
+	appendConfig(t, "credentials:\n  - { name: team-a, type: claude-oauth }\nclaude_accounts:\n  team-a: { allow_data_to: [acme/app] }\n")
+	if _, _, err := executeStdin(t, addToken(), "secrets", "set", config.CredentialSecret("team-a"), "--project-wide"); err == nil || !strings.Contains(err.Error(), "is declared claude-oauth") {
+		t.Fatalf("storing under a claude-oauth credential's key name: err = %v", err)
+	}
+
+	// The bare command lands on the repository's own copy, which a credential
+	// never has: the value is the project's, and its reach is the account's
+	// allow_data_to rather than the repository a copy was stored for.
+	secretsFixture(t)
+	appendConfig(t, "credentials:\n  - { name: team-a, type: openrouter }\nclaude_accounts:\n  team-a: { allow_data_to: [acme/app] }\n")
+	_, _, err = executeStdin(t, addToken(), "secrets", "set", config.CredentialSecret("team-a"), "--repo", "acme/app")
+	if err == nil || !strings.Contains(err.Error(), "--project-wide") {
+		t.Fatalf("a repository copy of a credential's secret: err = %v", err)
+	}
+}
+
 // TestAccountsAddOpenRouterKey is MC22's red step: the type is declared, the
 // value read from stdin is stored under the credential's own derived secret
 // name, and the account's Claude token container is left without a version —

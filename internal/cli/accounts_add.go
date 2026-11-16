@@ -85,11 +85,12 @@ claude_accounts and the profile is written, which is what this command has
 always done.
 
 Then it converges, in one command and behind the one sentence it prints: the
-token is stored project-wide as a new version of the account's own secret, the
-account's broken mark is cleared, and the publisher, the job set and this
-checkout's repository root are converged — the same stages fugaro update runs,
-invoked here rather than forked. It ends on the line that says what is left,
-which is a fugaro run and never an update.
+value is stored project-wide as a new version of the secret the name derives
+(the account's own Claude OAuth token, or, with --type, the credential's own
+key), the account's broken mark is cleared, and the publisher, the job set and
+this checkout's repository root are converged — the same stages fugaro update
+runs, invoked here rather than forked. It ends on the line that says what is
+left, which is a fugaro run and never an update.
 
 --claude runs Anthropic's own claude setup-token on your own terminal first,
 so the login is the one you would have run yourself: it gets your stdin, stdout
