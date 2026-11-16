@@ -248,8 +248,13 @@ const (
 // cache_write_1h (D2646, R4). All six name the `models` family, which is where
 // `fugaro models price set` writes an entry's prices (D2613), so the generic
 // path carries none of them.
+//
+// B1.4 of docs/review-levels-ab-jobmax/ is the last mover, by one row and by
+// none: the repository's `workflows.*.ab.reviewer_arm` is a workflow's ask for
+// an A/B reviewer arm (O12), a key a person states in `fugaro.yaml` by hand and
+// the launch reads, and no name and no prefix in the allowlist reaches it.
 const (
-	cfmRegistryRows   = 478
+	cfmRegistryRows   = 479
 	cfmAllowlistNamed = 118
 )
 

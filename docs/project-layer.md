@@ -348,6 +348,7 @@ Two exceptions: a workflow that sets `dockerfile:` drops its profile's `image:` 
 | `workflows.*.inputs.max_bytes` | profile, repo |  |
 | `workflows.*.inputs.max_total_bytes` | profile, repo |  |
 | `workflows.*.needs` | repo | it is a repository's own reference to an entry of the project's image catalog, and the entries themselves are the project's (D1155) |
+| `workflows.*.ab.reviewer_arm` | repo | it asks for a second review of this repository's own runs, and the challengers that review is admitted against are the project's (the top-level ab: block, D556), so the repository's own, PR-reviewed file is where the ask is stated |
 | `ab.rate` | repo | it is the repository's own opt-out of sampling, and every other leaf of the block is the project's (D556) |
 | `followup.trusted` | repo | it decides whose comments steer a run with the repository's credentials |
 | `followup.allow_public` | repo | it decides whose comments steer a run with the repository's credentials |

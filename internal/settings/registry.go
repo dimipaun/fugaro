@@ -360,6 +360,15 @@ var yamlMeta = map[string]Row{
 	// testdata/writer_gaps.golden's.
 	"workflows.*.needs": {Default: unset("none: the job needs no tag of the entry the run picks"), Doc: docImages},
 
+	// A repository's ask for an A/B reviewer arm (O12, the owner's ruling of
+	// 2026-11-16): the review level the arm replays over the champion's own
+	// recorded patch, one ask per workflow of the file. It keeps the default
+	// owner the yamlRow fallback gives it, exactly as workflows.*.needs beside
+	// it does, and it is reachable only once the write path's allowlist names
+	// the key (W3 of docs/config-ownership), so the row is
+	// testdata/writer_gaps.golden's until then.
+	"workflows.*.ab.reviewer_arm": {Default: unset("none: the workflow asks for no A/B reviewer arm"), Doc: docABJobmax},
+
 	"rigor.default": {
 		Owner: "rigor",
 		// A value here would be the fourth copy of the mode's floor: the
@@ -532,6 +541,11 @@ const (
 	// of the stage's own would take the row over.
 	docTriage    = "docs/post-review-triage/implementation-plan.md"
 	docCloneURLs = "docs/project-claude-accounts.md"
+	// docABJobmax is the document that states the A/B reviewer arm's key (O12).
+	// It is the work's plan rather than a spec, for docOrchestrator's reason:
+	// the ask is named there and in the reconciliation that records the ruling,
+	// and a document of the arm's own would take the row over.
+	docABJobmax = "docs/review-levels-ab-jobmax/implementation-plan.md"
 	// docBinaryAllow is the design of the binary allow rule (D981–D983,
 	// binary-allow-rule plan task AR1): it states the two members — the globs a
 	// run may add a binary at and the cap one is held to — and what a file that
