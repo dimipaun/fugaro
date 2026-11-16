@@ -2841,6 +2841,9 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	if spec, err = r.coordinatorJob(ctx, c, lc, spec); err != nil {
 		return outs, false, err
 	}
+	if spec, err = r.licenceJob(lc, spec); err != nil {
+		return outs, false, err
+	}
 	im, err := infra.DiscoverInstallation(ctx, c, spec)
 	if err != nil {
 		return outs, false, initErr(err)

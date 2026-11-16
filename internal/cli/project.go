@@ -424,7 +424,16 @@ func selectWith(ctx context.Context, o cloudOptions, co *localcfg.Checkout, crea
 		if co != nil {
 			fromCheckout = co.GCPProject
 		}
-		in.GCPProject = cmp.Or(o.gcpProject, fromCheckout)
+		// $FUGARO_GCP_PROJECT is the third and last resort, and it exists for
+		// the jobs: a container has no checkout (fromCheckout is empty) and no
+		// command line, so the variable every job's environment carries
+		// (platformEnvFor, installation/spec.go) is the only thing that can
+		// name the GCP project the shared config of this installation lives in.
+		// Without it, `fugaro licence renew --job` — and every other scheduled
+		// job that reads its installation's published config — would have no
+		// project to fetch from. It is read after the two a person typed, never
+		// before: on a machine that has both, the typed one wins.
+		in.GCPProject = cmp.Or(o.gcpProject, fromCheckout, os.Getenv("FUGARO_GCP_PROJECT"))
 		in.Shared = func(name, gcpProject string) (*localcfg.Config, string, error) {
 			if o.gcpProject != "" && fromCheckout != "" && o.gcpProject != fromCheckout {
 				return nil, "", userErr("--gcp-project %s contradicts this checkout's gcp_project %s in fugaro.yaml", o.gcpProject, fromCheckout)

@@ -198,6 +198,15 @@ type InstallationSpec struct {
 	EnableBudget bool             `json:"enable_budget,omitempty"`
 	History      *HistorySpec     `json:"history,omitempty"`
 	Coordinator  *CoordinatorSpec `json:"coordinator,omitempty"`
+	// Licence is the licence renewal job (K4.2): the scheduled
+	// `fugaro licence renew --job`, its own account and the empty container
+	// the renewal secret is written into. It hangs off the coordinator's
+	// opt-in rather than one of its own — its image IS the coordinator's, so
+	// an installation that has not opted in has no tagged image to run — and
+	// internal/cli's licenceJob drops the block again where this plan does not
+	// deploy the coordinator's job, which is the same fact
+	// modules/installation/licence.tf reads from local.deploy_coordinator.
+	Licence *LicenceSpec `json:"licence,omitempty"`
 	// MCPServer is the coordinator's front door (D920, D934), left out of an
 	// installation the owner has not turned it on for: the module creates the
 	// account, the service and the public invoker binding only for a variable
@@ -1618,6 +1627,11 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 				return InstallationSpec{}, err
 			}
 			s.Coordinator = &c
+			l, err := Licence(lc, bucket)
+			if err != nil {
+				return InstallationSpec{}, err
+			}
+			s.Licence = &l
 		}
 	}
 	// The front door's opt-in is refused rather than resolved when the

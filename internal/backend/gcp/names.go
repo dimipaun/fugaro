@@ -772,6 +772,110 @@ const ReportsWriteConditionTitlePrefix = "fugaro-reports-write-"
 // condition, as the installation module sets it.
 func ReportsWriteConditionTitle(saID string) string { return ReportsWriteConditionTitlePrefix + saID }
 
+// The licence renewal job's three objects (plan K4.2 of docs/licence-key-v2),
+// and the whole of what its account reads by name. The three are literals here
+// rather than read from the packages that write them — internal/infra owns the
+// marker's and the published config's names, ee/licence/project the key
+// object's, and this package may import neither — and each pair is pinned by a
+// test where both sides are importable (internal/infra's
+// TestLicenceObjectsAreTheWritersNames, ee/register's
+// TestTheLicenceObjectIsTheStores), so a rename on one side cannot leave the
+// grant naming an object nobody writes.
+const (
+	// LicenceMarkerObject is the project marker every cloud command checks
+	// before it acts: internal/infra.ProjectMarkerObject.
+	LicenceMarkerObject = "fugaro/project.json"
+	// LicenceConfigObject is the config the project publishes to its runs
+	// bucket: internal/infra.SharedConfigObject.
+	LicenceConfigObject = "fugaro/config.yaml"
+	// LicenceKeyObject is the project's licence object: the whole of a
+	// project's licence, and the one object the renewal job writes
+	// (ee/licence/project's Object, internal/infra.LicenceObject).
+	LicenceKeyObject = "fugaro/licence.json"
+)
+
+// LicenceReadObjects are the objects the renewal job reads, and the whole of
+// its read of the runs bucket. The key object is one of them; the other two
+// are how the job knows WHICH installation it is renewing for. It runs in a
+// Cloud Run container with no project config on disk and no checkout, so it
+// resolves its project the way a person's machine without a config does: from
+// the marker and the config published beside it, read out of the bucket its
+// FUGARO_GCP_PROJECT names (internal/cli's selectWith, the shared-config
+// fetch). A grant that named the key object alone would let the job read the
+// object it exists for and fail every night before it got there.
+//
+// The order is the read's own and is part of the bytes: the condition the plan
+// carries is compared with these, so reordering them is another condition.
+var LicenceReadObjects = []string{LicenceMarkerObject, LicenceConfigObject, LicenceKeyObject}
+
+// licenceObjectCondition is the one definition of the renewal job's two
+// conditions: the bucket's objects whose NAME is one of objects, joined with
+// " || ", from resource.name.
+//
+// resource.name and never resource.name.startsWith, which is what every other
+// bucket condition of this tree uses: a prefix clause grants a whole area, and
+// these are three names. A name is also what makes the grant readable in the
+// plan — `fugaro/licence.json` is the object ee/licence/project writes, and no
+// reordering of the runs bucket's layout can move what it names.
+//
+// There is no listing clause here and none is wanted: a List request names no
+// object, so no clause of this condition matches one (docs/design/bucket-iam.md
+// §2.3, live check 7's 403 on listing runs/), which is exactly right for a job
+// that reads its three objects by name and never lists the bucket. A name
+// condition cannot be widened into the listing half of the reports job's
+// conditions (reportsCondition), because that half names a PREFIX.
+func licenceObjectCondition(bucket string, objects []string) string {
+	clauses := make([]string, len(objects))
+	for i, o := range objects {
+		clauses[i] = fmt.Sprintf(`resource.name == "projects/_/buckets/%s/objects/%s"`, bucket, o)
+	}
+	return strings.Join(clauses, " || ")
+}
+
+// LicenceReadCondition is the condition of the read-only (objectViewer) grant
+// the installation's licence renewal job holds on the runs bucket: the three
+// objects above, by name, and nothing else in the bucket.
+func LicenceReadCondition(bucket string) string {
+	return licenceObjectCondition(bucket, LicenceReadObjects)
+}
+
+// LicenceWriteCondition is the condition of the read-write (objectUser) grant
+// the same account holds: ONE object, the licence itself. The job writes
+// nothing else anywhere (K4.1) — it writes the next key beside the old one in
+// that one object, and the renewal secret in Secret Manager is its other write
+// — so the object the read names three times is the only one the write names.
+//
+// objectUser and not objectCreator: the write is a compare-and-set that
+// REPLACES the object the job read (ee/licence/project's mutate), and the
+// bucket's own lifecycle keeps an archive of the replaced bytes, so the writer
+// needs the overwrite the tree's other one-object prefixes are given
+// (reports.tf's objectUser). The condition is what keeps that to one name:
+// objectUser without it reaches every run record, prompt and transcript the
+// installation keeps.
+func LicenceWriteCondition(bucket string) string {
+	return licenceObjectCondition(bucket, []string{LicenceKeyObject})
+}
+
+// LicenceReadConditionTitlePrefix is the fixed part of
+// LicenceReadConditionTitle: a caller that must recognise the title rather
+// than build it (internal/infra/tf reads a plan's condition titles) takes it
+// from here, so the two spellings cannot drift apart.
+const LicenceReadConditionTitlePrefix = "fugaro-licence-read-"
+
+// LicenceReadConditionTitle is the title of the renewal job's read condition,
+// as the installation module sets it.
+func LicenceReadConditionTitle(saID string) string { return LicenceReadConditionTitlePrefix + saID }
+
+// LicenceWriteConditionTitlePrefix is LicenceReadConditionTitlePrefix for the
+// other binding, and distinct from it on purpose: a condition that differs in
+// one byte is another binding, and a plan that swapped the two grants' titles
+// is one internal/infra/tf refuses rather than reads as the module's own.
+const LicenceWriteConditionTitlePrefix = "fugaro-licence-write-"
+
+// LicenceWriteConditionTitle is the title of the renewal job's write
+// condition, as the installation module sets it.
+func LicenceWriteConditionTitle(saID string) string { return LicenceWriteConditionTitlePrefix + saID }
+
 // CatalogRecordsCondition is the condition of the read-write (objectUser)
 // grant the project's catalog check job holds on ONE repository's area of the
 // runs bucket: builds/<slug>/catalog/, where a catalog entry's build record

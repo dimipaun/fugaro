@@ -460,6 +460,13 @@ func (e *initEngine) cover() tf.Cover {
 	if b := e.r.o.billingAccount; b != "" {
 		c.Billing = []string{b}
 	}
+	// The licence renewal job's container, when this plan carries one: it is
+	// the one grant the cover reads a target for (tf.Cover.LicenceRenewalSecret,
+	// licenceSecretGrant), and the run's own spec is what derived it from the
+	// Fugaro project's name.
+	if e.spec.Licence != nil {
+		c.LicenceRenewalSecret = e.spec.Licence.RenewalSecret
+	}
 	if fp := e.r.o.firebase; fp != "" && fp != e.r.gcpProject {
 		if ok, _ := e.firebaseVerified(e.r.ctx()); ok {
 			c.Projects = append(c.Projects, fp)
