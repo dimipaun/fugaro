@@ -121,6 +121,14 @@ resource "google_secret_manager_secret" "licence_renewal" {
 # reads the target too, and this is the one secret grant it does that for
 # (licenceSecretGrant): four calls are a read of a VALUE, where its other rows
 # are reads of a key the job already holds.
+#
+# The container is named by the same kind of literal — the ID the run's own
+# licence spec derived — and a literal reference is no edge in the graph:
+# nothing in this block tells Terraform the binding has to wait for the
+# container, so an apply that creates both could call setIamPolicy on a
+# container that does not exist yet and fail the update with a 404. The edge is
+# written out instead, beside the role's: these two are the resources whose
+# names this binding cannot reference, and both have to exist first.
 resource "google_secret_manager_secret_iam_member" "licence_renewal" {
   count = local.licence_on ? 1 : 0
 
@@ -129,7 +137,10 @@ resource "google_secret_manager_secret_iam_member" "licence_renewal" {
   role      = "projects/${var.project}/roles/fugaroLicenceRenewal"
   member    = google_service_account.licence[0].member
 
-  depends_on = [google_project_iam_custom_role.licence_renewal]
+  depends_on = [
+    google_project_iam_custom_role.licence_renewal,
+    google_secret_manager_secret.licence_renewal,
+  ]
 }
 
 # The job's read: THREE objects of the runs bucket, by name, joined by " || " in
