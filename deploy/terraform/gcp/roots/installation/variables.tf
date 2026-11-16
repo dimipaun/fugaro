@@ -224,6 +224,28 @@ variable "reports" {
   default = null
 }
 
+variable "licence" {
+  description = "The installation's licence renewal job (plan K4.2 of docs/licence-key-v2), or null when fugaro update deploys none: modules/installation/licence.tf and its variable of the same name. fugaro update writes it; it is passed through unchanged, and the module validates it. The module reads the coordinator's own condition, so this variable is a passthrough and not a switch: an installation that deploys no coordinator plans no job whatever this carries."
+  type = object({
+    account_id       = string
+    job              = string
+    image            = string
+    scheduler_job    = string
+    scheduler_region = string
+    env              = map(string)
+    read_condition = object({
+      title      = string
+      expression = string
+    })
+    write_condition = object({
+      title      = string
+      expression = string
+    })
+    renewal_secret = string
+  })
+  default = null
+}
+
 variable "coordinator" {
   type = object({
     account_id       = string
