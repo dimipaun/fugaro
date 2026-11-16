@@ -1441,7 +1441,7 @@ func plannedRun(ctx context.Context, env *cloudEnv, o *runOptions, slug string, 
 		Spec: copied, Chosen: o.runID != "", Config: cfg,
 		Providers:      mixRoutes(env, spec.Repo, cfg),
 		Prices:         prices,
-		ServiceHeldKey: len(credentialsServiceLaunchEnv(env.lc, "", spec.Repo, auth, env.policyMode(ctx), deployed)) > 0,
+		ServiceHeldKey: len(credentialsServiceLaunchEnv(env.lc, "", spec.Repo, auth, env.policyMode(ctx), deployed, false)) > 0,
 	}
 	eff, _ := chainLimitPolicyOf(ctx, env, spec, cfg).merge(o.limits.layer())
 	run.Policy = eff
@@ -4456,14 +4456,15 @@ func contextReposRefusal(ctx context.Context, env *cloudEnv, slug string, spec *
 		jobName = job.Name
 	}
 	auth, deployed := env.repoServiceAuth(ctx, spec, io.Discard)
-	if len(credentialsServiceLaunchEnv(env.lc, jobName, spec.Repo, auth, env.policyMode(ctx), deployed)) == 0 {
+	if len(credentialsServiceLaunchEnv(env.lc, jobName, spec.Repo, auth, env.policyMode(ctx), deployed, false)) == 0 {
 		if jobName != "" {
-			// A shared project job is never told the address whatever the
-			// installation's switch says, so the sentence below would be false
-			// there — and its remedy would be no remedy: the operator can deploy
-			// the service this launch already has and still be handed nothing.
-			return userErr("--context needs the credentials service's address on the job this launch runs on, and this launch runs on %s, a shared project job: the service refuses an account that belongs to one whole, before any route (that is the job class, not this repository or this installation), and the address is therefore never written on one — a shared project job told about the service would stop reading the App key it still mounts, because the same variable is what opens the git provider keyless, which breaks every GitHub run on it. So no launch on a shared project job is told about the service, a run of one could read no context repository, and this launch stops before any execution exists: run the task in the repository whose files it needs, with no --context, until a shared project job is moved onto the service (C3.9)",
-				pluginwire.Printable(jobName))
+			// A shared project job is told the address on the same switch a
+			// repository's own job is (B5.2), so the sentence below would
+			// answer for the repository's own job and name a remedy that is the
+			// repository's: the profile's switch is its own record and its
+			// document's auth, and `fugaro update --repo` is what writes it.
+			return userErr("--context needs the credentials service's address on the job this launch runs on, and this launch runs on %s, a shared project job that is not switched onto the service: the address is written on a shared project job only where the installation carries the service, this repository's record says its runs use it, and agent.auth is one the service serves (today agent.auth: cascade alone), and a run of one without it could read no context repository, so this launch stops before any execution exists. Run '%s update --repo %s' in your own terminal after setting agent.auth: cascade in the repository's fugaro.yaml, or run the task in the repository whose files it needs, with no --context",
+				pluginwire.Printable(jobName), selfCommand(), spec.Repo)
 		}
 		return userErr("--context needs a credentials service that serves %s, and this installation's does not: the service is what would read a context repository for a run, and the address it is reached at is written on the job only where the installation carries the service and this repository's runs use an auth it serves (today agent.auth: cascade alone). Run '%s update' in your own terminal to deploy the service where the installation can carry it, then set agent.auth: cascade in %s's fugaro.yaml and run '%s update --repo %s' to apply that repository's root with the switch on — or drop --context",
 			spec.Repo, selfCommand(), spec.Repo, selfCommand(), spec.Repo)
@@ -5998,9 +5999,10 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		// the launch rather than carry it (backend.LaunchSpec.SecretEnv).
 		lspec.SecretEnv = []string{sealMarker(sealKey)}
 	}
-	// The credentials service, when its switch is on for this repository and
-	// this execution is a repository's own job (job is the shared project job
-	// otherwise, and the service refuses that caller: see the helper). The
+	// The credentials service, when its switch is on for this repository: a
+	// repository's own job and, since B5.2, the shared project job a switched
+	// profile's launch runs on (see the helper). A review launch is told
+	// nothing: its variant carries the address from its own deployment. The
 	// pair the switch is judged with is repoServiceAuth's, read the same way
 	// by the proxy gate that has to know whether this launch is a proxied one
 	// (proxiedRepo) — one reader, because a gate reading the published node
@@ -6010,15 +6012,42 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		jobName = job.Name
 	}
 	svcAuth, deployed := env.repoServiceAuth(ctx, spec, launchWarn)
-	lspec.Env = credentialsServiceLaunchEnv(env.lc, jobName, spec.Repo, svcAuth, env.policyMode(ctx), deployed)
+	lspec.Env = credentialsServiceLaunchEnv(env.lc, jobName, spec.Repo, svcAuth, env.policyMode(ctx), deployed, reviewJob)
 	// The run's slip, asked for exactly where the service's address was just
 	// written: the grant the credentials service keeps for this run, whose id
 	// the job claims at its first call and presents on every call after it
 	// (DS1.3's two routes). It goes on THIS EXECUTION's environment and never
 	// into a stored document: the task object is the repository's own file, a
 	// repeated run ID repeats it byte for byte, and a slip is one run's.
-	if url, ok := credentialsServiceURLOf(lspec.Env); ok {
-		lspec.Env = append(lspec.Env, runSlipEnv(hctx, env, spec, slug, variant, url)...)
+	//
+	// The account the slip names is the account THIS EXECUTION will call as,
+	// which is the job's own and not the repository's: a per-repository job is
+	// one account per (slug, workflow) (gcp.ServiceAccountID, the pair the
+	// backend derives the job's own name from), while the shared project job a
+	// switched profile's launch runs on is one account per (profile, provider,
+	// account) (gcp.ProjectServiceAccountID, the derivation internal/infra's
+	// ProjectJobs deployed that job's account with). The claim is checked
+	// against the account the grant named (slipIsThisRuns, D1937), so naming
+	// the per-repository account for a shared execution writes a slip that run
+	// can never claim: it spends its model call on the refusal, the service
+	// keeps the slip as a grant nobody claimed, and FUGARO_SLIP sits on an
+	// execution it cannot open.
+	//
+	// A review launch is left out whole rather than judged by the gate below.
+	// It has no address to ask with — its variant carries one from its own
+	// deployment, and credentialsServiceLaunchEnv writes none here — and no
+	// account either arm below could name: a review-only variant's own account
+	// is credsvc.ReviewServiceAccountID's, deployed by internal/infra beside
+	// the coding job, so a slip granted for either derivation would be one
+	// that job can never claim.
+	if !reviewJob {
+		slipAccount := gcp.ServiceAccountID(slug, variant) + "@" + env.lc.GCPProject + ".iam.gserviceaccount.com"
+		if job != nil {
+			slipAccount = gcp.ProjectServiceAccountID(job.Profile, job.Provider, job.Account) + "@" + env.lc.GCPProject + ".iam.gserviceaccount.com"
+		}
+		if url, ok := credentialsServiceURLOf(lspec.Env); ok {
+			lspec.Env = append(lspec.Env, runSlipEnv(hctx, env, spec, slug, slipAccount, url)...)
+		}
 	}
 	// The services the job's own catalog entry declares, on EVERY launch and
 	// empty where the deployed image is no catalog entry (backend.ServicesEnv
@@ -6194,18 +6223,40 @@ func servicesLaunchEnv(entry config.Entry) string {
 // PR #903). So a teammate's `fugaro run`, on a machine that never ran the
 // opt-in, still hands the job the installation's service.
 //
-// A SHARED PROJECT JOB IS NOT TOLD, and that is the service's own rule rather
-// than a policy chosen here: its admission refuses an account that belongs to
-// a shared project job whole, before any route (internal/credsvc/auth.go's
-// verifyJob, Global Constraint 6, C3.9). So the address would buy such a job
-// nothing it could use -- a `cascade` run would fail at the service's door
-// instead of at the runner's clear "this job has no credentials service" --
-// and it would cost it something: the same variable is what opens the git
-// provider keyless (internal/gitprov/providers/providers.go), so a shared
-// project job told about the service would stop reading the App key it still
-// mounts and be refused the mint that replaced it, breaking every GitHub run
-// on it. The shared jobs keep their own credentials until C3.9 moves them,
-// which is what SECURITY.md and the credentials stage's confirmation both say.
+// A SHARED PROJECT JOB IS TOLD, on the same switch a repository's own job is
+// (B5.2, D505, D2078): its profile's repositories are served by the service, so
+// the execution is handed the address exactly as a repository job's is. What
+// made this function refuse every `job != ""` was the service's own admission,
+// which refused a shared project job's account whole before any route
+// (internal/credsvc/auth.go's verifyJob, Global Constraint 6, C3.9) — and B5.1
+// is the change that replaced that rule with the profile's: the account is
+// admitted for the repositories its profile admits (F40, G21), and the module
+// grants it roles/run.invoker on the service
+// (deploy/terraform/gcp/modules/project/sa.tf). The job keeps every mount it
+// has (G17): the address arrives first and the model credential is dropped only
+// by B5.7's flip, so a run here reaches its git provider and its model through
+// the service while the container still holds what it held.
+//
+// The address is withheld from a shared job whose document could not be read,
+// which is the one place the two paths differ. A repository's own job is handed
+// it on its record (or on this machine's tfvars) alone, because its mounts are
+// already gone where its record says on and withholding would halt the run at
+// the service's door (D143). A shared job still holds its mounts, so a launch
+// that cannot read the document the run will use starts the run it started
+// before this task — and one that handed the address to a repository whose file
+// says `vertex` (the default of a documentless repository,
+// config.DefaultAgentAuth) would open its git provider keyless
+// (internal/gitprov/providers/providers.go) for a mint the service refuses,
+// breaking every GitHub run of that job.
+//
+// A REVIEW LAUNCH IS NOT TOLD, and it is the variant's own deployment that
+// carries the address (internal/infra's reviewVariant): a review runs on the
+// review-only job of the same profile, whose container mounts nothing at all
+// (O1), so the address is part of what that job is deployed with rather than
+// something a per-launch entry adds — and a per-launch entry would be a value
+// every execution object records, and the gate the slip is asked at
+// (`credentialsServiceURLOf` on this function's answer, runSlipEnv) would be
+// opened for a path whose launch has never taken one.
 //
 // It is plain Env and not SecretEnv, deliberately. The URL is not a secret:
 // it is the service's public address, it is the audience every caller's ID
@@ -6243,10 +6294,15 @@ func servicesLaunchEnv(entry config.Entry) string {
 // installation runs — so it agrees with the root wherever it was applied. A
 // record that lags a bundle emptied since the apply cannot withdraw the address
 // on its own here: the deployed root still answers for the machine that applied
-// it.
-
-func credentialsServiceLaunchEnv(lc *localcfg.Config, job, repo, auth, mode string, deployed bool) []string {
-	if job != "" || lc == nil {
+// it. That second stand-in is a REPOSITORY root's answer about its own job, so
+// it is read for a repository's own job alone: a shared job's grant is the
+// installation root's, made from the same record wherever that root was applied.
+//
+// review says this launch runs on a shared job's review-only variant
+// (spec.Mode's review mode), which the caller resolves before it calls this:
+// such a launch is told nothing, whatever the job and the config say.
+func credentialsServiceLaunchEnv(lc *localcfg.Config, job, repo, auth, mode string, deployed, review bool) []string {
+	if lc == nil || review {
 		return nil
 	}
 	// The URL is part of "installed" here and on this side alone: the
@@ -6256,7 +6312,7 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, job, repo, auth, mode stri
 	installed := lc.CredentialsService != nil && lc.CredentialsService.URL != ""
 	local, _ := lc.RepoFor(repo)
 	serves := infra.CredentialsServiceServes(installed, local.CredentialsServiceOn(), auth, mode)
-	if auth == "" {
+	if auth == "" && job == "" {
 		// No document this launcher could read, so the switch's third
 		// condition is judged on the two answers that do not need one: the
 		// repository's own record, and this machine's tfvars of the root it
@@ -6444,7 +6500,13 @@ func checkSlipServiceURL(raw string) error {
 // launcher will not carry — starts the run it started before this task existed
 // and no more than that. The alternative, failing the launch, would break runs
 // that work today over the grant of a credential they may not even use.
-func runSlipEnv(ctx context.Context, env *cloudEnv, spec *task.Spec, slug, workflow, serviceURL string) []string {
+//
+// account is the account the execution this environment goes to will call as,
+// derived by the caller from the job that execution is on (launchRun): the
+// JOB's own account and not the repository's, because the claim is checked
+// against it and a slip named for any other account is one this run can never
+// claim.
+func runSlipEnv(ctx context.Context, env *cloudEnv, spec *task.Spec, slug, account, serviceURL string) []string {
 	names, why := slipCredentialNames(ctx, env, spec)
 	if why != "" {
 		// No slip rather than a slip that names less than the run will ask
@@ -6458,11 +6520,10 @@ func runSlipEnv(ctx context.Context, env *cloudEnv, spec *task.Spec, slug, workf
 	req := credsvc.SlipGrantRequest{
 		Slug: slug,
 		Run:  spec.RunID,
-		// The account the run will call as, derived exactly as the doctor's
-		// invoker check and the installation's own root derive it: one account
-		// is dedicated to one job per repository (D1937), and the claim is
-		// checked against it.
-		Account:           gcp.ServiceAccountID(slug, workflow) + "@" + env.lc.GCPProject + ".iam.gserviceaccount.com",
+		// The account the run will call as, which the caller derived from the
+		// job this execution is going on and from nothing else: one account is
+		// dedicated to one job (D1937), and the claim is checked against it.
+		Account:           account,
 		Credentials:       names,
 		MaxRuntimeSeconds: int64(slipRunTime(spec) / time.Second),
 	}
