@@ -325,15 +325,16 @@ func modelsAddPrice(path string, table *pricing.Table, id string, o *modelsAddOp
 
 // modelsCatalogPriceNote is what a catalog-priced model needs the owner to
 // read: the end of the tier's range that is charged, the dearest endpoint of
-// that range, and the switch that would charge that instead — which `fugaro
-// update` does not accept yet, so the command writes none (F7, D795).
+// that range, and the switch that would charge that instead — which belongs on
+// the route, where `fugaro update --repo` deploys it, so the command points
+// there rather than writing one (F7, D795, F29).
 func modelsCatalogPriceNote(id string, m pricing.Model) string {
 	c := m.Catalog
 	note := fmt.Sprintf("%s needs no price of your own: the built-in catalog prices it, and a call is charged the cheapest end of its %s tier — $%g/M in and $%g/M out", id, c.Tier, m.Rates.InputPerM, m.Rates.OutputPerM)
 	if spread := m.CatalogRange(); spread != "" {
 		note += "; " + spread
 	}
-	return note + "; price_policy: highest would charge that tier's dearest endpoint, and fugaro update does not accept the switch yet, so this command writes none (D795)"
+	return note + "; price_policy: highest would charge that tier's dearest endpoint, which you set on the route in your project config and fugaro update --repo deploys; this command has no switch for it (D795, F29)"
 }
 
 // modelsAddAllow is step 4: a set budget.allowed_models gains the ID, because

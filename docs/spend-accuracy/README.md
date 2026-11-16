@@ -16,11 +16,11 @@ settled and estimated spend drift apart.
 | [implementation-plan.md](implementation-plan.md) | Seven slices, 23 tasks (SA0.1-SA6.1), levels L0-L4, the critical path, the shared-files table, Checks 650-651, owner-run step OR1. **Nothing in it is approved** |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's tasks as the graph `fugaro plan graph` reads |
 | [day-leaves.md](day-leaves.md) | What each day-counter leaf holds, `notional`, `rep`, `tlo` and `thi` included, and what a day without them means (SA5.6) |
-| `cost-fields.md` | Not written yet: task SA1.0 adds it, to say what each new field holds |
+| [cost-fields.md](cost-fields.md) | What each new cost field a run records holds -- `reported_by`, `table_lo_usd`, `table_hi_usd`, `unreported_calls` -- and the stage-report and ledger shapes behind them (SA1.0) |
 
 **Headline:**
-- `price_policy: highest` exists, but `fugaro update --repo` still refuses it: `catalogShipped` was never flipped
-  after 0.7.5 (F3).
+- `fugaro update --repo` refused `price_policy: highest` until SA1.1: `catalogShipped` was never flipped after 0.7.5
+  (F3, RS1). It deploys the two route keys from that task on.
 - The dogfood override prices v4.1-flash cache reads at $0.000588/M (F5).
 - `diagnose` already compares reported with charged spend per run (F1).
 - The day counters mix billed and notional dollars in one leaf per model (F9).

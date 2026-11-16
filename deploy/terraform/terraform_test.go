@@ -1699,6 +1699,14 @@ var (
 	// service (iam.tf). Its own reach is that row and the operators'
 	// token-creator grant on the account, which is what makes it a member
 	// expression worth admitting by name here rather than by shape.
+	// google_service_account.build_identity[0] is the project's build identity
+	// (B5, D2301): the one account a shared repository's catalog build runs as,
+	// created beside the credentials service and holding exactly one row —
+	// roles/run.invoker on that service (build_identity.tf) — which is also why
+	// the module renders its email into the service's build class rather than
+	// spelling an address in Go. Its reach is that row and nothing wider: no
+	// role on any repository's registry, and no other grant in this tree names
+	// it.
 	// var.workspace_service_account is the member's own workspace_pin's
 	// account, and the Firebase root's one grant to it is the read-only
 	// database role (modules/firebase/workspace_access.tf, W7). It is the ONE
@@ -1721,7 +1729,7 @@ var (
 	// The narrowing is not what makes the plan covered either:
 	// internal/infra/tf's grant rules do NOT accept an allUsers member, so the
 	// update whose plan carries this grant asks its own typed confirmation.
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier|intake)\[0\]\.member|google_service_account\.(catalog_check|reports)\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account)\}")$`)
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier|intake|build_identity)\[0\]\.member|google_service_account\.(catalog_check|reports)\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account)\}")$`)
 
 	// workspaceRolePath and workspaceRoleType name the ONE custom role in this
 	// tree no module creates: the workspace root's own (W3 of the workspaces

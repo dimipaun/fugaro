@@ -1938,6 +1938,17 @@ var runAccountGrants = setOf(
 	// the operators already hold the runs bucket's own grants, the rows above,
 	// so the impersonation adds nothing to what they can reach.
 	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | google_service_account.fugaro_verifier[0].member | for_each= | perms=`,
+	// Reviewed for B5 (the project's build identity, D2301): the job's row once
+	// more — the same role on the same service, to the account THIS module
+	// creates beside it (modules/installation/build_identity.tf), which is the
+	// one identity a shared repository's catalog build runs as. roles/run.invoker
+	// carries no storage permission, no permission to grant a role, no actAs and
+	// no token minting; the target is that one Cloud Run service. The account's
+	// registry roles — the writer and tag-mover the per-repository build account
+	// held, which B6 moves onto this identity — are not written yet, so its whole
+	// reach here is this row, and it can reach neither the runs bucket's root nor
+	// any repository's registry through it.
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | google_service_account.build_identity[0].member | for_each= | perms=`,
 	`google_service_account_iam_member | "roles/iam.serviceAccountTokenCreator" | service_account_id="projects/${var.project}/serviceAccounts/fugaro-verifier@${var.project}.iam.gserviceaccount.com" | each.value | for_each=local.credentials_service_on ? toset(var.operators) : toset([]) [local.credentials_service_on=var.credentials_service != null] | perms=`,
 	// Reviewed for M4 (the coordinator's front door): D920 makes the front
 	// door public, and this is therefore the one grant in the tree whose
