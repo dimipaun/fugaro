@@ -105,15 +105,30 @@ const (
 	// claim that reaches the signer is, so a task that got past the spec's
 	// rule cannot mint a claim it would have refused.
 	MaxPRs = 4
+	// MaxContextRepos is the most context repositories one identity may name
+	// (fcr), held to task.MaxContextRepos's bound for the same reason MaxPRs
+	// is held to the review_prs rule: the claim the signer sees is refused
+	// here even when the task's own validation was bypassed.
+	MaxContextRepos = 5
+	// MaxClaimsBytes is the most bytes a custom token's developer claims may
+	// take. Firebase refuses a custom token whose claims are over 1000 bytes
+	// ("Claims must be less than or equal to 1000 bytes"), and it refuses it
+	// at the exchange — in the run, an hour after the launcher was told the
+	// launch succeeded. The launcher measures the set it is about to sign
+	// (ClaimsSize) and refuses the launch instead, where the person is still
+	// there to drop what made it too big.
+	MaxClaimsBytes = 1000
 )
 
-// ClaimBranch and ClaimPRs are the wire names of the branch and pull-request
-// claims (fb and fpr). They are exported because the credentials service reads
-// this same wire (internal/credsvc): one literal on both sides, so a rename on
-// one side cannot pass both suites.
+// ClaimBranch, ClaimPRs and ClaimContextRepos are the wire names of the branch,
+// pull-request and context-repository claims (fb, fpr and fcr). They are
+// exported because the credentials service reads this same wire
+// (internal/credsvc): one literal on both sides, so a rename on one side cannot
+// pass both suites.
 const (
-	ClaimBranch = "fb"
-	ClaimPRs    = "fpr"
+	ClaimBranch       = "fb"
+	ClaimPRs          = "fpr"
+	ClaimContextRepos = "fcr"
 )
 
 // Claims are the facts a run's token proves (R5).
@@ -133,6 +148,14 @@ type Claims struct {
 	// continues, or the one to four a review run reviews. Empty when the run
 	// writes no pull request.
 	PRs []int
+	// ContextRepos are the repositories this run reads and never writes
+	// (fcr, plan task C5a): the list the launcher recorded on the task, in
+	// the claim the credentials service reads — the service cannot read the
+	// task, and the task object is writable by the job, so the identity is
+	// the half a service may trust. Empty on every other run, and on every
+	// identity a launcher minted before this claim existed — such a token
+	// stays valid and reads back empty, exactly as Branch's own note says.
+	ContextRepos []string
 }
 
 // UID is the Firebase uid of the run: r~<slug>~<run>.
@@ -159,6 +182,48 @@ func ValidSegment(s string) bool {
 	return true
 }
 
+// claimSet is the developer claims of this identity: the map under "claims" in
+// the custom token, and the object Firebase's own byte bound is on. It is built
+// in one place because two readers need exactly the same bytes — MintAt, which
+// signs them, and ClaimsSize, which measures them before the launcher asks for
+// a signature (MaxClaimsBytes).
+//
+// A claim a run does not have is written at all: fb and fpr are written only
+// when the run pushes or writes a pull request, and fcr only when the launch
+// named a context repository, so a run with none of them mints the claim set
+// every earlier release minted.
+func (c Claims) claimSet() map[string]any {
+	extra := map[string]any{
+		"fs": c.Slug, "fr": c.Run, "fx": c.FX.UnixMilli(), "fp": c.FP, "rb": c.RB,
+	}
+	if c.Branch != "" {
+		extra[ClaimBranch] = c.Branch
+	}
+	if len(c.PRs) > 0 {
+		extra[ClaimPRs] = c.PRs
+	}
+	if len(c.ContextRepos) > 0 {
+		extra[ClaimContextRepos] = c.ContextRepos
+	}
+	return extra
+}
+
+// ClaimsSize is the number of bytes c's developer claims take once encoded, the
+// figure Firebase's bound is on (MaxClaimsBytes): json.Marshal's own bytes of
+// claimSet, which is exactly what MintAt puts under "claims" in the payload it
+// signs. It is exported so the launcher can refuse a launch whose claim set
+// would be refused at the exchange, where no one could act on it — and so a
+// test can state the bound without minting.
+func ClaimsSize(c Claims) int {
+	data, err := json.Marshal(c.claimSet())
+	if err != nil {
+		// The map holds only strings, numbers and slices of strings, so this
+		// is unreachable; a caller that got it would be measuring nothing.
+		return 0
+	}
+	return len(data)
+}
+
 func (c Claims) validate(now time.Time) error {
 	for _, n := range c.PRs {
 		if n <= 0 {
@@ -168,8 +233,12 @@ func (c Claims) validate(now time.Time) error {
 	switch {
 	case len(c.PRs) > MaxPRs:
 		return fmt.Errorf("budget token: the identity names more than %d pull requests", MaxPRs)
+	case len(c.ContextRepos) > MaxContextRepos:
+		return fmt.Errorf("budget token: the identity names more than %d context repositories", MaxContextRepos)
 	case !utf8.ValidString(c.Slug) || !utf8.ValidString(c.Run) || !utf8.ValidString(c.FP) || !utf8.ValidString(c.RB) || !utf8.ValidString(c.Branch):
 		return errors.New("budget token: a claim is not valid UTF-8")
+	case !validClaimStrings(c.ContextRepos):
+		return errors.New("budget token: invalid context repository claim")
 	case c.Branch != "" && (len(c.Branch) > maxFieldLen || strings.ContainsFunc(c.Branch, unicode.IsControl)):
 		return errors.New("budget token: invalid branch claim")
 	case !ValidSegment(c.Slug):
@@ -188,6 +257,46 @@ func (c Claims) validate(now time.Time) error {
 		return errors.New("budget token: fx is more than 30 days away")
 	}
 	return nil
+}
+
+// validClaimStrings reports whether every element of a claim that is a list of
+// strings is one this package will put on the wire: non-empty, at most
+// maxFieldLen bytes, valid UTF-8 and holding no control character. It is not
+// the *shape* of a context repository — that rule is task.ContextReposProblem's
+// and is applied where the value is read from a person (the launcher and
+// Spec.Validate), because this package must not import internal/task's whole
+// world to hold a claim to it. What is refused here is what must never reach a
+// signed payload whatever the value meant: an empty element, a value past a
+// field's bound, and text a log line or a JSON document cannot carry.
+func validClaimStrings(vals []string) bool {
+	for _, v := range vals {
+		if v == "" || len(v) > maxFieldLen || !utf8.ValidString(v) || strings.ContainsFunc(v, unicode.IsControl) {
+			return false
+		}
+	}
+	return true
+}
+
+// ClaimStrings reads a claim that is a JSON array of strings, like fcr; it is
+// false for anything else, including an element that is not a string, so no
+// caller reads a claim it cannot parse as an empty one. It is exported because
+// the credentials service reads this same wire (internal/credsvc), and what the
+// claim may hold is one rule held in one place (ClaimInts is the same
+// arrangement).
+func ClaimStrings(m map[string]any, k string) ([]string, bool) {
+	arr, ok := m[k].([]any)
+	if !ok {
+		return nil, false
+	}
+	out := make([]string, 0, len(arr))
+	for _, el := range arr {
+		s, ok := el.(string)
+		if !ok {
+			return nil, false
+		}
+		out = append(out, s)
+	}
+	return out, true
 }
 
 // parseJWT decodes the payload of a JWT WITHOUT verifying it (Google does);
