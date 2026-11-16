@@ -547,6 +547,31 @@ func TestCraftLsRowNamesWhyAModelCannotBeServed(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("the craft names no model", func(t *testing.T) {
+		// The other side of the member, and the F17 rule it would be easy to
+		// get wrong: a machine with no installation selected sets no craft's
+		// model at all, and a craft that names no model is served by the role
+		// slot below it rather than being a model of its own that is missing --
+		// so the row says servable and writes no sentence, exactly as a row
+		// whose model every check admits does.
+		craftFixture(t)
+		t.Setenv("FUGARO_CONFIG", "")
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		out, _, err := execute(t, "craft", "ls", "--json")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		for _, name := range config.CraftNames {
+			if servable, problem := craftRowServes(t, out, name); !servable || problem != "" {
+				t.Errorf("the %s row says its model cannot be served (%s), and no run's facts are held here for a model to fail: %s", name, problem, out)
+			}
+		}
+		row := craftRowRaw(t, out, config.CraftCoder)
+		if _, ok := row["model"]; ok {
+			t.Errorf("the coder row names a model, and no layer in this world sets one:\n%s", out)
+		}
+	})
 }
 
 // TestCraftLsSchemaPinsVersionOne holds schemas/craft-ls.schema.json to the rule
