@@ -141,6 +141,21 @@ func poolSvcAdmitted(t *testing.T, block string, accounts ...string) *svc {
 	})
 }
 
+// poolSvcHolding is poolSvc whose bundle holds further model credentials, for a
+// test whose subject is a name the bundle holds and the node points at another
+// path: Bundle.byName answers an account's name to every
+// claude-oauth-token-<name> key, so a member the node calls an OpenRouter
+// credential can also be a name this service could select. The three fixture
+// accounts stay admitted, as poolSvc admits them.
+func poolSvcHolding(t *testing.T, block string, bundle ...string) *svc {
+	t.Helper()
+	return newSvcWith(t, func(s *svc, _ *Config) {
+		s.src.docs = [][]byte{poolBundleDoc(t, bundle...)}
+		s.policy.shared = decodeTestPolicy(t, poolNode(block))
+		s.policy.admissions[s.slug] = decodeTestChild(t, testChildDoc(config.DefaultClaudeAccount, testAccount, testPoolAccount))
+	})
+}
+
 // poolCraftBlock is one pool and the craft whose access names it, as a test
 // writes it into a node: the credentials the members are of, the pool itself
 // and the coder craft that selects it. The review craft inherits the coder, so
@@ -661,19 +676,31 @@ func TestPublishedPoolOrderReachesTheService(t *testing.T) {
 // TestTheNodeReadsACrossPathPoolUntilItsSplitLands is the reader's half of the
 // staging, and TestOpenRouterAndVertexMembersNeverReachCredsvc is what this
 // service ANSWERS such a pool (MC6).
+//
+// The fixture's bundle holds a model credential NAMED after the member, so that
+// the member's path is the only thing that can keep it out of the offering: a
+// bundle that held no such name would drop it on the bundle check instead, and
+// the guard this test names would be pinned by nothing (a review round found
+// exactly that of the first cut — deleting the guard left the package green).
+// The name is one an account may take, which is what makes the two documents
+// meet: the node points the name at the runner's path and the bundle could
+// serve a call by it.
 func TestRunnerPathMemberIsNotOfferedToTheService(t *testing.T) {
 	if config.CredentialServingPath(config.CredentialTypeOpenRouter) != config.CredentialPathRunner {
 		t.Fatalf("the fixture's OpenRouter credential is served by %q, and this test is written against it being the runner path's",
 			config.CredentialServingPath(config.CredentialTypeOpenRouter))
 	}
-	s := poolSvc(t, `"credentials": {"fallback": "auto"},
+	s := poolSvcHolding(t, `"credentials": {"fallback": "auto"},
 		`+poolCraftBlock(
 		`{"name": "`+testRouterCredential+`", "type": "openrouter"},
 			{"name": "`+testPoolAccount+`", "type": "claude-oauth"}`,
 		testRouterCredential, testPoolAccount)+`,
-		"subscription_spread": true`)
+		"subscription_spread": true`, testRouterCredential)
 
-	b, err := ParseBundle(poolBundleDoc(t))
+	// The bundle the offering is read off is the one the service holds, the
+	// member's name included: a document without it would drop the member on the
+	// bundle check and this test would be pinning that instead of the path.
+	b, err := ParseBundle(poolBundleDoc(t, testRouterCredential))
 	if err != nil {
 		t.Fatalf("the fixture's bundle is not one ParseBundle accepts: %v", err)
 	}
