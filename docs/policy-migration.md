@@ -170,13 +170,16 @@ that wrote one of them would overwrite the newer node with the older file. The
 refusal writes neither the file nor the generation, and it says what to do. A
 member an edit can reach goes back by hand — a flow block rewritten as a block
 mapping is one the edit can reach — and the next `fugaro update` re-seeds the
-rest. An account-choice key has no edit that reaches it: the command that
-publishes it is **`fugaro project policy publish`**, run at the operator's own
-terminal, which builds the node from this file and never consults
+rest. An account-choice key has no edit that reaches it: the command that ends
+this refusal for one is **`fugaro project policy publish`**, run at the
+operator's own terminal, which builds the node from this file and never consults
 `policy_generation` — so the file is the source, the publish is the write, and
 the generation it records is what ends the refusal. `fugaro update` is the
-upgrade, and here it publishes nothing: it refuses this file until that publish
-has happened. A re-seed that recorded the generation while leaving a member
+upgrade, and in this state it publishes nothing: it refuses this file until that
+publish has happened. Where the stage does publish — the ordinary state, a file
+that records no generation or records the node's own — that is how a config edit
+reaches the node, these members included; the publish here is the way out of the
+refusal and not a second step of every edit. A re-seed that recorded the generation while leaving a member
 behind is exactly the overwrite this rule exists to prevent.
 
 A project policy is read under a deployed security rules generation, so the

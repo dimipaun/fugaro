@@ -542,6 +542,42 @@ func TestUpdatePolicyReseedRefusalNamesThePublishForAnAccountKey(t *testing.T) {
 	}
 }
 
+// TestUpdatePolicyReseedRefusalOrdersTheHandEditBeforeThePublish: when the
+// members it cannot write are of both kinds, the sentence names two remedies
+// and their order is the whole of their being safe. The publish builds the node
+// from this file, so a publish made before the hand edits writes this file's
+// older values for those members over the node's — the overwrite D854 refuses,
+// made by the command the refusal just recommended. The remedy that reads first
+// is therefore the one to run first, and the sentence says so.
+func TestUpdatePolicyReseedRefusalOrdersTheHandEditBeforeThePublish(t *testing.T) {
+	f := newProjectFixture(t, "")
+	setConfig(t, f, func(s string) string { return s + "policy_generation: etag-from-an-earlier-publish\n" })
+	node := staleBudgetNode()
+	node["budget"] = map[string]any{"mode": "enforce", "per_run_usd": 9, "allowed_models": []string{"claude-sonnet-5-5"}}
+	node["default_claude_account"] = "team-b"
+	f.db.Set(projectpolicy.PathShared(), node)
+	h := newMigrationRig(t, f, &initOptions{})
+
+	out, err := h.apply(t, true)
+	if err == nil {
+		t.Fatalf("the re-seed carried members it cannot splice:\n%s", out)
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"put the published values of budget.allowed_models",
+		"once this file states the node's own values for the members above",
+		"would write this file's older values for them over the node's",
+		"`fugaro project policy publish`",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if hand, publish := strings.Index(msg, "put the published values"), strings.Index(msg, "publish it with"); hand < 0 || publish < 0 || hand > publish {
+		t.Errorf("the two remedies are not in the order that keeps the file safe (hand edit at %d, publish at %d): %v", hand, publish, err)
+	}
+}
+
 // TestProjectPolicyPublishRecordsTheGenerationOfItsOwnWrite: the explicit door
 // writes one node, so it keeps the record the stage keeps (D854), in the file it
 // built that node from. The record is what the operator's next config edit is

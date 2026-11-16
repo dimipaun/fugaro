@@ -1225,6 +1225,11 @@ func applyPolicyReseed(cmd *cobra.Command, path string, lc *localcfg.Config, p *
 		// update is named only where it is the way out: run again over an
 		// account key it refuses this same file (publishPlanFor), which is the
 		// dead end this sentence exists not to send anyone into.
+		//
+		// The two are ordered where both are named, because that publish writes
+		// every member this file states over the node's: run before the hand
+		// edits, it puts this file's older values for them there, which is the
+		// overwrite D854 refuses one round later.
 		accounts, rest := splitAccountChoices(hand)
 		var remedies []string
 		if len(rest) > 0 {
@@ -1232,8 +1237,12 @@ func applyPolicyReseed(cmd *cobra.Command, path string, lc *localcfg.Config, p *
 				strings.Join(rest, ", "), selfCommand()+" update"))
 		}
 		if len(accounts) > 0 {
-			remedies = append(remedies, fmt.Sprintf("%s: an account choice is your own, and the local config is its only store — write the choice with `fugaro settings set default_claude_account <name>` or `fugaro settings set stages.<stage>.claude_account <name>`, then publish it with `fugaro project policy publish` at your own terminal, which builds the node from this file and writes it there (%s is the upgrade, and its policy stage refuses this file until that publish has landed)",
-				strings.Join(accounts, ", "), selfCommand()+" update"))
+			publishing := "then publish it with `fugaro project policy publish` at your own terminal, which builds the node from this file and never consults the recorded generation"
+			if len(rest) > 0 {
+				publishing = "then, once this file states the node's own values for the members above, publish it with `fugaro project policy publish` at your own terminal — that command builds the node from this file, so run before those edits it would write this file's older values for them over the node's"
+			}
+			remedies = append(remedies, fmt.Sprintf("%s: an account choice is your own, and the local config is its only store — write the choice with `fugaro settings set default_claude_account <name>` or `fugaro settings set stages.<stage>.claude_account <name>`, %s (%s is the upgrade, and its policy stage refuses this file until that publish has landed)",
+				strings.Join(accounts, ", "), publishing, selfCommand()+" update"))
 		}
 		return nil, userErr("the published policy node's %s cannot be re-seeded into %s by one edit, so the file was left as it is: %s",
 			strings.Join(hand, ", "), path, strings.Join(remedies, "; and "))
