@@ -85,7 +85,7 @@ func TestAfterWriteIsWiredToTheHook(t *testing.T) {
 		t.Fatal("runAfterWrite is nil: a semantic command's write would publish nothing and report nothing")
 	}
 	if got, want := reflect.ValueOf(runAfterWrite).Pointer(), reflect.ValueOf(publishAfterWrite).Pointer(); got != want {
-		t.Fatalf("runAfterWrite holds %#x and the hook is %#x: the variable is not this file's hook, so a run of its stages would not be one", got, want)
+		t.Fatalf("runAfterWrite holds %#x and publishAfterWrite is %#x: the hook a semantic command calls is not this file's, so its write would publish nothing", got, want)
 	}
 	_, db := afterWriteFixture(t)
 	cmd, out := afterWriteCmd(t, "settings", "set")
