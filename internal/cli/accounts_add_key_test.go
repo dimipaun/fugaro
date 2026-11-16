@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/streams"
 )
 
 // accounts_add_key_test.go is `accounts add --type` for the two KEY
@@ -902,5 +903,55 @@ func TestTheBundleWriteIsNotInAnAgentSession(t *testing.T) {
 	}
 	if leak := out + errOut + err.Error(); strings.Contains(leak, value) {
 		t.Errorf("the refusal echoed the value: %q", leak)
+	}
+}
+
+// TestKeyCredentialSinceHasAReleaseBullet: keyCredentialSince names the release
+// whose credentials service first reads the family, and it is the first such
+// constant whose release is not tagged yet, so docs/release.md's Before-you-tag
+// list is where a release verifies it against the tag actually cut — and where
+// the direction that matters (a raise) is pinned.
+func TestKeyCredentialSinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `keyCredentialSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no keyCredentialSince bullet: the checklist is where a release verifies the constant")
+	}
+	if !strings.Contains(bullet, "currently `\""+keyCredentialSince+"\"`") {
+		t.Errorf("docs/release.md's keyCredentialSince bullet does not carry the constant's release (%q)", keyCredentialSince)
+	}
+	for _, want := range []string{"the release that ships the family", "fugaro creds set", "must not raise it", "not tagged yet"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's keyCredentialSince bullet does not say %q", want)
+		}
+	}
+}
+
+// TestKeyCredentialSinceIsNotAheadOfAnyReleasedService: the sibling constants'
+// direction, read the way it applies to a family whose reader has never been in
+// a released image. Their tests hold the constant at or below the release the
+// cli stream is at, which no reader-less version of this family can satisfy —
+// the 0.25.0 tag predates MC22's declaration — so what is asserted here is the
+// fact that makes 0.26.0 the answer: every release at or below that `current`
+// predates the family, and the constant is above every one of them.
+func TestKeyCredentialSinceIsNotAheadOfAnyReleasedService(t *testing.T) {
+	cat, err := streams.Parse("docs/release-streams.yaml", []byte(readDoc(t, "docs/release-streams.yaml")))
+	if err != nil {
+		t.Fatalf("docs/release-streams.yaml: %v", err)
+	}
+	cli, ok := cat.Lookup(streams.CLI)
+	if !ok {
+		t.Fatal("docs/release-streams.yaml carries no cli stream, so the release this tree is on cannot be read")
+	}
+	if !imagePredates(cli.Current.String(), keyCredentialSince) {
+		t.Errorf("keyCredentialSince = %q is not above the cli stream's %s: no release at or below it serves a bundle holding the family (MC22's declaration and MC23's halves are newer than the %s tag), so a constant naming one of them would clear the write that halts that release's service", keyCredentialSince, cli.Current, cli.Current)
+	}
+	if imagePredates(keyCredentialSince, providerEntrySince) {
+		t.Errorf("keyCredentialSince = %q predates providerEntrySince = %q: the family's reader is newer than the entry that shipped before it", keyCredentialSince, providerEntrySince)
 	}
 }

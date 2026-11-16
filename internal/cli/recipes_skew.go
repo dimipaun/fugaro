@@ -728,15 +728,25 @@ const bitbucketTokenSince = "0.24.0"
 // (credsKeyCredentialHalfRefusal), so no document of this release holds an
 // entry of this family that a second write path could create.
 //
-// It names 0.25.0, the release this tree is on — the one whose credentials
-// service was built with the family's reader — and no earlier release reads it,
-// so there is no version below this one the constant could name. The direction
-// is providerEntrySince's: a release that RAISED it above the release that
-// shipped the reader would refuse `fugaro creds set credential-<name>-key` on
-// installations whose deployed service already reads the family, with `fugaro
-// update` no remedy for them. docs/release.md's ("Before you tag") list carries
-// that reading.
-const keyCredentialSince = "0.25.0"
+// It names 0.26.0, the release this work ships in, and it is the first constant
+// of this file whose reader has never been in a released image: MC22's
+// declaration and MC23's halves are both newer than the `v0.25.0` tag, so the
+// release before this one serves a bundle without the family and cannot read a
+// document that holds it. That is what makes 0.26.0 the answer and not 0.25.0 —
+// a constant naming a released version would clear the write that halts that
+// version's service — and it is why the tests that hold providerEntrySince and
+// bitbucketTokenSince to a release at or below docs/release-streams.yaml's
+// `current` have no counterpart here: no release at or below that `current` (the
+// 0.25.0 tag) reads the family, so the value is verified against the tag
+// actually cut, as slotSince's and modelGradesSince's bullets record.
+// TestKeyCredentialSinceHasAReleaseBullet holds the checklist's bullet to it.
+//
+// The direction those tests protect still holds from 0.26.0 on, and it is the
+// one to watch at the next release: a value ABOVE the tag that shipped the
+// family refuses `fugaro creds set credential-<name>-key` on installations whose
+// deployed service already reads it, with `fugaro update` no remedy for them.
+// docs/release.md's ("Before you tag") list carries that reading.
+const keyCredentialSince = "0.26.0"
 
 // gitSecretIDSince is the first fugaro release whose runner reads
 // CheckJobSpec's git_secret_id (internal/infra/spec.go): the daily image
