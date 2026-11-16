@@ -1195,6 +1195,68 @@ func TestInitRepoAcceptsAForkPinWithTheRecordedOwner(t *testing.T) {
 	}
 }
 
+// TestTheReviewDerivesTheRenewalContainer is the plan review's own half of the
+// licence renewal job (plan K4.2): the engine's cover — the one the run's
+// stages are really judged by, not a tf.Cover a test filled in — is asked about
+// the secret binding the installation module writes for the job's account, and
+// it covers it.
+//
+// What it pins: the review derives the container rather than reading
+// e.spec.Licence. Whether a plan carries the licence job is the module's own
+// condition (licence.tf's local.licence_on) and the block is filled by
+// infra.Licence on installRoot's COPY of the engine's spec, so a review that
+// read the block read nil, left LicenceRenewalSecret empty, and refused
+// google_secret_manager_secret_iam_member.licence_renewal[0]: `fugaro update`
+// failed at the installation stage on a plan no cover admits, and no test could
+// see it — the golden hands its cover the container and the update door's plans
+// for that root are empty.
+//
+// Mutation (run, restore): read the block again
+// (if e.spec.Licence != nil { c.LicenceRenewalSecret = e.spec.Licence.RenewalSecret })
+// and the covered case fails with the refusal.
+func TestTheReviewDerivesTheRenewalContainer(t *testing.T) {
+	r := newInitRig(t)
+	r.appendConfig(t, "terraform: { coordinator: true }\n")
+	r.stateBucket()
+	e := rigEngine(t, r, &initOptions{})
+	if e.spec.Licence != nil {
+		t.Fatalf("the engine's spec carries a licence block (%v), so this is not the run the review has to derive the container for", e.spec.Licence)
+	}
+	cover := e.cover()
+	if got, want := cover.LicenceRenewalSecret, infra.LicenceRenewalSecretID(e.lc.Name); got != want {
+		t.Errorf("the run's own cover carries the renewal container %q, want %q (infra.LicenceRenewalSecretID of %q)", got, want, e.lc.Name)
+	}
+	if got := cover.NotCovered(renewalBindingPlan(e.lc.Name), nil); len(got) != 0 {
+		t.Errorf("the run's own cover refuses the renewal job's secret binding: %q\nthe update that creates the job would fail at the installation stage on a plan nothing admits", got)
+	}
+	// ... and it is a container and not a rubber stamp: the same binding on
+	// another Fugaro project's container is still refused.
+	if got := cover.NotCovered(renewalBindingPlan("someone-elses-project"), nil); len(got) == 0 {
+		t.Errorf("the run's own cover covers the renewal role bound on another installation's container: licenceSecretGrant's whole check is the target")
+	}
+}
+
+// renewalBindingPlan is the installation module's own renewal binding
+// (licence.tf) as a plan of one change: the container derived from the Fugaro
+// project's name by the very function the module's tfvars value comes from
+// (infra.LicenceRenewalSecretID, which infra.Licence fills the block with), the
+// custom role written as the literal the plan review needs, and the job's own
+// account.
+func renewalBindingPlan(fugaroProject string) *tf.Plan {
+	return &tf.Plan{ResourceChanges: []tf.ResourceChange{{
+		Address:      "module.installation.google_secret_manager_secret_iam_member.licence_renewal[0]",
+		Mode:         "managed",
+		Type:         "google_secret_manager_secret_iam_member",
+		ProviderName: "registry.terraform.io/hashicorp/google",
+		Change: tf.Change{Actions: []string{"create"}, Before: map[string]any{}, After: map[string]any{
+			"project":   initProject,
+			"secret_id": infra.LicenceRenewalSecretID(fugaroProject),
+			"role":      "projects/" + initProject + "/roles/" + tf.LicenceRenewalRole,
+			"member":    "serviceAccount:" + tf.LicenceAccountID + "@" + initProject + ".iam.gserviceaccount.com",
+		}},
+	}}}
+}
+
 // TestFirebaseCoverSplitKeepsAnUnverifiedProjectIntegrity is the one step whose
 // split is not the cover's own: the Firebase root may be deployed into a
 // project that is not this installation's, and that is the step's own fact

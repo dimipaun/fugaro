@@ -452,16 +452,19 @@ type Cover struct {
 	// installation's cover names none.
 	Accounts []string
 	// LicenceRenewalSecret is the ID of the installation's renewal secret
-	// container (internal/infra.LicenceRenewalSecretID), which the caller reads
-	// off the spec it is planning: the one container licenceSecretGrant accepts
-	// a binding on, and empty where the plan carries no licence job at all.
+	// container (internal/infra.LicenceRenewalSecretID): the one container
+	// licenceSecretGrant accepts a binding on, and empty where the caller has
+	// none to name. The caller derives it from the Fugaro project's name — the
+	// same derivation internal/infra.Licence puts in the plan's tfvars — rather
+	// than reading the licence block, which the plan's own module decides from
+	// cloud facts no review of the plan can see.
 	//
-	// It is here rather than derived for the reason the conditions are carried
-	// in the spec: the ID is a hash of the Fugaro project's name
-	// (gcp.ProjectSecretID), the spec is where it is computed, and an empty one
-	// refuses every binding (a caller that forgets to fill it cannot open the
-	// hole) — which is the fail-closed direction, since the container of a plan
-	// with no licence block is one no grant of this class should name.
+	// It is carried rather than derived in this package because the caller that
+	// knows the Fugaro project's name is internal/infra, which imports this
+	// package and so cannot be called from it. An empty one refuses every
+	// binding — a caller that forgets to fill it cannot open the hole — which is
+	// the fail-closed direction, since the container of a plan with no licence
+	// block is one no grant of this class should name.
 	LicenceRenewalSecret string
 }
 
@@ -3119,9 +3122,9 @@ func (c Cover) licenceWriteGrant(rc ResourceChange, createdSAIDs map[string]bool
 // The container may be unknown, and then the grant is refused: the ID is a
 // derived literal (gcp.ProjectSecretID), never a computed attribute of a
 // resource in this plan, so "unknown" means the plan did not take it from the
-// spec. A plan that carries no licence job at all (LicenceRenewalSecret empty
-// — an installation that deploys no coordinator) has no container to compare
-// with, and every binding to this account is refused.
+// spec. A cover with no container in it (LicenceRenewalSecret empty — a caller
+// that had none to name) has nothing to compare with, and every binding to this
+// account is refused.
 func (c Cover) licenceSecretGrant(rc ResourceChange) string {
 	if unknown(rc.Change, "secret_id") {
 		return "grants the renewal role on a secret whose secret_id is not known: it is the container the installation's own licence spec derives (internal/infra.LicenceRenewalSecretID), which the plan carries as a literal"

@@ -460,13 +460,19 @@ func (e *initEngine) cover() tf.Cover {
 	if b := e.r.o.billingAccount; b != "" {
 		c.Billing = []string{b}
 	}
-	// The licence renewal job's container, when this plan carries one: it is
-	// the one grant the cover reads a target for (tf.Cover.LicenceRenewalSecret,
-	// licenceSecretGrant), and the run's own spec is what derived it from the
-	// Fugaro project's name.
-	if e.spec.Licence != nil {
-		c.LicenceRenewalSecret = e.spec.Licence.RenewalSecret
-	}
+	// The licence renewal job's container: the one grant the cover reads a
+	// target for (tf.Cover.LicenceRenewalSecret, licenceSecretGrant), and it is
+	// DERIVED here rather than read off e.spec.Licence. Whether a plan carries
+	// the job is the module's own condition (licence.tf's local.licence_on: the
+	// coordinator's, which installRoot decides from cloud facts), and the block
+	// itself is filled by infra.Licence on installRoot's COPY of this engine's
+	// spec — so a review that read the block would always read nil and refuse
+	// the one binding licenceSecretGrant exists to judge, which is a plan no
+	// gate admits. The ID is a pure function of the Fugaro project's name
+	// (infra.LicenceRenewalSecretID), the same derivation infra.Licence puts in
+	// the plan's tfvars, so the two cannot drift; a plan that carries no licence
+	// job carries no binding this rule is asked about.
+	c.LicenceRenewalSecret = infra.LicenceRenewalSecretID(e.lc.Name)
 	if fp := e.r.o.firebase; fp != "" && fp != e.r.gcpProject {
 		if ok, _ := e.firebaseVerified(e.r.ctx()); ok {
 			c.Projects = append(c.Projects, fp)
