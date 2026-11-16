@@ -786,6 +786,7 @@ test('a quiet-hours window is an IANA zone name and two minutes of the day', () 
   const withWindow = (quiet_hours) => aRegistration({ prefs: { ...aRegistration().prefs, quiet_hours } });
   assert.equal(validateMessage(withWindow({ zone: 'UTC', start: 0, end: MINUTE_MAX })).ok, true, 'the whole day');
   assert.equal(validateMessage(withWindow({ zone: 'America/Argentina/Buenos_Aires', start: 1, end: 2 })).ok, true, 'a nested zone name');
+  assert.equal(validateMessage(withWindow({ zone: 'Etc/GMT+5', start: 1, end: 2 })).ok, true, 'the plus sign is part of a name');
   // §3.8 stores the zone NAME, not an offset: a stored offset drifts onto the
   // wrong hour at the next DST transition, silently. The pattern is a SHAPE —
   // `Europe/Berlin` and `America/Argentina/Buenos_Aires` are names, and whether
@@ -794,6 +795,14 @@ test('a quiet-hours window is an IANA zone name and two minutes of the day', () 
   for (const zone of ['1Europe/Berlin', 'Europe//Berlin', '/Berlin', 'Europe/', 'Europe /Berlin', 'Europe/Berlin;rm -rf', 1, null]) {
     const code = typeof zone === 'string' ? REFUSALS.BAD_ZONE : REFUSALS.WRONG_TYPE;
     refusal(withWindow({ zone, start: 1, end: 2 }), code, 'prefs.quiet_hours.zone');
+  }
+  // A segment of dots alone is a path step and not a name, and the letter-first
+  // rule does not catch it: that rule guards the string's own first character,
+  // so `UTC/../../etc/passwd` and `Etc/../passwd` would pass a pattern whose
+  // only dot rule is the leading one — and the consumer hands this value to a
+  // zone loader. Every segment must carry something that is not a dot.
+  for (const zone of ['Europe/.', 'Europe/..', 'Europe/...', 'Etc/../passwd', 'UTC/../../etc/passwd', 'America/New_York/..']) {
+    refusal(withWindow({ zone, start: 1, end: 2 }), REFUSALS.BAD_ZONE, 'prefs.quiet_hours.zone');
   }
   refusal(withWindow({ zone: '', start: 1, end: 2 }), REFUSALS.EMPTY_STRING, 'prefs.quiet_hours.zone');
   refusal(withWindow({ zone: 'z'.repeat(ZONE_MAX + 1), start: 1, end: 2 }), REFUSALS.TOO_LONG, 'prefs.quiet_hours.zone');
@@ -1306,7 +1315,8 @@ test('the vectors carry the schema refusals both ends must agree on', () => {
     'unsigned message', 'unsigned prompt', 'unsigned answer', 'unsigned action', 'unsigned heartbeat',
     'unsigned registration', 'registration without a token', 'registration without a platform',
     'a token on a plain message', 'options on a registration', 'a token one code unit past its bound',
-    'an unknown platform', 'a zone that is not an IANA zone name', 'a quiet-hours minute outside the day',
+    'an unknown platform', 'a zone that is not an IANA zone name', 'a zone whose later segment is a path step',
+    'a quiet-hours minute outside the day',
     'a quiet-hours window whose ends are the same minute', 'prefs without one of the switches',
     'a switch that is not a boolean', 'an unknown field inside prefs',
     'short mac', 'long mac', 'uppercase mac', 'unknown verb', 'short head SHA', 'uppercase head SHA',

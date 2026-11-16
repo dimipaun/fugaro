@@ -410,6 +410,9 @@ run "registration: a quiet-hours window is complete" \
 run "registration: a zone is an IANA-shaped name" \
   "  if (!ZONE_PATTERN.test(zone.value)) {" \
   "  if (false) {"
+run "registration: a zone's segments are not dots alone" \
+  "const ZONE_PATTERN = /^[A-Za-z][A-Za-z0-9._+-]*(\/[A-Za-z0-9._+-]*[A-Za-z0-9_+-][A-Za-z0-9._+-]*)*$/;" \
+  "const ZONE_PATTERN = /^[A-Za-z][A-Za-z0-9._+-]*(\/[A-Za-z0-9._+-]+)*$/;"
 run "registration: a minute is inside the local day" \
   "  if (!Number.isSafeInteger(value) || value < 0 || value > MINUTE_MAX) {" \
   "  if (false) {"

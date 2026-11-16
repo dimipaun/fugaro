@@ -1266,6 +1266,35 @@
       "field": "prefs.quiet_hours.zone"
     },
     {
+      "name": "a zone whose later segment is a path step",
+      "why": "a segment of dots alone is a path step, and the letter-first rule guards the string's first character and not the segments after it",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "registration",
+        "token": "not-a-real-registration-token",
+        "platform": "ios",
+        "prefs": {
+          "kill_switch": true,
+          "cap_reached": true,
+          "consumer_offline": true,
+          "cap_near": false,
+          "prompt": true,
+          "quiet_hours": {
+            "zone": "UTC/../../etc/passwd",
+            "start": 1320,
+            "end": 420
+          }
+        }
+      },
+      "code": "bad-zone",
+      "field": "prefs.quiet_hours.zone"
+    },
+    {
       "name": "a quiet-hours window whose ends are the same minute",
       "why": "a window from a minute to itself is either a whole day or none of one, and a sender that guessed would suppress the wrong hours",
       "record": "message",

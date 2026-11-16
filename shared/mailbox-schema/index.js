@@ -1348,11 +1348,15 @@ const REPO_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9._-]*\/[A-Za-z0-9_][A-Za-z0-9._-]*$
  * An IANA zone name as the tz database spells one: a letter first — so neither
  * a leading `.` nor a leading `-` can reach a path or a flag position — then
  * letters, digits, `.`, `_`, `+` and `-`, in one or more `/`-separated
- * segments. `Etc/GMT+5` is why the `+` is there and `UTC` why the separator is
- * optional. The consumer hands this value to its own zone loader, so the shape
- * is checked here rather than trusted there.
+ * segments, and every segment carries at least one character that is not a
+ * dot. The letter-first rule alone is not enough for that last one: it guards
+ * the string's own first character, and `..` after a slash is a path step like
+ * any other, so `UTC/../../etc/passwd` is refused for the segment rather than
+ * for the `.` that opens the string. `Etc/GMT+5` is why the `+` is there and
+ * `UTC` why the separator is optional. The consumer hands this value to its
+ * own zone loader, so the shape is checked here rather than trusted there.
  */
-const ZONE_PATTERN = /^[A-Za-z][A-Za-z0-9._+-]*(\/[A-Za-z0-9._+-]+)*$/;
+const ZONE_PATTERN = /^[A-Za-z][A-Za-z0-9._+-]*(\/[A-Za-z0-9._+-]*[A-Za-z0-9_+-][A-Za-z0-9._+-]*)*$/;
 
 /** Lowercase hexadecimal, which is the one spelling a tag or a SHA has here. */
 const HEX_PATTERN = /^[0-9a-f]+$/;

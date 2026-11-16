@@ -1315,9 +1315,11 @@ var (
 	// membership test: whether the name is one the tz database has is the
 	// reader's zone loader's question, exactly as a tag's value is not
 	// hexPattern's. What it refuses is a string that could not be a name — an
-	// empty segment, a leading digit or dot, a slash where none belongs, a
-	// separator or a metacharacter.
-	zonePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9._+-]*(/[A-Za-z0-9._+-]+)*$`)
+	// empty segment, a leading digit or dot, a segment that is dots alone (a
+	// path step, so `UTC/../..` is refused for the segment and not only for the
+	// string's first character), a slash where none belongs, a separator or a
+	// metacharacter.
+	zonePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9._+-]*(/[A-Za-z0-9._+-]*[A-Za-z0-9_+-][A-Za-z0-9._+-]*)*$`)
 )
 
 // forbiddenKeyChars are the characters a database key may not contain.
