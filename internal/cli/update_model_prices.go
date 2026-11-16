@@ -2,7 +2,9 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"slices"
@@ -35,11 +37,15 @@ import (
 // name this release documents, and the next run's comparison of the two finds
 // them agreeing.
 //
-// Nothing is asked (CLAUDE.md: fugaro asks for nothing). The rename loses
-// nothing — the value, its comment block and every other byte of the file stay
-// where they were — so it is a SelfConfirming stage whose confirmation is the
-// run's own, and a LocalUnderAgent one, because every write of it is on this
-// machine.
+// Nothing is asked (CLAUDE.md: fugaro asks for nothing). No price moves — the
+// value each key held is the value the new name holds — so it is a
+// SelfConfirming stage whose confirmation is the run's own, and a LocalUnderAgent
+// one, because every write of it is on this machine. A comment written on one of
+// the renamed keys goes with the old key (yamledit's SetScalar and RemoveKey are
+// the two edits that rename one, and neither carries a comment across); every
+// other byte of the file, the comments the file wrote around the entry among
+// them, stays where it was, and the line the run prints says which of the two it
+// is.
 
 // modelPriceRename is one key this run rewrites: the model whose entry writes
 // it, and the two names and the value localcfg's own spelling table gives.
@@ -127,6 +133,16 @@ func modelPricesPlanFor(path string) (*modelPricesPlan, error) {
 		return p, nil
 	}
 	data, err := os.ReadFile(path)
+	// A file that is not there yet is the empty case and not a failure: the path
+	// this run holds is the one the installation stage writes the config to, so a
+	// first run — and a wizard run, and a checkout whose project has no local
+	// config yet — reaches this stage before the file exists. Nothing can be
+	// written the old way in a file that holds nothing, and the stage says so
+	// rather than stopping the run it is one step of.
+	if errors.Is(err, fs.ErrNotExist) {
+		p.skip = fmt.Sprintf("%s is not there yet, so this run has no cache price to rename", path)
+		return p, nil
+	}
 	if err != nil {
 		return nil, userErr("reading %s: %v", path, err)
 	}
@@ -291,7 +307,7 @@ func renameModelPriceKeys(r *initRun, lc *localcfg.Config, path string) (wrote [
 		mp.RenameLegacyCacheKeys()
 		lc.ModelPrices[id] = mp
 	}
-	fmt.Fprintf(r.stageDetail(), "renamed %s in %s: the prices are unchanged and every comment around them stays where it is (the file this run replaced is at %s)\n",
+	fmt.Fprintf(r.stageDetail(), "renamed %s in %s: every price is the one the owner set, and a comment written on one of the renamed keys went with it (the file this run replaced is at %s)\n",
 		modelPriceRenamesText(renames), path, backup)
 	return renames, false, nil
 }

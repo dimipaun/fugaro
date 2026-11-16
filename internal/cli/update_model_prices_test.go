@@ -1,8 +1,17 @@
 package cli
 
 import (
+	"bufio"
+	"context"
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
 // cacheKeyFixture is an installation whose local config writes its cache
@@ -33,6 +42,37 @@ model_prices:
     cache_read: 0.0042
     cache_write_5m: 1.4
     cache_write_1h: 2.5
+`
+
+// commentFixture is the same entry in a file a person has annotated: a note
+// above the entry, one above the read, one on the read's own line, and one at
+// the end of the file. Which of them the rename keeps is
+// TestUpdateRenameKeepsTheCommentsItDoesNotRewrite's question.
+const commentFixture = `
+version: 2
+name: aurora
+runs_bucket: fugaro-runs-proj-1234
+region: us-east5
+gcp_project: proj-1234
+# the note above the providers
+providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    models:
+      - deepseek/*
+model_prices:
+  # the note above the entry
+  deepseek/deepseek-v4.1-flash:
+    input_per_m: 0.14
+    output_per_m: 0.42
+    # the note above the read
+    cache_read: 0.0042 # the note on the read's own line
+    cache_write_5m: 1.4
+    cache_write_1h: 2.5
+# the note at the end of the file
 `
 
 // TestUpdateMigratesCacheReadKey is SA4.2's red step, and the state every
@@ -98,6 +138,102 @@ func TestUpdateMigratesCacheReadKey(t *testing.T) {
 	}
 	if want := "warning: model_prices.deepseek/deepseek-v4.1-flash.cache_read_per_m is $0.000588 per million tokens and the cheapest endpoint the built-in price catalog prices for it on the zdr tier is $0.002 per million tokens"; !strings.Contains(out, want) {
 		t.Errorf("fugaro update did not print %q:\n%s", want, out)
+	}
+}
+
+// TestUpdateRenameKeepsTheCommentsItDoesNotRewrite pins the bytes the rename
+// leaves, which is the claim the run's own line makes: SetScalar writes the new
+// key and RemoveKey takes the old one, so a note written on one of the renamed
+// keys — above it or on its line — goes with the key, while every comment
+// written anywhere else in the file stays where it was.
+//
+// It is asserted on the rename itself rather than on a whole `fugaro update`:
+// update writes the local config again from the struct later in its own run, so
+// what a comment's life over a whole run is, is that writer's question and not
+// this stage's (see writeLocalConfig).
+func TestUpdateRenameKeepsTheCommentsItDoesNotRewrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "aurora.yaml")
+	if err := os.WriteFile(path, []byte(commentFixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lc, err := localcfg.Parse([]byte(commentFixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := &syncBuf{}
+	r := &initRun{o: &initOptions{}, w: out}
+	wrote, refused, err := renameModelPriceKeys(r, lc, path)
+	if err != nil || refused {
+		t.Fatalf("the rename was refused over a file of comments (refused=%v, err=%v), want the splice", refused, err)
+	}
+	if len(wrote) != 3 {
+		t.Fatalf("the rename wrote %d key(s), want the three the file holds: %v", len(wrote), wrote)
+	}
+	written := string(readFile(t, path))
+	for _, kept := range []string{
+		"# the note above the providers",
+		"# the note above the entry",
+		"# the note at the end of the file",
+	} {
+		if !strings.Contains(written, kept) {
+			t.Errorf("the rename dropped %q, a note written away from the keys it renamed:\n%s", kept, written)
+		}
+	}
+	for _, gone := range []string{
+		"# the note above the read",
+		"# the note on the read's own line",
+	} {
+		if strings.Contains(written, gone) {
+			t.Errorf("the file still holds %q, so a note written on a renamed key outlived the key: the run's line says it goes with it, and this is where that sentence is kept true:\n%s", gone, written)
+		}
+	}
+	// The line the run prints is the other half of the same claim: an owner
+	// whose note went reads that it went, and the file it replaced is named.
+	if detail := out.String(); !strings.Contains(detail, "a comment written on one of the renamed keys went with it") {
+		t.Errorf("the run's line does not say the notes on the renamed keys went with them:\n%s", detail)
+	}
+}
+
+// TestModelPricesStageOnAFirstRunHasNothingToRename is the state a machine with
+// no local config is in, which is every first run: loadInitConfig hands the
+// stage the path the installation stage will write the file to, with no bytes
+// read from it, and the loop runs Check on every stage BEFORE any stage applies
+// — so the file this stage is pointed at does not exist when it reads.
+//
+// A file that is not there is the empty case and not a failure: nothing can be
+// written the old way in a file that holds nothing, and a stage that failed here
+// would end `fugaro setup` before its first apply. The stage is driven on its
+// own, as the other one-stage tests drive theirs.
+func TestModelPricesStageOnAFirstRunHasNothingToRename(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	t.Chdir(t.TempDir()) // outside any checkout
+	o := &initOptions{name: "aurora", cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5", stderr: discard}}
+	lc, path, old, err := loadInitConfig(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want, _ := localcfg.ProjectPath(os.Getenv, "aurora"); path != want || old != nil {
+		t.Fatalf("a first run holds %s (old %q), want %s with no bytes read", path, old, want)
+	}
+	cmd := NewRootCmd()
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetErr(&syncBuf{})
+	run := &initRun{o: o, w: &syncBuf{}, in: bufio.NewReader(strings.NewReader("")), cmd: cmd}
+	run.setProject(lc)
+	e := &initEngine{r: run, lc: lc, path: path, old: old}
+
+	res, err := initflow.Run(t.Context(), []initflow.Stage{newModelPricesStage(e)}, e.options())
+	if err != nil {
+		t.Fatalf("the loop failed a first run over a config file that is not there yet: %v", err)
+	}
+	if res.Failed != nil || res.ExitCode() != 0 {
+		t.Fatalf("a first run ended %+v (failed %+v), want the stage skipped and the run going on", res.Stages, res.Failed)
+	}
+	if got := stateOf(res, initflow.ModelPrices); got != initflow.Skipped {
+		t.Errorf("the stage is %s on a first run, want it skipped: %+v", got, res.Stages)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the stage left a file at %s (stat: %v), want it to write nothing", path, err)
 	}
 }
 
