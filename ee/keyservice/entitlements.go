@@ -43,12 +43,17 @@ const (
 	entitlementSourceOperations = "operations"
 )
 
-// The two statuses this area writes. The wire shape's other two are other
-// areas': `revoked` is the licensor withdrawing a grant (P5.1) and `expired` is
-// a term that has run out, which is read from EndsAt rather than written here.
+// The statuses this area writes. The wire shape's fourth, `expired`, is a term
+// that has run out, which is read from EndsAt rather than written here.
+//
+// `revoked` is a grant withdrawn — by operations (P5.1) and by the money going
+// back, which is F29's revocation by entitlement (merchant.go's `withdrawn`).
+// The two are one status because they are one thing: the licence stops serving
+// keys, and every key minted for it is withdrawn.
 const (
 	entitlementActive     = "active"
 	entitlementSuperseded = "superseded"
+	entitlementRevoked    = "revoked"
 )
 
 // entitlementGrant is one grant as the area that makes it hands it over: a
@@ -186,6 +191,28 @@ func (s *Service) supersededBy(ctx context.Context, from recordReader, grant ent
 		collect(seats)
 	}
 	return replaced, nil
+}
+
+// revokeEntitlement withdraws one licence: its record stops being active, and a
+// licence that is not active is one no key is minted from again — the binding
+// route refuses it, on the state its own transaction re-reads
+// (`bindEntitlement`), so the keys a withdrawal reached are not replaced the
+// moment after it ran (F29).
+//
+// It is the write half of a refund's revocation and not a grant's: nothing is
+// superseded, which is a grant another grant replaced in its workspace, and
+// nothing expires, which is read from the term. What moves is the status alone,
+// so the licence keeps the term, the seats and the buyer the money was for.
+func (s *Service) revokeEntitlement(ctx context.Context, entitlement WireEntitlement) error {
+	entitlement.Status = entitlementRevoked
+	doc, err := storedDoc(entitlement)
+	if err != nil {
+		return err
+	}
+	if err := s.docs.Put(ctx, entitlementsCollection, entitlement.ID, doc); err != nil {
+		return fmt.Errorf("keyservice: the licence %s was withdrawn and its record could not be written: %w", entitlement.ID, err)
+	}
+	return nil
 }
 
 // entitlementWrite is one grant's write, worked out before the transaction

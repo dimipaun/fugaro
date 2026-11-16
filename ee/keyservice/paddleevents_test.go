@@ -18,6 +18,7 @@ package keyservice
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -592,6 +593,46 @@ func TestRefundFindsItsEntitlement(t *testing.T) {
 	after, held, _ := f.store.Revocation(context.Background(), bought.KeyID)
 	if !held || after != entry {
 		t.Errorf("the licence's entry is %+v (held=%v), want the first delivery's %+v", after, held, entry)
+	}
+}
+
+// TestARefundedLicenceCannotBeBoundAgain: F29 — revocation is by entitlement, so
+// the money going back withdraws the licence itself and not only the keys that
+// existed when it arrived. A record left active is one the customer binds again
+// (the first rebind after a binding is not held by D2198's clock), and the
+// binding mints a fresh key the walk never reached, running to the end of the
+// term that was refunded: the withdrawal would be undone by the customer's own
+// next request, with no merchant event to notice it.
+func TestARefundedLicenceCannotBeBoundAgain(t *testing.T) {
+	f := newFixture(t)
+	bought := f.purchase("evt-1", "acme.example", 3, 30)
+	licence := f.onlyEntitlement(t)
+	signed, recorded := f.signer.calls, len(f.records())
+
+	f.advance(time.Hour)
+	f.deliver(Event{ID: "evt-2", Type: EventRefund, OccurredAt: f.now, Subscription: "sub-acme.example"})
+	if _, held, _ := f.store.Revocation(context.Background(), bought.KeyID); !held {
+		t.Fatalf("the refund left the key %s live, want the licence's key withdrawn", bought.KeyID)
+	}
+	after, held, err := getRecord[WireEntitlement](context.Background(), f.docs, entitlementsCollection, licence.ID)
+	if err != nil || !held {
+		t.Fatalf("the refund left no licence %s (held=%v, err=%v), want it withdrawn where it stands", licence.ID, held, err)
+	}
+	if after.Status != entitlementRevoked {
+		t.Errorf("the refunded licence is %q, want %q: a licence left active is one the customer binds again, and the binding mints the key the withdrawal did not reach (F29)", after.Status, entitlementRevoked)
+	}
+
+	if err := f.bindingAttempt("acme.example", "sub-acme.example"); !errors.Is(err, errEntitlementNotActive) {
+		t.Errorf("binding the refunded licence answered %v, want %v: the licence is withdrawn, so there is no key to mint for it", err, errEntitlementNotActive)
+	}
+	if got := f.signer.calls; got != signed {
+		t.Errorf("the refused binding signed %d key(s), want none", got-signed)
+	}
+	if got := len(f.records()); got != recorded {
+		t.Errorf("the refused binding recorded %d key(s), want none: the key it would have minted is one §8's list does not hold", got-recorded)
+	}
+	if got := f.revocations(); len(got) != 1 {
+		t.Errorf("§8's list holds %d entry(ies), want the one the refund wrote: nothing the customer does re-issues the withdrawn licence", len(got))
 	}
 }
 

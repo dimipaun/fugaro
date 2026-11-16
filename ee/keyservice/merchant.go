@@ -939,10 +939,13 @@ func (s *Service) seatChanged(ctx context.Context, e Event, sub Subscription) er
 // visited set keeps a chain the store happens to hold in a loop from being
 // walked for ever.
 //
-// A refund of a licence that has no key yet withdraws nothing and is not a
+// A refund of a licence that has no key yet withdraws no key and is not a
 // failure: D2196 mints the key at the binding, so a customer who paid and never
-// bound anything holds nothing to take back, and the entitlement is superseded
-// where it stands.
+// bound anything holds nothing to take back. The licence is withdrawn either
+// way, and that is the half that matters for one nobody has bound: the record
+// stops being active, so the binding the customer would otherwise make after the
+// refund is refused rather than served with the key the walk had nothing to
+// find.
 func (s *Service) withdrawn(ctx context.Context, e Event) error {
 	reason := ReasonRefund
 	if e.Type == EventChargeback {
@@ -1022,6 +1025,23 @@ func (s *Service) withdrawn(ctx context.Context, e Event) error {
 			if err := revoke(next); err != nil {
 				return err
 			}
+		}
+	}
+	if licensed {
+		// F29's revocation is by entitlement, so the licence itself is withdrawn
+		// and not only the keys that happened to exist when the money went back.
+		// A licence left active is one the customer binds again — the first
+		// rebind after a binding is not held by D2198's clock — and the binding
+		// mints a key the walk above never reached, running to the end of the
+		// term that was refunded.
+		//
+		// The keys are withdrawn first, because they are the half that reaches an
+		// installation: a store that fails on this write leaves keys that are
+		// already dead and a licence the merchant's retry withdraws again — the
+		// walk above is idempotent — rather than a licence that is dead with its
+		// keys still live.
+		if err := s.revokeEntitlement(ctx, entitlement); err != nil {
+			return err
 		}
 	}
 	return nil
