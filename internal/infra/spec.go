@@ -1192,8 +1192,10 @@ type SecretMount struct{ Logical, Env string }
 // secret (config.ClaudeAccountSecret) for oauth, and for an api-key job the
 // stage account's token when a stage key named one — the keys of the model
 // providers the owner's local config allows repo to send code to (only with
-// api-key), and the workflow's own secrets. It is the one place that decides
-// it, for the job's spec and for the secrets init asks for.
+// api-key, and under the credential's own container where the installation
+// declares a runner-path key credential of that provider's name,
+// runnerKeyCredential), and the workflow's own secrets. It is the one place
+// that decides it, for the job's spec and for the secrets init asks for.
 //
 // A provider's key is the runner's, for its gateway, and only a repository
 // the owner allowed to send code there gets it, as a variable the agent's
@@ -1224,9 +1226,22 @@ func SecretMounts(gitSecret string, cfg *config.Config, name, token string, w co
 	case "api-key":
 		out = append(out, SecretMount{"anthropic-api-key", config.ReservedSecrets["anthropic-api-key"]})
 		for _, pn := range slices.Sorted(maps.Keys(lc.Providers)) {
-			if p := lc.Providers[pn]; p.AllowsData(repo) {
-				out = append(out, SecretMount{p.Secret, p.SecretEnv()})
+			p := lc.Providers[pn]
+			if !p.AllowsData(repo) {
+				continue
 			}
+			// A runner-path key credential of the provider's own name is that
+			// provider's key (D1670, MC23): the value the credential's own
+			// declaration bounds is stored under the credential's derived secret
+			// name, and this mount is the half of the run that carries it to the
+			// call. The provider's own .secret is superseded and not mounted
+			// beside it: one variable carries one key, and a second container for
+			// it would be a copy no run reads.
+			logical := p.Secret
+			if s, ok := runnerKeyCredential(lc, pn, repo); ok {
+				logical = s
+			}
+			out = append(out, SecretMount{logical, p.SecretEnv()})
 		}
 		// The one mix the owner's B0 ruling admits: the stage account's own
 		// job mounts its token (mixedStageAccounts).
@@ -1257,6 +1272,38 @@ func SecretMounts(gitSecret string, cfg *config.Config, name, token string, w co
 		out = append(out, SecretMount{s.Name, s.Env})
 	}
 	return out, nil
+}
+
+// runnerKeyCredential is the container holding the key of the runner-path key
+// credential that serves provider pn for repo, when this installation declares
+// one (D1670, MC23). The provider of that name is the one a pool member of the
+// name is served by (config.PoolMemberServesModel, whose openrouter member
+// indexes providers by its own name), so the credential's declaration and the
+// provider's entry are the two halves of one wiring, and this function is where
+// they meet.
+//
+// The container is the credential's OWN derived secret name, which is what
+// `fugaro accounts add <name> --type openrouter` writes the value into: a
+// provider's .secret may not name it (config.ValidateModelProviders refuses the
+// name there, because the name is derived from a credential and never chosen),
+// so the mount is built from the credential's declaration rather than from the
+// provider entry's own field.
+//
+// It is bounded the way the credential is: claude_accounts.<name>.allow_data_to
+// names the repositories its key may be sent to, and a repository the list does
+// not name gets the provider's own .secret mounted as before. A credential of
+// the service's path (anthropic) is not one of these — the credentials service
+// serves it out of the bundle and this job mounts nothing for it — and a name
+// this config declares no key credential for is the ordinary provider key.
+func runnerKeyCredential(lc *localcfg.Config, provider, repo string) (string, bool) {
+	cred, ok := config.CredentialNamed(lc.Credentials, provider)
+	if !ok || !config.KeyCredentialType(cred.Type) || config.CredentialServingPath(cred.Type) != config.CredentialPathRunner {
+		return "", false
+	}
+	if !lc.ClaudeAccounts[provider].AllowsData(repo) {
+		return "", false
+	}
+	return config.CredentialSecret(provider), true
 }
 
 // WorkflowAccounts are the Claude accounts each of repo's workflows gets a

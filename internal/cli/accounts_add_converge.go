@@ -447,17 +447,56 @@ func accountsAddReport(cmd *cobra.Command, lc *localcfg.Config, stages map[strin
 		fmt.Fprintf(w, "%s has no checkout here, so its own repository root was not converged: run `fugaro update` in that checkout (fugaro doctor says whether it matters)\n",
 			pluginwire.Printable(repo))
 	}
-	// The last line is what the owner does next, and it is a run — except for
-	// the key types, whose value nothing reads on a call yet: the credential is
-	// declared and its key is stored, and a `--token NAME` run would have a
-	// credential no half of the run can authenticate with. Saying "ready" there
-	// would be this command promising the one thing its own block exists to
-	// report truthfully.
+	// The last line is what the owner does next, and for an account it is a run.
+	// It is not for a key credential: such a name is served by no Claude account
+	// job and no `--token NAME` run, so what it says is the HALF that serves its
+	// type and what has to exist before a run is authenticated with it (D1670,
+	// MC23) — a run that cannot authenticate is the one thing a "ready" here
+	// would promise.
 	if config.KeyCredentialType(typ) {
-		fmt.Fprintf(w, "Nothing else to run: %s is declared and its key is stored; what serves that key to a run is not installed by this release yet, so a run cannot authenticate with it until then.\n", pluginwire.Printable(name))
+		fmt.Fprintf(w, "%s\n", accountsAddKeyServingLine(lc, name, typ))
 		return
 	}
 	fmt.Fprintf(w, "Nothing else to run: fugaro run --token %s is ready.\n", pluginwire.Printable(name))
+}
+
+// accountsAddKeyServingLine is the last line for a key credential: the half of
+// a run that serves the credential's type, what carries its key there, and —
+// where that is not already in place — the one step that is left (D1670, MC23,
+// config.CredentialServingPath).
+//
+// The two types are served by the two halves of a run, and neither is a job of
+// the credential's own: the credentials service reads the bundle for the
+// service-served type, and the runner path's key is mounted in the job that
+// spends it. The line therefore names the value's OWN container
+// (config.CredentialSecret, which is where `fugaro accounts add --type` stored
+// it) and then the half, so an operator who meets the credential again — in
+// `fugaro accounts ls`, in a pool, in a run's log — can read out of it where
+// the key goes without a second document.
+//
+// The service-served half needs one write of its own, and the line says so
+// rather than closing on "nothing else to run": the bundle is a document this
+// command does not write (its one writer is `fugaro creds set`, which reads the
+// value itself and is refused in an agent's session), so the credential is
+// stored and not yet served until that write has happened. The runner half
+// needs nothing more once a provider of the credential's name exists — the job
+// mount is built from this config by the next converge of the installation —
+// and with no such provider the line says which one is missing, because a
+// credential nothing spends is what an operator would otherwise discover from a
+// failed run.
+func accountsAddKeyServingLine(lc *localcfg.Config, name, typ string) string {
+	shown := pluginwire.Printable(name)
+	secret := pluginwire.Printable(config.CredentialSecret(name))
+	if config.CredentialServingPath(typ) == config.CredentialPathRunner {
+		if _, served := lc.Providers[name]; !served {
+			return fmt.Sprintf("%s is declared and its key is stored under %s; the runner path serves %s, and its key is mounted in the job of the provider of that name — no providers.%s entry exists yet, so no job mounts it and a run cannot authenticate with it until one does.\n",
+				shown, secret, shown, shown)
+		}
+		return fmt.Sprintf("Nothing else to run: %s is declared and its key is stored under %s, and the job of the provider %s mounts it as that provider's key for the repositories claude_accounts.%s.allow_data_to names.\n",
+			shown, secret, shown, shown)
+	}
+	return fmt.Sprintf("%s is declared and its key is stored under %s. The credentials service serves %s from the bundle it reads, and that bundle is written by one command: run `fugaro creds set %s` at your own terminal to put the value where the service reads it — a run whose craft's access names %s cannot authenticate with it until then.\n",
+		shown, secret, shown, secret, shown)
 }
 
 // accountsAddPublishLine is what the published node now carries for this
@@ -512,7 +551,15 @@ func accountsAddDeployLine(lc *localcfg.Config, typ, profile, name string, st in
 	}
 	if profile == "" {
 		if config.KeyCredentialType(typ) {
-			return "no job: a key credential rides no job of its own"
+			// Which half serves the type is what the line adds to the fact that
+			// the credential has no job of its own: the job of the provider that
+			// spends a runner-path credential's key mounts it, and a
+			// service-served one is read from the bundle and mounted nowhere
+			// (D1670, MC23).
+			if config.CredentialServingPath(typ) == config.CredentialPathRunner {
+				return "no job: a key credential rides no job of its own — the job of the provider " + pluginwire.Printable(name) + " mounts its key (" + pluginwire.Printable(config.CredentialSecret(name)) + ")"
+			}
+			return "no job: a key credential rides no job of its own — the credentials service serves it from the bundle, and no job mounts it"
 		}
 		return "no job: no profile serves " + pluginwire.Printable(name) + " yet"
 	}

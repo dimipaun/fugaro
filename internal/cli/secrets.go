@@ -1544,14 +1544,13 @@ func projectWideRefusal(lc *localcfg.Config, name string) error {
 	// type, and the sentence says which of the two reasons it is rather than
 	// naming a field the owner could fill in and still not store under.
 	if cred, ok := config.CredentialBySecret(name); ok {
-		declared, isKey := config.CredentialNamed(lc.Credentials, cred)
-		switch {
-		case !isKey:
-			return userErr("%s is a key credential's own secret name, and this project declares no credential %s: declare one with '%s accounts add %s --type openrouter' (or --type anthropic), which stores its key under this name itself",
-				pluginwire.Printable(name), pluginwire.Printable(cred), selfCommand(), pluginwire.Printable(cred))
-		case !config.KeyCredentialType(declared.Type):
-			return userErr("%s is a key credential's own secret name, and %s is declared %s: a credential of that type stores its value under its Claude account's name (%s), so nothing would read this one — its type is changed in the file, where a type is a decision",
-				pluginwire.Printable(name), pluginwire.Printable(cred), pluginwire.Printable(declared.Type), pluginwire.Printable(config.ClaudeAccountSecret(cred)))
+		// The two states a name of the namespace is in when it is no declared
+		// key credential's are `fugaro creds set`'s own (creds.go's
+		// keyCredentialDeclarationRefusal), because they are one rule at the two
+		// write paths: this command refuses the container as a project-wide
+		// secret, and that one refuses the entry.
+		if err := keyCredentialDeclarationRefusal(lc, name, cred); err != nil {
+			return err
 		}
 		return projectSecretRefusal(name, "claude_accounts."+pluginwire.Printable(cred)+".allow_data_to")
 	}
