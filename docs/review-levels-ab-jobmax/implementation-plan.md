@@ -540,6 +540,7 @@ processor (O4). No agent edits the Terms.
 - **Depends on:** L4.2, T2.1, T3.1. #620, which is open and edits the same register, merges or rebases first.
 - **Red step:** none. It is a register entry, and the Go docs tests check the register's format and numbers.
 - **Commit:** `checklist: checks 270-272 for review levels and crash reports`.
+- **Blocked (2026-11-15): T3.1 is not built.** L4.2 and T2.1 are on `main` and T3.1 is not, so no row and no section were written into `docs/gcp-live-checklist.md` and 270–273 stay unused. **Read 271's `crash_reports: false` against the console as built**: it is T2.1 as this block describes it, and what shipped is the owner's ruling of 2026-10-31 — the console's own per-user `<userData>/crash.json`, off when it is absent. [Evidence, command by command](../review-levels-ab-jobmax-x1-blocked.md).
 
 ### X2 Check 273, written into the register
 

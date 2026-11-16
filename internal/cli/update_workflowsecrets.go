@@ -134,12 +134,22 @@ func (r *initRun) writeWorkflowSecrets(ctx context.Context, lc *localcfg.Config,
 // workflow stays out of the map when nothing is left, so a repository with no
 // workflow secrets at all is recorded as the empty record and not as a
 // workflow with no secrets.
+//
+// A repository-level name is one of those (D2313, which this record is the
+// second half of — the jobs are the first): the repository's own container is
+// not something a shared job mounts, so a row pointing the service at it would
+// be a record of a value no fetch can read, and the ROW is what a repository
+// declaring `secrets:` gets instead of the value. The name is not dropped from
+// the repository's config and its container is not touched: `fugaro validate`
+// and `update` say it is disabled for now (config.RepoSecretsWarnings), and the
+// project-wide container an operator has opened to this repository is still
+// recorded, because that one is mounted.
 func workflowSecretsRecord(ready infra.RepoSpec, cfg *config.Config) creds.WorkflowSecrets {
 	rec := creds.WorkflowSecrets{Version: creds.WorkflowSecretsVersion}
 	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
 		var rows []creds.WorkflowSecret
 		for _, s := range cfg.Workflows[name].Secrets {
-			id := ready.MountSecretID(s.Name)
+			id := workflowSecretMountID(ready, s.Name)
 			if id == "" {
 				continue
 			}
@@ -153,4 +163,30 @@ func workflowSecretsRecord(ready infra.RepoSpec, cfg *config.Config) creds.Workf
 		}
 	}
 	return rec
+}
+
+// workflowSecretMountID is the container the record names for a workflow secret:
+// infra.RepoSpec.MountSecretID's answer, except that a repository-level name is
+// answered with the project's copy alone under D2313.
+//
+// Why the repository's own copy is dropped there and only there: that container
+// is not one a shared job mounts, and this record is what the credentials
+// service reads to fetch a value for a run — a row naming it would be a promise
+// of a value no mount carries, which is the same fail-closed direction the rest
+// of this step takes (G19). The project's copy is still recorded for such a
+// name, because that one IS mounted: the operator's allow-list decides whether
+// this repository may read it (ProjectSecretCandidate), and a name it admits is
+// the project's copy and not the repository's own, whatever the workflow wrote
+// under `secrets:`.
+//
+// The door is read here rather than at workflowSecretsRecord's loop so the two
+// halves of the ruling — no mount for a repository-level name, and a warning
+// about it (config.RepoSecretsWarnings) — are asked in one place each, and the
+// machinery this ruling keeps stays exercised: with the door off the answer is
+// MountSecretID's, exactly as it was before D2313.
+func workflowSecretMountID(ready infra.RepoSpec, logical string) string {
+	if config.RepoSecretsOff && config.RepoLevelSecret(logical) {
+		return ready.ProjectSecrets[logical]
+	}
+	return ready.MountSecretID(logical)
 }

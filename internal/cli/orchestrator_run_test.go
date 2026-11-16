@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"go/parser"
 	"go/token"
 	"os"
@@ -161,9 +162,7 @@ const prevReleaseState = `{"schema_version":0,"rev":3,"agent_id":"aurora","role"
 func TestRunReportsUpdateDueAndDoesNothingElse(t *testing.T) {
 	f := newDaemonFixture(t)
 	d, out := f.daemon(t, "")
-	raw := `{"schema_version":3,"rev":9,"agent_id":"aurora","role":"orchestrator",
-		"goal":"from a newer release","work_items":[],"decisions":[],"facts":{},"archived":[],"intents":[]}`
-	f.setState(t, raw)
+	f.setState(t, newerReleaseState())
 	before := f.db.Value(f.statePath(t))
 
 	ctx := f.ctx
@@ -351,10 +350,17 @@ func TestOrchestratorRunIsRegistered(t *testing.T) {
 	}
 }
 
-// newerReleaseState is a state node a newer release wrote: this binary reads
-// schema_version 2 and stops over it (G8).
-const newerReleaseState = `{"schema_version":3,"rev":9,"agent_id":"aurora","role":"orchestrator",
-	"goal":"from a newer release","work_items":[],"decisions":[],"facts":{},"archived":[],"intents":[]}`
+// newerReleaseState is a state node a newer release wrote: one schema_version
+// above this release's, which this binary stops over rather than migrating
+// (G8). It is built from the constant and not written out, so a release that
+// raises SchemaVersion cannot leave this test handing the daemon a version the
+// daemon reads — the node would migrate, and the test would pass while
+// measuring nothing.
+func newerReleaseState() string {
+	return fmt.Sprintf(`{"schema_version":%d,"rev":9,"agent_id":"aurora","role":"orchestrator",
+		"goal":"from a newer release","work_items":[],"decisions":[],"facts":{},"archived":[],"intents":[]}`,
+		orchestrator.SchemaVersion+1)
+}
 
 // TestWaitHonoursTheInterval: the wait is the interval's, not the stream's.
 // Every connection opens with a full put of the node as it stands, which is a
@@ -562,7 +568,7 @@ func TestRunHoldsWhileAnUpdateIsDue(t *testing.T) {
 	f := newDaemonFixture(t)
 	binary := stubBinary(t, t.TempDir(), "fugaro", "echo v9.9.9")
 	d, out := f.daemon(t, binary)
-	f.setState(t, newerReleaseState)
+	f.setState(t, newerReleaseState())
 	waits := 0
 	d.wake = func(context.Context) error {
 		waits++

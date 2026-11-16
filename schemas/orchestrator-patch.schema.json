@@ -118,6 +118,11 @@
         "repo": { "type": "string", "pattern": "^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)+$" },
         "recipe": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$" },
         "rigor_tier": { "enum": ["trivial", "small", "medium", "large"] },
+        "spec": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,43}$",
+          "description": "The plan's folder under docs/ the work belongs to (docs/forge-labels, R3), which becomes the daemon's `spec:<name>` label. Either case is accepted here and stored lower-cased; the class is ASCII and nothing else, so a name that would fold into a passing one — the Kelvin sign into a \"k\" — is refused as written. A session or a person sets it in the upsert that declares the item, and an upsert that omits it leaves the item's own alone."
+        },
         "brief": { "type": "string", "minLength": 1, "maxLength": 2000 },
         "depends_on": {
           "type": "array",

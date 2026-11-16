@@ -424,6 +424,46 @@ func TestSwitchedRunUnreachableProviderIsNotAServiceFailure(t *testing.T) {
 	noHalt(t, h)
 }
 
+// TestSwitchedRunRetriesARoutedProviderCallOnce: a routed call beside a
+// service upstream is the provider's own call, and is retried exactly as the
+// same call is when that route sits beside the Anthropic upstream
+// (TestALostAttemptOnAProviderRouteIsChargedToo). What sendRetryingOnce skips
+// is the *service's* calls -- the service retries those itself, across the
+// credentials it holds, and an unreachable service is a halt rather than a
+// call this gateway sends again (D143) -- and that is a fact about the calls
+// the service answers, not about the route this upstream also carries. R6 and
+// D1634 keep a switched api-key repository's provider keys on the runner path
+// so its provider calls are the calls they were before the switch; losing the
+// one retry on a 429 or a 5xx would be the switch changing them.
+func TestSwitchedRunRetriesARoutedProviderCallOnce(t *testing.T) {
+	fastRetry(t)
+	prov, psrv := anthropicfake.New(t,
+		anthropicfake.Error(http.StatusServiceUnavailable, "api_error", "come back later"),
+		anthropicfake.MessageOK(dsModel, smallUsage))
+	h, svc := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
+		return serviceOK(TierB, "repo-shared-b")
+	}, func(o *Options) {
+		o.Upstream.AuthMode = "api-key"
+		o.Routes = []Route{{
+			Name: "openrouter", Models: []string{"deepseek/*"}, BaseURL: psrv.URL + "/api",
+			Auth: "bearer", Credential: func() (string, error) { return providerKey, nil },
+		}}
+	})
+	h.gw.BeginStage(Stage{Name: "implement", Model: dsModel, Background: sonnet})
+
+	resp, body := h.post(msg(dsModel, 100))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("a routed call the provider refused once: %d %s, want the retry's 200", resp.StatusCode, body)
+	}
+	if n := prov.Count(); n != 2 {
+		t.Fatalf("the provider saw %d requests, want 2: the call and its one retry", n)
+	}
+	if n := svc.Count(); n != 0 {
+		t.Errorf("the service saw %d calls, want none: the model is the route's", n)
+	}
+	noHalt(t, h)
+}
+
 // TestServiceUnreachableHalts: a job that cannot reach the credentials
 // service halts the run the way an unreachable budget backend does (D143),
 // and every later call gets the same refusal.

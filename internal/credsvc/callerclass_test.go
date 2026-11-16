@@ -3,7 +3,7 @@ package credsvc
 // The caller-class matrix (BB4, G4): every class this service admits, on every
 // route it serves, admitted or refused exactly as designed.
 //
-// The classes of these six routes are five — a per-repository job, a review
+// The classes of these seven routes are five — a per-repository job, a review
 // job, a verifier, a person and the coordinator (BB5) — and each is matched
 // against its OWN list (verifyJob against the job accounts, VerifyVerifier
 // against the verifier list, and the read mint's one admission against the
@@ -14,7 +14,7 @@ package credsvc
 // every test in this package green, because each of them only ever presented
 // the token of the class it was about.
 //
-// So this file presents six classes to all six routes. The sixth is the
+// So this file presents six classes to all seven routes. The sixth is the
 // launcher (D1938), whose list no route here reads: it is admitted on the grant
 // route and on the intake (DS1.3, DS2.1), which are not routes of this matrix,
 // so its whole row is refusals — the half of the cross-class rule (G13) this
@@ -24,13 +24,23 @@ package credsvc
 // else — including a route that answers 200 to a caller of another class — is a
 // failure that names itself.
 //
+// The daemon class (the orchestrator, E16/D2049 and D2439) is the one class
+// this matrix does not present, and it is not an omission: its routes are the
+// merge mint and the label route, each of which is answered ahead of the shared
+// parse and admits the daemon ALONE, so a row for it here would be six routes
+// of refusals plus the route it is admitted by — which the route's own class
+// test states (mergemint_test.go, T3's label route test). What this matrix
+// holds about the label route is the half that belongs to it: every class of
+// these routes is refused there, at the gate, before anything of the call is
+// read.
+//
 // The matrix is read TWICE, because the audience is the second thing the
 // classes do not share: once with every class presenting a token for the
 // service's own URL (classVerdicts), and once with every class presenting the
 // token a plain `gcloud auth print-identity-token` gives a user account
 // (gcloudVerdicts, GcloudAudience) — which exactly one class OF THESE ROUTES,
 // the person, may carry. The launcher may carry it too and is admitted by none
-// of the six, so the person's two read-mint cells stay the only admission
+// of the seven, so the person's two read-mint cells stay the only admission
 // either pass has. The second pass is what a mutant that widened the new
 // acceptance to another class fails, and no single-route test could hold it:
 // each of them presents only the class it is about.
@@ -111,7 +121,7 @@ func (h classMatrixTransport) RoundTrip(r *http.Request) (*http.Response, error)
 }
 
 // classMatrixSvc is one installation configured with ALL six classes at once
-// and behind all six routes: the job fixture's own repository, a review job
+// and behind all seven routes: the job fixture's own repository, a review job
 // whose account the published node admits, a verifier, a person, the
 // coordinator's own account, a launcher, the fake GitHub a mint reaches, the
 // fake bitbucket.org the read mint reaches, and the bundle holding every entry
@@ -184,6 +194,12 @@ var admitted = classVerdict{status: http.StatusOK}
 // each route, keyed by "<class>/<route>". Every cell of the table below has an
 // entry here and the test fails on a key it does not hold, so a route or a
 // class added later cannot quietly go unaimed at.
+//
+// The label route's six cells are the gate's own: the daemon class is the only
+// caller it admits (D2439), and each of these six is refused by
+// VerifyOrchestrator — the same `unverified_job_identity` the merge mint's
+// class answers a run's or a person's token with (E16), and with no audit line,
+// because a caller this service never verified has no name for one.
 var classVerdicts = map[string]classVerdict{
 	"job/read-token":  {StatusUnverified, ErrorUnverifiedJobIdentity},
 	"job/github-read": {StatusUnverified, ErrorUnverifiedJobIdentity},
@@ -191,6 +207,7 @@ var classVerdicts = map[string]classVerdict{
 	"job/mint":        admitted,
 	"job/sign":        {StatusUnverified, ErrorUnverifiedRunIdentity},
 	"job/messages":    admitted,
+	"job/labels":      {StatusUnverified, ErrorUnverifiedJobIdentity},
 
 	"review/read-token":  {StatusUnverified, ErrorUnverifiedJobIdentity},
 	"review/github-read": {StatusUnverified, ErrorUnverifiedJobIdentity},
@@ -198,6 +215,7 @@ var classVerdicts = map[string]classVerdict{
 	"review/mint":        admitted,
 	"review/sign":        admitted,
 	"review/messages":    admitted,
+	"review/labels":      {StatusUnverified, ErrorUnverifiedJobIdentity},
 
 	"verifier/read-token":  {StatusUnverified, ErrorUnverifiedJobIdentity},
 	"verifier/github-read": {StatusUnverified, ErrorUnverifiedJobIdentity},
@@ -205,6 +223,7 @@ var classVerdicts = map[string]classVerdict{
 	"verifier/mint":        {StatusUnverified, ErrorUnverifiedRunIdentity},
 	"verifier/sign":        {StatusUnverified, ErrorUnverifiedRunIdentity},
 	"verifier/messages":    {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"verifier/labels":      {StatusUnverified, ErrorUnverifiedJobIdentity},
 
 	"person/read-token":  admitted,
 	"person/github-read": admitted,
@@ -212,6 +231,7 @@ var classVerdicts = map[string]classVerdict{
 	"person/mint":        {StatusUnverified, ErrorUnverifiedRunIdentity},
 	"person/sign":        {StatusUnverified, ErrorUnverifiedRunIdentity},
 	"person/messages":    {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"person/labels":      {StatusUnverified, ErrorUnverifiedJobIdentity},
 
 	// The coordinator's verdicts are the person's on the Bitbucket read mint —
 	// the same admission answers both — and they are NOT on the GitHub read
@@ -227,21 +247,23 @@ var classVerdicts = map[string]classVerdict{
 	"coordinator/mint":        {StatusUnverified, ErrorUnverifiedRunIdentity},
 	"coordinator/sign":        {StatusUnverified, ErrorUnverifiedRunIdentity},
 	"coordinator/messages":    {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"coordinator/labels":      {StatusUnverified, ErrorUnverifiedJobIdentity},
 
 	// The launcher (D1938, DS1.2) is refused by every cell, and the shape of
 	// the refusals is what says why: the three routes a class's list answers
 	// refuse it as an unverified caller (its address is on none of those
 	// lists), and the three the shared parse reads refuse it for the run
-	// identity it does not hold — the same six answers the verifier gets, which
-	// is what a class of another route's looks like from here. Its own two
-	// routes, the grant and the intake (DS1.3, DS2.1), are not served by this
-	// matrix yet; when they are, its row there is the one that admits it.
+	// identity it does not hold — the same seven answers the verifier gets,
+	// which is what a class of another route's looks like from here. Its own
+	// two routes, the grant and the intake (DS1.3, DS2.1), are not served by
+	// this matrix yet; when they are, its row there is the one that admits it.
 	"launcher/read-token":  {StatusUnverified, ErrorUnverifiedJobIdentity},
 	"launcher/github-read": {StatusUnverified, ErrorUnverifiedJobIdentity},
 	"launcher/verify":      {StatusUnverified, ErrorUnverifiedJobIdentity},
 	"launcher/mint":        {StatusUnverified, ErrorUnverifiedRunIdentity},
 	"launcher/sign":        {StatusUnverified, ErrorUnverifiedRunIdentity},
 	"launcher/messages":    {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"launcher/labels":      {StatusUnverified, ErrorUnverifiedJobIdentity},
 }
 
 // gcloudVerdicts is the same matrix read with the OTHER audience a person's ID
@@ -261,10 +283,10 @@ var classVerdicts = map[string]classVerdict{
 //
 // The launcher class (D1938) is the case that says the audience is not what
 // admits: it MAY carry this one (VerifyLauncher admits it and this service's
-// URL alike), and its row here is refusals — six of them, the same six the
+// URL alike), and its row here is refusals — seven of them, the same seven the
 // verifier gets — because its routes are the grant route and the intake, which
 // this matrix does not serve. A mutant that let a gcloud-audience token through
-// one of these six routes for the class that can really mint one moves a cell
+// one of these seven routes for the class that can really mint one moves a cell
 // of that row, and this is the only table that would see it.
 //
 // The cells that are the same as classVerdicts' are the same for the same
@@ -278,6 +300,7 @@ var gcloudVerdicts = map[string]classVerdict{
 	"job/mint":        {StatusUnverified, ErrorUnverifiedJobIdentity},
 	"job/sign":        {StatusUnverified, ErrorUnverifiedJobIdentity},
 	"job/messages":    {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"job/labels":      {StatusUnverified, ErrorUnverifiedJobIdentity},
 
 	"review/read-token":  {StatusUnverified, ErrorUnverifiedJobIdentity},
 	"review/github-read": {StatusUnverified, ErrorUnverifiedJobIdentity},
@@ -285,6 +308,7 @@ var gcloudVerdicts = map[string]classVerdict{
 	"review/mint":        {StatusUnverified, ErrorUnverifiedJobIdentity},
 	"review/sign":        {StatusUnverified, ErrorUnverifiedJobIdentity},
 	"review/messages":    {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"review/labels":      {StatusUnverified, ErrorUnverifiedJobIdentity},
 
 	"verifier/read-token":  {StatusUnverified, ErrorUnverifiedJobIdentity},
 	"verifier/github-read": {StatusUnverified, ErrorUnverifiedJobIdentity},
@@ -292,6 +316,7 @@ var gcloudVerdicts = map[string]classVerdict{
 	"verifier/mint":        {StatusUnverified, ErrorUnverifiedRunIdentity},
 	"verifier/sign":        {StatusUnverified, ErrorUnverifiedRunIdentity},
 	"verifier/messages":    {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"verifier/labels":      {StatusUnverified, ErrorUnverifiedJobIdentity},
 
 	"person/read-token":  admitted,
 	"person/github-read": admitted,
@@ -299,6 +324,7 @@ var gcloudVerdicts = map[string]classVerdict{
 	"person/mint":        {StatusUnverified, ErrorUnverifiedRunIdentity},
 	"person/sign":        {StatusUnverified, ErrorUnverifiedRunIdentity},
 	"person/messages":    {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"person/labels":      {StatusUnverified, ErrorUnverifiedJobIdentity},
 
 	"coordinator/read-token":  {StatusUnverified, ErrorUnverifiedJobIdentity},
 	"coordinator/github-read": {StatusUnverified, ErrorUnverifiedJobIdentity},
@@ -306,11 +332,12 @@ var gcloudVerdicts = map[string]classVerdict{
 	"coordinator/mint":        {StatusUnverified, ErrorUnverifiedRunIdentity},
 	"coordinator/sign":        {StatusUnverified, ErrorUnverifiedRunIdentity},
 	"coordinator/messages":    {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"coordinator/labels":      {StatusUnverified, ErrorUnverifiedJobIdentity},
 
 	// The launcher's row is classVerdicts' row word for word: this audience is
 	// one it MAY carry (VerifyLauncher admits both, GcloudAudience), and not
 	// one cell of this matrix admits the class anyway — so a class that carries
-	// it is not thereby a caller of any of these six routes. That is the cell
+	// it is not thereby a caller of any of these seven routes. That is the cell
 	// a mutant which let the launcher through somewhere would have to move, and
 	// moving it here is what makes the person's two read mints the only
 	// admission this pass has.
@@ -320,6 +347,7 @@ var gcloudVerdicts = map[string]classVerdict{
 	"launcher/mint":        {StatusUnverified, ErrorUnverifiedRunIdentity},
 	"launcher/sign":        {StatusUnverified, ErrorUnverifiedRunIdentity},
 	"launcher/messages":    {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"launcher/labels":      {StatusUnverified, ErrorUnverifiedJobIdentity},
 }
 
 // audienceClaim is the mutation that puts aud on a class's token: the empty
@@ -332,8 +360,8 @@ func audienceClaim(aud string) func(map[string]any) {
 	return func(c map[string]any) { c["aud"] = aud }
 }
 
-// TestRouteCallerClassMatrix is the cross-class matrix: five classes against
-// six routes, each cell held to the verdict classVerdicts writes down — and
+// TestRouteCallerClassMatrix is the cross-class matrix: six classes against
+// seven routes, each cell held to the verdict classVerdicts writes down — and
 // then the same matrix again with the audience a plain `gcloud auth
 // print-identity-token` gives a person, held to gcloudVerdicts.
 func TestRouteCallerClassMatrix(t *testing.T) {
@@ -427,6 +455,17 @@ func TestRouteCallerClassMatrix(t *testing.T) {
 			path:     MessagesPath,
 			body:     func(*svc) string { return callBody("the-class-matrix") },
 			identity: true,
+		},
+		{
+			// The label route (D2439): answered ahead of the shared parse, so
+			// no class here carries a run identity into it, and its own class —
+			// the daemon's — is not one of this matrix's six. What every cell
+			// of this row says is that the gate is the route's whole admission:
+			// the body is never reached, which is why this row sends none (the
+			// call's own shape is T3's and is not written here).
+			name: "labels",
+			path: LabelPath,
+			body: func(*svc) string { return "" },
 		},
 	}
 

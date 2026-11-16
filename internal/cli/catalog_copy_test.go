@@ -418,7 +418,7 @@ func TestCatalogCopyRefusesABakeThatLeavesTheBound(t *testing.T) {
 	b := gcpfake.NewGCS(t).Bucket(t, "fugaro-runs-proj-1234")
 	e := config.Entry{Name: "agent", Source: config.Source{Kind: config.SourceInline, Inline: def}}
 	open := catalogOpen(&fake.Provider{Repo: "acme/app"})
-	bake := imagebake.Plan{Baked: &imagebake.Repo{Repo: "acme/app", Slug: "app-1234abcd", URL: "https://example.invalid/acme/app.git", Branch: "main"}}
+	bake := imagebake.Plan{Baked: []imagebake.Repo{{Repo: "acme/app", Slug: "app-1234abcd", URL: "https://example.invalid/acme/app.git", Branch: "main"}}}
 	_, _, err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e, bake)
 	if err == nil || !strings.Contains(err.Error(), "more than the") {
 		t.Fatalf("a definition the bake takes over the bound was copied: %v", err)

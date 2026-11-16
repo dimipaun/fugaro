@@ -48,7 +48,11 @@ cd "$root"
 
 all=$(mktemp)
 trap 'rm -f "$all"' EXIT
-go test -list '.*' "$pkg" | grep -E '^(Test|Example|Fuzz)' | sort > "$all"
+# $race here as well as on the run below: CI builds the race binary at the
+# listing step, and the run that follows is then the cached one rather than a
+# second compilation of the same package. Leaving it off measures a shard CI
+# does not have.
+go test $race -list '.*' "$pkg" | grep -E '^(Test|Example|Fuzz)' | sort > "$all"
 total=$(wc -l < "$all")
 echo "internal/cli: $total tests, $n shard(s)"
 
