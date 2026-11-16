@@ -623,6 +623,15 @@ func (s *Service) purchased(ctx context.Context, e Event) error {
 	}); err != nil {
 		return err
 	}
+	if bought.First {
+		// The checkout's own record names the licence its money bought, so a
+		// refund of this transaction resolves to that licence months later —
+		// when the workspace's current one is a licence this money never paid
+		// for, or when there is none at all (F16, F29).
+		if err := s.recordBought(ctx, bought.TransactionID, licence); err != nil {
+			return err
+		}
+	}
 	if !bought.First {
 		return s.renewedLicence(ctx, e, licence, end)
 	}
@@ -1025,12 +1034,17 @@ func (s *Service) withdrawn(ctx context.Context, e Event) error {
 // licence where this portal began it: the origin record a purchase wrote is
 // keyed by Paddle's subscription id and names the entitlement. The event's
 // **transaction** is the other half: an adjustment against a one-off transaction
-// names no subscription, and what that transaction bought is the checkout's own
-// record, whose workspace is where the entitlement is.
+// names no subscription, and what that transaction bought is written on the
+// checkout's own record, under Paddle's transaction id.
 //
-// A workspace the store holds no active entitlement for answers false, and that
-// is the ordinary case for an event this portal never sold — one that was parked
-// before this was reached.
+// Both steps answer the licence **the money belongs to** and neither asks
+// whether it is still the workspace's current one: a licence a later sale
+// superseded is still the licence this transaction paid for, and revoking the
+// current one instead would withdraw a licence this money never bought (D2204's
+// one licence per workspace is about which licence a workspace is served by, not
+// about which one a refund is about). An event whose transaction and
+// subscription resolve to no licence at all answers false — nothing of this
+// portal's was bought with that money.
 func (s *Service) entitlementFor(ctx context.Context, e Event) (WireEntitlement, bool, error) {
 	if e.Subscription != "" {
 		origin, held, err := s.origin(ctx, e.Subscription)
@@ -1041,39 +1055,17 @@ func (s *Service) entitlementFor(ctx context.Context, e Event) (WireEntitlement,
 			return getRecord[WireEntitlement](ctx, s.docs, entitlementsCollection, origin.EntitlementID)
 		}
 	}
-	workspace := e.WorkspaceID
-	if e.Transaction != "" {
-		record, held, err := getRecord[checkoutTransaction](ctx, s.docs, checkoutTransactionsCollection, e.Transaction)
-		if err != nil {
-			return WireEntitlement{}, false, err
-		}
-		if held {
-			workspace = record.WorkspaceID
-		}
-	}
-	if workspace == "" {
+	if e.Transaction == "" {
 		return WireEntitlement{}, false, nil
 	}
-	// One active entitlement per workspace is D2204's rule, so the list holds one
-	// at most and the newest is read where a store holds a superseded one beside
-	// it — a licence that has been replaced is still the licence the refund is
-	// about when it is the only one there is.
-	held, err := recordsWhere[WireEntitlement](ctx, s.docs, entitlementsCollection,
-		Where{Field: "workspace_id", Value: workspace})
+	record, held, err := getRecord[checkoutTransaction](ctx, s.docs, checkoutTransactionsCollection, e.Transaction)
 	if err != nil {
 		return WireEntitlement{}, false, err
 	}
-	var active WireEntitlement
-	found := false
-	for _, one := range held {
-		if one.Status != entitlementActive {
-			continue
-		}
-		if !found || one.CreatedAt.After(active.CreatedAt) {
-			active, found = one, true
-		}
+	if !held || record.EntitlementID == "" {
+		return WireEntitlement{}, false, nil
 	}
-	return active, found, nil
+	return getRecord[WireEntitlement](ctx, s.docs, entitlementsCollection, record.EntitlementID)
 }
 
 // Renew mints the next key for one subscription when T26's window is open: 30

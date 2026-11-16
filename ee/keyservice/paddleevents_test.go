@@ -570,6 +570,46 @@ func TestRefundFindsItsEntitlement(t *testing.T) {
 	}
 }
 
+// TestARefundRevokesTheLicenceItsTransactionBought: F16 — a refund resolves to
+// the licence **the money belongs to**, which is the licence that transaction
+// bought and not the workspace's current one. A workspace whose licence has been
+// replaced holds more than one licence over time, and withdrawing the newest
+// would take a licence this money never paid for while the refunded one stayed
+// live — a withdrawal nothing undoes, because the revocation list only grows
+// (D2131, D2204).
+func TestARefundRevokesTheLicenceItsTransactionBought(t *testing.T) {
+	f := newFixture(t)
+	refunded := f.purchase("evt-1", "acme.example", 3, 30)
+	// A second sale for the same workspace replaces the first licence (D2204),
+	// and the licence it replaces keeps the key its own binding minted.
+	f.event(Event{
+		ID: "evt-2", Type: EventPurchase, Subscription: "sub-second.example",
+		Organisation: "acme.example", Seats: 3, TermDays: 30,
+	})
+	current := f.bind("acme.example", "sub-second.example")
+	if current.KeyID == refunded.KeyID {
+		t.Fatalf("the second binding issued the key %s, want a key of its own", refunded.KeyID)
+	}
+
+	// The refund names the first transaction alone: an adjustment against a
+	// one-off transaction names no subscription, and the checkout's own record
+	// is the step from it to the licence it bought.
+	f.advance(time.Hour)
+	f.deliver(Event{
+		ID: "evt-3", Type: EventRefund, OccurredAt: f.now,
+		Transaction: "txn-sub-acme.example",
+	})
+	if _, held, _ := f.store.Revocation(context.Background(), refunded.KeyID); !held {
+		t.Errorf("the refund of the first transaction left the key %s live, want the licence that transaction bought withdrawn", refunded.KeyID)
+	}
+	if _, held, _ := f.store.Revocation(context.Background(), current.KeyID); held {
+		t.Errorf("the refund of the first transaction withdrew the key %s, want the workspace's current licence left alone: it is not the licence this money bought", current.KeyID)
+	}
+	if got := f.revocations(); len(got) != 1 {
+		t.Errorf("the refund wrote %d revocation(s), want the one the refunded licence's key", len(got))
+	}
+}
+
 // TestPurchaseCreatesAnEntitlement: D2196 — a purchase grants a licence and
 // mints nothing. The grant carries the row the term is sold under, the seats,
 // the workspace the money was for and the term the customer bought, running from
