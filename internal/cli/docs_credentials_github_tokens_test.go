@@ -192,10 +192,11 @@ func TestSecurityMdStatesTheAppKeyIsTheServicesWhenTheServiceIsOn(t *testing.T) 
 		"`fugaro creds set github-app-key`",
 		// The release that sets the variable is THIS one, and the document
 		// says so in the terms the code does: the launch puts it on a
-		// repository's own job, and on no other.
+		// repository's own job, and on the shared project job its profile
+		// sends the run to (B5.2, B5.4).
 		"So **on a switched-on repository a run's installation token is minted by the service and the run's runner opens its git provider with no key at all**",
 		"a bundle that holds none is a named refusal rather than a fall back to the job's copy (D143)",
-		"**A shared project job is deliberately not told**",
+		"**A shared project job is told too, on the same switch (B5.2)**",
 		"A mint call carries the App's ID and nothing else — there is no repository field to fill in.",
 		"**calling job's account is bound to**",
 		"(see \"The GitHub App's key, when the credentials service holds it\" above)",
