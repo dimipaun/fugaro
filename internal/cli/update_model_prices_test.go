@@ -100,3 +100,59 @@ func TestUpdateMigratesCacheReadKey(t *testing.T) {
 		t.Errorf("fugaro update did not print %q:\n%s", want, out)
 	}
 }
+
+// TestUpdateMigrationIdempotent: the config `fugaro update` leaves behind is one
+// the rename has nothing left to do to. The keys it wrote are the keys it would
+// write, so the line about them is printed once in an installation's life and no
+// run that follows finds anything to change.
+//
+// The door is not run twice here, for the reason TestUpdateIsIdempotent's own
+// comment gives (the rig's first run onboards the repository, and the second
+// run's repository stage stops over exactly that). What idempotence means for
+// this migration is a property of the file the run produced, and the stage's own
+// read of it is what the assertion asks: the plan of a second run over these
+// bytes renames nothing.
+func TestUpdateMigrationIdempotent(t *testing.T) {
+	r := newConvergeRig(t, v8Node())
+	r.appendConfig(t, cacheKeyFixture)
+	registerInstallation(t, r.initRig)
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	path := installationConfigPath()
+	second, err := modelPricesPlanFor(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.renames) != 0 {
+		t.Errorf("a second pass over the config fugaro update wrote renames %s again, so the file is not one the rename has finished with",
+			modelPriceRenamesText(second.renames))
+	}
+	// The prices are the owner's, before and after, and the file this binary
+	// would write back out of them keeps the name the run just wrote: the two
+	// spellings agree, which is what the run's own later writes to this file —
+	// and the local-config write of a stage behind this one — read.
+	lc := parseLocalConfigBytes(t, readFile(t, path))
+	mp := lc.ModelPrices["deepseek/deepseek-v4.1-flash"]
+	for _, c := range []struct {
+		what string
+		got  *float64
+		want float64
+	}{
+		{"cache_read", mp.CacheRead, 0.0042},
+		{"cache_write_5m", mp.CacheWrite5m, 1.4},
+		{"cache_write_1h", mp.CacheWrite1h, 2.5},
+	} {
+		if c.got == nil || *c.got != c.want {
+			t.Errorf("a second read of the file gives model_prices.deepseek/deepseek-v4.1-flash.%s = %v, want the %v the owner priced", c.what, c.got, c.want)
+		}
+	}
+	out, err := lc.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, old := range []string{"cache_read:", "cache_write_5m:", "cache_write_1h:"} {
+		if strings.Contains(string(out), old) {
+			t.Errorf("the config read back from the file fugaro update wrote would be written out with %s again:\n%s", old, out)
+		}
+	}
+}
