@@ -95,7 +95,6 @@ As of 2026-11-16, read from `main`, the open pull requests and each plan's task 
 | mcp-server | M9 parked (D936, the fence declined, no release schedules it); M11 declined (2026-11-09) |
 | mobile-auth | owner live checks, numbered Checks 620 to 627 on main (draft #2700's 601 to 608 was closed); P5's D231 gap is a follow-up awaiting the owner's decision — revoking the last device empties the node, so the next publish re-seeds the revoked entry |
 | model-ab-testing | owner Checks 210 to 212 (written on main, not run; drafts #2634 and #2637 were closed as superseded) |
-| model-crafts | owner Checks 420 to 422 (written; 420 and 421 ran 2026-11-15 and did not pass; 422 not run) |
 | models-commands | none |
 | no-prompt-policy | owner Checks 380 to 382 (scripts on main), not yet run; the T11 verification runs found nothing to fix (#2728, #2729) |
 | plugin-user-scope | E1, the release itself (rides the next CLI release; no operator step) |
