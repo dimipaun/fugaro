@@ -47,7 +47,7 @@ func TestEveryUnwrittenRowCarriesALabelAndAReason(t *testing.T) {
 			t.Errorf("writers_labels.go labels %s, which is no longer a registry row: a label registered for a key the registry dropped answers no reader", r.pattern)
 		}
 		if !measured[r.pattern] {
-			t.Errorf("writers_labels.go labels %s and the measurement above does not reach it: the row's owner moved to a command family, or another task claimed it, and the label is then a second answer to one question", r.pattern)
+			t.Errorf("writers_labels.go labels %s and the measurement above does not reach it: the family that owns the row now writes it, settingsUnwrittenKeys no longer names it, or another task claimed it — and the label is then a second answer to one question", r.pattern)
 		}
 	}
 	for key, holder := range settingsLabelledElsewhere {

@@ -23,8 +23,13 @@ import (
 // command family (`models`, `accounts`, `rigor`, `secrets`, `project`,
 // `workspace`, `budget`, the image map, the clone URLs) or whose key the
 // generic path's allowlist admits belongs to those writers and is registered by
-// them, and the rows another task of the plan already gives a writer are named
-// in settingsLabelledElsewhere rather than labelled here — a label registered
+// them — unless the family does not write it, which its owner token cannot say:
+// a token names the family a key belongs to, not that the family writes the
+// key, and `secrets` owns `batch.secrets` while writing expiry and rotation and
+// no key of the batch block. Those rows are named in settingsUnwrittenKeys
+// beside the tokens, so the measurement reaches them (F21). The rows another
+// task of the plan already gives a writer are named in
+// settingsLabelledElsewhere rather than labelled here — a label registered
 // for one of those would be a second registrant of one pattern, and
 // settings.RegisterWriter panics on that in every command
 // (docs/contracts/config-ownership.md §4).
@@ -56,6 +61,16 @@ var settingsUnwrittenOwners = map[string]bool{
 	"config local": true,
 }
 
+// settingsUnwrittenKeys are the rows no command writes although their Owner
+// names a command family. An owner token is a family's claim on a key and not a
+// statement that the family writes it, and the one row where the two come apart
+// is F21's: `secrets` owns `batch.secrets` — the block naming the Secret Manager
+// secrets a batch job mounts — and the family writes secret expiry and
+// rotation, never a key of the batch block.
+var settingsUnwrittenKeys = map[string]bool{
+	"batch.secrets": true,
+}
+
 // settingsLabelledElsewhere names the rows of those tokens another task of the
 // plan gives a writer, with the task. They stay T1's golden gap until it lands,
 // and a label here would be the same row registered twice.
@@ -72,15 +87,15 @@ var settingsLabelledElsewhere = map[string]string{
 	"layer.security.patterns.*.category": "M4 registers `fugaro rigor security` for it",
 }
 
-// settingsRowNeedsALabel is the measurement the two maps above make: the row is
-// one of a token no command answers for, and no other task has claimed it. It
-// is the scope of this file, read by the test and by nothing else.
+// settingsRowNeedsALabel is the measurement the three maps above make: the row
+// is one of a token no command answers for, or a key no family writes although
+// one owns it, and no other task has claimed it. It is the scope of this file,
+// read by the test and by nothing else.
 func settingsRowNeedsALabel(r settings.Row) bool {
-	if !settingsUnwrittenOwners[r.Owner] {
+	if _, elsewhere := settingsLabelledElsewhere[r.Key]; elsewhere {
 		return false
 	}
-	_, elsewhere := settingsLabelledElsewhere[r.Key]
-	return !elsewhere
+	return settingsUnwrittenOwners[r.Owner] || settingsUnwrittenKeys[r.Key]
 }
 
 const (
@@ -91,8 +106,11 @@ const (
 	// to one of their localcfg fields exists outside a test, so the labelled
 	// shape is the true one rather than `plumbing`, which claims a writer.
 	reasonBatch = "a key of the local config's `batch` block: no command writes one, and a batch installation states it as the backend is provisioned"
-	reasonBuild = "a key of the local config's `build` block: no command writes one, and a person states where the installation's images are built"
-	reasonPrice = "a key of the local config's `compute_prices` block: no command writes one, and it overrides a region's Compute Engine list prices"
+	// F21: this one's registry owner names a family, and the family does not
+	// write it, so the reason says which family and what it writes instead.
+	reasonBatchSecrets = "a key of the local config's `batch` block naming the Secret Manager secrets a batch job mounts: the `secrets` family writes secret expiry and rotation and no key of this block, so a batch installation states it as the backend is provisioned"
+	reasonBuild        = "a key of the local config's `build` block: no command writes one, and a person states where the installation's images are built"
+	reasonPrice        = "a key of the local config's `compute_prices` block: no command writes one, and it overrides a region's Compute Engine list prices"
 
 	reasonTerraform = "`fugaro setup` writes it from its flags as it applies the installation's root: a Terraform input of the installation"
 )
@@ -107,6 +125,7 @@ var settingsLabelRows = []settingsLabelRow{
 	{"batch.machine_type", labelFile, reasonBatch},
 	{"batch.network", labelFile, reasonBatch},
 	{"batch.service_account", labelFile, reasonBatch},
+	{"batch.secrets", labelFile, reasonBatchSecrets},
 	{"batch.socket_gid", labelFile, reasonBatch},
 	{"batch.subnetwork", labelFile, reasonBatch},
 	{"batch.task_timeout", labelFile, reasonBatch},
