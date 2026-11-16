@@ -49,6 +49,7 @@ Subcommands:
 - `fugaro issue` -- Read the issues saved on this machine, the ones you reported, and file one on GitHub
 - `fugaro licence` -- Install, read and renew the installation's licence key (Subscription Edition)
 - `fugaro logs` -- Print a run's logs from Cloud Logging
+- `fugaro mailbox` -- Consume this installation's mailbox: read the phone's messages and answer them
 - `fugaro managed` -- Act on a managed project (a project created by fugaro with the coding agent's refusal removed)
 - `fugaro models` -- Show the models this project can run, and where each is served
 - `fugaro orchestrator` -- Read and patch the project's orchestrator state
@@ -1419,7 +1420,7 @@ Flags:
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--mode` | string | "" | no | the rigor mode to preview: poc, startup, pro, critical, hotfix; it may raise the mode the repository resolves (its rigor: block, the project layer) and never lower it, so a mode below the resolved one changes nothing. This is the rigor mode, not the accounting mode budget set --mode takes (observe or enforce) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
-| `--recipe` | string | "" | yes | the recipe to preview (ab-judge, default, escalate, lint-fix, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix) |
+| `--recipe` | string | "" | yes | the recipe to preview (ab-judge, default, escalate, lint-fix, merge-judge, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | the repository (owner/name, or a path inside its checkout); default: the checkout's origin |
 | `--runs` | int | `0` | yes | how many runs to estimate |
@@ -2643,14 +2644,14 @@ This command has no subcommands.
 
 Show the model and the credential or pool each craft runs on
 
-Show the four crafts: the coder, the first-line review, the senior review
-and the security review.
+Show the crafts: the coder, the first-line review, the senior review,
+the security review and the merge judge.
 
 Each craft runs a model and sends its calls out on a credential or a pool, and
-the two halves inherit separately: the first-line review follows the coder and
-the security review follows the senior review, so a craft that sets only one
-half keeps the other half it follows. A craft that sets no access anywhere
-resolves to the project's default credential.
+the two halves inherit separately: the first-line review and the merge judge
+follow the coder, and the security review follows the senior review, so a craft
+that sets only one half keeps the other half it follows. A craft that sets no
+access anywhere resolves to the project's default credential.
 
 Every half names where it came from: the layer that wrote it (repo, local or
 project), the craft it was inherited from, or default when nothing set it. A
@@ -4359,6 +4360,83 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--url` | bool | `false` | no | print the execution's Cloud console link instead of the logs |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro mailbox`
+
+Consume this installation's mailbox: read the phone's messages and answer them
+
+Consume the mailbox of each phone this project is paired with: take the
+lease on its heartbeat, read its inbox, verify each message's pairing MAC,
+decide which deliveries are new, and sign and write the answers to its
+outbox.
+
+The consumer acts on the operator's behalf, and a voice-originated message
+may never cause a destructive command (D128). The default is refusal: a
+message this build does not recognise is refused, and the confirmation
+record that would admit a destructive one is not built yet, so every message
+that would be acted on is refused and reported by code. A launch and a
+read-only report are the allowance D128's amendment names; it reaches a real
+message only once the confirmation record's consumer lands.
+
+Both directions of the wire are MAC-covered. Every inbox message is verified
+before it is acted on, and one that does not verify is refused and never
+acted on — and because nothing can retire it, it is read and refused again on
+every pass until an operator removes the node with their own credential.
+Every reply and every heartbeat is signed before it is written, so a value
+the signer refuses is not written at all.
+
+The heartbeat IS the lease, and the loop renews it on every pass: it is
+rewritten with the current instant under the same compare-and-swap a take
+uses, which is what tells the phone this consumer is present and what keeps
+the lease fresh. A renewal that finds the mailbox held by someone else writes
+nothing, and the next pass takes the lease rather than acting on one it has
+lost.
+
+The command stops at startup when there is no pairing key at the keychain
+items its project config names, rather than looping over a mailbox it could
+do nothing with. The pairing key is read from the OS keychain by item name
+and is never printed; the item's name is not a secret and appears in a
+diagnostic.
+
+The command writes only the outbox and the heartbeat, with the operator's own
+credential, which is what makes that write set a rule in this command's code
+rather than a fence the database enforces.
+
+Its own state is the ledger at
+$XDG_STATE_HOME/fugaro/mailbox/<project>/ledger.json, written 0o600 by
+tmp+rename: it holds the deliveries this consumer has consumed, and it is
+what stops a restart from acting on one twice. The ledger is committed before
+an action is performed, never after.
+
+Each pass prints one line, or with --json one JSON document, naming the
+pairing, the lease, what was read and what was refused (by code, never by
+text). A message's text, a MAC, a key and a keychain item's value are never
+printed.
+
+Without --once it loops until interrupted, one pass every --interval; with
+--once it runs one pass per configured pairing and exits, which is the
+scriptable mode. A pass that held no lease, or read nothing, is a completed
+pass and exits 0.
+
+Usage: `fugaro mailbox`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for mailbox |
+| `--interval` | duration | `5s` | no | how long to wait between passes; never less than one second |
+| `--json` | bool | `false` | no | one JSON document per pass instead of lines |
+| `--no-heartbeat` | bool | `false` | no | write no heartbeat, so no lease is taken and nothing is acted on |
+| `--once` | bool | `false` | no | run one pass per configured pairing and exit |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
@@ -6455,7 +6533,7 @@ List, show, validate and publish recipes, the task loop a run follows after impl
 
 A recipe is found by name in .fugaro/recipes/NAME.yaml in the repository, then in the
 project's fugaro/recipes/NAME.yaml in the runs bucket, then in the catalog
-(ab-judge, default, escalate, lint-fix, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix). See docs/recipes.md.
+(ab-judge, default, escalate, lint-fix, merge-judge, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix). See docs/recipes.md.
 
 Usage: `fugaro recipes`
 
@@ -7094,7 +7172,7 @@ Flags:
 | `--plan-task` | string | "" | no | record the plan task this run works on, as <plan>/<task> (for example setup-wizard/W1.3): the id the console's graph joins this run to a node by; it changes nothing about what the run does, and a follow-up (--pr) records one only when given. A plan task that a run in flight, or a pull request a run of it left behind, already holds is refused (--allow-duplicate launches it anyway) |
 | `--pr` | intSlice | `[]` | no | continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions); with a mode: review --recipe, review PR N instead (repeatable, 1 to 4, any open PR) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
-| `--recipe` | string | "" | no | the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's (ab-judge, default, escalate, lint-fix, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's |
+| `--recipe` | string | "" | no | the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's (ab-judge, default, escalate, lint-fix, merge-judge, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's |
 | `--ref` | string | "" | no | base branch or ref the run is cut from (default: the branch this checkout is on, when origin has it and it is not the base branch; else the base branch (fugaro.yaml git.base_branch, then the local config's, then the project's base_branch, then main)) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | repository as owner/name, or a path inside its checkout (default: this checkout's origin) |

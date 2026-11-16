@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/mailbox/keychain"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -309,6 +310,16 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	// project until it is interrupted. --once is its own one snapshot, which is
 	// the run this harness can hold to a deadline.
 	"fugaro watch": {args: []string{"--once"}, reaches: "counted"},
+	// The mailbox consumer is the same shape — it serves the pairing until it is
+	// interrupted — and --once is its own one pass. The seed is what makes that
+	// pass a pass rather than the startup refusal a project with no mailbox
+	// block gets: the world's config names one pairing and a fake keychain holds
+	// its key, so the run takes the lease and reports the empty inbox it read.
+	"fugaro mailbox": {
+		args:    []string{"--once"},
+		reaches: "read 0, delivered 0, duplicates 0, refused 0, replied 0",
+		seed:    closedStdinMailboxSeed,
+	},
 	// The daemon is the same shape and answers it the same way: it drives the
 	// project until it is stopped, and --once is its own one cycle — the lease
 	// taken for it and released with it. In this world the node holds no work
@@ -481,7 +492,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro config publish":    "refuses with no fugaro.yaml to publish",
 	"fugaro config show":       "refuses outside a git checkout, which is what the world is",
 	"fugaro coordinator":       "refuses: the edition is not in this build",
-	"fugaro craft ls":          "prints the four crafts with no project selected, on the default credential",
+	"fugaro craft ls":          "prints the five crafts with no project selected, on the default credential",
 	"fugaro credentials serve": "refuses without FUGARO_PROJECT in its own environment",
 	"fugaro creds":             "is a name for set and ls: a bare run prints its own usage and returns",
 	"fugaro creds ls":          "prints the no-project-config refusal",
@@ -894,6 +905,25 @@ func closedStdinWorkflowSeed(extra string) func(*testing.T, *budgetFixture) {
 			t.Fatal(err)
 		}
 	}
+}
+
+// closedStdinMailboxSeed gives the world the two things the mailbox fixture's
+// pass reads before it acts: a pairing in the world's own project config, and
+// that pairing's key in a keychain of the test's own. A pass over a project
+// whose config names no mailbox refuses at startup without taking a lease or
+// reading an inbox, which would leave the fixture proving nothing about the
+// loop it exists for. The state directory is the ledger's — one project's own,
+// under a directory of the test's — so the pass records what it consumed
+// somewhere this machine does not keep its own state.
+func closedStdinMailboxSeed(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	item := "fugaro-mailbox-aurora-harness"
+	f.appendConfig(t, "mailbox:\n  keychain_item:\n    \""+mailboxUID+"\": "+item+"\n")
+	store := &keychain.Fake{Keys: map[string]string{item: mailboxKeyMaterial}}
+	prev := mailboxKeychain
+	mailboxKeychain = func() keychain.Store { return store }
+	t.Cleanup(func() { mailboxKeychain = prev })
 }
 
 // closedStdinWorld is the state every leaf is run in: one hermetic

@@ -173,7 +173,8 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 		// by a repository as its own or by the project for every repository of
 		// it, as the four slots above are.
 		"agent.models.diagnose": InProject | InRepo,
-		// The four crafts (docs/model-crafts/spec.md §3). A craft's model is a
+		// The five crafts — the spec's four (docs/model-crafts/spec.md §3) and
+		// the escalation ladder's merge judge (E6). A craft's model is a
 		// project default, as agent.models.* is; its access is not, and is a
 		// repository's own choice among the credentials the owner allow-lists.
 		"agent.crafts.coder.model":            InProject | InRepo,
@@ -184,6 +185,8 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 		"agent.crafts.senior-review.access":   InRepo,
 		"agent.crafts.security-review.model":  InProject | InRepo,
 		"agent.crafts.security-review.access": InRepo,
+		"agent.crafts.merge-judge.model":      InProject | InRepo,
+		"agent.crafts.merge-judge.access":     InRepo,
 		// The escalation ladder's two model grades (docs/outer-loop-escalation
 		// E2, D2039). Both halves of both grades are the project's, and this is
 		// the one key of the crafts' kind whose access the project layer may
