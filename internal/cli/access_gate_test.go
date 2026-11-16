@@ -291,6 +291,39 @@ func TestAccessReposAllReposAdminCannotEditTheAllowList(t *testing.T) {
 	}
 }
 
+// TestAccessReposConvergeAllReposAdminCannotEnrol: the case above is the
+// narrow path (`--allow-list-only`, which writes the published list), and this
+// is its twin on the default one, which writes more: the node's allow_repos,
+// the local config's entry, the project's job set and the repository's own
+// Terraform root, that last one carrying the run.invoker grant. Same F19
+// project-level action, same roster, same answer — an admin of every enrolled
+// repository still cannot widen what the project admits.
+func TestAccessReposConvergeAllReposAdminCannotEnrol(t *testing.T) {
+	f := accessFixture(t, false)
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"github/acme/app"},
+	})
+	accessAs(t, f.db, accessAdminAddr,
+		userStored(t, accessMember(t, accessAdminAddr), accesslib.RoleAdmin, "all-repos"))
+	before := allowReposOf(t, f.db)
+	configBefore := accessConfigText(t)
+	// The confirmation is granted — this terminal answers, the project's name
+	// is typed — so a gate that let the command through would reach its writes
+	// rather than stopping on the question, and the assertions below would
+	// catch it.
+	typed(t)
+	_, _, err := executeStdin(t, "aurora\n", "project", "repos", "add", "github/acme/new")
+	accessRefused(t, err, "nothing was enrolled", "admin at project scope", "(user:admin@example.com) hold admin at all-repos")
+	if after := allowReposOf(t, f.db); !slices.Equal(after, before) {
+		t.Errorf("the refused enrolment rewrote the published allow-list: %v, want %v", after, before)
+	}
+	if after := accessConfigText(t); after != configBefore {
+		t.Errorf("the refused enrolment wrote the local config:\n%s\nwant it as it was:\n%s", after, configBefore)
+	}
+}
+
 // TestAccessAccountsAllReposAdminCannotAddAnAccount: accounts are on F19's
 // project-level list for the same reason the catalog is — the account is the
 // project's, and what it may be mounted for is a project-wide list.
