@@ -309,10 +309,12 @@ run    argv: the listing's file, a run id. Prints that run's row field by field,
        `found=no` when the listing does not hold it, and the halt's own reason
        and detail for a run the record halted.
 policy argv: the `project policy show --json` document, a repository. Prints
-       whether the published block admits that repository and whether it is
-       proxied (`proxy: true`, projectpolicy's block), matched the way the
-       service matches a repository (projectpolicy.MatchRepo): the node's entries
-       carry a provider and a segment may be a wildcard.
+       whether the published Bitbucket block admits that repository
+       (`bitbucket_token.allow_repos`), whether it is proxied
+       (`bitbucket_token.proxy`), and the budget mode in force (`budget.mode`,
+       D2071). An entry is matched the way the service matches a repository
+       (projectpolicy.MatchRepo): it carries the host in front of the path
+       (`bitbucket/acme/web`) and a segment may be a wildcard.
 auth   argv: the Realtime Database record's file, a repository. Prints the auth
        the record names, and — under `oauth` — the accounts it names, which is
        the whole of what the service narrows a repository's calls to
@@ -456,7 +458,16 @@ def provider_keys_of(containers):
 
 
 def inside(entry, repo):
+    """Whether a published repository entry admits a repository. The entries are
+    spelled with the host in front of the path — `bitbucket/acme/web`,
+    `github/acme/app` (projectpolicy's allow_repos, and check191's reader reads
+    the same shape) — and the knob this check is handed is `<workspace>/
+    <repository>` without one, so the host segment is dropped before the two are
+    compared. A segment may be `*`, which is how the published node spells a
+    whole workspace."""
     e = entry.split("/")
+    if e and e[0] in ("github", "bitbucket", "gitlab"):
+        e = e[1:]
     r = repo.split("/")
     if len(e) != len(r):
         return False
@@ -543,7 +554,8 @@ elif cmd == "run":
         if not isinstance(row, dict) or row.get("run_id") != want:
             continue
         print("found=yes")
-        for key in ("run_id", "status", "terminal", "outcome", "pushed", "pr", "repo", "started_at"):
+        for key in ("run_id", "status", "terminal", "outcome", "pushed", "pr", "repo",
+                    "started_at", "oauth_account"):
             if key in row:
                 v = row[key]
                 if isinstance(v, bool):
@@ -561,27 +573,24 @@ elif cmd == "run":
     else:
         print("found=no")
 elif cmd == "policy":
+    # argv: the `fugaro project policy show --json` document, a repository. The
+    # two facts F29's row is read from are the published Bitbucket block's own
+    # admission of the repository and its proxy switch (projectpolicy's
+    # BitbucketToken: allow_repos, proxy) — the same two check191 reads, because
+    # they are the same switch — and the budget mode is D2071's third leg.
     repo = sys.argv[3]
     doc = load(sys.argv[2]) or {}
     policy = doc.get("policy") if isinstance(doc, dict) else None
     if not isinstance(policy, dict):
-        policy = doc if isinstance(doc, dict) else {}
-    found = "no"
-    proxy = "no"
-    for node in (policy, (policy.get("repositories") or {}) if isinstance(policy, dict) else {}):
-        if not isinstance(node, dict):
-            continue
-        for entry in (node.get("repositories") or []) if isinstance(node.get("repositories"), list) else []:
-            if not isinstance(entry, dict):
-                continue
-            name = entry.get("repo") or entry.get("name") or ""
-            if name and inside(name, repo):
-                found = "yes"
-                if entry.get("proxy") is True:
-                    proxy = "yes"
-    print("admits=%s" % found)
-    print("proxy=%s" % proxy)
-    print("mode=%s" % word((policy.get("budget") or {}).get("mode") if isinstance(policy.get("budget"), dict) else None, 20))
+        policy = {}
+    block = policy.get("bitbucket_token")
+    block = block if isinstance(block, dict) else {}
+    allow = block.get("allow_repos") or []
+    print("admits=%s" % ("yes" if any(inside(e, repo) for e in allow if isinstance(e, str)) else "no"))
+    print("proxy=%s" % ("yes" if block.get("proxy") is True else "no"))
+    budget = policy.get("budget")
+    budget = budget if isinstance(budget, dict) else {}
+    print("mode=%s" % word(budget.get("mode"), 20))
 elif cmd == "auth":
     repo = sys.argv[3]
     doc = load(sys.argv[2])
@@ -1009,51 +1018,63 @@ step_run() { # step_run REPO AUTH LABEL FACTKEY
 
 # step_declared_account: the oauth half of the boundary — the service serves a
 # run the ONE account it declared and refuses it every other one its repository's
-# record names. That is the reading that has no probe behind it and needs none:
-# `narrowToRepoAuth`'s oauth branch keeps the declared account's credential and
-# reports every other as not admitted, so the run's own lines can only ever name
-# the declared one. The row is measured only where the record names more than one
-# account: a record that names one has nothing the run could have been served
-# besides it, and a row read there would be a row about nothing.
+# record names.
+#
+# It is read from the run's own lines and not from a call the check makes, and
+# the reason is that the other half of the boundary cannot be reached from here:
+# `narrowToRepoAuth`'s oauth branch refuses a call that declares an account the
+# record does not name, and a run cannot declare one — the launch checks
+# `--token` against config.AllowedClaudeAccounts and the record is written from
+# infra.WorkflowAccounts over that same list (internal/cli/update_repoauth.go says
+# so in as many words), so a launched run's account is always one its own record
+# names. What IS reachable, and is what a run served the wrong account would
+# look like, is the reading below: the run's record says which account it
+# declared, and every tier-A line the service wrote for it must name that
+# account's token and no other account of the record's. The row is measured only
+# where the record names more than one account: a record that names one has
+# nothing the run could have been served besides it, and a row read there would
+# be a row about nothing.
 step_declared_account() {
-  local slug lines rid declared named extra=""
+  local slug lines rid declared want named others="" accounts n row
   slug=$(printf '%s' "$OAUTH_REPO" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
-  local accounts n
   accounts=$(reader auth "$SCRATCH/auth-$slug.json" "$OAUTH_REPO" | sed -n 's/^account=//p')
   n=$(field_of accounts "$(reader auth "$SCRATCH/auth-$slug.json" "$OAUTH_REPO")")
   if [ "${n:-0}" -lt 2 ]; then
-    unmeasured declared-account "${OAUTH_REPO}'s record names ${n:-0} account(s) (${accounts:-none}), so there is no second account the service could have served this run and refused: the row would be a row about nothing. Put a second Claude account the repository is allowed on the switch (its own local config's claude_accounts, then 'fugaro update --repo') and run this check again"
+    unmeasured declared-account "${OAUTH_REPO}'s own record names ${n:-0} account(s) (${accounts:-none}), so there is no account the run did NOT declare that the service could have served it instead: the row would be a row about nothing. Let the repository's runs name a second Claude account (the account's own allow_data_to for it in this machine's local config, then 'fugaro update --repo' there), so its record names two, and run this check again"
     return 0
   fi
-  lines=$SCRATCH/audit-two.json
   rid=$(run_id two)
-  named=$(audit_named "$lines" "$rid")
-  declared=$(printf '%s\n' "$named" | sed -n 's/^\(claude-oauth-token[-A-Za-z0-9._]*\)|A$/\1/p' | head -n 1)
+  lines=$SCRATCH/audit-two.json
+  # The account the run DECLARED is the run's own record's (`oauth_account`:
+  # the account the launch resolved — the runner sets X-Fugaro-Auth-Account from
+  # it, which is the header narrowToRepoAuth narrows by), and never a value
+  # inferred from what the service served: a row that read the declaration off
+  # the answer would pass whatever the answer was.
+  row=$(row_of two)
+  declared=$(field_of oauth_account "$row")
   if [ -z "$declared" ]; then
-    fact declared-account FAIL "the oauth run (${rid}) of ${OAUTH_REPO} has no served line naming a Claude account's token at tier A, so which account it was served cannot be read: $(printf '%s' "$named" | tr '\n' ' ')"
+    unmeasured declared-account "the oauth run (${rid}) of ${OAUTH_REPO} has no oauth_account in its own row, so the account it declared is not read: ${OAUTH_REPO}'s runs declare an account through the launch ('fugaro run --token', or the config's default) and the record carries it. Read 'fugaro runs show ${rid} --repo ${OAUTH_REPO}' and run this check again"
     return 0
   fi
-  # Every OTHER account the record names: its container is claude-oauth-token-<account>
-  # (config's ClaudeAccountSecret), and the default account's is the unsuffixed
-  # claude-oauth-token — so the names the run declared are the ones allowed to
-  # appear, and any other one of the record's appearing is the boundary not holding.
-  local a container
-  while IFS= read -r a; do
-    [ -n "$a" ] || continue
-    case "$a" in
-    default | "") container=claude-oauth-token ;;
-    *) container="claude-oauth-token-${a}" ;;
-    esac
-    [ "$container" = "$declared" ] && continue
-    if printf '%s\n' "$named" | grep -q "^${container}|A\$"; then extra="${extra} ${container}"; fi
-  done <<EOF
-$accounts
-EOF
-  if [ -n "$extra" ]; then
-    fact declared-account FAIL "the oauth run (${rid}) of ${OAUTH_REPO} was served an account ITS RECORD NAMES THAT IT DID NOT DECLARE: its lines name the declared ${declared} AND ${extra# }. The service serves an oauth call only the account the call declared (narrowToRepoAuth, D2070): a run served a second one is the boundary not holding, and this is the row Check 193 exists for"
+  # The container the DECLARED account's token is served out of
+  # (config.ClaudeAccountSecret): the unsuffixed claude-oauth-token for the
+  # default account, claude-oauth-token-<account> for a named one. This is the
+  # only tier-A credential name the service may put on a line of this run's.
+  case "$declared" in
+  default | "none") want=claude-oauth-token ;;
+  *) want="claude-oauth-token-${declared}" ;;
+  esac
+  named=$(audit_named "$lines" "$rid")
+  others=$(printf '%s\n' "$named" | sed -n 's/^\(claude-oauth-token[-A-Za-z0-9._]*\)|A$/\1/p' | grep -v "^${want}\$" | sort -u | tr '\n' ' ')
+  if [ -n "$others" ]; then
+    fact declared-account FAIL "the oauth run (${rid}) of ${OAUTH_REPO} declared ${declared} and the service served it ANOTHER account's token as well: its lines name ${want} and ${others% }. The service narrows an oauth call to the account the call itself declared (narrowToRepoAuth, D2070 (a): keepCandidates keeps tier A and Name == the declared account), so a line naming a second one of the record's accounts is a run served an account it did not declare — this is the row Check 193 exists for. Read that run's lines ('gcloud logging read') and the service's own code path before anything else"
     return 0
   fi
-  fact declared-account PASS "the oauth run (${rid}) of ${OAUTH_REPO} declared ${declared} and the service served it that account alone: ${n} account(s) are in its record and no line of the run names any other one ($(printf '%s' "$named" | tr '\n' ' ' | sed 's/ *$//'))"
+  if ! printf '%s\n' "$named" | grep -q "^${want}|A\$"; then
+    fact declared-account FAIL "the oauth run (${rid}) of ${OAUTH_REPO} declared ${declared}, and no served line of its own names that account's token at tier A (${want}): the lines name $(printf '%s' "$named" | tr '\n' ' ' | sed 's/ *$//'). An oauth repository's runs are served a Claude account's token and nothing else — the paid key is tier B and this repository's record says oauth — so a run whose lines name no account token was not served by the account it declared. Read 'fugaro runs show ${rid} --repo ${OAUTH_REPO}' and the service's lines for it"
+    return 0
+  fi
+  fact declared-account PASS "the oauth run (${rid}) of ${OAUTH_REPO} declared ${declared} (the account the launch resolved, read off the run's own record) and the service served it THAT account alone: every tier-A line of its own names ${want}, and ${n} account(s) are in its record (${accounts//$'\n'/ }) — so no line of the run names any other account the repository's own record would have allowed (narrowToRepoAuth, D2070)"
 }
 
 # step_proxy: F29's half of S2 — a Bitbucket repository published with
@@ -1091,17 +1112,27 @@ step_proxy() {
     return 0
   fi
   lines=$SCRATCH/audit-$label.json
-  local purposes
+  # A run's own git traffic that the service forwarded is one line of the
+  # purposes GIT_PURPOSES names, and the credential on it is the bundle's
+  # Bitbucket token: a push is one such request (internal/credsvc/audit.go,
+  # PurposeGit — a fetch, the receive-pack advertisement, or a push), and a
+  # repository's Bitbucket REST calls are the other (PurposeBitbucketAPI). A
+  # line of any OTHER purpose is a different act of the run's — its model calls
+  # are `forward` — and a person's read mint is `bitbucket_read`, which carries
+  # a repository and no run at all: matching a line by the word `bitbucket`
+  # would let a mint that is not this run's answer this row.
+  local purposes creds
   purposes=$(reader audit "$lines" "$rid" | sed -n 's/^audit=[^|]*|[^|]*|[^|]*|\([^|]*\)|.*/\1/p' | sort -u | tr '\n' ' ')
+  creds=$(reader audit "$lines" "$rid" | sed -n 's/^audit=ok|\([^|]*\)|\([^|]*\)|\(git\|bitbucket-api\)|.*/\1/p' | sort -u | tr '\n' ' ')
   if [ "$proxy" != yes ]; then
-    unmeasured proxy "${repo} is NOT published with proxy: true (admits=${admits}), so its run's push went straight to the provider with the credential its job holds and nothing about the proxy is measured. Publish proxy: true for it and run this check again"
+    unmeasured proxy "${repo} is NOT published with proxy: true (admits=${admits}), so nothing about the proxy is measured: a repository the published node does not proxy keeps its Bitbucket token mounted on its job and its runs push straight to the provider, which is the state F29 names. Publish proxy: true for it (fugaro project policy publish) and run this check again"
     return 0
   fi
-  if ! printf '%s\n' "$purposes" | grep -q 'bitbucket'; then
-    fact proxy FAIL "${repo} is published with proxy: true and on the switch, and the service wrote no Bitbucket-purpose line for its run (${rid}): the purposes its lines carry are '$(printf '%s' "$purposes" | sed 's/ *$//')'. F29's reading is that a switched Bitbucket repository published with proxy: true pushes THROUGH the service (internal/runner's project.go), which writes a line of that run's own for the traffic — a run whose push never reached the service pushed with the credential its job mounts, which is the state the flip exists to end. Read that run's lines ('gcloud logging read') and run this check again"
+  if ! printf '%s\n' "$purposes" | grep -qE '^(git|bitbucket-api)$'; then
+    fact proxy FAIL "${repo} is published with proxy: true and on the credentials-service switch, and the service wrote no git line for its run (${rid}): the purposes its lines carry are '$(printf '%s' "$purposes" | sed 's/ *$//')' and none of them is 'git' or 'bitbucket-api'. F29's reading is that a switched Bitbucket repository published with proxy: true pushes THROUGH the service (internal/runner's project.go's proxiedBitbucket), which writes a line of that run's own for the traffic — a run whose push never reached the service pushed with the credential its job mounts, which is the state S2 exists to end. Read that run's lines ('gcloud logging read') and run this check again"
     return 0
   fi
-  fact proxy PASS "${repo} is published with proxy: true and on the switch, and the service wrote a line for its run (${rid}) under a Bitbucket purpose ('$(printf '%s' "$purposes" | sed 's/ *$//')'): the push went through the credentials service and not through a credential of the job's own (F29)"
+  fact proxy PASS "${repo} is published with proxy: true and on the switch, and the service forwarded its run's (${rid}) own git traffic: the lines of its own carry the purposes '$(printf '%s' "$purposes" | sed 's/ *$//')' and name the credential $(printf '%s' "$creds" | sed 's/ *$//') — so the push went through the credentials service and not through a credential of the job's own (F29)"
 }
 
 # step_mounts: the flip's first half (B2.7, D2072, G17, R6) — after it, no job
