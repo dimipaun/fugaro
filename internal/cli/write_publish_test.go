@@ -19,14 +19,15 @@ import (
 // write_publish_test.go drives the after-write hook (N3, D2602): the stages a
 // semantic command's write owes, run in process after the write landed.
 //
-// Five things it pins, one test each: the variable C1's seam is held in points
-// at this file's hook and not at the stub's no-op
-// (TestAfterWriteIsWiredToTheHook); the policy stage publishes the node and the
-// local change is live (TestAfterWritePublishesThePolicyStage); a stage that
-// does not leave it live keeps the change and ends the command on the one
-// sentence (TestAfterWriteFailureKeepsTheLocalChange, and the sentence itself in
-// TestAfterWriteSentenceIsOneHelper); a coding agent's session publishes nothing
-// a plan gate may not judge, whatever the gate's marks say
+// Six things it pins: the variable C1's seam is held in points at this file's
+// hook and not at the stub's no-op (TestAfterWriteIsWiredToTheHook); the policy
+// stage publishes the node and the local change is live
+// (TestAfterWritePublishesThePolicyStage), and it is the installation the
+// command was aimed at (TestAfterWritePublishesTheCommandAimedInstallation); a
+// stage that does not leave it live keeps the change and ends the command on the
+// one sentence (TestAfterWriteFailureKeepsTheLocalChange, and the sentence itself
+// in TestAfterWriteSentenceIsOneHelper); a coding agent's session publishes
+// nothing a plan gate may not judge, whatever the gate's marks say
 // (TestAfterWriteUnderTheAgentMarkerPublishesNothing); and the stages a write
 // owes come from the key's own registry row and the layer the command wrote in,
 // which is what decides the layer stage for a project-layer key
