@@ -10,7 +10,8 @@
   },
   "scripts": {
     "build": "ASTRO_TELEMETRY_DISABLED=1 astro build",
-    "check": "npm run build && node --test test/*.mjs"
+    "check": "npm run build && node --test test/*.mjs",
+    "features": "node bin/feature-matrix.mjs"
   },
   "dependencies": {
     "astro": "7.4.7"
