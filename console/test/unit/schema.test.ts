@@ -892,9 +892,26 @@ describe('both document shapes decode', () => {
     expect(Object.keys(wireTotal).sort()).toEqual(
       [...fromTheStruct].filter((key) => !approvedAheadOfTheFixture.includes(key)).sort(),
     )
-    // ... and a document that does carry it is accepted rather than refused,
-    // drawing nothing: the key is the struct's, and no screen reads it yet.
-    ignoring(first, patched(first, ['total', 'max_parallel'], 4), (raw) => decodeDocument(raw))
+    // ... and the key is read, which is what the Live fleet panel's
+    // concurrent-runs cap bar draws: the fixture's lack of it is a reading and
+    // not a refusal (the one document of the corpus written before the key
+    // shipped), and a document that carries one is measured -- so the bar can
+    // draw a cap, or say it has none, and never fills against nothing.
+    const withoutKey = decoded(first)
+    expect(withoutKey.total.maxParallel.value).toBeNull()
+    expect(withoutKey.total.maxParallel.because).toBe('the document has no total.max_parallel')
+    expect(formatReading(withoutKey.total.maxParallel, 'count')).toBe(UNAVAILABLE_MARK)
+    expect(decoded(patched(first, ['total', 'max_parallel'], 4)).total.maxParallel.value).toBe(4)
+    // `null` on the wire -- the shape for a writer with no config to read -- is
+    // that same absent reading and never a cap of none.
+    expect(decoded(patched(first, ['total', 'max_parallel'], null)).total.maxParallel.value).toBeNull()
+    // A value that is not a count of runs is a document this console does not
+    // understand, refused by name rather than half-read -- `2.5` here, the shape
+    // a cap of two and a half runs would take.
+    expect(refusalFor(patched(first, ['total', 'max_parallel'], 2.5))).toMatchObject({
+      name: 'not-a-number',
+      field: 'total.max_parallel',
+    })
   })
 
   it('carries notional as the wire wrote it, and never infers it from auth', () => {
