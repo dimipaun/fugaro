@@ -243,6 +243,12 @@
         "agent.crafts.coder.model": {
           "default": "unset = required: the coder implements, so a run needs its model"
         },
+        "agent.crafts.merge-judge.access": {
+          "default": "unset = the coder's access"
+        },
+        "agent.crafts.merge-judge.model": {
+          "default": "unset = the coder's model"
+        },
         "agent.crafts.review.access": {
           "default": "unset = the coder's access"
         },
@@ -517,6 +523,12 @@
         "crafts.coder.model": {
           "default": "unset = required: the coder implements, so a run needs its model"
         },
+        "crafts.merge-judge.access": {
+          "default": "unset = the coder's access"
+        },
+        "crafts.merge-judge.model": {
+          "default": "unset = the coder's model"
+        },
         "crafts.review.access": {
           "default": "unset = the coder's access"
         },
@@ -534,6 +546,24 @@
         },
         "crafts.senior-review.model": {
           "default": "unset = required: the senior review is the second opinion a run needs"
+        },
+        "credential_cascade.backoff.cap": {
+          "default": "unset = 5h: the longest that wait doubles to (projectpolicy.DefaultBackoffCap); a cap below the initial wait is refused, because a probe schedule that never doubles retries a credential with no reset time for ever (D153)"
+        },
+        "credential_cascade.backoff.initial": {
+          "default": "unset = 15m: the first wait a credential is held for when its exhaustion reported no reset time, doubling from there (projectpolicy.DefaultBackoffInitial)"
+        },
+        "credential_cascade.concurrency_per_token": {
+          "default": "unset = 1: one run at a time may hold a shared credential, and the written 0 is no cap at all (projectpolicy.DefaultConcurrencyPerToken, D142)"
+        },
+        "credential_cascade.fallback": {
+          "default": "unset = oauth-only: a run waits for the shared token's reset and never falls over to the paid tiers, and the written auto is the value that does — the node refuses it unless the budget block enforces a per-run ceiling above zero (D152)"
+        },
+        "credential_cascade.stop_after_exhaustion_per_window": {
+          "default": "unset = true: a run stops rather than spending the project's money on a credential that has exhausted its window, and only the written false opts out (D142)"
+        },
+        "credential_cascade.wait_threshold": {
+          "default": "unset = 15m: how long a run waits for an exhausted credential's reset before it fails over to the next tier (projectpolicy.DefaultWaitThreshold); under oauth-only there is no tier to fail over to, so the run waits for the earliest reset whatever the threshold says"
         },
         "credentials.*.name": {
           "default": "unset = required: the name a craft's access and a pool's members speak"
@@ -809,6 +839,12 @@
         },
         "layer.defaults.agent.crafts.coder.model": {
           "default": "unset = defaults.agent.model"
+        },
+        "layer.defaults.agent.crafts.merge-judge.access": {
+          "default": "unset = none: only the local config and the policy node name a credential"
+        },
+        "layer.defaults.agent.crafts.merge-judge.model": {
+          "default": "unset = the coder's model"
         },
         "layer.defaults.agent.crafts.review.access": {
           "default": "unset = none: only the local config and the policy node name a credential"
@@ -1221,6 +1257,15 @@
         },
         "name": {
           "default": "unset = the file is refused (name: is required)"
+        },
+        "node_removals.craft_credentials": {
+          "default": "unset = none: silence in this file keeps the node's credentials, so a credential is removed by naming it here (D2607, F22); the name stays recorded until the node no longer holds it"
+        },
+        "node_removals.crafts": {
+          "default": "unset = none: silence in this file keeps the node's crafts, so a craft is removed by naming it here (D2607, F22)"
+        },
+        "node_removals.pools": {
+          "default": "unset = none: silence in this file keeps the node's pools, so a pool is removed by naming it here (D2607, F22)"
         },
         "orchestrator.batch_size": {
           "default": "unset = 10 (policy.DefaultBatchSize)"

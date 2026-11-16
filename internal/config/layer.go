@@ -330,6 +330,27 @@ func (l *ProjectLayer) SetsVision() bool {
 	return visionKey(d["agent"])
 }
 
+// SetsMergeJudgeCraft reports whether the layer's text writes
+// defaults.agent.crafts.merge-judge, at any value: a runner older than
+// mergeJudgeSince (internal/cli) decodes the layer with KnownFields, so the
+// key alone is what it refuses, and the block's own value cannot tell an empty
+// one from none. It reads the tree and not the parsed defaults for SetsVision's
+// reason: an older decoder refuses `merge-judge: {}` exactly as it refuses a
+// block naming a model and an access, and the parsed block would answer for
+// neither.
+//
+// It is the layer's half of the key's gate and the one that reaches further: a
+// layer carrying the key is a layer every repository of the project whose job
+// image predates the release fails at bootstrap on, which is why the gate
+// reads it whether or not the repository's own file writes the craft.
+func (l *ProjectLayer) SetsMergeJudgeCraft() bool {
+	if l == nil {
+		return false
+	}
+	d, _ := l.tree["defaults"].(map[string]any)
+	return mergeJudgeCraftKey(d["agent"])
+}
+
 // SetsGovernance reports whether the layer's text writes governance:, at any
 // value: a runner before governanceSince decodes the layer with KnownFields,
 // so the key alone is what it refuses, and Governance's zero value cannot

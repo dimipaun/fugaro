@@ -458,29 +458,79 @@ const escalationSince = "0.23.0"
 // refuses its task) or too early (an image that can judge stays blocked).
 const evaluateSince = "0.24.0"
 
+// mergeJudgeSince is the first fugaro release whose runner runs the merge
+// judge (E6, D2031): its recipe parser knows `merge_judge` as a kind, and
+// mode: evaluate's own step list carries it, so the judge's recipe — one step,
+// and that step — is a run; and its configuration reader knows the judge's
+// craft, `agent.crafts.merge-judge`, which the five-craft block adds (its
+// `Crafts` struct carries a field per craft, so the decoder refuses the field
+// and not the block).
+//
+// **It is not evaluateSince, and the two are a release apart.** 0.24.0 reads
+// mode: evaluate, which is the mode the judge's task carries, so that gate
+// admits a launch against a 0.24.0 job image and cannot tell this run from any
+// other evaluate one; its parser then refuses `merge_judge` outright ("is not a
+// step type") and its decoder refuses the craft key ("field merge-judge not
+// found in type config.Crafts"), so the run dies at bootstrap with the launch
+// already paid for and nothing judged. What judges a launch is therefore the
+// recipe's own constructs (recipe.UsesMergeJudge, read from the embedded text a
+// catalog launch carries) and the catalog's own name, for the task that names
+// it and carries no text — the two arms of recipeSinceFor, not the mode's —
+// and, for the craft key, the two files the configuration writes it in
+// (mergeJudgeCraftLaunchSources, checkMergeJudgeCraftImage).
+//
+// The two halves are one constant because they are one release and one
+// feature, but they are judged apart and a launch may carry either without the
+// other: a repository's file may set the judge's craft with no judge run ever
+// launched from it (the ladder launches the judge, and its task is the
+// ladder's), and a judge run may be launched where no layer sets the craft,
+// the judge then following the coder.
+//
+// It names 0.25.0, the release this work lands in, which is not tagged yet:
+// docs/release.md's ("Before you tag") checklist verifies the constant against
+// the tag actually cut, the way digestSince's, adversarialSince's and
+// evaluateSince's bullets record. A wrong value refuses too late (a launch
+// reaches a runner that refuses its recipe or its configuration) or too early
+// (an image that can judge stays blocked).
+const mergeJudgeSince = "0.25.0"
+
 // escalationRecipes are the catalog recipe names whose runner half ships in
 // escalationSince's release: `escalate` (one coder pass, one review, the
-// verdict recorded) and `rebase`, which that release adds, and `merge-judge`,
-// the merge judge's own recipe, which E6 adds with the same engine — its name
-// is listed here from the start so the three the escalation ladder launches
-// (E11) are held to the one release in one place, rather than each arrival
-// moving this gate. A recipe of the same name from the repository or the
-// project is that layer's own file and is judged by the constructs it
-// carries, like any other: this list is the catalog's names, not the names.
-var escalationRecipes = []string{"escalate", "rebase", "merge-judge"}
+// verdict recorded) and `rebase`, which that release adds. A recipe of the
+// same name from the repository or the project is that layer's own file and is
+// judged by the constructs it carries, like any other: this list is the
+// catalog's names, not the names. `merge-judge`, the third of the ladder's
+// recipes (E6), is deliberately not here: its runner half ships a release
+// later, and mergeJudgeRecipeNamed holds it to that one.
+var escalationRecipes = []string{"escalate", "rebase"}
 
 // escalationRecipeNamed reports whether the task's recipe is one of the
 // catalog's escalation recipes: a name the launcher resolved from the catalog
 // itself, never a repository's or the project's own file that happens to
 // share it (resolveRecipe reads those first, and they win). It is the floor
 // under the construct gates: a recipe whose text carries no hand_over and no
-// rebase step this launcher can see — merge-judge, whose file the catalog
-// does not hold yet, and any of the three whose text a later release edits to
-// use fewer constructs — is still held to the release whose runner runs the
-// ladder's recipes, so an image that cannot take the launch is refused at the
-// terminal rather than at bootstrap.
+// rebase step this launcher can see — or either of the two whose text a later
+// release edits to use fewer constructs — is still held to the release whose
+// runner runs the ladder's recipes, so an image that cannot take the launch is
+// refused at the terminal rather than at bootstrap.
 func escalationRecipeNamed(spec *task.Spec) bool {
 	return spec.Recipe != nil && spec.Recipe.Source == string(recipe.SourceCatalog) && slices.Contains(escalationRecipes, spec.Recipe.Name)
+}
+
+// mergeJudgeRecipe is the catalog recipe the judge run is launched by, and
+// mergeJudgeRecipeNamed reports whether the task's recipe is that catalog
+// entry: a name the launcher resolved from the catalog itself, never a
+// repository's or the project's own file that happens to share it.
+//
+// It is the name arm mergeJudgeSince needs beside the construct one: a catalog
+// launch carries the recipe's text, which recipe.UsesMergeJudge reads, but a
+// task naming the catalog entry and carrying no text (a hand-written task.json,
+// or a later release's launcher) has no construct to read, and the name is then
+// the only thing that says which run this is.
+const mergeJudgeRecipe = "merge-judge"
+
+func mergeJudgeRecipeNamed(spec *task.Spec) bool {
+	return spec.Recipe != nil && spec.Recipe.Source == string(recipe.SourceCatalog) && spec.Recipe.Name == mergeJudgeRecipe
 }
 
 // reviewLevelsSince is the first fugaro release whose runner acts on review
@@ -923,6 +973,31 @@ const chainLimitsSubject = "a chain limit (--max-usd, --max-tokens, --max-time, 
 // where the image cannot be brought forward.
 const chainLimitsAlt = "; or drop the chain limits from the launch, which needs a job image whose runner knows them before it can carry one"
 
+// contextReposSince is the release whose runner reads a task's read-only
+// context repositories (task.Spec.ContextRepos, fugaro run --context, plan
+// task C5a). task.Parse decodes with DisallowUnknownFields, so a runner older
+// than this refuses the whole task at bootstrap: the run would die over a
+// field it cannot read, and the launch is gated here instead of being started
+// on such a job.
+//
+// It gates the field and never the flag, exactly as launchLimitsSince does: a
+// launch that names no context repository writes none (the field is omitempty,
+// so the spec is byte-identical to what the previous release wrote) and is
+// never gated, while a --retry of a task that carries one is gated the same
+// way the launch that wrote it was.
+const contextReposSince = "0.26.0"
+
+// contextReposKnows is what such a runner knows, as the gate names it.
+const contextReposKnows = "the read-only context repositories its task carries (context_repos)"
+
+// contextReposSubject is what the gate says the launch carries: the flag, and
+// the stored task a --retry replays the field from.
+const contextReposSubject = "read-only context repositories (--context, kept by --retry and by a stored task)"
+
+// contextReposAlt is the gate's other cure: the launch can name none, where
+// the image cannot be brought forward.
+const contextReposAlt = "; or drop --context, which needs a job image whose runner reads the field before it can carry one"
+
 // authorSince is the first fugaro release whose runner reads a task's author
 // field (task.Spec.Author, the launcher's identity a launch records for the
 // repositories that opted in, D604/D606): an older runner refuses the field
@@ -1228,27 +1303,30 @@ func repoRecipeForGate(ctx context.Context, spec *task.Spec) *recipe.Recipe {
 // and start a job whose runner refuses the whole task at bootstrap, the
 // manifest being a field it does not know.
 //
-// The adversarial step and the escalation constructs are judged from rp too,
-// and they are the newest a recipe can carry (escalationSince, then
-// adversarialSince), so their cases come first. Unlike the manifest and mode:
-// artifact — a repository recipe's digest run and its mode both reach the
-// task as fields, which carry their own gates above — neither the step nor
-// the two escalation constructs has anything in the task behind it, so the
-// launcher's read of the file the recipe names is the only place the gate can
-// see it; one this launcher cannot read keeps recipesSince, with the runner's
-// parse refusal as the backstop. Every older construct keeps the gate it
-// always had, judged from the embedded text alone: a repository recipe trips
-// none of them here, which is what its own tests pin.
+// The judge's step, the adversarial step and the escalation constructs are
+// judged from rp too, and they are the newest a recipe can carry
+// (mergeJudgeSince, then escalationSince, then adversarialSince), so their
+// cases come first. Unlike the manifest and mode: artifact — a repository
+// recipe's digest run and its mode both reach the task as fields, which carry
+// their own gates above — none of those three has anything in the task behind
+// it, so the launcher's read of the file the recipe names is the only place
+// the gate can see it; one this launcher cannot read keeps recipesSince, with
+// the runner's parse refusal as the backstop. Every older construct keeps the
+// gate it always had, judged from the embedded text alone: a repository recipe
+// trips none of them here, which is what its own tests pin.
 //
 // The catalog's escalation recipes are held to escalationSince by name as
 // well (escalationRecipeNamed), which is the floor under the constructs: the
 // name is what the ladder's launches and a person's terminal carry, and the
 // gate must not move back if a later release edits one of those files to use
-// fewer of them.
+// fewer of them. The judge's recipe is the third of those names and is held
+// the same way, to its own, newer release (mergeJudgeRecipeNamed).
 func recipeSinceFor(spec *task.Spec, rp *recipe.Recipe) string {
 	r := embeddedRecipeOf(spec)
 	if len(spec.DigestRuns) == 0 && r == nil && rp != nil {
 		switch {
+		case recipe.UsesMergeJudge(rp):
+			return mergeJudgeSince
 		case recipe.UsesRebase(rp) || recipe.UsesHandOver(rp):
 			return escalationSince
 		case recipe.UsesAdversarial(rp):
@@ -1261,6 +1339,8 @@ func recipeSinceFor(spec *task.Spec, rp *recipe.Recipe) string {
 		since = digestSince
 	case r == nil:
 		since = recipesSince
+	case recipe.UsesMergeJudge(r):
+		since = mergeJudgeSince
 	case recipe.UsesRebase(r) || recipe.UsesHandOver(r):
 		since = escalationSince
 	case recipe.UsesAdversarial(r):
@@ -1279,6 +1359,9 @@ func recipeSinceFor(spec *task.Spec, rp *recipe.Recipe) string {
 		since = recipesV07Since
 	default:
 		since = recipesSince
+	}
+	if mergeJudgeRecipeNamed(spec) {
+		return mergeJudgeSince
 	}
 	if imagePredates(since, escalationSince) && escalationRecipeNamed(spec) {
 		return escalationSince
@@ -3751,6 +3834,100 @@ func checkCloneVisionImage(lc *localcfg.Config, spec *task.Spec, cfg *config.Con
 	}
 	subject, alt := visionSubject(spec.Repo, fromRepo, fromLayer)
 	return checkCloneImageSince(lc, spec, visionSince, subject, visionKnows(fromRepo, fromLayer), "; or "+alt, warn)
+}
+
+// mergeJudgeCraftLaunchSources reports, for the launch's mergeJudgeSince gate
+// on the judge's craft, whether the configuration the run will read writes
+// agent.crafts.merge-judge: the repository's fugaro.yaml
+// (RepoMergeJudgeCraftSet) or the project layer it resolves over
+// (SetsMergeJudgeCraft), the two homes config.Scopes gives agent.crafts, read
+// the way visionLaunchSources reads the vision slot's.
+//
+// It is the merge judge's craft key and not the crafts block: the other four
+// crafts are 0.24.0's, so a runner older than mergeJudgeSince decodes them, and
+// it is this one field that its KnownFields decoder refuses ("field merge-judge
+// not found in type config.Crafts"). Both files are read for the reason
+// visionLaunchSources reads both: an older runner refuses the key in either,
+// and the layer's is the one that reaches every repository of the project.
+func mergeJudgeCraftLaunchSources(cfg *config.Config) (fromRepo, fromLayer bool) {
+	if cfg == nil {
+		return false, false
+	}
+	return cfg.RepoMergeJudgeCraftSet, cfg.Layer.SetsMergeJudgeCraft()
+}
+
+// mergeJudgeCraftSubject names, for the gates' messages, which file wrote the
+// key, and the way out that file's author has: the craft is a choice of which
+// credential the judge's call goes out on, not a behaviour the run depends on —
+// a runner that does not read it resolves the judge's craft from the craft it
+// follows (the coder, config.CraftParent), which is what a run that sets no
+// judge craft already does — so removing the key is a way out with no image to
+// move, at the cost of the credential the operator asked for. The distinction
+// between the two files is visionSubject's: the layer's key reaches every
+// repository of the project and only its operator can remove it.
+func mergeJudgeCraftSubject(repo string, fromRepo, fromLayer bool) (subject, alt string) {
+	const (
+		repoAlt  = "remove agent.crafts.merge-judge from fugaro.yaml: a runner that does not read it resolves the judge's craft from the coder's, which is what a run that sets no judge craft already does"
+		layerAlt = "remove defaults.agent.crafts.merge-judge from the project layer and publish it again: until then every repository of the project whose job image predates it fails the same way, and a runner that does not read the key resolves the judge's craft from the coder's"
+	)
+	switch {
+	case fromRepo && fromLayer:
+		return "fugaro.yaml's agent.crafts.merge-judge and the project layer's defaults.agent.crafts.merge-judge of " + repo,
+			"remove the key from fugaro.yaml and " + layerAlt
+	case fromLayer:
+		return "the project layer's defaults.agent.crafts.merge-judge (read for " + repo + ")", layerAlt
+	}
+	return "fugaro.yaml's agent.crafts.merge-judge of " + repo, repoAlt
+}
+
+// mergeJudgeCraftKnows names, for the image gates' messages, the key the job
+// image's runner has to know: the message reads "needs a job image whose runner
+// knows <this>", so it has to name whichever of the two files wrote it.
+func mergeJudgeCraftKnows(fromRepo, fromLayer bool) string {
+	switch {
+	case fromRepo && fromLayer:
+		return "the merge judge's craft (agent.crafts.merge-judge and the project layer's defaults.agent.crafts.merge-judge)"
+	case fromLayer:
+		return "the merge judge's craft (the project layer's defaults.agent.crafts.merge-judge)"
+	}
+	return "the merge judge's craft (agent.crafts.merge-judge)"
+}
+
+// checkMergeJudgeCraftImage and checkCloneMergeJudgeCraftImage are the launch's
+// own mergeJudgeSince gate for the judge's craft, for a workflow whose job
+// image is a derived one and for a checkout: clone workflow respectively — the
+// pair every other per-workflow image gate has (checkImageSince and
+// checkCloneImageSince), judged on the key the configuration the run will read
+// writes (mergeJudgeCraftLaunchSources), exactly as checkVisionImage is judged
+// on the vision slot's.
+//
+// It is the second half of the release's gate on the merge judge: the step
+// gate (mergeJudgeSince, recipeSinceFor) judges the judge's recipe, and this
+// one judges the craft key its configuration writes. A launch may carry either
+// without the other — a hand launch of another recipe in a repository whose
+// file sets the judge's craft, and a judge run whose file sets none — so the
+// two are separate reads of the same constant. A repository's or the project's
+// file that writes the key is refused at the terminal, naming the file, the
+// release and the image to move, rather than at bootstrap on a runner that
+// cannot decode it.
+func checkMergeJudgeCraftImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, cfg *config.Config, warn io.Writer) error {
+	fromRepo, fromLayer := mergeJudgeCraftLaunchSources(cfg)
+	if !fromRepo && !fromLayer {
+		return nil
+	}
+	subject, alt := mergeJudgeCraftSubject(spec.Repo, fromRepo, fromLayer)
+	return checkImageSince(ctx, env, slug, spec, kind, mergeJudgeSince, subject, mergeJudgeCraftKnows(fromRepo, fromLayer), "; or "+alt, warn)
+}
+
+// checkCloneMergeJudgeCraftImage is checkMergeJudgeCraftImage for a checkout:
+// clone workflow: see checkCloneImageSince.
+func checkCloneMergeJudgeCraftImage(lc *localcfg.Config, spec *task.Spec, cfg *config.Config, warn io.Writer) error {
+	fromRepo, fromLayer := mergeJudgeCraftLaunchSources(cfg)
+	if !fromRepo && !fromLayer {
+		return nil
+	}
+	subject, alt := mergeJudgeCraftSubject(spec.Repo, fromRepo, fromLayer)
+	return checkCloneImageSince(lc, spec, mergeJudgeSince, subject, mergeJudgeCraftKnows(fromRepo, fromLayer), "; or "+alt, warn)
 }
 
 // modelGradesImageWarnings warns, once, that a configuration which writes the

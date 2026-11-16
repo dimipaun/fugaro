@@ -575,6 +575,10 @@ const rulesDeviceGeneration = 3
 // coordinator's read grant (coordinator plan P3, D194).
 const rulesCoordinatorGeneration = 4
 
+// rulesVoiceGeneration is the rules generation that added the voice policy node
+// (mobile plan task P5.3.1).
+const rulesVoiceGeneration = 5
+
 // rulesMarkerOlderText is the sentence for the state between the two
 // generations: at or above PolicyRulesVersion and below RulesVersion. Nothing
 // refuses here — Read reads the policy the marker's rules carry and
@@ -587,10 +591,15 @@ const rulesCoordinatorGeneration = 4
 // Each branch names the one thing the next generation adds, so the sentence
 // never sends the operator after a grant the deployed rules already carry: a
 // marker at rulesDeviceGeneration already has the mailbox and the device
-// binding, and one at rulesCoordinatorGeneration already has the coordinator's
-// read grant, so for it the sentence names the voice policy node (mobile plan
-// task P5.3.1).
+// binding, one at rulesCoordinatorGeneration already has the coordinator's read
+// grant and only the voice policy node is new to it (mobile plan task P5.3.1),
+// and one at rulesVoiceGeneration already has that node too and only the
+// registration kind's fields are new to it (mobile plan task P5.2.2).
 func rulesMarkerOlderText(gen int) string {
+	if gen >= rulesVoiceGeneration {
+		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox, the device binding, the coordinator's read grant and the voice policy node, so runs, a published policy, the mobile app and the coordinator are unaffected — what they predate is this release's own document, which adds the fields a push registration carries (the `token`, `platform` and `prefs` fields of a mailbox message of the new `registration` kind, mobile plan task P5.2.2): the app writes one into its own inbox, and until this is deployed the database refuses that message with no error, so the phone is registered with nothing; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
+			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, projectpolicy.RulesVersion)
+	}
 	if gen >= rulesCoordinatorGeneration {
 		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox, the device binding and the coordinator's read grant, so runs, a published policy, the mobile app and the coordinator are unaffected — what they predate is this release's own document, which adds the voice policy node %s/{shared,repos/$slug} (mobile plan task P5.3.1): a run token reads its own project's node there, and no client writes either node; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
 			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, rules.PathVoice, projectpolicy.RulesVersion)
@@ -995,6 +1004,27 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		if _, ok := lc.Profiles[projectpolicy.DefaultProfileName]; !ok {
 			return nil, false, userErr("this project's config sets profiles: and does not define %q, the profile every workflow that names none runs on: a repository selecting it would have every run refused; define it in %s, or remove the profiles: block (a policy with no profiles block sets no profile at all)",
 				projectpolicy.DefaultProfileName, lc.Name)
+		}
+		// R8, D2310: one default per provider the block serves, not `standard`
+		// alone. A workflow that names no job profile resolves to the default
+		// of its repository's provider (the runner's ProjectJobDefaultProfile:
+		// `standard` when that profile serves the provider and
+		// `standard-<provider>` when the policy defines one), so a block that
+		// serves a provider without defining its default is a block whose
+		// repositories on that provider resolve to no profile at all: they
+		// keep the per-repository jobs the block was published to replace, and
+		// nothing says why. It is refused here, where the file it came from can
+		// be named, and the fix is the one command: `fugaro update` writes the
+		// default profile of every provider a project uses.
+		served := servedProviders(lc)
+		first := firstDefaultProvider(lc, served)
+		for _, provider := range served {
+			name := projectpolicy.DefaultProfileNameFor(provider, provider == first)
+			if _, ok := lc.Profiles[name]; ok {
+				continue
+			}
+			return nil, false, userErr("this project's config sets profiles: and serves %s with them but defines no %q, the default profile of a %s repository whose workflow names none: that workflow would resolve to no profile and keep its per-repository job instead of the shared job this block is published for; run %s (it writes the default profile of every provider a project uses), or define %s in %s",
+				provider, name, provider, selfCommand()+" update", name, lc.Name)
 		}
 		for _, name := range slices.Sorted(maps.Keys(lc.Profiles)) {
 			// A profile's allow_repos is either written or not, and the node

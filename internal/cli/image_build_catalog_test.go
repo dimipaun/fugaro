@@ -1171,20 +1171,29 @@ func TestCatalogBuildBakesNothingWithoutTheMap(t *testing.T) {
 }
 
 // addRepoToProject adds a repository to the project's own `repos` in the config
-// the fixture wrote. The G4 fixture names one repository, and the map tests need
-// a second one: the map is read against the project's own list, so a key the
-// project does not admit and a key it does are two different answers
+// the fixture wrote, beside the acme/app row catalogBuildCheckoutFor placed
+// there — which is the row this anchors on, spelled as that fixture spelled it
+// for the provider and App ID. The G4 fixture names one repository, and the map
+// tests need a second one: the map is read against the project's own list, so a
+// key the project does not admit and a key it does are two different answers
 // (imagebake.Decide).
-func addRepoToProject(t *testing.T, name string) {
+func addRepoToProject(t *testing.T, name, provider, appID string) {
 	t.Helper()
-	const appRepo = "  acme/app: { provider: bitbucket, base_branch: main, workflows: [web] }"
+	// appID is what the fixture's own acme/app row carries, which only a GitHub
+	// repository has (infra.Repo refuses one without it).
+	id := ""
+	if appID != "" {
+		id = ", github_app_id: \"" + appID + "\""
+	}
+	appRepo := "  acme/app: { provider: " + provider + id + ", base_branch: main, workflows: [web] }"
+	added := "  " + name + ": { provider: " + provider + id + ", workflows: [web] }"
 	path := os.Getenv("FUGARO_CONFIG")
 	cfg := readFileString(t, path)
-	added := strings.Replace(cfg, appRepo, appRepo+"\n  "+name+": { provider: bitbucket, workflows: [web] }", 1)
-	if added == cfg {
+	updated := strings.Replace(cfg, appRepo, appRepo+"\n"+added, 1)
+	if updated == cfg {
 		t.Fatal("the fixture config's repos entry has changed shape")
 	}
-	if err := os.WriteFile(path, []byte(added), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -1216,7 +1225,7 @@ func TestCatalogBuildRefusesAnUnadmittedRepo(t *testing.T) {
 
 	t.Run("the repository admitted", func(t *testing.T) {
 		fb, gcs, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
-		addRepoToProject(t, "acme/other")
+		addRepoToProject(t, "acme/other", gitprov.KindBitbucket, "")
 		f.appendConfig(t, shared)
 
 		_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
@@ -1297,7 +1306,7 @@ func TestCatalogBuildClonesABakedRepoFromTheProjectsCloneURL(t *testing.T) {
 	// the build asks for (repourl.CloneURL, imagebake.Decide).
 	const urls = "clone_urls:\n  bitbucket/acme/other: https://bitbucket.org/acme/other\n"
 	_, gcs, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
-	addRepoToProject(t, "acme/other")
+	addRepoToProject(t, "acme/other", gitprov.KindBitbucket, "")
 	f.appendConfig(t, shared+urls)
 
 	_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
@@ -1506,9 +1515,9 @@ func TestCatalogBuildSaysNothingAboutABakeItKeeps(t *testing.T) {
 
 // recitingBuildToken is the credentials service's build route as a test sees
 // it: it records the request it was handed and answers what the test gave it.
-// buildtoken.Stub answers the shape and reads nothing, which is all the rest of
-// this package needs, but the entry mode's own question is what it asks for — so
-// that test holds a client that can be wrong about it.
+// What ships asks the real service and records nothing, so the entry mode's own
+// question — the entry, the build, the repositories and the lifetime it names —
+// is held here by a client that can be wrong about it.
 type recitingBuildToken struct {
 	request buildtoken.Request
 	answer  buildtoken.Response
@@ -1521,8 +1530,9 @@ func (c *recitingBuildToken) Mint(_ context.Context, req buildtoken.Request) (bu
 }
 
 // installBuildToken points the entry mode at c for one test, and puts the
-// package's own value back afterwards: what ships leaves gitCredBuildToken nil,
-// so the global is a test's to set and not a running process's.
+// package's own value back afterwards: what ships is the call itself
+// (gitcred_build.go), so a test that wants to hold the build's question still
+// replaces it and hands it back.
 func installBuildToken(t *testing.T, c buildtoken.Client) {
 	t.Helper()
 	prev := gitCredBuildToken
@@ -1688,18 +1698,20 @@ func TestCredentialIsReadFromTheNamedEntrysRepos(t *testing.T) {
 			})
 		}
 
-		// A build whose binary has no route to ask: the route is B1's and the
-		// client that calls it is I2's, and until they are joined the entry mode
-		// refuses rather than cloning with something this process can mint for
-		// itself, which would be a credential the project's build identity never
-		// granted.
+		// A build whose seam holds no route at all: the entry mode refuses
+		// rather than cloning with something this process can mint for itself,
+		// which would be a credential the project's build identity never
+		// granted. What ships installs the call (gitcred_build.go), so this is
+		// the guard on a nil seam and not a state of the binary — the test that
+		// holds what the shipped client does with the environment is
+		// TestCatalogBuildBakesTwoReposThroughTheService.
 		t.Run("no route in this binary", func(t *testing.T) {
 			prev := gitCredBuildToken
 			gitCredBuildToken = nil
 			t.Cleanup(func() { gitCredBuildToken = prev })
 			out := filepath.Join(t.TempDir(), "git-credentials")
 			_, _, err := execute(t, entryArgs(out, "--repos", "acme/app")...)
-			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "not wired into this binary yet") {
+			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "no route to the credentials service") {
 				t.Errorf("exit %d, err %v: want the build told it cannot ask", ExitCode(err), err)
 			}
 			if _, err := os.Stat(out); !os.IsNotExist(err) {

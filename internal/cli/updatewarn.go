@@ -4,14 +4,21 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/updatecheck"
 )
 
@@ -309,6 +316,136 @@ func WarnUpdateAvailable(cmd *cobra.Command) {
 		return
 	}
 	warnUpdateAvailable(cmd, disabled)
+	warnRepoBoundJobs(cmd, disabled)
+}
+
+// repoBoundJob is one repository this machine's configuration still launches on
+// its per-repository job, and the shared project job that replaces it.
+type repoBoundJob struct {
+	// Repo is the repository as the config spells it (owner/name).
+	Repo string
+	// Profile is the shared profile the replacement job serves.
+	Profile string
+	// Job is the replacement job's Cloud Run name.
+	Job string
+}
+
+// repoBoundJobs are the repositories whose workflows the launcher still sends to
+// a per-repository job, in the config's own order, each with the shared project
+// job that replaces it (M3, R3).
+//
+// The question is the launcher's own, and it is asked the way
+// launchProjectJobFor asks it: a workflow that names no job profile runs on the
+// default profile of its repository's provider (D2310, R8), and a provider the
+// profiles define none for is the choice of the per-repository job — the
+// JobChoice that carries no profile at all (contract.md). runner's
+// ProjectJobDefaultProfile is the one function both sides resolve that with, so
+// the launcher and this cannot disagree about which repositories are still on
+// their own job.
+//
+// What differs is the document the profiles are read from, and it has to: the
+// nag runs after a command, with no credential, no network and a cancelled
+// context, and doctor would answer differently from update if it read the
+// published node. The local config's profiles: block is where the node's own
+// profiles come from (R1, S5), so the two agree wherever the file is what was
+// published.
+//
+// Only this machine's own config is asked: a shared config carries no profiles
+// at all (localcfg.Shared drops the block, since they travel in the node), so
+// this would answer "still on its per-repository job" for every repository of a
+// project that runs them all on shared jobs — and the fix it prints, `fugaro
+// update`, cannot be carried out on a machine whose config is that file. The
+// nag cannot meet one (selectedProjectConfigReadOnly resolves with no shared
+// fetch), so the guard is doctor's, whose selection can (doctor_jobs.go).
+//
+// The replacement is the job the repository's workflows run on once the project
+// serves its provider: the default profile `fugaro update` writes for a provider
+// in use (S5), which R8 names standard for the project's first provider and
+// standard-<provider> for another. A repository whose provider the config does
+// resolve a shared job for is not one of these — the launcher sends it to that
+// job already, and naming a replacement for it would be naming the job it runs
+// on. Neither is a repository whose provider no shared job serves at all: there
+// is no job to name, the deployer would deploy none for it (internal/infra's
+// ProjectJobs skips a profile of a provider the list does not carry), and its
+// per-repository job is the one nothing is retiring yet.
+func repoBoundJobs(lc *localcfg.Config) []repoBoundJob {
+	if lc == nil {
+		return nil
+	}
+	// The policy is built from the config's own block and carries nothing else,
+	// which is all ProjectJobDefaultProfile reads: it answers from the profiles
+	// alone, so a policy with no version and no allow_repos answers it exactly
+	// as the published node would.
+	profiles := &projectpolicy.Policy{Profiles: policyProfiles(lc)}
+	first := firstRepoProvider(lc)
+	var out []repoBoundJob
+	for _, name := range slices.Sorted(maps.Keys(lc.Repos)) {
+		provider := lc.Repos[name].Provider
+		if provider == "" || !sharedJobProvider(provider) {
+			continue
+		}
+		if _, err := projectpolicy.Canonical(provider, name); err != nil {
+			continue
+		}
+		if runner.ProjectJobDefaultProfile(profiles, provider) != "" {
+			continue
+		}
+		profile := projectpolicy.DefaultProfileName
+		if provider != first {
+			profile = projectpolicy.DefaultProfileName + "-" + provider
+		}
+		out = append(out, repoBoundJob{Repo: name, Profile: profile,
+			Job: gcp.ProjectJobName(profile, provider, "")})
+	}
+	return out
+}
+
+// firstRepoProvider is the provider R8 gives the bare default profile to: the
+// provider of the project's first repository, in the order every reader in this
+// package walks the config in (the sorted repository names). A project with one
+// provider — every project today — answers with that provider whatever the
+// order.
+func firstRepoProvider(lc *localcfg.Config) string {
+	for _, name := range slices.Sorted(maps.Keys(lc.Repos)) {
+		if provider := lc.Repos[name].Provider; provider != "" {
+			return provider
+		}
+	}
+	return ""
+}
+
+// repoBoundJobLine is the one sentence both surfaces print for a repository
+// still on its per-repository job: what it runs on, that the model is being
+// retired, and the shared job that replaces it.
+func repoBoundJobLine(j repoBoundJob) string {
+	return fmt.Sprintf("%s still runs its workflows on a per-repository job, which is being retired: the shared project job %s (profile %s) replaces it",
+		pluginwire.Printable(j.Repo), pluginwire.Printable(j.Job), pluginwire.Printable(j.Profile))
+}
+
+// warnRepoBoundJobs prints the deprecation line for every repository still on
+// its per-repository job, once each (M3, R3).
+//
+// It rides the nag's own gates — shouldWarnUpdateAvailable, which is the same
+// terminal, --json/--plain, excluded-command and Cloud Run decision the version
+// nag makes — and it is `fugaro update` alone: doctor is the other surface R3
+// names, and it prints its own check (doctor_jobs.go) rather than a line after
+// the command. A command that is not update prints nothing, so this never
+// becomes a nag on every command the way the version one deliberately is.
+func warnRepoBoundJobs(cmd *cobra.Command, disabled bool) {
+	if cmd.Name() != "update" || !shouldWarnUpdateAvailable(cmd, disabled) {
+		return
+	}
+	// context.Background and not cmd's: main cancels the command's context
+	// before it calls WarnUpdateAvailable (stop()), and this read is the local
+	// config's alone — no cloud call and no network, which is what
+	// updateCheckDisabled's own read of the same file answers for the same
+	// reason. It is read here and not in PersistentPreRun because the answer
+	// belongs to what the command just did: an `update` that wrote the profile
+	// leaves nothing to warn about.
+	lc := selectedProjectConfigReadOnly(context.Background())
+	for _, j := range repoBoundJobs(lc) {
+		fmt.Fprintln(cmd.ErrOrStderr(), repoBoundJobLine(j))
+	}
 }
 
 // helpRequested reports whether cmd's auto-registered --help flag is set;

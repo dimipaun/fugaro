@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -221,7 +222,16 @@ func newConvergeRigYAML(t *testing.T, node map[string]any, yaml string) *converg
 // already carries.
 func seedAppSecret(t *testing.T, r *initRig, logical string) {
 	t.Helper()
-	slug, err := task.Slug("github", "acme/app")
+	seedRepoSecret(t, r, "github", logical)
+}
+
+// seedRepoSecret is seedAppSecret for a named provider's repository, which the
+// tests that move a checkout from one provider to the other need: the secrets a
+// repository's runs want are stored under the slug of the provider the config
+// records it at, so a repository that moves wants its secrets there.
+func seedRepoSecret(t *testing.T, r *initRig, provider, logical string) {
+	t.Helper()
+	slug, err := task.Slug(provider, "acme/app")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1138,7 +1148,7 @@ func TestUpdateConvergesTheVoicePolicyNodeFromThePreviousGeneration(t *testing.T
 	if err := json.Unmarshal(r.db.Rules(), &doc); err != nil {
 		t.Fatalf("the deployed rules are not JSON: %v", err)
 	}
-	voice := voiceNodeOf(t, doc.Rules, "config", "policy", "voice")
+	voice := deployedNodeOf(t, doc.Rules, "config", "policy", "voice")
 	if len(voice) != 2 {
 		t.Fatalf("the deployed config/policy/voice holds %d keys (%v), want the two the template writes: `shared` and `repos`", len(voice), sortedAnyKeys(voice))
 	}
@@ -1148,7 +1158,7 @@ func TestUpdateConvergesTheVoicePolicyNodeFromThePreviousGeneration(t *testing.T
 	if _, has := voice[".write"]; has {
 		t.Errorf("the deployed config/policy/voice carries a `.write` of its own, want none")
 	}
-	shared := voiceNodeOf(t, voice, "shared")
+	shared := deployedNodeOf(t, voice, "shared")
 	// The grants are the template's, rendered: `TOKEN` expands to the run
 	// token's own claims, and the point of the assertion is what is in the
 	// disjunction -- the run's `fp`/`fx`, and no user or consumer claim, which
@@ -1163,11 +1173,11 @@ func TestUpdateConvergesTheVoicePolicyNodeFromThePreviousGeneration(t *testing.T
 	if v, has := shared[".write"]; !has || v != false {
 		t.Errorf("the deployed config/policy/voice/shared carries .write = %v, want false", shared[".write"])
 	}
-	repos := voiceNodeOf(t, voice, "repos")
+	repos := deployedNodeOf(t, voice, "repos")
 	if _, has := repos[".read"]; has {
 		t.Errorf("the deployed config/policy/voice/repos carries a `.read` of its own: the grant is on the `$slug` child, and a grant here would be every project's node")
 	}
-	slug := voiceNodeOf(t, repos, "$slug")
+	slug := deployedNodeOf(t, repos, "$slug")
 	slugRead, _ := slug[".read"].(string)
 	if !strings.Contains(slugRead, "auth.token.fs == $slug") {
 		t.Errorf("the deployed config/policy/voice/repos/$slug .read = %q, want the run token's predicate bound to this project (`TOKEN && auth.token.fs == $slug`)", slugRead)
@@ -1180,11 +1190,83 @@ func TestUpdateConvergesTheVoicePolicyNodeFromThePreviousGeneration(t *testing.T
 	}
 }
 
-// voiceNodeOf walks the deployed document to the named node, one key at a
+// TestUpdateConvergesTheRegistrationKindFromThePreviousGeneration: an
+// installation whose deployed rules predate the registration kind reaches it
+// with `fugaro update` alone, and the one run writes both halves — the
+// generation marker and the document the marker names — so the app's
+// registration (P5.2.8) and the consumer that reads it (P5.2.4) are written
+// against a database that admits the message (mobile plan task P5.2.2;
+// the push-notifications design §3.5 (b) and §3.8).
+//
+// The fixture is the release behind, the marker one generation old over a
+// document with no `config` node, and the assertion this generation is about is
+// the app's *write*: a registration is a message the phone writes into its own
+// inbox, so under the document behind every one of them is refused at the
+// database with no error and the phone is registered with nothing. After one
+// `fugaro update` the deployed mailbox admits the kind and the three fields,
+// each gated on that kind and bounded by the shared schema's own number — and
+// none of them carries a `.write` of its own, so the fields sit under the
+// message's grant rather than widening who may write one.
+//
+// It is the same rules stage as every other generation (CLAUDE.md's HARD RULE):
+// nothing here is a second command, and the update is safe while a run is in
+// flight, which TestUpdateLeavesARunInFlightRunning pins.
+func TestUpdateConvergesTheRegistrationKindFromThePreviousGeneration(t *testing.T) {
+	r := newConvergeRig(t, v8Node())
+	currentRelease(t)
+	if got := r.db.Value(projectpolicy.PathRulesMarker()); fmt.Sprint(got) != fmt.Sprint(projectpolicy.RulesVersion-1) {
+		t.Fatalf("the fixture carries %s = %v, want the previous generation %d: it is not an installation whose rules predate the registration kind",
+			projectpolicy.PathRulesMarker(), got, projectpolicy.RulesVersion-1)
+	}
+	if infra.SameJSON(r.db.Rules(), generatedRules(t)) {
+		t.Fatal("the fixture's deployed rules are already the document this binary generates, so nothing has to converge")
+	}
+
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	if got := r.db.Value(projectpolicy.PathRulesMarker()); fmt.Sprint(got) != fmt.Sprint(projectpolicy.RulesVersion) {
+		t.Errorf("after one fugaro update, %s = %v, want %d", projectpolicy.PathRulesMarker(), got, projectpolicy.RulesVersion)
+	}
+	var doc struct {
+		Rules map[string]any `json:"rules"`
+	}
+	if err := json.Unmarshal(r.db.Rules(), &doc); err != nil {
+		t.Fatalf("the deployed rules are not JSON: %v", err)
+	}
+	inbox := deployedNodeOf(t, doc.Rules, "mailbox", "$mb", "inbox", "$msg")
+	kind, _ := inbox["kind"].(map[string]any)
+	enum, _ := kind[".validate"].(string)
+	if !strings.Contains(enum, "newData.val() == 'registration'") {
+		t.Errorf("the deployed kind enumeration (inbox/$msg/kind .validate = %q) does not carry `registration`: the document is not the one this generation deploys, and a registration message is refused at the database", enum)
+	}
+	for _, field := range []string{"token", "platform", "prefs"} {
+		node, ok := inbox[field].(map[string]any)
+		if !ok {
+			t.Errorf("the deployed /mailbox/$mb/inbox/$msg carries no %s field: the app's registration is refused at the database", field)
+			continue
+		}
+		v, _ := node[".validate"].(string)
+		if !strings.Contains(v, "'registration'") {
+			t.Errorf("the deployed /mailbox/$mb/inbox/$msg/%s .validate = %q, want it gated on the registration kind", field, v)
+		}
+		if _, has := node[".write"]; has {
+			t.Errorf("the deployed /mailbox/$mb/inbox/$msg/%s carries a `.write` of its own: the field sits under the message's grant and must not widen who may write one", field)
+		}
+	}
+	// The token's bound is the shared schema's own number, which the rules
+	// package holds to it (TestMailboxRulesAgreeWithTheSharedSchema): what this
+	// asserts is that the number reached the deployed document with the field.
+	token, _ := inbox["token"].(map[string]any)
+	if v, _ := token[".validate"].(string); !strings.Contains(v, "<= "+strconv.Itoa(rules.MaxTokenLength)) {
+		t.Errorf("the deployed /mailbox/$mb/inbox/$msg/token .validate = %q, want the schema's token bound (%d)", token[".validate"], rules.MaxTokenLength)
+	}
+}
+
+// deployedNodeOf walks the deployed document to the named node, one key at a
 // time, and fails the test rather than returning an empty node for a path that
 // is not there: a subtree a marker claims and the document does not carry is
 // the state this convergence is about.
-func voiceNodeOf(t *testing.T, node map[string]any, keys ...string) map[string]any {
+func deployedNodeOf(t *testing.T, node map[string]any, keys ...string) map[string]any {
 	t.Helper()
 	for i, k := range keys {
 		child, ok := node[k].(map[string]any)
