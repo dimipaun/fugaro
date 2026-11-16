@@ -1180,13 +1180,32 @@ type Budget struct {
 // field left out takes the list default (cache_write_5m 1.25, cache_write_1h
 // 2, cache_read 0.1, web_search_per_1k 10), never 0; input_per_m and
 // output_per_m are required.
+//
+// Each of the three cache prices may be written three ways: the old
+// cache_read, cache_write_5m and cache_write_1h keys, which have always meant
+// a multiple of input_per_m; the same number under cache_read_mult,
+// cache_write_5m_mult and cache_write_1h_mult, which says so; and
+// cache_read_per_m, cache_write_5m_per_m and cache_write_1h_per_m, in dollars
+// per million tokens, which is how the list price an override is copied from
+// is printed and needs no arithmetic (D2646). A file writes one of the three
+// per dimension; the loader folds whichever it is into the multiplier field
+// above, which is what everything below this package reads.
 type ModelPrice struct {
-	InputPerM      *float64 `yaml:"input_per_m"`
-	OutputPerM     *float64 `yaml:"output_per_m"`
-	CacheWrite5m   *float64 `yaml:"cache_write_5m,omitempty"`
-	CacheWrite1h   *float64 `yaml:"cache_write_1h,omitempty"`
-	CacheRead      *float64 `yaml:"cache_read,omitempty"`
-	WebSearchPer1k *float64 `yaml:"web_search_per_1k,omitempty"`
+	InputPerM    *float64 `yaml:"input_per_m"`
+	OutputPerM   *float64 `yaml:"output_per_m"`
+	CacheWrite5m *float64 `yaml:"cache_write_5m,omitempty"`
+	CacheWrite1h *float64 `yaml:"cache_write_1h,omitempty"`
+	CacheRead    *float64 `yaml:"cache_read,omitempty"`
+	// The three per-million spellings, then the three that name the
+	// multiplier. They are held so that a write back out keeps the spelling
+	// the owner chose, and only MarshalYAML reads them.
+	CacheWrite5mPerM *float64 `yaml:"cache_write_5m_per_m,omitempty"`
+	CacheWrite1hPerM *float64 `yaml:"cache_write_1h_per_m,omitempty"`
+	CacheReadPerM    *float64 `yaml:"cache_read_per_m,omitempty"`
+	CacheWrite5mMult *float64 `yaml:"cache_write_5m_mult,omitempty"`
+	CacheWrite1hMult *float64 `yaml:"cache_write_1h_mult,omitempty"`
+	CacheReadMult    *float64 `yaml:"cache_read_mult,omitempty"`
+	WebSearchPer1k   *float64 `yaml:"web_search_per_1k,omitempty"`
 	// ImageTokens is the per-image token ceiling an image block is reserved
 	// at, and it is the whole of what makes a model able to take an image
 	// (D2000): a model with no ceiling is refused the call. Left out, the
@@ -1197,6 +1216,133 @@ type ModelPrice struct {
 	// for a model with a long-context tier; an override without it
 	// replaces the model's tier with none.
 	LongContext *LongContext `yaml:"long_context,omitempty"`
+}
+
+// modelPriceYAML is ModelPrice without its marshaller: yaml would call
+// MarshalYAML again on a ModelPrice and never finish.
+type modelPriceYAML ModelPrice
+
+// MarshalYAML writes one spelling per cache dimension: the per-million key
+// the owner wrote, else the multiplier key he wrote, else the old key the
+// multiplier field came in under. Writing the field as well would put two
+// spellings of one price in the document, which is what Parse refuses.
+func (m ModelPrice) MarshalYAML() (any, error) {
+	w := modelPriceYAML(m)
+	w.CacheWrite5mPerM, w.CacheWrite5mMult, w.CacheWrite5m = oneCacheSpelling(m.CacheWrite5mPerM, m.CacheWrite5mMult, m.CacheWrite5m)
+	w.CacheWrite1hPerM, w.CacheWrite1hMult, w.CacheWrite1h = oneCacheSpelling(m.CacheWrite1hPerM, m.CacheWrite1hMult, m.CacheWrite1h)
+	w.CacheReadPerM, w.CacheReadMult, w.CacheRead = oneCacheSpelling(m.CacheReadPerM, m.CacheReadMult, m.CacheRead)
+	return w, nil
+}
+
+// oneCacheSpelling is the one of a dimension's three keys to write: the
+// per-million price when it is there, else the named multiplier, else the old
+// key — and nothing else, so the document holds one spelling of one price.
+func oneCacheSpelling(perM, mult, old *float64) (p, m, o *float64) {
+	switch {
+	case perM != nil:
+		return perM, nil, nil
+	case mult != nil:
+		return nil, mult, nil
+	default:
+		return nil, nil, old
+	}
+}
+
+// cacheKey is one of the names a cache price may be written under, with the
+// field it decodes into.
+type cacheKey struct {
+	key   string
+	field **float64
+}
+
+// cachePrice is one cache dimension's three spellings.
+type cachePrice struct {
+	old, mult, perM cacheKey
+}
+
+// cachePrices are the three dimensions, in the order a message lists them.
+func (m *ModelPrice) cachePrices() []cachePrice {
+	return []cachePrice{
+		{
+			cacheKey{"cache_read", &m.CacheRead},
+			cacheKey{"cache_read_mult", &m.CacheReadMult},
+			cacheKey{"cache_read_per_m", &m.CacheReadPerM},
+		},
+		{
+			cacheKey{"cache_write_5m", &m.CacheWrite5m},
+			cacheKey{"cache_write_5m_mult", &m.CacheWrite5mMult},
+			cacheKey{"cache_write_5m_per_m", &m.CacheWrite5mPerM},
+		},
+		{
+			cacheKey{"cache_write_1h", &m.CacheWrite1h},
+			cacheKey{"cache_write_1h_mult", &m.CacheWrite1hMult},
+			cacheKey{"cache_write_1h_per_m", &m.CacheWrite1hPerM},
+		},
+	}
+}
+
+// foldCacheSpellings reads every cache price an entry writes into the
+// multiplier field the rest of the binary reads — pricing.Overrides, and so
+// the policy node, the shared copy and FUGARO_MODEL_PRICES, know the three
+// old names only — and refuses an entry that writes two spellings of one
+// price. A per-million price needs the entry's input price to be read
+// against, so an entry that writes one without input_per_m is refused too,
+// naming the key rather than letting the division decide. warnOld is where
+// the old key's note goes, for the documents Parse allows one on.
+func (c *Config) foldCacheSpellings(warnOld func(string)) error {
+	var errs []error
+	for _, id := range slices.Sorted(maps.Keys(c.ModelPrices)) {
+		mp := c.ModelPrices[id]
+		for _, p := range mp.cachePrices() {
+			if err := foldCachePrice(id, p, mp.InputPerM, warnOld); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		c.ModelPrices[id] = mp
+	}
+	return errors.Join(errs...)
+}
+
+// warnOldCacheKey is where foldCacheSpellings' note goes: into the config's
+// own warnings when this document is the owner's file, and nowhere when it is
+// the published copy.
+func (c *Config) warnOldCacheKey(ownerFile bool) func(string) {
+	if !ownerFile {
+		return func(string) {}
+	}
+	return c.AddWarning
+}
+
+// foldCachePrice folds one dimension's one spelling into its multiplier field
+// and, for the old key, sets the note. warnOld is the caller's, because only
+// the caller knows whether this document may draw one at all.
+func foldCachePrice(id string, p cachePrice, inputPerM *float64, warnOld func(string)) error {
+	var written []string
+	for _, k := range []cacheKey{p.old, p.mult, p.perM} {
+		if *k.field != nil {
+			written = append(written, k.key)
+		}
+	}
+	switch {
+	case len(written) == 0:
+		return nil
+	case len(written) > 1:
+		return fmt.Errorf("model_prices.%s: %s are spellings of one price: write one of %s",
+			id, strings.Join(written, " and "), p.old.key+", "+p.mult.key+", "+p.perM.key)
+	case *p.perM.field != nil:
+		if inputPerM == nil || *inputPerM <= 0 {
+			return fmt.Errorf("model_prices.%s.%s is dollars per million tokens and it is read as a multiple of input_per_m: this entry must set a positive input_per_m, or write %s instead",
+				id, p.perM.key, p.mult.key)
+		}
+		v := **p.perM.field / *inputPerM
+		*p.old.field = &v
+	case *p.mult.field != nil:
+		*p.old.field = *p.mult.field
+	default:
+		warnOld(fmt.Sprintf("model_prices.%s.%s is a multiple of input_per_m: write %s for the same number, or %s in dollars per million tokens; fugaro update renames it for you",
+			id, p.old.key, p.mult.key, p.perM.key))
+	}
+	return nil
 }
 
 // LongContext is a long-context price tier.
@@ -2205,6 +2351,10 @@ func Parse(data []byte) (*Config, error) {
 	if err := dec.Decode(&c); err != nil {
 		return nil, fmt.Errorf("local config: %w", err)
 	}
+	// The document's own version, read before the fills below overwrite it:
+	// it is the one thing at this depth that tells the owner's file from the
+	// published copy (see foldCacheSpellings' caller).
+	fileVersion := c.Version
 	if c.Version == 0 {
 		c.Version = 1 // the first spelling: a document that says nothing is version 1's
 	}
@@ -2216,6 +2366,19 @@ func Parse(data []byte) (*Config, error) {
 		return nil, fmt.Errorf("local config: version %d is newer than the %d this Fugaro writes: upgrade Fugaro (brew upgrade dimipaun/tap/fugaro), then run fugaro update", c.Version, ConfigVersion)
 	}
 	c.Version = ConfigVersion
+	// The old cache keys draw their note in the owner's own file and nowhere
+	// else: the published copy keeps them as the multipliers they are by
+	// design (D2646 as amended), so a note on every read of it would be noise
+	// about a document nobody may edit. What tells the two apart here is the
+	// version: every shared document is SharedVersion, because Shared stamps
+	// it and every reader of a published copy (internal/cli's ParseShared,
+	// which is also how the cached one is read) takes nothing else, while a
+	// local file this release has written is ConfigVersion. A local file still
+	// at version 1 reads as the published copy and stays quiet: SA4.2's
+	// migration renames its key and prints its own line for it.
+	if err := c.foldCacheSpellings(c.warnOldCacheKey(fileVersion != SharedVersion)); err != nil {
+		return &c, err
+	}
 	if c.MaxParallel == 0 {
 		c.MaxParallel = DefaultMaxParallel
 	}

@@ -954,6 +954,101 @@ func TestModelPricesCarryAnImageRate(t *testing.T) {
 	}
 }
 
+// perMLocalSample is the owner's own file with the cache prices written the
+// way a provider's page prints them, in dollars per million tokens (D2646).
+// It carries the version this release writes, which is what tells the owner's
+// file from the published copy below.
+const perMLocalSample = `version: 2
+name: aurora
+gcp_project: my-project
+region: us-central1
+runs_bucket: my-runs
+model_prices:
+  claude-mine-1:
+    input_per_m: 10
+    output_per_m: 50
+    cache_read_per_m: 1
+    cache_write_5m_per_m: 12.5
+    cache_write_1h_per_m: 20
+`
+
+// TestPerMConvertsToMultiplier: the owner's file may price a model's cache in
+// dollars per million tokens, the way every list price it was copied from is
+// printed. Loading folds the three per-million keys into the multiplier
+// fields ModelPrice already carries, so what the binary reads — the policy
+// node's prices, the shared copy and the job's FUGARO_MODEL_PRICES — is the
+// multiplier under the old name, and a write back out keeps the spelling the
+// owner chose (D2646 as amended).
+func TestPerMConvertsToMultiplier(t *testing.T) {
+	c, err := Parse([]byte(perMLocalSample))
+	if err != nil {
+		t.Fatalf("a file pricing the cache in dollars per million: %v", err)
+	}
+	mp := c.ModelPrices["claude-mine-1"]
+	for _, tc := range []struct {
+		key  string
+		got  *float64
+		want float64
+	}{
+		{"cache_read", mp.CacheRead, 0.1},
+		{"cache_write_5m", mp.CacheWrite5m, 1.25},
+		{"cache_write_1h", mp.CacheWrite1h, 2},
+	} {
+		if tc.got == nil || *tc.got != tc.want {
+			t.Errorf("%s = %v, want the multiplier %g", tc.key, tc.got, tc.want)
+		}
+	}
+	o, err := c.Overrides()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := o["claude-mine-1"]
+	if r.InputPerM != 10 || r.OutputPerM != 50 || r.CacheRead != 0.1 || r.CacheWrite5m != 1.25 || r.CacheWrite1h != 2 {
+		t.Fatalf("the rates a run gets = %+v", r)
+	}
+	// The env the gateway reads is the multipliers under the old names: the
+	// job's wire is not where a new spelling may appear.
+	env, err := o.Env()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(env, `"cache_read":0.1`) || !strings.Contains(env, `"cache_write_5m":1.25`) || !strings.Contains(env, `"cache_write_1h":2`) {
+		t.Errorf("FUGARO_MODEL_PRICES = %s, want the three multipliers under the old names", env)
+	}
+	for _, bad := range []string{"cache_read_per_m", "cache_write_5m_per_m", "cache_write_1h_per_m", "cache_read_mult", "cache_write_5m_mult", "cache_write_1h_mult"} {
+		if strings.Contains(env, bad) {
+			t.Errorf("FUGARO_MODEL_PRICES = %s, and the job's wire carries no new spelling: %s is in it", env, bad)
+		}
+	}
+	// What the owner wrote survives a write and a read: the file keeps the
+	// per-million keys, and never both spellings of one dimension.
+	data, err := c.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"cache_read_per_m: 1\n", "cache_write_5m_per_m: 12.5\n", "cache_write_1h_per_m: 20\n"} {
+		if !strings.Contains(string(data), want) {
+			t.Errorf("marshal = %s, want it to carry %q", data, want)
+		}
+	}
+	for _, bad := range []string{"cache_read:", "cache_read_mult:", "cache_write_5m:", "cache_write_5m_mult:"} {
+		if strings.Contains(string(data), bad) {
+			t.Errorf("marshal = %s, want no second spelling %q", data, bad)
+		}
+	}
+	back, err := Parse(data)
+	if err != nil {
+		t.Fatalf("round trip: %v\n%s", err, data)
+	}
+	o2, err := back.Overrides()
+	if err != nil {
+		t.Fatalf("round trip overrides: %v", err)
+	}
+	if back := o2["claude-mine-1"]; back.CacheRead != r.CacheRead || back.CacheWrite5m != r.CacheWrite5m || back.CacheWrite1h != r.CacheWrite1h {
+		t.Fatalf("round trip rates = %+v, want %+v", back, r)
+	}
+}
+
 func TestBudgetTokensAndModelsValidation(t *testing.T) {
 	for name, tc := range map[string]struct{ yaml, msg string }{
 		"negative tokens":   {"budget: { max_run_tokens: -1 }\n", "max_run_tokens"},
