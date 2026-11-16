@@ -67,6 +67,12 @@ crafts.security-review.access
 crafts.security-review.model
 crafts.senior-review.access
 crafts.senior-review.model
+credential_cascade.backoff.cap
+credential_cascade.backoff.initial
+credential_cascade.concurrency_per_token
+credential_cascade.fallback
+credential_cascade.stop_after_exhaustion_per_window
+credential_cascade.wait_threshold
 credentials.conformance.name
 credentials.conformance.type
 credentials_service.url
@@ -203,6 +209,9 @@ model_prices.conformance.long_context.output_per_m
 model_prices.conformance.output_per_m
 model_prices.conformance.web_search_per_1k
 name
+node_removals.craft_credentials
+node_removals.crafts
+node_removals.pools
 orchestrator.batch_size
 orchestrator.decision_model_per_class
 orchestrator.max_running
