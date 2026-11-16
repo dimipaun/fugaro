@@ -5,9 +5,10 @@ package image_test
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"fmt"
 	"io"
 	"maps"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -30,36 +32,57 @@ func checkout(t *testing.T, files map[string]string) string {
 	return dir
 }
 
-// buildImage runs `fugaro image build --local --json` in dir, the way the
-// setup skill does. It removes the image when the test ends, and fails the
-// test unless the build and its smoke test pass.
+// buildImage checks a derived build and fails the test unless it and its
+// smoke test passed.
 func buildImage(t *testing.T, dir, base, tag string, env ...string) image.LocalResult {
 	t.Helper()
-	res, stderr, err := buildImageResult(t, dir, base, tag, env...)
+	res, log, err := buildImageResult(t, dir, base, tag, env...)
 	if err != nil || res.Smoke == nil || !res.Smoke.Passed {
-		t.Fatalf("image build: %v\nresult %+v\nstderr:\n%s", err, res, testutil.Tail(stderr))
+		t.Fatalf("image build: %v\nresult %+v\nlog:\n%s", err, res, testutil.Tail(log))
 	}
 	return res
 }
 
 // buildImageResult is buildImage without the pass requirement: it returns
-// the JSON result, the command's stderr and its error, and fails the test
-// only when there is no JSON result at all.
+// the result, the build's log and its error.
+//
+// The build is the derived-image machinery `fugaro image build --local` runs,
+// driven in process. D1900 disabled that command (repo-level images are
+// disabled and the code is kept) behind a door internal/cli's own TestMain
+// clears, and a docker-tagged test that runs the binary cannot clear it: the
+// binary a user has ships with the door shut. The derived build is the
+// machinery the ruling keeps -- `fugaro update` still runs it, for a
+// repository whose project names no catalog image -- so the test calls the
+// entry point the command's own arm calls, with the checkout loaded the way
+// that arm loads it.
 func buildImageResult(t *testing.T, dir, base, tag string, env ...string) (image.LocalResult, string, error) {
 	t.Helper()
-	cmd := exec.Command(testutil.BuildFugaro(t), "image", "build", "--local", "--json",
-		"--base", base, "--tag", tag, "--platform", testutil.DockerPlatform(t))
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), env...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	err := cmd.Run()
-	t.Cleanup(func() { _ = exec.Command("docker", "image", "rm", "--force", tag).Run() })
-	var res image.LocalResult
-	if jerr := json.Unmarshal(stdout.Bytes(), &res); jerr != nil {
-		t.Fatalf("no JSON result (exit: %v): %v\nstderr:\n%s", err, jerr, testutil.Tail(stderr.String()))
+	data, err := os.ReadFile(filepath.Join(dir, "fugaro.yaml"))
+	if err != nil {
+		t.Fatalf("reading the checkout's fugaro.yaml: %v", err)
 	}
-	return res, stderr.String(), err
+	cfg, problems := config.Parse(data)
+	if len(problems) > 0 {
+		t.Fatalf("fugaro.yaml: %v", problems)
+	}
+	workflow, _, err := cfg.SelectWorkflow("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var log bytes.Buffer
+	res, buildErr := image.BuildLocal(context.Background(), image.LocalOptions{
+		Root: dir, Config: cfg, Workflow: workflow, Base: base, Tag: tag,
+		Platform: testutil.DockerPlatform(t), Version: "dev", Smoke: true,
+		Env: append(os.Environ(), env...), Log: &log,
+	})
+	t.Cleanup(func() { _ = exec.Command("docker", "image", "rm", "--force", tag).Run() })
+	// A smoke test that did not pass is an error for the command as well,
+	// after it has printed the report: a build that fails its own smoke test
+	// is a failed build.
+	if buildErr == nil && res.Smoke != nil && !res.Smoke.Passed {
+		buildErr = fmt.Errorf("%s built, but its smoke test failed", res.Image)
+	}
+	return *res, log.String(), buildErr
 }
 
 func smokeCheck(res image.LocalResult, name string) image.Check {

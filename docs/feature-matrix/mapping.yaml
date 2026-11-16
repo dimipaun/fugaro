@@ -1,0 +1,309 @@
+# docs/feature-matrix/mapping.yaml — the hand-kept mapping from specs to features
+# (docs/feature-matrix/implementation-plan.md, task T2; the shape is C1's contract, and
+# this file is what the generator reads to build FEATURES.md and the /features/ page).
+#
+# **This file is the one place a feature's name, grouping and plan are written.** The page
+# and FEATURES.md write no claim of their own: they render the rows this file produces
+# (D2441, F1). So a feature whose name reads wrong is an edit here, never a sentence
+# rewritten in a page.
+#
+#   - `version` is this file's own format version; the contract's `validateMapping` and
+#     `website/test/feature-matrix-mapping.mjs` refuse a value they do not know.
+#   - a feature carries `id` (a user-language slug, public: it is in FEATURES.md's block,
+#     R8), `name`, `explanation` (one or two sentences), `plan` (the lowest plan that
+#     includes it, F2), `specs` (the status.md names it is built from) and an optional
+#     `hold`.
+#   - `plan` is one of `community` (what the MIT core does), `team` (what needs the
+#     Subscription Edition: `ee/`, the console, the mobile app) or `enterprise`; a row
+#     names its lowest plan and every higher plan is checked too (D2440). Team and
+#     Enterprise carry the same features today (F2), so no row here is `enterprise`.
+#   - `hold: {status: coming-soon, reason: ...}` marks a feature whose specs are all Done
+#     but which has not shipped — the mobile app, a switch still off — and the hold wins
+#     over the specs (D2444, F5). `coming-soon` is the only hold status.
+#   - `excluded` names every status.md name that is not a feature's spec, with the reason
+#     it is not (F6). Every name in every row of status.md is either a feature's `specs`
+#     entry or an entry here, or the generator refuses to write and lists the names (F13).
+#   - `retired` lists ids that were Available in a previous FEATURES.md and are deliberately
+#     gone; it is empty today (R7).
+#
+# A feature is `team` where the capability itself is delivered only by the business-licensed
+# halves — the console, the mobile app, or code the feature's own plan places under `ee/`.
+# Everything the MIT core does by itself is `community`.
+#
+# No name, explanation or id carries a spec name, a task id, a date or a price (R1, R8), and
+# none makes a claim about plans, licences or terms beyond its `plan` (O1, A5).
+version: 1
+features:
+  - id: run-a-task
+    name: "Run a task in your own cloud"
+    explanation: "Hand Fugaro a task and it runs the coding agent to completion as a job in the Google Cloud project you own, opening a pull request when it is done. A run can be launched for a repository you have not cloned, and it carries its own limits of time, tokens and money that a restart cannot reset."
+    plan: community
+    specs:
+      - compute-backend
+      - run-without-checkout
+      - run-limit-carry-over
+  - id: watch-a-run
+    name: "Watch a run as it happens"
+    explanation: "Follow what a run is doing while it works, and refer to it by a short ID that reads the same everywhere it is shown."
+    plan: community
+    specs:
+      - short-run-ids
+  - id: install-and-update
+    name: "Set up and update from the command line"
+    explanation: "Fugaro provisions everything it needs in your own Google Cloud project from the command line, and brings the whole installation to a new version the same way. The update reports which known issues it resolves."
+    plan: community
+    specs:
+      - setup-wizard
+      - issues-resolved-on-update
+  - id: drive-from-claude-code
+    name: "Drive Fugaro from Claude Code"
+    explanation: "Fugaro's commands are driven from Claude Code through a plugin installed for you, and the plugin says when an update is due. In a managed project the agent runs the cloud-changing commands itself, behind a deterministic gate instead of a prompt."
+    plan: community
+    specs:
+      - plugin-user-scope
+      - managed-agent-converge
+  - id: review-and-fix
+    name: "A model that did not write the code reviews it"
+    explanation: "Every run is reviewed by a model other than the one that wrote the code, and a triage step decides which findings hold the merge and which do not. A pull request can also be reviewed on its own, with the review depth chosen for the project."
+    plan: community
+    specs:
+      - cloud-senior-review
+      - api-key-review
+      - review-job
+      - review-levels-ab-jobmax
+      - post-review-triage
+  - id: model-access
+    name: "Choose the model and the account behind every stage"
+    explanation: "Each stage of a run can use a different model and a different account, with named accounts, aliases that can be repointed, and a vision model that reads pictures for a coder that cannot."
+    plan: community
+    specs:
+      - models-commands
+      - model-crafts
+      - account-aliases
+      - accounts-add
+      - vision-model
+  - id: settings-and-config
+    name: "Change any setting with a command"
+    explanation: "Every setting at every level — local, repository and project — is read and changed by a command, so no configuration file is edited by hand."
+    plan: community
+    specs:
+      - settings-commands
+      - config-management
+      - composite-commands
+  - id: run-thoroughness
+    name: "Choose how thorough a run is"
+    explanation: "A project picks a rigor mode, from a quick proof of concept to a change that must not break anything, and every stage of a run follows it."
+    plan: community
+    specs:
+      - rigor-modes
+      - rigor-command
+  - id: unattended-commands
+    name: "Nothing stops to ask you a question"
+    explanation: "No command prompts, and none waits on a closed input: a step that needs a decision takes a flag, a budget cap or a refusal that prints the fix."
+    plan: community
+    specs:
+      - no-prompt-policy
+  - id: job-images
+    name: "Bring your own job image"
+    explanation: "A project keeps a small catalogue of named images, each built from a Dockerfile you already have or from a base image of your own, and a skill proposes and validates them. An image's own environment variables reach the run that uses it."
+    plan: community
+    specs:
+      - project-image-catalog
+      - catalog-build-context
+      - image-env
+      - image-setup-skill
+  - id: bitbucket
+    name: "Work with Bitbucket repositories"
+    explanation: "A Bitbucket repository is driven like a GitHub one: the agent pushes a branch and opens a pull request with credentials the installation holds."
+    plan: community
+    specs:
+      - bitbucket-credentials
+  - id: bitbucket-tokens
+    name: "Connect Bitbucket with the token you have"
+    explanation: "A workspace, project or repository access token can be used to reach Bitbucket, and each token reaches only what it was granted."
+    plan: community
+    specs:
+      - bitbucket-token-types
+      - bitbucket-workspace-token
+  - id: commit-authorship
+    name: "Commits credited to the person who asked"
+    explanation: "A commit the agent makes is authored by the person who launched the run, and carries trailers that tie it back to the run and the model that produced it."
+    plan: community
+    specs:
+      - forge-authorship-images
+  - id: pull-request-labels
+    name: "See which work a pull request belongs to"
+    explanation: "The pull requests Fugaro opens are labelled with the state of the run and the work it came from, so a list of pull requests says at a glance what each one is."
+    plan: community
+    specs:
+      - forge-labels
+  - id: credentials-and-secrets
+    name: "Your credentials stay in your own cloud"
+    explanation: "Model and forge credentials are held by a service in your own project, and a job is given the access it needs when it starts rather than a stored key. A workflow's own secret is stored once for the project and reaches only the runs allowed to use it."
+    plan: community
+    specs:
+      - credentials-service
+      - secrets-brokering
+      - project-workflow-secrets
+  - id: project-security-rules
+    name: "Say what counts as security-sensitive"
+    explanation: "A project names the paths that count as security-sensitive and the executables a run may use, so a change to a sensitive path is escalated and a run nobody reviewed is reported as such."
+    plan: community
+    specs:
+      - security-classification
+      - binary-allow-rule
+  - id: roles-and-access
+    name: "Decide who may launch and cancel"
+    explanation: "A project grants roles — viewer, operator and admin — each with a scope, so a person can read, launch or cancel only within the projects and repositories they were given."
+    plan: community
+    specs:
+      - roles-scopes
+  - id: diagnose-and-report
+    name: "Find out what went wrong"
+    explanation: "A failed command's log can be read by a local diagnostic agent, and what it finds can be sent to the issue tracker from the command line. An issue already filed can be followed up to see what happened to it."
+    plan: community
+    specs:
+      - diagnose-agent
+      - issue-mine
+      - troubleshoot-issue
+  - id: run-reports
+    name: "Reports on how your runs are going"
+    explanation: "Every run ends with a classified failure, and a periodic digest reports what a project's runs did — the failures, the spend and the patterns worth acting on."
+    plan: community
+    specs:
+      - periodic-reviews
+      - failure-classes
+  - id: shared-jobs
+    name: "Runs share a project's jobs"
+    explanation: "A project's runs share a small pool of jobs and image caches instead of one job per repository, and what each run may reach is decided per job."
+    plan: community
+    specs:
+      - shared-jobs-default
+  - id: orchestrator
+    name: "Let Fugaro work through your queue"
+    explanation: "An orchestrator works through a queue of tasks on its own, keeps its state in the cloud rather than on a machine, and pauses when a repository refuses it."
+    plan: community
+    specs:
+      - stateless-orchestrator
+  - id: escalation
+    name: "Pull requests that stop converging"
+    explanation: "When a pull request stops converging, the orchestrator escalates through a ladder of rungs — rebase and retest, resume, one stronger pass, merge with follow-ups, or split — instead of retrying forever."
+    plan: community
+    specs:
+      - outer-loop-escalation
+  - id: documentation
+    name: "Read the docs, the support matrix and the change log"
+    explanation: "The public site carries the documentation, a matrix of what Fugaro supports on each platform and integration, and a change log of what every release brought."
+    plan: community
+    specs:
+      - website
+      - website-changelog
+      - compatibility-matrix
+  - id: console
+    name: "The desktop console"
+    explanation: "A desktop app for macOS and Linux shows a project's settings, its runs and its coordinator queue, and reads the same data the command line does."
+    plan: team
+    specs:
+      - console-managed-screens
+      - console-settings-edit
+      - console-coordinator-v2
+      - cli-output-console-graph
+  - id: console-on-windows
+    name: "The console on Windows"
+    explanation: "The console runs on Windows with the command line inside a Linux distribution, so the same screens work on a Windows machine."
+    plan: team
+    specs:
+      - console-windows
+    hold:
+      status: coming-soon
+      reason: "The build is written, and the console publishes no Windows download yet."
+  - id: release-graph
+    name: "See how releases depend on each other"
+    explanation: "A graph draws the project's releases and tasks as boxes, with the dependencies between them and the path that matters."
+    plan: team
+    specs:
+      - console-dependency-graph
+  - id: mobile-app
+    name: "Fugaro on your phone"
+    explanation: "A mobile app shows your projects, tasks and runs, and pairs a device with your installation to sign in."
+    plan: team
+    specs:
+      - mobile
+      - mobile-auth
+    hold:
+      status: coming-soon
+      reason: "The app's code is written, and no version of the app has been released."
+  - id: agent-access
+    name: "Reach a project from any agent"
+    explanation: "A hosted endpoint exposes a project's tasks, runs and reports to an agent outside Fugaro, over a protocol the agent already speaks."
+    plan: team
+    specs:
+      - mcp-server
+    hold:
+      status: coming-soon
+      reason: "The endpoint is built, and its front door stays off until a release turns it on."
+  - id: portal
+    name: "A signed-in web app for accounts and keys"
+    explanation: "The web app behind the site manages an account, its organisations and its workspaces, the keys it holds, and the records of what was bought."
+    plan: team
+    specs:
+      - portal
+  - id: plans-and-keys
+    name: "Buy and manage a plan"
+    explanation: "A paid plan is bought and managed online, and an installation is activated with the key it issues. Seats, renewal and lapse are all reported."
+    plan: team
+    specs:
+      - licence-key-v2
+      - subscriptions
+  - id: project-groups
+    name: "Group projects into a workspace"
+    explanation: "Several projects can be grouped into a workspace with its own budget, so a team's projects share one cap and one view."
+    plan: team
+    specs:
+      - workspaces
+  - id: run-governance
+    name: "Catch a runaway run early"
+    explanation: "Every task carries a tier, and a run that spends far more than its tier expects is stopped and reported instead of running to its cap."
+    plan: team
+    specs:
+      - task-governance
+  - id: model-comparison
+    name: "Compare models on the same task"
+    explanation: "Another model can be run against the same task beside the first, and the results are scored and reported together."
+    plan: team
+    specs:
+      - model-ab-testing
+excluded:
+  - spec: c39-review-identity
+    reason: "Internal plumbing: the review's own identity and read-only token set, which a user never sees or configures."
+  - spec: central-orchestrator
+    reason: "Superseded by the orchestrator that runs in the cloud; what survived of it is mapped there."
+  - spec: contract-first-decoupling
+    reason: "A planning rule for how tasks are written and decoupled, not something a user runs."
+  - spec: coordinator
+    reason: "Superseded: what remained of it was re-planned with the hosted endpoint work."
+  - spec: ee-reorg
+    reason: "An internal move of code between directories, with nothing a user sees."
+  - spec: feature-matrix
+    reason: "This matrix's own spec: internal, and excluded from its own rows (R4)."
+  - spec: go-to-market
+    reason: "Go-to-market work — the marketing pages and their campaigns — not a capability of the product."
+  - spec: how-to
+    reason: "Not a spec: a documentation folder with no plan and no code."
+  - spec: in-job-review
+    reason: "Historical: what it asked for was delivered by the review work that followed it."
+  - spec: licensing
+    reason: "The repository's licence split and its published terms: legal documents rather than a capability."
+  - spec: repo-image-removal
+    reason: "Internal cleanup of the image build path; the capability it moves to is the image catalogue."
+  - spec: windows-cli
+    reason: "Superseded by the console's own Windows work."
+  - spec: voice-module
+    reason: "Not a spec: no plan, and nothing to build."
+  - spec: collateral
+    reason: "Not a spec: no plan, and nothing to build."
+  - spec: backlog
+    reason: "Not a spec: no plan, and nothing to build."
+  - spec: plans
+    reason: "Not a spec: no plan, and nothing to build."
+retired: []

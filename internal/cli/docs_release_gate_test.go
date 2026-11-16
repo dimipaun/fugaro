@@ -41,7 +41,7 @@ var releaseGateDocs = []struct {
 			"shipped before counsel's sign-off",
 			"2026-10-27",
 			"that wait was not kept either",
-			"the terms are still not in force",
+			"the terms were still not in force when `0.113.0` shipped",
 			"exception",
 		},
 	},
