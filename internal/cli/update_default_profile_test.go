@@ -308,9 +308,10 @@ func TestUpdateKeepsTheDefaultProfilesJobWhenTheConfigCannotComposeIt(t *testing
 // repository stage reads the working tree and refuses a fugaro.yaml that is not
 // the default branch's, and that would hide the stage this test is about.
 //
-// The job the installation holds is compared with its base image left out: the
-// images stage re-pins it on every update, and that is the one thing about the
-// job that is meant to move.
+// The whole job set is compared, not the one job, and each job with its base
+// image left out: what this door writes for a profile it cannot compose is
+// nothing at all, and the images stage re-pins every job's image on every
+// update, which is the one thing about them that is meant to move.
 //
 // Mutation (run, restore): read the repository stage's spec with installOptions
 // rather than installSpec and the second update stops there with
@@ -319,10 +320,10 @@ func TestUpdateKeepsTheDefaultProfilesJobThroughTheRepositoryStage(t *testing.T)
 	r := newConvergeRig(t, v7Node())
 	convergeOn(t, r, []string{"policy-vs-jobs"})
 	name := gcp.ProjectJobName(projectpolicy.DefaultProfileName, "github", "")
-	deployed, _ := installationProjectJobs(t, r)[name].(map[string]any)
-	if deployed == nil {
+	deployed := installationProjectJobs(t, r)
+	if _, ok := deployed[name]; !ok {
 		t.Fatalf("the update that wrote profiles.%s deployed no %s job: %v",
-			projectpolicy.DefaultProfileName, name, installationProjectJobs(t, r))
+			projectpolicy.DefaultProfileName, name, slices.Sorted(maps.Keys(deployed)))
 	}
 
 	testutil.Git(t, r.root, "commit", "-qam", "the run's own change to the checkout")
@@ -340,12 +341,23 @@ func TestUpdateKeepsTheDefaultProfilesJobThroughTheRepositoryStage(t *testing.T)
 	if !strings.Contains(s, "✔ installation") {
 		t.Errorf("the run's account says nothing about the installation stage having planned, so this test may not have run the converge it is about:\n%s", s)
 	}
-	kept, _ := installationProjectJobs(t, r)[name].(map[string]any)
-	delete(deployed, "image")
-	delete(kept, "image")
+	kept := installationProjectJobs(t, r)
+	withoutImages(deployed)
+	withoutImages(kept)
 	if !reflect.DeepEqual(kept, deployed) {
-		t.Errorf("the job the installation holds is\n%v\nwant it unchanged from\n%v\nthe job the record holds is the job the state holds, and a document that rewrites it is a plan that replaces it\n%s",
-			kept, deployed, s)
+		t.Errorf("the door wrote a job set of its own for a profile it cannot compose:\n--- written\n%v\n--- the record the installation holds\n%v\nthe job the record holds is the job the state holds, and a document that rewrites it is a plan that replaces it\n%s",
+			slices.Sorted(maps.Keys(kept)), slices.Sorted(maps.Keys(deployed)), s)
+	}
+}
+
+// withoutImages drops each job's base image, the one field of a job the images
+// stage re-pins on every run: it is the field a comparison of what a door WROTE
+// leaves out rather than a field the door wrote.
+func withoutImages(jobs map[string]any) {
+	for _, v := range jobs {
+		if job, ok := v.(map[string]any); ok {
+			delete(job, "image")
+		}
 	}
 }
 

@@ -1663,7 +1663,7 @@ func installSpec(o *initOptions, lc *localcfg.Config, warn func(string)) (infra.
 			continue
 		}
 		kept.CarriedProjectJobs = []string{name}
-		warn(fmt.Sprintf("kept the shared job of %s as the installation holds it: this local config cannot compose it now (%s). This update converges with the job kept, and a later %s composes one from the config again once that is fixed",
+		warn(fmt.Sprintf("kept the shared job of %s as the installation holds it: this local config cannot compose it now (%s). This run converges with the job kept, and a later %s composes one from the config again once that is fixed",
 			defaultProfileNameList([]string{name}), oneLineCLI(err.Error()), selfCommand()+" update"))
 		return kept, nil
 	}
@@ -1675,23 +1675,30 @@ func installSpec(o *initOptions, lc *localcfg.Config, warn func(string)) (infra.
 // of the config the run cannot compose a job for, named by the installation's
 // own tfvars.
 //
-// It answers for the update door alone — `fugaro setup` composes what it plans
-// before anything exists, and has no installation holding a job — and a run with
-// no local config has no profile to ask about. A workdir that holds no tfvars —
-// a machine whose installation this run has not planned yet — holds no job
-// either: the config is the only thing that says what those profiles are, and
-// installOptions' refusal is the answer.
+// It answers for every door and not for the update alone (the owner's ruling of
+// 2026-11-16 on S5): the hold is what keeps a default profile this config can no
+// longer compose from taking the installation's jobs with it, and every door
+// that composes that spec plans those same jobs — `fugaro accounts add` and
+// `fugaro accounts rm` converge the Installation stage in-process, and a door
+// that refused where another converges is an installation the operator cannot
+// work on with the command they have. No door writes a default profile another
+// holds back.
 //
-// A --plan-only run is one of those runs and not an exception to them: it is the
-// preview of the same converge, so it must not refuse an installation that
-// `fugaro update` itself converges. What the carry then keeps out of the plan is
-// the job the installation holds, which is what the real run proposes no change
-// to either — what createDefaultProfiles writes is not part of this answer at
-// all: it does not run under --plan-only, so a profile only that write would add
-// is not in the config for this to name, and a profile the config states is one
-// an earlier `fugaro update` wrote or the operator's own.
+// What keeps this narrow is what it reads rather than the door it is under: a
+// run with no local config has no profile to ask about, and a workdir that holds
+// no tfvars — a machine whose installation this run has not planned yet, which
+// is every first run, `fugaro setup` included — holds no job either. The config
+// is the only thing that says what those profiles are, and installOptions'
+// refusal is the answer for a profile whose job the installation never held.
+//
+// A --plan-only run is one of those doors and not an exception to them: it is
+// the preview of the same converge, so it must not refuse an installation that
+// the run it previews converges. What createDefaultProfiles writes is not part
+// of this answer at all: it does not run under --plan-only, so a profile only
+// that write would add is not in the config for this to name, and a profile the
+// config states is one an earlier `fugaro update` wrote or the operator's own.
 func heldDefaultProfiles(o *initOptions, lc *localcfg.Config) []string {
-	if lc == nil || o.doorName() != updateDoor.name {
+	if lc == nil {
 		return nil
 	}
 	dir, err := infra.InstallationWorkdir(os.Getenv, lc.GCPProject)
