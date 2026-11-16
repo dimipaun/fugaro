@@ -62,7 +62,7 @@ func TestAccountsAddOpenRouterKey(t *testing.T) {
 	if want := []config.Credential{{Name: "team-a", Type: config.CredentialTypeOpenRouter}}; !slices.Equal(lc.Credentials, want) {
 		t.Errorf("the credentials block is %v, want %v: the name is declared a credential a pool may list", lc.Credentials, want)
 	}
-	if got := lc.ClaudeAccounts["team-a"].AllowDataTo; !slices.Equal(got, []string{"github/owner/repo-a"}) {
+	if got := lc.ClaudeAccounts["team-a"].AllowDataTo; !slices.Equal(got, []string{"owner/repo-a"}) {
 		t.Errorf("claude_accounts.team-a.allow_data_to = %v, want the repository the value may reach: the account entry is what bounds the credential's reach", got)
 	}
 	if !slices.Contains(lc.Profiles["standard"].ClaudeAccounts, "team-a") {

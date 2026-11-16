@@ -73,11 +73,16 @@ silently is what that rule exists to prevent.
 --type declares the name as a typed credential as well, in this prefix's
 credentials block: the entry that lets a pool list the name as a member
 (fugaro accounts pool add). claude-oauth is the type this command's token step
-serves. vertex is built in and is never defined, and the two types the spec
-lists as future work are refused in words that say so. A type whose key no
-command stores yet is refused too: the entry would name a credential no run
-could authenticate with. Without the flag nothing but claude_accounts and the
-profile is written, which is what this command has always done.
+serves; openrouter and anthropic are the two key types, and a key is read the
+same way the token is — from stdin, or at the hidden prompt on your terminal —
+and stored project-wide under the credential's own derived secret name
+(credential-<name>-key) rather than the account's. vertex is built in and is
+never defined, and the two types the spec lists as future work are refused in
+words that say so. What carries a key credential's key to a model call is not
+installed by this command yet: the credential is declared and its key stored,
+and a run serves it once that half ships. Without the flag nothing but
+claude_accounts and the profile is written, which is what this command has
+always done.
 
 Then it converges, in one command and behind the one sentence it prints: the
 token is stored project-wide as a new version of the account's own secret, the
@@ -115,7 +120,7 @@ step no plan admits.`,
 	f.StringVar(&o.repos, "repos", "", "the repositories the token may be used by, as owner/name,owner/name (default: this checkout's origin)")
 	f.StringVar(&o.profile, "profile", "", "the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one)")
 	f.BoolVar(&o.claude, "claude", false, "run Anthropic's own claude setup-token login on this terminal first, then paste the token at the hidden prompt")
-	f.StringVar(&o.typ, "type", "", "declare the name as a typed credential too, so a craft or a pool may spend it: claude-oauth, the one type this command's token step serves (without it, the name is declared in claude_accounts alone, as it always was)")
+	f.StringVar(&o.typ, "type", "", "declare the name as a typed credential too, so a craft or a pool may spend it: claude-oauth (this command's OAuth token step), or a key type (openrouter or anthropic), whose value is read the same way and stored under the credential's own derived secret name (without it, the name is declared in claude_accounts alone, as it always was)")
 	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this declaration would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed")
 	return cmd
 }
@@ -137,20 +142,13 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// (config.ValidateCredentials): the sentence for a type that does not ship,
 	// for the built-in vertex and for an empty or unknown type is the one the
 	// loader prints for the same entry in the file, so the two cannot part
-	// company.
+	// company. The three types it admits are the three this command can store a
+	// value for: the Claude OAuth token of the account below, and the key of
+	// the two types whose value lands under the credential's own derived name
+	// (accountsAddSecretName, MC22).
 	if o.typ != "" {
 		if ps := config.ValidateCredentials([]config.Credential{{Name: name, Type: o.typ}}); len(ps) > 0 {
 			return userErr("%s", ps[0].Message)
-		}
-		// Only the Claude OAuth type has a secret this command can store, and a
-		// credential entry is inert config: nothing would be written that
-		// authenticates, and a pool naming the name would be admitted at load
-		// (config.ValidatePools sees the entry) and fail at a run. So a type
-		// whose key has no command yet is refused here, before the file is
-		// read, rather than half-declared.
-		if o.typ != config.CredentialTypeClaudeOAuth {
-			return userErr("--type %s: a credential of this type authenticates with a key, and no command stores one under a credential's own name yet — this command's secret step is the Claude OAuth token's, and a %s entry written without one would be a name no run could authenticate with and a pool would still be allowed to list; declare it when that path ships (today a key is the project's, and fugaro secrets set stores it there); nothing was written",
-				pluginwire.Printable(o.typ), pluginwire.Printable(o.typ))
 		}
 	}
 
@@ -342,7 +340,7 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// The converge (spec §2.2 steps 5–8). It runs on the file the edit above
 	// wrote — the stages read it, and the account is in it — and on its bytes,
 	// which the engines take for the same reason `fugaro update` does.
-	return accountsAddConverge(cmd.Context(), cmd, after, sel.Path, next, name, profile, repos)
+	return accountsAddConverge(cmd.Context(), cmd, after, sel.Path, next, name, o.typ, profile, repos)
 }
 
 // accountsAddRepos is the repository list: the flag, or the checkout the
@@ -387,6 +385,23 @@ func accountsAddCredentialType(lc *localcfg.Config, name string) string {
 		}
 	}
 	return ""
+}
+
+// accountsAddSecretName is the secret this command stores the value under: the
+// account's own derived Claude OAuth token name for claude-oauth, which is what
+// a job mounts as CLAUDE_CODE_OAUTH_TOKEN, and the credential's own derived key
+// name for the two key types (MC22). The two are different credentials under
+// one name — a key credential is not the account's token, and a value stored
+// under the account's name would be handed to every job that already mounts it
+// — and the type is what decides which. No --type at all is the account's, as
+// it has always been. Which derivation each type's own reader uses is the one
+// config keeps (config.CredentialSecret beside config.ClaudeAccountSecret), so
+// the store here and a later read of the same value cannot name two secrets.
+func accountsAddSecretName(name, typ string) string {
+	if config.KeyCredentialType(typ) {
+		return config.CredentialSecret(name)
+	}
+	return config.ClaudeAccountSecret(name)
 }
 
 // accountsAddProfile is the profile whose claude_accounts gains the name: the
@@ -562,7 +577,7 @@ func accountsAddWhat(lc *localcfg.Config, name, profile string, beyond []string,
 	if profile != "" {
 		what += fmt.Sprintf("; profile profiles.%s.claude_accounts += %s", pluginwire.Printable(profile), pluginwire.Printable(name))
 	}
-	what += fmt.Sprintf("; secret a new version of %s (project-wide)", config.ClaudeAccountSecret(name))
+	what += fmt.Sprintf("; secret a new version of %s (project-wide)", accountsAddSecretName(name, typ))
 	if repos, ok := accountsAddPublishedRepos(lc, name); ok {
 		what += fmt.Sprintf("; publish accounts.%s.allow_repos = [%s] into the policy node", pluginwire.Printable(name), strings.Join(repos, ", "))
 	} else {

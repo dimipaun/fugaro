@@ -51,7 +51,13 @@ import (
 // down rather than read off the file again: a project whose profiles list the
 // account in more than one place would otherwise report a different profile
 // than the one this run's edit — and its confirmation — were about.
-func accountsAddConverge(ctx context.Context, cmd *cobra.Command, after *localcfg.Config, path string, old []byte, name, profile string, repos []string) error {
+//
+// typ is the --type the command was given, "" when it was given none, and it
+// decides the secret below: a key credential's value is stored under the
+// credential's own derived name and not the account's (accountsAddSecretName,
+// MC22). Every other step is the same one for both — a key credential is
+// declared, bounded and converged exactly as an account is (D1669).
+func accountsAddConverge(ctx context.Context, cmd *cobra.Command, after *localcfg.Config, path string, old []byte, name, typ, profile string, repos []string) error {
 	// The command's own account (CL7a): the steps below print through one
 	// reporter and the run's full output is kept in one log, and both are this
 	// command's — the converge is invoked in-process, so a second run with a
@@ -67,11 +73,11 @@ func accountsAddConverge(ctx context.Context, cmd *cobra.Command, after *localcf
 	}
 	defer env.Close()
 
-	// Step 5: the secret, project-wide, as a new version of the account's own
+	// Step 5: the secret, project-wide, as a new version of the credential's own
 	// ID. It runs after the local config and not before it because
 	// projectWideAccepted refuses a name whose allow_data_to lists no
 	// repository: the field has to exist first (spec §2.2 step 5).
-	version, err := accountsAddStoreSecret(run, cmd, env, name)
+	version, err := accountsAddStoreSecret(run, cmd, env, name, typ)
 	if err != nil {
 		return err
 	}
@@ -110,7 +116,7 @@ func accountsAddConverge(ctx context.Context, cmd *cobra.Command, after *localcf
 	// stage's own (readPolicyNode) and not a second one — nothing is written
 	// here, and a node this reader cannot read says so instead.
 	allow, unpublished := accountsAddNodeAccount(ctx, after, name)
-	accountsAddReport(cmd, after, stages, name, profile, repos, version, mark, check, allow, unpublished)
+	accountsAddReport(cmd, after, stages, name, typ, profile, repos, version, mark, check, allow, unpublished)
 	return nil
 }
 
@@ -150,8 +156,8 @@ func accountsAddNodeAccount(ctx context.Context, lc *localcfg.Config, name strin
 // it. The version then reaches this command's block as the store's answer and
 // not as a line read back out of its output (CL7a): the step and the block are
 // two accounts of one store, and neither is parsed out of the other.
-func accountsAddStoreSecret(run *stepRun, cmd *cobra.Command, env *cloudEnv, name string) (string, error) {
-	secret := config.ClaudeAccountSecret(name)
+func accountsAddStoreSecret(run *stepRun, cmd *cobra.Command, env *cloudEnv, name, typ string) (string, error) {
+	secret := accountsAddSecretName(name, typ)
 	return secretsStoreStep(run, secret, func() (string, string, error) {
 		return secretsSetProjectWide(run, cmd, env, secretsOptions{}, secret)
 	})
@@ -385,9 +391,9 @@ func accountsAddCheck(cmd *cobra.Command, repo string) (accountsListDoc, error) 
 // results and the command's own read-back. A step that was skipped says so in
 // the stage's words, so a project with no budget backend is a sentence rather
 // than a silent "published".
-func accountsAddReport(cmd *cobra.Command, lc *localcfg.Config, stages map[string]initflow.StageResult, name, profile string, repos []string, version, mark string, check accountsListDoc, allow []string, unpublished string) {
+func accountsAddReport(cmd *cobra.Command, lc *localcfg.Config, stages map[string]initflow.StageResult, name, typ, profile string, repos []string, version, mark string, check accountsListDoc, allow []string, unpublished string) {
 	w := cmd.OutOrStdout()
-	secret := config.ClaudeAccountSecret(name)
+	secret := accountsAddSecretName(name, typ)
 	row := func(label, value, rest string) {
 		fmt.Fprintf(w, "%-10s%-18s%s\n", label, pluginwire.Printable(value), rest)
 	}
@@ -422,6 +428,16 @@ func accountsAddReport(cmd *cobra.Command, lc *localcfg.Config, stages map[strin
 	for _, repo := range accountsAddUnconverged(cmd.Context(), repos) {
 		fmt.Fprintf(w, "%s has no checkout here, so its own repository root was not converged: run `fugaro update` in that checkout (fugaro doctor says whether it matters)\n",
 			pluginwire.Printable(repo))
+	}
+	// The last line is what the owner does next, and it is a run — except for
+	// the key types, whose value nothing reads on a call yet: the credential is
+	// declared and its key is stored, and a `--token NAME` run would have a
+	// credential no half of the run can authenticate with. Saying "ready" there
+	// would be this command promising the one thing its own block exists to
+	// report truthfully.
+	if config.KeyCredentialType(typ) {
+		fmt.Fprintf(w, "Nothing else to run: %s is declared and its key is stored; what serves that key to a run is not installed by this release yet, so a run cannot authenticate with it until then.\n", pluginwire.Printable(name))
+		return
 	}
 	fmt.Fprintf(w, "Nothing else to run: fugaro run --token %s is ready.\n", pluginwire.Printable(name))
 }

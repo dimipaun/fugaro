@@ -411,6 +411,15 @@ func ValidateModelProviders(providers map[string]ModelProvider) []Problem {
 			// key could never be written, and every repository the provider
 			// allows would mount a secret that does not exist.
 			add(at+".secret", "%q is a harness's OAuth credential name (claude-oauth-token or codex-oauth-token, and the names in their -<name> namespaces): that is a person's subscription token, never a provider's key", p.Secret)
+		case KeyCredentialSecret(p.Secret):
+			// A typed credential's own derived secret name (CredentialSecret,
+			// MC22): that container is where the credential's reader looks for
+			// the key it spends on a call, so a provider pointing .secret at it
+			// would have the credential's key read as the provider's and sent
+			// wherever this entry's calls route. The name is derived from the
+			// credential and never chosen, so unlike the harness names above
+			// there is no provider key an operator could have meant by it.
+			add(at+".secret", "names starting %s are a typed credential's own derived secret name (credentials in the local config): that container holds a credential's key, never a provider's", CredentialSecretPrefix)
 		default:
 			if other, dup := secrets[p.Secret]; dup {
 				add(at+".secret", "%q is already the secret of provider %s: each provider has its own key", p.Secret, other)
