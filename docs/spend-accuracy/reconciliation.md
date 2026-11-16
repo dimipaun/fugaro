@@ -200,7 +200,7 @@ spec. It is listed as considered and declined here and left to the models-comman
 today plus yesterday, a window of 24 to 48 hours. **Consequence:** D2649 is amended to that window, and O4 asks the
 owner to confirm.
 
-**F31 (Gap, review round 2; answers U8).** The price table holds one bound per model. A catalog row carries the
+**F31 (Gap, review round 2).** The price table holds one bound per model. A catalog row carries the
 selected bound's `Rates`, plus `TierInputMax`/`TierOutputMax` in its provenance (`pricing.CatalogPrice`), and no
 minimum and no cache bounds. Once `highest` is the default, the cheapest end is not in the table at all.
 **Consequence:** a new task (SA1.6) gives a `pricing.Model` both ends' rates, set in `catalogModel`; for a row that is
@@ -216,9 +216,10 @@ old day. **Consequence:** resolution RS8.
 
 **F34 (Gap, review round 2; answers U8).** No command removes one `model_prices` entry from the shared copy: the
 publish writes `MergeShared(published, local)` (`publishSharedWarn`, `internal/cli/sharedcfg.go`), which unions the
-two. Runs are unaffected, because a job's `FUGARO_MODEL_PRICES` is built from the owner's own local config
-(`lc.Overrides()` in `internal/infra/spec.go`). A teammate's CLI keeps the stale entry for its own estimates and
-`budget prices`. **Consequence:** OR1 fixes the runs. The shared copy's stale entry is O3, a follow-up outside this
+two. Runs are unaffected for another reason (corrected in review round 3): with a published policy, a run takes
+`model_prices` from the policy node, whole (`internal/runner/policy.go`), and `fugaro update` republishes the node when
+the local `model_prices` differs (`policyConfigDrift`). A teammate's CLI keeps the stale entry for its own estimates and
+`budget prices`. **Consequence:** OR1 fixes the runs, verified on the published node. The shared copy's stale entry is O3, a follow-up outside this
 spec.
 
 ## Resolutions (one defensible answer)
@@ -280,6 +281,16 @@ compared.
 - **O3 (rewritten after review round 2, F34).** The shared copy keeps the dogfood override after OR1, and no command
   removes one entry. Runs are not affected. Whether to add a removal (a `models rm` that also prunes the shared copy,
   say) is the owner's call, and it is outside this spec.
+- **O5 (review round 3, left open: the review cap).** Some review-round-3 findings need a design call, so this
+  plan does not settle them:
+  - A generation-6 runner whose stage report is refused (an older CLI redeployed generation-5 rules mid-run) fails the
+    whole atomic update. The plan does not say whether it retries without the new leaves.
+  - A `max`-priced call with no known pin (RS7): left out of the band but kept in `reported_by` makes the alarm
+    fire, while leaving it out of `reported_by` breaks the sum against `reported_usd`.
+  - F28's window could be closed rather than stated, by writing the resolved `price_policy` into
+    `FUGARO_MODEL_PROVIDERS` explicitly, which every runner from 0.7.5 reads.
+- **O6 (review round 3).** A call priced `surprise` (a speed or geography the request chose) keeps its penalty and
+  does not settle on its report. The plan takes this as the default, since the stage fails either way; confirm it.
 - **O4.** Confirm the amended D2649 window: today plus yesterday (UTC), which is 24 to 48 hours (F30).
 
 ## UNVERIFIED

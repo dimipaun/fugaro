@@ -68,7 +68,8 @@
           "internal/cli/project_cmd_test.go",
           "internal/cli/init_repo_gate_test.go",
           "internal/cli/models_add_test.go",
-          "internal/cli/docs_compute_backend_test.go"
+          "internal/cli/docs_compute_backend_test.go",
+          "internal/cli/recipes_skew_test.go"
         ]
       }
     },
@@ -121,7 +122,8 @@
           "internal/cli/project_cmd.go",
           "internal/cli/doctor_render.go",
           "internal/cli/doctor_policy_test.go",
-          "internal/cli/update_converge_test.go"
+          "internal/cli/update_converge_test.go",
+          "docs/gcp-live-checklist.md"
         ]
       }
     },
@@ -220,7 +222,8 @@
           "internal/cli/update_model_prices_test.go",
           "internal/cli/init_stages.go",
           "internal/cli/validate.go",
-          "internal/cli/validate_undercut_test.go"
+          "internal/cli/validate_undercut_test.go",
+          "internal/cli/update_converge_test.go"
         ]
       }
     },
@@ -236,6 +239,7 @@
           "internal/budget/lease.go",
           "internal/budget/session.go",
           "internal/runner/budget_session.go",
+          "internal/projectpolicy/read.go",
           "internal/budget/session_test.go",
           "internal/budget/by_tier_test.go"
         ]
@@ -285,7 +289,8 @@
           "internal/watch/json.go",
           "internal/watch/plain.go",
           "internal/watch/console_parity_test.go",
-          "internal/cli/watch.go"
+          "internal/cli/watch.go",
+          "console/docs/json-contract.md"
         ]
       }
     },
@@ -302,7 +307,8 @@
           "internal/gateway/sse.go",
           "internal/gateway/ledger.go",
           "internal/gateway/provider_settle_test.go",
-          "internal/gateway/sse_test.go"
+          "internal/gateway/sse_test.go",
+          "internal/runner/provider_run_test.go"
         ]
       }
     },
@@ -331,7 +337,8 @@
           "internal/cli/diagnose_test.go",
           "internal/projectpolicy/policy.go",
           "internal/projectpolicy/policy_test.go",
-          "internal/runner/providers_test.go"
+          "internal/runner/providers_test.go",
+          "internal/runner/provider_run_test.go"
         ]
       }
     },
@@ -375,7 +382,8 @@
           "internal/gateway/gateway.go",
           "schemas/result.schema.json",
           "internal/runner/gateway.go",
-          "internal/runner/reported_gap_test.go"
+          "internal/runner/reported_gap_test.go",
+          "plugin/skills/working/SKILL.md"
         ]
       }
     },
@@ -490,8 +498,23 @@
     },
     {
       "task": "SA0.1",
+      "needs": "SA5.0",
+      "reason": "same file docs/gcp-live-checklist.md"
+    },
+    {
+      "task": "SA5.0",
       "needs": "SA1.1",
       "reason": "same file docs/gcp-live-checklist.md"
+    },
+    {
+      "task": "SA3.1",
+      "needs": "SA2.1",
+      "reason": "same file internal/runner/provider_run_test.go"
+    },
+    {
+      "task": "SA4.2",
+      "needs": "SA5.0",
+      "reason": "same file internal/cli/update_converge_test.go"
     },
     {
       "task": "SA5.3",

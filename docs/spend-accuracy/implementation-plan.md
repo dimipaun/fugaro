@@ -23,8 +23,8 @@ Task ids are `SA<slice>.<n>`. Checks 650-651 come from the block this plan reser
   `ee/`, and `go test ./internal/eeboundary/ -count=1`. `.claude/rules/website.md` applies to SA1.3, whose command
   enters the CLI reference: run `npm run check` in `website/`. Comments say why, never what.
 - **Always:** targeted tests (`go test ./<pkg>/ -run 'TestX|TestY' -count=1`), `gofmt -l .` prints nothing,
-  `go vet ./...`. **Each task keeps the docs tests green in its own pull request (RS6):** run
-  `go test ./internal/cli/ -run Docs -count=1`, and change a pinned sentence that the task makes false in the same pull
+  `go vet ./...`. **Each task keeps the docs tests green in its own pull request (RS6):** every task also runs
+  `go test ./internal/cli/ -run Docs -count=1`, whether or not its Command repeats it, and change a pinned sentence that the task makes false in the same pull
   request. A task's pull request names its `SA#` and the `D#` it implements.
 - **Ask first:** a format change other than the additive fields named here; any change to `routedKeys` or to the
   gateway's no-rewrite rule (D2642); a new setting (D2649 chose a fixed threshold).
@@ -84,7 +84,7 @@ Task ids are `SA<slice>.<n>`. Checks 650-651 come from the block this plan reser
 - Tests: every docs test (`-run Docs`); the checklist's numbering tests are among them.
 - Command: `go test ./internal/cli/ -run Docs -count=1`.
 - Red step: none (documents only); the docs tests must stay green.
-- Depends on: SA1.1 (the same file: SA1.1 corrects the checklist's Check 44 line that the gate made true).
+- Depends on: SA5.0 (the same file, `docs/gcp-live-checklist.md`, which SA1.1 and SA5.0 write before it).
 - Commit: `checks: 650 and 651, spend against the OpenRouter invoice (spend-accuracy SA0.1)`.
 - Reviewer tier: standard.
 
@@ -143,13 +143,13 @@ Task ids are `SA<slice>.<n>`. Checks 650-651 come from the block this plan reser
   - Past five files by design (Conventions).
 - Files: `internal/cli/recipes_skew.go`, `internal/cli/models_add.go`, `README.md`, `docs/release.md`,
   `docs/multi-model.md`, `docs/gcp-live-checklist.md`, `internal/cli/docs_providers_test.go`, `internal/cli/project_cmd_test.go`, `internal/cli/init_repo_gate_test.go`,
-  `internal/cli/models_add_test.go`, `internal/cli/docs_compute_backend_test.go`.
+  `internal/cli/models_add_test.go`, `internal/cli/docs_compute_backend_test.go`, `internal/cli/recipes_skew_test.go`.
 - Interfaces: none new.
-- Tests: `TestReadmeOpenRouterSetup`, `TestImageCatalogGateIsNotThePriceCatalogGate`,
+- Tests: `TestRefuseCatalogSwitches`, `TestReadmeOpenRouterSetup`, `TestImageCatalogGateIsNotThePriceCatalogGate`,
   `TestInitRepoRefusesCatalogSwitches` (renamed to say what is now true),
   `TestModelsAddExplainsTheSpreadAndWritesNoSwitch` (its D795 text), `TestDocsReleaseChecklistNamesEveryShippedGate`,
   and the `catalogSwitchSkew` tests.
-- Command: `go test ./internal/cli/ -run 'TestReadmeOpenRouterSetup|ImageCatalogGate|InitRepoRefusesCatalogSwitches|CatalogSwitch|ModelsAdd|Docs' -count=1`.
+- Command: `go test ./internal/cli/ -run 'TestRefuseCatalogSwitches|TestReadmeOpenRouterSetup|ImageCatalogGate|InitRepoRefusesCatalogSwitches|CatalogSwitch|ModelsAdd|Docs' -count=1`.
 - Red step: a new case, "a route with price_policy highest on a 0.25 base image deploys", fails against `false`.
 - Depends on: none.
 - Commit: `pricing: price_policy and require_zdr deploy, as 0.7.5 shipped them (spend-accuracy SA1.1, F3)`.
@@ -178,13 +178,13 @@ Task ids are `SA<slice>.<n>`. Checks 650-651 come from the block this plan reser
 - Reviewer tier: opus (the gateway).
 
 ### SA1.5: the runner records them in result.json
-- Acceptance: the runner sums the stage reports' and the run ledger's new figures into `cost.reported_by`,
-  `cost.table_lo_usd`, `cost.table_hi_usd` and `cost.unreported_calls`, beside its existing sums
-  (`r.reported += rep.Reported`).
+- Acceptance: the runner takes `cost.reported_by`, `cost.table_lo_usd`, `cost.table_hi_usd` and
+  `cost.unreported_calls` from the run `Ledger` alone (F24), which holds every call, late ones included. It never adds
+  the stage reports to them, so no call is counted twice.
 - Files: `internal/runner/gateway.go`, `internal/runner/runner.go`, `internal/runner/cost.go`,
   `internal/runner/cost_reported_test.go` (new).
 - Interfaces: reads SA1.0's gateway fields; writes SA1.0's record fields.
-- Tests: `TestRunRecordsReportedBy`, `TestRunRecordsBandAndUnreported`.
+- Tests: `TestRunRecordsReportedBy`, `TestRunRecordsBandAndUnreported`, `TestLateCallCountedOnce`.
 - Command: `go test ./internal/runner/ -run 'RunRecordsReportedBy|RunRecordsBand' -count=1`.
 - Red step: `TestRunRecordsReportedBy` fails on an empty `reported_by`.
 - Depends on: SA1.0 (the fields; its tests hand-build stage reports).
@@ -255,13 +255,16 @@ Task ids are `SA<slice>.<n>`. Checks 650-651 come from the block this plan reser
   - The comments that D2640 makes false are rewritten: `usageAcc.reported`, the `fromUsage` doc, and the `ledger.go`
     lines on `reported` and `pricedTier`.
   - The docs tests stay green (RS6).
+  - A call priced `surprise` (a speed or geography the request chose) keeps today's penalty charge and does not settle
+    on its report (O6).
 - Files: `internal/gateway/forward.go`, `internal/gateway/sse.go`, `internal/gateway/ledger.go`,
-  `internal/gateway/provider_settle_test.go`, `internal/gateway/sse_test.go`.
+  `internal/gateway/provider_settle_test.go`, `internal/gateway/sse_test.go`, `internal/runner/provider_run_test.go`
+  (`TestProviderRunEndsInPR` checks the charge against the table).
 - Interfaces: reads the band that SA1.2 computes.
 - Tests: `TestSettleOnReport`, `TestLowReportFlooredAtTierMinimum`, `TestReportAboveReservationIsOverrun`,
   `TestReportAboveTenTimesReservationFallsBackToTable`, `TestPartialCallIgnoresReport`, `TestNoReportIsTable`,
   `TestProviderCostKeepsLargest`, `TestMaxPricedCallFloorFromPin`.
-- Command: `go test ./internal/gateway/ -run 'SettleOnReport|LowReportFloored|ReportAbove|PartialCallIgnores|NoReportIsTable|ProviderCostKeepsLargest|MaxPricedCall' -count=1 && go test ./internal/cli/ -run Docs -count=1`.
+- Command: `go test ./internal/gateway/ -run 'SettleOnReport|LowReportFloored|ReportAbove|PartialCallIgnores|NoReportIsTable|ProviderCostKeepsLargest|MaxPricedCall|Surprise' -count=1 && go test ./internal/runner/ -run TestProviderRunEndsInPR -count=1 && go test ./internal/cli/ -run Docs -count=1`.
 - Red step: `TestSettleOnReport` fails while the table settles.
 - Depends on: SA1.2 (the same files, `forward.go` and `ledger.go`, and its band).
 - Commit: `gateway: settle a provider call on the cost the provider reported (spend-accuracy SA2.1, D2640)`.
@@ -271,7 +274,9 @@ Task ids are `SA<slice>.<n>`. Checks 650-651 come from the block this plan reser
 - Acceptance:
   - When the record carries the new fields, `diagnose` prints
     `Settled: $X (reported on N of M calls); table band $lo-$hi`.
-  - It warns when the report is more than `reportedGapPct` above `table_hi_usd` or below `table_lo_usd`.
+  - It warns when the report is more than `reportedGapPct` above `table_hi_usd` or below `table_lo_usd`, in a new
+    `--json` field `band_warning`. `reported_warning` keeps its rule and meaning for a record without the new fields,
+    and is empty otherwise (the console renders it).
   - A record without the fields keeps today's comparison and line.
   - `--json` gains `table_lo_usd`, `table_hi_usd` and `unreported_calls` (RS5); `reported_usd`, `charge_usd` and
     `reported_warning` keep their meaning.
@@ -290,16 +295,17 @@ Task ids are `SA<slice>.<n>`. Checks 650-651 come from the block this plan reser
   - The `StageReport.Reported` comment and `reported_usd`'s schema description say that a report settles a complete
     call.
   - The runner's `warnReportedGap` compares the report with the band, as `diagnose` does, instead of with the charge.
+  - `plugin/skills/working/SKILL.md`'s Cost line no longer says `reported_usd` is "never replacing" the priced figure.
   - The docs tests stay green.
 - Files: `internal/gateway/gateway.go`, `schemas/result.schema.json`, `internal/runner/gateway.go`,
-  `internal/runner/reported_gap_test.go` (new).
+  `internal/runner/reported_gap_test.go` (new), `plugin/skills/working/SKILL.md`.
 - Interfaces: none new.
 - Tests: `TestWarnReportedGapAgainstBand`, `TestResultSchemaAcceptsRunnerRecords`.
-- Command: `go test ./internal/runner/ ./schemas/ -run 'WarnReportedGap|TestResultSchema' -count=1`.
+- Command: `go test ./internal/runner/ ./schemas/ -run 'WarnReportedGap|TestResultSchema' -count=1 && go test ./plugin/... -count=1 && go test ./internal/cli/ -run Docs -count=1`.
 - Red step: `TestWarnReportedGapAgainstBand` fails while the warning compares with the charge.
 - Depends on: SA2.1 (the behaviour it describes), SA1.5 (the same file, `internal/runner/gateway.go`).
 - Commit: `runner, schema: the reported cost settles a call (spend-accuracy SA2.3)`.
-- Reviewer tier: standard.
+- Reviewer tier: opus (a plugin skill is a security-review path).
 
 ### SA3.1: `highest` is the default price policy (R3, D2644, F28)
 - Acceptance:
@@ -309,7 +315,7 @@ Task ids are `SA<slice>.<n>`. Checks 650-651 come from the block this plan reser
     highest" names `model_prices` alone once `highest` is already the default, and the comment at
     `projectpolicy/policy.go` on what an unset `price_policy` means is corrected.
   - Every test that pins `cheapest` as the default moves (find them with
-    `git grep -n 'PricePolicyCheapest\|cheapest end' -- '*_test.go'`).
+    `git grep -n 'PricePolicyCheapest\|cheapest end\|Bound != "min"\|Bound == "min"' -- '*_test.go'`).
   - The mixed-version window (F28) is stated in the commit body.
   - Past five files by design (Conventions).
 - Files: `internal/config/providers.go`, `internal/config/providers_test.go`, `internal/pricing/catalog_apply.go`,
@@ -317,13 +323,14 @@ Task ids are `SA<slice>.<n>`. Checks 650-651 come from the block this plan reser
   `internal/config/pins_test.go`, `internal/config/pricetable_test.go`, `internal/runner/catalog_test.go`,
   `internal/cli/validate_test.go`, `internal/cli/budget_test.go`, `internal/cli/models_ls_test.go`,
   `internal/cli/diagnose.go`, `internal/cli/diagnose_test.go`, `internal/projectpolicy/policy.go`,
-  `internal/projectpolicy/policy_test.go`, `internal/runner/providers_test.go`.
+  `internal/projectpolicy/policy_test.go`, `internal/runner/providers_test.go`, `internal/runner/provider_run_test.go`.
 - Interfaces: none new.
 - Tests: `TestPricePolicyDefaultsHighest`, `TestApplyCatalogUnsetPolicyIsHighest`, and the moved tests.
-- Command: `go test ./internal/config/ ./internal/pricing/ ./internal/runner/ ./internal/projectpolicy/ -run 'PricePolicy|ApplyCatalog|Catalog|Pin|PriceTable|Providers|Policy' -count=1 && go test ./internal/cli/ -run 'ModelsAdd|ModelsLs|Validate|Budget|Diagnose|Docs' -count=1`.
+- Command: `go test ./internal/config/ ./internal/pricing/ ./internal/runner/ ./internal/projectpolicy/ -run 'PricePolicy|ApplyCatalog|Catalog|Pin|PriceTable|Providers|ProviderRun|Policy' -count=1 && go test ./internal/cli/ -run 'ModelsAdd|ModelsLs|Validate|Budget|Diagnose|Docs' -count=1`.
 - Red step: `TestPricePolicyDefaultsHighest` fails against `cheapest`.
 - Depends on: SA1.1 (the same file, `models_add.go`; and a default that `update --repo` refuses cannot be tested end
-  to end), SA2.2 (the same files, `diagnose.go` and `diagnose_test.go`), SA1.6 (the same file, `catalog_apply.go`).
+  to end), SA2.2 (the same files, `diagnose.go` and `diagnose_test.go`), SA1.6 (the same file, `catalog_apply.go`),
+  SA2.1 (the same file, `internal/runner/provider_run_test.go`, whose `Bound == "min"` check this task moves).
 - Commit: `pricing: highest is the default price_policy (spend-accuracy SA3.1, D2644, supersedes ruling 3)`.
 - Reviewer tier: standard.
 
@@ -350,8 +357,9 @@ Task ids are `SA<slice>.<n>`. Checks 650-651 come from the block this plan reser
 - Reviewer tier: standard.
 
 ### SA4.3: the undercut check (R4, F15)
-- Acceptance: `pricing.UndercutsCatalog(model, override, table)` names each dimension of an override below the route
-  tier's cheapest end (SA1.6's `Lo`), with both prices. A model the catalog does not price returns nothing.
+- Acceptance: `pricing.UndercutsCatalog(model, override, routes)` compiles the model's catalog row as if it were not
+  overridden (an override row has `Lo = Hi = Rates`, so the effective table cannot answer), and names each dimension
+  of the override below that row's `Lo`, with both prices. A model the catalog does not price returns nothing.
 - Files: `internal/pricing/undercut.go` (new), `internal/pricing/undercut_test.go` (new).
 - Interfaces: reads SA1.6's ends; produces the check SA4.2 calls.
 - Tests: `TestUndercutsCatalog`, `TestUndercutUnknownModelSilent`.
@@ -367,13 +375,15 @@ Task ids are `SA<slice>.<n>`. Checks 650-651 come from the block this plan reser
     place, through `internal/yamledit`. It keeps the value, prints one line, asks nothing, and is idempotent.
   - `update` and `validate` print one warning per override dimension below the route tier's minimum, naming both
     prices. Neither refuses.
-  - A converge test starts from a config with `cache_read: 0.0042`.
+  - A converge test starts from a config with `cache_read: 0.0042`, and `TestUpdateLeavesARunInFlightRunning` still
+    passes.
   - The migration is a stage of `update`'s stage list (`initStages` in `init_stages.go`), before the policy publish.
 - Files: `internal/cli/update_model_prices.go` (new), `internal/cli/update_model_prices_test.go` (new),
-  `internal/cli/init_stages.go`, `internal/cli/validate.go`, `internal/cli/validate_undercut_test.go` (new).
+  `internal/cli/init_stages.go`, `internal/cli/validate.go`, `internal/cli/validate_undercut_test.go` (new),
+  `internal/cli/update_converge_test.go`.
 - Interfaces: uses SA4.1's keys and SA4.3's `UndercutsCatalog`.
 - Tests: `TestUpdateMigratesCacheReadKey`, `TestUpdateMigrationIdempotent`, `TestValidateWarnsUndercut`.
-- Command: `go test ./internal/cli/ -run 'UpdateMigratesCacheRead|UpdateMigrationIdempotent|ValidateWarnsUndercut|Docs' -count=1`.
+- Command: `go test ./internal/cli/ -run 'UpdateMigratesCacheRead|UpdateMigrationIdempotent|ValidateWarnsUndercut|UpdateConverge|UpdateLeavesARunInFlight|Docs' -count=1`.
 - Red step: `TestUpdateMigratesCacheReadKey` fails while the file is unchanged.
 - Depends on: SA4.1 (the migration writes keys only SA4.1's parser accepts: behaviour), SA4.3 (the check it calls).
 - Commit: `update: migrate model_prices cache keys and warn on undercuts (spend-accuracy SA4.2)`.
@@ -398,13 +408,15 @@ Task ids are `SA<slice>.<n>`. Checks 650-651 come from the block this plan reser
   `internal/budget/rules/testdata/rules.generation5.json` (new), `internal/budget/rules/rules_test.go`,
   `internal/budget/rules/new_leaves_emulator_test.go` (new), `internal/projectpolicy/version.go`,
   `internal/cli/docs_mobile_auth_test.go`, `internal/cli/project_cmd.go`, `internal/cli/doctor_render.go`,
-  `internal/cli/doctor_policy_test.go`, `internal/cli/update_converge_test.go`.
+  `internal/cli/doctor_policy_test.go`, `internal/cli/update_converge_test.go`, `docs/gcp-live-checklist.md` (Check
+  82's `policyRules = 6` and the generated rules' byte count, which `TestDocsMobileChecklistHasCheck81And82And89`
+  pins).
 - Interfaces: produces the leaves that SA5.1 writes.
 - Tests: `TestRulesVersionUnchanged` (moved to 6), `TestRulesGolden`, `TestNewLeavesNeedTheirGeneration` (`firebase`
   tag), the `rulesMarkerOlderText` tests, the update converge tests.
 - Command: `go test ./internal/budget/rules/ -run 'TestRulesVersionUnchanged|TestRulesGolden' -count=1 && go test -tags firebase ./internal/budget/rules/ -run TestNewLeavesNeedTheirGeneration -count=1 && go test ./internal/cli/ -run 'RulesMarker|TestDoctorPolicyChecks|UpdateConverge|UpdateLeavesARunInFlight|Docs' -count=1`.
 - Red step: `TestRulesGolden` fails until the template and the golden agree.
-- Depends on: none.
+- Depends on: SA1.1 (the same file, `docs/gcp-live-checklist.md`).
 - Commit: `spend-accuracy SA5.0: per-model notional, reported and band leaves, rules generation 6`.
 - Reviewer tier: opus, with an independent review before SA5.1 starts (Firebase rules).
 
@@ -438,8 +450,9 @@ Task ids are `SA<slice>.<n>`. Checks 650-651 come from the block this plan reser
   - `plan` merges each leaf's writes before it builds the update (F26), and chunks every new leaf at the largest
     single lease, as `micros` is.
   - Under generation 5, it writes exactly what it writes today.
+  - The generation comes from `projectpolicy`, which exports what its unexported `rulesGeneration` reads.
 - Files: `internal/budget/lease.go`, `internal/budget/session.go`, `internal/runner/budget_session.go`,
-  `internal/budget/session_test.go`, `internal/budget/by_tier_test.go`.
+  `internal/projectpolicy/read.go`, `internal/budget/session_test.go`, `internal/budget/by_tier_test.go`.
 - Interfaces: reads SA1.0's `StageReport` fields; writes SA5.6's leaves, which SA5.0's rules grant.
 - Tests: `TestReportWritesModelTokens`, `TestReportWritesRepAndBand`, `TestNotionalLeaf`,
   `TestOneFlushSumsBilledAndNotional`, `TestGeneration5WritesTodaysLeaves`, `TestNewLeavesChunkedAtMaxRes`,
@@ -472,7 +485,7 @@ Task ids are `SA<slice>.<n>`. Checks 650-651 come from the block this plan reser
 - Acceptance:
   - A `doctor` check reads today's and yesterday's counters (the amended window, F30) for every repository
     (`spend/<day>/repos/*`, where `byModel` lives), summed per model.
-  - For each model with at least $1 reported in that window, it is a **warning** (not a failure: nothing `update` can
+  - For each model with at least $1 of spend in that window, it is a **warning** (not a failure: nothing `update` can
     fix) when `rep` is more than 10% above `thi` or more than 10% below `tlo`, naming the model and the factor. It is
     quiet otherwise, quiet on a day without the leaves, and skipped offline as the other cloud checks are.
   - `doctor --json` carries it as an ordinary check, with its entries in `doctor_render.go`'s maps.
@@ -493,10 +506,11 @@ Task ids are `SA<slice>.<n>`. Checks 650-651 come from the block this plan reser
   - It shows the same drift line as SA5.3, once per model per day, in its plain and `--json` views. The `--json`
     change is additive, and the console parity test passes.
 - Files: `internal/watch/build.go`, `internal/watch/json.go`, `internal/watch/plain.go`,
-  `internal/watch/console_parity_test.go`, `internal/cli/watch.go`.
+  `internal/watch/console_parity_test.go`, `internal/cli/watch.go`, `console/docs/json-contract.md`
+  (`TestDocsDesktopConsoleContractNamesEveryWatchField`).
 - Interfaces: reads SA5.6's `ModelUse`.
 - Tests: `TestWatchDriftLineOnce`, the console parity test.
-- Command: `go test ./internal/watch/ ./internal/cli/ -run 'Drift|ConsoleParity|Watch' -count=1`.
+- Command: `go test ./internal/watch/ ./internal/cli/ -run 'Drift|ConsoleParity|Watch|Docs' -count=1`.
 - Red step: `TestWatchDriftLineOnce` fails on a missing line.
 - Depends on: SA5.6 (the shape).
 - Commit: `watch: the drift line (spend-accuracy SA5.7, R6)`.
@@ -524,7 +538,8 @@ Task ids are `SA<slice>.<n>`. Checks 650-651 come from the block this plan reser
     - §6: a call settles on the provider's cost, floored at the tier's cheapest end, and the drift alarm.
   - `docs/design/provider-price-catalog.md` D6 and §0 item 3: D2644 supersedes ruling 3.
   - `docs/design/m10-multi-model.md`: the "Real vs notional dollars" paragraph and its Phase 3 line point here.
-  - `docs/design/v1.md`: the gateway paragraph says what a report settles.
+  - `docs/design/v1.md`: the gateway paragraph and the later sentence that a reported cost is "not something Fugaro
+    adopts by itself" say what a report settles.
   - A docs test pins these sentences.
 - Files: `docs/multi-model.md`, `docs/design/provider-price-catalog.md`, `docs/design/m10-multi-model.md`,
   `docs/design/v1.md`, `internal/cli/docs_spend_accuracy_test.go` (new).
@@ -542,22 +557,26 @@ Task ids are `SA<slice>.<n>`. Checks 650-651 come from the block this plan reser
 
 | Level | Tasks |
 | --- | --- |
-| L0 | SA1.0, SA1.1, SA1.6, SA4.1, SA5.0, SA5.6 |
-| L1 | SA0.1, SA1.2, SA1.3, SA1.5, SA2.2, SA4.3, SA5.1, SA5.2, SA5.3, SA5.7 |
-| L2 | SA2.1, SA3.1, SA4.2, SA5.4 |
-| L3 | SA1.4, SA2.3, SA6.1 |
+| L0 | SA1.0, SA1.1, SA1.6, SA4.1, SA5.6 |
+| L1 | SA1.2, SA1.3, SA1.5, SA2.2, SA4.3, SA5.0, SA5.2, SA5.7 |
+| L2 | SA0.1, SA2.1, SA4.2, SA5.1, SA5.3 |
+| L3 | SA1.4, SA2.3, SA3.1, SA5.4 |
+| L4 | SA6.1 |
 
-**Critical path:** SA1.0 → SA1.2 → SA2.1 → SA1.4 / SA2.3 / SA6.1. It is sequential because SA2.1 changes the
-`fromUsage` that SA1.2 instruments, and the last level proves it end to end, cleans up after it and documents it.
+**Critical path:** SA1.0 → SA1.2 → SA2.1 → SA3.1 → SA6.1, as `fugaro plan graph` reads it. It is sequential for two
+reasons. SA2.1 changes the `fromUsage` that SA1.2 instruments. SA3.1 then moves a runner test, `provider_run_test.go`,
+that SA2.1 also changes; and the documents describe what merged.
 
 **Edges kept**, each with its reason:
 - SA2.1 needs SA1.2: the same files (`forward.go`, `ledger.go`), and its band.
 - SA2.3 needs SA2.1 (it describes SA2.1's behaviour) and SA1.5 (the same file, `internal/runner/gateway.go`).
 - SA3.1 needs SA1.1 (the same file, `models_add.go`; and a default that `update --repo` refuses cannot be tested end
-  to end) and SA2.2 (the same files, `diagnose.go` and `diagnose_test.go`).
+  to end), SA2.2 (the same files, `diagnose.go` and `diagnose_test.go`) and SA2.1 (the same file,
+  `provider_run_test.go`).
+- SA4.2 needs SA5.0: the same file, `update_converge_test.go`.
 - SA4.2 needs SA4.1 (the migration writes keys only SA4.1's parser accepts) and SA4.3 (the check it calls).
 - SA4.3, SA1.2 and SA3.1 need SA1.6: they read its two ends, and SA3.1 shares its file `catalog_apply.go`.
-- SA0.1 needs SA1.1: the same file, `docs/gcp-live-checklist.md`.
+- SA5.0 needs SA1.1, and SA0.1 needs SA5.0: the same file, `docs/gcp-live-checklist.md`, written in turn.
 - SA5.3 needs SA5.0: the same file, `doctor_render.go`.
 - SA5.1 needs SA5.0: its generation gate is about the rules SA5.0 deploys.
 - SA1.4 and SA5.4 need the tasks they prove. SA1.4 needs SA2.1 because it pins the settle rule.
@@ -573,28 +592,30 @@ that fills a contract (SA1.2, SA5.1) builds against its types, and the read does
 own contract. So each shape became the first real task of its slice instead: SA1.0 for the fields, and SA5.6 for the
 leaves. Neither is a stub; both ship as themselves. Writers and readers wait on them, and no reader waits on SA1.2 or
 SA5.1. The graph records no `decoupling` entry, and SA1.4 and SA5.4 are ordinary end-to-end tasks. Without the split,
-the readers would sit a level later, behind SA1.2 (weight 3) and SA5.1 (weight 2). With it, ten tasks share L1.
+the readers would sit a level later, behind SA1.2 (weight 3) and SA5.1 (weight 2.5). With it, eight tasks share L1.
 
 **Shared files** (no level holds two writers of one file):
 
 | File | Writers, by level |
 | --- | --- |
 | `internal/gateway/forward.go`, `ledger.go`, `provider_settle_test.go` | SA1.2 (L1), SA2.1 (L2) |
-| `internal/gateway/gateway.go` | SA1.0 (L0), SA2.3 (L3) |
+| `internal/gateway/gateway.go` | SA1.0 (L0), SA1.2 (L1), SA2.3 (L3) |
 | `schemas/result.schema.json` | SA1.0 (L0), SA2.3 (L3) |
 | `internal/runner/gateway.go` | SA1.5 (L1), SA2.3 (L3) |
-| `internal/cli/models_add.go`, `models_add_test.go` | SA1.1 (L0), SA3.1 (L2) |
-| `internal/cli/diagnose.go`, `diagnose_test.go` | SA2.2 (L1), SA3.1 (L2) |
-| `internal/pricing/catalog_apply.go`, `catalog_apply_test.go` | SA1.6 (L0), SA3.1 (L2) |
-| `docs/gcp-live-checklist.md` | SA1.1 (L0), SA0.1 (L1) |
-| `docs/multi-model.md` | SA1.1 (L0), SA6.1 (L3) |
-| `internal/cli/doctor_render.go` | SA5.0 (L0), SA5.3 (L1) |
-| `internal/cli/project_cmd.go` | SA5.0 (L0) |
-| `internal/cli/doctor.go` | SA5.3 (L1) |
+| `internal/runner/provider_run_test.go` | SA2.1 (L2), SA3.1 (L3) |
+| `internal/cli/models_add.go`, `models_add_test.go` | SA1.1 (L0), SA3.1 (L3) |
+| `internal/cli/diagnose.go`, `diagnose_test.go` | SA2.2 (L1), SA3.1 (L3) |
+| `internal/pricing/catalog_apply.go`, `catalog_apply_test.go` | SA1.6 (L0), SA3.1 (L3) |
+| `docs/gcp-live-checklist.md` | SA1.1 (L0), SA5.0 (L1), SA0.1 (L2) |
+| `docs/multi-model.md` | SA1.1 (L0), SA6.1 (L4) |
+| `internal/cli/update_converge_test.go` | SA5.0 (L1), SA4.2 (L2) |
+| `internal/cli/doctor_render.go` | SA5.0 (L1), SA5.3 (L2) |
+| `internal/cli/project_cmd.go` | SA5.0 (L1) |
+| `internal/cli/doctor.go` | SA5.3 (L2) |
 | `internal/budget/model.go`, `rollup.go` | SA5.6 (L0) |
-| `internal/budget/lease.go`, `session.go` | SA5.1 (L1) |
-| `internal/budget/rules/*` | SA5.0 (L0), SA5.4 (L2, a new file only) |
-| `docs/design/*.md` | SA6.1 (L3), and any pinned sentence its own task changes (RS6) |
+| `internal/budget/lease.go`, `session.go` | SA5.1 (L2) |
+| `internal/budget/rules/*` | SA5.0 (L1), SA5.4 (L3, a new file only) |
+| `docs/design/*.md` | SA6.1 (L4), and any pinned sentence its own task changes (RS6) |
 
 **If a shape task turns out wrong:** a task that finds SA1.0's or SA5.6's shape wrong amends it in a small task of its
 own, and does not work around it. For example, SA1.2 might find that the band needs the pin's key, which would reach
@@ -620,10 +641,11 @@ SA1.5, SA2.2 and SA5.1.
 ## Owner-run steps
 
 - **OR1 (D2645), now, ahead of the plan.** Delete `model_prices.deepseek/deepseek-v4.1-flash` from
-  `~/.config/fugaro/projects/fugaro.yaml` (or run `fugaro models rm`, which drops the entry with `modelsRmPrice`), then
-  run `fugaro update` in your own terminal.
-  - **Verify:** `fugaro budget prices` on your machine shows v4.1-flash as catalog-priced. That is what runs use, since
-    a job's prices come from your local config (F34). The shared copy keeps the old entry for teammates' CLIs (O3).
+  `~/.config/fugaro/projects/fugaro.yaml` by hand (not with `fugaro models rm`, which also removes the model from
+  `budget.allowed_models` and would stop v4.1-flash runs), then run `fugaro update` in your own terminal, which
+  republishes the policy node's `model_prices`.
+  - **Verify:** `fugaro project policy show` (the published node, which runs read) no longer lists v4.1-flash under
+    `model_prices`. The shared copy keeps the old entry for teammates' CLIs (O3).
   - Until SA3.1 ships, the catalog prices the model at `cheapest`. From 2026-11-22 the catalog is stale (F11) and
     prices it at the tier's maximum.
 
