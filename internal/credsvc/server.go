@@ -423,11 +423,16 @@ type Config struct {
 	// proxy asks it only after Decide admitted the call and with the one
 	// policy-and-bundle snapshot the decision itself used.
 	//
-	// nil is a service whose token store is not wired: every proxied call is
-	// served with the bundle's legacy bitbucket-token entry, which is the
-	// release behind's behaviour and the state of an installation between this
-	// field and the store's wiring (I1). It is a field of the deployment and
-	// not of the request: no caller, no record and no policy can set it.
+	// nil leaves the store to NewServer, which builds the real one over the
+	// configured State and this service's client (I1) whenever that state can
+	// keep a Bitbucket token's status. A deployment therefore sets nothing
+	// here; a test sets its own to decide what the selection answers.
+	//
+	// nil on a service whose state CANNOT keep a token's status is a service
+	// served by the bundle's legacy bitbucket-token entry alone: an
+	// installation that never stored a typed token, whose behaviour is what it
+	// was before this work (R3). It is a field of the deployment and not of the
+	// request: no caller, no record and no policy can set it.
 	Selector bbtokens.Selector
 	// State is the cascade's shared state under creds/.
 	State creds.Store
@@ -721,6 +726,23 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	if cfg.State == nil {
 		return nil, errors.New("credsvc: the service has no credential state")
+	}
+	// The Bitbucket token store, built here from the state store the service was
+	// already handed and never from a field of its own (I1): a token's status
+	// lives in the creds state store's own subtree (T6, D2351), so a deployment
+	// wires ONE store, and this value is the token half of it. It is built
+	// before the wrap below, because the wrapper is a SELECTION's reader and
+	// carries no token method — the store the token half needs is the one that
+	// was configured.
+	//
+	// A state store that cannot keep a Bitbucket token's status leaves Selector
+	// as it was, which is a service served by the bundle's legacy entry alone
+	// (Config.Selector): the behaviour of an installation between T8's route and
+	// this task, kept reachable so that no deployment is switched on by a build.
+	if cfg.Selector == nil {
+		if statuses, ok := cfg.State.(creds.TokenStatusStore); ok {
+			cfg.Selector = NewBitbucketTokenStore(statuses, cfg.Client)
+		}
 	}
 	// The state is read through this service's own reader (stateReads), which
 	// labels the read that failed as it fails: a selection makes three reads of
