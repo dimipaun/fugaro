@@ -21,7 +21,7 @@
 // injects, so a test can put the machine past its timeout without waiting), and
 // calls nothing: `pipeline.start()`, `pipeline.stop()`, the native module's
 // `start`/`updateStatus`/`setMuted`/`end` and P3.5's screen all belong to the
-// controller (VS1.1, not written yet). What this file is, is the table §4
+// controller (VS1.1, `session.js`). What this file is, is the table §4
 // writes -- every state, every event, and the reason each pair has no
 // transition -- written down where a test can walk all of it.
 //

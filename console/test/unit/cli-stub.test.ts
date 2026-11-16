@@ -526,10 +526,11 @@ describe('the stub’s settings arms', () => {
   })
 
   it('answers the write with the CLI’s own sentence, and records the same argv', () => {
-    // C3's second spawn: the same words with `--yes` instead of `--dry-run
-    // --json` (D1107). Its answer is a sentence rather than a document -- the
-    // console reads it as text and draws it (`settingsedit.ts`) -- and it ends
-    // with the line every settings write ends with.
+    // C3's second spawn: the same words with the write's phase -- which carries
+    // no flag -- instead of `--dry-run --json`. Its answer is a sentence rather
+    // than a document -- the console reads it as text and draws it
+    // (`settingsedit.ts`) -- and it ends with the line every settings write ends
+    // with.
     const directory = install()
     writeFileSync(join(directory, 'project.txt'), 'e2e\n')
     const asked = [
@@ -538,7 +539,6 @@ describe('the stub’s settings arms', () => {
       'agent.review_rounds',
       '--layer',
       'project',
-      '--yes',
       '--project',
       'e2e',
       '--',
@@ -553,7 +553,7 @@ describe('the stub’s settings arms', () => {
     // too: the console sends the same subcommand for an empty box
     // (`openSettingsEdit`), so the arm's second spelling is reachable without a
     // second stub.
-    const unset = ['settings', 'unset', 'agent.review_rounds', '--layer', 'project', '--yes', '--project', 'e2e']
+    const unset = ['settings', 'unset', 'agent.review_rounds', '--layer', 'project', '--project', 'e2e']
     expect(run(directory, unset).status).toBe(0)
     expect(settingsArgvs(directory)).toHaveLength(2)
   })
@@ -579,7 +579,6 @@ describe('the stub’s settings arms', () => {
       'agent.review_rounds',
       '--layer',
       'project',
-      '--yes',
       '--project',
       'e2e',
       '--',
@@ -587,7 +586,7 @@ describe('the stub’s settings arms', () => {
     ])
     expect(valued.status).toBe(2)
     expect(valued.stderr).toContain('an unset carries no value')
-    const valueless = run(directory, ['settings', 'set', 'agent.review_rounds', '--layer', 'project', '--yes', '--project', 'e2e'])
+    const valueless = run(directory, ['settings', 'set', 'agent.review_rounds', '--layer', 'project', '--project', 'e2e'])
     expect(valueless.status).toBe(2)
     expect(valueless.stderr).toContain('a set carries one behind --')
     // And a key with no dry-run document seeded beside the stub is refused by

@@ -105,6 +105,23 @@
         "unreconciled": { "type": "number", "minimum": 0, "description": "USD charged from reservations rather than from reported usage." },
         "cache_read_tokens": { "type": "integer", "minimum": 0, "description": "The run's prompt-cache read token total, summed from the gateway's per-call usage. A token count and not a dollar split: the price table returns one blended figure per call, so a cache read's dollars cannot be told from a write's (P12). Absent when the run read nothing from cache, and for a run with no gateway." },
         "cache_write_tokens": { "type": "integer", "minimum": 0, "description": "The run's prompt-cache write token total, summed from the gateway's per-call usage, both cache TTLs together. Absent when the run wrote nothing to cache, and for a run with no gateway." },
+        "model_tokens": {
+          "type": "object",
+          "description": "The run's token counts by model: the counts a repricing of the run reads, so `fugaro estimate` can price a run's own usage again on another model (F8). A key is a model ID the run's own path keyed usage under, never a string an upstream response claimed. On a run with a gateway these counts are what cache_read_tokens and cache_write_tokens sum; a run without one records no such totals -- they are the gateway's -- so its per-model counts stand alone and a reader that wants a total sums these entries. The 5m/1h split is what each path could tell -- the gateway prices every call from pricing.Usage, which keeps the two cache TTLs apart, and a run without a gateway records the agent's single cache-creation count as cache_write_5m -- so a zero is 'none, or this path could not tell', never a guess. Absent for a run that recorded no tokens, and in records written before this field existed.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["input", "output", "cache_read", "cache_write_5m", "cache_write_1h"],
+            "description": "One model's counts. Every count is written, zero included, so a member is never absent: a zero is a count, and which paths could tell one from 'used none' is model_tokens' own note. A short entry is a truncated write and is refused. Web searches are not here: they are priced apart and a repricing of the run's tokens does not carry them.",
+            "properties": {
+              "input": { "type": "integer", "minimum": 0 },
+              "output": { "type": "integer", "minimum": 0 },
+              "cache_read": { "type": "integer", "minimum": 0 },
+              "cache_write_5m": { "type": "integer", "minimum": 0, "description": "Cache-creation tokens written with the 5-minute TTL, and -- on a run with no gateway -- every cache-creation token the agent reported, which that path cannot split." },
+              "cache_write_1h": { "type": "integer", "minimum": 0, "description": "Cache-creation tokens written with the 1-hour TTL. Always 0 on a run with no gateway, whose agent reports one cache-creation count." }
+            }
+          }
+        },
         "usage_unparsed": { "type": "integer", "minimum": 0, "description": "Calls settled at their reservation because their usage could not be read." },
         "service_tiers": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "The service tiers the run's calls came back at that the price table has no multiplier for, spelled as a violation is (`usage.service_tier \"priority\"`). Those calls were charged the conservative multiple of the rates each call was priced at -- or, where the route reported what the call cost, the dearer of that multiple and the provider's own figure plus the route fee, up to the reservation that call made -- rather than failing their stage, so model_usd counts that charge and this is what names it. At most eight distinct names, then one `+N more` entry counting the distinct names beyond them, so a provider that answers a new tier on every call cannot grow the record with the call count. Absent when every call was priced at the model's own rates." },
         "catalog_stale": { "type": "boolean", "description": "True when the built-in provider price catalog was older than its own 30-day threshold (catalog.StaleAfter, internal/pricing/catalog), so every model it priced was charged the dearest end of its tier's range rather than the end price_policy asked for. The run over-counts on purpose and logs one `budget: price catalog stale` WARN. Absent when the catalog was fresh, or when no catalog-priced model was charged." }
@@ -187,7 +204,8 @@
         "reason": { "enum": ["kill_switch", "run_cap", "repo_daily_cap", "global_daily_cap", "no_cap", "token_cap", "budget_unavailable", "budget_token_expired", "no_credential", "creds_rules_denied", "stage_budget", "review_ratio", "fanout", "review_scope", "expected_exceeded", "owner_decision"] },
         "scope": { "enum": ["run", "repo", "global"] },
         "at": { "type": "string", "format": "date-time" },
-        "detail": { "type": "string" }
+        "detail": { "type": "string" },
+        "workspace_refusal": { "enum": ["stop", "cap", "settle"], "description": "The workspace's own credentials service refused this run, and which of the workspace's refusals it was (docs/workspaces/spec.md §5, §9; D2022's O19): its stop switch, the workspace's own spend cap, or a call the service made and could not record the cost of, which it refuses rather than serves. It is the marker a run the workspace refused did not have — the refusal reaches a member's run as the same budget_unavailable/run halt a member's own credentials-service outage writes, so a reader of records alone cannot tell the two apart (docs/stateless-orchestrator/reconciliation.md U12) — and it is read off the marker the workspace's service put on the refusal it answered (internal/gateway's WorkspaceRefusalHeader) and never inferred from reason, scope or detail, which a member's own service writes the same way. The enum is internal/gateway's WorkspaceRefusals, which TestResultSchemaWorkspaceRefusalsAgreeWithGo holds this list to. reason, scope and detail keep exactly what they said before this property existed: a run refused by a workspace stops where it always stopped. Absent — never an empty string — for every run no workspace refused, which is every run on an installation with no workspace and every record written before this property existed, so an old reader sees the record it always saw and version stays 1 (the field is additive)." }
       }
     },
     "checkpoint": {
@@ -269,6 +287,35 @@
               "source": { "enum": ["ceiling", "default-branch", "branch", "chain", "policy"], "description": "The layer of the effective value." },
               "from": { "enum": ["ceiling", "default-branch", "branch", "chain"], "description": "The layer that asked for the dropped value. The ceiling is here for one case: a stage timeout the run's own timeouts.stage bounds at least as tightly, which the run drops and records (T7.6) — the layer that wrote it can be the project layer's governance, which is the ceiling. chain is a launch's own chain limits, the last layer a value is asked for from." },
               "clamped": { "type": "boolean", "description": "True for the one shape that is not 'looser than the limits in force': a stage timeout the run's own timeouts.stage bounds at least as tightly, which the run drops rather than give a deadline of its own (T7.6). Absent (false) for the merge's looser values, which is also a stage timeout dropped because a tighter layer capped it — the two cannot be told apart by key, source and from alone." }
+            }
+          }
+        }
+      }
+    },
+    "chain_raises": {
+      "type": "array",
+      "description": "The raises a launcher made on this run's chain (docs/run-limit-carry-over L9, D1061): one entry per `fugaro budget chain raise`, each of which rewrote the stored task of the run that began the chain, where the chain's limit lives. The root run's record is the one that carries them. A launcher writes it and no merge reads it: the chain limit is a convention the installation states and not a bound the platform enforces, so who and why is what tells a raise from a rewritten limit. Absent for a chain nobody raised, and in records written before this field existed.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["by", "at", "reason", "limits"],
+        "properties": {
+          "by": { "type": "string", "minLength": 1, "description": "Who made the raise, as the launcher states itself (localcfg.Config.Me): a person's own account, never the run's." },
+          "at": { "type": "string", "format": "date-time", "description": "When the raise was made." },
+          "reason": { "type": "string", "minLength": 1, "description": "Why, in the launcher's own words; never empty, because the reason is what the raise is recorded for." },
+          "limits": {
+            "type": "array",
+            "minItems": 1,
+            "description": "The dimensions the raise moved, in the order every message about them reads: dollars, tokens, wall time, review rounds.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["dimension", "from", "to"],
+              "properties": {
+                "dimension": { "enum": ["usd", "tokens", "time", "review_rounds"] },
+                "from": { "type": "number", "minimum": 0, "description": "The chain's limit as the launch that began it stored it, in the dimension's own unit: micro-dollars, whole tokens, seconds, a count." },
+                "to": { "type": "number", "minimum": 0, "description": "The figure the raise wrote, in the same unit, above from." }
+              }
             }
           }
         }
@@ -498,7 +545,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["rounds"],
-      "description": "What the run's post-review triage decided (docs/post-review-triage/implementation-plan.md T-TR3, D1850): one entry per triage round the stage ran, in the order it ran them, with each finding's placement. A block of its own and never a replacement for `tolerated` — that one is the mode's table's account of what it let through and this one is the triage step's, and a run can carry both. A round is kept whatever it decided, a failed call included, because that is the fact a reader needs (D1846's triage_failed). Bounded: at most 32 rounds (runstore.MaxTriageRounds), each round at most 100 entries (runstore.MaxTriageEntries) with its own `total` saying how many findings it really read — a review round's findings are bounded by nothing, so a round the cap cut is a record of its first 100 verdicts and never presented as the whole round — each entry a key, a verdict, a reason of at most 200 runes and a source. Absent — never an empty block — for a run that triaged nothing, which is every record written before this field existed; the field is additive, so an old reader sees the record it always saw and `version` stays 1 (F21).",
+      "description": "What the run's post-review triage decided (docs/post-review-triage/implementation-plan.md T-TR3, D1850): one entry per triage round the stage ran, in the order it ran them, with each finding's placement. A block of its own and never a replacement for `tolerated` — that one is the mode's table's account of what it let through and this one is the triage step's, and a run can carry both. A round is kept whatever it decided, a failed call included, because that is the fact a reader needs (D1846's triage_failed). Bounded: at most 32 rounds (runstore.MaxTriageRounds), each round at most 100 entries (runstore.MaxTriageEntries) with its own `total` saying how many findings it really read — a review round's findings are bounded by nothing, so a round the cap cut is a record of its first 100 verdicts and never presented as the whole round — each entry a key, a verdict, a reason of at most 200 runes and a source, and a failed round a one-line `cause` saying why. Absent — never an empty block — for a run that triaged nothing, which is every record written before this field existed; the field is additive, so an old reader sees the record it always saw and `version` stays 1 (F21).",
       "properties": {
         "rounds": {
           "type": "array",
@@ -516,6 +563,7 @@
               "account": { "type": "string", "minLength": 1, "description": "The account that served the round's call, absent for a round the table settled alone without buying a call. It is the same account name the record's `stage_accounts` holds." },
               "model": { "type": "string", "minLength": 1, "description": "The model that answered the round's call, absent for a round the table settled alone. It is the same model id the record's `stages` hold." },
               "failed": { "type": "boolean", "description": "Whether the round's call failed or its answer could not be read. Set, the fallback blocks every finding the table blocks (D1846) — the record's triage_failed — and the flag is what makes that visible rather than a round that looks like any other. Absent (false) for a round that answered." },
+              "cause": { "type": "string", "minLength": 1, "maxLength": 200, "description": "Why the round failed, one line, absent for a round that did not (and dropped by internal/runstore's NewTriage for one whose `failed` is absent). It is the first line of the call's own text where the call answered nothing a verdict could be read from — an auth or upstream failure, a stream cut before the answer — and `unreadable verdict` (runstore.TriageCauseUnreadable) where it answered something shaped like a verdict that internal/triage's reader refused; `the call answered nothing` (runstore.TriageCauseNoAnswer) is the cause of last resort for a call that left no words at all. Clipped to 200 runes (runstore.MaxTriageLine), and redacted with the run's secrets and the token-shaped strings it does not hold before it is stored, because a service's auth error quotes the credential it refused and the record's own readers print this line: `fugaro diagnose` and the pull request's status section, above a stage table that says the same round failed." },
               "entries": {
                 "type": "array",
                 "maxItems": 100,
@@ -693,7 +741,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["pair_id", "arm"],
-      "description": "The A/B pair block the run's task carried (docs/model-ab-testing, decisions D550-D573; runstore.Record.AB, task.AB): the pair both arms belong to, which arm this run is, and, for a challenger, the coder model it ran. It is the task's own block echoed onto the record, so a pair can be scored from records alone, without a bucket listing (D559). Absent — never a block with an empty arm — for a run that was not sampled, which is every record written before this field existed, so an old reader sees the record it always saw and version stays 1 (the field is additive). The enums are internal/task's own closed vocabulary, spelled exactly as it spells it, and they are the same ones task.schema.json carries: a task and the record it produces state one block the same way.",
+      "description": "The A/B pair block the run's task carried (docs/model-ab-testing, decisions D550-D573; runstore.Record.AB, task.AB): the pair both arms belong to, which arm this run is, and, for a challenger, the coder model it ran. It is the task's own block echoed onto the record, so a pair can be scored from records alone, without a bucket listing (D559). Absent — never a block with an empty arm — for a run that was not sampled, which is every record written before this field existed, so an old reader sees the record it always saw and version stays 1 (the field is additive). The enums are internal/task's own closed vocabulary, spelled exactly as it spells it, and they are the same ones task.schema.json carries: a task and the record it produces state one block the same way — slot and champion_run included, which docs/review-levels-ab-jobmax B1.1 added to both (D728): the slot the pair varies, with an absent one meaning coder, and, on a challenger at a review slot, the champion's run ID whose patch the replay reads (B1.2).",
       "properties": {
         "pair_id": {
           "type": "string",
@@ -716,6 +764,15 @@
         "challenger_source": {
           "enum": ["owner"],
           "description": "Who named the challenger: the owner, in the project layer, never the repository's own file (D556, task.ABChallengerOwner)."
+        },
+        "slot": {
+          "enum": ["coder", "l1", "l2", "l3"],
+          "description": "The one thing the pair varied (D728, task.ABSlot): coder — the value an absent key means (task.AB.EffectiveSlot) — is a second full run on another coder model with every reviewer held fixed, and l1, l2 and l3 are the review slots, whose challenger replayed that level over the champion's own patch. A record written before this key was added is a coder pair, which is what D555 fixed and what A1.1 launched."
+        },
+        "champion_run": {
+          "type": "string",
+          "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$",
+          "description": "The champion's run ID, present only on a challenger whose slot is a review slot (task.AB.ChampionRun, D728): the run whose recorded patch this arm's reviewer read. Absent on a champion and on a coder pair's challenger, and absent from every record written before the key, which is why the field is additive and the format's version stays 1."
         }
       },
       "not": {
@@ -725,7 +782,14 @@
         ]
       },
       "if": { "properties": { "arm": { "const": "challenger" } }, "required": ["arm"] },
-      "then": { "required": ["publish", "challenger"] }
+      "then": { "required": ["publish", "challenger"] },
+      "allOf": [
+        {
+          "if": { "properties": { "arm": { "const": "challenger" }, "slot": { "enum": ["l1", "l2", "l3"] } }, "required": ["arm", "slot"] },
+          "then": { "required": ["champion_run"] },
+          "else": { "not": { "required": ["champion_run"] } }
+        }
+      ]
     },
     "patch_object": {
       "type": "string",

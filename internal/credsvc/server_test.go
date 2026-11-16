@@ -105,7 +105,7 @@ func testPolicyDocWith(fallback string) string {
 // exactly the case the intersection exists for.
 func testPolicyDocAccounts(fallback, accounts string) string {
 	return `{
-		"version": 4,
+		"version": 5,
 		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
 		"accounts": {
@@ -123,7 +123,7 @@ func testPolicyDocAccounts(fallback, accounts string) string {
 // and the project does not.
 func testPolicyDocAllowRepos(allowRepos, accounts string) string {
 	return `{
-		"version": 4,
+		"version": 5,
 		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ` + allowRepos + `,
 		"accounts": {
@@ -140,7 +140,7 @@ func testPolicyDocAllowRepos(allowRepos, accounts string) string {
 // without ever reaching into the block.
 func testPolicyDocNoCredentials() string {
 	return `{
-		"version": 4,
+		"version": 5,
 		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
 		"accounts": {
@@ -158,7 +158,7 @@ func testPolicyDocNoCredentials() string {
 // an empty list would be a different one.
 func testPolicyDocNoAllowList() string {
 	return `{
-		"version": 4,
+		"version": 5,
 		"budget": {"mode": "enforce", "per_run_usd": 5},
 		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
 		"accounts": {
@@ -175,7 +175,7 @@ func testPolicyDocNoAllowList() string {
 // and 0 is the written "no cap at all" rather than the absent key's one.
 func testPolicyDocControls(fallback string, stops bool, concurrency int) string {
 	return `{
-		"version": 4,
+		"version": 5,
 		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
 		"accounts": {
@@ -319,18 +319,54 @@ func (k *fakeKills) readCount() int {
 // express: a selection that is made and a credential that is spent, whose mark
 // cannot be recorded — the refusal the next call pays for (cascade.go's
 // markRefusal).
+//
+// The three per-read errors fail ONE of the three reads a selection makes and
+// no other — err fails all of them at once and so can never say which the
+// refusal was taken on, which is the one thing refusallog.go's line has to
+// name (refusallog_test.go).
 type fakeStore struct {
-	mu        sync.Mutex
-	marks     map[string]creds.Mark
-	current   map[string]string
-	leases    map[string]creds.Lease
-	rr        int64
-	err       error
-	updateErr error
+	mu         sync.Mutex
+	marks      map[string]creds.Mark
+	current    map[string]string
+	leases     map[string]creds.Lease
+	rr         int64
+	repoAuth   map[string]creds.RepoAuth
+	err        error
+	updateErr  error
+	marksErr   error
+	leasesErr  error
+	currentErr error
+	// repoAuthErr fails the repository auth record's read alone. It is its own
+	// error for the reason the three per-read ones are: a refusal taken on a
+	// record that could not be read is a different incident from one taken on
+	// the marks, and only this field can say which a test meant.
+	repoAuthErr error
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{marks: map[string]creds.Mark{}, current: map[string]string{}, leases: map[string]creds.Lease{}}
+	return &fakeStore{marks: map[string]creds.Mark{}, current: map[string]string{}, leases: map[string]creds.Lease{}, repoAuth: map[string]creds.RepoAuth{}}
+}
+
+// setRepoAuth records what `fugaro update` would have written for a repository,
+// which is the only way a test states what a repository's own configuration
+// says: the service reads the record and never the caller.
+func (s *fakeStore) setRepoAuth(slug string, rec creds.RepoAuth) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.repoAuth[slug] = rec
+}
+
+func (s *fakeStore) RepoAuth(_ context.Context, slug string) (creds.RepoAuth, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.err != nil {
+		return creds.RepoAuth{}, false, s.err
+	}
+	if s.repoAuthErr != nil {
+		return creds.RepoAuth{}, false, s.repoAuthErr
+	}
+	rec, ok := s.repoAuth[slug]
+	return rec, ok, nil
 }
 
 func runKey(run creds.Run) string { return run.Slug + "/" + run.ID }
@@ -340,6 +376,9 @@ func (s *fakeStore) Marks(context.Context) (map[string]creds.Mark, error) {
 	defer s.mu.Unlock()
 	if s.err != nil {
 		return nil, s.err
+	}
+	if s.marksErr != nil {
+		return nil, s.marksErr
 	}
 	out := make(map[string]creds.Mark, len(s.marks))
 	for k, v := range s.marks {
@@ -372,6 +411,9 @@ func (s *fakeStore) Leases(context.Context, time.Time) ([]creds.Lease, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
+	if s.leasesErr != nil {
+		return nil, s.leasesErr
+	}
 	out := make([]creds.Lease, 0, len(s.leases))
 	for _, l := range s.leases {
 		out = append(out, l)
@@ -396,6 +438,9 @@ func (s *fakeStore) Current(_ context.Context, run creds.Run) (string, bool, err
 	defer s.mu.Unlock()
 	if s.err != nil {
 		return "", false, s.err
+	}
+	if s.currentErr != nil {
+		return "", false, s.currentErr
 	}
 	name, ok := s.current[runKey(run)]
 	return name, ok, nil

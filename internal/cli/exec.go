@@ -46,6 +46,17 @@ type execOptions struct {
 	identityURL string
 }
 
+// defaultExecWorkDir is where a job's container starts the runner: the base
+// image's own WORKDIR, and the default of --workdir below, which is what a job
+// passes when it names none (the image's CMD is a bare `fugaro exec`). The two
+// are one value because a run looks for a baked checkout beside the work
+// directory (internal/runner's BakedRepoRoot), and the bake step writes it
+// under the image's own path (internal/imagebake's Root): a work directory
+// anywhere else is a job that finds no baked checkout and clones instead, with
+// every test still green. TestBakedRootIsTheJobWorkDirectorysSibling holds the
+// three together, the image's Dockerfile included.
+const defaultExecWorkDir = "/work/repo"
+
 func newExecCmd() *cobra.Command {
 	var o execOptions
 	cmd := &cobra.Command{
@@ -59,7 +70,7 @@ func newExecCmd() *cobra.Command {
 	f.StringVar(&o.bucket, "bucket", os.Getenv("FUGARO_BUCKET"), "runs bucket URL (gs://… or file://…)")
 	f.StringVar(&o.run, "run", os.Getenv("FUGARO_RUN"), "run to execute, as <repo-slug>/<run-id>")
 	f.StringVar(&o.taskFile, "task-file", "", "store this task spec (path, or - for stdin) and run it; a run ID is generated if missing")
-	f.StringVar(&o.workDir, "workdir", "/work/repo", "repository checkout; it is force-reset to the task's ref and untracked files are removed (ignored ones are kept)")
+	f.StringVar(&o.workDir, "workdir", defaultExecWorkDir, "repository checkout; it is force-reset to the task's ref and untracked files are removed (ignored ones are kept)")
 	// The default is the job's own FUGARO_REMOTE (infra.RemoteEnv), which a
 	// checkout: clone workflow's job carries and a baked one does not: the
 	// repository has to reach a clone job from its environment, since its

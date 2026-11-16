@@ -1,0 +1,20 @@
+{
+  "code": "GBDB-6AMT",
+  "envelope": "Ac4rCgQZOczRLapAASz4P8KhFO8U4tDfo8A4wVwJPRE2Z_WOs7I778lRaFBhEsJ7VNJG_BsjOj0ryItbUUr867o6EW06lxNnoNZ4uUVBwv1mPkC1jogoTWWZ13M93LQ6PeegBDpMKinnTaWWLk2Cg4QcNFQafTjeiIZd1hIckV4ethOIxMxOEMPp0RwbMwsZoUTfWWnk_V5ubL2lN_3mHSz0I4hPP57zKVwnj3xJl88-njkGamo_ggiQJE8_lumntp6eDe-bW7U8ZYY60Dy_-OWTiKbDQIAp5EJWAab1s6K4X8eJcN2Gs7QiOn1iEM0HkmvifK_QVvtHaPUqxQIZg0eHhdQLuaNFsbOjU3L8yAVJqCmW8ReYGUaTiLi9QXRG2UbtiipvZOss78SNSbgMTq2y3DLhZ79gDmnqpFrIPJ-DeCwspR_64Wo8R5cyWjL0gfP8ZogkypjLGw0HXgKI",
+  "pairing_uid": "p~JCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQ",
+  "payload": {
+    "config": {
+      "project": "aurora",
+      "gcp_project": "fp-1234",
+      "database_url": "https://fp-1234-default-rtdb.firebaseio.com",
+      "api_key": "test-web-api-key"
+    },
+    "device": {
+      "uid": "m~MzMzMzMzMzMzMzMzMzMzMw",
+      "token": "test-device-token-not-a-credential"
+    },
+    "mac_key": "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio"
+  },
+  "phone_public": "EyxEK-AQ-9V-cmAzKKp25x_MwVA6riGTJ9FNnJmT9HI",
+  "phone_secret": "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI"
+}

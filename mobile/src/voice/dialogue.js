@@ -89,11 +89,14 @@
 // **A launch is not confirmed -- and it does travel (D162).** The machine answers
 // `pass-through` for one, and `propose` hands the owner's own words to the same
 // `send` port agent text goes to, which is exactly what P6.9's typed path does
-// for the same verb (`mobile/src/text/input.js`, `return send(text)`): "no
-// confirmation" means
-// the command goes to the agent as text, through the one write path the phone
-// has. What is unwritten for a launch is the same *record* the confirmed action
-// above waits on -- not the launch itself.
+// for the same verb (`mobile/src/text/input.js`, its pass-through branch): "no
+// confirmation" means the command goes to the agent as text, through the one
+// write path the phone has. What is unwritten for a launch is the same *record*
+// the confirmed action above waits on -- not the launch itself. What travels
+// WITH it is the verb the machine just classified it as: a launch and an
+// ordinary message are the same bytes at the write path, so the classification
+// is the only thing that lets the lapse (S6.3) keep the one and refuse the
+// other.
 //
 // **Nothing here reads a clock, a file, the network, a random source or a
 // credential.** `now` (D117's server-anchored now), `newId` and the `send` port
@@ -248,11 +251,15 @@ function isPlainObject(value) {
  * the sentences, and the prompt announcement. `send` is the sink for **agent
  * text**, and the app wires it to the voice screen's own `accept` -- so the
  * screen's offline refusal (P1.4, P3.5) still stands over the voice path, and
- * the app keeps exactly one write path (P3.6). `now` is D117's server-anchored
- * now and `newId` mints the utterance, action and confirmation ids the machine
- * spends; `router` carries P6.1's configuration (`aliases`, `projects`,
- * `agents`) and `confirm` P6.2's (`timeoutMs`, `maxPending`, `maxLedger`). Both
- * are refused by the module that owns them if they are wrong.
+ * the app keeps exactly one write path (P3.6). It takes a second argument, the
+ * classification of the sentence being sent (`{ verb }`, passed for a launch
+ * and for nothing else), which the sink hands on to the client: a sink that
+ * ignores it is a sink that makes a lapsed launch look like an ordinary
+ * message. `now` is D117's server-anchored now and `newId` mints the utterance,
+ * action and confirmation ids the machine spends; `router` carries P6.1's
+ * configuration (`aliases`, `projects`, `agents`) and `confirm` P6.2's
+ * (`timeoutMs`, `maxPending`, `maxLedger`). Both are refused by the module that
+ * owns them if they are wrong.
  *
  * Three wiring failures throw rather than being discovered mid-action: a missing
  * port, a clock that is not a time (the machine's state carries a watermark, so
@@ -375,9 +382,15 @@ export function createVoiceDialogue(options = {}) {
    * which needs no confirmation. A destructive command is never sent as its own
    * text -- P6.2 answers those with a read-back, and the record of a confirmed
    * one is returned rather than written (see the header).
+   *
+   * `options` is the CALLER'S CLASSIFICATION and nothing else: a launch passes
+   * its verb, because the sink cannot tell a launch from chatter and the lapse
+   * (S6.3; D436, T12) has to know which of the two it is refusing -- a lapsed
+   * launch never reaches the inbox (the design's §4.3). Agent text passes
+   * nothing, which is what makes it a message.
    */
-  async function deliver(text) {
-    const sent = await send(text);
+  async function deliver(text, options) {
+    const sent = await send(text, options);
     if (sent === null || typeof sent !== 'object') {
       return refuse(DIALOGUE_CODES.BAD_INPUT, 'send');
     }
@@ -667,10 +680,14 @@ export function createVoiceDialogue(options = {}) {
       if (stepped.outcome === CONFIRM_OUTCOME.PASS_THROUGH) {
         // D162: a launch is not read back and needs no phrase -- so it is the
         // one command that travels as the owner's own words, through the same
-        // sink agent text uses (P6.9's typed path sends it the same way). The
-        // machine takes no target and no action id for it, and neither does the
-        // result: `actionId: null` is "nothing was proposed to confirm".
-        const sent = await deliver(text);
+        // sink agent text uses (P6.9's typed path sends it the same way, with
+        // the same classification). The machine takes no target and no action
+        // id for it, and neither does the result: `actionId: null` is "nothing
+        // was proposed to confirm". The VERB does travel, and that is S6.3's
+        // half of it: an ordinary message and a launch are the same bytes at
+        // the write path, so the sink is handed what the machine just said the
+        // utterance is -- the only thing that lets a lapse refuse it.
+        const sent = await deliver(text, { verb: stepped.verb });
         if (sent.ok !== true) return sent;
         return Object.freeze({ ...sent, verb: stepped.verb, actionId: null });
       }

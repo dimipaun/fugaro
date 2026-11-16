@@ -203,7 +203,6 @@ fugaro update.`,
 	f.StringVar(&o.issuer, "issuer", "", "the issuer the exchange requires; must be https://securetoken.google.com/<firebase-project>")
 	f.StringVar(&o.assertionKey, "assertion-key", "", "the key this project verifies a member-bound assertion against")
 	f.StringVar(&o.serviceAccount, "service-account", "", "the workspace service account this project's grant binds to")
-	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
 	return cmd
 }
 
@@ -355,7 +354,6 @@ file is kept. The removal reaches the installation through fugaro update.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runWorkspaceRm(cmd, args[0], &o) },
 	}
-	cmd.Flags().BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
 	return cmd
 }
 
@@ -478,7 +476,6 @@ builds.`,
 	f.StringVar(&o.fp, "fp", "", "the member's Fugaro project name, which the token's fp claim must be")
 	f.StringVar(&o.exchangeURL, "exchange-url", "", "the member's exchange endpoint, where the workspace's signer mints a member-bound assertion for")
 	f.StringArrayVar(&o.repos, "repo", nil, "a repository the member contributes to the workspace, as owner/name (repeatable)")
-	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
 	return cmd
 }
 
@@ -646,7 +643,6 @@ file is kept. The owner's fugaro update publishes the record the table builds.`,
 			return runWorkspaceMemberRm(cmd, args[0], args[1], &o)
 		},
 	}
-	cmd.Flags().BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
 	return cmd
 }
 
@@ -722,7 +718,6 @@ file is kept.`,
 	f := cmd.Flags()
 	f.StringVar(&o.workspace, "workspace", "", "the workspace whose cap this is (required: a cap is never spelled globally)")
 	f.Float64Var(&o.monthly, "monthly", 0, "the cap in US dollars per month, more than zero")
-	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
 	return cmd
 }
 

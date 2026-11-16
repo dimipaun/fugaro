@@ -152,8 +152,8 @@ func TestDocsTaskGovernanceReservedChecksStayReserved(t *testing.T) {
 // taskGovernanceOtherInstallationRE matches the installations this work's
 // checks must never point at: the owner's own (`belong`) and the two others the
 // register names when it says which installation a check is not for. The word
-// boundary is what keeps "belongs to the stage's own session" — Check 139's own
-// prose — out of the reading.
+// boundary is what keeps a word like "belongs" in a section's own prose out of
+// the reading: only the standalone `belong` is another installation's name.
 var taskGovernanceOtherInstallationRE = regexp.MustCompile(`\bbelong\b|EdgeWeb|EdgeServer`)
 
 // TestDocsTaskGovernanceChecksNameTheSandboxOnly: the three checks are the

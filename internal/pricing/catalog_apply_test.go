@@ -472,6 +472,36 @@ func TestOverrideClearsCatalogProvenance(t *testing.T) {
 	}
 }
 
+// TestCatalogRowsStillPriceNoImage: D8 is unchanged by D2001 -- the catalog
+// prices tokens, never an image, so a compiled row refuses one. An owner who
+// prices that model's tokens and says nothing about its images is in the same
+// place: there is no ceiling on the row to keep, so the override leaves the
+// zero, and a call carrying images is refused rather than reserved at a
+// number nobody chose. Giving it one takes the member, which is the whole
+// point of the owner's lever.
+func TestCatalogRowsStillPriceNoImage(t *testing.T) {
+	got := compile(t, catalogFile("2026-10-14", entry()), route(false, "cheapest"))
+	if m, _ := got.Lookup("vendor/model"); m.ImageTokens != 0 {
+		t.Fatalf("a compiled catalog row has ImageTokens = %d, want 0", m.ImageTokens)
+	}
+	with, err := got.With(Overrides{"vendor/model": {InputPerM: 7, OutputPerM: 9, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.5}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := with.Lookup("vendor/model"); m.ImageTokens != 0 {
+		t.Errorf("pricing the tokens gave the model ImageTokens = %d, want the catalog's 0", m.ImageTokens)
+	}
+	// What the owner writes for the images is what the row gets.
+	rate := int64(1200)
+	priced, err := got.With(Overrides{"vendor/model": {Rates: Rates{InputPerM: 7, OutputPerM: 9, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.5}, ImageTokens: &rate}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := priced.Lookup("vendor/model"); m.ImageTokens != 1200 {
+		t.Errorf("ImageTokens = %d, want the owner's 1200", m.ImageTokens)
+	}
+}
+
 // TestApplyCatalogLeavesUnpricedModelAlone pins the route scope: a route
 // that claims a model the catalog does not price gets no row, so the
 // existing refusal stands rather than a marketplace guess.

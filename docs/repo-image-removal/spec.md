@@ -55,7 +55,7 @@ removal and not a separate one.
 | `fugaro image check` | **loses its repository arms and keeps the catalog job's.** The local workflow check and the per-repository `--job` mode go with the repository image — they read `rebuild.*` and the repository's registry, and the job they serve is R4's. **`--job --catalog` stays** (`internal/cli/image_check_catalog.go:31`, merged as #1679): one run of the installation's catalog check job, reading its spec out of `catalogCheckSpecEnv` and deciding every entry of the project's catalog — that is D1148's driver, and not this removal's to delete |
 | `fugaro image status` | **removed** (`internal/cli/imagecheck.go:982`) |
 | `fugaro image render` | **removed** (`internal/cli/image.go:510`). It prints the Dockerfile the template generates, and there is no template |
-| `fugaro image gate`, `fugaro image record` | **removed** (`internal/cli/image_record.go:60`, `:145`). They are the derived build's own steps; the catalog build carries its own pin, tag and record steps (`internal/backend/gcp/catalog.go:385`, `:562`, `:627`) and calls neither |
+| `fugaro image gate`, `fugaro image record` | **removed** (`internal/cli/image_record.go:60`, `:145`). They are the derived build's own steps; the catalog build carries its own pin, tag and record steps (`internal/backend/gcp/catalog.go:393`, `:570`, `:635`) and calls neither |
 | `fugaro image selftest` | **stays** (`internal/cli/image.go:44`). It is the runtime-contract check the *catalog* build's smoke runs too (`internal/cli/image_build_catalog.go:208`), so it is the catalog's step now |
 | `fugaro image git-credential` | **stays** (`internal/cli/gitcred.go:39`); the catalog build clones with it |
 | `fugaro image ls`, `add`, `rm` | **stay unchanged** (`internal/cli/image_catalog.go:60`, `:286`, `:407`) |
@@ -260,9 +260,9 @@ They are destroyed by the flow the tree already has and by nothing else:
   in [reconciliation.md](reconciliation.md) §5 and is not hidden here: until the owner runs it for a
   repository, that repository's converge is refused.
 - **Retirement is owner-run: `fugaro update --repo <r> --retire`**, with the two typed confirmations
-  `--yes` cannot cover (`internal/cli/init.go:444`; the flow is `internal/cli/init_retire.go:22` and
-  the set it acts on is `internal/infra/retire.go:26`). A coding agent's session, a pipe, `--json` and
-  `--non-interactive` cover neither.
+  no flag covers (`internal/cli/init.go:444`; the flow is `internal/cli/init_retire.go:22` and
+  the set it acts on is `internal/infra/retire.go:26`). A coding agent's session, a pipe and `--json`
+  answer neither.
 - **It is never automatic.** No `fugaro update` converge, no `setup`, no managed gate and no run
   performs it; the retirement set is *printed* by an ordinary run and acted on only under `--retire`.
 - **The plan shows the destroy and refuses it without the flag.** The retirement set names each address

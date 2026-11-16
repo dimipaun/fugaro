@@ -90,11 +90,12 @@ import (
 // records that all carried one digest would not say which build was admitted
 // (refreshBuildDoc's own reason for naming the build).
 //
-// Why the class is YesOrTyped, and why it decides less than it used to. YesOrTyped
-// is D12's answer of 2026-10-20 and the class `fugaro image refresh`'s per-build
-// document already carried (askBuild), and it is the class a build's admission is
-// still made under. What it decides now is what the verdict is spent on — the
-// record, and the line the session that was admitted reads (GateProceeded at a
+// Why a build is a step the run's own answer reaches, and why that answer
+// decides less than it used to. It is D12's answer of 2026-10-20, and the one
+// `fugaro image refresh`'s per-build document already carried (askBuild), so a
+// build's admission is still made under it. What it decides now is what the
+// verdict is spent on — the record, and the line the session that was admitted
+// reads (GateProceeded at a
 // terminal, AgentProceeded under a marker) — and no longer whether anything is
 // asked: with the confirmation gone, a managed project's terminal and a coding
 // agent's session are judged by the same document and submit their builds under
@@ -277,11 +278,11 @@ func (m *buildManaged) admitEntry(ctx context.Context, cmd *cobra.Command, c ini
 		return err
 	}
 	rules, refused := buildRules(m.lc, cat, e, p, killRule)
-	conv := managedmode.ConvergeAdmitted(doc, initflow.YesOrTyped, rules)
+	conv := managedmode.ConvergeAdmitted(doc, rules)
 	if len(refused) > 0 {
-		conv = managedmode.ConvergeRefused(doc, initflow.YesOrTyped, refused)
+		conv = managedmode.ConvergeRefused(doc, refused)
 	}
-	adm, err := m.gate.admit(ctx, initflow.YesOrTyped, conv)
+	adm, err := m.gate.admit(ctx, conv)
 	if err != nil {
 		return err
 	}
@@ -303,10 +304,10 @@ func (m *buildManaged) admitEntry(ctx context.Context, cmd *cobra.Command, c ini
 	// unadmitted plan, and a session that has no admission to proceed on
 	// proceeds on nothing. refreshBuilds' announceBuild gives its own
 	// per-build admission the same two answers.
-	if initflow.ConfirmsByGate(initflow.YesOrTyped, c, adm) {
+	if initflow.PersonAtTheTerminal(c) && adm.Removes() {
 		fmt.Fprintf(cmd.ErrOrStderr(), "  %s\n", initflow.GateProceeded())
 	} else if c.Agent != "" {
-		if !initflow.CanConfirmManaged(initflow.YesOrTyped, c, adm) {
+		if !adm.Removes() {
 			return &initflow.AgentError{Marker: c.Agent}
 		}
 		fmt.Fprintf(cmd.ErrOrStderr(), "  %s\n", initflow.AgentProceeded(c.Agent))

@@ -85,6 +85,7 @@ import { installStub } from './stub'
 import type { Stub } from './stub'
 import { installWslStub } from './wslstub'
 import type { WslFixture } from './wslstub'
+import { itHostRoute } from '../support/hostRoute'
 
 function freshDirectory(): string {
   return mkdtempSync(join(tmpdir(), 'fugaro-picker-'))
@@ -550,7 +551,7 @@ describe('the two documents’ surfaces', () => {
 // ---------------------------------------------------------------------------
 
 describe('the picker’s list', () => {
-  it('draws the installations the CLI listed, with its warning lines', async () => {
+  itHostRoute('draws the installations the CLI listed, with its warning lines', async () => {
     const { picker, ipcMain } = pickerOver({ prefixes: [listableStub().directory] })
     void picker
     const reply = await answer(ipcMain, 'list')
@@ -600,7 +601,7 @@ describe('the picker’s list', () => {
     expect(data.warnings).toEqual([])
   })
 
-  it('answers the no-installation screen when a binary answered and nothing was listed', async () => {
+  itHostRoute('answers the no-installation screen when a binary answered and nothing was listed', async () => {
     const { picker, ipcMain } = pickerOver({ prefixes: [seededStub().directory] })
     void picker
     const reply = await answer(ipcMain, 'list')
@@ -613,7 +614,7 @@ describe('the picker’s list', () => {
     expect(data.rows).toEqual([])
   })
 
-  it('keeps a record the CLI did not list, so an older store still opens', async () => {
+  itHostRoute('keeps a record the CLI did not list, so an older store still opens', async () => {
     // `installations.json` written by a console whose CLI cannot enumerate, and a
     // CLI that lists nothing: the record is still a row, marked as this console's
     // own, and it can still be chosen -- which is what "no migration" means for
@@ -738,7 +739,7 @@ describe('the picker’s list', () => {
 // ---------------------------------------------------------------------------
 
 describe('the picker’s choose', () => {
-  it('opens the installation the CLI listed, and hands the resolved binary to the window', async () => {
+  itHostRoute('opens the installation the CLI listed, and hands the resolved binary to the window', async () => {
     const handed: { project: string; version: string; resolvedBinaryPath: string }[] = []
     const stub = listableStub()
     const { picker, ipcMain } = pickerOver({
@@ -766,7 +767,7 @@ describe('the picker’s choose', () => {
     expect(data.rows.find((row) => row.project === 'sandbox')).toMatchObject({ active: true, saved: true })
   })
 
-  it('does not choose a CLI this console cannot drive, and hands nothing over (review S11)', async () => {
+  itHostRoute('does not choose a CLI this console cannot drive, and hands nothing over (review S11)', async () => {
     const refused = installStub(join(freshDirectory(), 'bin'), {
       commands: { version: { stdout: '0.5.0\n' }, 'config list': { stdout: '{"installations":[{"name":"old"}],"warnings":[]}\n' } },
     })
@@ -810,7 +811,7 @@ describe('the picker’s choose', () => {
     if (!reply.ok) expect(reply.reason).not.toBe('')
   })
 
-  it('runs one mutation at a time: a second choose waits for the first one’s window (review S6)', async () => {
+  itHostRoute('runs one mutation at a time: a second choose waits for the first one’s window (review S6)', async () => {
     let release: () => void = () => undefined
     const held = new Promise<void>((resolve) => {
       release = resolve
@@ -859,7 +860,7 @@ describe('the picker’s checkout', () => {
     return { directory: stub.directory, checkout }
   }
 
-  it('refuses a checkout the CLI listed under a temporary root, as the screen never offers it', async () => {
+  itHostRoute('refuses a checkout the CLI listed under a temporary root, as the screen never offers it', async () => {
     // The renderer is not trusted to keep to the drawn list: the write is held to
     // the same list the rail offers, so a temporary or tool-owned directory the
     // CLI listed is refused here as well as left off the screen.
@@ -877,7 +878,7 @@ describe('the picker’s checkout', () => {
     if (!refused.ok) expect(refused.reason).toContain('not one of the checkouts the CLI listed')
   })
 
-  it('refuses a listed checkout that is a symlink into a tool-owned directory, offer and write both (review m1)', async () => {
+  itHostRoute('refuses a listed checkout that is a symlink into a tool-owned directory, offer and write both (review m1)', async () => {
     const target = join(freshDirectory(), 'scratchpad', 'real')
     mkdirSync(target, { recursive: true })
     const link = join(freshDirectory(), 'link')
@@ -903,7 +904,7 @@ describe('the picker’s checkout', () => {
     expect(refused.ok).toBe(false)
   })
 
-  it('offers only what the CLI listed: a directory it never named is refused', async () => {
+  itHostRoute('offers only what the CLI listed: a directory it never named is refused', async () => {
     const { directory, checkout } = withCheckouts()
     const { picker, ipcMain } = pickerOver({ prefixes: [directory] })
     void picker
@@ -941,7 +942,7 @@ describe('the picker’s checkout', () => {
     if (!refused.ok) expect(refused.reason).toContain('not the project named')
   })
 
-  it('probes the record’s own override, and its config, rather than a second walk of rule 4', async () => {
+  itHostRoute('probes the record’s own override, and its config, rather than a second walk of rule 4', async () => {
     // `setInstallationCheckout` validated `{ project, checkout }` alone: the
     // record's own `binaryPath` and `configPath` were not part of the candidate,
     // so rule 4's walk decided which CLI the version handshake and rule 7's
@@ -1010,7 +1011,7 @@ describe('the picker’s checkout', () => {
     expect(doctor?.project).toBe('sandbox')
   })
 
-  it('clears a checkout when no directory is sent, and checks nothing', async () => {
+  itHostRoute('clears a checkout when no directory is sent, and checks nothing', async () => {
     const { directory, checkout } = withCheckouts()
     const { picker, ipcMain } = pickerOver({ prefixes: [directory] })
     void picker
@@ -1025,7 +1026,7 @@ describe('the picker’s checkout', () => {
     }
   })
 
-  it('writes nothing when a listed project this console holds no record for is cleared', async () => {
+  itHostRoute('writes nothing when a listed project this console holds no record for is cleared', async () => {
     // The other half of the case above, and the one the console got wrong: a
     // project the CLI lists and this console never chose has **no record at
     // all**, so there is no checkout to clear. The reply is still the ordinary
@@ -1054,7 +1055,7 @@ describe('the picker’s checkout', () => {
 })
 
 describe('the picker’s remove', () => {
-  it('names every removal that happened to the launch seam, active or not, and none that refused', async () => {
+  itHostRoute('names every removal that happened to the launch seam, active or not, and none that refused', async () => {
     // `onRemoved` is the dashboard's seam and it fires only for the **active**
     // installation, because a removal of another row leaves the dashboard with
     // an installation to drive. A launch in flight is a different fact: it names
@@ -1099,7 +1100,7 @@ describe('the picker’s remove', () => {
     expect(notified).toHaveLength(1)
   })
 
-  it('drops this console’s record, and tells the dashboard when the active one went', async () => {
+  itHostRoute('drops this console’s record, and tells the dashboard when the active one went', async () => {
     const removed: string[] = []
     const { picker, ipcMain } = pickerOver({ prefixes: [listableStub().directory], onRemoved: (id) => removed.push(id) })
     void picker
@@ -1313,7 +1314,7 @@ const NO_WSL: WslFixture = {
 }
 
 describe('the picker’s distro list', () => {
-  it('answers the distributions wsl.exe lists, with the machine’s own default marked', async () => {
+  itHostRoute('answers the distributions wsl.exe lists, with the machine’s own default marked', async () => {
     // The one row whose subject is the machine and not this console's record of
     // anything: `wslDistributions` is the single enumeration of distributions
     // (T-C4), and the channel answers with its own value rather than a shape the
@@ -1334,7 +1335,7 @@ describe('the picker’s distro list', () => {
     })
   })
 
-  it('answers the absence of a list when wsl.exe cannot answer, and never an empty one', async () => {
+  itHostRoute('answers the absence of a list when wsl.exe cannot answer, and never an empty one', async () => {
     // The three outcomes T-C4 exists for, at the boundary: a machine with
     // distributions, a machine whose `wsl.exe` answered with none, and a machine
     // where WSL is not installed. The third is not the second, and a picker that
@@ -1351,7 +1352,7 @@ describe('the picker’s distro list', () => {
     expect(answer_.reason).toContain('Windows Subsystem for Linux has no installed distributions.')
   })
 
-  it('answers a machine with no distributions as an empty list, which is an answer', async () => {
+  itHostRoute('answers a machine with no distributions as an empty list, which is an answer', async () => {
     const wsl = installWslStub(freshDirectory(), { distros: { list: '', status: '' } })
     const { picker, ipcMain } = pickerOver({ wslPath: wsl.binary, platform: 'win32' })
     void picker
@@ -1361,7 +1362,7 @@ describe('the picker’s distro list', () => {
     })
   })
 
-  it('runs wsl.exe and no CLI: the read starts nothing inside a distribution', async () => {
+  itHostRoute('runs wsl.exe and no CLI: the read starts nothing inside a distribution', async () => {
     // The list is a question about the machine, so the child is `wsl.exe` itself
     // -- two invocations (`--list --quiet`, `--status`) and no third hop. A
     // console that resolved an installation to ask this, or that ran the CLI
@@ -1440,7 +1441,7 @@ describe('the picker’s window', () => {
     expect(built?.options).toEqual(pickerOptions(pickerPreloadPath('/work/repo/console')))
     expect(built?.options['webPreferences']).toEqual({
       ...consoleWebPreferences(),
-      preload: '/work/repo/console/dist/preload/installations.js',
+      preload: join('/work/repo/console', 'dist', 'preload', 'installations.js'),
     })
   })
 

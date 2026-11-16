@@ -1,0 +1,6 @@
+version: 1
+name: rebase
+description: "Puts a pull request's branch back on its base, resolves the conflicts, re-runs the tests and pushes. No coder pass and no review."
+use_when: "A pull request that has fallen behind its base and needs nothing else. Launch it as a follow-up on the pull request (--recipe rebase --pr N): a run that cannot resolve the conflicts pushes nothing and ends refused with the reason."
+steps:
+  - rebase: {}

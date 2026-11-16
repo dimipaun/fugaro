@@ -35,7 +35,7 @@ func TestProjectPolicyPublishIsRefusedInAnAgentSession(t *testing.T) {
 	}{
 		{"publish", []string{"project", "policy", "publish"}},
 		{"--seed-repos", []string{"project", "policy", "publish", "--seed-repos"}},
-		{"--delete", []string{"project", "policy", "publish", "--delete", "--yes"}},
+		{"--delete", []string{"project", "policy", "publish", "--delete"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newProjectFixture(t, "")
@@ -96,7 +96,11 @@ func TestProjectPolicyPublishKeepsDeleteAndSeedRepos(t *testing.T) {
 		f := newProjectFixture(t, "")
 		f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
 
-		out, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+		// The deletion names what it takes away and asks for the project's name
+		// before it does: with --yes gone from the door, the typed name at a
+		// real terminal is the only thing that confirms it (T11).
+		fakeTerminal(t)
+		out, _, err := executeStdin(t, "aurora\n", "project", "policy", "publish", "--delete")
 		if err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
@@ -217,6 +221,38 @@ func TestOlderCLIRefusesANodeCarryingImageCatalog(t *testing.T) {
 	// about the key nobody reads and not about the catalog.
 	if err := refuseUnknownPolicyKeys(&projectpolicy.Policy{Version: projectpolicy.Version}); err != nil {
 		t.Errorf("a node carrying no unknown key was refused: %v", err)
+	}
+}
+
+// TestOlderCLIRefusesANodeCarryingTheTokensKey is the same skew for R5's key,
+// and it is the one acceptance T3 has on the CLI side: a launcher older than
+// the key models every top-level key but bitbucket_tokens, so a node a project
+// with typed Bitbucket tokens publishes is a node that release does not know,
+// and every CLI reader refuses it rather than launching against a policy it
+// half-reads — while the runner of that release tolerates the key and keeps
+// serving (projectpolicy's TestOldRunnerReaderToleratesTheTokensKey, which
+// decodes one node twice). What the refusal costs is one line in the release
+// notes and one upgrade, which is why the key is at the top level: an unknown
+// member inside the bitbucket_token block would be refused by every reader,
+// runner included, and no run in flight would survive it.
+func TestOlderCLIRefusesANodeCarryingTheTokensKey(t *testing.T) {
+	older := &projectpolicy.Policy{Version: projectpolicy.Version, UnknownKeys: []string{projectpolicy.BitbucketTokensKey}}
+	err := refuseUnknownPolicyKeys(older)
+	if err == nil {
+		t.Fatal("a launcher of an older CLI accepted a node carrying bitbucket_tokens")
+	}
+	if got := ExitCode(err); got != ExitUserError {
+		t.Errorf("exit %d, want %d: the operator can fix this, so it is not a crash", got, ExitUserError)
+	}
+	for _, want := range []string{projectpolicy.BitbucketTokensKey, projectpolicy.PathShared(), "does not know", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	// The refusal is about the key nobody reads and not about the tokens: a
+	// node whose policy carries the key this Fugaro knows refuses nothing.
+	if err := refuseUnknownPolicyKeys(&projectpolicy.Policy{Version: projectpolicy.Version, BitbucketTokens: &projectpolicy.BitbucketTokens{}}); err != nil {
+		t.Errorf("a node carrying a key this Fugaro reads was refused: %v", err)
 	}
 }
 
@@ -422,5 +458,79 @@ func TestPolicyShowAndPublishDiffPrintACatalogChange(t *testing.T) {
 	}
 	if !strings.Contains(out, "~ image_catalog universal: tags node, default true, source image ghcr.io/acme/agent:1.2 → tags node, postgres, default true, source image ghcr.io/acme/agent:1.3") {
 		t.Errorf("the diff does not show the catalog entry that changed:\n%s", out)
+	}
+}
+
+// TestBuildProjectPolicyPublishesTheLocalBlocksAndNotTheNodesCopy: the
+// clone_urls block moved out of the node and into the local config (SD5,
+// D842), so what the node holds is not the source any more — the file is. An
+// entry the file states is what this publish writes, even where the node
+// carried another value for the same repository and a member of its own that
+// this binary does not model beside it, and an entry only the node carries is
+// still kept, because a config that states no block states nothing to publish
+// (`localcfg.Config.CloneURLsEffective`). The two halves are one test because
+// they are one rule: a publish that took the block from the node in both cases
+// would ignore the operator's own file, and one that took it from the file in
+// both would drop the entries of every installation whose config predates the
+// key.
+func TestBuildProjectPolicyPublishesTheLocalBlocksAndNotTheNodesCopy(t *testing.T) {
+	const (
+		canonical = "github/acme/app"
+		member    = "github%2Facme%2Fapp"
+	)
+	f := newProjectFixture(t, "clone_urls:\n  github/acme/app: https://github.com/acme/app\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	// The node now carries a different value for the same repository, and one
+	// member beside it that this binary reads as no canonical name at all:
+	// both belong to the source the file has just replaced.
+	node := f.db.Value(projectpolicy.PathShared()).(map[string]any)
+	node["clone_urls"] = map[string]any{
+		member:                  "https://github.com/acme/app.git",
+		"github%2Facme%2Fother": "https://github.com/acme/other.git",
+	}
+	f.db.Set(projectpolicy.PathShared(), node)
+
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol := publishedPolicy(t, f)
+	if got := pol.CloneURL(canonical); got != "https://github.com/acme/app" {
+		t.Errorf("CloneURL(%q) = %q, want the URL this machine's config states, not the node's copy", canonical, got)
+	}
+	if got := pol.CloneURL("github/acme/other"); got != "" {
+		t.Errorf("CloneURL(github/acme/other) = %q, want none: the config states no entry for it and the node's copy is the source the file replaced", got)
+	}
+	if strings.Contains(out, "clone_urls "+canonical+" kept") {
+		t.Errorf("the diff says the entry is kept when it is this config's:\n%s", out)
+	}
+	if !strings.Contains(out, "clone_urls "+canonical+": https://github.com/acme/app") {
+		t.Errorf("the diff does not name the entry this publish wrote:\n%s", out)
+	}
+	// The entry the file replaced is a removal the operator has to read: the
+	// repository whose runs cloned from a URL of their own goes back to the
+	// provider's own clone URL, which is a difference in where a run's code
+	// comes from.
+	if !strings.Contains(out, "clone_urls github/acme/other removed (was https://github.com/acme/other.git)") {
+		t.Errorf("the diff does not name the entry it removed:\n%s", out)
+	}
+
+	// The other half of the rule: a config that states no block keeps the
+	// node's entries, so an installation whose file predates the key — and an
+	// owner who declines the import (§6.4) — is left exactly as it was.
+	rewriteProjectConfig(t, f, "")
+	node["clone_urls"] = map[string]any{member: "https://github.com/acme/app.git"}
+	f.db.Set(projectpolicy.PathShared(), node)
+	out, _, err = execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := publishedPolicy(t, f).CloneURL(canonical); got != "https://github.com/acme/app.git" {
+		t.Errorf("CloneURL(%q) = %q, want the node's own entry: this config states no clone_urls block", canonical, got)
+	}
+	if !strings.Contains(out, "clone_urls "+canonical+" kept: https://github.com/acme/app.git") {
+		t.Errorf("the diff does not say the node's entry is kept:\n%s", out)
 	}
 }

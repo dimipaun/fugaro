@@ -472,7 +472,11 @@ func TestTemplatePolicyPathsAgreeWithProjectpolicy(t *testing.T) {
 		t.Fatalf("PolicyPaths = (%q, %q, %q), want config/policy/shared, config/policy/repos/x, config/admin", shared, repo, admin)
 	}
 	paths := generatedPaths(t)
-	for _, p := range []string{shared, repo, admin} {
+	// The voice policy node's paths are the same agreement one family over
+	// (P5.3.1): internal/projectpolicy builds them in Go, the template spells
+	// them, and this package names their parent.
+	for _, p := range []string{shared, repo, admin, PathVoice,
+		projectpolicy.PathVoiceShared(), projectpolicy.PathVoiceRepos(), projectpolicy.PathVoiceRepo(slugForPath)} {
 		if _, ok := paths[p]; !ok {
 			t.Errorf("the template does not generate /%s, which internal/projectpolicy names", p)
 		}
@@ -553,6 +557,75 @@ func TestPolicyNodesAreReadPerChild(t *testing.T) {
 		if w, ok := a[".write"]; ok && w != false {
 			t.Errorf("/%s .write = %v, want false under config", p, w)
 		}
+	}
+}
+
+// TestVoicePolicyNodesAreReadPerChild pins §4.3 of the voice design (mobile
+// plan task P5.3.1) without the emulator: the voice subtree is two children of
+// config/policy/voice, each carrying config/policy's own grant for its level,
+// and the parent carries none — because a TOKEN read there would cascade to
+// every project's allow-list at once.
+//
+// It is the parity test as well, from the other side: the template spells the
+// three paths as JSON literals and internal/projectpolicy builds them in Go
+// (PathVoiceShared, PathVoiceRepo, PathVoiceRepos), so a rename updates both or
+// fails here. The parent has no function of its own — PathVoice is this
+// package's, and it is the path the template spells.
+//
+// What the emulator adds is the refusal of a *token*: a run token for one slug
+// reads its own node and is refused its sibling's, and no client writes either.
+// This proves the document says so.
+func TestVoicePolicyNodesAreReadPerChild(t *testing.T) {
+	paths := generatedPaths(t)
+	shared := projectpolicy.PathVoiceShared()
+	repo := projectpolicy.PathVoiceRepo(slugForPath)
+	repos := projectpolicy.PathVoiceRepos()
+	if PathVoice != "config/policy/voice" || shared != PathVoice+"/shared" ||
+		repos != PathVoice+"/repos" || repo != repos+"/"+slugForPath {
+		t.Fatalf("the voice paths disagree: PathVoice = %q, shared = %q, repos = %q, repo = %q", PathVoice, shared, repos, repo)
+	}
+	for _, p := range []string{PathVoice, shared, repos, repo} {
+		if _, ok := paths[p]; !ok {
+			t.Errorf("the template does not generate /%s, which this package and internal/projectpolicy name", p)
+		}
+	}
+
+	// The parent: no grant at all, of its own.
+	if attrs, ok := paths[PathVoice]; !ok {
+		t.Fatalf("the template does not generate /%s", PathVoice)
+	} else {
+		for _, a := range []string{".read", ".write"} {
+			if v, ok := attrs[a]; ok {
+				t.Errorf("/%s has %s = %v: an RTDB read grant on the parent cascades to every project's voice policy", PathVoice, a, v)
+			}
+		}
+	}
+	// The children: the policy's own grants, field for field, and read-only.
+	for _, c := range []struct {
+		p, want string
+	}{{shared, "auth.token.fp"}, {repo, "auth.token.fs == $slug"}} {
+		attrs, ok := paths[c.p]
+		if !ok {
+			continue
+		}
+		read, _ := attrs[".read"].(string)
+		if !strings.Contains(read, c.want) {
+			t.Errorf("/%s .read = %q, want the %s claim (config/policy's own grant for that level)", c.p, read, c.want)
+		}
+		if strings.Contains(read, "auth.token.mu") {
+			t.Errorf("/%s .read = %q carries USER: the phone holds no read of config/policy/**, which is why the switch's project-policy state is the hop's answer", c.p, read)
+		}
+		if w, ok := attrs[".write"]; !ok || w != false {
+			t.Errorf("/%s .write = %v, want false: only an operator's IAM credential writes the voice policy", c.p, w)
+		}
+	}
+	// The shared node is not slug-bound, and a project's node is: the two
+	// grants are the policy's, copied, and not one widened grant.
+	if attrs := paths[shared]; strings.Contains(attrs[".read"].(string), "auth.token.fs") {
+		t.Errorf("/%s .read = %v: the shared node is not slug-bound", shared, attrs[".read"])
+	}
+	if attrs := paths[repos]; len(attrs) != 0 {
+		t.Errorf("/%s carries %v: the grant must be per $slug child", repos, attrs)
 	}
 }
 
@@ -786,6 +859,158 @@ func TestDeviceNodesAreClientDenied(t *testing.T) {
 	}
 	if r, ok := attrs[".read"].(string); ok {
 		t.Errorf("/%s .read = %q: the node is written and read over IAM only", node, r)
+	}
+}
+
+// TestDeviceNodeCarriesNoShapeRule is P2's fourth claim — the plan's red step
+// calls it "the document moved" — and the one its three emulator cases cannot
+// reach: reconciliation §F29 reads the node as `{ ".read": false, ".write":
+// false }` with **no `.validate` over it, no `$other` beneath it, and nothing in
+// the document naming a child of it**, and that absence, not the fields, is what
+// makes the administered email and the role (D222, D225) children whose arrival
+// changes nothing. No rule reads one, so an entry carrying them is admitted
+// exactly as a bare one is, an installation whose document predates them needs
+// no redeploy, and the deployed document takes no generation.
+//
+// It reads testdata/rules.golden.json rather than Generate(), and it pins the
+// node's own attributes, every node on the way to it — the root and `config`
+// included, because a rule on either, or on a wildcard spelling such as
+// `config/admin/$x` that covers the entry just as the literal path does,
+// constrains the entry's shape as much as one on `config/admin` does — every
+// path beneath it and every occurrence of its path anywhere in the document,
+// because the byte
+// comparison in TestRulesGolden is satisfied by regenerating the golden — which
+// is exactly how a shape rule arrives: whoever writes it runs UPDATE_GOLDEN=1 in
+// the same change, and the diff is then the only place the generation would be
+// seen. TestDeviceNodesAreClientDenied reads Generate() and so catches the
+// change before it is regenerated; neither reading subsumes the other, and this
+// one is the fence that survives the regeneration. A rule over this node, or one
+// that reads a child of it, is a generation of its own (§F29's "what would force
+// a generation later", D225's later half), so it has to fail here as well.
+//
+// The occurrences are read as spellings rather than as text: adjacent string
+// literals are joined back up before the search, so the `devices` segment cut in
+// two and put back together is seen, and a literal naming the path counts as a
+// mention of it wherever it is built with a `+`, so a segment stood in for by a
+// `$` capture is seen too. That last reading is anchored on `config/admin` and
+// not on `config`, because a capture holds one segment and a rule that builds
+// some other `config/…` path names neither the node nor a child of it: this
+// fence may not accuse one of that. It is a fence over spellings and not a
+// parser — a path assembled from pieces that never sit next to each other in the
+// expression would still slip past it — but a reader that gets past it has to
+// name the node somehow else, and TestUserClaimRequiresTheDeviceNode holds the
+// document's one allowed reach to its exact text.
+//
+// Hand mutation this fails on, each with the golden regenerated — or edited
+// outright, which is the same thing to a test that reads the golden — so that
+// the byte comparison cannot object: `".read": "USER"` or `".write": "USER"` on
+// the `$uid` entry (the attribute set), a `".validate"` beside them or on
+// `config/admin/devices` above it (the same, and it is why every node on the way
+// to the entry is read here at all: a rule on the parent constrains every entry
+// under it), that `".validate"` on `config` or on the root instead, or on a
+// `config/admin/$x` that covers the entry (the way there, which follows a
+// wildcard segment as it follows the literal spelling), a `$other` child beneath
+// the node (the paths), a USER that also required `child('role').exists()` (the
+// occurrences), and a reader spelled around the entry — `root.child(
+// 'config/admin/devices/' + auth.uid + '/role')`, one `child()` call and a
+// concatenation, one call per segment, `root.child('config').child('admin')
+// .child('devices').child(auth.uid).child('role')`, or the `devices` segment
+// itself cut in two and put back together, `'config/admin/dev' + 'ices'`, or
+// stood in for by a capture, `'config/admin/' + $k`: a test that matched the
+// literal path, or a `.child(` *after* the entry's own chain, sees none of them
+// (the occurrences again).
+//
+// The two predicates and the USER are caught twice over:
+// TestDeviceNodesAreClientDenied and TestUserClaimRequiresTheDeviceNode hold the
+// document to the expression each expects to find, and a regenerated golden does
+// not break them. Everything else in that list is caught by nothing else, which
+// is what this test is for.
+func TestDeviceNodeCarriesNoShapeRule(t *testing.T) {
+	raw, err := os.ReadFile(goldenPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("%s is not JSON: %v", goldenPath, err)
+	}
+	node := PathDevices + "/$uid"
+	segments := strings.Split(node, "/")
+	// The one reach the document is allowed on the node: the conjunct that asks
+	// whether the entry exists. It is taken out of an expression whole, and what
+	// is left must name no part of the path — every spelling of the path carries
+	// the `devices` segment, so a reader written one `.child()` per segment is as
+	// visible here as the literal one.
+	entry := "root.child('" + PathDevices + "').child(auth.uid).exists()"
+	devices := segments[len(segments)-2]
+	// A literal can be cut in two around the word (`'config/admin/dev' +
+	// 'ices'`), so the pieces are put back together before the search, and a
+	// capture can stand in for a whole segment (`'config/admin/' + $k`), so a
+	// literal naming the path counts as a mention of it wherever it is built with
+	// a `+`. Anchored on `config/admin` and not on `config`: a `$` variable holds
+	// exactly one segment, so a capture can only stand in for `admin` or
+	// `devices`, and a rule that builds some other `config/…` path — a per-repo
+	// cap or kill lookup — names neither the node nor a child of it.
+	split := regexp.MustCompile(`'\s*\+\s*'`)
+	captured := regexp.MustCompile(`'[^']*config/admin[^']*'\s*\+|\+\s*'[^']*config/admin[^']*'`)
+	// How far a path reaches towards the node: a wildcard segment matches any one
+	// of the node's, so `config/admin/$x` covers the entry as surely as the
+	// literal path does, and a rule there constrains its shape for the same
+	// reason one on `config/admin/devices` does.
+	reach := func(p string) (int, bool) {
+		var given []string
+		if p != "" {
+			given = strings.Split(p, "/")
+		}
+		for i, s := range given {
+			if i == len(segments) {
+				break
+			}
+			if s != segments[i] && !strings.HasPrefix(s, "$") {
+				return 0, false
+			}
+		}
+		return len(given), true
+	}
+	var found bool
+	var beneath, occurrences []string
+	walk(doc["rules"], nil, func(path []string, attrs map[string]any) {
+		p := strings.Join(path, "/")
+		n, covers := reach(p)
+		switch {
+		case covers && n == len(segments):
+			found = true
+			if len(attrs) != 2 || attrs[".read"] != false || attrs[".write"] != false {
+				t.Errorf("/%s carries %v, want exactly {\".read\": false, \".write\": false}: a rule over the node is a rules generation (§F29), and it is the first one that reads a child of it that D225's later half is for", p, attrs)
+			}
+		case covers && n < len(segments):
+			for a, v := range attrs {
+				if (a != ".read" && a != ".write") || v != false {
+					t.Errorf("/%s carries %s = %v: the way to the entry is IAM-only, and a rule anywhere on it — a `.validate` here, or under a wildcard that covers the entry — is a rule over the entry's shape and moves the document (§F29)", p, a, v)
+				}
+			}
+		case covers:
+			beneath = append(beneath, "/"+p)
+		}
+		for a, v := range attrs {
+			expr, ok := v.(string)
+			if !ok {
+				continue
+			}
+			rest := split.ReplaceAllString(strings.ReplaceAll(expr, entry, ""), "")
+			if strings.Contains(rest, devices) || captured.MatchString(rest) {
+				occurrences = append(occurrences, "/"+p+" "+a)
+			}
+		}
+	})
+	if !found {
+		t.Fatalf("%s carries no /%s: the deployed document denies the node USER's device conjunct reads", goldenPath, node)
+	}
+	if len(beneath) > 0 {
+		t.Errorf("%s names %s beneath /%s: nothing in the document may name a child of the node, or the entry stops being one whose fields are optional", goldenPath, strings.Join(beneath, ", "), node)
+	}
+	if len(occurrences) > 0 {
+		t.Errorf("%s names %q outside the conjunct that asks whether the entry exists, in %s: only %s may mention the path — this reading joins literals split around a `+` and follows a `$` capture joined to one, so the whole segment need not be written out — because a rule that reads a child of the node is D225's later half and a rules generation of its own (§F29)", goldenPath, PathDevices, strings.Join(occurrences, ", "), entry)
 	}
 }
 
@@ -1690,12 +1915,17 @@ func TestByTierCountersAreValidatedLikeSpent(t *testing.T) {
 // naming it in the template (or the reverse: removing a child the struct still
 // writes).
 func TestAgentEntryFieldsAreTemplateChildren(t *testing.T) {
-	// Every field set, so an omitempty one is marshalled too.
+	// Every field set, so an omitempty one is marshalled too -- the two rigor
+	// children of the rigor-modes plan's T1.7 among them, which is the only
+	// reason this test sees them: leave them empty and omitempty drops them
+	// from the map, so the template could lose its "mode" or "from" child and
+	// only TestRulesGolden would notice.
 	entry := budget.AgentEntry{
 		Repo: "aurora/web", Workflow: "implement", Title: "t", Stage: "code", Round: 1, Verify: "go",
 		Coder: "m", Reviewer: "m", Recipe: "r", Auth: "cascade", PRURL: "https://example.invalid/1",
 		Action: "tool Bash", Tokens: 1, StartedAt: 1, StageStartedAt: 1, StageDeadline: 1, UpdatedAt: 1,
 		Spent: 1, Halted: "budget", Credential: "a1", WaitingUntil: 2, RequestedBy: "alice@example.invalid",
+		Mode: "critical", From: "area",
 	}
 	b, err := json.Marshal(entry)
 	if err != nil {
@@ -1938,7 +2168,25 @@ func withoutValidate(m map[string]any) map[string]any {
 // look legitimate.
 func isNamedAddition(p string) bool {
 	return isNewCredsPath(p) || p == coordpath.PathRoot || p == PathMCPAuth ||
-		p == PathBuildLeases || p == PathOrchestrator || isNewWorkspacePath(p)
+		p == PathBuildLeases || p == PathOrchestrator || isNewWorkspacePath(p) || isNewVoicePath(p)
+}
+
+// isNewVoicePath reports whether p is one of the four locations the voice
+// policy node adds (mobile plan task P5.3.1, the voice-evaluation switch
+// design §4.3): the subtree's own node, its two children, and one project's
+// child. All four are equalities and not prefixes, for isNewCredsPath's reason
+// — the whole subtree is what this task adds, so a path *under* a project's
+// node is a change to what it contains, which is the shape a grant hidden one
+// level down takes, and it belongs here as a diff a reviewer reads rather than
+// as a match this function waves through.
+//
+// The parent, PathVoice, is in the list because the template spells it: it
+// carries no grant of its own — the grants are per child, and a read on the
+// parent would cascade to every project's allow-list — and naming it here is
+// what makes an edit that puts one there a diff this test shows.
+func isNewVoicePath(p string) bool {
+	return p == PathVoice || p == projectpolicy.PathVoiceShared() ||
+		p == projectpolicy.PathVoiceRepos() || p == projectpolicy.PathVoiceRepo(slugForPath)
 }
 
 // isNewWorkspacePath reports whether p is one of the paths the workspace family
@@ -1997,8 +2245,14 @@ func isNewCredsPath(p string) bool {
 			return true
 		}
 	}
+	// `mode` and `from` are the same shape of addition one generation later
+	// (rigor-modes plan T1.7, F40 of its reconciliation): the mode a live run
+	// resolved and the layer that decided it, which the runner writes into its
+	// own registry entry from its record so `fugaro watch` can show them. Both
+	// are equalities, for the reason above.
 	entry := "agents/" + slugForPath + "/$run/"
-	return p == entry+"credential" || p == entry+"waiting_until"
+	return p == entry+"credential" || p == entry+"waiting_until" ||
+		p == entry+"mode" || p == entry+"from"
 }
 
 // TestRulesVersionUnchanged: the generations an installation compares, asserted
@@ -2013,8 +2267,14 @@ func isNewCredsPath(p string) bool {
 //     children of nodes runs already write. P3 adds a **grant** — a whole family
 //     a signed-in person may read — and a client holding the older marker would
 //     not know the family is there, which is the drift the marker exists to
-//     report; so the generation moves to 4 and doctor's policy-rules-skew is
-//     what tells an installation whose owner has not redeployed yet.
+//     report; so the generation moved to 4 and doctor's policy-rules-skew is
+//     what tells an installation whose owner has not redeployed yet. P5.3.1
+//     moves it to 5 for the same reason one step over: the voice policy node
+//     (PathVoice, `config/policy/voice/{shared,repos/$slug}`) is a grant too —
+//     a run token reads its own project's node there and did not before — and
+//     the generation is what tells an installation at 4 that its deployed
+//     document is not this binary's. `fugaro update`'s rules stage is the
+//     migration, and it is the same stage every generation is met through.
 //   - projectpolicy.PolicyRulesVersion gates the policy nodes, which neither
 //     change touches. It stays 1.
 //   - rules.CredsRulesVersion is the credentials family's own generation, at 1,
@@ -2029,8 +2289,8 @@ func isNewCredsPath(p string) bool {
 // Hand mutation this fails on: bumping any of the four (or lowering one of the
 // family versions), which is what a reviewer must see argued for.
 func TestRulesVersionUnchanged(t *testing.T) {
-	if projectpolicy.RulesVersion != 4 {
-		t.Errorf("projectpolicy.RulesVersion = %d, want 4: the generation that carries the coordinator's read grant (coordinator plan task P3)", projectpolicy.RulesVersion)
+	if projectpolicy.RulesVersion != 5 {
+		t.Errorf("projectpolicy.RulesVersion = %d, want 5: the generation that carries the voice policy node (mobile plan task P5.3.1)", projectpolicy.RulesVersion)
 	}
 	if projectpolicy.PolicyRulesVersion != 1 {
 		t.Errorf("projectpolicy.PolicyRulesVersion = %d, want 1: this change does not touch the policy nodes", projectpolicy.PolicyRulesVersion)

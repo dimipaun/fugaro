@@ -73,6 +73,41 @@ func TestNeedsAnthropicKeyReadsALevelModel(t *testing.T) {
 	}
 }
 
+// TestNeedsAnthropicKeyReadsTheVisionSlot: the vision slot is a pin of its own
+// and one a stage runs, not only one a rule judges — a coder that cannot read
+// an image is moved onto it (V7, D2002) — so a Claude model there under
+// provider pins is a call to Anthropic this rule has to see. Without it,
+// `fugaro setup` stores no key for a repository whose three role models a
+// provider serves, and every run of it dies at implement for a key that was
+// never stored (initsecrets, infra's job spec and validate all ask this).
+func TestNeedsAnthropicKeyReadsTheVisionSlot(t *testing.T) {
+	open := map[string]ModelProvider{
+		"openrouter": {Kind: ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+			Secret: "openrouter-api-key", Models: []string{"deepseek/*"}, AllowDataTo: []string{"acme/app"}},
+	}
+	pins := Agent{Model: "deepseek/deepseek-v4-flash"}
+	for _, tc := range []struct {
+		name   string
+		vision string
+		repo   string
+		want   bool
+	}{
+		{"no vision slot at all", "", "acme/app", false},
+		{"a vision model the route serves", "deepseek/deepseek-v4-vision", "acme/app", false},
+		{"a Claude vision slot", "claude-sonnet-5-5", "acme/app", true},
+		{"a vision model no provider claims", "openai/gpt-9", "acme/app", true},
+		{"a vision model on a route that may not serve this repository", "deepseek/deepseek-v4-vision", "acme/other", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ag := pins
+			ag.Models.Vision = tc.vision
+			if got := NeedsAnthropicKey(ag, open, tc.repo); got != tc.want {
+				t.Errorf("NeedsAnthropicKey = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestNeedsAnthropicKeyLevelModelServedByAProvider is the other half, and it
 // is why the rule reads the level's model rather than counting every level:
 // only a model no allowed provider claims goes direct. A level model the

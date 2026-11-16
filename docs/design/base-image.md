@@ -229,7 +229,7 @@ In every case: delete `base:`; a `.fugaro/*.Dockerfile` is re-rendered with `fug
 
 **The upgrade order** (strict parsers on both sides mean no `fugaro.yaml` is valid for 0.6 and 0.7 at once):
 
-1. Every operator upgrades the CLI to 0.7.0 (`fugaro upgrade --local` for the pin, Homebrew for the binary). A 0.7.0 CLI refuses an old `fugaro.yaml`, so step 2 follows at once.
+1. Every operator upgrades the CLI to 0.7.0 (Homebrew for the binary, then `fugaro update` in the checkout). A 0.7.0 CLI refuses an old `fugaro.yaml`, so step 2 follows at once.
 2. Per repository, one pull request with the `mise.toml` and the `fugaro.yaml` change (the setup skill writes it), validated with `fugaro image build --local`. Merge it.
 3. Right after the merge, in that checkout: `fugaro image refresh`. It copies `fugaro-base`, rewrites the check job's image and spec, and rebuilds every workflow from the new base. Until it finishes, a run launched against the repository uses the old image, whose 0.6 runner refuses the new `fugaro.yaml`: don't launch runs in that window (minutes).
 4. `fugaro doctor` in the checkout says nothing about bases.

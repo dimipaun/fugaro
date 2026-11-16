@@ -256,12 +256,12 @@ The one function every reader of the decision shares (F3), plus the container th
   the flag refusing as well, the key would have no command writer at all and each refusal would point
   at the other path. And the security work is already there rather than new: naming one more
   repository is a **widening**, classified by the same settings write path every other widening pays —
-  the project's own name at a terminal, or `--yes` outside a coding agent's session — so a session is
+  answered at the owner's own real terminal — so a session is
   refused, which is the property the task has to pin. **The outright refusal is G8's, and W3 keeps
   it.** Beside the typed-widening path, G8 refuses a secret's policy write in a coding agent's session
   outright — `internal/cli/secrets.go:747` on G8's branch is the line, and that branch's
   `TestSecretsSetPolicyRefusesAnAgentSession` is the test, neither of them readable here until G8
-  merges — and `--yes` does not lift it. W3 writes the new block's entry through that same call and
+  merges — and no flag lifts it. W3 writes the new block's entry through that same call and
   adds no route of its own, because a second path into one key is the door that refusal exists to
   close. What the task owes, therefore: the name check
   answers for either block (a `config.ReservedSecrets` name writes `project_secrets.<name>`; any

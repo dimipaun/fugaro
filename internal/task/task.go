@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/escalation"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -207,9 +208,9 @@ type Spec struct {
 	// judged on the field for that reason rather than on the flag.
 	CompressionOff bool `json:"compression_off,omitempty"`
 	// Mode is the recipe's mode, written by the launcher from the recipe it
-	// resolved ("artifact" today; implement and review write nothing, so
-	// every existing spec is byte-identical to what the previous release
-	// wrote). The runner cannot read the recipe before it reads the
+	// resolved ("artifact" and "evaluate" today; implement and review write
+	// nothing, so every existing spec is byte-identical to what the previous
+	// release wrote). The runner cannot read the recipe before it reads the
 	// configuration, so the spec is what selects the shape at bootstrap —
 	// exactly as ReviewPRs does for mode: review — and the resolved recipe
 	// is cross-checked against it afterwards, both ways.
@@ -417,21 +418,72 @@ type Spec struct {
 	// by a runner that has never heard of the field. A task that carries one
 	// needs a runner that knows it: Parse decodes with DisallowUnknownFields,
 	// so an older runner refuses the whole spec — the skew every new task
-	// field has, and the reason a launch that would set it is to be gated the
-	// way rigor's own request is. That gate is T-TR10's of the same plan and
-	// does not exist yet, so today only a task written by hand can carry the
-	// field.
+	// field has, and the reason a launch that would set it is gated the way
+	// rigor's own request is: `fugaro run` refuses a job image older than the
+	// release whose runner reads the field (internal/cli/recipes_skew.go's
+	// followUpSince, T-TR10), and `fugaro followups --launch` is what writes
+	// it.
 	//
 	// The parent is checked (Validate below) and the keys are not: a key
 	// names a finding of the parent's own record — a hash of a file and a
 	// summary (D1850) — and is only ever compared with the keys that record
-	// carries, never joined into a path, a command or a prompt.
+	// carries, never joined into a path or a command. The one prompt a key
+	// reaches is the brief the CLI files it in, and that brief treats it as
+	// the record's own text, neutralized and indented like the summary beside
+	// it (internal/cli/followups.go's followUpKeys): a reader of that block
+	// trusts no value in it, keys included.
 	FollowUpOf *FollowUpOf `json:"follow_up_of,omitempty"`
 	// Debt marks the same task as one filed from a triage deferral rather
 	// than asked for: what `fugaro runs ls --debt` lists. False is every
 	// task that is not one, and every spec written before the field, so a
 	// spec carrying no mark is byte-identical to the previous release's.
 	Debt bool `json:"debt,omitempty"`
+	// Security is the launch's own request that this run's review be the
+	// strongest one it can be (docs/security-classification, D1517): a task
+	// that says `security: true`, or a launch that passes `--security`,
+	// which is the same request written by the flag instead of by hand.
+	//
+	// It is raise-only: true turns review level 3 on for the run whatever
+	// the paths hold, and false changes nothing — it is not an exemption,
+	// so a run that says false is a run that said nothing, including one
+	// whose diff then matches a row of the list in force (D1517: the field
+	// is a bool that only turns on, so a false is the floor's answer and
+	// not a way to ask for less). There is no fence and no allow-list, for
+	// the same reason `--mode`'s raise needs neither: nothing here can
+	// lower a level.
+	//
+	// False is every task that did not ask, and every spec written before
+	// the field, so a spec carrying false is byte-identical to the previous
+	// release's. A runner before the release that reads `security: true`
+	// refuses the whole spec (Parse decodes with DisallowUnknownFields), so
+	// the launcher gates a launch that would set it (securityRequestSince,
+	// internal/cli/recipes_skew.go) rather than let the run fail at
+	// bootstrap after the task was written.
+	Security bool `json:"security,omitempty"`
+	// ModelGrade is the model grade this run runs at
+	// (docs/outer-loop-escalation, D2039's E4, G11): which of the project
+	// layer's two grades the run's coder — and its judge, which runs the
+	// coder's model — runs on, and whose credential or pool their calls go
+	// out on.
+	//
+	// It names a grade and never a model or a credential: the vocabulary is
+	// escalation.Grades' two names, a value outside it is refused by Validate
+	// below, and what a grade resolves to is the project layer's answer
+	// (config.ModelGrades), read by the runner at bootstrap
+	// (internal/runner's applyGrade). A grade the project sets nothing for
+	// refuses the run there rather than falling back to a model the owner
+	// never chose, which is D2039's point: the plan ships no default for
+	// either grade.
+	//
+	// "" is every task that names no grade — every spec written before this
+	// field, and every launch the ladder did not escalate, since the daemon's
+	// ladder (E10a) is what writes one — so a spec carrying none is
+	// byte-identical to what the release before this field wrote. A runner
+	// before the release that reads it refuses the whole spec (Parse decodes
+	// with DisallowUnknownFields), so the launcher gates a launch that would
+	// set it (taskGradeSince, internal/cli/recipes_skew.go) rather than let
+	// the run fail at bootstrap after the task was written.
+	ModelGrade escalation.Grade `json:"model_grade,omitempty"`
 }
 
 // FollowUpOf is the parent a triage follow-up came from: the run whose
@@ -446,10 +498,71 @@ type FollowUpOf struct {
 	// carries: one task per group, and the ungrouped case is one key. A task
 	// the CLI files always names at least one, since a group is formed from
 	// the deferrals themselves, but nothing here requires it: a key is only
-	// ever compared for equality with the keys of the parent's record, never
-	// joined into a path, a command or a prompt, and one key alone is read by
-	// nobody.
+	// ever compared for equality with the keys of the parent's record, and
+	// the one prompt it is written into fences it as data (Spec.FollowUpOf's
+	// own comment), so one key alone is read by nobody.
 	Keys []string `json:"keys,omitempty"`
+	// Importance is how much this follow-up matters (D2040): important, or
+	// minor. The launcher orders the important ones ahead of new work and
+	// notifies about them; it never approves one on their say-so (G6, F21),
+	// which is the whole of what the field decides.
+	//
+	// It is written from the merge judge's classification when a judge ran
+	// and from a deterministic rule when none did (a security or data-loss
+	// class, or impact 5, is important), so a value outside the two names is
+	// not a third opinion about a finding but a launcher's bug: Validate
+	// below refuses it. "" is every follow-up filed before this field —
+	// including every one filed by hand — and it is not minor: it is no
+	// answer, and a reader that has to sort one asks its own rule rather than
+	// reading a mark nobody wrote.
+	Importance Importance `json:"importance,omitempty"`
+}
+
+// Importance is how much a follow-up a run left behind matters (D2040): the
+// two values a task's follow-up block may carry. It is a mark about ordering
+// and notification and nothing else — an important follow-up is not an
+// approved one (G6, D1226, F21), and nothing in this package or in a run
+// reads it as consent to work.
+type Importance string
+
+const (
+	// ImportanceImportant is a finding the judge (or the deterministic rule
+	// that stands in for it) held to matter: security, data loss, or impact
+	// 5.
+	ImportanceImportant Importance = "important"
+	// ImportanceMinor is every other finding, which is the common case.
+	ImportanceMinor Importance = "minor"
+)
+
+// Importances is the whole vocabulary, in the order a message names it: the
+// one that sorts first, then the rest.
+var Importances = []Importance{ImportanceImportant, ImportanceMinor}
+
+// KnownImportance reports whether i is one of Importances. The zero
+// Importance — a follow-up nobody classified — is not: it is the field left
+// out, which Validate accepts and a reader answers with its own rule.
+func KnownImportance(i Importance) bool { return slices.Contains(Importances, i) }
+
+// ImportanceList is Importances as a message names the vocabulary, the way
+// rigor.ModeList and tier.List are read by a refusal.
+func ImportanceList() string {
+	names := make([]string, len(Importances))
+	for i, im := range Importances {
+		names[i] = string(im)
+	}
+	return strings.Join(names, ", ")
+}
+
+// GradeList is escalation.Grades as a message names the vocabulary
+// (Spec.ModelGrade's refusal). The list is that package's — the ladder's own
+// names, which the project layer and the policy node are held to as well — and
+// this only spells it the way a task spec's message does.
+func GradeList() string {
+	names := make([]string, len(escalation.Grades))
+	for i, g := range escalation.Grades {
+		names[i] = string(g)
+	}
+	return strings.Join(names, ", ")
 }
 
 // MaxOwnerRuledBytes bounds a task's owner ruling (Spec.OwnerRuled, fugaro
@@ -821,8 +934,8 @@ type ProjectLayer struct {
 	YAML       string `json:"yaml"`                 // the exact text
 }
 
-// ABArm, ABPublish and ABChallengerSource are the pair block's three closed
-// vocabularies. Each is a named string type with one exported list, as
+// ABArm, ABPublish, ABChallengerSource and ABSlot are the pair block's four
+// closed vocabularies. Each is a named string type with one exported list, as
 // rigor.Mode and tier.Tier are, because a near miss is a launcher's bug
 // rather than a run's opinion about which arm it is — and a named type is
 // what keeps an arbitrary string out of a field the schemas pin to an enum.
@@ -830,6 +943,7 @@ type (
 	ABArm              string
 	ABPublish          string
 	ABChallengerSource string
+	ABSlot             string
 )
 
 const (
@@ -848,15 +962,28 @@ const (
 	// (D556). It is the seam D572 reserves for a later auto-flip writer —
 	// nothing reads it to pick a challenger, and nothing writes another one.
 	ABChallengerOwner ABChallengerSource = "owner"
+	// ABSlotCoder is the slot a coder pair varies, and the slot an absent
+	// one means (AB.EffectiveSlot): the challenger is a second full run of
+	// the task on another coder model, and every reviewer stays fixed, which
+	// is what keeps the two arms' review findings comparable (D555, D571).
+	ABSlotCoder ABSlot = "coder"
+	// ABSlotL1, ABSlotL2 and ABSlotL3 are the three review slots (D728): the
+	// pair varies that level's reviewer, and it does so by replaying the
+	// level over the champion's own recorded patch (AB.ChampionRun, B1.2),
+	// so the two reviewers judge one diff rather than two runs' code.
+	ABSlotL1 ABSlot = "l1"
+	ABSlotL2 ABSlot = "l2"
+	ABSlotL3 ABSlot = "l3"
 )
 
-// ABArms, ABPublishes and ABChallengerSources are each whole vocabulary,
-// closed the way rigor.Modes and tier.Tiers are: a value outside one is
-// refused where it is written, never matched as an unknown arm later.
+// ABArms, ABPublishes, ABChallengerSources and ABSlots are each whole
+// vocabulary, closed the way rigor.Modes and tier.Tiers are: a value outside
+// one is refused where it is written, never matched as an unknown arm later.
 var (
 	ABArms              = []ABArm{ABArmChampion, ABArmChallenger}
 	ABPublishes         = []ABPublish{ABPublishNone}
 	ABChallengerSources = []ABChallengerSource{ABChallengerOwner}
+	ABSlots             = []ABSlot{ABSlotCoder, ABSlotL1, ABSlotL2, ABSlotL3}
 )
 
 // AB is the pair block a sampled launch carries (docs/model-ab-testing,
@@ -873,6 +1000,13 @@ var (
 // here and never through Overrides.Model, which a run with no per-role models
 // applies to every stage (Spec.Apply) and would change the reviewer both arms
 // share — Validate refuses a task carrying both for that reason.
+//
+// Slot says which one thing the pair varies (D728). A coder pair — the slot
+// an absent one means — varies the coder and holds every reviewer fixed,
+// which is D555 as it stands. A pair at a review slot varies that level's
+// reviewer and holds the coder fixed, and its challenger arm is not a second
+// run at all: it replays that level over the champion's own recorded patch
+// (ChampionRun, B1.2), so both reviewers read one diff.
 type AB struct {
 	// PairID names the pair both arms belong to: one value, written by the
 	// launcher onto both tasks, so a reader joins the two records by it. It
@@ -892,6 +1026,41 @@ type AB struct {
 	// champion: the owner set that model in the project layer, never the
 	// repository's own file (D556).
 	ChallengerSource ABChallengerSource `json:"challenger_source,omitempty"`
+	// Slot is the one thing the pair varies (D728), empty on a coder pair:
+	// the empty spelling is not a hole but the value itself (EffectiveSlot),
+	// because every block written before this field — A1.1's own tasks and
+	// records — is a coder pair, and re-reading them must not turn them into
+	// pairs nobody could score.
+	Slot ABSlot `json:"slot,omitempty"`
+	// ChampionRun is the champion's run ID on a challenger at a review slot,
+	// and empty everywhere else: it names the run whose recorded patch
+	// (runstore.PatchName) this arm's reviewer reads, which is what makes the
+	// two arms of a review pair judge the same code (D728, B1.2). A champion
+	// is the run its own block names; a coder pair's challenger runs the
+	// whole task itself. Validate refuses it in both places rather than
+	// ignoring it, as it does with the fields that describe a challenger.
+	ChampionRun string `json:"champion_run,omitempty"`
+}
+
+// EffectiveSlot is the slot the pair varies with the empty spelling
+// resolved: a block that names no slot is a coder pair (D728), which is what
+// every task and record written before the field says by saying nothing. A
+// reader that asked Slot directly would read those as "no slot" and would
+// have to repeat the rule; this is the one place it is written.
+func (ab *AB) EffectiveSlot() ABSlot {
+	if ab.Slot == "" {
+		return ABSlotCoder
+	}
+	return ab.Slot
+}
+
+// IsReviewer reports whether the slot varies a review level rather than the
+// coder: such a pair's challenger is a shadow replay of that level over the
+// champion's patch (D728, B1.2) and never a second coding loop, which is the
+// one thing a reader has to tell apart. It is a method rather than a list
+// checked at each call site, so the closed vocabulary and the reader agree.
+func (s ABSlot) IsReviewer() bool {
+	return s == ABSlotL1 || s == ABSlotL2 || s == ABSlotL3
 }
 
 // MaxAuthorNameLen and MaxAuthorEmailLen bound the two fields of an author
@@ -1194,6 +1363,14 @@ func (s *Spec) Validate() error {
 	if s.FollowUpOf != nil && !runIDRE.MatchString(s.FollowUpOf.Run) {
 		bad("task spec: follow_up_of.run %q is not a run ID", s.FollowUpOf.Run)
 	}
+	// The mark the launcher sorts and notifies by (D2040), and nothing else:
+	// the vocabulary is closed for rigor's and tier's reason — a near miss is a
+	// launcher's bug rather than a run's opinion about a finding — and the
+	// field being absent is legal, since a follow-up filed by hand or by a
+	// release before this field carries no mark at all.
+	if s.FollowUpOf != nil && s.FollowUpOf.Importance != "" && !KnownImportance(s.FollowUpOf.Importance) {
+		bad("task spec: follow_up_of.importance %q must be one of %s or empty", s.FollowUpOf.Importance, ImportanceList())
+	}
 	if s.Branch != "" && !BranchRE.MatchString(s.Branch) {
 		bad("task spec: branch %q must be fugaro/<run-id>", s.Branch)
 	}
@@ -1289,6 +1466,16 @@ func (s *Spec) Validate() error {
 	if s.Tier != "" && !tier.Known(s.Tier) {
 		bad("task spec: tier %q must be one of %s or empty", s.Tier, tier.List())
 	}
+	// The grade a run runs at (E4, G11). The vocabulary is escalation's two
+	// names and not a model ID: a task names the grade, the project layer
+	// answers what it resolves to, and a spec carrying a model or a credential
+	// here is refused where it is written rather than resolved into a call the
+	// owner never chose. That refusal is this field's own half of G11; the
+	// other half — a grade the project sets nothing for — is the runner's,
+	// because only a run can read the project's answer (applyGrade).
+	if s.ModelGrade != "" && !escalation.KnownGrade(s.ModelGrade) {
+		bad("task spec: model_grade %q must be one of %s or empty: a task names a grade, and the project layer says which model and credential that grade runs (G11)", s.ModelGrade, GradeList())
+	}
 	if len(s.ExpectedScope) > MaxDeclaredPaths {
 		bad("task spec: expected_scope must name at most %d paths", MaxDeclaredPaths)
 	}
@@ -1316,9 +1503,9 @@ func (s *Spec) Validate() error {
 	// recipe is implement or review) is legal and means "the runner reads
 	// it from the resolved recipe".
 	switch s.Mode {
-	case "", recipe.ModeImplement, recipe.ModeReview, recipe.ModeArtifact:
+	case "", recipe.ModeImplement, recipe.ModeReview, recipe.ModeArtifact, recipe.ModeEvaluate:
 	default:
-		bad("task spec: mode %q must be %s, %s, %s or empty", s.Mode, recipe.ModeImplement, recipe.ModeReview, recipe.ModeArtifact)
+		bad("task spec: mode %q must be %s, %s, %s, %s or empty", s.Mode, recipe.ModeImplement, recipe.ModeReview, recipe.ModeArtifact, recipe.ModeEvaluate)
 	}
 	// The entries' own shapes only. What an input NAME may be — no absolute
 	// path, no ".." element, no NUL or newline, a length limit, no duplicate
@@ -1349,13 +1536,31 @@ func (s *Spec) Validate() error {
 	// refused on it rather than ignored. That last rule is what keeps a task
 	// and the record the runner echoes from it (A2.1) in step with the
 	// published result schema, which refuses a champion carrying any of the
-	// three. An absent block is legal, and is what every launch writes today.
+	// three. The slot (D728) is judged the same way: it is a closed value,
+	// and the champion's run ID goes with a challenger at a review slot and
+	// with nothing else, so a block that describes no pair any runner could
+	// run is refused here rather than at bootstrap. An absent block is legal,
+	// and is what every launch writes today.
 	if ab := s.AB; ab != nil {
 		if strings.TrimSpace(ab.PairID) == "" {
 			bad("task spec: ab.pair_id is required")
 		}
 		if !slices.Contains(ABArms, ab.Arm) {
 			bad("task spec: ab.arm %q must be %s or %s", ab.Arm, ABArmChampion, ABArmChallenger)
+		}
+		if ab.Slot != "" && !slices.Contains(ABSlots, ab.Slot) {
+			bad("task spec: ab.slot %q must be %s, %s, %s or %s, or empty for %s", ab.Slot,
+				ABSlotCoder, ABSlotL1, ABSlotL2, ABSlotL3, ABSlotCoder)
+		}
+		// The champion's run ID belongs to a challenger at a review slot
+		// (D728): that arm replays a level over the champion's own recorded
+		// patch (B1.2) and so cannot be run without naming the run it reads,
+		// while a champion is the run its own block names and a coder pair's
+		// challenger runs the task itself. A field that described neither is
+		// refused rather than ignored, the way the three above are.
+		if ab.ChampionRun != "" && (ab.Arm != ABArmChallenger || !ab.EffectiveSlot().IsReviewer()) {
+			bad("task spec: ab.champion_run belongs to a challenger at a review slot (ab.slot %s, %s or %s): a coder pair's challenger runs the task itself, and a champion is the run it names",
+				ABSlotL1, ABSlotL2, ABSlotL3)
 		}
 		switch ab.Arm {
 		case ABArmChampion:
@@ -1377,6 +1582,13 @@ func (s *Spec) Validate() error {
 			}
 			if ab.ChallengerSource != "" && !slices.Contains(ABChallengerSources, ab.ChallengerSource) {
 				bad("task spec: ab.challenger_source %q must be %s or empty", ab.ChallengerSource, ABChallengerOwner)
+			}
+			// The replay's own input: the pair is only comparable if the
+			// challenger reads a real run's patch, so the ID is a run ID here
+			// the way run_id is — a blank or invented one would send the
+			// runner looking for an object nobody wrote (B1.2).
+			if ab.EffectiveSlot().IsReviewer() && !ValidRunID(ab.ChampionRun) {
+				bad("task spec: ab.champion_run %q must be the champion's run ID, the way run_id looks", ab.ChampionRun)
 			}
 		}
 		// The challenger never travels as an override (D555): with no

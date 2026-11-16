@@ -340,24 +340,29 @@ func TestProxiedReviewRunNeedsNoBranch(t *testing.T) {
 }
 
 // TestProxyFalseUnchanged is G9's other half: without the published block's
-// proxy: true -- and without the installation's service on, or on a project
-// job, or for a repository the block does not admit -- nothing about the run
-// changes. The decision is admissionCheck's (proxiedBitbucket), and it is the
-// one place it is made, so a table over it is the table over which runs are
-// proxied.
+// proxy: true -- and without the installation's service on, or for a
+// repository the block does not admit -- nothing about the run changes. The
+// decision is admissionCheck's (proxiedBitbucket), and it is the one place it
+// is made, so a table over it is the table over which runs are proxied.
+//
+// The job model is deliberately not a column: a shared project job of a
+// Bitbucket profile is proxied like any other Bitbucket job (S3), and the two
+// things that decide it are the block and the job's environment. What a
+// project job changes is what a refusal means -- it holds no token to fall
+// back to -- and that is TestSharedBitbucketJobHaltsWhenTheProxyRefusesARepository
+// (shared_bitbucket_test.go).
 func TestProxyFalseUnchanged(t *testing.T) {
 	block := func(proxy bool, repos ...string) *projectpolicy.Policy {
 		return &projectpolicy.Policy{BitbucketToken: &projectpolicy.BitbucketToken{AllowRepos: repos, Proxy: proxy}}
 	}
 	for _, tc := range []struct {
-		name    string
-		p       *projectpolicy.Policy
-		found   bool
-		project bool
-		kind    string
-		repo    string
-		env     []string
-		want    bool
+		name  string
+		p     *projectpolicy.Policy
+		found bool
+		kind  string
+		repo  string
+		env   []string
+		want  bool
 	}{
 		{name: "the block admits the repository with proxy: true", p: block(true, "bitbucket/acme/app"), found: true, kind: gitprov.KindBitbucket, repo: "acme/app", env: []string{providers.EnvCredentialsServiceURL + "=" + proxyService}, want: true},
 		{name: "a wildcard admits it", p: block(true, "bitbucket/acme/*"), found: true, kind: gitprov.KindBitbucket, repo: "acme/app", env: []string{providers.EnvCredentialsServiceURL + "=" + proxyService}, want: true},
@@ -366,13 +371,12 @@ func TestProxyFalseUnchanged(t *testing.T) {
 		{name: "no policy at all", found: true, kind: gitprov.KindBitbucket, repo: "acme/app", env: []string{providers.EnvCredentialsServiceURL + "=" + proxyService}},
 		{name: "the node was not found", p: block(true, "bitbucket/acme/app"), kind: gitprov.KindBitbucket, repo: "acme/app", env: []string{providers.EnvCredentialsServiceURL + "=" + proxyService}},
 		{name: "another repository", p: block(true, "bitbucket/acme/other"), found: true, kind: gitprov.KindBitbucket, repo: "acme/app", env: []string{providers.EnvCredentialsServiceURL + "=" + proxyService}},
-		{name: "a project job", p: block(true, "bitbucket/acme/app"), found: true, project: true, kind: gitprov.KindBitbucket, repo: "acme/app", env: []string{providers.EnvCredentialsServiceURL + "=" + proxyService}},
 		{name: "another provider", p: block(true, "bitbucket/acme/app"), found: true, kind: gitprov.KindGitHub, repo: "acme/app", env: []string{providers.EnvCredentialsServiceURL + "=" + proxyService}},
 		{name: "the installation has no service", p: block(true, "bitbucket/acme/app"), found: true, kind: gitprov.KindBitbucket, repo: "acme/app"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := proxiedRun(t, gitRunIdentity(t), func(r *run) { r.d.Env = tc.env; r.proxied = false })
-			if got := r.proxiedBitbucket(tc.p, tc.found, tc.project, tc.kind, tc.repo); got != tc.want {
+			if got := r.proxiedBitbucket(tc.p, tc.found, tc.kind, tc.repo); got != tc.want {
 				t.Fatalf("proxiedBitbucket = %v, want %v", got, tc.want)
 			}
 		})

@@ -353,3 +353,84 @@ func TestRecipeFollowUpOversizeBaseFileFails(t *testing.T) {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
 }
+
+// TestRecipeHandOverSkipsFix is E5's red step: a review step with hand_over
+// ends the run at that review. The recipe pins no rounds of its own, so the
+// configured agent.review_rounds (3) would buy three reviews and the fixes
+// between them; the run buys one review, keeps its verdict and its findings
+// on the record and stops — no fix, no second review — which is what the
+// escalation's escalate recipe asks for: one coder pass, one review, and the
+// verdict left for whoever reads it.
+//
+// Mutation (drop the `if st.HandOver { return true }` arm from seniorLoop):
+// the run dispatches a fix round this test never scripts, and the stages come
+// back implement, review, fix.
+func TestRecipeHandOverSkipsFix(t *testing.T) {
+	const handOver = "version: 1\nname: hand-over\nsteps:\n  - review: { hand_over: true }\n"
+	h := newHarness(t, firstLineCfg(t, 3, "  first_line_review: off\n"), recipeSpec(embeddedTask("hand-over", handOver)))
+	rec, err := h.run(t, implement("feature"), review("changes", 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review") {
+		t.Fatalf("stages = %v, want the implement stage and the one review", got)
+	}
+	if len(rec.Reviews) != 1 || rec.Reviews[0].Verdict != "changes" || rec.Reviews[0].Findings != 2 {
+		t.Fatalf("reviews = %+v, want the one round's verdict and findings recorded", rec.Reviews)
+	}
+}
+
+// TestRecipeHandOverSkipsFirstLine: the run that hands the review over has no
+// inner loop either. Level 1's step is the one a run inserts before the review
+// step whenever agent.first_line_review resolves on, and running it would be
+// the cheap review-and-fix pass this recipe is defined without — the
+// escalation's `escalate` is one coding pass and one review pass, of the model
+// the recipe names (docs/recipes.md §1) — so the insert is refused for it as
+// level 3's is, and the knobs that turn the level on cannot add a stage the
+// recipe's own text is not allowed to carry.
+//
+// Mutation (drop the `!recipe.UsesHandOver(rcp)` guard from planRecipe's
+// level-1 insert): the run reaches the first_line stage this test never
+// scripts, then the fix its round buys.
+func TestRecipeHandOverSkipsFirstLine(t *testing.T) {
+	const handOver = "version: 1\nname: hand-over\nsteps:\n  - review: { hand_over: true }\n"
+	h := newHarness(t, firstLineCfg(t, 3, "  first_line_review: on\n"), recipeSpec(embeddedTask("hand-over", handOver)))
+	rec, err := h.run(t, implement("feature"), review("changes", 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review") {
+		t.Fatalf("stages = %v, want the implement stage and the one review: no inner loop runs in a recipe that hands the run over", got)
+	}
+	if len(rec.Reviews) != 1 || rec.Reviews[0].Verdict != "changes" {
+		t.Fatalf("reviews = %+v, want the one review pass and nothing else", rec.Reviews)
+	}
+}
+
+// TestRecipeHandOverSkipsLevel3: the same ending on the one mode whose own row
+// runs review level 3 (rigor.Critical; agent.levels.l3, the owner's floor and
+// the security escalation turn it on at every other mode). Level 3's step is
+// the one a run inserts after the review step, and a review that hands the run
+// over ends it: a step inserted after that review would be an adversarial
+// round, and the fix it buys, dispatched after the run has already ended —
+// which is what the recipe's own grammar refuses ("hand_over ends the run at
+// the review: no adversarial step may follow it", recipe.Parse), and what the
+// insert must not undo.
+//
+// Mutation (drop the `!recipe.UsesHandOver(rcp)` guard from planRecipe's
+// level-3 insert): the run reaches the adversarial stage this test never
+// scripts.
+func TestRecipeHandOverSkipsLevel3(t *testing.T) {
+	const handOver = "version: 1\nname: hand-over\nsteps:\n  - review: { hand_over: true }\n"
+	h := newHarness(t, modeCfg(t, "critical", 3, "  first_line_review: off\n"), recipeSpec(embeddedTask("hand-over", handOver)))
+	rec, err := h.run(t, implement("feature"), review("changes", 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review") {
+		t.Fatalf("stages = %v, want the implement stage and the one review: nothing runs after a review that hands the run over", got)
+	}
+	if len(rec.Reviews) != 1 {
+		t.Fatalf("reviews = %+v, want the one round of the review that ended the run", rec.Reviews)
+	}
+}

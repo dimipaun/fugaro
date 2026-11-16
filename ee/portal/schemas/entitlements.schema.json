@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/ee/portal/schemas/entitlements.schema.json",
+  "title": "Portal entitlements",
+  "description": "Entitlements: what an organisation holds and until when (portal plan P3.1, P5.1, P6.2; D2196, D2199). Every grant — a purchase, the free seat, a trial, an operations grant, a reseller's sale, an open-source approval — is one shape, because the question the rest of the portal asks is what a customer holds, and source is kept beside it only for the reports and the reseller's accrual. An entitlement is created before it is bound, and the key is minted at binding, so nothing here is a key. Every object here is closed, because ee/keyservice/wire_entitlements.go decodes it with DisallowUnknownFields.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/entitlement"
+    },
+    {
+      "$ref": "#/$defs/mint"
+    }
+  ],
+  "$defs": {
+    "entitlement": {
+      "type": "object",
+      "description": "One entitlement, as the organisation's members read it and, for the metadata F5 allows, as a reseller or the operations team does.",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "organisation_id",
+        "workspace_id",
+        "source",
+        "row",
+        "tier",
+        "kind",
+        "seats",
+        "starts_at",
+        "ends_at",
+        "status",
+        "air_gapped",
+        "created_at",
+        "bound_at",
+        "rebindable_at"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The entitlement's id. Revocation is by this and not by a key id (F29): every key minted for one entitlement is revoked together, so a revealed successor cannot outlive a refund of the original."
+        },
+        "organisation_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The organisation that holds the entitlement, whether it paid for it, was granted it or received it from a reseller."
+        },
+        "workspace_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The portal workspace the entitlement is for, or null for one granted outside any workspace. It is not the Firebase project id: the project is the key's, and it is named at binding."
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "purchase",
+            "free_seat",
+            "trial",
+            "open_source",
+            "operations",
+            "reseller"
+          ],
+          "description": "Where the grant came from. Purchase is Paddle's, free_seat is the one comped seat every organisation gets at sign-up (D2184, D2199), and operations and reseller are the two the team hands out."
+        },
+        "row": {
+          "type": "string",
+          "minLength": 1,
+          "$comment": "A row of ee/keyservice/policy.go's defaultPolicies, which P1.8 extends with the free-seat row.",
+          "description": "The policy row the key is minted under. The tier, the term, the grace and the check interval are the row's and never the caller's (D2133, F28), and the minter re-reads the row by name."
+        },
+        "tier": {
+          "type": "string",
+          "enum": [
+            "community",
+            "team",
+            "enterprise"
+          ],
+          "$comment": "ee/licence's TierCommunity, TierTeam and TierEnterprise, the three names a released CLI's key already carries.",
+          "description": "The tier the key carries. The list is the released verifier's and not one this portal invents: a kind or a tier a shipped CLI does not know is a key it refuses (F6)."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "paid",
+            "trial",
+            "comped"
+          ],
+          "$comment": "ee/licence's KindPaid, KindTrial and KindComped — knownKind in licence/keyv1.go.",
+          "description": "Whether the key counts as revenue. The free seat is comped and not a kind of its own (F6, D2199), so a report can leave it out of the money without a second rule."
+        },
+        "seats": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many people may act. It is the entitlement's number: a seat change reissues the key under the same secret (D2200), and both sides of that read it here."
+        },
+        "starts_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The start of the term, in UTC, which for a purchase is the payment's instant and not the binding's (D2197): a customer who sets their project up a month later holds the month they paid for."
+        },
+        "ends_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The end of the term, in UTC. A reveal mints a key ending here and never past it (F4, F30), and a renewal issues the next term's key while this one still runs."
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "active",
+            "expired",
+            "revoked",
+            "superseded"
+          ],
+          "description": "Where the entitlement stands. Superseded is the trial or the free seat a purchase replaced in its workspace (D2203, D2204) — it does not come back — and revoked is every key it ever minted (F29)."
+        },
+        "air_gapped": {
+          "type": "boolean",
+          "description": "Whether the key is issued as a file for an installation with no egress (D2206). It is issued once at binding, it never checks in, it carries no secret, and no reveal or rebind touches it except operations'."
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the entitlement was created, in UTC."
+        },
+        "bound_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "When its key was first minted, or null while it is unbound. A paid entitlement that is still unbound is the state the binding reminder mails about (P7.1)."
+        },
+        "rebindable_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "The instant an owner or admin may bind this entitlement to another project, or null while nothing has been bound. Rebinding is once per 30 days (D2198), and the first one after a binding is immediate rather than held by the clock."
+        }
+      }
+    },
+    "mint": {
+      "type": "object",
+      "description": "Operations' and a reseller's request to grant a term (P5.1, P6.2). It names a row, seats, an end and a check interval, and nothing else about the policy: the tier, the grace and the renewal mode are the row's (D2133, F28), and the minter caps the requested end at the row's own term (P1.8). A reseller's request is this shape because it is the same act under a credit limit (D2189).",
+      "additionalProperties": false,
+      "required": [
+        "workspace_id",
+        "row",
+        "seats",
+        "ends_at",
+        "check_interval"
+      ],
+      "properties": {
+        "workspace_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The portal workspace the entitlement is for. The key is minted when that workspace is bound, so this names which customer's installation will hold it."
+        },
+        "row": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The policy row to mint under, by name. A caller that could name the policy instead of the row could mint a key that never checks in (F28)."
+        },
+        "seats": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many people may act, chosen freely here: this is the route the spec's \"mint with any seat count\" is (spec §Operations), and it is operations' and a reseller's rather than a customer's."
+        },
+        "ends_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The end the caller asks for, in UTC. It is capped at the row's term: a grant may run shorter than the row and never longer (F30, P1.8)."
+        },
+        "check_interval": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "How often the installation asks whether its key is still good, as an ISO 8601 duration of 1 to 30 days (`P1D` … `P30D`). Null is the air-gapped row and nothing else: a connected key that never checks in is one revocation cannot reach (F28)."
+        }
+      }
+    }
+  }
+}

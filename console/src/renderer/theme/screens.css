@@ -580,7 +580,7 @@ span.spend-persons-state {
  * the read resolved, and the total of the window under them.
  *
  * The panel is a wrapping flex row because its own header -- the view, the
- * identity the read was resolved for, whether the caller is an operator, the
+ * identity the read was resolved for, whether the caller is an admin, the
  * window and the bound -- is a run of loose spans, and a run of loose spans
  * with no gap between them is one word. Every child that is not one of those
  * spans takes the whole width (`flex-basis` below), so the panel still reads
@@ -614,7 +614,7 @@ section.spend-people[data-available='false'] {
  * same shape as the header's own range words. */
 span.spend-people-view,
 span.spend-people-you,
-span.spend-people-operator,
+span.spend-people-admin,
 span.spend-people-since,
 span.spend-people-until,
 span.spend-people-bound {

@@ -39,10 +39,15 @@ import (
 // Without either, the check is "not made", never "fine".
 
 // githubAPIURL is the GitHub REST root the pre-check asks; tests replace it.
+// The launch's own read of a ref's fugaro.yaml asks it too, for the same
+// reason: it is the root the installation's token is spent at, and nothing on
+// that path reads a host out of the environment (project_job.go).
 var githubAPIURL = github.DefaultBaseURL
 
-// githubAPIClient is the HTTP client of the pre-check (nil: the default one,
-// with a timeout). Tests replace it.
+// githubAPIClient is the HTTP client of the pre-check and of that read (nil:
+// the default one, with a timeout). Tests replace it — including the launch's
+// read, which is given it so that one fixture can stand for the forge and the
+// credentials service at once.
 var githubAPIClient *http.Client
 
 // readSecretValue reads one secret's value with the person's own credentials:

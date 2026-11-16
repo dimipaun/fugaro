@@ -89,6 +89,25 @@ variable "operators" {
   }
 }
 
+# The viewer list (RS4 of docs/roles-scopes/implementation-plan.md, roles.md
+# §4): the members who read the database and the spend history and nothing
+# else. They are the one list besides the two above that is handed to this
+# root, and they are deliberately NOT part of local.people: the token-minter
+# grant is that local's, and a viewer who could mint a token for any identity
+# in the project would hold by claim everything this list withholds (roles.md
+# §4, F44).
+variable "viewers" {
+  description = "Members who read and nothing else: roles/firebasedatabase.viewer for the database and roles/datastore.viewer for the spend history. No minter, no admin, no write."
+  type        = list(string)
+  default     = []
+  nullable    = false
+
+  validation {
+    condition     = alltrue([for m in var.viewers : can(regex("^(user|group|serviceAccount):[^ *]+$", m))])
+    error_message = "viewers must be IAM members: user:, group: or serviceAccount: followed by one address (no domain: and no wildcard: these members get roles on the FP)."
+  }
+}
+
 variable "admins" {
   description = "The GCP project's roles/owner and roles/editor members, which fugaro update reads from the project's IAM policy. They become budget admins (D6): roles/firebasedatabase.admin."
   type        = list(string)

@@ -259,22 +259,23 @@ func TestGoreleaserReleaseBuild(t *testing.T) {
 	})
 
 	t.Run("the notices matrix is the build matrix", func(t *testing.T) {
-		var want []string
+		// The two builds of the release compile the same matrix -- that is
+		// what makes the untagged one the tagged one without the tag -- so
+		// this compares the targets as a set rather than as a list.
+		want := map[string]bool{}
 		for _, b := range cfg.Builds {
 			for _, goos := range b.Goos {
 				for _, goarch := range b.Goarch {
-					want = append(want, goos+"/"+goarch)
+					want[goos+"/"+goarch] = true
 				}
 			}
 		}
-		var got []string
+		got := map[string]bool{}
 		for _, tgt := range noticesTargets {
-			got = append(got, tgt.goos+"/"+tgt.goarch)
+			got[tgt.goos+"/"+tgt.goarch] = true
 		}
-		slices.Sort(want)
-		slices.Sort(got)
-		if !slices.Equal(want, got) {
-			t.Errorf("the config builds %v and these tests ask go list -deps for %v; a target the config builds and the notices script does not ask about can link a module the archive carries no notice for", want, got)
+		if !maps.Equal(want, got) {
+			t.Errorf("the config builds %v and these tests ask go list -deps for %v; a target the config builds and the notices script does not ask about can link a module the archive carries no notice for", slices.Sorted(maps.Keys(want)), slices.Sorted(maps.Keys(got)))
 		}
 	})
 
@@ -353,6 +354,226 @@ func TestGoreleaserReleaseBuild(t *testing.T) {
 		}
 	})
 }
+
+// The release publishes two archives of one main: the mixed-licence one every
+// install path follows, and, beside it, the pure-MIT one a user who wants no
+// ee/ code downloads instead of building from source (the owner's T3 (c) ruling
+// of 2026-11-11; plan task L5.3). Both names are the owner's answers of that
+// day: `fugaro-core_<version>_<os>_<arch>.tar.gz` for the core archive, and the
+// binary inside it still `fugaro`.
+const (
+	mixedArchiveTemplate = "fugaro_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+	coreArchiveTemplate  = "fugaro-core_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+	releaseBinary        = "fugaro"
+)
+
+// TestCoreArchiveIsThePureMITBuild: the pure-MIT archive has to be the untagged
+// build and only that -- no `ee` tag on any route into it, no copy of the
+// Subscription licence beside the binary, and no way for the two archives to
+// swap their contents. The mixed-licence archive keeps both halves: the tag
+// TestEETagNeedsTheLabels holds to every label, and the licence copy clause 8.1
+// asks to travel with every copy of the code.
+//
+// The plants prove the readers below are not vacuous: each one is a whole
+// release of this repository's shape with a single edit, and the base is
+// asserted clean first, so a plant cannot pass on a gap its own starting point
+// already had.
+func TestCoreArchiveIsThePureMITBuild(t *testing.T) {
+	root := testutil.ModuleRoot()
+	cfg := readGoreleaser(t, filepath.Join(root, ".goreleaser.yaml"))
+	workflow := []byte(readText(t, filepath.Join(root, ".github", "workflows", "release.yml")))
+	for _, gap := range coreArchiveGaps(t, cfg, workflow) {
+		t.Errorf("%s", gap)
+	}
+
+	for _, c := range []struct{ name, config, want string }{
+		{
+			name:   "a planted release whose core build is tagged too",
+			config: strings.Replace(coreArchivePlant, "\n  - id: fugaro-core\n", "\n  - id: fugaro-core\n    tags: [ee]\n", 1),
+			want:   "exactly one build has to be untagged",
+		},
+		{
+			name:   "a planted core archive carrying the Subscription licence copy",
+			config: strings.Replace(coreArchivePlant, "files: [LICENSE, README.md, THIRD_PARTY_NOTICES.md]\n", "files: [LICENSE, README.md, THIRD_PARTY_NOTICES.md, LICENSES/"+subscriptionMarker+".txt]\n", 1),
+			want:   "the pure-MIT archive carries",
+		},
+		{
+			name:   "a planted archive that selects no build",
+			config: strings.Replace(coreArchivePlant, "    ids: [fugaro-core]\n", "", 1),
+			want:   "takes exactly one build's binary",
+		},
+		{
+			name:   "a planted mixed-licence archive without the Subscription licence copy",
+			config: strings.Replace(coreArchivePlant, ", LICENSES/"+subscriptionMarker+".txt", "", 1),
+			want:   "does not carry LICENSES/" + subscriptionMarker + ".txt",
+		},
+		{
+			name:   "a planted Homebrew cask on the core archive",
+			config: strings.Replace(coreArchivePlant, "    ids: [fugaro]\n    license:", "    ids: [fugaro-core]\n    license:", 1),
+			want:   "the Homebrew cask installs",
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			planted := parseGoreleaser(t, c.config)
+			gaps := coreArchiveGaps(t, planted, []byte(noTagWorkflow))
+			if len(gaps) == 0 {
+				t.Fatalf("%s reports no gap, so a release the plants describe would ship", c.name)
+			}
+			if !strings.Contains(strings.Join(gaps, "\n"), c.want) {
+				t.Errorf("%s reports %v, and no gap names %q: a failure has to say which half of the release to change", c.name, gaps, c.want)
+			}
+		})
+	}
+
+	t.Run("the plant this case starts from is a clean release", func(t *testing.T) {
+		gaps := coreArchiveGaps(t, parseGoreleaser(t, coreArchivePlant), []byte(noTagWorkflow))
+		if len(gaps) > 0 {
+			t.Errorf("the planted release the cases above edit reports gaps of its own (%v), so an edit that adds nothing would still fail and the cases would prove nothing", gaps)
+		}
+	})
+}
+
+// coreArchiveGaps reports every way the release fails to publish the pure-MIT
+// archive beside the mixed-licence one. The two builds are told apart by the tag
+// alone, read through buildTagSet so that every route a tag can take counts --
+// a GOFLAGS in the config's own env tags both builds, and an archive whose file
+// list carries the Subscription licence or a path into ee/ is the mix-up this
+// whole test exists for.
+func coreArchiveGaps(t *testing.T, cfg goreleaserConfig, workflow []byte) []string {
+	t.Helper()
+	var gaps []string
+
+	var tagged, untagged []goreleaserBuild
+	for _, b := range cfg.Builds {
+		if buildTagSet(t, goreleaserConfig{Env: cfg.Env, Builds: []goreleaserBuild{b}}, workflow)["ee"] {
+			tagged = append(tagged, b)
+		} else {
+			untagged = append(untagged, b)
+		}
+	}
+	if len(tagged) != 1 || len(untagged) != 1 {
+		return []string{fmt.Sprintf("the release has %d build(s) that set the ee tag and %d that do not, and it publishes one archive of each: exactly one build has to be untagged, or there is no pure-MIT archive to publish", len(tagged), len(untagged))}
+	}
+	core, mixed := untagged[0], tagged[0]
+
+	// The tag is the only thing that may differ. A flag, a target or a linker
+	// setting on one build alone makes the core archive a second build nobody
+	// decided on rather than the mixed-licence one without the tag.
+	for _, one := range []struct {
+		field      string
+		core, both any
+	}{
+		{"main", core.Main, mixed.Main},
+		{"binary", core.Binary, mixed.Binary},
+		{"goos", core.Goos, mixed.Goos},
+		{"goarch", core.Goarch, mixed.Goarch},
+		{"flags", core.Flags, mixed.Flags},
+		{"env", core.Env, mixed.Env},
+		{"overrides", core.Overrides, mixed.Overrides},
+		{"ldflags", core.Ldflags, mixed.Ldflags},
+		{"mod_timestamp", core.ModTimestamp, mixed.ModTimestamp},
+	} {
+		if fmt.Sprintf("%v", one.core) != fmt.Sprintf("%v", one.both) {
+			gaps = append(gaps, fmt.Sprintf("the two builds differ in %s: the untagged build has %v and the tagged one %v. The core archive is the mixed-licence build with the tag left off and nothing else", one.field, one.core, one.both))
+		}
+	}
+	if core.Binary != releaseBinary || mixed.Binary != releaseBinary {
+		gaps = append(gaps, fmt.Sprintf("the builds ship their binaries as %q and %q, and both archives carry `%s`: only the archive's own name says which is which (the owner's answer of 2026-11-11)", core.Binary, mixed.Binary, releaseBinary))
+	}
+
+	// One archive per build, each selecting exactly one id: an archive with no
+	// `ids` takes every build's binary, which is the one misconfiguration that
+	// would put the tagged binary -- and with it the commercial code -- inside
+	// the tar file a pure-MIT user downloads.
+	byBuild := map[string][]goreleaserArchive{}
+	for _, a := range cfg.Archives {
+		if len(a.IDs) != 1 {
+			gaps = append(gaps, fmt.Sprintf("the archive %q selects the builds %v; each of the release's archives takes exactly one build's binary, because an archive with no `ids` takes every build's", a.ID, a.IDs))
+			continue
+		}
+		byBuild[a.IDs[0]] = append(byBuild[a.IDs[0]], a)
+	}
+	coreArchives, mixedArchives := byBuild[core.ID], byBuild[mixed.ID]
+	if len(coreArchives) != 1 {
+		gaps = append(gaps, fmt.Sprintf("the untagged build %q is the binary of %d archives, want one: the pure-MIT archive is the build's own", core.ID, len(coreArchives)))
+	}
+	if len(mixedArchives) != 1 {
+		gaps = append(gaps, fmt.Sprintf("the tagged build %q is the binary of %d archives, want one: the mixed-licence archive is the build's own", mixed.ID, len(mixedArchives)))
+	}
+	if len(coreArchives) != 1 || len(mixedArchives) != 1 {
+		return gaps
+	}
+	coreArchive, mixedArchive := coreArchives[0], mixedArchives[0]
+
+	if coreArchive.NameTemplate != coreArchiveTemplate {
+		gaps = append(gaps, fmt.Sprintf("the pure-MIT archive's name_template is %q, want %q: the owner's answer of 2026-11-11 names the file `fugaro-core_<version>_<os>_<arch>.tar.gz`, and a reader has to be able to tell the two archives apart by name", coreArchive.NameTemplate, coreArchiveTemplate))
+	}
+	if coreArchive.NameTemplate == mixedArchive.NameTemplate {
+		gaps = append(gaps, fmt.Sprintf("both archives are named %q: two archives of one OS/arch pair under one name overwrite each other on the release, and the one a reader downloads says nothing about which licence it is under", mixedArchive.NameTemplate))
+	}
+
+	// What each archive carries. The Subscription licence copy travels with
+	// the code that is under it (clause 8.1 of ee/LICENSE) and belongs to the
+	// mixed-licence archive alone; the core archive carries the MIT LICENSE,
+	// the README and the third-party notices, and nothing that reads as if the
+	// binary beside it were commercial.
+	for _, f := range coreArchive.Files {
+		for _, p := range []string{f.Src, f.Dst, f.Glob} {
+			if strings.Contains(p, subscriptionMarker) || reachesEE(p) {
+				gaps = append(gaps, fmt.Sprintf("the pure-MIT archive carries %q: the binary in it has no ee/ code, so the Subscription terms are not its licence and their text does not belong beside it", p))
+			}
+		}
+	}
+	if !slices.ContainsFunc(mixedArchive.Files, func(f archiveFile) bool {
+		return strings.Contains(f.Src+"/"+f.Dst+"/"+f.Glob, subscriptionMarker)
+	}) {
+		gaps = append(gaps, fmt.Sprintf("the mixed-licence archive does not carry LICENSES/%s.txt: the binary in it carries ee/ code, and clause 8.1 of ee/LICENSE asks its terms to travel with every copy", subscriptionMarker))
+	}
+
+	if cfg.Checksum.Disable {
+		gaps = append(gaps, "the release writes no checksums file (checksum.disable): a reader verifies a download against it by hand (docs/release.md), and there are two archives to verify now")
+	} else if len(cfg.Checksum.Artifacts) > 0 && !slices.Contains(cfg.Checksum.Artifacts, "archive") {
+		gaps = append(gaps, fmt.Sprintf("checksum.artifacts is %v and names no `archive`: GoReleaser sums every archive by default, and a list that leaves them out gives one of the two archives no line in checksums.txt", cfg.Checksum.Artifacts))
+	}
+
+	// The cask stays on the mixed-licence build, and there is one of it: the
+	// pure-MIT archive is a download rather than a second install path (the
+	// owner's answer of 2026-11-11).
+	if len(cfg.HomebrewCasks) != 1 {
+		gaps = append(gaps, fmt.Sprintf("the release writes %d Homebrew casks, want one: the cask stays on the mixed-licence archive and the pure-MIT one gets no cask", len(cfg.HomebrewCasks)))
+	} else if !slices.Equal(cfg.HomebrewCasks[0].IDs, mixedArchive.IDs) {
+		gaps = append(gaps, fmt.Sprintf("the Homebrew cask installs the archives %v and the mixed-licence archive is %v: a cask with no `ids` takes every archive of an OS/arch pair, and the core archive is now a second of them", cfg.HomebrewCasks[0].IDs, mixedArchive.IDs))
+	}
+	return gaps
+}
+
+// coreArchivePlant is a release of this repository's shape, written small: the
+// two builds of one main, the two archives, the cask. Every plant in the test
+// above is one edit to it, and it reports no gap of its own -- which the test
+// asserts before it trusts any edit.
+const coreArchivePlant = `project_name: fugaro
+builds:
+  - id: fugaro
+    main: ./cmd/fugaro
+    binary: fugaro
+    tags: [ee]
+  - id: fugaro-core
+    main: ./cmd/fugaro
+    binary: fugaro
+archives:
+  - id: fugaro
+    ids: [fugaro]
+    name_template: "fugaro_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files: [LICENSE, README.md, THIRD_PARTY_NOTICES.md, LICENSES/` + subscriptionMarker + `.txt]
+  - id: fugaro-core
+    ids: [fugaro-core]
+    name_template: "fugaro-core_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files: [LICENSE, README.md, THIRD_PARTY_NOTICES.md]
+homebrew_casks:
+  - name: fugaro
+    ids: [fugaro]
+    license: MIT AND ` + subscriptionMarker + `
+`
 
 // workflowWithGOFLAGS is a release workflow with one step, whose env block is
 // written exactly as env is given, so the reader is held to both the mapping
@@ -774,7 +995,16 @@ type goreleaserConfig struct {
 	Before        goreleaserHooks     `yaml:"before"`
 	Builds        []goreleaserBuild   `yaml:"builds"`
 	Archives      []goreleaserArchive `yaml:"archives"`
+	Checksum      goreleaserChecksum  `yaml:"checksum"`
 	HomebrewCasks []goreleaserCask    `yaml:"homebrew_casks"`
+}
+
+// goreleaserChecksum is the checksum block: artifacts names the artifact types
+// the sums file covers, and an absent list means GoReleaser's own default,
+// every archive.
+type goreleaserChecksum struct {
+	Disable   bool     `yaml:"disable"`
+	Artifacts []string `yaml:"artifacts"`
 }
 
 type goreleaserHooks struct {
@@ -783,13 +1013,17 @@ type goreleaserHooks struct {
 
 // goreleaserBuild is one builds[] entry.
 type goreleaserBuild struct {
-	Main      string               `yaml:"main"`
-	Goos      []string             `yaml:"goos"`
-	Goarch    []string             `yaml:"goarch"`
-	Tags      []string             `yaml:"tags"`
-	Flags     []string             `yaml:"flags"`
-	Env       envList              `yaml:"env"`
-	Overrides []goreleaserOverride `yaml:"overrides"`
+	ID           string               `yaml:"id"`
+	Main         string               `yaml:"main"`
+	Binary       string               `yaml:"binary"`
+	Goos         []string             `yaml:"goos"`
+	Goarch       []string             `yaml:"goarch"`
+	Tags         []string             `yaml:"tags"`
+	Flags        []string             `yaml:"flags"`
+	Env          envList              `yaml:"env"`
+	Overrides    []goreleaserOverride `yaml:"overrides"`
+	Ldflags      []string             `yaml:"ldflags"`
+	ModTimestamp string               `yaml:"mod_timestamp"`
 }
 
 // goreleaserOverride is one overrides[] entry, which carries a single goos and
@@ -801,12 +1035,20 @@ type goreleaserOverride struct {
 	Env   envList  `yaml:"env"`
 }
 
+// goreleaserArchive is one archives[] entry: the builds whose binaries it
+// carries (`ids`, which an absent list widens to every build), the name it is
+// published under, and the files that travel beside the binary.
 type goreleaserArchive struct {
-	Files []archiveFile `yaml:"files"`
+	ID           string        `yaml:"id"`
+	IDs          []string      `yaml:"ids"`
+	NameTemplate string        `yaml:"name_template"`
+	Files        []archiveFile `yaml:"files"`
 }
 
 type goreleaserCask struct {
-	License string `yaml:"license"`
+	Name    string   `yaml:"name"`
+	IDs     []string `yaml:"ids"`
+	License string   `yaml:"license"`
 }
 
 // archiveFile is one archives[].files entry, which GoReleaser accepts either as

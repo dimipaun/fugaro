@@ -22,6 +22,7 @@ type contentsFile struct {
 }
 
 var _ gitprov.ContentsReader = (*Provider)(nil)
+var _ gitprov.PRBranchReader = (*Provider)(nil)
 
 // Contents implements gitprov.ContentsReader: one file of this repository,
 // read through GET /repos/{owner}/{repo}/contents/{path} at ref (D1140,

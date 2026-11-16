@@ -1,21 +1,25 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
-// One set of vectors for all three verifiers (subscriptions plan S2.6; the
-// design is docs/licensing/licence-key.md, and S2.4 is the verifier this file
-// reads them with).
+// One set of vectors for the two verifiers of the older key (subscriptions plan
+// S2.6; the design is docs/licensing/licence-key.md, and S2.4 is the verifier
+// this file reads them with).
 //
-// `ee/licence/testdata/vectors.json` is the plan's one set: the claim sets,
-// states and refusals the Go verifier (S2.3), this console's (S2.4) and the
-// app's (S2.5) are all read against, so a key that one of them accepts and
-// another refuses is a defect no one of their own suites can see. This file
-// reads that file **as it is written** -- the key texts verbatim, the ids as
-// the text they are, the ring as the file spells it -- and asserts the
-// console's answer for every vector and every installed-key pair. The app's
-// sibling (`mobile/src/licence/vectors.test.js`) does the same, and the Go
-// verifier's `TestVectorsRoundTrip` is the third reader.
+// `ee/licence/testdata/vectors.json` is that format's set: the claim sets,
+// states and refusals this console's verifier (S2.4) and the app's (S2.5) are
+// both read against, so a key that one of them accepts and another refuses is a
+// defect no one of their own suites can see. This file reads that file **as it
+// is written** -- the key texts verbatim, the ids as the text they are, the ring
+// as the file spells it -- and asserts the console's answer for every vector and
+// every installed-key pair. The app's sibling
+// (`mobile/src/licence/vectors.test.js`) does the same.
+//
+// **The Go verifier left this format with K7.3, and with it this file's third
+// reader**: `ee/licence` verifies the `fgk_` key and no other, and its vectors
+// are `ee/licence/testdata/vectors_v1.json`, read by `TestVectorsRoundTrip` and
+// by the console's v1 verifier's own case (K1.4).
 //
 // **What "the same state" means for a refusal.** The file carries a `refused`
-// name for a key a verifier must turn away, drawn from the five the three
+// name for a key a verifier must turn away, drawn from the five the two
 // verifiers share (malformed, unknown-key-id, signature, claims, lifetime),
 // and a `state` for one it must read (valid, grace, expired). The console
 // answers a refusal with a sentence rather than a code (S2.4's contract: every

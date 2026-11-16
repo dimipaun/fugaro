@@ -354,8 +354,9 @@ standard, with the Docs and console-contract pins in the same pull request. **SE
 **Owner-run:** no.
 
 - **Files (7):** `internal/cli/runs.go` (the flag, `lsOptions`, `lsDoc.Groups`, the refusals — the
-  closed value list and the refusal by `slices.Contains` are the shape `--state` and `lsStates`
-  (`:65`) already have), `internal/cli/runs_group.go` (new: the grouping over the rows the listing
+  closed value list and the refusal by `slices.Contains` are the shape `--state` and `lsStateWords`
+  (`runs_prstate.go:51`: the run states plus the states of a pull request) already have),
+  `internal/cli/runs_group.go` (new: the grouping over the rows the listing
   already read, `(*cli.Cloud).LoadRows`, `internal/cli/api.go:301`), `internal/cli/runs_group_test.go`
   (new), `internal/cli/runs_test.go`, `internal/cli/testdata/runs_group.golden` (new),
   `console/docs/json-contract.md` (the `groups` row — the pin sees this key through
@@ -581,6 +582,15 @@ statement), or that the console draws the class (it does not; §4).
 owner's own work runs in.** No agent runs any step of it: every live check in this repository is
 owner-run, and this one is read by a person because it is a claim about **what the owner can see**,
 which is the claim the design exists to make true.
+
+**Written 2026-11-14, and NOT RUN.** Steps 1 to 4 and the read half of step 5 are now ONE script the
+owner runs — `scripts/live-checks/check350.sh`, whose sibling `scripts/live-checks/check350_test.sh`
+drives it against a fake `gcloud` and a fake `fugaro` and nothing else — and `docs/gcp-live-checklist.md`
+carries the register's row and `## Check 350` section with it. **Steps 5 and 6 keep the numbered shape
+below and are never faked**: the run step 5 needs and the `brew upgrade` / `fugaro update` of step 6 stay
+yours — the script prompts for both and makes neither, and it measures step 5 only when you hand it the
+run with `--step5-run`, whose class it then reads as a criterion like the others. **No step of any of it has been
+run**, and this section is not a reading about the classes.
 
 1. On the sandbox repository, take one run that fails for a cause the classifier can name on purpose
    (a `fugaro.yaml` with an invalid key is `config_invalid`, and it is repeatable without touching

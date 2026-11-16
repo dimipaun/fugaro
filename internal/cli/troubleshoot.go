@@ -1,0 +1,991 @@
+package cli
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+	"gopkg.in/yaml.v3"
+
+	"github.com/dimipaun/fugaro/internal/claudeplugin"
+	"github.com/dimipaun/fugaro/internal/cmdlog"
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/diagnoseagent"
+	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/srctree"
+)
+
+// troubleshoot is the local diagnosis of a command that failed on this machine
+// (docs/diagnose-agent, D1604): `fugaro diagnose` explains a cloud run, and
+// this explains the failure the person is standing in front of. It runs on the
+// machine and never as a job, because the cloud setup is often exactly what is
+// broken, and it reads no stdin: the typed command is the consent (F13,
+// D1606).
+//
+// Everything the diagnosis does that reaches outside this process is a package
+// variable, one per call, so a test can drive the whole command in the
+// hermetic world (no network, no git, no claude) and assert what it prints:
+//
+//   - troubleshootSource and troubleshootChanges, the source tree and the
+//     "changes since your version" file (D1602, D1610, D1611);
+//   - troubleshootRun, the read-only agent (D1602, D1613);
+//   - troubleshootDoctor, `fugaro doctor`, whose output is one of the four
+//     evidence files.
+//
+// This is the shape the package already uses for layerRead and getenvOS.
+//
+// It reads no secret of the installation's and needs no gcloud login: the
+// credential is this machine's own — a value in the environment, or the login
+// claude already holds here (D1601 as the owner's report of 2026-11-13 fixed
+// it), and claude itself is found through the package's own claudeLookPath.
+
+const (
+	// troubleshootReportName is D1605's report file, written into the evidence
+	// folder beside the four files the collector writes. The person reads it,
+	// checks it and posts it; Fugaro files nothing.
+	troubleshootReportName = "report.md"
+	// troubleshootLogLines is how much of the redacted log the offline path
+	// prints (D1608). It is the end of the log, which is where a command that
+	// failed says why, and it is short enough to read in a terminal.
+	troubleshootLogLines = 40
+	// troubleshootNoteLimit bounds one evidence file the offline path prints.
+	// The doctor's output and the log are the local user's own text and are
+	// printed as they are; this bound is only so that a file a hand has filled
+	// with megabytes cannot fill the terminal.
+	troubleshootNoteLimit = 512 << 10
+	// causeMarkerJobImage is the marker checkImageSinceDev's refusal carries
+	// (recipes_skew.go), so that a launch refused over an image older than the
+	// published policy is answered from the log alone (troubleshootCauses). It
+	// opens with the space that joins it to the sentence before it.
+	//
+	// It sits inside the refusal's own sentence rather than on a line of its
+	// own, because the line that names the cause is the line a reader has: a
+	// note on a separate line can be left behind by a tail, a rewrap or a
+	// reader that keeps the error and not the note, and then the log no longer
+	// says what it says. Nothing else in the log or the run record types this
+	// failure — the refusal is an ordinary userErr — so this token, written by
+	// the CLI in one place and read in one place, is what makes it typed.
+	causeMarkerJobImage = " [fugaro-cause: job-image-older-than-policy]"
+)
+
+// troubleshootSource, troubleshootChanges and troubleshootRun are the three
+// calls this command makes outside its own process, named here because a test
+// replaces them (the header comment above).
+var (
+	troubleshootSource  = srctree.Ensure
+	troubleshootChanges = srctree.ChangesSince
+	troubleshootRun     = diagnoseagent.Run
+)
+
+type troubleshootOptions struct {
+	asJSON bool
+	// maxTurns and maxBudgetUSD are D1613's cap. They are flags rather than
+	// constants because a hard failure may need a longer look, and they are
+	// never absent: a diagnosis that ran unbounded on a metered key is the
+	// thing the cap exists to refuse.
+	maxTurns     int
+	maxBudgetUSD float64
+}
+
+// troubleshootDoc is `fugaro troubleshoot --json`. It is one shape for both
+// answers the command gives: a diagnosis, and the offline path's evidence
+// (D1608), which is told apart by Offline.
+type troubleshootDoc struct {
+	RunID   string `json:"run_id"`
+	Command string `json:"command"`
+	Version string `json:"version"`
+	Model   string `json:"model"`
+	// EvidenceDir and Guide are where the evidence is and where the guide a
+	// person may read lives: both are printed by the offline path (D1608).
+	EvidenceDir string `json:"evidence_dir"`
+	Guide       string `json:"guide"`
+	// SourceNote is set when the tree the agent read may not be this build
+	// (D1611), which is the one thing a finding resting on a line of it has to
+	// be read against.
+	SourceNote string `json:"source_note,omitempty"`
+
+	Outcome    string            `json:"outcome,omitempty"`
+	Signature  string            `json:"signature,omitempty"`
+	Answer     string            `json:"answer,omitempty"`
+	Fixes      []troubleshootFix `json:"fixes,omitempty"`
+	CostUSD    float64           `json:"cost_usd,omitempty"`
+	ReportPath string            `json:"report_path,omitempty"`
+
+	// Cause, Fix and LogLine are the answer the evidence gave by itself, with
+	// no model: Cause is the class of failure the log named, Fix is the one
+	// command this CLI knows for it, and LogLine is the line of the log they
+	// were read from (the owner's report of 2026-11-15). The three are set
+	// together and only together.
+	Cause   string `json:"cause,omitempty"`
+	Fix     string `json:"fix,omitempty"`
+	LogLine string `json:"log_line,omitempty"`
+
+	Offline bool     `json:"offline,omitempty"`
+	Reason  string   `json:"reason,omitempty"`
+	LogTail []string `json:"log_tail,omitempty"`
+	// logTailSkipped is how many lines the tail left out as Terraform refresh
+	// noise. It is not part of the document — the tail is — and it is here
+	// rather than recomputed by the printer so that the header says refresh
+	// lines were left out only where they were: a log that is nothing but
+	// refresh lines is printed whole under a header claiming nothing.
+	logTailSkipped int
+	Doctor         string `json:"doctor,omitempty"`
+}
+
+// troubleshootFix is one fix command D1614's check reached a verdict on: what
+// was printed, and whether the CLI's own command tree holds it. Only a Checked
+// command is shown as runnable.
+type troubleshootFix struct {
+	Command string   `json:"command"`
+	Argv    []string `json:"argv"`
+	Checked bool     `json:"checked"`
+	Reason  string   `json:"reason,omitempty"`
+}
+
+func newTroubleshootCmd() *cobra.Command {
+	var o troubleshootOptions
+	cmd := &cobra.Command{
+		Use:   "troubleshoot [RUN ID]",
+		Short: "Explain a Fugaro command that failed on this machine, locally",
+		Long: `Explain a Fugaro command that failed on this machine: its log, fugaro
+doctor's output, the effective configuration and the Fugaro source at the
+version that failed, read by a local agent that can only read (no shell, no
+writes, no network) and answers with the cause and the fix.
+
+With no RUN ID it takes the newest logged command that failed. RUN ID is the
+one the failed command printed (update-20261107183012-48213), which is also
+the name of its log. A cloud run's <repo-slug>/<run-id> is a different thing
+and is refused here: fugaro diagnose explains those.
+
+A failure this CLI recognises in the log is answered from the log alone, with
+no model call and nothing sent anywhere: the cause and the one command that
+fixes it are printed, and the exit is zero because it explained something. The
+diagnosis runs when the log holds no cause the CLI knows.
+
+Log text is data: it holds Terraform and gcloud error bodies, API responses
+and file names, so a command the answer prints is checked against this CLI's
+own command tree before it is shown as runnable, and anything else is marked
+as unchecked.
+
+It runs on your own Claude credential and reads no secret: CLAUDE_CODE_OAUTH_TOKEN
+or ANTHROPIC_API_KEY if either is set in this environment, and otherwise the
+logged-in claude on this machine, which is run as it is and needs no gcloud. It
+never reads the project's account out of Secret Manager.
+
+The command reads no stdin. Typing it is the consent: one line says which
+provider and what class of data the redacted evidence goes to, and then the
+diagnosis runs. With no credential at all, or with the source at this version
+out of reach, it prints the evidence where it is and exits non-zero instead: a
+machine with no credential is told to log in with the claude CLI, or to set one
+of the two variables, and to run the command again, and a claude that is there
+but not logged in is refused in one sentence naming the login, with no evidence
+printed and the same non-zero exit.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var ref string
+			if len(args) == 1 {
+				ref = args[0]
+			}
+			return runTroubleshoot(cmd, &o, ref)
+		},
+	}
+	cmd.Flags().BoolVar(&o.asJSON, "json", false, "print machine-readable output")
+	// The defaults are D1613's own, written out rather than left at zero: a
+	// zero field takes the same value (Cap.withDefaults), and a reference page
+	// that printed 0 would read as "no bound" to the person the cap protects.
+	cmd.Flags().IntVar(&o.maxTurns, "max-turns", diagnoseagent.DefaultCap.Turns, "bound the diagnosis to this many agent turns")
+	cmd.Flags().Float64Var(&o.maxBudgetUSD, "max-budget-usd", diagnoseagent.DefaultCap.USD, "bound the diagnosis to this many US dollars")
+	return cmd
+}
+
+func runTroubleshoot(cmd *cobra.Command, o *troubleshootOptions, ref string) error {
+	ctx := cmd.Context()
+	id, err := troubleshootID(getenvOS, ref)
+	if err != nil {
+		return err
+	}
+	// The configuration is read before anything else is collected: it is both
+	// one of the four evidence files and where D1607's model comes from.
+	res := readTroubleshootResolution(ctx)
+	// The credential is resolved before the evidence is collected: it decides
+	// which claude the diagnosis runs, and its refusal is one of the reasons
+	// D1608's offline path answers instead. Every value it can resolve is this
+	// machine's own — a variable of the environment, which cliSecrets already
+	// holds, or no value at all — so the evidence files' redaction list needs
+	// nothing from it (F4, spec.md).
+	cred, credErr := troubleshootCredential()
+	ev, err := diagnoseagent.Collect(ctx, id, diagnoseagent.Options{
+		Version: Version,
+		Commit:  Commit,
+		Getenv:  getenvOS,
+		GOOS:    runtime.GOOS,
+		Doctor:  troubleshootDoctor,
+		Config:  func(context.Context) ([]byte, error) { return res.text() },
+		Secrets: cliSecrets(getenvOS),
+	})
+	if err != nil {
+		return userErr("%v", err)
+	}
+	d := troubleshootDoc{
+		RunID: ev.RunID, Command: ev.Command, Version: ev.Version,
+		EvidenceDir: ev.EvidenceDir, Guide: diagnoseagent.GuidePath(),
+		Model: res.model(),
+	}
+	// A log that names its own cause is answered here, before the source is
+	// fetched, before D1606's egress line and before any model call: the cause
+	// and the command that fixes it are already in the evidence, and making a
+	// person wait for a model to be told what their own log says is the failure
+	// the owner reported on 2026-11-15. The doctor's output is collected by
+	// then, under its own bound, and it cannot hide the log's cause: the cause
+	// is printed above it.
+	if c, line, ok := troubleshootLogCause(ev); ok {
+		return troubleshootExplained(cmd, o, ev, d, c, line)
+	}
+	// The source tree is fetched next: it makes no call that needs the
+	// credential, and D1608's path is the answer when the machine cannot
+	// reach it.
+	dir, rec, err := troubleshootSource(ctx, srctree.Options{Version: Version, Commit: Commit, Getenv: getenvOS, GOOS: runtime.GOOS})
+	if err != nil {
+		return troubleshootOffline(cmd, o, ev, d, fmt.Errorf("the Fugaro source at %s could not be fetched, so there is nothing for the agent to read the code against: %w", Version, err))
+	}
+	ev.SourceDir, ev.SourceNote = dir, troubleshootSourceNote(rec)
+	d.SourceNote = ev.SourceNote
+	// The guide the offline path prints is the one in that tree, beside the
+	// code it is about; GuidePath alone is where it is in a repository.
+	d.Guide = filepath.Join(dir, diagnoseagent.GuidePath())
+	if err := troubleshootChanges(ctx, srctree.Options{Version: Version, Commit: Commit, Getenv: getenvOS, GOOS: runtime.GOOS}, dir, filepath.Join(ev.EvidenceDir, troubleshootChangesName)); err != nil {
+		// The file lists the releases newer than the installed one, which is
+		// what a fixed_in_newer_release answer reads: a git-less machine is
+		// D1611's ordinary case and this is a note, not the end of anything.
+		fmt.Fprintf(cmd.ErrOrStderr(), "note: the changes since your version were not written: %v\n", oneLine(err.Error()))
+	}
+
+	if credErr != nil {
+		return troubleshootOffline(cmd, o, ev, d, credErr)
+	}
+	ev.Nonce = diagnoseagent.NewNonce()
+	troubleshootEgress(cmd, o, d.Model, cred.handle)
+	diag, err := troubleshootRun(ctx, diagnoseagent.Request{
+		Handle:      cred.handle,
+		Bin:         cred.bin,
+		Prompt:      diagnoseagent.Prompt(ev),
+		Nonce:       ev.Nonce,
+		Model:       d.Model,
+		Cap:         diagnoseagent.Cap{Turns: o.maxTurns, USD: o.maxBudgetUSD},
+		SourceDir:   dir,
+		EvidenceDir: ev.EvidenceDir,
+		ParentEnv:   os.Environ(),
+		Stderr:      cmd.ErrOrStderr(),
+	})
+	if errors.Is(err, diagnoseagent.ErrNotLoggedIn) {
+		return troubleshootNoLogin()
+	}
+	if err != nil {
+		return troubleshootOffline(cmd, o, ev, d, err)
+	}
+	d.Outcome, d.Signature, d.CostUSD = diag.Outcome, diag.Signature, diag.CostUSD
+	check := troubleshootChecker(cmd.Root())
+	d.Answer = diagnoseagent.FixText(diag.Text, check)
+	for _, f := range diagnoseagent.Fixes(diag.Text, check) {
+		d.Fixes = append(d.Fixes, troubleshootFix{Command: f.Command, Argv: f.Argv, Checked: f.Checked, Reason: f.Reason})
+	}
+	if troubleshootCarriesReport(diag.Outcome) {
+		path, err := troubleshootWriteReport(ev, d)
+		if err != nil {
+			return userErr("%v", err)
+		}
+		d.ReportPath = path
+	}
+	return printTroubleshoot(cmd.OutOrStdout(), d, o.asJSON)
+}
+
+// troubleshootChangesName is the "changes since your version" file's name
+// inside the evidence folder. Fugaro writes it (D1602), which is why the
+// command names it and the guide only says it is there.
+const troubleshootChangesName = "changes.txt"
+
+// troubleshootID is the run the command diagnoses: the reference the person
+// typed, or the newest logged command that failed. A cloud run's reference is
+// refused rather than parsed: the two commands explain two different things
+// (D1600), and a person who typed the wrong one is told which to run.
+func troubleshootID(getenv func(string) string, ref string) (cmdlog.ID, error) {
+	if ref == "" {
+		id, err := cmdlog.Latest(getenv, true)
+		switch {
+		case errors.Is(err, cmdlog.ErrNoLog):
+			return cmdlog.ID{}, userErr("no failed fugaro command is logged on this machine, so there is nothing to explain: run the command that failed and it will be logged, or pass the run ID it printed (for example update-20261107183012-48213)")
+		case err != nil:
+			return cmdlog.ID{}, userErr("%v", err)
+		}
+		return id, nil
+	}
+	if strings.Contains(ref, "/") {
+		return cmdlog.ID{}, userErr("%q is a cloud run, and this command explains a fugaro command that failed on this machine: run `fugaro diagnose %s` for a run", ref, ref)
+	}
+	id, err := cmdlog.ParseID(ref)
+	if err != nil {
+		return cmdlog.ID{}, userErr("%v (a run ID is what the failed command printed, for example update-20261107183012-48213)", err)
+	}
+	return id, nil
+}
+
+// troubleshootResolution is what this machine's configuration resolves to,
+// read before the diagnosis starts: the checkout's fugaro.yaml over the
+// project layer that reaches it (in a checkout), or the project layer's own
+// file (outside one). It is both the effective configuration the agent is
+// given and where D1607's model comes from.
+//
+// Nothing here is fatal. A configuration that cannot be read is a note in the
+// evidence folder rather than the end of the diagnosis: a configuration that
+// contradicts what Fugaro expects is a large share of what this command
+// exists to explain (F23), and the agent can say so from the log alone.
+type troubleshootResolution struct {
+	cfg   *config.Config
+	layer *config.ProjectLayer
+	notes []string
+}
+
+// model is D1607's key: the repository's own agent.models.diagnose, else the
+// project layer's defaults.agent.models.diagnose — which is what applies
+// outside a checkout, where the repository has no say — else Fugaro's own
+// choice. It never falls back on a run's model: a diagnosis is few calls of a
+// model that reads code and logs, and it must not follow a setting that moves
+// every run.
+func (r troubleshootResolution) model() string {
+	if r.cfg != nil && r.cfg.Agent.Models.Diagnose != "" {
+		return r.cfg.Agent.Models.Diagnose
+	}
+	if r.layer != nil && r.layer.Defaults.Agent.Models.Diagnose != "" {
+		return r.layer.Defaults.Agent.Models.Diagnose
+	}
+	return config.DefaultDiagnoseModel
+}
+
+// text is the effective configuration as one YAML document: the values the
+// checkout resolves to, the project layer's own file beside them, and the
+// notes about what could not be read. nil when there is nothing at all to
+// write, which the collector writes down as such.
+func (r troubleshootResolution) text() ([]byte, error) {
+	if r.cfg == nil && r.layer == nil && len(r.notes) == 0 {
+		return nil, nil
+	}
+	doc := map[string]any{}
+	if r.cfg != nil {
+		values, err := yaml.Marshal(r.cfg)
+		if err != nil {
+			return nil, err
+		}
+		var tree map[string]any
+		if err := yaml.Unmarshal(values, &tree); err != nil {
+			return nil, err
+		}
+		doc["resolved"] = tree
+	}
+	if r.layer != nil {
+		doc["project_layer"] = r.layer
+	}
+	if len(r.notes) > 0 {
+		doc["notes"] = r.notes
+	}
+	return yaml.Marshal(doc)
+}
+
+// readTroubleshootResolution reads the two documents above, best effort: a
+// checkout whose file does not resolve falls through to the project layer's
+// own file, and every failure is a note rather than an error.
+func readTroubleshootResolution(ctx context.Context) troubleshootResolution {
+	var r troubleshootResolution
+	lc := selectedProjectConfigReadOnly(ctx)
+	// The checkout is resolved without recording it: this command explains a
+	// failure and changes nothing on the machine, and remembering a checkout
+	// is a write.
+	co, err := resolveCheckout(ctx, "")
+	switch {
+	case err != nil:
+		r.notes = append(r.notes, oneLine(err.Error()))
+	case co != nil:
+		data, err := readFugaroYAML(filepath.Join(co.Root, "fugaro.yaml"))
+		if err != nil {
+			r.notes = append(r.notes, oneLine(err.Error()))
+			break
+		}
+		rf, err := resolveFugaroYAML(ctx, data, lc, layerOptions{Lenient: true})
+		switch {
+		case err != nil:
+			r.notes = append(r.notes, oneLine(err.Error()))
+		case len(rf.Problems) > 0:
+			for _, p := range rf.Problems {
+				r.notes = append(r.notes, oneLine(problemText(p)))
+			}
+		default:
+			r.cfg, r.layer = rf.Cfg, rf.Layer.Layer
+			if rf.Layer.Note != "" {
+				r.notes = append(r.notes, oneLine(rf.Layer.Note))
+			}
+			return r
+		}
+	}
+	// No checkout, or a file that did not resolve as a whole: the project
+	// layer's own value applies, out of this machine's copy of it. The
+	// published object is deliberately not read — the cloud is often what
+	// failed — which is the same answer D1608 gives for the model key.
+	if lc == nil {
+		return r
+	}
+	path, err := localcfg.LayerFile(getenvOS, lc.Name)
+	if err != nil {
+		return r
+	}
+	data, err := readLayerFile(path)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			r.notes = append(r.notes, oneLine(err.Error()))
+		}
+		return r
+	}
+	layer, ps := projectLayerProblems(data, lc)
+	if len(ps) > 0 {
+		for _, p := range ps {
+			r.notes = append(r.notes, oneLine(problemText(p)))
+		}
+		return r
+	}
+	r.layer = layer
+	return r
+}
+
+// problemText is one configuration problem as one line, in the shape the
+// person reads elsewhere in the CLI (path, then what is wrong with it).
+func problemText(p config.Problem) string {
+	if p.Path == "" {
+		return p.Message
+	}
+	return p.Path + ": " + p.Message
+}
+
+// troubleshootCred is what one diagnosis runs on: the credential, and the
+// claude binary that holds it when the credential is this machine's own login.
+type troubleshootCred struct {
+	handle diagnoseagent.Handle
+	// bin is claude's absolute path, set only for the machine's own login: that
+	// login lives in claude's own store under this user's home, so the
+	// diagnosis has to run the binary that reads it. A credential from the
+	// environment is handed to `claude` on PATH, as it always was, and bin is
+	// then empty.
+	bin string
+}
+
+// troubleshootCredential resolves what the diagnosis may run on, in the order
+// the owner's report of 2026-11-13 fixed (D1601 as amended):
+//
+//  1. CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in this environment, if
+//     either is set;
+//  2. otherwise claude on PATH, run on the login this machine already holds:
+//     the diagnosis then injects no credential at all;
+//  3. otherwise an error, which the caller prints as D1608's offline path.
+//
+// It reads no Secret Manager secret and needs no gcloud login. The project's
+// account is not a fallback here at all: troubleshoot explains a command that
+// failed on this machine, the machine's own login is the credential a person
+// who has one really holds, and a cloud read is the thing that failed for the
+// owner who reported this. The refusal of a value too short to redact is kept
+// rather than stepped over: a variable is set, and the answer to a broken value
+// is not a different credential.
+func troubleshootCredential() (troubleshootCred, error) {
+	if h, ok, err := diagnoseagent.Own(os.Environ()); ok || err != nil {
+		return troubleshootCred{handle: h}, err
+	}
+	bin, err := claudeplugin.Find(claudeLookPath)
+	if err != nil {
+		return troubleshootCred{}, fmt.Errorf("no Claude credential is available for this diagnosis: neither %s nor %s is set in this environment, and this machine has no logged-in claude to run it on either (%v). Log in with `claude`, or set one of the two variables, and run this again",
+			config.ReservedSecrets[config.ClaudeOAuthToken], config.ReservedSecrets[config.AnthropicSecret], err)
+	}
+	return troubleshootCred{handle: diagnoseagent.LocalHandle(), bin: bin}, nil
+}
+
+// troubleshootSourceNote is what the person is told about the tree the agent
+// read: D1611's sentence when the build could not be tied to it, and nothing
+// when it could.
+func troubleshootSourceNote(rec srctree.Record) string {
+	if !rec.MayNotMatch {
+		return ""
+	}
+	return fmt.Sprintf("this is a %s build of fugaro with no release tag, so the source tree is the newest release (%s) and may not be the code that failed", Version, rec.Version)
+}
+
+// troubleshootEgress is D1606's one line, printed before anything is sent and
+// asking nothing: the typed command is the consent (F13). It names the
+// provider, which account pays, and what class of data goes.
+//
+// In --json mode it goes to stderr, so that the document on stdout stays one
+// document; the same sentence is what a person reads either way.
+//
+// The credential is always this machine's own — a variable of the environment,
+// or the login claude already holds here — because this command reads no
+// project account. The one that is the machine's own login says so in as many
+// words, and says that Fugaro sends no token with it: what goes to the provider
+// there is the login the person already has, and nothing of Fugaro's.
+func troubleshootEgress(cmd *cobra.Command, o *troubleshootOptions, model string, h diagnoseagent.Handle) {
+	account := "your own Claude login"
+	switch {
+	case h.Local():
+		account += " on this machine, the one claude already holds here, and Fugaro sends no token with it"
+	case !h.Own():
+		account = "the project's Claude account " + h.Account()
+	}
+	line := fmt.Sprintf("Sending to Anthropic on %s: the redacted log, fugaro doctor's output, the effective configuration and the Fugaro source at this version, read by the model %s.\n", account, oneLine(model))
+	if o.asJSON {
+		fmt.Fprint(cmd.ErrOrStderr(), line)
+		return
+	}
+	fmt.Fprint(cmd.OutOrStdout(), line)
+}
+
+// troubleshootCarriesReport is the outcome whose answer is an issue report
+// (D1605): a bug answer and an unclear one carry the same report, and a
+// configuration or a fixed-in-a-newer-release answer carries none.
+func troubleshootCarriesReport(outcome string) bool {
+	return outcome == diagnoseagent.OutcomeBug || outcome == diagnoseagent.OutcomeUnclear
+}
+
+// troubleshootWriteReport writes D1605's report file into the evidence folder
+// and returns its path. It holds the answer as the agent wrote it, under a
+// header naming the run it is about, and nothing else: it is what a person
+// reads, checks and posts, and Fugaro files nothing itself.
+//
+// The header carries no local path, and the answer is model output that has
+// already passed both redaction passes with the child's credential in the list
+// (F20). What neither can promise is that the text holds no name a person
+// would not want public, which is what the guide tells the model to strip and
+// what the report's own last line tells the reader to check.
+func troubleshootWriteReport(ev diagnoseagent.Evidence, d troubleshootDoc) (string, error) {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %s failed\n\n", d.Command)
+	fmt.Fprintf(&b, "- fugaro %s (%s)\n", d.Version, d.RunID)
+	if d.Signature != "" {
+		fmt.Fprintf(&b, "- signature: %s\n", oneLine(d.Signature))
+	}
+	b.WriteString("\nRedacted, and review before posting it to an issue.\n\n")
+	b.WriteString(multiLine(d.Answer))
+	b.WriteString("\n")
+	path := filepath.Join(ev.EvidenceDir, troubleshootReportName)
+	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
+		return "", fmt.Errorf("the issue report could not be written: %w", err)
+	}
+	return path, nil
+}
+
+// troubleshootOffline is D1608: with no credential, with the source out of
+// reach, or with the agent unable to answer, the evidence is printed where it
+// is and the command exits non-zero with the reason. The person gets something
+// to read and to keep — the log's end, the doctor's output and the version —
+// rather than a failure line and nothing else.
+func troubleshootOffline(cmd *cobra.Command, o *troubleshootOptions, ev diagnoseagent.Evidence, d troubleshootDoc, reason error) error {
+	d.Offline, d.Reason = true, oneLine(reason.Error())
+	d.LogTail, d.logTailSkipped = troubleshootLogTail(ev)
+	d.Doctor = troubleshootEvidenceFile(ev, "doctor.txt")
+	// The model is printed with the rest of the header and no answer is: no
+	// agent ran, so there is none to print.
+	if werr := printTroubleshoot(cmd.OutOrStdout(), d, o.asJSON); werr != nil {
+		return werr
+	}
+	return &ExitError{Code: ExitUserError, Err: errors.New(d.Reason)}
+}
+
+// troubleshootNoLogin is the refusal when this machine's claude is not logged
+// in: one sentence saying so, naming the fix, and nothing else. The diagnosis
+// never started — claude refused before any request left the machine — so there
+// is no answer and no failed call to explain; what is missing is a credential
+// only the person can supply. The exit is non-zero, and the word success is not
+// in the sentence: a client that reports a failed call as is_error beside
+// subtype "success" is where "the diagnosis agent reported an error (success)"
+// came from, and it is also why this case is told apart from an ordinary error
+// before it is printed (run.go).
+//
+// The sentence is the whole message, and claude's own text is not in it: that
+// text can quote account detail the person does not need, and the one thing
+// this refusal owes them is the login they already have.
+func troubleshootNoLogin() error {
+	return &ExitError{Code: ExitUserError, Err: errors.New(
+		"fugaro troubleshoot runs on a Claude login and this machine's claude is not logged in, so run `claude` once in a terminal and use /login — that login is what this command runs on, and Fugaro sends no token of its own")}
+}
+
+// troubleshootRefreshLine is Terraform's per-resource refresh line, which
+// `fugaro update` prints one of per resource before it does anything: on a
+// project of any size it is the whole of what the last forty lines hold, and
+// what the person needs is the failure under it.
+const troubleshootRefreshLine = "Refreshing state"
+
+// troubleshootLogTail is the end of the redacted log the collector wrote, in
+// the shape the offline path and the document print it: the last
+// troubleshootLogLines lines that are not Terraform's refresh noise (the
+// owner's report of 2026-11-13 — forty lines of it said nothing). The order of
+// the log is kept, and a log that is nothing but refresh lines falls back to
+// its own end rather than printing none of it.
+//
+// The second answer is how many lines that left out, so that the header under
+// which the tail is printed can say what really happened: a fallback that
+// dropped nothing must not be described as a tail refresh lines were removed
+// from.
+func troubleshootLogTail(ev diagnoseagent.Evidence) (lines []string, skipped int) {
+	text := troubleshootEvidenceFile(ev, ev.RunID+".log")
+	if text == "" {
+		return nil, 0
+	}
+	lines = strings.Split(strings.TrimRight(text, "\n"), "\n")
+	kept := make([]string, 0, len(lines))
+	for _, l := range lines {
+		if strings.Contains(l, troubleshootRefreshLine) {
+			continue
+		}
+		kept = append(kept, l)
+	}
+	skipped = len(lines) - len(kept)
+	if len(kept) == 0 {
+		kept, skipped = lines, 0
+	}
+	if len(kept) > troubleshootLogLines {
+		kept = kept[len(kept)-troubleshootLogLines:]
+	}
+	return kept, skipped
+}
+
+// troubleshootCause is one class of failure this command can name from the
+// evidence alone: the marker a refusal carries, the cause in one sentence, and
+// the one command that fixes it.
+type troubleshootCause struct {
+	marker string
+	cause  string
+	fix    string
+}
+
+// troubleshootCauses is the minimal set of failures the log answers by itself
+// (the owner's report of 2026-11-15, on a machine whose diagnosis never ran):
+// the end of the log already said what was wrong and which command fixes it,
+// and sending that text to a model — when the model cannot even be reached —
+// answers a person's question with a refusal of its own.
+//
+// A cause is matched on a marker the CLI writes, never on prose the log
+// happens to hold: the log is text nobody here wrote, Terraform and gcloud
+// error bodies among it, and a table keyed on a sentence would let whoever
+// wrote that text choose what this command prints. The fix comes from this
+// table for the same reason: a marker selects a row, and the row's command was
+// checked in this tree, so no line of the log is ever read as a command.
+//
+// One class so far. A second belongs here only where the CLI itself knows the
+// command that fixes it and where the refusal is one this tree writes.
+var troubleshootCauses = []troubleshootCause{{
+	marker: causeMarkerJobImage,
+	cause: "the job image of that repository's workflow is older than the Fugaro its job would run: its runner does not know the version this release and the project's policy require, " +
+		"so the launch was refused and nothing ran",
+	fix: "fugaro update, in the checkout of that repository and in your own terminal window (its images stage verifies this release's base, pins it by digest and rebuilds the workflow's image)",
+}}
+
+// troubleshootLogCause is the last cause the redacted log names on its own, and
+// the line it was read from. The last is the one the command stopped on: a log
+// may hold a launch refused and retried, or several failures across a long
+// update, and the failure a person is asking about is the one at its end.
+//
+// The search is backwards over the whole log rather than over the tail the
+// printer shows: a refusal can sit above forty lines of Terraform refresh noise
+// (the owner's report of 2026-11-13), and a cause the printer dropped from the
+// tail is still the reason the command stopped.
+func troubleshootLogCause(ev diagnoseagent.Evidence) (c troubleshootCause, line string, ok bool) {
+	text := troubleshootEvidenceFile(ev, ev.RunID+".log")
+	if text == "" {
+		return troubleshootCause{}, "", false
+	}
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		for _, cand := range troubleshootCauses {
+			if strings.Contains(lines[i], cand.marker) {
+				return cand, oneLine(lines[i]), true
+			}
+		}
+	}
+	return troubleshootCause{}, "", false
+}
+
+// troubleshootExplained is the answer when the evidence names its own cause:
+// the cause and the fix it carries, the end of the log they were read from, and
+// the doctor's output, which is the same evidence the offline path prints and
+// may hold the next thing a person needs. No source is fetched, no egress line
+// is printed and no agent is started, and the command succeeds: it explained
+// something, which is what exit 0 means here (D1608 exits non-zero only because
+// that path explains nothing).
+func troubleshootExplained(cmd *cobra.Command, o *troubleshootOptions, ev diagnoseagent.Evidence, d troubleshootDoc, c troubleshootCause, line string) error {
+	d.Cause, d.Fix, d.LogLine = c.cause, c.fix, line
+	d.LogTail, d.logTailSkipped = troubleshootLogTail(ev)
+	d.Doctor = troubleshootEvidenceFile(ev, "doctor.txt")
+	return printTroubleshoot(cmd.OutOrStdout(), d, o.asJSON)
+}
+
+// troubleshootEvidenceFile reads one file of the evidence folder, "" when it
+// is not there. The folder is this user's own, written 0600 inside a 0700
+// directory by the collector, and the read is bounded so that a file something
+// else filled cannot fill the terminal.
+func troubleshootEvidenceFile(ev diagnoseagent.Evidence, name string) string {
+	f, err := os.Open(filepath.Join(ev.EvidenceDir, filepath.Base(name)))
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, troubleshootNoteLimit))
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// troubleshootDoctor runs `fugaro doctor` the way the person would and keeps
+// what it printed: it is one of the four evidence files. The collector's own
+// timeout bounds the call (F23) — doctor makes cloud calls, and a cloud that
+// does not answer is one of the things this diagnosis exists to explain.
+//
+// Doctor exits non-zero when a check fails, which is the ordinary state of a
+// machine whose command just failed: that is not a failure to run doctor, so
+// the text is kept and the exit is swallowed. Nothing printed at all is the one
+// case with nothing to keep, and the collector writes that down as such.
+//
+// The empty argument list is not the same as no argument list, and that is the
+// whole of the owner's report of 2026-11-13: cobra falls back on os.Args when
+// the args were never set, so doctor was run as `fugaro doctor troubleshoot
+// <run ID>` and what the evidence folder kept was `unknown command
+// "troubleshoot" for "doctor"` rather than doctor's own output. SetArgs with an
+// empty, non-nil slice is what says "this command and no arguments".
+var troubleshootDoctor = func(ctx context.Context) ([]byte, error) {
+	cmd := newDoctorCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{})
+	cmd.SetContext(ctx)
+	if err := cmd.Execute(); err != nil && buf.Len() == 0 {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// troubleshootShellSyntax is the characters that make a word more than an
+// argument of the command it stands beside. A line Fugaro vouches for is one
+// command with the arguments that command takes: `;`, `&&` and `|` chain a
+// second command onto it, a redirect writes a file, and a substitution, a
+// quote or a backslash hides what the rest of the line runs. The words come
+// from the log as readily as from the model — a Terraform body, an API
+// response or a file name can put them there (F5) — and the label is what a
+// person reads before pasting, so a line carrying any of them is one Fugaro
+// cannot vouch for. The skill lint splits its lines on these same operators
+// before it resolves a command; here the line is refused instead, because the
+// whole line is what gets printed.
+const troubleshootShellSyntax = ";|&$()`<>\\\"'"
+
+// troubleshootChecker is D1614's check against the command tree this binary
+// was built with. Only a `fugaro` command whose subcommand path exists, whose
+// flags are that command's flags, and that is one command line rather than
+// several, comes back checked; everything else is shown as text marked as
+// unchecked.
+//
+// The walk is the skill lint's, for the same reason: a word is a subcommand
+// when the command so far has one by that name, and a flag belongs to the
+// command the path has reached. It is deliberately one direction — a command
+// it does not understand is not checked, never silently accepted.
+func troubleshootChecker(root *cobra.Command) diagnoseagent.Checker {
+	return func(argv []string) error {
+		if len(argv) == 0 || argv[0] != "fugaro" {
+			return errors.New("it is not a fugaro command")
+		}
+		for _, w := range argv[1:] {
+			if i := strings.IndexAny(w, troubleshootShellSyntax); i >= 0 {
+				return fmt.Errorf("it carries %q, so it is not one command with the arguments that command takes", string(w[i]))
+			}
+		}
+		cmd := root
+		i, path := 1, 0
+		for i < len(argv) {
+			w := argv[i]
+			if strings.HasPrefix(w, "-") {
+				name, inline := flagToken(w)
+				f := commandFlag(cmd, name)
+				if f == nil {
+					return fmt.Errorf("%s has no --%s flag", cmd.CommandPath(), name)
+				}
+				i++
+				if !inline && commandFlagTakesValue(f) && i < len(argv) {
+					i++
+				}
+				continue
+			}
+			sub := commandByName(cmd, w)
+			if sub == nil {
+				break
+			}
+			// A hidden command is in the tree without being one Fugaro offers
+			// a person: the credentials service's entry point is hidden on
+			// purpose, and cobra's own help and completion are hidden by
+			// default. The skill lint refuses a line naming one, and the label
+			// here says Fugaro endorses the line, so it is refused as well.
+			if sub.Hidden {
+				return fmt.Errorf("%s is not a command Fugaro offers a person", sub.CommandPath())
+			}
+			cmd, path, i = sub, path+1, i+1
+		}
+		if path == 0 {
+			if i < len(argv) {
+				return fmt.Errorf("fugaro has no subcommand %q", argv[i])
+			}
+			return errors.New("it names no fugaro subcommand")
+		}
+		if i < len(argv) && len(cmd.Commands()) > 0 && !cmd.Runnable() {
+			return fmt.Errorf("%s has no subcommand %q", cmd.CommandPath(), argv[i])
+		}
+		// What is left is the command's own arguments and flags: a bare word is
+		// the command's business, and a flag has to be one it takes.
+		for ; i < len(argv); i++ {
+			w := argv[i]
+			if !strings.HasPrefix(w, "-") {
+				continue
+			}
+			name, inline := flagToken(w)
+			f := commandFlag(cmd, name)
+			if f == nil {
+				return fmt.Errorf("%s has no --%s flag", cmd.CommandPath(), name)
+			}
+			if !inline && commandFlagTakesValue(f) && i < len(argv) {
+				i++
+			}
+		}
+		return nil
+	}
+}
+
+// commandByName is cmd's subcommand called name or carrying it as an alias.
+func commandByName(cmd *cobra.Command, name string) *cobra.Command {
+	for _, sub := range cmd.Commands() {
+		if sub.Name() == name || sub.HasAlias(name) {
+			return sub
+		}
+	}
+	return nil
+}
+
+// commandFlag is the flag of cmd (or of a command above it) that name or its
+// one-letter shorthand stands for, nil when the command has none.
+func commandFlag(cmd *cobra.Command, name string) *pflag.Flag {
+	// InheritedFlags merges the persistent flags of every command above this
+	// one into Flags, so the one set below holds everything it accepts.
+	cmd.InheritedFlags()
+	set := cmd.Flags()
+	if f := set.Lookup(name); f != nil {
+		return f
+	}
+	// A shorthand is one letter by definition, and pflag panics rather than
+	// answering nil for anything longer: a flag a model printed as --nope is
+	// an unknown flag, not a reason to take the command down.
+	if len(name) == 1 {
+		return set.ShorthandLookup(name)
+	}
+	return nil
+}
+
+// commandFlagTakesValue reports whether a flag consumes the word after it, "" a
+// flag that does not: a boolean flag's value is the flag itself, so the word
+// after it belongs to the command.
+func commandFlagTakesValue(f *pflag.Flag) bool { return f.Value.Type() != "bool" }
+
+// flagToken splits one word of a command line into the flag it names and
+// whether it carries its value in the same word (--json=x, -vx).
+func flagToken(w string) (name string, inline bool) {
+	name = strings.TrimLeft(w, "-")
+	if n, _, ok := strings.Cut(name, "="); ok {
+		return n, true
+	}
+	return name, false
+}
+
+// printTroubleshoot prints the document as JSON, or as a short labelled
+// section per item. Every string that came from the agent goes through oneLine
+// or multiLine: it is model output about text nobody here wrote.
+func printTroubleshoot(w io.Writer, d troubleshootDoc, asJSON bool) error {
+	if asJSON {
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(d)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Run:       %s (%s)\n", oneLine(d.RunID), oneLine(d.Command))
+	fmt.Fprintf(&b, "Version:   fugaro %s\n", oneLine(d.Version))
+	if d.Cause != "" {
+		// The model is not printed here: nothing ran. A model line over an
+		// answer the evidence gave by itself would say a call was made, and the
+		// line a person reads first is the cause.
+		fmt.Fprintf(&b, "Cause:     %s\n", oneLine(d.Cause))
+		fmt.Fprintf(&b, "Fix:       %s\n", oneLine(d.Fix))
+		fmt.Fprintf(&b, "Log:       %s\n", oneLine(d.LogLine))
+		if d.SourceNote != "" {
+			fmt.Fprintf(&b, "Source:    %s\n", oneLine(d.SourceNote))
+		}
+		fmt.Fprintf(&b, "\nEvidence   %s\n", oneLine(d.EvidenceDir))
+		fmt.Fprintf(&b, "Guide      %s\n", oneLine(d.Guide))
+		printTroubleshootEvidence(&b, d)
+		_, err := io.WriteString(w, b.String())
+		return err
+	}
+	fmt.Fprintf(&b, "Model:     %s\n", oneLine(d.Model))
+	if d.SourceNote != "" {
+		fmt.Fprintf(&b, "Source:    %s\n", oneLine(d.SourceNote))
+	}
+	if d.Offline {
+		fmt.Fprintf(&b, "\nThe diagnosis did not run: %s\n", d.Reason)
+		fmt.Fprintf(&b, "\nEvidence   %s\n", oneLine(d.EvidenceDir))
+		fmt.Fprintf(&b, "Guide      %s\n", oneLine(d.Guide))
+		printTroubleshootEvidence(&b, d)
+		_, err := io.WriteString(w, b.String())
+		return err
+	}
+	fmt.Fprintf(&b, "Outcome:   %s\n", oneLine(d.Outcome))
+	if d.Signature != "" {
+		fmt.Fprintf(&b, "Signature: %s\n", oneLine(d.Signature))
+	}
+	fmt.Fprintf(&b, "\n%s\n", multiLine(strings.TrimRight(d.Answer, "\n")))
+	if d.CostUSD > 0 {
+		fmt.Fprintf(&b, "\nCost:      $%.4f (the model this diagnosis ran on)\n", d.CostUSD)
+	}
+	if d.ReportPath != "" {
+		fmt.Fprintf(&b, "Report:    %s\n", oneLine(d.ReportPath))
+	}
+	fmt.Fprintf(&b, "Evidence:  %s\n", oneLine(d.EvidenceDir))
+	fmt.Fprintf(&b, "Guide:     %s\n", oneLine(d.Guide))
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
+// printTroubleshootEvidence prints the two pieces of evidence a person reads
+// whole: the end of the log, and what fugaro doctor said. Both answers that
+// have no diagnosis print them — D1608's offline path and a cause the log named
+// by itself — and both print the cause above them, which is why the doctor's
+// own line can never be the whole of the answer.
+func printTroubleshootEvidence(b *strings.Builder, d troubleshootDoc) {
+	if len(d.LogTail) > 0 {
+		// What the tail is only where it was cut: a log of nothing but
+		// refresh lines is printed whole, and a header saying they were
+		// left out over the lines themselves would be the one line a
+		// person checks the tail against, contradicting it.
+		cut := ""
+		if d.logTailSkipped > 0 {
+			cut = fmt.Sprintf(", %d `%s` lines left out", d.logTailSkipped, troubleshootRefreshLine)
+		}
+		fmt.Fprintf(b, "\nThe end of the log (%d lines%s)\n%s\n", len(d.LogTail), cut, indent(multiLine(strings.Join(d.LogTail, "\n"))))
+	}
+	if d.Doctor != "" {
+		fmt.Fprintf(b, "\nfugaro doctor said\n%s\n", indent(multiLine(strings.TrimRight(d.Doctor, "\n"))))
+	}
+}

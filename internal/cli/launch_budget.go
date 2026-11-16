@@ -133,11 +133,11 @@ func (e *cloudEnv) budgetMintOn(ctx context.Context) (bool, error) {
 }
 
 // projectPolicyRead is the CLI's read of the project's policy with the
-// operator's own credentials: the one read the CLI itself makes of the node
-// (Readiness's D11 gate, the launch gate, and in mintBudgetToken the decision
-// whether a run needs a budget identity at all). A project whose config
-// carries no database URL has no policy this CLI can see, and says so without
-// a call. policyReadOnce is what callers use, so one launch reads it once.
+// operator's own credentials: the read the CLI decides by (Readiness's D11
+// gate, the launch gate, and in mintBudgetToken the decision whether a run
+// needs a budget identity at all). A project whose config carries no database
+// URL has no policy this CLI can see, and says so without a call.
+// policyReadOnce is what callers use, so one launch reads it once.
 //
 // It is the read with projectpolicy's typed errors intact, not the wording
 // (policyReadErr), for the one caller that words the version skew itself —
@@ -151,6 +151,39 @@ func (e *cloudEnv) budgetMintOn(ctx context.Context) (bool, error) {
 // rather than the error: a key nobody reads is a policy that never takes
 // effect, and the launch gate must not pass over one either.
 func projectPolicyRead(ctx context.Context, lc *localcfg.Config) (*projectpolicy.Policy, bool, error) {
+	return policyReadWith(ctx, lc, projectpolicy.Read)
+}
+
+// repoPolicyRead is the repository stage's read of the same node, carried
+// forward from projectpolicy.ShapeFreeFloor up
+// (projectpolicy.ReadCarriedForwardShapeFree) instead of refused.
+//
+// The repository stage runs before the policy stage, and the node the first
+// `fugaro update` after a version bump reads is written in the version behind:
+// a strict read refuses it, the stage then passes no policy at all
+// (repoPolicyInput), and internal/infra reads a nil policy as "nothing is
+// proxied" — the repository root loses the bitbucket_proxied fact, the job's
+// service account regains the accessor and the mount on bitbucket-token that
+// the credentials-service proxy withholds, and the node's published image
+// catalog and image map are not enforced. That is the HARD RULE's second
+// command, so the stage reads the node the policy stage is about to write: a
+// carry in memory states exactly what the operator's own migration writes from
+// ShapeFreeFloor up (projectpolicy's doc on that floor is the argument), and
+// nothing is written back here.
+//
+// It is deliberately not the memoized read (policyReadOnce): that one is the
+// read the gates and the launch decide by, where a node no version of this
+// reader understands is a refusal rather than a document to enforce, and it is
+// shared by a dozen callers whose answer must not change. This read is the
+// repository stage's alone, so an update reads the node one more time.
+func repoPolicyRead(ctx context.Context, lc *localcfg.Config) (*projectpolicy.Policy, bool, error) {
+	return policyReadWith(ctx, lc, projectpolicy.ReadCarriedForwardShapeFree)
+}
+
+// policyReadWith is the two reads above with the decode as its parameter: the
+// config's own answer without a call, the client, and the unknown-keys refusal
+// both of them want.
+func policyReadWith(ctx context.Context, lc *localcfg.Config, read func(context.Context, *rtdb.Client) (*projectpolicy.Policy, bool, error)) (*projectpolicy.Policy, bool, error) {
 	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
 		return nil, false, nil
 	}
@@ -158,7 +191,7 @@ func projectPolicyRead(ctx context.Context, lc *localcfg.Config) (*projectpolicy
 	if err != nil {
 		return nil, false, err
 	}
-	p, found, err := projectpolicy.Read(ctx, db)
+	p, found, err := read(ctx, db)
 	if err != nil {
 		return nil, false, err
 	}
@@ -192,12 +225,14 @@ func policyReadErr(err error) error {
 	var me *projectpolicy.MarkerError
 	switch {
 	case errors.As(err, &ve):
-		// The remedy depends on the direction of the skew — an older node is
-		// removed with `fugaro project policy publish --delete` before this
-		// release publishes again (never a re-run of init, which writes no
-		// policy node), an older binary wants upgrading — and
+		// The remedy depends on the direction of the skew — an older binary
+		// wants upgrading, and an older node is moved by whichever of the two
+		// moves its version allows: `fugaro update`'s in-place rewrite for one
+		// the migration chain carries, `fugaro project policy publish
+		// --delete` and a fresh publish for one below the chain's first step
+		// (never a re-run of init, which writes no policy node) — and
 		// projectpolicy.SkewSentence is the one place that picks between the
-		// two sentences for this reader (the launch gate beside this file
+		// sentences for this reader (the launch gate beside this file
 		// words the same error through it, ReaderCLI, and so does the
 		// runner's own refusal, ReaderRunner).
 		return userErr("%s", projectpolicy.SkewSentence(ve, projectpolicy.ReaderCLI))
@@ -220,13 +255,15 @@ func policyReadErr(err error) error {
 	}
 }
 
-// policyReadOnce memoizes one CLI run's read of the policy: update --repo asks
-// twice (once before the first plan, once after the builds) and must not pay
-// for it twice, and a launch asks twice on one path too — the gate before
-// anything of it exists, and the mint decision — where two reads could
-// disagree about the policy a single launch is admitted against. The answer
-// cannot change under either of them (and where it could, the run reads the
-// node itself and is the one that counts).
+// policyReadOnce memoizes one CLI run's read of the policy: a launch asks twice
+// on one path — the gate before anything of it exists, and the mint decision —
+// where two reads could disagree about the policy a single launch is admitted
+// against, and the Readiness gate planRepo reads shares that one answer with
+// every other caller of the run. The repository stage's own read is deliberately
+// not this one (repoPolicyRead carries a predecessor forward, which this read
+// must not do), so a run that converges a checkout reads the node one time more
+// than the memo alone would. The answer cannot change under any of them (and
+// where it could, the run reads the node itself and is the one that counts).
 //
 // What is memoized is the raw read, projectPolicyRead's result with
 // projectpolicy's typed errors intact, because two callers word the same error
@@ -722,10 +759,14 @@ func sealDevNote(spec *task.Spec, clone bool) string {
 // own rule (proxiedBitbucket, which reads the same variable off the job's
 // environment) and not a superset of it.
 //
-// The job half of that answer is asked with no job name, because a Bitbucket
-// repository is never launched onto a shared project job: internal/infra's
-// SharedJobProvider serves GitHub alone, so launchProjectJobFor answers nil for
-// one and the execution is always the repository's own job (D505).
+// The job half of that answer is asked with no job name, because the address is
+// written on a repository job and on that job alone: a shared project job
+// reaches Bitbucket through the deployment's own forwarder and is mounted no
+// token at all (D2302), so its execution never carries the address (Check 96).
+// What this gate reads through the function is therefore the repository's own
+// switch and the auth its runs use — the repository's facts, and not the job's
+// environment — and they stay the repository's facts whichever job a run lands
+// on, a Bitbucket workflow that names a profile now included (S4, D2304).
 //
 // A launch that is not proxied is judged by every gate it always was and
 // nothing about it changes (G9): an installation that carries no service, no
@@ -807,8 +848,9 @@ var newSealKey = token.NewKey
 
 // budgetBranch is the branch the run's identity may push (fb, G6): the branch
 // a first run creates, or the one a follow-up continues. A review run writes
-// only comments on its pull requests and an artifact run produces files, so
-// neither pushes and neither carries a branch — the proxy admits both with no
+// only comments on its pull requests, an artifact run produces files and an
+// evaluate run works on objects the runs bucket already holds, so none of the
+// three pushes and none carries a branch — the proxy admits all three with no
 // fb and refuses every push of theirs (B1.4).
 //
 // The branch a follow-up continues is checked here rather than minted
@@ -820,7 +862,7 @@ var newSealKey = token.NewKey
 // refusal there halts the run. So the pairing is refused at the launch, where
 // nothing has been signed yet; see the arm below.
 func budgetBranch(spec *task.Spec) (string, error) {
-	if spec.ReviewPRs != nil || spec.Mode == recipe.ModeArtifact {
+	if spec.ReviewPRs != nil || spec.Mode == recipe.ModeArtifact || spec.Mode == recipe.ModeEvaluate {
 		return "", nil
 	}
 	if spec.Branch == "" {
@@ -1016,4 +1058,62 @@ func (e *cloudEnv) tokenSigner(ctx context.Context) (token.Signer, error) {
 		return nil, userErr("budget.token_signer: %v", err)
 	}
 	return s, nil
+}
+
+// pairHeadroomCaps is D573's margin: a pair is sampled only when the day has
+// this many per-run caps left, in observe and enforce mode alike. Five
+// because the day's own cap is the project's guardrail and a sampled pair
+// spends two of it beside the runs the owner asked for.
+const pairHeadroomCaps = 5
+
+// pairBudgetPrecheck judges whether a sampled pair fits the budget, and
+// answers "" when it does or the reason it does not. It is D566's pair
+// pre-check — batchBudgetPrecheck with n = 2, one read-only lease of both
+// arms' headroom before either starts — followed by D573's margin: the day
+// must have pairHeadroomCaps per-run caps left, read through
+// budget.ReadDailyHeadroom, which leases nothing.
+//
+// Every answer but "" is a pair not sampled, never a launch refused: the
+// champion goes on alone and on the single pre-check every launch makes
+// (D554). An unreadable database is a reason too, for the same reason — and
+// --no-budget-check is one as well, because D573 never samples beside a
+// skipped check.
+//
+// Its own notes print to warn, once for the pair, exactly as a batch's do:
+// the champion's single pre-check is skipped below (skipBudget), so this is
+// the launch's one budget reading.
+func (e *cloudEnv) pairBudgetPrecheck(ctx context.Context, slug string, spec *task.Spec, warn io.Writer) string {
+	on, err := budgetBackendOn(e.lc)
+	if err != nil {
+		return oneLine(err.Error())
+	}
+	if !on {
+		return "the project has no budget backend, so a pair has no headroom to be judged against"
+	}
+	if e.noBudgetCheck {
+		return "the launch skips the budget pre-check (--no-budget-check), and a pair is never sampled beside a skipped pre-check"
+	}
+	if err := e.batchBudgetPrecheck(ctx, slug, spec.Repo, 2, warn); err != nil {
+		return oneLine(err.Error())
+	}
+	db, err := newBudgetClient(ctx, e.lc.Budget.RTDBURL, e.lc.Endpoints.NoAuth)
+	if err != nil {
+		return oneLine(err.Error())
+	}
+	capped := true
+	if c := checkoutConfig(ctx, spec.Repo); c != nil && c.Agent.Auth == "oauth" {
+		capped = false
+	}
+	h, err := budget.ReadDailyHeadroom(ctx, db, budget.PrecheckInput{Project: e.lc.Name, Slug: slug, Capped: capped, Now: time.Now()})
+	if err != nil {
+		return "the day's headroom could not be read: " + oneLine(err.Error())
+	}
+	if !h.Capped {
+		return "the project has no per-run cap and daily cap to measure a margin of"
+	}
+	if margin := budget.Micros(pairHeadroomCaps) * h.PerRun; h.Remaining < margin {
+		return fmt.Sprintf("the day has %s left and a pair is sampled only with %s (five per-run caps of %s) left",
+			money(h.Remaining), money(margin), money(h.PerRun))
+	}
+	return ""
 }

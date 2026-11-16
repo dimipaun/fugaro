@@ -12,7 +12,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
-	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -132,20 +131,17 @@ func TestCatalogCheckSpecRoundTripsThroughItsReader(t *testing.T) {
 		t.Fatalf("the installed catalog check job would refuse the spec this installation writes: %v", err)
 	}
 	// The version is a wire value: the reader accepts the document it knows
-	// (version 1) and refuses anything below it, so a producer that bumped its
-	// own version without the reader's is caught here rather than once a night
-	// in a job that starts nothing.
-	if e.spec.Version != 1 {
-		t.Fatalf("the reader read version %d, and this release's document is version 1 (infra.CatalogCheckSpecVersion): an installation and the job it deploys disagree about the bytes between them", e.spec.Version)
+	// (infra.CatalogCheckSpecVersion) and refuses anything below it, so a
+	// producer that bumped its own version without the reader's is caught here
+	// rather than once a night in a job that starts nothing.
+	if e.spec.Version != infra.CatalogCheckSpecVersion {
+		t.Fatalf("the reader read version %d, and this release's document is version %d (infra.CatalogCheckSpecVersion): an installation and the job it deploys disagree about the bytes between them", e.spec.Version, infra.CatalogCheckSpecVersion)
 	}
 	if e.spec.Catalog == nil || len(e.spec.Catalog.Entries) != 4 {
 		t.Fatalf("the reader read the catalog %+v, want the four entries of the local config", e.spec.Catalog)
 	}
 	if e.name != lc.Name || e.gcpProject != lc.GCPProject || e.region != lc.Region {
 		t.Fatalf("the reader read %s/%s/%s, want the installation's %s/%s/%s", e.name, e.gcpProject, e.region, lc.Name, lc.GCPProject, lc.Region)
-	}
-	if got, want := e.maxImageBuilds, int(managed.DefaultImageBuilds); got != want {
-		t.Fatalf("the run's build cap is %d, want M5's default %d: the producer writes no cap for an installation that never read one", got, want)
 	}
 	if got, want := e.spec.BaseImages[config.BaseKind], lc.BaseImage(config.BaseKind); got != want {
 		t.Fatalf("the spec's %s base image is %q, want the local config's %q", config.BaseKind, got, want)
@@ -223,23 +219,30 @@ func TestCatalogCheckSpecRoundTripsThroughItsReader(t *testing.T) {
 	}
 }
 
-// TestCatalogCheckSpecCarriesTheManagedBuildBound: one run's build cap is M5's
-// managed bound (the marker's max_image_builds), which so bounds a managed
-// creation's image builds, and an installation that has read no bound writes
-// none: the job then applies the default the reader shares with M5.
-func TestCatalogCheckSpecCarriesTheManagedBuildBound(t *testing.T) {
-	cc, _ := installationCatalogCheck(t, catalogProducerLocal, infra.InstallOptions{ImageBuilds: 7})
+// TestCatalogCheckSpecCarriesNoBuildBound: the spec records no count of builds
+// (D1543), because no installation has one to record — the marker's
+// max_image_builds is gone and the count that bounded a night's builds is the
+// job's own (catalogRunBuildCap). What bounds a build's cost is the lease it
+// takes (D1554), and this pins that the removal really reached the bytes on the
+// wire rather than leaving a key the reader would silently ignore.
+//
+// The other direction — the mixture `fugaro update` leaves behind, since the
+// spec and the job image swap without an order between them — is pinned beside
+// it: a spec the release behind rendered (version 1, with the count) is read
+// here as the catalog it names, with the count ignored, because
+// json.Unmarshal is not strict about a key a newer document dropped and
+// nothing else about the two versions differs.
+func TestCatalogCheckSpecCarriesNoBuildBound(t *testing.T) {
+	cc, lc := installationCatalogCheck(t, catalogProducerLocal, infra.InstallOptions{})
 	if cc == nil {
 		t.Fatal("the installation tfvars carry no catalog_check")
 	}
-	var doc struct {
-		MaxImageBuilds int `json:"max_image_builds"`
-	}
+	var doc map[string]any
 	if err := json.Unmarshal([]byte(cc.Env[infra.CatalogCheckSpecEnv]), &doc); err != nil {
 		t.Fatalf("%s: %v", infra.CatalogCheckSpecEnv, err)
 	}
-	if doc.MaxImageBuilds != 7 {
-		t.Fatalf("the spec's max_image_builds is %d, want the managed bound 7", doc.MaxImageBuilds)
+	if v, ok := doc["max_image_builds"]; ok {
+		t.Fatalf("the spec still records an image build bound (%v): no installation has one to record, and the job's own count is what bounds a night's builds", v)
 	}
 	for _, name := range []string{infra.ProjectEnv, infra.GCPProjectEnv, infra.RegionEnv, infra.BucketEnv} {
 		t.Setenv(name, cc.Env[name])
@@ -249,8 +252,25 @@ func TestCatalogCheckSpecCarriesTheManagedBuildBound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readCatalogJobEnv: %v", err)
 	}
-	if e.maxImageBuilds != 7 {
-		t.Fatalf("the run's build cap is %d, want the managed bound 7", e.maxImageBuilds)
+	if e.spec.Version != infra.CatalogCheckSpecVersion || e.name != lc.Name {
+		t.Fatalf("the reader read %+v, want the spec this installation writes", e.spec)
+	}
+
+	// The release behind's bytes: the same document with the count it wrote and
+	// the version it wrote them under.
+	doc["version"] = 1
+	doc["max_image_builds"] = 1
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(catalogCheckSpecEnv, string(raw))
+	e, err = readCatalogJobEnv()
+	if err != nil {
+		t.Fatalf("the job refuses the spec the release behind wrote, so an installation whose job image was rebuilt before its spec was written runs no check at all: %v", err)
+	}
+	if len(e.spec.Repositories) != 2 || len(e.spec.Catalog.Entries) != 4 {
+		t.Fatalf("the reader read the older document as %+v", e.spec)
 	}
 }
 
@@ -430,15 +450,104 @@ func TestTheInstallationTakesTheJobsSettingFromThePublishedLayer(t *testing.T) {
 		})
 	}
 
-	// An installation with no catalog check reads nothing: there is no value to
-	// correct, and the read would be a bucket call this run does not owe.
+	// An installation with neither of the scheduled jobs reads nothing: there
+	// is no value to correct, and the read would be a bucket call this run does
+	// not owe.
 	old := layerPublishedRead
 	t.Cleanup(func() { layerPublishedRead = old })
 	layerPublishedRead = func(context.Context, *localcfg.Config, string) ([]byte, int64, bool, error) {
-		t.Fatal("the bucket was read for an installation with no catalog check")
+		t.Fatal("the bucket was read for an installation with neither of the scheduled jobs")
 		return nil, 0, false, nil
 	}
 	if got := (&initRun{}).publishedJobsPaused(context.Background(), lc, infra.InstallationSpec{}); got.CatalogCheck != nil {
 		t.Errorf("a spec with no catalog check came back with one: %+v", got.CatalogCheck)
+	}
+}
+
+// TestTheInstallationTakesTheReportsJobSettingFromThePublishedLayer: the
+// reports job's half of the same correction (R7). Its schedule is stopped by
+// default and started by jobs.reports.paused alone, so a run whose local layer
+// file is not the project's answer — one the layer stage seeds FROM the
+// published object, or re-seeds because the object has moved past it (D854) —
+// would apply a stop the project never asked for and leave the job idle until
+// the next update.
+//
+// The two keys are one object, so the answers are read together: a document
+// that starts both jobs corrects both, and the bucket is read once.
+func TestTheInstallationTakesTheReportsJobSettingFromThePublishedLayer(t *testing.T) {
+	const (
+		both    = "version: 1\nproject: aurora\ngcp_project: proj-1234\njobs:\n  catalog_check: { paused: false }\n  reports: { paused: false }\n"
+		silent  = "version: 1\nproject: aurora\ngcp_project: proj-1234\n"
+		stopped = "version: 1\nproject: aurora\ngcp_project: proj-1234\njobs:\n  reports: { paused: true }\n"
+	)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	lc, err := localcfg.Parse([]byte(catalogProducerLocal))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		what      string
+		file      string // "" writes no local layer file
+		published string // "" publishes no layer at all
+		recorded  string // the generation this machine's file was written from; "" is the first run
+		want      bool
+	}{
+		{"no local file, the published layer starts the job", "", both, "", false},
+		{"the local file is stale, the published layer starts the job", silent, both, "3", false},
+		{"the local file is the published one, and it starts the job", both, both, "7", false},
+		{"the local file is the published one, and it stops the job", stopped, stopped, "7", true},
+		{"no local file, no published layer", "", "", "", true},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			lc.LayerGeneration = tc.recorded
+			path := localLayerPath(t)
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				t.Fatal(err)
+			}
+			if tc.file != "" {
+				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(tc.file), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			spec, err := installOptions(&initOptions{}, lc)
+			if err != nil {
+				t.Fatalf("installOptions: %v", err)
+			}
+			if spec.Reports == nil {
+				t.Fatal("the installation plans no reports job, and this local config records a base image")
+			}
+			var reads int
+			old := layerPublishedRead
+			t.Cleanup(func() { layerPublishedRead = old })
+			layerPublishedRead = func(context.Context, *localcfg.Config, string) ([]byte, int64, bool, error) {
+				reads++
+				if tc.published == "" {
+					return nil, 0, false, nil
+				}
+				return []byte(tc.published), 7, true, nil
+			}
+			got := (&initRun{}).publishedJobsPaused(context.Background(), lc, spec)
+			if reads != 1 {
+				t.Errorf("the bucket was read %d times, want 1: the two keys are one object, and one read answers for both", reads)
+			}
+			if got.Reports == nil {
+				t.Fatal("the spec lost its reports job")
+			}
+			if got.Reports.Paused != tc.want {
+				t.Errorf("the installation applies the reports schedule paused %v, want %v: the setting is the project layer's, and this run's own file is not always the project's answer", got.Reports.Paused, tc.want)
+			}
+			// The two keys are corrected together, from the one read: the
+			// document starts both jobs, so whenever it is the project's answer
+			// the catalog check comes back started in the same call.
+			if got.CatalogCheck == nil {
+				t.Fatal("the spec lost its catalog check")
+			}
+			if want := tc.published != both; got.CatalogCheck.Paused != want {
+				t.Errorf("the catalog check comes back paused %v, want %v: the two keys are one object, and one read answers for both", got.CatalogCheck.Paused, want)
+			}
+		})
 	}
 }

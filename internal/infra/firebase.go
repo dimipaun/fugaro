@@ -243,12 +243,29 @@ type FirebaseSpec struct {
 	// IAM binding. It is empty, and nothing is granted, on an installation
 	// whose owner has not opted in to the coordinator (InstallOptions.
 	// Coordinator), which is every installation by default.
-	Launchers          []string `json:"launchers"`
-	Operators          []string `json:"operators"`
+	Launchers []string `json:"launchers"`
+	Operators []string `json:"operators"`
+	// Viewers read the database and the spend history and write nothing
+	// (roles.md §4, RS4): the Firebase module grants them a read of this
+	// project's database, and they are NOT part of the people the token
+	// signer mints for, which is what keeps a viewer unable to claim anyone's
+	// identity. Left out of the tfvars when empty, like the installation's.
+	Viewers            []string `json:"viewers,omitempty"`
 	Admins             []string `json:"admins"`
 	BudgetAdmins       []string `json:"budget_admins"`
 	HistoryAccount     string   `json:"history_account"`
 	CoordinatorAccount string   `json:"coordinator_account"`
+	// WorkspaceServiceAccount is the workspace service account the member's
+	// own workspace_pin names, and the ONLY principal this root grants a
+	// read of this project's database to (docs/workspaces/spec.md §5, W7):
+	// the workspace's credentials service reads the member's ledger with it,
+	// for the reconciliation alarm that compares the workspace's own count
+	// against the member's. Empty — the state of every installation that
+	// belongs to no workspace — creates no role and no binding. It is never
+	// the member's own account: the pin names a workspace, which is another
+	// project's Fugaro installation, so no job account of this one appears
+	// here.
+	WorkspaceServiceAccount string `json:"workspace_service_account"`
 	// SkipAPIs are the APIs the Firebase root leaves to the installation
 	// root: set (to SharedAPIs) only when the Firebase project is the
 	// installation's own project, and left out of the tfvars otherwise.
@@ -286,6 +303,12 @@ type FirebaseInputs struct {
 	// coordinator, and empty is then the same address derivation
 	// HistoryAccount's is.
 	CoordinatorAccount string
+	// WorkspaceServiceAccount is the account the local config's
+	// workspace_pin names (localcfg's WorkspacePin.ServiceAccount), empty
+	// when it names no workspace. It is the member's own value and never
+	// the workspace's: the record a workspace publishes names no service
+	// account, so nothing the workspace says can widen its reach here.
+	WorkspaceServiceAccount string
 }
 
 // Firebase is the Firebase root's spec for the installation spec, which
@@ -321,10 +344,23 @@ func Firebase(inst InstallationSpec, in FirebaseInputs) (FirebaseSpec, error) {
 		ManageAPIs:         inst.ManageAPIs,
 		Launchers:          members(inst.Launchers, nil),
 		Operators:          members(inst.Operators, nil),
+		Viewers:            members(inst.Viewers, nil),
 		Admins:             sortedUnique(in.Admins),
 		BudgetAdmins:       sortedUnique(in.BudgetAdmins),
 		HistoryAccount:     history,
 		CoordinatorAccount: coordinator,
+	}
+	// The workspace's account is the member's own pin and needs no rule of
+	// this root's to exist (it is not created here, and it is not on the
+	// review screen: a workspace is another project's installation). What is
+	// checked is its SHAPE, and here rather than at the plan: the module's
+	// variable refuses anything but a service account email, and a value the
+	// module would refuse is refused before the apply instead.
+	if in.WorkspaceServiceAccount != "" {
+		if !saEmailRE.MatchString(in.WorkspaceServiceAccount) {
+			return FirebaseSpec{}, userErr("the workspace service account %q is not a service account email (<id>@<project>.iam.gserviceaccount.com); the workspace's read of this project's database is bound to it and IAM refuses a member it cannot find", in.WorkspaceServiceAccount)
+		}
+		s.WorkspaceServiceAccount = in.WorkspaceServiceAccount
 	}
 	if in.FP == inst.Project {
 		// One project holds the installation and the Firebase backend (design
@@ -334,7 +370,8 @@ func Firebase(inst InstallationSpec, in FirebaseInputs) (FirebaseSpec, error) {
 		s.SkipAPIs = slices.Clone(SharedAPIs)
 	}
 	if err := CheckFirebaseMembers(inst.Project, in.FP, map[string][]string{
-		"launchers": s.Launchers, "operators": s.Operators, "admins": s.Admins, "budget admins": s.BudgetAdmins,
+		"launchers": s.Launchers, "operators": s.Operators, "viewers": s.Viewers,
+		"admins": s.Admins, "budget admins": s.BudgetAdmins,
 	}); err != nil {
 		return FirebaseSpec{}, err
 	}
@@ -345,6 +382,7 @@ func Firebase(inst InstallationSpec, in FirebaseInputs) (FirebaseSpec, error) {
 func FirebaseVars(spec FirebaseSpec) ([]byte, error) {
 	spec.Launchers = launchersWithOperators(spec.Launchers, spec.Operators)
 	spec.Operators = sortedUnique(spec.Operators)
+	spec.Viewers = sortedUnique(spec.Viewers)
 	return sortedJSON(spec)
 }
 
@@ -361,6 +399,12 @@ var (
 	fpIDRE       = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]$`)
 	fpMemberRE   = regexp.MustCompile(`^(user|group|serviceAccount):([^\s*:]+)$`)
 	saMemberHost = ".iam.gserviceaccount.com"
+	// saEmailRE is one service account's email, the shape the modules'
+	// account variables accept. It is stated here as well as in the HCL so a
+	// value terraform would refuse at plan time — with a plan that has
+	// already been written and a state file already touched — is refused
+	// before the run.
+	saEmailRE = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$`)
 )
 
 // CheckFirebaseMembers refuses a member that must not hold a role on the

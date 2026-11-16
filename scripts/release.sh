@@ -5,6 +5,7 @@
 # push included: the release gate is the safeguard, there is no prompt.
 #
 #   scripts/release.sh X.Y.Z [--yes] [--dry-run] [--timeout-minutes N]
+#   scripts/release.sh X.Y.Z --hotfix [--fix SHA]... [--dry-run] [--timeout-minutes N]
 #
 # --yes is accepted and does nothing (there is no tag prompt any more); every
 # precondition below still runs. --dry-run applies the version bump to a
@@ -17,7 +18,7 @@
 # The plan says what that check did, including that it did not run when the
 # checkout holds no module. --timeout-minutes (default 45, a whole number
 # >= 1) bounds each of the two waits: step 3 (the release PR
-# merging) and step 4 (CI's test, terraform, rules and both console checks finishing on the merge
+# merging) and step 4 (CI's test, terraform and rules finishing on the merge
 # commit).
 #
 # The release reads the CLI stream from docs/release-streams.yaml through a
@@ -35,6 +36,31 @@
 # pushes, never pushes to main directly, and never deletes a tag. However it
 # exits, it leaves the checkout on main.
 #
+# --hotfix is the other path: steps 2 to 5 of docs/release.md's "Hotfix
+# releases", a patch release vX.Y.Z (Z of 1 or more) cut from the maintenance
+# branch release/X.Y instead of from main -- the one shape the release gate
+# accepts off main. Its preconditions are its own, and each is a refusal that
+# names what is missing: Z of 1 or more; vX.Y.0 exists and is on origin/main;
+# X.Y is the newest line (the gate's own rule); main's
+# plugin/.claude-plugin/plugin.json already says X.Y.Z or newer, so the bump PR
+# landed on main first; every --fix commit is on origin/main; the tag does not
+# exist and the working tree is clean. Nothing is checked out in the user's
+# checkout, which ends on the branch it started on: the branch is built in a
+# scratch worktree (created there, removed however the run ends), where the
+# --fix commits are cherry-picked with -x and, when the branch does not carry
+# them yet, so is the commit on main that set the plugin version to X.Y.Z --
+# release.yml checks the tag against that version, so a branch without the bump
+# publishes nothing. It then requires the release's own text on the branch --
+# docs/releases/vX.Y.Z.md, its line in website/data/release-summaries.yaml, and
+# the CLI stream's current in docs/release-streams.yaml -- and prints exactly
+# which of the three is missing instead of writing any of them (they are the
+# branch's own commits, docs/release.md). With all three there: the branch is
+# pushed (plain push, never force), CI is dispatched on it (`gh workflow run ci
+# --ref release/X.Y`, which is what vouches for the commit the gate reads), the
+# release gate waits for it (--timeout-minutes), and the tag goes on the branch
+# tip and is pushed. The last step of both paths is scripts/verify-release.sh,
+# which waits for every workflow the tag started.
+#
 # A dropped connection to GitHub does not end it: read-only gh and git calls,
 # and the release gate's polling, are retried a bounded number of times
 # (scripts/retry.sh); the auto-merge request and the tag push are repeated only
@@ -45,15 +71,32 @@ set -eu
 repo_root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$repo_root"
 . scripts/retry.sh
+. scripts/versions.sh
+# The rule scripts/verify-release.sh holds a patch tag's own commits to, run in
+# run_hotfix while the branch is still a branch (scripts/hotfix-commits.sh).
+. scripts/hotfix-commits.sh
 
 yes=0
 dry_run=0
 timeout_minutes=45
 version=""
+hotfix=0
+# fixes is the `--fix` commits, space-separated by design: this runs under bash
+# 3.2 on macOS, where "${#arr[@]}" on an empty array under set -u is an error.
+fixes=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --yes) yes=1 ;;
     --dry-run) dry_run=1 ;;
+    --hotfix) hotfix=1 ;;
+    --fix)
+      if [ $# -lt 2 ] || [ -z "${2:-}" ]; then
+        echo "--fix needs a commit (a sha on origin/main): the fix the hotfix carries, cherry-picked onto the maintenance branch (docs/release.md, \"Hotfix releases\")" >&2
+        exit 2
+      fi
+      shift
+      fixes="$fixes $1"
+      ;;
     --timeout-minutes)
       if [ $# -lt 2 ]; then
         echo "--timeout-minutes needs a value (a whole number of minutes, at least 1)" >&2
@@ -77,13 +120,25 @@ while [ $# -gt 0 ]; do
   shift
 done
 if [ -z "$version" ]; then
-  echo "usage: $0 X.Y.Z [--yes] [--dry-run] [--timeout-minutes N]" >&2
+  echo "usage: $0 X.Y.Z [--yes] [--dry-run] [--timeout-minutes N]
+       $0 X.Y.Z --hotfix [--fix SHA]... [--dry-run] [--timeout-minutes N]" >&2
   exit 2
 fi
 if ! [[ $timeout_minutes =~ ^[1-9][0-9]*$ ]]; then
   echo "--timeout-minutes wants a whole number of minutes, at least 1; got '$timeout_minutes'" >&2
   exit 2
 fi
+# --fix is --hotfix's alone: the ordinary release authors its one commit (the
+# bump) itself, and takes no other (docs/release.md, "Cutting a release").
+if [ "$hotfix" = 0 ] && [ -n "$fixes" ]; then
+  echo "--fix names a commit --hotfix cherry-picks onto the maintenance branch, and this run has no --hotfix: the ordinary release commits only the plugin bump, which it makes itself" >&2
+  exit 2
+fi
+# fix_flags renders $fixes as the arguments that named them, for the resume
+# hint an interruption or a refusal prints.
+fix_flags() {
+  for f in $fixes; do printf -- '--fix %s ' "$f"; done
+}
 
 # restore_main runs on every exit: whatever the script did on the release
 # branch, the checkout ends on main so a re-run starts from the state its
@@ -111,9 +166,20 @@ cleanup_plugin_scratch() {
   git worktree prune >/dev/null 2>&1 || true
   plugin_scratch=""
 }
+# rerun is this run's own command line, as far as resuming needs it: the
+# refusal messages and the signal handler print it rather than the plain one,
+# so the user re-runs with the flags the run had.
+if [ "$hotfix" = 1 ]; then
+  rerun="scripts/release.sh $version --hotfix"
+  if [ -n "$fixes" ]; then
+    rerun="$rerun $(fix_flags)"
+  fi
+else
+  rerun="scripts/release.sh $version"
+fi
 on_signal() {
   echo "
-interrupted; nothing was torn down. Re-run \"scripts/release.sh $version\" to resume: it finds an existing release branch or pull request and continues from there, and refuses outright if the tag already exists on origin." >&2
+interrupted; nothing was torn down. Re-run \"$rerun\" to resume: it finds an existing release branch or pull request and continues from there, and refuses outright if the tag already exists on origin." >&2
   exit 130
 }
 
@@ -133,11 +199,10 @@ version_gt() {
 
 # latest_released_version prints the highest existing strict vX.Y.Z tag's
 # version (other than the one being released; -rc and four-part tags do not
-# count), or nothing when there is none. Sorted via a zero-padded numeric key
-# so it needs only a plain `sort`, not GNU sort -V (this runs on a
-# developer's machine, not just CI).
+# count), or nothing when there is none. The ordering is scripts/versions.sh's
+# (a zero-padded key, so a plain `sort` is enough).
 latest_released_version() {
-  git tag -l 'v*' | grep -E '^v(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*)){2}$' | grep -vxF "$tag" | sed 's/^v//' | awk -F. '{printf "%020d%020d%020d %s\n", $1, $2, $3, $0}' | sort | tail -1 | awk '{print $2}'
+  git tag -l 'v*' | sed -n 's/^v//p' | grep -vxF "$version" | highest_version
 }
 
 # released_version_docs check|write X.Y.Z handles the two doc lines that name
@@ -183,6 +248,384 @@ poll_seconds=${RELEASE_SH_POLL_SECONDS:-30}
 # a one-minute floor).
 timeout_seconds=${RELEASE_SH_TIMEOUT_SECONDS:-$((timeout_minutes * 60))}
 
+# resolve_repo checks that gh is there and authenticated and that it targets the
+# repository origin points at, and sets $repo to it: every gh call after this
+# one, and the tag workflows' GITHUB_REPOSITORY, has to mean the same repository
+# this checkout pushes to.
+resolve_repo() {
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "gh is not installed; see https://cli.github.com" >&2
+    return 1
+  fi
+  if ! retry_read --any gh auth status >/dev/null 2>&1; then
+    echo "gh is not authenticated; run 'gh auth login'" >&2
+    return 1
+  fi
+  repo=$(retry_read gh repo view --json nameWithOwner --jq .nameWithOwner) || {
+    echo "'gh repo view' failed; run this from inside the fugaro checkout" >&2
+    return 1
+  }
+  # gh resolves its repo from the checkout's remotes (or a "default" setting);
+  # the tag and the PR must land where origin points, so the two must agree.
+  origin_url=$(git remote get-url origin)
+  url_path=${origin_url%/}
+  url_path=${url_path%.git}
+  url_name=${url_path##*[/:]}
+  url_rest=${url_path%[/:]*}
+  url_repo="${url_rest##*[/:]}/$url_name"
+  if [ "$(printf '%s' "$url_repo" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]')" ]; then
+    echo "origin ($origin_url) is $url_repo but gh targets $repo; fix it with 'gh repo set-default' or run from the right checkout" >&2
+    return 1
+  fi
+}
+
+# streams_cmd is how this script reads docs/release-streams.yaml, the CLI
+# stream's own record of where the line is at: the package's own reader,
+# internal/streams/cmd/streams, rather than a YAML reader of its own, so the
+# file is refused here exactly as the console's dependency graph refuses it (the
+# long paragraph further down has the rest). The hotfix path needs it before the
+# ordinary preconditions below run -- it reads the branch's catalogue from its
+# scratch worktree -- so the definition is here. RELEASE_SH_STREAMS_CMD exists
+# for the tests only: the fixture checkout holds no go module, so they
+# substitute a helper binary built from this checkout (the same reason
+# RELEASE_SH_PLUGIN_TEST_CMD exists).
+streams_cmd=${RELEASE_SH_STREAMS_CMD:-go run ./internal/streams/cmd/streams}
+
+# plugin_version_at REF prints the plugin version in the tree at REF, or nothing
+# when REF holds no plugin/.claude-plugin/plugin.json. It is the same read
+# scripts/release-gate.sh makes of main, which is what a patch tag is held to.
+plugin_version_at() {
+  git show "$1:plugin/.claude-plugin/plugin.json" 2>/dev/null \
+    | sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1
+}
+
+# hotfix_scratch is the scratch worktree --hotfix builds the maintenance branch
+# in; cleanup_hotfix_scratch removes it and is called from the EXIT trap, so it
+# is gone however the run ends -- an error, a Ctrl-C or SIGTERM included
+# (on_signal exits 130 and the same trap runs).
+hotfix_scratch=""
+cleanup_hotfix_scratch() {
+  [ -n "$hotfix_scratch" ] || return 0
+  git worktree remove --force "$hotfix_scratch/tree" >/dev/null 2>&1 || true
+  rm -rf "$hotfix_scratch"
+  git worktree prune >/dev/null 2>&1 || true
+  hotfix_scratch=""
+}
+
+# hotfix_plugin_version prints the plugin version the scratch worktree's HEAD
+# carries: the version release.yml checks the tag against
+# (scripts/bump-plugin-version.sh --check "${TAG#v}"), which the tag's own
+# required `test` check and that workflow both refuse a mismatch on.
+hotfix_plugin_version() {
+  ( cd "$hotfix_scratch/tree" && plugin_version_at HEAD )
+}
+
+# hotfix_picked SHA succeeds when a commit of the scratch worktree's history
+# names SHA in a "(cherry picked from commit ...)" trailer, which is what
+# `git cherry-pick -x` writes: that pick is already made, so a re-run does not
+# make it twice. verify-release.sh reads the same trailers back.
+hotfix_picked() {
+  git -C "$hotfix_scratch/tree" log --format=%B | grep -qF "(cherry picked from commit $1)"
+}
+
+# bump_commit_on_main prints the commit on origin/main that set the plugin
+# version to $1, or nothing when main has none. It is the bump PR's commit --
+# the newest one touching plugin.json whose tree says $1 and whose parent's does
+# not -- and cherry-picking it carries the whole bump: the skill headers and,
+# because the bump commit is the only one allowed to move them, the two doc
+# lines that name the released version (released_version_docs_list above,
+# docs/release.md "Hotfix releases").
+bump_commit_on_main() {
+  while read -r sha; do
+    [ "$(plugin_version_at "$sha")" = "$1" ] || continue
+    if ! parent=$(git rev-parse --quiet --verify "$sha^"); then
+      printf '%s' "$sha"
+      return 0
+    fi
+    if [ "$(plugin_version_at "$parent")" = "$1" ]; then
+      continue
+    fi
+    printf '%s' "$sha"
+    return 0
+  done <<EOF
+$(git rev-list refs/remotes/origin/main -- plugin/.claude-plugin/plugin.json)
+EOF
+}
+
+# hotfix_pick SHA cherry-picks SHA into the scratch worktree with -x, or
+# returns 1 having printed git's own output and aborted the pick, leaving the
+# worktree at the tip it had.
+hotfix_pick() {
+  if pick_err=$(git -C "$hotfix_scratch/tree" cherry-pick -x "$1" 2>&1); then
+    return 0
+  fi
+  printf '%s\n' "$pick_err" >&2
+  git -C "$hotfix_scratch/tree" cherry-pick --abort >/dev/null 2>&1 || true
+  return 1
+}
+
+# hotfix_missing_text prints one line per piece of the release's own text that
+# the scratch worktree's HEAD does not carry -- the Highlights file GoReleaser
+# reads from the tag's tree, the summary line the changelog page prints, and
+# the CLI stream's current, the floor the next release is read against -- and
+# nothing when the branch holds all three. Empty is not the same as fine for the
+# first two only: an empty Highlights file is what a release publishes with no
+# Highlights, and the workflows refuse it (scripts/release-policy.sh).
+hotfix_missing_text() {
+  notes="docs/releases/$tag.md"
+  if ! git -C "$hotfix_scratch/tree" cat-file -e "HEAD:$notes" 2>/dev/null; then
+    echo "  $notes (the release's Highlights; docs/releases/README.md has the format)"
+  elif [ -z "$(git -C "$hotfix_scratch/tree" show "HEAD:$notes" | tr -d '[:space:]')" ]; then
+    echo "  $notes is empty (GoReleaser reads the Highlights from the tag's tree, so a release with an empty file publishes none)"
+  fi
+  summaries=website/data/release-summaries.yaml
+  summary_line=$(git -C "$hotfix_scratch/tree" show "HEAD:$summaries" 2>/dev/null | grep -F "  $tag: " | head -1 || true)
+  summary_text=${summary_line#"  $tag: "}
+  if [ -z "${summary_text// /}" ]; then
+    echo "  $summaries carries no non-empty \"  $tag: ...\" line (the changelog page prints one per release, and the site build stops when a release file has none)"
+  fi
+  stream_get=$(cd "$hotfix_scratch/tree" && $streams_cmd get cli 2>&1) || stream_get=""
+  branch_current=$(printf '%s\n' "$stream_get" | sed -n 's/^current=//p')
+  if [ "$branch_current" != "$version" ]; then
+    echo "  docs/release-streams.yaml's cli current is '${branch_current:-unreadable}', not $version (the file is the stream's own record of where the line is at, so the next release reads its floor from it)"
+  fi
+}
+
+# run_hotfix is --hotfix: steps 2 to 5 of docs/release.md's "Hotfix releases".
+# It never checks anything out in the user's tree -- the branch is built in a
+# scratch worktree, whose commits are pushed through an explicit refspec -- so
+# the checkout is left on the branch it started on.
+run_hotfix() {
+  if [ "${version##*.}" = 0 ]; then
+    echo "X.Y.0 is a minor's first release and is cut from main: run \"scripts/release.sh $version\". --hotfix is for a patch release vX.Y.Z with Z of 1 or more, the one shape the release gate accepts off main (docs/release.md, \"Hotfix releases\")" >&2
+    return 1
+  fi
+  resolve_repo || return 1
+  if [ -z "${RELEASE_SH_STREAMS_CMD:-}" ] && ! command -v go >/dev/null 2>&1; then
+    echo "go is not on PATH, and a hotfix reads the branch's docs/release-streams.yaml through internal/streams/cmd/streams with it (the cli stream's current is one of the three things the branch has to carry): install go (https://go.dev/dl)" >&2
+    return 1
+  fi
+  line=${version%.*}
+  first="v$line.0"
+  branch="release/$line"
+  retry_read git fetch --quiet origin main --tags --prune
+
+  # vX.Y.0 exists and is on main: the line was gated on main once, so the patch
+  # is not the first release of anything. Both are the gate's own rules, read
+  # the same way, so this refuses before a branch exists rather than after the
+  # tag's workflows do.
+  if ! first_sha=$(git rev-parse --quiet --verify "refs/tags/$first^{commit}"); then
+    echo "$first does not exist: a hotfix is a patch of a line that shipped from main, so release v$line.0 from main first (docs/release.md, \"Hotfix releases\")" >&2
+    return 1
+  fi
+  if ! git merge-base --is-ancestor "$first_sha" refs/remotes/origin/main; then
+    echo "$first is not on origin/main: a hotfix is a patch of a line that shipped from main, and the gate refuses a patch tag whose line never went through it (docs/release.md, \"Hotfix releases\")" >&2
+    return 1
+  fi
+  # Only the newest line may be patched from a maintenance branch: a patch of an
+  # older line is published as GitHub's latest release, and the Homebrew cask
+  # follows the tag.
+  newest=$(git tag -l 'v*' | sed -n 's/^v//p' | highest_version)
+  if [ -z "$newest" ]; then
+    echo "no strict vX.Y.Z tag could be read from this checkout, so whether v$line is the newest line cannot be known: fetch the tags (git fetch --tags) and re-run \"$rerun\"" >&2
+    return 1
+  fi
+  if [ "${newest%.*}" != "$line" ]; then
+    echo "$tag is a patch of the line v$line, but a newer line exists (v$newest): a maintenance release would be published as the latest release, so only the newest line may be patched from its maintenance branch (docs/release.md, \"Hotfix releases\")" >&2
+    return 1
+  fi
+  # main's plugin version is the tag's or newer, so the bump PR landed on main
+  # first: the branch is never merged back, and a plugin version only it carries
+  # leaves every installation serving a plugin older than its binary while the
+  # gate refuses the tag (0.21.1, 2026-11-09).
+  main_plugin=$(plugin_version_at refs/remotes/origin/main)
+  if [[ ! $main_plugin =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] \
+    || [ "$(printf '%s\n%s\n' "$main_plugin" "$version" | highest_version)" != "$main_plugin" ]; then
+    echo "main's plugin/.claude-plugin/plugin.json says '${main_plugin:-nothing}' and $tag is $version: a hotfix's plugin bump is merged to main first, through a PR as usual, and cherry-picked onto $branch with the fix (docs/release.md, \"Hotfix releases\")" >&2
+    return 1
+  fi
+  # Every --fix commit is on origin/main: a fix lands there first, and the
+  # branch carries a copy of it, never the only copy.
+  fix_shas=""
+  for fix in $fixes; do
+    if ! fix_sha=$(git rev-parse --quiet --verify "$fix^{commit}"); then
+      echo "--fix $fix is not a commit in this checkout; fetch it (git fetch origin), or name a commit that is on origin/main" >&2
+      return 1
+    fi
+    if ! git merge-base --is-ancestor "$fix_sha" refs/remotes/origin/main; then
+      echo "--fix $fix is not on origin/main: a fix is merged to main first, through a PR as usual, and the hotfix cherry-picks it onto $branch (docs/release.md, \"Hotfix releases\")" >&2
+      return 1
+    fi
+    fix_shas="$fix_shas $fix_sha"
+  done
+  if [ -n "$(retry_read git ls-remote --tags origin "refs/tags/$tag")" ]; then
+    echo "tag $tag already exists on origin; a release is never re-tagged (ship the fix as the next patch instead, see docs/release.md#rolling-back)" >&2
+    return 1
+  fi
+  if git rev-parse --quiet --verify "refs/tags/$tag" >/dev/null; then
+    echo "tag $tag exists locally; delete it (git tag -d $tag) if it is a leftover, or push it (git push origin refs/tags/$tag) if the release is done, then re-run \"$rerun\"" >&2
+    return 1
+  fi
+  line_latest=$(git tag -l "v$line.*" | sed -n 's/^v//p' | highest_version)
+  if [ -z "$line_latest" ]; then
+    echo "no strict v$line.* tag could be read from this checkout, so the line's latest release cannot be known: fetch the tags (git fetch --tags) and re-run \"$rerun\"" >&2
+    return 1
+  fi
+  if ! version_gt "$version" "$line_latest"; then
+    echo "version $version is not greater than the line's latest tag v$line_latest" >&2
+    return 1
+  fi
+
+  # The branch is created from the line's last tag (the hand flow's step 2) or,
+  # when origin already has release/X.Y, reused -- but only when it descends
+  # from vX.Y.0, which is the ancestry the gate reads, so a branch that merely
+  # shares the name is refused rather than tagged.
+  base_ref="v$line_latest"
+  base_desc="v$line_latest"
+  if retry_read git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+    retry_read git fetch --quiet origin "refs/heads/$branch:refs/remotes/origin/$branch"
+    if ! git merge-base --is-ancestor "$first_sha" "refs/remotes/origin/$branch"; then
+      echo "origin's $branch does not descend from $first, so it is not this line's maintenance branch (the gate refuses a tag on it); inspect it, or delete it (git push origin --delete $branch) and re-run \"$rerun\"" >&2
+      return 1
+    fi
+    base_ref="refs/remotes/origin/$branch"
+    base_desc="the branch origin already has"
+  fi
+  hotfix_scratch=$(mktemp -d)
+  if ! worktree_err=$(git worktree add --quiet --detach "$hotfix_scratch/tree" "$base_ref" 2>&1); then
+    printf '%s\n' "$worktree_err" >&2
+    cleanup_hotfix_scratch
+    echo "could not create a scratch worktree at $base_ref (the branch is built there, never in this checkout); fix what git reported and re-run \"$rerun\"" >&2
+    return 1
+  fi
+
+  # The fixes, then the bump: `-x` records where each one came from, which is
+  # what verify-release.sh reads back to require every fix to be on main, and a
+  # pick already named by a trailer is skipped, so a re-run resumes rather than
+  # picking twice.
+  picked=""
+  for fix_sha in $fix_shas; do
+    if hotfix_picked "$fix_sha"; then
+      picked="$picked ${fix_sha:0:12}(already there)"
+      continue
+    fi
+    if ! hotfix_pick "$fix_sha"; then
+      echo "cherry-picking $fix_sha onto $branch failed (above). Nothing was pushed and nothing in this checkout changed. Resolving the conflict here is not the recovery: the commit would either keep the pick's trailer while carrying a change main does not have, or carry no trailer at all, and scripts/verify-release.sh refuses both -- a trailer is held to the change under it by patch-id, and a commit with no trailer may touch only the release's own three files -- once the tag is pushed, where it cannot be moved and the release is stranded. The change has to be on main in the shape this line needs it, so that the pick applies cleanly to $branch as it stands: land a commit on main that carries the change as this line needs it (a PR as usual) and name that commit, or name a --fix commit that applies, then re-run \"$rerun\" (docs/release.md, \"Hotfix releases\")" >&2
+      return 1
+    fi
+    picked="$picked $fix_sha"
+  done
+  branch_plugin=$(hotfix_plugin_version)
+  if [ "$branch_plugin" != "$version" ]; then
+    bump_commit=$(bump_commit_on_main "$version")
+    if [ -z "$bump_commit" ]; then
+      echo "the plugin version on $branch is '${branch_plugin:-nothing}' and no commit on origin/main sets it to $version: bump it on main first (scripts/bump-plugin-version.sh $version, through a PR), then re-run \"$rerun\"" >&2
+      return 1
+    fi
+    if ! hotfix_pick "$bump_commit"; then
+      echo "cherry-picking main's plugin bump $bump_commit onto $branch failed (above). Nothing was pushed and nothing in this checkout changed. Resolving it here is not the recovery either: the commit would keep the pick's trailer while carrying a plugin change main does not have, and scripts/verify-release.sh refuses every commit of the tag that is not a clean pick of a commit on main -- once the tag is pushed, where it cannot be moved and the release is stranded. The bump has to be on main in the shape this line needs it, so that the pick applies cleanly to $branch as it stands. Check what the branch carries that the bump's parent does not: a hand edit outside the release's own three files is a commit scripts/verify-release.sh refuses on the tag anyway, and if main's bump cannot apply to this line at all, the line cannot take it as a pick and the fix has to ship from main instead. Then re-run \"$rerun\" (docs/release.md, \"Hotfix releases\")" >&2
+      return 1
+    fi
+    picked="$picked $bump_commit(bump)"
+  fi
+  # The check release.yml runs on the tag before it builds anything: a branch
+  # whose plugin.json or skill header disagrees with $version publishes nothing,
+  # so it is refused here, while the branch is still a branch.
+  if [ -f "$hotfix_scratch/tree/scripts/bump-plugin-version.sh" ] \
+    && ! bump_check=$(cd "$hotfix_scratch/tree" && scripts/bump-plugin-version.sh --check "$version" 2>&1); then
+    printf '%s\n' "$bump_check" >&2
+    echo "$branch does not carry the $version plugin bump (above), and release.yml refuses a tag on such a commit (scripts/bump-plugin-version.sh --check), so it is refused here" >&2
+    return 1
+  fi
+
+  missing_text=$(hotfix_missing_text)
+  if [ -n "$missing_text" ]; then
+    text_state="these are missing:
+$missing_text"
+    text_stop="A real run would stop at step 3 until the text above is committed on $branch."
+  else
+    text_state="all three are there (docs/releases/$tag.md, its line in website/data/release-summaries.yaml, and the cli stream's current)"
+    text_stop=""
+  fi
+  tip=$(git -C "$hotfix_scratch/tree" rev-parse HEAD)
+  # The rule scripts/verify-release.sh holds the pushed tag to, run here while
+  # the branch is still a branch: a commit that is neither a clean pick of a
+  # commit on origin/main nor one of the release's own three files is refused
+  # there, after the tag is pushed, where it cannot be moved and the release is
+  # stranded. A branch resumed from origin is where this finds one -- a pick
+  # someone resolved by hand keeps the pick's trailer while carrying a change
+  # main does not have, which its patch-id alone catches (scripts/hotfix-commits.sh
+  # is the one copy of the rule, so this check and that verification agree).
+  if ! commits_err=$(hotfix_commits_check "$tag" "$tip" 2>&1 >/dev/null); then
+    printf '%s\n' "$commits_err" >&2
+    echo "no tag was created: a commit the tag would carry cannot be vouched for, and scripts/verify-release.sh refuses the same commit on the pushed tag, where it can no longer be fixed. Land the change on main as a PR and name it with --fix, or rebuild the branch from the line's last tag (git push origin --delete $branch) and re-run \"$rerun\" (docs/release.md, \"Hotfix releases\")" >&2
+    return 1
+  fi
+  if [ "$dry_run" = 1 ]; then
+    cat <<EOF
+
+Dry run for $tag ($branch): every precondition above passed, and the branch was
+built and committed in a scratch worktree, now removed. Nothing was pushed,
+tagged or changed anywhere.
+  2. the branch would start at $base_desc, cherry-picked with -x:$picked
+     tip: $tip
+  3. the release's own text would be required on it, and this script writes
+     none of it: $text_state
+  4. the branch would be pushed (a plain push, never a force) and CI dispatched
+     on it: gh workflow run ci --ref $branch
+  5. the test, terraform and rules checks would be waited for on
+     the branch tip (up to ${timeout_minutes}m, scripts/release-gate.sh), then
+     $tag would be tagged there and pushed
+  6. every workflow the tag starts would be waited for, and the published
+     images and the patch checked (up to ${timeout_minutes}m,
+     scripts/verify-release.sh $tag)
+$text_stop
+EOF
+    return 0
+  fi
+
+  # Step 3's push comes before the text check, so a first run leaves the branch
+  # on origin for the text to be committed to (the hand flow commits it there);
+  # the refusal names what is missing and the run resumes from the branch.
+  if ! push_err=$(git -C "$hotfix_scratch/tree" push --quiet origin "HEAD:refs/heads/$branch" 2>&1); then
+    printf '%s\n' "$push_err" >&2
+    echo "pushing $branch failed; fix the cause (permissions, a branch rule) and re-run \"$rerun\": the branch is in a scratch worktree that is removed on exit, so the run starts over from $base_desc" >&2
+    return 1
+  fi
+  echo "pushed $branch ($tip), cherry-picked with -x:$picked"
+  if [ -n "$missing_text" ]; then
+    echo "$branch is pushed, but the release's own text is not on it. These are committed on the branch by hand (docs/release.md, \"Hotfix releases\"), and this script writes none of them:
+$missing_text
+
+Commit them on $branch (git fetch origin $branch && git switch -c $branch origin/$branch), push, then re-run \"$rerun\": it resumes from the pushed branch and picks up from here. The tag is not created until they are there, because the tag's own workflows refuse without them." >&2
+    return 1
+  fi
+  if ! dispatch_err=$(gh workflow run ci --ref "$branch" 2>&1); then
+    printf '%s\n' "$dispatch_err" >&2
+    echo "could not dispatch CI on $branch (\"gh workflow run ci --ref $branch\"). The branch is pushed and carries the release's text; dispatch it by hand, then re-run \"$rerun\"" >&2
+    return 1
+  fi
+  echo "dispatched CI on $branch; waiting up to ${timeout_minutes}m for the required checks..."
+  GITHUB_SHA="$tip" GITHUB_REPOSITORY="$repo" GATE_WAIT_SECONDS="$timeout_seconds" GATE_POLL_SECONDS="$poll_seconds" scripts/release-gate.sh "$tag"
+
+  git tag -a "$tag" -m "Fugaro $tag" "$tip"
+  if ! tag_err=$(git push origin "refs/tags/$tag" 2>&1); then
+    printf '%s\n' "$tag_err" >&2
+    echo "pushing tag $tag failed. It exists locally at $tip; once the cause is fixed, push it with:
+  git push origin refs/tags/$tag" >&2
+    return 1
+  fi
+  cat <<EOF
+
+tag $tag pushed on $branch ($tip). Watch:
+  https://github.com/$repo/actions/workflows/release.yml
+  https://github.com/$repo/actions/workflows/images.yml
+  https://github.com/$repo/actions/workflows/console-windows.yml
+EOF
+  scripts/verify-release.sh "$tag" --timeout-minutes "$timeout_minutes" || return 1
+  return 0
+}
+
 # 1. Preconditions, checked in order; the first failure stops the script.
 if ! [[ $version =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
   echo "version '$version' is not strict SemVer X.Y.Z (no leading v, no pre-release suffix, no leading zeros in a component)" >&2
@@ -194,6 +637,28 @@ branch="release/$tag"
 if [ -n "$(git status --porcelain)" ]; then
   echo "the working tree is not clean; commit or stash first" >&2
   exit 1
+fi
+
+# Both paths end with scripts/verify-release.sh, which refuses without docker
+# when the tagged tree holds an images/*/Dockerfile -- every release does -- and
+# it runs after the tag is pushed, where a refusal is not recoverable. Checked
+# here instead, with the other preconditions, so a machine without docker never
+# gets as far as the branch, the pull request or the tag.
+if ! command -v docker >/dev/null 2>&1; then
+  echo "docker is not on PATH, and the release's last step, scripts/verify-release.sh, pulls the images the release published (images/verify-public.sh) to prove they can be read without a login: install docker, then re-run \"$rerun\"" >&2
+  exit 1
+fi
+
+# --hotfix is the other path from here: it owns every step from the branch on,
+# and it never moves the user's checkout (restore_main is not installed for it:
+# the branch is built in a scratch worktree), so it ends on whatever branch it
+# started on. A refusal inside run_hotfix returns 1, and set -e ends the script
+# with it; the trap removes the worktree either way.
+if [ "$hotfix" = 1 ]; then
+  trap cleanup_hotfix_scratch EXIT
+  trap on_signal INT TERM HUP
+  run_hotfix
+  exit 0
 fi
 
 current_branch=$(git rev-parse --abbrev-ref HEAD)
@@ -241,31 +706,7 @@ if scripts/release-policy.sh highlights-required "$version"; then
   fi
 fi
 
-if ! command -v gh >/dev/null 2>&1; then
-  echo "gh is not installed; see https://cli.github.com" >&2
-  exit 1
-fi
-if ! retry_read --any gh auth status >/dev/null 2>&1; then
-  echo "gh is not authenticated; run 'gh auth login'" >&2
-  exit 1
-fi
-repo=$(retry_read gh repo view --json nameWithOwner --jq .nameWithOwner) || {
-  echo "'gh repo view' failed; run this from inside the fugaro checkout" >&2
-  exit 1
-}
-# gh resolves its repo from the checkout's remotes (or a "default" setting);
-# the tag and the PR must land where origin points, so the two must agree.
-origin_url=$(git remote get-url origin)
-url_path=${origin_url%/}
-url_path=${url_path%.git}
-url_name=${url_path##*[/:]}
-url_rest=${url_path%[/:]*}
-url_repo="${url_rest##*[/:]}/$url_name"
-if [ "$(printf '%s' "$url_repo" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]')" ]; then
-  echo "origin ($origin_url) is $url_repo but gh targets $repo; fix it with 'gh repo set-default' or run from the right checkout" >&2
-  exit 1
-fi
-
+resolve_repo
 if [ -n "$(retry_read git ls-remote --tags origin "refs/tags/$tag")" ]; then
   echo "tag $tag already exists on origin; a release is never re-tagged (ship the fix as the next patch instead, see docs/release.md#rolling-back)" >&2
   exit 1
@@ -306,8 +747,9 @@ fi
 #
 # RELEASE_SH_STREAMS_CMD exists for the tests only: the fixture checkout holds no
 # go module, so they substitute a helper binary built from this checkout (the
-# same reason RELEASE_SH_PLUGIN_TEST_CMD exists).
-streams_cmd=${RELEASE_SH_STREAMS_CMD:-go run ./internal/streams/cmd/streams}
+# same reason RELEASE_SH_PLUGIN_TEST_CMD exists). streams_cmd itself is set
+# above, before the hotfix path, which reads the branch's catalogue through it
+# too (and from the branch's own tree, in its scratch worktree).
 if [ -z "${RELEASE_SH_STREAMS_CMD:-}" ] && ! command -v go >/dev/null 2>&1; then
   echo "go is not on PATH, and the release reads the CLI stream (docs/release-streams.yaml) through internal/streams/cmd/streams with it, for the version it must not go behind and the name it is spoken with (--dry-run's plugin budget check needs go too). Install go (https://go.dev/dl)." >&2
   exit 1
@@ -399,7 +841,7 @@ Nothing else was changed.
 Without --dry-run this would:
   2. create $branch from main, bump the plugin to $version (scripts/bump-plugin-version.sh), record $version as the cli stream's current in docs/release-streams.yaml (moving its next name when the release opens a new minor), rewrite the two doc lines that name the released version, commit "release: $tag", push it, open a PR to main, and enable squash auto-merge
   3. wait up to ${timeout_minutes}m for that PR to merge
-  4. wait up to ${timeout_minutes}m for the merge commit's test, terraform, rules and console checks, and require them to pass (the release gate)
+  4. wait up to ${timeout_minutes}m for the merge commit's test, terraform and rules checks, and require them to pass (the release gate)
   5. create and push the tag $tag (no prompt: the green release gate on the verified merge commit is the safeguard)
 EOF
   exit 0
@@ -592,10 +1034,17 @@ esac
 echo "pull request #$pr_number merged as $merge_sha; verifying main"
 git switch --quiet main
 retry_read git pull --quiet --ff-only origin main
-head_sha=$(git rev-parse HEAD)
-if [ "$head_sha" != "$merge_sha" ]; then
-  echo "HEAD ($head_sha) is not the release merge commit ($merge_sha); something else landed on main first, inspect before tagging" >&2
+# The tag goes on the merge commit by its SHA, wherever main's tip is by now:
+# a commit that landed after it is not in the release, and the gate below
+# vouches for the merge commit alone.
+if ! git merge-base --is-ancestor "$merge_sha" origin/main; then
+  echo "the release merge commit ($merge_sha) is not on origin/main; inspect before tagging" >&2
   exit 1
+fi
+head_sha=$merge_sha
+if [ "$(git rev-parse HEAD)" != "$head_sha" ]; then
+  echo "main has moved past the release merge commit; tagging $head_sha, not the tip"
+  git checkout --quiet --detach "$head_sha"
 fi
 scripts/bump-plugin-version.sh --check "$version"
 # CI starts on the merge commit only now, so its checks are usually missing
@@ -603,7 +1052,7 @@ scripts/bump-plugin-version.sh --check "$version"
 # what is pending, and fails at once on a conclusive failure. It does not wait
 # for CI on a squash-merge commit whose tree equals the green PR head's: it
 # uses the head's checks and says so.
-echo "waiting for test, terraform, rules and the console checks to pass on $head_sha (up to ${timeout_minutes}m)..."
+echo "waiting for test, terraform and rules to pass on $head_sha (up to ${timeout_minutes}m)..."
 GITHUB_SHA="$head_sha" GITHUB_REPOSITORY="$repo" GATE_WAIT_SECONDS="$timeout_seconds" GATE_POLL_SECONDS="$poll_seconds" scripts/release-gate.sh "$tag"
 
 # 5. Summary and confirmation.
@@ -614,7 +1063,7 @@ Release summary
   tag:     $tag
   name:    $stream_name
   commit:  $head_sha ($subject)
-  checks:  test, terraform, rules and both console checks (console (ubuntu-latest), console (macos-latest)) all succeeded, on $head_sha or on the identical-tree head of the merged PR (scripts/release-gate.sh says which, above)
+  checks:  test, terraform and rules all succeeded, on $head_sha or on the identical-tree head of the merged PR (scripts/release-gate.sh says which, above)
 
 A pushed tag is permanent: the Go module proxy and the public ghcr.io images
 cache vX.Y.Z forever, so it is never moved or re-cut (docs/release.md#rolling-back).
@@ -636,13 +1085,19 @@ fi
 # A failed push is repeated only on a dropped connection, and only once origin
 # has been read again and found without the tag: a push that reached origin
 # before the connection dropped is not pushed twice.
+# already_there: origin turned out to have the tag at this commit, so there was
+# nothing to push and the failure's own output is not printed again below. The
+# run goes on to the verification either way: whether this run pushed the tag or
+# found it there, what has to hold is the same.
+already_there=0
 push_try=1
 while ! push_out=$(git push origin "refs/tags/$tag" 2>&1); do
   printf '%s\n' "$push_out" >&2
   remote_sha=$(retry_read git ls-remote origin "refs/tags/$tag^{}" | cut -f1)
   if [ "$remote_sha" = "$head_sha" ]; then
     echo "tag $tag is already on origin at $head_sha; nothing to push."
-    exit 0
+    already_there=1
+    break
   fi
   if [ -z "$remote_sha" ] && [ "$push_try" -lt "$retry_tries" ] && retry_is_transient "$push_out"; then
     echo "pushing tag $tag failed (try $push_try of $retry_tries) and origin does not have it; retrying in $((retry_seconds * push_try))s" >&2
@@ -655,15 +1110,23 @@ while ! push_out=$(git push origin "refs/tags/$tag" 2>&1); do
 or re-run scripts/release.sh $version, which pushes it." >&2
   exit 1
 done
-printf '%s\n' "$push_out"
+if [ "$already_there" = 0 ]; then
+  printf '%s\n' "$push_out"
+fi
 
 cat <<EOF
 tag $tag pushed. Watch:
   https://github.com/$repo/actions/workflows/release.yml
   https://github.com/$repo/actions/workflows/images.yml
+  https://github.com/$repo/actions/workflows/console-windows.yml
 
 Post-release checklist (docs/release.md):
-  - verify-public: each image must be anonymously pullable with a linux/amd64 build (images/verify-public.sh)
   - the first release of a new image package: make it public once (package settings, Danger Zone, Change visibility)
-  - verify the release end to end (docs/release.md#verifying-a-release)
 EOF
+
+# 7. Verify the release: every workflow the tag started has to conclude green,
+# the images it published have to be pullable without a login, and -- on a patch
+# tag -- the fixes it carries have to be on main. This waits (bounded), so it is
+# the last thing the script does; scripts/verify-release.sh runs it on its own
+# too, for a tag whose runs are already finished.
+scripts/verify-release.sh "$tag" --timeout-minutes "$timeout_minutes"

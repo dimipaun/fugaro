@@ -50,6 +50,53 @@ func TestAgentActorCannotResolveAPersonDecision(t *testing.T) {
 	}
 }
 
+// TestTheCallLedgersNameIsTheDaemonsToWrite is the other half of the summary's
+// filter: a decision whose id carries DecisionCallID is left out of what a
+// person and a session are shown, and out of what they carry away. A name a
+// reader hides is a name nothing else may use — asked under it by a class that
+// is not the daemon, a real question would be a question nobody is ever shown,
+// and the reader would have no way to tell it from the loop's own bookkeeping.
+// The reservation is the one applyDecisionAdd makes, so this pins it to the
+// same constant the filter reads rather than to a convention either side could
+// drift from.
+//
+// Mutation: drop the DecisionCallID guard from applyDecisionAdd and every
+// class below writes its question into the state; the daemon's own record
+// still lands, so the guard is not refusal for its own sake.
+func TestTheCallLedgersNameIsTheDaemonsToWrite(t *testing.T) {
+	now := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
+	s := stateWithAQueuedItem(t, now)
+	ask := func(id string) orchestrator.Op {
+		return orchestrator.Op{Op: orchestrator.OpDecisionAdd, Decision: &orchestrator.DecisionOp{
+			ID: id, Question: "Which of the two should this wait for?", WaitingOn: orchestrator.OnPerson,
+		}}
+	}
+
+	for _, class := range []orchestrator.Class{orchestrator.Session, orchestrator.DecisionAgent, orchestrator.Person} {
+		_, err := applyAs(t, s, class, "session:20261107-090000-abcd", now, ask(orchestrator.DecisionCallID+"forged"))
+		if !errors.Is(err, orchestrator.ErrActorNotAllowed) {
+			t.Fatalf("a %s actor asked a real question under the ledger's name: err = %v, want %v", class, err, orchestrator.ErrActorNotAllowed)
+		}
+	}
+	if len(s.Decisions) != 0 {
+		t.Fatalf("a refused write still asked: %+v", s.Decisions)
+	}
+
+	// What the name buys: the reader hides a decision carrying it, so the
+	// refusal above is what keeps the hidden name from being a place to put a
+	// question. Anyone's ordinary question still lands — the fence is the name,
+	// not the op.
+	s = mustApply(t, s, orchestrator.Daemon, orchestrator.DecisionCallID+"20261107T090000Z", now, ask(orchestrator.DecisionCallID+"20261107T090000Z"))
+	s = mustApply(t, s, orchestrator.DecisionAgent, "session:20261107-090000-abcd", now, ask("ask-ci-flake"))
+	summary := orchestrator.Summarize(s)
+	if strings.Contains(summary, "decide-call-") {
+		t.Errorf("the summary prints the ledger's own record:\n%s", summary)
+	}
+	if !strings.Contains(summary, "ask-ci-flake") {
+		t.Errorf("the summary hides a question an agent asked:\n%s", summary)
+	}
+}
+
 // TestUnknownOpIsRefused is G1 at the wire: an agent's patch is data, so the
 // vocabulary it may name is closed, and an op outside it — or one carrying a
 // payload its kind does not take — is refused rather than read as the nearest
@@ -252,6 +299,88 @@ func TestEditAfterApprovalRevokes(t *testing.T) {
 		upsertOp("wi-1", func(op *orchestrator.WorkItemOp) { op.Note = ptr("the run is in its review round") }))
 	if noted.WorkItems[0].Approved == nil {
 		t.Fatal("a note revoked the approval, and a note is not part of the spec")
+	}
+}
+
+// TestWorkItemSpecShapeRefused is R3 at the only door a spec name comes
+// through: the patch. The name becomes `spec:<name>` on a pull request, so a
+// name that is not a plan folder — a path, a colon, a space, a name too long
+// for GitHub's 50 characters — is refused where it is written rather than
+// skipped later by the syncer, and the two ends cannot drift apart.
+//
+// The ASCII check comes before the lowering and not after: the Kelvin sign
+// (U+212A) lower-cases to a plain "k", so a name that was lowered first would
+// be accepted here as a name this release then has to label with.
+//
+// Mutation: drop the shape check and every refusal below lands; leave out the
+// ASCII check and the Kelvin-sign case lands, reading as "forge-labelsk".
+func TestWorkItemSpecShapeRefused(t *testing.T) {
+	now := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
+	s := stateWithAQueuedItem(t, now)
+	write := func(spec string) (orchestrator.State, error) {
+		t.Helper()
+		return applyAs(t, s, orchestrator.Session, "session:20261107-090000-abcd", now,
+			upsertOp("wi-1", func(op *orchestrator.WorkItemOp) { op.Spec = ptr(spec) }))
+	}
+
+	for _, tc := range []struct{ name, spec string }{
+		{"an empty name", ""},
+		{"a path", "docs/forge-labels"},
+		{"a leading dash", "-forge-labels"},
+		{"a colon", "spec:forge-labels"},
+		{"a space", "forge labels"},
+		{"a dot", "forge.labels"},
+		{"an underscore", "forge_labels"},
+		{"a name that is not ASCII", "forge-labelsK"},
+		{"a name one past the bound", strings.Repeat("a", 45)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := write(tc.spec); !errors.Is(err, orchestrator.ErrInvalid) {
+				t.Fatalf("the spec %q landed: err = %v, want %v", tc.spec, err, orchestrator.ErrInvalid)
+			}
+		})
+	}
+
+	// What R3 lets through, which is a name and not a tidier one: 44
+	// characters is the bound ("spec:" plus the name is at most 49 of GitHub's
+	// 50, F20), a trailing dash is a character in the set, and a name is
+	// stored as the label will read it, lower-cased.
+	at := strings.Repeat("a", 44)
+	for _, tc := range []struct{ name, spec, want string }{
+		{"name at the bound", at, at},
+		{"name in mixed case", "Forge-Labels", "forge-labels"},
+		{"name with a trailing dash", "forge-labels-", "forge-labels-"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			next, err := write(tc.spec)
+			if err != nil {
+				t.Fatalf("the spec %q did not land: %v", tc.spec, err)
+			}
+			if got := next.WorkItems[0].Spec; got != tc.want {
+				t.Fatalf("the item carries the spec %q, want %q", got, tc.want)
+			}
+		})
+	}
+
+	// An upsert that carries no spec leaves the item's alone: the field is
+	// written by whoever declares the item and by nothing else (T8).
+	named, err := write("forge-labels")
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := mustApply(t, named, orchestrator.Session, "session:20261107-090000-abcd", now,
+		upsertOp("wi-1", func(op *orchestrator.WorkItemOp) { op.Note = ptr("the spec is unchanged by this") }))
+	if got := after.WorkItems[0].Spec; got != "forge-labels" {
+		t.Fatalf("an upsert that omits the spec changed it to %q", got)
+	}
+
+	// And a state carrying a name outside the shape is not one this release
+	// reads back: the shape is checked on the way out of the document too, so
+	// a hand-written one is refused rather than labelled.
+	edited := named
+	edited.WorkItems[0].Spec = "docs/forge-labels"
+	if err := orchestrator.ValidateState(edited); !errors.Is(err, orchestrator.ErrInvalid) {
+		t.Fatalf("a stored spec outside the shape validated: err = %v, want %v", err, orchestrator.ErrInvalid)
 	}
 }
 

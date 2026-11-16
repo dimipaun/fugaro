@@ -38,11 +38,11 @@ One package needs a bound of its own. `go test` kills any package still running 
 go test -race -timeout 40m ./internal/runner/...
 ```
 
-CI's `test` job does not give that package the same bound yet. `.github/workflows/ci.yml` is a file no run may push, so the exact change the owner has to make — the job's one test step split in two, and its own `timeout-minutes` raised with them, without which the longer bound can never fire — is written out in `docs/pending-workflows/README.md`, `## ci.yml`. `internal/cli/docs_runner_timeout_test.go` holds this sentence and that section to the workflow in both directions, so applying the change without rewriting this line fails the suite.
+CI gives that package the same bound, on test-shard runners of its own. `.github/workflows/ci.yml` runs it, and `internal/cli/docs_runner_timeout_test.go` holds this sentence to the workflow in both directions.
 
 ## Skills
 
-The plugin's skills are in `plugin/skills` (`setup`, `working`, `routing`, `parallelism`, `upgrade`, `orchestrator`). Try a change with `claude --plugin-dir plugin`. A CLI change that touches a documented command changes the skill that names it in the same PR: the tests in `plugin/` check every command and flag a skill gives against the CLI.
+The plugin's skills are in `plugin/skills` (`setup`, `working`, `routing`, `parallelism`, `update`, `orchestrator`, `images`, `spec-to-pr`, `landing`). Try a change with `claude --plugin-dir plugin`. A CLI change that touches a documented command changes the skill that names it in the same PR: the tests in `plugin/` check every command and flag a skill gives against the CLI.
 
 ## Conventions
 
@@ -60,6 +60,18 @@ The plugin's skills are in `plugin/skills` (`setup`, `working`, `routing`, `para
 - Branch from `main`, keep a PR to one change, and open it against `main`. History is squash-merged, so the PR title becomes the commit subject, followed by the PR number.
 - Titles are short and say what changed, often prefixed by the area or milestone, for example `rtdb: conditional PUT must not carry print=silent` or `M9c: fugaro watch, the live terminal dashboard`. Explain the why in the body.
 - Fill in the PR template: tests, docs, no secrets.
+
+### Landing a batch of pull requests
+
+`scripts/land-prs.sh` is the merge helper a landing ends with. The merge is the person's to make, at their own hands, in the provider's own interface — the [`landing` skill](plugin/skills/landing/SKILL.md) says what is safe to land, and an agent never merges for them — and this is the person's own command for making it for a batch: their own `gh`, the provider's own CLI, under their own credential. The script refuses a coding agent's session, so the person is the one who runs it. It exists so a landing of many pull requests is one command instead of a merge per pull request with a wait in between.
+
+```sh
+bash scripts/land-prs.sh --repo OWNER/NAME 1234 1235 1236
+```
+
+It reads every pull request's mergeable state in one parallel sweep and prints one line per pull request — state, draft or ready, MERGEABLE, CONFLICTING or UNKNOWN, and the title — before it touches anything. `--check-only` stops there and merges nothing. Then it merges the ones that are open and MERGEABLE, back to back and in the order given, marking a draft ready first; one that is CONFLICTING, still UNKNOWN or not open is skipped and named, and a merge that fails is reported while the batch goes on, with a draft it marked ready put back the way it found it. The exit status is 0 when every pull request ended merged, 1 when any did not, and 2 for a usage error or a coding agent's session.
+
+It never force-pushes, never rewrites a branch, never runs tests and never decides what is safe to merge: the caller has already decided, and the script only merges and reports. Its hermetic test is `scripts/land-prs_test.sh`, driven from `scripts/land_prs_test.go`.
 
 ## Licensing of contributions
 

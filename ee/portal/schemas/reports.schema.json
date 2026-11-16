@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/ee/portal/schemas/reports.schema.json",
+  "title": "Portal sales reports",
+  "description": "A month of sales split by channel (portal plan P5.2; spec §Operations, D2190). A report is derived from the ledger's entries and never from a counter, so a report and the ledger cannot disagree, and a comped key is not revenue: the free seat is a grant, and a figure that counted it would make it look like a sale. Months are UTC, and a reseller's receivable is its statements' total rather than a second calculation of the same accrual. Every object here is closed, because ee/keyservice/wire_reports.go decodes it with DisallowUnknownFields.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/month"
+    },
+    {
+      "$ref": "#/$defs/customer"
+    }
+  ],
+  "$defs": {
+    "month": {
+      "type": "object",
+      "description": "One month's report, as the operations team reads it.",
+      "additionalProperties": false,
+      "required": [
+        "month",
+        "direct_micros",
+        "reseller_micros",
+        "customers"
+      ],
+      "properties": {
+        "month": {
+          "type": "string",
+          "pattern": "^\\d{4}-(0[1-9]|1[0-2])$",
+          "description": "The month the report is for, as `YYYY-MM` in UTC — the same spelling a statement carries, so the two can be read side by side."
+        },
+        "direct_micros": {
+          "type": "integer",
+          "description": "What customers bought directly in the month, in micro-dollars. It is signed as the ledger's lines are, so a month whose only direct event was a refund is negative. A comped customer is not in it: a comped seat is a grant and not revenue (P5.2)."
+        },
+        "reseller_micros": {
+          "type": "integer",
+          "description": "What was sold through resellers in the month, in micro-dollars. It is a second figure and not a split of the first: the two are what the operations team reads, and neither is derived from the other."
+        },
+        "customers": {
+          "type": "array",
+          "description": "Every customer the month had a line for, including ones whose amount came to nothing: a customer with no amount is a fact a report is read for, and leaving them out would hide a month that never happened.",
+          "items": {
+            "$ref": "#/$defs/customer"
+          }
+        }
+      }
+    },
+    "customer": {
+      "type": "object",
+      "description": "One customer's line in one month.",
+      "additionalProperties": false,
+      "required": [
+        "organisation_id",
+        "name",
+        "channel",
+        "amount_micros"
+      ],
+      "properties": {
+        "organisation_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The customer organisation the money came from."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Its name, so the report reads as a list of customers and not of ids."
+        },
+        "channel": {
+          "type": "string",
+          "enum": [
+            "direct",
+            "reseller"
+          ],
+          "description": "Whether this month's money came in directly or through a reseller. It is the month's channel and not the customer's: a customer a reseller sold to in March and who bought directly in April appears once under each month's own channel."
+        },
+        "amount_micros": {
+          "type": "integer",
+          "description": "What that customer paid in the month, in micro-dollars, signed as the ledger's lines are: a month of refunds is a negative figure and not an empty one, and a comped customer's line is zero."
+        }
+      }
+    }
+  }
+}

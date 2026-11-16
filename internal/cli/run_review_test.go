@@ -323,7 +323,7 @@ func TestRunReviewLevelsFlagRefusesHostileDocuments(t *testing.T) {
 // ask): this test fails, finding the launch accepted and a job started.
 func TestRunRefusesLevelsBelowFloor(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
-	publishPolicy(t, f, `{"version":4,"allow_repos":["github/acme/*"],"review_floor":{"pro":["l2"]}}`)
+	publishPolicy(t, f, `{"version":5,"allow_repos":["github/acme/*"],"review_floor":{"pro":["l2"]}}`)
 	writeBuildRecord(t, f.cloudFixture, appSlug, "web", release0160)
 	dir := t.TempDir()
 	levels := filepath.Join(dir, "levels.yaml")

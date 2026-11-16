@@ -41,6 +41,62 @@ func TestFugaroRunRecognizesMarkerAndLegacyHeading(t *testing.T) {
 	}
 }
 
+// TestMarkerRoundTripEscalation pins the ladder's own marker kind (E8, E10a):
+// a transition comment is Fugaro's, it names the run and the rung, and a body
+// that quotes one cannot pass it off as another run's.
+func TestMarkerRoundTripEscalation(t *testing.T) {
+	const id = "20261111-172557-dabe"
+	m := TransitionMarker(id, "R2")
+	if m != "<!-- fugaro:escalation run=20261111-172557-dabe rung=R2 -->" {
+		t.Fatalf("TransitionMarker = %q", m)
+	}
+	body := "R1 → R2: churn_same at deadbeef.\n\n" + m + "\n"
+	if run, rung, ok := TransitionOf(body); !ok || run != id || rung != "R2" {
+		t.Fatalf("TransitionOf = %q, %q, %v", run, rung, ok)
+	}
+	if got, ok := FugaroRun(body); !ok || got != id {
+		t.Fatalf("FugaroRun(transition) = %q, %v; a transition comment is Fugaro's own", got, ok)
+	}
+	if got := StripMarkers(body); strings.Contains(got, "fugaro:") || strings.Contains(got, id) {
+		t.Fatalf("StripMarkers left %q", got)
+	}
+	// A rung the ladder has no name for is not a transition, whatever else the
+	// comment looks like.
+	for _, bad := range []string{
+		"<!-- fugaro:escalation run=" + id + " rung=R9 -->",
+		"<!-- fugaro:escalation run=" + id + " -->",
+		"<!-- fugaro:escalation run=../../x rung=R2 -->",
+		"<!-- fugaro:escalation run=" + id + " rung =R2 -->",
+	} {
+		if _, _, ok := TransitionOf(bad); ok {
+			t.Errorf("TransitionOf(%q) read a marker it should not", bad)
+		}
+	}
+}
+
+// TestFugaroRunLastMarkerWinsAcrossKinds covers the rule that the last marker
+// of either kind decides which run a body names: a report quoting a transition
+// marker earlier must not be read as that transition's.
+func TestFugaroRunLastMarkerWinsAcrossKinds(t *testing.T) {
+	const mine = "20261111-172557-dabe"
+	body := "quoted: " + TransitionMarker("20260101-000000-dead", "R3") + "\n\n" + ReportMarker(mine) + "\n"
+	if got, ok := FugaroRun(body); !ok || got != mine {
+		t.Fatalf("FugaroRun = %q, %v; want the last marker's run", got, ok)
+	}
+	// And the other way round: the transition written last is the one that
+	// names the body.
+	body = "quoted: " + ReportMarker("20260101-000000-dead") + "\n\n" + TransitionMarker(mine, "R4") + "\n"
+	if got, ok := FugaroRun(body); !ok || got != mine {
+		t.Fatalf("FugaroRun = %q, %v; want the last marker's run", got, ok)
+	}
+	// A transition marker's rung is what TransitionOf reads, and it is the
+	// LAST one: an item that moved twice names where it ended.
+	body = TransitionMarker(mine, "R1") + "\n" + TransitionMarker(mine, "R3")
+	if _, rung, ok := TransitionOf(body); !ok || rung != "R3" {
+		t.Fatalf("TransitionOf = %q, %v; want R3", rung, ok)
+	}
+}
+
 func TestFugaroRunLastMarkerWins(t *testing.T) {
 	// An agent's text quoted earlier in a report can't name another run:
 	// Fugaro's own marker always comes last.
@@ -113,6 +169,38 @@ func TestSameCommit(t *testing.T) {
 	} {
 		if got := SameCommit(c.a, c.b); got != c.want {
 			t.Errorf("SameCommit(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+// TestReportRunIsNarrowerThanFugaroRun is the split the runner needs: a report
+// and a ladder transition are both Fugaro's own and both name a run, but only
+// one of them answers "has this run posted its report". A transition comment
+// can name a run that has posted nothing (E10a writes it before the run
+// finishes, if it finishes at all), and reading it as that run's report would
+// silently suppress the report the pull request is waiting for.
+func TestReportRunIsNarrowerThanFugaroRun(t *testing.T) {
+	const mine = "20261111-172557-dabe"
+	for _, c := range []struct {
+		name, body     string
+		wantRun        string
+		wantReport     bool
+		wantFugaroOwns bool
+	}{
+		{"the run's own report", "### Report\n\nbody\n" + ReportMarker(mine) + "\n", mine, true, true},
+		{"a report quoting a transition marker", "quoted: " + TransitionMarker(mine, "R2") + "\n\n" + ReportMarker(mine) + "\n", mine, true, true},
+		{"a transition comment naming the run", "R1 → R2: churn_same.\n\n" + TransitionMarker(mine, "R2") + "\n", "", false, true},
+		{"the legacy report heading", "### Fugaro run `" + mine + "`\n\n**Outcome:** ready\n", mine, true, true},
+		{"the legacy not-ready note", "**Fugaro:** this pull request is not ready.\n", "", true, true},
+		{"somebody else's comment", "LGTM\n", "", false, false},
+		{"a transition marker alone, with no report", TransitionMarker(mine, "R4"), "", false, true},
+	} {
+		run, ok := ReportRun(c.body)
+		if run != c.wantRun || ok != c.wantReport {
+			t.Errorf("%s: ReportRun = %q, %v; want %q, %v", c.name, run, ok, c.wantRun, c.wantReport)
+		}
+		if _, owns := FugaroRun(c.body); owns != c.wantFugaroOwns {
+			t.Errorf("%s: FugaroRun ok = %v, want %v", c.name, owns, c.wantFugaroOwns)
 		}
 	}
 }

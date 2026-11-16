@@ -12,6 +12,7 @@ package report
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -298,12 +299,13 @@ func (s *Step) Skipped(reason string) {
 }
 
 // Failed ends the step with a cross and prints the error, the last lines of
-// context behind it and the log's path. The context is on the screen rather
-// than only in the log because a coding agent's session often has a read-only
-// home and cannot open the log at all (G8).
+// context behind it, the log's path and the command that explains the run. The
+// context is on the screen rather than only in the log because a coding agent's
+// session often has a read-only home and cannot open the log at all (G8).
 func (s *Step) Failed(err error, context []string) {
 	lines := append([]string(nil), context...)
 	s.r.appendLogLine(&lines)
+	s.r.appendDiagnoseLine(&lines)
 	s.end(glyphFailed, colourFailed, Failed, ": ", err.Error(), lines)
 }
 
@@ -519,6 +521,25 @@ func (r *Reporter) appendLogLine(lines *[]string) {
 	}
 	if p := r.o.Sink.Path(); p != "" {
 		*lines = append(*lines, "full output: "+p)
+	}
+}
+
+// diagnoseLine is the sentence a failure prints about the command that
+// explains it, up to the run ID the sentence ends with (T-DG9).
+const diagnoseLine = "Something went wrong. Run: fugaro troubleshoot "
+
+// appendDiagnoseLine adds that line under a failure, with the log's own name as
+// its run ID: the stem of the file the path beside it points at, which is what
+// `fugaro troubleshoot` routes by (D1609). A person passes on one word rather
+// than a path, and the file that word names is the one the failure already
+// sent them to. A run with no log has no run ID to name and adds nothing
+// (T6) — the same rule the log's path follows.
+func (r *Reporter) appendDiagnoseLine(lines *[]string) {
+	if r.o.Sink == nil {
+		return
+	}
+	if id, ok := strings.CutSuffix(filepath.Base(r.o.Sink.Path()), logSuffix); ok && id != "" {
+		*lines = append(*lines, diagnoseLine+id)
 	}
 }
 

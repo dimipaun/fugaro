@@ -62,8 +62,8 @@
 // the table of commands and flags the console must never reach: every write
 // subcommand on this tree -- including the converge, `setup` and `update`, which
 // create a project and apply Terraform -- the `secrets` commands, the retired
-// `init` tombstone, `upgrade` and the hidden `exec`, the hidden
-// `budget history` job command, `image git-credential`
+// `init` tombstone and the hidden `exec`, the hidden `budget history` job
+// command, `image git-credential`
 // (it prints a credential), the project-centric phase 1 commands that write or
 // publish, and the flags that make a read-only command into something else
 // (`--follow`, `--check-github-app`, `--strict`, `--csv`, `--watch`, the watch
@@ -259,6 +259,65 @@ const GRAPH_SCOPE_RE = /^(?:all|coordinator|(?:orchestrator|local):[a-z0-9][a-z0
 export const MAX_GRAPH_SCOPE_LENGTH = 'orchestrator:'.length + 40
 
 /**
+ * ROADMAP_NODE_RE is the shape of the **document key** a move names: the
+ * `<source>:<id>` a graph document's `nodes[].key` is (contract §6.22), which is
+ * the identity the drawing carries on every row and the one value a renderer
+ * may name a task of the record by.
+ *
+ * It is a *shape* and not an identity: no pattern could say whether a node of
+ * that spelling exists, and this one deliberately does not try -- the id of a
+ * local scope's own key carries a colon of its own (`local:o1:t-042`), so a
+ * grammar that took a key apart would refuse a key the document wrote. Whether
+ * the node exists is the **source's** question, asked of the last document this
+ * installation read (`createBoundSource`'s move, the graph read's own F21 rule):
+ * a key no answer listed is refused before a child exists and before any word of
+ * an argv is built.
+ *
+ * What the pattern is for is the other half: a key that could never be one, so a
+ * payload cannot make this process carry a path, a newline or a megabyte into a
+ * refusal sentence. It is `isSafeArgumentValue`'s alphabet (`src/main/spawn.ts`)
+ * **and that function's own length bound** (`MAX_ARGUMENT_LENGTH`), even though
+ * no node key ever reaches argv -- the value a node key reaches is the
+ * document's own `id`, and that one is emitted from main-process state and held
+ * to the same bound by `assertMoveWord`. A key this schema admits and that bound
+ * would not is a task a person could select and the console would then refuse to
+ * spell, with a sentence about an alphabet the key spells perfectly well; so the
+ * two are one number, and a key longer than it is refused here, by name and
+ * length.
+ */
+const ROADMAP_NODE_RE = /^[A-Za-z0-9._:@/+-]{1,200}$/
+
+/** MAX_ROADMAP_NODE_LENGTH is the length `ROADMAP_NODE_RE` admits, read out
+ * here so the check that runs before the grammar and the pattern it feeds cannot
+ * disagree about where a key ends. It is `spawn.ts`'s `MAX_ARGUMENT_LENGTH` for
+ * the reason above, and `ipc.test.ts` holds the two together: the longest key
+ * this schema admits is the longest value that guard passes. */
+const MAX_ROADMAP_NODE_LENGTH = 200
+
+/**
+ * ROADMAP_RELEASE_RE is the shape of the release a move names: **the record's
+ * own key for a release box**, or the empty string for "the record holds no
+ * assignment for this task" (D2114's `none`).
+ *
+ * The key is opaque: `coordinator.ReleaseID` builds it as a hash (`ee/graph`),
+ * so this is the only thing a renderer's value can be checked against here --
+ * and, as above, it is not an identity. Membership is the source's, taken from
+ * the `releases[]` of the document this installation last read.
+ *
+ * **The empty string is the unassign and not an absent argument.** A missing
+ * `toRelease` is refused by the schema (the field is required), so the two
+ * readings cannot be confused, and the word the empty string becomes is the
+ * CLI's own `none` -- spelled by the main process (`spawn.ts`), never by a
+ * renderer.
+ */
+const ROADMAP_RELEASE_RE = /^(?:[0-9a-f]{64})?$/
+
+/** MAX_ROADMAP_RELEASE_LENGTH is the length of one release key: the record
+ * builds it as a sha-256 hex digest (`coordinator.ReleaseID`), so 64 is the
+ * pattern's own bound and, in `kindLimit`, the bound the check runs first. */
+const MAX_ROADMAP_RELEASE_LENGTH = 64
+
+/**
  * ArgumentKind is the closed set of things an operation's argument may be. Every
  * kind is a value the CLI's own flags already accept *in that position*, and
  * none of them is a path, a command, a flag name or a free-form string: a
@@ -406,6 +465,8 @@ export type ArgumentKind =
   | 'settingKey'
   | 'settingValue'
   | 'graphSource'
+  | 'roadmapNode'
+  | 'roadmapRelease'
   | 'licenceKey'
 
 /** ArgumentSpec is one field of an operation's closed argument schema. */
@@ -479,6 +540,56 @@ export interface ConsoleOperation {
    * because the bound every other read is held to is a fact about those reads.
    */
   readonly payloadWidth?: number
+  /**
+   * `refusedAfterLapse` is the field that makes an operation part of the
+   * **refused class** of the design's lapse state (subscriptions plan S6.2;
+   * `docs/design/lapse-read-only.md` §3.2, D436, T12): after the key's grace
+   * period this console does not launch a run, does not change a setting and
+   * does not move a task of a record, and `lapseHandlers`
+   * (`src/main/licence-state.ts`) refuses exactly the rows that carry this
+   * field, before the handler -- and so before any child -- is reached.
+   *
+   * **It is a field of the row and never a list of names beside the table.** The
+   * design states the rule and its reason: a later cancel is admitted to the kept
+   * set by its own row differing from the launch's in this one field, so a gate
+   * that classified by name would refuse a cancel the day it was added. Two rows
+   * carry it today -- `run.launch` and `settings.edit`, the whole of what T12
+   * takes away -- and `assertReachableSurface` refuses the column on a row that
+   * spawns no command, because the rows that spawn nothing are the console's own
+   * answers (the design's kept set, and the key screen §5.6 keeps ungated as the
+   * way out).
+   *
+   * Every other operation is the design's kept set: every read, including the
+   * paid views, and the kill switch's state.
+   */
+  readonly refusedAfterLapse?: true
+  /**
+   * `installationArgument` names the payload argument that carries the
+   * installation this row acts on, for a row whose target is not the console's
+   * own active binding. `run.launch` is the one row with it today: its payload
+   * names the installation to launch, and `src/main/launch.ts` resolves that name
+   * against this console's records and spawns **that** installation -- handing its
+   * child that installation's key, not the binding's.
+   *
+   * **It is a column for `refusedAfterLapse`'s reason, and it is what keeps the
+   * lapse gate honest about which installation it is asking about.** The gate
+   * (`src/main/licence-state.ts`) reads the licence state of the installation an
+   * operation acts on, and the row -- not the entry point -- says where that
+   * installation is spelled: a gate that read the active binding for every row
+   * would admit a launch of a lapsed installation while the console was driving a
+   * valid one, spawn it, and hand it the lapsed installation's key. A row that
+   * acts on the active installation carries no such column, because its payload
+   * names no installation at all (`settings.edit` writes the settings document of
+   * the installation the console is driving), and `undefined` is then the honest
+   * answer to "which installation is this for".
+   *
+   * `assertReachableSurface` holds the column to a **required `installationName`
+   * argument of the row itself**, so the one failure that would be silent --
+   * pointing it at a free-text field, whose value no installation answers for,
+   * which would read as the no-key state and admit the operation -- fails closed
+   * at registration instead.
+   */
+  readonly installationArgument?: string
 }
 
 /**
@@ -508,7 +619,7 @@ export const LAUNCH_PAYLOAD_WIDTH =
   LAUNCH_TASK_RAW_LIMIT + LAUNCH_TITLE_RAW_LIMIT + LAUNCH_PLAN_TASK_RAW_LIMIT + 4096
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Thirty-seven operations, and the table
+ * CONSOLE_OPERATIONS is the whole surface. Forty operations, and the table
  * is the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
@@ -559,8 +670,10 @@ export const LAUNCH_PAYLOAD_WIDTH =
  *
  * **`models ls --json` is this surface's twentieth argv** (console 0.119.0's
  * read-only models panel; the CLI half is M1, #1553, and
- * `console/docs/json-contract.md` §6.18 describes its document). It is the one
- * argv here whose **group** the console may otherwise not touch: `fugaro models`
+ * `console/docs/json-contract.md` §6.18 describes its document). It is one of
+ * the two argvs here whose **group** the console may otherwise not touch -- the
+ * other is `user ls --json` below (the roles-and-scopes plan's RS7), whose
+ * group's five words are on the never table the same way: `fugaro models`
  * has four other words -- `search`, `add`, `rm` and `use` -- and each is on the
  * never table below, the three writers as commands and all four as words of
  * `models`, so this row is the group's whole reachable argv. It takes no
@@ -773,9 +886,9 @@ export const CONSOLE_OPERATIONS = [
   //
   // What is deliberately absent is the point. `--all-users` is a flag of
   // `newRunsStatsCmd` that shows every user's row, and it is not a key of this
-  // schema: the command resolves the view itself -- an operator of the
+  // schema: the command resolves the view itself -- an admin of the
   // installation (the identity named in the local config's `user:`/git, listed
-  // in its `terraform.operators`) sees every user's rows, and everyone else sees
+  // in its `terraform.admins`) sees every user's rows, and everyone else sees
   // their own row alone (`internal/cli/runs_stats.go`, `userStatsViewOwn`) --
   // and a console that could pass the flag could widen a private view to
   // everyone's with one click. `--by` is fixed to `user` by the command's own
@@ -913,7 +1026,7 @@ export const CONSOLE_OPERATIONS = [
         key: 'source',
         kind: 'graphSource',
         required: false,
-        why: '`newGraphCmd` has this flag and its set is closed: `all` (the command’s own default, the union of the scopes that exist), `coordinator` (the stored view), and `orchestrator:<id>` / `local:<id>` for the scopes a later release adds -- both of which today answer "no orchestrator is installed in this build", which is a refusal and not an empty graph. The pattern is the CLI’s own (`graph.ParseScope`), so a value this surface admits is a value that command reads. It is optional because the command has a default of its own (`all`), so a caller that names no scope is answered rather than refused.',
+        why: '`newGraphCmd` has this flag and its set is closed: `all` (the command’s own default, the union of the scopes that exist), `coordinator` (the stored view), and `orchestrator:<id>` / `local:<id>`, which read one orchestrator’s own state node (CG4 and CG5). An id no scope of that name exists for is a refusal and not an empty graph: the database holds no node for it, and for `local:` this machine holds no cached brief either. The pattern is the CLI’s own (`graph.ParseScope`), so a value this surface admits is a value that command reads. It is optional because the command has a default of its own (`all`), so a caller that names no scope is answered rather than refused.',
       },
     ],
   },
@@ -944,7 +1057,7 @@ export const CONSOLE_OPERATIONS = [
         key: 'source',
         kind: 'graphSource',
         required: false,
-        why: 'the scope the stream is about, on `graph.read`’s own terms: `all` (the command’s default, the union of the scopes that exist), `coordinator`, or `orchestrator:<id>` / `local:<id>` for the scopes a later release adds. It is the same closed grammar the read above is held to (`GRAPH_SCOPE_RE`) and, at the source, the same membership rule: a scope no previous document of this installation listed is refused before a child exists (F21), so a renderer cannot hold a stream open on a scope that exists nowhere. It is optional because the command has a default of its own, exactly as the read’s is.',
+        why: 'the scope the stream is about, on `graph.read`’s own terms: `all` (the command’s default, the union of the scopes that exist), `coordinator`, or `orchestrator:<id>` / `local:<id>`, which read one orchestrator’s own state node (CG4 and CG5). It is the same closed grammar the read above is held to (`GRAPH_SCOPE_RE`) and, at the source, the same membership rule: a scope no previous document of this installation listed is refused before a child exists (F21), so a renderer cannot hold a stream open on a scope that exists nowhere. It is optional because the command has a default of its own, exactly as the read’s is.',
       },
       {
         key: 'visible',
@@ -1011,6 +1124,19 @@ export const CONSOLE_OPERATIONS = [
     command: 'run --task-file -',
     flags: ['--json'],
     summary: 'the console’s one write: one launch of `fugaro run` for a named installation',
+    // The lapse takes this row away and keeps every read (design §3.2 rule 1,
+    // T12): a lapsed installation is read-only, and the launch is half of what
+    // read-only means.
+    refusedAfterLapse: true,
+    // **And the installation the lapse is about is this payload's own.** The
+    // launcher resolves the name below against this console's records and spawns
+    // *that* installation (`launch.ts`), handing its child that installation's
+    // key -- so the gate has to ask about the name the renderer sent, not about
+    // the binding the console happens to be driving. `settings.edit` and
+    // `roadmap.move`, the lapse's other rows, carry no such column: each acts on
+    // the installation the console is already driving, which its payload does not
+    // name.
+    installationArgument: 'installation',
     // The five fields, and nothing else: no `--pr`, no `--retry`, no `--recipe`,
     // no mode, no path, no ref, no workflow, no budget escape. Every one of them
     // is on `NEVER_REACHABLE`'s argv rows below, because a closed schema is not
@@ -1163,11 +1289,10 @@ export const CONSOLE_OPERATIONS = [
   //
   // **`flags` is empty, and that is the one place this row differs from every
   // read beside it.** The dry run's argv carries `--dry-run --json` and a
-  // confirmed write's carries `--yes` -- which is not a set of flags this
+  // confirmed write's carries no flag at all -- which is not a set of flags this
   // operation *fixes*, so it is the phase the main process decides
   // (`SETTINGS_EDIT_PHASE_WORDS`, `src/main/spawn.ts`) rather than a column
-  // here. A screen chooses none of them: not `--dry-run`, not `--yes`, not even
-  // `--json`.
+  // here. A screen chooses none of them: not `--dry-run`, not even `--json`.
   //
   // **The schema is three keys and no more**, and the layer is not one of them:
   // it is the read's own `target_layer`, held in this process's copy of the
@@ -1205,6 +1330,12 @@ export const CONSOLE_OPERATIONS = [
     command: 'settings',
     flags: [],
     summary: 'the second write: one setting set or unset, at the layer the read named, after the operator confirms it',
+    // One of the lapse's rows: T12 takes the launch and the configuration change
+    // away (design §3.2 rule 1), and the record's move joined them on 2026-11-12
+    // (`roadmap.move` below, the console's third write). `settings.read` -- the
+    // same command, as a read -- is not this row and keeps answering, which is
+    // the design's line between reading a setting and writing one.
+    refusedAfterLapse: true,
     args: [
       {
         key: 'op',
@@ -1541,6 +1672,63 @@ export const CONSOLE_OPERATIONS = [
     summary: 'what the fleet’s writers have declared, newest first',
     args: [],
   },
+  // The roadmap record's one write (the dependency-graph plan's GV3.2; the
+  // console's third write, after rule 11's launch and rule 12's settings edit):
+  // `fugaro coordinator roadmap move <plan>/<task> --to <release|none> --json`,
+  // the call that puts a task of the record into a release box or takes it out
+  // of one.
+  //
+  // **A renderer names two keys and no word of the command line.** `node` is the
+  // document key of the card that was dragged (`coordinator:plans/x/T1`) and
+  // `toRelease` is the record's own key for the box it was dropped on, or the
+  // empty string for "no release" -- both **ids the last graph read printed**,
+  // and both checked against that document in the source before anything is
+  // built (`createBoundSource`'s move, on F21's terms). The three words the CLI
+  // reads are the main process's own: the task word is the document's `id` for
+  // the node that key names, `--to` is the key the box was named by (or the
+  // CLI's `none`), and `--expect` is the `release` the same document recorded
+  // for that node -- the compare-and-set's whole safety (GV3.1), which a
+  // renderer must not be able to state.
+  //
+  // **`confirmed` is the one argument of this table that reaches no word of any
+  // argv** (`src/main/spawn.ts`'s row declares it with `flag: null`, exactly as
+  // `graph.watch`'s `visible` is declared), and it is what makes one operation
+  // do the two halves of a confirmed write: without it the answer is the move's
+  // **preview** -- the exact argv, the task and the two boxes, and no child --
+  // and with it the child runs, refused if the argv the preview drew is not the
+  // one this call builds (the record moved under the confirmation). The
+  // preview is the same operation rather than a second one because the two
+  // answers must be the same words: a table where a screen asked one row for the
+  // command line and another to run it could be shown one argv and spawn
+  // another, and no test could tell.
+  {
+    name: 'roadmap.move',
+    method: 'moveRoadmapTask',
+    command: 'coordinator roadmap move',
+    flags: ['--json'],
+    summary: 'one task of the record into a release, or out of one',
+    refusedAfterLapse: true,
+    args: [
+      {
+        key: 'node',
+        kind: 'roadmapNode',
+        required: true,
+        why: 'the document key of the task the operator dragged: the `nodes[].key` of the graph document this installation last read, which is what the drawing puts on the row (`data-key`, `src/renderer/screens/graph.ts`). It is an **id and not a word**: the positional the CLI reads is the document’s own `id` for the node this key names, emitted by the main process out of the document it checked the key against, so a renderer cannot name a task the record does not hold and cannot spell one either. The kind’s own pattern keeps a payload from carrying something no key could be.',
+      },
+      {
+        key: 'toRelease',
+        kind: 'roadmapRelease',
+        required: true,
+        why: 'the record’s key for the release box the task was dropped on -- a `releases[].key` of the same document -- or the empty string for the unassign, which is the operator dropping a task out of every release (D2114). It is required rather than optional because the two readings must not be confusable: an absent argument would be "the caller said nothing", and the empty string is "the record holds no assignment for this task", which is a value a caller who read the document may state. The word behind `--to` is the main process’s spelling of it (`none` for the empty string), so the record’s own word never comes from a renderer.',
+      },
+      {
+        key: 'confirmed',
+        kind: 'flag',
+        required: false,
+        why: '**the one argument on this surface that reaches no word of any argv**: it decides whether the child runs at all, which is what makes this operation answer a preview and a write both. A caller that leaves it out (or sends `false`) is answered the move’s own command line, the task and the two boxes, and no child is spawned; `true` runs it, and only if the argv this process builds is the argv the preview drew. It is the launch’s `visible` argument read the other way round -- there `false` stops a feed, here `true` is the write -- and it is `false` by default for the same reason Cancel is the focused button of a confirmation: the state a caller reaches by forgetting is the one that writes nothing.',
+      },
+    ],
+  },
   // The Project tab's managed state and its audit trail (the managed screens'
   // plan, CM4; D1472 to D1477, and rule 6 carries its row). It is the console's
   // first read of a **managed** project as such: the two marks and whether they
@@ -1649,6 +1837,83 @@ export const CONSOLE_OPERATIONS = [
         kind: 'licenceKey',
         required: true,
         why: 'the pasted key — the one argument on this surface whose value is a credential, and the only one the console never answers back. It is bounded before anything decodes it and passed nowhere but the verifier; what it can reach is the child’s environment and never an argv.',
+      },
+    ],
+  },
+  // The Project tab's seat estimate (subscriptions plan S4.2; the read behind
+  // it is `fugaro seats --json`, S4.1, and the rulings are D439, D433 and
+  // T14). It is the console's **thirty-eighth** operation, and it is a read of
+  // core data and nothing else: the command reads this machine's own launcher
+  // and operator lists and the requesters of the last 90 days of runs, sends
+  // nothing, stores nothing and consults no key, licence or server.
+  //
+  // **It is not on a reduced view.** The reduced mode withholds the screens
+  // that read money an operator's runs spent (`REDUCED_VIEW_OPERATIONS`), and
+  // this document carries no money at all: a seat is a contract pricing rule of
+  // the Subscription Terms and not a figure of this installation's spend, and
+  // the estimate the CLI publishes is a count of people. It is not gated by a
+  // lapse either, and for the same reason a read is never gated: only the three
+  // writes that walk an installation out of a lapse carry
+  // `refusedAfterLapse` (`docs/design/lapse-read-only.md`).
+  //
+  // **No argument at all**, the strongest form of this rule's closed schema:
+  // the command takes no positional word, `--json` is a fixed word of the spawn
+  // row and the cloud group's `--project`/`--config` are the installation's --
+  // so there is no field a renderer could fill. The window is the ruling's own
+  // 90 days and no flag moves it: an estimate over a window the caller chose
+  // would be a different count wearing the same name.
+  {
+    name: 'seats.read',
+    method: 'readSeats',
+    command: 'seats',
+    flags: ['--json'],
+    summary: 'the advisory estimate of who launches jobs on this installation, and the identities the estimate cannot count',
+    args: [],
+  },
+  // The Members view's read (the roles-and-scopes plan's RS7, roles.md D691(b):
+  // a read-only Members view over the installation's grants node). It is the
+  // console's **fortieth** operation, and the read behind it is RS5's
+  // `fugaro user ls` (`internal/cli/user_ls.go`).
+  //
+  // **The `user` group's one reachable argv, and the group is why it is worth
+  // saying.** `fugaro user` has six words; the other five change who may do
+  // what -- `grant` and `revoke` write the installation's grants node, `add`
+  // and `rm` rewrite this machine's own copy of the two IAM lists (F42), and
+  // `offboard` drops every roster grant naming the member and has the intake
+  // delete the secrets they stored -- so each of the five is on the never table
+  // below, as a command and as a word of `user`, and `user ls --json` is the
+  // whole of this group's reach. A role is the one thing this surface reads and
+  // never moves.
+  //
+  // **It reads, and it is the console's strongest kind of read**: the command
+  // reads this machine's own config and the installation's grants node with the
+  // caller's own credential, prints one document and writes nothing -- no
+  // cloud object, no cache, no remembered checkout (`consoleReadPaths`,
+  // `internal/cli/project.go`). **No role logic lives in the renderer**: the
+  // document's own words are what a screen draws, and the resolver that decides
+  // what a role means is the CLI's.
+  //
+  // **Its one argument is the repository a role is asked about, and it is
+  // optional.** Without it the document's `effective` list is empty, which is
+  // the absence of a named repository rather than an empty roster -- the CLI's
+  // own distinction, and the reason this argument is not required. The value is
+  // the canonical `owner/name` the other repository arguments here are
+  // (`task.CanonicalRepo`), because one repository has one name on this
+  // surface; it is never a pattern. The scope of a grant **is** a pattern, and
+  // no pattern is expressible here: a caller names a repository and the CLI
+  // answers which roles cover it.
+  {
+    name: 'members.list',
+    method: 'listMembers',
+    command: 'user ls',
+    flags: ['--json'],
+    summary: 'the installation’s roster: every stored role and scope pair, the repositories a pattern matches here, and the role each person holds in one repository',
+    args: [
+      {
+        key: 'repo',
+        kind: 'repository',
+        required: false,
+        why: '`newUserLsCmd` has this flag, and it is what the view turns on: the role each person holds in one repository -- the highest role whose scope covers it, with the published policy’s `allow_repos` taken into account -- rather than the whole roster. It is optional because the command has a state of its own without it (the stored pairs, and the repositories of this machine a pattern matches), so a caller that names no repository is answered rather than refused. The grammar is this surface’s own `repository` kind, the canonical `owner/name` every other repository argument here is: a **pattern** is what a grant’s scope holds, never what this argument may hold, so the one word a caller fills here cannot widen what the read is about.',
       },
     ],
   },
@@ -1945,12 +2210,6 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
   },
   {
     shape: 'command',
-    value: 'upgrade',
-    why: "a write: it replaces the CLI's own wiring and refreshes images",
-    where: 'internal/cli/upgrade.go:79',
-  },
-  {
-    shape: 'command',
     value: 'exec',
     why: "the hidden verb that runs an arbitrary command in a run's context — never a command from outside the console",
     where: 'internal/cli/exec.go:52 (Hidden: true)',
@@ -1984,6 +2243,90 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
     value: 'recipes publish',
     why: 'a write: it publishes a recipe',
     where: 'internal/cli/recipes.go:327',
+  },
+  // **The `user` group's writers, in the two shapes the models rows below are
+  // drawn in.** `fugaro user ls --json` is the group's one reachable word
+  // (`members.list` above, the roles-and-scopes plan's RS7); the five commands
+  // here are the words beside it, and no one of them is a read: `grant` and
+  // `revoke` write the installation's grants node -- one person, one role, one
+  // scope, judged against the grantor's own scope and written conditionally on
+  // an ETag (RS5) -- `add` and `rm` rewrite this machine's own copy of the
+  // installation's two IAM lists (F42), and `offboard` takes the member off the
+  // installation outright: the roster drops every grant naming them and the
+  // intake deletes the secrets stored under their prefix (DS2.4, D1935). Each
+  // changes who may do what, which is the one thing this surface reads and
+  // never moves.
+  //
+  // The `argv` rows under them refuse the five **words** wherever an operation
+  // under `user` spells them, on the models rows' own reasoning: a command row
+  // alone would not cover a future operation whose command is `user grant
+  // <member>` rather than the command `user grant`. Each `command` row stays
+  // above the `argv` row carrying its word, so `isNeverReachable` answers with
+  // the narrower one and `console/test/unit/ipc.test.ts` can assert it per row.
+  {
+    shape: 'command',
+    value: 'user grant',
+    why: 'a write: it writes one role and scope pair for one person into the installation’s grants node, which is the installation’s record of who may do what and what its next `fugaro update` derives the IAM lists from',
+    where: 'internal/cli/user_grant.go:101 (newUserPairCmd(true))',
+  },
+  {
+    shape: 'command',
+    value: 'user revoke',
+    why: 'a write: it takes one role and scope pair away from one person in that same node, which can leave an installation with one fewer admin than it had',
+    where: 'internal/cli/user_grant.go:101 (newUserPairCmd(false))',
+  },
+  {
+    shape: 'command',
+    value: 'user add',
+    why: 'a write: it rewrites this machine’s own copy of the installation’s operator or admin IAM list, and that copy is what the machine’s next `fugaro update` applies',
+    where: 'internal/cli/user.go:129',
+  },
+  {
+    shape: 'command',
+    value: 'user rm',
+    why: 'a write: it takes a member out of this machine’s own copy of one of those two IAM lists, and that copy is what the machine’s next `fugaro update` applies',
+    where: 'internal/cli/user.go:134',
+  },
+  {
+    shape: 'command',
+    value: 'user offboard',
+    why: 'a write: it drops every grant of the installation’s roster that names the member and has the intake delete the secrets stored under their prefix, which is the group’s most destructive word',
+    where: 'internal/cli/offboard.go:106',
+  },
+  {
+    shape: 'argv',
+    command: 'user',
+    value: 'grant',
+    why: 'the write above, refused as a word of this command as well: a `user` argv that spells `grant` is refused before `spawn` is called, whether it spells it in the command path or in the flags it fixes',
+    where: 'internal/cli/user_grant.go:101 (newUserPairCmd(true))',
+  },
+  {
+    shape: 'argv',
+    command: 'user',
+    value: 'revoke',
+    why: 'the write above, refused as a word of this command as well',
+    where: 'internal/cli/user_grant.go:101 (newUserPairCmd(false))',
+  },
+  {
+    shape: 'argv',
+    command: 'user',
+    value: 'add',
+    why: 'the write above, refused as a word of this command as well',
+    where: 'internal/cli/user.go:129',
+  },
+  {
+    shape: 'argv',
+    command: 'user',
+    value: 'rm',
+    why: 'the write above, refused as a word of this command as well',
+    where: 'internal/cli/user.go:134',
+  },
+  {
+    shape: 'argv',
+    command: 'user',
+    value: 'offboard',
+    why: 'the write above, refused as a word of this command as well',
+    where: 'internal/cli/offboard.go:106',
   },
   // **The models group's writers, and the two shapes its fence is drawn in.**
   // `fugaro models ls --json` is the group's one reachable word
@@ -2341,7 +2684,7 @@ const MAX_SETTING_KEY_LENGTH = 120
  * **`*` is admitted anywhere a letter is, on purpose.** A standalone segment is
  * the spelling the registry uses, but `stages.rev*iew.x` passes this grammar
  * too, and that is the honest shape of the claim: this expression bounds the
- * **word** a key can be, and `internal/cli/settings_set.go:331` refuses any key
+ * **word** a key can be, and `internal/cli/settings_set.go:537` refuses any key
  * carrying a `*` with its own sentence -- "varies with a name this command does
  * not take" -- before the allow-list is consulted. Tightening the segment here
  * would move that refusal from the CLI's words to a schema refusal of this
@@ -2349,7 +2692,7 @@ const MAX_SETTING_KEY_LENGTH = 120
  *
  * **It is a shape and not the allow-list.** Whether the generic write path owns
  * a key is `settingsGenericKeys`/`settingsGenericPrefixes`
- * (`internal/cli/settings_set.go:75`, `:99`) -- the CLI's own list, which the
+ * (`internal/cli/settings_set.go:96`, `:251`) -- the CLI's own list, which the
  * console keeps no copy of (D1102). What this grammar does is keep the argv
  * word a key can be: no space, no dash, no `=`, nothing that could be read as a
  * flag or quoted by a shell, so the key never needs the terminator the value
@@ -2783,6 +3126,27 @@ function validateValue(
         )
       }
       return { ok: true, value }
+    case 'roadmapNode':
+      // The node a move is about, named by the key the drawing carries. **The
+      // two words of the move's argv are not this value** -- the task word is
+      // the document's own `id` and the `--expect` word is the node's own
+      // `release`, both read out of main-process state (`spawn.ts`) -- so what
+      // this check does is keep a payload from carrying something a key could
+      // not be, and the identity is the source's question, asked of the last
+      // document this installation read.
+      if (!ROADMAP_NODE_RE.test(value)) {
+        return refuse(`${spec.key} must be a node key of the graph the console last read`)
+      }
+      return { ok: true, value }
+    case 'roadmapRelease':
+      // The release box the task is moved into, or the empty string for the
+      // unassign. The key is the record's own opaque id, so this is the whole
+      // of what a shape can say about it; that the box is one the document held
+      // is the source's check.
+      if (!ROADMAP_RELEASE_RE.test(value)) {
+        return refuse(`${spec.key} must be a release key of the record, or empty for no release`)
+      }
+      return { ok: true, value }
     case 'link': {
       const decision = validateExternalUrl(value)
       if (!decision.ok) return refuse(`${spec.key} ${decision.reason}`)
@@ -2976,6 +3340,14 @@ function kindLimit(kind: ArgumentKind): number {
     // so the grammar never runs on a string longer than one it could accept.
     case 'graphSource':
       return MAX_GRAPH_SCOPE_LENGTH
+    // The move's two (GV3.2): the longest node key `ROADMAP_NODE_RE` admits, and
+    // the length of a release key -- the empty string is the unassign, so a
+    // bound of 64 is the pattern's own longest value and not a bound a shorter
+    // word could be refused by.
+    case 'roadmapNode':
+      return MAX_ROADMAP_NODE_LENGTH
+    case 'roadmapRelease':
+      return MAX_ROADMAP_RELEASE_LENGTH
     default:
       return 0
   }
@@ -3567,7 +3939,9 @@ function boundReason(message: string): string {
 /**
  * assertReachableSurface throws unless every entry of a table is one the console
  * may drive: its command and its flags are clear of `NEVER_REACHABLE`, the flags
- * it fixes are the surface's own two, and no two entries share a name.
+ * it fixes are the surface's own two, the lapse's refused class holds only rows
+ * that spawn a command and names its target installation only in a required
+ * `installationName` argument of its own, and no two entries share a name.
  *
  * It takes the table as an argument so that the guard is a pure function of one
  * and the test can hand it the mutation directly -- a table with `budget kill`
@@ -3587,6 +3961,36 @@ export function assertReachableSurface(operations: readonly ConsoleOperation[]):
     for (const flag of operation.flags) {
       if (!ALLOWED_OPERATION_FLAGS.includes(flag)) {
         throw new Error(`${operation.name} fixes ${flag}, which is not a flag the surface may fix`)
+      }
+    }
+    // The lapse's refused class is the three writes (`run.launch`, `settings.edit`
+    // and `roadmap.move`), and the design's kept set includes every answer the
+    // console gives out of its own process: a row with no command spawns
+    // nothing, so refusing it would take away a read, the key
+    // screen (the way out, §5.6), or the console's own surface -- and never a
+    // capability the licence granted. A later task that wants to refuse one of
+    // these has to come back here and say why, which is the point.
+    if (operation.refusedAfterLapse === true && operation.command === null) {
+      throw new Error(
+        `${operation.name} is refused after a lapse and spawns no command: the operations the lapse takes away are the ones that spawn a command, and the console's own answers stay`,
+      )
+    }
+    // The lapse gate asks about the installation a row's own payload names
+    // (`installationArgument`), so the column has to name an argument of this
+    // same row that really is one. Anything else fails here rather than at the
+    // gate: a column pointing at a free-text field would ask the licence store
+    // about a string no installation answers for -- the no-key state, which
+    // refuses nothing, so the operation would be admitted while the installation
+    // it acts on had lapsed -- and a column naming no argument of the row at all
+    // would hand the gate `undefined` and silently ask about the active binding
+    // instead. A later row that wants to point this at something else has to
+    // come back here and say why, which is the point.
+    if (operation.installationArgument !== undefined) {
+      const named = operation.args.find((argument) => argument.key === operation.installationArgument)
+      if (named === undefined || named.required !== true || named.kind !== 'installationName') {
+        throw new Error(
+          `${operation.name} names the installation it acts on in ${JSON.stringify(operation.installationArgument)}, which is not a required \`installationName\` argument of this row: the lapse gate reads the target installation out of the row's own payload, and an argument that is not one would have it ask about the wrong installation`,
+        )
       }
     }
     if (names.has(operation.name)) {

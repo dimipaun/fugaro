@@ -202,10 +202,10 @@ func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSumma
 			// rule that ended the rounds — the record's own two words
 			// (runstore.StopRoundsSpent, StopTimeThreshold).
 			return readyDecision(fmt.Sprintf("review round %d left %s, accepted at %s (%s)",
-				last.Round, Plural(len(pol.Tolerated), "finding"), pol.Mode, pol.AtStop))
+				last.Round, Plural(pol.through(), "finding"), pol.Mode, pol.AtStop))
 		}
 		if pol.tolerates(last) && !pol.raisedAfterReview() {
-			return readyDecision(fmt.Sprintf("review round %d left %s, tolerated at %s", last.Round, Plural(len(pol.Tolerated), "finding"), pol.Mode))
+			return readyDecision(fmt.Sprintf("review round %d left %s, tolerated at %s", last.Round, Plural(pol.through(), "finding"), pol.Mode))
 		}
 		if pol.Raised != nil {
 			return blockedDecision(pol.raiseReason(last), failure.ReviewNotConverged)
@@ -418,11 +418,15 @@ func (r *run) levelTolerated(l policy.Level, rs runstore.ReviewSummary) bool {
 	if rs.Verdict == "ship" {
 		return true
 	}
-	findings, ok := r.levelRound(l, rs.Round)
+	sr, ok := r.levelRound(l, rs.Round)
 	if !ok {
 		return false
 	}
-	pol := findingsPolicyOf(r.rigorCfg, r.reachedRigor(), rs.Round, scoresOf(findings), r.stopAt)
+	// The level's own deferrals, which the round's recorded verdict word does
+	// not carry: a level-2 round a judge deferred whole left the pull request
+	// nothing to be a draft on, and level 3 shipping over it does not change
+	// that (F21).
+	pol := findingsPolicyOf(r.rigorCfg, r.reachedRigor(), rs.Round, scoresOf(sr.Findings), r.stopAt).withDeferred(sr.Deferred)
 	return pol.tolerates(&rs)
 }
 
@@ -485,9 +489,9 @@ func (r *run) stopBlockingLevels() []runstore.ReviewSummary {
 	return out
 }
 
-// levelRound is the level's last round as the loop kept it: the findings the
-// record's summary only counts, for the three levels the loop keeps a round of
-// — level 3 in lastSenior, level 2 in seniorLevelLast (which is the copy level
+// levelRound is the level's last round as the loop kept it: the findings and
+// deferrals the record's summary only counts, for the three levels the loop
+// keeps a round of — level 3 in lastSenior, level 2 in seniorLevelLast (which is the copy level
 // 3 would otherwise overwrite) and level 1 in firstLineLast, the cheap loop's
 // own field whichever of the two things it is doing. The round numbers of the
 // levels are not comparable (each loop counts from 1), which is why the level
@@ -500,22 +504,22 @@ func (r *run) stopBlockingLevels() []runstore.ReviewSummary {
 // cheap round with an outer level above it reviewed keeps that level's round in
 // lastSenior, and its own in firstLineLast, which is the field that says what
 // the round nobody above it read left (stopBlockingLevels).
-func (r *run) levelRound(l policy.Level, round int) ([]Finding, bool) {
+func (r *run) levelRound(l policy.Level, round int) (seniorRound, bool) {
 	switch l {
 	case policy.LevelL1:
 		if r.firstLineLast.Round == round {
-			return r.firstLineLast.Findings, true
+			return r.firstLineLast, true
 		}
 	case policy.LevelL2:
 		if r.seniorLevelLast.Round == round {
-			return r.seniorLevelLast.Findings, true
+			return r.seniorLevelLast, true
 		}
 	case policy.LevelL3:
 		if r.lastSenior.Round == round {
-			return r.lastSenior.Findings, true
+			return r.lastSenior, true
 		}
 	}
-	return nil, false
+	return seniorRound{}, false
 }
 
 // FindingsPolicy is the mode's findings policy as Decide is given it
@@ -539,6 +543,20 @@ type FindingsPolicy struct {
 	// tolerate nothing at all: one that configured no rigor, or a mode whose
 	// rigor.Files row files no tolerated finding (D9).
 	Blocking, Tolerated []rigor.Score
+	// Deferred is the scores of the round's findings a judge deferred and the
+	// table did not tolerate (T-TR7b, D1840): a round whose findings all sit
+	// here or in Tolerated is one the mode does not block on, whatever the
+	// recorded verdict word says. It is empty for a round no judge was asked
+	// about — the switch off, POC, Critical, Hotfix, a repository that never
+	// opted in — which is what keeps such a run deciding by the recorded count
+	// exactly as it did before the stage existed (F32).
+	//
+	// The two sites that ask tolerates of a round readiness is decided on fill
+	// it from the round the loop kept, through withDeferred, which is also where
+	// the one split it may not be added to is stated; findingsPolicyOf leaves it
+	// empty, and the policy that only reads the record's tolerated block has no
+	// use for it.
+	Deferred []rigor.Score
 	// Raised is the raise the run's mode took during the run, nil when it never
 	// rose (T3.5, D19). It is what makes a raised mode decide readiness and
 	// name itself in the reason.
@@ -630,7 +648,15 @@ func (pol FindingsPolicy) raiseReason(last *runstore.ReviewSummary) string {
 
 // tolerates reports whether the mode lets the whole round through: the split
 // Decide was given is the one that round produced, every finding the record
-// counts sits in its tolerated half, and there is at least one.
+// counts sits in one of the policy's two letting-through halves, and there is
+// at least one.
+//
+// The two halves are the mode's own tolerance and the judge's deferrals
+// (Deferred, T-TR7b): a round whose findings a judge deferred whole is a round
+// the run does not block on, and readiness reads it as the tolerated one it is
+// — which is what makes an all-deferred round end the loop ready (F21). The
+// halves do not overlap: a finding the table tolerates is in Tolerated and
+// never in Deferred (triageOutcome), so a finding counts once either way.
 //
 // The count is checked against the record rather than trusted, and a round
 // that left no finding is not tolerated: a `changes` verdict that names
@@ -639,8 +665,35 @@ func (pol FindingsPolicy) raiseReason(last *runstore.ReviewSummary) string {
 func (pol FindingsPolicy) tolerates(last *runstore.ReviewSummary) bool {
 	return last.Findings > 0 &&
 		pol.Round == last.Round &&
-		len(pol.Blocking) == 0 &&
-		len(pol.Tolerated) == last.Findings
+		pol.through() == last.Findings
+}
+
+// through is how many of the round's findings the policy lets through: the ones
+// the mode's own table tolerates and the ones a judge deferred (Deferred,
+// T-TR7b). It is what tolerates counts and what Decide's own reasons name — a
+// round a judge deferred whole was left with its findings, and a reason saying
+// it left none of them would report a review that found nothing (F21).
+func (pol FindingsPolicy) through() int { return len(pol.Tolerated) + len(pol.Deferred) }
+
+// withDeferred folds the round's deferrals into the policy at the one moment
+// they are the policy's to count, which is what keeps a finding from being
+// counted twice (T-TR7b). A deferral is a finding the mode's own table blocks
+// and a judge let through — the floor is what no verdict moves (F3, D1857) — so
+// it belongs in the tolerant half beside the mode's own tolerations, which are
+// the findings that rule does not block, and the two halves a round splits into
+// under the mode's own rule are disjoint.
+//
+// The stop's split is not that rule (AtStop, rigor.SplitAtStop): it accepts
+// every finding but the catastrophic ones, and a judge may only defer a finding
+// the floor does not name, so it already carries every deferral the round has.
+// Adding them there would count each of them twice and read a round the stop
+// blocks one finding of as a round the stop takes whole — a draft published
+// ready (F31's shape, on the stop's side).
+func (pol FindingsPolicy) withDeferred(deferred []rigor.Score) FindingsPolicy {
+	if pol.AtStop == "" {
+		pol.Deferred = deferred
+	}
+	return pol
 }
 
 // acceptsAtStop reports whether the stop is what makes this run ready: the
@@ -735,7 +788,10 @@ func findingsPolicyOf(cfg rigor.Config, mode rigor.Mode, round int, findings []r
 // it (noteRigorRaise, rigor.go), the outer level the deciding one held back,
 // if any, and the half of the stop rule the run's rounds ended on, if any.
 func (r *run) findingsPolicy() FindingsPolicy {
-	pol := findingsPolicyOf(r.rigorCfg, r.reachedRigor(), r.lastSenior.Round, scoresOf(r.lastSenior.Findings), r.stopAt)
+	// The deciding round's deferrals, read from the round the loop kept and
+	// never from the recorded verdict word: a round a judge deferred whole
+	// records `changes` and is a round the mode does not block on (F21).
+	pol := findingsPolicyOf(r.rigorCfg, r.reachedRigor(), r.lastSenior.Round, scoresOf(r.lastSenior.Findings), r.stopAt).withDeferred(r.lastSenior.Deferred)
 	pol.Raised = r.rigorRaise
 	pol.HeldBack = r.heldBackLevel()
 	pol.StopBlocking = r.stopBlockingLevels()
@@ -837,6 +893,104 @@ func (r *run) acceptedRecord(pol FindingsPolicy, last *runstore.ReviewSummary) *
 	return runstore.NewAccepted(pol.Mode, last.Round, pol.AtStop, r.toleratedEntries(pol, r.lastSenior.Findings))
 }
 
+// capDeferredReason is what a cap's deferral says put it there: the run's
+// rounds ended — spent, or cut by the time threshold — with the finding still
+// open and no review round left to spend on it. It is one line, like the
+// table's own reason for the findings it tolerates (internal/triage), and it
+// reaches a follow-up task's brief and the pull request's deferred section
+// (T-TR9).
+const capDeferredReason = "the run reached its review cap with this finding still open"
+
+// capDeferrals is what a cap leaves open (T-TR8, D1845): the deciding round's
+// findings the cap does not hold the run on, each recorded under
+// runstore.TriageSourceCap so a reader can tell it from a judge's deferral —
+// the block's other writer (T-TR7b).
+//
+// The set is the stop's own rule and not the mode's round rule: a cap defers
+// what it lets go, so a finding the mode's table blocks in a round but the stop
+// takes is a leftover here, and one the mode tolerates in a round is one too.
+// Read as the stop's split it is D1845's "non-floor leftovers" in each mode's
+// own terms rather than as a list of modes: for Startup and POC the finding the
+// stop holds is exactly the floor (rigor.BlocksAtStop), so what is filed is
+// every non-floor finding the round left; for Pro, whose row names no stop and
+// whose floor the stop does not widen, it is the findings the mode tolerates;
+// and for Critical, which tolerates nothing, it is empty (D7). It is BF1m's cap
+// rule that says which findings a stopped run merges with, which is why a cap's
+// deferrals are not the judge's and survive agent.triage off (D1858).
+//
+// A floor finding is never one of them, and no line here has to say so:
+// rigor.BlocksAtStop holds every finding rigor.Floor names, mode by mode and
+// class by class, so a stop that lets a floor finding through is not one the
+// table has. That is what makes D1845's "a floor finding always holds the
+// draft" true of this block and not only of Decide, which never reads it.
+//
+// A finding only the owner can settle is not one either, however low its scores
+// are: the cap's block is follow-up tasks, and a decision that is not a run's to
+// make is not one a later run settles (OD1). The judge never defers such a
+// finding for the same reason (triage.Apply), and a cap that filed one would
+// have `fugaro followups` open a coding task for the question the record beside
+// it says the run is waiting on.
+//
+// The repository's opt-in is asked before anything else (D1858, D1852): a
+// deferral recorded for a repository that never asked for the mode would file a
+// follow-up task out of a reading the run does not publish under, and an
+// unconfigured repository resolves Pro and keeps the record it always had. A
+// run whose rounds ended for a reason of their own has no cap at all and files
+// nothing, which is what r.stopAt — the half of the stop rule that ended them
+// (BF1m) — is empty for.
+func (r *run) capDeferrals() []runstore.DeferredFinding {
+	if r.stopAt == "" || !r.rigorCfg.Configured() {
+		return nil
+	}
+	mode := r.reachedRigor()
+	var out []runstore.DeferredFinding
+	for _, f := range r.lastSenior.Findings {
+		if f.NeedsOwner || rigor.BlocksAtStop(mode, scoreOf(f)) {
+			continue
+		}
+		out = append(out, runstore.DeferredFinding{
+			Key:     findingKey(f),
+			Summary: r.redact(f.Summary),
+			Reason:  capDeferredReason,
+			Source:  runstore.TriageSourceCap,
+		})
+	}
+	return out
+}
+
+// recordCapDeferrals folds the cap's leftovers into the run's deferral ledger
+// and the record's block. It is called from finalize beside the tolerated and
+// accepted blocks — the three are one account of what the run left open, and
+// the pull request's body and the report read them (T-TR9) — and from the
+// shadow arm's ending, which mirrors the champion's record so the two arms can
+// be compared.
+//
+// An entry an earlier rule already filed stands: a judge's deferral carries the
+// judge's own word for the finding and the table's carries the table's
+// (T-TR7b), and a cap that rewrote either would lose that account of who
+// deferred the finding. The key is what says it is the same finding (D1850), so
+// a cap files nothing for a finding an earlier round already filed.
+func (r *run) recordCapDeferrals() {
+	filed := false
+	for _, e := range r.capDeferrals() {
+		known := false
+		for _, d := range r.deferred {
+			if d.Key == e.Key {
+				known = true
+				break
+			}
+		}
+		if known {
+			continue
+		}
+		r.rememberDeferred(e)
+		filed = true
+	}
+	if filed {
+		r.rec.Deferred = runstore.NewDeferred(r.deferred)
+	}
+}
+
 // toleratedEntries pairs the policy's tolerated scores back with the round's
 // findings, as the record's entries.
 //
@@ -874,13 +1028,20 @@ func (r *run) toleratedEntries(pol FindingsPolicy, findings []Finding) []runstor
 	return entries
 }
 
-// seniorRound is one senior review round as the loop read it: the round number
-// the record carries, and the findings the summary beside it only counts. The
-// findings are kept whole because the mode's threshold table reads their
-// scores, and a count is not enough for it (T3.1, D7a).
+// seniorRound is one review round as the loop read it: the round number the
+// record carries, the findings the summary beside it only counts, and the ones
+// a judge deferred out of them (T-TR7b).
+//
+// The findings are kept whole because the mode's threshold table reads their
+// scores, and a count is not enough for it (T3.1, D7a). The deferrals are kept
+// beside them for the same reason: they are what a round the table blocks on is
+// read through when no judge was asked about it, and the recorded verdict word
+// — `changes`, for a round the judge deferred whole — says nothing about them
+// (F21).
 type seniorRound struct {
 	Round    int
 	Findings []Finding
+	Deferred []rigor.Score
 }
 
 // scoresOf presents the reviewer's findings to the threshold table: the three

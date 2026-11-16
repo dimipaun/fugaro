@@ -249,7 +249,7 @@ func TestRunAuthorGitAuthorKeyGatedForOlderRunner(t *testing.T) {
 			writeBuildRecord(t, f, appSlug, "web", releaseBeforeAuthor)
 			baseBranchCheckout(t, "acme/app", authorYAML(c.author), "main")
 			_, _, err := execute(t, "run", "--run-id", "20261030-100000-abcd", "A task")
-			for _, want := range []string{"git.author", "the git.author key", "fugaro " + gitAuthorSince + " or later", "release 0.13.0", "fugaro image refresh"} {
+			for _, want := range []string{"git.author", "the git.author key", "fugaro " + gitAuthorSince + " or later", "release 0.13.0", imageGateRemedy} {
 				if !strings.Contains(err.Error(), want) {
 					t.Fatalf("err = %v, want it to name %q", err, want)
 				}

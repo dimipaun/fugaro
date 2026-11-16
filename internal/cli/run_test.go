@@ -14,6 +14,7 @@ import (
 
 	"gocloud.dev/blob"
 
+	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -103,6 +104,55 @@ func TestRunHumanOutput(t *testing.T) {
 	if !strings.HasPrefix(out, want) {
 		t.Fatalf("output:\n%s\nwant prefix:\n%s", out, want)
 	}
+}
+
+// TestLaunchTextNamesTheChainOnlyWhenThereIsOne: a launch that joins a chain
+// says so (L7, D1056) — the run that began it, how many runs of it the link
+// reached, the run just launched among them, and whether the figures are the
+// budget database's — and a launch that begins one prints exactly what it
+// always printed. The run's own chain is the run the line above already names,
+// and printing it would be a chain of one: the shortening D1047 forbids
+// wherever an id is read back as the chain's. A chain the read could not follow
+// to the run that began it is named as well, with no id and no absence, because
+// an absent line here is what a launch that began a chain prints.
+func TestLaunchTextNamesTheChainOnlyWhenThereIsOne(t *testing.T) {
+	t.Run("a launch that joins a chain", func(t *testing.T) {
+		f := chainRig(t)
+		jsonChain(t, f)
+		out, errOut, err := execute(t, "run", "--repo", limitsRepo, "--pr", "7", "--run-id", jsonFu, "A task")
+		if err != nil {
+			t.Fatalf("run --pr: %v (%s)", err, errOut)
+		}
+		want := "  chain " + jsonRoot + " (4 runs, UNENFORCED)"
+		if !strings.Contains(out, want) {
+			t.Errorf("output:\n%s\nwant it to name the chain:\n%s", out, want)
+		}
+	})
+	t.Run("a launch whose chain cannot be followed", func(t *testing.T) {
+		f := newCloudFixture(t)
+		jsonAgedChain(t, f)
+		out, errOut, err := execute(t, "run", "--repo", limitsRepo, "--pr", "7", "--run-id", jsonFu, "A task")
+		if err != nil {
+			t.Fatalf("run --pr: %v (%s)", err, errOut)
+		}
+		want := "  chain unread: a link in it stops at a run the bucket no longer holds (UNENFORCED)"
+		if !strings.Contains(out, want) {
+			t.Errorf("output:\n%s\nwant it to say the chain could not be followed:\n%s", out, want)
+		}
+	})
+	t.Run("a launch that begins a chain", func(t *testing.T) {
+		newCloudFixture(t)
+		// The id is minted against the real clock: this test drives --pr
+		// above, whose window the guard reads this id against, and a launch
+		// that begins a chain is what it is whatever the date says.
+		out, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", wallRunIDAt(0, "100000", "abcd"), "Add a feature")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(out, "\n  chain ") {
+			t.Errorf("a launch that begins a chain printed a chain of its own:\n%s", out)
+		}
+	})
 }
 
 func TestRunIdempotentRunID(t *testing.T) {
@@ -877,11 +927,11 @@ func TestAnArtifactLaunchRefusesACapSetThatCannotFitMemory(t *testing.T) {
 }
 
 // backendNamed is a backend.Backend that answers with one codec and nothing
-// else: launchBackend reads the seam for the backend a launch runs on, and no
-// test can select cloud-batch in this build (internal/localcfg refuses the
-// name until the enable task), so the name a launch would carry is stood in
-// for here. The embedded interface is nil, so any other method called on it
-// panics rather than answering something wrong.
+// else: launchBackend reads the seam for the backend a launch runs on, and
+// what these tests need is a backend of a named kind without the cloud client
+// behind it, so the name a launch would carry is stood in for here. The
+// embedded interface is nil, so any other method called on it panics rather
+// than answering something wrong.
 type backendNamed struct {
 	backend.Backend
 	codec backend.Codec
@@ -895,8 +945,9 @@ func (b backendNamed) Codec() backend.Codec { return b.codec }
 // covers a launch naming its own recipe -- the one a reviewer found missing --
 // is this gate, which asks the same artifactOnBatchRefusal with the recipe the
 // launch resolves, before anything is written. (A repository recipe resolves
-// from this launcher's working tree, not at the task's ref the runner reads:
-// TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef pins that residual.)
+// from this launcher's working tree, and the gate then asks the task's ref for
+// the same name, as the runner reads it:
+// TestTheArtifactLaunchGateJudgesTheRefNotTheWorkingTree pins that read.)
 //
 // Both ways a launch can carry an artifact recipe are here: the task's own
 // (--recipe, a repository recipe the launcher reads from the checkout) and the
@@ -1151,23 +1202,32 @@ func TestACarriedRecipeTheRefCannotBeReadForIsRefusedOnCloudBatch(t *testing.T) 
 	}
 }
 
-// TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef pins what the
-// launch's arm of the artifact boundary does NOT cover, so the comments that
-// describe it can say exactly what it enforces: a repository recipe is judged
-// by the file in this launcher's WORKING TREE (recipeForLaunch), while the
-// runner reads the same file at the task's ref -- the repository's base branch
-// unless the launch names another. A working tree whose recipe says
-// mode: implement therefore passes the gate for a ref whose recipe says
-// mode: artifact, and that is the residual the plan's Task 10 records in its
-// step 5 inventory and must close before backend: cloud-batch is selectable
-// (Global Constraint 13). Task 10's fix flips this test to assert the refusal;
-// until then a test that passed here would be a comment claiming more than
-// the code does.
+// TestTheArtifactLaunchGateJudgesTheRefNotTheWorkingTree: a repository recipe
+// is read from this launcher's WORKING TREE (recipeForLaunch), while the run
+// reads the same file at the task's ref -- the repository's base branch unless
+// the launch names another. A working tree whose recipe says mode: implement
+// therefore said nothing about a ref whose recipe says mode: artifact, and the
+// run reached a Batch VM: the residual the plan's Task 10 recorded in its step 5
+// inventory (Global Constraint 13). This test pinned that residual until this
+// task landed its closure, which flipped it to the refusal asserted below --
+// the gate asks the ref for the name this launcher resolved (repoRecipeAtRef),
+// whatever the working tree holds.
 //
-// The control is the same launch with the working tree matching the ref: the
-// gate refuses it, so what lets the first launch through is the tree/ref
-// difference and nothing else.
-func TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef(t *testing.T) {
+// The closure is not this read: the ref it asks is this checkout's local
+// remote-tracking one, deliberately never fetched, so a same-named mode:
+// artifact file pushed after the launcher's last fetch passes here. The runner
+// is what refuses that (plan Task 10 step 5 entry 6,
+// TestArtifactRecipeIsRefusedOnTheBatchBackend), and this read is defence in
+// depth beside it.
+//
+// Three cases, all on cloud-batch: the control, where the working tree matches
+// the ref (the boundary's ordinary refusal); the case this test used to pin as
+// a hole, now refused by the ref; and a launch whose ref this checkout does not
+// hold, refused fail-closed because nothing here can then say what recipe runs.
+// The cloud-run case is the mutation guard: the ref read is the Batch
+// boundary's, and an installation that runs on Cloud Run keeps artifact runs
+// (design artifact-runs.md D11).
+func TestTheArtifactLaunchGateJudgesTheRefNotTheWorkingTree(t *testing.T) {
 	testutil.IsolateGit(t)
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q", "-b", "main")
@@ -1191,11 +1251,33 @@ func TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef(t *testing.T) {
 		t.Fatalf("an artifact recipe on cloud-batch whose working tree matches the ref = %v, want the artifact boundary's refusal", err)
 	}
 
-	// The residual: the working tree says implement, the ref still says
-	// artifact, and the gate judges the working tree.
-	testutil.WriteFiles(t, dir, map[string]string{".fugaro/recipes/sizzle.yaml": "version: 1\nname: sizzle\nsteps:\n  - review: {}\n"})
-	if err := checkArtifactLaunch(context.Background(), env, spec); err != nil && strings.Contains(err.Error(), artifactOnBatchMessage) {
-		t.Fatalf("the gate refused a launch whose working-tree recipe is not mode: artifact (%v): it now reads the ref the runner reads, which closes the residual the plan's Task 10 step 5 records -- flip this test to assert the refusal and drop the sentence from Task 10's inventory and the comments in validate_batch.go and run.go", err)
+	// The case this test pinned as a hole until the enable closed it: the
+	// working tree says implement while the ref still says artifact, and the
+	// gate refuses on the ref.
+	testutil.WriteFiles(t, dir, map[string]string{".fugaro/recipes/sizzle.yaml": implementRecipe})
+	if err := checkArtifactLaunch(context.Background(), env, spec); err == nil || !strings.Contains(err.Error(), artifactOnBatchMessage) {
+		t.Fatalf("a launch whose working-tree recipe is not mode: artifact against a ref whose recipe is = %v, want the artifact boundary's refusal: the recipe a run uses is the one at its ref", err)
+	}
+	// The mutation guard for the backend gate: the ref read is the Batch
+	// boundary's, and Cloud Run is where artifact runs live.
+	cloudRun := &cloudEnv{be: backendNamed{codec: backend.CloudRunCodec()}}
+	if err := checkArtifactLaunch(context.Background(), cloudRun, spec); err != nil && strings.Contains(err.Error(), artifactOnBatchMessage) {
+		t.Fatalf("the artifact boundary refused a Cloud Run launch: the ref read is cloud-batch's arm, and Cloud Run is where artifact runs live (%v)", err)
+	}
+
+	// A ref this checkout does not hold: nothing here can say what recipe the
+	// run reads there, so the launch is refused fail-closed rather than passed
+	// on the working tree's copy.
+	elsewhere := *spec
+	elsewhere.Ref = "release"
+	err := checkArtifactLaunch(context.Background(), env, &elsewhere)
+	if err == nil {
+		t.Fatal("a launch whose ref this checkout does not hold was passed: nothing here can then say whether the run reads an artifact recipe")
+	}
+	for _, want := range []string{"docs/design/artifact-runs.md", "§8.5", "D11", "release"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the fail-closed refusal does not name %q: %v", want, err)
+		}
 	}
 }
 
@@ -1748,19 +1830,39 @@ func TestTheDockerTagAsksTheVMBackendForTheSocket(t *testing.T) {
 			t.Fatalf("ask = %v, err = %v, want neither", ask, err)
 		}
 	})
-	// A workflow that keeps its own image definition is not the catalog's job
-	// at all (D1155): the deploy gave it the image this project builds for the
-	// repository, which no catalog entry is, so the launcher must not judge it
-	// — here the catalog's default is the docker entry, which would otherwise
-	// refuse this launch on Cloud Run and ask a VM for a socket.
+	// A workflow that keeps its own image definition keeps the image THIS
+	// project builds for the repository: while the project's default is an
+	// entry such a job cannot run — the docker-tagged dind here, which a baked
+	// job would be refused at deploy time for carrying (D1191) — the resolver
+	// sets the default aside for that workflow (catalog.JobImage, D1900), so
+	// the catalog does not speak for this job and the launcher must not judge
+	// the tag of an entry the job does not run. What a deploy of this release
+	// gives such a workflow is the derived image, which no entry is, and that
+	// is the state the two backends below are asked about: neither refuses the
+	// launch nor asks a VM for a socket.
+	//
+	// The second state — the job deployed with the entry's own image — is
+	// asserted too, and it is one no deploy of this release produces: the entry
+	// it runs is the one the workflow's definition key is set aside in favour
+	// of, so a job carrying it was deployed by a release that gave it the entry
+	// or had its file edited afterwards. The launcher answers it as it answers
+	// a workflow this project never spoke for (the release before this one's
+	// catalog.Applies, on the same fixture): nothing is refused and nothing is
+	// asked for, because the file this launcher reads is not the one the job
+	// was deployed from and no entry of the catalog is this job's.
 	t.Run("its own image definition is not the catalog's", func(t *testing.T) {
+		const defined = "{ image: { apt: [jq] }, commands: { build: sh b.sh, test: sh t.sh } }"
 		derived := gcp.ImageName(gcp.DefaultRegistryHost("us-east5", "proj-1234")+"/"+gcp.RegistryRepoID(appSlug), appSlug, "web") + ":latest"
-		for name, codec := range map[string]backend.Codec{"cloud-run": backend.CloudRunCodec(), "cloud-batch": backend.BatchCodec()} {
-			f := newCloudFixture(t)
-			dockerCheckout(t, "{ image: { apt: [jq] }, commands: { build: sh b.sh, test: sh t.sh } }")
-			ask, err := catalogDockerAsk(context.Background(), deployedLaunchEnv(t, f, codec, dockerDefaultCatalogYAML, derived), appSlug, spec)
-			if err != nil || ask {
-				t.Fatalf("%s: ask = %v, err = %v, want neither", name, ask, err)
+		for name, deployed := range map[string]string{"the repository's own image": derived, "the entry's own image": "ghcr.io/acme/dind:1"} {
+			for backendName, codec := range map[string]backend.Codec{"cloud-run": backend.CloudRunCodec(), "cloud-batch": backend.BatchCodec()} {
+				t.Run(name+", "+backendName, func(t *testing.T) {
+					f := newCloudFixture(t)
+					dockerCheckout(t, defined)
+					ask, err := catalogDockerAsk(context.Background(), deployedLaunchEnv(t, f, codec, dockerDefaultCatalogYAML, deployed), appSlug, spec)
+					if err != nil || ask {
+						t.Fatalf("ask = %v, err = %v, want neither: a workflow that wrote an image definition of its own is not the catalog's job while the project's default is one its job cannot run, so the entry's docker tag is not this run's", ask, err)
+					}
+				})
 			}
 		}
 	})
@@ -1844,6 +1946,88 @@ func TestACatalogMoveBetweenDeployAndLaunchIsRefused(t *testing.T) {
 		ask, err := catalogDockerAsk(context.Background(), deployedLaunchEnv(t, f, backend.BatchCodec(), dockerCatalogYAML, "us-east5-docker.pkg.dev/proj-1234/acme-app/tiny:latest"), appSlug, spec)
 		if err == nil || !strings.Contains(err.Error(), "fugaro update") {
 			t.Fatalf("ask = %v, err = %v, want a refusal naming fugaro update", ask, err)
+		}
+	})
+}
+
+// The configuration this launcher has in its working tree is judged at launch
+// like every other claim about the deployed job (F7): a workflow that names an
+// entry the project's catalog does not hold is refused by the deploy-time arm,
+// so the job cannot have been deployed with what this file names, and the run
+// must not start on the image the job happens to carry — the reference may
+// have been edited after the deploy, and nothing here can redeploy the job.
+//
+// The refusal is the one every other catalog move gets, naming `fugaro update`,
+// and it carries the resolver's own sentence: a pin and a map entry are both
+// answered by catalog.JobImage, whose error for both is ErrUnknownEntry, and
+// the launcher is where a person reads why the launch stopped.
+//
+// Mutation (drop the selErr arm at deployedCatalogEntry): both subtests below
+// launch, silently, on the previously deployed job — the guard this replaces in
+// main read the workflow's own image_name and refused it.
+//
+// Mutation (drop the Reference arm beside it): the third subtest launches on an
+// image the project's configuration does not name for this job.
+func TestALaunchTheResolverRefusesIsRefused(t *testing.T) {
+	// A repository that pins an entry the catalog does not hold: the refusal is
+	// the resolver's, and the job it would start is deployed with another
+	// entry — the state the deploy refuses and the reason this launch must too.
+	t.Run("a pin to an entry the catalog does not hold", func(t *testing.T) {
+		f := newCloudFixture(t)
+		f.appendConfig(t, dockerCatalogYAML)
+		dockerCheckout(t, "{ image_name: gone, commands: { build: sh b.sh, test: sh t.sh } }")
+		f.run.SetJob(gcp.JobName(appSlug, "web"), nil, "ghcr.io/acme/minimal:1")
+		_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261103-100000-a1b2", "Add a feature")
+		if err == nil || !strings.Contains(err.Error(), "fugaro update") {
+			t.Fatalf("err = %v, want a refusal naming fugaro update", err)
+		}
+		if !strings.Contains(err.Error(), "gone") {
+			t.Errorf("err = %v: the refusal does not name the entry the workflow pins, so a person cannot see which reference to fix", err)
+		}
+		if ExitCode(err) != ExitUserError {
+			t.Errorf("the refusal is not a user error: %v", err)
+		}
+		if startedAny(f) {
+			t.Fatal("a job was started for a run whose own configuration the project's image catalog refuses")
+		}
+	})
+	// The other side of the same error: the project's map points this repository
+	// at an entry the catalog does not hold. It is written by a command and
+	// published, so the sentence that reaches the person names the map.
+	t.Run("a map entry the catalog does not hold", func(t *testing.T) {
+		f := newCloudFixture(t)
+		f.appendConfig(t, dockerCatalogYAML)
+		f.appendConfig(t, "image_map: { acme/app: gone }\n")
+		// The workflow names no entry of its own: the map is what the project
+		// gives this repository, and a workflow that pins or lists needs: is
+		// answered by the reference arm before the map is asked at all (T1 b).
+		dockerCheckout(t, "{ commands: { build: sh b.sh, test: sh t.sh } }")
+		f.run.SetJob(gcp.JobName(appSlug, "web"), nil, "ghcr.io/acme/minimal:1")
+		_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261103-100000-a1b2", "Add a feature")
+		if err == nil || !strings.Contains(err.Error(), "fugaro update") {
+			t.Fatalf("err = %v, want a refusal naming fugaro update", err)
+		}
+		if !strings.Contains(err.Error(), "image_map") {
+			t.Errorf("err = %v: the refusal does not name the map, which is where this person's fix is", err)
+		}
+		if startedAny(f) {
+			t.Fatal("a job was started for a run the project's image_map points at no entry")
+		}
+	})
+	// A pin the catalog holds and the job does not run: the workflow names
+	// another entry than the image the job was deployed with, which is the same
+	// move the docker tag's rule is refused for.
+	t.Run("a pin the deployed job does not run", func(t *testing.T) {
+		f := newCloudFixture(t)
+		f.appendConfig(t, dockerCatalogYAML)
+		dockerCheckout(t, "{ image_name: minimal, commands: { build: sh b.sh, test: sh t.sh } }")
+		f.run.SetJob(gcp.JobName(appSlug, "web"), nil, "ghcr.io/acme/dind:1")
+		_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261103-100000-a1b2", "Add a feature")
+		if err == nil || !strings.Contains(err.Error(), "fugaro update") {
+			t.Fatalf("err = %v, want a refusal naming fugaro update", err)
+		}
+		if startedAny(f) {
+			t.Fatal("a job was started for a run whose workflow pins an entry its deployed job does not run")
 		}
 	})
 }
@@ -2253,5 +2437,64 @@ func TestRunIDFlagKeepsFullID(t *testing.T) {
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "3bb2", "Add a feature")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "must look like 20260926-221530-a1b2") {
 		t.Fatalf("run --run-id 3bb2 = %v, want the shape refusal", err)
+	}
+}
+
+// TestLaunchWithoutCheckoutInAnAgentSessionIsRefusedBeforeAnyRead is spec.md
+// §5 and D902: the token a source-3 read presents is the OPERATOR's own, so a
+// coding agent's session — where that value would be minted inside an agent's
+// process — is refused, and refused before anything is read: no identity is
+// minted, no service is called, no forge is asked. The refusal is the shared
+// one, in this command's own words, and the way out it names is the checkout:
+// from the repository's own checkout the document comes out of the objects and
+// no credential is involved at all.
+func TestLaunchWithoutCheckoutInAnAgentSessionIsRefusedBeforeAnyRead(t *testing.T) {
+	f := newProjectJobFixture(t)
+	s := newServiceReadFixture(t)
+	s.use(t, f.cloudFixture)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+	t.Setenv(agentenv.AgentMarkers[0], "1")
+
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-130006-aaaa", "Add a feature")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	for _, want := range []string{"fugaro run", "coding agent's session", "fugaro.yaml"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if mints, reads := s.counts(); mints != 0 || reads != 0 {
+		t.Errorf("a launch refused in an agent's session made %d mint(s) and %d read(s), want none: the refusal comes before anything is read", mints, reads)
+	}
+	if calls := f.run.RunRequests(); len(calls) != 0 {
+		t.Errorf("the refused launch asked Cloud Run for %d job(s): %+v", len(calls), calls)
+	}
+}
+
+// TestLaunchWithoutCheckoutInAnAgentSessionWithoutAServiceNamesTheCheckout is
+// the order of the two refusals, and it is the catalog's (catalogProviderEnv): a
+// value is refused where it would actually be read. An installation with no
+// credentials service has no read to refuse, so an agent's session gets the
+// no-service line rather than the terminal-window one — and that line's way out,
+// the repository's own checkout, is one an agent can take.
+func TestLaunchWithoutCheckoutInAnAgentSessionWithoutAServiceNamesTheCheckout(t *testing.T) {
+	newProjectJobFixture(t)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+	t.Setenv(agentenv.AgentMarkers[0], "1")
+
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-130007-bbbb", "Add a feature")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	if !strings.Contains(err.Error(), "this installation has no credentials service") {
+		t.Errorf("the refusal is not the no-service one: %v", err)
+	}
+	if strings.Contains(err.Error(), "coding agent's session") {
+		t.Errorf("an installation with no credentials service has no read to refuse, so the agent-session refusal is not the one to give: %v", err)
 	}
 }

@@ -246,7 +246,7 @@ A JSON schema, `schemas/project-layer.schema.json`, describes it for editors.
 | `fugaro config show [--workflow W] [--json]` | The resolved config of the checkout. Every value is printed with its source (`default`, `project`, `profile <name>`, `repo`), followed by the project layer's generation, sha256 and age, and the resolved config's sha256. `--json` is the hook for sub-project 2 (§12) |
 | `fugaro config layer [--json]` | The published project layer: text, generation, sha256 (`doctor` reports a repository whose copy differs) |
 | `fugaro config publish FILE [--executable-changes]` | As above |
-| `fugaro config init [--profile P] [--base-branch B] [--yes]` | Writes the minimal file into a checkout that has none. It is non-interactive with `--yes`, and refuses to overwrite (§12) |
+| `fugaro config init [--profile P] [--base-branch B]` | Writes the minimal file into a checkout that has none. It asks nothing and takes no flag for the write, and refuses to overwrite (§12) |
 | `fugaro validate [--offline] [--project-layer FILE]` | Resolves exactly as the runner will when the project config is selected (otherwise from the cache, saying so). `--project-layer` checks a layer file before it is published, and lets CI without bucket access validate a minimal file |
 
 ## 8. How every consumer gets the same bytes
@@ -396,7 +396,7 @@ The recommendation is A, with the IAM hardening as the next security task. B is 
 
 This design does not build `fugaro adopt`. A script adopting 50 repositories will need:
 
-- `fugaro config init --yes [--profile P] [--base-branch B]`. A non-interactive, idempotent writer of the minimal file. It refuses to overwrite an existing `fugaro.yaml` and exits 0 when the file already says exactly that.
+- `fugaro config init [--profile P] [--base-branch B]`. An unattended, idempotent writer of the minimal file. It refuses to overwrite an existing `fugaro.yaml` and exits 0 when the file already says exactly that.
 - `fugaro config show --json`: the resolved config and the source of every value, so a script can assert that a repository resolves as intended without parsing prose.
 - `fugaro validate --json`, which resolves like the runner.
 - Profiles chosen by name, never by prompt: no default profile and no `profile:` is an error, not a question.

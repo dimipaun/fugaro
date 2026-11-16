@@ -67,6 +67,40 @@ func TestHistorySweepRemovesCrashedRun(t *testing.T) {
 	}
 }
 
+// TestHistorySweepKeepsARunTheExecutionListingDoesNotName is step 5's first
+// path (plan 2026-10-19-compute-backend.md): `internal/cli/history.go`
+// constructs the Cloud Run client and a Cloud Run job name directly, and
+// lifting the refusal of `backend: cloud-batch` makes that listing reachable
+// from an installation whose runs are not Cloud Run executions at all. What
+// this pins is that the listing is not what keeps a run alive: an entry whose
+// own heartbeat is inside the staleness window is kept whether or not the
+// platform reports an execution for it -- which is the state of every Batch
+// run, since a Batch job's execution never appears in that listing -- and one
+// nothing reports and no heartbeat covers is still removed, so the fallback is
+// a rule and not a blanket keeping.
+//
+// The residual window (a live Batch run silent for longer than the window) is
+// stated in the design's §9 rather than closed here; this test is the shape
+// that fallback has.
+func TestHistorySweepKeepsARunTheExecutionListingDoesNotName(t *testing.T) {
+	f := newHistoryFixture(t)
+	f.entry("20261002-090000-aaaa", time.Minute)
+	f.entry("20261002-090100-bbbb", 2*time.Hour)
+	out, _, err := execute(t, "budget", "history", "--sweep")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.db.Value("agents/"+appSlug+"/20261002-090000-aaaa") == nil {
+		t.Fatalf("the sweep removed a run whose own heartbeat is a minute old (registry = %v)\n%s", f.db.Value("agents"), out)
+	}
+	if f.db.Value("agents/"+appSlug+"/20261002-090100-bbbb") != nil {
+		t.Fatalf("the sweep kept a run nothing reports and no heartbeat covers (registry = %v)", f.db.Value("agents"))
+	}
+	if !strings.Contains(out, "1 removed") || !strings.Contains(out, "1 kept") {
+		t.Fatalf("output = %q", out)
+	}
+}
+
 // TestHistoryPrintsPairingNodesDeleted: the sweep deletes the pairing/<uid>
 // node of the p~ user it deletes (decision 2), and this line is what an
 // operator reads afterwards. A node that is gone and not counted is a deletion

@@ -17,10 +17,15 @@ variables {
     minter_role_id    = "fugaroTokenMinter"
     api_key           = "fugaro-web"
   }
-  launchers       = ["user:launcher@example.com"]
-  operators       = ["user:operator@example.com"]
-  admins          = ["user:owner@example.com", "group:editors@example.com"]
-  budget_admins   = ["user:extra@example.com"]
+  launchers     = ["user:launcher@example.com"]
+  operators     = ["user:operator@example.com"]
+  admins        = ["user:owner@example.com", "group:editors@example.com"]
+  budget_admins = ["user:extra@example.com"]
+  # A viewer is in the fixture on purpose (RS4 of docs/roles-scopes): the
+  # viewer is a member kind of its own here — it reads the database and the
+  # spend history and mints nothing — and a list nobody names is a list no run
+  # reads. Every enumeration below that a viewer changes names it.
+  viewers         = ["user:viewer@example.com"]
   history_account = "fugaro-history@proj-1234.iam.gserviceaccount.com"
 }
 
@@ -152,14 +157,22 @@ run "TestLauncherHasViewerAndMinterOnly" {
     alltrue([for m in google_service_account_iam_member.minter : m.role == "projects/fp-1234/roles/fugaroTokenMinter"]))
     error_message = "launchers and operators get the minter role, on the signer account"
   }
+  # The viewer's absence from the minter is asserted on its own, and not left
+  # to the key list above, because it is the one grant that would hand a
+  # viewer everything roles.md §4 withholds: a viewer holds no way to mint an
+  # identity. The fixture names a viewer precisely so this reads something.
+  assert {
+    condition     = !contains(keys(google_service_account_iam_member.minter), "user:viewer@example.com")
+    error_message = "a viewer must not hold the token minter: minting an identity is everything the viewer list withholds"
+  }
   assert {
     condition     = alltrue([for m in google_service_account_iam_member.minter : m.service_account_id == google_service_account.signer.name])
     error_message = "the minter role is granted on the signer account, never on the project"
   }
   assert {
-    condition = (keys(google_project_iam_member.viewer) == ["user:launcher@example.com", "user:operator@example.com"] &&
+    condition = (keys(google_project_iam_member.viewer) == ["user:launcher@example.com", "user:operator@example.com", "user:viewer@example.com"] &&
     alltrue([for m in google_project_iam_member.viewer : m.role == "roles/firebasedatabase.viewer"]))
-    error_message = "launchers and operators get roles/firebasedatabase.viewer on the FP"
+    error_message = "launchers, operators and viewers get roles/firebasedatabase.viewer on the FP, and nobody else"
   }
   # The launcher holds no admin role, and no project-level role other than
   # the viewer: the minter role is only ever on the signer.
@@ -182,9 +195,9 @@ run "TestFirebaseRootHasDatastoreGrants" {
 
   assert {
     condition = (keys(google_project_iam_member.datastore_viewer) == [
-      "group:editors@example.com", "user:extra@example.com", "user:launcher@example.com", "user:operator@example.com", "user:owner@example.com",
+      "group:editors@example.com", "user:extra@example.com", "user:launcher@example.com", "user:operator@example.com", "user:owner@example.com", "user:viewer@example.com",
     ] && alltrue([for m in google_project_iam_member.datastore_viewer : m.role == "roles/datastore.viewer" && m.project == "fp-1234"]))
-    error_message = "launchers, operators, admins and budget admins get roles/datastore.viewer on the FP, and nobody else"
+    error_message = "launchers, operators, admins, budget admins and viewers get roles/datastore.viewer on the FP, and nobody else"
   }
   assert {
     condition = (google_project_iam_member.history_firestore.role == "roles/datastore.user" && google_project_iam_member.history_firestore.project == "fp-1234" &&
@@ -213,9 +226,9 @@ run "TestUsageConsumerGrants" {
 
   assert {
     condition = (keys(google_project_iam_member.usage_consumer) == [
-      "group:editors@example.com", "user:extra@example.com", "user:launcher@example.com", "user:operator@example.com", "user:owner@example.com",
+      "group:editors@example.com", "user:extra@example.com", "user:launcher@example.com", "user:operator@example.com", "user:owner@example.com", "user:viewer@example.com",
     ] && alltrue([for m in google_project_iam_member.usage_consumer : m.role == "roles/serviceusage.serviceUsageConsumer" && m.project == "fp-1234"]))
-    error_message = "serviceUsageConsumer goes to the datastore.viewer principals on the FP, and nobody else"
+    error_message = "serviceUsageConsumer goes to the datastore.viewer principals, viewers included, and nobody else"
   }
   assert {
     condition     = keys(google_project_iam_member.usage_consumer) == keys(google_project_iam_member.datastore_viewer)
@@ -559,6 +572,68 @@ run "bad_coordinator_account" {
   expect_failures = [var.coordinator_account]
 }
 
+# W7's binding (docs/workspaces/spec.md §5): one project grant, of one custom
+# role holding exactly the instance's read, to the account the member's own
+# config pins — and nothing at all for an installation that pins no workspace,
+# which is every install that has not joined one.
+run "TestWorkspaceReadGrant" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    workspace_service_account = "fugaro-credentials@ws-1234.iam.gserviceaccount.com"
+  }
+
+  assert {
+    condition = (length(google_project_iam_member.workspace_read) == 1 &&
+      google_project_iam_member.workspace_read[0].project == "fp-1234" &&
+      google_project_iam_member.workspace_read[0].role == "projects/fp-1234/roles/fugaroWorkspaceRead" &&
+    google_project_iam_member.workspace_read[0].member == "serviceAccount:fugaro-credentials@ws-1234.iam.gserviceaccount.com")
+    error_message = "the pinned account holds the read-only role on the FP, and it is the only member bound here"
+  }
+  assert {
+    condition = (length(google_project_iam_custom_role.workspace_read) == 1 &&
+      contains(google_project_iam_custom_role.workspace_read[0].permissions, "firebasedatabase.instances.get") &&
+    !contains(google_project_iam_custom_role.workspace_read[0].permissions, "firebasedatabase.instances.update"))
+    error_message = "the role is the instance's read and no write: a member's database is the member's, and this grant is IAM's half of that"
+  }
+}
+
+run "TestNoWorkspaceReadWithoutAPin" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    workspace_service_account = ""
+  }
+
+  assert {
+    condition = (length(google_project_iam_member.workspace_read) == 0 &&
+    length(google_project_iam_custom_role.workspace_read) == 0)
+    error_message = "an installation in no workspace creates neither the role nor the binding: the absent pin is not an account"
+  }
+}
+
+run "bad_workspace_account" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    workspace_service_account = "not-an-email"
+  }
+
+  expect_failures = [var.workspace_service_account]
+}
+
 run "bad_member" {
   command = plan
 
@@ -655,6 +730,37 @@ run "bad_operator_member" {
   }
 
   expect_failures = [var.operators]
+}
+
+# The viewer list's own validation, which the fixture above cannot read: a
+# viewer is granted on the FP, so a domain member (every account of a domain
+# reading every run's spend history) and a wildcard are refused here.
+run "domain_viewer_rejected" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    viewers = ["domain:example.com"]
+  }
+
+  expect_failures = [var.viewers]
+}
+
+run "wildcard_viewer_rejected" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    viewers = ["user:*@example.com"]
+  }
+
+  expect_failures = [var.viewers]
 }
 
 run "bad_project_id" {

@@ -28,8 +28,20 @@ const printVarsUngatedFirebase = "--print-vars is ungated and makes no cloud cal
 
 // firebaseVars is the installation's and the Firebase root's tfvars as one
 // JSON object, for --print-vars.
+//
+// It carries the workspace pin's account for the same reason the apply does: a
+// member whose config names a workspace has the read bound to that account, and
+// a printed document that dropped the key would disagree with the installation
+// it stands for — the reading of it an owner cannot trust. The pin is in the
+// local config, so it needs no cloud call (what --print-vars by design makes
+// none of), unlike the history and coordinator accounts, which come from an
+// apply's outputs and are therefore absent here.
 func (r *initRun) firebaseVars(inst []byte, spec infra.InstallationSpec, lc *localcfg.Config) ([]byte, error) {
-	fs, err := infra.Firebase(spec, infra.FirebaseInputs{FP: r.o.firebaseProject(), BudgetAdmins: r.budgetAdmins(lc)})
+	fs, err := infra.Firebase(spec, infra.FirebaseInputs{
+		FP:                      r.o.firebaseProject(),
+		BudgetAdmins:            r.budgetAdmins(lc),
+		WorkspaceServiceAccount: lc.WorkspacePin.ServiceAccount,
+	})
 	if err != nil {
 		return nil, initErr(err)
 	}
@@ -159,7 +171,7 @@ func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd 
 			return nil, remote(err)
 		}
 		if !changed {
-			fmt.Fprintf(r.w, "No changes: the %s root matches the plan.\n", root)
+			fmt.Fprintf(r.stageDetail(), "No changes: the %s root matches the plan.\n", root)
 			stop = r.o.planOnly
 			return nil, nil
 		}
@@ -171,7 +183,7 @@ func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd 
 		counts := infra.CountPlan(plan)
 		// The managed gate first, and the guard and the confirmation only when it
 		// does not admit this plan (D1016, update_managed.go).
-		gated, err := r.gateStep(ctx, t, imports, r.coverOf(r.coverReasonsFirebase), nil)
+		gated, err := r.gateStep(ctx, t, imports, r.coverOfFirebase(), nil)
 		if err != nil {
 			return plan, err
 		}
@@ -184,7 +196,7 @@ func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd 
 				stop = true
 				return plan, nil
 			}
-			if err := r.confirmOrdinary("applies "+counts.String()+" "+what, "nothing was applied", r.notCoveredFirebase(plan, imports)); err != nil {
+			if err := r.confirmPlanned("applies "+counts.String()+" "+what, "nothing was applied", plan, r.notCoveredFirebase(plan, imports)); err != nil {
 				return plan, err
 			}
 		}
@@ -249,7 +261,11 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	}
 	// Refused here, before the first apply, whatever the installation module
 	// accepts.
-	if _, err := infra.Firebase(spec, infra.FirebaseInputs{FP: fp, Admins: admins, BudgetAdmins: r.budgetAdmins(lc)}); err != nil {
+	// Every input the apply below passes is passed here too, the workspace pin's
+	// account included: this call is the gate that runs before the installation
+	// root is applied, so a value the Firebase root would refuse has to be
+	// refused here rather than after an apply has already touched the state.
+	if _, err := infra.Firebase(spec, infra.FirebaseInputs{FP: fp, Admins: admins, BudgetAdmins: r.budgetAdmins(lc), WorkspaceServiceAccount: lc.WorkspacePin.ServiceAccount}); err != nil {
 		return initErr(err)
 	}
 
@@ -318,7 +334,7 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	if err != nil {
 		return err
 	}
-	fspec, err := infra.Firebase(spec, infra.FirebaseInputs{FP: fp, Admins: admins, BudgetAdmins: r.budgetAdmins(lc), HistoryAccount: outs.HistoryServiceAccount, CoordinatorAccount: outs.CoordinatorServiceAccount})
+	fspec, err := infra.Firebase(spec, infra.FirebaseInputs{FP: fp, Admins: admins, BudgetAdmins: r.budgetAdmins(lc), HistoryAccount: outs.HistoryServiceAccount, CoordinatorAccount: outs.CoordinatorServiceAccount, WorkspaceServiceAccount: lc.WorkspacePin.ServiceAccount})
 	if err != nil {
 		return initErr(err)
 	}
@@ -629,22 +645,22 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 // confirmLocation is the Firestore database's own confirmation: its location
 // is permanent, so the note below is the whole of what a person reads before
 // it is created. The location is typed nowhere (T7, docs/no-prompt-policy):
-// what answers for the step is confirmNow — --ask's own question, --yes where
-// the class takes it, or the person at their own terminal, who reads the note
-// and is asked nothing. --non-interactive, --json, a pipe and a coding agent
-// still confirm it never, and the class is still D12's answer of 2026-10-20
-// (stepConfirmation, stepClass): the location is Typed in `setup`, the door
-// that asks for it as a first-time question, and YesOrTyped in `update`, which
-// meets it as a step of a stage it owns. Where nothing can confirm it the step
-// is the user's, with the one-line route.
+// what answers for the step is confirmNow — --ask's own question, or the person
+// at their own terminal, who reads the note and is asked nothing.
+// --non-interactive, --json, a pipe and a coding agent still confirm it never,
+// and the door is still D12's answer of 2026-10-20 (stepConfirmation): `setup`
+// asks the location as a first-time question and an answer a run carries never
+// reaches it, while `update` meets it as a step of a stage it owns, so a run
+// opened on an answer the person already gave is covered there. Where nothing
+// can confirm it the step is the user's, with the one-line route.
 func (r *initRun) confirmLocation() error {
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s): the Firestore database is created in %s, and a database's location can NEVER be changed.\n", r.projectName, infra.FirestoreLocation)
-	switch r.stepConfirmation(r.stepClass()) {
+	switch r.stepConfirmation(r.o.door == updateDoor.name) {
 	case stepLeave:
 		lf := promptLeft(initflow.Firebase, "run the command below: it prints the note about the Firestore database's permanent location and then creates the database, asking you nothing", r.o.doorName(), "--firebase-project", quoteWord(r.o.firebaseProject()))
 		return &initflow.NeedsYouError{Left: lf}
 	case stepByYes:
-		fmt.Fprintln(r.w, "  confirmed by --yes")
+		fmt.Fprintln(r.w, "  confirmed by this run's own answer")
 		return nil
 	}
 	ok, err := r.confirmNow("create the Firestore database in " + infra.FirestoreLocation + ", a location that can never be changed?")

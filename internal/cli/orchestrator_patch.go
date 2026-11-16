@@ -45,7 +45,7 @@ func newOrchestratorPatchCmd() *cobra.Command {
 			"that lands: the spec an approval binds, and every op the document carries,\n" +
 			"because the whole of it lands as the person who confirms it. Every other\n" +
 			"session, --json, a pipe and a coding agent's environment are refused and write\n" +
-			"nothing, and --yes never covers them.\n" +
+			"nothing, and no flag covers them.\n" +
 			"No flag, environment variable or field of the document makes this command the\n" +
 			"daemon or the decision agent: the daemon's bookkeeping is the daemon's.",
 		Args: cobra.NoArgs,
@@ -107,9 +107,13 @@ func personOnlyOps(before orchestrator.State, p orchestrator.Patch) int {
 // SpecDigest covers and nothing else. That digest is what an approval binds,
 // and a person who approves a spec the terminal did not show them has approved
 // nothing they read — so the title, the repository, the recipe, the rigor tier,
-// the dependencies and the brief are all here, taken from the state the patch
-// leaves behind rather than from the op's own fields, which may be a partial
-// declaration over an item that already stands.
+// the spec, the dependencies and the brief are all here, taken from the state
+// the patch leaves behind rather than from the op's own fields, which may be a
+// partial declaration over an item that already stands.
+//
+// The spec is on this list because a session may write it and the person
+// approving the item is then attesting to a label name — one no other field on
+// the screen implies (T8, docs/forge-labels).
 //
 // Nothing here is cut, and nothing needs to be: every one of these fields is
 // bounded by the state model's own caps (MaxTitleRunes, MaxBriefRunes), and a
@@ -119,9 +123,9 @@ func itemWords(head string, w orchestrator.WorkItem) []string {
 	if w.Title != "" {
 		lines = append(lines, "title: "+oneLine(w.Title))
 	}
-	where := make([]string, 0, 3)
+	where := make([]string, 0, 4)
 	for _, f := range []struct{ name, value string }{
-		{"repo", w.Repo}, {"recipe", w.Recipe}, {"rigor", w.RigorTier},
+		{"repo", w.Repo}, {"recipe", w.Recipe}, {"rigor", w.RigorTier}, {"spec", w.Spec},
 	} {
 		if f.value != "" {
 			where = append(where, f.name+" "+oneLine(f.value))
@@ -276,7 +280,7 @@ func confirmPersonPatch(cmd *cobra.Command, o *orchestratorPatchOptions, lc *loc
 	switch {
 	case marker != "":
 		return userErr("nothing was written: %s", initflow.AgentRefusal(marker))
-	case !initflow.CanConfirm(initflow.Typed, initflow.Conditions{Terminal: terminal, JSON: o.json, Agent: marker}):
+	case !initflow.CanConfirmRun(initflow.Conditions{Terminal: terminal, JSON: o.json, Agent: marker}):
 		return userErr("%s: %s; nothing was written", initflow.NeedsTerminal("the typed confirmation of this step"), what)
 	}
 	return confirmTypedStrict(cmd, lc, "a patch that approves a work item, sets the goal or closes a person's decision is the person's own word, and no flag stands in for it: everything this document carries lands with it", what)

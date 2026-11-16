@@ -27,8 +27,6 @@ func TestAllowed(t *testing.T) {
 		{"plugin", "marketplace", "remove", "fugaro", "--scope", "user"},
 		{"plugin", "install", "fugaro@fugaro", "--scope", "user"},
 		{"plugin", "update", "fugaro@fugaro", "--scope", "user"},
-		{"plugin", "update", "fugaro@fugaro", "--scope", "project"},
-		{"plugin", "update", "fugaro@fugaro", "--scope", "local"},
 	} {
 		if err := Allowed(ok); err != nil {
 			t.Errorf("%q refused: %v", ok, err)
@@ -38,6 +36,10 @@ func TestAllowed(t *testing.T) {
 		nil,
 		{"plugin", "install", "fugaro@fugaro", "--scope", "user", "-y"},
 		{"plugin", "install", "fugaro@fugaro", "--scope", "project"},
+		// An update of an install a checkout's own settings declare: not a call
+		// fugaro makes any more (D949, U2).
+		{"plugin", "update", "fugaro@fugaro", "--scope", "project"},
+		{"plugin", "update", "fugaro@fugaro", "--scope", "local"},
 		{"plugin", "update", "fugaro@fugaro", "--scope", "managed"},
 		{"plugin", "update", "fugaro@fugaro"},
 		{"plugin", "install", "other@fugaro", "--scope", "user"},
@@ -99,17 +101,21 @@ func runner(t *testing.T, f *testutil.ClaudePluginFake) (*Runner, *bytes.Buffer)
 	return &Runner{Bin: f.Bin(), Dir: t.TempDir(), Out: &out}, &out
 }
 
-func TestChangeRunsTheExactArgvInDir(t *testing.T) {
+// The change call runs in a directory of fugaro's own, never in the checkout:
+// no call fugaro makes acts on the checkout any more (D949, U2), and running in
+// one would let "owner/name" given to marketplace add match a local directory
+// of that name in it.
+func TestChangeRunsTheExactArgvOutsideTheCheckout(t *testing.T) {
 	f := testutil.NewClaudePluginFake(t, "[]", "[]")
 	r, out := runner(t, f)
-	if err := r.Change(t.Context(), updatePlugin("project")...); err != nil {
+	if err := r.Change(t.Context(), updatePlugin("user")...); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	calls := f.Calls(t)
-	if len(calls) != 1 || !slices.Equal(calls[0].Args, updatePlugin("project")) || !testutil.SamePath(calls[0].Dir, r.Dir) {
+	if len(calls) != 1 || !slices.Equal(calls[0].Args, updatePlugin("user")) || testutil.SamePath(calls[0].Dir, r.Dir) {
 		t.Fatalf("calls %+v", calls)
 	}
-	for _, want := range []string{"running: " + f.Bin() + " plugin update fugaro@fugaro --scope project", "claude: ok: plugin update fugaro@fugaro --scope project"} {
+	for _, want := range []string{"running: " + f.Bin() + " plugin update fugaro@fugaro --scope user", "claude: ok: plugin update fugaro@fugaro --scope user"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
@@ -410,13 +416,18 @@ func TestCallRefusesRelativeBinAndDir(t *testing.T) {
 	}
 }
 
-func TestOnlyProjectAndLocalUpdatesRunInTheCheckout(t *testing.T) {
+// Every call fugaro makes runs in an empty directory of its own, none of them
+// in the checkout: the checkout's own directory, whose "dimipaun" would match
+// the owner of the marketplace source. A project or local scope update was the
+// one call that ran there, and it is not a call fugaro makes any more (D949,
+// U2), so nothing in the tree runs claude in the user's checkout at all.
+func TestEveryCallRunsInAnEmptyDirectoryOfItsOwn(t *testing.T) {
 	f := testutil.NewClaudePluginFake(t, "[]", "[]")
 	r, out := runner(t, f)
 	if err := os.WriteFile(filepath.Join(r.Dir, "dimipaun"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{addMarket("dimipaun/fugaro", "v0.5.2"), updateMarket, installUser, updatePlugin("user"), updatePlugin("project"), updatePlugin("local")} {
+	for _, args := range [][]string{addMarket("dimipaun/fugaro", "v0.5.2"), updateMarket, installUser, updatePlugin("user")} {
 		if err := r.Change(t.Context(), args...); err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
@@ -427,15 +438,14 @@ func TestOnlyProjectAndLocalUpdatesRunInTheCheckout(t *testing.T) {
 	calls := f.Calls(t)
 	data, _ := os.ReadFile(filepath.Join(f.Dir, "cwdfiles.log"))
 	files := strings.Fields(string(data))
-	if len(calls) != 7 || len(files) != 7 {
+	if len(calls) != 5 || len(files) != 5 {
 		t.Fatalf("calls %+v files %v", calls, files)
 	}
 	for i, c := range calls {
-		inCheckout := testutil.SamePath(c.Dir, r.Dir)
-		if want := i == 4 || i == 5; inCheckout != want {
-			t.Errorf("%q ran in %s (checkout %s)", c.Args, c.Dir, r.Dir)
+		if testutil.SamePath(c.Dir, r.Dir) {
+			t.Errorf("%q ran in the checkout %s", c.Args, c.Dir)
 		}
-		if !inCheckout && (files[i] != "0" || !strings.HasPrefix(c.Dir, filepath.Clean(os.TempDir())) && !strings.HasPrefix(c.Dir, "/private")) {
+		if files[i] != "0" || !strings.HasPrefix(c.Dir, filepath.Clean(os.TempDir())) && !strings.HasPrefix(c.Dir, "/private") {
 			t.Errorf("%q ran in %s with %s files, not an empty temp directory", c.Args, c.Dir, files[i])
 		}
 	}

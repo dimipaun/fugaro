@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/ee/portal/schemas/resellers.schema.json",
+  "title": "Portal resellers",
+  "description": "Reseller organisations and their commercial terms (portal plan P6.1; D2189, D2190, D2191). A reseller is an organisation that sells to its own customers: it creates their organisations and invites their first owners, it is never a member of them (F40), it sees their keys' metadata and never a key (F5), and what it owes Fugaro accrues daily against a credit limit operations set. Every object here is closed, because ee/keyservice/wire_resellers.go decodes it with DisallowUnknownFields.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/reseller"
+    },
+    {
+      "$ref": "#/$defs/customer"
+    },
+    {
+      "$ref": "#/$defs/relink"
+    }
+  ],
+  "$defs": {
+    "reseller": {
+      "type": "object",
+      "description": "One reseller organisation's commercial terms, as the reseller reads them and as operations sets them (P6.1's TestCreditLimitAndRatesAreOperationsSet).",
+      "additionalProperties": false,
+      "required": [
+        "organisation_id",
+        "credit_limit_micros",
+        "rates",
+        "created_at"
+      ],
+      "properties": {
+        "organisation_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The reseller organisation itself. Only operations creates one (D2191), and its type is what makes the sign-in rule apply to its members (F10)."
+        },
+        "credit_limit_micros": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The ceiling on unpaid accrual, in micro-dollars (D2189). It is a limit and not a balance: nothing is prepaid, and a mint that would pass it is refused rather than queued. Zero is a reseller that may not mint at all, which is not the same as one nobody set a limit for."
+        },
+        "rates": {
+          "type": "array",
+          "description": "One wholesale price per policy row. A row with no rate here is a row this reseller cannot sell: a missing price is not a price of zero.",
+          "items": {
+            "$ref": "#/$defs/rate"
+          }
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the reseller organisation was created, in UTC."
+        }
+      }
+    },
+    "rate": {
+      "type": "object",
+      "description": "One row's wholesale price for one reseller.",
+      "additionalProperties": false,
+      "required": [
+        "row",
+        "daily_rate_micros"
+      ],
+      "properties": {
+        "row": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The policy row this price is for, by name, as a mint names one."
+        },
+        "daily_rate_micros": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "What one seat of that row costs the reseller a day, in micro-dollars. Daily is the unit because accrual is days times seats times this (D2189), and it has to stop the day an entitlement is revoked rather than at the end of a term that was never served."
+        }
+      }
+    },
+    "customer": {
+      "type": "object",
+      "description": "One customer organisation a reseller sold to, as the reseller's own list answers it.",
+      "additionalProperties": false,
+      "required": [
+        "organisation_id",
+        "name",
+        "reseller_organisation_id",
+        "linked_at"
+      ],
+      "properties": {
+        "organisation_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The customer organisation. Its own owners are its owners: the reseller is not a member of it (F40)."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "The customer organisation's name, which is what the reseller's list shows."
+        },
+        "reseller_organisation_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The link, carried here and not only on the customer because operations can relink one (P6.1): a customer whose reseller changed is a customer whose accrual moves with it, and a list read months later has to say which reseller it belonged to then."
+        },
+        "linked_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the link was made, in UTC. A relink writes a new one rather than editing this."
+        }
+      }
+    },
+    "relink": {
+      "type": "object",
+      "description": "Operations' request to move one customer organisation from one reseller to another (P6.1). It is audited, and it does not move money: the ledger's lines carry the channel they had when they were written (see ledger.schema.json).",
+      "additionalProperties": false,
+      "required": [
+        "customer_organisation_id",
+        "reseller_organisation_id"
+      ],
+      "properties": {
+        "customer_organisation_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The customer organisation being relinked."
+        },
+        "reseller_organisation_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The reseller organisation it is being relinked to. Only operations sets this link (D2191): a reseller that could claim a customer could claim its accrual."
+        }
+      }
+    }
+  }
+}

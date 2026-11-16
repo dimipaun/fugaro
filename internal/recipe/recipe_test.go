@@ -311,7 +311,7 @@ func TestOrderWithChecksAndModes(t *testing.T) {
 		"mode: review\nsteps:\n  - review: { max_rounds: 2 }\n":                      "mode: review reviews once: max_rounds must be 1",
 		"mode: review\nroles: { coder: reviewer }\nsteps:\n  - review: {}\n":         "mode: review has no coder step to map roles onto",
 		"mode: review\nroles: { reviewer: coder }\nsteps:\n  - review: {}\n":         "mode: review has no coder step to map roles onto",
-		"mode: plan\nsteps:\n  - review: {}\n":                                       "must be implement, review or artifact",
+		"mode: plan\nsteps:\n  - review: {}\n":                                       "must be implement, review, artifact or evaluate",
 		"use_when: " + strings.Repeat("x", 301) + "\nsteps:\n  - review: {}\n":       "must be at most 300 bytes",
 	} {
 		_, ps := Parse([]byte("version: 1\nname: x\n" + src))
@@ -949,5 +949,116 @@ func TestUsesV08IsPresenceNotValue(t *testing.T) {
 	}
 	if r := mustParse(t, "version: 1\nname: a\nsteps:\n  - review: {}\n"); UsesV08(r) || UsesV07(r) {
 		t.Fatal("a bare recipe uses a 0.7 or 0.8 key")
+	}
+}
+
+// TestUnregisteredStepRefused: the step kinds of version 1 are the core's and
+// a registered kind is the build's, so a recipe naming a kind this build has
+// no code for is refused. Two names look alike to a reader and must not to
+// this parser: a kind that exists in Fugaro Subscription Edition is answered
+// with D522's capability statement — nothing can run here, so the message says
+// which build can — and a kind that exists nowhere is answered with version
+// 1's own list.
+func TestUnregisteredStepRefused(t *testing.T) {
+	_, ps := Parse([]byte("version: 1\nname: judge\nmode: evaluate\nsteps:\n  - ab_judge: {}\n"))
+	text := ProblemsText(ps)
+	if !strings.Contains(text, "ab_judge is part of Fugaro Subscription Edition; this build does not include it") {
+		t.Errorf("problems = %s, want D522's capability statement for ab_judge", text)
+	}
+	// A capability statement, not a licence notice (D523): the sentence names
+	// the edition and the missing code and nothing about a licence, a key or
+	// a payment, and it is NOT the generic unknown-kind message, which would
+	// tell the reader the step does not exist.
+	for _, forbidden := range []string{"licence", "license", "subscription has", "renew", "pay"} {
+		if strings.Contains(strings.ToLower(text), forbidden) {
+			t.Errorf("problems = %s, want no licence wording (%q)", text, forbidden)
+		}
+	}
+	if strings.Contains(text, "is not a step type") {
+		t.Errorf("problems = %s: a paid step is reported as an unknown one", text)
+	}
+	_, ps = Parse([]byte("version: 1\nname: judge\nmode: evaluate\nsteps:\n  - judge_it: {}\n"))
+	if text := ProblemsText(ps); !strings.Contains(text, "is not a step type (version 1 has first_line, review, adversarial, check, digest, plan, render and rebase)") {
+		t.Errorf("problems = %s, want version 1's own list for an unknown kind", text)
+	}
+}
+
+// TestEvaluateModeRefusesCommandsAndImplement: mode: evaluate is the judge
+// run's shape (U6, A5.2), and the whole point of it is that the run executes
+// nothing of the repository's and starts no agent. Every one of version 1's
+// own steps is refused by name — a check step runs the workflow's commands,
+// first_line, review and digest start a model, plan and render deliver files —
+// and so is the shape that would smuggle one in beside a registered step.
+func TestEvaluateModeRefusesCommandsAndImplement(t *testing.T) {
+	for _, tc := range []struct{ name, text, want string }{
+		{"commands", "steps:\n  - check: { command: test }\n", "check is not a step of mode: evaluate"},
+		{"implement", "steps:\n  - first_line: {}\n", "first_line is not a step of mode: evaluate"},
+		{"review", "steps:\n  - review: {}\n", "review is not a step of mode: evaluate"},
+		{"digest", "steps:\n  - digest: {}\n", "digest is not a step of mode: evaluate"},
+		{"render", "steps:\n  - render: {}\n", "render is not a step of mode: evaluate"},
+		{"outputs", "outputs: { globs: [x] }\nsteps:\n  - review: {}\n", "is only for mode: artifact"},
+		{"roles", "roles: { reviewer: coder }\nsteps:\n  - review: {}\n", "mode: evaluate has no agent steps to map roles onto"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, ps := Parse([]byte("version: 1\nname: judge\nmode: evaluate\n" + tc.text))
+			if text := ProblemsText(ps); !strings.Contains(text, tc.want) {
+				t.Errorf("problems = %s, want %q", text, tc.want)
+			}
+		})
+	}
+	// The mode's shape is exactly one step, so a core step beside another one
+	// is refused for both reasons: the step is not this mode's, and there are
+	// two of them.
+	_, ps := Parse([]byte("version: 1\nname: judge\nmode: evaluate\nsteps:\n  - check: { command: test }\n  - review: {}\n"))
+	if text := ProblemsText(ps); !strings.Contains(text, "mode: evaluate takes exactly one step") {
+		t.Errorf("problems = %s, want the two-step refusal as well", text)
+	}
+}
+
+// TestRegisteredStepKindIsOnlyItsMode: a registered kind is a step of the one
+// mode it was registered for, and it is refused in the other three rather than
+// accepted and dropped. Nothing in version 1's implement, review or artifact
+// loop has a rule for a kind it does not carry, so a recipe the parser read and
+// the run ignored would be a step that never runs with no line anywhere saying
+// so — and a mode: evaluate step is the one kind whose whole meaning is the
+// mode it is registered for.
+//
+// Mutation (verified, run and restored): drop the default arm of order's switch
+// — the implement and review subtests stop being refused; drop orderArtifact's
+// — the artifact subtest does; accept any of the four modes in
+// RegisterStepKind — the second half fails naming the mode.
+func TestRegisteredStepKindIsOnlyItsMode(t *testing.T) {
+	const kind = StepKind("evaluate_fixture")
+	if err := RegisterStepKind(kind, ModeEvaluate); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ mode, want string }{
+		{ModeImplement, "evaluate_fixture is a step of mode: evaluate, not of mode: implement"},
+		{ModeReview, "evaluate_fixture is a step of mode: evaluate, not of mode: review"},
+		{ModeArtifact, "evaluate_fixture is a step of mode: evaluate, not of mode: artifact"},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			_, ps := Parse([]byte("version: 1\nname: judge\nmode: " + tc.mode + "\nsteps:\n  - evaluate_fixture: {}\n"))
+			if text := ProblemsText(ps); !strings.Contains(text, tc.want) {
+				t.Errorf("problems = %s, want %q", text, tc.want)
+			}
+		})
+	}
+	// The same recipe in the kind's own mode parses, so the three refusals
+	// above are the mode and not the kind.
+	if r, ps := Parse([]byte("version: 1\nname: judge\nmode: evaluate\nsteps:\n  - evaluate_fixture: {}\n")); r == nil {
+		t.Fatalf("a recipe holding the registered kind in its own mode was refused: %v", ps)
+	}
+	// A mode whose sequence cannot place a registered step is refused where the
+	// two halves would otherwise drift apart: the kind registered, and the
+	// parser with no rule for where it sits.
+	for _, mode := range []string{ModeImplement, ModeReview, ModeArtifact} {
+		err := RegisterStepKind(StepKind("evaluate_fixture_"+mode), mode)
+		if err == nil || !strings.Contains(err.Error(), "a registered step kind is a step of mode: evaluate alone") || !strings.Contains(err.Error(), mode) {
+			t.Errorf("registering a kind for mode %s: err = %v", mode, err)
+		}
+	}
+	if err := RegisterStepKind("evaluate_fixture_none", "judge"); err == nil || !strings.Contains(err.Error(), modeMsg) {
+		t.Errorf("registering a kind for a mode that does not exist: err = %v", err)
 	}
 }

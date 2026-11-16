@@ -44,7 +44,7 @@ func clipString(s string) string {
 }
 
 func clipEntry(e *AgentEntry) {
-	for _, p := range []*string{&e.Repo, &e.Workflow, &e.Title, &e.Stage, &e.Verify, &e.Coder, &e.Reviewer, &e.Recipe, &e.Auth, &e.PRURL, &e.Halted, &e.Action, &e.Credential} {
+	for _, p := range []*string{&e.Repo, &e.Workflow, &e.Title, &e.Stage, &e.Verify, &e.Coder, &e.Reviewer, &e.Recipe, &e.Auth, &e.PRURL, &e.Halted, &e.Action, &e.Credential, &e.Mode, &e.From} {
 		*p = clipString(*p)
 	}
 	// The rules refuse the whole entry for a tokens value outside
@@ -76,6 +76,23 @@ func (s *Session) Start(ctx context.Context, entry AgentEntry) error {
 		return s.db.Patch(ctx, "", map[string]any{PathAgent(s.cfg.Slug, s.cfg.Run): entry})
 	}
 	err := s.retryBoot(ctx, "registry", write)
+	if errors.Is(err, ErrPermissionDenied) && (entry.Mode != "" || entry.From != "") {
+		// Rules deployed before the rigor mode reached the registry have no
+		// key for these children, and their $other refuses the whole entry
+		// rather than ignoring them: go on without them for the whole
+		// session. The newest children are probed first, so an older one the
+		// rules do know (the recipe, below) is never dropped for a refusal
+		// that was not about it. Warn only once the second write succeeded: a
+		// second refusal is a genuinely bad credential, not old rules.
+		entry.Mode, entry.From = "", ""
+		s.mu.Lock()
+		s.entry, s.noMode = entry, true
+		s.mu.Unlock()
+		err = s.retryBoot(ctx, "registry", write)
+		if err == nil {
+			s.log.Warn("budget: the database's rules predate the rigor mode in the registry, so the registry entry goes without it; run fugaro update --firebase-project <gcp-project-id> to update the rules")
+		}
+	}
 	if errors.Is(err, ErrPermissionDenied) && entry.Recipe != "" {
 		// Rules from before 0.5.0 have no recipe key, and their $other
 		// refuses the whole entry: go on without it for the whole session.
@@ -155,6 +172,9 @@ func (s *Session) Update(fn func(*AgentEntry)) {
 	if s.noRecipe {
 		s.entry.Recipe = ""
 	}
+	if s.noMode {
+		s.entry.Mode, s.entry.From = "", ""
+	}
 	if s.newKeysRefused {
 		s.entry.Action, s.entry.Tokens = "", 0
 	}
@@ -212,6 +232,44 @@ func (s *Session) checkNewKeys(ctx context.Context) {
 	s.mu.Unlock()
 	s.dbOK()
 	s.log.Warn("budget: the dashboard rules predate 0.7.0, so the last action and token count are not shown; run fugaro update --firebase-project <gcp-project-id> to update them")
+}
+
+// dropRefusedMode writes the entry once without the rigor mode and its layer,
+// and keeps them dropped for the rest of the session when that write lands.
+// It is the heartbeat's half of Start's own fallback, and it answers the same
+// question the same way: refused with the children and accepted without them,
+// the deployed rules are what do not know them.
+//
+// Start meets this at bootstrap, where the rules in place are the ones the
+// installation has. A heartbeat meets it when the document changes under a
+// running run — an older Fugaro redeploying its own document over the newer
+// one, the downgrade C1.3's marker cannot see because it records a generation
+// the older CLI does not know, which is why checkCascadeKeys exists for the
+// cascade's children. What a run cannot do is keep sending them: the usage
+// report travels in the same patch (flush), so every beat is refused, the
+// grace clock the refusal fails runs out, and the run halts as
+// budget-unavailable — the wrong reason for two facts the dashboard only ever
+// shows. Dropping costs the row its mode and its layer, which is what Start
+// does under the same rules and what the row's `-` means: "not recorded".
+//
+// A second refusal leaves the entry as it was and the session undecided, as
+// checkNewKeys leaves it: the two attempts can straddle an unrelated blip, and
+// the next refused heartbeat asks again. That is why nothing is cached here
+// but noMode, which is set only once a write without the children has landed.
+func (s *Session) dropRefusedMode(ctx context.Context) {
+	e := s.snapshotEntry()
+	if e.Mode == "" && e.From == "" {
+		return
+	}
+	e.Mode, e.From = "", ""
+	if err := s.db.Patch(ctx, "", map[string]any{PathAgent(s.cfg.Slug, s.cfg.Run): e}); err != nil {
+		return // refused without them too: not about the children, or a blip
+	}
+	s.mu.Lock()
+	s.entry.Mode, s.entry.From, s.noMode = "", "", true
+	s.mu.Unlock()
+	s.dbOK()
+	s.log.Warn("budget: the database's rules predate the rigor mode in the registry, so the registry entry goes without it; run fugaro update --firebase-project <gcp-project-id> to update the rules")
 }
 
 // checkCascadeKeys is checkNewKeys's twin for the credentials cascade's
@@ -351,6 +409,15 @@ func (s *Session) heartbeat(ctx context.Context) {
 	s.checkNewKeys(ctx)
 	e := s.snapshotEntry()
 	err := s.flush(ctx, map[string]any{PathAgent(s.cfg.Slug, s.cfg.Run): e}, "heartbeat")
+	if err != nil && errors.Is(err, rtdb.ErrPermission) && (e.Mode != "" || e.From != "") {
+		// The bundled write carried the rigor children into the refusal: find
+		// out, with the entry's own write, whether the deployed rules are the
+		// reason, and go on without them if they are. This is the newest of
+		// the children, so it is asked first: under rules that refuse a
+		// cascade child as well, this write is refused too and the named halt
+		// below is what answers.
+		s.dropRefusedMode(ctx)
+	}
 	if err != nil && errors.Is(err, rtdb.ErrPermission) && (e.Credential != "" || e.WaitingUntil != 0) {
 		// The bundled write carried a cascade child into the refusal: find
 		// out, with the two writes of its own, whether the deployed rules

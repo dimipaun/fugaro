@@ -13,7 +13,7 @@ package cli
 // coordinator's two and the file read this design is for is served where the
 // project publishes a service; and `github.FileAt` reads one file at a ref through
 // a `gitprov.TokenSource` its caller supplies, which is what A3's launcher seam is
-// built on. The folder's four documents are the record of the ask and of each
+// built on. The folder's documents are the record of the ask and of each
 // answer, and every sentence in them that says what the tree does is a claim
 // that went stale the day a task landed: a status line still reading "nothing
 // implemented", a spec section saying the read is refused until A0 lands, a
@@ -25,16 +25,21 @@ package cli
 // stay as written even where the wording around them moves.
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
 
 const rwcDir = "docs/run-without-checkout/"
 
-// rwcDocs are the four documents the folder ships, in the order README.md lists
-// them. The list is written here rather than derived from the directory so that a
-// document that disappears — or a fifth that arrives without the index naming it —
-// fails instead of quietly shrinking what these checks read.
+// rwcDocs are the four design documents the folder's status checks read, in the
+// order README.md lists them: the review document C1 landed carries its own
+// verdict paragraph rather than the folder's claim about the tree, so neither
+// list below reads it. The list is written here rather than derived from the
+// directory so that a document that disappears fails instead of quietly
+// shrinking what these checks read; the other half — a document that arrives
+// without the index naming it — is
+// TestDocsRunWithoutCheckoutIndexesEveryDocument's, which reads the directory.
 var rwcDocs = []string{"README.md", "spec.md", "reconciliation.md", "implementation-plan.md"}
 
 // rwcLandedAccessor is the code the folder's status lines are read against: the
@@ -143,6 +148,47 @@ func TestDocsRunWithoutCheckoutStatesTheLandedTasks(t *testing.T) {
 	for _, name := range []string{"README.md", "spec.md", "implementation-plan.md"} {
 		if !strings.Contains(flattenDoc(readDoc(t, rwcDir+name)), "PersonReadTokenPermissions") {
 			t.Errorf("%s never names `github.PersonReadTokenPermissions`, the set A0 landed and the one this read's token carries: the folder would describe a read without the permission that makes it possible", rwcDir+name)
+		}
+	}
+}
+
+// TestDocsRunWithoutCheckoutIndexesEveryDocument: README.md's file table is the
+// folder's index, and it names every document the folder ships. A document that
+// arrives without a row is one a reader of the index never learns is there — the
+// review C1 owes landed as exactly that, until this check existed — and a row is
+// the only way the folder sends a reader to a document, so the two move together.
+//
+// Mutation (verified, run and restored): delete the review's own row from the
+// table and this test fails naming review-c1.md.
+func TestDocsRunWithoutCheckoutIndexesEveryDocument(t *testing.T) {
+	entries, err := os.ReadDir("../../" + rwcDir)
+	if err != nil {
+		t.Fatalf("reading %s: %v", rwcDir, err)
+	}
+	// The targets are read from the table's own rows rather than from any link on
+	// the page: a document linked from a sentence — the review document is named
+	// in the Status paragraph and in "What this design does not do" — is not one
+	// the index names, and a check that took any link for a row would pass on the
+	// page while the table still hid the document.
+	indexed := map[string]bool{}
+	for _, line := range strings.Split(readDoc(t, rwcDir+"README.md"), "\n") {
+		if !strings.HasPrefix(line, "| [") {
+			continue
+		}
+		first := strings.SplitN(strings.TrimPrefix(line, "| "), "|", 2)[0]
+		if i := strings.Index(first, "]("); i >= 0 {
+			if j := strings.Index(first[i:], ")"); j >= 0 {
+				indexed[first[i+2:i+j]] = true
+			}
+		}
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".md") || name == "README.md" {
+			continue
+		}
+		if !indexed[name] {
+			t.Errorf("%s ships %s and README.md's file table carries no row for it: the table is the folder's index, so the folder would hide a document from the reader who opens it first", rwcDir, name)
 		}
 	}
 }

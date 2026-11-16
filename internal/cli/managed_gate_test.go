@@ -198,14 +198,14 @@ func TestManagedGateAdmitsAConvergedStepAndRecordsIt(t *testing.T) {
 	if !gate.managed {
 		t.Fatal("both marks are in place and the gate did not read the project as managed")
 	}
-	m, err := gate.admit(context.Background(), initflow.YesOrTyped, managedmode.ConvergeAdmitted(doc, initflow.YesOrTyped, []string{rule}))
+	m, err := gate.admit(context.Background(), managedmode.ConvergeAdmitted(doc, []string{rule}))
 	if err != nil {
 		t.Fatalf("a plan every rule passed was refused: %v", err)
 	}
 	if !m.Managed || !m.Admitted || m.Fallback {
 		t.Errorf("the gate answered %+v, want a managed project whose plan was admitted", m)
 	}
-	if !initflow.CanConfirmManaged(initflow.YesOrTyped, r.agent(), m) {
+	if !m.Removes() {
 		t.Error("an admitted step of a managed project is still refused under a coding agent's marker: the confirmation the gate exists to remove was not removed")
 	}
 	// The record is the command's OWN write's record: nothing is filed before
@@ -275,7 +275,7 @@ func TestManagedGateRefusesAStepOutsideItsRulesAndRecordsTheRefusal(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := gate.admit(context.Background(), initflow.YesOrTyped, managedmode.ConvergeRefused(doc, initflow.YesOrTyped, []string{rule}))
+	m, err := gate.admit(context.Background(), managedmode.ConvergeRefused(doc, []string{rule}))
 	if err == nil {
 		t.Fatal("a plan a rule refused was admitted")
 	}
@@ -288,7 +288,7 @@ func TestManagedGateRefusesAStepOutsideItsRulesAndRecordsTheRefusal(t *testing.T
 	if !m.Managed || m.Admitted {
 		t.Errorf("the gate answered %+v: the project is managed and THIS plan was not admitted", m)
 	}
-	if initflow.CanConfirmManaged(initflow.YesOrTyped, r.agent(), m) {
+	if m.Removes() {
 		t.Error("a refused plan still confirmed the step: the refusal an agent's session must read was removed")
 	}
 	got := r.audits(t)
@@ -326,10 +326,10 @@ func TestManagedGateRecordsOnlyWhatTheLastCallAdmitted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := gate.admit(context.Background(), initflow.YesOrTyped, managedmode.ConvergeAdmitted(admitted, initflow.YesOrTyped, []string{rule})); err != nil {
+	if _, err := gate.admit(context.Background(), managedmode.ConvergeAdmitted(admitted, []string{rule})); err != nil {
 		t.Fatalf("a plan every rule passed was refused: %v", err)
 	}
-	if _, err := gate.admit(context.Background(), initflow.YesOrTyped, managedmode.ConvergeRefused(refused, initflow.YesOrTyped, []string{rule})); err == nil {
+	if _, err := gate.admit(context.Background(), managedmode.ConvergeRefused(refused, []string{rule})); err == nil {
 		t.Fatal("the plan a rule refused was admitted")
 	}
 	// The refusal is the day's one record, written where it happened. The
@@ -365,7 +365,7 @@ func TestManagedGateWritesNothingForAProjectThatIsNotManaged(t *testing.T) {
 	if gate.managed {
 		t.Fatal("a project whose label says something else was read as managed")
 	}
-	m, err := gate.admit(context.Background(), initflow.YesOrTyped, managedmode.ConvergeAdmitted([]byte("{}"), initflow.YesOrTyped, nil))
+	m, err := gate.admit(context.Background(), managedmode.ConvergeAdmitted([]byte("{}"), nil))
 	if err != nil {
 		t.Fatalf("the gate refused a plan in a project it is not the gate of: %v", err)
 	}
@@ -373,13 +373,12 @@ func TestManagedGateWritesNothingForAProjectThatIsNotManaged(t *testing.T) {
 		t.Errorf("the gate answered %+v for a project that is not managed, want the zero value", m)
 	}
 	// The zero value is the property, and it is held against every condition
-	// rather than the agent's alone: for each of them the answer has to be the
-	// one CanConfirm gave before the managed case existed.
-	for _, cond := range []initflow.Conditions{{}, {Yes: true}, {Terminal: true}, {NonInteractive: true}, {JSON: true}, {Agent: "CLAUDECODE"}, {Agent: "CURSOR_AGENT", Yes: true, Terminal: true}} {
-		for _, class := range []initflow.ConfirmClass{initflow.Typed, initflow.YesOrTyped} {
-			if got, want := initflow.CanConfirmManaged(class, cond, m), initflow.CanConfirm(class, cond); got != want {
-				t.Errorf("%v under %+v answers %v with the gate and %v without it: a project that is not managed must keep today's answer exactly", class, cond, got, want)
-			}
+	// rather than the agent's alone: for each of them the gate has to stand in
+	// for nothing, which is the answer every caller of D55's rule had before
+	// the managed case existed.
+	for _, cond := range []initflow.Conditions{{}, {Terminal: true}, {JSON: true}, {Ask: true}, {Agent: "CLAUDECODE"}, {Agent: "CURSOR_AGENT", Terminal: true}} {
+		if initflow.GateStandsIn(cond, m) {
+			t.Errorf("the gate stands in for a step under %+v in a project that is not managed: a project that is not managed must keep today's answer exactly", cond)
 		}
 	}
 	if err := gate.recorded(context.Background()); err != nil {
@@ -390,30 +389,27 @@ func TestManagedGateWritesNothingForAProjectThatIsNotManaged(t *testing.T) {
 	}
 }
 
-// The gate can only narrow (D1026): a class it does not cover keeps the
+// The gate can only narrow (D1026): a step no plan gate may judge keeps the
 // confirmation it has today, whatever the plan looked like — and nothing is
 // recorded, because the gate judged no step.
-func TestManagedGateDoesNotConfirmAClassItDoesNotCover(t *testing.T) {
+func TestManagedGateDoesNotJudgeAStepNoPlanGateMayJudge(t *testing.T) {
 	r := newManagedGateRig(t)
 	gate, err := readManagedGate(context.Background(), r.env(), r.facts())
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := gate.admit(context.Background(), initflow.Typed, managedmode.ConvergeAdmitted([]byte("{}"), initflow.Typed, nil))
+	m, err := gate.admit(context.Background(), managedmode.ConvergeUnjudged([]byte("{}"), nil))
 	if err != nil {
-		t.Fatalf("the gate refused a step of a class it does not judge: %v", err)
+		t.Fatalf("the gate refused a step it does not judge: %v", err)
 	}
 	if !m.Managed {
-		t.Error("the project is managed and the gate did not say so: the class rule and the project's fact are not the same answer")
+		t.Error("the project is managed and the gate did not say so: the step and the project's fact are not the same answer")
 	}
-	if m.Removes(initflow.Typed) {
-		t.Error("a Typed confirmation was removed by a plan verdict: D1026's rule is that the class wins over the gate")
+	if m.Removes() {
+		t.Error("the step's confirmation was removed by a gate that judged no document: D1026's rule is that the step wins over the gate")
 	}
 	if m.Admitted {
 		t.Error("a document the gate never judges is reported as admitted")
-	}
-	if initflow.CanConfirmManaged(initflow.Typed, r.agent(), m) {
-		t.Error("a coding agent's session confirmed a Typed step of a managed project")
 	}
 	if err := gate.recorded(context.Background()); err != nil {
 		t.Fatal(err)
@@ -435,7 +431,7 @@ func TestManagedGateCarriesTheInventoryFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := gate.admit(context.Background(), initflow.YesOrTyped, managedmode.ConvergeAdmitted([]byte("{}"), initflow.YesOrTyped, nil))
+	m, err := gate.admit(context.Background(), managedmode.ConvergeAdmitted([]byte("{}"), nil))
 	if err != nil {
 		t.Fatalf("an inventory that fell back was reported as a refusal of the plan: it is not a verdict on the document: %v", err)
 	}
@@ -445,17 +441,18 @@ func TestManagedGateCarriesTheInventoryFallback(t *testing.T) {
 	if !m.Fallback {
 		t.Fatal("the answer does not carry the inventory's fallback, so nothing downstream can keep the confirmation")
 	}
-	if m.Removes(initflow.YesOrTyped) {
+	if m.Removes() {
 		t.Error("a fallback removed the coding agent's refusal: D59 keeps every confirmation the inventory could not clear")
 	}
-	if initflow.CanConfirmManaged(initflow.YesOrTyped, r.agent(), m) {
-		t.Error("a coding agent's session confirmed a step whose whole-project inventory fell back")
-	}
 	// A person at a terminal is not the case D59 is about, and the fallback is
-	// not a second rule beside theirs: for them the answer is the one
-	// CanConfirm gives with no gate at all.
-	if got, want := initflow.CanConfirmManaged(initflow.YesOrTyped, initflow.Conditions{Terminal: true}, m), initflow.CanConfirm(initflow.YesOrTyped, initflow.Conditions{Terminal: true}); got != want {
-		t.Errorf("a fallback changed a person's own confirmation (%v, want %v): it keeps the confirmation a coding agent's session cannot give and no other", got, want)
+	// not a second rule beside theirs: the gate stands in for nothing there,
+	// and what confirms the step is the person's own answer.
+	person := initflow.Conditions{Terminal: true}
+	if initflow.GateStandsIn(person, m) {
+		t.Error("a fallback left a person's step to the gate: it keeps the confirmation a coding agent's session cannot give and no other")
+	}
+	if !initflow.CanConfirmRun(person) {
+		t.Error("a fallback took a person's own confirmation away: it is not a verdict about the person's session")
 	}
 	// And the record is not the fallback's to drop: the person's apply DID
 	// happen, so the admission is still held here and the command's `recorded`
@@ -488,14 +485,14 @@ func TestManagedGateReReadsTheMarksBeforeTheWrite(t *testing.T) {
 	// The owner unflags it, in the window between the plan being read and the
 	// write: exactly the revocation D1024 narrows and does not close.
 	r.crm.SetLabels(managedPropertyGCP, map[string]string{managed.ProjectLabelKey: "no"})
-	m, err := gate.admit(context.Background(), initflow.YesOrTyped, managedmode.ConvergeAdmitted([]byte("{}"), initflow.YesOrTyped, nil))
+	m, err := gate.admit(context.Background(), managedmode.ConvergeAdmitted([]byte("{}"), nil))
 	if err != nil {
 		t.Fatalf("the revocation was reported as a failure: %v", err)
 	}
 	if m != (initflow.Managed{}) {
 		t.Errorf("the gate answered %+v after the project was unflagged: the mark read once and cached is the window D1024 exists to narrow", m)
 	}
-	if initflow.CanConfirmManaged(initflow.YesOrTyped, r.agent(), m) {
+	if m.Removes() {
 		t.Error("a coding agent's session was admitted to a step after the owner revoked the mark")
 	}
 	// The gate's own answer is the second read's and not the first's: the read
@@ -528,7 +525,7 @@ func TestManagedGateRecordsTheFactInForceAtTheWrite(t *testing.T) {
 	if now == first {
 		t.Fatalf("the fake answered generation %d twice, so this test cannot tell the two reads apart", now)
 	}
-	if _, err := gate.admit(context.Background(), initflow.YesOrTyped, managedmode.ConvergeAdmitted([]byte("{}"), initflow.YesOrTyped, nil)); err != nil {
+	if _, err := gate.admit(context.Background(), managedmode.ConvergeAdmitted([]byte("{}"), nil)); err != nil {
 		t.Fatal(err)
 	}
 	if err := gate.recorded(context.Background()); err != nil {
@@ -543,6 +540,87 @@ func TestManagedGateRecordsTheFactInForceAtTheWrite(t *testing.T) {
 	}
 }
 
+// The record of a step whose marks cannot be read again. The re-read is what
+// makes the record name the fact in force at the write (D1024); where it does
+// not answer at all, the record is written anyway, naming the marks the step ran
+// under — the ones this command read before it acted.
+//
+// `fugaro managed apply` hands its verdict over AFTER the plan is applied
+// (internal/managed's Request.Recorder), so the other answer is the one that
+// must not happen: a re-read that failed would fail a command whose plan has
+// already landed, report it as an error and leave the apply with no record at
+// all. D1014 fails a step whose trail cannot be left; this one is written, with
+// the fact the step acted under, which is the fact that is true of the step.
+func TestManagedGateRecordsTheFactItRanUnderWhenTheReReadFails(t *testing.T) {
+	r := newManagedGateRig(t)
+	gate, err := readManagedGate(context.Background(), r.env(), r.facts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	under := gate.marks.Generation
+	if under == 0 {
+		t.Fatal("the first read placed no generation, so this test cannot tell the two reads apart")
+	}
+	// The read that named the generation above is the one this command made
+	// before it applied; the one the record makes answers 500 — a backend that
+	// did not answer, which is neither of the two codes the read answers "not
+	// managed" to, so ReadMarkFacts returns an error and there is no second
+	// fact to name.
+	r.crm.FailGet(managedPropertyGCP, 500, "INTERNAL", "the label read failed")
+	doc := []byte(`{"version":1,"keys":{"rigor":"standard"}}`)
+	const rule = "every key is in the registry"
+	if err := gate.Record(context.Background(), managedmode.ConvergeAdmitted(doc, []string{rule})); err != nil {
+		t.Fatalf("a step whose marks could not be read again left no record, and the plan it accounts for had already been applied: %v", err)
+	}
+	got := r.audits(t)
+	if len(got) != 1 {
+		t.Fatalf("the day holds %d records, want the one verdict this step reached", len(got))
+	}
+	if want := strconv.FormatInt(under, 10); got[0].MarkerGeneration != want {
+		t.Errorf("the record names marker_generation %q, and the fact this step ran under is %q: a failed re-read is not a reason to withhold the account of a step that landed", got[0].MarkerGeneration, want)
+	}
+	if got[0].Verdict != managedmode.AuditAdmitted {
+		t.Errorf("the record's verdict is %q, want %q", got[0].Verdict, managedmode.AuditAdmitted)
+	}
+	if got[0].PlanDigest != gateDigest(doc) {
+		t.Errorf("the record's plan_digest is %q, want the sha256 of the bytes that were judged (%q)", got[0].PlanDigest, gateDigest(doc))
+	}
+}
+
+// The other answer of that same read, and the one that makes it worth making:
+// where it DOES answer managed, the fact the record names is the one in force at
+// the record and not the one in force when the session started (D1024). The
+// marker is replaced between the read this command makes before the apply and
+// the read the record makes, and the record names the newer fact.
+func TestManagedGateRecordsTheFactInForceAtTheRecord(t *testing.T) {
+	r := newManagedGateRig(t)
+	gate, err := readManagedGate(context.Background(), r.env(), r.facts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := gate.marks.Generation
+	if first == 0 {
+		t.Fatal("the first read placed no generation, so this test cannot tell the two reads apart")
+	}
+	r.gcs.Put(managedPropertyBucket(), managed.MarkerObject, managedGateMarker())
+	now := r.markerGeneration(t)
+	if now == first {
+		t.Fatalf("the fake answered generation %d twice, so this test cannot tell the two reads apart", now)
+	}
+	doc := []byte(`{"version":1,"keys":{"rigor":"standard"}}`)
+	const rule = "every key is in the registry"
+	if err := gate.Record(context.Background(), managedmode.ConvergeAdmitted(doc, []string{rule})); err != nil {
+		t.Fatal(err)
+	}
+	got := r.audits(t)
+	if len(got) != 1 {
+		t.Fatalf("the day holds %d records, want the one verdict this step reached", len(got))
+	}
+	if want := strconv.FormatInt(now, 10); got[0].MarkerGeneration != want {
+		t.Errorf("the record names marker_generation %q, and the fact in force at the record is %q (the first read saw %d): the fact the record names has to be the one the write happened under (D1024)", got[0].MarkerGeneration, want, first)
+	}
+}
+
 // A record that could not be written fails the command (D1014), and it fails it
 // with the exit code the cause deserves: a missing grant on the operator's own
 // account is theirs to fix, an outage is not. The fake refuses every write under
@@ -554,7 +632,7 @@ func TestManagedGateFailsTheStepWhenTheRecordCannotBeWritten(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := gate.admit(context.Background(), initflow.YesOrTyped, managedmode.ConvergeAdmitted([]byte("{}"), initflow.YesOrTyped, nil)); err != nil {
+		if _, err := gate.admit(context.Background(), managedmode.ConvergeAdmitted([]byte("{}"), nil)); err != nil {
 			t.Fatal(err)
 		}
 		r.gcs.DenyWrites(managedPropertyBucket(), managedmode.AuditPrefix)
@@ -580,7 +658,7 @@ func TestManagedGateFailsTheStepWhenTheRecordCannotBeWritten(t *testing.T) {
 		}
 		r.gcs.DenyWrites(managedPropertyBucket(), managedmode.AuditPrefix)
 		const rule = "the plan removes a bucket"
-		_, err = gate.admit(context.Background(), initflow.YesOrTyped, managedmode.ConvergeRefused([]byte("{}"), initflow.YesOrTyped, []string{rule}))
+		_, err = gate.admit(context.Background(), managedmode.ConvergeRefused([]byte("{}"), []string{rule}))
 		if err == nil {
 			t.Fatal("a refused step whose refusal could not be recorded was reported as refused")
 		}
@@ -681,7 +759,7 @@ func TestManagedGateNamesTheAccountTheWriteRanAs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := gate.admit(context.Background(), initflow.YesOrTyped, managedmode.ConvergeAdmitted([]byte("{}"), initflow.YesOrTyped, nil)); err != nil {
+		if _, err := gate.admit(context.Background(), managedmode.ConvergeAdmitted([]byte("{}"), nil)); err != nil {
 			t.Fatal(err)
 		}
 		return gate.recorded(context.Background())

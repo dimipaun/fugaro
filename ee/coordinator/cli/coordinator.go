@@ -274,12 +274,15 @@ func CoordinatorDB(ctx context.Context, lc *localcfg.Config) (*rtdb.Client, erro
 // and not the rules and not IAM, is what keeps the writer to the coordinator's
 // subtree (D194).
 //
-// A caller that reads this node once opens one and drops it — `graph --json`
-// does, which is why it is reachable from there. A caller that reads it again
-// and again opens none of these: `graph --watch --json` builds its store over
-// the client its subscription already holds (coordinator.NewStore), so one
+// A caller that reads this node once opens one of these and drops it, which is
+// what this package's own reads do (openCoordinatorStore). A caller that reads
+// it again and again opens none of them: `graph --watch --json` builds its store
+// over the client its subscription already holds (coordinator.NewStore), so one
 // connection, and the one credential minted for it, serve the stream and every
-// read behind it (CG7).
+// read behind it (CG7). `graph --json` is that shape done once — it opens the
+// database with CoordinatorDB and builds the store over that same client — so a
+// read and a stream of one scope share one connection instead of each opening
+// its own.
 func CoordinatorStore(ctx context.Context, lc *localcfg.Config) (*coordinator.Store, error) {
 	db, err := CoordinatorDB(ctx, lc)
 	if err != nil {
@@ -600,8 +603,9 @@ type coordinatorOptions struct {
 }
 
 // NewCoordinatorCmd is the coordinator's command tree: report, sweep, status,
-// show and intents. Exported because ee/register is what adds it to the
-// released tree (design docs/design/ee-boundary-moves.md §5.1).
+// show, intents, serve, login, logout and roadmap. Exported because ee/register
+// is what adds it to the released tree (design
+// docs/design/ee-boundary-moves.md §5.1).
 func NewCoordinatorCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "coordinator",
@@ -618,6 +622,9 @@ func NewCoordinatorCmd() *cobra.Command {
 	cmd.AddCommand(newCoordinatorShowCmd())
 	cmd.AddCommand(newCoordinatorIntentsCmd())
 	cmd.AddCommand(newCoordinatorServeCmd())
+	cmd.AddCommand(newCoordinatorLoginCmd())
+	cmd.AddCommand(newCoordinatorLogoutCmd())
+	cmd.AddCommand(newCoordinatorRoadmapCmd())
 	return cmd
 }
 

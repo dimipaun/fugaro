@@ -4,8 +4,8 @@ package cli
 //
 // docs/diagnose-agent/ holds the owner's spec verbatim, a reconciliation with
 // decisions D1600-D1614 answered (D1615-D1619 reserved and unused) and a plan
-// whose Checks 410-412 are taken. Six tasks of that plan are written and
-// four are not, and nothing in the folder is a command or a flag yet, so these tests pin
+// whose Checks 410-412 are taken. Nine tasks of that plan are written and one
+// is not, so these tests pin
 // only what rots silently: a decision row with an empty answer cell, a row in
 // the reserved tail, a check number the plan no longer holds, a current status
 // line that stops naming the part that is built, and a first-written status line
@@ -15,7 +15,8 @@ package cli
 // test fails naming D1605; add a D1615 row -> fails naming D1615; remove
 // "Check 411" from the plan -> the checks test fails; take "T-DG5" out of the
 // current status line -> the status test fails naming it, and the same for
-// "T-DG3", "T-DG4" and "T-DG7" -- every task named here is one each current status line
+// "T-DG3", "T-DG4", "T-DG6", "T-DG7", "T-DG8" and "T-DG9" -- every task named
+// here is one each current status line
 // has to keep naming while its files are in the tree, and each of the last
 // three was dropped by a later line before this guard named it.
 
@@ -34,8 +35,9 @@ const (
 	dgaTail  = 1619
 	// dgaStatusNow marks the folder's current status line, the one a reader of
 	// the directory sees first. Every folder in this repository dates a later
-	// status line, so the guards below read that line rather than the kept one.
-	dgaStatusNow = "**Status (2026-11-09):"
+	// status line, so the guards below read that line rather than the kept one:
+	// T-DG8's and T-DG9's both landed on 2026-11-11, and the later one says so.
+	dgaStatusNow = "**Status (2026-11-11, later):"
 	// dgaStatus is that line's own first sentence as written before the first
 	// task landed. It is pinned in the line kept below the current one: the
 	// folder's history is kept rather than rewritten, and the claim has to stay
@@ -93,15 +95,17 @@ func dgaStatusLine(t *testing.T, f string) string {
 			return line
 		}
 	}
-	t.Fatalf("%s%s carries no line opening with %q: T-DG5's and T-DG7's files are in the tree, and the folder's status has to say so -- if the line was reworded, move this guard's marker with it", dgaDir, f, dgaStatusNow)
+	t.Fatalf("%s%s carries no line opening with %q: T-DG5's, T-DG6's and T-DG7's files are in the tree, and the folder's status has to say so -- if the line was reworded, move this guard's marker with it", dgaDir, f, dgaStatusNow)
 	return ""
 }
 
 // TestDocsDiagnoseAgentStatusAndChecks: the folder states its own state in one
 // current line per document, and that line has to move with the tree. T-DG3's,
-// T-DG4's and T-DG5's files landed while both said nothing was implemented, so
-// the current line names the tasks that are written and the first-written line
-// is kept below it, still reading as what was true then. The clauses checked
+// T-DG4's, T-DG5's, T-DG6's, T-DG7's, T-DG8's, T-DG9's and T-DG10's files landed
+// while both said nothing was implemented, so the current line names the tasks
+// that are written and the
+// first-written line is kept below it, still reading as what was true then. The
+// clauses checked
 // here are the two a reader decides on: what is built, and that the rest of the
 // plan is not approved. Every task named in the list below has its files in the
 // tree, so a line that stops naming one reads as if that task were not built —
@@ -109,7 +113,7 @@ func dgaStatusLine(t *testing.T, f string) string {
 func TestDocsDiagnoseAgentStatusAndChecks(t *testing.T) {
 	for _, f := range []string{"README.md", "implementation-plan.md"} {
 		line := dgaStatusLine(t, f)
-		for _, want := range []string{"T-DG3", "T-DG4", "T-DG5", "T-DG7", "no other task is approved"} {
+		for _, want := range []string{"T-DG3", "T-DG4", "T-DG5", "T-DG6", "T-DG7", "T-DG8", "T-DG9", "T-DG10", "no other task is approved"} {
 			if !strings.Contains(line, want) {
 				t.Errorf("%s%s: the current status line does not say %q, so the folder reads as if that task's files were not in the tree, or as if the rest of the plan were approved: %s", dgaDir, f, want, line)
 			}
@@ -125,6 +129,56 @@ func TestDocsDiagnoseAgentStatusAndChecks(t *testing.T) {
 	for _, c := range []string{"Check 410", "Check 411", "Check 412"} {
 		if !strings.Contains(plan, c) {
 			t.Errorf("the plan no longer holds %s", c)
+		}
+	}
+}
+
+// TestDocsDiagnoseAgentChecksAreRegistered: the three checks the plan takes are
+// in the register a person running them reads, as the register's own convention
+// puts them — one summary row and one `## Check` section each — and each section
+// names the script, its sibling test and the task that wrote it, says it is
+// owner-run, and says it has NOT been run. A check number the plan holds and the
+// register does not is a check nobody can run; a section naming a script the
+// tree does not have is a reader's dead end; and a section that stopped saying
+// "not run" would read as a pass nobody earned. The census of the register's
+// highest written section is not read here: it stays 511, since 410 to 412 are
+// below it (docs_check340_test.go pins that number against the register).
+//
+// Their position is not asserted: the three sit after Check 511 and before the
+// forge block, because docs_forge_checks_test.go holds its own five last in the
+// register, so a block written after them is the one thing that pin forbids.
+func TestDocsDiagnoseAgentChecksAreRegistered(t *testing.T) {
+	checklist := readDoc(t, "docs/gcp-live-checklist.md")
+	for _, n := range []string{"410", "411", "412"} {
+		if !strings.Contains(checklist, "\n| "+n+" | ") {
+			t.Errorf("docs/gcp-live-checklist.md has no summary row %s: the register's rows are where a person running the checks finds them", n)
+		}
+		head := "## Check " + n + ": "
+		i := strings.Index(checklist, head)
+		if i < 0 {
+			t.Errorf("docs/gcp-live-checklist.md has no `%s` section for Check %s, though %s names the task that writes one", strings.TrimSpace(head), n, dgaDir+"implementation-plan.md")
+			continue
+		}
+		rest := checklist[i:]
+		if j := strings.Index(rest, "\n## Check "); j > 0 {
+			rest = rest[:j]
+		}
+		for _, want := range []string{
+			"scripts/live-checks/check-" + n + ".sh",
+			"scripts/live-checks/check-" + n + "_test.sh",
+			"T-DG10",
+			"never `belong`",
+			"no agent runs any step of it",
+			"NOT RUN",
+		} {
+			if !strings.Contains(rest, want) {
+				t.Errorf("Check %s's section does not say %q: it is the whole of what a person reading the register takes that check to be", n, want)
+			}
+		}
+		for _, p := range []string{"scripts/live-checks/check-" + n + ".sh", "scripts/live-checks/check-" + n + "_test.sh"} {
+			if _, err := os.Stat("../../" + p); err != nil {
+				t.Errorf("Check %s's section names %s and there is no such file: %v", n, p, err)
+			}
 		}
 	}
 }

@@ -122,6 +122,24 @@ type ProjectLayer struct {
 	tree map[string]any
 }
 
+// Applies reports whether l is the layer in force for a fugaro.yaml that
+// names project as its project: and gcpProject as its gcp_project: — the
+// two keys read leniently out of the file (ProjectOf, GCPProjectOf), which
+// are the same two a LayerAnchor is built from. Nothing but a file that
+// names both of the layer's own applies: a file that writes neither, or
+// one of them, keeps the layer's rows out of what a run resolves
+// (docs/design/layered-config.md §8).
+//
+// It is the one spelling of the rule, so that no reader can report a
+// layer's rows in force on a file a run would resolve without them: the
+// runner's ResolveConfig decides its Applied with it, and the two CLI
+// readers that hold a repository's bytes and a cached layer read by
+// project name (internal/cli's security paths and its security check)
+// ask it before they resolve the file over that layer.
+func (l *ProjectLayer) Applies(project, gcpProject string) bool {
+	return l != nil && project == l.Project && gcpProject == l.GCPProject
+}
+
 // Jobs is the project layer's jobs: block (R13): the installation's two
 // scheduled jobs, and whether each is stopped. Every field is a pointer
 // because the default is paused: a layer that writes no jobs: block, no block
@@ -222,6 +240,14 @@ type LayerDefaults struct {
 	Agent    LayerAgent    `yaml:"agent"`
 	Rigor    LayerRigor    `yaml:"rigor"`
 	Planning LayerPlanning `yaml:"planning"`
+	// ModelGrades is the escalation ladder's grades for every repository of
+	// the project (docs/outer-loop-escalation E2, D2039): the model each grade
+	// runs and the credential or pool its calls go out on, the pair a craft
+	// carries. It is a block of its own rather than part of defaults.agent
+	// because it is not an agent role: the ladder picks it per rung at run
+	// time, and a project that names no grade leaves it to the rung, which
+	// refuses and asks (D2039).
+	ModelGrades ModelGrades `yaml:"model_grades"`
 }
 
 // LayerPlanning is defaults.planning (docs/contract-first-decoupling, D1813):
@@ -242,6 +268,21 @@ func (l *ProjectLayer) SetsPlanning() bool {
 	}
 	d, _ := l.tree["defaults"].(map[string]any)
 	_, ok := d["planning"]
+	return ok
+}
+
+// SetsModelGrades reports whether the layer's text writes
+// defaults.model_grades, at any value, for the question SetsPlanning answers
+// about defaults.planning: a runner before modelGradesSince decodes the layer
+// with KnownFields, so the key alone is what it refuses, and LayerDefaults'
+// block cannot tell an absent one from a written empty one (both empty it) —
+// while the skew gate judges the text, not the value.
+func (l *ProjectLayer) SetsModelGrades() bool {
+	if l == nil {
+		return false
+	}
+	d, _ := l.tree["defaults"].(map[string]any)
+	_, ok := d["model_grades"]
 	return ok
 }
 
@@ -271,6 +312,22 @@ func (l *ProjectLayer) SetsLevelsNoneModel() bool {
 	}
 	d, _ := l.tree["defaults"].(map[string]any)
 	return levelsNoneModel(d["agent"])
+}
+
+// SetsVision reports whether the layer's text writes
+// defaults.agent.models.vision, at any value: a runner older than visionSince
+// (internal/cli) decodes the layer with KnownFields, so the key alone is what
+// it refuses, and LayerAgent's own value cannot tell a blank pin from none. It
+// reads the tree and not the parsed defaults for SetsRigor's reason, and it
+// answers true for the key written as a null leaf, which SetsDefault would
+// not: an older decoder refuses `models: { vision: }` exactly as it refuses a
+// model ID.
+func (l *ProjectLayer) SetsVision() bool {
+	if l == nil {
+		return false
+	}
+	d, _ := l.tree["defaults"].(map[string]any)
+	return visionKey(d["agent"])
 }
 
 // SetsGovernance reports whether the layer's text writes governance:, at any
@@ -926,6 +983,9 @@ func validateLayer(l *ProjectLayer, a LayerAnchor) []Problem {
 	}
 	for _, p := range validateAgentModels(Agent{Model: ag.Model, Models: ag.Models, Crafts: ag.Crafts}) {
 		p.Path = "defaults." + p.Path
+		ps = append(ps, p)
+	}
+	for _, p := range ValidateModelGrades(l.Defaults.ModelGrades, "defaults.model_grades") {
 		ps = append(ps, p)
 	}
 	for _, name := range sortedKeys(l.Profiles) {

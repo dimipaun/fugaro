@@ -12,7 +12,10 @@
 # minted for, a conditioned grant is evaluated against the resource's REAL name
 # (project NUMBER and all, so a condition anchored at the project ID never
 # matches, which is the trap finding (a) is about), secrets.create is granted
-# only without a condition (F30), and secrets.list only without one. The modes
+# only without a condition unless a mode bends that (F30, whose create half the
+# owner's 2026-11-11 run contradicted — the two modes below are the two readings
+# the check's create rows have to tell apart), and secrets.list only without
+# one. The modes
 # below bend exactly one of those rules at a time, which is what lets a case show
 # that the check notices.
 #
@@ -236,10 +239,19 @@ iam)
       : >"$state/sa/$sa"
       ;;
     describe)
-      [ -e "$state/sa/${sa%%@*}" ] || {
+      # The account, or — under the mode that models a deletion still
+      # propagating — the account the delete just removed, still describable
+      # once. That is what a read-back taken immediately after the delete sees,
+      # and what the check's own restore has to wait through (the owner's
+      # 2026-11-11 run reported it as a leftover).
+      if [ -e "$state/sa/${sa%%@*}" ]; then
+        :
+      elif [ -e "$state/sa-lagging/${sa%%@*}" ]; then
+        rm -f "$state/sa-lagging/${sa%%@*}"
+      else
         echo "ERROR: (gcloud.iam.service-accounts.describe) NOT_FOUND: $sa" >&2
         exit 1
-      }
+      fi
       ;;
     delete)
       case "$mode" in
@@ -247,7 +259,12 @@ iam)
       esac
       # gcloud takes either the email or the bare name, and this one is deleted
       # by the email the check recorded.
-      rm -f "$state/sa/${sa%%@*}" "$state/sa-bindings/${sa%%@*}"
+      if [ "$mode" = sa-delete-lags ]; then
+        mv "$state/sa/${sa%%@*}" "$state/sa-lagging/${sa%%@*}" 2>/dev/null || true
+      else
+        rm -f "$state/sa/${sa%%@*}"
+      fi
+      rm -f "$state/sa-bindings/${sa%%@*}"
       ;;
     add-iam-policy-binding)
       printf '%s\t%s\n' "$sa" "$member" >>"$state/sa-bindings/$sa"
@@ -507,13 +524,28 @@ if [ -f "$state/bindings.tsv" ]; then
     conditional_seen=yes
     case "$perm" in
     secrets.create)
-      # F30's reading: the check is made where the secret does not exist yet, so
-      # a condition on its name cannot admit a create. Only the mode that bends
-      # that rule admits it, and the check has to say so.
-      if [ "$mode" = create-conditioned-admitted ] && condition_allows_name "$bexpr" "$name"; then
+      # F30's reading was that the check is made where the secret does not exist
+      # yet, so a condition on its name cannot admit a create — which is what
+      # this fake does with no mode set. The owner's 2026-11-11 run measured
+      # otherwise inside the prefix, and the two rows the check takes have to
+      # tell the two possible readings apart: a condition IAM evaluates against
+      # the name the request carries (create-conditioned-admitted — the
+      # prefixes admitted, anything else refused: create IS fenced by name), and
+      # a conditioned grant that admits a create whatever the name is
+      # (create-conditioned-ignored — no name fence at all). They differ exactly
+      # on the row DS2.2 waits on, a create of a name outside both prefixes.
+      case "$mode" in
+      create-conditioned-admitted)
+        if condition_allows_name "$bexpr" "$name"; then
+          allowed=yes
+          break
+        fi
+        ;;
+      create-conditioned-ignored)
         allowed=yes
         break
-      fi
+        ;;
+      esac
       ;;
     secrets.list)
       if [ "$mode" = list-admits-some ]; then
@@ -674,6 +706,7 @@ run_check() { # run_check DIR ENV... [-- ARGS...]
     FAKE_MAX_ID_LENGTH="${FAKE_MAX_ID_LENGTH:-255}" \
     CHECK510_STAMP="$stamp" \
     CHECK510_IAM_WAIT_SECONDS=0 CHECK510_IAM_POLL_SECONDS=0 \
+    CHECK510_RESTORE_WAIT_SECONDS=2 CHECK510_RESTORE_POLL_SECONDS=1 \
     CHECK510_LENGTH_MAX_PROBE="${CHECK510_LENGTH_MAX_PROBE:-256}" \
     ${args[@]+"${args[@]}"} \
     bash ${bashargs[@]+"${bashargs[@]}"} "$script" ${cli[@]+"${cli[@]}"} >"$dir/out" 2>"$dir/err" || status=$?
@@ -683,7 +716,7 @@ run_check() { # run_check DIR ENV... [-- ARGS...]
 }
 
 prepare() { # dir
-  mkdir -p "$1/home" "$1/tmp" "$1/state/secrets" "$1/state/sa" "$1/state/sa-bindings"
+  mkdir -p "$1/home" "$1/tmp" "$1/state/secrets" "$1/state/sa" "$1/state/sa-bindings" "$1/state/sa-lagging"
   : >"$1/state/bindings.tsv"
   printf 'check510-owner@example.com\n' >"$1/state/account"
   # The project's NUMBER, which is what a Secret Manager resource name carries
@@ -697,13 +730,16 @@ prepare() { # dir
 }
 
 # what_is_left DIR: everything the check made that is still there, so a case can
-# say that its own cleanup (and not the test's) removed it.
+# say that its own cleanup (and not the test's) removed it. The lagging accounts
+# are read too: the mode models a deletion still propagating, and an account that
+# only moved there would otherwise be invisible to every case.
 what_is_left() { # dir
   local dir=$1 out=""
   out+=$(cd "$dir/state/secrets" && ls -1 2>/dev/null | tr '\n' ' ' || true)
   out+=$(grep -c . "$dir/state/bindings.tsv" 2>/dev/null | tr -d '\n' || true)
   out+=" binding line(s) "
   out+=$(cd "$dir/state/sa" && ls -1 2>/dev/null | tr '\n' ' ' || true)
+  out+=$(cd "$dir/state/sa-lagging" && ls -1 2>/dev/null | tr '\n' ' ' || true)
   printf '%s' "$out"
 }
 
@@ -754,6 +790,7 @@ test_dry_run() {
   # A row the plan did not measure reads INFO, never PASS: a plan is not a
   # reading, and a block that said PASS would be one nobody took.
   expect_contains "$out" "FACT condition-version-add-deny: INFO — planned" "dry run: a planned row is INFO"
+  expect_contains "$out" "FACT create-conditioned-outside: INFO — planned" "dry run: the row DS2.2 waits on is planned too"
   expect_contains "$out" "FACT secret-id-length: INFO — planned" "dry run: a planned measurement is INFO"
   expect_contains "$err" "the length bisection's creates" "dry run: the plan says what it would create"
   assert_no_writes "$dir" "dry run"
@@ -769,8 +806,15 @@ test_happy_path() {
   expect_contains "$out" "FACT condition-version-add-deny: PASS" "happy path: the refusal"
   expect_contains "$out" "FACT condition-delete-allow: PASS" "happy path: the conditioned delete"
   expect_contains "$out" "FACT condition-delete-deny: PASS" "happy path: the refused delete"
-  expect_contains "$out" "FACT create-conditioned: PASS" "happy path: the conditioned create is refused"
-  expect_contains "$out" "FACT create-unconditioned: PASS" "happy path: the unconditioned create is admitted"
+  expect_contains "$out" "FACT create-conditioned: REPORT" "happy path: the conditioned create, a reading and not a criterion"
+  # The control reading is read against the row after it, so the refusal's own
+  # message has to reach the block: the row is worthless as a control if the
+  # placeholder stands in for what Secret Manager said.
+  expect_contains "$out" "Permission 'secrets.create' denied on resource" "happy path: the conditioned create's refusal carries the API's own message"
+  expect_absent "$out" "the refusal carried no message in its body" "happy path: the placeholder is not printed in place of a refusal that carried a message"
+  expect_contains "$out" "FACT create-conditioned-outside: REPORT" "happy path: the conditioned create outside the prefixes"
+  expect_contains "$out" "FACT create-unconditioned: REPORT" "happy path: the unconditioned create, the control reading"
+  expect_contains "$out" "so there is no name fence to write and the unconditioned create stays" "happy path: F30's create half holding leaves the grant as planned"
   expect_contains "$out" "FACT list-condition-admits-nothing: PASS" "happy path: the conditioned list admits nothing"
   expect_contains "$out" "the longest admitted secret ID is 255 characters and 256 was refused" "happy path: the length bisection"
   expect_contains "$out" "FACT restore: PASS" "happy path: the restore"
@@ -1012,16 +1056,64 @@ test_a_delete_refused_with_something_other_than_403_is_a_failure() {
   expect_contains "$out" "did NOT measure the condition" "a refusal that was not a 403: why"
 }
 
-test_a_conditioned_create_that_is_admitted_is_a_failure() {
-  # F30 is the reason DS2.2 grants create unconditioned. If a conditioned create
-  # were admitted, the plan's own reason for that would be gone.
+test_a_conditioned_create_admitted_inside_the_prefix_is_a_reading() {
+  # What the owner's run of 2026-11-11 reported: a conditioned create WAS
+  # admitted for the name the condition names, so F30's create half — "the check
+  # is made on the project, so a conditioned create admits nothing" — is wrong
+  # there. It is a reading and no longer a failure: the run ends 0 with the
+  # reading printed, and what DS2.2 waits on is the row that follows, which here
+  # asks the same grant about a name it does not name and is REFUSED.
   local dir=$work/create-cond
   prepare "$dir"
   run_check "$dir" FAKE_MODE=create-conditioned-admitted
-  expect_status "$status" 1 "a conditioned create that was admitted"
-  expect_contains "$out" "FACT create-conditioned: FAIL" "a conditioned create that was admitted: the row"
-  expect_contains "$out" "Report this reading to the owner" "a conditioned create that was admitted: what follows"
-  assert_clean "$dir" "a conditioned create that was admitted"
+  expect_status "$status" 0 "a conditioned create admitted inside the prefix"
+  expect_contains "$out" "FACT create-conditioned: REPORT" "a conditioned create admitted inside the prefix: the row is a reading"
+  expect_contains "$out" "contradicts it, and it is the reading the owner's 2026-11-11 run reported" "a conditioned create admitted inside the prefix: the row says what it means"
+  expect_contains "$out" "FACT create-conditioned-outside: REPORT" "a conditioned create admitted inside the prefix: the outside row is a reading like the two beside it"
+  expect_contains "$out" "Create IS fenced by name under the condition in both directions" "a conditioned create admitted inside the prefix: what the pair means for DS2.2"
+  expect_contains "$out" "FACT create-unconditioned: REPORT" "a conditioned create admitted inside the prefix: the control reading"
+  expect_absent "$out" "FACT create-conditioned: FAIL" "a conditioned create admitted inside the prefix: no failure is claimed"
+  # The container the admitted create made is the check's, and its own restore
+  # is what removed it.
+  assert_clean "$dir" "a conditioned create admitted inside the prefix"
+}
+
+test_a_conditioned_create_admitted_outside_the_prefix_is_a_reading() {
+  # The other reading, and the one that keeps DS2.2 as written: the conditioned
+  # grant admits a create whatever the name is, so there is no name fence. Still
+  # exit 0 with the reading printed — the owner decides, the check does not —
+  # and the container the outside row made is deleted by the check's own restore
+  # and read back.
+  local dir=$work/create-out
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=create-conditioned-ignored
+  expect_status "$status" 0 "a conditioned create admitted outside the prefixes"
+  expect_contains "$out" "FACT create-conditioned-outside: REPORT" "a conditioned create admitted outside the prefixes: the row"
+  expect_contains "$out" "create is NOT fenced by name outside the prefix either" "a conditioned create admitted outside the prefixes: what it means"
+  expect_contains "$out" "the unconditioned create stays as DS2.2 has it" "a conditioned create admitted outside the prefixes: what follows for the grant"
+  expect_absent "$out" "FACT create-conditioned-outside: FAIL" "a conditioned create admitted outside the prefixes: no failure is claimed"
+  # The row's own call, and the restore's delete of the container it made: an
+  # admitted create is a real container in the owner's project.
+  expect_contains "$(cat "$dir/logs/curl.calls")" "secretId=fugaro-chk510-${stamp}-made-outside" "a conditioned create admitted outside the prefixes: the row's call"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "secrets delete fugaro-chk510-${stamp}-made-outside" "a conditioned create admitted outside the prefixes: the restore deletes it"
+  assert_clean "$dir" "a conditioned create admitted outside the prefixes"
+}
+
+test_a_create_probe_that_could_not_be_made_is_not_measured() {
+  # A status that is neither 200 nor 403 is not a reading of the condition: a 409
+  # is the name already taken (an earlier attempt's container). The row is a
+  # not-measured and the check ends 2, never 0 — a reading nobody took is not a
+  # reading for the owner.
+  local dir=$work/create-409
+  prepare "$dir"
+  : >"$dir/state/secrets/fugaro-chk510-${stamp}-made-outside"
+  run_check "$dir" FAKE_MODE=create-conditioned-ignored
+  expect_status "$status" 2 "a create probe that could not be made"
+  expect_contains "$out" "FACT create-conditioned-outside: FAIL" "a create probe that could not be made: the row"
+  expect_contains "$out" "answered 409 and not 200 or 403" "a create probe that could not be made: the status it read"
+  expect_contains "$err" "could NOT measure" "a create probe that could not be made: the exit is a not-measured"
+  # The container the case put there is the case's, and the check must leave it.
+  [ -e "$dir/state/secrets/fugaro-chk510-${stamp}-made-outside" ] || fail "a create probe that could not be made: the check deleted the container that was already there"
 }
 
 test_a_create_that_is_not_admitted_unconditioned_is_unmeasured() {
@@ -1178,6 +1270,34 @@ test_a_binding_the_restore_cannot_remove_is_a_failure() {
   expect_contains "$out" "binding(serviceAccount:chk510-${stamp}@fugaro-dev.iam.gserviceaccount.com" "a binding the restore could not remove: the row names it"
 }
 
+test_a_service_account_deletion_not_visible_at_once_is_waited_for() {
+  # The owner's 2026-11-11 run reported `service-account(...)` as a leftover its
+  # restore "could not confirm what it deleted" — the read-back was taken while
+  # the deletion was still propagating, and the command was never the suspect.
+  # The restore waits it out here, and says so, rather than reporting an account
+  # that is on its way out as something left in the owner's project.
+  local dir=$work/sa-lag
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=sa-delete-lags
+  expect_status "$status" 0 "a deletion that is not visible at once"
+  expect_contains "$out" "FACT restore: PASS" "a deletion that is not visible at once: the row"
+  expect_contains "$err" "the deletion of chk510-${stamp}@fugaro-dev.iam.gserviceaccount.com became visible after 1s" "a deletion that is not visible at once: the wait is said"
+  expect_absent "$out" "service-account(chk510-${stamp}" "a deletion that is not visible at once: no leftover is claimed"
+  assert_clean "$dir" "a deletion that is not visible at once"
+}
+
+test_an_account_the_restore_cannot_delete_is_a_failure() {
+  # The wait must not turn a real leftover into a pass: an account the delete
+  # never removed is still a FAIL that names it, exactly as a container is.
+  local dir=$work/restore-sa
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=sa-delete-does-nothing
+  expect_status "$status" 1 "an account the restore could not delete"
+  expect_contains "$out" "FACT restore: FAIL" "an account the restore could not delete: the row"
+  expect_contains "$out" "service-account(chk510-${stamp}@fugaro-dev.iam.gserviceaccount.com)" "an account the restore could not delete: the row names it"
+  expect_contains "$out" "delete them yourself" "an account the restore could not delete: what to do"
+}
+
 test_an_account_that_cannot_be_created_is_not_measured() {
   local dir=$work/sa-fail
   prepare "$dir"
@@ -1233,7 +1353,9 @@ t test_a_condition_ignored_on_add_is_a_failure
 t test_a_condition_ignored_on_delete_is_a_failure
 t test_a_delete_the_condition_admits_is_a_failure_when_the_name_stays
 t test_a_delete_refused_with_something_other_than_403_is_a_failure
-t test_a_conditioned_create_that_is_admitted_is_a_failure
+t test_a_conditioned_create_admitted_inside_the_prefix_is_a_reading
+t test_a_conditioned_create_admitted_outside_the_prefix_is_a_reading
+t test_a_create_probe_that_could_not_be_made_is_not_measured
 t test_a_create_that_is_not_admitted_unconditioned_is_unmeasured
 t test_a_conditioned_list_that_admits_something_is_a_failure
 t test_a_conditioned_list_fenced_to_the_prefixes_is_a_failure
@@ -1245,6 +1367,8 @@ t test_a_probe_of_no_more_than_the_checks_prefix_is_unmeasured
 t test_a_length_probe_refused_for_another_reason_is_not_measured
 t test_a_container_the_restore_cannot_delete_is_a_failure
 t test_a_binding_the_restore_cannot_remove_is_a_failure
+t test_a_service_account_deletion_not_visible_at_once_is_waited_for
+t test_an_account_the_restore_cannot_delete_is_a_failure
 t test_an_account_that_cannot_be_created_is_not_measured
 t test_a_token_that_cannot_be_minted_stops_the_check
 

@@ -1,7 +1,7 @@
 # A vision-capable model for a run on a text-only coder: implementation plan
 
 **Status: plan only; nothing is implemented; no task is approved, and none has a release slot.** The
-owner has answered none of D2000–D2016, so every task below is written to the recommendation
+owner answered D2000–D2016 on 2026-11-10, every one as recommended, and every task below is written to that answer
 [reconciliation.md](reconciliation.md) §4 gives, and each task names the decisions it carries. Where a
 task and the reconciliation disagree, **the reconciliation's findings (F1–F19) and decisions
 (D2000–D2016) win and the task is wrong**.

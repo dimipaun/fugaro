@@ -59,6 +59,7 @@ import {
   writeCrashSwitch,
 } from '../../src/main/crashstore'
 import type { CrashFs } from '../../src/main/crashstore'
+import { reportedMode } from '../support/fsMode'
 
 /** made is every temporary directory this file has handed out, so one rule at the
  * end of each case can take them all away: these hold FIFOs, links and files that
@@ -80,6 +81,8 @@ afterEach(() => {
  * the tool is POSIX's, and a host without it skips those cases with the reason
  * rather than failing on a name it cannot create. */
 const mkfifoAbsent = ((): boolean => {
+  // Git for Windows ships an msys `mkfifo` whose pipe `node:fs` does not see as a FIFO.
+  if (process.platform === 'win32') return true
   const probe = mkdtempSync(join(tmpdir(), 'fugaro-crash-'))
   try {
     execFileSync('mkfifo', [join(probe, 'probe')])
@@ -207,7 +210,7 @@ describe('the crash-reporting switch’s file', () => {
     const text = readFileSync(path, 'utf8')
     expect(text).toBe('true')
     expect(typeof (JSON.parse(text) as unknown)).toBe('boolean')
-    expect(statSync(path).mode & 0o777).toBe(CRASH_FILE_MODE)
+    expect(statSync(path).mode & 0o777).toBe(reportedMode(CRASH_FILE_MODE))
 
     expect(fs.calls.filter((call) => call.startsWith('mkdir:'))).toEqual([`mkdir:${directory}`])
     const write = only(fs.calls.filter((call) => call.startsWith('writeFile:')))

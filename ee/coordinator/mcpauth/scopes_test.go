@@ -27,9 +27,9 @@ import (
 // before M7 existed — there was no registry and no resource server, so even a
 // token the server itself had minted was answered 401.
 //
-// The unknown name is `roadmap:write`, the one D927 refuses by name: it is a
-// real scope for a surface that does not exist yet, which is exactly the value
-// a later build would make known, and a door that ignored it today would serve
+// The unknown name is `roadmap:read`, the reading half beside D2121's write:
+// it is a near miss of a name this build does mint, which is exactly the value
+// a later build could make known, and a door that ignored it today would serve
 // its holder tomorrow's permission today.
 func TestUnknownScopeIsRefusedNotIgnored(t *testing.T) {
 	ts := newResourceServer(t)
@@ -44,7 +44,7 @@ func TestUnknownScopeIsRefusedNotIgnored(t *testing.T) {
 	// seeded rather than minted through the flow, because the flow refuses to
 	// mint it (Limits.Validate) — which is the point: a value only a later
 	// build could issue is exactly what this door has to refuse.
-	const unknown = "roadmap:write"
+	const unknown = "roadmap:read"
 	ts.seedAccessToken(t, testSeededToken, Token{
 		Identity:  testIdentity,
 		ClientID:  "client-that-minted-it",
@@ -94,7 +94,11 @@ func TestTheCatalogueMapsEveryToolToAScopeV1Mints(t *testing.T) {
 			t.Errorf("ToolScope(%q) = %q, %v; want the catalogue's own %q", spec.name, scope, ok, spec.scope)
 		}
 	}
-	if _, ok := ToolScope("get_state"); ok {
+	// retry_task is D1224's own example of a name that is not a tool of this
+	// front door: the retry is a spawn_task carrying the same idempotency key
+	// family, so the name belongs to no catalogue entry and the mapping has to
+	// say so rather than answer with a scope for it.
+	if _, ok := ToolScope("retry_task"); ok {
 		t.Error("ToolScope maps a name the catalogue does not hold: a name outside the table has no scope and is not served")
 	}
 }
@@ -112,8 +116,8 @@ func TestCheckScopesRefusesAnEmptySetAndAnUnknownOne(t *testing.T) {
 	}{
 		{"one scope", []string{ScopeTasksRead}, nil},
 		{"both scopes", []string{ScopeTasksRead, ScopeTasksWrite}, nil},
-		{"one unknown scope", []string{ScopeTasksRead, "roadmap:write"}, ErrUnknownScope},
-		{"only an unknown scope", []string{"roadmap:write"}, ErrUnknownScope},
+		{"one unknown scope", []string{ScopeTasksRead, "roadmap:read"}, ErrUnknownScope},
+		{"only an unknown scope", []string{"roadmap:read"}, ErrUnknownScope},
 		{"no scopes at all", nil, ErrNoScope},
 		{"an empty set", []string{}, ErrNoScope},
 	} {

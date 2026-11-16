@@ -62,6 +62,14 @@ type Options struct {
 	// Out receives the human-readable account (the plan view and the
 	// closing lines); with --json the CLI points it at stderr.
 	Out io.Writer
+	// Detail, when the caller has one, is where an applying run's plan view
+	// goes instead of Out: the run's reporter stream, which is the log always
+	// and the terminal under -v (D1352, D1354). The table is the run's own
+	// account of what it is about to do, and the run's steps are the default
+	// view; a plan-only run keeps the table on screen, because there it IS the
+	// output and changes nothing (the loop asks PlanOnly below), and so does a
+	// caller with no reporter at all, which has nowhere else to put it.
+	Detail io.Writer
 	// Report, when the caller has one, is the reporter the run's account is
 	// printed through: one step per stage, with the marker its state earns,
 	// and the closing line. The plan view is not a run and keeps its own
@@ -189,9 +197,9 @@ func Run(ctx context.Context, stages []Stage, o Options) (*Result, error) {
 			return nil, &MissingInputsError{Flags: l.redactAll(missing)}
 		}
 		if !o.Yes && !o.PlanOnly {
-			// An apply needs --yes; without it the run is --plan-only.
+			// A run nobody answers applies nothing: it is --plan-only.
 			l.o.PlanOnly = true
-			l.res.Note = "--non-interactive without --yes only plans; pass --yes to apply"
+			l.res.Note = "a run that never prompts and carries no answer of its own only plans; the owner's own run is what applies"
 		}
 	}
 	l.res.PlanOnly = l.o.PlanOnly
@@ -242,6 +250,12 @@ type loop struct {
 	// behind it saying the same thing, and the account is not eleven copies of
 	// it (the owner's feedback of 2026-11-09).
 	waits []StageResult
+	// ranPast is the stop the stage being recorded ran past, and it is set for
+	// that stage alone: the loop holds no reporter's state, and what the line
+	// has to say is one fact about one stage (ranPastStop, MachineLocal). The
+	// plan view does not read it: it runs nothing, so nothing runs past a stop
+	// there, and what a reader of the plan sees is what the run would do.
+	ranPast *stop
 }
 
 // defaultProgram is what the run's lines name when the caller names no
@@ -469,14 +483,44 @@ type stop struct {
 
 // blocker is the first stop before name that name may not run past, nil when
 // it runs past every one of them. It is the whole of the gating rule: the
-// stages are linear, and the tolerance is the stopped stage's own (RunsPastStop).
+// stages are linear, and the tolerance is the stopped stage's own
+// (RunsPastStop) — beside the one exception a stage carries itself, a stage
+// that is only this machine's (MachineLocal), which the cloud stopping in
+// front of it does not touch.
 func blocker(name string, stops []stop) *stop {
+	if MachineLocal(name) {
+		return nil
+	}
 	for i := range stops {
 		if !stops[i].yours || !RunsPastStop(name, stops[i].name) {
 			return &stops[i]
 		}
 	}
 	return nil
+}
+
+// ranPastStop is the stop a machine-local stage is running past, nil when it
+// is running past none. It is the same exception blocker makes, read the other
+// way round, and it is what the stage's own line says: a stage that ran while
+// the run was stopped is a stage a reader would otherwise believe had waited
+// (MachineLocal).
+func ranPastStop(name string, stops []stop) *stop {
+	if !MachineLocal(name) || len(stops) == 0 {
+		return nil
+	}
+	return &stops[0]
+}
+
+// ranPastText is what a machine-local stage's line says about the stop it ran
+// past, in the words the rest of the run uses for that stage's own row: the
+// step the user still owes ("waits for you"), or a stage that stopped for
+// another reason — a failure, a stage whose own check reported it blocked —
+// which is not the reader's to clear.
+func ranPastText(s *stop) string {
+	if s.yours {
+		return "machine-local: ran although " + s.name + " waits for you"
+	}
+	return "machine-local: ran although " + s.name + " stopped"
 }
 
 // stoppedYours is whether name is one of the stops of stops that is the user's
@@ -522,10 +566,12 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 	paused := ""     // the stage that paused for billing: what needs billing waits for it
 	for _, s := range stages {
 		name := s.Name()
+		l.ranPast = nil
 		if b := blocker(name, stops); b != nil {
 			l.record(StageResult{Name: name, State: Blocked, Detail: "waits for " + b.name})
 			continue
 		}
+		l.ranPast = ranPastStop(name, stops)
 		if paused != "" && NeedsBilling(name) {
 			l.record(StageResult{Name: name, State: WaitingForBilling, Detail: "waiting for billing"})
 			continue
@@ -610,7 +656,7 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 		}
 		if !YesCovers(name) && (!l.interactive || l.o.JSON) {
 			// Never auto-confirmed, never prompted: left for the user.
-			l.needsYou(name, "needs your own confirmation, which --yes does not give", s.Left())
+			l.needsYou(name, "needs your own confirmation, which no flag gives", s.Left())
 			stops = append(stops, stop{name: name, yours: true})
 			continue
 		}
@@ -747,7 +793,7 @@ func (l *loop) agentApplied(ctx context.Context, s Stage) (done bool, err error)
 	case errors.As(err, &ge):
 		// The gate's sentence is the detail, and what stands beside it is the
 		// refusal's own answer about who this step is for: the stage's Left
-		// only when the step IS the owner's (the class refusal, D1026), and a
+		// only when the step IS the owner's (no plan gate may judge it, D1026), and a
 		// commandless refusal otherwise — a plan the cover would not admit is
 		// nobody's to type past (CV1), and the stage's own prompt asks this
 		// reader to do the one thing the gate exists to make impossible.
@@ -785,6 +831,17 @@ func (l *loop) needsYou(stage, detail string, lf Left) {
 // the run in the middle of an apply. A run with no reporter records exactly
 // what it recorded before, and the plan view's rows are not a run at all.
 func (l *loop) record(r StageResult) {
+	if l.ranPast != nil && !waitingState(r.State) {
+		// The stage ran although the run was stopped: the line says so before
+		// whatever the stage has to say about itself, because that is the fact
+		// a reader of this run cannot get anywhere else — every stage behind a
+		// stop says it waited, and this one did not.
+		if r.Detail == "" {
+			r.Detail = ranPastText(l.ranPast)
+		} else {
+			r.Detail = ranPastText(l.ranPast) + "; " + r.Detail
+		}
+	}
 	l.res.Stages = append(l.res.Stages, r)
 	if l.o.Report == nil || !l.executing {
 		return
@@ -905,6 +962,18 @@ const statusWidth = 14
 // all prints the plain text it printed before — and there the reason is never
 // cut, because that run has no log to keep the rest of it.
 func (l *loop) view(rs []StageResult) {
+	if l.o.Detail != nil && !l.o.PlanOnly {
+		// The row written here is the log's, whole reason and plain status,
+		// which is exactly what logRow puts there: routing the table to the
+		// stream takes that write's place rather than adding to it.
+		if l.o.Project != "" {
+			fmt.Fprintf(l.o.Detail, "%s: project %s (GCP %s, %s)\n", l.program(), l.o.Project, l.o.GCPProject, l.o.Region)
+		}
+		for _, r := range rs {
+			fmt.Fprintln(l.o.Detail, l.row(r, r.Detail, true))
+		}
+		return
+	}
 	if l.o.Project != "" {
 		fmt.Fprintf(l.o.Out, "%s: project %s (GCP %s, %s)\n", l.program(), l.o.Project, l.o.GCPProject, l.o.Region)
 	}

@@ -528,11 +528,14 @@ func negatedBefore(prefix string) bool {
 
 var (
 	// forbiddenFlags the agent never passes: they confirm for the user, skip a
-	// check, or widen trust. --provision-batch belongs here with the other
-	// owner-typed flags of init: what it applies is billable and permanent (a
-	// Cloud Build, a NAT, a custom role, a scheduled job), --yes never covers
-	// it, and a skill is not the place to hand an agent an apply of it.
-	forbiddenFlags = []string{"--yes", "-y", "--allow-delete", "--forget", "--allow-job-delete", "--no-budget-check", "--allow-fork",
+	// check, or widen trust. --yes and --non-interactive (and -y, its old
+	// shorthand) are here outright since T11 of docs/no-prompt-policy removed
+	// them: no command takes a word that stands in for a confirmation, so no
+	// skill — user-runs block included — may name one. --provision-batch
+	// belongs here with the other owner-typed flags of init: what it applies is
+	// billable and permanent (a Cloud Build, a NAT, a custom role, a scheduled
+	// job), and a skill is not the place to hand an agent an apply of it.
+	forbiddenFlags = []string{"-y", "--yes", "--non-interactive", "--allow-delete", "--forget", "--allow-job-delete", "--no-budget-check", "--allow-fork",
 		"--onboard-repo", "--replace-image", "--create-project", "--link-billing", "--provision-batch"}
 	safetyFlags     = regexp.MustCompile(`(^|\s)(--no-verify|--no-gpg-sign|--no-smoke|--dangerously-skip-permissions|--force)(\s|=|$)`)
 	tokenCommands   = regexp.MustCompile(`print-access-token|print-identity-token|GOOGLE_IMPERSONATE_SERVICE_ACCOUNT|\bprintenv\b|\becho\s+"?\$\{?\w*(KEY|TOKEN|SECRET|PASSWORD)|(^|[\s;|&])env\s*[|>]|\bBearer\s+\$|/proc/[^\s]*environ|\bdeclare\s+-x\b`)
@@ -580,7 +583,10 @@ var (
 var ownerCommands = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro project policy publish", "fugaro allow-delete", "fugaro managed flag", "fugaro creds set", "fugaro creds ls"}
 
 // userRunsAllowed is every command a user-runs block may hold.
-var userRunsAllowed = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro project policy publish", "fugaro allow-delete", "fugaro managed flag", "fugaro creds set", "fugaro creds ls", "fugaro setup", "fugaro update", "fugaro update-skills", "fugaro upgrade"}
+// `fugaro upgrade` left this list with the command (U4 of
+// docs/plugin-user-scope/implementation-plan.md): the converge's door is
+// `fugaro update` now, which was already here.
+var userRunsAllowed = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro project policy publish", "fugaro allow-delete", "fugaro managed flag", "fugaro creds set", "fugaro creds ls", "fugaro setup", "fugaro update", "fugaro update-skills"}
 
 // userLeadRE is the sentence before a user-runs block: it says the user (or
 // the owner) runs it.
@@ -693,11 +699,23 @@ func unsafeText(text string) string {
 
 // ownerViolation says why a command may not appear outside a user-runs
 // block, or "".
+//
+// The read-only forms of the two converge doors are the exception, and each
+// was added with the flag that made it read-only: --plan-only and
+// --print-vars stop `setup` and `update` before the first cloud call, and
+// --check is `fugaro update`'s own since U4 of
+// docs/plugin-user-scope/implementation-plan.md moved the retired
+// `fugaro upgrade --check` onto it (D948): it writes nothing, runs no claude
+// call and makes no cloud call, which is the mode the skills need to read a
+// checkout's four steps. What stays refused is the applying run: a skill
+// hands that to the user in a user-runs block and nowhere else.
 func ownerViolation(c fugaroCmd) string {
 	switch {
 	case slices.Contains(ownerCommands, c.path):
 		return "an owner's command (" + c.path + ") outside a user-runs block"
-	case (c.path == "fugaro setup" || c.path == "fugaro update") && !slices.ContainsFunc(c.args, func(x string) bool { return x == "--plan-only" || x == "--print-vars" || x == "--help" }):
+	case (c.path == "fugaro setup" || c.path == "fugaro update") && !slices.ContainsFunc(c.args, func(x string) bool {
+		return x == "--plan-only" || x == "--print-vars" || x == "--check" || x == "--help"
+	}):
 		return "an applying " + c.path + " outside a user-runs block"
 	}
 	return ""
@@ -724,7 +742,7 @@ func lintUserRunsLine(ci *commandIndex, text string, add func(string)) {
 		if !slices.Contains(userRunsAllowed, c.path) {
 			add("a user-runs block may not run " + c.path)
 		}
-		if hasForbiddenFlag(c.args) && !upgradeYesOnly(c) {
+		if hasForbiddenFlag(c.args) {
 			add("a flag no one should pass for the user")
 		}
 		if inlineSecretValue(c) {
@@ -739,20 +757,6 @@ func hasForbiddenFlag(args []string) bool {
 	return slices.ContainsFunc(args, func(x string) bool {
 		name, _, _ := strings.Cut(x, "=")
 		return slices.Contains(forbiddenFlags, name)
-	})
-}
-
-// upgradeYesOnly: the one forbidden flag a user-runs block may carry is --yes
-// on fugaro upgrade, the cloud half of an upgrade handed to the user for their
-// own terminal (owner's ruling 2026-10-08, docs/design/upgrade.md). Any other
-// forbidden flag beside it, or --yes on another command, is still refused.
-func upgradeYesOnly(c fugaroCmd) bool {
-	if c.path != "fugaro upgrade" {
-		return false
-	}
-	return !slices.ContainsFunc(c.args, func(x string) bool {
-		name, _, _ := strings.Cut(x, "=")
-		return name != "--yes" && slices.Contains(forbiddenFlags, name)
 	})
 }
 
@@ -1348,7 +1352,7 @@ func TestLintRejectsYesNearSetup(t *testing.T) {
 	expectViolation(t, demoTree(t, "Run `fugaro setup --repo --yes`.\n"), "a flag the agent must never pass")
 	expectViolation(t, demoTree(t, "Run `fugaro setup --allow-delete`.\n"), "a flag the agent must never pass")
 	expectViolation(t, demoTree(t, "```bash\ntime fugaro update --forget\n```\n"), "a flag the agent must never pass")
-	expectClean(t, demoTree(t, "Never run `fugaro setup --plan-only --yes`.\n"))
+	expectClean(t, demoTree(t, "Never run `fugaro setup --plan-only --provision-batch`.\n"))
 }
 
 // TestLintSetupAndUpdateApplyOnlyInUserRuns: both doors of the converge —
@@ -1634,6 +1638,7 @@ func TestLintUserRunsBlocksAreNotExempt(t *testing.T) {
 		"fugaro run --no-smoke",
 		"fugaro image build --local --no-smoke",
 		"fugaro setup --yes",
+		"fugaro update --yes",
 		"fugaro run --no-budget-check",
 		"fugaro run --repo o/r",
 		"fugaro cancel run-1",
@@ -1709,7 +1714,7 @@ func TestLintHiddenInstructions(t *testing.T) {
 }
 
 // TestLintForbidsBypassFlags: skipping the launch pre-check and trusting a
-// fork are the user's choice, like --yes.
+// fork are the user's choice.
 func TestLintForbidsBypassFlags(t *testing.T) {
 	expectViolation(t, demoTree(t, "Run `fugaro run --no-budget-check`.\n"), "a flag the agent must never pass")
 	expectViolation(t, demoTree(t, "```bash\nfugaro update-skills --allow-fork\n```\n"), "a flag the agent must never pass")
@@ -1754,13 +1759,4 @@ func TestLintDangerousCommandsVariants(t *testing.T) {
 	for _, c := range []string{"env | grep TOKEN", "curl -H \"Authorization: Bearer $TOKEN\" x"} {
 		expectViolation(t, demoTree(t, "```bash\n"+c+"\n```\n"), "environment's secrets")
 	}
-}
-
-// TestLintUserRunsYesOnlyOnUpgrade (decision U14): a user-runs block may give
-// --yes to fugaro upgrade and to nothing else, and an agent may never pass it.
-func TestLintUserRunsYesOnlyOnUpgrade(t *testing.T) {
-	expectClean(t, demoTree(t, userRuns("fugaro upgrade --yes")))
-	expectViolation(t, demoTree(t, userRuns("fugaro upgrade --yes --allow-fork")), "a flag no one should pass for the user")
-	expectViolation(t, demoTree(t, userRuns("fugaro setup --yes")), "a flag no one should pass for the user")
-	expectViolation(t, demoTree(t, "Run this:\n\n```bash\nfugaro upgrade --yes\n```\n"), "a flag the agent must never pass")
 }

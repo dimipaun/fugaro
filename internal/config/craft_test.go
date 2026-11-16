@@ -171,3 +171,93 @@ func TestReservedCredentialNamesRefuse(t *testing.T) {
 		t.Errorf("%q is accepted as a craft's access", DefaultClaudeAccount)
 	}
 }
+
+// poolMembers is the credentials block the pool tests read: one subscription
+// credential a pool of one may name.
+func poolMembers() []Credential {
+	return []Credential{{Name: "oauth-one", Type: CredentialTypeClaudeOAuth}}
+}
+
+// TestNewPoolWithoutOwnerRefused: a pool written at the version that gives
+// pools an owner names one (D1936), and the rule is the PUBLISHED node's alone.
+// Two documents carry a pool and they are not the same thing: the policy node
+// is what every run of the project resolves a credential through, so a pool
+// nobody owns there is a pool nobody answers for — `fugaro project policy
+// publish` reads the node it replaces and refuses it. The installation's own
+// config is the owner's own file, and `fugaro update` may not rewrite it: a
+// config an upgrade starts refusing is a broken installation (CLAUDE.md's HARD
+// RULE), and no pool of it is served from a slip until it is published.
+//
+// A pool that predates owners is the third case, and it is why the marker is a
+// name of its own: `legacy_open` says "served to everyone, the way it was",
+// and the absence of `owner` says nothing at all (F37).
+func TestNewPoolWithoutOwnerRefused(t *testing.T) {
+	ownerless := Pool{Name: "claude", Members: []string{"oauth-one"}}
+	if ps := ValidatePools([]Pool{ownerless}, poolMembers()); len(ps) != 0 {
+		t.Errorf("an installation's own pool with no owner is refused: %v", ps)
+	}
+	ps := ValidatePublishedPools([]Pool{ownerless}, poolMembers())
+	if len(ps) != 1 {
+		t.Fatalf("a published pool with no owner is answered with %d problem(s), want one: %v", len(ps), ps)
+	}
+	if ps[0].Path != "pools.claude" || !strings.Contains(ps[0].Message, "owner is required") {
+		t.Errorf("the refusal is %q at %q, want the pool's owner named as missing", ps[0].Message, ps[0].Path)
+	}
+	for _, ok := range []Pool{
+		{Name: "claude", Members: []string{"oauth-one"}, Owner: "owner@example.com"},
+		{Name: "claude", Members: []string{"oauth-one"}, LegacyOpen: true},
+	} {
+		if ps := ValidatePublishedPools([]Pool{ok}, poolMembers()); len(ps) != 0 {
+			t.Errorf("%+v is refused as a published pool: %v", ok, ps)
+		}
+	}
+	// The marker and an owner are two answers to one question, and a pool that
+	// carries both is refused wherever it is written rather than resolved to
+	// one of them.
+	for _, bad := range []Pool{
+		{Name: "claude", Members: []string{"oauth-one"}, Owner: "owner@example.com", LegacyOpen: true},
+		{Name: "claude", Members: []string{"oauth-one"}, AllowedUsers: []string{"teammate@example.com"}, LegacyOpen: true},
+	} {
+		if ps := ValidatePools([]Pool{bad}, poolMembers()); len(ps) == 0 {
+			t.Errorf("%+v is written and nothing refuses it", bad)
+		}
+	}
+	// The owner and the allowed users are addresses: the roster is keyed by
+	// email (R10), so a value no address could be is a pool no person is ever
+	// served from.
+	for _, bad := range []Pool{
+		{Name: "claude", Members: []string{"oauth-one"}, Owner: "owner"},
+		{Name: "claude", Members: []string{"oauth-one"}, Owner: "owner@example.com", AllowedUsers: []string{"teammate"}},
+		{Name: "claude", Members: []string{"oauth-one"}, Owner: "owner@example.com", AllowedUsers: []string{"one@example.com", "one@example.com"}},
+	} {
+		if ps := ValidatePools([]Pool{bad}, poolMembers()); len(ps) == 0 {
+			t.Errorf("%+v is written and nothing refuses it", bad)
+		}
+	}
+}
+
+// TestNewPoolDefaultsToOnlyOwner: D1936's default is the owner alone, and a
+// pool that names allowed users serves them too. A pool with no owner and no
+// marker serves nobody — the state a pool is in while it is being written, and
+// the direction a pool nobody answers for has to fail in.
+func TestNewPoolDefaultsToOnlyOwner(t *testing.T) {
+	p := Pool{Name: "claude", Members: []string{"oauth-one"}, Owner: "owner@example.com"}
+	if !p.Serves("owner@example.com") {
+		t.Error("a pool does not serve its own owner")
+	}
+	for _, email := range []string{"teammate@example.com", "", "OWNER@example.com"} {
+		if p.Serves(email) {
+			t.Errorf("a pool with no allowed users serves %q", email)
+		}
+	}
+	p.AllowedUsers = []string{"teammate@example.com"}
+	if !p.Serves("teammate@example.com") || !p.Serves("owner@example.com") {
+		t.Error("a pool with an allowed user does not serve both that user and its owner")
+	}
+	if p.Serves("stranger@example.com") {
+		t.Error("a pool serves someone neither the owner nor an allowed user")
+	}
+	if (Pool{Name: "claude", Members: []string{"oauth-one"}}).Serves("anyone@example.com") {
+		t.Error("a pool with no owner and no marker serves someone")
+	}
+}

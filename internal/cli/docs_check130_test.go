@@ -32,7 +32,7 @@ const (
 	check130RunLine  = "**Run it:** `bash scripts/live-checks/check130.sh`"
 	check130Row      = "130"
 	check130RowRun   = "`bash scripts/live-checks/check130.sh`"
-	check130RowState = "**USER-RUN, NOT RUN.**"
+	check130RowState = "**USER-RUN, RUN 2026-11-11: PASS.**"
 )
 
 // TestDocsCheck130IsOneScriptTheOwnerRuns: the section tells the owner to run
@@ -42,7 +42,7 @@ func TestDocsCheck130IsOneScriptTheOwnerRuns(t *testing.T) {
 	doc := readDoc(t, liveChecksDoc)
 	section := registerSection(t, doc, check130Heading)
 	for _, want := range []string{
-		"**NOT RUN.**",
+		"**RUN 2026-11-11: PASS.**",
 		check130RunLine,
 		"no agent runs any step of it",
 		"ONE runnable, idempotent script",

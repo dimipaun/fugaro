@@ -32,7 +32,7 @@ func TestModelsAddRefusesAClaudeID(t *testing.T) {
 	_, path := modelsWriteHome(t)
 	before := readFileString(t, path)
 
-	_, _, err := execute(t, "models", "add", "claude-sonnet-5-5", "--yes")
+	_, _, err := execute(t, "models", "add", "claude-sonnet-5-5")
 	if err == nil {
 		t.Fatal("a Claude ID was added as a provider model")
 	}
@@ -51,7 +51,7 @@ func TestModelsAddRefusesAVariant(t *testing.T) {
 	_, path := modelsWriteHome(t)
 	before := readFileString(t, path)
 
-	_, _, err := execute(t, "models", "add", "vendor/model-z:free", "--price-in", "1", "--price-out", "2", "--yes")
+	_, _, err := execute(t, "models", "add", "vendor/model-z:free", "--price-in", "1", "--price-out", "2")
 	if err == nil {
 		t.Fatal("a variant was added")
 	}
@@ -71,7 +71,7 @@ func TestModelsAddRefusesAnUnpricedModelWithoutPrices(t *testing.T) {
 	_, path := modelsWriteHome(t)
 	before := readFileString(t, path)
 
-	_, _, err := execute(t, "models", "add", "vendor/model-z", "--yes")
+	_, _, err := execute(t, "models", "add", "vendor/model-z")
 	if err == nil {
 		t.Fatal("an uncatalogued model was added with no price")
 	}
@@ -84,7 +84,7 @@ func TestModelsAddRefusesAnUnpricedModelWithoutPrices(t *testing.T) {
 		t.Errorf("the refused add wrote the file:\n%s", got)
 	}
 	// One flag alone is not the pair the model needs.
-	_, _, err = execute(t, "models", "add", "vendor/model-z", "--price-in", "1", "--yes")
+	_, _, err = execute(t, "models", "add", "vendor/model-z", "--price-in", "1")
 	if err == nil {
 		t.Fatal("a half-given price was accepted")
 	}
@@ -100,7 +100,7 @@ func TestModelsAddRefusesAnUnpricedModelWithoutPrices(t *testing.T) {
 func TestModelsAddAppendsTheExactIDNeverAPattern(t *testing.T) {
 	_, path := modelsWriteHome(t)
 
-	out, _, err := execute(t, "models", "add", "vendor/model-z", "--price-in", "1", "--price-out", "2", "--yes")
+	out, _, err := execute(t, "models", "add", "vendor/model-z", "--price-in", "1", "--price-out", "2")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -149,7 +149,7 @@ func TestModelsAddRefusesARateTheBudgetCannotCount(t *testing.T) {
 			_, path := modelsWriteHome(t)
 			before := readFileString(t, path)
 
-			out, _, err := execute(t, "models", "add", "vendor/model-z", "--price-in", c.in, "--price-out", c.out, "--yes")
+			out, _, err := execute(t, "models", "add", "vendor/model-z", "--price-in", c.in, "--price-out", c.out)
 			if err == nil {
 				t.Fatalf("the rate %s/%s was accepted:\n%s", c.in, c.out, out)
 			}
@@ -169,7 +169,7 @@ func TestModelsAddRefusesARateTheBudgetCannotCount(t *testing.T) {
 func TestModelsAddLeavesAClaimingRouteUnchanged(t *testing.T) {
 	_, path := modelsWriteHome(t)
 
-	out, _, err := execute(t, "models", "add", "deepseek/deepseek-v4-pro", "--yes")
+	out, _, err := execute(t, "models", "add", "deepseek/deepseek-v4-pro")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -196,7 +196,7 @@ func TestModelsAddLeavesAClaimingRouteUnchanged(t *testing.T) {
 func TestModelsAddAppendsToASetAllowList(t *testing.T) {
 	_, path := modelsWriteHome(t)
 
-	out, _, err := execute(t, "models", "add", "vendor/model-z", "--price-in", "1", "--price-out", "2", "--yes")
+	out, _, err := execute(t, "models", "add", "vendor/model-z", "--price-in", "1", "--price-out", "2")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -213,7 +213,7 @@ func TestModelsAddAppendsToASetAllowList(t *testing.T) {
 func TestModelsAddLeavesAnAbsentAllowListAbsent(t *testing.T) {
 	_, path := modelsWriteHomeWith(t, modelsWriteNoBudgetExtra)
 
-	out, _, err := execute(t, "models", "add", "vendor/model-z", "--price-in", "1", "--price-out", "2", "--yes")
+	out, _, err := execute(t, "models", "add", "vendor/model-z", "--price-in", "1", "--price-out", "2")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -234,7 +234,7 @@ func TestModelsAddLeavesAnAbsentAllowListAbsent(t *testing.T) {
 func TestModelsAddExplainsTheSpreadAndWritesNoSwitch(t *testing.T) {
 	_, path := modelsWriteHome(t)
 
-	out, _, err := execute(t, "models", "add", "deepseek/deepseek-v4-pro", "--yes")
+	out, _, err := execute(t, "models", "add", "deepseek/deepseek-v4-pro")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -260,7 +260,7 @@ func TestModelsAddRefusesInAnAgentSessionEvenWithYes(t *testing.T) {
 	before := readFileString(t, path)
 	t.Setenv("CLAUDECODE", "1")
 
-	out, _, err := execute(t, "models", "add", "vendor/model-z", "--price-in", "1", "--price-out", "2", "--yes")
+	out, _, err := execute(t, "models", "add", "vendor/model-z", "--price-in", "1", "--price-out", "2")
 	if err == nil {
 		t.Fatal("a models write ran in a coding agent's session with --yes")
 	}
@@ -302,7 +302,7 @@ func TestModelsAddAsksNothingForAClaim(t *testing.T) {
 
 	// The flag makes no difference to it, and neither does a terminal.
 	_, path = modelsWriteHome(t)
-	out, _, err = execute(t, "models", "add", "vendor/model-z", "--price-in", "1", "--price-out", "2", "--yes")
+	out, _, err = execute(t, "models", "add", "vendor/model-z", "--price-in", "1", "--price-out", "2")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -357,7 +357,7 @@ func TestModelsAddBacksUpAndWritesAtomically(t *testing.T) {
 	_, path := modelsWriteHome(t)
 	before := readFileString(t, path)
 
-	out, _, err := execute(t, "models", "add", "vendor/model-z", "--price-in", "1", "--price-out", "2", "--yes")
+	out, _, err := execute(t, "models", "add", "vendor/model-z", "--price-in", "1", "--price-out", "2")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -400,7 +400,7 @@ func TestModelsAddPrintsOnlyFugaroUpdateNext(t *testing.T) {
 	_, path := modelsWriteHome(t)
 	modelsWriteCheckout(t, modelsWriteHomeDir(t, path), "owner/repo-b", modelsWriteRepoYAML)
 
-	out, _, err := execute(t, "models", "add", "vendor/model-z", "--price-in", "1", "--price-out", "2", "--yes")
+	out, _, err := execute(t, "models", "add", "vendor/model-z", "--price-in", "1", "--price-out", "2")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -420,7 +420,7 @@ func TestModelsAddPrintsTheOneNextLineWhenTheRouteAlreadyClaimedIt(t *testing.T)
 	_, path := modelsWriteHome(t)
 	modelsWriteCheckout(t, modelsWriteHomeDir(t, path), "owner/repo-b", modelsWriteRepoYAML)
 
-	out, _, err := execute(t, "models", "add", "deepseek/deepseek-v4-pro", "--price-in", "1", "--price-out", "2", "--yes")
+	out, _, err := execute(t, "models", "add", "deepseek/deepseek-v4-pro", "--price-in", "1", "--price-out", "2")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -442,7 +442,7 @@ func TestModelsAddWritesNothingInTheCloud(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	path := os.Getenv("FUGARO_CONFIG")
 
-	out, _, err := execute(t, "models", "add", "vendor/model-z", "--price-in", "1", "--price-out", "2", "--yes")
+	out, _, err := execute(t, "models", "add", "vendor/model-z", "--price-in", "1", "--price-out", "2")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}

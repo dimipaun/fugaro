@@ -103,12 +103,24 @@
           "type": "array",
           "items": { "type": "string" },
           "description": "The parent record's own finding keys (D1850, a hash of a file and a summary) that this task carries: one task per group, and the ungrouped case is one key. A task the CLI files always names at least one, since a group is formed from the deferrals themselves, but neither this schema nor task.Spec.Validate requires it: a key is only ever compared with the keys the parent's record carries, and never joined into a path, a command or a prompt. Unlike the spec's other lists, this one is carried through as written — the keys are opaque hashes, not launcher text."
+        },
+        "importance": {
+          "enum": ["important", "minor"],
+          "description": "How much this follow-up matters (task.FollowUpOf.Importance, docs/outer-loop-escalation, D2040): the launcher orders the important ones ahead of new work and notifies about them, and that is the whole of what the mark decides — an important follow-up is not an approved one (G6, F21). It is written from the merge judge's classification when a judge ran and from a deterministic rule when none did (a security or data-loss class, or impact 5, is important), so task.Spec.Validate refuses a value outside the two names rather than reading it as a third opinion about a finding. Absent — and so empty — for every follow-up filed before this field, including every one filed by hand, and empty is not `minor`: it is no answer, and a reader that has to sort one applies its own rule rather than reading a mark nobody wrote. It is a new key inside an existing block, so an older runner that knows `follow_up_of` still refuses the whole spec on it (task.Parse decodes with DisallowUnknownFields), and the launcher gates it with `model_grade`'s constant (taskGradeSince, internal/cli/recipes_skew.go), which covers both fields of this release."
         }
       }
     },
     "debt": {
       "type": "boolean",
       "description": "True marks a task filed from a triage deferral (task.Spec.Debt, docs/post-review-triage), which is what `fugaro runs ls --debt` lists. Absent — and so false — for every task that is not one, which is every task written before this field, so such a spec is byte-identical to the previous release's. Like `follow_up_of` it needs a runner that knows it (task.Parse decodes with DisallowUnknownFields), which is why a launch that writes it is to be gated the same way (the launcher-side gate T-TR10 of that plan adds)."
+    },
+    "security": {
+      "type": "boolean",
+      "description": "The launch's own request that this run's review be the strongest one it can be (task.Spec.Security, docs/security-classification, D1517): `fugaro run --security` writes it, and a task may say it by hand. It is raise-only — true turns review level 3 on whatever paths the run changed, and false changes nothing, since there is no value that asks for less — so it needs no fence and no allow-list, exactly as --mode's own raise needs neither. The project layer's security.always_level_3 (schemas/project-layer.schema.json) makes the same request for every run of the project, and the repository's own security: rows escalate a matching diff independently of either. Absent — and so false — for every task that did not ask, which is every task written before this field, so such a spec is byte-identical to the previous release's. Like the spec's other new fields it needs a runner that knows it (task.Parse decodes with DisallowUnknownFields), so a launch that writes it is refused on a job image older than the release whose runner reads it (securityRequestSince, internal/cli/recipes_skew.go)."
+    },
+    "model_grade": {
+      "enum": ["strong", "strongest"],
+      "description": "The model grade this run runs at (task.Spec.ModelGrade, docs/outer-loop-escalation, D2039's E4): which of the project layer's two grades the run's coder — and its judge, which runs the coder's model — runs on, and whose credential or pool their calls go out on. A task names a grade and never a model or a credential (G11): the project layer's `defaults.model_grades` (schemas/project-layer.schema.json, published on the policy node) is what says which model and which credential each name resolves to, and the runner resolves it at bootstrap (internal/runner's applyGrade). A grade the project sets nothing for refuses the run there rather than falling back to a model nobody chose, which is D2039's reading: the plan ships no default for either grade. The two names are escalation.Grades' and the field is closed to them, so a model ID or a credential name here is refused by task.Spec.Validate and by this schema both. Absent — and so empty — for every task that names no grade, which is every task written before this field and every launch the ladder did not escalate, so such a spec is byte-identical to the previous release's. Like the spec's other new fields it needs a runner that knows it (task.Parse decodes with DisallowUnknownFields), so a launch that writes it is refused on a job image older than the release whose runner reads it (taskGradeSince, internal/cli/recipes_skew.go)."
     },
     "overrides": {
       "type": "object",
@@ -126,8 +138,8 @@
     },
     "requested_by": { "type": "string" },
     "mode": {
-      "enum": ["implement", "review", "artifact"],
-      "description": "The resolved recipe's mode, written by the launching CLI (\"artifact\" today; an implement or review recipe writes nothing, so those specs are unchanged). The runner selects the run's shape from it at bootstrap, before the recipe is resolved, and cross-checks it against the resolved recipe afterwards. Needs a 0.8.0 runner, which is why an artifact launch at a job image older than that is refused at launch."
+      "enum": ["implement", "review", "artifact", "evaluate"],
+      "description": "The resolved recipe's mode, written by the launching CLI (\"artifact\" and \"evaluate\" today; an implement or review recipe writes nothing, so those specs are unchanged). The runner selects the run's shape from it at bootstrap, before the recipe is resolved, and cross-checks it against the resolved recipe afterwards. Needs a 0.8.0 runner, which is why an artifact launch at a job image older than that is refused at launch; \"evaluate\" is the judge run's mode (docs/model-ab-testing A5.2) and needs the runner that carries it."
     },
     "rigor": {
       "enum": ["poc", "startup", "pro", "critical", "hotfix"],
@@ -217,7 +229,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["pair_id", "arm"],
-      "description": "The A/B pair block of a sampled launch (docs/model-ab-testing, decisions D550-D573; task.AB): which pair this run belongs to, which arm it is, and, for a challenger, the coder model it runs and the fact that it never publishes. Absent for every launch that was not sampled — which is every launch today, since nothing samples yet — so a spec without it is byte-identical to what the release before this field wrote. Both arms of one pair carry the same pair_id and differ in nothing but this block (D555): the challenger travels here and never in overrides.model, which a run with no per-role models applies to every stage and would move the reviewer both arms share, which is why an ab block and overrides.model never appear together. The vocabulary is closed, like rigor's and tier's: an unknown arm, publish or challenger_source is refused rather than read as something else. Needs a runner that knows the field: task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than running a challenger as a publishing run, and the launcher's own gate is what keeps a sampled launch off such a job.",
+      "description": "The A/B pair block of a sampled launch (docs/model-ab-testing, decisions D550-D573; task.AB): which pair this run belongs to, which arm it is, and, for a challenger, the coder model it runs and the fact that it never publishes. Absent for every launch that was not sampled — which is every launch today, since nothing samples yet — so a spec without it is byte-identical to what the release before this field wrote. Both arms of one pair carry the same pair_id and differ in nothing but this block (D555): the challenger travels here and never in overrides.model, which a run with no per-role models applies to every stage and would move the reviewer both arms share, which is why an ab block and overrides.model never appear together. The vocabulary is closed, like rigor's and tier's: an unknown arm, publish, challenger_source or slot is refused rather than read as something else. `slot` (D728, docs/review-levels-ab-jobmax B1.1) says which one thing the pair varies: a coder pair — the slot an absent key means — holds every reviewer fixed, and a pair at a review slot holds the coder fixed and carries its challenger's champion_run, the run whose recorded patch that challenger's reviewer replays (B1.2). Needs a runner that knows these fields: task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than running a challenger as a publishing run, and the launcher's own gates are what keep a sampled launch, or one at a review slot, off such a job (internal/cli/recipes_skew.go's slotSince).",
       "properties": {
         "pair_id": {
           "type": "string",
@@ -240,6 +252,15 @@
         "challenger_source": {
           "enum": ["owner"],
           "description": "Who named the challenger: the owner, in the project layer, never the repository's own file (D556, task.ABChallengerOwner). It is the seam D572 reserves for a later auto-flip writer; nothing reads it to pick a challenger."
+        },
+        "slot": {
+          "enum": ["coder", "l1", "l2", "l3"],
+          "description": "The one thing the pair varies (D728, task.ABSlot): coder is the pair A1.1 already writes — a second full run on another coder model, with every reviewer held fixed, which is D555 as it stands — and l1, l2 and l3 are the review slots, whose challenger replays that level's review over the champion's own recorded patch instead of running a coding loop (B1.2). Absent means coder (task.AB.EffectiveSlot): every block written before this key is a coder pair, so the empty spelling cannot be read as a pair nobody could score. Both arms of a pair carry the same slot — it says what the pair varies, not what this arm does — and a champion carries it as readily as a challenger."
+        },
+        "champion_run": {
+          "type": "string",
+          "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$",
+          "description": "The champion's run ID, present only on a challenger whose slot is a review slot (task.AB.ChampionRun, D728, B1.2): it names the run whose recorded patch, runs/<repo-slug>/<run-id>/ab/patch.diff, this arm's reviewer reads, which is what makes the two arms of a review pair judge the same code. Absent on a champion — which is the run its own block names — and on a coder pair's challenger, which runs the whole task itself; task.Spec.Validate and the if/then below refuse it there rather than ignoring it, and the pattern is run_id's own form (task.ValidRunID), because a blank or invented ID would send the replay looking for an object nobody wrote."
         }
       },
       "not": {
@@ -249,7 +270,14 @@
         ]
       },
       "if": { "properties": { "arm": { "const": "challenger" } }, "required": ["arm"] },
-      "then": { "required": ["publish", "challenger"] }
+      "then": { "required": ["publish", "challenger"] },
+      "allOf": [
+        {
+          "if": { "properties": { "arm": { "const": "challenger" }, "slot": { "enum": ["l1", "l2", "l3"] } }, "required": ["arm", "slot"] },
+          "then": { "required": ["champion_run"] },
+          "else": { "not": { "required": ["champion_run"] } }
+        }
+      ]
     },
     "review_levels": {
       "type": "object",

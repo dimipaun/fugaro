@@ -280,10 +280,13 @@ const pullRequestsSentence = ci.pullRequest
               next line, and the built card would read "LICENSING.mdsays which parts are not"
               (website/test/faq-community.mjs refuses a link that runs into the word after it). */}
           <a href={sourceHref('LICENSING.md')} rel="noopener">LICENSING.md</a>{' '}
-          says which parts are not, and the binary the release ships — the archives and the
-          Homebrew cask — carries the reserved <code>ee/</code> directory's code under{' '}
+          says which parts are not, and one of the two archives a release publishes —{' '}
+          <code>fugaro_…</code>, the mixed-licence one the Homebrew cask installs — carries the
+          reserved <code>ee/</code> directory's code under{' '}
           <code>LicenseRef-Fugaro-Subscription</code>{' '}
-          (<a href={sourceHref('ee/LICENSE')} rel="noopener">ee/LICENSE</a>)
+          (<a href={sourceHref('ee/LICENSE')} rel="noopener">ee/LICENSE</a>); the other,{' '}
+          <code>fugaro-core_…</code>, is the same binary built without that code, under the MIT
+          licence alone
         </p>
       </li>
     </ul>
@@ -336,9 +339,12 @@ const pullRequestsSentence = ci.pullRequest
         <a href={sourceHref('LICENSE')} rel="noopener">LICENSE</a>;{' '}
         <a href={sourceHref('LICENSING.md')} rel="noopener">LICENSING.md</a>{' '}
         says which parts of the repository are not, and the reserved <code>ee/</code> directory is
-        one. From 0.13.0 the binary the release ships — the archives and the Homebrew cask — is
-        the core plus that directory's code, under <code>LicenseRef-Fugaro-Subscription</code>{' '}
-        (<a href={sourceHref('ee/LICENSE')} rel="noopener">ee/LICENSE</a>).
+        one. From 0.13.0 a release publishes two archives, and only the mixed-licence one —{' '}
+        <code>fugaro_…</code>, which the Homebrew cask installs — is the core plus that
+        directory's code, under <code>LicenseRef-Fugaro-Subscription</code>{' '}
+        (<a href={sourceHref('ee/LICENSE')} rel="noopener">ee/LICENSE</a>);{' '}
+        <code>fugaro-core_…</code> is the same binary built without it, under the MIT licence
+        alone.
       </p>
     </div>
   </section>

@@ -80,6 +80,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -87,6 +88,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 )
 
 // ProbeLeases is the conditional write the probe's one-at-a-time lease needs:
@@ -772,4 +774,174 @@ func (l *BundleLoader) Scrub(s string) string {
 		}
 	}
 	return s
+}
+
+// The probe's own bounds for a Bitbucket token. bitbucketCountBudget is how long
+// the best-effort write of a token's request count may take; the token's own
+// probe reuses the model probe's two budgets (probeBudget, probeRecordBudget)
+// for their reason: the answer is a fact about a credential and not about the
+// run that happened to ask, so a caller that hangs up must not discard it.
+const bitbucketCountBudget = 5 * time.Second
+
+// bitbucketProbeURL is the read a Bitbucket token's probe makes: one repository
+// the token covers, read through Bitbucket's own API root (R14).
+//
+// It is a repository read and never `GET /2.0/user`, and the reason is R14's:
+// a repository token's GET /user is a 403 ("not accessible by this
+// authentication mechanism"), and that call is the one every run's own
+// selfUser makes, so marking a token from it would let an ordinary
+// authentication answer take a working token out of service. A repository the
+// token covers answers 200 for a token that works and 401 for one that does
+// not, which is the question a probe asks.
+//
+// The host is internal/gitprov/bitbucket's constant and nothing else: a record
+// carries a repository NAME and never a host (F22), so no policy, no config and
+// no caller of this service can name where a token is sent.
+//
+// The argument is the canonical repository this package pairs and forwards by
+// — "bitbucket/<workspace>/<repo>", splitCanonicalRepo's spelling — and not the
+// coverage pattern a record may hold: a pattern names a family
+// ("bitbucket/acme/*", R1) and nothing lists the repositories in one (F7), so a
+// probe given a pattern has no repository to read. Probing it literally would
+// ask Bitbucket about a repository named "*", and the 404 that answers is an
+// unproven probe — the wait doubled — rather than the confirmation of a 401 the
+// caller asked for. The caller that confirms a 401 holds the canonical
+// repository of the call in hand (T9).
+//
+// ok is false for anything else, and refusing is the fail-closed direction
+// since the alternative is building a path out of a caller's text: a value that
+// is not two literal segments under the bitbucket provider — including a bare
+// "workspace/repository" with no provider, another provider, and a wildcard
+// anywhere in either half. A dot segment is refused for R14's reason as well:
+// escapeSeg leaves "." and ".." as they are, so `bitbucket/../user` would build
+// .../repositories/../user, which resolves to the GET /2.0/user this probe must
+// never make.
+func bitbucketProbeURL(canonical string) (string, bool) {
+	workspace, repo, err := splitCanonicalRepo(canonical)
+	if err != nil || !literalSegment(workspace) || !literalSegment(repo) {
+		return "", false
+	}
+	return bitbucket.DefaultBaseURL + "/repositories/" + escapeSeg(workspace) + "/" + escapeSeg(repo), true
+}
+
+// literalSegment reports whether one half of a canonical is one literal path
+// segment: not empty, no wildcard, and not a dot segment.
+func literalSegment(s string) bool {
+	return s != "" && s != "." && s != ".." && !strings.Contains(s, "*")
+}
+
+// bitbucketProbe is one Bitbucket token's probe: which token, its value, and
+// the canonical repository it covers that the probe will read.
+//
+// The value is here because the probe is the one call this service makes with
+// it that no run asked for; it is never logged, never audited and never
+// returned, exactly as the model probe's credential is not.
+type bitbucketProbe struct {
+	Name       string
+	Value      string
+	Repository string
+}
+
+// probeBitbucketToken asks whether one Bitbucket token works, with a read of a
+// repository it covers, and records what the answer means as its status.
+//
+// It is the probe C1.12 gives a model credential, on the token's own subject: a
+// token that is backed off — a 429 that named no reset — is not usable again by
+// waiting out its wait, so the question ("does this token work at all?") is
+// asked before real work is routed to it. A token that is exhausted until a
+// named reset is not probed, because its reset is a time rather than a
+// question, and a broken one is not probed, because a probe is not what clears
+// a 401 (C1.21).
+//
+// The classification is classifyProbe's, verbatim, and that is deliberate
+// rather than convenient: a 401 is the token dead, a 429 is the token limited
+// with whatever reset the answer named and none if it named none, a 2xx is the
+// token working, and everything else — a 5xx, a 403 for a repository the record
+// claimed, a connection that never reached Bitbucket — is unproven, which
+// leaves the wait doubled rather than clearing it. Only an answer that says the
+// token WORKS is a success.
+//
+// Nothing here selects, nothing here writes to Bitbucket, and nothing here
+// audits: a probe made while serving a run's call is recorded on that call's
+// own audit line (R14: a reaction is recorded on the request's single line and
+// never as a second one), which is the proxy's business and not this
+// function's. What it does write is the token's status, through the same
+// compare-and-set every write under creds/ uses.
+func (s *Server) probeBitbucketToken(ctx context.Context, st creds.TokenStatusStore, p bitbucketProbe, set creds.Settings) (creds.TokenStatus, error) {
+	target, ok := bitbucketProbeURL(p.Repository)
+	if !ok {
+		return creds.TokenStatus{}, fmt.Errorf("credsvc: %q is not a canonical Bitbucket repository (bitbucket/<workspace>/<repo>), so a token's probe cannot read it", p.Repository)
+	}
+	// The probe is detached from the caller's context and bounded, for the model
+	// probe's reason: the call has been made and charged by the time its answer
+	// is classified, and a run that hangs up while it is in flight must not be
+	// the reason a token's question goes unanswered.
+	callCtx, callDone := probeCallContext(ctx)
+	defer callDone()
+	req, err := http.NewRequestWithContext(callCtx, http.MethodGet, target, nil)
+	if err != nil {
+		return creds.TokenStatus{}, fmt.Errorf("credsvc: building a Bitbucket token's probe: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+p.Value)
+	resp, err := s.cfg.Client.Do(req)
+	var outcome probeOutcome
+	reset := time.Time{}
+	if resp != nil && err == nil {
+		defer resp.Body.Close()
+		outcome, reset = classifyProbe(resp, nil, s.now())
+	} else {
+		outcome, reset = classifyProbe(nil, err, s.now())
+	}
+	now := s.now()
+	recordCtx, recordDone := probeRecordContext(ctx)
+	defer recordDone()
+	written, werr := st.UpdateTokenStatus(recordCtx, p.Name, func(prev creds.TokenStatus, _ bool) (creds.TokenStatus, error) {
+		switch outcome {
+		case probeWorked:
+			return creds.TokenSucceeded(prev, now, set), nil
+		case probeRefused:
+			return creds.TokenBroken(prev, now), nil
+		case probeLimited:
+			return creds.TokenThrottled(prev, now, reset, set), nil
+		default:
+			return creds.TokenUnproven(prev, now, set), nil
+		}
+	})
+	if werr != nil {
+		// The status could not be written, which is the forward path's own
+		// refusal one step earlier: the next call's decision is made from the
+		// state, so a probe whose answer could not be recorded is an answer that
+		// does not exist. The error names the token and never its value.
+		return creds.TokenStatus{}, fmt.Errorf("credsvc: recording the probe of the Bitbucket token %q: %w", p.Name, werr)
+	}
+	return written, nil
+}
+
+// recordBitbucketRequest counts one served request against a Bitbucket token's
+// window (D2356), and it takes no decision and returns nothing: the count is
+// advisory and is for display only.
+//
+// It is written best-effort off the request path, which is the whole of the
+// rule: the caller writes it after the answer has been relayed to the run, so
+// the run already has its bytes and a slow write cannot delay it, and a failed
+// one is logged and dropped rather than refusing or failing a call that was
+// served. Nothing selects or refuses on the count either — the plan declines a
+// proactive queue until the upstream's limits are measured, and this build
+// reacts to a 429 instead (TokenThrottled).
+//
+// The write is still bounded and still conditional: bounded by a budget of its
+// own so an unreachable database does not hold this goroutine forever, and
+// conditional because every write under creds/ is (F17) — two instances
+// counting at once must both land rather than one overwriting the other's view
+// of the window.
+func (s *Server) recordBitbucketRequest(ctx context.Context, st creds.TokenStatusStore, name string) {
+	countCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bitbucketCountBudget)
+	defer cancel()
+	if _, err := st.UpdateTokenStatus(countCtx, name, func(prev creds.TokenStatus, _ bool) (creds.TokenStatus, error) {
+		return prev.RecordRequest(s.now()), nil
+	}); err != nil {
+		s.log.Warn("credsvc: a Bitbucket token's request count could not be recorded",
+			"token", name, "error", err)
+	}
 }

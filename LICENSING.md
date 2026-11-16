@@ -12,12 +12,12 @@ where the file type has no comment syntax, in a sibling `<name>.license` carryin
 lines — and the only files without one are each directory's own licence file and its `README`,
 which the licence and the page belong to instead. The text the
 identifier resolves to is [`LICENSES/LicenseRef-Fugaro-Subscription.txt`](LICENSES/LicenseRef-Fugaro-Subscription.txt),
-a byte-for-byte copy of [`ee/LICENSE`](ee/LICENSE). **It names two documents**: the Subscription Terms, at https://fugaro.dev/legal/subscription-terms (the page is **not published yet**; it goes up once counsel has approved the text), and the contributor licence agreement, published at https://gist.githubusercontent.com/dimipaun/d5bb5db937f973b25be5778ce14ec8dd/raw/64918c7fc0f782327db82e7e790db53c3d47d09f/fugaro-cla.md (a raw Gist link pinned to a revision, so a later edit to the Gist does not change it). The licence allows copying and modifying for development and testing,
+a byte-for-byte copy of [`ee/LICENSE`](ee/LICENSE). **It names two documents**: the Subscription Terms (published at https://fugaro.dev/legal/subscription-terms), and the contributor licence agreement, published at https://gist.githubusercontent.com/dimipaun/d5bb5db937f973b25be5778ce14ec8dd/raw/64918c7fc0f782327db82e7e790db53c3d47d09f/fugaro-cla.md (a raw Gist link pinned to a revision, so a later edit to the Gist does not change it). The licence allows copying and modifying for development and testing,
 and needs a subscription for the correct number of user seats (one seat per person who uses it)
 for production use, under those Subscription Terms.
-A first draft of the Subscription Terms, written for counsel, is at
-[`docs/licensing/subscription-terms.md`](docs/licensing/subscription-terms.md): it is **not in force**
-until counsel has reviewed it and the owner has published it.
+The Subscription Terms are published at https://fugaro.dev/legal/subscription-terms (live on 2026-11-11), and
+their source is [`docs/licensing/subscription-terms.md`](docs/licensing/subscription-terms.md). A Customer is bound
+by them once it accepts them under section 1.2 of the Terms.
 
 ## The desktop console, `console/`
 
@@ -43,8 +43,14 @@ parts of the core moved there, and each is business-licensed where it now lives:
 and its stage tripwires in `ee/governance/`, `fugaro report` in `ee/report/`, and the coordinator in
 `ee/coordinator/`. **The central orchestrators and the hosted MCP server are born here** (D435, T20):
 they were never in the core, so nothing of theirs moved, and they are business-licensed from the
-start. No release before 0.13.0 carries it; from 0.13.0 the binaries a release ships (the
-archives and the Homebrew cask) are built with the `ee` tag and carry its code beside the MIT core.
+start. No release before 0.13.0 carries it; from 0.13.0 a release publishes two archives, and a build with
+the `ee` tag — the mixed-licence one — is the only one that does. `fugaro_<version>_<os>_<arch>.tar.gz`
+is built with that tag: the MIT core plus the code under this directory, and it is the binary the
+Homebrew cask installs and the one `fugaro update`, the console's CLI discovery and the plugin pin
+follow. `fugaro-core_<version>_<os>_<arch>.tar.gz` is the same binary built without it — the core
+above, under the MIT licence alone, with no `ee/` code and no Subscription terms in or beside it —
+for a user who wants neither; no cask points at it, and it is a download rather than a second
+install path (the owner's ruling of 2026-11-11).
 Nothing outside `ee/` imports anything under it: its first file is the assembly point `ee/register`, which only a build with the `ee` build
 tag compiles in, through [`cmd/fugaro/ee_on.go`](cmd/fugaro/ee_on.go).
 

@@ -341,15 +341,16 @@ const STATS_TOTALS = [
 /** STATS_DOCUMENT is the by-person aggregate those rows came out of, in the
  * shape `internal/cli/runs_stats.go`'s `userStatsDoc` writes: the view the CLI
  * resolved, the identity it resolved it for, whether the installation's own
- * lists place that identity as an operator, the window, the read's own bound and
+ * lists place that identity as an admin, the window, the read's own bound and
  * the runs of the window that never started. */
 function statsDocument(over: JSONDoc = {}): JSONDoc {
   return {
+    version: 2,
     project: 'fugaro-demo',
     by: 'user',
     view: 'all',
     you: 'ada@example.com',
-    operator: true,
+    admin: true,
     since: '2026-10-12',
     until: '2026-10-15',
     max_runs: 5000,
@@ -387,7 +388,7 @@ function statsOwnDocument(you: string): JSONDoc {
   return statsDocument({
     view: 'own',
     you,
-    operator: false,
+    admin: false,
     rows: [...rows],
     totals,
     notes: ['this read is your own runs in the window'],
@@ -400,11 +401,12 @@ function statsOwnDocument(you: string): JSONDoc {
  * why it is built from the whole-window rows on purpose. */
 function statsDefensiveDocument(over: JSONDoc = {}): JSONDoc {
   return {
+    version: 2,
     project: 'fugaro-demo',
     by: 'user',
     view: 'all',
     you: 'ada@example.com',
-    operator: true,
+    admin: true,
     since: '2026-10-12',
     until: '2026-10-15',
     max_runs: 5000,
@@ -1453,7 +1455,7 @@ describe('the by-person view', () => {
     expect(handed.people).toBeNull()
   })
 
-  it('draws the view the CLI resolved: every row, the identity, the operator line and the window', () => {
+  it('draws the view the CLI resolved: every row, the identity, the admin line and the window', () => {
     const model = buildSpendModel(PERSON_REPORT, BUDGET, { persons: true, people: statsDocument() })
     const people = peopleOf(model)
     expect(people.available).toBe(true)
@@ -1461,7 +1463,7 @@ describe('the by-person view', () => {
     expect(people.viewSource).toBe('all')
     expect(people.viewName).toBe('everyone in this project')
     expect(people.failPrivate).toBe(false)
-    expect(people.operator).toBe(true)
+    expect(people.admin).toBe(true)
     expect(people.you).toBe('ada@example.com')
     expect(people.withheld).toBe(0)
     expect(people.rows.map((row) => row.user)).toEqual([
@@ -1482,10 +1484,10 @@ describe('the by-person view', () => {
     const panel = one(tree, 'spend-people')
     expect(panel.getAttribute('data-available')).toBe('true')
     expect(panel.getAttribute('data-view')).toBe('all')
-    expect(panel.getAttribute('data-operator')).toBe('true')
+    expect(panel.getAttribute('data-admin')).toBe('true')
     expect(texts(tree, 'spend-people-view')).toEqual(['everyone in this project'])
     expect(texts(tree, 'spend-people-you')).toEqual(['redacted@example.invalid'])
-    expect(texts(tree, 'spend-people-operator')[0]).toContain('place you as an operator')
+    expect(texts(tree, 'spend-people-admin')[0]).toContain('place you as an admin')
     expect(texts(tree, 'spend-people-max-runs')).toEqual([formatReading(people.maxRuns, 'count')])
     // Three rows and the total line. The total is the console's own word,
     // because the document's own total carries an empty user.
@@ -1531,7 +1533,7 @@ describe('the by-person view', () => {
     const people = peopleOf(model)
     expect(people.view).toBe('own')
     expect(people.viewName).toBe('you alone')
-    expect(people.operator).toBe(false)
+    expect(people.admin).toBe(false)
     expect(people.rows.map((row) => row.user)).toEqual(['bob@example.com'])
     expect(people.withheld).toBe(0)
     expect(people.sentences.join(' ')).toContain('your own runs alone')
@@ -1546,7 +1548,7 @@ describe('the by-person view', () => {
     // One row and the total.
     expect(all(tree, 'spend-person')).toHaveLength(2)
     expect(texts(tree, 'spend-person-user')).toEqual(['redacted@example.invalid', 'total'])
-    expect(texts(tree, 'spend-people-operator')[0]).toContain('do not place you as an operator')
+    expect(texts(tree, 'spend-people-admin')[0]).toContain('do not place you as an admin')
     expect(drawn(tree)).not.toContain('ada@example.com')
   })
 
@@ -1663,21 +1665,21 @@ describe('the by-person view', () => {
     }
   })
 
-  it('draws everyone for an operator and the caller alone for a plain launcher, by the CLI’s view', () => {
+  it('draws everyone for an admin and the caller alone for a plain operator, by the CLI’s view', () => {
     // The two licensed states side by side, from the documents the CLI writes:
-    // an operator (`view: all`, identified) sees every launcher's row; a plain
-    // launcher (`view: own`, the default the CLI resolves) sees their own row
+    // an admin (`view: all`, identified) sees every launcher's row; a plain
+    // operator (`view: own`, the default the CLI resolves) sees their own row
     // alone, even though the window holds other people's runs.
-    const operator = renderSpend(
+    const admin = renderSpend(
       factory,
       buildSpendModel(PERSON_REPORT, BUDGET, { persons: true, people: statsDocument() }),
       'light',
     )
-    const operatorRows = one(operator, 'spend-people-rows').childNodes()
-    expect(operatorRows).toHaveLength(STATS_ROWS.length)
-    expect(one(operator, 'spend-people').getAttribute('data-operator')).toBe('true')
+    const adminRows = one(admin, 'spend-people-rows').childNodes()
+    expect(adminRows).toHaveLength(STATS_ROWS.length)
+    expect(one(admin, 'spend-people').getAttribute('data-admin')).toBe('true')
 
-    const launcher = renderSpend(
+    const operator = renderSpend(
       factory,
       buildSpendModel(PERSON_REPORT, BUDGET, {
         persons: true,
@@ -1685,12 +1687,12 @@ describe('the by-person view', () => {
       }),
       'light',
     )
-    const launcherRows = one(launcher, 'spend-people-rows').childNodes() as readonly FakeScreen[]
-    expect(launcherRows).toHaveLength(1)
-    expect(launcherRows[0]?.classes).toContain('spend-person')
-    expect(launcherRows[0]?.classes).not.toContain('spend-person-total')
-    expect(one(launcher, 'spend-people').getAttribute('data-view')).toBe('own')
-    expect(one(launcher, 'spend-people').getAttribute('data-operator')).toBe('false')
+    const operatorRows = one(operator, 'spend-people-rows').childNodes() as readonly FakeScreen[]
+    expect(operatorRows).toHaveLength(1)
+    expect(operatorRows[0]?.classes).toContain('spend-person')
+    expect(operatorRows[0]?.classes).not.toContain('spend-person-total')
+    expect(one(operator, 'spend-people').getAttribute('data-view')).toBe('own')
+    expect(one(operator, 'spend-people').getAttribute('data-admin')).toBe('false')
   })
 
   it('counts the rows of a private view a document should not have carried, and keeps no claim about totals', () => {

@@ -688,7 +688,7 @@ func TestRestoreEndsItsApplyStepWhenTheApplyFailsBeforeItsPlan(t *testing.T) {
 
 func TestBudgetSetDefaultIsShort(t *testing.T) {
 	newBudgetFixture(t, "")
-	out, _, err := execute(t, "budget", "set", "--global", "--daily", "60", "--yes")
+	out, _, err := execute(t, "budget", "set", "--global", "--daily", "60")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -700,7 +700,7 @@ func TestBudgetSetDefaultIsShort(t *testing.T) {
 
 func TestBudgetSetWritesALog(t *testing.T) {
 	newBudgetFixture(t, "")
-	if _, _, err := execute(t, "budget", "set", "--global", "--daily", "60", "--yes"); err != nil {
+	if _, _, err := execute(t, "budget", "set", "--global", "--daily", "60"); err != nil {
 		t.Fatal(err)
 	}
 	writesALog(t, "budget-set")
@@ -708,7 +708,7 @@ func TestBudgetSetWritesALog(t *testing.T) {
 
 func TestBudgetKillDefaultIsShort(t *testing.T) {
 	newBudgetFixture(t, "")
-	out, _, err := execute(t, "budget", "kill", "--all", "--yes")
+	out, _, err := execute(t, "budget", "kill", "--all")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -720,7 +720,7 @@ func TestBudgetKillDefaultIsShort(t *testing.T) {
 
 func TestBudgetKillWritesALog(t *testing.T) {
 	newBudgetFixture(t, "")
-	if _, _, err := execute(t, "budget", "kill", "--all", "--yes"); err != nil {
+	if _, _, err := execute(t, "budget", "kill", "--all"); err != nil {
 		t.Fatal(err)
 	}
 	writesALog(t, "budget-kill")
@@ -746,10 +746,10 @@ func TestBudgetKillWorkspaceWritesALog(t *testing.T) {
 
 func TestBudgetResumeDefaultIsShort(t *testing.T) {
 	newBudgetFixture(t, "")
-	if _, _, err := execute(t, "budget", "kill", "--all", "--yes"); err != nil {
+	if _, _, err := execute(t, "budget", "kill", "--all"); err != nil {
 		t.Fatal(err)
 	}
-	out, _, err := execute(t, "budget", "resume", "--all", "--yes")
+	out, _, err := execute(t, "budget", "resume", "--all")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -761,10 +761,10 @@ func TestBudgetResumeDefaultIsShort(t *testing.T) {
 
 func TestBudgetResumeWritesALog(t *testing.T) {
 	newBudgetFixture(t, "")
-	if _, _, err := execute(t, "budget", "kill", "--all", "--yes"); err != nil {
+	if _, _, err := execute(t, "budget", "kill", "--all"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := execute(t, "budget", "resume", "--all", "--yes"); err != nil {
+	if _, _, err := execute(t, "budget", "resume", "--all"); err != nil {
 		t.Fatal(err)
 	}
 	writesALog(t, "budget-resume")
@@ -779,8 +779,8 @@ func TestBudgetResumeWritesALog(t *testing.T) {
 func TestTheWriterCommandsPrintNoAnsiOffATerminal(t *testing.T) {
 	newBudgetFixture(t, "")
 	for _, args := range [][]string{
-		{"budget", "set", "--global", "--daily", "60", "--yes"},
-		{"budget", "kill", "--all", "--yes"},
+		{"budget", "set", "--global", "--daily", "60"},
+		{"budget", "kill", "--all"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			out, errOut, err := execute(t, args...)

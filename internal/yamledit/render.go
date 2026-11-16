@@ -172,6 +172,15 @@ func scalarLeaf(value string) leafOf {
 	}
 }
 
+// emptyMappingLeaf renders `key: {}`, YAML's only spelling of an empty mapping:
+// block style has no empty form, and a key written with nothing after it is a
+// null scalar and not a mapping.
+func emptyMappingLeaf() leafOf {
+	return func(key string, indent, _ int) []string {
+		return []string{indentOf(indent) + renderKey(key) + ": {}"}
+	}
+}
+
 // listLeaf renders `key:` with one sequence item under it.
 func listLeaf(value string) leafOf {
 	return func(key string, indent, step int) []string {

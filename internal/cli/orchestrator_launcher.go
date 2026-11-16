@@ -75,6 +75,13 @@ func (l *orchestratorLauncher) Launch(ctx context.Context, spec orchestrator.Spe
 	// a project that published profiles cannot tell a clone workflow's shared job
 	// from a baked workflow's own).
 	ctx = withoutCheckout(ctx)
+	// The one read this launch makes of the repository's document at the forge
+	// (project_job.go) is shared by its two readers — the gates (prepare,
+	// freshLaunchGates) and the job decision (launchRun) — so it is installed
+	// over the whole launch, before either: the two would otherwise cost two
+	// mints where spec.md §6 allows one (D904). `fugaro run` installs one in
+	// the same place and for the same reason (finishLaunch).
+	ctx = withServiceReadCache(ctx)
 	slug, ts, err := l.prepare(ctx, spec, runID)
 	if err != nil {
 		return "", err

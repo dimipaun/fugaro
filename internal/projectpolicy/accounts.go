@@ -32,6 +32,42 @@ type Account struct {
 	AllowRepos []string `json:"allow_repos"`
 }
 
+// RepoAccount is one repository's own account list: the local config's
+// repos.<owner/name>.claude_accounts key, as this block's derivation reads it.
+// It is the second source of the accounts block, beside the profiles, and it
+// exists because a profile is not the only kind of job a repository's runs
+// land on.
+//
+// A profile's job is shared by every repository the profile admits, so the
+// accounts its runs may use are a fact of the profile. A repository whose runs
+// are NOT on a profile job — a per-repository job, which is every repository
+// of a provider with no shared job (Bitbucket) and every repository no
+// workflow sends to one — has no profile to name its accounts in, and while
+// this block was derived from the profiles alone such a repository had no way
+// to be admitted to an account at all: the block carried no entry for its
+// account, so the credentials service's intersection (credsvc's
+// admittedAccounts) was empty, the cascade offered no candidate and every
+// model call of such a run was answered 503 state_unavailable.
+//
+// The key is the repository as the local config spells it (owner/name, the
+// same spelling a claude_accounts allow_data_to entry and a profile's
+// allow_repos are matched against), which is also what the D3 subset rule
+// below is decided on.
+type RepoAccount struct {
+	// Provider is the git provider kind the repository's own repos entry names
+	// (config.Providers). It qualifies the repository into the canonical name
+	// this block publishes, exactly as a profile's provider qualifies the
+	// allow_data_to of the accounts it names — an entry of this block is
+	// provider-qualified, and nothing else in the local config says which
+	// provider a per-repository job's runs are. An entry that names accounts
+	// without one is refused (providerRequired) rather than qualified by a
+	// guess.
+	Provider string
+	// Accounts are the account names this repository's own runs may be served
+	// by, in the order the file writes them.
+	Accounts []string
+}
+
 // accountMembers is the member names an accounts entry is spelled with, read
 // from the struct's own json tags the way profileMembers is (carrierMembers),
 // so a field this type gains is held to its spelling without a second list.
@@ -285,10 +321,14 @@ func profileNameOf(at string) string {
 // is qualified with the provider of the profile(s) naming the account, through
 // Canonical — the one function the matcher and the allow-list are built from.
 //
-// Only accounts some profile names are published. An account no profile lists
-// is one no job mounts, and a block entry for it would be a list of
-// repositories published on the readable node for no reason (§5(2): the node
-// is read by every run).
+// Only accounts some profile or some repository entry names are published. An
+// account nothing lists is one no job mounts, and a block entry for it would
+// be a list of repositories published on the readable node for no reason
+// (§5(2): the node is read by every run). The two sources are a union, and
+// neither narrows the other: a repository entry adds the ONE canonical name of
+// the repository it is written on to each account it names, so an account a
+// profile already serves gains the spelling of that repository's own provider
+// beside the profile's — which is what the per-repository job's run reads.
 //
 // The default account (D5) is one case where the source is not
 // claude_accounts: "default" is reserved there (it is the unsuffixed
@@ -310,17 +350,21 @@ func profileNameOf(at string) string {
 // Every refusal names the profile that lists the account and the block the
 // operator edits (design §4.4 rows 1 and 2): this runs at publish and at
 // `fugaro update`, and both readers are the operator, at a terminal.
-func DeriveAccounts(profiles map[string]Profile, accounts map[string]config.ClaudeAccount, projectSecrets map[string]config.ProjectSecret) (map[string]Account, error) {
+func DeriveAccounts(profiles map[string]Profile, accounts map[string]config.ClaudeAccount, projectSecrets map[string]config.ProjectSecret, repos map[string]RepoAccount) (map[string]Account, error) {
 	named := map[string][]string{} // account name → the profiles naming it, sorted
 	for _, name := range profileMapNames(profiles) {
 		for _, ref := range profiles[name].ClaudeAccounts {
 			named[ref] = append(named[ref], name)
 		}
 	}
-	if len(named) == 0 {
+	repoAccounts, err := deriveRepoAccounts(repos, accounts, projectSecrets)
+	if err != nil {
+		return nil, err
+	}
+	if len(named) == 0 && len(repoAccounts) == 0 {
 		return nil, nil
 	}
-	out := make(map[string]Account, len(named))
+	out := make(map[string]Account, len(named)+len(repoAccounts))
 	for _, ref := range sortedStringKeys(named) {
 		if msg := config.ValidClaudeAccountRef(ref); msg != "" {
 			return nil, fmt.Errorf("projectpolicy: profiles.%s.claude_accounts: %s", named[ref][0], msg)
@@ -406,7 +450,134 @@ func DeriveAccounts(profiles map[string]Profile, accounts map[string]config.Clau
 		slices.Sort(list)
 		out[ref] = Account{AllowRepos: list}
 	}
+	// The repositories' own entries are the union's other half, and they are
+	// merged last so that an account a profile also names keeps what the
+	// profile derived and gains what the repository adds: the two are one
+	// answer about the same credential, and a repository entry narrows nothing
+	// (its own D3 check is against the account's list, not against the
+	// profile's).
+	for _, ref := range sortedStringKeys(repoAccounts) {
+		out[ref] = Account{AllowRepos: unionRepos(out[ref].AllowRepos, repoAccounts[ref].AllowRepos)}
+	}
 	return out, nil
+}
+
+// unionRepos is two allow_repos lists as one, sorted and without a repeat: the
+// profile-derived list and the repository-derived one are each already sorted
+// and repeat-free, and their union is not.
+func unionRepos(a, b []string) []string {
+	if len(b) == 0 {
+		return a
+	}
+	out := append(append(make([]string, 0, len(a)+len(b)), a...), b...)
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// deriveRepoAccounts is the accounts block's second source: the repositories
+// whose own entries name accounts (the local config's
+// repos.<owner/name>.claude_accounts, read here as RepoAccount), each
+// contributing the one canonical name of the repository it is written on to
+// every account it names.
+//
+// The D3 subset rule is asked here, repository by repository, in the shape
+// validProfileAccounts asks it of a profile: an account may serve only what
+// its own list covers — claude_accounts.<n>.allow_data_to for a named account,
+// the project_secrets entry for the default account, the reach
+// ProjectSecretReaches answers for the axis's two non-account values — so an
+// entry naming an account that does not cover its repository is refused rather
+// than published. The account is the credential, and a repository it does not
+// cover is one whose runs the token must never reach; the refusal names the
+// repository, the account and the block the operator edits.
+//
+// The provider is required and is the entry's own (providerRequired): an
+// allow_repos entry is provider-qualified, and a per-repository job's runs are
+// of the repository's own provider — a repository entry with no provider has
+// no provider to qualify its repository with, and guessing one would publish
+// an admission no run of that repository could ever read.
+func deriveRepoAccounts(repos map[string]RepoAccount, accounts map[string]config.ClaudeAccount, projectSecrets map[string]config.ProjectSecret) (map[string]Account, error) {
+	if len(repos) == 0 {
+		return nil, nil
+	}
+	out := map[string]Account{}
+	for _, repo := range sortedStringKeys(repos) {
+		entry := repos[repo]
+		if len(entry.Accounts) == 0 {
+			// A repos entry that names no account states nothing about
+			// accounts, which is the shape every one of them has today.
+			continue
+		}
+		at := "projectpolicy: repos." + repo + ".claude_accounts"
+		if entry.Provider == "" {
+			return nil, providerRequired(at)
+		}
+		canonical, err := Canonical(entry.Provider, repo)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %q is not a repository this block can publish: %v — an accounts entry's allow_repos is a provider-qualified repository name, qualified here with the provider of the repository's own repos entry (%s)",
+				at, repo, err, entry.Provider)
+		}
+		for i, ref := range entry.Accounts {
+			one := fmt.Sprintf("%s[%d]", at, i)
+			if msg := config.ValidClaudeAccountRef(ref); msg != "" {
+				return nil, fmt.Errorf("%s: %s", one, msg)
+			}
+			if err := repoAccountCovers(ref, repo, accounts, projectSecrets); err != nil {
+				return nil, fmt.Errorf("%s: %w", one, err)
+			}
+			out[ref] = Account{AllowRepos: append(out[ref].AllowRepos, canonical)}
+		}
+	}
+	for _, ref := range sortedStringKeys(out) {
+		list := out[ref].AllowRepos
+		slices.Sort(list)
+		out[ref] = Account{AllowRepos: slices.Compact(list)}
+	}
+	return out, nil
+}
+
+// repoAccountCovers is D3 for one repository entry: whether the account it
+// names covers the repository at all, and, when it does not, the refusal naming
+// the list the operator edits. It is the same rule validProfileAccounts decides
+// between a profile and the accounts it names, asked here between a repository
+// entry and the accounts it names, and it reads each account's own source the
+// way accountSlugs does: a named account's claude_accounts entry, the default
+// account's project_secrets entry, and for the axis's two non-account values the
+// reach ProjectSecretReaches answers.
+//
+// The entry is refused rather than narrowed because an account's list is the
+// bound on where its token may be read (D3), and a repository the account does
+// not cover is one the operator said the token is not for: publishing it anyway
+// would admit a repository the credential's own list excludes, which is the
+// widening this rule exists to prevent.
+func repoAccountCovers(ref, repo string, accounts map[string]config.ClaudeAccount, projectSecrets map[string]config.ProjectSecret) error {
+	switch {
+	case config.AxisNonAccountValue(ref):
+		subject, short := "the project's own key", "the key"
+		if ref == config.ProviderKeyAccount {
+			subject, short = "the project's provider key", "the provider key"
+		}
+		if secret := nonAccountSecret(ref); !config.ProjectSecretReaches(projectSecrets, secret, repo) {
+			return fmt.Errorf("%s may serve no repository the project_secrets entry does not reach, and project_secrets.%s.allow_data_to does not reach %s: add the repository there, or take %s off this repository's claude_accounts",
+				subject, secret, repo, short)
+		}
+	case ref == config.DefaultClaudeAccount:
+		secret := config.ClaudeAccountSecret(config.DefaultClaudeAccount)
+		if !config.ProjectSecretReaches(projectSecrets, secret, repo) {
+			return fmt.Errorf("the default account may serve no repository project_secrets does not reach: its token is %s, and a job mounts it only where project_secrets carries a %s entry whose allow_data_to lists the repository — add `%s: {allow_data_to: [%s]}` there and publish again, or take the account off this repository's claude_accounts",
+				secret, secret, secret, repo)
+		}
+	default:
+		acct, ok := accounts[ref]
+		if !ok {
+			return fmt.Errorf("the local config defines no claude_accounts entry for %q, so the repositories this account serves are undecidable: define it as `claude_accounts: {%s: {allow_data_to: [%s]}}`, or take the account off this repository's claude_accounts",
+				ref, ref, repo)
+		}
+		if !acct.AllowsData(repo) {
+			return fmt.Errorf("the account %q may serve no repository its own allow_data_to does not name, and %s holds %s: add %s to claude_accounts.%s.allow_data_to and publish again, or take the account off this repository's claude_accounts",
+				ref, accountSourcePhrase(ref), strings.Join(acct.AllowDataTo, ", "), repo, ref)
+		}
+	}
+	return nil
 }
 
 // nonAccountSlugs is the policy list of one of the account axis's non-account

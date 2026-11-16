@@ -70,6 +70,8 @@ import {
   writeUpdateSwitch,
 } from '../../src/main/updatestore'
 import type { UpdatesFs } from '../../src/main/updatestore'
+import { reportedMode } from '../support/fsMode'
+import { itHostRoute } from '../support/hostRoute'
 
 /** made is every temporary directory this file has handed out, so one rule at
  * the end of each case can take them all away: these hold FIFOs, links and
@@ -92,6 +94,8 @@ afterEach(() => {
  * rather than failing on a name it cannot create. The probe's own directory,
  * and the FIFO inside it when there is one, go away whatever it answered. */
 const mkfifoAbsent = ((): boolean => {
+  // Git for Windows ships an msys `mkfifo` whose pipe `node:fs` does not see as a FIFO.
+  if (process.platform === 'win32') return true
   const probe = mkdtempSync(join(tmpdir(), 'fugaro-updates-'))
   try {
     execFileSync('mkfifo', [join(probe, 'probe')])
@@ -215,7 +219,7 @@ describe('the update switch’s file', () => {
     const text = readFileSync(path, 'utf8')
     expect(text).toBe('false')
     expect(typeof (JSON.parse(text) as unknown)).toBe('boolean')
-    expect(statSync(path).mode & 0o777).toBe(UPDATES_FILE_MODE)
+    expect(statSync(path).mode & 0o777).toBe(reportedMode(UPDATES_FILE_MODE))
 
     // The write is the atomic one: a fresh temporary file, then a rename onto
     // the target, with nothing left behind.
@@ -308,7 +312,7 @@ describe('the update switch’s file', () => {
     expect(readUpdateSwitch(directory)).toBe(false)
   })
 
-  it('reads a symlink as on, and follows it nowhere (U4b, U4c)', () => {
+  itHostRoute('reads a symlink as on, and follows it nowhere (U4b, U4c)', () => {
     // The gate is read on a path, and the one answer it must never give is one
     // read out of a name somebody else chose: the open does not follow the link
     // (`O_NOFOLLOW`), so a symlink is refused rather than parsed -- the target

@@ -93,7 +93,7 @@ this repository writes down.
 **VERIFIED — the tree already has the precedent that states it, and the guard that reads it.** The MCP
 front door, the one other always-on endpoint this installation deploys, pins it explicitly:
 
-- `deploy/terraform/gcp/modules/installation/coordinator.tf:443-445` —
+- `deploy/terraform/gcp/modules/installation/coordinator.tf:458-460` —
   `scaling { min_instance_count = 0 }`, under a comment that gives the reason in the same words the
   owner's ruling does ("a public endpoint nobody calls costs nothing, and a cold start is what a caller
   waits for rather than what the installation pays for around the clock").
@@ -499,8 +499,8 @@ of the bundle and this task's file list, its tests and its SEC flag are as they 
 **Decisions:** the ruling of 2026-11-05; `CLAUDE.md`'s HARD RULE. **Verification:** `internal/cli`.
 
 - **Files:** `internal/cli/init_converge_test.go` (the convergence pair),
-  `internal/cli/update_managed_test.go` (its `--yes --provision-credentials` invocations at `:798`,
-  `:808` become plain `--yes`). **2 files.**
+  `internal/cli/update_managed_test.go` (its `--provision-credentials` invocations at `:798`,
+  `:808`, the `--yes` beside them gone with T11). **2 files.**
 - **Interfaces:** consumes DON1's write. Produces no interface of its own: it is the test that makes the
   HARD RULE falsifiable. Two directions, and the second is the one that is easy to forget:
   1. an installation whose recorded state is **0.19.0** — no `credentials_service` block, the
@@ -565,7 +565,7 @@ behaviour is already pinned in `managed_cost_test.go` where it belongs.
   `scripts/gen-golden-plans.sh`, never by hand.
 - **Interfaces:** `google_cloud_run_v2_service.credentials` states, in a `scaling` block on the
   **template**, `min_instance_count = 0` and a `max_instance_count`. The precedent is the MCP front
-  door's own block (`coordinator.tf:443-445`), and the numbers are chosen rather than copied: the
+  door's own block (`coordinator.tf:458-460`), and the numbers are chosen rather than copied: the
   **minimum is 0** because that is the owner's cost claim made checkable, and the **maximum is bounded**
   because an unbounded service is the other half of a cost the owner did not consent to — a runaway
   caller, or a retry storm, scales this service as far as Cloud Run allows. The plan proposes
@@ -628,7 +628,7 @@ behaviour is already pinned in `managed_cost_test.go` where it belongs.
   **`internal/config/providers.go` (`:542`, `ServiceHeldSecretNames`'s own doc: "once an installation
   opts in AND the job's own account has given its own copy up")** and
   **`internal/cli/init_coordinator_test.go` (`:113`, `TestTheCoordinatorOptInIsRefusedWhereItCannotBe
-  Confirmed`, whose comment states "the opt-in follows `--provision-credentials` — `--yes` never covers
+  Confirmed`, whose comment states "the opt-in follows `--provision-credentials` — no flag covers
   it")** — the last two added by the review, and both are **Go sources with a retired phrase in them**,
   not documents, which is why they belong in this list rather than in the table below.
   **At most 28 Go files**, plus the documents in the table below — and the cap is the list, not a
@@ -845,7 +845,7 @@ credentials service). **Verification:** `internal/cli`, `internal/managed`.
 
   | state | the line |
   |---|---|
-  | no block in the local config | the installation has not opted into the service: this release deploys it only behind `fugaro update --provision-credentials` (the flag DON1 removes: until it lands, the credentials stage is registered behind it and nothing else runs it), and every run of an installation that never asked for it fetches its model credential the way it did before the service existed, so nothing here is broken or behind. Taking the opt-in is what moves the credential out of the jobs: every repository root re-applied after it drops its jobs' model credential in **every** `agent.auth` mode (which is why a project that takes it runs its workflows with `agent.auth: cascade`), the stage asks for its own **typed confirmation** (a `--yes` run does not cover it), and a GitHub run of it refuses to mint until the bundle holds the App's key (`fugaro creds set github-app-key`) |
+  | no block in the local config | the installation has not opted into the service: this release deploys it only behind `fugaro update --provision-credentials` (the flag DON1 removes: until it lands, the credentials stage is registered behind it and nothing else runs it), and every run of an installation that never asked for it fetches its model credential the way it did before the service existed, so nothing here is broken or behind. Taking the opt-in is what moves the credential out of the jobs: every repository root re-applied after it drops its jobs' model credential in **every** `agent.auth` mode (which is why a project that takes it runs its workflows with `agent.auth: cascade`), the stage asks for its own **typed confirmation** (no flag covers it), and a GitHub run of it refuses to mint until the bundle holds the App's key (`fugaro creds set github-app-key`) |
   | block present, Cloud Run answers `NOT_FOUND` | the block is written and the service is not deployed; `fugaro update --provision-credentials` re-applies the root (the same flag as the row above, for the same reason) |
   | deployed, the bundle holds no version | deployed and admitting nobody: the bundle is empty, and `fugaro creds set NAME` is the writer. **Warning**: the loader fails closed, so every model call of a run against it is refused |
   | deployed, the bundle's newest version is not `ENABLED` | deployed and admitting nobody: the version and its document are there and Secret Manager will not serve them, so the loader's read fails closed — the same refused model call as the row above, so the same **warning**. The line names the version and its state; `DISABLED` is the one an operator's incident disable leaves, and the fix names the enable (`gcloud secrets versions enable <version> --secret=<id>`) because `creds set` refuses while the newest version is disabled |
@@ -1275,8 +1275,8 @@ time; it may be two tasks' **across** levels and never within one. So:
 
 **A level with two writers of one file is the thing this table exists to make impossible**, and the
 first draft of this section had exactly that: DON2 and DON6 both wanted
-`internal/cli/update_managed_test.go`. The task that holds it is **DON2** — the file's `--yes
---provision-credentials` invocations are the convergence test's own fixture, so the task that owns the
+`internal/cli/update_managed_test.go`. The task that holds it is **DON2** — the file's `--provision-credentials`
+invocations (the `--yes` beside them gone with T11) are the convergence test's own fixture, so the task that owns the
 convergence owns them — and DON6 takes `managed_apply_test.go` instead. Naming the collision is the
 point: a shared-files table that has never caught one is a table nobody checked.
 
@@ -1437,7 +1437,7 @@ how the second change happens, and the two readings are:**
   moves together or the guard fires. *(ii)* **`update` becomes a bundle writer**, which is a class of
   code the CLI does not have: it reads the project's existing secrets — the model credential, and the
   App key, which is **already a project-wide secret** (`gcp.ProjectSecretID(lc.Name,
-  config.GitHubAppKeySecret)`, `internal/cli/project_enroll.go:918`, which is what makes this reading
+  config.GitHubAppKeySecret)`, `internal/cli/project_enroll.go:1075`, which is what makes this reading
   feasible rather than a prompt) — and writes them into the one bundle secret, so the CLI holds raw
   credential values on a path that today never does. Terraform cannot do it: no credential value may
   reach Terraform or its state (`TestNoSecretVersionsInTerraform`), so the migration is the CLI's or
@@ -1508,7 +1508,7 @@ which is the class of decision this file does not make for the owner. **The owne
 |---|---|---|---|
 | V1 | Secret Manager's price per **active secret version** per month | §1.3's "one active version" is the only Secret Manager line this ruling adds, and the number is the whole of it | Google's published price list, read by the owner. **Nothing in this tree states a price**, and this file does not invent one |
 | V2 | Artifact Registry's price per GB per month of storage, and its free allowance | §1.3's cached-image line | the same |
-| V3 | Cloud Run's price per request and per CPU/allocation-second, and that a zero-minimum service has **no** idle charge | The owner's own reason for the ruling ("a Cloud Run service that scales to zero costs nothing idle"). **The scale-to-zero behaviour is not in this tree** — what is in this tree is the MCP front door's `min_instance_count = 0` and a comment saying why (`coordinator.tf:443`) | Cloud Run's published documentation and price list, read by the owner; and, once DON3 lands, **Check 94 read back on a real installation** |
+| V3 | Cloud Run's price per request and per CPU/allocation-second, and that a zero-minimum service has **no** idle charge | The owner's own reason for the ruling ("a Cloud Run service that scales to zero costs nothing idle"). **The scale-to-zero behaviour is not in this tree** — what is in this tree is the MCP front door's `min_instance_count = 0` and a comment saying why (`coordinator.tf:458`) | Cloud Run's published documentation and price list, read by the owner; and, once DON3 lands, **Check 94 read back on a real installation** |
 | V4 | That the Cloud Run provider's default for `min_instance_count` really is `0` | §1.2 rests on it: the gap is that the tree states nothing, so the *default* is what decides today | The provider's schema, read by the owner. The tree does not state it, and DON3's whole point is that the tree should not have to |
 | V5 | Whether a **managed** project's `fugaro update` applies its own installation root | §3 DON6 cannot be written until this is known, and it is a fact about the managed convergence path rather than about this ruling | Read out of `internal/cli/upgrade_cloud.go` and the managed path **by DON6's own red step**, which is why that task determines rather than assumes it |
 | V6 | That the compressed size of the credentials image is materially below its ~60 MB uncompressed size | §1.3's "smaller again" | The image's manifest, read by the owner (`docker buildx imagetools inspect`). The **uncompressed** size is VERIFIED in the tree (`images/credentials_test.go:209-220`) and this row is only about the compressed figure |

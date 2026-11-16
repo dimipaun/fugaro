@@ -19,7 +19,11 @@
       },
       "policy": {
         "shared": { ".read": "TOKEN", ".write": false },
-        "repos": { "$slug": { ".read": "TOKEN && auth.token.fs == $slug", ".write": false } }
+        "repos": { "$slug": { ".read": "TOKEN && auth.token.fs == $slug", ".write": false } },
+        "voice": {
+          "shared": { ".read": "TOKEN", ".write": false },
+          "repos": { "$slug": { ".read": "TOKEN && auth.token.fs == $slug", ".write": false } }
+        }
       },
       "limits": { ".read": "TOKEN" },
       "mode": { ".read": "TOKEN" },
@@ -236,6 +240,8 @@
           "updatedAt": { ".validate": "AMOUNT && RBOK" },
           "spent": { ".validate": "AMOUNT && RBOK" },
           "credential": { ".validate": "STR && RBOK" },
+          "mode": { ".validate": "STR && RBOK" },
+          "from": { ".validate": "STR && RBOK" },
           "waiting_until": { ".validate": "TIMESTAMP && RBOK" },
           "requestedBy": { ".validate": "STR && RBOK" },
           "$other": { ".validate": false }

@@ -87,7 +87,8 @@ The row is `runview.Row` (`internal/runview/runview.go:74`); it copies the recor
 halt into `Halt`, and the run's five-key status vocabulary into `Status`. The document is `lsDoc`
 (`internal/cli/runs.go:214`) — `project`, `runs`, `totals`, `warnings` — and the rows come from
 `(*cli.Cloud).LoadRows` (`internal/cli/api.go:301`), which `runs ls` and every other row reader call.
-`--state`'s closed list is `lsStates` (`internal/cli/runs.go:65`) and it is refused by
+`--state`'s closed list is `lsStateWords` (`internal/cli/runs_prstate.go:51`) — the run states plus
+the three states of a pull request — and it is refused by
 `slices.Contains`, which is the shape the design gives `--group-by`'s own closed list.
 
 **Two consequences the design's §6.1 does not carry.** First, a row key is a **contract key** for the
@@ -624,7 +625,11 @@ reserves 351–359 for a second owner-run check if a task needs one. Neither cla
 with it: 350 is neither 330 nor 360, and the register's rule renumbers the later of two **colliding**
 claims, which this is not. The register's own summary row and `## Check 350` section are written by the
 task that implements the check, under the number free **at that merge** — the register's rule, and not
-this folder's choice.
+this folder's choice. **Written 2026-11-14 and NOT RUN**: that task wrote `## Check 350` and its summary
+row in `docs/gcp-live-checklist.md`, and the check itself as one script the owner runs —
+`scripts/live-checks/check350.sh` with `scripts/live-checks/check350_test.sh` — so this block's number is
+spent, the register's own reading above is what it was on 2026-11-07, and nothing here is a reading about
+the classes.
 
 ---
 

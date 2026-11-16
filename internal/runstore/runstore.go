@@ -145,6 +145,34 @@ type Halt struct {
 	Scope  string     `json:"scope"` // run | repo | global
 	At     time.Time  `json:"at"`
 	Detail string     `json:"detail,omitempty"`
+	// WorkspaceRefusal, when set, says the workspace's own credentials
+	// service refused this run, and which of the workspace's refusals it was:
+	// its stop switch, its cap, or a settle that failed — the values of
+	// internal/gateway's WorkspaceRefusals, which result.schema.json's enum
+	// is held to (docs/workspaces/spec.md §5, §9; D2022's O19,
+	// docs/stateless-orchestrator/implementation-plan.md).
+	//
+	// It is the marker the run's record did not have (U12, resolved NO on
+	// 2026-11-13) and the reason a launcher needs it: a workspace's refusal
+	// reaches a member's run as the same budget_unavailable/run halt a
+	// member's own credentials-service outage writes, so a daemon reading
+	// records alone cannot tell them apart, counts the refusal as one of an
+	// item's ordinary attempts, and trips its breaker only after three. It
+	// says who refused and never why the run stopped — Reason, Scope and
+	// Detail keep exactly what they said before this field existed, so a run
+	// refused by a workspace stops where it always stopped and only its
+	// record says by whom.
+	//
+	// It is written from the marker the workspace's service put on the
+	// refusal it answered (internal/gateway's WorkspaceRefusalHeader, read by
+	// the gateway that halts the run) and never inferred from a reason, a
+	// scope or a detail: a member's own credentials service writes those the
+	// same way, and a field a run can claim for itself is a field a daemon
+	// would pause a queue on for nothing. Absent — never an empty string —
+	// for every run no workspace refused, which is every run on an
+	// installation with no workspace and every record written before this
+	// field existed, so an old reader sees the record it always saw.
+	WorkspaceRefusal string `json:"workspace_refusal,omitempty"`
 }
 
 // Outcome is the state of the run's pull request.
@@ -718,6 +746,27 @@ const (
 	TriageSourceCap TriageSource = "cap"
 )
 
+// The two causes a failed triage round records that are not a service's own
+// words (TriageRound.Cause). They are the record's vocabulary and not
+// internal/triage's or internal/runner's, because every reader of the record
+// has to be able to tell a call that never got through from a judge whose
+// answer was unusable without guessing at a service's phrasing: the first is
+// what an auth or upstream failure looks like once the service's text is
+// clipped to its first line, and this pair is what the run itself knows.
+const (
+	// TriageCauseUnreadable is a round whose call answered something shaped
+	// like a verdict that internal/triage's reader refused: a word outside the
+	// two, a key that is not a finding's, a reason wrapped onto a second line,
+	// or a finding the round does not have. The judge ran; the answer was
+	// unusable, and the fail-safe blocked every finding the table blocks.
+	TriageCauseUnreadable = "unreadable verdict"
+	// TriageCauseNoAnswer is a round whose call left no words at all to quote:
+	// no text, and no error the stage could read — a stream that ended before
+	// its first token. It is the cause of last resort, so a failed round says
+	// something rather than carrying an empty line beside Failed.
+	TriageCauseNoAnswer = "the call answered nothing"
+)
+
 // TriageRecord is what a run's triage decided (docs/post-review-triage, D1850):
 // one entry per round the stage ran, in the order it ran them, so a reader can
 // see how each finding was placed, by which model, and what a failed call left
@@ -758,6 +807,16 @@ type TriageRound struct {
 	// the flag is what makes that visible rather than a round that looks like
 	// any other.
 	Failed bool `json:"failed,omitempty"`
+	// Cause is why a failed round failed, one line, and empty for a round that
+	// did not. It is the call's own first line where the call answered nothing
+	// a verdict could be read from — an auth or upstream failure, a stream cut
+	// before the answer — and TriageCauseUnreadable where it answered
+	// something shaped like a verdict that the reader refused. Clipped to
+	// MaxTriageLine and dropped for a round that is not failed (NewTriage),
+	// and redacted with both passes where it is written (internal/runner): a
+	// service's auth error quotes the credential it refused, and this line
+	// reaches the pull request's body.
+	Cause string `json:"cause,omitempty"`
 	// Entries is one verdict per finding of the round. It may be empty — a
 	// round whose call failed before it placed anything still says so through
 	// Failed — and is never null, so a reader can range over it.
@@ -799,8 +858,10 @@ type TriageEntry struct {
 // The rounds are capped at MaxTriageRounds and one round's entries at
 // MaxTriageEntries — each round's Total is set here, from the entries the
 // caller gave it, so a round the cap cut says how many verdicts it wrote
-// instead of looking like one that read only the first hundred — the reason and
-// the group key are clipped to MaxTriageLine, and a round or an entry a reader
+// instead of looking like one that read only the first hundred — the reason,
+// the group key and a failed round's cause are clipped to MaxTriageLine, the
+// cause of a round that did not fail is dropped, and a round or an entry a
+// reader
 // cannot place is dropped: a round with no number, a mode or a level outside
 // its vocabulary, and an entry at a negative index, with no key, no reason, a
 // word outside the two or a source outside the four — an index below 0 names no
@@ -832,6 +893,13 @@ func NewTriage(rounds []TriageRound) *TriageRecord {
 			entries = append(entries, e)
 		}
 		r.Entries = entries
+		// The cause belongs to a failed round and to no other: a round that
+		// answered a verdict did not fail, and a record whose cause outlived
+		// its flag would read as a failure beside a flag that says otherwise.
+		if !r.Failed {
+			r.Cause = ""
+		}
+		r.Cause = clipRunes(r.Cause, MaxTriageLine)
 		tr.Rounds = append(tr.Rounds, r)
 	}
 	if len(tr.Rounds) == 0 {
@@ -1321,6 +1389,23 @@ type Record struct {
 	// Policy is the budget and model policy the run ran under, set only
 	// when a layer set something (a run with no policy writes none).
 	Policy *PolicyRecord `json:"policy,omitempty"`
+	// ChainRaises is the raises a launcher made on this run's chain
+	// (docs/run-limit-carry-over L9, D1061): one entry per `fugaro budget
+	// chain raise`, each of which rewrote the stored task of the run that
+	// began the chain — the one place a chain's limit lives (D1041, D1046) —
+	// because the chain had spent it. It is the root run's record that carries
+	// them, the chain's limit being the root launch's number and every link
+	// reading it there.
+	//
+	// A launcher writes it, and that is the point (F21: it holds objectUser
+	// on the runs/ prefix already): the chain limit is a convention the
+	// installation states and not a bound the platform enforces, so who made
+	// the raise and why is the whole of what separates a raise from a
+	// rewritten limit (spec §4). Nothing reads this block back into a merge:
+	// it is the record of an edit, and the figures the edit wrote are in the
+	// root run's stored task. Absent — never an empty list — for a chain
+	// nobody raised, which is every record written before this field existed.
+	ChainRaises []ChainRaise `json:"chain_raises,omitempty"`
 	// Recipe is the recipe the run's loop came from (docs/design/recipes.md
 	// §8); absent in records from before 0.5.0.
 	Recipe *RecipeRecord `json:"recipe,omitempty"`
@@ -1569,6 +1654,20 @@ const PatchName = "ab/patch.diff"
 // PatchKey is PatchName under prefix (Store.Prefix(), which ends in "/").
 func PatchKey(prefix string) string { return prefix + PatchName }
 
+// ManifestName is a judge run's manifest under its own prefix:
+// runs/<repo-slug>/<judge-run-id>/ab/manifest.json, the complete and unjudged
+// pairs the launcher found. The launcher writes it before the task exists and
+// the judge step reads it back, so the pair it judges is fixed at the launch
+// rather than recomputed at the judge — and writer and reader spell the leaf
+// once, as PatchName is.
+const ManifestName = "ab/manifest.json"
+
+// VerdictsName is where a judge run writes what it decided, under its own
+// prefix and nowhere else: runs/<repo-slug>/<judge-run-id>/ab/verdicts.json.
+// It is the record a later reader scores a pair from, so a reader that spells
+// it differently would report a judged pair as unjudged and judge it again.
+const VerdictsName = "ab/verdicts.json"
+
 // MaxBacklogClosed bounds Record.BacklogClosed. A run closes only what the
 // runs of its own pull request filed for a round, one item a run over a walk
 // the runner bounds at twenty runs, so this is room for every close a real
@@ -1661,6 +1760,40 @@ type PolicyIgnored struct {
 	Source    string `json:"source"`
 	From      string `json:"from"`
 	Clamped   bool   `json:"clamped,omitempty"`
+}
+
+// ChainRaise is one raise a launcher made on a chain that had spent its limit
+// (docs/run-limit-carry-over L9, D1061): who made it, when, why, and each
+// dimension's figure before and after.
+//
+// The figures are the ones the edit wrote, in the dimension's own unit
+// (Amount), which is the unit the chain's reader prints them in too — the
+// chain block of `fugaro runs show` and the launch reply (L6, L7). From is
+// always there: a raise moves a limit the chain has, and a dimension the
+// chain's launch set no figure for is not a limit this command raises.
+type ChainRaise struct {
+	// By is who made the raise, as the launcher states itself
+	// (localcfg.Config.Me): a person's own account, and never the run's.
+	By string `json:"by"`
+	// At is when the raise was made.
+	At time.Time `json:"at"`
+	// Reason is why, in the launcher's own words — the one field that says
+	// what the raise was for, and never empty.
+	Reason string `json:"reason"`
+	// Limits are the dimensions the raise moved, in the order every message
+	// about them reads: dollars, tokens, wall time, review rounds. Never
+	// empty, and never twice one dimension.
+	Limits []ChainRaiseLimit `json:"limits"`
+}
+
+// ChainRaiseLimit is one dimension of one raise: the chain's limit as the
+// launch that began the chain stored it, and the figure the raise wrote in its
+// place, both in the dimension's own unit — micro-dollars for the money,
+// whole tokens, seconds and a count for the rounds (Amount).
+type ChainRaiseLimit struct {
+	Dimension Dimension `json:"dimension"`
+	From      Amount    `json:"from"`
+	To        Amount    `json:"to"`
 }
 
 // FollowUp is what a follow-up run acted on (design §4.4).

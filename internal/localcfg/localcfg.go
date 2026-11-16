@@ -30,16 +30,47 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/mailbox/keychain"
 	"github.com/dimipaun/fugaro/internal/mirror"
+	"github.com/dimipaun/fugaro/internal/mobileauth"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
+// ConfigVersion is the version of the local config this release writes, and
+// the newest Parse reads.
+//
+// Version 1 is the document every installation had before the roles' own words
+// arrived: its `terraform` block spelled the two member lists `launchers` (who
+// may start runs — the role operator) and `operators` (who administer the
+// project — the role admin). Version 2 spells the same two lists `operators`
+// and `admins`, and the bump exists precisely because ONE NAME MOVED: the word
+// `operators` names the first list in version 2 and named the second in version
+// 1, so a reader that cannot tell the two shapes apart would read a version-1
+// admin list as this version's operator list, which is a privilege change
+// nobody asked for. The document's own `version` is therefore read BEFORE the
+// document is decoded, a version-1 document is folded into this shape
+// (foldLegacyLists), and a document of a version newer than this one is refused
+// by name rather than guessed at — which is also the floor an older Fugaro
+// meets: it reads a `version` it does not write and refuses the document, so an
+// old binary never converges an installation whose shape it cannot see.
+//
+// The two keys are the machine's copy of the role words, and the grants node
+// (internal/access, under config/admin) is their authority: `fugaro update`
+// derives these lists from it on every converge, and its migration writes the
+// node from the version-1 lists an installation already had.
+const ConfigVersion = 2
+
 // Config is the local CLI config.
 type Config struct {
+	// Version is the document's own version, and the field an older Fugaro
+	// refuses: ConfigVersion is the one this release writes, and Parse returns
+	// every accepted document as this version, because folding a version-1
+	// document produces version 2's shape and a document that says 1 while
+	// carrying 2's keys is the one spelling nobody may read.
 	Version int `yaml:"version"`
 	// Name is the Fugaro project (config.ProjectNameRE), which the file
 	// is named after.
@@ -100,17 +131,27 @@ type Config struct {
 	// this installation, and a remote-shaped entry then refuses.
 	ImageSource string `yaml:"image_source,omitempty"`
 	// BackendName is the compute backend by name (backend.Open's registry
-	// key); empty means backend.CloudRun, the only one implemented
-	// (design m11-setup-and-skills.md §7). Read it through Backend.
+	// key); empty means backend.CloudRun (design m11-setup-and-skills.md
+	// §7). Both cloud-run and cloud-batch are known names; the Batch one is
+	// what `fugaro doctor` reports on for an installation that selects it,
+	// and a config here only records the choice (design compute-backend.md
+	// §4.4). Read it through Backend.
+	//
+	// It is never published: Shared drops it and ParseShared refuses the key,
+	// so the selection is the one the machine running the launch wrote. The
+	// runs bucket's shared file is written by any launcher, and the checks
+	// that hold a `batch:` block -- or the choice itself -- to the
+	// installation's own provisioning are `fugaro doctor`'s, which a launch
+	// does not consult (docs/design/shared-config.md §4).
 	BackendName string `yaml:"backend,omitempty"`
 	// Batch is what the Cloud Batch backend reads: the installation facts a
 	// run's VM is built and placed from (design
 	// docs/design/compute-backend.md §4.4, plan
-	// 2026-10-19-compute-backend.md Task 8 step 2). Only the Batch opener
-	// reads it (internal/cli/cloud.go's cloudOpeners) and nothing selects
-	// that opener yet, so a config that carries this block still runs on
-	// Cloud Run: `backend: cloud-batch` stays refused by validate below until
-	// the enable task.
+	// 2026-10-19-compute-backend.md Task 8 step 2). The Batch opener reads it
+	// (internal/cli/cloud.go's cloudOpeners), and the block is only read by
+	// the backend that was selected: an installation that carries it without
+	// `backend: cloud-batch` still runs on Cloud Run, so nothing here selects
+	// a backend on its own.
 	Batch     *Batch    `yaml:"batch,omitempty"`
 	Build     Build     `yaml:"build"`
 	Terraform Terraform `yaml:"terraform,omitempty"`
@@ -159,6 +200,23 @@ type Config struct {
 	// choose among by name (design docs/design/named-oauth-tokens.md).
 	// Only the owner sets them, here, never in fugaro.yaml.
 	ClaudeAccounts map[string]config.ClaudeAccount `yaml:"claude_accounts,omitempty"`
+	// ClaudeAccountAliases are the names the choice keys may hold instead of an
+	// account's own name, each pointing at one account of claude_accounts (or
+	// at "default" for the unsuffixed account), so moving every key that names
+	// the alias to another account is one edit (docs/account-aliases/spec.md
+	// §1, D2090, D2092, D2093). Only the owner sets them, here, never in
+	// fugaro.yaml, the project layer or the shared config, for claude_accounts'
+	// own reason: an alias is resolved by whoever writes the name out or holds
+	// one to a rule, and a key a launcher could write would be a way around
+	// that account's allow_data_to. The alias never reaches the node, the task,
+	// the run record or a job by its own name — the publish resolves the members
+	// it copies there (internal/cli's configAccountValues and project_cmd), the
+	// launch resolves the flag, the stage keys and the project default before
+	// the allow-list is asked (claudeAccountFor), and the job set resolves the
+	// variant it builds (internal/infra's mixedStageAccounts and
+	// mixedDefaultAccount) — so this block is local config and nothing else
+	// moves with it.
+	ClaudeAccountAliases map[string]string `yaml:"claude_account_aliases,omitempty"`
 	// Credentials are the installation's named credentials (design
 	// docs/model-crafts/spec.md §1): a name a craft's access speaks and the
 	// type of the provider that serves it, whose secret value this file never
@@ -172,6 +230,18 @@ type Config struct {
 	// (spec §2). They are created where credentials are, and for the same
 	// reason.
 	Pools []config.Pool `yaml:"pools,omitempty"`
+	// SubscriptionSpread is whether a run may spread across two or more Claude
+	// OAuth subscription credentials at all (D1622, D1636): the D875 switch
+	// `claude_account_auto` held, under the name the pools it governs use, and
+	// off is what every installation reads until the owner turns it on — the
+	// arrangement a subscription's terms may forbid is not what Fugaro does
+	// unattended. It is a pointer so that "the owner wrote false" and "the
+	// owner wrote nothing" are two facts: the second is what a publish keeps
+	// the node's member for, and only the first turns a pool that is already
+	// spread off. It is created where the pools are, and for their reason: the
+	// node a run reads it from is the owner's own, and a key a launcher could
+	// write would be one that spends a subscription nobody agreed to spread.
+	SubscriptionSpread *bool `yaml:"subscription_spread,omitempty"`
 	// Crafts are the credential or pool each craft's calls go out on (spec
 	// §3): the project's own answer, published to the policy node by the same
 	// publish that carries the two blocks above. It is here rather than in the
@@ -215,6 +285,24 @@ type Config struct {
 	// is what makes the value mountable, and a launcher who could publish one
 	// would be widening the grant.
 	WorkflowSecrets map[string]config.ProjectSecret `yaml:"workflow_secrets,omitempty"`
+	// BitbucketTokens are the typed Bitbucket access tokens the credentials
+	// service's proxy may serve, one record per token (spec §"Token record",
+	// D2350, D2351, R1): the name, type, coverage and expiry the operator
+	// states, with each token's value in the service's bundle and nowhere
+	// else. Only the owner sets them, here, never in fugaro.yaml: coverage is
+	// what decides which requests a token may carry, so a block a reviewed
+	// repository could write would be a reach the operator never gave.
+	// ValidateBitbucketTokens holds type and coverage to R1's agreement, which
+	// is asked at load and therefore by `fugaro validate`, before anything
+	// derives a node or writes a bundle entry from the records.
+	//
+	// Identity and verified_at are deliberately not members (R12): they are
+	// written by `fugaro creds set` into the creds state store, so a
+	// hand-edited config cannot state an identity a run would trust, and
+	// `expires` is the one expiry source a typed token has (R6) — the legacy
+	// bitbucket-token keeps its secret_expires entry, and no secret_expires
+	// entry is read for a record here.
+	BitbucketTokens []config.BitbucketToken `yaml:"bitbucket_tokens,omitempty"`
 	// BitbucketAPIRoots are the Bitbucket API roots the owner allow-lists
 	// (D474), for an installation that sends its Bitbucket token to a root of
 	// its own rather than to Bitbucket's: a cloud run refuses any
@@ -232,6 +320,52 @@ type Config struct {
 	// refused by the publish that builds the node, before anything is written,
 	// with a sentence naming the entry.
 	BitbucketAPIRoots []string `yaml:"bitbucket_api_roots,omitempty"`
+	// CloneURLs are the URLs the project's repositories clone from, keyed by
+	// the canonical repository name (projectpolicy's clone_urls, which
+	// `fugaro project policy publish` copies this into — the runner computes a
+	// project job's clone URL from the node, so this file is where the owner
+	// writes it). Only the owner sets it, here or in the published node, and
+	// the shared config never carries it: a launcher who could write it into
+	// the runs bucket's shared file would be choosing where every teammate's
+	// runs clone from.
+	//
+	// It is a copy and not a derivation, and it is held to the node's rule
+	// alone (projectpolicy.ValidCloneURLs): an https URL without credentials
+	// that names exactly this repository on its own provider's host. There is
+	// no second copy of that rule here on purpose — an entry the node would
+	// refuse is refused by the publish that builds the node, before anything is
+	// written, with a sentence naming the entry, and by `fugaro project
+	// clone-url` where it is typed.
+	//
+	// A map and not a pointer, like ImageMap: nil is "this file states
+	// nothing", which keeps the node's block (CloneURLsEffective), and a
+	// written block with no entry in it is a statement of its own — the
+	// project gives no repository a URL, which is how a published block is
+	// taken away on purpose.
+	CloneURLs map[string]string `yaml:"clone_urls,omitempty"`
+	// MobileAllow is the DECLARED mobile allowlist (docs/mobile-auth, D231):
+	// the people and domains this project admits from a phone, each with the
+	// uid its device node is keyed by and the role it grants. It is the seed
+	// `fugaro project policy publish` writes into config/admin/devices and the
+	// record of what that node carries, and the node is what the deployed rules
+	// read: an entry declared here and not on the node admits nobody, because a
+	// publish seeds a project whose device node is not there yet and never
+	// re-adds what `fugaro pair revoke` removed.
+	//
+	// Only the owner sets it, here or in the published node, and that is the
+	// security half of the block rather than its convenience: the role it names
+	// is an authority over every run's messages and spending, and every other
+	// store is one a run or a teammate can write — a repository's own
+	// fugaro.yaml travels with the checkout a run is handed, so a declaration
+	// there would be a way for a pull request to add an admin, and the shared
+	// config in the runs bucket is writable by any launcher, so Shared drops
+	// the block and internal/cli's ParseShared refuses the key.
+	//
+	// A slice and not a pointer, like bitbucket_tokens: nil is "this file
+	// declares nothing", and an empty written block declares nothing either,
+	// because a declaration is a list of people rather than a switch with an
+	// empty state of its own.
+	MobileAllow []mobileauth.Declared `yaml:"mobile_allow,omitempty"`
 	// VerifierAccounts are the identities that may ask the installation's
 	// credentials service whether a verdict's signature is its own (C3.9g3,
 	// D1068, D1075): the coordinator's own account once it exists, and the
@@ -371,6 +505,15 @@ type Config struct {
 	// committed report carries no part of it, so a published threshold is a
 	// figure no other machine acts on.
 	Issues *Issues `yaml:"issues,omitempty"`
+	// Escalation is the outer loop's ladder as this machine states it: the
+	// thresholds, the model grades its rungs run at and the switches that
+	// decide whether the daemon acts on a stalled item at all
+	// (docs/outer-loop-escalation, E3). It is local-only for Issues' reason
+	// and one of its own: a threshold is authority rather than preference, so
+	// the block is refused by name in a repository's file and in the project
+	// layer, and Shared drops it — a launcher who could write the shared file
+	// would be choosing when every teammate's runs merge (D2032, G3).
+	Escalation *Escalation `yaml:"escalation,omitempty"`
 	// CredentialsService is the installation's credentials service
 	// (docs/credentials-service, D146/D147), or nil on an installation whose
 	// `fugaro update` could not deploy one — no Firebase backend for the
@@ -489,7 +632,42 @@ type Config struct {
 	// two spellings are told apart here (a written empty object is a non-nil
 	// empty map, an absent key a nil one) and mean the same floor, none.
 	ReviewFloor map[string][]string `yaml:"review_floor,omitempty"`
-	Repos       map[string]Repo     `yaml:"repos"`
+	// Binaries is the owner's grant of the paths a run may add a binary at,
+	// and the cap it is held to (D981–D983; binary-allow-rule, plan task
+	// AR1): `binaries.allow` is a list of doublestar path globs relative to
+	// the repository root, and `binaries.max_bytes` the size an admitted one
+	// must not exceed, 2 MiB unless the project lowers it.
+	//
+	// It travels the way ReviewFloor does, and the reason is the same one:
+	// `fugaro project policy publish` copies it into the policy node, which
+	// only the owner writes and the runner fails closed on, and the block
+	// never enters the shared config a launcher can write (Shared drops it,
+	// and ParseShared refuses the key besides). The rule this key states is
+	// about the bytes a run's own agent may add, so a file the subject of the
+	// rule can write must not carry it: a repository's committed `fugaro.yaml`
+	// has no such key at all (D986) — the run's own agent writes that file —
+	// and this one is the installation's own config, which no launcher can
+	// reach.
+	//
+	// It is projectpolicy's type, the way Orchestrator is policy's, because
+	// the file's key and the node's member are one block: a person reading the
+	// published node reads the key they wrote, and the pattern rule cannot be
+	// applied one way to a file and another to the node
+	// (projectpolicy.ValidBinariesAllow is called here and by that package's
+	// decode of the node).
+	//
+	// A publish keeps the node's block when this file states none, and a
+	// written empty block takes it away (BinariesEffective, D987): silence is
+	// not a request to remove an admission the owner published — a second
+	// machine whose config predates the key, or an owner who declined to set
+	// one, would otherwise widen the project's own rule by omission — while
+	// taking it away on purpose is written, and the strictest spelling of it
+	// is `binaries: {allow: []}`. The database keeps no member for an empty
+	// list, so what the written-empty spelling publishes is a node with no
+	// block at all: the same node a project that never set one has, and one
+	// that admits nothing either way.
+	Binaries *projectpolicy.Binaries `yaml:"binaries,omitempty"`
+	Repos    map[string]Repo         `yaml:"repos"`
 	// Workspace is the membership: the name of the workspace this project
 	// belongs to, and nothing else (D1291, docs/workspaces/spec.md §2). It is
 	// a scalar and not a list, because a project is in at most one workspace —
@@ -665,11 +843,33 @@ func (c *Config) choiceRefProblem(name string) string {
 	if config.AxisNonAccountValue(name) {
 		return config.NonAccountChoiceMessage(name)
 	}
+	// An alias is the other name these keys may hold (docs/account-aliases,
+	// D2091, D2092): the key keeps the alias as written, and whoever reads it
+	// resolves it through ResolveAccount before asking anything else — the
+	// allow-list included — so the lookup below would refuse a name this file
+	// does define. The alias's own name and target rules are
+	// ValidateAccountAliases', applied where the block is loaded; asking them
+	// again here would be a second copy of them.
+	if _, ok := c.ClaudeAccountAliases[name]; ok {
+		return ""
+	}
 	if _, ok := c.ClaudeAccounts[name]; ok {
 		return ""
 	}
 	return fmt.Sprintf("the account %q is not defined here: this key names an account of this file's claude_accounts block, where the account's own allow_data_to decides which repositories may use its token, or %q for the unsuffixed default account — define it as claude_accounts: {%s: {allow_data_to: [owner/name]}}, or drop the key",
 		pluginwire.Printable(name), config.DefaultClaudeAccount, pluginwire.Printable(name))
+}
+
+// ResolveAccount is name resolved through this file's aliases: the account a
+// reader has to work with, and the alias the name came through ("" when it was
+// no alias at all). It is the one step every reader of a choice key takes —
+// the launch, the publish and the job set — and it is taken BEFORE the result
+// is held to the account's own allow_data_to, so the allow-list is always asked
+// about the account the run will hold and never about the alias (F6). A reader
+// that holds an alias back rather than resolving it, or resolves it after the
+// allow-list, is the shape this method exists to keep out of the tree.
+func (c *Config) ResolveAccount(name string) (account, alias string) {
+	return config.ResolveAccountAlias(c.ClaudeAccountAliases, name)
 }
 
 // Mailbox is the mailbox block: what the mailbox consumer needs from the
@@ -882,6 +1082,12 @@ type ModelPrice struct {
 	CacheWrite1h   *float64 `yaml:"cache_write_1h,omitempty"`
 	CacheRead      *float64 `yaml:"cache_read,omitempty"`
 	WebSearchPer1k *float64 `yaml:"web_search_per_1k,omitempty"`
+	// ImageTokens is the per-image token ceiling an image block is reserved
+	// at, and it is the whole of what makes a model able to take an image
+	// (D2000): a model with no ceiling is refused the call. Left out, the
+	// model keeps the ceiling it already had — the built-in Claude rows have
+	// one — and an explicit 0 takes its images away.
+	ImageTokens *int64 `yaml:"image_tokens,omitempty"`
 	// LongContext is the price of a call whose input passes a threshold,
 	// for a model with a long-context tier; an override without it
 	// replaces the model's tier with none.
@@ -948,11 +1154,12 @@ func (c *Config) Overrides() (pricing.Overrides, error) {
 			}
 			r.LongContext = &pricing.Tier{AboveInputTokens: t.AboveInputTokens, InputPerM: *t.InputPerM, OutputPerM: *t.OutputPerM}
 		}
-		if err := r.Validate(); err != nil {
+		ov := pricing.Override{Rates: r, ImageTokens: mp.ImageTokens}
+		if err := ov.Validate(); err != nil {
 			errs = append(errs, fmt.Errorf("model_prices.%s: %w", id, err))
 			continue
 		}
-		o[id] = r
+		o[id] = ov
 	}
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
@@ -1016,11 +1223,37 @@ func (c *Config) validateBudget(bad func(string, ...any)) {
 
 // Terraform is what fugaro update needs to plan the installation again: its
 // state bucket, and the inputs that exist only as flags.
+//
+// Its two member lists carry the ROLES' own words (docs/roles-scopes, D1581):
+// `operators` are the members who start and steer runs, `admins` those who
+// onboard repositories, apply Terraform and submit builds. Before this release
+// the same two lists were spelled `launchers` and `operators`, which is the
+// collision a reader of this file must know about: the word `operators` names
+// one list here and named the OTHER one until version 1, so the document's own
+// `version` is what tells the two shapes apart (Parse folds version 1 into this
+// shape, and the migration in `fugaro update` rewrites the file as version 2
+// once the grants node holds the roles). The Terraform variables keep their old
+// names (D1589) — the installation's module still takes `launchers` and
+// `operators`, filled from these two lists by internal/cli's spec builders — so
+// a pure rename plans nothing.
+//
+// The lists are the machine's copy, not the authority: the roles live in the
+// grants node, and `fugaro update` derives these two lists from it on every
+// converge (internal/cli's access step). A file that disagrees with the
+// installation's own lists is a refusal, not a silent preference.
 type Terraform struct {
-	StateBucket string   `yaml:"state_bucket,omitempty"`
-	AlertEmail  string   `yaml:"alert_email,omitempty"`
-	Launchers   []string `yaml:"launchers,omitempty"` // IAM members, such as user:a@example.com
-	Operators   []string `yaml:"operators,omitempty"`
+	StateBucket string `yaml:"state_bucket,omitempty"`
+	AlertEmail  string `yaml:"alert_email,omitempty"`
+	// Operators are the IAM members who launch and watch runs (the role word is
+	// the spec's operator). The key was `launchers` in version 1: the list is
+	// the same one, under the role's name.
+	Operators []string `yaml:"operators,omitempty"`
+	// Admins are the IAM members who onboard repositories and apply Terraform
+	// (the role word is the spec's admin). The key was `operators` in version 1,
+	// and that reuse is why the document carries a version at all: a version-1
+	// reader must not read this list as the one above, and it does not — it
+	// refuses the document instead (Version).
+	Admins []string `yaml:"admins,omitempty"`
 	// BudgetAdmins are further budget admins on the Firebase project, IAM
 	// members (user:, group: or serviceAccount:); the GCP project's owners
 	// and editors are admins too, read when fugaro update --firebase-project runs.
@@ -1065,9 +1298,12 @@ const SecretExpiryLayout = "2006-01-02"
 // run's VM and job are built and placed from (design
 // docs/design/compute-backend.md §4.4, plan 2026-10-19-compute-backend.md
 // Task 8 step 2). It is read in one place — internal/cli/cloud.go's Batch
-// opener, which builds internal/backend/batch.Options from it — and
-// `backend: cloud-batch` is refused by validate below until the enable task,
-// so this block selects nothing today.
+// opener, which builds internal/backend/batch.Options from it — and the
+// backend name is what selects that opener: since the enable task (plan
+// 2026-10-19-compute-backend.md Task 10) `backend: cloud-batch` is a known
+// name, and the installation that selects it is what `fugaro doctor` refuses
+// until the Batch provisioning, the IAM, the logs, the cost and the reaper
+// all pass (design §4.4, §8.1 task 9).
 //
 // Most fields are what the compute root's apply already produces and
 // internal/infra/compute.go's ComputeOutputs already decodes (the machine
@@ -1391,6 +1627,30 @@ type Repo struct {
 	// where the spec is built, and the repository's agent.auth is read there
 	// too, live from the fugaro.yaml the runs read.
 	CredentialsServiceReady *bool `yaml:"credentials_service_ready,omitempty"`
+	// ClaudeAccounts are the accounts this repository's OWN runs may be served
+	// by, and they are the repository's own statement because a profile is not
+	// the only kind of job its runs land on: a per-repository job — every
+	// Bitbucket repository, and every repository no workflow sends to a shared
+	// one — has no profile to name its accounts in, and while the published
+	// accounts block was derived from the profiles alone such a repository
+	// could be admitted to no account at all (the credentials service's
+	// intersection came out empty and its runs were answered 503
+	// state_unavailable).
+	//
+	// An entry here adds this repository's canonical name to each account it
+	// names (projectpolicy.DeriveAccounts), which is the same admission a
+	// profile naming the account gives the repositories of ITS allow_repos:
+	// the account's own list is the bound, and this entry is refused at publish
+	// when it does not cover the repository. A profile and this key may both
+	// name one account; the union applies, and nothing already admitted is
+	// narrowed.
+	//
+	// It is operator-only local config, like claude_accounts and
+	// project_secrets themselves: never fugaro.yaml, never the project layer,
+	// never published as written. Provider must be set on an entry that names
+	// accounts, because the published entry is provider-qualified and this
+	// entry is the only place a per-repository job's provider is stated.
+	ClaudeAccounts []string `yaml:"claude_accounts,omitempty"`
 }
 
 // CredentialsServiceOn is the record as every reader of the switch judges it:
@@ -1408,6 +1668,31 @@ func (r Repo) CredentialsServiceOn() bool {
 // to its own copy of on, so two entries never share one record — the field is a
 // pointer only so that "no record at all" is a document a config can hold.
 func RecordSwitch(on bool) *bool { return &on }
+
+// PolicyRepoAccounts is the repositories whose own entries name Claude
+// accounts, as the published accounts block's derivation reads them
+// (projectpolicy.DeriveAccounts): keyed by the repository as this file spells
+// it (owner/name), each with the provider that qualifies it and the accounts it
+// names, in file order.
+//
+// The entry's provider is the one the repository was onboarded with, and it is
+// what turns owner/name into the canonical provider/owner/name an allow_repos
+// entry is written in. A repository entry naming accounts without one is
+// refused by validate (and again by the derivation), so the empty provider here
+// reaches no publish.
+func (c *Config) PolicyRepoAccounts() map[string]projectpolicy.RepoAccount {
+	if len(c.Repos) == 0 {
+		return nil
+	}
+	out := map[string]projectpolicy.RepoAccount{}
+	for repo, r := range c.Repos {
+		if len(r.ClaudeAccounts) == 0 {
+			continue
+		}
+		out[repo] = projectpolicy.RepoAccount{Provider: r.Provider, Accounts: r.ClaudeAccounts}
+	}
+	return out
+}
 
 // UsesVertex reports whether any repository the config records uses
 // Vertex AI.
@@ -1680,6 +1965,90 @@ func oldMailboxKeychainItem(mailbox *yaml.Node) string {
 	return ""
 }
 
+// foldLegacyLists rewrites a version-1 document's `terraform` block into the
+// spelling this release reads: `launchers` becomes `operators` and `operators`
+// becomes `admins` (ConfigVersion).
+//
+// It is the ONE place the two spellings are told apart, and it does so from the
+// document's own version rather than from the keys it carries: a version-1
+// document's `operators` is the ADMINS (and its `launchers` the operators),
+// whichever of the two keys it happens to carry, so reading it by "which keys
+// are here" would take a version-1 roster of admins for this version's
+// operators — the exact misread the version exists to prevent. A document at
+// this version or newer is returned untouched, and one whose `terraform` block
+// holds neither key has nothing to move either way.
+//
+// It works on the parsed YAML tree, not on text and not on the typed struct:
+// the rewrite is two key names, the comments and the rest of the document are
+// nobody's business here, and a document whose `terraform` block is not a
+// mapping (or whose `launchers` is written twice) is left for the typed decode
+// to refuse with its own message.
+func foldLegacyLists(data []byte, top map[string]yaml.Node) ([]byte, error) {
+	if documentVersion(top) >= 2 {
+		return data, nil
+	}
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return data, nil // not YAML at all: the typed decode says so, in its own words
+	}
+	if root.Kind != yaml.DocumentNode || len(root.Content) != 1 || root.Content[0].Kind != yaml.MappingNode {
+		return data, nil
+	}
+	block := mappingValue(root.Content[0], "terraform")
+	if block == nil || block.Kind != yaml.MappingNode {
+		return data, nil
+	}
+	moved := false
+	for i := 0; i+1 < len(block.Content); i += 2 {
+		switch block.Content[i].Value {
+		case "launchers":
+			block.Content[i].Value = "operators"
+			moved = true
+		case "operators":
+			block.Content[i].Value = "admins"
+			moved = true
+		}
+	}
+	if !moved {
+		return data, nil
+	}
+	out, err := yaml.Marshal(&root)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// documentVersion is the `version` a document states, or 0 when it states none
+// and when the document itself could not be read.
+func documentVersion(top map[string]yaml.Node) int {
+	n, ok := top["version"]
+	if !ok {
+		return 0
+	}
+	var v int
+	if err := n.Decode(&v); err != nil {
+		return 0
+	}
+	return v
+}
+
+// mappingValue is the value node of key in a YAML mapping node, or nil when the
+// mapping does not carry it. A key written twice answers with its last value,
+// which is what a YAML reader would take; the fold above only asks whether a
+// key is there at all.
+func mappingValue(m *yaml.Node, key string) *yaml.Node {
+	if m == nil || m.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			return m.Content[i+1]
+		}
+	}
+	return nil
+}
+
 // The local loader's own values, which Parse leaves in place for a file that
 // sets the key nowhere. They are named because the settings registry cites
 // them in the DEFAULT column (spec §2.4): the row for one of these keys is the
@@ -1713,20 +2082,42 @@ func Parse(data []byte) (*Config, error) {
 			}
 		}
 	}
+	folded, err := foldLegacyLists(data, top)
+	if err != nil {
+		return nil, fmt.Errorf("local config: %w", err)
+	}
 	var c Config
-	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec := yaml.NewDecoder(bytes.NewReader(folded))
 	dec.KnownFields(true)
 	if err := dec.Decode(&c); err != nil {
 		return nil, fmt.Errorf("local config: %w", err)
 	}
 	if c.Version == 0 {
-		c.Version = 1
+		c.Version = 1 // the first spelling: a document that says nothing is version 1's
 	}
+	if c.Version > ConfigVersion {
+		// Refused by name rather than guessed at, and the sentence names the
+		// one command that settles it, exactly as the policy node's own floor
+		// does: a newer document's shape is that release's to read, and this
+		// binary's guess at it is the misread ConfigVersion exists to prevent.
+		return nil, fmt.Errorf("local config: version %d is newer than the %d this Fugaro writes: upgrade Fugaro (brew upgrade dimipaun/tap/fugaro), then run fugaro update", c.Version, ConfigVersion)
+	}
+	c.Version = ConfigVersion
 	if c.MaxParallel == 0 {
 		c.MaxParallel = DefaultMaxParallel
 	}
 	if c.Build.MachineType == "" {
 		c.Build.MachineType = DefaultBuildMachineType
+	}
+	// A written `max_bytes: 0` (and a written `max_bytes:` with nothing under
+	// it) is refused while the decoded block cannot tell it from the absent
+	// member: absent means the 2 MiB default, so the zero a decode leaves is
+	// this block's one *wider* answer and a file that wrote it would silently
+	// raise the cap to its ceiling. The node's decode reads the same member off
+	// its own document for the same reason (decodeBinaries), and the two
+	// spellings are told apart the same way there.
+	if blk, ok := top["binaries"]; ok && c.Binaries != nil && c.Binaries.MaxBytes == 0 && mappingValue(&blk, "max_bytes") != nil {
+		return nil, fmt.Errorf("local config: %v", projectpolicy.ValidBinariesMaxBytes(c.Binaries.MaxBytes))
 	}
 	if err := c.validate(); err != nil {
 		return &c, err
@@ -1836,6 +2227,58 @@ func (c *Config) ImageMapEffective(published map[string]string) map[string]strin
 	return effective
 }
 
+// CloneURLsEffective is the keep rule for the clone URLs (SD5, D842, D844): the
+// block this file states when it writes one — a written block with no entry
+// included, which is how a published one is taken away on purpose — and the
+// published node's otherwise.
+//
+// The second half is what makes the import's refusal harmless: a machine whose
+// file predates the block, or an owner who declined the import, publishes the
+// node's own entries rather than dropping them, so the node is left exactly as
+// it was (§6.4's "a declined import leaves the file and the node exactly as
+// they were"). A nil answer is the whole of the answer, as it is for the image
+// map: the publisher omits the key when the effective block names no entry, so
+// a project that gives no repository a URL has a node byte for byte what it had
+// before the key existed. The two halves cannot be one field for the image
+// map's reason: "this file says nothing" must keep the node's block, and "this
+// file says nothing is in it" must take it away.
+func (c *Config) CloneURLsEffective(published map[string]string) map[string]string {
+	effective := published
+	if c.CloneURLs != nil {
+		effective = c.CloneURLs
+	}
+	if len(effective) == 0 {
+		return nil
+	}
+	return effective
+}
+
+// BinariesEffective is the keep rule for the binaries block (AR1, D987): the
+// block this file states when it writes one, and the published node's when it
+// says nothing. The second half is what leaves a machine whose config predates
+// the key — a teammate's, a CI box's, an operator's second laptop — publishing
+// the node's own grant rather than a node that admits nothing and holds every
+// admitted binary to the ceiling again: the block is the owner's own word about
+// the bytes a run may add, and a publish must not widen the project's other
+// machines by saying nothing.
+//
+// A written block that states no member is the other direction, and it is the
+// one spelling that takes a published grant away on purpose (D987): nil, so
+// the publisher writes a node with no block at all — which is what the
+// database would keep of an empty list anyway, so the written-empty spelling
+// is this file's and never the node's, and the node it leaves is the node a
+// project that never set one has. A written block with a member in it (the
+// globs, a lowered cap) is published as it stands.
+func (c *Config) BinariesEffective(published *projectpolicy.Binaries) *projectpolicy.Binaries {
+	if c.Binaries == nil {
+		return published
+	}
+	if len(c.Binaries.Allow) == 0 && c.Binaries.MaxBytes == 0 {
+		return nil
+	}
+	return c.Binaries
+}
+
 // BakeReposEffective is the keep rule for the bake switch (D1901): this file's
 // answer when it writes one, and the published node's otherwise — so a machine
 // whose config predates the key does not publish a node that turns baking off
@@ -1869,6 +2312,28 @@ func (c *Config) TriageEffective(published *bool) *bool {
 	return published
 }
 
+// SubscriptionSpreadEffective is the keep rule for the pools' subscription
+// switch (F22, D1622, D1636), stated here beside the field for the triage
+// switch's reason and one of its own: this file's answer when the owner wrote
+// one, and the published node's otherwise, so a machine whose config says
+// nothing about it does not publish a node that turns off — for every teammate,
+// and for the runs in flight while `fugaro update` republishes the node — a
+// spread the owner turned on somewhere else. The cost of the other reading is
+// the triage switch's: the switch is what makes a pool of two or more
+// subscriptions serve anything at all (D1622), so a publish that invented an
+// "off" for it would take a project's pools away from its runs.
+//
+// A written false is the owner's own "no" and is kept as the value it is, which
+// is what the pointer on both sides is for: the two are different facts here,
+// since the field's own default is off and a written false is a decision, and a
+// config and a node that both say nothing publish no member at all.
+func (c *Config) SubscriptionSpreadEffective(published *bool) *bool {
+	if c.SubscriptionSpread != nil {
+		return c.SubscriptionSpread
+	}
+	return published
+}
+
 // OrchestratorEffective is the keep rule for the orchestrator block, stated
 // here beside the field for the verifier list's and the catalog's reason
 // (D1239, D1234): this file's block when it writes one that sets a key, and the
@@ -1890,8 +2355,8 @@ func (c *Config) OrchestratorEffective(published *policy.Orchestrator) *policy.O
 func (c *Config) validate() error {
 	var errs []error
 	bad := func(f string, a ...any) { errs = append(errs, fmt.Errorf("local config: "+f, a...)) }
-	if c.Version != 1 {
-		bad("version must be 1")
+	if c.Version != ConfigVersion {
+		bad("version must be %d", ConfigVersion)
 	}
 	if !config.ProjectNameRE.MatchString(c.Name) {
 		bad("name %q is not a project name (1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit)", c.Name)
@@ -1994,17 +2459,8 @@ func (c *Config) validate() error {
 	if !machineTypeRE.MatchString(c.Build.MachineType) {
 		bad("build.machine_type %q is not a machine type such as E2_HIGHCPU_8", c.Build.MachineType)
 	}
-	if c.BackendName != "" && c.BackendName != backend.CloudRun {
-		// cloud-batch is a name this build knows -- internal/backend/batch
-		// speaks it and the fake tests it -- and must not select yet: the
-		// tasks that make a Batch run safe come after Check 57a (design
-		// compute-backend.md §8.1 Task 2, §9). Calling it unknown would be a
-		// different claim, and a wrong one.
-		if c.BackendName == backend.CloudBatch {
-			bad("backend %q is not enabled yet (this build runs %s)", c.BackendName, backend.CloudRun)
-		} else {
-			bad("backend %q is not a known backend (%s)", c.BackendName, backend.CloudRun)
-		}
+	if c.BackendName != "" && !knownBackends[c.BackendName] {
+		bad("backend %q is not a known backend (%s, %s)", c.BackendName, backend.CloudRun, backend.CloudBatch)
 	}
 	validateBatch(bad, c)
 	if t := c.Terraform; t.StateBucket != "" && !bucketRE.MatchString(t.StateBucket) {
@@ -2021,7 +2477,7 @@ func (c *Config) validate() error {
 	for _, l := range []struct {
 		name    string
 		members []string
-	}{{"launchers", c.Terraform.Launchers}, {"operators", c.Terraform.Operators}} {
+	}{{"operators", c.Terraform.Operators}, {"admins", c.Terraform.Admins}} {
 		for _, m := range l.members {
 			if !memberRE.MatchString(m) {
 				bad("terraform.%s: %q is not an IAM member (user:, group:, serviceAccount: or domain:)", l.name, m)
@@ -2042,6 +2498,8 @@ func (c *Config) validate() error {
 		}
 	}
 	c.validateBudget(bad)
+	c.validateEscalation(bad)
+	c.validateMobileAllow(bad)
 	for _, p := range config.ValidateModelProviders(c.Providers) {
 		bad("%s: %s", p.Path, p.Message)
 	}
@@ -2077,6 +2535,16 @@ func (c *Config) validate() error {
 		if msg := config.ModelIDProblem(c.Crafts.Of(name).Model); msg != "" {
 			bad("crafts.%s.model: %s", name, msg)
 		}
+	}
+	// The aliases the account-choice keys may hold (docs/account-aliases, D2090,
+	// D2092, D2093): their names are held to credentialNameProblem's rule and
+	// share one namespace with the accounts, the credentials and the pools, and
+	// their targets are one account of claude_accounts or "default". It is
+	// checked here, above the keys that name them, because both rules are about
+	// the names those blocks hold and this is the one place all four are in
+	// hand.
+	for _, p := range config.ValidateAccountAliases(c.ClaudeAccountAliases, c.ClaudeAccounts, c.Credentials, c.Pools) {
+		bad("%s: %s", p.Path, p.Message)
 	}
 	// The account-choice keys are checked against the REFERENCE rule and not
 	// the definition's: each one names an account a run may use, and "default"
@@ -2114,6 +2582,23 @@ func (c *Config) validate() error {
 	}
 	for _, p := range config.ValidateProjectSecrets(c.ProjectSecrets) {
 		bad("%s: %s", p.Path, p.Message)
+	}
+	// bitbucket_tokens' form rules are config.ValidateBitbucketTokens'
+	// (R1's agreement of type and coverage); the date is checked here, beside
+	// secret_expires', because the layout an operator writes is this file's
+	// (SecretExpiryLayout) and config cannot reach it. Both are asked at load
+	// rather than at the first proxied call: a record whose halves disagree
+	// would otherwise be probed as one type and selected as another.
+	for _, p := range config.ValidateBitbucketTokens(c.BitbucketTokens) {
+		bad("%s: %s", p.Path, p.Message)
+	}
+	for i := range c.BitbucketTokens {
+		if c.BitbucketTokens[i].Expires == "" {
+			continue
+		}
+		if _, err := time.Parse(SecretExpiryLayout, c.BitbucketTokens[i].Expires); err != nil {
+			bad("%s.expires %q is not a date (YYYY-MM-DD)", config.BitbucketTokenPath(c.BitbucketTokens, i), c.BitbucketTokens[i].Expires)
+		}
 	}
 	// workflow_secrets' name-only rules are config.ValidateWorkflowSecrets';
 	// the two that read the operator's providers can only be asked here, where
@@ -2299,6 +2784,34 @@ func (c *Config) validate() error {
 	if err := policy.ValidOrchestrator(c.Orchestrator); err != nil {
 		bad("%v", err)
 	}
+	// The binaries block is held to the node's own rules here, the way the
+	// floor, the verifier list, the catalog and the orchestrator block are: it
+	// is copied into the policy node, and a pattern this file accepted while the
+	// node refused it — or the one the node accepted and this file refused —
+	// would be an admission whose meaning depended on which door it came
+	// through. projectpolicy.ValidBinariesAllow and ValidBinariesMaxBytes are
+	// those two rules, the same functions the node's own decode applies. The
+	// pattern rule is the one that has to be asked here rather than at
+	// admission: a misspelt glob is a lock that is not there, and it reads
+	// exactly like the silence of a project that admitted nothing.
+	//
+	// The cap is judged only when it is written, because this document cannot
+	// tell a written blank from the absent member: a YAML `max_bytes:` with
+	// nothing under it decodes to the zero an absent key has, and the zero is
+	// read as the shipped 2 MiB — the widest cap this block may hold, so the
+	// reading is the strict one, and a written 0 or null is refused where it
+	// can be told apart (the node's own decode reads the member off the
+	// document).
+	if c.Binaries != nil {
+		if err := projectpolicy.ValidBinariesAllow(c.Binaries.Allow); err != nil {
+			bad("%v", err)
+		}
+		if c.Binaries.MaxBytes != 0 {
+			if err := projectpolicy.ValidBinariesMaxBytes(c.Binaries.MaxBytes); err != nil {
+				bad("%v", err)
+			}
+		}
+	}
 	for repo, r := range c.Repos {
 		if !repoRE.MatchString(repo) {
 			bad("repos: %q must look like owner/name", repo)
@@ -2316,6 +2829,14 @@ func (c *Config) validate() error {
 			if !config.WorkflowNameRE.MatchString(w) {
 				bad("repos.%s: workflow %q is not a workflow name", repo, w)
 			}
+		}
+		for _, name := range r.ClaudeAccounts {
+			if msg := config.ValidClaudeAccountRef(name); msg != "" {
+				bad("repos.%s.claude_accounts: %s", repo, msg)
+			}
+		}
+		if len(r.ClaudeAccounts) > 0 && r.Provider == "" {
+			bad("repos.%s.claude_accounts: this repository names accounts and no provider, and a published account entry is provider-qualified (owner/name is published as provider/owner/name): write the repository's provider here, which is the only place a per-repository job's provider is stated", repo)
 		}
 	}
 	validateWorkspace(c, bad)
@@ -2551,6 +3072,17 @@ func (c *Config) BuildRegion() string {
 	}
 	return c.Region
 }
+
+// knownBackends are the backend names config validation accepts: the names
+// internal/backend.Open resolves, and no others. `cloud-batch` became one of
+// them in the enable task (plan 2026-10-19-compute-backend.md Task 10), and
+// this file accepting the name is all that changed here. `fugaro doctor` is
+// what judges an installation that selects it -- the provisioning, the IAM,
+// the log isolation, the cost table and the reaper -- and it reports what it
+// finds; nothing in this file, and no launch, holds the choice back on that
+// report (design compute-backend.md §4.4, §8.1 task 9; SECURITY.md, "The VM
+// backend, and the Docker daemon it gives a run").
+var knownBackends = map[string]bool{backend.CloudRun: true, backend.CloudBatch: true}
 
 // Backend is the compute backend this config selects: backend.CloudRun
 // when BackendName is unset.

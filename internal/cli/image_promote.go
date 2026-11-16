@@ -98,6 +98,9 @@ func runImagePromote(cmd *cobra.Command, o cloudOptions, repo, name string) erro
 	if err != nil {
 		return err
 	}
+	if err := accessGateProject(ctx, onDisk, nil, "nothing was written", "promoting a workflow's image into the project's catalog"); err != nil {
+		return err
+	}
 	if onDisk.ImageCatalog == nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "note: this machine's project config names no image catalog, so this entry is written as the project's whole catalog: if the project already has one published, it is replaced by this file's rather than added to")
 	}

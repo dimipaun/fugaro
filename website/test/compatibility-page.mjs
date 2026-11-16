@@ -647,7 +647,7 @@ const MATRIX_REFUSALS = [
   },
   {
     what: 'a group whose title is empty',
-    edit: (yaml) => yaml.replace(/^ {4}title: "Console \(Electron\)"$/m, '    title: ""'),
+    edit: (yaml) => yaml.replace(/^ {4}title: "Console"$/m, '    title: ""'),
     wants: [/title is empty/],
   },
   {
@@ -699,7 +699,7 @@ const MATRIX_REFUSALS = [
   },
   {
     what: 'a key on a row nobody reads',
-    edit: (yaml) => yaml.replace(/^ {8}note: "No plan for email\."$/m, '        note: "No plan for email."\n        nickname: "nope"'),
+    edit: (yaml) => yaml.replace(/^ {8}note: "Alongside Slack and Teams\."$/m, '        note: "Alongside Slack and Teams."\n        nickname: "nope"'),
     wants: [/"nickname"/],
   },
   {
@@ -710,12 +710,6 @@ const MATRIX_REFUSALS = [
         '        status: supported\n        note: "One universal build for Apple silicon and Intel."',
       ),
     wants: [/writes an edition on 3 of its 4 rows/],
-  },
-  {
-    what: 'an edition on every row of a group whose spec table has no Edition column',
-    edit: (yaml) =>
-      yaml.replace(/^ {2}- id: agent-harness\n[\s\S]*?(?=^ {2}- id: model-access)/m, (block) => block.replace(/^( {8}status: .+)$/gm, '$1\n        edition: core')),
-    wants: [/is one of the groups whose spec table has an Edition column/],
   },
   {
     what: 'a supported row with no evidence path behind it',

@@ -124,8 +124,12 @@ func TestMintRefusesATokenThatCouldNeverBeUsed(t *testing.T) {
 // refresh token out, and a family that has moved to the new one.
 func TestRotateReturnsAFreshPair(t *testing.T) {
 	ctx := context.Background()
-	s := newFakeStore(t)
 	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	// The store reads its own clock for a family's bounds, and this test's
+	// family was minted at a fixed instant: without the same clock here the
+	// family ages past FamilyIdleTTL seven days after the fixture's date and
+	// the rotation this test is about is refused as aged.
+	s := newFakeStoreOver(t, func() time.Time { return now }, nil)
 
 	access, refresh, err := MintAt(ctx, s, "user:person-1", testClient(), testLimits(), now.Add(-time.Minute))
 	if err != nil {

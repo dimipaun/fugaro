@@ -174,6 +174,13 @@ func (s *Store) SetStatus(ref string, status Status, now time.Time) error {
 // it was filed as, and renames the file to `<NNNN>-<stem>.md` (D1723). The
 // local name is gone afterwards, so a second call finds the issue by its
 // number and is a no-op.
+//
+// A caller that names no URL leaves the one the record already carries: `issue
+// submit` files with the person's own `gh` and records the link it showed them
+// while the record is still `uploaded: false` (T-IS7), and the shared store's
+// own upload numbers the issue without having a link of its own (SyncPending,
+// Uploaded). Clearing the field there would take away the only place that link
+// is kept, and nothing restores it.
 func (s *Store) MarkUploaded(ref string, number int, url string) error {
 	if err := validateNumber(number); err != nil {
 		return err
@@ -182,7 +189,10 @@ func (s *Store) MarkUploaded(ref string, number int, url string) error {
 	if err != nil {
 		return err
 	}
-	i.Number, i.Uploaded, i.URL = number, true, url
+	i.Number, i.Uploaded = number, true
+	if url != "" {
+		i.URL = url
+	}
 	if err := s.Rename(i); err != nil {
 		return err
 	}

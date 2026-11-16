@@ -59,6 +59,9 @@ func queuedRow(q QueuedRun, now time.Time) RunRow {
 	return RunRow{
 		Run: clean(q.Run), Slug: budget.Key(q.Slug),
 		Title: dash(title), Stage: "queued", Round: "-", Verify: "-", Models: "-", Auth: "-",
+		// A queued run has no registry entry yet, so it has no mode either:
+		// the same "-" every other absent value on this row shows.
+		Mode: "-", From: "-",
 		Recipe: clean(q.Recipe), Workflow: clean(q.Workflow), RequestedBy: clean(q.RequestedBy),
 		LaunchedBy: safetext.Field(q.LaunchedBy),
 		Age:        age, HasAge: true,

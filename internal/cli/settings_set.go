@@ -19,6 +19,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/escalation"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rigor"
@@ -59,6 +60,15 @@ var settingsFamilyCommands = map[string]string{
 	// do. Its refusal names that command rather than `fugaro project`, which
 	// writes the project's other policy keys and not this one.
 	"image map": "fugaro image map",
+	// The clone URLs are a family of one command for the image map's reason and
+	// a second one of its own: an entry is keyed by a canonical repository name
+	// and its value is held to the node's own rule — this repository, on this
+	// provider's host, with no credentials (projectpolicy.ValidCloneURLs) —
+	// so the key and the value are checked against each other there and a
+	// generic scalar write could land a URL a publish refuses. `fugaro project
+	// clone-url` is that command, and the refusal names it rather than
+	// `fugaro project`, which writes the project's other policy keys.
+	"project clone-url": "fugaro project clone-url",
 }
 
 // settingsGenericKeys is the allowlist of spec §4.4: the exact keys `settings
@@ -118,6 +128,12 @@ var settingsGenericKeys = map[string]bool{
 	"default_claude_account":  true,
 	"claude_account_auto":     true,
 	"stages.*.claude_account": true,
+	// The pools' subscription switch (F22, D1636) is here for the account
+	// choice's reason: it is not §4.4's list either, and a registry row no list
+	// carries is a key nobody can write. It is the one write that turns D1622's
+	// inert rule off, so the row carries TypedWhy and the agent-session fence
+	// asks its sentence.
+	"subscription_spread": true,
 	// The pattern above is the registry's shape and this is every stage of the
 	// closed set beside it, one spelling per config.RunStages name: the registry
 	// carries a row for each (internal/settings' stageAccountRows), and a row no
@@ -131,6 +147,14 @@ var settingsGenericKeys = map[string]bool{
 	"stages.review.claude_account":       true,
 	"stages.review_first.claude_account": true,
 	"stages.triage.claude_account":       true,
+	// The ladder's per-mode override table (E3). A mode's own member is the one
+	// spelling of the block that carries a varying segment, so it is named here
+	// the way the stage account's pattern is: the registry carries the row and
+	// settingsWriteLookup reaches a wildcard row only through this list.
+	"escalation.modes.*.r2_after_hours":    true,
+	"escalation.modes.*.r2_after_attempts": true,
+	"escalation.modes.*.r3_after_hours":    true,
+	"escalation.modes.*.r2_coder":          true,
 	// A repository's workflows.* (37 rows) and the project layer's profiles.*
 	// (36), in the registry's own order.
 	"workflows.*.profile":                            true,
@@ -228,6 +252,16 @@ var settingsGenericKeys = map[string]bool{
 	"layer.ab":                               true,
 	"layer.profiles.*.commands.rerun_failed": true,
 	"layer.profiles.*.cache":                 true,
+	// The four members of a repository's entry a person writes (G10, D1173):
+	// a map of scalars and one list, which is the shape §2 reaches, so they are
+	// this path's rather than `fugaro project repos set`'s. The two members of
+	// that entry `fugaro update` records — vertex and
+	// credentials_service_ready — are NOT here and keep the `project` owner in
+	// the registry: a person writes no record of what a run applied.
+	"repos.*.provider":      true,
+	"repos.*.base_branch":   true,
+	"repos.*.workflows":     true,
+	"repos.*.github_app_id": true,
 }
 
 // settingsGenericPrefixes are the blocks spec §4.4 hands to the generic path
@@ -242,6 +276,11 @@ var settingsGenericPrefixes = []string{
 	"agent.", "git.", "followup.", "governance.", "watch.",
 	"layer.defaults.", "layer.governance.",
 	"credentials.", "clone_urls.",
+	// The ladder's own block (E3). It is §4.4's list's successor in shape and
+	// not in origin: the keys are T-E3's, and the generic path is their one
+	// door — which is what puts the owner's own hand (the typed form below) and
+	// the coding agent's session in front of them at all.
+	"escalation.",
 }
 
 // settingsGenericKey reports whether spec §4.4 gives the generic path the key.
@@ -395,15 +434,15 @@ adding a name to a followup.* list or turning one of those keys on, is a
 widening, and a widening is the owner's own step: nothing is asked for it at
 your own terminal, and a coding agent's session is refused it with the command
 to run yourself (D1552). Writing outside a repository is refused in a coding
-agent's session, --yes included: --yes never lifts that fence.
+agent's session, and no flag lifts that fence.
 
 --dry-run says what the edit would do — the key, the layer, the file, the old
 and the new value, and whether it raises a limit — and writes nothing: no
 confirmation, no backup, no change to any file. It is answered with no
 terminal, and with --json it prints the versioned document
 schemas/settings-write.schema.json describes, which is what a caller that draws
-an edit reads. --dry-run takes neither --yes (the two answer different
-questions) nor a bare --json.
+an edit reads. --dry-run takes no bare --json (the two answer different
+questions).
 
 Every write ends with one line: next: fugaro update.`,
 		Args: cobra.ArbitraryArgs,
@@ -415,8 +454,7 @@ Every write ends with one line: next: fugaro update.`,
 	settingsAimFlags(cmd, &o.project, &o.config)
 	f.StringVar(&o.layer, "layer", "", "the layer to write ("+strings.Join(settingsWriteLayers, ", ")+")")
 	f.StringVar(&o.repo, "repo", "", "the repository whose fugaro.yaml to edit (owner/name, or a path inside its checkout)")
-	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
-	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this write would otherwise get (the y/N) instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back — a widening is the owner's own step and is asked nothing with or without it (D1552). Refused where nobody can answer them (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes")
+	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this write would otherwise get (the y/N) instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back — a widening is the owner's own step and is asked nothing with or without it (D1552). Refused where nobody can answer them (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed")
 	f.StringVar(&o.add, "add", "", "add an item to a string-list key")
 	f.StringVar(&o.remove, "remove", "", "remove an item from a string-list key")
 	f.StringArrayVar(&o.addEntry, "add-entry", nil, "add one entry to a map or an object list (field=value, once per member the entry has)")
@@ -454,8 +492,8 @@ writing one does (spec §3.7).
 value it takes away, and whether it raises a limit — and writes nothing: no
 confirmation, no backup, no change to any file. It is answered with no
 terminal, and with --json it prints the versioned document
-schemas/settings-write.schema.json describes. --dry-run takes neither --yes
-(the two answer different questions) nor a bare --json.
+schemas/settings-write.schema.json describes. --dry-run takes no bare --json
+(the two answer different questions).
 
 Every write ends with one line: next: fugaro update.`,
 		Args: cobra.ArbitraryArgs,
@@ -467,8 +505,7 @@ Every write ends with one line: next: fugaro update.`,
 	settingsAimFlags(cmd, &o.project, &o.config)
 	f.StringVar(&o.layer, "layer", "", "the layer to write ("+strings.Join(settingsWriteLayers, ", ")+")")
 	f.StringVar(&o.repo, "repo", "", "the repository whose fugaro.yaml to edit (owner/name, or a path inside its checkout)")
-	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
-	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this removal would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes, --dry-run and --json")
+	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this removal would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed; refused beside --dry-run and --json")
 	f.BoolVar(&o.executableChanges, "executable-changes", false, "allow a --layer repo write that takes away a workflow's commands or image steps, or a --layer project write that changes a profile's commands or image steps (both run as shell in every run of the repositories that take them)")
 	f.BoolVar(&o.dryRun, "dry-run", false, "print what the edit would do and write nothing")
 	f.BoolVar(&o.jsonOut, "json", false, "print the dry run's document (with --dry-run)")
@@ -527,7 +564,7 @@ func settingsRefuseRow(key, registry string, row settings.Row) (settings.Row, er
 		return settings.Row{}, userErr("%s varies with a name this command does not take: a key with a * is a map entry, and a map has no generic form", key)
 	}
 	if !settingsGenericKey(registry) {
-		return settings.Row{}, userErr("%s is not a key the generic path writes: settings set writes spec §4.4's settings (the budget scalars, base_branch, max_parallel, update_check, watch.*, commit_name, commit_email, agent.*, git.*, followup.*, governance.*, default_profile, credentials.*, clone_urls.* and the layer's defaults.*), the account choice (default_claude_account, claude_account_auto, stages.<stage>.claude_account) and a repository's workflows.<name>.* and the project layer's profiles.<name>.*, and refuses the installation's own plumbing — an endpoint, a terraform switch, a generation counter, name or runs_bucket — however it is spelled", key)
+		return settings.Row{}, userErr("%s is not a key the generic path writes: settings set writes spec §4.4's settings (the budget scalars, base_branch, max_parallel, update_check, watch.*, commit_name, commit_email, agent.*, git.*, followup.*, governance.*, default_profile, credentials.*, clone_urls.* and the layer's defaults.*), the account choice (default_claude_account, claude_account_auto, stages.<stage>.claude_account), the pools' subscription switch (subscription_spread) and a repository's workflows.<name>.* and the project layer's profiles.<name>.*, and refuses the installation's own plumbing — an endpoint, a terraform switch, a generation counter, name or runs_bucket — however it is spelled", key)
 	}
 	return row, nil
 }
@@ -540,14 +577,14 @@ func settingsRefuseRow(key, registry string, row settings.Row) (settings.Row, er
 // spelling is what the allowlist and the row's own sentences name.
 //
 // Only a wildcard row the allowlist carries is matched, which is how
-// `stages.*.claude_account` and the blocks D1161 hands this path — a
-// repository's `workflows.*.*` and the project layer's `profiles.*.*` — are
-// reachable at all. The registry's other wildcard rows — the project family's
-// `repos.*.*`, the models family's `providers.*.*` and `model_prices.*.*`, the
-// rigor family's `layer.defaults.rigor.areas.*.*` and the accounts family's
-// `claude_accounts.*.allow_data_to` — are other paths' keys: matching one would
-// hand back a row this command does not write, and the refusal a person gets
-// should be the one about the name, not a row that was never theirs.
+// `stages.*.claude_account`, the D1161 blocks (`workflows.*.*`, `profiles.*.*`)
+// and the four `repos.*` members a person writes (D1173) are reachable at all.
+// The registry's other wildcard rows — the models family's `providers.*.*` and
+// `model_prices.*.*`, the rigor family's `layer.defaults.rigor.areas.*.*`, the
+// accounts family's `claude_accounts.*.allow_data_to` and a run's own records
+// (`repos.*.vertex`, `repos.*.credentials_service_ready`) — are other paths'
+// keys: matching one would hand back a row this command does not write, and the
+// refusal a person gets should be about the name, not a row never theirs.
 func settingsWriteLookup(key string) (settings.Row, string, bool) {
 	if row, found := settings.Lookup(key); found {
 		return row, key, true
@@ -1601,6 +1638,167 @@ func settingsLoosens(key, oldValue, newValue string) bool {
 	return true
 }
 
+// settingsEscalationLoosens is the outer loop's ladder read as a direction
+// (E3, D846): the three threshold keys and the critical-path factor, whose
+// *smaller* figure is the wider one, and the cost ceiling beside them, whose
+// larger figure is. It is not settingsCeilingKey's list, and that is the whole
+// reason it exists: on the ladder a lower figure takes an item off its normal
+// recipe sooner, merges it under the gate on a shorter clock, or scales the
+// clock of an item that blocks other work down — which is more of the owner's
+// authority handed to the daemon and not less.
+//
+// `unset` is deliberately not the typed form here, though it is on a ceiling: a
+// ceiling removed hands the decision to a looser layer, where a threshold
+// removed hands it back to the shipped table — a figure the owner did not
+// choose, and one neither looser nor tighter than the figure it replaces. The
+// directions that are provably a loosening are the ones worth the owner's own
+// hand; the rest are an ordinary edit to a local file.
+//
+// A grade is not here either: naming a stronger grade is the tightening
+// direction, and naming a weaker one is a model choice the project layer owns
+// rather than a ladder threshold (G11, D2039).
+func settingsEscalationLoosens(key, oldValue, newValue, mode string) (string, bool) {
+	if mode != "set" && mode != "add-entry" {
+		return "", false
+	}
+	_, leaf := settingsEscalationName(key)
+	switch "escalation." + leaf {
+	case "escalation.r2_after_hours", "escalation.r2_after_attempts":
+		if settingsLowersFigure(oldValue, newValue) {
+			return "this escalates sooner: rung 2 then runs on a lower figure than the one a run gets today", true
+		}
+	case "escalation.r3_after_hours":
+		if settingsLowersFigure(oldValue, newValue) {
+			return "this lowers the ladder's ceiling: an item is then merged under the gate on a shorter clock than the one a run gets today", true
+		}
+	case "escalation.critical_path_factor":
+		if settingsLowersFigure(oldValue, newValue) {
+			return "this shortens the ladder's critical path: every time threshold of an item that blocks other work is then scaled by a smaller figure, so it escalates sooner than it does today", true
+		}
+	case "escalation.cost_ceiling":
+		if settingsLoosens(key, oldValue, newValue) {
+			return "this raises the ladder's cost ceiling: an item may then spend more before the ceiling stops it", true
+		}
+	}
+	return "", false
+}
+
+// settingsEscalationName splits a ladder key into the mode it is about and the
+// leaf it names: a mode's own member is the same key one segment deeper, so the
+// two spellings are one rule rather than two, and the mode comes back empty for
+// every key the block states once.
+func settingsEscalationName(key string) (mode, leaf string) {
+	rest, ok := strings.CutPrefix(key, "escalation.modes.")
+	if !ok {
+		return "", strings.TrimPrefix(key, "escalation.")
+	}
+	m, l, _ := strings.Cut(rest, ".")
+	return m, l
+}
+
+// settingsEscalationFigureKey is the ladder's own figures: the keys a write is
+// measured against what a run gets today, which settingsEscalationBase answers.
+// The grades and the readiness switch beside them are not figures — a grade is
+// a model choice the project layer owns (G11, D2039) and turning ready_drafts
+// on is the row's own direction — so the fence for those reads the values and
+// not a scale.
+func settingsEscalationFigureKey(key string) bool {
+	_, leaf := settingsEscalationName(key)
+	switch leaf {
+	case "r2_after_hours", "r2_after_attempts", "r3_after_hours", "critical_path_factor", "cost_ceiling":
+		return true
+	}
+	return false
+}
+
+// settingsEscalationBase is the figure a run gets today for one of the ladder's
+// keys: the file's own figure where it states one, and the shipped table
+// (escalation.DefaultThresholds) behind it where it does not. It is
+// settingsCeilingBase's rule read against the one layer a ladder key has, and
+// it exists for the same hole: a first write over a default the file never
+// states is a loosening like any other, and an empty base reads it as an
+// ordinary write — so an agent session could lower the ladder every mode runs
+// under with an edit that meets no fence.
+//
+// A scalar key reaches every mode, so it is measured against the *largest*
+// figure it would lower: the fence is over any mode being widened, not over all
+// of them, and one mode's clock shortening is the authority this guards. A
+// mode's own member is measured against that mode's figure alone — its member
+// where the file states one, else the block's scalar, else the shipped row.
+// The cost ceiling answers "" where no file states one, and that is not the
+// same blind spot: a ceiling nobody wrote is no ceiling, which is the loosest
+// direction, so a write that adds one tightens.
+func settingsEscalationBase(doc []byte, key, raw string) string {
+	shipped := escalation.DefaultThresholds()
+	mode, leaf := settingsEscalationName(key)
+	if mode != "" {
+		return settingsEscalationFigure(doc, shipped, mode, leaf, raw)
+	}
+	best, bestN := "", 0.0
+	for _, m := range rigor.Modes {
+		figure := settingsEscalationFigure(doc, shipped, string(m), leaf, raw)
+		n, err := strconv.ParseFloat(figure, 64)
+		if err != nil {
+			continue
+		}
+		if best == "" || n > bestN {
+			best, bestN = figure, n
+		}
+	}
+	return best
+}
+
+// settingsEscalationFigure is what a run gets for one mode and one leaf today:
+// the mode's own member where the file states one, else the file's scalar,
+// else the shipped row's own figure.
+func settingsEscalationFigure(doc []byte, shipped escalation.Thresholds, mode, leaf, scalar string) string {
+	if v := settingsValueIn(doc, []string{"escalation", "modes", mode, leaf}); v != "" {
+		return v
+	}
+	if scalar != "" {
+		return scalar
+	}
+	return settingsEscalationShipped(shipped, mode, leaf)
+}
+
+// settingsEscalationShipped is the shipped table's own figure for one mode and
+// leaf — the figure a run gets for a mode this file does not override. A key
+// the table has no column for (the cost ceiling, a mode's member of a key the
+// block states once) answers "", which the callers read as no figure to
+// compare against.
+func settingsEscalationShipped(t escalation.Thresholds, mode, leaf string) string {
+	row, ok := t.Rows[rigor.Mode(mode)]
+	if !ok {
+		return ""
+	}
+	switch leaf {
+	case "r2_after_hours":
+		return strconv.FormatFloat(row.R2Hours, 'f', -1, 64)
+	case "r2_after_attempts":
+		return strconv.Itoa(row.RunsBeforeR2)
+	case "r3_after_hours":
+		return strconv.FormatFloat(row.CeilingHours, 'f', -1, 64)
+	case "critical_path_factor":
+		return strconv.FormatFloat(t.CriticalPathFactor, 'f', -1, 64)
+	}
+	return ""
+}
+
+// settingsLowersFigure reports whether newValue is a smaller number than
+// oldValue. A key no file sets has nothing to lower, so a first write is never
+// the typed form — settingsLoosens' rule over one figure rather than a cap.
+func settingsLowersFigure(oldValue, newValue string) bool {
+	if oldValue == "" {
+		return false
+	}
+	oldN, oldErr := strconv.ParseFloat(oldValue, 64)
+	newN, newErr := strconv.ParseFloat(newValue, 64)
+	if oldErr != nil || newErr != nil {
+		return false
+	}
+	return newN < oldN
+}
+
 // settingsListSubset reports whether every member of a appears in b.
 func settingsListSubset(a, b string) bool {
 	in := map[string]bool{}
@@ -1739,6 +1937,11 @@ func settingsTypedWrite(row settings.Row, oldValue, newValue, mode string) (bool
 			return true, followupAddWhy
 		}
 	}
+	// The ladder's own block (E3), whose directions are its own for the reason
+	// settingsEscalationLoosens states.
+	if why, typed := settingsEscalationLoosens(key, oldValue, newValue, mode); typed {
+		return true, why
+	}
 	// A row's own sensitive direction: turning the key on is the act D846
 	// reserves, and the row carries the sentence saying why.
 	if row.TypedWhy != "" && mode == "set" && settingsTrue(newValue) {
@@ -1801,9 +2004,6 @@ func settingsWriteCommand(op, key, value string, o settingsWriteOptions, layer s
 // runSettingsSet is `settings set`: find the row, find the layer, check the
 // value, then the shared write path (spec §4.2).
 func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) error {
-	if err := askConflict(askFlags{ask: o.ask, yes: o.yes}); err != nil {
-		return err
-	}
 	if err := settingsDryRunFlags(o); err != nil {
 		return err
 	}
@@ -1937,6 +2137,15 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 		fmt.Fprintf(cmd.OutOrStdout(), "%s: %s already reads what was asked for\n", target.path, key)
 		return nil
 	}
+	// The role the write needs, asked once the document has answered that there
+	// is a write to make: the layer it lands in is the surface (a project-level
+	// one takes admin at project scope, a repository's own file takes admin at a
+	// scope covering it), and it is asked before the refusals about the
+	// document's own content, because "you may not change this" is the answer a
+	// caller needs before "this value is not one the loader reads".
+	if err := settingsAccessWrite(cmd.Context(), lc, o, target, settingsWriteCommand("set", key, value, o, target.layer)); err != nil {
+		return err
+	}
 	// A removal that leaves a sequence with no items is refused wherever it
 	// happens: the loader tells an absent key from an empty one, and the two
 	// mean different things. A map member's removal is not asked, because the
@@ -1987,6 +2196,13 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 	base := checkedOld
 	if settingsCeilingKey(checked.Key) {
 		base = settingsCeilingBase(cmd.Context(), checked, checkedOld)
+	}
+	// The ladder's figures are the same "what a run gets today" question read
+	// against the shipped table rather than the layers above the file
+	// (settingsEscalationBase), so a first write into a file that states no
+	// escalation block is a loosening like any other.
+	if settingsEscalationFigureKey(checked.Key) {
+		base = settingsEscalationBase(old, checked.Key, checkedOld)
 	}
 	typed, why := settingsTypedWrite(checked, base, checkedNew, mode)
 	if !changed {
@@ -2054,7 +2270,7 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 	// --ask, once the marks are read: the sentence it prints, or the refusal
 	// that stops the run before a byte is written (managed_ask.go). It is
 	// after the gate's own admit and never instead of it.
-	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask, yes: o.yes}, managed.Managed, settingsEditConditions(cmd, edit)); err != nil {
+	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask}, managed.Managed, settingsEditConditions(cmd, edit)); err != nil {
 		return err
 	}
 	edit.Managed = managed
@@ -2077,9 +2293,6 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 // runSettingsUnset is `settings unset`: remove the key from one layer so the
 // layer below decides again, never writing a default in its place (spec §4.3).
 func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions) error {
-	if err := askConflict(askFlags{ask: o.ask, yes: o.yes}); err != nil {
-		return err
-	}
 	if err := settingsDryRunFlags(o); err != nil {
 		return err
 	}
@@ -2123,6 +2336,10 @@ func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions)
 		fmt.Fprintf(cmd.OutOrStdout(), "nothing to unset: %s is not set in %s\n", key, target.path)
 		return nil
 	}
+	// The same role question, in the same place, as the set path above.
+	if err := settingsAccessWrite(cmd.Context(), lc, o, target, settingsWriteCommand("unset", key, "", o, target.layer)); err != nil {
+		return err
+	}
 	if err := settingsReparse(target, newData); err != nil {
 		return err
 	}
@@ -2162,7 +2379,7 @@ func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions)
 	if err := settingsLayerGate(cmd, target, o, key, old, newData); err != nil {
 		return err
 	}
-	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask, yes: o.yes}, managed.Managed, settingsEditConditions(cmd, edit)); err != nil {
+	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask}, managed.Managed, settingsEditConditions(cmd, edit)); err != nil {
 		return err
 	}
 	edit.Managed = managed
@@ -2208,15 +2425,13 @@ func settingsLayerReservedGate(cmd *cobra.Command, target settingsTarget, key st
 }
 
 // settingsDryRunFlags refuses the flag combinations a dry run does not take.
-// --dry-run and --yes answer different questions — one says what the edit would
-// do, the other answers a write that is about to happen — so the pair is
-// refused rather than resolved (D1106); --json is the dry run's own shape, and
-// a caller that asked for a document must not silently get a table instead.
+// --dry-run and --ask answer different questions — one says what the edit would
+// do, the other asks for the confirmations a write that is about to happen gets
+// — so the pair is refused rather than resolved (D1106); --json is the dry run's
+// own shape, and a caller that asked for a document must not silently get a
+// table instead.
 func settingsDryRunFlags(o settingsWriteOptions) error {
 	if o.dryRun {
-		if o.yes {
-			return userErr("--dry-run and --yes answer different questions: a dry run says what the edit would do and writes nothing, --yes answers a write; name one")
-		}
 		if o.ask {
 			return userErr("--dry-run and --ask answer different questions: a dry run confirms nothing and writes nothing, --ask is about the confirmations a write is given; name one")
 		}

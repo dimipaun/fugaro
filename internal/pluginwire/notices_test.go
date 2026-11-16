@@ -85,16 +85,18 @@ func TestNoticesAreCutAndEscaped(t *testing.T) {
 	}
 }
 
-// Plan carries the notices, whether or not the file changes.
-func TestPlanCarriesNotices(t *testing.T) {
+// NoticesFor reads the file and carries its notices, which is what the reader
+// of a checkout that still holds a pin is shown (the merge that used to show
+// them on its diff screen was deleted, D949).
+func TestNoticesForReadsTheFile(t *testing.T) {
 	const hooked = `{"hooks":{"PreToolUse":[]},"enableAllProjectMcpServers":true}`
 	p := settingsIn(t, hooked)
-	ch, err := Plan(p, "0.2.0", false)
-	if err != nil {
-		t.Fatal(err)
+	got := NoticesFor(p)
+	if len(got) == 0 || !strings.Contains(strings.Join(got, " "), "enableAllProjectMcpServers") {
+		t.Errorf("notices %v", got)
 	}
-	if len(ch.Notices) == 0 || !strings.Contains(strings.Join(ch.Notices, " "), "enableAllProjectMcpServers") {
-		t.Errorf("notices %v", ch.Notices)
+	if got := NoticesFor(filepath.Join(filepath.Dir(p), "nope.json")); got != nil {
+		t.Errorf("notices for an unusable path: %v", got)
 	}
 }
 
@@ -127,11 +129,11 @@ func TestNoticesCoverTheOtherWaysASettingsFileActs(t *testing.T) {
 	}
 }
 
-// The diff screen's heads-up lines always end with the caveat: a clean screen
-// is no assurance.
+// The heads-up lines always end with the caveat: a clean screen is no
+// assurance.
 func TestNoticeTextAlwaysSaysTheListIsNotExhaustive(t *testing.T) {
-	for _, c := range []*Change{{}, {Notices: []string{"x"}}} {
-		if got := c.NoticeText(); !strings.Contains(got, NoticesCaveat) || !strings.Contains(got, "read the file yourself") {
+	for _, notices := range [][]string{nil, {"x"}} {
+		if got := NoticeText(notices); !strings.Contains(got, NoticesCaveat) || !strings.Contains(got, "read the file yourself") {
 			t.Errorf("%q", got)
 		}
 	}

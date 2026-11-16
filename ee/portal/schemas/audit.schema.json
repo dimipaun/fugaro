@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/ee/portal/schemas/audit.schema.json",
+  "title": "Portal audit log",
+  "description": "Who did what, when (portal plan P5.3; D456, D457, F9). The log is append-only and the portal writes no endpoint that edits or deletes one: an entry that could be changed after the fact would not answer the question the log exists for. Reads are entries too (D456) — an operations member reading a customer's metadata is a fact about that customer — so a burst of reads is visible in the same list as a key's revocation. Every object here is closed, because ee/keyservice/wire_audit.go decodes it with DisallowUnknownFields.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/entry"
+    }
+  ],
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "description": "One line of the audit log.",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "at",
+        "actor_uid",
+        "actor_email",
+        "organisation_id",
+        "action",
+        "target_id",
+        "read",
+        "detail"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The entry's id, and the only handle it has: nothing else in the portal points at an audit line, so an entry cannot be linked to from something that could later be edited."
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the act happened, in UTC, from the server's clock and not the request's: the sign-in freshness rule is measured against this service's own time (D2187), so a client's idea of now is not evidence."
+        },
+        "actor_uid": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The Firebase uid of whoever acted. The uid is the identity and the email below is what a person reads, kept separately because an email can be reassigned inside a workspace and a uid cannot."
+        },
+        "actor_email": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The email the actor signed in with, as it was at the time. It is copied into the entry rather than looked up later: the log has to say what was true then, and a member's email can change."
+        },
+        "organisation_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The organisation the act was in, or null for one that was not in one — a sign-in that created the first organisation, or an operations act that is the team's own."
+        },
+        "action": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What was done, as a short name the portal itself wrote. It is a name and not a sentence: the reader is a person with the spec open, and a translated sentence in a log is a sentence that changes meaning when the translation is edited."
+        },
+        "target_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "What it was done to — the workspace, entitlement, invite or member — or null for an act with no single target. It is an id and not a copy of the object, because the object will change and the log has to say what was touched rather than what it looked like."
+        },
+        "read": {
+          "type": "boolean",
+          "description": "True for an entry that records reading rather than changing (D456). It is a flag and not a separate log, so reads sit in the same list as writes and can be counted against a person in one query."
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The little that is worth keeping beside the action — a reason operations gave, or the previous value a change replaced — or null when the action speaks for itself. It never carries a key or a renewal secret: F5 holds for the log as it does everywhere else, and an audit line is read by more people than a key is."
+        }
+      }
+    }
+  }
+}

@@ -213,7 +213,7 @@ func TestCloudCheckBlockedRerunLine(t *testing.T) {
 	useVersion(t, "0.5.1")
 	r := newAnchorModeRig(t, refreshYAML, true)
 	r.appendConfig(t, "base_images: {base: "+refreshHost+"/fugaro-base/fugaro-base:dev-abc}\n")
-	again := "fugaro upgrade --check " + quoteWord("/tmp/my repo")
+	again := "fugaro update --check " + quoteWord("/tmp/my repo")
 	v := cloudCheck(t.Context(), r.root, cloudOptions{}, again)
 	if v.state != cloudBlocked || !strings.Contains(v.reason, again) {
 		t.Fatalf("%+v want %q", v, again)

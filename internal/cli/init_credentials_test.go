@@ -17,6 +17,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -45,11 +47,13 @@ func credentialsRig(t *testing.T) *imagesRig { return credentialsRigAt(t, "1.2.3
 // BETWEEN two releases is tested with.
 func credentialsRigAt(t *testing.T, version string) *imagesRig {
 	t.Helper()
+	// The owner's own terminal, which is what confirms the steps these runs ask
+	// about (T11 of docs/no-prompt-policy: the flag that stood in for it is
+	// gone). A rig with no terminal would stop at the first confirmation, which
+	// is what the refusals' own tests are for.
+	fakeTerminal(t)
 	r := newImagesRig(t, version)
-	// The released image, and the nightly-immune "-pinned" tag a release
-	// publishes beside the plain version tag.
-	r.src.publish("dimipaun/fugaro-credentials", version)
-	r.src.tags["dimipaun/fugaro-credentials:"+version+"-pinned"] = r.src.tags["dimipaun/fugaro-credentials:"+version]
+	publishCredentialsImage(t, r, version)
 	// The database the marker is read from: a project config with a budget
 	// backend is what `fugaro update --firebase-project` writes. Its
 	// firebase_project is the one the credentials service's own environment
@@ -59,6 +63,18 @@ func credentialsRigAt(t *testing.T, version string) *imagesRig {
 	r.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, firebase_project: "+fpID+", rtdb_url: "+r.db.URL+" }\n")
 	r.db.Set(rules.PathCredsRulesMarker(), rules.CredsRulesVersion)
 	return r
+}
+
+// publishCredentialsImage is the release's credentials image in the fake source:
+// the plain version tag and the nightly-immune "-pinned" tag a release publishes
+// beside it, which is the tag the resolve-and-verify step reads. A rig whose
+// installation has to be MOVED onto this release's service needs it before the
+// run, and one that only reads an image back (credentialsDigestAt) has nothing
+// to resolve.
+func publishCredentialsImage(t *testing.T, r *imagesRig, version string) {
+	t.Helper()
+	r.src.publish("dimipaun/fugaro-credentials", version)
+	r.src.tags["dimipaun/fugaro-credentials:"+version+"-pinned"] = r.src.tags["dimipaun/fugaro-credentials:"+version]
 }
 
 // credentialsDigest is the digest the fake source published the credentials
@@ -181,6 +197,13 @@ func credentialsServiceEntry(t *testing.T, r *imagesRig) map[string]any {
 	return svc
 }
 
+// credentialsServiceOutput is the credentials service as the installation
+// root's outputs carry it (the installation root's outputs.tf): the name, the
+// region the module deploys to, and the URL Cloud Run assigned.
+func credentialsServiceOutput() map[string]any {
+	return map[string]any{"name": infra.CredentialsServiceName, "region": "us-east5", "url": credentialsServiceURL}
+}
+
 // credentialsOutputs makes the installation root's `terraform output -json`
 // answer carry the credentials service the module publishes (the installation
 // root's outputs.tf): the run reads it back for the audience, and the
@@ -191,10 +214,24 @@ func credentialsServiceEntry(t *testing.T, r *imagesRig) map[string]any {
 // — Cloud Run assigns it, and Terraform refuses a resource that reads its own
 // uri — so the revision carries the module's unassigned placeholder until this
 // value comes back and the run applies it.
+//
+// The document is the service ALONE, which is what a rig whose run reads no
+// other output of the installation wants. A rig whose repository stage reads
+// the installation's own outputs for its other facts writes the same member
+// into outputsJSONWith's document instead (update_converge_test.go's
+// TestUpdateMigratesTheNodeBeforeItReplacesTheCredentialsService): those runs
+// decode project_name, runs_bucket and the rest from the same answer, and an
+// installation stage refuses the half-carried state either way (its tfvars
+// carrying the service while the outputs name none).
 func credentialsOutputs(t *testing.T, r *imagesRig) {
 	t.Helper()
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
-		"credentials_service": map[string]any{"name": infra.CredentialsServiceName, "region": "us-east5", "url": credentialsServiceURL},
+		"credentials_service": credentialsServiceOutput(),
+		// The second service the same module publishes, and the same rule
+		// applies to it: a run whose tfvars carry the intake and whose outputs
+		// name none is the half-carried state this fixture must not model
+		// (fillCredentialsAudience refuses it).
+		"intake": intakeServiceOutput(),
 	})}
 	r.save(t)
 }
@@ -203,6 +240,19 @@ func credentialsOutputs(t *testing.T, r *imagesRig) {
 // the shape Cloud Run assigns (the service's name, the project number, the
 // region), which is the audience its callers' ID tokens are minted for.
 const credentialsServiceURL = "https://fugaro-credentials-123456789012.us-east5.run.app"
+
+// intakeServiceURL is the same shape for the installation's other Cloud Run
+// service (DS2.2, DS4.1), and a URL of its own: the two services are two
+// audiences, and a caller's ID token is minted for the one it calls.
+const intakeServiceURL = "https://fugaro-intake-123456789012.us-east5.run.app"
+
+// intakeServiceOutput is the secrets intake as the installation root's outputs
+// carry it (the installation root's outputs.tf): credentialsServiceOutput's
+// three members for the second service, which is what the audience fill reads
+// back and what `fugaro secrets user set` derives the intake's URL from.
+func intakeServiceOutput() map[string]any {
+	return map[string]any{"name": infra.IntakeServiceName, "region": "us-east5", "url": intakeServiceURL}
+}
 
 // TestUpdateSetsCredentialsServiceOnEveryInstallation is the RED STEP of this
 // task. On the tree before it, an installation whose tfvars carried no
@@ -216,7 +266,7 @@ func TestUpdateSetsCredentialsServiceOnEveryInstallation(t *testing.T) {
 	r := credentialsRig(t)
 	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
 	credentialsOutputs(t, r)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	s := out + errOut
 	if err != nil {
 		t.Fatalf("an ordinary update of an installation with no credentials service failed: %v\n%s", err, s)
@@ -261,6 +311,295 @@ func TestUpdateSetsCredentialsServiceOnEveryInstallation(t *testing.T) {
 	// service is on and every launch goes out without the address.
 	if got := localConfigOf(t, r).CredentialsService; got == nil || got.URL != credentialsServiceURL {
 		t.Errorf("the project config records credentials_service = %+v, want the service's URL %s\n%s", got, credentialsServiceURL, s)
+	}
+}
+
+// credentialsRigRepoLine is the repository the init rig's local config
+// declares, and the line credentialsGitHubRepo replaces.
+const credentialsRigRepoLine = "  acme/sandbox: { provider: bitbucket, base_branch: master, workflows: [web] }"
+
+// credentialsRigGitHubAppID is the App ID the github fixture records: a job on
+// the github provider runs on providers.EnvGitHubAppID, and the module refuses
+// a job without one (modules/project/job.tf), so an installation whose
+// repositories are all Bitbucket is an installation no github job is deployed
+// for — the shape every credentials test above is about, and not this one.
+const credentialsRigGitHubAppID = "123456789"
+
+// credentialsRigRepo is the repository the rig's local config declares, by the
+// key the config is read and edited with: credentialsRigRepoLine's own name for
+// it, spelled once for the readers that hold the config rather than its text.
+const credentialsRigRepo = "acme/sandbox"
+
+// credentialsGitHubRepo puts the rig's one repository on the github provider
+// with an App ID recorded, which is what makes the installation one a job on
+// the github provider is deployed for at all.
+func credentialsGitHubRepo(t *testing.T, r *imagesRig) {
+	t.Helper()
+	before := readFileString(t, r.cfg)
+	after := strings.Replace(before, credentialsRigRepoLine,
+		"  acme/sandbox: { provider: github, base_branch: master, workflows: [web], github_app_id: \""+credentialsRigGitHubAppID+"\" }", 1)
+	if after == before {
+		t.Fatalf("the rig's config does not carry the repository line this fixture replaces:\n%s", before)
+	}
+	if err := os.WriteFile(r.cfg, []byte(after), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestTheDeployRunDeploysTheImplicitReviewJob: the run that deploys the
+// credentials service deploys the review job beside it, and the service's own
+// review table names that job's account.
+//
+// The local config is the whole difficulty: the credentials_service block is
+// the opt-in every reader gates on — the implicit default review job
+// (infra's implicitReviewVariant) and the review rows the service is handed
+// (infra.Credentials over infra.CredentialsReviewJobAccounts) — and the run
+// that WRITES the block is the one run whose config does not hold it yet: the
+// block reaches the project config from this run's own outputs, at the end of
+// the run (init.go's writeConfig). A reader that took the config as it stands
+// would therefore compose an installation one run behind the deployment —
+// service first, review job on the NEXT `fugaro update` — and the owner's
+// requirement of 2026-11-13 (`fugaro review --pr N` works out of the box on a
+// project with no profiles) would need a second command for every fresh
+// installation and every installation upgrading from before the service was
+// default-on.
+//
+// Mutation (run, restore): drop the spec's own set from
+// deployCredentialsService (the `e.spec.ProjectReviewJobs` assignment) and the
+// installation's tfvars carry no project_review_jobs — the first assertion;
+// read infra.Credentials off e.lc rather than off credentialsServiceOptedIn and
+// the service's table carries no review row — the second.
+func TestTheDeployRunDeploysTheImplicitReviewJob(t *testing.T) {
+	r := credentialsRig(t)
+	credentialsGitHubRepo(t, r)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	credentialsOutputs(t, r)
+	out, errOut, err := executeStdin(t, "", "update")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("an ordinary update of an installation with no credentials service failed: %v\n%s", err, s)
+	}
+	name := credsvc.ReviewJobName(infra.ImplicitReviewProfile, "github", config.DefaultClaudeAccount)
+	// The job the run handed terraform, in the tfvars every stage of the run
+	// rewrites from the spec: the installation root's own apply creates it.
+	reviewJob := func(step string) map[string]any {
+		t.Helper()
+		review, _ := r.tfvars(t)["project_review_jobs"].(map[string]any)
+		job, _ := review[name].(map[string]any)
+		if job == nil {
+			t.Fatalf("%s: the installation deploys no review job %s: project_review_jobs = %v\n%s", step, name, review, s)
+		}
+		return job
+	}
+	job := reviewJob("the run that deployed the credentials service")
+	// Built from the installation's own facts: the App ID its repository
+	// records. The address is absent here and present on the second run below,
+	// which is the one-run lag every variant's address has: it is Cloud Run's
+	// answer, this run writes it into the installation's tfvars only after the
+	// apply that creates the service (fillCredentialsAudience), and a job's
+	// environment is composed from the local config, which records the block at
+	// the end of the run (init.go's writeConfig).
+	env, _ := job["env"].(map[string]any)
+	if got := env[providers.EnvGitHubAppID]; got != credentialsRigGitHubAppID {
+		t.Errorf("the review job's %s = %v, want the App ID the installation records (%s)\n%s", providers.EnvGitHubAppID, got, credentialsRigGitHubAppID, s)
+	}
+	// And the service's table names that job's account in the same run: the
+	// table is the set the deployment admits a review caller by, so a row one
+	// run behind its job is a job whose every call is refused.
+	svc := credentialsServiceEntry(t, r)
+	want := []any{map[string]any{"profile": infra.ImplicitReviewProfile, "provider": "github", "account": config.DefaultClaudeAccount}}
+	if rows, _ := svc["review_job_accounts"].([]any); !reflect.DeepEqual(rows, want) {
+		t.Errorf("credentials_service.review_job_accounts = %v, want %v: the row is what binds the deployed account to the credential its calls are served by\n%s", svc["review_job_accounts"], want, s)
+	}
+	// And the project config records the block, which is what makes the NEXT
+	// run compose the same set — with the address on the job, and the job's
+	// account in the table of the service it now records — rather than plan the
+	// job's deletion, which RefuseProjectJobDeletes stops the whole update on.
+	if got := localConfigOf(t, r).CredentialsService; got == nil || got.URL != credentialsServiceURL {
+		t.Fatalf("the project config records credentials_service = %+v, want the service's URL %s\n%s", got, credentialsServiceURL, s)
+	}
+	if _, errOut, err := executeStdin(t, "", "update"); err != nil {
+		t.Fatalf("the update after the one that deployed the service failed: %v\n%s", err, errOut)
+	}
+	if got := reviewJob("the update after the deploy")["env"].(map[string]any)[providers.EnvCredentialsServiceURL]; got != credentialsServiceURL {
+		t.Errorf("the review job's %s = %v, want the installation's own audience %s: a launch on a named job is handed no address (credentialsServiceLaunchEnv), so the variant's own deployment is the only place it can come from\n%s", providers.EnvCredentialsServiceURL, got, credentialsServiceURL, s)
+	}
+}
+
+// dropCredentialsServiceFromConfig rewrites the rig's project config without
+// its credentials_service block, which is the state a run that dies between the
+// installation root's apply and the config write at the end of the run leaves
+// behind: the installation's own record of the service — its tfvars, block and
+// review job together — is exactly as the run wrote it, and the config this
+// machine reads on the next update carries no block at all.
+func dropCredentialsServiceFromConfig(t *testing.T, r *imagesRig) {
+	t.Helper()
+	lc := localConfigOf(t, r)
+	if lc.CredentialsService == nil {
+		t.Fatalf("the rig's project config carries no credentials_service block to drop: the update did not record one, so this fixture would test nothing")
+	}
+	lc.CredentialsService = nil
+	data, err := lc.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.cfg, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := localConfigOf(t, r).CredentialsService; got != nil {
+		t.Fatalf("the project config records credentials_service = %+v after the block was dropped", got)
+	}
+}
+
+// TestACarriedRunStillDeploysTheImplicitReviewJob: the run that finds the
+// credentials service already recorded in the installation's tfvars plans the
+// review job the run that deployed the service created, even when this
+// machine's config does not name the block.
+//
+// That is the shape a run leaves when it dies in the window between the
+// installation root's apply and the config write that records the block, and it
+// is the shape every later `fugaro update` then meets: the implicit default
+// review job's existence is the local config's block (infra's
+// implicitReviewVariant), so a spec composed from a config without it holds no
+// review job at all, while the state holds the one the deploy run created. The
+// plan of a run in that state is the job's destruction, RefuseProjectJobDeletes
+// stops the whole update on it however --allow-delete reads, and the writer that
+// would record the block — and so repair the spec — is the last step of a run
+// that now never gets past its own plan: it repeats forever, with no in-CLI
+// repair and a hint naming a profile that is not what is missing.
+//
+// The carried branch is what this test drives: the block is in the tfvars, so
+// ensureCredentialsService hands the run's own record to the spec
+// (specReviewJobsOfTheService) rather than composing a fresh block off the
+// config. The issuance is the tfvars every stage of the run rewrites from the
+// spec, so what is asserted is what terraform is handed.
+//
+// Mutation (run, restore): drop that call from the carried branch and the second
+// update hands terraform no project_review_jobs — this test's assertion, with
+// the map empty.
+func TestACarriedRunStillDeploysTheImplicitReviewJob(t *testing.T) {
+	r := credentialsRig(t)
+	credentialsGitHubRepo(t, r)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	credentialsOutputs(t, r)
+	if _, errOut, err := executeStdin(t, "", "update"); err != nil {
+		t.Fatalf("the run that deploys the credentials service failed: %v\n%s", err, errOut)
+	}
+	name := credsvc.ReviewJobName(infra.ImplicitReviewProfile, "github", config.DefaultClaudeAccount)
+	dropCredentialsServiceFromConfig(t, r)
+	out, errOut, err := executeStdin(t, "", "update")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("the update that finds the service already recorded in the installation failed: %v\n%s", err, s)
+	}
+	review, _ := r.tfvars(t)["project_review_jobs"].(map[string]any)
+	if _, ok := review[name].(map[string]any); !ok {
+		t.Errorf("the run that found the block already in the installation's tfvars hands terraform no review job %s: project_review_jobs = %v. The state holds that job — the run that deployed the service created it — so this run's plan destroys it, and RefuseProjectJobDeletes stops the whole update on that plan\n%s", name, review, s)
+	}
+}
+
+// TestAnInstallationHoldingTheImplicitReviewJobConvergesThroughBothTransitions:
+// the installation that deploys the implicit default review job goes on
+// converging when the config loses the one fact that job is composed from.
+//
+// One of implicitReviewVariant's gates is the single GitHub App ID the config
+// records, and the config can lose it after the job is deployed: the last github
+// repository moves to Bitbucket (no App ID recorded at all), or a repository on
+// a second App is added (two IDs, which recordedGitHubAppID reports as an
+// error). Either way the spec composes no review job while the state holds the
+// one the installation deployed, so the plan every later run makes is that
+// job's destruction — RefuseProjectJobDeletes stops the whole update on it, with
+// "restore the profile as it was" as the only remedy it can print, a profile an
+// installation that declares none does not have — and the installation stops
+// converging for good. Both transitions are ordinary acts, so both are here.
+//
+// What converges them is the carry: the job the installation's own tfvars hold
+// is put back into the document the spec composes (infra.CarriedProjectReviewJobs,
+// init.go's prepare), whole, so the plan proposes no change to it at all. The
+// tfvars every stage of the run rewrites from the spec are what terraform is
+// handed, so what is asserted is what the plan is made from.
+//
+// Mutation (run, restore): drop the CarriedProjectReviewJobs loop from prepare
+// and both transitions hand terraform no project_review_jobs — this test's
+// assertion, with the map empty.
+func TestAnInstallationHoldingTheImplicitReviewJobConvergesThroughBothTransitions(t *testing.T) {
+	r := credentialsRig(t)
+	credentialsGitHubRepo(t, r)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	credentialsOutputs(t, r)
+	if _, errOut, err := executeStdin(t, "", "update"); err != nil {
+		t.Fatalf("the run that deploys the credentials service failed: %v\n%s", err, errOut)
+	}
+	name := infra.ImplicitReviewJobName()
+	deployed := reviewJobOf(t, r, name, "the run that deployed the credentials service")
+
+	for _, c := range []struct {
+		what    string
+		comment string
+		edit    func(*localcfg.Config)
+	}{
+		{
+			what:    "the last github repository gone",
+			comment: "the repository moves to Bitbucket and the config records no App ID at all",
+			edit: func(lc *localcfg.Config) {
+				repo := lc.Repos[credentialsRigRepo]
+				repo.Provider, repo.GitHubAppID = "bitbucket", ""
+				lc.Repos[credentialsRigRepo] = repo
+			},
+		},
+		{
+			what:    "a repository on a second App added",
+			comment: "recordedGitHubAppID reports the two IDs as an error, and the implicit job runs on one App",
+			edit: func(lc *localcfg.Config) {
+				lc.Repos[credentialsRigRepo] = localcfg.Repo{
+					Provider: "github", BaseBranch: "master", Workflows: []string{"web"}, GitHubAppID: credentialsRigGitHubAppID,
+				}
+				lc.Repos["acme/other"] = localcfg.Repo{
+					Provider: "github", BaseBranch: "main", Workflows: []string{"web"}, GitHubAppID: "987654321",
+				}
+			},
+		},
+	} {
+		rewriteRigConfig(t, r, c.edit)
+		out, errOut, err := executeStdin(t, "", "update")
+		s := out + errOut
+		if err != nil {
+			t.Errorf("%s (%s): the update was refused: %v\n%s", c.what, c.comment, err, s)
+			continue
+		}
+		kept := reviewJobOf(t, r, name, c.what)
+		if !reflect.DeepEqual(kept, deployed) {
+			t.Errorf("%s (%s): the review job the installation holds is %v, want it unchanged from %v: the job the record holds is the job the state holds, and a document that rewrites it is a plan that replaces it\n%s", c.what, c.comment, kept, deployed, s)
+		}
+	}
+}
+
+// reviewJobOf is the implicit review job as the installation's tfvars carry it
+// after a run, which is the document every stage of the run plans the root from.
+func reviewJobOf(t *testing.T, r *imagesRig, name, what string) map[string]any {
+	t.Helper()
+	review, _ := r.tfvars(t)["project_review_jobs"].(map[string]any)
+	job, _ := review[name].(map[string]any)
+	if job == nil {
+		t.Fatalf("%s hands terraform no review job %s: project_review_jobs = %v. The state holds that job — the installation's own tfvars record it — so this run's plan destroys it, and RefuseProjectJobDeletes stops the whole update on that plan", what, name, review)
+	}
+	return job
+}
+
+// rewriteRigConfig writes the rig's project config with edit applied to it, the
+// way the transitions of the implicit review job's App ID are made by hand: the
+// file a run has rewritten is canonical YAML, so the edit is made over the
+// parsed config rather than over its text.
+func rewriteRigConfig(t *testing.T, r *imagesRig, edit func(*localcfg.Config)) {
+	t.Helper()
+	lc := localConfigOf(t, r)
+	edit(lc)
+	data, err := lc.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.cfg, data, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -328,7 +667,7 @@ func TestUpdateKeepsTheVarsFileWhereTheAudiencePlanReadsIt(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", link)
 	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
 	credentialsOutputs(t, r)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	s := out + errOut
 	if err != nil {
 		t.Fatalf("an update that creates the credentials service failed at one of the installation step's own plans: %v\n%s", err, s)
@@ -340,8 +679,12 @@ func TestUpdateKeepsTheVarsFileWhereTheAudiencePlanReadsIt(t *testing.T) {
 		t.Fatalf("the run did not fill the service's audience, so this test is not arranged as the report is: want %q in\n%s", want, s)
 	}
 	dirs := planDirs(t, r.log)
-	if len(dirs) != 2 {
-		t.Fatalf("the installation step planned %d times, want 2 (the apply that creates the service, then the audience): %v\n%s", len(dirs), dirs, s)
+	// Three plans of the root: the installation step's two (the apply that
+	// creates the service, then the audience), and installation-2's, the stage
+	// that applies the root again for the scheduled jobs (R7) because this
+	// rig records no base image for the images stage to leave alone.
+	if len(dirs) != 3 {
+		t.Fatalf("the installation root planned %d times, want 3 (the apply that creates the service, the audience, then installation-2's): %v\n%s", len(dirs), dirs, s)
 	}
 	// Both sides resolved, as computeCalls' comparison is: the fake records
 	// os.Getwd(), which answers a path with every symlink followed, while the
@@ -403,7 +746,9 @@ func planDirs(t *testing.T, log string) []string {
 // already has the block keeps it. The block is the record of a service that
 // exists — its URL is the audience every caller's ID token is minted for, and
 // its job table is the installation's own — so the run carries it as it is
-// found and moves the ONE member it owns, the image.
+// found and moves the members it owns: the image, and the one member the
+// carry's own rewrite writes over it (verifier_accounts, CSR14 — see the
+// expectation below).
 //
 // Mutation (verified, run and restored): rebuild the block from the spec
 // (infra.Credentials) instead of carrying it, and this test fails on the
@@ -414,12 +759,22 @@ func TestUpdateKeepsAnOptedInInstallationsServiceUnchanged(t *testing.T) {
 	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
 	credentialsOutputs(t, r)
 	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	s := out + errOut
 	if err != nil {
 		t.Fatalf("an ordinary update of an installation that has the service failed: %v\n%s", err, s)
 	}
 	svc := credentialsServiceEntry(t, r)
+	// The one member that is not the earlier run's is verifier_accounts: the
+	// carry's own rewrite writes this run's effective list into the block
+	// (infra.CarriedCredentialsService, prepare), and the effective list is
+	// the published node's whenever the config states none of its own — which
+	// this rig's does not. The credentials-service stage runs AFTER the policy
+	// one (the owner's ruling of 2026-11-10), so the run that publishes the
+	// node naming the verifier account is also the run that plans the
+	// installation root again after it, and the member arrives in the update
+	// that published it rather than in the one behind. Every other member is
+	// the earlier run's, byte for byte.
 	want := map[string]any{
 		"account_id":       infra.CredentialsAccountID,
 		"service":          infra.CredentialsServiceName,
@@ -430,6 +785,8 @@ func TestUpdateKeepsAnOptedInInstallationsServiceUnchanged(t *testing.T) {
 		"job_accounts": []any{map[string]any{
 			"provider": "bitbucket", "repo": "acme/sandbox", "workflow": "web"}},
 		"url": credentialsServiceURL,
+		"verifier_accounts": []any{
+			"fugaro-verifier@proj-1234.iam.gserviceaccount.com"},
 	}
 	got, err := json.Marshal(svc)
 	if err != nil {
@@ -477,7 +834,7 @@ func seedCheckoutGitSecret(t *testing.T, r *imagesRig, repo string) {
 //
 // Mutation (verified, run and restored): drop the
 // infra.RefreshCredentialsServiceJobAccounts call in init_stages.go's
-// pinCredentialsImage → this fails on the config's own repository, which the
+// writeCarriedCredentials → this fails on the config's own repository, which the
 // table then does not hold.
 func TestUpdateRefreshesTheServicesJobTable(t *testing.T) {
 	r := credentialsRig(t)
@@ -488,7 +845,7 @@ func TestUpdateRefreshesTheServicesJobTable(t *testing.T) {
 	// describes, which is what stands in for "the config has moved on since".
 	setCredentialsJobTable(t, r, []any{map[string]any{
 		"provider": "bitbucket", "repo": "acme/old", "workflow": "web"}})
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	s := out + errOut
 	if err != nil {
 		t.Fatalf("an ordinary update of an installation whose job table is stale failed: %v\n%s", err, s)
@@ -536,6 +893,24 @@ func TestAnOnboardingConvergeNamesTheNewRepositoriesJobs(t *testing.T) {
 	r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
 	credentialsOutputs(t, r)
 	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
+	// The installation root's plan is not empty: this release's run writes the
+	// secrets intake's block into an installation that has none (DS4.1), the
+	// module's intake file is gated on that variable, and the apply that
+	// follows the write creates the service — so an installation stage whose
+	// plan reports no changes while its tfvars gained a service is the shape
+	// the audience fill refuses (TF.Plan's exit code is what says a plan has
+	// something to apply). The plan's content is not what this test is about;
+	// the table the same run's installation apply writes is, and a stage that
+	// plans nothing never reaches it.
+	//
+	// The two reads are scripted apart, as the fake's own contract has them:
+	// "show -json" is the root's state (no plan file) and a root-scoped
+	// "show@installation" is the plan. Without the first, the fallback the
+	// fake documents would hand this plan document to the state read, which
+	// decodes it as an installation that manages nothing.
+	r.script["show -json"] = r.script["show"]
+	r.script["plan@installation"] = map[string]any{"exit": 2}
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.intake", "create"))
 	// The table the deploy left: a repository this machine's config no longer
 	// describes, which is what stands in for "the config has moved on since".
 	setCredentialsJobTable(t, r, []any{map[string]any{
@@ -577,7 +952,7 @@ func TestAnOnboardingConvergeNamesTheNewRepositoriesJobs(t *testing.T) {
 	// about is the installation apply and the table it writes, and a billable
 	// build of a fixture's own app would only stand between the two.
 	t.Chdir(repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", cloneCheckoutYAML("bitbucket", "cascade", "aurora")))
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	s := out + errOut
 	if err != nil {
 		t.Fatalf("the run that onboards the checkout's repository failed: %v\n%s", err, s)
@@ -616,7 +991,7 @@ func TestUpdateCarriesTheVerifierAccount(t *testing.T) {
 		"version":           projectpolicy.Version,
 		"verifier_accounts": []any{verifierServiceAccount()},
 	})
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	s := out + errOut
 	if err != nil {
 		t.Fatalf("an ordinary update of an installation deploying the service failed: %v\n%s", err, s)
@@ -631,21 +1006,25 @@ func TestUpdateCarriesTheVerifierAccount(t *testing.T) {
 		}
 	}
 
-	// And with nothing anywhere naming a verifier, the block carries no member
-	// at all: that is the state the module's own default is for — the address of
-	// the verifier account the same apply creates (verifier.tf) — which is a
-	// service account too, and the run records it in the config so the next
-	// update's block names it.
+	// And with nothing anywhere naming a verifier, the block names the verifier
+	// account the same apply creates and nothing else. The run records the
+	// address in the config after the first apply, and installation-2 — the
+	// stage that applies the root again for the scheduled jobs (R7) — reads the
+	// spec from the config it then holds, so this run's LAST block is the one
+	// the next update would have written anyway: the module's own default for
+	// the variable is that same address (verifier.tf), so which of the two
+	// spellings the apply carries changes nothing in the plan.
 	plain := credentialsRig(t)
 	plain.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
 	credentialsOutputs(t, plain)
-	out, errOut, err = executeStdin(t, "", "update", "--yes")
+	out, errOut, err = executeStdin(t, "", "update")
 	s = out + errOut
 	if err != nil {
 		t.Fatalf("an ordinary update of an installation with no verifier named failed: %v\n%s", err, s)
 	}
-	if got, ok := credentialsServiceEntry(t, plain)["verifier_accounts"]; ok {
-		t.Errorf("credentials_service.verifier_accounts = %v on an installation whose config and node both name nobody, want the member absent: an absent member is the module's variable null, which is the state its default — the verifier account this apply creates — is for\n%s", got, s)
+	listed, _ := credentialsServiceEntry(t, plain)["verifier_accounts"].([]any)
+	if len(listed) != 1 || listed[0] != verifierServiceAccount() {
+		t.Errorf("credentials_service.verifier_accounts = %v on an installation whose config and node both name nobody, want exactly [%s]: the account the module's default is for, and never a person's address\n%s", listed, verifierServiceAccount(), s)
 	}
 	if got := verifierListOf(localConfigOf(t, plain)); !sameList(got, []string{verifierServiceAccount()}) {
 		t.Errorf("the local config names verifier_accounts = %v, want [%s]: the address is a fact of the configuration (infra.VerifierAccountID), which is what lets one update create the account and name it\n%s", got, verifierServiceAccount(), s)
@@ -708,7 +1087,7 @@ func TestUpdatePinsTheServiceImageByDigest(t *testing.T) {
 	r := credentialsRig(t)
 	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
 	credentialsOutputs(t, r)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	s := out + errOut
 	if err != nil {
 		t.Fatalf("%v\n%s", err, s)
@@ -729,8 +1108,11 @@ func TestUpdatePinsTheServiceImageByDigest(t *testing.T) {
 	// exist until that apply returns — and fillCredentialsAudience's, which puts
 	// the module's own output on it. Both happen before the stage reports done,
 	// so an installation this run calls converged is one that serves.
-	if apps := r.ran(t, "apply"); len(apps) != 2 {
-		t.Errorf("applies = %v, want the installation root twice (the installation stage's, and the audience's)", apps)
+	// And installation-2's, the third: the stage that applies the root again
+	// once the images stage has pinned the base image the scheduled jobs run
+	// FROM (R7), which this rig has none of until that stage runs.
+	if apps := r.ran(t, "apply"); len(apps) != 3 {
+		t.Errorf("applies = %v, want the installation root three times (the installation stage's, the audience's, and installation-2's)", apps)
 	}
 
 	// A development build has no released image, so there is nothing to resolve
@@ -742,7 +1124,7 @@ func TestUpdatePinsTheServiceImageByDigest(t *testing.T) {
 	dev.setPlanAt(t, "installation", change("module.installation.google_storage_bucket.runs", "update"))
 	dev.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, firebase_project: "+fpID+", rtdb_url: "+dev.db.URL+" }\n")
 	dev.db.Set(rules.PathCredsRulesMarker(), rules.CredsRulesVersion)
-	out, errOut, err = executeStdin(t, "", "update", "--yes")
+	out, errOut, err = executeStdin(t, "", "update")
 	s = out + errOut
 	if err != nil {
 		t.Fatalf("a development build's update failed instead of deploying nothing: %v\n%s", err, s)
@@ -785,7 +1167,7 @@ func TestUpdateWithoutAFirebaseBackendDeploysNothing(t *testing.T) {
 	if err := os.WriteFile(r.cfg, []byte(strings.Join(kept, "\n")), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	s := out + errOut
 	if err != nil {
 		t.Fatalf("an installation with no Firebase backend could not be updated: %v\n%s", err, s)
@@ -842,7 +1224,7 @@ func TestCredentialsServiceKeepsThePublishedVerifierList(t *testing.T) {
 	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
 	credentialsOutputs(t, r)
 	publishedVerifiersForTest(t, r)
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
@@ -875,7 +1257,7 @@ func TestCredentialsServiceClearsTheListOnAnExplicitEmptyOne(t *testing.T) {
 	credentialsOutputs(t, r)
 	publishedVerifiersForTest(t, r)
 	r.appendConfig(t, "verifier_accounts: []\n")
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
@@ -904,7 +1286,7 @@ const credsRefreshYAML = "version: 1\nproject: aurora\ngit: { provider: github }
 func upgradeRigWithCascade(t *testing.T) *anchorModeRig {
 	t.Helper()
 	fakeTerraform(t)
-	upgradeEnv(t, "0.5.1")
+	convergeEnv(t, "0.5.1")
 	r := newAnchorModeRig(t, credsRefreshYAML, false)
 	r.appendConfig(t, "  acme/app: { provider: github, workflows: [app], github_app_id: \"12345\" }\n")
 	runs := t.TempDir()
@@ -940,7 +1322,8 @@ func TestUpgradeNoteNamesTheStage(t *testing.T) {
 	stubCurrentRefresh(t, r)
 	setJobConfigCopyEnv(t, r, "api", nil)
 	fakeSteps(t, "", nil)
-	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	fakeTerminal(t)
+	out, _, err := runCloudStep(t)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -990,7 +1373,7 @@ func TestPrintVarsCarriesTheCredentialsService(t *testing.T) {
 	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
 	credentialsOutputs(t, r)
 	seedCredentialsServiceWithVerifiers(t, r, oldCredentialsRef("1.2.2"), verifierAccountsEnv)
-	out, errOut, err := executeStdin(t, "", "update", "--yes", "--print-vars")
+	out, errOut, err := executeStdin(t, "", "update", "--print-vars")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
@@ -1030,15 +1413,15 @@ func TestPrintVarsCarriesTheCredentialsService(t *testing.T) {
 // this is the carry half: an installation that HAS the block keeps every fact
 // of it and only the image moves.
 //
-// Mutation (verified, run and restored): return from pinCredentialsImage before
-// it resolves (the carry this test exists to replace): the tfvars keep 1.2.2's
-// image and this test fails.
+// Mutation (verified, run and restored): return from moveCredentialsImage
+// before it resolves (the carry this test exists to replace): the tfvars keep
+// 1.2.2's image and this test fails.
 func TestUpdateRepinsTheCredentialsImageOnAnOrdinaryUpdate(t *testing.T) {
 	r := credentialsRig(t)
 	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
 	credentialsOutputs(t, r)
 	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	s := out + errOut
 	if err != nil {
 		t.Fatalf("an ordinary update of an installation that has the service failed: %v\n%s", err, s)
@@ -1065,12 +1448,22 @@ func TestUpdateRepinsTheCredentialsImageOnAnOrdinaryUpdate(t *testing.T) {
 			t.Errorf("credentials_service.%s = %v, want %v: the re-pin rewrote a fact of the service it does not own", k, svc[k], want)
 		}
 	}
-	// One apply, and no audience fill: the block already carries the URL the
-	// module's own output does, which is every run after the one that deployed
-	// the service (prepare carries it forward), so there is nothing for the
-	// second apply to change.
-	if apps := r.ran(t, "apply"); len(apps) != 1 {
-		t.Errorf("applies = %v, want the installation root's alone", apps)
+	// Four applies: the installation root's own, the audience fill's — the
+	// second apply inside the installation stage, which writes the credentials
+	// service's URL and the secrets intake's back from the root's outputs, and
+	// which this run makes because it also deploys the intake (DS4.1: the
+	// installation at the previous version has none, so the block this run
+	// writes is the one whose URL the apply after it carries onto the
+	// revision) — installation-2's, the stage that applies the root again for
+	// the scheduled jobs the images stage has just pinned a base image for
+	// (R7) — and the credentials-service stage's. That last one is the root
+	// once more, whose one change is the moved image; it is what the reorder
+	// costs (the owner's ruling of 2026-11-10): the service may not be replaced
+	// before the node it reads per call is one its own binary understands, so
+	// its apply is the stage after the policy migration rather than part of the
+	// installation stage's.
+	if apps := r.ran(t, "apply"); len(apps) != 4 {
+		t.Errorf("applies = %v, want the installation root's, the audience fill's own, installation-2's and the credentials-service stage's", apps)
 	}
 
 	// The next ordinary update is the converged one, and it asks the registry
@@ -1078,7 +1471,7 @@ func TestUpdateRepinsTheCredentialsImageOnAnOrdinaryUpdate(t *testing.T) {
 	// to move and no reason to reach the network — which is also why an owner
 	// whose registry is briefly unreachable updates as they did before this
 	// migration existed.
-	if out, errOut, err := executeStdin(t, "", "update", "--yes"); err != nil {
+	if out, errOut, err := executeStdin(t, "", "update"); err != nil {
 		t.Fatalf("the update after the re-pin failed: %v\n%s%s", err, out, errOut)
 	}
 	if r.resolveCalls != 1 || r.arCalls != 1 {
@@ -1113,14 +1506,20 @@ func TestUpdateFirebaseProjectRepinsTheCredentialsImage(t *testing.T) {
 	// stage reads back. credentialsOutputs replaces the rig's script rather
 	// than adding to it, and this is the one test that needs both objects from
 	// the same run, so the two are composed here.
+	//
+	// The intake is part of the first half, and it is not optional: this run
+	// writes the intake's block into an installation that has none (the state
+	// the seed below leaves), and the audience fill refuses the half-carried
+	// state a tfvars block without the output is.
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"credentials_service":     map[string]any{"name": infra.CredentialsServiceName, "region": "us-east5", "url": credentialsServiceURL},
+		"intake":                  intakeServiceOutput(),
 		"history_service_account": historyAccount,
 		"history_job":             nil,
 	})}
 	r.save(t)
 	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
-	out, errOut, err := executeStdin(t, "", "update", "--firebase-project", fpID, "--yes")
+	out, errOut, err := executeStdin(t, "", "update", "--firebase-project", fpID)
 	s := out + errOut
 	if err != nil {
 		t.Fatalf("update --firebase-project of an opted-in installation failed: %v\n%s", err, s)
@@ -1159,10 +1558,12 @@ func TestTheFirebaseProjectDoorBackfillsTheRecordToo(t *testing.T) {
 	r.fs.SetDatabase("us-east5")
 	r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
 	// The installation's own outputs, as the Firebase stage reads them back: the
-	// credentials block this door re-pins AND the history account the stage
-	// needs (the composed script is TestUpdateFirebaseProjectRepinsTheCredentialsImage's).
+	// credentials block this door re-pins, the intake block the audience fill
+	// pairs with the one on disk, AND the history account the stage needs (the
+	// composed script is TestUpdateFirebaseProjectRepinsTheCredentialsImage's).
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"credentials_service":     map[string]any{"name": infra.CredentialsServiceName, "region": "us-east5", "url": credentialsServiceURL},
+		"intake":                  intakeServiceOutput(),
 		"history_service_account": historyAccount,
 		"history_job":             nil,
 	})}
@@ -1174,7 +1575,7 @@ func TestTheFirebaseProjectDoorBackfillsTheRecordToo(t *testing.T) {
 	putSwitchBundle(t, r.initRig, []byte(config.AnthropicSecret+": "+credsValue(t, "model")+"\n"))
 	seedRepoStateGrant(t, r.initRig, slug)
 
-	out, errOut, err := executeStdin(t, "", "update", "--firebase-project", fpID, "--yes")
+	out, errOut, err := executeStdin(t, "", "update", "--firebase-project", fpID)
 	s := out + errOut
 	if err != nil {
 		t.Fatalf("update --firebase-project failed: %v\n%s", err, s)
@@ -1205,7 +1606,7 @@ func TestInstallationAtThePreviousVersionConvergesInOneUpdateCredentials(t *test
 	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
 	credentialsOutputs(t, r)
 	seedCredentialsService(t, r, oldCredentialsRef("0.14.2"))
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	s := out + errOut
 	if err != nil {
 		t.Fatalf("one update from the previous release failed: %v\n%s", err, s)
@@ -1219,6 +1620,105 @@ func TestInstallationAtThePreviousVersionConvergesInOneUpdateCredentials(t *test
 	}
 	if r.resolveCalls != 1 {
 		t.Errorf("resolve calls %d, want 1: one update is one resolve, and it is the release's own signed image the run pins", r.resolveCalls)
+	}
+}
+
+// TestUpdateConvergesAnInstallationThatSkippedTheIntakeInOneRun is CLAUDE.md's
+// HARD RULE at the intake's own ordering, and the bug this fixes. The block an
+// installation with no intake gets is written BEFORE the apply that creates the
+// intake's service, so the image in it is the binary that service runs — and a
+// recorded image is a release's, which for an installation that skipped the one
+// the intake shipped in is a binary with no `intake serve` subcommand
+// (intake.tf runs the image with exactly those args). Written from the recorded
+// image, the apply brings up a revision that exits on start and fails; the
+// block is on disk already, so the recorded image is the one every rerun
+// repeats it with and the installation can never be updated again by the one
+// documented command.
+//
+// The end state cannot show the bug — the credentials-service stage re-pins the
+// intake with the service it shares the pin with, so the final tfvars carry
+// this release's image either way — so the assertion is on what the apply RAN
+// WITH (captureApplies). That is the whole of the ordering: the block's image
+// at the moment the service is created from it.
+//
+// Red before the fix: the captured applies carried oldCredentialsRef("0.22.3").
+//
+// The credentials service's OWN image is deliberately still the recorded one
+// in those applies — the published node may not move before the process that
+// reads it is replaced (the owner's ruling of 2026-11-10) — which is why the
+// assertion is the intake's image and not the service's.
+func TestUpdateConvergesAnInstallationThatSkippedTheIntakeInOneRun(t *testing.T) {
+	r := credentialsRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.intake", "create"))
+	credentialsOutputs(t, r)
+	// The installation's record: the service, on a release that predates the
+	// intake, and no intake block at all.
+	seedCredentialsService(t, r, oldCredentialsRef("0.22.3"))
+	applies := r.captureApplies(t)
+
+	out, errOut, err := executeStdin(t, "", "update")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("one fugaro update of an installation that skipped the release the intake shipped in failed: %v\n%s", err, s)
+	}
+	ran := capturedApplies(t, applies, "installation")
+	if len(ran) == 0 {
+		t.Fatalf("the update applied the installation root not at all, so nothing created the intake the run reports:\n%s", s)
+	}
+	for i, doc := range ran {
+		intake, _ := doc["intake"].(map[string]any)
+		if intake == nil {
+			t.Fatalf("the installation root's apply %d ran with no intake block, so the service the run reports as deployed was never created:\n%v", i+1, doc)
+		}
+		if got, want := intake["image"], r.credentialsRef(); got != want {
+			t.Errorf("the installation root's apply %d ran with intake.image = %v, want %s: the first of these applies is the one that CREATES the intake's service, and the image in the block it reads is the binary that service runs — the recorded one is a release whose binary has no `intake serve` subcommand, so the revision exits on start and the apply fails, with the block already written to make every rerun fail the same way\n%s", i+1, got, want, s)
+		}
+	}
+	// One run converges the installation: both services deployed, each on this
+	// release's verified image, each with its own URL as its audience.
+	intake, _ := r.tfvars(t)["intake"].(map[string]any)
+	if intake == nil {
+		t.Fatalf("the run left the installation with no intake block:\n%s", s)
+	}
+	if got, want := intake["image"], r.credentialsRef(); got != want {
+		t.Errorf("intake.image = %v after one update, want %s", got, want)
+	}
+	if got := intake["url"]; got != intakeServiceURL {
+		t.Errorf("intake.url = %v after one update, want %s: the run's own apply created the service, so the module's output carries its URL, and an intake left without it is reachable by IAM and admits nobody\n%s", got, intakeServiceURL, s)
+	}
+	if got := intake["service"]; got != infra.IntakeServiceName {
+		t.Errorf("intake.service = %v, want %s", got, infra.IntakeServiceName)
+	}
+	svc := credentialsServiceEntry(t, r)
+	if got, want := svc["image"], r.credentialsRef(); got != want {
+		t.Errorf("credentials_service.image = %v after one update, want %s", got, want)
+	}
+	if got := svc["url"]; got != credentialsServiceURL {
+		t.Errorf("credentials_service.url = %v after one update, want %s", got, credentialsServiceURL)
+	}
+	// The resolve is one per run (credentialsResolve is memoized): the intake's
+	// block and the credentials-service stage's move read the same answer, so
+	// pinning the block here costs no second registry read.
+	if r.resolveCalls != 1 {
+		t.Errorf("resolve calls %d after one update, want 1: the intake's pin is the run's own resolve, not a second registry read", r.resolveCalls)
+	}
+
+	// And a SECOND update writes nothing: what the first left is the one
+	// documented command's own output, not a state the next run moves.
+	before := len(r.ran(t, "apply"))
+	r.script["plan"] = map[string]any{"exit": 0}
+	r.setPlanAt(t, "installation")
+	r.setPlan(t)
+	out, errOut, err = executeStdin(t, "", "update")
+	s = out + errOut
+	if err != nil {
+		t.Fatalf("the second update of a converged installation failed: %v\n%s", err, s)
+	}
+	if after := len(r.ran(t, "apply")); after != before {
+		t.Errorf("the second update applied %d time(s): a run after a converged update has nothing left to do, and one that applies again is an upgrade nobody finishes\n%s", after-before, s)
+	}
+	if !strings.Contains(s, "No changes") {
+		t.Errorf("the second update does not report a converged installation:\n%s", s)
 	}
 }
 
@@ -1260,7 +1760,7 @@ func TestUpdateOutsideACheckoutConvergesTheReviewAdmissionGate(t *testing.T) {
 		t.Fatal("a review launch from an installation whose service predates the class was admitted before the update")
 	}
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	s := out + errOut
 	if err != nil {
 		t.Fatalf("one ordinary update of an installation whose service predates the class failed: %v\n%s", err, s)
@@ -1303,13 +1803,9 @@ func TestUpdateWithAFailedCredentialsRepinKeepsTheOptIn(t *testing.T) {
 	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
 	credentialsOutputs(t, r)
 	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
-	seeded, err := os.ReadFile(filepath.Join(r.root(), infra.VarsFile))
-	if err != nil {
-		t.Fatal(err)
-	}
 	r.resolveErr = errors.New("the signature of dimipaun/fugaro-credentials:1.2.3-pinned did not verify")
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	s := out + errOut
 	if err == nil {
 		t.Fatalf("an update whose credentials image could not be resolved reported success: the installation is applied on the previous release's image while the run says it moved the service\n%s", s)
@@ -1323,19 +1819,15 @@ func TestUpdateWithAFailedCredentialsRepinKeepsTheOptIn(t *testing.T) {
 	// left holding, and what every reader of this file reads next — prepare and
 	// --print-vars carry the keys this run's spec never holds forward FROM them,
 	// and installationFenceRecorded reads the managed deployer's fence out of
-	// them. They are the earlier run's document entire, so the file and the
-	// snapshot the next run takes agree, and no clean-up step is owed here: a
-	// deletion would be the finding this test exists for.
-	after, err := os.ReadFile(filepath.Join(r.root(), infra.VarsFile))
-	if err != nil {
-		t.Fatalf("the failed update left no tfvars to read back: %v\n%s", err, s)
-	}
-	if string(after) != string(seeded) {
-		t.Errorf("the failed update left tfvars that are not the document it started from: %s, want %s\n%s", after, seeded, s)
-	}
-	// The opt-in is where it was, image and all: the run wrote the document
-	// the carry is about to use back before it resolved, so the file the next
-	// run reads carries the service.
+	// them, so an installation whose document is gone or unreadable cannot be
+	// updated again without a manual repair. What is left is this run's OWN
+	// document and not the one it started from, and that is the reorder's
+	// (the owner's ruling of 2026-11-10): the move onto this release's image
+	// happens in the credentials-service stage, after the policy migration, so
+	// the installation stage's apply — and prepare's rewrite of the root's
+	// tfvars from this run's spec, with the block carried forward by that same
+	// rewrite — is behind the failure rather than ahead of it. The invariant is
+	// the block the document carries (below), not the bytes.
 	doc := credentialsVarsOnDisk(t, r)
 	if doc == nil {
 		t.Fatalf("the failed update left the installation with no tfvars at all: the next run carries no credentials_service forward, plans the service's removal, and the bundle container's prevent_destroy refuses that plan — the installation could then never be updated again\n%s", s)
@@ -1344,15 +1836,22 @@ func TestUpdateWithAFailedCredentialsRepinKeepsTheOptIn(t *testing.T) {
 	if svc == nil {
 		t.Fatalf("the failed update left tfvars carrying no credentials_service: the next run reads that as never having opted in\n%s", s)
 	}
-	if svc["image"] != oldCredentialsRef("1.2.2") {
-		t.Errorf("credentials_service.image = %v, want the previous pin %s kept: nothing was applied, so nothing may say the service moved", svc["image"], oldCredentialsRef("1.2.2"))
+	for k, want := range map[string]any{
+		"account_id": infra.CredentialsAccountID, "service": infra.CredentialsServiceName,
+		"firebase_project": fpID, "url": credentialsServiceURL,
+		"bundle_secret": "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358",
+		"image":         oldCredentialsRef("1.2.2"),
+	} {
+		if svc[k] != want {
+			t.Errorf("after the failed update credentials_service.%s = %v, want %v, the fact the run started from: nothing was applied to the service, so nothing may say it moved, and no other fact of it may have been rewritten either\n%s", k, svc[k], want, s)
+		}
 	}
 
 	// The next update, this time with the registry reachable, still finds the
 	// opt-in and converges — the whole point: one transient failure costs one
 	// retry and not an operator step.
 	r.resolveErr = nil
-	if out, errOut, err := executeStdin(t, "", "update", "--yes"); err != nil {
+	if out, errOut, err := executeStdin(t, "", "update"); err != nil {
 		t.Fatalf("the update after the failed re-pin did not converge: %v\n%s%s", err, out, errOut)
 	}
 	if got := credentialsServiceEntry(t, r)["image"]; got != r.credentialsRef() {
@@ -1376,7 +1875,7 @@ func TestUpdateKeepsANewerRecordedCredentialsImage(t *testing.T) {
 	ahead := oldCredentialsRef("1.2.4")
 	seedCredentialsService(t, r, ahead)
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	s := out + errOut
 	if err != nil {
 		t.Fatalf("an update whose installation already runs a later release's image failed: %v\n%s", err, s)
@@ -1411,7 +1910,7 @@ func TestUpdateReplacesACredentialsImageThatNamesNoRelease(t *testing.T) {
 		"/dimipaun/fugaro-credentials@sha256:" + strings.Repeat("ab", 32)
 	seedCredentialsService(t, r, seeded)
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	s := out + errOut
 	if err != nil {
 		t.Fatalf("an update of an installation whose image names no release failed: %v\n%s", err, s)
@@ -1444,8 +1943,11 @@ func TestUpdateInAnAgentSessionPinsNoCredentialsImage(t *testing.T) {
 	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
 	t.Setenv("CLAUDECODE", "1")
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
-	s := out + errOut
+	out, errOut, err := executeStdin(t, "", "update")
+	// The log is read beside the screen: what a step says about itself is the
+	// run's own account (stageDetail), and the skip this test is about is one
+	// of them.
+	s := out + errOut + newestLog(t, "update")
 	if err != nil && !strings.Contains(s, "left for you") {
 		t.Fatalf("an ordinary update in a coding agent's session failed with something other than the steps it leaves for the user: %v\n%s", err, s)
 	}
@@ -1454,6 +1956,13 @@ func TestUpdateInAnAgentSessionPinsNoCredentialsImage(t *testing.T) {
 	}
 	if got := credentialsServiceEntry(t, r)["image"]; got != oldCredentialsRef("1.2.2") {
 		t.Errorf("credentials_service.image = %v, want the recorded %s: nothing of the re-pin may run in an agent's session\n%s", got, oldCredentialsRef("1.2.2"), s)
+	}
+	// The stage says it itself rather than being reported as a step the session
+	// would take: what it does when it is allowed to run is resolve an image
+	// through the operator's ADC and rewrite the installation's tfvars, and a
+	// session that applies nothing may show neither as outstanding work.
+	if !strings.Contains(s, "credentials-service") || !strings.Contains(s, "a coding agent's session deploys nothing") {
+		t.Errorf("the credentials-service stage was not reported skipped in a coding agent's session:\n%s", s)
 	}
 }
 
@@ -1547,15 +2056,22 @@ func TestOrdinaryUpdateAdmitsTheVerifierAccountInOneRun(t *testing.T) {
 	// both create the account and name it.
 	want := "fugaro-verifier@" + initProject + ".iam.gserviceaccount.com"
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	s := out + errOut
 	if err != nil {
 		t.Fatalf("one ordinary update from the previous release failed: %v\n%s", err, s)
 	}
 
-	svc := credentialsServiceEntry(t, r)
-	if got, ok := svc["verifier_accounts"]; ok {
-		t.Errorf("credentials_service.verifier_accounts = %v after one ordinary update, want no member at all: the member's absence is the state the module's default is for, and the default is the account this apply creates\n%s", got, s)
+	// The block names the account, and it is the same address the module's own
+	// default is for: the run records it in the config at the installation
+	// stage, and installation-2 — the stage that applies the root again for the
+	// scheduled jobs (R7) — builds the spec from the config it then holds, so
+	// the member this run's last apply carries is the one the next update would
+	// have written anyway. What the test is about is the node: the publish
+	// below still has to name the account in the same run.
+	mem, _ := credentialsServiceEntry(t, r)["verifier_accounts"].([]any)
+	if len(mem) != 1 || mem[0] != want {
+		t.Errorf("credentials_service.verifier_accounts = %v after one ordinary update, want exactly [%s]: the account the module's default is for, named by the last apply this run makes\n%s", mem, want, s)
 	}
 
 	node, _ := r.db.Value(projectpolicy.PathShared()).(map[string]any)
@@ -1599,7 +2115,7 @@ func TestOrdinaryInitAfterTheOptInNamesTheVerifierAccount(t *testing.T) {
 	credentialsOutputs(t, r)
 	want := "fugaro-verifier@" + initProject + ".iam.gserviceaccount.com"
 
-	out, errOut, err := executeStdin(t, "", "setup", "--yes")
+	out, errOut, err := executeStdin(t, "", "setup")
 	s := out + errOut
 	if err != nil {
 		t.Fatalf("an ordinary init of an opted-in installation failed: %v\n%s", err, s)
@@ -1671,9 +2187,8 @@ func TestCredentialsServiceKeepsTheOwnersVerifierList(t *testing.T) {
 			if row.config != "" {
 				r.appendConfig(t, row.config)
 			}
-			typedThroughYes(t)
 			fakeTerminal(t)
-			if out, errOut, err := executeStdin(t, initProjectName+"\n", "setup", "--yes"); err != nil {
+			if out, errOut, err := executeStdin(t, initProjectName+"\n", "setup"); err != nil {
 				t.Fatalf("%v\n%s%s", err, out, errOut)
 			}
 			lc := localConfigOf(t, r)
@@ -1717,7 +2232,7 @@ func TestOrdinaryUpdateCarriesTheOwnersClearIntoTheBlock(t *testing.T) {
 	seedCredentialsService(t, r, r.credentialsRef())
 	r.appendConfig(t, "verifier_accounts: []\n")
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	s := out + errOut
 	if err != nil {
 		t.Fatalf("an ordinary update of an installation whose owner cleared the list failed: %v\n%s", err, s)
@@ -1870,7 +2385,7 @@ func TestAFailedPolicyReadKeepsTheVerifierList(t *testing.T) {
 	seedCredentialsServiceWithVerifiers(t, r, r.credentialsRef(), []string{owner})
 	r.save(t)
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	// The step's line is one clause of the refusal and the log the whole of it
 	// (report.Brief), so the sentence is read back where the run keeps it.
 	s := out + errOut + namedLog(t, out+errOut)

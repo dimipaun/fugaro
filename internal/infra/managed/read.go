@@ -141,8 +141,8 @@ type MarkFacts struct {
 	Managed bool
 	// Reason is IsManaged's reason, one line and already bounded.
 	Reason string
-	// Version is the marker version that was in force: 1, 2 or 3, and 0 when
-	// the read believed no object.
+	// Version is the marker version that was in force: 1, 2, 3 or 4, and 0
+	// when the read believed no object.
 	Version int
 	// Generation is the creation fact object's own generation.
 	Generation int64
@@ -181,19 +181,19 @@ func ReadMarkFacts(ctx context.Context, s *storage.Service, c *crm.Service, proj
 // caller that needs a line to compare against — an absent amount is not an
 // unlimited one.
 //
-// One ok=false answer carries a figure: a version-2 or version-3 marker whose
-// recorded budget fails Budget.Check comes back with that refused figure (and
-// the reason), so the caller can report "the recorded budget is invalid" rather
-// than "not managed". The figure is never valid when ok is false; a caller
-// that needs a line reads it only when ok is true.
+// One ok=false answer carries a figure: a version-2, version-3 or version-4
+// marker whose recorded budget fails Budget.Check comes back with that refused
+// figure (and the reason), so the caller can report "the recorded budget is
+// invalid" rather than "not managed". The figure is never valid when ok is
+// false; a caller that needs a line reads it only when ok is true.
 func ReadBudget(ctx context.Context, s *storage.Service, c *crm.Service, project, gcpProject string) (budget Budget, ok bool, reason string, err error) {
 	a, err := ReadBudgetAnswer(ctx, s, c, project, gcpProject)
 	return a.Budget, a.OK, a.Reason, err
 }
 
 // BudgetAnswer is ReadBudget's answer with the one thing its four return
-// values cannot say: Invalid is true exactly when the object is a version-2 or
-// version-3 marker about this project whose recorded figure fails
+// values cannot say: Invalid is true exactly when the object is a version-2,
+// version-3 or version-4 marker about this project whose recorded figure fails
 // Budget.Check — including an empty one ("budget":{}), whose figure is the
 // zero Budget and so cannot be told from "no figure" by the figure alone.
 // Budget then holds the refused figure; it is never valid unless OK.
@@ -225,87 +225,7 @@ func ReadBudgetAnswer(ctx context.Context, s *storage.Service, c *crm.Service, p
 	return BudgetAnswer{Budget: *m.Budget, OK: true}, nil
 }
 
-// ImageBuildsAnswer is ReadImageBuilds' answer: the bound a managed project's
-// creation fact records on the billable image builds one invocation of
-// `fugaro image refresh` may start (D1013), or which of the ways of having
-// none it is.
-//
-// It is BudgetAnswer's shape with one more answer, because the bound has one
-// more way of being absent than the amount does, and the two have opposite
-// answers. A managed creation that recorded no amount is a refusal for a
-// caller that needs a line to compare a spend against (Task 4.4, and an
-// absent amount is not an unlimited one); a managed creation that recorded no
-// *bound* is the default of one, never "no bound" (D1013's own table, spec
-// §5), because a version-1 or version-2 fact is a project whose applies are
-// still held to a count and the count it is held to is the default. So
-// Default is a positive answer here where the budget's equivalent is a
-// reason, and the three ways of having no usable bound — a figure Check
-// refuses, a project that is not managed, a read that did not answer — are
-// the refusals.
-type ImageBuildsAnswer struct {
-	// Builds is the bound the fact records, and it is set only when OK. With
-	// OK false it is the refused figure in the Invalid case and 0 in every
-	// other, and it is never a bound a caller may use.
-	Builds int64
-	// OK is true only when the creation fact was read, it is this project's,
-	// it is a version that records a bound, and that bound passes
-	// CheckImageBuilds.
-	OK bool
-	// Default is true when the creation fact was read and is this project's,
-	// and it is a version that records no bound: the bound is
-	// DefaultImageBuilds. It is a distinct answer from the reasons below
-	// because the project is managed and its builds are held to a count —
-	// the default one — while a fact this build refuses is a project whose
-	// builds are held to nothing this read can state.
-	Default bool
-	// Invalid is true exactly when the fact is a version-3 marker about this
-	// project whose recorded bound fails CheckImageBuilds, including a
-	// "max_image_builds":0 whose figure the Builds field cannot tell from
-	// "no bound". Builds then holds the refused figure; it is never usable
-	// unless OK.
-	Invalid bool
-	// Reason is the one-line reason, empty when OK. It is what a caller
-	// prints, and it is already bounded.
-	Reason string
-}
-
-// ReadImageBuilds is the bound's read, and it is the same read as IsManaged
-// and ReadBudget — the same object, the same project-number proof, the same
-// label, through readFact, so a bound can never be read from an object
-// IsManaged would refuse (reconciliation F3, and the warning on this file's
-// gcpProject note is why there is exactly one reader).
-//
-// It answers OK for the one case the plan's table admits a recorded bound in:
-// a version-3 fact about this project whose figure passes the marker's own
-// CheckImageBuilds. Everything else is either a refusal (a figure Check
-// refuses, a project that is not managed, an object that is not there or
-// cannot be read, a version this build does not know) or Default, which is
-// the version-1 and version-2 fact: managed, and no bound recorded, so the
-// bound is DefaultImageBuilds. A caller needs both err == nil and OK to use
-// Builds, and a caller that sees Default uses the default rather than
-// treating the absence as unlimited.
-func ReadImageBuilds(ctx context.Context, s *storage.Service, c *crm.Service, project, gcpProject string) (a ImageBuildsAnswer, err error) {
-	defer func() {
-		a.Reason = safetext.Field(a.Reason)
-		err = safetext.FieldErr(err)
-	}()
-	m, managed, reason, _, err := readFact(ctx, s, c, project, gcpProject)
-	if err != nil || !managed {
-		if err == nil && m.MaxImageBuilds != 0 && CheckImageBuilds(m.MaxImageBuilds) != nil {
-			// The refused figure is handed back (and only here) so the caller
-			// can say the recorded bound is invalid rather than that the
-			// project is not managed; it is never usable.
-			return ImageBuildsAnswer{Builds: m.MaxImageBuilds, Invalid: true, Reason: reason}, nil
-		}
-		return ImageBuildsAnswer{Reason: reason}, err
-	}
-	if m.Version != MarkerVersionBuilds {
-		return ImageBuildsAnswer{Default: true, Reason: fmt.Sprintf("gs://%s/%s records no image build bound for %s: the creation fact is version %d, which is a creation whose builds were never asked for a bound, so they are held to the default of %d build per invocation (D1013)", runsBucketName(gcpProject), MarkerObject, project, m.Version, DefaultImageBuilds)}, nil
-	}
-	return ImageBuildsAnswer{Builds: m.MaxImageBuilds, OK: true}, nil
-}
-
-// readFact is the read all three above are: the creation fact of gcpProject, as
+// readFact is the read the two above are: the creation fact of gcpProject, as
 // this build believes it (IsManaged) or not, with the reason why when it does
 // not. Its doc is IsManaged's — every decision in the body below is that
 // comment's, and each return is one of the ways it lists of being "not
@@ -512,10 +432,12 @@ func readFactObject(ctx context.Context, s *storage.Service, project, gcpProject
 		}
 	case MarkerVersionBuilds:
 		// Version 3 is the version that carries both figures (D1013), so an
-		// object of it missing either is not a fact this build wrote — and
-		// believing one would be a managed project whose applies are held to
-		// a bound nobody recorded, which is exactly what this version exists
-		// to prevent. Both are judged by the rules the write holds
+		// object of it missing either is not a fact this build wrote. The
+		// count is judged here although nothing bounds a build by it any more
+		// (D1543): what the figure decides now is whether the object IS the
+		// version-3 fact, and half a fact believed as one would leave this
+		// build's own migration (managed.ConvergeMarker) rewriting an object
+		// it never understood. Both are judged by the rules the write holds
 		// (Budget.Check and CheckImageBuilds), and each refused figure is
 		// handed back so the caller can name it.
 		if m.Budget == nil {
@@ -530,20 +452,39 @@ func readFactObject(ctx context.Context, s *storage.Service, project, gcpProject
 		if err := CheckImageBuilds(m.MaxImageBuilds); err != nil {
 			return Marker{MaxImageBuilds: m.MaxImageBuilds}, false, fmt.Sprintf("gs://%s/%s is version %d and records no image build bound a managed creation could have chosen (%v), so %s is not managed by it", bucket, MarkerObject, m.Version, err, project), 0, nil
 		}
+	case MarkerVersionNoBuilds:
+		// Version 4 is the amount and nothing else: the count version 3 carried
+		// is gone (D1543), so an object of this version carrying one is not a
+		// fact this build wrote — checkMarkerShape refuses the key first, and
+		// this says it where the versions are decided, as the other cases do.
+		// The amount is judged exactly as version 2 and version 3 judge it, by
+		// the same Budget.Check, and a refused figure is handed back the same
+		// way.
+		if m.Budget == nil {
+			return Marker{}, false, fmt.Sprintf("gs://%s/%s is version %d and records no budget amount, and version %d is a creation that was required to choose one, so %s is not managed by it", bucket, MarkerObject, m.Version, MarkerVersionNoBuilds, project), 0, nil
+		}
+		if m.MaxImageBuilds != 0 {
+			return Marker{}, false, fmt.Sprintf("gs://%s/%s is version %d and records an image build bound, which only version %d carries, so %s is not managed by it", bucket, MarkerObject, m.Version, MarkerVersionBuilds, project), 0, nil
+		}
+		if err := m.Budget.Check(); err != nil {
+			return Marker{Budget: m.Budget}, false, fmt.Sprintf("gs://%s/%s is version %d and records no budget amount a managed creation could have chosen (%v), so %s is not managed by it", bucket, MarkerObject, m.Version, err, project), 0, nil
+		}
 	default:
-		return Marker{}, false, fmt.Sprintf("gs://%s/%s is version %d, and this build knows versions %d, %d and %d, so %s is not managed by it", bucket, MarkerObject, m.Version, MarkerVersion, MarkerVersionBudget, MarkerVersionBuilds, project), 0, nil
+		return Marker{}, false, fmt.Sprintf("gs://%s/%s is version %d, and this build knows versions %d, %d, %d and %d, so %s is not managed by it", bucket, MarkerObject, m.Version, MarkerVersion, MarkerVersionBudget, MarkerVersionBuilds, MarkerVersionNoBuilds, project), 0, nil
 	}
 	return m, true, "", gen, nil
 }
 
 // refusedFigure reports whether the read refused this marker for a figure it
 // records. It is the one ok=false answer that hands the figure back, and the
-// read's label case has to agree with both of the callers that read it out
-// (ReadBudgetAnswer's own predicate and ReadImageBuildsAnswer's), because a
-// disagreement would answer one of them with the label's reason instead of
-// the figure's.
+// read's label case has to agree with the caller that reads it out
+// (ReadBudgetAnswer's own predicate), because a disagreement would answer it
+// with the label's reason instead of the figure's. No image build bound is
+// part of this any more: the count D1543 removed bounds nothing, so a
+// version-3 object whose figure is outside the shape is not a marker this
+// build refuses for an amount anything is compared against.
 func refusedFigure(m Marker) bool {
-	return (m.Budget != nil && m.Budget.Check() != nil) || (m.MaxImageBuilds != 0 && CheckImageBuilds(m.MaxImageBuilds) != nil)
+	return m.Budget != nil && m.Budget.Check() != nil
 }
 
 // parseMarker is the shape every reader and writer of the object agrees on:
@@ -606,7 +547,7 @@ func checkMarkerShape(data []byte, version int) error {
 		"gcp_project": nil,
 	}
 	switch version {
-	case MarkerVersionBudget:
+	case MarkerVersionBudget, MarkerVersionNoBuilds:
 		allowed["budget"] = objectShape{"amount": nil, "currency": nil}
 	case MarkerVersionBuilds:
 		allowed["budget"] = objectShape{"amount": nil, "currency": nil}

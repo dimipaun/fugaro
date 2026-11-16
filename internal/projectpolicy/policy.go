@@ -276,6 +276,43 @@ type Policy struct {
 	// every craft resolves to the project's default credential (D1624).
 	Crafts *config.Crafts `json:"crafts,omitempty"`
 
+	// ModelGrades are the escalation ladder's two grades (E2, D2039): the
+	// model each rung's stronger single pass runs and the credential or pool
+	// its calls go out on, the pair a craft carries. They are on this node
+	// because the node is the project's published word, read by the daemon
+	// that walks the ladder rather than by the process that happens to launch
+	// a rung: which model a rung spends on and whose credential its calls go
+	// out on is a decision the owner publishes, not one a job's environment
+	// carries. The project layer's defaults.model_grades is the other home
+	// D2039 gives them, and a repository's own file may name one, which the
+	// merge drops and records (internal/policy's tightenGrades).
+	//
+	// It is a pointer so that a project that sets no grade writes no member,
+	// which is what every project is in until it names one: the ladder's rungs
+	// then refuse and ask rather than running a model nobody chose, and the
+	// node of a project that never set a grade stays byte for byte what it was
+	// before this member existed.
+	ModelGrades *config.ModelGrades `json:"model_grades,omitempty"`
+
+	// SubscriptionSpread is the project's switch over the pools that list more
+	// than one Claude OAuth subscription (docs/model-crafts/reconciliation.md
+	// F22, D1622, D1636): the successor of the D875 switch `claude_account_auto`
+	// held, under the name the pools it governs use, and off is what a run reads
+	// until the owner turns it on. With it off a pool of two or more
+	// subscriptions serves nothing and each subscription member of a mixed pool
+	// is stepped over, so a subscription with an API-key fallback beside it is
+	// the shape that works (D1626).
+	//
+	// It travels here for the account-choice members' reason: the value decides
+	// which credential serves a stage, and an environment value of a shared job
+	// is launcher-writable, so the owner's own node — written by the publish and
+	// read by a run that fails closed — is where it lives. It is a pointer
+	// because "the owner wrote false" and "the owner wrote nothing" are two
+	// facts: the second is the state every installation is in and the one the
+	// node stays byte for byte identical in, and only the first is an owner
+	// saying no to a spread the project's pools would otherwise make.
+	SubscriptionSpread *bool `json:"subscription_spread,omitempty"`
+
 	// CloneURLs are the project's clone URLs, keyed by canonical repository
 	// (Canonical: "github/owner/name", the spelling allow_repos patterns and
 	// the runner's slug already use). A repository that is not listed here
@@ -304,6 +341,37 @@ type Policy struct {
 	// validProfiles and validBitbucketProfileRepos are the two halves of that
 	// rule.
 	BitbucketToken *BitbucketToken `json:"bitbucket_token,omitempty"`
+
+	// BitbucketTokens are the project's TYPED Bitbucket tokens (R5): one entry
+	// per record of the local config's bitbucket_tokens block, carrying the
+	// token's document key, its type, its coverage and the identity the creds
+	// state store recorded for it. The credentials service reads it per
+	// request to decide which token serves a call, and the runner reads it once
+	// at bootstrap to know which accounts are its own (F20); the legacy
+	// bitbucket-token key above is not among the entries — it is the untyped
+	// record of R3 and is read off this node's own block.
+	//
+	// It is a TOP-LEVEL key and not a member of the block above, and that is
+	// deliberate rather than tidiness: every member of bitbucket_token is
+	// refused when it is unknown (validBitbucketTokenBlock), while every
+	// unknown top-level key is listed in UnknownKeys and tolerated by a runner
+	// of the release behind (P8) and refused by its CLI. A member added inside
+	// the block would therefore make every reader of the release behind refuse
+	// the WHOLE node — and the node is re-read while runs are in flight (the
+	// service reads it per model call and per request), so that refusal would
+	// stop runs an update promises to leave alone. The key is the same skew the
+	// image_catalog key set (D1156), down to the one line the release notes owe
+	// it: an older CLI refuses a node carrying it until it is upgraded, and an
+	// older runner keeps serving, falling back to its single GET /user
+	// identity.
+	//
+	// It is a pointer because the promise is about the bytes: omitempty is a
+	// no-op on a struct, so a value would write "bitbucket_tokens":{} for every
+	// project that names no typed token and make the key's skew every project's.
+	// An absent member and a written empty one are the same key — a project
+	// that names no typed token — so the node of such a project is byte for
+	// byte what it was before this key existed.
+	BitbucketTokens *BitbucketTokens `json:"bitbucket_tokens,omitempty"`
 
 	// BitbucketAPIRoots are the Bitbucket API roots the owner allow-lists
 	// (D474, task T2.8): the runner accepts FUGARO_BITBUCKET_API_URL only when
@@ -350,27 +418,6 @@ type Policy struct {
 	// that sets neither publishes no member: the node of such a project stays
 	// byte for byte what it was before this member existed.
 	Triage *bool `json:"triage,omitempty"`
-	// Binaries is the project's binary allow rule (D981, D986): the paths a run
-	// may add a binary at, and the largest one it may add. It belongs to this
-	// node for the floor's reason — the owner writes it and the runner fails
-	// closed on it, while the shared file is writable by any launcher — and for
-	// the sharper one the block's own comment gives: the rule's writer must not
-	// be a file the subject of the rule can write, and the repository's
-	// fugaro.yaml is inside the checkout the run's own agent writes.
-	//
-	// Nothing decodes it yet: `binaries` is deliberately not in
-	// knownTopLevelKeys, so a node that writes the key has it listed in
-	// UnknownKeys and this field stays nil, which is the strict end — the run
-	// admits no binary. The member, its validation and the version bump that
-	// publishes them are the plan's AR0 and land together, because a block read
-	// before its patterns, count, lengths and cap are checked would be an
-	// unvalidated rule in force (see internal/projectpolicy/binaries.go).
-	//
-	// The runner reads it at bootstrap and puts the block on the ceiling layer
-	// (internal/runner's policyCeiling), where Merge intersects the list and
-	// takes the smaller cap, so a layer under the ceiling can remove an admitted
-	// path and can never add one.
-	Binaries *Binaries `json:"binaries,omitempty"`
 
 	// VerifierAccounts are the identities that may ask the credentials
 	// service's verify route whether a verdict's signature is that service's
@@ -446,6 +493,44 @@ type Policy struct {
 	// member and its node is byte for byte what it was before this member
 	// existed.
 	ImageMap ImageMap `json:"image_map,omitempty"`
+
+	// Binaries is the rule that says which paths a run may add a binary at and
+	// how large one may be (D981–D983, AR0): the owner's own grant, which the
+	// owner's local config states (AR1) and every run reads from this node. It
+	// travels every member's road — the owner writes
+	// it and the run fails closed on it — and it is here rather than in a
+	// repository's `fugaro.yaml` for a sharper reason than most: that file
+	// lives in the checkout the run's own agent writes, so a key there would
+	// let the coder grant itself the payload it is refused by (D986, F1). The
+	// shared config in the runs bucket is refused it too (any launcher can
+	// write that one), and the managed publish gate judges the member like
+	// every other key no rule reads.
+	//
+	// It is a pointer because the member's *presence* is a statement: a
+	// written block is how an operator takes an admission away on purpose
+	// (`binaries: {allow: []}`), while a file that says nothing keeps the
+	// list the node already carries (D987, review_floor's rule). So an
+	// absent member and a written empty block are the same answer at admission
+	// time — both admit nothing — and two different answers at publish time,
+	// and folding them together here would leave the publisher unable to tell
+	// "clear it" from "say nothing".
+	//
+	// The distinction is the publisher's, and the node holds no empty block for
+	// it to read: an RTDB list is an object with numeric keys, so a written
+	// `{"allow": []}` is a write that leaves no member at all (internal/cli's
+	// storesNoMember, the rule a publish's own node comparison converges on),
+	// and a node that spelling was written to reads back exactly like one
+	// nothing was written to. What tells the two apart is the file the publish
+	// reads — a pointer that is nil where the file says nothing — while the
+	// answer a written empty block asks for is reached by the member being
+	// absent: nothing is admitted. A block that carries a value member (an
+	// allow list with entries in it, a lowered cap) is a member the database
+	// keeps, and is read as the grant it is.
+	//
+	// The block's own rules are Binaries' decode (binaries.go): the pattern
+	// rule of §2.1, the cap's positivity and ceiling, and the strict member
+	// reading every block of this node gets.
+	Binaries *Binaries `json:"binaries,omitempty"`
 
 	// ImageServices is the services each catalog entry's image provides
 	// (D1904): the entry's own list, keyed by the entry's name, which a run
@@ -529,14 +614,16 @@ var knownTopLevelKeys = map[string]bool{
 	"providers": true, "model_prices": true, "routing": true,
 	"profiles": true, "clone_urls": true, "accounts": true,
 	"credentials": true, "base_branch": true,
-	"bitbucket_token": true, "bitbucket_api_roots": true,
+	"bitbucket_token": true, "bitbucket_tokens": true, "bitbucket_api_roots": true,
 	"review_floor": true, "verifier_accounts": true,
 	"image_catalog": true,
 	"image_map":     true, "bake_repos": true, "image_services": true,
 	"default_claude_account": true, "claude_account_stages": true,
 	"crafts": true, "craft_credentials": true, "craft_pools": true,
-	"orchestrator": true,
-	"triage":       true,
+	"model_grades":        true,
+	"subscription_spread": true,
+	"orchestrator":        true, "binaries": true,
+	"triage": true,
 }
 
 // Budget is the ceiling a run is held to. An absent field is zero and means
@@ -602,7 +689,14 @@ func (p Provider) EffectivePricePolicy() string { return p.ModelProvider.PricePo
 // internal/localcfg.ModelPrice): input_per_m and output_per_m are required,
 // and the optional rates are pointers so that a field left out keeps the list
 // default (cache_write_5m 1.25, cache_write_1h 2, cache_read 0.1,
-// web_search_per_1k 10), never 0. Decode checks the block with the catalogue's
+// web_search_per_1k 10), never 0. ImageTokens is the per-image token ceiling
+// a call carrying an image block is reserved at (D2001), and a pointer for
+// the same reason: left out, the model keeps the ceiling it had, and an
+// explicit 0 refuses its images. It does not move the node's Version (D2015):
+// nothing was removed or re-meant, and a version an older reader does not know
+// refuses the whole node, where this member needs one launch refused — that
+// guard is the release's visionSince check, not a version move. Decode checks
+// the block with the catalogue's
 // own pricing.ParseOverrides as well, so the two spellings cannot drift
 // (TestDecodeModelPricesAgreeWithTheCatalog). The model ID it belongs to is
 // the map key of Prices, which escapes it on the node and not in Go.
@@ -613,6 +707,7 @@ type Price struct {
 	CacheWrite1h   *float64   `json:"cache_write_1h,omitempty"`
 	CacheRead      *float64   `json:"cache_read,omitempty"`
 	WebSearchPer1k *float64   `json:"web_search_per_1k,omitempty"`
+	ImageTokens    *int64     `json:"image_tokens,omitempty"`
 	LongContext    *PriceTier `json:"long_context,omitempty"`
 }
 
@@ -1088,7 +1183,14 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 	if err := json.Unmarshal(vraw, &p.Version); err != nil {
 		return nil, true, fmt.Errorf("projectpolicy: the policy version is not an integer: %w", err)
 	}
-	if p.Version != Version {
+	// A node this reader is a shape-free step behind is read rather than
+	// refused (ReadsVersion): its members are this version's members, and the
+	// refusal would be a window an update's own stages open — this release's
+	// readers are at work while the node one step behind is still the published
+	// one, and the release behind's credentials service is on the project until
+	// the update replaces it (migrate.go's ReadsVersion has the whole
+	// argument). Any other version is the skew it always was.
+	if p.Version != Version && !ReadsVersion(p.Version) {
 		return nil, true, &VersionError{Found: p.Version, Understood: Version}
 	}
 
@@ -1324,7 +1426,13 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 		if err := dec.Decode(&p.CraftPools); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: craft_pools: %w", err)
 		}
-		for _, prob := range config.ValidatePools(p.CraftPools, p.CraftCredentials) {
+		// The PUBLISHED node is where a pool must name its owner
+		// (ValidatePublishedPools, D1936): an installation's own config keeps
+		// loading without one, so a pool written before owners existed still
+		// starts a run on the release that bumped the version, and the
+		// migration's legacy-open marker is what such a pool carries here
+		// (D1942).
+		for _, prob := range config.ValidatePublishedPools(p.CraftPools, p.CraftCredentials) {
 			return nil, true, fmt.Errorf("projectpolicy: %s: %s", prob.Path, prob.Message)
 		}
 	}
@@ -1346,6 +1454,32 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 			p.Crafts = &cs
 		}
 	}
+	// The subscription switch is read last of the model-crafts members because
+	// it is a statement *about* the pools above rather than a definition among
+	// them: it is the one member of the group with no name to judge and nothing
+	// to judge it against, so a node that carries it and no pool is read in
+	// full and a run that finds no pool never asks it anything. A written false
+	// is the owner's own "no" and is kept — that is what the pointer is for —
+	// while an absent member (and a written null, which is the same absence)
+	// leaves the switch unset, which a run reads as off.
+	if sraw, ok := doc["subscription_spread"]; ok && !IsNull(sraw) {
+		var on bool
+		if err := json.Unmarshal(sraw, &on); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: subscription_spread: %w", err)
+		}
+		p.SubscriptionSpread = &on
+	}
+	// The escalation ladder's two model grades (E2, D2039) are read after the
+	// credentials and the pools for the crafts' reason: a grade names a
+	// credential or pool, and a node that carries one is read in full rather
+	// than against a block this reader has not seen.
+	if graw, ok := doc["model_grades"]; ok && !IsNull(graw) {
+		grades, err := decodeModelGrades(graw)
+		if err != nil {
+			return nil, true, err
+		}
+		p.ModelGrades = grades
+	}
 	// The Bitbucket block is judged *before* the profiles block, and the
 	// profiles against it: a profile that mounts the token admits a subset of
 	// this block's repositories, which is a property of the two together, and
@@ -1361,6 +1495,22 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 			return nil, true, err
 		}
 		p.BitbucketToken = bt
+	}
+	// The typed tokens' own key, beside the block and never inside it (R5):
+	// it is read whether or not the block is written, because the two are
+	// different tokens — the block is the legacy untyped one and this key is
+	// every typed one — and a project that holds only one of them reads
+	// exactly what it holds. It is decoded before the profiles for the block's
+	// reason: a node that carries it is read whole rather than against a part
+	// of itself, and nothing here is judged against the profiles (the typed
+	// records add no admission of their own; coverage never replaces
+	// allow_data_to, D2354).
+	if traw, ok := doc[BitbucketTokensKey]; ok && !IsNull(traw) {
+		tokens, err := decodeBitbucketTokens(traw)
+		if err != nil {
+			return nil, true, err
+		}
+		p.BitbucketTokens = tokens
 	}
 	if fraw, ok := doc["profiles"]; ok && !IsNull(fraw) {
 		// decodeProfileBlock's errors name their place themselves
@@ -1431,6 +1581,13 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 			p.ImageMap = nil
 		}
 	}
+	if nraw, ok := doc["binaries"]; ok && !IsNull(nraw) {
+		block, err := decodeBinaries(nraw)
+		if err != nil {
+			return nil, true, err
+		}
+		p.Binaries = block
+	}
 	if sraw, ok := doc["image_services"]; ok && !IsNull(sraw) {
 		if err := json.Unmarshal(sraw, &p.ImageServices); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: image_services: %w", err)
@@ -1451,7 +1608,7 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 		if err := json.Unmarshal(craw, &p.CloneURLs); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: clone_urls: %w", err)
 		}
-		if err := validCloneURLs(p.CloneURLs); err != nil {
+		if err := ValidCloneURLs(p.CloneURLs); err != nil {
 			return nil, true, err
 		}
 	}
@@ -1596,7 +1753,7 @@ func ValidVerifierAccounts(accounts []string) error {
 	return policy.ValidVerifierAccounts(accounts)
 }
 
-// validCloneURLs checks the clone_urls block, entry by entry: each key a
+// ValidCloneURLs checks the clone_urls block, entry by entry: each key a
 // canonical repository name, and each value an https URL without credentials
 // that names exactly that repository on that repository's own provider's host
 // — the rules the deployer applies to a repository URL (repourl.CloneURL, the
@@ -1609,7 +1766,7 @@ func ValidVerifierAccounts(accounts []string) error {
 // cache and its budget session name — the very thing the run's own remote
 // checks refuse when a launcher sets FUGARO_REMOTE, and the reason the node
 // is checked here rather than trusted.
-func validCloneURLs(urls CloneURLs) error {
+func ValidCloneURLs(urls CloneURLs) error {
 	for _, key := range sortedStringKeys(urls) {
 		at := fmt.Sprintf("projectpolicy: clone_urls[%s]", key)
 		provider, repo, ok := strings.Cut(key, "/")

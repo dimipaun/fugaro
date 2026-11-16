@@ -1061,6 +1061,37 @@ func TestReportDedupeOnlyForFollowUps(t *testing.T) {
 	}
 }
 
+// TestReportDedupeIgnoresATransitionComment pins the CALL SITE of the report
+// question, not just the function that answers it. reportPosted (followup.go)
+// asks whether THIS run already posted its REPORT, and a ladder transition
+// comment naming the run is not one: E10a posts a transition for an item that
+// may have posted nothing at all, so reading it as an earlier report would
+// silently drop the only report a person ever sees. The two comment kinds meet
+// here and nowhere else in the suite, which is why the assertion is made
+// through the runner rather than on gitprov.ReportRun alone.
+func TestReportDedupeIgnoresATransitionComment(t *testing.T) {
+	h := followUpHarness(t, "", nil)
+	h.followUp(t, followID, runID, "Tidy up.")
+	h.selfComment(t, "Moving this item to R2.\n\n"+gitprov.TransitionMarker(followID, "R2")+"\n")
+	rec, err := h.run(t, implement("tidy"), review("ship", 0))
+	mustReady(t, rec, err)
+	var reports, fugaro int
+	for _, c := range h.posted(t) {
+		if id, ok := gitprov.ReportRun(c); ok && id == followID {
+			reports++
+		}
+		if id, ok := gitprov.FugaroRun(c); ok && id == followID {
+			fugaro++
+		}
+	}
+	if reports != 1 {
+		t.Fatalf("%d posted comments are this run's report, want 1: a transition comment naming the run must not stand in for its report", reports)
+	}
+	if fugaro != 2 {
+		t.Errorf("FugaroRun found %d comments of this run, want the run's own transition and its report", fugaro)
+	}
+}
+
 // baseWithFiles is the follow-up config with agent.instructions and
 // agent.review set, and change applied to the base branch before the
 // first run.

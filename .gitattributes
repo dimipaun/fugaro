@@ -1,0 +1,3 @@
+# Byte-exact hashes (the fixtures' sha256, the golden docs) are computed over LF text; a Windows
+# checkout would otherwise rewrite every text file to CRLF.
+* text=auto eol=lf

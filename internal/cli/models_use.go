@@ -24,7 +24,7 @@ type modelsUseOptions struct {
 func newModelsUseCmd() *cobra.Command {
 	var o modelsUseOptions
 	cmd := &cobra.Command{
-		Use:   "use <repo> <coder|reviewer|background> <id>",
+		Use:   "use <repo> <coder|reviewer|background|vision> <id>",
 		Short: "Point one repository's own config at a model, in its working tree",
 		Long: "Prepare the change to a repository's own fugaro.yaml that makes one role run\n" +
 			"a model, in the checkout's working tree for the owner to review and commit.\n\n" +
@@ -43,7 +43,6 @@ func newModelsUseCmd() *cobra.Command {
 			return runModelsUse(cmd, args[0], args[1], args[2], &o)
 		},
 	}
-	cmd.Flags().BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
 	return cmd
 }
 
@@ -238,6 +237,8 @@ func modelsUseCheck(lc *localcfg.Config, cfg *config.Config, path, repo, role, i
 	switch role {
 	case modelsRoleBackground:
 		agent.Models.Background = id
+	case modelsRoleVision:
+		agent.Models.Vision = id
 	case string(config.RoleReviewer):
 		agent.Models.Reviewer = id
 	default:

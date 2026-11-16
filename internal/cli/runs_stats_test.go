@@ -28,7 +28,7 @@ import (
 //     and is never guessed from the task beside it;
 //   - the money: counted and notional are separate columns and are never
 //     summed, and neither is a run that has no readable record;
-//   - the visibility ruling: an operator sees everyone, a plain launcher sees
+//   - the visibility ruling: an admin sees everyone, a plain operator sees
 //     their own row and may opt in, and an identity that cannot be placed
 //     fails to the more private view;
 //   - the read: bounded, with a truncation the output admits to.
@@ -37,9 +37,12 @@ import (
 // cloud fixture builds (reconciliation Global Constraint 10).
 
 // userStatsPlace writes the fixture's local config with user: replaced by
-// user (dropped when empty) and the installation's own launchers and
-// operators lists set, so a test decides how the installation places the
-// caller.
+// user (dropped when empty) and the installation's own two lists set, so a
+// test decides how the installation places the caller. The lists are written
+// in the version-1 keys the fixture's config carries, which fold to the roles'
+// own words: v1's `launchers` IS this version's operators and v1's `operators`
+// its admins (localcfg.foldLegacyLists), so the second list written below is
+// the one that places the caller as an admin.
 func userStatsPlace(t *testing.T, f *cloudFixture, user string, launchers, operators []string) {
 	t.Helper()
 	path := os.Getenv("FUGARO_CONFIG")
@@ -122,11 +125,12 @@ func userStatsID(day time.Time, n int) string {
 
 // userStatsOut is runs stats --json's document, as a test reads it.
 type userStatsOut struct {
+	Version    int             `json:"version"`
 	Project    string          `json:"project"`
 	By         string          `json:"by"`
 	View       string          `json:"view"`
 	You        string          `json:"you"`
-	Operator   bool            `json:"operator"`
+	Admin      bool            `json:"admin"`
 	Since      string          `json:"since"`
 	Until      string          `json:"until"`
 	MaxRuns    int             `json:"max_runs"`
@@ -169,9 +173,10 @@ func userStatsRow(t *testing.T, doc userStatsOut, user string) userstats.Row {
 // that recorded nobody, and a notional run that is a column of its own.
 func TestRunsStatsByUserAttributesEachRun(t *testing.T) {
 	f := newCloudFixture(t)
-	// The caller is an operator of the fixture's installation: the local
-	// config's user: is listed in its terraform.operators, the list fugaro
-	// doctor's bucket check reads.
+	// The caller is an admin of the fixture's installation: the local config's
+	// user: is listed in its terraform.admins (written under the version-1 key
+	// the fixture's config carries), one of the lists fugaro doctor's bucket
+	// check reads.
 	userStatsPlace(t, f, "someone@example.com", nil, []string{"user:someone@example.com"})
 	day := time.Now().UTC()
 
@@ -184,8 +189,8 @@ func TestRunsStatsByUserAttributesEachRun(t *testing.T) {
 	seedUserRun(t, f, userStatsID(day, 3), "", userRec(runstore.StatusHalted, 3.00, runstore.BasisAPIList))
 
 	doc := runsStats(t)
-	if doc.View != "all" || !doc.Operator || doc.You != "someone@example.com" {
-		t.Fatalf("an operator's view = %+v", doc)
+	if doc.View != "all" || !doc.Admin || doc.You != "someone@example.com" {
+		t.Fatalf("an admin's view = %+v", doc)
 	}
 	if doc.By != "user" || doc.Project != "aurora" {
 		t.Errorf("by = %q, project = %q", doc.By, doc.Project)
@@ -239,6 +244,37 @@ func TestRunsStatsByUserAttributesEachRun(t *testing.T) {
 	}
 	if strings.Contains(human, "\x1b") {
 		t.Errorf("the table carries an escape:\n%q", human)
+	}
+}
+
+// TestRunsStatsDocumentNamesThePrivilegedListByItsRoleWord: the document's own
+// member for the privileged list is `admin`, and `operator` is not in the
+// document at all -- under the roles' own words that word names the runs-only
+// list, so a consumer that read an `operator` member as version 1's set would
+// draw the run-starters' answer from the admins'. The shape is therefore a new
+// version, the way `seats --json` and `user ls --json` are (CLAUDE.md, "a field
+// never changes meaning").
+func TestRunsStatsDocumentNamesThePrivilegedListByItsRoleWord(t *testing.T) {
+	f := newCloudFixture(t)
+	// The second list is the one that places the caller as an admin: the
+	// fixture's config carries the version-1 keys, whose `operators` folds to
+	// this version's admins (localcfg.foldLegacyLists).
+	userStatsPlace(t, f, "someone@example.com", nil, []string{"user:someone@example.com"})
+	seedUserRun(t, f, userStatsID(time.Now().UTC(), 0), "someone@example.com", userRec(runstore.StatusSucceeded, 1.00, runstore.BasisAPIList))
+
+	raw, _, err := execute(t, "runs", "stats", "--json")
+	if err != nil {
+		t.Fatalf("runs stats: %v", err)
+	}
+	doc := runsStats(t)
+	if doc.Version != userStatsDocVersion {
+		t.Errorf("the document is version %d, and the shape it publishes is %d", doc.Version, userStatsDocVersion)
+	}
+	if !doc.Admin {
+		t.Errorf("an admin's own view = %+v, want every user's", doc)
+	}
+	if strings.Contains(raw, `"operator"`) {
+		t.Errorf("the document still carries the retired member:\n%s", raw)
 	}
 }
 
@@ -472,8 +508,8 @@ func TestRunsStatsOwnViewIsTheLaunchsNotTheTasks(t *testing.T) {
 }
 
 // TestRunsStatsVisibilityIsTheRuling is the owner's ruling in all four of its
-// cases: an operator sees everyone, a plain launcher sees their own row alone
-// and may opt in, an installation whose lists place nobody stays private, and
+// cases: an admin sees everyone, a plain operator sees their own row alone and
+// may opt in, an installation whose lists place nobody stays private, and
 // an identity that cannot be told at all is refused rather than shown
 // everyone.
 func TestRunsStatsVisibilityIsTheRuling(t *testing.T) {
@@ -484,41 +520,42 @@ func TestRunsStatsVisibilityIsTheRuling(t *testing.T) {
 		seedUserRun(t, f, userStatsID(day, 1), "sam@example.com", userRec(runstore.StatusSucceeded, 2.00, runstore.BasisAPIList))
 	}
 
-	t.Run("an operator sees everyone", func(t *testing.T) {
+	t.Run("an admin sees everyone", func(t *testing.T) {
 		f := newCloudFixture(t)
 		userStatsPlace(t, f, "dana@example.com", []string{"user:dana@example.com"}, []string{"user:dana@example.com"})
 		seed(t, f)
 		doc := runsStats(t)
-		if doc.View != "all" || !doc.Operator || len(doc.Rows) != 2 {
-			t.Fatalf("an operator's default view = %+v", doc)
+		if doc.View != "all" || !doc.Admin || len(doc.Rows) != 2 {
+			t.Fatalf("an admin's default view = %+v", doc)
 		}
 	})
 
-	t.Run("a launcher sees their own row alone, and may opt in", func(t *testing.T) {
+	t.Run("a plain operator sees their own row alone, and may opt in", func(t *testing.T) {
 		f := newCloudFixture(t)
-		// A launcher of the installation, and not an operator of it.
+		// An operator of the installation (v1's `launchers`), and not an admin
+		// of it.
 		userStatsPlace(t, f, "dana@example.com", []string{"user:dana@example.com"}, nil)
 		seed(t, f)
 		own := runsStats(t)
-		if own.View != "own" || own.Operator {
-			t.Fatalf("a launcher's default view = %+v", own)
+		if own.View != "own" || own.Admin {
+			t.Fatalf("a plain operator's default view = %+v", own)
 		}
 		if len(own.Rows) != 1 || own.Rows[0].User != "dana@example.com" {
-			t.Fatalf("a launcher's rows = %+v, want their own alone", own.Rows)
+			t.Fatalf("a plain operator's rows = %+v, want their own alone", own.Rows)
 		}
 		if len(own.Totals) != 1 || own.Totals[0].Runs != 1 || own.Totals[0].CountedUSD != 1.00 {
-			t.Errorf("a launcher's total = %+v, want their own run and nobody else's money", own.Totals)
+			t.Errorf("a plain operator's total = %+v, want their own run and nobody else's money", own.Totals)
 		}
 		raw, _ := json.Marshal(own)
 		if strings.Contains(string(raw), "sam@example.com") {
-			t.Errorf("another user's identity reached a launcher's private view: %s", raw)
+			t.Errorf("another user's identity reached a plain operator's private view: %s", raw)
 		}
 		human, _, err := execute(t, "runs", "stats")
 		if err != nil || !strings.Contains(human, "your own runs only") || strings.Contains(human, "sam@example.com") {
 			t.Errorf("the private table = %q, %v", human, err)
 		}
 		all := runsStats(t, "--all-users")
-		if all.View != "all" || all.Operator || len(all.Rows) != 2 {
+		if all.View != "all" || all.Admin || len(all.Rows) != 2 {
 			t.Fatalf("--all-users = %+v", all)
 		}
 		humanAll, _, err := execute(t, "runs", "stats", "--all-users")
@@ -673,11 +710,11 @@ func TestRunsStatsVisibilityIsTheRuling(t *testing.T) {
 		f := newCloudFixture(t)
 		// The installation names neither list: every installation from before
 		// the 0.7.0 hardening looks like this, and the caller is not an
-		// operator of it.
+		// admin of it.
 		userStatsPlace(t, f, "dana@example.com", nil, nil)
 		seed(t, f)
 		doc := runsStats(t)
-		if doc.View != "own" || doc.Operator || len(doc.Rows) != 1 {
+		if doc.View != "own" || doc.Admin || len(doc.Rows) != 1 {
 			t.Fatalf("an unplaced caller's view = %+v, want the private one", doc)
 		}
 	})
@@ -700,7 +737,7 @@ func TestRunsStatsVisibilityIsTheRuling(t *testing.T) {
 		// The explicit opt-in still works: it is the caller's own request for
 		// the whole table, and it never needed to know who they are.
 		doc := runsStats(t, "--all-users")
-		if doc.View != "all" || doc.You != "" || doc.Operator || len(doc.Rows) != 2 {
+		if doc.View != "all" || doc.You != "" || doc.Admin || len(doc.Rows) != 2 {
 			t.Fatalf("--all-users with no identity = %+v", doc)
 		}
 	})
@@ -1100,7 +1137,7 @@ func TestRunsStatsIdentitiesPastTheCapAreOneRow(t *testing.T) {
 func TestWriteUserStatsNamesEachCurrencyWhenSeveral(t *testing.T) {
 	doc := userStatsDoc{
 		Project: "aurora", By: userStatsByUser, View: userStatsViewAll,
-		You: "someone@example.com", Operator: true, Since: "2026-10-11", Until: "2026-10-18",
+		You: "someone@example.com", Admin: true, Since: "2026-10-11", Until: "2026-10-18",
 		MaxRuns: userStatsMaxRuns,
 		Rows: []userstats.Row{
 			{User: "dana@example.com", Currency: "EUR", Counts: userstats.Counts{Runs: 1, Succeeded: 1},
@@ -1214,7 +1251,7 @@ func userStatsCellsPinned(t *testing.T, out string, wantHeader []string, wantRow
 func TestWriteUserStatsPinsEveryColumn(t *testing.T) {
 	doc := userStatsDoc{
 		Project: "aurora", By: userStatsByUser, View: userStatsViewAll,
-		You: "someone@example.com", Operator: true, Since: "2026-10-11", Until: "2026-10-18",
+		You: "someone@example.com", Admin: true, Since: "2026-10-11", Until: "2026-10-18",
 		MaxRuns: userStatsMaxRuns,
 		Rows: []userstats.Row{
 			// Every column of this row is a different figure, and its counts add
@@ -1262,7 +1299,7 @@ func TestWriteUserStatsAverageIsDashWithoutACountedRun(t *testing.T) {
 		CountedUSD: 4.00, CountedRuns: 2, AvgCountedUSD: 2.00}
 	doc := userStatsDoc{
 		Project: "aurora", By: userStatsByUser, View: userStatsViewAll,
-		You: "someone@example.com", Operator: true, Since: "2026-10-11", Until: "2026-10-18",
+		You: "someone@example.com", Admin: true, Since: "2026-10-11", Until: "2026-10-18",
 		MaxRuns: userStatsMaxRuns,
 		Rows:    []userstats.Row{notional, counted},
 		Totals: []userstats.Row{{Currency: userstats.CurrencyUSD,
@@ -1287,7 +1324,7 @@ func TestWriteUserStatsAverageIsDashWithoutACountedRun(t *testing.T) {
 	// total's included: "-" is not a per-row quirk.
 	single := userStatsDoc{
 		Project: "aurora", By: userStatsByUser, View: userStatsViewAll,
-		You: "someone@example.com", Operator: true, Since: "2026-10-11", Until: "2026-10-18",
+		You: "someone@example.com", Admin: true, Since: "2026-10-11", Until: "2026-10-18",
 		MaxRuns: userStatsMaxRuns,
 		Rows:    []userstats.Row{notional},
 		Totals: []userstats.Row{{Currency: userstats.CurrencyUSD,

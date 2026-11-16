@@ -45,6 +45,12 @@ type Document struct {
 	// Sources is the state of every scope the document covers, so a reader can
 	// tell a scope that is down from one that is empty (H3).
 	Sources []SourceState `json:"sources"`
+	// Releases are the project's release boxes, as the roadmap record holds them
+	// (D2113, GV4.1). They are the project's and not a scope's: the record is
+	// project-level (D2111), so a release is drawn whichever scope a task it
+	// holds came from. Empty is the ordinary case for a project that has never
+	// written one.
+	Releases []Release `json:"releases"`
 	// Nodes and Edges are the graph itself; a key in Edges is a Node's Key.
 	Nodes []Node `json:"nodes"`
 	Edges []Edge `json:"edges"`
@@ -97,11 +103,53 @@ type Node struct {
 	Release string `json:"release"`
 	// Updated is when the node last changed; nil when the source does not say.
 	Updated *time.Time `json:"updated"`
+	// Plan, Stream and Version are the roadmap record's own words about a task,
+	// and "" for a node of any other source (GV4.1). Plan is the plan document
+	// the task belongs to — the record's project-wide name, which with the task
+	// id is the qualified id this node's `id` is (D2111) — and it is what marks
+	// a node as the record's. Stream is the lane the task is drawn in: the
+	// stream of the release it has been assigned to, or the plan's own for a
+	// task nobody has placed (D2114). Version is the plan's own target, carried
+	// as a display input for a task the record draws in no box — nobody has
+	// placed it (D2114), or its assignment names a release the record no longer
+	// holds (D2115) — and never beside a task in a box, where a number would
+	// read as the box's own: a release the record holds carries a name and no
+	// version, so the two are never matched (D2114).
+	Plan    string `json:"plan"`
+	Stream  string `json:"stream"`
+	Version string `json:"version"`
+	// Dangling is D2115's mark, and it covers both shapes the record's own reader
+	// names: an assignment or an edge whose task no plan document carries, and an
+	// assignment naming a release the record no longer holds. It is a state of
+	// the record's own housekeeping rather than of the work, so a marked node may
+	// be a published task or an id nobody published.
+	Dangling bool `json:"dangling,omitempty"`
+}
+
+// Release is one release box as the roadmap record holds it (D2113, GV4.1): the
+// stream it is in, the record's own key for it, its name, the state the record
+// calls it, and its position in its stream. A node's `release` is `Key` and
+// nothing else, so the join from a task to its box happens in one place.
+//
+// There is deliberately no version: a stored release carries a name, which is
+// what its box is drawn with, and a plan's own `version` is a different kind of
+// value that is never matched to one (D2114).
+type Release struct {
+	Key    string `json:"key"`
+	Stream string `json:"stream"`
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	// State is the record's own word for the release, `open` or `finished`
+	// (coordinator.ReleaseOpen, coordinator.ReleaseFinished).
+	State string `json:"state"`
+	Order int    `json:"order"`
 }
 
 // Edge is one relation between two nodes, by Key. Kind is the source's own word
-// for the relation; the coordinator's view has no edges, so a document drawn
-// from it alone carries none (F17).
+// for the relation; the coordinator's stored view has no edges, so the only
+// edges a coordinator document carries are the roadmap record's cross-plan ones
+// (D2112, GV4.1), and a document drawn from the stored view alone carries none
+// (F17).
 type Edge struct {
 	From string `json:"from"`
 	To   string `json:"to"`
@@ -129,6 +177,11 @@ func (d *Document) Sanitise() error {
 	d.StreamID = safetext.Field(d.StreamID)
 	for i := range d.Sources {
 		d.Sources[i].sanitise()
+	}
+	for i := range d.Releases {
+		if err := d.Releases[i].sanitise(); err != nil {
+			return err
+		}
 	}
 	for i := range d.Nodes {
 		if err := d.Nodes[i].sanitise(); err != nil {
@@ -162,7 +215,25 @@ func (n *Node) sanitise() error {
 	n.Repo = safetext.Field(n.Repo)
 	n.State = safetext.Field(n.State)
 	n.Release = safetext.Field(n.Release)
+	n.Plan = safetext.Field(n.Plan)
+	n.Stream = safetext.Field(n.Stream)
+	n.Version = safetext.Field(n.Version)
 	n.Key = NodeKey(n.Source, n.ID)
+	return nil
+}
+
+// sanitise makes a release box fit to print. Its Key is `Release.Key`'s own
+// promise — the value a task's `release` is compared with — so a key sanitising
+// would rewrite would merge two boxes, and it is refused rather than rewritten
+// exactly as a node's Source and ID are.
+func (r *Release) sanitise() error {
+	if clean := safetext.Field(r.Key); clean != r.Key {
+		return fmt.Errorf("graph: release key %q is not a clean identifier: sanitising it would merge two releases", clean)
+	}
+	r.Stream = safetext.Field(r.Stream)
+	r.ID = safetext.Field(r.ID)
+	r.Name = safetext.Field(r.Name)
+	r.State = safetext.Field(r.State)
 	return nil
 }
 
@@ -204,6 +275,9 @@ func ParseDocument(data []byte) (Document, error) {
 func (d *Document) normalise() {
 	if d.Sources == nil {
 		d.Sources = []SourceState{}
+	}
+	if d.Releases == nil {
+		d.Releases = []Release{}
 	}
 	if d.Nodes == nil {
 		d.Nodes = []Node{}

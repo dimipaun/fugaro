@@ -1,0 +1,46 @@
+{
+  // The portal's one tsconfig (portal plan P1.4). It covers the app, the two
+  // config files at the root and the tests together, as the console's does:
+  // the app is a single Vite build with a single test runner, so a
+  // project-references split would be more machinery than either side needs.
+  // `lib` carries DOM because the app is a browser app, and `types` names
+  // `vite/client` because `import.meta.glob` and `import.meta.env` are Vite's
+  // and not the language's -- a screen that collects itself through the glob
+  // is type-checked against a `ImportMeta` the language does not declare.
+  //
+  // No emit: the bundler builds and the test runner transforms, so this is the
+  // type checker and nothing else. `noUncheckedIndexedAccess` and the four
+  // strictness switches below it are the console's set, for the same reason:
+  // the portal reads shapes written by somebody else (the API's answers, a
+  // sign-in token's claims) and an index or a `case` that falls through is a
+  // default the compiler should make a person write.
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "types": ["vite/client"],
+    "jsx": "react-jsx",
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "forceConsistentCasingInFileNames": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+
+    "noEmit": true,
+    "skipLibCheck": false
+  },
+  // vite.config.ts is named rather than left to a directory: it sits at the
+  // portal's root, and a config file that escapes the type check is a guard
+  // nobody can see breaking -- a `test.include` with a typo in it would let the
+  // suite collect nothing and pass.
+  "include": ["vite.config.ts", "src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "test/**/*.tsx"]
+}

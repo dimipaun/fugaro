@@ -10,7 +10,10 @@
 //
 //   1. **the interrupt switch (D127)** -- a local phone setting, never written
 //      to the database, gating whether a proactive update may be spoken now
-//      (`interrupt.js` holds the rule; this file holds the queue it drains);
+//      (`interrupt.js` holds the rule; this file holds the queue it drains, and
+//      the hold VS1.1's session puts on that queue while the session is paused
+//      or over -- see `setHeld`, which is the one decision here that is the
+//      session's rather than this file's);
 //   2. **the offline refusal** -- P1.4's `offline` is shown, and the app
 //      **refuses to accept a message** while it holds. The spec's own sentence
 //      is *rather than accepting messages into the void*, and the refusal is
@@ -27,8 +30,9 @@
 // events, and none of it is implemented here), no prompt queue (P6.5, which is
 // not a dependency of this task -- see `interrupt.js` on the one place the two
 // disagree), and no writing of its own: **every** write goes through the client
-// (`accept` calls `client.send` and nothing else), which is what keeps D113's
-// "one write path" true.
+// (`accept` calls `client.send`, and asks `client.licenceRefusal` before its own
+// offline refusal so the licence's answer wins -- a question, not a write),
+// which is what keeps D113's "one write path" true.
 //
 // **The queue is bounded and refuses rather than evicting.** A queue that
 // dropped its oldest entry to make room would lose an update silently, which is
@@ -56,6 +60,8 @@ import { INTERRUPT_SWITCH, interruptDecision } from './interrupt.js';
 export const SCREEN_CODES = Object.freeze({
   /** The switch is neither `off` nor `on`. */
   BAD_SWITCH: 'bad-switch',
+  /** The session's hold on the queue is not a boolean. */
+  BAD_HELD: 'bad-held',
   /** A presence that is not P1.4's answer: not an object, or no known state. */
   BAD_PRESENCE: 'bad-presence',
   /** A digest that is not a digest: not an object. */
@@ -135,9 +141,13 @@ export function createVoiceScreen({
   utterance: dialogue = null,
 } = {}) {
   if (!isVoicePipeline(pipeline)) throw new TypeError('pipeline is a VoicePipeline');
+  // `licenceRefusal` is the third name this screen needs (S6.3): the offline
+  // refusal asks the licence first, and a client that cannot be asked would
+  // turn that into a crash inside `accept` rather than a wiring failure here.
   if (client === null || typeof client !== 'object'
-    || typeof client.send !== 'function' || typeof client.poll !== 'function') {
-    throw new TypeError('client is a mailbox client: send(text) and poll()');
+    || typeof client.send !== 'function' || typeof client.poll !== 'function'
+    || typeof client.licenceRefusal !== 'function') {
+    throw new TypeError('client is a mailbox client: send(text), poll() and licenceRefusal(text)');
   }
   if (typeof now !== 'function') throw new TypeError('now is a function');
   if (typeof holder !== 'string' || holder.length === 0) throw new TypeError('holder is a non-empty string');
@@ -151,6 +161,14 @@ export function createVoiceScreen({
 
   /** D127's setting, in memory and nowhere else: it is never written down. */
   let switchValue = setting;
+  /**
+   * Whether VS1.1's session is holding the queue, and `false` until it says so:
+   * a screen with no session over it is the one P3.5 shipped with, and it
+   * speaks. The two facts behind it -- the session is paused, the session is
+   * over -- are the session's and not this file's, and neither is one of the
+   * four `interruptDecision` is asked (see `setHeld`).
+   */
+  let held = false;
   /** P1.4's last answer, or `null` before one has arrived. */
   let presence = null;
   /** The digest's most severe severity, or `null` before a digest arrives. */
@@ -185,23 +203,25 @@ export function createVoiceScreen({
   /**
    * Speak one queued update, if the rule allows one now.
    *
-   * The rule is `interruptDecision`'s and nothing else: this function finds the
-   * **first** update the decision says may interrupt and hands it to the
-   * pipeline. Two consequences worth naming, because they are the plan's
-   * sentences:
+   * The rule is `interruptDecision`'s, over the queue the session may be
+   * holding: this function finds the **first** update the decision says may
+   * interrupt and hands it to the pipeline. Three consequences worth naming,
+   * because they are the plan's sentences:
    *
    *   * the switch being off means nothing is ever spliced out, so an update is
    *     **queued and not spoken**;
    *   * the decision is asked with the pipeline's own `speaking()` and `turn()`,
    *     so an update is never spoken over an in-progress utterance or while the
    *     user is being listened to -- and the update stays queued rather than
-   *     being lost to a refusal.
+   *     being lost to a refusal;
+   *   * a held queue is not drained at all, however free the boundary is: a
+   *     session that is paused or over says nothing out loud (see `setHeld`).
    *
    * One update per pass: the next pass is the pipeline's `utterance` event,
    * which is the next boundary.
    */
   function drain() {
-    if (highest === null) return;
+    if (held || highest === null) return;
     for (let i = 0; i < queue.length; i++) {
       const verdict = interruptDecision({
         switch: switchValue,
@@ -263,17 +283,45 @@ export function createVoiceScreen({
    * recorded as well as returned: a refusal nobody renders is a message the
    * owner believes they sent.
    *
+   * **The licence is asked first, and its answer wins over this screen's**
+   * (S6.3; the design's §5.7). Being offline and having lapsed can both be true
+   * of one utterance, and only one of the two sentences helps: "the
+   * orchestrator is offline" sends the owner to wait for a network that is not
+   * the problem, while the licence's names the key screen, which is never
+   * gated. A pre-check that answered first would be exactly the masking the
+   * design forbids -- and this screen cannot make the licence's refusal itself
+   * (the lapse is decided in the write path and nowhere else), so it asks the
+   * client before it refuses anything of its own. Nothing is written either
+   * way: the licence's refusal is reported by the client, and this screen's
+   * refusal is not a write at all.
+   *
    * And a message that **is** accepted clears what the last refusal left: the
    * snapshot's `refused` is the screen's current state, not a history of every
    * refusal it ever made.
    *
+   * `options` is the classification the caller already made, handed on to the
+   * client unchanged: P6.12's dialogue passes `{ verb: 'launch' }` for D162's
+   * pass-through, because the client cannot tell a launch from chatter and the
+   * lapse (S6.3) refuses the one and keeps the other. A caller with nothing to
+   * classify passes nothing, and this screen classifies nothing itself.
+   *
    * @param {unknown} text what the owner said
+   * @param {{action?: object, verb?: string}} [options] what the caller knows
+   *   about it: the client's own options, forwarded
    * @returns {Promise<object>} the client's own verdict, or this screen's refusal
    */
-  async function accept(text) {
+  async function accept(text, options) {
     if (typeof text !== 'string' || text.length === 0) return noteRefusal(refuse(SCREEN_CODES.BAD_TEXT, 'text'));
-    if (offline()) return noteRefusal(refuse(SCREEN_CODES.OFFLINE, 'presence'));
-    const sent = await client.send(text);
+    if (offline()) {
+      const refusedByLicence = await client.licenceRefusal(text, options);
+      // The licence's refusal is the client's and is returned as itself -- it
+      // is not recorded here, because this screen records its own refusals and
+      // this one is not this screen's (the rule the client's stale refusal
+      // follows too).
+      if (refusedByLicence !== null) return refusedByLicence;
+      return noteRefusal(refuse(SCREEN_CODES.OFFLINE, 'presence'));
+    }
+    const sent = await client.send(text, options);
     if (sent.ok) lastRefused = null;
     return sent;
   }
@@ -317,6 +365,41 @@ export function createVoiceScreen({
       switchValue = value;
       drain();
       return Object.freeze({ ok: true, switch: switchValue });
+    },
+
+    /**
+     * Hold the queue, or let it go.
+     *
+     * This is VS1.1's session speaking, and the only thing that knows the two
+     * facts `interruptDecision` is never asked: that the session is paused (§4's
+     * paused states are "mic closed, playback paused", and §6.3's unsafe route
+     * "must not continue speaking through the loudspeaker"), and that it is
+     * over. The decision's four arguments are about the update and the phone --
+     * the switch, the ladder's top, an utterance in flight, the user's turn --
+     * and none of them is either fact.
+     *
+     * What makes the hold necessary is that both states are reached **by**
+     * `stop()`: the pause's and the teardown's. A stop cancels the utterance in
+     * flight, the cancel reports itself as an `utterance` event, and that event
+     * is wired to `drain` like any other boundary -- so without the hold, the
+     * stop that exists to silence the loudspeaker speaks the queue's next
+     * update with it.
+     *
+     * Held means nothing is spoken and nothing is dropped: the queue keeps its
+     * order and its contents, and letting go drains it again.
+     *
+     * @param {unknown} value `true` to hold the queue, `false` to let it go
+     */
+    setHeld(value) {
+      if (typeof value !== 'boolean') return refuse(SCREEN_CODES.BAD_HELD, 'held');
+      const was = held;
+      held = value;
+      // Letting go is the boundary, and it is drained only on the way out of a
+      // hold: a session that re-states `false` on every state change -- VS1.1
+      // does, since its rule is "paused or over" -- would otherwise hand the
+      // queue a boundary it never asked for.
+      if (was && !held) drain();
+      return Object.freeze({ ok: true, held });
     },
 
     /** Adopt P1.4's answer, as a caller hands it over. See the function above. */

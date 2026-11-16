@@ -28,8 +28,9 @@ import (
 // is decoded in one function, strictly, and every surface reads what it returns.
 //
 // Why the decode is strict. A record is a document somebody else can write —
-// the bucket is unversioned and any project-level storage writer can rewrite an
-// object (this package's own header says so) — so a field this build does not
+// the bucket keeps noncurrent versions but is not tamper-proof, and any
+// project-level storage writer can write a new one (this package's own header
+// says so) — so a field this build does not
 // know is a field whose meaning it cannot judge, and ignoring it would let an
 // object carry a claim nothing acts on. The version is checked for the same
 // reason the marker's is: a later build's record read as this one's shape is the

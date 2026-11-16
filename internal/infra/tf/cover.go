@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
@@ -31,7 +32,7 @@ var allowedTypes = map[string]bool{
 	// service now (DON1, the owner's ruling of 2026-11-05), so the
 	// installation's own plan carries both — which is why the two are covered
 	// by the step that plans it. An agent's session never writes the block
-	// (init_stages.go's pinCredentialsImage returns early under a marker), and
+	// (init_stages.go's ensureCredentialsService returns early under a marker), and
 	// an installation that cannot carry the service gets none.
 	"google_cloud_run_v2_service":            true,
 	"google_cloud_run_v2_service_iam_member": true,
@@ -119,13 +120,25 @@ var allowedTypes = map[string]bool{
 // MCP is the front door's own account (D920, D935), its own kind for the
 // catalog check job's reason: as one of FugaroAccounts every toAccounts row
 // would have accepted it, and the account's whole point is that it reaches the
-// runs bucket's read (D932) and the store its records live in (D935) and
-// nothing else — a public endpoint whose identity could ride a job's
-// datastore.user or a launcher's role would be the "there is no credential to
-// reach" of spec.md §8 one grant away from false. Exactly one row carries the
-// bit, and it is narrowed further by the bucket it is on
-// (mcpauthStoreGrant, TestMCPAccountIsItsOwnPrincipalKind).
-type who uint8
+// runs bucket's read (D932), the store its records live in (D935) and — since
+// O16b — the orchestrator's node, read-only (D2020 (a)), and nothing else — a
+// public endpoint whose identity could ride a job's datastore.user or a
+// launcher's role would be the "there is no credential to reach" of spec.md §8
+// one grant away from false. Exactly two rows carry the bit, and each is
+// narrowed further: the store's by the bucket it is on (mcpauthStoreGrant) and
+// the state group's by its role and the project it is in
+// (mcpauthStateReadGrant, TestMCPAccountIsItsOwnPrincipalKind).
+//
+// Intake is the secrets intake's own account (D1931, DS2.2), its own kind for
+// the catalog check job's reason: as one of FugaroAccounts every toAccounts row
+// would have accepted it, and this is the one account that may CREATE, add a
+// version to and DELETE the installation's dynamic secret containers — a write
+// reach no job account has. Exactly two rows carry the bit
+// (fugaroIntakeSecrets, which is conditioned by name, and the shared
+// fugaroSecretLister), each narrowed further by the condition it must carry
+// (dynamicSecretsGrant) and, for the runs bucket's one object, by the bucket
+// and the object (intakeAdminListGrant).
+type who uint16
 
 const (
 	toPeople who = 1 << iota
@@ -136,6 +149,12 @@ const (
 	toVerifier
 	toCatalogCheck
 	toMCP
+	toIntake
+	// The reports job's own kind (slice P, ruling E4), appended rather than
+	// inserted: the bits above are the ones a test's mask and every row in
+	// grantRules are written with, and a shift would rewrite all of them.
+	// ReportsAccountID says why the account is its own kind.
+	toReports
 )
 
 // customKey is how grantRules names a custom role of the installation (by its
@@ -154,6 +173,7 @@ const customKey = "custom:"
 var grantRules = map[string]map[string]who{
 	"google_project_iam_member": {
 		customKey + "fugaroLauncher":       toPeople,
+		customKey + ViewerRole:             toPeople,
 		customKey + "fugaroBuildSubmitter": toPeople | toAccounts,
 		customKey + "fugaroHistory":        toAccounts,
 		customKey + "fugaroReaper":         toAccounts,
@@ -187,7 +207,34 @@ var grantRules = map[string]map[string]who{
 		// nothing else, in the ONE binding credentials.tf writes (toCredentials
 		// alone — granting it to a job account or to a person is not a grant
 		// the installation makes).
-		customKey + CredentialsDatabaseRole:       toCredentials,
+		customKey + CredentialsDatabaseRole: toCredentials,
+		// The dynamic-delivery class (D1931, DS2.2). fugaroIntakeSecrets is
+		// create, version-add and delete of the grammar's containers, held by
+		// the intake's own account and by nothing else, and only under the
+		// name-prefix fence (dynamicSecretsGrant reads the condition, which
+		// grantRules cannot see); fugaroSecretLister is a name-and-metadata
+		// read the two services share, because secretmanager.secrets.list is
+		// refused under that same condition (Check 510) — so it is
+		// unconditioned on purpose and it is the one row of this class that
+		// takes two principals.
+		customKey + IntakeSecretsRole: toIntake,
+		customKey + SecretListerRole:  toIntake | toCredentials,
+		// The front door's read of the orchestrator's node (O16b, D2020 (a)):
+		// a PROJECT grant on the coordinator's own Firebase project, where the
+		// database lives (D6), and the account's second role. Like the store's
+		// bit, this one is not the row's to decide: mcpauthStateReadGrant
+		// accepts exactly this account, exactly this role, on exactly the
+		// project the role was declared in and under no condition, so a plan
+		// that moved the read to another project, another role to this
+		// account, or a write permission into the role (which RolePermissions
+		// pins) is refused rather than covered.
+		customKey + MCPStateReadRole: toMCP,
+		// The service's project-level accessor over the same fence: a PROJECT
+		// grant, unlike the bundle's (google_secret_manager_secret_iam_member),
+		// so the row is here rather than in that type's, and it names the
+		// credentials account alone — a job account holding a project-wide
+		// secretAccessor is precisely what DS2.2 exists to stop.
+		"roles/secretmanager.secretAccessor":      toCredentials,
 		"roles/aiplatform.user":                   toAccounts,
 		"roles/batch.agentReporter":               toAccounts,
 		"roles/batch.jobsEditor":                  toPeople, // only under the Fugaro job-name condition (jobsCondition); never an account
@@ -241,8 +288,29 @@ var grantRules = map[string]map[string]who{
 		// check the bit would let a plan hand this account every repository's
 		// records and check state (the account's own read is
 		// TestCatalogCheckRecordsGrant's subject).
-		"roles/storage.objectUser":   toPeople | toAccounts | toCatalogCheck,
-		"roles/storage.objectViewer": toPeople | toAccounts | toCoordinator,
+		//
+		// objectUser's toReports is the reports job writing reports/ — the one
+		// writer that prefix has (ruling 3), which is why no launcher's write
+		// condition grows it and no job account holds it. Like the catalog
+		// check's row, what makes the grant the modules' own is the condition
+		// and not the member: reports/<the prefix> of one of this run's
+		// buckets, byte for byte gcp.ReportsWriteCondition, under the title
+		// built from that account (reportsWriteGrant). Without that check the
+		// bit would let a plan hand this account objectUser on runs/ — the
+		// launchers' own write area — or on another bucket.
+		"roles/storage.objectUser": toPeople | toAccounts | toCatalogCheck | toReports,
+		// The intake's bit is on the reader row and not on the writer's: what
+		// the class reads is the derived admin list, one object of the runs
+		// bucket (intakeAdminListGrant checks the bucket AND the object), and
+		// its own writes go to Secret Manager, never to the runs bucket.
+		//
+		// objectViewer's toReports is the reports job reading runs/: every
+		// repository's run records, which is what its reports summarise, under
+		// the same title rule and reportsReadGrant's own bytes. The two bits
+		// are on the two rows and not one: the read is objectViewer, and a
+		// grant of the write role under the read condition (or the reverse) is
+		// refused rather than read as either.
+		"roles/storage.objectViewer": toPeople | toAccounts | toCoordinator | toIntake | toReports,
 	},
 	"google_artifact_registry_repository_iam_member": {
 		customKey + "fugaroTagMover":    toAccounts,
@@ -373,6 +441,23 @@ type Cover struct {
 // and this one differ.
 const CloudAssetRole = "fugaroCloudAssetReader"
 
+// ViewerRole is the installation's read-only job role (RS4 of
+// docs/roles-scopes/implementation-plan.md, roles.md §4): the fugaroLauncher
+// role minus run.executions.cancel, so its holder reads a run, its execution
+// and its operations — and the project's secret list's metadata, which is the
+// launcher's too — and cannot cancel one. Its list is the one grant of the
+// viewer's that is a role of its own: everything else a viewer holds is a
+// predefined role on a resource the modules already grant to someone.
+//
+// The ID is a literal in the module and here, like the Cloud Asset reader's
+// and the history role's, and not a names.role_ids entry: nothing outside
+// installation/iam.tf names it, the pin in this package is by the same literal
+// (TestViewerRoleHasNoCancelPermission), and an installation with an empty
+// viewer list must plan exactly what it planned before this role existed —
+// which the tfvars plumbing of the four older roles would break, since role_ids
+// is a required key of the root's tfvars (TestInstallationVarsMatchModule).
+const ViewerRole = "fugaroViewer"
+
 // CredentialsAccountID is the credentials service's fixed service account ID
 // (internal/infra/tfvars.go's CredentialsAccountID, which
 // var.credentials_service.account_id carries) and CredentialsDatabaseRole the
@@ -416,22 +501,96 @@ const VerifierAccountID = "fugaro-verifier"
 // package reads differently. It is NOT among FugaroAccounts, for the
 // credentials and coordinator accounts' reason: its grants are a project-wide
 // reach that no `fugaro update` confirmation announced, so it is read as a
-// kind of its own (toCatalogCheck) and every role it is given is refused
-// unless a row carries that bit — which is the bucket rows' objectUser one
-// alone, and only through bucketCondition's catalogRecordsGrant, the check
-// that pins the grant to one repository's records condition (D1148).
+// kind of its own (toCatalogCheck), and a row accepts it only where the row
+// carries that bit — which ONE row does, the bucket rows' objectUser, and only
+// through bucketCondition's catalogRecordsGrant, the check that pins the grant
+// to one repository's records condition (D1148).
+//
+// Every other grant to it is one the tables do not cover, and what a managed
+// apply then does with it is D1545's answer and not the pre-D1545 one: the
+// grant table is one of that decision's three CONTENT sites
+// (managed_cover.go's NotCoveredSplit names them), so the grant is a finding
+// the gate records and warns about — the run prints it, files a warned record
+// in the audit family and `doctor` reports that record as a finding — while
+// the verdict's OK stays true and the apply goes ahead, a coding agent's
+// session included, with nothing typed and no terminal. The grant of
+// CatalogLeaseRole below is one of these, and deliberately not a row: a row
+// would be the quieter outcome of the two, since the grant would be covered
+// and announced by the gate's own line, and what the tables' silence buys is
+// that the reach is never granted without the run naming it in its own words.
+// Read the paragraph above at that size: the fence is a warning the owner can
+// find again in `doctor`, not a question asked before the grant is made.
 const CatalogCheckAccountID = "fugaro-catalog-check"
+
+// ReportsAccountID is the project's reports job account (slice P): the account
+// the installation module's reports resource creates, one per project, and the
+// one the module's variable validation pins the ID to, so a plan cannot hand
+// the account a name this package reads differently. It is NOT among
+// FugaroAccounts, for the catalog check job's reason: it reads every
+// repository's run records and it is the one writer of reports/, a reach no
+// `fugaro update` confirmation announced on a job account's behalf, so it is a
+// kind of its own (toReports).
+//
+// Its two grants are the two rows that carry that bit (the bucket's
+// objectViewer and objectUser), each further narrowed by reportsReadGrant and
+// reportsWriteGrant: one prefix of one of this run's buckets, under the
+// condition title built from this account, byte for byte
+// gcp.ReportsReadCondition or gcp.ReportsWriteCondition. Everything else the
+// account is given is refused and the update that carries it asks its owner —
+// which for this account includes its own two prefixes on another bucket, the
+// other prefix under the other role, and any condition the two builders do not
+// write.
+const ReportsAccountID = "fugaro-reports"
+
+// CatalogLeaseRole is the custom role the catalog check job's account holds in
+// the installation's Firebase project: the two Realtime Database DATA
+// permissions its build leases are written with (catalogcheck.tf, D1554). It
+// is a SECOND role rather than a second grant of CredentialsDatabaseRole, even
+// though the two pin the same two permissions today, because the two accounts'
+// reach must not be able to grow by the other's needs: a permission the
+// credentials service needs next is not one the unattended nightly job gets,
+// and RolePermissions pins each list on its own.
+//
+// It is created in the Firebase project, which is why roleKey resolves it
+// through that project and not through the installation's alone (Cover.Projects
+// carries a verified Firebase project for the reason).
+const CatalogLeaseRole = "fugaroCatalogLease"
 
 // MCPServerAccountID is the front door's own service account (D920), the one
 // modules/installation/coordinator.tf creates in the installation's project
 // and the service runs as; internal/infra.MCPServerAccountID is the same name
 // on the writer's side, and TestCoverMCPNamesAreTheWritersNames pins the two
 // together. It is NOT among FugaroAccounts, for the catalog check job's
-// reason: its one role is the store's (D935), so it is read as a kind of its
-// own (toMCP) and every role it is given is refused unless a row carries that
-// bit — which the objectAdmin row alone does, and only through
-// mcpauthStoreGrant, the check that pins the grant to D935's store.
+// reason: its two roles are the store's (D935) and the database's read (O16b),
+// so it is read as a kind of its own (toMCP) and every role it is given is
+// refused unless a row carries that bit — which the objectAdmin row and the
+// state-read row alone do, each narrowed further by mcpauthStoreGrant and
+// mcpauthStateReadGrant, the checks that pin the two grants to D935's store and
+// to the coordinator's own project.
 const MCPServerAccountID = "fugaro-mcp"
+
+// MCPStateReadRole is the custom role modules/installation/state_read.tf
+// creates in the coordinator's Firebase project for the front door's own
+// account, holding MCPStateReadPermissions and nothing else (O16b, D2020 (a)).
+//
+// It is the front door's reach into the orchestrator's node, and it is a READ:
+// the state group's two tools answer get_state and get_events, apply_patch is
+// served by nothing (D2021), and the state group's writes stay with `fugaro
+// orchestrator patch` and the person's own credential (D1223, D1241). Realtime
+// Database IAM has no path-level scope, so the role's permission list is the
+// only place that direction can be decided: MCPStateReadPermissions is the
+// instance's read alone, and the write (instances.update, the only one — a node
+// write is an update) is not in it, so no later revision of the front door can
+// reach for it. TestCoverAdmitsTheStateReadGrantOnPurpose and
+// TestFrontDoorStateRoleHoldsNoDatabaseWrite (the module's own file) are the
+// pins, and TestRolePinsAreTheModules holds the list to the module's.
+const MCPStateReadRole = "fugaroStateRead"
+
+// MCPStateReadPermissions are that role's permissions, the instance's read and
+// no second one. A var rather than a literal inside RolePermissions so a test
+// can hold the map, the module's own source and this list to each other — the
+// shape WorkspaceReadPermissions has for the member's workspace read.
+var MCPStateReadPermissions = []string{"firebasedatabase.instances.get"}
 
 // MCPServerStorePrefix begins the name of D935's store: the installation
 // module's own local is `fugaro-mcpauth-${var.project}`
@@ -442,6 +601,39 @@ const MCPServerAccountID = "fugaro-mcp"
 // module by TestCoverMCPNamesAreTheWritersNames.
 const MCPServerStorePrefix = "fugaro-mcpauth-"
 
+// IntakeAccountID is the secrets intake's own service account (D1931, DS2.2),
+// the one modules/installation/intake.tf creates in the installation's project
+// and the service runs as. It is NOT among FugaroAccounts, for the front door's
+// account's reason: as one of them every toAccounts row would have accepted it,
+// and this is the one account that may CREATE, add a version to and DELETE the
+// installation's dynamic secret containers — a write reach no job account has
+// and no `fugaro update` confirmation announced on its behalf. It is a kind of
+// its own (toIntake), and every grant it is given is refused unless a row
+// carries that bit AND the narrowing check accepts it: the two project grants
+// of the dynamic class, under the name-prefix fence (dynamicSecretsGrant), and
+// the runs bucket's one admin-list object (intakeAdminListGrant).
+//
+// There is no writer-side constant to pin it to yet — the stage that deploys
+// the intake is DS4.1's — so the module's own validation is what holds the ID
+// today, and the pin lands with that stage's tfvars.
+const IntakeAccountID = "fugaro-intake"
+
+// IntakeSecretsRole and SecretListerRole are the dynamic class's two custom
+// roles (intake.tf, D1931, DS2.2). They are two and not one because an IAM
+// binding's condition cannot be lifted for a single permission of its role:
+// the write half (create, delete and versions.add) is granted to the intake
+// alone and only under the name-prefix fence, while secretmanager.secrets.list
+// must stay unconditioned — Check 510 (2026-11-12) refused that call under the
+// condition — so it is a role of its own, holding that permission and nothing
+// else. The lister is the one role of the class two principals share: the
+// intake and the credentials service each find containers by listing.
+// RolePermissions pins both permission lists and TestRolePinsAreTheModules
+// holds them to the module's, so no plan can widen either role.
+const (
+	IntakeSecretsRole = "fugaroIntakeSecrets"
+	SecretListerRole  = "fugaroSecretLister"
+)
+
 // FugaroRoles are the custom role IDs the modules create; FugaroAccounts the
 // fixed service account IDs a toAccounts row accepts. Job and build accounts
 // are fugaro-<readable>-<8 hex>. The deployer account (DeployerAccountID) and
@@ -451,9 +643,11 @@ const MCPServerStorePrefix = "fugaro-mcpauth-"
 // writer (CoordinatorAccountID) is not among them either, and neither is the
 // project's catalog check job (CatalogCheckAccountID), nor the front door's
 // own account (MCPServerAccountID), for the same reason (toCoordinator,
-// toCatalogCheck, toMCP).
+// toCatalogCheck, toMCP). The reports job's account (ReportsAccountID) is not
+// among them either: its read of runs/ and its write of reports/ are a reach
+// no job holds, so it is a kind of its own too (toReports).
 var (
-	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole}
+	FugaroRoles    = []string{"fugaroLauncher", ViewerRole, "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, CatalogLeaseRole, WorkspaceReadRole, IntakeSecretsRole, SecretListerRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole, MCPStateReadRole}
 	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
 )
 
@@ -797,12 +991,28 @@ func (c Cover) isCatalogCheckMember(m string) bool {
 	return p != "" && m == "serviceAccount:"+CatalogCheckAccountID+"@"+p+".iam.gserviceaccount.com"
 }
 
+// isReportsMember is whether m is exactly the project's reports job account as
+// an IAM member, in the installation's project: the account the installation
+// module's reports resource creates (var.project, ReportsAccountID).
+func (c Cover) isReportsMember(m string) bool {
+	p := c.installationProject()
+	return p != "" && m == "serviceAccount:"+ReportsAccountID+"@"+p+".iam.gserviceaccount.com"
+}
+
 // isMCPMember is whether m is exactly the front door's own account as an IAM
 // member, in the installation's project: the account coordinator.tf creates
 // and the service runs as (MCPServerAccountID).
 func (c Cover) isMCPMember(m string) bool {
 	p := c.installationProject()
 	return p != "" && m == "serviceAccount:"+MCPServerAccountID+"@"+p+".iam.gserviceaccount.com"
+}
+
+// isIntakeMember is whether m is the secrets intake's own account as an IAM
+// member, in the installation's project: the account intake.tf creates and the
+// service runs as (IntakeAccountID).
+func (c Cover) isIntakeMember(m string) bool {
+	p := c.installationProject()
+	return p != "" && m == "serviceAccount:"+IntakeAccountID+"@"+p+".iam.gserviceaccount.com"
 }
 
 // mcpauthStoreBucket is the name of D935's store in this cover's installation
@@ -849,6 +1059,45 @@ func (c Cover) mcpauthStoreGrant(rc ResourceChange) string {
 	return ""
 }
 
+// mcpauthStateReadGrant says why a PROJECT grant to the front door's own
+// account is not O16b's read of the orchestrator's node, "" when it is: the
+// account's second role, on the project the role was declared in, under no
+// condition — the single binding modules/installation/state_read.tf makes.
+//
+// What it holds is the instance's READ and nothing else (RolePermissions pins
+// the permission; the module's own file is the other half), and Realtime
+// Database IAM has no path-level scope, so a project binding of this role is a
+// read of the WHOLE database of that project — every run's state, the policy,
+// the kill switches and the credentials' nodes included. That reach is what
+// D2020 (a) answered for, and it is why the grant is checked rather than
+// accepted by the row: a plan that moved the read to another role, put another
+// role on this account, declared the role in a project the grant is not in, or
+// carried a condition (which RTDB cannot express as a path prefix, so one would
+// look like a fence and not be one) is refused here and the update that carries
+// it asks its owner.
+//
+// The member is read before this runs: the caller checks it with isMCPMember,
+// so what is left to check is the role, the project and the condition.
+func (c Cover) mcpauthStateReadGrant(rc ResourceChange) string {
+	ch := rc.Change
+	project := str(ch.After["project"])
+	if !slices.Contains(c.Projects, project) {
+		return "grants the front door's account its database read in a project that is not this run's, where the role the module declares cannot be read"
+	}
+	want := "projects/" + project + "/roles/" + MCPStateReadRole
+	if role := str(ch.After["role"]); role != want {
+		return "grants the front door's account " + role + " on a project, and its second role is " + MCPStateReadRole + " on the project the module declares it in"
+	}
+	conds, why := grantConditions(ch, "a project grant")
+	switch {
+	case why != "":
+		return why
+	case len(conds) != 0:
+		return "grants the front door's account its database read under a condition, which the module never sets: RTDB IAM cannot express a path prefix, so a condition here would fence nothing"
+	}
+	return ""
+}
+
 // isDeployerMember is whether m is exactly this run's deployer account as an
 // IAM member: "serviceAccount:" + DeployerAccount(the installation's project).
 func (c Cover) isDeployerMember(m string) bool {
@@ -883,6 +1132,14 @@ var (
 // TestRolePinsAreTheModules fails when a module's list and this one differ.
 var RolePermissions = map[string][]string{
 	"fugaroLauncher": {"run.jobs.get", "run.jobs.list", "run.executions.get", "run.executions.list", "run.executions.cancel", "run.operations.get",
+		"secretmanager.secrets.list", "secretmanager.versions.list"},
+	// The viewer's read-only job role (RS4, roles.md §4): the launcher's list
+	// minus run.executions.cancel and nothing else, so every read a launcher
+	// makes a viewer makes — the run's own state and operations, and the
+	// project's secret list's metadata, which is what `fugaro secrets ls`
+	// needs — and the one thing the list withholds is the cancel.
+	// TestViewerRoleHasNoCancelPermission reads this against the launcher's.
+	ViewerRole: {"run.jobs.get", "run.jobs.list", "run.executions.get", "run.executions.list", "run.operations.get",
 		"secretmanager.secrets.list", "secretmanager.versions.list"},
 	"fugaroJobRunner":      {"run.jobs.run", "run.jobs.runWithOverrides"},
 	"fugaroBuildSubmitter": {"cloudbuild.builds.create", "cloudbuild.builds.get"},
@@ -923,6 +1180,48 @@ var RolePermissions = map[string][]string{
 	// installation's database. credentials.tf lists both permissions with their
 	// reasons; TestCredentialsDatabaseRoleIsTheTwoDataPermissions is the pin.
 	CredentialsDatabaseRole: {"firebasedatabase.instances.get", "firebasedatabase.instances.update"},
+	// The catalog check job's database role (D1554): the two permissions
+	// catalogcheck.tf lists, and the same two the credentials role above pins.
+	// They are a second entry and not a shared one on purpose — the two
+	// accounts hold the same surface today, and neither may grow it because the
+	// other needed a permission. The job reads the leases it left behind, the
+	// day's counters and the database's mark, and writes the lease it takes and
+	// settles (internal/budget/lease_build.go); it never touches the instance's
+	// lifecycle, which is what roles/firebasedatabase.admin would hand it.
+	// TestCatalogLeaseRoleIsTheTwoDataPermissions is the pin.
+	CatalogLeaseRole: {"firebasedatabase.instances.get", "firebasedatabase.instances.update"},
+	// The dynamic class's write half (intake.tf, D1931, DS2.2): what the
+	// intake may do to a container, and no read at all — it creates one, adds a
+	// version to it and deletes it, and it must not be able to read a value
+	// back (R3), which is why neither secretmanager.secrets.get nor
+	// secretmanager.versions.access is here. All three are conditioned by name
+	// in the binding below (dynamicSecretsGrant), so the role's own reach is
+	// the grammar's containers and no other resource of the project.
+	IntakeSecretsRole: {"secretmanager.secrets.create", "secretmanager.secrets.delete", "secretmanager.versions.add"},
+	// ... and the list half, which the intake and the credentials service
+	// share: the names, labels and annotations of the project's containers, and
+	// never a version and never a payload.
+	SecretListerRole: {"secretmanager.secrets.list"},
+	// The workspace's read of the MEMBER's database (docs/workspaces/
+	// spec.md §5, W7; workspace_access.go): the ONE permission a member's own
+	// Fugaro installation binds, so the workspace's credentials service can
+	// read the member's ledger for the reconciliation alarm. It is the read
+	// half of the credentials role above and deliberately not that role:
+	// firebasedatabase.instances.update is not bound at all, so no later
+	// revision of the service can write a member's database.
+	WorkspaceReadRole: {"firebasedatabase.instances.get"},
+	// The front door's read of the installation's database (O16b, D2020 (a),
+	// state_read.tf): the instance's read and no second permission — the write
+	// is instances.update, the only one RTDB has, and it is deliberately not
+	// here, so the state group's writes stay with `fugaro orchestrator patch`
+	// and the person's own credential (D1223, D1241) and a later revision of
+	// the front door has none to reach for. The module's own file names the
+	// same single permission and
+	// TestFrontDoorStateRoleHoldsNoDatabaseWrite refuses a second one there;
+	// TestCoverAdmitsTheStateReadGrantOnPurpose holds this pin to
+	// MCPStateReadPermissions, and TestRolePinsAreTheModules holds both to the
+	// module.
+	MCPStateReadRole: {"firebasedatabase.instances.get"},
 	// The deployer's eight roles (D75, Task 1.5, redesigned for 0.10.0). They
 	// are not installation roles: nothing a run does needs them, and their
 	// bound is the split between them — creation, reads and
@@ -977,14 +1276,15 @@ var RolePermissions = map[string][]string{
 // knownCommands are the container command and args the modules set: none for a
 // workflow's job and for the credentials service (whose image's own entrypoint
 // is the service, credentials.tf), the history sweep, the coordinator's
-// aggregation sweep, the image check and the project catalog's check
-// (catalogcheck.tf).
+// aggregation sweep, the image check, the project catalog's check
+// (catalogcheck.tf) and the reports job (reports.tf).
 var knownCommands = [][2][]string{
 	{nil, nil},
 	{{"/usr/local/bin/fugaro"}, {"budget", "history", "--sweep"}},
 	{{"/usr/local/bin/fugaro"}, {"coordinator", "sweep"}},
 	{{"fugaro"}, {"image", "check", "--job"}},
 	{{"fugaro"}, {"image", "check", "--job", "--catalog"}},
+	{{"fugaro"}, {"runs", "reports", "--job"}},
 }
 
 // credentialsServiceEnv are the only environment variables the credentials
@@ -1018,8 +1318,21 @@ var credentialsServiceEnv = []string{
 	"FUGARO_CREDENTIALS_SERVICE_URL", "FUGARO_JOB_ACCOUNTS",
 	"FUGARO_VERIFIER_ACCOUNTS", "FUGARO_PERSON_ACCOUNTS",
 	"FUGARO_COORDINATOR_ACCOUNT", "FUGARO_REVIEW_JOB_ACCOUNTS",
-	"FUGARO_LAUNCHER_ACCOUNTS",
+	"FUGARO_LAUNCHER_ACCOUNTS", "FUGARO_SHARED_JOB_ACCOUNTS",
 }
+
+// intakeServiceArgs and intakeServiceEnv are the argv and the environment
+// intake.tf writes for the secrets intake's container, and nothing else is
+// admitted on it: the released image's `intake serve` subcommand (the image is
+// the credentials service's own, whose default command serves the other
+// service), and the four names internal/cli/intake_serve.go reads — the
+// project, the service's own URL (the audience a caller's ID token is minted
+// for), the runs bucket holding the derived admin list, and the launcher class
+// the process admits.
+var (
+	intakeServiceArgs = []string{"intake", "serve"}
+	intakeServiceEnv  = []string{"FUGARO_GCP_PROJECT", "FUGARO_INTAKE_URL", "FUGARO_RUNS_BUCKET", "FUGARO_LAUNCHER_ACCOUNTS"}
+)
 
 // CredentialsServiceEnvAwaitingTheModule are the names credentialsServiceEnv
 // admits that the installation module does not render yet: the cover is what
@@ -1028,25 +1341,24 @@ var credentialsServiceEnv = []string{
 // in the same binary — deploy/terraform is embedded — so the order is the
 // cover's and not a release's).
 //
-// Its one entry is FUGARO_LAUNCHER_ACCOUNTS, the launcher class's list (D1938,
-// F25): this task adds the name to the cover, and the change that makes
-// installation/credentials.tf render it takes the entry off this list
-// (DS2.2). The service reads it as an OPTIONAL value the whole time
-// (internal/cli's credentialsServiceConfig), so a deployment that has not
-// moved yet serves the same service with a launcher class that admits nobody
-// rather than failing to start.
+// FUGARO_SHARED_JOB_ACCOUNTS is on it now (B5.1): the service reads it as an
+// optional value (internal/cli's envSharedJobAccounts), and the module that
+// renders it from the shared jobs an installation deploys is the deployment
+// side's own step — which is why the name is here, on the allow-list ahead of
+// its module, rather than nowhere. Until that step every installation renders
+// the entry nowhere, the service starts with an empty shared set and the class
+// is refused whole: the fail-closed state B5.1 leaves production in. Before it,
+// FUGARO_LAUNCHER_ACCOUNTS (the launcher class's list, D1938, F25) left this
+// list in the change that made installation/credentials.tf render it (DS2.2),
+// and FUGARO_REVIEW_JOB_ACCOUNTS left it the same way before that.
 //
-// The entry before it, FUGARO_REVIEW_JOB_ACCOUNTS, left this list in the same
-// change that made installation/credentials.tf render it, and it is the shape
-// the launcher name is following.
-//
-// It is a list with a tripwire and not a carve-out. Two tests hold it: the
-// golden test below fails on a name that is both here and on the plan, and
+// The function is the tripwire and not a carve-out: two tests hold it —
+// the golden test below fails on a name that is both here and on the plan, and
 // internal/cli's TestCredentialsServiceEnvIsTheDeploymentsOwn fails on one that
-// is here and in the module's own source — so an entry cannot be left behind
-// once the module renders it.
+// is here and in the module's own source — so a name added ahead of its module
+// cannot be left behind once the module renders it.
 func CredentialsServiceEnvAwaitingTheModule() []string {
-	return []string{"FUGARO_LAUNCHER_ACCOUNTS"}
+	return []string{"FUGARO_SHARED_JOB_ACCOUNTS"}
 }
 
 // APITargets are the two services the Firebase web key may call, sorted;
@@ -1070,14 +1382,66 @@ func APITargets() []string {
 // the workdir never adopts something discovery did not check. An import is
 // otherwise checked as any other change (an import and update included).
 func (c Cover) NotCovered(p *Plan, imports []ImportKey) []string {
+	all, _, _ := c.notCoveredSplit(p, imports)
+	return all
+}
+
+// NotCoveredSplit is NotCovered's answer in the two halves D1545 needs: the
+// reasons that REFUSE a plan (integrity, D1549) and the reasons that are
+// recorded and warned instead (content). The two together are NotCovered's
+// list, in its order and with its wording, so a reader that wants the whole
+// answer keeps calling NotCovered and one that judges a plan asks for the
+// halves.
+//
+// It exists on this cover and not only on tf.ManagedCover because this is the
+// cover `fugaro update`'s gate is handed (internal/cli's stepCover wraps it,
+// and it holds no delete list): a split the managed cover kept to itself left
+// every CONTENT refusal of the installation's own review looking like an
+// integrity one, which would have made D1545's whole point — record the two
+// cover tables and warn — inert for the command that applies the most.
+//
+// Which reasons are which is decided in notCoveredSplit below, on exactly
+// tf.ManagedCover's rule (managed_cover.go's coverFinding): the two tables that
+// judge WHAT a plan contains — the type table and the grant table — are content
+// while nothing is being removed, because D1545 leaves that judgement to
+// record-and-warn, and every other rule of the chain is D1549's and refuses.
+// The type table's content arm does not end the chain: the import rules and
+// attributes' own rules below it are read for a type the modules do not carry
+// as well, so an off-table resource in a project that is not this run's — or
+// one importing an object this run's discovery never found — is refused as well
+// as warned (notCoveredIntegrity).
+func (c Cover) NotCoveredSplit(p *Plan, imports []ImportKey) (integrity, content []string) {
+	_, integrity, content = c.notCoveredSplit(p, imports)
+	return integrity, content
+}
+
+// notCoveredSplit is the one walk both answers come from, so a plan cannot be
+// told two different things about one change depending on which half a caller
+// asked for.
+func (c Cover) notCoveredSplit(p *Plan, imports []ImportKey) (all, integrity, content []string) {
 	if p == nil {
-		return []string{"no plan"}
+		return []string{"no plan"}, []string{"no plan"}, nil
 	}
-	var out []string
-	add := func(rc ResourceChange, why string) { out = append(out, safetext.Field(rc.Address)+" ("+why+")") }
+	add := func(rc ResourceChange, why string) {
+		item := safetext.Field(rc.Address) + " (" + why + ")"
+		all = append(all, item)
+		integrity = append(integrity, item)
+	}
+	addContent := func(rc ResourceChange, why string) {
+		item := safetext.Field(rc.Address) + " (" + why + ")"
+		all = append(all, item)
+		content = append(content, item)
+	}
+	addFinding := func(rc ResourceChange, f coverFinding) {
+		if f.content {
+			addContent(rc, f.why)
+			return
+		}
+		add(rc, f.why)
+	}
 	creates := creates(p)
 	createdSAIDs, heldSAIDs := planAccounts(p)
-	creds := planCredentialsAccounts(p)
+	creds := planServiceAccounts(p)
 	dep := planDeployer(p)
 	for _, rc := range p.ResourceChanges {
 		acts := rc.Change.Actions
@@ -1086,8 +1450,28 @@ func (c Cover) NotCovered(p *Plan, imports []ImportKey) []string {
 			add(rc, "no actions")
 			continue
 		case !allOf(acts, "create", "update", "no-op", "read"):
-			add(rc, "actions "+strings.Join(acts, ", "))
-			continue
+			if !removalContent(rc) {
+				add(rc, "actions "+strings.Join(acts, ", "))
+				continue
+			}
+			// A removal of a classified, non-data-bearing type: what D1545
+			// records and warns about. Its warning is not the whole answer
+			// either — the walk carries on to judge the resource underneath it,
+			// because a warning that ended the walk would make a removal a way
+			// past every rule below that D1549 keeps refusing: a replace of a
+			// scheduler pointed at another host, a custom role widened, an image
+			// from somewhere else, a resource moved to another project. A REPLACE
+			// is judged on what it creates; a plain DELETE creates nothing, so
+			// terraform writes the destroyed resource in before and null in
+			// after, and the same rules are handed the removed view instead
+			// (removed, managed_cover.go) — otherwise a name outside the
+			// projects, a resource of a type the modules dropped or an object
+			// whose removal is refused for good would be waved through on the
+			// removal's own warning.
+			addContent(rc, "actions "+strings.Join(acts, ", "))
+			if slices.Equal(acts, []string{"delete"}) {
+				rc = removed(rc)
+			}
 		}
 		if allOf(acts, "no-op", "read") && rc.Change.Importing == nil {
 			continue
@@ -1099,7 +1483,21 @@ func (c Cover) NotCovered(p *Plan, imports []ImportKey) []string {
 		case t == "google_service_account_key":
 			add(rc, "a service account key")
 		case !allowedTypes[t]:
-			add(rc, "a resource type outside the installation's modules")
+			f := coverFinding{why: "a resource type outside the installation's modules", content: !removalRefuses(rc)}
+			addFinding(rc, f)
+			// The type table is CONTENT — D1545 records it and warns — and it
+			// must not take the rules below it down with it: the imports and
+			// attributes' own rules judge the resource itself, where it lands
+			// and what it takes over, and they are D1549's whatever the type is.
+			// A type the modules do not carry is therefore warned about AND
+			// still refused for the deeper reason when there is one
+			// (notCoveredIntegrity), which is the shape tf.ManagedCover's own
+			// chain has.
+			if f.content {
+				if why := c.notCoveredIntegrity(rc, imports, creates, createdSAIDs, heldSAIDs, creds); why != "" {
+					add(rc, why)
+				}
+			}
 		case t == "google_project_iam_custom_role" && c.customRole(rc) != "":
 			add(rc, c.customRole(rc))
 		case rc.Change.Importing != nil && !c.importOK(rc.Change.Importing.ID):
@@ -1110,11 +1508,45 @@ func (c Cover) NotCovered(p *Plan, imports []ImportKey) []string {
 			add(rc, c.attributes(rc, creates, createdSAIDs, heldSAIDs, creds))
 		case strings.HasSuffix(t, "_iam_member"):
 			if why := c.grant(rc, creates, createdSAIDs, heldSAIDs, dep); why != "" {
-				add(rc, why)
+				addFinding(rc, coverFinding{why: why, content: !removalRefuses(rc)})
 			}
 		}
 	}
-	return out
+	return all, integrity, content
+}
+
+// notCoveredIntegrity is the part of the installation cover's chain below its
+// type table — the two import rules and attributes' own rules — in the order
+// the chain reads them. It is a function of its own for the reason
+// tf.ManagedCover's helper of the name is (managed_cover.go): the type table is
+// CONTENT for a type the modules do not carry, and its warning must not stop
+// the rules that judge the resource itself from answering. "" when the change
+// passes all of them.
+func (c Cover) notCoveredIntegrity(rc ResourceChange, imports []ImportKey, creates, createdSAIDs, heldSAIDs map[string]bool, creds serviceAccountsPlan) string {
+	switch {
+	case rc.Change.Importing != nil && !c.importOK(rc.Change.Importing.ID):
+		return "imports " + rc.Change.Importing.ID + ", which is not in this run's projects"
+	case rc.Change.Importing != nil && !slices.Contains(imports, ImportKey{rc.Address, rc.Change.Importing.ID}):
+		return "imports " + rc.Change.Importing.ID + ", which this run's discovery did not find"
+	case c.attributes(rc, creates, createdSAIDs, heldSAIDs, creds) != "":
+		return c.attributes(rc, creates, createdSAIDs, heldSAIDs, creds)
+	}
+	return ""
+}
+
+// removalContent is whether the arm this cover refuses a removal with — the one
+// it has instead of a delete list — is a CONTENT refusal D1545 records and
+// warns rather than an integrity one D1549 keeps. D1551's rule alone decides
+// it: a delete, or a replace in either of terraform's two orders, of a
+// data-bearing or unclassified type refuses for good (RefusesRemovalType), and
+// one of any other classified type is a removal the managed gate now takes with
+// a warning.
+//
+// A set terraform does not write, and forget, are not removals: nothing is
+// destroyed by them, and this cover reads them fail closed — integrity — as
+// tf.ManagedCover's managedActions reads the same sets (managed_cover.go).
+func removalContent(rc ResourceChange) bool {
+	return allOf(rc.Change.Actions, "create", "delete") && !RefusesRemovalType(rc.Type)
 }
 
 // creates is what a plan creates, by module and type: a computed member or
@@ -1157,16 +1589,24 @@ func planAccounts(p *Plan) (created, held map[string]bool) {
 	return created, held
 }
 
-// credentialsAccountResource is the name of the installation module's own
-// service account for the credentials service: resource
-// "google_service_account" "credentials" in
-// modules/installation/credentials.tf. It is counted, so a plan's address for
-// it ends in google_service_account.credentials[0].
-const credentialsAccountResource = "credentials"
+// credentialsAccountResource and intakeAccountResource are the names of the
+// installation module's own two service accounts for its two Cloud Run
+// services: resource "google_service_account" "credentials" in
+// modules/installation/credentials.tf and "intake" in intake.tf. Both are
+// counted, so a plan's address for either ends in
+// google_service_account.<name>[0].
+const (
+	credentialsAccountResource = "credentials"
+	intakeAccountResource      = "intake"
+	// intakeServiceResource is the Cloud Run service's own resource name:
+	// intake.tf names the service and the account that runs it the same word,
+	// and the service case dispatches on this one (cloudRunServiceName).
+	intakeServiceResource = "intake"
+)
 
-// credentialsPlan is that account as a plan carries it, which the
-// credentials-service case reads: the account ID the module's own resource
-// holds, by module, and whether this plan creates it or leaves it in place.
+// accountPlan is one of those accounts as a plan carries it, which the two
+// service cases read: the account ID the module's own resource holds, by
+// module, and whether this plan creates it or leaves it in place.
 //
 // It is deliberately not planAccounts' wider pair. modules/installation also
 // creates the deployer, the history and the scheduler accounts, so a check
@@ -1176,46 +1616,68 @@ const credentialsAccountResource = "credentials"
 // unknown-email arm vacuously (the review round that found this: the check was
 // weaker than the case comment, the plan paragraph and the commit message all
 // claimed).
-type credentialsPlan struct {
-	// id is the account ID of the module's google_service_account.credentials,
-	// by module: the local part the service's template.service_account must
-	// carry.
+type accountPlan struct {
+	// id is the account ID of the module's resource this plan was read for, by
+	// module: the local part the service's template.service_account must carry.
 	id map[string]string
-	// created is the modules whose credentials account this plan creates, held
-	// the modules it leaves in place (created, updated or unchanged, never
-	// deleted — planAccounts' rule). A replace is in both.
+	// created is the modules whose account this plan creates, held the modules
+	// it leaves in place (created, updated or unchanged, never deleted —
+	// planAccounts' rule). A replace is in both.
 	created map[string]bool
 	held    map[string]bool
 }
 
-// planCredentialsAccounts reads that account out of a plan. Every change
+// serviceAccountsPlan is the installation module's two service accounts as a plan
+// carries them, which the google_cloud_run_v2_service case reads: the
+// credentials service's (D146) and the secrets intake's (D1931, DS2.2).
+//
+// They are two and not one because the two services run as two different
+// identities: a check that admitted either for both would let a plan run the
+// intake's container as the account that reads every model credential in the
+// bundle — the account the intake's own roles deliberately keep free of every
+// read (R3) — or the credentials service's as the account that only writes
+// dynamic containers.
+type serviceAccountsPlan struct {
+	credentials accountPlan
+	intake      accountPlan
+}
+
+// planServiceAccounts reads the two accounts out of a plan. Every change
 // counts, a no-op included: an unchanged account is one the plan holds and the
 // service it runs keeps naming, which is the shape of every plan after the one
 // that created the service.
-func planCredentialsAccounts(p *Plan) credentialsPlan {
-	c := credentialsPlan{id: map[string]string{}, created: map[string]bool{}, held: map[string]bool{}}
+func planServiceAccounts(p *Plan) serviceAccountsPlan {
+	c := serviceAccountsPlan{
+		credentials: accountPlan{id: map[string]string{}, created: map[string]bool{}, held: map[string]bool{}},
+		intake:      accountPlan{id: map[string]string{}, created: map[string]bool{}, held: map[string]bool{}},
+	}
 	for _, rc := range p.ResourceChanges {
-		id, ok := credentialsAccountOf(rc)
-		if !ok || id == "" {
-			continue
-		}
-		pre := modulePrefix(rc)
-		c.id[pre] = id
-		if len(rc.Change.Actions) > 0 && !slices.Contains(rc.Change.Actions, "delete") {
-			c.held[pre] = true
-		}
-		if slices.Contains(rc.Change.Actions, "create") {
-			c.created[pre] = true
+		for _, a := range []struct {
+			resource string
+			plan     *accountPlan
+		}{{credentialsAccountResource, &c.credentials}, {intakeAccountResource, &c.intake}} {
+			id, ok := accountOfResource(rc, a.resource)
+			if !ok || id == "" {
+				continue
+			}
+			pre := modulePrefix(rc)
+			a.plan.id[pre] = id
+			if len(rc.Change.Actions) > 0 && !slices.Contains(rc.Change.Actions, "delete") {
+				a.plan.held[pre] = true
+			}
+			if slices.Contains(rc.Change.Actions, "create") {
+				a.plan.created[pre] = true
+			}
 		}
 	}
 	return c
 }
 
-// credentialsAccountOf reads rc as the module's credentials account and
-// returns the account ID it carries. ok is false for every other resource,
+// accountOfResource reads rc as the module's account resource named resource
+// and returns the account ID it carries. ok is false for every other resource,
 // the module's own siblings included: the resource name after the module
-// prefix must be exactly "credentials", counted or not.
-func credentialsAccountOf(rc ResourceChange) (id string, ok bool) {
+// prefix must be exactly that name, counted or not.
+func accountOfResource(rc ResourceChange, resource string) (id string, ok bool) {
 	if rc.Type != "google_service_account" {
 		return "", false
 	}
@@ -1227,14 +1689,36 @@ func credentialsAccountOf(rc ResourceChange) (id string, ok bool) {
 	if !found {
 		return "", false
 	}
-	// "credentials" or "credentials[0]": the name, then the count index when
-	// the address carries one. A different resource of the same module — the
-	// deployer's address ends in ...google_service_account.fugaro_deployer, and
-	// the fixtures' siblings in ...google_service_account.x — is not this one.
-	if name, _, _ := strings.Cut(rest, "["); name != credentialsAccountResource {
+	// "intake" or "intake[0]": the name, then the count index when the address
+	// carries one. A different resource of the same module — the deployer's
+	// address ends in ...google_service_account.fugaro_deployer, and the
+	// fixtures' siblings in ...google_service_account.x — is not this one.
+	if name, _, _ := strings.Cut(rest, "["); name != resource {
 		return "", false
 	}
 	return str(rc.Change.After["account_id"]), true
+}
+
+// cloudRunServiceName is the installation module's Cloud Run service rc names,
+// and "" for everything else: the resource name after the module prefix,
+// counted or not. It is the same read accountOfResource makes one level over,
+// and the two service cases dispatch on it — the credentials service and the
+// intake are one module's two services, and which rules a change is held to
+// may not be a hand-edited label or a container's own args.
+func cloudRunServiceName(rc ResourceChange) string {
+	if rc.Type != "google_cloud_run_v2_service" {
+		return ""
+	}
+	pre := modulePrefix(rc)
+	if pre == "" {
+		return ""
+	}
+	rest, found := strings.CutPrefix(rc.Address, pre+"."+rc.Type+".")
+	if !found {
+		return ""
+	}
+	name, _, _ := strings.Cut(rest, "[")
+	return name
 }
 
 // deployerPlan is what a plan does about the deployer (D75, Task 1.5).
@@ -1289,8 +1773,32 @@ func (c Cover) grant(rc ResourceChange, creates, createdSAIDs, heldSAIDs map[str
 	if why == "" && t == "google_storage_bucket_iam_member" && c.isMCPMember(str(rc.Change.After["member"])) {
 		why = c.mcpauthStoreGrant(rc)
 	}
+	// ... and the account's second grant is one row on the project too: the
+	// state-read bit opens the custom-role cell, and mcpauthStateReadGrant
+	// closes it again to that role, on the project it was declared in, under no
+	// condition. A plan that moved the read to another role or project, or
+	// another role to the account, is refused here even though the row would
+	// otherwise accept it.
+	if why == "" && t == "google_project_iam_member" && c.isMCPMember(str(rc.Change.After["member"])) {
+		why = c.mcpauthStateReadGrant(rc)
+	}
+	if why == "" && t == "google_project_iam_member" {
+		why = c.dynamicSecretsGrant(rc)
+	}
 	if why == "" && t == "google_storage_bucket_iam_member" {
-		why = c.bucketCondition(rc, createdSAIDs, heldSAIDs)
+		// The member says WHICH bucket check this is: the intake's own read is
+		// one object under its own condition (intakeAdminListGrant), and
+		// bucketCondition is what judges every other grant — a launcher's, a
+		// job's, an account's — under the bucket conditions the modules write.
+		// The two are alternatives and not two checks in a row: bucketCondition
+		// refuses every conditioned objectViewer that is not a repository's or
+		// a job's, so an intake grant reaching it would be refused for being
+		// the very thing this check accepts.
+		if c.isIntakeMember(str(rc.Change.After["member"])) {
+			why = c.intakeAdminListGrant(rc)
+		} else {
+			why = c.bucketCondition(rc, createdSAIDs, heldSAIDs)
+		}
 	}
 	if why == "" && t == "google_project_iam_member" && !unknown(rc.Change, "role") && str(rc.Change.After["role"]) == "roles/batch.jobsEditor" {
 		why = c.jobsCondition(rc.Change)
@@ -1320,7 +1828,7 @@ func (c Cover) GrantsNotCovered(p *Plan) []string {
 	add := func(rc ResourceChange, why string) { out = append(out, safetext.Field(rc.Address)+" ("+why+")") }
 	made := creates(p)
 	createdSAIDs, heldSAIDs := planAccounts(p)
-	creds := planCredentialsAccounts(p)
+	creds := planServiceAccounts(p)
 	dep := planDeployer(p)
 	for _, rc := range p.ResourceChanges {
 		acts := rc.Change.Actions
@@ -1503,16 +2011,41 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 			// otherwise be able to grant it a launcher's or an operator's
 			// role.
 			kind = toCatalogCheck
+		case c.isReportsMember(m):
+			// ... and the project's reports job (slice P): its own kind, which
+			// two rows accept — objectViewer on runs/ and objectUser on
+			// reports/, and only under the condition of the one prefix each
+			// holds (reportsReadGrant, reportsWriteGrant) — so every other
+			// grant it is given, and every other role a plan might reach for,
+			// is refused and the update that carries them asks its owner. Read
+			// here, before the review screen's list, for the deployer's
+			// reason: a plan that listed its address would otherwise be able
+			// to grant it a launcher's or an operator's role.
+			kind = toReports
 		case c.isMCPMember(m):
-			// ... and the front door's own account (D920, D935): its own kind,
-			// which one row accepts — objectAdmin on D935's store, and only
-			// through mcpauthStoreGrant, which reads the bucket, the role and
-			// the condition as well as the member — so every other grant it is
-			// given is refused and the update that carries one asks its owner.
+			// ... and the front door's own account (D920, D935, O16b): its own
+			// kind, which two rows accept — objectAdmin on D935's store and the
+			// state group's database read on the coordinator's project, each
+			// narrowed further by mcpauthStoreGrant and mcpauthStateReadGrant,
+			// which read the role, the target and the condition as well as the
+			// member — so every other grant it is given is refused and the
+			// update that carries one asks its owner.
 			// Read here, before the review screen's list, for the deployer's
 			// reason: a plan that listed the front door's address would
 			// otherwise be able to grant it any toAccounts row's role.
 			kind = toMCP
+		case c.isIntakeMember(m):
+			// ... and the secrets intake's own account (D1931, DS2.2): its own
+			// kind, whose three rows — the conditioned write role, the shared
+			// lister and objectViewer on the runs bucket — are narrowed further
+			// by dynamicSecretsGrant and intakeAdminListGrant, so the condition
+			// and the object are what make each grant the modules' own. Every
+			// other grant it is given, an account's role or a person's alike,
+			// is refused and the update that carries one asks its owner. Read
+			// here, before the review screen's list, for the deployer's reason:
+			// a plan that listed the intake's address would otherwise be able
+			// to grant it a launcher's or an operator's role.
+			kind = toIntake
 		case slices.Contains(c.Listed, m):
 			if !strings.HasPrefix(m, "user:") && !strings.HasPrefix(m, "group:") && !strings.HasPrefix(m, "serviceAccount:") {
 				return fmt.Sprintf("grants to %s, which is not a user, group or service account", m)
@@ -1527,6 +2060,23 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 	if unknown(ch, "role") {
 		if kind == toDeployer {
 			return "a computed role to the deployer account: it holds its eight roles, named, and nothing else"
+		}
+		// The dynamic class's two accounts (DS2.2) are refused a computed role
+		// as flatly as the deployer is, and for the same reason: what this
+		// file checks about their grants is the condition, and
+		// dynamicSecretsGrant reads that condition off a role it can name. The
+		// role at stake is this module's own custom role --
+		// google_project_iam_custom_role.intake_secrets -- so a plan that
+		// wrote it as a reference instead of the literal would hand the intake
+		// create, delete and version-add for every container of the project
+		// with no condition to read, under the ordinary confirmation. Both
+		// roles are therefore written as literals in the modules (intake.tf,
+		// credentials.tf), and a plan that computes one asks its owner.
+		if kind == toIntake {
+			return "a computed role to the intake's account: it holds its own two roles, named, and the name-prefix condition on the write role is the whole of what fences it to the delivery grammar (D1931, F30)"
+		}
+		if kind == toCredentials {
+			return "a computed role to the credentials service's account: it holds the bundle's accessor, the dynamic class's prefix accessor and the shared lister, named, and the prefix condition is what narrows the second (D1931, Q6)"
 		}
 		if createsDeployerRole && typ == "google_project_iam_member" {
 			// The plan is creating one of the deployer's roles, so a computed
@@ -1838,6 +2388,131 @@ var tokenClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_/b
 // account's row exists to refuse.
 var conditionSlug = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 
+// dynamicSecretsGrant says why a project grant of the dynamic secret class is
+// not the modules', "" when it is — and "" for every project grant that is not
+// of the class, which is the whole of what this function reads.
+//
+// The class's whole reach in a project is three bindings (intake.tf and
+// credentials.tf, D1931, DS2.2), and each is the one thing a row of grantRules
+// cannot see:
+//
+//   - the intake's write role (IntakeSecretsRole) to the intake's own account,
+//     under the name-prefix fence;
+//   - the credentials service's prefix accessor — a PROJECT grant of
+//     roles/secretmanager.secretAccessor, deliberately not the per-secret
+//     bundle's — to the service's own account, under the same fence byte for
+//     byte: the reader half of the names the intake writes;
+//   - the lister role (secretmanager.secrets.list alone), to either of those
+//     two accounts, under NO condition, because Check 510 (2026-11-12) refused
+//     that call under the fence.
+//
+// What makes this check the fence rather than a formality: without it a plan
+// could grant the write role UNCONDITIONED — create and delete for every secret
+// container of the project — or hand the prefix accessor to an account of its
+// choosing, and both would ride the same one confirmation, since grantRules
+// reads a member kind and a role and says nothing about a condition. The
+// expression is compared against gcp.DynamicSecretNamesCondition() byte for
+// byte, so a narrower or a wider spelling is refused rather than read as nearly
+// right, and a condition known only after apply is refused the way the rest of
+// this file refuses one.
+func (c Cover) dynamicSecretsGrant(rc ResourceChange) string {
+	ch := rc.Change
+	key, ok := c.roleKey(str(ch.After["role"]))
+	if !ok {
+		return ""
+	}
+	write := key == customKey+IntakeSecretsRole
+	lister := key == customKey+SecretListerRole
+	accessor := key == "roles/secretmanager.secretAccessor"
+	if !write && !lister && !accessor {
+		return ""
+	}
+	member := str(ch.After["member"])
+	switch {
+	case write && !c.isIntakeMember(member):
+		return "grants the intake's write role to " + member + ", which is not the intake's own account: create, delete and version-add of the dynamic containers is one account's authority (D1931)"
+	case accessor && !c.isCredentialsMember(member):
+		return "grants a project-wide roles/secretmanager.secretAccessor to " + member + ", which is not the credentials service's own account: the dynamic class's reader is that account and the per-secret bundle stays the only other accessor (D1931, Q6)"
+	case lister && !c.isIntakeMember(member) && !c.isCredentialsMember(member):
+		return "grants the dynamic secrets lister to " + member + ", which is neither the intake's account nor the credentials service's: those two are the only principals that find the dynamic containers by listing (D1931)"
+	}
+	if p := str(ch.After["project"]); !slices.Contains(c.Projects, p) {
+		return "grants " + str(ch.After["role"]) + " for the dynamic secrets in project " + p + ", which is not one of this installation's projects"
+	}
+	conds, why := grantConditions(ch, "a dynamic secrets grant")
+	if why != "" {
+		return why
+	}
+	if lister {
+		if len(conds) != 0 {
+			return "grants the dynamic secrets lister under a condition, which the modules never do: secretmanager.secrets.list is REFUSED under the name-prefix condition (Check 510), so the list is the one half of the fence that carries none"
+		}
+		return ""
+	}
+	if len(conds) == 0 {
+		return "grants " + str(ch.After["role"]) + " for the dynamic secrets with no condition, which is every secret container of the project: the name-prefix fence is the whole of what narrows it to the grammar's names (D1931, F30)"
+	}
+	if str(conds[0]["description"]) != "" {
+		return "a dynamic secrets grant whose condition has a description, which the modules never set"
+	}
+	if title, expr := str(conds[0]["title"]), str(conds[0]["expression"]); title != gcp.DynamicSecretNamesConditionTitle || expr != gcp.DynamicSecretNamesCondition() {
+		return "grants " + str(ch.After["role"]) + " for the dynamic secrets under a condition that is not " + gcp.DynamicSecretNamesConditionTitle + ": " + gcp.DynamicSecretNamesCondition() + " is the fence, byte for byte, and the same one the intake's writes carry (D1931, F30)"
+	}
+	return ""
+}
+
+// intakeAdminListGrant says why a bucket grant to the intake is not the
+// modules', "" when it is (and "" for every bucket grant that is not the
+// intake's): objectViewer on the runs bucket under a condition naming ONE
+// object, the derived admin list `fugaro update` publishes (DS2.0's
+// access.PathAdminList), for the intake's own account. The object is read by
+// name and never by listing — the intake holds no storage.objects.list — and
+// the condition is what makes that true: an objectViewer on the bucket without
+// one reaches every run record, prompt and transcript the installation keeps.
+//
+// The bucket is read from the cover rather than from the grant where it can be
+// (a bucket this run knows), and the expression is built here from that name
+// and the object's fixed key, so a plan that moved the read to another object —
+// the admin list's own neighbours are the run records — is refused.
+func (c Cover) intakeAdminListGrant(rc ResourceChange) string {
+	ch := rc.Change
+	if !c.isIntakeMember(str(ch.After["member"])) {
+		return ""
+	}
+	if role := str(ch.After["role"]); role != "roles/storage.objectViewer" {
+		return "grants the intake's account " + role + " on a bucket, and its one bucket role is objectViewer on the admin list's object (DS2.0)"
+	}
+	conds, why := grantConditions(ch, "a bucket grant")
+	if why != "" {
+		return why
+	}
+	if len(conds) == 0 {
+		return "grants the intake's account objectViewer on the bucket with no condition, which is every run record, prompt and transcript the installation keeps: the derived admin list is ONE object"
+	}
+	if str(conds[0]["description"]) != "" {
+		return "a bucket grant whose condition has a description, which the modules never set"
+	}
+	bucket := str(ch.After["bucket"])
+	if bucket == "" || !slices.Contains(c.Buckets, bucket) {
+		return "grants the intake's account objectViewer on bucket " + bucket + ", which is not the runs bucket of this installation"
+	}
+	want := IntakeAdminListCondition(bucket)
+	if str(conds[0]["title"]) != gcp.IntakeAdminListConditionTitle || str(conds[0]["expression"]) != want {
+		return "grants the intake's account objectViewer on the runs bucket under a condition that is not the derived admin list's one object: " + want + " is that read, byte for byte"
+	}
+	return ""
+}
+
+// IntakeAdminListCondition is the one expression the intake's read of the
+// derived admin list is bound under (intake.tf, DS2.0's access.PathAdminList):
+// ONE object of that bucket and nothing else in it. It is here rather than
+// built twice — in the module and in this check — for the reason every other
+// condition of the modules has its builder beside its check: a test that
+// spells it out again could agree with the module while the check refused it.
+func IntakeAdminListCondition(bucket string) string {
+	return `resource.name == "projects/_/buckets/` + bucket + `/objects/` + access.PathAdminList + `"`
+}
+
 // bucketCondition says why a bucket grant's condition is not the modules'
 // (docs/design/bucket-iam.md H6), "" when it is: objectAdmin carries none; an
 // objectViewer carries none, except an account's, which may carry exactly
@@ -1861,9 +2536,14 @@ var conditionSlug = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 // account carries exactly one repository's builds/<slug>/catalog/ clause
 // (gcp.CatalogRecordsCondition, the job's read-write reach into the records
 // and check state of the repository an entry belongs to, D1148), under that
-// condition's own title and that account alone (catalogRecordsGrant). The
-// modules never set a description, and a condition known only after apply is
-// not covered.
+// condition's own title and that account alone (catalogRecordsGrant) — and the
+// reports job's account carries exactly the two-clause condition of ONE prefix
+// of one of this run's buckets: the runs/ one under objectViewer
+// (gcp.ReportsReadCondition, the records its reports summarise) and the
+// reports/ one under objectUser (gcp.ReportsWriteCondition, the one write that
+// prefix has), each under its own condition title and that account alone
+// (reportsReadGrant, reportsWriteGrant). The modules never set a description,
+// and a condition known only after apply is not covered.
 //
 // What a tokens/<slug>/ clause is *not* checked against is the grant's own
 // repository. A job account's ID is derived and does not read back: a project
@@ -1912,11 +2592,24 @@ func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[st
 			if c.catalogReadGrant(rc, createdSAIDs, heldSAIDs, title, expr) {
 				return ""
 			}
+			if ok, why := c.reportsReadGrant(rc, createdSAIDs, title, expr); ok {
+				return ""
+			} else if why != "" {
+				return why
+			}
 			// The title says which grant this claims to be: when it is the
 			// catalog builder's spelling, the refusal names that grant rather
 			// than the tokens/ ones the expression alone would suggest.
 			if strings.HasPrefix(title, gcp.CatalogReadConditionTitlePrefix) {
 				return "grants objectViewer on the bucket under a build account's builds/catalog/ condition to a member that is not the build account its title names, which the modules never do"
+			}
+			// The reports job's account is admitted by this branch's row for
+			// its runs/ read and for nothing else, so its name under any other
+			// condition is refused HERE, with the grant named: the account
+			// reads its source records and holds no other read of the bucket
+			// (ruling E4).
+			if c.isReportsMember(str(ch.After["member"])) {
+				return "grants objectViewer on the bucket to the project's reports job under a condition that is not its runs/ condition of this run's bucket (gcp.ReportsReadCondition), which is the only objectViewer the modules give it (ruling E4)"
 			}
 			return "grants objectViewer on the bucket to an account under a condition that is not one repository's tokens/ condition of this run's bucket, a project job's whole-tokens/ one, nor a build account's builds/catalog/ one"
 		}
@@ -1936,6 +2629,15 @@ func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[st
 	case role == "roles/storage.objectAdmin" || role == "roles/storage.objectViewer":
 		if len(conds) != 0 {
 			return "grants " + role + " on the bucket under a condition, which the modules never do"
+		}
+		// An unconditioned grant to the reports job is the bucket-wide one:
+		// every other account's objectViewer here is a job reading the whole
+		// bucket, which is the modules' own choice for them, but this account
+		// holds objectViewer under its runs/ condition alone — a whole-bucket
+		// read of it would reach tokens/, cache/, locks/ and the issue store,
+		// none of which the job has any business reading (ruling E4).
+		if c.isReportsMember(str(ch.After["member"])) {
+			return "grants " + role + " on the bucket, unconditioned, to the project's reports job: the modules give it objectViewer under its runs/ condition and objectUser under its reports/ one, and nothing else (ruling E4)"
 		}
 	case role == "roles/storage.objectUser" && person:
 		for _, b := range c.Buckets {
@@ -1961,6 +2663,11 @@ func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[st
 		if c.catalogRecordsGrant(rc, createdSAIDs, title, expr) {
 			return ""
 		}
+		if ok, why := c.reportsWriteGrant(rc, createdSAIDs, title, expr); ok {
+			return ""
+		} else if why != "" {
+			return why
+		}
 		// The catalog check job's account is admitted by this branch's row for
 		// its one records grant and for nothing else, so its name under any
 		// other condition is refused HERE, before the clause loop below: that
@@ -1969,6 +2676,15 @@ func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[st
 		// would otherwise be covered as some repository's own.
 		if c.isCatalogCheckMember(str(ch.After["member"])) {
 			return "grants objectUser on the bucket to the project's catalog check job under a condition that is not one repository's builds/<slug>/catalog/ records condition of this run's bucket (gcp.CatalogRecordsCondition), which is the only objectUser the modules give it (D1148)"
+		}
+		// The reports job's account is admitted by the same row and for the
+		// same reason: objectUser
+		// under reports/ is the ONE write the modules give it, so its name
+		// under a per-repository clause — runs/ included, which is the
+		// launchers' own area — is refused here rather than read as some
+		// repository's job grant by the clause loop below.
+		if c.isReportsMember(str(ch.After["member"])) {
+			return "grants objectUser on the bucket to the project's reports job under a condition that is not its reports/ condition of this run's bucket (gcp.ReportsWriteCondition), which is the only objectUser the modules give it (ruling E4)"
 		}
 		for _, clause := range strings.Split(expr, " || ") {
 			m := accountClause.FindStringSubmatch(clause)
@@ -2081,6 +2797,65 @@ func (c Cover) catalogReadGrant(rc ResourceChange, createdSAIDs, heldSAIDs map[s
 		}
 	}
 	return false
+}
+
+// reportsGrant is the account rule the reports job's two conditions share: the
+// condition's title is titlePrefix + the account's ID, the account is the
+// reports account itself, and the expression is the builder's bytes for one of
+// this run's buckets. It returns whether the grant passed and, when the title
+// claims to be one of the reports ones and the grant is not, why — a sentence
+// the caller uses instead of the generic refusal, since the title says which
+// grant the plan meant to write.
+//
+// The member rule is catalogRecordsGrant's: the account named outright on the
+// plan that carries it after a first deploy, or a computed member that the
+// grant's own module creates in this plan — and it has to be THIS account,
+// since the title is built from it. The account's ID is fixed (the module's
+// variable validation pins it), so unlike a job account's there is nothing to
+// derive from the member. The title is what says whose grant it is: the two
+// expressions name no prefix of their own beyond the objects path, so without
+// it any member could hold one of these two conditions and be covered.
+//
+// The bucket loop is the other half: the same bytes on another bucket are a
+// grant the modules never write, and a grant that carries no bucket of its own
+// yet (a computed one) is accepted only for a bucket of this run.
+func (c Cover) reportsGrant(rc ResourceChange, createdSAIDs map[string]bool, title, expr, titlePrefix string, build func(bucket string) string) (bool, string) {
+	id, ok := strings.CutPrefix(title, titlePrefix)
+	if !ok {
+		return false, ""
+	}
+	if id != ReportsAccountID {
+		return false, "grants a bucket role under the reports job's condition to the account " + id + ", which is not the project's reports account (" + ReportsAccountID + ")"
+	}
+	if !c.isReportsMember(str(rc.Change.After["member"])) &&
+		(!unknown(rc.Change, "member") || !createdSAIDs[modulePrefix(rc)+"|"+ReportsAccountID]) {
+		return false, "grants a bucket role under the reports job's condition to a member that is not the reports account its title names, which the modules never do"
+	}
+	bucket := str(rc.Change.After["bucket"])
+	for _, b := range c.Buckets {
+		if !gcp.ValidBucketName(b) || (bucket != "" && bucket != b) {
+			continue
+		}
+		if expr == build(b) {
+			return true, ""
+		}
+	}
+	return false, "grants a bucket role under the reports job's condition with an expression that is not the reports condition of this run's bucket (" + titlePrefix + ReportsAccountID + ")"
+}
+
+// reportsReadGrant reports whether a bucket grant is the reports job reading
+// runs/ (gcp.ReportsReadCondition, slice P): objectViewer, which the branch
+// this is called from has already established, on exactly runs/ of one of this
+// run's buckets, with the condition title built from the reports account.
+func (c Cover) reportsReadGrant(rc ResourceChange, createdSAIDs map[string]bool, title, expr string) (bool, string) {
+	return c.reportsGrant(rc, createdSAIDs, title, expr, gcp.ReportsReadConditionTitlePrefix, gcp.ReportsReadCondition)
+}
+
+// reportsWriteGrant is reportsReadGrant for the job's other binding: objectUser
+// on exactly reports/ (gcp.ReportsWriteCondition) — the write the job alone
+// holds, and the one row this account may reach beyond the reader's.
+func (c Cover) reportsWriteGrant(rc ResourceChange, createdSAIDs map[string]bool, title, expr string) (bool, string) {
+	return c.reportsGrant(rc, createdSAIDs, title, expr, gcp.ReportsWriteConditionTitlePrefix, gcp.ReportsWriteCondition)
 }
 
 // catalogRecordsGrant reports whether a bucket grant is the project's catalog
@@ -2291,7 +3066,7 @@ func objects(v any) []map[string]any {
 // this project, a private bucket, this run's projects and buckets, the
 // billing account the review showed, and the web key's two API targets. ""
 // when all is as the modules write it.
-func (c Cover) attributes(rc ResourceChange, creates, createdSAIDs, heldSAIDs map[string]bool, creds credentialsPlan) string {
+func (c Cover) attributes(rc ResourceChange, creates, createdSAIDs, heldSAIDs map[string]bool, creds serviceAccountsPlan) string {
 	a := rc.Change.After
 	if a == nil {
 		a = map[string]any{}
@@ -2362,6 +3137,16 @@ func (c Cover) attributes(rc ResourceChange, creates, createdSAIDs, heldSAIDs ma
 			}
 		}
 	case "google_cloud_run_v2_service":
+		// The installation module's two services are two shapes, and which
+		// rules a change is held to is the resource the plan names and nothing
+		// an editor of the variables can reach: intake.tf hardcodes the
+		// intake's account, its args and its environment names, so the change
+		// at that address is the intake's, and everything else falls to the
+		// credentials service's case below — which is what refuses a Cloud Run
+		// service this module does not create.
+		if cloudRunServiceName(rc) == intakeServiceResource {
+			return c.intakeServiceChange(rc, a, rc.Change.AfterUnknown, pre, creds, proj)
+		}
 		// The credentials service (D146, C1.18): the one container image in
 		// the tree that is not a job's. Its container sits one `template`
 		// shorter than a job's (template[0].containers[0]), and it is held to
@@ -2773,18 +3558,119 @@ func (c Cover) pinOK(ref, proj string) bool {
 // is not the module's plan — it runs the bundle-reading image as somebody
 // else's identity — while the unknown-email arm, which only required that the
 // module create *some* account, was satisfied by all three of them.
-func (c Cover) serviceAccount(a map[string]any, unk any, pre string, creds credentialsPlan) string {
+func (c Cover) serviceAccount(a map[string]any, unk any, pre string, plans serviceAccountsPlan) string {
+	return c.accountFrom(a, unk, pre, plans.credentials, "the credentials service", credentialsAccountResource)
+}
+
+// intakeAccount is serviceAccount's check on the other service of the same
+// module (DS2.2, DS4.1): the plan's own google_service_account.intake[0],
+// which intake.tf writes into the template and which the same rules hold.
+//
+// It is a check of its own rather than the credentials service's with another
+// message, because the two accounts are two: admitting the credentials
+// account here would run the intake's container as the identity that reads
+// every model credential in the bundle, and admitting the intake's there would
+// run the credentials service as an account whose whole reach is two
+// conditioned secret roles and one object read.
+func (c Cover) intakeAccount(a map[string]any, unk any, pre string, plans serviceAccountsPlan) string {
+	return c.accountFrom(a, unk, pre, plans.intake, "the secrets intake", intakeAccountResource)
+}
+
+// accountFrom is the check both of the above are: the account a covered
+// service's template names must be the plan's own resource named resource, in
+// this run's project and in the service's module, and the plan must create or
+// hold it (the whole of the reasoning is serviceAccount's comment above).
+func (c Cover) accountFrom(a map[string]any, unk any, pre string, plan accountPlan, what, resource string) string {
 	if unknownAt(unk, "template", 0, "service_account") {
-		if !creds.created[pre] {
+		if !plan.created[pre] {
 			return "runs as an account that is not known and this plan creates none for it"
 		}
 		return ""
 	}
 	email := str(at(a["template"], "service_account"))
 	sm := saMember.FindStringSubmatch("serviceAccount:" + email)
-	id, known := creds.id[pre]
-	if sm == nil || !slices.Contains(c.Projects, sm[2]) || !known || id != sm[1] || !(creds.created[pre] || creds.held[pre]) {
-		return "runs as " + email + ", not the account this module creates for the credentials service (google_service_account.credentials[0])"
+	id, known := plan.id[pre]
+	if sm == nil || !slices.Contains(c.Projects, sm[2]) || !known || id != sm[1] || !(plan.created[pre] || plan.held[pre]) {
+		return "runs as " + email + ", not the account this module creates for " + what + " (google_service_account." + resource + "[0])"
+	}
+	return ""
+}
+
+// intakeServiceChange holds the secrets intake's own service (DS2.2, DS4.1) to
+// the same four rules the credentials service's change is held to, and the
+// whole of the reasoning is that case's comment. Two of the four are the
+// intake's own, and they are why the branch exists:
+//
+//   - the argv. The intake runs the credentials service's own image — the
+//     released binary, one pin — and that image's default command is
+//     `credentials serve`, so the module tells the two services apart by
+//     `args = ["intake", "serve"]` (intake.tf). A change whose args are not
+//     exactly that pair is refused in both directions: none would serve the
+//     credentials service's routes from the intake's own URL, as the account
+//     that writes this installation's dynamic secrets, and anything else would
+//     run code the module does not write. The command is still empty, as the
+//     credentials service's is: the image's entrypoint is the binary.
+//   - the account, which is the intake's own google_service_account.intake[0]
+//     (intakeAccount) and never its sibling's: the two services may not swap
+//     identities, or the intake would run as the account that reads every model
+//     credential in the bundle — the read its own two roles deliberately do not
+//     hold (R3, F30).
+//
+// The environment is the four names the process reads (intakeServiceEnv), held
+// to literal values and no value_source for the credentials service's reason:
+// an environment is the one path a value could reach this process without a
+// Secret Manager read, and this process writes containers it never reads.
+func (c Cover) intakeServiceChange(rc ResourceChange, a map[string]any, unk any, pre string, plans serviceAccountsPlan, proj string) string {
+	if unknown(rc.Change, "invoker_iam_disabled") {
+		return "an IAM setting that is not known"
+	}
+	if a["invoker_iam_disabled"] != false {
+		return "a service that does not require IAM, which would let anyone invoke the account that writes this installation's dynamic secrets"
+	}
+	cs := objects(at(a["template"], "containers"))
+	if unknownAt(unk, "template", 0, "containers") {
+		return "containers that are not known"
+	}
+	if len(cs) == 0 {
+		return "no container"
+	}
+	if why := c.intakeAccount(a, unk, pre, plans); why != "" {
+		return why
+	}
+	for i, m := range cs {
+		cp := []any{"template", 0, "containers", i}
+		for _, attr := range []string{"image", "command", "args"} {
+			if unknownAt(unk, append(slices.Clone(cp), attr)...) {
+				return "a container " + attr + " that is not known"
+			}
+		}
+		img := str(m["image"])
+		if !c.credentialsImageOK(img, proj) {
+			return fmt.Sprintf("runs the image %q, which is not this installation's released pin read back through the pull-through repository (%s/%s/%s/%s/fugaro-<kind>:<version>@sha256:<digest>): the intake is a subcommand of the released binary, so it runs the credentials service's own pin and never an image of its own",
+				img, c.Registry, proj, c.Ghcr, c.Owner)
+		}
+		cmd, args := strList(m["command"]), strList(m["args"])
+		if len(cmd) != 0 || !slices.Equal(args, intakeServiceArgs) {
+			return "a container whose command or args are not the module's: the intake runs the released image with no command of its own and args " +
+				strings.Join(intakeServiceArgs, " ") + ", and a change that named anything else would either serve the credentials service's routes here or run code intake.tf does not write"
+		}
+		if unknownAt(unk, append(slices.Clone(cp), "env")...) {
+			return "an environment that is not known"
+		}
+		for j, e := range objects(m["env"]) {
+			ep := append(slices.Clone(cp), "env", j)
+			if unknownAt(unk, append(slices.Clone(ep), "name")...) || unknownAt(unk, append(slices.Clone(ep), "value")...) ||
+				unknownAt(unk, append(slices.Clone(ep), "value_source")...) {
+				return "an environment variable that is not known"
+			}
+			if n := str(e["name"]); !slices.Contains(intakeServiceEnv, n) {
+				return fmt.Sprintf("an environment variable %q, which the secrets intake does not read: its container sets only %s",
+					n, strings.Join(intakeServiceEnv, ", "))
+			}
+			if refs := objects(e["value_source"]); len(refs) > 0 {
+				return "an environment variable whose value comes from a source rather than the module: this service's environment is the module's own names and nothing else"
+			}
+		}
 	}
 	return ""
 }
@@ -2880,4 +3766,109 @@ func (c Cover) checkSpecs(m map[string]any, unk any, envPath []any, proj string)
 		}
 	}
 	return ""
+}
+
+// dataBearingTypes and nonDataBearingTypes classify every entry of allowedTypes
+// under D1551 (docs/no-prompt-policy/reconciliation.md): whether the objects the
+// type holds are data a delete or a replace would destroy, and — by the type's
+// presence in one of the two — whether anybody has decided the question at all.
+//
+// D1545 makes the managed gate audit-only for CONTENT: a refusal about what a
+// plan contains becomes record-and-warn. D1551 is the exception it leaves, and
+// it is scoped to TYPES: a delete or a replace of a resource whose objects hold
+// data is a loss the record-and-warn rule was never meant to take, so its type
+// still refuses. Data-bearing here is exactly D1551's list of nine.
+//
+// The two tables are stated separately and neither is derived from the other by
+// subtraction, deliberately: a type added to allowedTypes by a later module is
+// in NEITHER table and is therefore UNCLASSIFIED, so DataBearingType answers
+// (false, false) for it and RefusesRemovalType refuses its removal — a type
+// refuses until somebody classifies it on purpose, which is D1551's fail-closed
+// direction (an unclassified type behaves like a data-bearing one rather than a
+// non-data-bearing one). TestEveryAllowedTypeIsClassifiedDataBearingOrNot holds
+// the split: every allowedTypes entry is in exactly one table, the two do not
+// overlap, and the nine data-bearing names are D1551's own.
+var dataBearingTypes = map[string]bool{
+	// The budget ledger's instance: D1551 names it by what it holds (the kill
+	// switches, the caps and the mode the whole installation is bounded by).
+	"google_firebase_database_instance": true,
+	// Artifact Registry holds the images a managed project's jobs run; the
+	// repository is the container the image lives in.
+	"google_artifact_registry_repository": true,
+	// The log bucket and the view over it are where a managed project's logs
+	// are kept — deleting the bucket destroys the records in it.
+	"google_logging_project_bucket_config": true,
+	"google_logging_log_view":              true,
+	// D1551 names the key's container: a secret's values live in its versions,
+	// and deleting the secret destroys them.
+	"google_secret_manager_secret": true,
+	// An identity whose keys and grants are lost with it (D1551).
+	"google_service_account": true,
+	// The bucket and the objects in it: the plan's own storage.
+	"google_storage_bucket":        true,
+	"google_storage_bucket_object": true,
+	// A key's own value is the credential an API call carries.
+	"google_apikeys_key": true,
+}
+
+// nonDataBearingTypes is the other half of D1551's classification: every entry
+// of allowedTypes whose removal destroys no data its objects hold. D1551 groups
+// them — the *_iam_member grant types, the Cloud Run job and service, the
+// scheduler, the compute network, the monitoring and logging plumbing, the
+// billing budget, a custom role, an enabled service and the Firebase project —
+// and each is named here one by one so that the classification of every type is
+// a decision rather than a default.
+var nonDataBearingTypes = map[string]bool{
+	"google_artifact_registry_repository_iam_member": true,
+	"google_billing_budget":                          true,
+	"google_cloud_run_v2_job":                        true,
+	"google_cloud_run_v2_job_iam_member":             true,
+	"google_cloud_run_v2_service":                    true,
+	"google_cloud_run_v2_service_iam_member":         true,
+	"google_cloud_scheduler_job":                     true,
+	"google_compute_firewall":                        true,
+	"google_compute_router":                          true,
+	"google_compute_router_nat":                      true,
+	"google_firebase_project":                        true,
+	"google_logging_log_view_iam_member":             true,
+	"google_logging_project_exclusion":               true,
+	"google_logging_project_sink":                    true,
+	"google_monitoring_alert_policy":                 true,
+	"google_monitoring_notification_channel":         true,
+	"google_project_iam_custom_role":                 true,
+	"google_project_iam_member":                      true,
+	"google_project_service":                         true,
+	"google_secret_manager_secret_iam_member":        true,
+	"google_service_account_iam_member":              true,
+	"google_storage_bucket_iam_member":               true,
+}
+
+// DataBearingType classifies a resource type for D1551: whether its objects
+// hold data a delete or a replace would destroy, and whether the type is
+// classified at all. A type in neither table — one added to allowedTypes by a
+// later module and not yet decided — is (false, false): not data-bearing as far
+// as anyone has said, and unclassified, which the caller reads as the
+// fail-closed direction (RefusesRemovalType refuses it).
+//
+// The question is asked of the TYPE and not of the change, because D1551's
+// ruling is about types: it is what makes a type's removal refuse wherever it
+// appears, whether or not the plan says anything else about it.
+func DataBearingType(t string) (dataBearing, classified bool) {
+	if dataBearingTypes[t] {
+		return true, true
+	}
+	if nonDataBearingTypes[t] {
+		return false, true
+	}
+	return false, false
+}
+
+// RefusesRemovalType is D1551's rule as the delete and replace rule reads it: a
+// removal of a data-bearing type refuses, and so does one of an unclassified
+// type — a type added to allowedTypes later refuses until somebody classifies
+// it on purpose. Every other classified, non-data-bearing type is one the
+// managed gate now takes with a warning (D1545).
+func RefusesRemovalType(t string) bool {
+	bearing, classified := DataBearingType(t)
+	return !classified || bearing
 }

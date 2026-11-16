@@ -411,6 +411,15 @@ export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   // section 5). A screen that draws it compares it or names it from its own
   // table, so it is not text and carries no class.
   'failure_class',
+  // `pr_state` is the state of the pull request a `runs ls` row carries, in the
+  // owner's four words of 2026-11-12 (`live`, `ready`, `stalled`; the fourth,
+  // `orphan`, is one no listing of runs can write -- contract section 5). It is
+  // an enum of the same kind as `status` and `derived` beside it: the CLI folds
+  // it from the run records and writes it from its own table, so a screen that
+  // draws it names it from that table rather than sanitizing it. The console
+  // reads no screen from it yet, and the key is accepted so a document carrying
+  // it decodes instead of reading as the skew state.
+  'pr_state',
   'outcome',
   'auth',
   'deadline',
@@ -691,6 +700,21 @@ function optionalMoneyAt(raw: Record<string, unknown>, key: string, field: strin
   return measured(value)
 }
 
+/** optionalCountAt reads a whole-number key a CLI older than the release that
+ * added it does not write (`max_parallel`, on `total` alone). Absent and `null`
+ * are both *unavailable*: the document has nothing to say about the cap, which
+ * is `n/a` and never a cap of none. A value of the wrong shape -- or a
+ * fractional or negative one, which no count of runs can be -- is a document
+ * this console has not learned to read, refused by name rather than
+ * half-read, the same way `optionalMoneyAt` treats `leased_usd`. */
+function optionalCountAt(raw: Record<string, unknown>, key: string, field: string, where: string): Reading {
+  const at = field === '' ? key : `${field}.${key}`
+  const value = raw[key]
+  if (value === undefined || value === null) return unavailable(`the document has no ${at}`)
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) return refuse('not-a-number', at, where)
+  return measured(value)
+}
+
 // ---------------------------------------------------------------------------
 // The shapes.
 // ---------------------------------------------------------------------------
@@ -732,6 +756,16 @@ export interface TotalsView {
   readonly leasedUsd: Reading
   /** null on the wire = no cap set, which is unavailable and not a cap of zero */
   readonly dailyCapUsd: Reading
+  /** maxParallel is the concurrent-run cap a launch is checked against
+   * (`JSONTotal.MaxParallel`), read as a count rather than as `number | null`
+   * for the reason every other figure here is a reading: a cap nobody read is
+   * `n/a`, and a bar drawn against it is a bar with no limit, never a full one.
+   *
+   * **It is `JSONTotal`'s key and no repository's** (`internal/watch/json.go`:
+   * `JSONRepo` carries none), so `repoAt` answers it with a sentence of its own
+   * rather than with the "the document has no repos[0].max_parallel" reason a
+   * shared read would build. */
+  readonly maxParallel: Reading
   readonly percent: Reading
   readonly burn: BurnView
   readonly kill: KillView | null
@@ -961,12 +995,12 @@ export const TOTAL_KEYS = [
   'daily_cap_usd',
   'percent',
   // Written by the CLI since the release that added it, and declared here as
-  // part of the struct's key set before any view reads it: `TOTAL_KEYS` is
-  // `JSONTotal`'s own keys, pinned against `internal/watch/json.go` by
-  // `schema.test.ts`, so a key the struct writes belongs in this list. The
-  // concurrent-runs cap bar is the view that will read it; a document from an
-  // older CLI carries no such key at all, and `null` is one whose writer had
-  // no cap to report -- never `0`.
+  // part of the struct's key set: `TOTAL_KEYS` is `JSONTotal`'s own keys,
+  // pinned against `internal/watch/json.go` by `schema.test.ts`, so a key the
+  // struct writes belongs in this list. The Live screen's concurrent-runs cap
+  // bar is the view that reads it (`totalsOf`'s `optionalCountAt`); a document
+  // from an older CLI carries no such key at all, and `null` is one whose
+  // writer had no cap to report -- never `0`.
   'max_parallel',
   'burn',
   'kill',
@@ -1050,6 +1084,21 @@ export const REPO_KEYS = [
  * ever issues. A number, never a link: the console builds none from a feed value
  * (design section 5.1 rule 2).
  *
+ * **`mode` and `from` arrived with CLI 0.23.0** (rigor-modes plan T1.7): the
+ * rigor mode a live run resolved and the layer that decided it, which the
+ * runner writes into the run's own registry entry from its record -- the same
+ * pair `runs ls --json`'s `rigor` block carries, and the pair the Live screen's
+ * chip draws today by joining that list to a row by run id
+ * (`shared/rigor.ts`'s `rigorIndex`, `live.test.ts`'s "takes a run's rigor from
+ * the join by id"). It is in the live frame now, so a later console task may read
+ * it here instead of joining; nothing draws it from this row yet, and both keys
+ * are classified already -- `mode` is an enum of the CLI's own table
+ * (`NON_TEXT_STRING_KEYS`) and `from` is the label the graph read's node keys
+ * took -- so accepting them costs the scrub and the sanitizer nothing. They sit
+ * after `auth` in `JSONRun`, as the struct writes them, and both are always
+ * present: a run under rules that predate them writes `-`, which is "not
+ * recorded", never a mode this build picked.
+ *
  * Exported so `schema.test.ts` can pin it against the struct, as it pins
  * `RECORD_KEYS` and `REPO_KEYS`. */
 export const RUN_KEYS = [
@@ -1063,6 +1112,8 @@ export const RUN_KEYS = [
   'models',
   'recipe',
   'auth',
+  'mode',
+  'from',
   'notional',
   'spent_usd',
   'age_seconds',
@@ -1222,6 +1273,19 @@ export const FINISHED_KEYS = [
  * `WIRE_TEXT_CLASSES` because its value is a name of the CLI's own vocabulary
  * and not text a job wrote: it is in `NON_TEXT_STRING_KEYS`, as `status` and
  * `derived` are, so the screen that reads it takes it through that list.
+ *
+ * **`pr_state` arrived with the pull request vocabulary (CLI 0.24.0)**, between
+ * `pr` and `pushed` in the struct, and `runs ls` writes it on every row that
+ * carries a pull request: the state of that pull request in the owner's four
+ * words of 2026-11-12 -- `live`, `ready` or `stalled`; the fourth, `orphan`, is
+ * one no listing of runs can write (contract section 5). It is
+ * `failure_class`'s omission a sixth time, and the pin against the struct is
+ * again what would catch it. The console reads no screen from it yet -- the key
+ * is accepted and dropped, as `plan_task` and `owner_decisions` are -- and it
+ * carries no entry in `WIRE_TEXT_CLASSES` because its value is a word of the
+ * CLI's own table and not text a job wrote: it is in `NON_TEXT_STRING_KEYS`,
+ * beside `status`, `outcome` and `derived`, whose vocabulary it is a second
+ * closed list of.
  */
 export const RECORD_KEYS = [
   'run',
@@ -1261,6 +1325,7 @@ export const RECORD_KEYS = [
   'task_pr',
   'record_pr',
   'pr',
+  'pr_state',
   'pushed',
   'pushed_head',
   'started_at',
@@ -1315,6 +1380,7 @@ function totalsOf(total: Record<string, unknown>, field: string, where: string):
     notionalUsd: readingOf(total, 'notional_usd', `${field}.notional_usd`),
     leasedUsd: optionalMoneyAt(total, 'leased_usd', field, where),
     dailyCapUsd: readingOf(total, 'daily_cap_usd', `${field}.daily_cap_usd`),
+    maxParallel: optionalCountAt(total, 'max_parallel', field, where),
     percent: readingOf(total, 'percent', `${field}.percent`),
     burn: burnAt(required(total, 'burn', field, where), `${field}.burn`, where),
     kill: killAt(total.kill, `${field}.kill`, where),
@@ -1328,6 +1394,12 @@ function repoAt(raw: unknown, index: number, where: string): RepoView {
     slug: stringAt(required(repo, 'slug', field, where), `${field}.slug`, where),
     repo: stringAt(required(repo, 'repo', field, where), `${field}.repo`, where),
     ...totalsOf(repo, field, where),
+    // A repository is a total with two keys in front of it, and the concurrent
+    // cap is not one of them: `max_parallel` is `JSONTotal`'s own
+    // (`internal/watch/json.go`), so a row's is unmeasured for a reason of its
+    // own and never the "the document has no repos[0].max_parallel" sentence
+    // the shared read would build around a key no CLI writes there.
+    maxParallel: unavailable('the concurrent-run cap is the total\'s, and a repository row carries none'),
   }
 }
 
@@ -3296,6 +3368,48 @@ export interface GraphNode {
   readonly state: string
   readonly release: string
   readonly updated: string | null
+  /** GV4.1's four members, absent from a document a CLI older than that
+   * release printed -- which is why each is read as the empty value it means
+   * and never as a missing document (the console accepts any newer CLI, and an
+   * older one is the case the empty values cover).
+   *
+   * `plan` is the plan document a task belongs to, as the coordinator's roadmap
+   * record names it project-wide (`<plan>/<task>` is the node's `id`), and it
+   * is the one member that marks a node as the record's: the coordinator's
+   * stored view draws nodes of the same source and names no plan. `stream` is
+   * the lane the task is drawn in -- the stream of the release it has been
+   * assigned to, or its own plan's for a task nobody has placed -- and `version`
+   * is the plan's own target, which is a display input for a task the record
+   * draws in no box and never a release it is matched to (the record's releases
+   * carry a name, D2114).
+   * `dangling` is the record's own housekeeping, in both the shapes its reader
+   * names: a task whose plan documents have dropped it and a task whose
+   * assignment names a release the record no longer holds, each kept and marked
+   * rather than dropped (D2115). */
+  readonly plan: string
+  readonly stream: string
+  readonly version: string
+  readonly dangling: boolean
+}
+
+/** GraphReleaseBox is one release of the coordinator's roadmap record (§6.22,
+ * GV4.1): the record's own key for it -- which is what a node's `release` is,
+ * so the join from a task to its box happens here and nowhere else -- the stream
+ * it is in, its id, the name its box is drawn with, the state the record calls
+ * it (`open` or `finished`) and its position in its stream, which is the order
+ * the boxes are drawn in (D2113). There is deliberately no version: a stored
+ * release carries a name, and a plan's own `version` is never matched to one.
+ *
+ * A stream is not a document of its own: the record's streams are the `stream`
+ * members its releases carry, so a document that lists no release names no
+ * stream and draws no lane. */
+export interface GraphReleaseBox {
+  readonly key: string
+  readonly stream: string
+  readonly id: string
+  readonly name: string
+  readonly state: string
+  readonly order: number
 }
 
 /** GraphEdge is one relation between two nodes, by `key`. The document defines
@@ -3320,6 +3434,13 @@ export interface GraphView {
   readonly seq: number
   readonly generatedAt: string
   readonly sources: readonly GraphSourceState[]
+  /** The project's release boxes, as the coordinator's roadmap record holds them
+   * (GV4.1). Empty in a document a CLI older than that release printed, and
+   * empty for a project that has never written a release: both are read as "no
+   * box to draw", which is the reading neither of them makes wrong -- a lane is
+   * drawn only for a stream a box names, so a document without them draws
+   * exactly the picture it drew before this member existed. */
+  readonly releases: readonly GraphReleaseBox[]
   readonly nodes: readonly GraphNode[]
   readonly edges: readonly GraphEdge[]
   readonly warnings: readonly string[]
@@ -3364,7 +3485,41 @@ function graphNodeAt(raw: unknown, index: number, where: string): GraphNode {
     state: stringAt(required(node, 'state', field, where), `${field}.state`, where),
     release: stringAt(required(node, 'release', field, where), `${field}.release`, where),
     updated: graphStampAt(node, 'updated', field, where),
+    // GV4.1's members, read as an older CLI's absence means: a document from a
+    // build before the member is a document whose nodes are not the record's.
+    plan: optionalText(node, 'plan', field, where),
+    stream: optionalText(node, 'stream', field, where),
+    version: optionalText(node, 'version', field, where),
+    dangling: optionalBool(node, 'dangling', field, where),
   }
+}
+
+/** graphReleaseAt decodes one release box (§6.22, GV4.1). Its `state` is the
+ * record's own word and is carried as a string rather than closed here, for the
+ * reason a source's own `state` is: a word this build has not learned yet is a
+ * word a screen shows beside the box's name. */
+function graphReleaseAt(raw: unknown, index: number, where: string): GraphReleaseBox {
+  const field = `releases[${String(index)}]`
+  const box = objectAt(raw, field, where)
+  return {
+    key: stringAt(required(box, 'key', field, where), `${field}.key`, where),
+    stream: stringAt(required(box, 'stream', field, where), `${field}.stream`, where),
+    id: stringAt(required(box, 'id', field, where), `${field}.id`, where),
+    name: stringAt(required(box, 'name', field, where), `${field}.name`, where),
+    state: stringAt(required(box, 'state', field, where), `${field}.state`, where),
+    order: intAt(required(box, 'order', field, where), `${field}.order`, where),
+  }
+}
+
+/** graphReleasesAt reads the document's `releases` member, which a CLI older
+ * than GV4.1 does not write at all: absent and null are the empty list they
+ * mean (the console accepts any newer CLI, so an older one must draw the
+ * picture it always drew), while a key that is there and is not an array is
+ * refused by field name like every other list. */
+function graphReleasesAt(raw: Record<string, unknown>, where: string): readonly GraphReleaseBox[] {
+  const value = raw['releases']
+  if (value === undefined || value === null) return []
+  return arrayAt(value, 'releases', where).map((item, index) => graphReleaseAt(item, index, where))
 }
 
 function graphEdgeAt(raw: unknown, index: number, where: string): GraphEdge {
@@ -3398,6 +3553,7 @@ function graphAt(raw: Record<string, unknown>, where: string): GraphView {
     sources: arrayAt(required(raw, 'sources', '', where), 'sources', where).map((item, index) =>
       graphSourceAt(item, index, where),
     ),
+    releases: graphReleasesAt(raw, where),
     nodes: arrayAt(required(raw, 'nodes', '', where), 'nodes', where).map((item, index) =>
       graphNodeAt(item, index, where),
     ),

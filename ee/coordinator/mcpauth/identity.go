@@ -32,8 +32,8 @@ import (
 // `user:` entries admits the people it names and no domain.
 //
 // **The spelling is exact, and it is `internal/cli/roles.go`'s.** That file
-// places a member on these lists with `slices.Contains` (operatorMember,
-// launcherMember) and never folds a case; the one comparison in the CLI that
+// places a member on these lists with `slices.Contains` (adminMember,
+// operatorMember) and never folds a case; the one comparison in the CLI that
 // folds is the local self-removal guard's, which says of itself that it is
 // "not the rule the lists are read or written by". The addresses on both sides
 // are lower-cased where they are derived — `foldEmail` on the token's side and

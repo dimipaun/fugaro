@@ -75,13 +75,13 @@ func declaredFlags(door string) map[string]bool {
 // under it: two doors that lost the same flag at once would leave the two sets
 // equal to each other and empty of it.
 var sharedFlagsFloor = []string{
-	"repo", "firebase-project", "yes", "plan-only", "print-vars", "config-only",
+	"repo", "firebase-project", "plan-only", "print-vars", "config-only",
 	"json", "anchor", "retire", "gcp-project", "region", "name",
 }
 
 // TestBothDoorsTakeTheSharedFlags: the flags that belong to the converge are
 // on both doors, and they are *declared* there rather than hidden: a user
-// reading `fugaro update --help` has to find --repo, --firebase-project and --yes.
+// reading `fugaro update --help` has to find --repo and --firebase-project.
 //
 // The two doors' declared sets are read off the commands and held to each
 // other rather than compared against a list written here. A list cannot say
@@ -173,34 +173,52 @@ func TestAForeignFlagIsHiddenFromItsDoorsHelp(t *testing.T) {
 
 // TestNoDoorsHelpOffersAFlagItRefuses: the flag list is not the whole help. A
 // usage string that says what a flag *does* may not name a flag the door
-// refuses — `fugaro setup --help` went on saying what --non-interactive does
-// "with --forget and --config-only", on the door that rejects --forget by name
-// and hides it from the list beside it. Neither of the checks above can see
-// that: the flag list is not prose, and the Long's rule is about a paragraph
-// that *begins* with the flag.
+// refuses — `fugaro setup --help` went on saying, on the flag that asked for no
+// terminal, what it does "with --forget and --config-only", on the door that
+// rejects --forget by name and hides it from the list beside it. Neither
+// of the checks above can see that: the flag list is not prose, and the Long's
+// rule is about a paragraph that *begins* with the flag.
 //
-// Only --non-interactive is held to it, because it is the one usage string
-// that describes what the named flag does. --provision-batch's and --retire's
-// name --forget among the flags they *exclude*, which is a statement about
-// themselves and true of the converge on either door.
+// That flag is gone (T11, docs/no-prompt-policy), and with it the one usage
+// string that described what the flag it named does, so the rule is held over
+// every flag each door still prints instead. A flag that names another among
+// the flags it *excludes* is allowed: that is a statement about the flag itself
+// and true of the converge on either door (--provision-batch, --coordinator and
+// --retire name --forget that way), so the mention has to stand inside the
+// clause saying what the flag excludes.
 func TestNoDoorsHelpOffersAFlagItRefuses(t *testing.T) {
-	for _, tc := range []struct{ door, foreign string }{
-		{"setup", "--forget"},
-		{"update", "--create-project"},
-		{"update", "--display-name"},
-		{"update", "--parent"},
-		{"update", "--managed"},
-		{"update", "--link-billing"},
-		{"update", "--provision-batch"},
-	} {
-		t.Run(tc.door+" "+tc.foreign, func(t *testing.T) {
-			f := doorCommands[tc.door]().Flags().Lookup("non-interactive")
-			if f == nil {
-				t.Fatal("no --non-interactive")
-			}
-			if strings.Contains(f.Usage, tc.foreign) {
-				t.Errorf("fugaro %s's --non-interactive help names %s, which the door refuses:\n%s", tc.door, tc.foreign, f.Usage)
-			}
+	for _, tc := range []struct {
+		door string
+		d    convergeDoor
+	}{{"setup", setupDoor}, {"update", updateDoor}} {
+		t.Run(tc.door, func(t *testing.T) {
+			doorCommands[tc.door]().Flags().VisitAll(func(f *pflag.Flag) {
+				if f.Hidden {
+					// The other door's flag: its usage is never printed, and the
+					// exclusion its own text may carry is not this door's offer.
+					return
+				}
+				for _, ff := range tc.d.foreign {
+					name := "--" + ff.name
+					for off, rest := 0, f.Usage; ; {
+						i := strings.Index(rest, name)
+						if i < 0 {
+							break
+						}
+						at, end := off+i, off+i+len(name)
+						next := byte(' ')
+						if end < len(f.Usage) {
+							next = f.Usage[end]
+						}
+						// A longer flag's name is not this one's mention: the
+						// update door's --check must not answer for --check-github-app.
+						if strings.ContainsRune(" ,).", rune(next)) && !strings.Contains(f.Usage[:at], "xcludes") {
+							t.Errorf("fugaro %s's --%s help names %s, which the door refuses, outside the clause naming what it excludes:\n%s", tc.door, f.Name, name, f.Usage)
+						}
+						off, rest = end, f.Usage[end:]
+					}
+				}
+			})
 		})
 	}
 }
@@ -217,9 +235,13 @@ func TestNoDoorsHelpOffersAFlagItRefuses(t *testing.T) {
 // contradicted setup's Long two paragraphs above it, on the same screen. Both
 // doors accept --anchor and run it through the same door-independent path
 // (runAnchor, before any door-specific step), so the exception is the reader's
-// own door, not update's.
+// own door, not update's. That sentence went with the flag (T11,
+// docs/no-prompt-policy), so the positive half is held door-independently now:
+// a usage string that names a door at all names the one the reader is at, and
+// none is left naming a command it should not.
 func TestNoDoorsFlagHelpNamesTheOtherDoor(t *testing.T) {
 	other := map[string]string{"setup": "update", "update": "setup"}
+	own := 0
 	for door, build := range doorCommands {
 		cmd := build()
 		cmd.Flags().VisitAll(func(f *pflag.Flag) {
@@ -229,19 +251,27 @@ func TestNoDoorsFlagHelpNamesTheOtherDoor(t *testing.T) {
 				// sentence, not this.
 				return
 			}
-			for _, pattern := range []string{"fugaro " + other[door], other[door] + " --"} {
-				if strings.Contains(f.Usage, pattern) {
-					t.Errorf("fugaro %s's --%s help names the other door (%q), and the reader is at %s:\n%s", door, f.Name, pattern, door, f.Usage)
+			for _, name := range []string{door, other[door]} {
+				for _, pattern := range []string{"fugaro " + name, name + " --"} {
+					if !strings.Contains(f.Usage, pattern) {
+						continue
+					}
+					if name == other[door] {
+						t.Errorf("fugaro %s's --%s help names the other door (%q), and the reader is at %s:\n%s", door, f.Name, pattern, door, f.Usage)
+						continue
+					}
+					own++
 				}
 			}
 		})
-		// The positive half, on the clause that was wrong: the exception names
-		// this door, and the test above only says the other one is absent.
-		if f := cmd.Flags().Lookup("yes"); f == nil {
-			t.Errorf("fugaro %s has no --yes to hold to its own door", door)
-		} else if !strings.Contains(f.Usage, door+" --anchor") {
-			t.Errorf("fugaro %s's --yes help does not name its own door in the --anchor exception, which both doors accept:\n%s", door, f.Usage)
-		}
+	}
+	// The rule has something to hold: a usage string that names a door names
+	// this one. The update door's --check is the one that does ("the checkout
+	// is PATH (update --check [PATH])"), and a tree where no flag named its own
+	// door would leave the half above saying nothing (the sentence that used to
+	// carry it was --yes's).
+	if own == 0 {
+		t.Error("no flag's help names the door the reader is at: nothing here holds the rule this test is about")
 	}
 }
 
@@ -313,7 +343,7 @@ func TestTheDoorIndependentRefusalsNameTheReadersDoor(t *testing.T) {
 // Terraform's state, which a first run has nothing to do.
 func TestSetupRefusesAnUpdateOnlyFlag(t *testing.T) {
 	firstRunEnv(t)
-	out, errOut, err := executeStdin(t, "", "setup", "--forget", "--yes")
+	out, errOut, err := executeStdin(t, "", "setup", "--forget")
 	if err == nil {
 		t.Fatal("fugaro setup --forget exited 0")
 	}
@@ -347,7 +377,7 @@ func TestUpdateRefusesASetupOnlyFlag(t *testing.T) {
 		{"provision-batch", "--provision-batch"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			out, errOut, err := executeStdin(t, "", "update", tc.arg, "--yes")
+			out, errOut, err := executeStdin(t, "", "update", tc.arg)
 			if err == nil {
 				t.Fatalf("fugaro update %s exited 0", tc.arg)
 			}

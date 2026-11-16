@@ -228,7 +228,7 @@ func (r *initRun) writeAnchor(a *anchorEdit, env initflow.Env, planOnly bool) (b
 	case r.gateStandsIn() && initflow.PersonAtTheTerminal(r.conditions()):
 		fmt.Fprintf(r.w, "  %s\n", initflow.OwnerProceeded())
 	case env.Yes:
-		fmt.Fprintln(r.w, "  confirmed by --yes")
+		fmt.Fprintln(r.w, "  confirmed by this run's own answer")
 	case !env.Interactive:
 		fmt.Fprint(r.w, addLine)
 		return false, nil
@@ -344,7 +344,7 @@ func anchorProblemText(repo, wf, kind, lcPath string, reasons []string, customBa
 		steps = append(steps, fmt.Sprintf("remove base_images.%s from %s (keep a backup)", kind, where))
 	}
 	if kind != "" {
-		steps = append(steps, fmt.Sprintf("fugaro image refresh --repo %s --workflow %s in the checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it verifies this release's %s base image and pins it by digest through the installation's remote repository, points the daily image check job at it and rebuilds the image)", repo, wf, kind))
+		steps = append(steps, fmt.Sprintf("fugaro image refresh --repo %s --workflow %s in the checkout, in your own terminal window (never in a coding agent's session; it verifies this release's %s base image and pins it by digest through the installation's remote repository, points the daily image check job at it and rebuilds the image)", repo, wf, kind))
 	} else {
 		steps = append(steps, fmt.Sprintf("fugaro image build --repo %s --workflow %s", repo, wf))
 	}

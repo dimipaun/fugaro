@@ -117,7 +117,7 @@ func startEmulator() (stop func(), err error) {
 		return nil, err
 	}
 	emuLog = logf.Name()
-	cmd := exec.Command(bin, "emulators:start", "--only", "database", "--project", project, "--non-interactive")
+	cmd := exec.Command(bin, "emulators:start", "--only", "database", "--project", project)
 	cmd.Dir = dir
 	cmd.Stdout, cmd.Stderr = logf, logf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

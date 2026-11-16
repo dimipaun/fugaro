@@ -99,6 +99,10 @@ func doctorLayerChecks(ctx context.Context, lc *localcfg.Config, root string, rf
 		// pinned workflow was then judged by no line at all while its job runs
 		// an entry only the published node holds.
 		cat, catErr := effectiveCatalog(ctx, env)
+		// The same node answers the map, and its read error is reported once
+		// (imageCatalogUnreadCheck): a map this machine could not read is the
+		// file's own or none, which is the keep rule's answer for it.
+		imap, _ := effectiveImageMap(ctx, env)
 		out = append(out, imageCatalogUnreadCheck(lc, rf.Cfg, catErr)...)
 		// A nil catalog is two states, and the checks below judge a workflow
 		// differently in each: a catalog nobody read leaves the workflows it
@@ -114,8 +118,8 @@ func doctorLayerChecks(ctx context.Context, lc *localcfg.Config, root string, rf
 		// same condition imageCatalogUnreadCheck states, and the two are read
 		// one after the other so they cannot drift.
 		catUnknown := catErr != nil && lc.ImageCatalog == nil
-		out = append(out, imageConfigChecks(ctx, env, rb, slug, rf.Cfg, rf.Res, cat, catUnknown)...)
-		out = append(out, catalogImageChecks(ctx, env, rb, slug, rf.Cfg, cat, catUnknown)...)
+		out = append(out, imageConfigChecks(ctx, env, rb, oi.Repo, slug, rf.Cfg, rf.Res, cat, imap, catUnknown)...)
+		out = append(out, catalogImageChecks(ctx, env, rb, oi.Repo, slug, rf.Cfg, cat, imap, catUnknown)...)
 	}
 	return out
 }
@@ -363,6 +367,74 @@ func imageCatalogUnreadCheck(lc *localcfg.Config, cfg *config.Config, catErr err
 		Fix:     "check that the credentials doctor uses can read the budget database, then run doctor again"}}
 }
 
+// imageConfigWorkflows are the workflows an image-config-<name> check is
+// emitted for: every workflow of cfg except the two a per-workflow build
+// record is never compared for.
+//
+// A workflow that builds from a dockerfile: is never one of them: the hash the
+// check compares covers the Dockerfile's own blob, which needs a tree this run
+// does not have.
+//
+// A workflow the project's image catalog speaks for is not one either
+// (catalogImageChecks judges those by their entry's record): the per-workflow
+// record compared here is not the image its jobs start on, and the fix the
+// check would name, `fugaro image build --workflow`, builds an image those
+// jobs never run. Whether the catalog speaks for it is workflowCatalogEntry's
+// own answer, over the catalog and map the caller resolved.
+//
+// One predicate, two callers, so that the checks `doctor --offline` records a
+// skip for are the checks that exist: the offline run cannot read the record
+// (that is what the skip says), but which workflows have one at all is a fact
+// of the file on disk, and this is where both runs read it.
+func imageConfigWorkflows(cfg *config.Config, cat *config.Catalog, imap map[string]string, catUnknown bool, repo string, be catalog.Backend) []string {
+	var out []string
+	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
+		w := cfg.Workflows[name]
+		if w.Dockerfile != "" {
+			continue
+		}
+		if _, ok := workflowCatalogEntry(cat, imap, catUnknown, repo, w, be); ok {
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
+// offlineImageConfigWorkflows are the image-config-<workflow> skips `fugaro
+// doctor --offline` records for a resolved checkout: imageConfigWorkflows'
+// own list, over the selection this run can read.
+//
+// That selection is the catalog and the repo-to-image map this machine's own
+// project config states — the two that win over the published node's wherever
+// they are stated (localcfg's keep rules, D1140 and D1906) and that cost no
+// bucket — and the backend the catalog's docker rule is read against. A config
+// that states neither is read as no selection and not as an unknown, which is
+// the choice the skip list turns on: offline cannot tell a project with no
+// catalog from one whose catalog lives in the node, and the unknown reading
+// would leave every baked workflow unjudged and unsaid — the silent pass the
+// classes exist to prevent — where this one still names a check the ordinary
+// run may hold. The node's half of the selection is the residual, and it is
+// reported rather than guessed at.
+func offlineImageConfigWorkflows(ctx context.Context, root string, cfg *config.Config, lc *localcfg.Config) []string {
+	cat, imap, be := (*config.Catalog)(nil), map[string]string(nil), catalog.CloudRun
+	if lc != nil {
+		cat, imap, be = lc.ImageCatalogEffective(nil), lc.ImageMapEffective(nil), catalog.Backend(lc.Backend())
+	}
+	// The repository's own name is read only for a map that could point at an
+	// entry (the only thing that reads it), and under the guard every other
+	// consumer of it applies (doctorLayerChecks): the checkout's raw
+	// .git/config is not trusted by name, and a name this run cannot establish
+	// leaves the map half unjudged, which keeps the skip.
+	repo := ""
+	if len(imap) > 0 {
+		if oi, ok := readOrigin(ctx, root); ok && !oi.Rewritten {
+			repo = oi.Repo
+		}
+	}
+	return imageConfigWorkflows(cfg, cat, imap, false, repo, be)
+}
+
 // imageConfigChecks names each workflow (with a generated image) whose build
 // record's image-config hash is not the hash of what it resolves to now:
 // typically a profile's base or image settings changed.
@@ -376,22 +448,19 @@ func imageCatalogUnreadCheck(lc *localcfg.Config, cfg *config.Config, catErr err
 // `fugaro update`, and sending the owner back to it for an image it does not
 // build is a loop they have already run.
 //
+// The workflows it judges are imageConfigWorkflows', which is the same list
+// `doctor --offline` records its skips from: the flag says which checks it did
+// not run, so it has to name the checks that exist and no others.
+//
 // cat is the catalog the job spec resolves (doctorLayerChecks), never the
 // local config's alone: a workflow the published node's catalog speaks for is
 // as much the catalog's as one this file's own catalog names. catUnknown is
 // the other half of that argument (workflowCatalogEntry): a project with no
 // catalog at all is one whose pinned workflows are compared here, because
 // their jobs run the derived image — so the two nils are not one state.
-func imageConfigChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, slug string, cfg *config.Config, res *config.Resolution, cat *config.Catalog, catUnknown bool) []doctorCheck {
+func imageConfigChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, repo, slug string, cfg *config.Config, res *config.Resolution, cat *config.Catalog, imap map[string]string, catUnknown bool) []doctorCheck {
 	var out []doctorCheck
-	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
-		w := cfg.Workflows[name]
-		if _, ok := workflowCatalogEntry(cat, catUnknown, slug, w, catalog.Backend(env.lc.Backend())); ok {
-			continue
-		}
-		if w.Dockerfile != "" {
-			continue // its hash covers the Dockerfile's blob, which needs a tree
-		}
+	for _, name := range imageConfigWorkflows(cfg, cat, imap, catUnknown, repo, catalog.Backend(env.lc.Backend())) {
 		data, _, err := rb.Read(ctx, imagecheck.RecordKey(slug, name))
 		if err != nil {
 			continue
@@ -405,9 +474,13 @@ func imageConfigChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, slu
 			continue
 		}
 		reason := imageConfigReason(res, name)
+		// The daily image check was this warning's rebuild path, and D1900
+		// disabled it with every other repo-level image command: what is left is
+		// the images stage of `fugaro update`, which rebuilds a repository's own
+		// image when its base image moves and no other setting reaches it.
 		out = append(out, doctorCheck{ID: "image-config-" + name, Severity: "warning",
 			Problem: fmt.Sprintf("workflow %s's job image was built from other image settings than it resolves to now (%s)", name, reason),
-			Fix:     "the daily image check rebuilds it; to do it now: fugaro image build --workflow " + name})
+			Fix:     "fugaro update rebuilds this repository's own image when its base image moves; the daily image check that rebuilt it on any other settings change is disabled"})
 	}
 	return out
 }
@@ -432,10 +505,10 @@ func imageConfigChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, slu
 // warning below (catalogEntryRecord). An entry that is a prebuilt image has
 // nothing to build, and what it is judged on instead is the smoke of the
 // reference it names (prebuiltSmokeChecks).
-func catalogImageChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, slug string, cfg *config.Config, cat *config.Catalog, catUnknown bool) []doctorCheck {
+func catalogImageChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, repo, slug string, cfg *config.Config, cat *config.Catalog, imap map[string]string, catUnknown bool) []doctorCheck {
 	var out []doctorCheck
 	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
-		e, ok := workflowCatalogEntry(cat, catUnknown, slug, cfg.Workflows[name], catalog.Backend(env.lc.Backend()))
+		e, ok := workflowCatalogEntry(cat, imap, catUnknown, repo, cfg.Workflows[name], catalog.Backend(env.lc.Backend()))
 		if !ok {
 			continue
 		}
@@ -544,9 +617,9 @@ func prebuiltSmokeChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, s
 }
 
 // workflowCatalogEntry is the catalog entry the workflow w runs, and whether
-// the project's image catalog decides its image at all. It is catalog.Applies
-// — the predicate the deploy-time job spec (internal/infra) and the launch's
-// image rule (run.go) ask — asked of the same catalog those two resolve
+// the project's image catalog decides its image at all. It asks the one
+// resolver the deploy-time job spec (internal/infra) and the launch's image
+// rule (run.go) ask (catalog.JobImage), of the same catalog those two resolve
 // (effectiveCatalog, handed in as cat), so doctor judges the workflows the
 // deployed job's own image came from.
 //
@@ -557,7 +630,7 @@ func prebuiltSmokeChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, s
 //
 // The two nils are not one state, and the difference is what the job spec
 // resolves. A project with no catalog at all is the plain one:
-// internal/infra's catalogJobImage and run.go's catalogDockerAsk both stop at
+// internal/infra's jobImage and run.go's catalogDockerAsk both stop at
 // cat == nil, so every workflow's job runs the derived image, which is the
 // image the per-workflow comparison is about, and a pin names an entry no
 // catalog holds (a configuration mistake the job spec's own rule and
@@ -568,50 +641,42 @@ func prebuiltSmokeChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, s
 // the comparison would then name a build of an image its jobs never run — the
 // loop imageConfigChecks' own comment is about.
 //
-// The question asked in that state is therefore MayApply's and not Applies':
-// whether the catalog could speak for this workflow at all, without asking it
-// the one thing that is not known. A workflow Applies refuses only for want of
-// a default is the catalog's here, because the node nobody read may mark one,
+// The question asked in that state is therefore MayApply's and not the
+// resolver's: whether the catalog could speak for this workflow at all,
+// without asking it the one thing that is not known. A workflow the resolver
+// would give no entry for want of a default is the catalog's here, because the
+// node nobody read may mark one,
 // and the entry returned is the pin's name by itself (no source) for a pin,
 // and nothing at all for one the catalog would have chosen — the caller judges
 // what it can of that, which is the entry it was given or nothing.
-func workflowCatalogEntry(cat *config.Catalog, catUnknown bool, slug string, w config.Workflow, be catalog.Backend) (config.Entry, bool) {
-	var c config.Catalog
-	if cat != nil {
-		c = *cat
+func workflowCatalogEntry(cat *config.Catalog, imap map[string]string, catUnknown bool, repo string, w config.Workflow, be catalog.Backend) (config.Entry, bool) {
+	sel, err := catalog.JobImage(catalog.ImageRequest{
+		Catalog:   cat,
+		ImageMap:  imap,
+		Canonical: repo,
+		Workflow:  w,
+		Backend:   be,
+	})
+	if err == nil && sel.Source == catalog.SourceCatalog {
+		return sel.Entry, true
 	}
-	if !catalog.Applies(c, w) {
-		// The one clause of the predicate that reads the catalog is the
-		// default entry, and that is exactly what a catalog nobody read does
-		// not answer: a workflow that names nothing runs the default's image
-		// when the node marks one, so it is left to the catalog too
-		// (MayApply is the half of the predicate that reads no catalog).
-		if catUnknown && catalog.MayApply(w) {
-			return config.Entry{}, true
-		}
+	switch {
+	case err != nil:
+		// A configuration the resolver refuses — a pin or a map entry the
+		// catalog does not hold, a docker-tagged entry on a backend with no
+		// daemon — is a mistake the job spec's own rule and `fugaro validate`
+		// report, and there is no entry here to judge an image of.
 		return config.Entry{}, false
+	case cat == nil && catUnknown && catalog.MayApply(w):
+		// A project whose images nobody read may hold the entry a pin names,
+		// one the map points this repository at, or the default a workflow
+		// that names nothing runs, so the workflow is left to the selection
+		// after all — MayApply is the half of the predicate that reads
+		// neither the catalog nor the map. The pin is the one name this state
+		// has, and whether the node holds it is exactly what nobody read.
+		return config.Entry{Name: w.ImageName}, true
 	}
-	if w.ImageName != "" {
-		e, ok := catalogEntryNamed(&c, w.ImageName)
-		switch {
-		case ok:
-			return e, true
-		case cat == nil && catUnknown:
-			return config.Entry{Name: w.ImageName}, true
-		}
-		// A pin the catalog does not hold is a configuration mistake the job
-		// spec's own rule and `fugaro validate` report, and there is no entry
-		// here to judge an image of.
-		return config.Entry{}, false
-	}
-	if cat == nil {
-		return config.Entry{}, catUnknown
-	}
-	choice, err := catalog.Choose(catalog.Job{Catalog: c, Repos: []catalog.Repo{{Slug: slug, Needs: w.Needs}}, Backend: be})
-	if err != nil {
-		return config.Entry{}, false
-	}
-	return choice.Entry, true
+	return config.Entry{}, false
 }
 
 // catalogEntrySlugs are the repository slugs entry e's build record may be

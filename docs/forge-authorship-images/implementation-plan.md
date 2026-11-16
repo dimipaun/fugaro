@@ -11,7 +11,7 @@ from [reconciliation-image-setup.md](reconciliation-image-setup.md), which check
 **The owner answered D600–D649 on 2026-10-29: every answer is the recommendation except D618**
 (shared images across repos, scoped to repos with an identical resolved dependency set), which
 slice C below follows (C7, C8). Its tension T6 (open item O6) was resolved on 2026-10-29: shared
-images stay under user control, a divergence is proposed and confirmed, never forked silently. Answers are not task approvals: slice A still needs the owner's explicit go. Every task
+images stay under user control, a divergence is proposed and confirmed, never forked silently. Answers are not task approvals: slice A still needed the owner's explicit go, **given on 2026-11-16 with every other agent task of this folder; owner-run A5 (Check 230), C8b/C8c (unscheduled, D650), and tasks that wait on a merged dependency (D3 and D4 on ee-reorg's coordinator move, B3 on its own first reconciliation) stay gated, as the plan already says.** Every task
 names the decisions it rests on. Tasks marked **GATED** are not planned in detail
 because their decision may remove them.
 
@@ -254,9 +254,9 @@ the stage runs (Constraint 1). Commits are now born stamped.
 
 #### A5. Check 230 (OWNER-RUN)
 
-- **State:** Kept — the code it measures is merged (A3), the check has not run, and its entry is
-  unwritten: `docs/gcp-live-checklist.md` has no Check 230 section and X1, its only writer, is not
-  merged.
+- **State:** Kept — the code it measures is merged (A3) and its entry is written now that X1 has
+  landed (`90cfd931`, #2331), so what is left is the owner's run: `docs/gcp-live-checklist.md`'s
+  Check 230 section reads NOT RUN.
 
 - **Measures:** on a sandbox GitHub repository and a sandbox Bitbucket repository, with
   `git.author: launcher` committed: the run's boundary commits show the launcher as author and the
@@ -273,8 +273,11 @@ the stage runs (Constraint 1). Commits are now born stamped.
 
 #### B1. One list of forge kinds
 
-- **State:** Kept — there is no `internal/gitprov/kinds.go`: `internal/gitprov/gitprov.go` still
-  declares the two kinds and `internal/gitprov/providers/providers.go` reads them ad hoc. Nothing in
+- **State:** Merged — `internal/gitprov/kinds.go` (the two constants and `Kinds`), pinned by
+  `internal/gitprov/kinds_test.go` (`TestKindsListedOnce`, `TestEveryKindSwitchIsInventoried`). It
+  landed after the census was read, in `9af1fd50` (#2332), whose subject is `gitprov: one list of
+  forge kinds (B1)` and whose body's first bullet is the **Commit** line below;
+  [b1-already-landed.md](../forge-authorship-images-b1-already-landed.md) is the evidence. Nothing in
   the image setup plan creates or moves a forge kind.
 
 - **Decisions:** D610, D611.
@@ -331,8 +334,11 @@ from it. **Not sized here** beyond: L, security-sensitive throughout.
 
 #### C1. `fugaro project sync` for Bitbucket, with `--check`
 
-- **State:** Kept — `internal/gitprov/bitbucket/` has no `list.go`, and `newProjectSyncCmd`
-  (`internal/cli/project_enroll.go`) offers the GitHub App's installed repositories only.
+- **State:** Merged — `internal/gitprov/bitbucket/list.go` lists a workspace's or project's
+  repositories, `newProjectSyncCmd` (`internal/cli/project_enroll.go`) offers them behind
+  `--bitbucket` (narrowed by `--bitbucket-project`), and `--check` reports without writing; pinned by
+  `internal/cli/project_sync_bitbucket_test.go` and `internal/gitprov/bitbucket/list_test.go`. It
+  landed after the census was read, in `d37c8af6` (#2428, 2026-11-12).
 
 - **Decisions:** D623, D625.
 - **Files:** `internal/cli/project_enroll.go`, `internal/gitprov/bitbucket/list.go` (new),
@@ -470,12 +476,13 @@ from it. **Not sized here** beyond: L, security-sensitive throughout.
 
 #### C6. SECURITY.md: baked source and registry readers
 
-- **State:** Kept in part — the shared-key half of the commit is merged with C8a (`SECURITY.md`'s
-  "Shared images: what the key protects, and what it does not", pinned by
-  `internal/cli/docs_security_test.go` `TestSecurityMdStatesTheModelAndItsLimits`); the baked-source
-  half is written nowhere — the design's own "C6 is not written" line predates C8a's paragraph and
-  still holds for that half. Whether to re-point it at the catalog's images is
-  [reconciliation-image-setup.md](reconciliation-image-setup.md) §5, D651.
+- **State:** Merged — the shared-key half with C8a (`SECURITY.md`'s "Shared images: what the key
+  protects, and what it does not", pinned by `internal/cli/docs_security_test.go`
+  `TestSecurityMdStatesTheModelAndItsLimits`), and the baked-source half as
+  [reconciliation-image-setup.md](reconciliation-image-setup.md) §5's D651 answered it on
+  2026-11-16 -- re-pointed at the catalog's images and at a baked catalog entry, in `SECURITY.md`'s
+  "The source an image carries, and who can read it", pinned by
+  `internal/cli/docs_registry_readers_test.go`.
 
 - **Files:** `SECURITY.md`, `website/content/security.md` (regenerated),
   `internal/cli/docs_registry_readers_test.go` (new).
@@ -728,10 +735,11 @@ from E0.
 
 ### X1. The live-check entries
 
-- **State:** Kept — `docs/gcp-live-checklist.md` has no Check 230, 231, 232, 234 or 235 section, and
-  `internal/cli/docs_forge_checks_test.go` does not exist. The image setup plan reserves Checks
-  500–509 and secrets-brokering's dynamic-delivery holds Checks 510–519; 230–249 stays this
-  folder's.
+- **State:** Merged — `docs/gcp-live-checklist.md` carries a Check 230, 231, 232, 234 and 235
+  section, each NOT RUN, pinned by `internal/cli/docs_forge_checks_test.go`
+  (`TestDocsForgeChecksWritten`, `TestDocsForgeChecksNotRun`). It landed after the census was read,
+  in `90cfd931` (#2331, 2026-11-11). The image setup plan reserves Checks 500–509 and
+  secrets-brokering's dynamic-delivery holds Checks 510–519; 230–249 stays this folder's.
 
 - **Files:** `docs/gcp-live-checklist.md` (Checks 230, 231, 232, 234, 235, each NOT RUN, with its
   prerequisites, the exact commands and the task that makes it runnable),
@@ -776,7 +784,7 @@ from E0.
 | D649 | A2b |
 | D647 | A3, A4 |
 | D648 | A5 (Check 230's squash step) |
-| D650–D653 | written 2026-11-10 by [reconciliation-image-setup.md](reconciliation-image-setup.md), **awaiting the owner's answers**; they name what C8b/C8c become (D650), whether C6 is re-pointed at the catalog's images (D651), whether baked repositories replace C5a–C5c (D652), and what defines a shared image if C8b/C8c are built (D653) |
+| D650–D653 | written 2026-11-10 by [reconciliation-image-setup.md](reconciliation-image-setup.md), **answered 2026-11-16, each as recommended**; they name what C8b/C8c become (D650), whether C6 is re-pointed at the catalog's images (D651), whether baked repositories replace C5a–C5c (D652), and what defines a shared image if C8b/C8c are built (D653): C8b/C8c stay unscheduled, C6's first half is re-pointed at the catalog's images and baked catalog entries and the task stays, C5a–C5c stay, and a shared dependency-layer image is a catalog entry keyed by the dependency set |
 
 ## Parallel execution
 

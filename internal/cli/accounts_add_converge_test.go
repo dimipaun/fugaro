@@ -206,7 +206,7 @@ func TestAccountsAddReplacesTheTokenOnRerun(t *testing.T) {
 	r.add(t, "team-a", "--repos", "owner/repo-a")
 
 	rotated := strings.Repeat("m", 48)
-	out, _, err := executeStdin(t, rotated+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a", "--yes")
+	out, _, err := executeStdin(t, rotated+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a")
 	if err != nil {
 		t.Fatalf("the second run: %v\n%s", err, out)
 	}
@@ -456,7 +456,7 @@ func TestAccountsAddFailsWhenAStageIsLeftForTheOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a", "--yes")
+	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a")
 	if err == nil {
 		t.Fatalf("the command exited 0 with a stage left for the owner:\n%s", out)
 	}

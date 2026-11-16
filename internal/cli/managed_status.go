@@ -92,8 +92,12 @@ import (
 // keeps the directory a person opened rather than one the console resolved on
 // its way here. The roles a request for this document needs are the runs
 // bucket's viewer and the project's viewer, the ones every read of the marks
-// already takes. And it is not a tamper-proof trail: the bucket is unversioned
-// and any project-level storage writer can rewrite an object in it.
+// already takes. And it is not a tamper-proof trail: any project-level storage
+// writer can rewrite an object in it. The versioning D1545 gave the bucket
+// (bucket.tf) makes an erasure leave a noncurrent version instead, and the
+// noncurrent rule purges the prefixes the bucket's own rules empty and never
+// fugaro/, where the record lives — harder to erase than it was, and still not a
+// boundary.
 
 // managedStatusNow is the day the trail is read about and the clock the read's
 // own two-day window is measured from. It is a package variable for the reason
@@ -217,12 +221,15 @@ type managedStatusAudit struct {
 	// Command is the command as a person types it ("fugaro config publish"),
 	// which is the record's own name for it and not its argv.
 	Command string `json:"command"`
-	// Verdict is the gate's own answer about the judged plan: "admitted" or
-	// "refused". A refusal is a record an owner reads most, so it is shown
-	// beside an admission and never instead of it.
+	// Verdict is the gate's own answer about the judged plan: "admitted",
+	// "warned" or "refused". "warned" is D1545's middle answer — the gate
+	// recorded the plan's content findings and the write went through — and the
+	// findings themselves are not carried here (the member's own comment). A
+	// refusal is a record an owner reads most, so it is shown beside an
+	// admission and never instead of it.
 	Verdict string `json:"verdict"`
-	// Identity is the account the write ran as: the deployer account for a
-	// managed apply, the operator's own elsewhere.
+	// Identity is the account the write ran as: the command's own answer where
+	// it names one, and otherwise the credentials in force (the operator's own).
 	Identity string `json:"identity"`
 	// PlanDigest is the sha256 of the exact document the gate judged, so a
 	// reader can compare the record against a plan rather than believe a
@@ -456,9 +463,9 @@ func managedStatusTrail(ctx context.Context, s *storage.Service, bucket string, 
 		At:      found.At.UTC().Format(time.RFC3339),
 		Command: safetext.Field(found.Command),
 		Verdict: string(found.Verdict),
-		// The record is an object somebody else can rewrite — the bucket is
-		// unversioned and any project-level storage writer reaches it — so its
-		// text is bounded on the way into the document. The digest is not: the
+		// The record is an object somebody else can rewrite — any project-level
+		// storage writer reaches it, versioned or not — so its text is bounded
+		// on the way into the document. The digest is not: the
 		// parser refuses a record whose digest is not the sha256 it claims.
 		Identity:   safetext.Field(found.Identity),
 		PlanDigest: found.PlanDigest,

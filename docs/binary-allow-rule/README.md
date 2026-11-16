@@ -1,13 +1,13 @@
 # The project's binary allow rule, and a status label for a run no review answered
 
-**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
-approved.** The two changes below are settled down to the shape of a node member, the moment a run
+**Status: design answered by the owner 2026-11-04, with D990, D992 and D993 ruled 2026-11-15; AR0
+and AR2 landed (#2202, #2204); the owner approved ALL binary-allow-rule tasks (AR0–AR7) on
+2026-11-15.** The two changes below are settled down to the shape of a node member, the moment a run
 is refused, the stage that publishes it and the vocabulary of one wire enum, but this folder writes
 no code: it is the input the tasks are written from, and the answers of 2026-11-04 are recorded in
 [reconciliation.md](reconciliation.md) §2. The slot is in
-[implementation-plan.md](implementation-plan.md) §"The recommended slot" — **0.20.0**, because
-0.15.0, 0.16.0 and 0.17.0 have shipped (the newest notes in `docs/releases/`), 0.18.0 and 0.19.0 are
-spoken for, and this design is two works, one of them a policy-node version bump —
+[implementation-plan.md](implementation-plan.md) §"The recommended slot" — **0.26.0**, the
+owner's scope for AR1, which carries the policy-node version bump from 7 to 8 —
 and the one-line answer is that **the status label lands first** (it is independent of everything
 else and closes a lie today) and **the allow rule's runner half follows it**, with its publish
 riding the **managed** policy-publish gate
@@ -73,7 +73,7 @@ reads the two ends of the run's diff. Both are in spec.md §4.2 and §9's residu
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The rule's shape (paths, size, and the three things it deliberately is not), who may write it, where finalize checks it, what the agent is told, how `fugaro update` publishes it, the residual and what to do about it, the status label and its wire, and the threat model. The design in full; the tasks in [implementation-plan.md](implementation-plan.md) are written to it |
-| [reconciliation.md](reconciliation.md) | Findings F1–F14 against the code on `main`, the owner decisions **D981–D997** — **D983–D989, D991 and D997 answered by the owner 2026-11-04**, the rest recommendations — each with the recommendation and the cost of the alternative, the open items O1–O3, and what this design does not decide. **D997 was the one left open on purpose** (whether a binary the coder commits itself is refused) and the answer is yes. **Where it disagrees with [spec.md](spec.md), it wins** |
+| [reconciliation.md](reconciliation.md) | Findings F1–F15 against the code on `main`, the owner decisions **D981–D997** — **D983–D989, D991 and D997 answered by the owner 2026-11-04**, the rest recommendations — each with the recommendation and the cost of the alternative, the open items O1–O3, and what this design does not decide. **D997 was the one left open on purpose** (whether a binary the coder commits itself is refused) and the answer is yes. **Where it disagrees with [spec.md](spec.md), it wins** |
 | [implementation-plan.md](implementation-plan.md) | Tasks NV0–NV2 (the label) and AR0–AR7 (the rule), the external dependencies E1–E3, the files the sibling designs share, the order, and the recommended slot |
 | [README.md](README.md) | This file: what is being asked, what it adds, and where it sits in the release |
 

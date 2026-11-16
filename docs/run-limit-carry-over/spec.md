@@ -195,15 +195,44 @@ failing — the node absent, the call erroring — and it is not the same as a l
 ledger cannot be read is charged the **largest** amount it could have been holding, that run's own per-run cap
 (the effective `PerRunUSD` and its token twin), so a chain never reads an unreadable predecessor as cheaper
 than that run may have been. There is no separate "unknown" state carried into `remaining` and no launch that
-has to be refused for it: the charge is a number, it favours the cap, and a caller may only raise it
-(`--used-*`, below). It is the sweeper's own direction applied to a read that failed rather than to a lease
-that was never released.
+has to be refused for it: where the cap exists the charge is a number, it favours the cap, and a caller may
+only raise it (`--used-*`, below); where the installation sets no cap for the dimension the figure is reported
+**unmeasured** and the launch continues (below), never charged zero and never stopped for the read. It is the
+sweeper's own direction applied to a read that failed rather than to a lease that was never released.
+
+**Where the installation sets no per-run cap for a dimension, that dimension is reported unmeasured and the
+launch proceeds** (D1049). The per-run token cap is optional policy with no database counterpart
+(`budget.max_run_tokens` for the installation, `agent.max_run_tokens` in a repository's `fugaro.yaml`), so the
+*token* dimension has no cap on an installation that sets none, and the rollover deletes a run's ledger node
+eight days after its last share (`internal/budget/rollover.go`, `PruneAfter`) while the run's record stays — so
+an unreadable ledger is the ordinary case for an old chain, not a failure. D1049 gives a read that cannot be
+charged no state to stop at: the run whose ledger could not be read is named, the dimension is reported
+unmeasured, and the launch continues. What the chain is charged for it is **the sum the read could
+establish** — the runs whose ledgers it did read, and nothing at all where every ledger of the chain is gone —
+so a chain the rollover has pruned entirely hands the run that continues it the **chain's own limit** for that
+dimension, the figure the budget-off arm of the same code names for the same reason. The honest cost is that
+the chain's limit for that dimension **is not enforced for that continuation**: what bounds the run is its own
+`--max-*` under the policy, and not what the chain had left. The installation's own per-run cap for the
+dimension (`budget.per_run_usd`, `budget.max_run_tokens`) is what brings the dimension back under the read's
+figure, since the unreadable run is then charged the cap (above); a raise of the chain's limit in the run that
+began it (D1061) is the other thing a caller can do; and a `--used-*` of the caller's own is the one way to
+*tighten* a dimension the engine could not measure, charged as it is stated (D1048). Nothing durable replaces
+the pruned ledger today: the token members a record carries are the gateway's cache sums, which are not the
+input and output tokens a cap counts, and the per-model counts that would carry a total (`model_tokens`) have
+no writer in the runner — which is why the chain's figure for such a run is what the read could establish
+rather than that run's own total (F8).
 
 **The caller never supplies `used`** (D1048). A caller-supplied usage number is accepted only as a *further
 tightening*: a `--used-usd X` that is **larger** than what the engine read raises the charge, and one that is
 smaller is refused, naming both figures. That keeps the one honest use of the knob — an orchestrator that
 knows about spend the chain's own ledgers do not, such as a sibling chain — without giving a caller a way to
-understate.
+understate. **The figure a caller may not go under is the floor the read establishes, and not only the amount
+it measured.** Where a dimension comes back unmeasured the figure is nothing to read, but the read still read
+something: the runs it *could* read, in that dimension, are a sum no stated figure may go below, since an
+understatement there takes the charge under a figure the database itself holds (T1). A figure at or above that
+sum *is* the charge, and bounds the chain by the caller's own account — the one way the knob tightens a
+dimension the engine could not measure. What a launch with no stated figure carries there is the chain's own
+limit (above), and that is not a figure a caller states.
 
 **The engine applies `remaining`, not `limit`, to the run.** The **launcher** computes the chain's `remaining`
 before the launch — it is the identity that can read the chain's ledgers (§3) — and it rides the launch's
@@ -214,10 +243,17 @@ the token cap and the clock follow the same figure. Nothing in the gateway chang
 it is simply handed a smaller one (D1059).
 
 **A chain that has spent its limit is raised by rewriting the root launch's task, with its reason recorded**
-(D1061, F22). No new command, no new node and no operator-only write path: a chain limit lives in the root
-run's `task.json` `overrides` (§2), so raising it is an edit of that stored task — the root run's record under
-`runs/$slug/` — carrying the reason for the raise, which the record keeps the way its policy record already
-keeps the reason a looser value was dropped (`policy.ignored`, `internal/runstore/runstore.go:865`). **Said
+(D1061, F22). No new node and no operator-only write path: a chain limit lives in the root run's `task.json`
+`overrides` (§2), so raising it is an edit of that stored task, and the reason for the raise is written into
+that run's own record under `runs/$slug/` — the `chain_raises` member of §7 — which keeps it the way the
+record already keeps the reason a looser policy value was dropped (`policy.ignored`,
+`internal/runstore/runstore.go:865`). **The supported path is one command, `fugaro budget chain raise` (§7):**
+it makes those two writes through the runs-bucket access a launcher already holds, refuses a raise with
+no reason and a figure that is not above the one in force, and opens neither the budget database nor the
+published policy, because a chain has no cap of its own for it to move. It is a **raise**, so it carries the
+fence every other raise form carries (D1542, D1552): a coding agent's session is refused and handed the
+invocation its owner runs themselves, which the no-prompt policy states as a rule of its own — no raise form
+is open to a session (`docs/no-prompt-policy/implementation-plan.md:56`, T3). **Said
 plainly, because the alternative is a claim this design cannot support: a launcher can do the same.** It holds
 `objectUser` on the `runs/` and `tokens/` prefixes (F21) and can rewrite that task exactly as an operator can,
 so the rule is
@@ -237,7 +273,12 @@ caches (F17). The writeback does not touch the ledger. Three cases, and the desi
    and halts at once.
 2. **The ledger cannot be read** — the container died between the halt and the release and the node is gone,
    or the read itself fails. The usage is **never zero** (D1049): the run is charged its **full per-run cap**,
-   the most it could have been holding (§4), and a caller's `--used-*` may only raise that charge.
+   the most it could have been holding (§4), and a caller's `--used-*` may only raise that charge. Where the
+   installation sets **no** per-run cap for a dimension there is no figure to charge that run with, and the
+   answer is **not** a refusal either: that dimension is reported **unmeasured**, the launch proceeds, and the
+   chain is charged the sum the read could establish and nothing else (§4). This is the node-gone case the
+   rollover makes ordinary — a run's ledger is deleted eight days after its last share while its record stays
+   (`internal/budget/rollover.go`, `PruneAfter`) — so it is the case an old chain meets on every continuation.
 3. **The halt was the cap itself, mid-call.** This is where the "$5 held, $0.25 needed" message comes from —
    and that message is **not about spend**. It is the per-run cap compared against the lease's **outstanding**
    amount: `run cap %s reached (%s held, %s needed)`, where "held" is `Reserved − Released`
@@ -300,10 +341,12 @@ block for a halted run, because a halted run's first question is "how much is le
 | `task.json` (`schemas/task.schema.json`) | `overrides.max_usd`, `.max_tokens`, `.max_time`, `.max_review_rounds` | the runner at bootstrap |
 | `runs show --json` (new document) | `chain`, `enforced`, `limits[]` (`dimension`, `limit`, `used`, `remaining`, `source`) | the console, the coordinator, an orchestrator |
 | `fugaro run --json`'s reply (`launchResult`) | `chain` (the root run id), `enforced` and `limits[]`, the same shape | the console's launch reply decoder, which ignores keys it does not know |
+| `result.json` (`schemas/result.schema.json`) | `chain_raises[]`: `by`, `at`, `reason`, and `limits[]` (`dimension`, `from`, `to`), one entry per raise of that chain — written on the **root** run's record, where the chain's limit is (D1046) | nothing yet: the raise is kept for the reader the reason exists for, and no command prints it back — `runs show` prints the chain and what is left of its limit, and nothing else of the record (L9 adds the write and leaves the read-back surface open) |
 
-**`result.json` does not change at all** (D1051): the ledger carries the token total, so nothing is added to
-a run's record for this work. No member is renamed, retyped or removed, and no version is bumped
-(`internal/task/task.go:880`, `schemas/result.schema.json`).
+**`result.json` gains that one member and nothing else** (D1051, D1061). The token dimension is the ledger's
+figure, so *that* adds nothing to a run's record — the only addition is `chain_raises`, which no chain read is
+built from and no figure of the budget is computed out of. No member is renamed, retyped or removed, and no
+version is bumped (`internal/task/task.go:880`, `schemas/result.schema.json`).
 
 ## 8. Rigor modes and the cloud senior reviewer
 
@@ -391,7 +434,9 @@ by anything here.
 
 - It adds **no** new ceiling, cap or default of its own: every number is one the owner, the team or the
   branch already set, and a chain limit exists only when a launch sets one (§2).
-- It adds **no node, no rule and no wire field** to the budget database or to `result.json` (D1046, D1051).
+- It adds **no node, no rule and no wire field** to the budget database — and to `result.json`, whose
+  additions §7 lists with the rest of this design's, it adds one: `chain_raises`, the log of the raises L9
+  makes, which no read is built from (D1046, D1051, §7).
 - It does not touch the gateway's ledger, the lease, the sweeper or the budget rules (D1059).
 - It does not make the console pass a limit; the console's never-table keeps `--total-timeout` and gains
   nothing (D1055).

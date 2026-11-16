@@ -20,9 +20,11 @@ import (
 )
 
 // The published policy node an older Fugaro wrote, carried over to the version
-// this one reads, IN PLACE: the policy stage of `fugaro update`'s converge and
-// the policy step of `fugaro upgrade`. Both call the same two functions, so
-// the diff one shows and the write the other makes cannot drift.
+// this one reads, IN PLACE: the policy stage of `fugaro update`'s converge, and
+// the one door into the two functions below since U4 of
+// docs/plugin-user-scope/implementation-plan.md retired the second command. The
+// diff a check shows and the write an apply makes are those functions', so the
+// two cannot drift.
 //
 // It exists for the owner's rule of 2026-10-30 — `fugaro update` is the whole
 // upgrade, and it works perfectly. Before this, a bump of projectpolicy.Version
@@ -93,6 +95,15 @@ type policyMigration struct {
 	// a plan that read them again afterwards would be comparing two states.
 	recorded string
 
+	// importCloneURLs is the published node's clone_urls block, when this
+	// machine's file states none of its own and there is a file to write it
+	// into (D842, D844). It is nil in the common case: an installation whose
+	// file already states the block, and one whose node carries none — the
+	// case D843 words, where no default is seeded into a file nobody wrote.
+	// A plan that holds it writes the file and not the node, which is why it
+	// is read here beside the plan rather than discovered at the write.
+	importCloneURLs map[string]string
+
 	// firstPublish is whether the write this plan holds is the project's FIRST
 	// published node: nothing is at the path today, so the write creates it
 	// rather than replacing one. The distinction is not decoration — every other
@@ -116,8 +127,8 @@ func policyNodeUnreachable(lc *localcfg.Config) bool {
 // policyMigrationNotOurs is the answer policyMigrationFor gives for a database
 // the shared ownership predicate refuses (budgetDBUnadopted): there is nothing
 // to migrate HERE, and the callers turn it into the skip their own vocabulary
-// has — `fugaro update`'s stage into a skipped stage, `fugaro upgrade` into a
-// skipped step — rather than into an error, because the rest of the run has
+// has — a skipped stage rather than a refusal — rather than into an error,
+// because the rest of the run has
 // nothing to do with that database, exactly as the rules stage's skip is not a
 // refusal.
 //
@@ -142,8 +153,7 @@ func (e *policyMigrationNotOurs) Error() string { return e.reason }
 // the budget database, and the rules stage being skipped over a database the
 // installation never adopted does not stop this one from migrating the node in
 // it — the read, the ETag and the write all land in that same database, and
-// `fugaro upgrade` reaches this function with no rules stage in front of it at
-// all.
+// this stage reaches this function whatever the stage in front of it answered.
 //
 // That gate is the rules stage's own, the same function and not a second one
 // worded alike (the second review's finding: the two drifted, and a database the
@@ -243,6 +253,7 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 		return nil, true, policyMigrationRefusal(derr)
 	}
 	m.node = old
+	m.importCloneURLs = cloneURLsToImport(lc, old, configPath)
 	m.drift = policyConfigDrift(lc, old)
 	if len(m.drift) > 0 {
 		if err := publishPlanFor(ctx, db, lc, m, base, old); err != nil {
@@ -279,7 +290,7 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 			return nil, true, err
 		}
 	}
-	if !writes && m.generations == nil && m.record == "" {
+	if !writes && m.generations == nil && m.record == "" && len(m.importCloneURLs) == 0 {
 		return nil, true, nil
 	}
 	return m, true, nil
@@ -293,10 +304,11 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 // A member written but stating no value is not one of them:
 // ImageCatalogEffective is nil for a config that names no catalog and for one
 // that writes an empty catalog, which publishes no member at all (D1156),
-// ImageMapEffective is nil for the same two spellings of the map (D1906), and
-// OrchestratorEffective is nil for a block that sets no key (SetsNothing). The
-// publish would create a policy that admits nothing and carry none of them with
-// it.
+// ImageMapEffective is nil for the same two spellings of the map (D1906),
+// CloneURLsEffective is nil for them too (a block with no entry publishes no
+// member, SD5), and OrchestratorEffective is nil for a block that sets no key
+// (SetsNothing). The publish would create a policy that admits nothing and
+// carry none of them with it.
 //
 // The rule is the publisher's own rows, one member at a time: whatever
 // policyNodeForPublish would put in the node because the file states it is a
@@ -327,6 +339,23 @@ func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
 	if lc.TriageEffective(nil) != nil {
 		out = append(out, "the triage switch")
 	}
+	// The pools' subscription switch joins them (F22, D1636): it is read off
+	// the node and nowhere else — a run asks the published policy whether it
+	// may spread a project across subscriptions at all — so a project whose
+	// config writes it and which never published a node has left the owner's
+	// own act in a file no run reads.
+	if lc.SubscriptionSpreadEffective(nil) != nil {
+		out = append(out, "the pools' subscription switch")
+	}
+	// The clone URLs join them (SD5, D842): the URL a run clones from is the
+	// member the runner computes from the published node, and no job's
+	// environment carries it, so a project whose config writes the block and
+	// which has never published a node has left where its runs clone from in a
+	// file no run reads — the state a cluster with no browser console could not
+	// leave at all before this release (G3).
+	if lc.CloneURLsEffective(nil) != nil {
+		out = append(out, "the clone URLs")
+	}
 	return out
 }
 
@@ -338,8 +367,15 @@ func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
 // and the shared config refuses the map and the switches outright. The triage
 // switch joins them (D1854) for the half a repository cannot write: a
 // repository's own file states the switch for itself, and the answer a
-// project's runs read is the node's. So each of them is a member a project that
-// has never published a node has left in a file no run reads.
+// project's runs read is the node's. The clone URLs join them (SD5, D842) for
+// the whole of the member: the runner computes a run's clone URL from the
+// published node, so the block the local config writes reaches no run until the
+// node carries it. The pools' subscription switch joins them last (F22, D1636)
+// for the same reason, one over: whether a run may spread a project across two
+// or more subscriptions at all is the node's answer, and a written true is what
+// makes a pool of two or more subscriptions serve anything. So each of them is
+// a member a project that has never published a node has left in a file no run
+// reads.
 //
 // The members that are not node-only are not this stage's to publish here: a
 // budget ceiling, a base branch or a model list reaches every run through the
@@ -453,8 +489,8 @@ func policyMigrationRefusal(err error) error {
 // the gate's own and are not asked again. It is a parameter and not a field of
 // the migration for the reason initflow.Managed gives for its own: a caller
 // that could assert an admission could assert it for a node nobody judged, and
-// `fugaro upgrade` — the other door into this function, and the one with no
-// gate at all — passes false and gets exactly the code that was here before.
+// a caller under no gate passes false and gets exactly the code that was here
+// before.
 // The answer about the runs in flight is not among the confirmations admitted
 // stands in for: it is asked before any of them and whatever admitted the
 // write, because it is about the runs that read the node and not about who
@@ -462,7 +498,7 @@ func policyMigrationRefusal(err error) error {
 //
 // managed is whether the project's marks say it is managed, and it is the
 // reading the rest of init makes for that question (initGate.underway, the same
-// answer askBuild's ConfirmsByGate and the gate's own stages take). It changes
+// answer the gate's own stages take in initflow.GateStandsIn). It changes
 // the confirmations of the owner's own session: a person at a real terminal is
 // not asked to type the project's name to publish the node, so the typed
 // confirmation below is replaced by a note of what is written — for a node that
@@ -478,9 +514,11 @@ func policyMigrationRefusal(err error) error {
 // (inflightAnswer): the update door passes inflightQuiet, because the owner's
 // ruling of 2026-11-09 is that `fugaro update` is safe while runs are in flight
 // and never tells anybody to wait, the doors that reach the stage without being
-// the update door (`fugaro setup`, `fugaro accounts add`) pass inflightManaged
-// and keep the answer of 2026-11-06, and `fugaro upgrade` passes inflightAsk
-// and keeps its refusal. It is a parameter and not a field of the migration for
+// the update door (`fugaro setup`, and the composite doors running a named
+// subset of the stages: `fugaro accounts add`, `accounts rm`, `accounts alias`)
+// pass inflightManaged
+// and keep the answer of 2026-11-06. It is a parameter and not a field of the
+// migration for
 // the reason the paragraph above gives for admitted: a door is a fact of the
 // command, not of the node.
 //
@@ -490,7 +528,19 @@ func policyMigrationRefusal(err error) error {
 // below are scoped to is one reading and cannot disagree with itself. `fugaro
 // upgrade`, which has no initRun, passes the same two facts its own agent
 // refusal was made from.
-func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMigration, yes bool, w io.Writer, admitted, managed bool, c initflow.Conditions, inflight inflightAnswer) error {
+//
+// ownerHand is whether the command this run is converging for already IS the
+// owner's hand at their own terminal (initOptions.ownerHand): `fugaro accounts
+// alias set` is refused in a coding agent's session before it reads anything, so
+// the account choice its publish carries was made by the owner typing that
+// command, and the typed name below would be a second confirmation of the same
+// decision — which D2097 does not have (F10, D1540). It waives that confirmation
+// for the account-choice widening and for nothing else
+// (policyMigration.accountChoiceOnly): a ceiling raised in the same publish is
+// the separate decision D846 reserves for the project's own hand. It is a
+// parameter for the reason admitted is: a door is a fact of the command, not of
+// the node.
+func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMigration, yes bool, w io.Writer, admitted, managed, ownerHand bool, c initflow.Conditions, inflight inflightAnswer) error {
 	// The in-flight answer is about the NODE this run rewrites, and it is asked
 	// before the branch below: D854's re-seed carries a pending migration with it
 	// (confirmReseed writes the re-seeded file and then the migrated node), and a
@@ -512,6 +562,20 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 		return m.confirmReseed(ctx, cmd, restoreAsk(c, ask), yes, w, admitted)
 	}
 	if !m.writesNode() {
+		if len(m.importCloneURLs) > 0 {
+			// The import is a write of its own, and the only one this run
+			// makes: the block has been readable to this operator inside the
+			// published node and nowhere else, so it is confirmed the way the
+			// node's own write is rather than riding on the one-line record
+			// that would otherwise be this run's whole work (spec §6.4).
+			if err := confirmStageWrite(cmd, m.lc, restoreAsk(c, ask), yes, policyCloneURLsWhat); err != nil {
+				return err
+			}
+			if err := m.recordGeneration(ctx, cmd); err != nil {
+				return err
+			}
+			return m.importPolicyNodeCloneURLs(w)
+		}
 		// The one write of this run is the generation record in this machine's
 		// file: there is no node to rewrite and so nothing for the operator to
 		// confirm by name — the file is backed up and replaced the same way, and
@@ -562,7 +626,7 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 		// (confirmEmptyAllowList, #1674).
 		//
 		// The condition is the gate's own reading of who is there
-		// (initflow.PersonAtTheTerminal, ConfirmsByGate's condition half): a
+		// (initflow.PersonAtTheTerminal, GateStandsIn's condition half): a
 		// real terminal, no marker, and none of --ask, --non-interactive and
 		// --json. The terminal is the load-bearing half, because a pipe and a
 		// coding agent's tool call carry no marker and a managed project is
@@ -593,8 +657,16 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 			if stdinIsTerminal(cmd.InOrStdin()) {
 				fmt.Fprintf(w, "%s\n", why)
 			}
-			if err := confirmTypedStrict(cmd, m.lc, why, what); err != nil {
-				return err
+			// The account the owner just chose with the command they typed is
+			// the one widening this run may carry without the typed name: for
+			// that door the sentence above IS the report, and the confirmation
+			// would be a second one for a decision already made at this same
+			// terminal (D2097, F10). Everything else — a ceiling raised, a
+			// removed member, a first node — keeps it.
+			if !(ownerHand && m.accountChoiceOnly(loosening)) {
+				if err := confirmTypedStrict(cmd, m.lc, why, what); err != nil {
+					return err
+				}
 			}
 		} else if err := confirmStageWrite(cmd, m.lc, restoreAsk(c, ask), yes, what); err != nil {
 			return err
@@ -603,7 +675,14 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 	if err := m.write(ctx); err != nil {
 		return err
 	}
-	return m.recordGeneration(ctx, cmd)
+	if err := m.recordGeneration(ctx, cmd); err != nil {
+		return err
+	}
+	// The import rides on the confirmation the node's write has just taken:
+	// this run is publishing the node the local config states, and the block's
+	// home is now the file, so it is written there in the run the operator
+	// confirmed rather than left for the next one.
+	return m.importPolicyNodeCloneURLs(w)
 }
 
 // inflightAnswer is what a door does about the runs a node write finds in
@@ -612,11 +691,14 @@ type inflightAnswer int
 
 const (
 	// inflightAsk refuses the write without --yes and tells the operator to
-	// wait for the runs. It is the door that is NOT the whole upgrade —
-	// `fugaro upgrade`'s own policy step, the only caller left — where the
-	// person is in the middle of something else and a node of theirs is being
-	// published: the refusal costs them nothing the HARD RULE promises them,
-	// because the one command the upgrade is stays `fugaro update`.
+	// wait for the runs: the answer of the door that is NOT the whole upgrade,
+	// where the person is in the middle of something else and a node of theirs
+	// is being published, and the refusal costs them nothing the HARD RULE
+	// promises them because the one command the upgrade is stays `fugaro
+	// update`. No door passes it since U4 retired the second one — the answer
+	// is kept, and kept first, because it is the enum's zero value: a door that
+	// forgot to pass one refuses the write rather than making it, and of the
+	// two that is the safe side.
 	inflightAsk inflightAnswer = iota
 	// inflightQuiet writes and says nothing about the runs. `fugaro update` is
 	// the whole upgrade, and the owner's ruling of 2026-11-09 is that it is
@@ -636,7 +718,7 @@ const (
 	// refusal (refuseRunsInFlight), because every ruling widens the person's
 	// session and never a marker's. And it is `fugaro update`'s alone, which is
 	// why it is not what every door into the stage passes (inflightManaged):
-	// `fugaro setup` and `fugaro accounts add` reach this stage too, and the
+	// `fugaro setup` and the composite doors reach this stage too, and the
 	// ruling is about the one command the whole upgrade is.
 	inflightQuiet
 	// inflightManaged is the answer the doors that are not `fugaro update` had
@@ -648,18 +730,20 @@ const (
 	// a project that is not managed and a coding agent's session included, is
 	// refused without --yes.
 	//
-	// It is `fugaro setup`'s and `fugaro accounts add`'s: those doors converge
-	// the same stages (initStages) and neither is the update door, so neither
-	// gets the update door's answer, and the update door's own line
+	// It is `fugaro setup`'s and the composite doors' — `fugaro accounts add`,
+	// `accounts rm` and `accounts alias` converge the same stages through
+	// stagesNamed (spec §2.5 rule 2) and none of them is the update door, so
+	// none gets the update door's answer, and the update door's own line
 	// (announceRunsInFlight) is not one of theirs. What they keep is what they
 	// had, which is this.
 	inflightManaged
 )
 
 // refuseRunsInFlight is the guard a door holds before a node write: a run that
-// is mid-flight read the policy this write replaces, so `fugaro upgrade`'s own
-// step refuses it without --yes, and --yes is the way past it once the operator
-// has read what the write does (the same reading `publish --delete` has). A run
+// is mid-flight read the policy this write replaces, so the door that is not
+// the whole upgrade refused it without --yes, and --yes was the way past it
+// once the operator had read what the write does (the same reading `publish
+// --delete` has). A run
 // that writes no node — D854's re-seed alone, or the generation record alone —
 // asks nothing: no run in flight reads this machine's file.
 //
@@ -702,7 +786,7 @@ func (m *policyMigration) refuseRunsInFlight(ctx context.Context, yes bool, answ
 	if yes {
 		return nil
 	}
-	return userErr("%d run(s) are in flight: a run that is mid-flight read the policy this migration would rewrite, so it is refused without --yes; wait for them (fugaro runs ls), or pass --yes once you have read what it does", inflight)
+	return userErr("%d run(s) are in flight: a run that is mid-flight read the policy this migration would rewrite, so it is refused while they run; wait for them (fugaro runs ls), then repeat it", inflight)
 }
 
 // writesNode is whether this run's confirmation ends in a write to the published
@@ -757,6 +841,8 @@ func (m *policyMigration) doneDetail() string {
 		return fmt.Sprintf("re-seeded %s from the published policy node", m.path)
 	case m.writesNode():
 		return fmt.Sprintf("migrated the published policy from version %d to %d in place", m.from, projectpolicy.Version)
+	case len(m.importCloneURLs) > 0:
+		return fmt.Sprintf("imported the published policy node's clone_urls block into %s", m.path)
 	default:
 		return fmt.Sprintf("recorded the published policy's generation in %s", m.path)
 	}
@@ -821,7 +907,10 @@ func (m *policyMigration) confirmReseed(ctx context.Context, cmd *cobra.Command,
 		// Verify to read back either, which is the whole of what it asks
 		// (writesNode): a re-seed that carries a migration with it does write the
 		// node and is verified like any other write.
-		return policyGenerationRecord(w, m.path, m.lc, m.generations.published)
+		if err := policyGenerationRecord(w, m.path, m.lc, m.generations.published); err != nil {
+			return err
+		}
+		return m.importPolicyNodeCloneURLs(w)
 	}
 	if err := m.write(ctx); err != nil {
 		return err
@@ -831,7 +920,10 @@ func (m *policyMigration) confirmReseed(ctx context.Context, cmd *cobra.Command,
 	// re-seeded from — recording the generation the node was at before the write
 	// would leave the file refusing the operator's own next edit against the node
 	// this very run wrote.
-	return m.recordGeneration(ctx, cmd)
+	if err := m.recordGeneration(ctx, cmd); err != nil {
+		return err
+	}
+	return m.importPolicyNodeCloneURLs(w)
 }
 
 // printGenerationState is D854's three-way state: what this machine's config was
@@ -870,6 +962,7 @@ const (
 	policyMigrationWhat  = "this rewrites the published policy node in place"
 	policyPublishWhat    = "this rewrites the published policy node in place, from your local config"
 	policyReseedWhat     = "this re-seeds your local config from the published policy node"
+	policyCloneURLsWhat  = "this imports the published policy node's clone_urls block into your local config, which becomes the block's source from then on"
 	policyNoDBReason     = "the project's config names no Firebase budget backend, so there is no published policy node to read"
 )
 
@@ -1095,6 +1188,15 @@ func (s *policyMigrateStage) Check(ctx context.Context) (initflow.Status, error)
 	if err != nil {
 		return initflow.Status{}, err
 	}
+	// The node's version and the credentials service's process move together:
+	// a run that replaces no service may not raise the node either, or the
+	// service deployed on the project refuses every cascade and
+	// Bitbucket-proxied call until a later update succeeds
+	// (init_stages.go's credentialsMoveHeld has the whole argument).
+	var held string
+	if m != nil && m.moved != nil {
+		held = s.e.credentialsMoveHeld()
+	}
 	switch {
 	case !published && m == nil:
 		return initflow.Status{State: initflow.Done, Detail: policyNoneDetail()}, nil
@@ -1106,11 +1208,21 @@ func (s *policyMigrateStage) Check(ctx context.Context) (initflow.Status, error)
 		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("no policy is published at %s, and the local config states %s, which only the node carries: this run publishes the project's first node, after your confirmation", projectpolicy.PathShared(), strings.Join(firstPublishNodeOnlyMembers(s.e.lc), " and "))}, nil
 	case m == nil:
 		return initflow.Status{State: initflow.Done, Detail: fmt.Sprintf("the published policy is version %d", projectpolicy.Version)}, nil
+	case held != "":
+		return initflow.Status{State: initflow.Skipped, Detail: fmt.Sprintf("the published policy is version %d and this run holds it there: %s, and the service that reads the published node on every cascade and Bitbucket-proxied call refuses a node its own binary does not understand — %s, run from the owner's own session, migrates the node and replaces the service in one run", m.from, held, selfCommand()+" update")}, nil
 	case m.generations != nil:
 		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the published policy at %s has moved past the generation this machine's config was written from (%s)", projectpolicy.PathShared(), m.generations.text())}, nil
 	case m.record != "":
 		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the published policy node carries what the local config states, and the config records %s as the generation its policy keys were written from: this run records %s in %s",
 			generationText(m.recorded), m.record, m.path)}, nil
+	case m.moved == nil && len(m.importCloneURLs) > 0 && len(m.drift) == 0 && m.record == "":
+		// The only thing this run has to do is move the block: the node is at
+		// this version, the file states nothing the node does not carry, and
+		// the block the node holds is not in the file. A check line that said
+		// "the local config states what the published policy does not carry"
+		// would name an empty list, which reads as a bug rather than as the
+		// migration the next update is.
+		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the published policy node carries a clone_urls block this machine's config file does not: this run imports it into %s", m.path)}, nil
 	case m.moved == nil:
 		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the local config states what the published policy does not carry: %s", memberListText(m.drift))}, nil
 	}
@@ -1161,6 +1273,8 @@ func (m *policyMigration) planDetail() string {
 		return fmt.Sprintf("re-seed %s from the published policy node, after your confirmation", m.path)
 	case m.record != "":
 		return fmt.Sprintf("record the published policy node's generation (%s) in %s", m.record, m.path)
+	case m.moved == nil && len(m.importCloneURLs) > 0 && m.pub == nil:
+		return fmt.Sprintf("import the published policy node's clone_urls block into %s, after your confirmation", m.path)
 	case m.moved == nil:
 		return "publish the node the local config states, after your confirmation"
 	case m.pub == nil:
@@ -1179,10 +1293,11 @@ func (m *policyMigration) planDetail() string {
 // (inflightAnswer, refuseRunsInFlight): `fugaro update` implies no refusal and
 // no request to wait at all — the owner's ruling of 2026-11-09, the whole
 // upgrade being this command — the doors that reach this stage without being
-// the update door (`fugaro setup`, `fugaro accounts add`) keep the answer of
-// 2026-11-06 they had before it, and it is `fugaro upgrade`'s own policy step
-// that keeps the refusal --yes is the way past, the same reading
-// `fugaro project policy publish --delete` has (internal/cli/project_cmd.go).
+// the update door (`fugaro setup`, and the composite doors naming a subset of
+// the stages) keep the answer of
+// 2026-11-06 they had before it. The refusal --yes is the way past is
+// `fugaro project policy publish --delete`'s, the same reading
+// (internal/cli/project_cmd.go).
 func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
 	// A managed project's gate is asked FIRST, and only this door has one: in a
 	// coding agent's session on a managed project the step that rewrites the
@@ -1212,6 +1327,18 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 	if m == nil {
 		return initflow.Outcome{Detail: "No changes"}, nil
 	}
+	// The write's own precondition, before the gate is asked and before the
+	// confirmation: a node whose version rises is written by a run that will
+	// replace the service reading it, and the image that replacement pins is
+	// resolved here, before the write, so a registry read or a signature this
+	// run cannot make fails the run with the node exactly where it was
+	// (credentialsResolveBeforeRaise; a run that replaces nothing at all never
+	// reaches this line, Check having held the stage back).
+	if m.moved != nil {
+		if err := s.e.credentialsResolveBeforeRaise(ctx); err != nil {
+			return initflow.Outcome{}, err
+		}
+	}
 	admitted, err := s.gateStep(ctx, m)
 	if err != nil {
 		return initflow.Outcome{}, err
@@ -1229,7 +1356,7 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 	// CONFIRM block under it is drawn over (G1).
 	cmd := s.e.r.cmd
 	if err := s.e.r.asking(func() error {
-		return policyMigrationConfirm(ctx, cmd, m, env.Yes, s.e.r.w, admitted, s.e.r.gateUnderway(), s.e.r.conditions(), s.inflightAnswer())
+		return policyMigrationConfirm(ctx, cmd, m, env.Yes, s.e.r.w, admitted, s.e.r.gateUnderway(), s.e.r.o.ownerHand(), s.e.r.conditions(), s.inflightAnswer())
 	}); err != nil {
 		return initflow.Outcome{}, err
 	}
@@ -1250,8 +1377,9 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 // `fugaro update`'s answer is the owner's ruling of 2026-11-09 (inflightQuiet):
 // the whole upgrade is that command, it is safe while runs are in flight, and
 // it never asks anybody to wait. That ruling is that door's, and the doors that
-// reach this stage without being it — `fugaro setup`, and `fugaro accounts
-// add` / `accounts rm`, whose stage list is built from initStages too — keep
+// reach this stage without being it — `fugaro setup`, and the composite doors
+// (`fugaro accounts add`, `accounts rm`, `accounts alias`), whose stage list is
+// built from initStages through stagesNamed too — keep
 // the answer they had before it (inflightManaged), which is the ruling of
 // 2026-11-06 those doors' own users were given: a managed project's own session
 // writes and is told the count, every other session is refused without --yes.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
@@ -89,6 +90,14 @@ func (r *run) recordRigor(at string, paths []string) {
 	res := rigor.Resolve(r.rigorCfg, rigor.Request{Mode: r.spec.Rigor, Paths: paths, Reached: before})
 	r.rec.Rigor = r.rec.Rigor.Applied(runstore.Moment{Resolved: res, At: at, Revision: r.rigorRev})
 	r.noteRigorRaise(at, before, res)
+	// The registry carries the same pair, so a live row in `fugaro watch`
+	// shows the mode the run is at now and not only the one bootstrap
+	// resolved. It is the record's own value, written by the same fold that
+	// just changed it, so the two can never disagree; the session's own copy
+	// is dropped under rules that predate the children (noMode).
+	if rr := r.rec.Rigor; rr != nil {
+		r.noteRegistry(func(e *budget.AgentEntry) { e.Mode, e.From = string(rr.Mode), string(rr.From) })
+	}
 }
 
 // noteRigorRaise records the raise this moment took, if it took one, as the
@@ -184,12 +193,17 @@ func (r *run) changedPaths() []string {
 // review's own value, which is the one answer this must never give.
 func (r *run) baseRigor(ctx context.Context) (rigor.Config, string) {
 	if r.follow != nil || r.review {
+		// r.cfg is already the base's own file for these two: readBaseConfig
+		// fetched origin/<ref> and resolved it, so the whole configuration —
+		// the triage switch included — is what the base branch carries.
+		r.baseCfg = r.cfg
 		return r.cfg.RigorConfig(), "origin/" + r.cfg.Git.BaseBranch
 	}
 	rev, data, err := r.readBaseRigor(ctx)
 	if err != nil {
 		r.d.Log.Warn("the base branch's fugaro.yaml could not be read; the run resolves its rigor from the project layer alone",
 			"revision", rev, "err", r.redact(err.Error()))
+		r.baseCfg = nil
 		return r.cfg.ProjectRigor(), ""
 	}
 	out := ResolveConfig(data, r.spec.ProjectLayer, r.d.Project, r.spec.BaseBranch)
@@ -202,8 +216,10 @@ func (r *run) baseRigor(ctx context.Context) (rigor.Config, string) {
 	if err != nil {
 		r.d.Log.Warn("the base branch's fugaro.yaml does not resolve; the run resolves its rigor from the project layer alone",
 			"revision", rev, "err", r.redact(err.Error()))
+		r.baseCfg = nil
 		return r.cfg.ProjectRigor(), ""
 	}
+	r.baseCfg = out.Cfg
 	return out.Cfg.RigorConfig(), rev
 }
 

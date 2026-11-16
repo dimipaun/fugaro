@@ -577,7 +577,7 @@ func TestDocsCloudSeniorReviewTreeClaimsHold(t *testing.T) {
 		},
 		{
 			"internal/agent/settings.go",
-			"func DenyRules(denyWeb, review bool) []string {",
+			"func DenyRules(denyWeb, denyBinaries bool) []string {",
 			"CSR4b's Bash denial is a change to this function's contract, and the design names it",
 		},
 		{

@@ -22,8 +22,9 @@ import (
 	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/image"
+	"github.com/dimipaun/fugaro/internal/imagebake"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
-	"github.com/dimipaun/fugaro/internal/infra/managed"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -46,11 +47,11 @@ const catalogNotInstalledReason = "run fugaro update"
 // It carries the catalog and the repositories because the job can read neither
 // on its own: the published catalog lives in the project's policy node, whose
 // rules grant a read to a Fugaro-minted token alone (internal/budget/rules), so
-// a service account's IAM read of it would be a project-level database role,
-// and this job's account holds no project-level role at all (D1148). The
-// catalog therefore reaches the job here, as the published catalog the
-// operator's own fugaro update read, and the repositories come with it: which
-// entries each one builds, and the facts a build of them is submitted with.
+// a service account's IAM read of it would be a project-level database role
+// (D1148). The catalog therefore reaches the job here, as the published
+// catalog the operator's own fugaro update read, and the repositories come
+// with it: which entries each one builds, and the facts a build of them is
+// submitted with.
 type catalogCheckSpec struct {
 	Version int `json:"version"`
 	// Catalog is the project's published image catalog, config.Catalog's own
@@ -70,16 +71,34 @@ type catalogCheckSpec struct {
 	BaseImages map[string]string `json:"base_images"`
 	// MachineType is the machine a build runs on, and BuildRegion the Cloud
 	// Build region it is submitted to (the local config's build settings).
+	// They are what a build's lease is priced at (the estimator reads the
+	// machine's rate in that region), and they are read here rather than from a
+	// config because this job has no checkout.
 	MachineType string `json:"machine_type"`
 	BuildRegion string `json:"build_region"`
-	// MaxImageBuilds is this run's build cap: how many Cloud Builds one run of
-	// this job may submit, whatever the catalog says changed. It is M5's own
-	// bound (managed.MaxImageBuilds' range), zero is the default
-	// (managed.DefaultImageBuilds), and the managed marker's max_image_builds
-	// is what fugaro update renders here — one setting, so a project that
-	// bounds a managed creation's image builds bounds this job's too.
-	MaxImageBuilds int `json:"max_image_builds,omitempty"`
+	// FirebaseProject is the installation's Firebase project: the database
+	// every lease this run takes is written into is that project's own, and
+	// the job proves it with the predicate every writer into that database
+	// asks (requireOwnBudgetDB). It is not read out of the database URL, which
+	// is the very pair the proof is about. Empty on an installation whose
+	// config names no Firebase project, where the lease is refused by name
+	// rather than written into a database nothing proves is the
+	// installation's.
+	FirebaseProject string `json:"firebase_project"`
 }
+
+// catalogRunBuildCap is how many builds one run of the catalog check job may
+// submit, whatever the catalog says changed.
+//
+// It is the job's own cap and no longer a project setting: D1013's count lived
+// in the managed marker's max_image_builds and fugaro update rendered it here,
+// and T10 removed the count (D1543) — the marker records no bound, so this is
+// the job's own figure, the same one every installation's marker recorded by
+// default. What bounds a build's cost now is the lease it takes (D1554), and
+// this bounds only how many one night submits: the entries it leaves are
+// recorded with the build-cap reason and are the next run's, exactly as they
+// were when the cap was a project's.
+const catalogRunBuildCap = 1
 
 // catalogCheckRepo is one repository's part of the catalog check job's spec:
 // the facts a build of one of its entries is submitted with, and the entries it
@@ -120,7 +139,11 @@ type catalogCheckRepo struct {
 type catalogJobEnv struct {
 	spec                             catalogCheckSpec
 	name, gcpProject, region, bucket string
-	maxImageBuilds                   int
+	// budgetURL is the installation's budget database, from the same
+	// FUGARO_RTDB_URL every other job of the installation carries: "" on an
+	// installation with no Firebase backend, where a build takes no lease
+	// (openCatalogJobLease says so in one line and submits nothing less).
+	budgetURL string
 }
 
 // readCatalogJobEnv reads the job's spec and its own variables, refusing an
@@ -149,11 +172,8 @@ func readCatalogJobEnv() (catalogJobEnv, error) {
 			return e, fmt.Errorf("%s: the repository %s is incomplete: %s", catalogCheckSpecEnv, pluginwire.Printable(r.Repo), catalogNotInstalledReason)
 		}
 	}
-	e.maxImageBuilds = cmp.Or(s.MaxImageBuilds, int(managed.DefaultImageBuilds))
-	if err := managed.CheckImageBuilds(int64(e.maxImageBuilds)); err != nil {
-		return e, fmt.Errorf("%s: %v", catalogCheckSpecEnv, err)
-	}
 	e.name, e.gcpProject, e.region = os.Getenv("FUGARO_PROJECT"), os.Getenv("FUGARO_GCP_PROJECT"), os.Getenv("FUGARO_REGION")
+	e.budgetURL = os.Getenv(infra.RTDBURLEnv)
 	u, err := url.Parse(os.Getenv("FUGARO_BUCKET"))
 	if e.name == "" || e.gcpProject == "" || e.region == "" || err != nil || u.Scheme != "gs" || u.Host == "" || strings.Trim(u.Path, "/") != "" {
 		return e, fmt.Errorf("FUGARO_PROJECT (the project's name), FUGARO_GCP_PROJECT, FUGARO_REGION and FUGARO_BUCKET (gs://<runs bucket>) must be set, as the catalog check job's spec sets them; %s", catalogNotInstalledReason)
@@ -211,6 +231,18 @@ type catalogEvaluation struct {
 	// read back from the one object the build itself reads.
 	definitionSHA256     string
 	definitionGeneration int64
+	// contextSHA256 and contextCommit are the digest of the build context the
+	// entry names and the commit the copy staged it from, as the copy staged
+	// both beside the Dockerfile; "" for an entry that names no context. The
+	// rebuild is pinned to them rather than to the record's, which holds what
+	// the last build already built.
+	contextSHA256 string
+	contextCommit string
+	// bakedDir is the directory the copied definition bakes its checkout at,
+	// and baked whether it bakes one at all (imagebake.BakedDir): the smoke a
+	// rebuild of this entry runs reads the checkout there.
+	bakedDir string
+	baked    bool
 	// inputs are what imagecheck.CheckCatalog decides the entry from: this
 	// run's read of everything a decision needs, which the pass below hands
 	// the library rather than deciding the entry itself.
@@ -276,6 +308,71 @@ func (t *catalogCheckTarget) evaluate(ctx context.Context, e config.Entry, r cat
 	}
 	sum := sha256.Sum256(def)
 	ev.definitionSHA256, ev.definitionGeneration = hex.EncodeToString(sum[:]), gen
+	// Where the definition this job rebuilds bakes its checkout, when a build
+	// composed one into it (imagebake, the image setup skill's bake step): the
+	// smoke this job submits is the manual build's own spec, and it has to read
+	// the checkout where the image the build produced actually put it.
+	//
+	// The marker names the checkout the definition was composed with, and a
+	// rebuild reproduces that definition only when it runs as the repository
+	// that checkout is of: a build's REPO_URL is this job's repository's
+	// (r.RepoURL), so a marker for another one means the rebuild would clone
+	// the wrong source into that path, under the same tag and the same smoke
+	// the composed definition carried — a checkout nobody downstream could tell
+	// from the right one. The composed stage refuses that REPO_URL itself; this
+	// refuses it a step earlier, before a build is submitted, where the entry,
+	// the checkout and the command that fixes it can be named.
+	ev.bakedDir, ev.baked = imagebake.BakedDir(def)
+	if ev.baked {
+		if bakedSlug, ok := imagebake.BakedSlug(def); !ok || bakedSlug != r.Slug {
+			what, fix := "a checkout at "+pluginwire.Printable(ev.bakedDir),
+				fmt.Sprintf("run fugaro image build %s from that repository's checkout", pluginwire.Printable(e.Name))
+			if repo, known := t.bakedRepoFor(bakedSlug); known {
+				what = "the checkout of " + pluginwire.Printable(repo)
+				fix = fmt.Sprintf("map the entry to it (fugaro image map set %s %s) and run fugaro update, or run fugaro image build %s from its checkout",
+					pluginwire.Printable(repo), pluginwire.Printable(e.Name), pluginwire.Printable(e.Name))
+			}
+			return ev, fmt.Errorf("the catalog entry %s bakes %s, but the installed catalog check job rebuilds the entry as %s: a rebuild has to run as the repository whose checkout the entry bakes, so %s",
+				pluginwire.Printable(e.Name), what, pluginwire.Printable(r.Repo), fix)
+		}
+	}
+
+	// The context the entry names, for the entry that names one: the digest the
+	// copy staged beside the Dockerfile, read from the bucket and never from the
+	// repository. That read is what makes the context trigger cost this job no
+	// credential at all (D1401), and a missing object is not "nothing changed":
+	// it is a copy that never staged the context, which is what a build pins.
+	if e.Source.Context != "" {
+		hashKey, err := config.CatalogContextHashKey(e.Name)
+		if err != nil {
+			return ev, err
+		}
+		staged, _, err := t.bucket.Read(ctx, hashKey)
+		switch {
+		case errors.Is(err, blobx.ErrNotExist):
+			return ev, fmt.Errorf("the catalog entry %s names the build context %s but has no staged context digest at %s, which is what its rebuild pins: fugaro image build %s from %s's checkout stages it and builds it once, and this job rebuilds it from then on",
+				pluginwire.Printable(e.Name), pluginwire.Printable(e.Source.Context), hashKey, pluginwire.Printable(e.Name), pluginwire.Printable(r.Repo))
+		case err != nil:
+			return ev, fmt.Errorf("reading %s: %w", hashKey, err)
+		}
+		// The commit that digest was taken at, staged by the same copy. The
+		// record's own commit is the one the last build already built, so a
+		// rebuild pinned to it would build the same tree and record the same
+		// digest: the staged one is what makes the rebuild converge.
+		commitKey, err := config.CatalogContextCommitKey(e.Name)
+		if err != nil {
+			return ev, err
+		}
+		stagedCommit, _, err := t.bucket.Read(ctx, commitKey)
+		switch {
+		case errors.Is(err, blobx.ErrNotExist):
+			return ev, fmt.Errorf("the catalog entry %s names the build context %s but has no staged context commit at %s, which is the commit its rebuild pins: fugaro image build %s from %s's checkout stages it and builds it once, and this job rebuilds it from then on",
+				pluginwire.Printable(e.Name), pluginwire.Printable(e.Source.Context), commitKey, pluginwire.Printable(e.Name), pluginwire.Printable(r.Repo))
+		case err != nil:
+			return ev, fmt.Errorf("reading %s: %w", commitKey, err)
+		}
+		ev.contextSHA256, ev.contextCommit = string(staged), string(stagedCommit)
+	}
 
 	checkKey := imagecheck.CatalogCheckKey(slug, e.Name)
 	ev.prevRaw, ev.prevGen, err = t.bucket.Read(ctx, checkKey)
@@ -308,7 +405,13 @@ func (t *catalogCheckTarget) evaluate(ctx context.Context, e config.Entry, r cat
 	}
 	ev.inputs = imagecheck.CatalogInputs{
 		Entry: e.Name, Record: ev.rec, LastCheck: ev.prev, LastBuildStatus: ev.lastStatus,
-		DefinitionSHA256: ev.definitionSHA256, BaseRef: t.base, BaseDigest: t.baseDigest,
+		DefinitionSHA256: ev.definitionSHA256, ContextSHA256: ev.contextSHA256,
+		// The template this job's own binary would build with: a release that
+		// changes the build reaches the entries the release behind built, which
+		// is the blind spot the workflow check closes with the same salt (F33,
+		// D1402).
+		TemplateSalt: gcp.TemplateSalt(Version),
+		BaseRef:      t.base, BaseDigest: t.baseDigest,
 		// The lockfiles trigger is the one trigger this job cannot evaluate: it
 		// is decided from the baked repository's tree, and this job has no
 		// checkout of it and no git credential to read one with. An entry whose
@@ -321,11 +424,27 @@ func (t *catalogCheckTarget) evaluate(ctx context.Context, e config.Entry, r cat
 	return ev, nil
 }
 
+// bakedRepoFor is the repository a baked checkout is of, when this job's spec
+// knows it. The spec lists every repository the catalog builds in — the map is
+// what puts an entry with no repository of its own on one (infra's
+// catalogCheckRepos) — and the marker names the repository that composed the
+// definition. A composing repository this installation does not build in is not
+// in the spec, and the caller falls back to naming the directory.
+func (t *catalogCheckTarget) bakedRepoFor(slug string) (string, bool) {
+	for _, r := range t.spec.Repositories {
+		if r.Slug == slug {
+			return r.Repo, true
+		}
+	}
+	return "", false
+}
+
 // submit submits entry e's rebuild as repository r's build account: the request
 // fugaro image build <entry> sends, with the definition this run read and the
-// commit the entry's record names. The account is r's, and
-// CatalogBuildSpec.check refuses any other, so the job's own account is never
-// the one a build runs as.
+// commit the entry's record names — or, for an entry that names a build
+// context, the commit and digest the copy staged with it, which is what its
+// rebuild is pinned to. The account is r's, and CatalogBuildSpec.check refuses
+// any other, so the job's own account is never the one a build runs as.
 func (t *catalogCheckTarget) submit(ctx context.Context, e config.Entry, r catalogCheckRepo, slug string, ev catalogEvaluation) (id, status string, err error) {
 	rec := ev.rec
 	if rec == nil {
@@ -341,20 +460,35 @@ func (t *catalogCheckTarget) submit(ctx context.Context, e config.Entry, r catal
 	if err != nil {
 		return "", "", err
 	}
-	selftest, err := catalogSmokeSpec(r, rec.SourceCommit)
-	if err != nil {
-		return "", "", err
-	}
-	res, err := t.builder.SubmitCatalog(ctx, gcp.CatalogBuildSpec{
+	// An entry that names a context is built at the commit the copy staged it
+	// from — the definition is read there too, since the copy wrote both from
+	// that one commit — and carries the staged context with it. An entry that
+	// names none is built at the commit its record holds, unchanged.
+	commit := rec.SourceCommit
+	spec := gcp.CatalogBuildSpec{
 		Entry: e.Name, Slug: slug,
 		GitProvider: r.Provider, RepoURL: r.RepoURL, BaseBranch: r.BaseBranch,
 		GitSecretID: r.GitSecretID, GitUser: r.GitUser, GitHubAppID: r.GitHubAppID,
 		Base: t.base, Image: imageRef,
-		Definition:     gcp.CatalogDefinition{SourceCommit: rec.SourceCommit, Generation: ev.definitionGeneration, SHA256: ev.definitionSHA256},
+		Definition:     gcp.CatalogDefinition{SourceCommit: commit, Generation: ev.definitionGeneration, SHA256: ev.definitionSHA256},
 		ServiceAccount: r.BuildServiceAccount, MachineType: t.spec.MachineType,
 		WorkflowSecrets: r.WorkflowSecrets,
-		Bucket:          "gs://" + t.bucket.GCSName, Selftest: selftest,
-	})
+		Bucket:          "gs://" + t.bucket.GCSName,
+		// The rebuild records the template it ran, which is this job's own: the
+		// entry it rebuilds stops firing the template trigger (F33, D1402).
+		TemplateSalt: gcp.TemplateSalt(Version),
+	}
+	if e.Source.Context != "" {
+		commit = ev.contextCommit
+		spec.Definition.SourceCommit = commit
+		spec.Context, spec.ContextCommit, spec.ContextSHA256 = e.Source.Context, ev.contextCommit, ev.contextSHA256
+	}
+	selftest, err := catalogSmokeSpec(r, commit, ev.bakedDir)
+	if err != nil {
+		return "", "", err
+	}
+	spec.Selftest = selftest
+	res, err := t.builder.SubmitCatalog(ctx, spec)
 	if err != nil {
 		return "", "", err
 	}
@@ -366,10 +500,19 @@ func (t *catalogCheckTarget) submit(ctx context.Context, e config.Entry, r catal
 // one. The config is a stub because an entry is not a workflow and
 // SpecForCloud reads a config only to check that the name it is given exists
 // (it reads the same constant for every workflow).
-func catalogSmokeSpec(r catalogCheckRepo, commit string) ([]byte, error) {
+//
+// bakedDir is where the copied definition put the checkout, when it baked one
+// (imagebake.BakedDir of the same bytes this job read): the manual build
+// submits the same directory for the definition it composed, and a rebuild
+// that looked at /work/repo instead would fail the smoke of an image whose
+// checkout is where the engine bakes it.
+func catalogSmokeSpec(r catalogCheckRepo, commit, bakedDir string) ([]byte, error) {
 	spec, err := image.SpecForCloud(&config.Config{Workflows: map[string]config.Workflow{r.Workflow: {}}}, r.Workflow, commit, r.RepoURL)
 	if err != nil {
 		return nil, err
+	}
+	if bakedDir != "" {
+		spec.RepoDir = bakedDir
 	}
 	return json.Marshal(spec)
 }
@@ -479,11 +622,13 @@ type catalogAssignment struct {
 //
 // It builds nothing it could not read: an entry's record, its copied definition
 // or its check state that cannot be read is an error for that entry
-// (check-failed, nothing submitted), never "no record, so rebuild". The run's
-// own build cap (the spec's max_image_builds, one by default) bounds how many
-// builds one run may submit, so a bug in a decision cannot spend a project's
-// budget in one night: the entries it leaves are recorded with the build-cap
-// reason and are the next run's.
+// (check-failed, nothing submitted), never "no record, so rebuild". Each
+// submission takes a lease on its estimated cost before it is sent
+// (openCatalogJobLease), so a build the project's caps have no room for is
+// refused by name and is not submitted at all (D1550, D1554); the run's own
+// build cap (catalogRunBuildCap) bounds how many builds one run may submit, so
+// a bug in a decision cannot spend a project's budget in one night: the entries
+// it leaves are recorded with the build-cap reason and are the next run's.
 func runImageCheckCatalogJob(cmd *cobra.Command, o imageCheckOptions) error {
 	ctx := cmd.Context()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -493,7 +638,7 @@ func runImageCheckCatalogJob(cmd *cobra.Command, o imageCheckOptions) error {
 		lg.log("", "", imagecheck.CheckFailed, nil, "", "", oneLine(err.Error()))
 		return remote(err)
 	}
-	lg.maxBuild = e.maxImageBuilds
+	lg.maxBuild = catalogRunBuildCap
 	s := e.spec
 	warn := func(msg string) { fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", msg) }
 
@@ -546,7 +691,7 @@ func runImageCheckCatalogJob(cmd *cobra.Command, o imageCheckOptions) error {
 		return catalogFailAll(cmd, ctx, lg, e, bucket, fmt.Errorf("the installed catalog check job has no %s base image: %s", config.BaseKind, catalogNotInstalledReason), now, o.dryRun)
 	}
 	t := &catalogCheckTarget{
-		spec: s, gcpProject: e.gcpProject, region: e.region, maxBuilds: e.maxImageBuilds,
+		spec: s, gcpProject: e.gcpProject, region: e.region, maxBuilds: catalogRunBuildCap,
 		force: o.force, now: now, bucket: bucket, builder: builder, registry: checkRegistry(),
 		base: base, warn: warn,
 	}
@@ -639,14 +784,31 @@ func runImageCheckCatalogJob(cmd *cobra.Command, o imageCheckOptions) error {
 		}
 		state := catalogNextState(ev.prev, ev.d, ev.lastStatus, now)
 		if ev.d.Decision == imagecheck.Rebuild && !o.dryRun && !capped {
-			id, status, serr := t.submit(ctx, w.entry, w.repo, w.slug, ev)
-			if serr != nil {
-				ev.d.Decision, ev.d.Error = imagecheck.CheckFailed, "submitting the rebuild: "+oneLine(serr.Error())
+			lease, lerr := openCatalogJobLease(ctx, cmd.ErrOrStderr(), e, s, w.repo.Repo, w.slug)
+			if lerr != nil {
+				// The lease is taken before the submission, so a cap with no
+				// room, a price the catalog will not give and a database that
+				// will not answer are all refusals of the build itself
+				// (D1550): nothing is submitted, and the next run is the one
+				// that tries again.
+				ev.d.Decision, ev.d.Error = imagecheck.CheckFailed, "leasing the rebuild: "+oneLine(lerr.Error())
+				state = catalogNextState(ev.prev, ev.d, ev.lastStatus, now)
+			} else if id, status, serr := t.submit(ctx, w.entry, w.repo, w.slug, ev); serr != nil {
+				ev.d.Decision, ev.d.Error = imagecheck.CheckFailed, "submitting the rebuild: "+oneLine(withLease(serr, lease.release(ctx)).Error())
 				state = catalogNextState(ev.prev, ev.d, ev.lastStatus, now)
 			} else {
+				// Nothing here watches the build to an end — SubmitCatalog
+				// returns as soon as Cloud Build accepts it — so the whole
+				// reservation is what the day counts (buildLease.settle).
 				submitted++
 				inputs := ev.d.Inputs
 				state.BuildID, state.BuildInputs, state.LastBuildStatus, state.LastBuildAt = id, &inputs, status, &now
+				if lerr := lease.settle(ctx, false); lerr != nil {
+					// The build runs; what failed is the day's counters, and
+					// the entry says which build it was.
+					ev.d.Decision, ev.d.Error = imagecheck.CheckFailed,
+						"submitted Cloud Build build "+id+", but could not record what it reserves: "+oneLine(lerr.Error())
+				}
 			}
 		}
 		if !o.dryRun && !ev.prevUnreadable {

@@ -1277,10 +1277,11 @@ func TestRedactPassesAreIdempotent(t *testing.T) {
 }
 
 // TestPassesAreBounded: both passes run over a whole log, so their cost has
-// to be linear in the text rather than in what the text repeats. The bound is
-// loose on purpose — this runs under -race on a shared machine, where the
-// same pass costs an order of magnitude more — and it is still far below what
-// a pass that scanned the text again for every position would take.
+// to be linear in the text rather than in what the text repeats. An absolute
+// time limit says more about the machine than the pass (under -race on a
+// shared runner the same pass took 19 s), so the test compares the cost of a
+// log with the cost of one a quarter its size: linear work grows about four
+// times, a pass that scanned the text again for every position sixteen.
 func TestRedactPassesAreBounded(t *testing.T) {
 	token := fake(strings.Repeat("A1b2C3d4", 3))
 	sig := fake(strings.Repeat("ab", 16))
@@ -1288,27 +1289,41 @@ func TestRedactPassesAreBounded(t *testing.T) {
 	jwt := fake("eyJ", "hbGciOiJIUzI1NiJ9.", "eyJzdWIiOiIxIn0.", "c2lnbmF0dXJlMTIz")
 	person := fake("dimi", "@", "example.com")
 	home := fake("/home/", "someone")
-	var b strings.Builder
-	for i := 0; i < 500; i++ {
-		b.WriteString("Authorization: Bearer " + token + "\n")
-		b.WriteString(key + "\n")
-		b.WriteString("?sig=" + sig + "&X-Amz-Expires=1\n")
-		b.WriteString(jwt + "\n")
-		b.WriteString("reached " + person + " at " + home + "/.config\n")
+	fixture := func(n int) string {
+		var b strings.Builder
+		for i := 0; i < n; i++ {
+			b.WriteString("Authorization: Bearer " + token + "\n")
+			b.WriteString(key + "\n")
+			b.WriteString("?sig=" + sig + "&X-Amz-Expires=1\n")
+			b.WriteString(jwt + "\n")
+			b.WriteString("reached " + person + " at " + home + "/.config\n")
+		}
+		return b.String()
 	}
-	in := b.String()
-	if len(in) < 1<<17 {
-		t.Fatalf("the fixture is %d bytes, too small to say anything about cost", len(in))
+	redact := func(in string) (string, time.Duration) {
+		best := time.Duration(1<<63 - 1)
+		var got string
+		for i := 0; i < 2; i++ {
+			start := time.Now()
+			got = Report(Text(in, []string{"a-known-value"}))
+			if d := time.Since(start); d < best {
+				best = d
+			}
+		}
+		return got, best
 	}
-	start := time.Now()
-	got := Text(in, []string{"a-known-value"})
-	got = Report(got)
-	if d := time.Since(start); d > 10*time.Second {
-		t.Errorf("redacting %d bytes took %s, which is not a pass over a log", len(in), d)
+	small, large := fixture(60), fixture(240)
+	if len(large) < 1<<16 {
+		t.Fatalf("the fixture is %d bytes, too small to say anything about cost", len(large))
+	}
+	_, dSmall := redact(small)
+	got, dLarge := redact(large)
+	if dLarge > 10*dSmall {
+		t.Errorf("redacting %d bytes took %s and %d bytes %s: the cost grows faster than the text", len(small), dSmall, len(large), dLarge)
 	}
 	for _, leak := range []string{person, home, token, sig} {
 		if strings.Contains(got, leak) {
-			t.Errorf("%q survived a pass over %d bytes", leak, len(in))
+			t.Errorf("%q survived a pass over %d bytes", leak, len(large))
 		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -122,16 +123,20 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	// branch starts.
 	//
 	// The one thing that lifts the refusal is the managed gate's answer
-	// (D1012): a caller that read the gate and was admitted for THIS edit's
-	// class passes it in e.Managed, and the step proceeds as it would for a
-	// person. Every other value — the zero value every other caller passes, a
-	// class the gate does not cover, an edit whose class is Typed — keeps the
-	// refusal exactly as it was, and a caller that passes nothing changes
-	// nothing. The marker is the fence itself for a widening (D1552, D1555):
-	// the class rule is the second thing that refuses one, and a fence read off
-	// a class the same release deletes would leave the ceiling unfenced.
+	// (D1012): a caller that read the gate and was admitted for THIS edit passes
+	// it in e.Managed, and the step proceeds as it would for a person. Every
+	// other value — the zero value every other caller passes, a verdict that
+	// refused, an inventory that fell back — keeps the refusal exactly as it
+	// was, and a caller that passes nothing changes nothing. A widening is
+	// never lifted (D1552, D1555): no document a plan gate judges admits one
+	// (D1026), and the class that used to say so is gone with the class
+	// system, so the edit's own widening marker says it here — a fence read off
+	// a class the same release deletes would have left the ceiling unfenced.
+	// Everything the gate does not stand in for keeps the refusal beside it:
+	// --ask puts this step's own question back (GateStandsIn answers false
+	// under it), and a marker is asked for one, which is the refusal here.
 	conds := settingsEditConditions(cmd, e)
-	if marker := conds.Agent; marker != "" && (!e.insideRepo() || e.Typed) && !initflow.CanConfirmManaged(e.editClass(), conds, e.Managed) {
+	if marker := conds.Agent; marker != "" && (!e.insideRepo() || e.Typed) && (e.Typed || !initflow.GateStandsIn(conds, e.Managed)) {
 		fmt.Fprintf(out, "%s\n%s", e.Path, diff)
 		return userErr("refusing to write %s in a coding agent's session (%s is set): %s; run this yourself at your own terminal: %s; nothing was written",
 			e.Path, marker, e.What, e.Command)
@@ -152,8 +157,8 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	// ruling of 2026-11-01): the gate read this edit's document, admitted it, and
 	// its verdict IS what the write proceeds on — the diff above is the whole of
 	// what the owner reads. A widening reads what it widens (D1552, D1555):
-	// initflow.GateConfirms is false for one whatever the verdict was (D1026, and
-	// settingsEdit's own editClass). Every other edit reads the sentence naming
+	// the gate's sentence is not read for one whatever the verdict was (D1026,
+	// through the e.Typed below). Every other edit reads the sentence naming
 	// it, and the one question a write may still ask is the one --ask puts back
 	// (D1544). A project that is not managed, a mark that did not answer and an
 	// edit the gate refused all arrive here as the zero value every fence reads
@@ -165,7 +170,7 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	// GateProceeded, which says where the verdict was recorded. gateSentence is
 	// the one place that choice is made (update_managed.go), so this surface
 	// cannot be the one that prints the owner's line to a session.
-	if !e.Yes && initflow.GateConfirms(e.editClass(), conds, e.Managed) {
+	if !e.Yes && !e.Typed && initflow.GateStandsIn(conds, e.Managed) {
 		fmt.Fprintf(out, "  %s\n", gateSentence(conds.Agent))
 	} else if e.Typed {
 		// A widening is the owner's own step, and the owner's own terminal
@@ -214,20 +219,6 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 // (`--layer repo`), the one document an agent session may write.
 func (e settingsEdit) insideRepo() bool { return e.Kind == settingsDocRepo }
 
-// editClass is the confirmation class of this edit, which is the class the
-// managed gate reads: Typed is D846's widening form — a loosened ceiling, a
-// floor removed — and everything else is the ordinary y/N. It is derived here
-// and not passed beside Managed, because the two facts a write is decided
-// under have to agree: a caller that could name a class of its own
-// could name the one the gate covers for an edit that is Typed, and D1026's
-// rule is exactly that no plan gate admits one.
-func (e settingsEdit) editClass() initflow.ConfirmClass {
-	if e.Typed {
-		return initflow.Typed
-	}
-	return initflow.YesOrTyped
-}
-
 // readSettingsCurrent re-reads the file one edit is about to overwrite, for
 // the comparison that refuses an edit built on bytes that have moved. It reads
 // the document the way the caller's own read read it: a checkout's fugaro.yaml
@@ -247,7 +238,7 @@ func readSettingsCurrent(e settingsEdit) ([]byte, error) {
 // it runs in. It is read once per edit, so the fence above and the gate below
 // are decided under one struct rather than two readings that could disagree.
 func settingsEditConditions(cmd *cobra.Command, e settingsEdit) initflow.Conditions {
-	return initflow.Conditions{Terminal: stdinIsTerminal(cmd.InOrStdin()), Yes: e.Yes, Agent: agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())), Ask: e.Ask}
+	return initflow.Conditions{Terminal: stdinIsTerminal(cmd.InOrStdin()), Agent: agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())), Ask: e.Ask}
 }
 
 // announceSettingsWrite says what one settings write does and asks whether to
@@ -290,4 +281,119 @@ func announceSettingsWrite(cmd *cobra.Command, managed bool, what string) error 
 		return userErr("not confirmed; nothing was written")
 	}
 	return nil
+}
+
+// settingsLocalFile is the selected local project config and the file it lives
+// in: what every family that edits the person's own dotfile writes — `models
+// add` and `models rm`, `workspace add`, `project profile` and `project
+// routing`. A project selected from a layer and with no file of its own has
+// nothing to edit, which is a refusal and not an empty edit. what names the
+// commands in that refusal, so each family's sentence names its own commands
+// rather than another family's.
+func settingsLocalFile(what string) (localcfg.Selection, *localcfg.Config, error) {
+	sel, lc, err := settingsSelection()
+	if err != nil {
+		return sel, nil, err
+	}
+	if sel.Path == "" {
+		return sel, nil, userErr("no local project config file is selected: %s edit the selected project's own config file, and this project has none; run fugaro setup, or pass --config", what)
+	}
+	return sel, lc, nil
+}
+
+// settingsSetList makes the sequence at path hold the values want names: the
+// items the file carries and want does not are removed, the ones want names and
+// the file does not carry are appended, and an item both name keeps the place
+// the file gave it. have is the sequence as the caller read it — the config it
+// already parsed — so this composes the editor's own item operations rather
+// than re-reading the document to find them.
+//
+// The one shape yamledit refuses is a member of a flow sequence, which is a
+// shape an operator's own hand writes (docs/git-providers.md teaches one), so
+// the fallback is the same one `secrets allow` makes: the key is written again
+// in the block style this program writes a list in, and the diff shows it.
+func settingsSetList(src []byte, path []string, have, want []string) ([]byte, error) {
+	next := src
+	for _, item := range have {
+		if slices.Contains(want, item) {
+			continue
+		}
+		out, err := yamledit.RemoveListItemWithOptions(next, path, item, yamledit.RemoveOptions{DropEmptyParents: true})
+		if err != nil {
+			return settingsSetListFallback(src, path, want, err)
+		}
+		next = out
+	}
+	for _, item := range want {
+		if slices.Contains(have, item) {
+			continue
+		}
+		out, err := yamledit.AddListItem(next, path, item)
+		if err != nil {
+			return settingsSetListFallback(src, path, want, err)
+		}
+		next = out
+	}
+	return next, nil
+}
+
+// settingsSetListFallback is what a list edit does when the editor refused it:
+// a flow sequence is the one refusal this rewrites, and anything else is the
+// caller's to report.
+func settingsSetListFallback(src []byte, path []string, want []string, err error) ([]byte, error) {
+	if yamledit.ReasonOf(err) != yamledit.ReasonFlowCollection {
+		return nil, err
+	}
+	next, err := yamledit.RemoveKeyWithOptions(src, path, yamledit.RemoveOptions{DropEmptyParents: true})
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range want {
+		if next, err = yamledit.AddListItem(next, path, item); err != nil {
+			return nil, err
+		}
+	}
+	return next, nil
+}
+
+// settingsRewriteList writes one allow-list entry again in the block style this
+// program writes a list in — values under allow_data_to, and the Bitbucket
+// token's proxy written back only when the entry carried it — and is the second
+// half of every edit of the two lists that share it: `project_secrets`/
+// `workflow_secrets` and `claude_accounts`.
+//
+// The entry is taken away whole rather than edited in place because a member
+// cannot be spliced into a flow collection, which is the one shape the editor's
+// item operations refuse (yamledit.ReasonFlowCollection) and the shape
+// docs/git-providers.md teaches the operator to write the Bitbucket allow-list
+// in. The values come from the parsed entry rather than from the command line,
+// so a repository the entry already named is not lost with the shape it was
+// spelled in, and the caller's own diff shows the reformatting beside the edit.
+//
+// The flow collection this cannot take away either is the entry itself being a
+// member of a flow mapping — project_secrets: { bitbucket-token: { ... } }, the
+// whole-file line that page teaches — and no edit of this program reaches one.
+// The entry is not even there to take away, so taking it away answers with the
+// bytes unchanged and no error, and the refusal the operator reads comes from
+// the write that follows; that is why every step below, the removal included,
+// means the same thing by its error (workspaceEditResult).
+func settingsRewriteList(old []byte, block, name string, values []string, proxy bool) ([]byte, error) {
+	path := block + "." + name
+	next, err := yamledit.RemoveKeyWithOptions(old, []string{block, name}, yamledit.RemoveOptions{DropEmptyParents: true})
+	if next, err = workspaceEditResult(path, next, err); err != nil {
+		return nil, err
+	}
+	for _, v := range values {
+		added, addErr := yamledit.AddListItem(next, []string{block, name, "allow_data_to"}, v)
+		if next, err = workspaceEditResult(path, added, addErr); err != nil {
+			return nil, err
+		}
+	}
+	if proxy {
+		scaled, setErr := yamledit.SetScalar(next, []string{block, name, "proxy"}, "true")
+		if next, err = workspaceEditResult(path, scaled, setErr); err != nil {
+			return nil, err
+		}
+	}
+	return next, nil
 }

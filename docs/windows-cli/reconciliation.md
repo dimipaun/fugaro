@@ -725,7 +725,7 @@ sees.** Class: **Gap**.
 | `docker` | `image build --local`, `image selftest` | `internal/preflight/preflight.go`'s `Docker`, only when a local build is asked for |
 | `gcloud` | `gcloud auth application-default login`, the Fix commands the CLI prints | **not detected as a binary**; only ADC's *file* is read (F28) |
 | `cosign` | verifying a base pin's signature | `internal/cli/doctor.go`'s cosign check and `internal/basepin/cosign.go`'s `CosignPath` |
-| `claude` | the plugin's skills, `fugaro upgrade --plugin` | `internal/cli/upgrade_plugin.go`'s `claudeLookPath` |
+| `claude` | the plugin's skills, `fugaro update`'s plugin step and `fugaro update-skills` | `internal/cli/init_plugin_stage.go`'s `claudeLookPath` |
 
 Cost: `fugaro doctor` is the command that exists to answer "is this machine
 ready", and on Windows it would answer for **two** of the six tools —
@@ -1307,7 +1307,7 @@ terminal including the ones that can do it, and the two modes of
 **Recommend: both are in scope, in the last slices, after the non-interactive
 paths — and neither is a blocker for the release.** The reason: the wizard is
 `internal/initflow`, which reads a terminal through `x/term` (F14, portable)
-and has a non-interactive mode (`--yes`, `--non-interactive`, `--json`) that
+and has a non-interactive mode (`--json`) that
 already works; the TUI is Bubble Tea (F17, portable). So both are *expected*
 to work and neither is *verified*, and F36's rule — do not claim what was not
 run — says to keep them in the plan as tasks with their own verification

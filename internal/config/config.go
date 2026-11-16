@@ -85,6 +85,18 @@ type Config struct {
 	// the json tag keeps an absent block out of the resolved config's hash the
 	// way Rigor's does, and names the block on the wire when one is written.
 	Planning *Planning `yaml:"planning,omitempty" json:"planning,omitempty"`
+	// ModelGrades is the escalation ladder's two model grades (docs/outer-
+	// loop-escalation E2, D2039): the model each grade runs and the credential
+	// or pool its calls go out on. The project layer's defaults.model_grades
+	// is what a repository that writes none takes, and a repository's own
+	// block may name a grade, which the merge drops and records — a grade is
+	// a model choice the project owns (G3).
+	//
+	// Like Rigor the pointer is what keeps an absent block out of the resolved
+	// config's hash: SHA256 marshals this struct (resolve.go), and a pointer
+	// with no json name would write a null key into every file that writes
+	// none, moving the hash of a file that did not change.
+	ModelGrades *ModelGrades `yaml:"model_grades,omitempty" json:"model_grades,omitempty"`
 
 	// Layer is the project layer Resolve resolved this config over, nil
 	// for none. It is never part of the file or of SHA256: a consumer that
@@ -165,6 +177,22 @@ type Config struct {
 	// (internal/cli). Like the fields above it is never part of the file or of
 	// SHA256.
 	RepoTriageSet bool `yaml:"-" json:"-"`
+	// RepoModelGradesSet is whether the repository's own file wrote the
+	// model_grades key at all, at any value: the question RepoRigorSet answers
+	// for rigor:, and ModelGrades cannot answer it — the block written empty
+	// (`model_grades: {}`) decodes to the same nil pointer as the key being
+	// absent, and a runner older than modelGradesSince refuses the key itself,
+	// whatever it says (internal/cli). Like the fields above it is never part
+	// of the file or of SHA256.
+	RepoModelGradesSet bool `yaml:"-" json:"-"`
+	// RepoVisionSet is whether the repository's own file wrote the
+	// agent.models.vision key at all, at any value: the question RepoRigorSet
+	// answers for rigor:, and Agent.VisionModel cannot answer it — the key
+	// written blank (`vision: ""`, which asks for no slot) decodes to the same
+	// empty string as the key being absent, and a runner older than
+	// visionSince refuses the key itself, whatever it says (internal/cli).
+	// Like the fields above it is never part of the file or of SHA256.
+	RepoVisionSet bool `yaml:"-" json:"-"`
 }
 
 // Planning is fugaro.yaml's planning: block and the project layer's
@@ -686,6 +714,27 @@ type ModelRoles struct {
 	Coder      string `yaml:"coder"`      // implement and fix
 	Reviewer   string `yaml:"reviewer"`   // review
 	Background string `yaml:"background"` // Claude Code's small background requests
+	// Vision is the model a stage runs instead when its own model cannot read
+	// an image (D2000, D2002, D2004). It is not a role: no stage is the vision
+	// one, and the slot never falls back to agent.model, because a text-only
+	// coder is exactly the model that must not answer an image. What makes a
+	// model able to read one is its price row's image rate, so the slot carries
+	// no flag of its own.
+	//
+	// The json tag is what Config.SHA256 hashes: a field without one changes
+	// every configuration hash in the installation, for a key most files do not
+	// set (the Agent.JobProfile precedent).
+	Vision string `yaml:"vision" json:"vision,omitempty"`
+	// Diagnose is the model a local diagnosis runs on (`fugaro troubleshoot`,
+	// D1607). It is not a run's role either: no stage is the diagnose one, the
+	// slot never falls back to agent.model — a diagnosis explains a failure
+	// rather than doing a task, and what a repository runs its stages on is not
+	// the model a person wants reading their log — and nothing applies a
+	// default to it, because the built-in one (DefaultDiagnoseModel) is read by
+	// the command that runs the diagnosis, so a file that writes no such key
+	// keeps the configuration hash it had. The json tag is Vision's, for
+	// Vision's reason.
+	Diagnose string `yaml:"diagnose" json:"diagnose,omitempty"`
 }
 
 // RoleTokens is a per-call output limit for each role.
@@ -745,6 +794,12 @@ func (a Agent) ModelFor(r Role) string {
 	return m
 }
 
+// VisionModel is the model of the vision slot, "" when the run names none. It
+// never falls back to agent.model: the slot is read exactly when a stage's own
+// model cannot read an image, and the model that cannot is the one the fallback
+// would answer with (D2003).
+func (a Agent) VisionModel() string { return a.Models.Vision }
+
 // MaxOutputFor is role r's per-call output limit, 0 for none.
 func (a Agent) MaxOutputFor(r Role) int64 {
 	if r == RoleReviewer {
@@ -753,13 +808,13 @@ func (a Agent) MaxOutputFor(r Role) int64 {
 	return a.MaxOutputTokens.Coder
 }
 
-// PinnedModels are the three models a run under a budget charges through the
-// gateway: the coder's, the reviewer's and the background model's, in the
-// order PinPaths names them. An empty name is one the config pins to nothing
-// (the agent's own default), so callers that judge a pin keep the empty
-// entry rather than dropping it.
+// PinnedModels are the four models a run under a budget charges through the
+// gateway: the coder's, the reviewer's, the background model's and the vision
+// model's, in the order PinPaths names them. An empty name is one the config
+// pins to nothing (the agent's own default), so callers that judge a pin keep
+// the empty entry rather than dropping it.
 func (a Agent) PinnedModels() []string {
-	return []string{a.ModelFor(RoleCoder), a.ModelFor(RoleReviewer), a.Models.Background}
+	return []string{a.ModelFor(RoleCoder), a.ModelFor(RoleReviewer), a.Models.Background, a.VisionModel()}
 }
 
 // Workflow is one buildable unit of the repository, such as a server or a web app.
@@ -1050,6 +1105,55 @@ const MissingAnthropicKey = "no Anthropic API key is stored, so this call cannot
 // (config.PerRepositorySecret, owner ruling of 2026-10-15; the workspace or
 // project token is D461/D464 of 2026-10-27).
 const BitbucketSecret = "bitbucket-token"
+
+// BitbucketTokenSep is the separator of the bundle's Bitbucket token FAMILY
+// (D2350): a DOUBLED dash between the legacy key and the token's name, so that
+// the family's keys are a spelling the account-name rule cannot produce (R13).
+// A single dash would spell claude-oauth-token-bitbucket-token-ci, which is a
+// legal account today, and admitting one name in two families is exactly what
+// the loader refuses a document over.
+const BitbucketTokenSep = "--"
+
+// BitbucketTokenPrefix is what every key of the family starts with.
+const BitbucketTokenPrefix = BitbucketSecret + BitbucketTokenSep
+
+// ValidBitbucketTokenName reports whether name is a name a Bitbucket token of
+// the family may have. It is the rule a Claude account's name is held to — the
+// regex AND MaxClaudeAccountNameLen, which the regex alone does not carry — and
+// it is deliberately that rule rather than a second one: one name shape for
+// every name this platform derives, and a whole-key length the published schema
+// can state as a single number.
+func ValidBitbucketTokenName(name string) bool {
+	return len(name) <= MaxClaudeAccountNameLen && ClaudeAccountNameRE.MatchString(name)
+}
+
+// BitbucketTokenKey answers the bundle key of the Bitbucket token named name:
+// config.BitbucketSecret, the doubled dash and the name (D2350, R13). "" is a
+// name the family may not hold, which is a refusal and never a key that falls
+// back to the legacy credential's.
+//
+// The key is the token's NAME everywhere the platform speaks of it (R5), never
+// the bare suffix: the suffix would be a name the model account family could
+// also spell, and one name meaning two credentials is what the audit line
+// cannot survive.
+func BitbucketTokenKey(name string) string {
+	if !ValidBitbucketTokenName(name) {
+		return ""
+	}
+	return BitbucketTokenPrefix + name
+}
+
+// BitbucketTokenAccount reads a name back out of a member of the family's
+// bundle key, which is BitbucketTokenKey's inverse. ok=false is a key that is
+// not one of the family's — the legacy key among them, which is its own
+// credential and not a member with an empty name.
+func BitbucketTokenAccount(key string) (string, bool) {
+	name, found := strings.CutPrefix(key, BitbucketTokenPrefix)
+	if !found || !ValidBitbucketTokenName(name) {
+		return "", false
+	}
+	return name, true
+}
 
 // ReservedSecrets are the logical secret names the platform itself mounts,
 // mapped to the variable each one becomes. A workflow's secrets may not

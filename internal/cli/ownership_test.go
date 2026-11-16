@@ -317,13 +317,13 @@ func TestBudgetSetExitsTwoWhenTheDatabaseCannotBeRead(t *testing.T) {
 // project's.
 func TestBudgetKillRefusesAnotherInstallationsDatabase(t *testing.T) {
 	f := newBudgetFixture(t, "")
-	if _, _, err := execute(t, "budget", "kill", "--all", "--yes", "--reason", "maintenance"); err != nil {
+	if _, _, err := execute(t, "budget", "kill", "--all", "--reason", "maintenance"); err != nil {
 		t.Fatalf("budget kill on the installation's own marked database was refused: %v", err)
 	}
 	own := f.db.Value(budget.PathKillGlobal)
 
 	f.db.Set(budget.PathMark, birchMark())
-	_, _, err := execute(t, "budget", "kill", "--all", "--yes", "--reason", "maintenance")
+	_, _, err := execute(t, "budget", "kill", "--all", "--reason", "maintenance")
 	refusedByTheOwnershipCheck(t, "budget kill", err, "nothing was killed")
 	if err != nil && !strings.Contains(err.Error(), "one Firebase project serves one installation") {
 		t.Errorf("the refusal is not the shared one: %v", err)
@@ -334,7 +334,7 @@ func TestBudgetKillRefusesAnotherInstallationsDatabase(t *testing.T) {
 
 	// Data and no mark at all: the other half of the same answer.
 	f.db.Set(budget.PathMark, nil)
-	_, _, err = execute(t, "budget", "resume", "--all", "--yes", "--reason", "maintenance")
+	_, _, err = execute(t, "budget", "resume", "--all", "--reason", "maintenance")
 	refusedByTheOwnershipCheck(t, "budget resume", err, "nothing was resumed")
 	if !reflect.DeepEqual(f.db.Value(budget.PathKillGlobal), own) {
 		t.Errorf("the refused resume wrote the switch: %v, want %v", f.db.Value(budget.PathKillGlobal), own)
@@ -439,7 +439,7 @@ func TestPolicyPublishRefusesAnotherInstallationsDatabase(t *testing.T) {
 
 	// The delete door is the same opener: it writes exactly as much.
 	f.db.Set(budget.PathMark, birchMark())
-	_, _, err = execute(t, "project", "policy", "publish", "--delete", "--yes")
+	_, _, err = execute(t, "project", "policy", "publish", "--delete")
 	refusedByTheOwnershipCheck(t, "project policy publish --delete", err, "nothing was published")
 	if !reflect.DeepEqual(f.db.Value(projectpolicy.PathShared()), own) {
 		t.Errorf("the refused delete changed the policy node: %v, want %v", f.db.Value(projectpolicy.PathShared()), own)
@@ -465,7 +465,7 @@ func TestReposAddRefusesAnotherInstallationsDatabase(t *testing.T) {
 	if err != nil && !strings.Contains(err.Error(), "one Firebase project serves one installation") {
 		t.Errorf("the refusal is not the shared one: %v", err)
 	}
-	_, _, err = execute(t, "project", "repos", "rm", "github/acme/app", "--yes")
+	_, _, err = execute(t, "project", "repos", "rm", "github/acme/app")
 	refusedByTheOwnershipCheck(t, "project repos rm", err, "nothing was removed from the allow-list")
 	if !reflect.DeepEqual(f.db.Value(projectpolicy.PathShared()), own) {
 		t.Error("the refused edit rewrote the policy node")
@@ -531,13 +531,13 @@ func TestAccountsMarkRefusesAnotherInstallationsDatabase(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	f.appendConfig(t, claudeAccountsConfig)
 	f.db.Set(credsMarkPath("acme-personal"), map[string]any{"state": "broken"})
-	if _, _, err := execute(t, "accounts", "clear", "acme-personal", "--yes"); err != nil {
+	if _, _, err := execute(t, "accounts", "clear", "acme-personal"); err != nil {
 		t.Fatalf("accounts clear on the installation's own marked database was refused: %v", err)
 	}
 
 	f.db.Set(credsMarkPath("acme-personal"), map[string]any{"state": "broken"})
 	f.db.Set(budget.PathMark, birchMark())
-	_, _, err := execute(t, "accounts", "clear", "acme-personal", "--yes")
+	_, _, err := execute(t, "accounts", "clear", "acme-personal")
 	refusedByTheOwnershipCheck(t, "accounts clear", err, "nothing was cleared")
 	if err != nil && !strings.Contains(err.Error(), "one Firebase project serves one installation") {
 		t.Errorf("the refusal is not the shared one: %v", err)
@@ -548,7 +548,7 @@ func TestAccountsMarkRefusesAnotherInstallationsDatabase(t *testing.T) {
 
 	// Data and no mark at all: the same answer, from the other half.
 	f.db.Set(budget.PathMark, nil)
-	_, _, err = execute(t, "accounts", "clear", "acme-personal", "--yes")
+	_, _, err = execute(t, "accounts", "clear", "acme-personal")
 	refusedByTheOwnershipCheck(t, "accounts clear", err, "nothing was cleared")
 	if m, _ := f.db.Value(credsMarkPath("acme-personal")).(map[string]any); m["state"] != "broken" {
 		t.Errorf("the refused clear wrote the mark: %v", m)

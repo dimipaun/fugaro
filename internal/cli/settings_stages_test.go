@@ -42,7 +42,7 @@ func settingsStageHome(t *testing.T) (home, localPath string) {
 // path's unknown-key refusal.
 func TestSettingsSetWritesAStageAccount(t *testing.T) {
 	_, localPath := settingsStageHome(t)
-	if _, _, err := execute(t, "settings", "set", "stages.review.claude_account", "acme-wide", "--layer", "local", "--yes"); err != nil {
+	if _, _, err := execute(t, "settings", "set", "stages.review.claude_account", "acme-wide", "--layer", "local"); err != nil {
 		t.Fatalf("settings set stages.review.claude_account: %v", err)
 	}
 	lc, err := localcfg.Parse([]byte(readFileString(t, localPath)))
@@ -96,10 +96,10 @@ func TestSettingsSetStageAccountDryRunWritesNothing(t *testing.T) {
 // and the read falls back to the default's own sentence.
 func TestSettingsUnsetTakesAStageAccountAway(t *testing.T) {
 	_, localPath := settingsStageHome(t)
-	if _, _, err := execute(t, "settings", "set", "stages.review.claude_account", "acme-wide", "--layer", "local", "--yes"); err != nil {
+	if _, _, err := execute(t, "settings", "set", "stages.review.claude_account", "acme-wide", "--layer", "local"); err != nil {
 		t.Fatalf("settings set: %v", err)
 	}
-	if _, _, err := execute(t, "settings", "unset", "stages.review.claude_account", "--layer", "local", "--yes"); err != nil {
+	if _, _, err := execute(t, "settings", "unset", "stages.review.claude_account", "--layer", "local"); err != nil {
 		t.Fatalf("settings unset: %v", err)
 	}
 	lc, err := localcfg.Parse([]byte(readFileString(t, localPath)))
@@ -126,7 +126,7 @@ func TestSettingsSetRefusesAnUndeclaredStageAccount(t *testing.T) {
 	_, localPath := settingsStageHome(t)
 	before := readFileString(t, localPath)
 	for _, args := range [][]string{
-		{"settings", "set", "stages.review.claude_account", "acme-nowhere", "--layer", "local", "--yes"},
+		{"settings", "set", "stages.review.claude_account", "acme-nowhere", "--layer", "local"},
 		{"settings", "set", "stages.review.claude_account", "acme-nowhere", "--dry-run"},
 	} {
 		_, _, err := execute(t, args...)
@@ -171,7 +171,7 @@ func TestSettingsSetRefusesTheAxisValuesThatAreNotAccounts(t *testing.T) {
 	before := readFileString(t, localPath)
 	for _, value := range []string{config.AnthropicKeyAccount, config.ProviderKeyAccount} {
 		t.Run(value, func(t *testing.T) {
-			_, _, err := execute(t, "settings", "set", "stages.review.claude_account", value, "--layer", "local", "--yes")
+			_, _, err := execute(t, "settings", "set", "stages.review.claude_account", value, "--layer", "local")
 			if err == nil {
 				t.Fatalf("settings set wrote %s as a stage's account: no job mounts it", value)
 			}
@@ -202,7 +202,7 @@ func TestSettingsSetRefusesTheAxisValuesThatAreNotAccounts(t *testing.T) {
 func TestSettingsSetRefusesAStageAccountThatCoversLess(t *testing.T) {
 	_, localPath := settingsStageHome(t)
 	before := readFileString(t, localPath)
-	_, _, err := execute(t, "settings", "set", "stages.review.claude_account", "acme-narrow", "--layer", "local", "--yes")
+	_, _, err := execute(t, "settings", "set", "stages.review.claude_account", "acme-narrow", "--layer", "local")
 	if err == nil {
 		t.Fatal("settings set wrote an account that does not cover the project's repositories")
 	}
@@ -223,7 +223,7 @@ func TestSettingsSetRefusesAStageAccountThatCoversLess(t *testing.T) {
 	}
 	// And the project's own default account is always admitted: no account
 	// covers less than the unsuffixed one, which every repository may choose.
-	if _, _, err := execute(t, "settings", "set", "stages.review.claude_account", "default", "--layer", "local", "--yes"); err != nil {
+	if _, _, err := execute(t, "settings", "set", "stages.review.claude_account", "default", "--layer", "local"); err != nil {
 		t.Errorf("settings set stages.review.claude_account default: %v", err)
 	}
 }
@@ -237,7 +237,7 @@ func TestSettingsSetRefusesAStageAccountInACodingAgentsSession(t *testing.T) {
 	for _, k := range agentMarkers {
 		t.Setenv(k, "1")
 	}
-	_, _, err := execute(t, "settings", "set", "stages.review.claude_account", "acme-wide", "--layer", "local", "--yes")
+	_, _, err := execute(t, "settings", "set", "stages.review.claude_account", "acme-wide", "--layer", "local")
 	if err == nil {
 		t.Fatal("a coding agent's session wrote the stage account")
 	}

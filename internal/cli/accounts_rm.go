@@ -108,7 +108,7 @@ way it was and the command stops: an account whose declaration is gone while
 its secret is still there is the one state this command may not leave behind.
 
 Run it at your own terminal: this command deletes a credential, so a coding
-agent's session is refused, --yes included — a managed project's gate refuses
+agent's session is refused — a managed project's gate refuses
 the removal too, because the refs and the checkouts record its referrer check
 reads are documents the session writes, so no read here answers for what origin
 carries.`,
@@ -119,7 +119,6 @@ carries.`,
 	}
 	f := cmd.Flags()
 	f.StringVar(&o.profile, "profile", "", "the profile whose claude_accounts loses the name (a profile that lists accounts is taken out of it one at a time)")
-	f.BoolVar(&o.yes, "yes", false, "confirm the removal without a prompt")
 	return cmd
 }
 
@@ -144,6 +143,23 @@ type accountsRmPlan struct {
 	allow    []string
 	secretID string
 	rest     []string // the profiles that still list the account after the edit
+	// repos is the repository entries whose own claude_accounts names this
+	// account (docs/project-claude-accounts.md §3). They are cleared with the
+	// declaration rather than refused over, for the crafts' reason: no command
+	// of this release edits that list (`repos.*.claude_accounts` is not a
+	// `settings set` path), so a refusal would send the owner to a hand edit,
+	// while an entry left behind is a repository naming an account this file no
+	// longer declares — the state a publish refuses. Empty for a run that keeps
+	// the declaration.
+	repos []string
+	// crafts is the crafts whose access names the typed entry this removal
+	// takes away. They are cleared with it rather than refused over: the key is
+	// the one `fugaro update`'s own conversion writes (init_craft_migrate.go),
+	// no command of this release writes a crafts key — the generic path refuses
+	// a family-owned row (settings_set.go) — and a refusal naming a remedy that
+	// does not exist sends the owner to a hand edit. Empty for a run that
+	// removes no typed entry.
+	crafts []string
 }
 
 // runAccountsRm is the order spec §4 forces: everything that can refuse does,
@@ -161,6 +177,9 @@ func runAccountsRm(cmd *cobra.Command, name string, o accountsRmOptions) error {
 
 	sel, lc, err := settingsSelection()
 	if err != nil {
+		return err
+	}
+	if err := accessGateProject(cmd.Context(), lc, nil, "nothing was written", "removing a model account"); err != nil {
 		return err
 	}
 	old, err := settingsReadDocument(settingsTarget{kind: settingsDocLocal, path: sel.Path})
@@ -200,7 +219,7 @@ func runAccountsRm(cmd *cobra.Command, name string, o accountsRmOptions) error {
 	// The refusal a session with no admission keeps, in this command's own
 	// words. It comes before the diff rather than after it, and --yes does not
 	// answer it.
-	if marker != "" && !initflow.CanConfirmManaged(initflow.YesOrTyped, initflow.Conditions{Agent: marker}, m) {
+	if marker != "" && !m.Removes() {
 		return accountsRmSession(marker, plan, command)
 	}
 
@@ -256,6 +275,16 @@ func accountsRmResolve(path string, lc *localcfg.Config, name, want string, old 
 	if _, ok := lc.ClaudeAccounts[name]; !ok {
 		return accountsRmPlan{}, nil, nil, userErr("claude_accounts.%s is not declared in %s, so there is nothing to remove; `fugaro accounts ls` lists the accounts this project's repositories may use", pluginwire.Printable(name), path)
 	}
+	// An alias standing for this account is the reference this command may not
+	// answer for (docs/account-aliases, D2101): the removal takes the
+	// declaration away, and the alias would be left standing for a name this
+	// file no longer defines — the state the loader refuses. It is refused
+	// whatever --profile says, and the remedy is one edit of the alias's own
+	// entry rather than an edit per key, which is what the sentence names.
+	if aliases := accountsAliasTargeting(lc, name); len(aliases) > 0 {
+		return accountsRmPlan{}, nil, nil, userErr("claude_account_aliases.%s stands for %s, so removing the account would leave the alias pointing at a name this config does not define; point it at the account it should choose instead (`fugaro accounts alias set %s ACCOUNT`), or drop it (`fugaro accounts alias rm %s`), and remove the account once nothing stands for it; nothing was written",
+			pluginwire.Printable(aliases[0]), pluginwire.Printable(name), pluginwire.Printable(aliases[0]), pluginwire.Printable(aliases[0]))
+	}
 	if want != "" {
 		// --profile means what it means in add, and a profile this project does
 		// not define is the same refusal (accountsAddProfile): the two commands
@@ -288,6 +317,12 @@ func accountsRmResolve(path string, lc *localcfg.Config, name, want string, old 
 			plan.rest = append(plan.rest, p)
 		}
 	}
+	if plan.drop {
+		plan.repos = reposNamingAccount(lc, name)
+	}
+	if plan.drop && plan.typed {
+		plan.crafts = craftsNaming(lc, name)
+	}
 
 	next := old
 	if plan.entry {
@@ -303,13 +338,25 @@ func accountsRmResolve(path string, lc *localcfg.Config, name, want string, old 
 			return accountsRmPlan{}, nil, nil, userErr("claude_accounts.%s: %v", pluginwire.Printable(name), err)
 		}
 		next = n
+		// A repository's own entry that named the account goes on the same
+		// bytes, for the crafts' reason one level out: the declaration it
+		// names is gone, so an entry left behind is a repository admitted to
+		// an account this file no longer defines, and the publish that
+		// derives it refuses.
+		for _, repo := range plan.repos {
+			n, err := yamledit.RemoveListItemWithOptions(next, []string{"repos", repo, "claude_accounts"}, name, yamledit.RemoveOptions{DropEmptyParents: true})
+			if err != nil {
+				return accountsRmPlan{}, nil, nil, userErr("repos.%s.claude_accounts: %v", pluginwire.Printable(repo), err)
+			}
+			next = n
+		}
 	}
 	// The typed half goes with the declaration, on the same bytes: the entry the
 	// account was declared as is the account's, and a name left in the
 	// credentials block by this removal is a credential whose secret and job are
 	// gone that a pool would still be admitted to list.
 	if plan.drop && plan.typed {
-		if err := accountsRmTypedNamed(lc, name); err != nil {
+		if err := accountsRmPoolMember(lc, name); err != nil {
 			return accountsRmPlan{}, nil, nil, err
 		}
 		n, err := yamledit.RemoveSeqItemByKeyWithOptions(next, []string{"credentials"}, "name", name,
@@ -318,6 +365,19 @@ func accountsRmResolve(path string, lc *localcfg.Config, name, want string, old 
 			return accountsRmPlan{}, nil, nil, userErr("credentials.%s: %v", pluginwire.Printable(name), err)
 		}
 		next = n
+		// A craft's access that named the entry goes on the same bytes: the
+		// entry it named is gone, so an access left behind resolves to no
+		// credential at all, and no command of this release could repoint it
+		// (accountsRmPlan.crafts). The sentence this run prints names every key
+		// it clears.
+		for _, craft := range plan.crafts {
+			n, err := yamledit.RemoveKeyWithOptions(next, []string{"crafts", craft, "access"},
+				yamledit.RemoveOptions{DropEmptyParents: true})
+			if err != nil {
+				return accountsRmPlan{}, nil, nil, userErr("crafts.%s.access: %v", craft, err)
+			}
+			next = n
+		}
 	}
 	// The edit is read back strictly before it is written, as add's is: a file
 	// this Fugaro cannot load is a file the owner's very next command refuses,
@@ -344,19 +404,20 @@ func accountsRmTyped(lc *localcfg.Config, name string) bool {
 	return false
 }
 
-// accountsRmTypedNamed refuses an account whose typed entry is still named: the
-// entry goes with the account, and a craft's access or a pool's members left
-// pointing at a credential no run can serve is the state the --type guard in
-// `accounts add` exists to keep out of the file. It is the refusal
-// `accounts pool rm` makes for a pool a craft names, at the other end of the
-// same name.
-func accountsRmTypedNamed(lc *localcfg.Config, name string) error {
+// accountsRmPoolMember refuses an account whose typed entry is still a pool's
+// member: the entry goes with the account, and a pool left listing a member no
+// block defines is the file this config's own loader refuses — the state the
+// --type guard in `accounts add` exists to keep out of the file. The remedy it
+// names is a command the owner can run — `accounts pool rm` for the pool that
+// lists the entry — which is what makes the refusal worth printing.
+//
+// A craft's access is not refused here: nothing in this release writes a crafts
+// key — the migration is its only writer (init_craft_migrate.go) and the
+// generic path refuses a family-owned row (settings_set.go) — so a refusal
+// would point at a hand edit. The entry's own crafts are cleared with it
+// instead (craftsNaming).
+func accountsRmPoolMember(lc *localcfg.Config, name string) error {
 	var named []string
-	for _, craft := range config.CraftNames {
-		if lc.Crafts.Of(craft).Access == name {
-			named = append(named, "crafts."+craft+".access")
-		}
-	}
 	for _, p := range lc.Pools {
 		if slices.Contains(p.Members, name) {
 			named = append(named, "pools."+pluginwire.Printable(p.Name)+".members")
@@ -365,9 +426,56 @@ func accountsRmTypedNamed(lc *localcfg.Config, name string) error {
 	if len(named) == 0 {
 		return nil
 	}
-	where := strings.Join(named, " and ")
-	return userErr("credentials.%s is still named by %s, so removing the account would leave it with nothing to spend: point it at another credential or pool first, then run this again; nothing was written",
-		pluginwire.Printable(name), where)
+	return userErr("credentials.%s is still a member of %s, so removing the account would leave the pool with a member no block defines: run `fugaro accounts pool rm` for that pool first, then run this again; nothing was written",
+		pluginwire.Printable(name), strings.Join(named, " and "))
+}
+
+// craftsNaming is the crafts whose access names this credential or pool, in
+// config.CraftNames' order: the keys a removal of that name clears with it
+// (`accounts rm` for a typed entry, `accounts pool rm` for a pool).
+func craftsNaming(lc *localcfg.Config, name string) []string {
+	var out []string
+	for _, craft := range config.CraftNames {
+		if lc.Crafts.Of(craft).Access == name {
+			out = append(out, craft)
+		}
+	}
+	return out
+}
+
+// craftAccessKeys spells those crafts' keys for a sentence: the whole of what a
+// write clears, named one by one so the owner can read which crafts it moved.
+func craftAccessKeys(crafts []string) string {
+	keys := make([]string, 0, len(crafts))
+	for _, craft := range crafts {
+		keys = append(keys, "crafts."+craft+".access")
+	}
+	return strings.Join(keys, " and ")
+}
+
+// reposNamingAccount is the local config's repos entries whose own
+// claude_accounts lists the name, in the order the sentence that clears them
+// names them: the repository-level half of the account sources, which is how a
+// repository whose runs are not on a profile job is admitted
+// (docs/project-claude-accounts.md §3).
+func reposNamingAccount(lc *localcfg.Config, name string) []string {
+	var out []string
+	for _, repo := range slices.Sorted(maps.Keys(lc.Repos)) {
+		if slices.Contains(lc.Repos[repo].ClaudeAccounts, name) {
+			out = append(out, repo)
+		}
+	}
+	return out
+}
+
+// repoAccountKeys spells those entries' keys for a sentence, the way
+// craftAccessKeys does: the whole of what the write clears, named one by one.
+func repoAccountKeys(repos []string) string {
+	keys := make([]string, 0, len(repos))
+	for _, repo := range repos {
+		keys = append(keys, "repos."+repo+".claude_accounts")
+	}
+	return strings.Join(keys, " and ")
 }
 
 // accountsRmServing is the profiles that list the account, in the order every
@@ -763,14 +871,13 @@ func accountsRmGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config
 		return initflow.Managed{}, managedGate{}, nil
 	}
 	applied, refused := accountsRmRules(plan, read)
-	conv := managedmode.ConvergeAdmitted(doc, initflow.YesOrTyped, applied)
+	conv := managedmode.ConvergeAdmitted(doc, applied)
 	if len(refused) > 0 {
-		conv = managedmode.ConvergeRefused(doc, initflow.YesOrTyped, refused)
+		conv = managedmode.ConvergeRefused(doc, refused)
 	}
-	// YesOrTyped is the class this step is: the ordinary edit the diff
-	// describes, and not a Typed step — the value D846 reserves for a loosened
-	// ceiling is what the declaration's own rules already refuse here.
-	m, err := gate.admit(ctx, initflow.YesOrTyped, conv)
+	// This step is the ordinary edit the diff describes and not the loosened
+	// ceiling D846 reserves: the declaration's own rules refuse that one here.
+	m, err := gate.admit(ctx, conv)
 	if err == nil {
 		return m, gate, nil
 	}
@@ -785,7 +892,7 @@ func accountsRmGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config
 // accountsRmRules are the rules the gate judges this removal by, in the words
 // the record and the refusal carry: the rules that were applied and passed, and
 // the ones that refused. They are this command's own and live here rather than
-// in internal/managed, where the SHAPE of a verdict and the one class rule are
+// in internal/managed, where the SHAPE of a verdict and its one narrowing rule are
 // (D1021).
 //
 // The rule is the design's whole content for this command (managed spec §4.2,
@@ -909,6 +1016,14 @@ func accountsRmWhat(plan accountsRmPlan) string {
 	if plan.typed {
 		parts = append(parts, fmt.Sprintf("remove credentials.%s (the typed entry the account was declared with)",
 			pluginwire.Printable(plan.name)))
+		if len(plan.crafts) > 0 {
+			parts = append(parts, fmt.Sprintf("clear %s, which named that entry and would have nothing to spend without it",
+				craftAccessKeys(plan.crafts)))
+		}
+	}
+	if len(plan.repos) > 0 {
+		parts = append(parts, fmt.Sprintf("clear %s, which admitted that repository's own runs to the account",
+			repoAccountKeys(plan.repos)))
 	}
 	parts = append(parts,
 		fmt.Sprintf("delete the secret %s (Secret Manager's own delete, which cannot be undone here)", plan.secretID),

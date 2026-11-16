@@ -94,8 +94,9 @@ func sharedRuns(t *testing.T) string {
 func TestInitConfigOnlyPublishesTheSharedConfig(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
+	fakeTerminal(t)
 	dir := sharedRuns(t)
-	if _, _, err := executeStdin(t, "", "setup", "--config-only", "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "", "setup", "--config-only"); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(sharedObjectPath(dir))
@@ -122,8 +123,8 @@ func TestInitPublishConfigAlone(t *testing.T) {
 	}
 }
 
-// A launcher's --publish-config is refused with the operator text and exit
-// 1, since 0.7.0 only operators may write fugaro/ (bucket-iam.md H8).
+// A launcher's --publish-config is refused with the admin text and exit
+// 1, since 0.7.0 only admins may write fugaro/ (bucket-iam.md H8).
 func TestInitPublishConfigAsLauncherIsRefused(t *testing.T) {
 	r := newInitRig(t)
 	old := sharedBucketOpener
@@ -133,7 +134,7 @@ func TestInitPublishConfigAsLauncherIsRefused(t *testing.T) {
 	t.Cleanup(func() { sharedBucketOpener = old })
 	r.gcs.DenyWrites(initRunsBucket, "fugaro/")
 	_, _, err := executeStdin(t, "", "setup", "--publish-config")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "operator role") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "admin role") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 }
@@ -144,18 +145,19 @@ func TestInitPublishConfigAsLauncherIsRefused(t *testing.T) {
 func TestInitWarnsWhenSharedConfigPublishIsForbidden(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
+	fakeTerminal(t)
 	old := sharedBucketOpener
 	sharedBucketOpener = func(ctx context.Context, _ string) (*blobx.Bucket, error) {
 		return r.gcs.Bucket(t, initRunsBucket), nil
 	}
 	t.Cleanup(func() { sharedBucketOpener = old })
 	r.gcs.DenyWrites(initRunsBucket, "fugaro/")
-	out, _, err := executeStdin(t, "", "setup", "--yes")
+	out, _, err := executeStdin(t, "", "setup")
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
-	if !strings.Contains(out, "could not publish the shared config") || !strings.Contains(out, "operator role") {
-		t.Fatalf("no warning naming the operator role:\n%s", out)
+	if !strings.Contains(out, "could not publish the shared config") || !strings.Contains(out, "admin role") {
+		t.Fatalf("no warning naming the admin role:\n%s", out)
 	}
 }
 
@@ -192,6 +194,7 @@ func TestInitPublishConfigExcludesTheOtherModes(t *testing.T) {
 func TestInitPublishFailureWarnsAndSucceeds(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
+	fakeTerminal(t)
 	dir := sharedRuns(t)
 	if err := os.Chmod(dir, 0o500); err != nil {
 		t.Fatal(err)
@@ -201,7 +204,7 @@ func TestInitPublishFailureWarnsAndSucceeds(t *testing.T) {
 		f.Close()
 		t.Skip("the directory is writable despite its mode (running as root)")
 	}
-	out, _, err := executeStdin(t, "", "setup", "--config-only", "--yes")
+	out, _, err := executeStdin(t, "", "setup", "--config-only")
 	if err != nil {
 		t.Fatalf("a publish failure must not fail init: %v", err)
 	}
@@ -635,6 +638,52 @@ func TestInitPublishFromACodingAgentSession(t *testing.T) {
 	}
 }
 
+// TestSharedConfigRefusesAliases: an alias is a name the account-choice keys
+// may hold in place of an account's own name, so it is local-only for their
+// reason and one indirection in (docs/account-aliases, D2090) — a published
+// alias would let whoever can write the runs bucket's shared file name an
+// account that file never admitted. The publish writes the resolved account
+// into the policy node instead, and localcfg.Config.Shared nils the block, so
+// the reader refuses the key by name before the file is parsed and again on the
+// decoded value, the way review_floor and the catalog are refused.
+func TestSharedConfigRefusesAliases(t *testing.T) {
+	if !slices.Contains(sharedForbidden, "claude_account_aliases") {
+		t.Fatal("sharedForbidden does not name claude_account_aliases, so a published alias would be read")
+	}
+	block := "claude_account_aliases:\n    reviewer: team-a\n"
+	_, err := ParseShared([]byte(validShared()+block), sharedAnchor)
+	if err == nil {
+		t.Fatal("a published shared config carrying claude_account_aliases: was accepted")
+	}
+	for _, want := range []string{"claude_account_aliases", "never published", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	// The decoded half, which no document reaches (the key is refused before
+	// Parse): a config built another way must not publish a block the converge
+	// never writes. The alias's own target is defined here, so what the parse
+	// complains about, if anything, is the block and not the fixture.
+	c, err := localcfg.Parse([]byte(validShared() + "claude_accounts:\n    team-a:\n        allow_data_to:\n            - belong/edgeweb\n" + block))
+	if err != nil {
+		t.Fatalf("the fixture does not read back: %v", err)
+	}
+	if !sharedNeverPublished(c) {
+		t.Error("a decoded config carrying claude_account_aliases: is called publishable, so a shared file could carry an alias")
+	}
+	// That fixture is publishable by three of the predicate's arms at once
+	// (registry, claude_accounts and the alias block), so it cannot say which
+	// one answered. This pair does: the alias block alone is refused, and a
+	// config that carries nothing is the control that keeps the arm from being
+	// replaced by a predicate that refuses everything.
+	if !sharedNeverPublished(&localcfg.Config{ClaudeAccountAliases: map[string]string{"reviewer": "team-a"}}) {
+		t.Error("only the alias block is set, and the config is called publishable")
+	}
+	if sharedNeverPublished(&localcfg.Config{}) {
+		t.Error("a config carrying no section at all is called unpublishable, so the check is not the sections it names")
+	}
+}
+
 // TestSharedConfigRefusesImageCatalog: the image catalog is the owner's policy
 // and is published through the policy node — which the runner reads and fails
 // closed on — precisely because the shared config is the file any launcher with
@@ -711,6 +760,135 @@ func TestSharedConfigRefusesOrchestrator(t *testing.T) {
 	}
 }
 
+// TestSharedConfigRefusesCloneURLs: the clone URL is where a repository's runs
+// clone from, and it is the local config's block (SD5, D842) published through
+// the policy node the runner reads — the file the runner computes the URL from
+// and fails closed on — rather than read from the shared config, which any
+// launcher with objectAdmin on the runs bucket can write. An entry there would
+// let a launcher point every teammate's runs at a URL of its choosing, which is
+// the whole of what the node's own rule (projectpolicy.ValidCloneURLs) exists to
+// refuse. The reader refuses the key by name before the file is parsed, the way
+// review_floor and the catalog are refused.
+func TestSharedConfigRefusesCloneURLs(t *testing.T) {
+	if !slices.Contains(sharedForbidden, "clone_urls") {
+		t.Fatal("sharedForbidden does not name clone_urls, so a published block would be read")
+	}
+	data := validShared() + "clone_urls:\n    github/acme/app: https://github.com/acme/app\n"
+	_, err := ParseShared([]byte(data), sharedAnchor)
+	if err == nil {
+		t.Fatal("a published shared config carrying clone_urls: was accepted")
+	}
+	for _, want := range []string{"clone_urls", "never published", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+}
+
+// TestConfigPublishRefusesTheBinariesKey: the binaries block is the owner's
+// grant of the paths a run may add a binary at and of the cap the run is held
+// to, and it travels the way the review floor and the clone URLs do (AR1, D986,
+// F11). The shared config is the file any launcher holding objectAdmin on the
+// runs bucket can write, so a `binaries:` key in it would be the launcher the
+// rule binds stating the rule — admitting its own payload to every teammate's
+// runs, from the one file it can write — and both doors are closed here as they
+// are for the floor: the reader refuses the key (sharedForbidden), and the
+// publisher never writes it, because localcfg's Shared nils the block (so the
+// local file's block publishes none of itself) and the block reaches a run off
+// the policy node instead, which the owner writes and the runner fails closed
+// on.
+//
+// The existing published object is the launcher's half of the fixture rather
+// than an older publisher's, and it is the case the refusal exists for: an
+// object carrying the key is refused and replaced, never merged, so the next
+// publish is the one that takes the launcher's own grant out of the file every
+// teammate reads.
+func TestConfigPublishRefusesTheBinariesKey(t *testing.T) {
+	f := newCloudFixture(t)
+	dir := filepath.Join(f.dir, "runs")
+	block := "binaries:\n  allow: [\"brand/*.png\"]\n  max_bytes: 1048576\n"
+	writePublished(t, dir, publishedWithOtherRepo+block)
+	if _, err := localcfg.Parse([]byte(publishedWithOtherRepo + block)); err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+	f.appendConfig(t, block)
+	lc := publishable(t)
+	if lc.Binaries == nil {
+		t.Fatalf("the local fixture states no binaries block: %+v", lc.Binaries)
+	}
+	var warned []string
+	if _, err := publishSharedWarn(context.Background(), lc, func(m string) { warned = append(warned, m) }); err != nil {
+		t.Fatal(err)
+	}
+	if len(warned) != 1 || !strings.Contains(warned[0], "refused") || !strings.Contains(warned[0], "binaries") {
+		t.Errorf("warnings = %q", warned)
+	}
+	got, err := os.ReadFile(sharedObjectPath(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "binaries") || strings.Contains(string(got), "brand/*.png") {
+		t.Errorf("the shared config carries the binaries block, which the launcher who wrote it must not be able to state:\n%s", got)
+	}
+	if r := publishedRepos(t, dir); len(r) != 1 || r["acme/app"].Provider != "github" {
+		t.Errorf("published repos = %v; want only the local acme/app", r)
+	}
+}
+
+// TestSharedConfigRefusesARepositoryAccountList: a repos entry's own
+// claude_accounts is the repository-level half of the trust anchor T1 keeps in
+// the operator-only local config — it is what admits a repository whose runs
+// are not on a profile job to an account (docs/project-claude-accounts.md §3) —
+// so it is refused in the shared file exactly as the top-level block is, and
+// localcfg.Config.Shared clears it for the same reason. A launcher with
+// objectAdmin on the runs bucket who could publish one would be adding a
+// repository to an account's admission, and the machine whose next publish
+// derives the admission would be deriving what that launcher wrote. The key is
+// nested, so it is refused on the decoded value rather than by key before the
+// parse; the refusal names the entry, the key and the block to edit.
+func TestSharedConfigRefusesARepositoryAccountList(t *testing.T) {
+	data := strings.Replace(validShared(),
+		"        workflows:\n            - web\n",
+		"        workflows:\n            - web\n        claude_accounts:\n            - team-a\n", 1)
+	if data == validShared() {
+		t.Fatal("the fixture did not gain the entry: the check below would pass on a file carrying no claude_accounts")
+	}
+	_, err := ParseShared([]byte(data), sharedAnchor)
+	if err == nil {
+		t.Fatal("a published shared config carrying repos.<r>.claude_accounts: was accepted")
+	}
+	for _, want := range []string{"repos.belong/edgeweb.claude_accounts", "never published", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	// The publish half: the converge's own copy of the repos map carries
+	// neither local key, so a config that has one is never the file that
+	// reaches the bucket. The control beside it is the same config without the
+	// key, so the check is the entry's own keys and not the entry.
+	c, err := localcfg.Parse([]byte(data))
+	if err != nil {
+		t.Fatalf("the fixture does not read back: %v", err)
+	}
+	if got := c.Shared().Repos["belong/edgeweb"]; len(got.ClaudeAccounts) > 0 || got.BaseBranch != "" {
+		t.Errorf("the published copy of belong/edgeweb carries %v/%q, so a repository's own account list would travel to the runs bucket", got.ClaudeAccounts, got.BaseBranch)
+	}
+	if got := validSharedPublished(t); len(got.Repos["belong/edgeweb"].ClaudeAccounts) > 0 {
+		t.Error("the control entry carries an account list, so the check above proves nothing")
+	}
+}
+
+// validSharedPublished is the shared copy of the valid fixture, for the tests
+// that need the config the converge publishes beside the config it reads.
+func validSharedPublished(t *testing.T) *localcfg.Config {
+	t.Helper()
+	c, err := localcfg.Parse([]byte(validShared()))
+	if err != nil {
+		t.Fatalf("the fixture does not read back: %v", err)
+	}
+	return c.Shared()
+}
+
 // TestSharedConfigRefusesEveryForbiddenSection: the list is the fence, and a
 // name dropped from it is a section the commands would read from a file any
 // launcher with objectAdmin on the runs bucket can write. Each name is put in
@@ -746,7 +924,15 @@ func TestSharedConfigRefusesEveryForbiddenSection(t *testing.T) {
 	// run -- the catalog's own reason, one step out -- and the triage switch
 	// decides which of a review round's findings hold a pull request back
 	// (D1854), which is the floor's reason one level down.
-	for _, k := range []string{"image_map", "bake_repos", "triage"} {
+	//
+	// `backend` joined the list with the enable (plan
+	// 2026-10-19-compute-backend.md Task 10 step 4), for a reason of the same
+	// shape: the checks that judge a `batch:` block are `fugaro doctor`'s and
+	// they read the machine's own config, so a launcher who could write the
+	// choice into the shared file would move every teammate with no local
+	// config onto VMs with a block that same launcher chose and no check ever
+	// saw.
+	for _, k := range []string{"image_map", "bake_repos", "triage", "backend"} {
 		if !slices.Contains(sharedForbidden, k) {
 			t.Errorf("sharedForbidden does not name %s, so a published %s would be read", k, k)
 		}
@@ -765,6 +951,9 @@ func TestSharedNeverPublishedCatchesTheDecodedSections(t *testing.T) {
 		{"image_map", "image_map:\n    acme/app: tools\n"},
 		{"bake_repos", "bake_repos: false\n"},
 		{"triage", "triage: false\n"},
+		{"backend", "backend: cloud-batch\n"},
+		{"clone_urls", "clone_urls:\n    github/acme/app: https://github.com/acme/app\n"},
+		{"bitbucket_tokens", "bitbucket_tokens:\n    - {name: ci, type: repo, coverage: [belong/edgeweb]}\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, err := localcfg.Parse([]byte(validShared() + tc.yaml))

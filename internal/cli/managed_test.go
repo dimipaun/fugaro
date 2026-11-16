@@ -28,6 +28,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // The property this feature's safety rests on, and the one place it is
@@ -149,28 +150,27 @@ func (s agentEnvState) apply(t *testing.T) {
 	}
 }
 
-// confirmRow is one combination of the flags and the terminal that
-// initRun.conditions reads, with what a project that is NOT managed and has
-// NO agent marker must do, written by hand:
+// confirmRow is one combination of the flags and the terminal a run's
+// confirmation is decided under, with what a project that is NOT managed and
+// has NO agent marker must do, written by hand:
 //
-//   - condYes: initflow.Conditions.Yes as initRun.conditions must build it
-//     (--plan-only never takes --yes);
-//   - ordRight/ordWrong: whether the RULE lets a run of this row take a
-//     YesOrTyped step (initflow.CanConfirm, which
-//     TestManagedConfirmRuleMatchesTheTable reads back out of the row);
-//   - typRight/typWrong: the same for the Typed class.
+//   - own: whether the run's own answer reaches the step — initRun.ask's
+//     answer, which is what the ordinary confirmation of every apply is, and
+//     a money-or-permanent step's where D12's answer of 2026-10-20 covers it
+//     (askCovered);
+//   - typed: the same for a money-or-permanent step the run's own answer does
+//     NOT reach (askTyped): an answer a run carries never confirms one, and
+//     the person at the terminal does. It is initflow.CanConfirmRun's answer,
+//     which TestManagedConfirmRuleMatchesTheTable reads back out of the row.
 //
-// The *Wrong columns are false in every row: the rule asks who is there and
-// never what was typed. They were the run's own expectation while a
-// confirmation was the step's name typed at the terminal — typing something
-// else left the step — and the run's own expectation is runConfirms now, which
-// is not the rule any more (see it) and is what the property drives.
+// Both are read by the property (runConfirms reads the column of the arm it is
+// asked about) and the second by the rule's own test, so a column that drifts
+// from the code it states is a failure rather than a dead field.
 //
 // Under any agent marker every one of them is false.
 type confirmRow struct {
 	yes, planOnly, nonInteractive, json, terminal bool
-	condYes                                       bool
-	ordRight, ordWrong, typRight, typWrong        bool
+	own, typed                                    bool
 	// ask is --ask. It is written LAST rather than beside the flags it is a
 	// sibling of, so that every column the rows had before it keeps its place
 	// in the literal.
@@ -186,125 +186,75 @@ type confirmRow struct {
 // move something are the managed ones, which are not this table's subject:
 // managed_ask_test.go is theirs.
 var confirmTable = []confirmRow{
-	//  yes    plan   nonInt json   term     condYes    ordR   ordW   typR   typW   ask
-	{false, false, false, false, false /**/, false /**/, false, false, false, false, false /*ask*/},
-	{false, false, false, false, true /* */, false /**/, true, false, true, false, false /*ask*/},
-	{false, false, false, true, false /* */, false /**/, false, false, false, false, false /*ask*/},
-	{false, false, false, true, true /*  */, false /**/, true, false, false, false, false /*ask*/},
-	{false, false, true, false, false /* */, false /**/, false, false, false, false, false /*ask*/},
-	{false, false, true, false, true /*  */, false /**/, false, false, false, false, false /*ask*/},
-	{false, false, true, true, false /*  */, false /**/, false, false, false, false, false /*ask*/},
-	{false, false, true, true, true /*   */, false /**/, false, false, false, false, false /*ask*/},
-	{false, true, false, false, false /* */, false /**/, false, false, false, false, false /*ask*/},
-	{false, true, false, false, true /*  */, false /**/, true, false, true, false, false /*ask*/},
-	{false, true, false, true, false /*  */, false /**/, false, false, false, false, false /*ask*/},
-	{false, true, false, true, true /*   */, false /**/, true, false, false, false, false /*ask*/},
-	{false, true, true, false, false /*  */, false /**/, false, false, false, false, false /*ask*/},
-	{false, true, true, false, true /*   */, false /**/, false, false, false, false, false /*ask*/},
-	{false, true, true, true, false /*   */, false /**/, false, false, false, false, false /*ask*/},
-	{false, true, true, true, true /*    */, false /**/, false, false, false, false, false /*ask*/},
-	{true, false, false, false, false /* */, true /* */, true, true, false, false, false /*ask*/},
-	{true, false, false, false, true /*  */, true /* */, true, true, false, false, false /*ask*/},
-	{true, false, false, true, false /*  */, true /* */, true, true, false, false, false /*ask*/},
-	{true, false, false, true, true /*   */, true /* */, true, true, false, false, false /*ask*/},
-	{true, false, true, false, false /*  */, true /* */, true, true, false, false, false /*ask*/},
-	{true, false, true, false, true /*   */, true /* */, true, true, false, false, false /*ask*/},
-	{true, false, true, true, false /*   */, true /* */, true, true, false, false, false /*ask*/},
-	{true, false, true, true, true /*    */, true /* */, true, true, false, false, false /*ask*/},
-	{true, true, false, false, false /*  */, false /**/, false, false, false, false, false /*ask*/},
-	{true, true, false, false, true /*   */, false /**/, true, false, true, false, false /*ask*/},
-	{true, true, false, true, false /*   */, false /**/, false, false, false, false, false /*ask*/},
-	{true, true, false, true, true /*    */, false /**/, true, false, false, false, false /*ask*/},
-	{true, true, true, false, false /*   */, false /**/, false, false, false, false, false /*ask*/},
-	{true, true, true, false, true /*    */, false /**/, false, false, false, false, false /*ask*/},
-	{true, true, true, true, false /*    */, false /**/, false, false, false, false, false /*ask*/},
-	{true, true, true, true, true /*     */, false /**/, false, false, false, false, false /*ask*/},
-	{false, false, false, false, false /**/, false /**/, false, false, false, false, true /*ask*/},
-	{false, false, false, false, true /* */, false /**/, true, false, true, false, true /*ask*/},
-	{false, false, false, true, false /* */, false /**/, false, false, false, false, true /*ask*/},
-	{false, false, false, true, true /*  */, false /**/, true, false, false, false, true /*ask*/},
-	{false, false, true, false, false /* */, false /**/, false, false, false, false, true /*ask*/},
-	{false, false, true, false, true /*  */, false /**/, false, false, false, false, true /*ask*/},
-	{false, false, true, true, false /*  */, false /**/, false, false, false, false, true /*ask*/},
-	{false, false, true, true, true /*   */, false /**/, false, false, false, false, true /*ask*/},
-	{false, true, false, false, false /* */, false /**/, false, false, false, false, true /*ask*/},
-	{false, true, false, false, true /*  */, false /**/, true, false, true, false, true /*ask*/},
-	{false, true, false, true, false /*  */, false /**/, false, false, false, false, true /*ask*/},
-	{false, true, false, true, true /*   */, false /**/, true, false, false, false, true /*ask*/},
-	{false, true, true, false, false /*  */, false /**/, false, false, false, false, true /*ask*/},
-	{false, true, true, false, true /*   */, false /**/, false, false, false, false, true /*ask*/},
-	{false, true, true, true, false /*   */, false /**/, false, false, false, false, true /*ask*/},
-	{false, true, true, true, true /*    */, false /**/, false, false, false, false, true /*ask*/},
-	{true, false, false, false, false /* */, true /* */, true, true, false, false, true /*ask*/},
-	{true, false, false, false, true /*  */, true /* */, true, true, false, false, true /*ask*/},
-	{true, false, false, true, false /*  */, true /* */, true, true, false, false, true /*ask*/},
-	{true, false, false, true, true /*   */, true /* */, true, true, false, false, true /*ask*/},
-	{true, false, true, false, false /*  */, true /* */, true, true, false, false, true /*ask*/},
-	{true, false, true, false, true /*   */, true /* */, true, true, false, false, true /*ask*/},
-	{true, false, true, true, false /*   */, true /* */, true, true, false, false, true /*ask*/},
-	{true, false, true, true, true /*    */, true /* */, true, true, false, false, true /*ask*/},
-	{true, true, false, false, false /*  */, false /**/, false, false, false, false, true /*ask*/},
-	{true, true, false, false, true /*   */, false /**/, true, false, true, false, true /*ask*/},
-	{true, true, false, true, false /*   */, false /**/, false, false, false, false, true /*ask*/},
-	{true, true, false, true, true /*    */, false /**/, true, false, false, false, true /*ask*/},
-	{true, true, true, false, false /*   */, false /**/, false, false, false, false, true /*ask*/},
-	{true, true, true, false, true /*    */, false /**/, false, false, false, false, true /*ask*/},
-	{true, true, true, true, false /*    */, false /**/, false, false, false, false, true /*ask*/},
-	{true, true, true, true, true /*     */, false /**/, false, false, false, false, true /*ask*/},
+	//  yes    plan   nonInt json   term   own    typed  ask
+	{false, false, false, false, false, false, false, false},
+	{false, false, false, false, true, true, true, false},
+	{false, false, false, true, false, false, false, false},
+	{false, false, false, true, true, false, false, false},
+	{false, false, true, false, false, false, false, false},
+	{false, false, true, false, true, false, false, false},
+	{false, false, true, true, false, false, false, false},
+	{false, false, true, true, true, false, false, false},
+	{false, true, false, false, false, false, false, false},
+	{false, true, false, false, true, true, true, false},
+	{false, true, false, true, false, false, false, false},
+	{false, true, false, true, true, false, false, false},
+	{false, true, true, false, false, false, false, false},
+	{false, true, true, false, true, false, false, false},
+	{false, true, true, true, false, false, false, false},
+	{false, true, true, true, true, false, false, false},
+	{true, false, false, false, false, true, false, false},
+	{true, false, false, false, true, true, false, false},
+	{true, false, false, true, false, true, false, false},
+	{true, false, false, true, true, true, false, false},
+	{true, false, true, false, false, true, false, false},
+	{true, false, true, false, true, true, false, false},
+	{true, false, true, true, false, true, false, false},
+	{true, false, true, true, true, true, false, false},
+	{true, true, false, false, false, false, false, false},
+	{true, true, false, false, true, true, true, false},
+	{true, true, false, true, false, false, false, false},
+	{true, true, false, true, true, false, false, false},
+	{true, true, true, false, false, false, false, false},
+	{true, true, true, false, true, false, false, false},
+	{true, true, true, true, false, false, false, false},
+	{true, true, true, true, true, false, false, false},
+	{false, false, false, false, false, false, false, true},
+	{false, false, false, false, true, true, true, true},
+	{false, false, false, true, false, false, false, true},
+	{false, false, false, true, true, false, false, true},
+	{false, false, true, false, false, false, false, true},
+	{false, false, true, false, true, false, false, true},
+	{false, false, true, true, false, false, false, true},
+	{false, false, true, true, true, false, false, true},
+	{false, true, false, false, false, false, false, true},
+	{false, true, false, false, true, true, true, true},
+	{false, true, false, true, false, false, false, true},
+	{false, true, false, true, true, false, false, true},
+	{false, true, true, false, false, false, false, true},
+	{false, true, true, false, true, false, false, true},
+	{false, true, true, true, false, false, false, true},
+	{false, true, true, true, true, false, false, true},
+	{true, false, false, false, false, true, false, true},
+	{true, false, false, false, true, true, false, true},
+	{true, false, false, true, false, true, false, true},
+	{true, false, false, true, true, true, false, true},
+	{true, false, true, false, false, true, false, true},
+	{true, false, true, false, true, true, false, true},
+	{true, false, true, true, false, true, false, true},
+	{true, false, true, true, true, true, false, true},
+	{true, true, false, false, false, false, false, true},
+	{true, true, false, false, true, true, true, true},
+	{true, true, false, true, false, false, false, true},
+	{true, true, false, true, true, false, false, true},
+	{true, true, true, false, false, false, false, true},
+	{true, true, true, false, true, false, false, true},
+	{true, true, true, true, false, false, false, true},
+	{true, true, true, true, true, false, false, true},
 }
 
 func (c confirmRow) String() string {
 	return fmt.Sprintf("--yes=%v --plan-only=%v --non-interactive=%v --json=%v terminal=%v --ask=%v", c.yes, c.planOnly, c.nonInteractive, c.json, c.terminal, c.ask)
-}
-
-// confirmClasses is every confirmation class the product runs over, by the
-// name internal/initflow/stage.go declares it under.
-var confirmClasses = []struct {
-	name  string
-	class initflow.ConfirmClass
-}{
-	{"Typed", initflow.Typed},
-	{"YesOrTyped", initflow.YesOrTyped},
-}
-
-// declaredConfirmClasses reads the ConfirmClass constants out of
-// internal/initflow/stage.go, in declaration order: Go cannot enumerate a
-// constant set at run time, and a class with no case here is a class whose
-// confirmations the property stops covering.
-func declaredConfirmClasses(t *testing.T) []string {
-	t.Helper()
-	const src = "../initflow/stage.go"
-	f, err := parser.ParseFile(token.NewFileSet(), src, nil, 0)
-	if err != nil {
-		t.Fatalf("parsing %s: %v", src, err)
-	}
-	var names []string
-	for _, decl := range f.Decls {
-		gd, ok := decl.(*ast.GenDecl)
-		if !ok || gd.Tok != token.CONST {
-			continue
-		}
-		// A const spec with neither a type nor a value repeats the one before
-		// it (`YesOrTyped` after `Typed ConfirmClass = iota`), so the block is
-		// tracked rather than each spec.
-		var class bool
-		for _, spec := range gd.Specs {
-			vs, ok := spec.(*ast.ValueSpec)
-			if !ok {
-				continue
-			}
-			if vs.Type != nil {
-				id, ok := vs.Type.(*ast.Ident)
-				class = ok && id.Name == "ConfirmClass"
-			}
-			if class {
-				for _, n := range vs.Names {
-					names = append(names, n.Name)
-				}
-			}
-		}
-	}
-	return names
 }
 
 // managedRead is one answer the marker read gave, with the verdict the world
@@ -586,66 +536,83 @@ func withTerminal(t *testing.T, on bool) {
 	t.Cleanup(func() { stdinIsTerminal = old })
 }
 
-// managedDecision is the decision an applying step of class makes in a
-// project whose read gave rd, under the run r: the confirmation is replaced
-// only when mode says managed, and otherwise it is the program's own
-// confirmation path — initRun.ask for YesOrTyped, initRun.askTyped (which
-// reads initRun.conditions and canConfirmTyped) for Typed.
-func managedDecision(mode func(bool, string, error) bool, rd managedRead, r *initRun, class initflow.ConfirmClass) (bool, error) {
+// confirmPath is one of the three ways a step of this table is confirmed, with
+// the hand-written answer it must give in a project nothing recorded: the run's
+// ordinary confirmation, which every applying step of the converge goes through
+// (initRun.ask), and a money-or-permanent step, which the run's own answer
+// reaches (askCovered) or does not (askTyped).
+type confirmPath struct {
+	name string
+	// covered is whether the run's own answer reaches a step confirmed this
+	// way, and it is the arm of the table's columns this path is read against.
+	covered bool
+	// ordinary marks the run's one confirmation, which answers a coding
+	// agent's marker with the marker's own refusal. A money step leaves such a
+	// session's step instead — reachable false, no error — because what the
+	// caller prints there is its own warning and the route the user takes.
+	ordinary bool
+	confirm  func(r *initRun) (bool, error)
+}
+
+var confirmPaths = []confirmPath{
+	{"the run's own confirmation", true, true, func(r *initRun) (bool, error) {
+		return r.ask("an applying step")
+	}},
+	{"a step the run's own answer reaches", true, false, func(r *initRun) (bool, error) {
+		ok, reachable, err := r.askCovered("an applying step")
+		return ok && reachable && err == nil, err
+	}},
+	{"a step the run's own answer does not reach", false, false, func(r *initRun) (bool, error) {
+		ok, reachable, err := r.askTyped("an applying step")
+		return ok && reachable && err == nil, err
+	}},
+}
+
+// managedDecision is the decision an applying step makes in a project whose
+// read gave rd, under the run r: the confirmation is replaced only when mode
+// says managed, and otherwise it is the program's own path for the step
+// (confirmPath).
+func managedDecision(mode func(bool, string, error) bool, rd managedRead, r *initRun, path confirmPath) (bool, error) {
 	if mode(rd.ok, rd.reason, rd.err) {
 		return true, nil
 	}
-	if class == initflow.Typed {
-		ok, reachable, err := r.askTyped("an applying step")
-		return ok && reachable && err == nil, err
-	}
-	return r.ask("an applying step")
+	return path.confirm(r)
 }
 
-// runConfirms is what the run itself does at a step of the class in a row, for
-// a project nothing recorded (so the mode never answers) and under marker (the
-// environment's, "" for a person's own session), written by hand beside the
-// property that drives it. It is the run's own path and not the rule: the two
-// were one predicate while a confirmation was the step's name typed at a
-// terminal, and since T7 they are not, which is why both are written out.
+// runConfirms is what the run itself does at a step confirmed the path's way in
+// a row, for a project nothing recorded (so the mode never answers) and under
+// marker (the environment's, "" for a person's own session), written by hand
+// beside the property that drives it: the column of the arm, which is the
+// table's own statement of the same rule (confirmRow).
 //
 // Every row this property runs is a project the oracle says is NOT managed, and
 // --ask moves nothing in one of those: the flag restores the question a managed
 // project's gate would have replaced, and there is no such question here
 // (initflow.AskDecision's own rule, and the line its help prints for the same
-// project). What is left is confirmNow's last arm — a real terminal, with no
-// --json and no --non-interactive — and --yes, and the ask column of the table
-// changes neither, which is what this function says by not reading it.
-//
-// That arm is narrower than the rule for a YesOrTyped step by the --json arm
-// alone (initflow.CanConfirm asks only whether a person may type, and under
-// --json a name could still be typed) — and a run that reads no name at all has
-// nothing to do with the flag, so --json at a terminal leaves the step. A Typed
-// step — creating the project, linking the billing account, the Firestore
-// location in setup — is --yes's in neither door, and its column already says
-// so.
-func runConfirms(row confirmRow, class initflow.ConfirmClass, marker string) bool {
+// project), which is what this function says by not reading that column. What
+// is left is what the session carries — an answer a run was opened on, and a
+// person at the run's own real terminal, with no --json and no
+// --non-interactive — and a step the run's own answer does not reach has only
+// the second of the two.
+func runConfirms(row confirmRow, covered bool, marker string) bool {
 	if marker != "" {
 		return false
 	}
-	if class == initflow.Typed {
-		return row.typRight
+	if covered {
+		return row.own
 	}
-	return row.condYes || (row.terminal && !row.json && !row.nonInteractive)
+	return row.typed
 }
 
 // managedViolations runs the decision over the whole product — every read,
-// every agent environment state, every row of the table, both classes, and both
-// lines a terminal could carry (the step's name, which nothing reads any more,
-// and the y and the n, which nothing reads at all in a project that is not
-// managed) — and returns every combination in which a project the oracle says
-// is NOT managed does other than runConfirms says (and, in a coding agent's
-// session, anything but refuse).
+// every agent environment state, every row of the table, all three paths a
+// step is confirmed by, and both lines a terminal could carry (the name a
+// confirmation was once typed on, and the y and the n, which nothing reads at
+// all in a project that is not managed) — and returns every combination in
+// which a project the oracle says is NOT managed does other than runConfirms
+// says (and, in a coding agent's session, anything but refuse).
 func managedViolations(t *testing.T, mode func(bool, string, error) bool, reads []managedRead) (bad []string, n int) {
 	t.Helper()
-	old := canConfirmTyped
-	canConfirmTyped = initflow.CanConfirm
-	t.Cleanup(func() { canConfirmTyped = old })
 	for _, env := range agentEnvStates() {
 		env.apply(t)
 		for _, row := range confirmTable {
@@ -655,7 +622,7 @@ func managedViolations(t *testing.T, mode func(bool, string, error) bool, reads 
 				if rd.managed {
 					continue // the managed direction is Task 3.1's
 				}
-				for _, class := range confirmClasses {
+				for _, path := range confirmPaths {
 					for _, right := range []bool{true, false} {
 						n++
 						// The line the terminal carries. No confirmation reads a
@@ -676,10 +643,10 @@ func managedViolations(t *testing.T, mode func(bool, string, error) bool, reads 
 								feed = "y"
 							}
 						}
-						want := runConfirms(row, class.class, marker)
+						want := runConfirms(row, path.covered, marker)
 						r, spy := confirmRig(t, row, feed)
-						got, err := managedDecision(mode, rd, r, class.class)
-						where := fmt.Sprintf("%s, %s, %s, stdin %q, %s", class.name, row, env.name, feed, rd.state)
+						got, err := managedDecision(mode, rd, r, path)
+						where := fmt.Sprintf("%s, %s, %s, stdin %q, %s", path.name, row, env.name, feed, rd.state)
 						if got != want {
 							bad = append(bad, fmt.Sprintf("%s: proceeds=%v, want %v (err %v)", where, got, want, err))
 						}
@@ -688,7 +655,7 @@ func managedViolations(t *testing.T, mode func(bool, string, error) bool, reads 
 								bad = append(bad, where+": stdin was read in a coding agent's session")
 							}
 							var ae *initflow.AgentError
-							if class.class == initflow.YesOrTyped && (!errors.As(err, &ae) || ae.Marker != marker) {
+							if path.ordinary && (!errors.As(err, &ae) || ae.Marker != marker) {
 								bad = append(bad, fmt.Sprintf("%s: ask's refusal is %v, want the agent refusal naming %s", where, err, marker))
 							}
 						}
@@ -707,8 +674,8 @@ func TestManagedNonManagedProjectNeverSkipsAConfirmation(t *testing.T) {
 		t.Fatalf("the table has %d rows, want 64", len(confirmTable))
 	}
 	bad, n := managedViolations(t, managedMode, reads)
-	// 13 environment states x 64 rows x 14 non-managed reads x 2 classes x 2 answers.
-	if want := len(agentEnvStates()) * len(confirmTable) * (len(reads) - 1) * len(confirmClasses) * 2; n != want || n == 0 {
+	// 13 environment states x 64 rows x 14 non-managed reads x 3 paths x 2 answers.
+	if want := len(agentEnvStates()) * len(confirmTable) * (len(reads) - 1) * len(confirmPaths) * 2; n != want || n == 0 {
 		t.Fatalf("the property ran %d combinations, want %d", n, want)
 	}
 	if len(bad) != 0 {
@@ -736,11 +703,11 @@ func TestManagedPropertyCatchesAWrongPredicate(t *testing.T) {
 	}
 }
 
-// The rule and the run's conditions, against the same hand-written table:
-// initflow.CanConfirm for each class, CanConfirmRun, and canConfirmTyped (the
-// seam askTyped asks) say what the table's "typed right" columns say for
-// conditions without --plan-only (plan-only is folded into Yes by
-// initRun.conditions, checked here too), and nothing under any marker.
+// The run's conditions, against the same hand-written table: initRun.conditions
+// builds the row's own facts, the stage loop's options carry the same marker,
+// and initflow.CanConfirmRun says what the table's "person" column says for
+// conditions without --plan-only (the run's own answer is folded into o.yes by
+// askCovered, checked by the property above), and nothing under any marker.
 func TestManagedConfirmRuleMatchesTheTable(t *testing.T) {
 	for _, env := range agentEnvStates() {
 		env.apply(t)
@@ -748,7 +715,11 @@ func TestManagedConfirmRuleMatchesTheTable(t *testing.T) {
 			withTerminal(t, row.terminal)
 			marker := env.agentFor(row.terminal)
 			r, _ := confirmRig(t, row, "")
-			want := initflow.Conditions{Yes: row.condYes, NonInteractive: row.nonInteractive, JSON: row.json, Terminal: row.terminal, Agent: marker, Ask: row.ask}
+			// The run's own answer is the one the step's class used to decide:
+			// it reaches every step the run announces (askCovered's rule,
+			// folded into Conditions.Yes by initRun.conditions) and a
+			// money-or-permanent step only where D12's answer covers it.
+			want := initflow.Conditions{Yes: row.yes && !row.planOnly, NonInteractive: row.nonInteractive, JSON: row.json, Terminal: row.terminal, Agent: marker, Ask: row.ask}
 			if got := r.conditions(); got != want {
 				t.Errorf("%s, %s: initRun.conditions() = %+v, want %+v", row, env.name, got, want)
 			}
@@ -761,25 +732,7 @@ func TestManagedConfirmRuleMatchesTheTable(t *testing.T) {
 				t.Errorf("%s, %s: initEngine.options() has Agent=%q Yes=%v PlanOnly=%v NonInteractive=%v JSON=%v Terminal=%v, want Agent=%q and the row's flags",
 					row, env.name, o.Agent, o.Yes, o.PlanOnly, o.NonInteractive, o.JSON, o.Terminal, marker)
 			}
-			if row.planOnly {
-				continue
-			}
-			for _, rule := range []struct {
-				name string
-				fn   func(initflow.ConfirmClass, initflow.Conditions) bool
-			}{{"initflow.CanConfirm", initflow.CanConfirm}, {"canConfirmTyped", canConfirmTyped}} {
-				ord, typ := row.ordRight, row.typRight
-				if marker != "" {
-					ord, typ = false, false
-				}
-				if got := rule.fn(initflow.YesOrTyped, want); got != ord {
-					t.Errorf("%s(YesOrTyped) under %s, %s = %v, want %v", rule.name, row, env.name, got, ord)
-				}
-				if got := rule.fn(initflow.Typed, want); got != typ {
-					t.Errorf("%s(Typed) under %s, %s = %v, want %v", rule.name, row, env.name, got, typ)
-				}
-			}
-			typ := row.typRight && marker == ""
+			typ := row.typed && marker == ""
 			if got := initflow.CanConfirmRun(want); got != typ {
 				t.Errorf("initflow.CanConfirmRun under %s, %s = %v, want %v", row, env.name, got, typ)
 			}
@@ -815,6 +768,19 @@ var inlineAgentSites = []inlineAgentSite{
 		var ae *initflow.AgentError
 		if marker != "" && (!errors.As(err, &ae) || ae.Marker != marker) {
 			t.Errorf("askOrdinary's refusal under %s is %v, want the agent refusal", marker, err)
+		}
+		return ok && err == nil
+	}},
+	// askPlanned is the question a plan that grants a member the review did not
+	// announce asks (init_review.go, grantsNotAnnounced), and it carries the
+	// marker check askBanner carries for its own reason: it is the one question
+	// of the run that --yes does not answer, so a session that must confirm
+	// nothing must not answer it either.
+	{"init_review.go askPlanned", "init_review.go askPlanned (the grant the review did not announce)", func(t *testing.T, r *initRun, e *initEngine, marker string) bool {
+		ok, err := r.askPlanned("an ordinary step", []string{"user:new@example.com"})
+		var ae *initflow.AgentError
+		if marker != "" && (!errors.As(err, &ae) || ae.Marker != marker) {
+			t.Errorf("askPlanned's refusal under %s is %v, want the agent refusal", marker, err)
 		}
 		return ok && err == nil
 	}},
@@ -861,11 +827,15 @@ var inlineAgentSites = []inlineAgentSite{
 // propertyAgentSites are the agent-marker sites the other ManagedXxx tests
 // drive, with the test that does.
 var propertyAgentSites = map[string]string{
-	"init.go askBanner":          "TestManagedNonManagedProjectNeverSkipsAConfirmation (the YesOrTyped class); ask is its wrapper (the question is asked with the run's line in flight down)",
-	"init.go confirmNow":         "TestManagedNonManagedProjectNeverSkipsAConfirmation (both classes), which reaches it through ask and askTyped",
-	"init.go conditions":         "TestManagedConfirmRuleMatchesTheTable, and the Typed class of the property through askTyped",
-	"init_stages.go options":     "TestManagedConfirmRuleMatchesTheTable (options().Agent) and TestManagedPluginStageThroughTheLoopAppliesUnderEachMarker (the stage loop's agent gate: the plugin stage is LocalUnderAgent since U1, so the loop applies it there and the marker decides the line, not the write)",
-	"init_plugin_stage.go Apply": "TestUpdateManagedPluginWiringAsksNothing (the managed gate's own hand on the wiring's y/N, in the owner's terminal and in a coding agent's session)",
+	"init.go askBanner":  "TestManagedNonManagedProjectNeverSkipsAConfirmation (the run's own confirmation); ask is its wrapper (the question is asked with the run's line in flight down)",
+	"init.go confirmNow": "TestManagedNonManagedProjectNeverSkipsAConfirmation (the run's own confirmation), which reaches it through ask and askCovered",
+	"init.go conditions": "TestManagedConfirmRuleMatchesTheTable, and every path of the property through the conditions it builds",
+	// stepConfirmation is the marker's own fence for the money-or-permanent
+	// steps: the property reaches it through askCovered and askTyped, and its
+	// rows are what a run that carries its own answer, or a session nobody is
+	// at, is answered by there.
+	"init.go stepConfirmation": "TestManagedNonManagedProjectNeverSkipsAConfirmation (the two steps the run's own answer does and does not reach), and TestRefusalMatrixTheMoneyRuleRefusesEveryMode",
+	"init_stages.go options":   "TestManagedConfirmRuleMatchesTheTable (options().Agent) and TestManagedPluginStageThroughTheLoopAppliesUnderEachMarker (the stage loop's agent gate: the plugin stage is LocalUnderAgent since U1, so the loop applies it there and the marker decides the line, not the write)",
 	// The policy stage refuses a marker itself rather than leaning on the
 	// loop's gate: it is SelfConfirming, so the loop would call it.
 	"init_policy_migrate.go Apply": "TestUpdatePolicyMigrationRefusedInAgentSession",
@@ -875,7 +845,19 @@ var propertyAgentSites = map[string]string{
 	// running with the operator's ADC, and that is what the first test drives.
 	// The second one drives the same function WITHOUT a marker, so the two
 	// together say the skip is the marker's and not a site that does nothing.
-	"init_stages.go pinCredentialsImage": "TestUpdateInAnAgentSessionPinsNoCredentialsImage (under a marker) and TestUpdateRepinsTheCredentialsImageOnAnOrdinaryUpdate (with none)",
+	"init_stages.go ensureCredentialsService": "TestUpdateInAnAgentSessionPinsNoCredentialsImage (under a marker) and TestUpdateRepinsTheCredentialsImageOnAnOrdinaryUpdate (with none)",
+	// The credentials-service stage's skip is the same shape again, and it is
+	// what the session's own plan reports for the stage: the test below asserts
+	// the sentence it answers with, so removing the arm is visible in the run's
+	// output. What would resolve the image and rewrite the tfvars is the stage's
+	// run, which no marker reaches — moveCredentialsImage's own arm is the
+	// second guard and is outside, for that reason.
+	"init_stages.go newCredentialsStage": "TestUpdateInAnAgentSessionPinsNoCredentialsImage (under a marker: the run reports the stage skipped with its own sentence) and TestUpdateMigratesTheNodeBeforeItReplacesTheCredentialsService (with none: the stage moves the image and applies the root after the policy stage)",
+	// credentialsMoveHeld answers the same question one stage earlier, for the
+	// policy stage: a session replaces no service, so it may not raise the
+	// node's version either, and the test drives that through the door — the
+	// session's own run leaves the node at its version and the stage says so.
+	"init_stages.go credentialsMoveHeld": "TestUpdateInAnAgentSessionHoldsTheNodeAtItsVersion (under a marker: the policy stage holds the node at its version and says why), and TestUpdateFailsTheCredentialsResolveBeforeItMigratesTheNode and TestUpdateMigratesTheNodeBeforeItReplacesTheCredentialsService drive the same decision with no marker",
 	// The audience fill is the same shape and for the same reason: it applies
 	// from inside the installation stage, so it must not run in a session whose
 	// apply is a plan the owner has not confirmed. Under a marker it returns
@@ -885,7 +867,7 @@ var propertyAgentSites = map[string]string{
 	"init_stages.go fillCredentialsAudience": "TestUpdateInAnAgentSessionPinsNoCredentialsImage (under a marker) and TestUpdateSetsCredentialsServiceOnEveryInstallation (with none)",
 	// The layer stage refuses a marker itself for the same reason: it is
 	// SelfConfirming, so the loop would call it.
-	"init_layer_stage.go Apply": "TestUpdateLayerStageAppliesNothingInAnAgentSessionEvenWithYes",
+	"init_layer_stage.go Apply": "TestUpdateLayerStageAppliesNothingInAnAgentSession",
 	// The switch's record is the same shape: credentialsBundleReady opens the
 	// credentials service's bundle with the identity of whoever runs the
 	// update, so a coding agent's session reads nothing there and says so,
@@ -896,6 +878,14 @@ var propertyAgentSites = map[string]string{
 	// are the ones that reach it, an agent's session being refused by the
 	// installation step before that door runs at all.
 	"init_credentials.go credentialsBundleReady": "TestTheBundleIsNeverOpenedInAnAgentsSessionOrARunsProcess, TestTheRecordIsKeptUnderARunsProcessMarker and TestTheBackfillIsNotWrittenInAnAgentsSessionOrARunsProcess",
+	// The login unit's step (O9, Q2 and T7) refuses a marker itself rather
+	// than leaning on the loop's gate: it SKIPS with the marker's own
+	// sentence, because a unit is code that runs at every login and the drift
+	// a re-render would fix is what `doctor` reports until the person runs
+	// the command in their own terminal. Both doors share the read, and one
+	// test drives each: the setup door's skip, and the update door's — which
+	// leaves the installed unit exactly as it was.
+	"init_orchestrator_stage.go unitStepRead": "TestSetupNeverInstallsUnderAnAgentMarker (the setup door) and TestUpdateUnitStepAsksNothingAndIsLeftForThePerson (the update door)",
 	// The compute stage refuses a marker itself rather than leaning on the
 	// loop's gate, and it refuses FIRST, before the root's tfvars are written
 	// and planned: the stage is registered noYes, so the loop's own agent arm
@@ -920,10 +910,11 @@ var propertyAgentSites = map[string]string{
 // outsideAgentSites are the agent-marker sites the property does not cover,
 // each with the reason.
 var outsideAgentSites = map[string]string{
-	"init.go runInit":                 "OUTSIDE: --publish-config's refusal before any write; not a confirmation (initFlagCases: publish-config)",
-	"init.go publishSharedConfig":     "OUTSIDE: the shared-config publish after the local config is written; not a confirmation, it skips with a note under a marker",
-	"initsecrets.go Check":            "OUTSIDE: the wording of the secrets stage's detail; whether it prompts is canPrompt (an inline site)",
-	"init_repo_gate.go convergeOptIn": "OUTSIDE: the wording of the repository gate's detail — it says whether --yes is named as a way in; whether the run may onboard at all is authState/onboardCovered (inline sites)",
+	"init.go runInit":                     "OUTSIDE: --publish-config's refusal before any write; not a confirmation (initFlagCases: publish-config)",
+	"init.go publishSharedConfig":         "OUTSIDE: the shared-config publish after the local config is written; not a confirmation, it skips with a note under a marker",
+	"initsecrets.go Check":                "OUTSIDE: the wording of the secrets stage's detail; whether it prompts is canPrompt (an inline site)",
+	"init_stages.go moveCredentialsImage": "OUTSIDE: unreachable under a marker through the loop — the credentials-service stage's own skip answers first (newCredentialsStage, in propertyAgentSites) and the loop never runs a stage it skipped, so this is the second of the two guards and no test drives it under one. It stays because what it guards is the resolve (cosign and the registry on the operator's ADC) and the tfvars write after it, which a session must not do even if a caller reaches the method by another route",
+	"init_repo_gate.go convergeOptIn":     "OUTSIDE: the wording of the repository gate's detail — it says whether --yes is named as a way in; whether the run may onboard at all is authState/onboardCovered (inline sites)",
 }
 
 // Every inline decision refuses under each marker, and only under a marker:
@@ -934,9 +925,6 @@ func TestManagedEveryInlineAgentDecisionRefusesUnderEachMarker(t *testing.T) {
 	oldW := writerIsTerminal
 	writerIsTerminal = func(io.Writer) bool { return true }
 	t.Cleanup(func() { writerIsTerminal = oldW })
-	old := canConfirmTyped
-	canConfirmTyped = initflow.CanConfirm
-	t.Cleanup(func() { canConfirmTyped = old })
 	for _, site := range inlineAgentSites {
 		for _, env := range agentEnvStates() {
 			t.Run(site.where+"/"+env.name, func(t *testing.T) {
@@ -993,20 +981,20 @@ func TestManagedAgentMarkersAreTheExpectedSix(t *testing.T) {
 // TestManagedEveryInitFlagHasACase: a new flag is a new condition until
 // someone writes down what it does to a confirmation.
 var initFlagCases = map[string]string{
-	// The table's dimensions (confirmTable).
-	"yes":             "dimension: confirms YesOrTyped (ask), never Typed; refused under a marker",
-	"non-interactive": "dimension: never prompts, so nothing typed confirms",
-	"json":            "dimension: never takes a Typed confirmation",
-	"plan-only":       "dimension: folded into Yes=false by initRun.conditions; never takes --yes",
-	"ask":             "dimension: takes the gate out of the question (initflow.Conditions.Ask makes GateConfirms false), so every step falls back to the confirmation it would have had in a project that is not managed — the same decision the --ask half of every row already records. It never weakens the gate: the read and the admit are made before it is consulted. In a session that cannot answer it refuses (managed_ask.go), and `fugaro setup` refuses the flag by name: the gate is `fugaro update`'s",
+	// The table's dimensions (confirmTable). --yes and --non-interactive
+	// were two of them until T11 removed the flags everywhere: the
+	// conditions remain, but no flag declares them any more.
+	"json":      "dimension: never takes the person's own confirmation",
+	"plan-only": "dimension: folded into Yes=false by initRun.conditions; never takes --yes",
+	"ask":       "dimension: takes the gate out of the question (initflow.Conditions.Ask makes GateConfirms false), so every step falls back to the confirmation it would have had in a project that is not managed — the same decision the --ask half of every row already records. It never weakens the gate: the read and the admit are made before it is consulted. In a session that cannot answer it refuses (managed_ask.go), and `fugaro setup` refuses the flag by name: the gate is `fugaro update`'s",
 	// Flags whose steps confirm through the paths the property drives.
-	"create-project":   "its creation confirms through the Typed class (askTyped/canType, both covered)",
-	"managed":          "OUTSIDE the property: with --create-project it requires the budget amount (D64) and records it in the creation fact (Task 4.2); it adds a guard, so the creation still confirms through the Typed class (covered)",
-	"link-billing":     "the billing link confirms through the Typed class (askTyped/canType, both covered)",
+	"create-project":   "its creation confirms through askTyped/canType, both covered",
+	"managed":          "OUTSIDE the property: with --create-project it requires the budget amount (D64) and records it in the creation fact (Task 4.2); it adds a guard, so the creation still confirms through askTyped/canType (covered)",
+	"link-billing":     "the billing link confirms through askTyped/canType, both covered",
 	"replace-image":    "names the intent only; replacing confirms through askTyped (covered)",
 	"retire":           "both confirmations are askTyped; retireConfirm's agent refusal is an inline site (covered)",
 	"repo":             "the repository's applies confirm through ask/askOrdinary (covered)",
-	"firebase-project": "its applies confirm through ask, its Firestore location through the Typed class (covered)",
+	"firebase-project": "its applies confirm through ask (covered), its Firestore location through askCovered/canType (covered)",
 	"forget":           "its state removals confirm through ask (covered)",
 	"config-only":      "writes the local config; any confirmation is ask's (covered)",
 	"onboard-repo":     "an opt-in in place of the typed owner/name: refused under a marker (checkOnboardRepo, authState: inline sites, covered); for a non-managed project without a marker it opts in without typing, which is NOT in the table",
@@ -1015,19 +1003,19 @@ var initFlagCases = map[string]string{
 	"check-github-app": "OUTSIDE the property: a secret read, refused under a marker (githubapp.go); no confirmation",
 	"allow-delete":     "OUTSIDE the property: feeds tf.Guard, not a confirmation (D74, Task 1.4, is the managed case)",
 	"allow-job-delete": "OUTSIDE the property: changes what a --repo plan holds, not whether it is confirmed",
-	"allow-fork":       "OUTSIDE the property: lets plugin wiring move a ref; the wiring's apply still confirms through ask",
+	"check":            "OUTSIDE the property: the read-only mode, which runs no step of any stage, so nothing is confirmed and --yes is refused beside it (refuseConvergeFlags, update_check.go). It is `fugaro update`'s alone (D948, U4 of docs/plugin-user-scope/implementation-plan.md) and `fugaro setup` declares it hidden and refuses it by name (setupDoor.foreign), the shape --forget has on that door",
 	"print-vars":       "no cloud call and no confirmation (canAsk is false under it)",
-	"no-build":         "only drops the first image build's offer (a Typed step); takes nothing away from a confirmation",
-	"provision-batch":  "main's compute stage (0.9.5, init_compute.go): registered noYes, its confirmation is the project's name typed (initflow.Typed), so --yes never covers it; added on the merge of main into next-0.8.5, the confirm table does not drive this stage itself",
+	"no-build":         "only drops the first image build's offer (a step only the person's own answer gives); takes nothing away from a confirmation",
+	"provision-batch":  "main's compute stage (0.9.5, init_compute.go): registered noYes, its confirmation is the person's own (no answer a run carries reaches it), so --yes never covers it; added on the merge of main into next-0.8.5, the confirm table does not drive this stage itself",
 	"coordinator":      "the coordinator's opt-in (P5): it is an apply of the installation's own roots whose steps confirm through ask (covered), but --yes is refused beside it (checkCoordinator), and a coding agent's session and a run with no terminal are refused before anything is read (refuseCoordinatorUnattended, an inline site, covered)",
 	// Values a confirmed step carries: they change what is confirmed, never whether.
 	// bake-repos (IS7) is one of them: it answers the wizard's own question and
 	// writes the switch, and it is asked — and taken — on a first run of setup
 	// only, so no confirmation is touched by it either way.
-	"alert-email": "value", "bake-repos": "value", "base": "value", "base-image": "value", "billing-account": "value", "budget": "value",
+	"admin": "value", "alert-email": "value", "bake-repos": "value", "base": "value", "base-image": "value", "billing-account": "value", "budget": "value",
 	"budget-admin": "value", "budget-currency": "value", "budget-mode": "value", "config": "value",
 	"display-name": "value", "expect-digest": "value", "gcp-project": "value", "github-app-id": "value",
-	"image-source": "value", "launcher": "value", "name": "value", "no-log-isolation": "value",
+	"image-source": "value", "name": "value", "no-log-isolation": "value",
 	"operator": "value", "parent": "value", "project": "value", "region": "value",
 	"registry-cleanup": "value", "runs-bucket": "value", "scheduler-region": "value",
 	"state-bucket": "value; under --managed the value must be the derived fugaro-tfstate-<gcp-project> and anything else refuses the creation before the project stage (checkManagedStateBucket, Task 4.5/D59), the way a bad --budget-currency refuses it",
@@ -1049,9 +1037,16 @@ func TestManagedEveryInitFlagHasACase(t *testing.T) {
 			t.Errorf("initFlagCases names --%s, which fugaro setup does not declare", name)
 		}
 	}
-	for _, d := range []string{"yes", "non-interactive", "json", "plan-only", "ask"} {
+	for _, d := range []string{"json", "plan-only", "ask"} {
 		if !strings.HasPrefix(initFlagCases[d], "dimension:") {
 			t.Errorf("--%s is one of the table's dimensions", d)
+		}
+	}
+	// --yes and --non-interactive are gone from the product (T11): a run
+	// confirms by a person at a real terminal, and no flag stands in for them.
+	for _, gone := range []string{"yes", "non-interactive"} {
+		if f := newSetupCmd().Flags().Lookup(gone); f != nil {
+			t.Errorf("fugaro setup still declares --%s: the flag is gone (T11)", gone)
 		}
 	}
 }
@@ -1098,24 +1093,6 @@ func TestManagedConditionEnumerationIsComplete(t *testing.T) {
 	}
 	if want := []string{"Yes", "NonInteractive", "JSON", "Terminal", "Agent", "Ask"}; !slices.Equal(declared, want) {
 		t.Fatalf("initflow.Conditions is %v and the table covers %v (%s)", declared, want, conditionsString(initflow.Conditions{}))
-	}
-}
-
-// The confirmation classes against the declaration in
-// internal/initflow/stage.go, in its iota order.
-func TestManagedConfirmClassEnumerationIsComplete(t *testing.T) {
-	declared := declaredConfirmClasses(t)
-	got := make([]string, 0, len(confirmClasses))
-	for _, c := range confirmClasses {
-		got = append(got, c.name)
-	}
-	if !slices.Equal(declared, got) {
-		t.Fatalf("initflow declares the confirmation classes %v and the product enumerates %v", declared, got)
-	}
-	for i, c := range confirmClasses {
-		if int(c.class) != i {
-			t.Errorf("the product's %s is value %d, want %d", c.name, int(c.class), i)
-		}
 	}
 }
 
@@ -1202,19 +1179,19 @@ func TestManagedEveryAgentSiteInInitHasACase(t *testing.T) {
 	}
 }
 
-// The stage loop's agent gate over the plugin stage, whose writes are this
-// machine's own: the checkout's .claude/settings.json and the plugin in the
-// user's own Claude Code. The stage is LocalUnderAgent since U1 (D941 of
+// The stage loop's agent gate over the plugin stage, whose one write is this
+// machine's own: the plugin in the user's own Claude Code. The stage is
+// LocalUnderAgent since U1 (D941 of
 // docs/plugin-user-scope/implementation-plan.md), so a coding agent's session
 // applies it — which is the point of the marker: the plugin install is the
 // step that clears the staleness line every command prints, and a run that
 // parked it left that line unclearable (reconciliation.md F13). The plugin
 // stage is driven through the real loop with the options init builds
-// (initEngine.options), under every environment state, and the write is made
-// in all of them: what the marker decides inside the stage is which line
-// credits it — the flag, or the session nobody could ask — and never whether
-// it is made. With no marker, or one present but empty, the same run writes it
-// the ordinary way, so what this pins is not a stage that writes nothing.
+// (initEngine.options), under every environment state, and the install is made
+// in all of them: the marker decides which line credits it — the flag, or the
+// session nobody could ask — and never whether it is made. The checkout's own
+// file comes out of all of them byte for byte (U2, D949: the settings write
+// went with the merge), which is read off the file and not off the run's words.
 //
 // The loop's own refusal (initflow.AgentRefusal) is what a stage that reaches
 // outside this machine still reads in a session — the installation stage, in
@@ -1234,17 +1211,22 @@ func TestManagedPluginStageThroughTheLoopAppliesUnderEachMarker(t *testing.T) {
 		for _, env := range agentEnvStates() {
 			t.Run(how.name+"/"+env.name, func(t *testing.T) {
 				settings := wiringCheckout(t, settingsWithOthers)
+				f := testutil.NewClaudePluginFake(t, "[]", "[]")
+				f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
 				withTerminal(t, how.terminal)
 				o := how.o
 				e, out := stageEngine(t, how.stdin, &o)
 				env.apply(t) // after stageEngine, which blanks the markers
+				useFakeClaude(t, f)
 				res, err := initflow.Run(t.Context(), []initflow.Stage{newPluginStage(e)}, e.options())
 				if err != nil {
 					t.Fatalf("the loop: %v\n%s", err, out.String())
 				}
-				got, _ := os.ReadFile(settings)
-				if string(got) == settingsWithOthers || stateOf(res, initflow.Plugin) != initflow.Changed {
-					t.Fatalf("the run did not wire the plugin (marker %q): stages %+v\n%s", env.agentFor(how.terminal), res.Stages, out.String())
+				if stateOf(res, initflow.Plugin) != initflow.Changed {
+					t.Fatalf("the run did not install the plugin in Claude Code (marker %q): stages %+v\n%s", env.agentFor(how.terminal), res.Stages, out.String())
+				}
+				if got, _ := os.ReadFile(settings); string(got) != settingsWithOthers {
+					t.Errorf("the checkout's settings were written under marker %q, and nothing in the tree writes one (U2, D949):\n%s", env.agentFor(how.terminal), got)
 				}
 				if marker := env.agentFor(how.terminal); marker != "" {
 					// The stage is applied whole there, so neither the loop's
@@ -1267,36 +1249,42 @@ func TestManagedPluginStageThroughTheLoopAppliesUnderEachMarker(t *testing.T) {
 	}
 }
 
-// pluginStage.Apply reads the marker itself since U1: the stage is
-// LocalUnderAgent, so the loop applies it in a coding agent's session rather
-// than leaving it for the user, and the arm that reads the marker is what
-// writes the pin there — where nobody is at a prompt and --yes may not have
-// been given (init_plugin_stage.go's Apply). The loop still is its only caller
-// (newPluginStage is built in initEngine.converge alone and handed to
-// initflow.Run with initEngine.options), which is why the arm reads the
-// environment's marker rather than anything the stage carries.
+// pluginStage.Apply reads no agent marker at all: the only write it had that a
+// marker could decide was the checkout's .claude/settings.json, and that write
+// went with the merge (U2, D949). What is left is the machine's own install in
+// Claude Code, which no terminal and no --yes and no marker decides, and the
+// loop's own LocalUnderAgent gate is what applies the stage in a coding agent's
+// session rather than leaving it for the user. The loop is still its only
+// caller (newPluginStage is built in initEngine.converge alone and handed to
+// initflow.Run with initEngine.options).
 //
 // What this test records is the rest of that picture: Apply called directly
-// with Env.Yes writes under every marker, because --yes is a confirmation of
-// its own and the marker decides which line credits the write, never whether
-// it is made — and the stage is built by the loop alone, so nothing writes
-// through a caller that never looked at a marker. The loop's own gate, over
-// the stages that do reach outside this machine, is pinned by the
-// options().Agent case of TestManagedConfirmRuleMatchesTheTable and by
-// update_managed_test.go's installation gate.
-func TestManagedPluginStageApplyWritesUnderEveryMarkerItself(t *testing.T) {
+// with Env.Yes installs under every marker state, and the checkout's file comes
+// out of all of them byte for byte — so the stage is the same stage wherever it
+// is reached from, and the structural half below keeps it reachable only
+// through the loop, which is where the gate that does read a marker stands. The
+// loop's own gate, over the stages that do reach outside this machine, is
+// pinned by the options().Agent case of TestManagedConfirmRuleMatchesTheTable
+// and by update_managed_test.go's installation gate.
+func TestManagedPluginStageApplyIsTheInstallUnderEveryMarker(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	for _, env := range agentEnvStates() {
 		t.Run(env.name, func(t *testing.T) {
+			f := testutil.NewClaudePluginFake(t, "[]", "[]")
+			f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
 			settings := wiringCheckout(t, settingsWithOthers)
 			e, out := stageEngine(t, "", &initOptions{yes: true})
 			env.apply(t)
+			useFakeClaude(t, f)
 			s := newPluginStage(e)
 			if _, err := s.Apply(t.Context(), initflow.Env{Yes: true}); err != nil {
 				t.Fatalf("Apply: %v\n%s", err, out.String())
 			}
-			if got, _ := os.ReadFile(settings); string(got) == settingsWithOthers {
-				t.Errorf("Apply under %s did not write: the --yes arm is no longer reached before the marker's, or the write is parked where it should be made; update this test and the comment above", env.name)
+			if calls := callArgs(f.Calls(t)); !slices.ContainsFunc(calls, func(a []string) bool { return slices.Equal(a, argsInstall) }) {
+				t.Errorf("Apply under %s did not install the plugin in Claude Code: %q\n%s", env.name, calls, out.String())
+			}
+			if got, _ := os.ReadFile(settings); string(got) != settingsWithOthers {
+				t.Errorf("Apply under %s wrote the checkout's settings, and nothing in the tree writes one any more (U2, D949):\n%s", env.name, got)
 			}
 		})
 	}
@@ -1313,7 +1301,7 @@ func TestManagedPluginStageApplyWritesUnderEveryMarkerItself(t *testing.T) {
 			continue
 		}
 		if b, _ := os.ReadFile(path); strings.Contains(string(b), "newPluginStage(") || strings.Contains(string(b), "pluginStage{") {
-			t.Errorf("%s builds a plugin stage outside the loop: its Apply reads the marker off the environment, which only the loop's run sets", path)
+			t.Errorf("%s builds a plugin stage outside the loop: its Apply is the one the loop's gate has already decided on", path)
 		}
 	}
 }

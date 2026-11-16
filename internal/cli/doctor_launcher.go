@@ -129,7 +129,7 @@ func doctorLauncherReach(ctx context.Context, lc *localcfg.Config) []doctorCheck
 	if err != nil {
 		return unchecked(err)
 	}
-	launchers := launcherMembers(lc.Terraform.Launchers, lc.Terraform.Operators)
+	launchers := launcherMembers(lc.Terraform.Operators, lc.Terraform.Admins)
 	jobs, err := doctorListedJobs(ctx, svc, doctorJobsParent(lc))
 	if err != nil {
 		return unchecked(err)
@@ -288,7 +288,7 @@ var launchPermissions = []string{"run.jobs.run", "run.jobs.runWithOverrides"}
 // is what the roots render, "operators get everything launchers get" (they
 // run, watch and cancel runs too) — so a binding naming an operator is a grant
 // the installation made, and a job only an operator can start is still a job
-// Fugaro can start. Comparing against lc.Terraform.Launchers alone read every
+// Fugaro can start. Comparing against lc.Terraform.Operators alone read every
 // operator-only binding as no grant at all.
 func launcherMembers(launchers, operators []string) []string {
 	out := slices.Concat(launchers, operators)

@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -434,37 +435,42 @@ func TestBackendDefaultsToCloudRun(t *testing.T) {
 	}
 }
 
-// Cloud Batch is a backend this build can speak but must not select yet: the
-// seam and the fake exist (design compute-backend.md §8.1 Task 2), while the
-// tasks that make a Batch run safe -- the log sink, the cost of a VM and the
-// reaper that stops a leaked one -- come after the owner's Check 57a
-// measurement (design §9). So `backend: cloud-batch` stays refused, and this
-// is the single place that refuses it: every command that reads a project
-// config, `fugaro update` included, goes through Parse.
-func TestCloudBatchIsRefused(t *testing.T) {
+// Cloud Batch is a backend this build accepts as a name, and what makes a
+// Batch run safe is not this file: it is `fugaro doctor`'s gate, which refuses
+// an installation that selects the name until its provisioning, IAM, logs,
+// cost and reaper checks all pass (design compute-backend.md §4.4, §8.1 task
+// 9). This test is the acceptance TestCloudBatchIsRefused became in the enable
+// task (plan 2026-10-19-compute-backend.md Task 10): the refusal it replaced
+// held the name back while the tasks that make a Batch run safe were unwritten
+// (design §8.1 Task 2), and every one of them -- the opener and its config,
+// the offline and live checks, the reaper's role and its provisioning, the
+// reaper itself -- is merged. What did NOT change with it is the artifact
+// boundary Global Constraint 13 leaves standing: `artifacts:` is not a key of
+// this file (an artifact-producing run is a recipe's `mode: artifact`), so
+// that refusal lives in internal/cli's validate_batch.go and the launch's own
+// gate, and its cases are there.
+func TestCloudBatchIsAccepted(t *testing.T) {
 	if backend.CloudBatch != "cloud-batch" {
 		t.Fatalf("backend.CloudBatch = %q: the constant and the config value must not drift", backend.CloudBatch)
 	}
 	c, err := Parse([]byte(sample + "backend: " + backend.CloudBatch + "\n"))
-	if err == nil || !strings.Contains(err.Error(), backend.CloudBatch) {
-		t.Fatalf("err = %v, want it to name %s", err, backend.CloudBatch)
+	if err != nil {
+		t.Fatalf("backend: %s is refused: %v", backend.CloudBatch, err)
 	}
-	// It is refused as a name this build knows and has not enabled, not as
-	// one it has never heard of: the two are different claims and only the
-	// first is true (design §8.1 Task 2).
-	if !strings.Contains(err.Error(), "not enabled yet") || strings.Contains(err.Error(), "not a known backend") {
-		t.Fatalf("err = %q, want the refusal of a known backend that is not enabled", err)
+	if c.Backend() != backend.CloudBatch {
+		t.Fatalf("Backend() = %q, want %s: the name must select what the operator wrote rather than fall back to %s", c.Backend(), backend.CloudBatch, backend.CloudRun)
 	}
-	// A name this build does not know at all is refused as such.
-	if _, err := Parse([]byte(sample + "backend: ecs-fargate\n")); err == nil || !strings.Contains(err.Error(), "not a known backend") {
+	if c.BackendName != backend.CloudBatch {
+		t.Fatalf("BackendName = %q, want the name as written", c.BackendName)
+	}
+	// An unknown name is still refused, and the refusal names both backends
+	// this build knows, so the fix is in the message.
+	_, err = Parse([]byte(sample + "backend: ecs-fargate\n"))
+	if err == nil || !strings.Contains(err.Error(), "not a known backend") {
 		t.Fatalf("err = %v, want an unknown backend", err)
 	}
-	// The refusal names the only backend this build runs, so the fix is in
-	// the message; and nothing rewrites the name on the way out, so a caller
-	// that ignored the error still sees what the operator asked for rather
-	// than a silent fallback to Cloud Run.
-	if c != nil && c.BackendName != backend.CloudBatch {
-		t.Fatalf("a refused config rewrote its backend to %q", c.BackendName)
+	if err != nil && (!strings.Contains(err.Error(), backend.CloudRun) || !strings.Contains(err.Error(), backend.CloudBatch)) {
+		t.Fatalf("err = %q, want it to name both known backends", err)
 	}
 }
 
@@ -670,22 +676,23 @@ func TestBatchSectionValidation(t *testing.T) {
 	}
 }
 
-// TestBatchSectionDoesNotEnableTheBackend: the block is what the opener would
-// read, not what selects it. `backend: cloud-batch` stays refused with the
-// block present, so an installation that writes the whole section still runs
-// on Cloud Run and TestCloudBatchIsRefused above stays the single place that
-// decides it.
-func TestBatchSectionDoesNotEnableTheBackend(t *testing.T) {
-	_, err := Parse([]byte(sample + batchSample + "backend: " + backend.CloudBatch + "\n"))
-	if err == nil || !strings.Contains(err.Error(), "not enabled yet") {
-		t.Fatalf("err = %v, want the block to leave the backend refused as not enabled yet", err)
-	}
+// TestBatchSectionDoesNotSelectTheBackend: the block is what the opener reads,
+// not what selects it. An installation that writes the whole section and no
+// `backend` key still runs on Cloud Run, and `backend` is the one key that
+// selects the other name (TestCloudBatchIsAccepted above).
+func TestBatchSectionDoesNotSelectTheBackend(t *testing.T) {
 	c, err := Parse([]byte(sample + batchSample))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c.Backend() != backend.CloudRun {
 		t.Fatalf("a config with a batch block selects %q, want %s", c.Backend(), backend.CloudRun)
+	}
+	// The whole section with the name on the line above it is the installation
+	// an operator enables, and it parses: what refuses it, when it is not
+	// provisioned, is `fugaro doctor` and not this file.
+	if c, err := Parse([]byte(sample + batchSample + "backend: " + backend.CloudBatch + "\n")); err != nil || c.Backend() != backend.CloudBatch {
+		t.Fatalf("the batch section with backend: %s parses to %v, %v, want it accepted and selected", backend.CloudBatch, c, err)
 	}
 	// And the block must not be a way to smuggle a second selection path in:
 	// there is one key that names a backend, and it is `backend`. A `backend`
@@ -705,7 +712,7 @@ func TestM5FieldsValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if c.Terraform.StateBucket != "fugaro-tfstate-my-project" || c.Terraform.AlertEmail != "ops@example.com" ||
-		len(c.Terraform.Launchers) != 2 || len(c.Terraform.Operators) != 2 ||
+		len(c.Terraform.Operators) != 2 || len(c.Terraform.Admins) != 2 ||
 		c.LogView != "projects/my-project/locations/global/buckets/fugaro/views/runs" || c.SchedulerRegion != "us-east4" {
 		t.Fatalf("parsed = %+v", c)
 	}
@@ -717,10 +724,13 @@ func TestM5FieldsValidation(t *testing.T) {
 		t.Fatalf("round trip = %+v, %v", again, err)
 	}
 	for name, tc := range map[string]struct{ yaml, msg string }{
-		"state bucket":     {"terraform: { state_bucket: Bad_Bucket }\n", "terraform.state_bucket"},
-		"alert email":      {"terraform: { alert_email: nobody }\n", "terraform.alert_email"},
-		"launcher":         {"terraform: { launchers: [\"a@example.com\"] }\n", "terraform.launchers"},
-		"operator":         {"terraform: { operators: [\"owner:a@example.com\"] }\n", "terraform.operators"},
+		"state bucket": {"terraform: { state_bucket: Bad_Bucket }\n", "terraform.state_bucket"},
+		"alert email":  {"terraform: { alert_email: nobody }\n", "terraform.alert_email"},
+		// Both spellings come back as the version-1 list they are: v1's
+		// `launchers` folds into this version's operators, v1's `operators`
+		// into its admins (foldLegacyLists).
+		"launcher":         {"terraform: { launchers: [\"a@example.com\"] }\n", "terraform.operators"},
+		"operator":         {"terraform: { operators: [\"owner:a@example.com\"] }\n", "terraform.admins"},
 		"log view":         {"log_view: projects/my-project/buckets/fugaro/views/runs\n", "log_view"},
 		"log view project": {"log_view: projects/My_Project/locations/global/buckets/fugaro/views/runs\n", "log_view"},
 		"scheduler region": {"scheduler_region: us_east4\n", "scheduler_region"},
@@ -841,6 +851,7 @@ func TestBudgetValidation(t *testing.T) {
 		"unknown field":         {"budget: { mode: off, per_run: 5 }\n", "per_run"},
 		"price without rates":   {"model_prices: { claude-sonnet-5-5: { cache_read: 0.1 } }\n", "input_per_m"},
 		"negative price":        {"model_prices: { claude-sonnet-5-5: { input_per_m: -1, output_per_m: 10 } }\n", "claude-sonnet-5-5"},
+		"negative image rate":   {"model_prices: { claude-sonnet-5-5: { input_per_m: 1, output_per_m: 10, image_tokens: -1 } }\n", "image_tokens"},
 		"alias key":             {"model_prices: { sonnet: { input_per_m: 1, output_per_m: 10 } }\n", "alias"},
 		"unknown price field":   {"model_prices: { claude-sonnet-5-5: { input_per_m: 1, output_per_m: 10, tokens: 3 } }\n", "tokens"},
 		"two keys one model":    {"model_prices: { claude-haiku-4-5: { input_per_m: 1, output_per_m: 5 }, 'claude-haiku-4-5@20251001': { input_per_m: 1, output_per_m: 5 } }\n", "both price"},
@@ -897,6 +908,49 @@ func TestModelPricesDefaults(t *testing.T) {
 	}
 	if o2, err := back.Overrides(); err != nil || len(o2) != 2 || o2["claude-mine-1"].CacheRead != 0 {
 		t.Fatalf("round trip overrides = %v, %v", o2, err)
+	}
+}
+
+func TestModelPricesCarryAnImageRate(t *testing.T) {
+	c, err := Parse([]byte(sample + `model_prices:
+  deepseek/deepseek-v4.1-flash: { input_per_m: 0.3, output_per_m: 1.2, image_tokens: 6000 }
+  claude-mine-1: { input_per_m: 1, output_per_m: 5, image_tokens: 0 }
+`))
+	if err != nil {
+		t.Fatalf("a project that prices a model's images: %v", err)
+	}
+	o, err := c.Overrides()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := o["deepseek/deepseek-v4.1-flash"].ImageTokens; got == nil || *got != 6000 {
+		t.Fatalf("image_tokens = %v, want 6000", got)
+	}
+	// An explicit zero is a value, not an omission: it says the model takes
+	// no image, exactly as the table's own 0 does.
+	if got := o["claude-mine-1"].ImageTokens; got == nil || *got != 0 {
+		t.Fatalf("image_tokens = %v, want an explicit 0", got)
+	}
+	// What the config says survives a write and a read.
+	data, err := c.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := Parse(data)
+	if err != nil {
+		t.Fatalf("round trip: %v\n%s", err, data)
+	}
+	o2, err := back.Overrides()
+	if err != nil {
+		t.Fatalf("round trip overrides: %v", err)
+	}
+	if got := o2["deepseek/deepseek-v4.1-flash"].ImageTokens; got == nil || *got != 6000 {
+		t.Fatalf("round trip image_tokens = %v, want 6000", got)
+	}
+	// The zero is written and read back too: a Marshal that dropped it would
+	// turn "this model takes no image" into "keep the ceiling it had".
+	if got := o2["claude-mine-1"].ImageTokens; got == nil || *got != 0 {
+		t.Fatalf("round trip image_tokens = %v, want the explicit 0", got)
 	}
 }
 
@@ -2556,5 +2610,173 @@ func TestIssuesNudgeKeysDecodeStrictly(t *testing.T) {
 		if _, err := Parse([]byte(sample + y)); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+// TestLocalConfigCloneURLsDecode: the block is read as the operator wrote it —
+// keyed by the canonical repository name a run looks the entry up by, under the
+// spelling of the file and not the node's escaping (D842).
+func TestLocalConfigCloneURLsDecode(t *testing.T) {
+	c, err := Parse([]byte(sample + "clone_urls:\n  github/acme/app: https://github.com/acme/app\n"))
+	if err != nil {
+		t.Fatalf("a config carrying the block: %v", err)
+	}
+	if got := c.CloneURLs["github/acme/app"]; got != "https://github.com/acme/app" {
+		t.Errorf("clone_urls = %v, want the URL the file names for github/acme/app", c.CloneURLs)
+	}
+}
+
+// TestLocalConfigCloneURLsKeepsThePublishedBlockWhenSilent: the block's own keep
+// rule, written out the way the map's is (ImageMapEffective). A machine whose
+// config predates the key must not publish a node that takes the project's clone
+// URLs away, and a written empty block is how the operator says there are none
+// on purpose — which is the only spelling that removes the published one.
+func TestLocalConfigCloneURLsKeepsThePublishedBlockWhenSilent(t *testing.T) {
+	published := map[string]string{"github/acme/app": "https://github.com/acme/app"}
+	silent, err := Parse([]byte(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := silent.CloneURLsEffective(published); !reflect.DeepEqual(got, published) {
+		t.Errorf("a silent config takes %v, want the published block", got)
+	}
+	if got := silent.CloneURLsEffective(nil); got != nil {
+		t.Errorf("a silent config beside a node with no block takes %v, want nothing published", got)
+	}
+	stated, err := Parse([]byte(sample + "clone_urls:\n  github/acme/app: https://github.com/acme/app\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stated.CloneURLsEffective(published); !reflect.DeepEqual(got, stated.CloneURLs) {
+		t.Errorf("a config that states a block takes %v, want its own", got)
+	}
+	empty, err := Parse([]byte(sample + "clone_urls: {}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := empty.CloneURLsEffective(published); got != nil {
+		t.Errorf("a written empty block takes %v, want none: it is how a published block is removed on purpose", got)
+	}
+}
+
+// TestCloneURLsNotInShared: the block is the owner's policy — the URL is where
+// a run clones from, and a launcher who could write it into the runs bucket's
+// shared file would be choosing the code every teammate's runs execute — so it
+// travels the image map's way and never reaches the shared file.
+// internal/cli's ParseShared refuses the key besides.
+func TestCloneURLsNotInShared(t *testing.T) {
+	c, err := Parse([]byte(sample + "clone_urls:\n  github/acme/app: https://github.com/acme/app\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, got := range map[string]*Config{"shared": c.Shared(), "merged": MergeShared(nil, c)} {
+		if got.CloneURLs != nil {
+			t.Errorf("%s: clone_urls = %v", name, got.CloneURLs)
+		}
+		out, err := got.Marshal()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if strings.Contains(string(out), "clone_urls") {
+			t.Errorf("%s: output carries clone_urls:\n%s", name, out)
+		}
+	}
+	if c.CloneURLs == nil {
+		t.Error("Shared/MergeShared cleared the local block")
+	}
+}
+
+// TestLocalConfigRefusesAnUnreadableBinariesPattern: the block's own rule is
+// projectpolicy's (ValidBinariesAllow / ValidBinariesMaxBytes), applied at load
+// and never after it, and a misspelt pattern is a refusal rather than a rule
+// that quietly admits nothing (AR1, spec.md §2.1). It is the same rule the
+// node's decode applies, so a file this loader accepts is one the published
+// node can carry: a second spelling of the pattern rule is how one lock comes
+// to mean two things.
+func TestLocalConfigRefusesAnUnreadableBinariesPattern(t *testing.T) {
+	for name, block := range map[string]string{
+		"an absolute path":        "allow: [/etc/passwd]",
+		"a parent component":      "allow: ['../elsewhere/**']",
+		"an empty entry":          "allow: ['']",
+		"a blank entry":           "allow: ['   ']",
+		"an unreadable glob":      "allow: ['brand/[.png']",
+		"a cap of zero":           "allow: ['brand/*.png'], max_bytes: 0",
+		"a cap above the ceiling": "allow: ['brand/*.png'], max_bytes: 3145728",
+		"a negative cap":          "allow: ['brand/*.png'], max_bytes: -1",
+	} {
+		if _, err := Parse([]byte(sample + "binaries: {" + block + "}\n")); err == nil {
+			t.Errorf("%s: the file loaded, and a grant the owner misspells must be refused where it is written — an entry the matcher cannot read is a rule that admits nothing while looking like one", name)
+		}
+	}
+	// The half that must not be refused: the entry the design's own draft took
+	// for an unreadable one is a readable pattern (F15), and the ceiling itself
+	// is the highest cap a project may write.
+	c, err := Parse([]byte(sample + "binaries: {allow: ['website/public/**.png', 'brand/*.png'], max_bytes: 2097152}\n"))
+	if err != nil {
+		t.Fatalf("a block the rule accepts was refused: %v", err)
+	}
+	if c.Binaries == nil || len(c.Binaries.Allow) != 2 || c.Binaries.MaxBytes != 2097152 {
+		t.Errorf("binaries = %+v, want the two globs and the ceiling the file names", c.Binaries)
+	}
+}
+
+// TestLocalConfigBinariesKeepsThePublishedBlockWhenSilent is the keep rule
+// written out the way the clone URLs' is (BinariesEffective, D987): a machine
+// whose config says nothing keeps the node's block — a teammate's file that
+// predates the key, or an owner who declined to set one, must not publish a node
+// that takes the owner's admission away — a stated block replaces it, and a
+// written empty block is how the admission is taken away on purpose.
+func TestLocalConfigBinariesKeepsThePublishedBlockWhenSilent(t *testing.T) {
+	published := &projectpolicy.Binaries{Allow: []string{"brand/*.png"}, MaxBytes: 1048576}
+	silent, err := Parse([]byte(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := silent.BinariesEffective(published); got != published {
+		t.Errorf("a silent config takes %+v, want the published block", got)
+	}
+	if got := silent.BinariesEffective(nil); got != nil {
+		t.Errorf("a silent config beside a node with no block takes %+v, want no member published at all", got)
+	}
+	stated, err := Parse([]byte(sample + "binaries: {allow: ['assets/*.webp'], max_bytes: 4096}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stated.BinariesEffective(published); got != stated.Binaries {
+		t.Errorf("a config that states a block takes %+v, want its own", got)
+	}
+	empty, err := Parse([]byte(sample + "binaries: {allow: []}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := empty.BinariesEffective(published); got != nil {
+		t.Errorf("a written empty block takes %+v, want none: it is how a published admission is taken away on purpose", got)
+	}
+}
+
+// TestBinariesNotInShared: the block is the owner's own grant over the bytes a
+// run's agent may add, and the shared config is a file the launcher writes — a
+// launcher that could write it would be admitting its own payload (D986, F11,
+// localcfg's Config.Shared), which is the one thing the rule exists to refuse.
+// internal/cli's ParseShared refuses the key besides.
+func TestBinariesNotInShared(t *testing.T) {
+	c, err := Parse([]byte(sample + "binaries: {allow: ['brand/*.png']}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, got := range map[string]*Config{"shared": c.Shared(), "merged": MergeShared(nil, c)} {
+		if got.Binaries != nil {
+			t.Errorf("%s: binaries = %+v", name, got.Binaries)
+		}
+		out, err := got.Marshal()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if strings.Contains(string(out), "binaries") {
+			t.Errorf("%s: output carries binaries:\n%s", name, out)
+		}
+	}
+	if c.Binaries == nil {
+		t.Error("Shared/MergeShared cleared the local block")
 	}
 }

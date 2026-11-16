@@ -1,0 +1,42 @@
+{
+  "version": 4,
+  "budget": {
+    "mode": "enforce",
+    "per_run_usd": 5
+  },
+  "base_branch": "main",
+  "allow_repos": [
+    "github/owner/repo-a"
+  ],
+  "craft_credentials": [
+    {
+      "name": "openrouter-main",
+      "type": "openrouter"
+    }
+  ],
+  "craft_pools": [
+    {
+      "name": "claude",
+      "strategy": "failover",
+      "members": [
+        "openrouter-main",
+        "vertex"
+      ]
+    },
+    {
+      "name": "bmb",
+      "members": [
+        "vertex"
+      ],
+      "owner": "owner@example.com",
+      "allowed_users": [
+        "teammate@example.com"
+      ]
+    }
+  ],
+  "crafts": {
+    "coder": {
+      "access": "claude"
+    }
+  }
+}

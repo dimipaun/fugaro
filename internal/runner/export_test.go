@@ -113,6 +113,19 @@ func OnRun(t *testing.T, f func(*RunHandle)) {
 	t.Cleanup(func() { onNewRun = prev })
 }
 
+// SetDeferred plants the record's deferred block — the findings whose
+// deferral took effect, which the pull request's status section and the report
+// list. T-TR7b (a round's verdicts) and T-TR8 (the cap's leftovers) are the
+// writers of that field in a run, and both land after T-TR9, so a test of what
+// those two renderers say about a deferral puts one on the run's own record
+// here. It is written on r.rec and not on a copy, so finalize renders the
+// record the run has been carrying.
+func (h *RunHandle) SetDeferred(df *runstore.DeferredFindings) {
+	h.r.mu.Lock()
+	defer h.r.mu.Unlock()
+	h.r.rec.Deferred = df
+}
+
 // SetHaltGrace shortens how long a halted stage's agent gets to exit by itself.
 func SetHaltGrace(t *testing.T, d time.Duration) {
 	prev := haltGrace
@@ -370,3 +383,18 @@ func ResetStageHook(t *testing.T) {
 // install one of the two halves at a time, the policy half's off-switch being
 // unimportable from this package's tests.
 func StageBoundAsked(layers []policy.Layer, stage string) bool { return stageBoundAsked(layers, stage) }
+
+// SetGatewayStageLimitHook is SetGatewayStageLimit, so a test can exercise the
+// refusals that keep a tagged binary's stage limits from being replaced, and
+// install a builder of its own for the wiring test (§5.5, T7.2).
+var SetGatewayStageLimitHook = SetGatewayStageLimit
+
+// ResetGatewayStageLimitHook puts the gateway stage-limit builder back to the
+// core default — none — before and after t: SetGatewayStageLimit refuses a
+// second call for the life of the process, so a test that installed one would
+// otherwise leave the whole package with a builder installed.
+func ResetGatewayStageLimitHook(t *testing.T) {
+	t.Helper()
+	gatewayStageLimitFunc = nil
+	t.Cleanup(func() { gatewayStageLimitFunc = nil })
+}

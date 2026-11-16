@@ -43,7 +43,8 @@ import (
 //     defines — the model credentials (config.AnthropicSecret and the
 //     claude-oauth-token family), the GitHub App's private key
 //     (config.GitHubAppKeySecret, C2.1), the upstream Bitbucket credential
-//     (config.BitbucketSecret, D506), the Bitbucket read consumer
+//     (config.BitbucketSecret, D506) and the family of NAMED ones beside it
+//     (config.BitbucketTokenKey, D2350), the Bitbucket read consumer
 //     (BitbucketReadConsumerSecret, F21), the project's provider key
 //     (config.ProviderKeySecret, AK6b) and the review-signing family
 //     (config.ReviewSigningKeySecret, D1069) — and a key outside that set is
@@ -274,9 +275,12 @@ const (
 	// select would be an App private key attached to an Anthropic call as the
 	// caller's credential.
 	KindGitHubApp Kind = "github-app"
-	// KindGit is the upstream git credential: the document key
+	// KindGit is an upstream git credential: the document key
 	// config.BitbucketSecret, the Bitbucket token the proxy forwards a
-	// proxied repository's git and REST requests with (D506). It has no tier
+	// proxied repository's git and REST requests with (D506), or one key of
+	// the family of named tokens beside it (config.BitbucketTokenKey, D2350)
+	// — at most one of them per name, and the legacy key is the one
+	// BitbucketToken answers. It has no tier
 	// and it must never reach the cascade, for the App key's reason: the
 	// cascade would offer the caller's own git token to a model call.
 	KindGit Kind = "git"
@@ -459,8 +463,16 @@ type Bundle struct {
 	appKey int
 	// gitToken is the index of the upstream Bitbucket credential's entry, or
 	// -1 when the document holds none, under the same rule as appKey: one
-	// document key, one entry, a duplicate refused.
+	// document key, one entry, a duplicate refused. It is the LEGACY entry
+	// alone, config.BitbucketSecret's key: the named tokens of the family
+	// beside it (D2350) are bitbucketTokens, because each of them is a
+	// credential of its own rather than a second spelling of this one.
 	gitToken int
+	// bitbucketTokens indexes the family of named Bitbucket tokens (D2350) by
+	// their DOCUMENT KEY (config.BitbucketTokenKey), which is the name they are
+	// spoken of by (R5). A key, not a suffix: the suffix is a name the model
+	// account family may also spell, and this map is the family's own index.
+	bitbucketTokens map[string]int
 	// readConsumer is the read consumer's entry, or nil when the document
 	// holds none, under the same rule as appKey: one document key, one entry,
 	// a duplicate refused. It holds the consumer's three fields, and the
@@ -618,6 +630,35 @@ func (b *Bundle) BitbucketToken() (Entry, bool) {
 	return b.entries[b.gitToken], true
 }
 
+// BitbucketTokens answers the bundle's family of NAMED Bitbucket tokens
+// (D2350): every entry whose document key is config.BitbucketTokenKey(name),
+// each under the name it is spoken of by — its document key, never the bare
+// suffix (R5) — and in a stable order: the keys sorted. The order is the
+// accessor's own rather than the document's, because a document is rewritten on
+// every `creds set` and an answer that moved with it would move the order a
+// selection walks a request through.
+//
+// The legacy config.BitbucketSecret entry is deliberately NOT among them. R3
+// reads it as an implicit record of its own — untyped, covered by the
+// operator's allow_data_to list as written, ranked after every typed record —
+// and BitbucketToken answers it alone, so an accessor that answered it here too
+// would count one credential twice.
+func (b *Bundle) BitbucketTokens() []Entry {
+	if b == nil {
+		return nil
+	}
+	keys := make([]string, 0, len(b.bitbucketTokens))
+	for k := range b.bitbucketTokens {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	out := make([]Entry, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, b.entries[b.bitbucketTokens[k]])
+	}
+	return out
+}
+
 // ProviderKey answers the bundle's provider key (AK6b, F15): the entry whose
 // document key is config.ProviderKeySecret, the credential a call routed to a
 // third-party provider is forwarded with, beside the two routing facts its
@@ -761,6 +802,19 @@ func CredentialKey(key string) (name string, kind Kind, tier creds.Tier, ok bool
 		return config.GitHubAppKeySecret, KindGitHubApp, "", true
 	case key == config.BitbucketSecret:
 		return config.BitbucketSecret, KindGit, "", true
+	case strings.HasPrefix(key, config.BitbucketTokenPrefix):
+		// The family of NAMED Bitbucket tokens (D2350, R13): the legacy key,
+		// the doubled dash and a name the account rule admits. The doubled
+		// dash is what keeps the family out of the account namespace
+		// (ClaudeAccountNameRE refuses one), so neither has to reserve a name
+		// in the other. Its name is the DOCUMENT KEY and not the suffix, which
+		// is what R5 requires: the suffix could be read as a model account's
+		// name, and one name meaning two credentials is what the audit line
+		// cannot survive.
+		if _, ok := config.BitbucketTokenAccount(key); !ok {
+			return "", "", "", false
+		}
+		return key, KindGit, "", true
 	case key == BitbucketReadConsumerSecret:
 		return BitbucketReadConsumerSecret, KindBitbucketReadConsumer, "", true
 	case key == config.ProviderKeySecret:
@@ -893,7 +947,7 @@ func ParseBundle(raw []byte) (*Bundle, error) {
 	if n := len(root.Content) / 2; n > MaxBundleCredentials {
 		return nil, bundleErr(ErrBundleTooMany, "")
 	}
-	b := &Bundle{entries: make([]Entry, 0, len(root.Content)/2), byName: make(map[string]int, len(root.Content)/2), appKey: -1, gitToken: -1, providerKey: -1, reviewSigning: make(map[string]int, 1)}
+	b := &Bundle{entries: make([]Entry, 0, len(root.Content)/2), byName: make(map[string]int, len(root.Content)/2), appKey: -1, gitToken: -1, bitbucketTokens: make(map[string]int, 1), providerKey: -1, reviewSigning: make(map[string]int, 1)}
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		k, v := root.Content[i], root.Content[i+1]
 		if k.Kind != yaml.ScalarNode || k.Tag != "!!str" {
@@ -930,7 +984,18 @@ func ParseBundle(raw []byte) (*Bundle, error) {
 				return nil, bundleErr(ErrBundleUnknownKey, k.Value)
 			}
 		} else if kind == KindGit {
-			if b.gitToken >= 0 {
+			// The legacy key and each name of the family are credentials of
+			// their own, so what is a duplicate is read off the key: the
+			// legacy key twice is one credential written twice, and each
+			// family name twice is one token written twice. Two spellings of
+			// one family name cannot exist — the name IS the key's suffix —
+			// which is the difference from the model family, whose names two
+			// spellings can carry.
+			if k.Value == config.BitbucketSecret {
+				if b.gitToken >= 0 {
+					return nil, bundleErr(ErrBundleUnknownKey, k.Value)
+				}
+			} else if _, dup := b.bitbucketTokens[k.Value]; dup {
 				return nil, bundleErr(ErrBundleUnknownKey, k.Value)
 			}
 		} else if kind == KindBitbucketReadConsumer {
@@ -987,7 +1052,11 @@ func ParseBundle(raw []byte) (*Bundle, error) {
 		case KindGitHubApp:
 			b.appKey = len(b.entries)
 		case KindGit:
-			b.gitToken = len(b.entries)
+			if k.Value == config.BitbucketSecret {
+				b.gitToken = len(b.entries)
+			} else {
+				b.bitbucketTokens[k.Value] = len(b.entries)
+			}
 		case KindReviewSigning:
 			b.reviewSigning[k.Value] = len(b.entries)
 		case KindBitbucketReadConsumer:

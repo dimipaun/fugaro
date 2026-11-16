@@ -1,0 +1,197 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/ee/portal/schemas/ops.schema.json",
+  "title": "Portal operations requests",
+  "description": "What the operations team changes by hand (portal plan P5.1; D2187, D2204, F9). Operations is the one actor that acts across organisations: it changes terms it granted, decides the queue of requests waiting for a person, sets the two lists the sign-in rule reads, and transfers a project id from one workspace to another. Every one of those is audited, reads included (D456), so these shapes are small requests and their effect is read back from the audit log rather than from an answer. Nothing here carries a key: operations sees metadata (F5), and the one thing it may do with a secret is cut a handover short, which takes it away. Every object here is closed, because ee/keyservice/wire_ops.go decodes it with DisallowUnknownFields.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/entitlement_action"
+    },
+    {
+      "$ref": "#/$defs/project_transfer"
+    },
+    {
+      "$ref": "#/$defs/lists"
+    },
+    {
+      "$ref": "#/$defs/queue_decision"
+    },
+    {
+      "$ref": "#/$defs/event_resolution"
+    }
+  ],
+  "$defs": {
+    "entitlement_action": {
+      "type": "object",
+      "description": "A change to a term operations already granted (P5.1). A mint is an entitlement of its own (see entitlements.schema.json) and this is every later change to one: the four actions share a shape because they are one route with one target, and which fields are read is the action's.",
+      "additionalProperties": false,
+      "required": [
+        "entitlement_id",
+        "action",
+        "seats",
+        "ends_at",
+        "reason"
+      ],
+      "properties": {
+        "entitlement_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The entitlement to act on. Revoking it ends every key it ever minted and not only the one an installation is running (F29)."
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "extend",
+            "seats",
+            "comp",
+            "revoke"
+          ],
+          "description": "What to do: move the end, change the seat count, make it comped so it counts as no revenue, or end it. Owners and admins only, after a sign-in no older than five minutes with Google (D2187, D2207)."
+        },
+        "seats": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "description": "The new seat count, read by `seats` alone and null for the other three actions. A seat change reissues the key under the same renewal secret, so the installation needs no paste (D2200, P3.6)."
+        },
+        "ends_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "The new end of the term, in UTC, read by `extend` alone and null for the other three. It is still capped at the row's own term: operations may shorten a term and not exceed the row (F30)."
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The licensor's word for what it did, read by `revoke` (and welcome on any of them). It reaches nobody but the operations team and the audit log: what a holder is told is its key's state and never why the licensor ended it (store.go's Revocation)."
+        }
+      }
+    },
+    "project_transfer": {
+      "type": "object",
+      "description": "Operations' request to move one Firebase project id from the workspace that bound it to another (D2204, TN-P1): the remedy for a squatted binding and for a customer who set the wrong project up. The workspace that loses the id loses the key bound to it.",
+      "additionalProperties": false,
+      "required": [
+        "project_id",
+        "workspace_id",
+        "reason"
+      ],
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{4,28}[a-z0-9]$",
+          "description": "The Firebase project id being transferred. It is checked against Firebase's grammar first, as every project id this API puts in a host name is (F41)."
+        },
+        "workspace_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The portal workspace it is being transferred to. The workspace it leaves is found by the id itself, because one project id is bound by one workspace (D2204)."
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "What the audit line carries for the person who reads it months later, or null for a routine transfer. Every transfer is audited either way (P5.1's TestProjectTransferIsAudited)."
+        }
+      }
+    },
+    "lists": {
+      "type": "object",
+      "description": "The two lists the operations owner sets (D2207, F40). Both are read by the sign-in rule rather than by a screen, which is why they are one shape: they are the whole of what the operations team's own door is configured with.",
+      "additionalProperties": false,
+      "required": [
+        "email_domains",
+        "microsoft_directories"
+      ],
+      "properties": {
+        "email_domains": {
+          "type": "array",
+          "description": "The domains operations may invite somebody at, and the only ones. An empty list invites nobody: the operations organisation is the one whose invitations are limited by a list (F9), and a list nobody set is not a list that allows everything.",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$"
+          }
+        },
+        "microsoft_directories": {
+          "type": "array",
+          "description": "The Microsoft (Entra ID) directories a reseller organisation's microsoft.com sign-in is accepted from (D2207 as amended on 2026-11-13): Microsoft identity is a directory's claim, so a reseller's sign-in is pinned to the directories it sells through, and the value compared is the `tid` of the verified token and never the Identity Platform tenant a client names at sign-in. An empty list refuses every microsoft.com sign-in, which is the safe reading of \"nobody set one\".",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "queue_decision": {
+      "type": "object",
+      "description": "Operations' answer to one item of the queue of requests that a person has to decide (P3.3, P5.1): an open-source approval is the case it was built for, and the queue itself is `queue.go`'s.",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "decision",
+        "note"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The queued request's id, as the queue answers it."
+        },
+        "decision": {
+          "type": "string",
+          "enum": [
+            "approved",
+            "refused"
+          ],
+          "description": "What was decided. An approval mints an entitlement and never a key: the key is minted when the customer binds the workspace (D2196)."
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "What the operations member wrote about it, or null for a decision that needs no explanation. The applicant is told the decision and not the discussion."
+        }
+      }
+    },
+    "event_resolution": {
+      "type": "object",
+      "description": "Operations' answer to one parked Paddle event (F15, P5.1). A notification whose transaction and subscription did not begin with a transaction this API created is stored, parked and left for a person; operations either attaches it to an entitlement or dismisses it, and both are audited.",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "decision",
+        "entitlement_id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The stored event's id. The parked body is never re-keyed: the id is what makes a redelivery of the same event change nothing."
+        },
+        "decision": {
+          "type": "string",
+          "enum": [
+            "attach",
+            "dismiss"
+          ],
+          "description": "Whether the event is attached to an entitlement or dismissed as one that will never be. Neither edits the stored body, which stays as it arrived."
+        },
+        "entitlement_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "What the event is attached to, read by `attach` alone, and null for a dismissal. Attaching a purchase creates the entitlement if the event is the one that sold it (P4.2)."
+        }
+      }
+    }
+  }
+}

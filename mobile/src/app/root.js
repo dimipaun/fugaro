@@ -23,6 +23,20 @@
 // deliberately absent from the tree, because a tree is the one thing that ends
 // up in a screenshot, a crash report and a debug overlay.
 //
+// **The widening of 2026-11-11, which this rule asks to be recorded (P7.2).**
+// The shell draws one more thing: the statement that says what the app's
+// reports are, with the privacy page's URL beside it. The app **has no settings
+// screen**, so the shell is the only surface that sentence has, and it owes the
+// reader the sentence rather than a control. The words and the URL come from
+// `src/telemetry/notice.js`, which is the single source for both, and the URL
+// is drawn as **text**: the app has no link opener, and until the owner answers
+// D124 `shared/url`'s validator refuses every host, so the shell shows what the
+// URL is rather than a control that would pretend to open it. The verdict the
+// shell draws today is read where it draws (`notice()`), not frozen here: the
+// task that grows the opener reads `openable` from the same call, and this
+// paragraph is where that widening is recorded. Nothing else is added to what
+// the shell may show: this is the only widening, and a later one belongs here.
+//
 // **The demo banner, and why it is drawn here.** The owner's ruling requires
 // that every screen a reviewer sees while demo mode is on carries "Demo mode:
 // sample data", and that there is always a visible way to leave. Both are the
@@ -41,6 +55,7 @@
 // saying so in this file.
 
 import { DEMO_BANNER, LEAVE_DEMO } from '../demo/index.js';
+import { notice } from '../telemetry/notice.js';
 
 /** The element type names the shell uses, in one place so a test can name
  * them too. They are the react-native primitives the entry passes in. */
@@ -50,6 +65,7 @@ export const SHELL = Object.freeze({
   BANNER: 'fugaro.banner',
   LEAVE: 'fugaro.banner.leave',
   BODY: 'fugaro.body',
+  NOTICE: 'fugaro.notice',
 });
 
 /** The title the app shows. A constant, never a value from an account. */
@@ -153,6 +169,23 @@ export function createRoot({ React, store, View, Text, Pressable, useDemo, scree
         ),
       ];
     children.push(React.createElement(View, { type: SHELL.BODY, key: 'body' }, ...body));
+
+    // The statement, as the shell's LAST child -- after the body, which is why
+    // it is the fourth element while the demo banner is on -- and on every
+    // screen: it is the only surface the app has for it, and a reader who
+    // reaches the app at all is owed it. Both texts are
+    // `src/telemetry/notice.js`'s -- the shell
+    // renders the sentence and the URL rather than copying either -- and the
+    // notice is read here, where it is drawn, rather than frozen at module
+    // load: its `openable` is the verdict the task that grows the link opener
+    // reads, and the shell draws no opener of its own.
+    const { text: statement, url: privacyUrl } = notice();
+    children.push(React.createElement(
+      View,
+      { type: SHELL.NOTICE, key: 'notice' },
+      React.createElement(Text, { type: SHELL.NOTICE, key: 'statement' }, statement),
+      React.createElement(Text, { type: SHELL.NOTICE, key: 'privacy' }, privacyUrl),
+    ));
 
     return React.createElement(View, { type: SHELL.ROOT }, ...children);
   };

@@ -229,7 +229,7 @@ func TestBaseBranchSkew(t *testing.T) {
 	newSpec := func() *task.Spec {
 		return &task.Spec{Version: 1, RunID: "20261027-100000-abcd", Repo: "acme/app", Ref: "master", BaseBranch: "master", Workflow: "web", Task: "x"}
 	}
-	wantSkew := "the job image predates " + baseBranchSince + " and ignores the project's base branch master; refresh it with fugaro image refresh"
+	wantSkew := "the job image predates " + baseBranchSince + " and ignores the project's base branch master; fugaro update in the checkout moves it onto this release's base image"
 	cloneOf := func(v bool) *bool { return &v }
 	baseImageOf := func(e *cloudEnv, ref string) *cloudEnv {
 		lc := *e.lc

@@ -27,6 +27,12 @@ const (
 	bkRB          = "dev@example.invalid"
 )
 
+// bkHeartbeatEvery is the fixture's session cadence. It is the registry's beat
+// and, since the runner's keep-warm request reads the session's own interval
+// (slipBeatEvery), the run's too -- so a test about either reads this number
+// rather than the 15 s a real run keeps.
+const bkHeartbeatEvery = 30 * time.Millisecond
+
 // bk is a run against the budget backend's fakes: a database seeded as
 // fugaro update --firebase-project leaves it, Firebase Auth, and the run's token waiting
 // in the bucket where the launcher put it.
@@ -81,7 +87,7 @@ func attachBackend(t *testing.T, g *gw, mode string) *bk {
 		TokenMarked: true, TokenKey: b.key,
 		Tune: func(c *budget.Config) {
 			c.IdentityURL, c.SecureTokenURL = b.itk.URL, b.itk.URL
-			c.HeartbeatEvery, c.RetryEvery, c.CapRetryWait = 30*time.Millisecond, 20*time.Millisecond, 30*time.Millisecond
+			c.HeartbeatEvery, c.RetryEvery, c.CapRetryWait = bkHeartbeatEvery, 20*time.Millisecond, 30*time.Millisecond
 			c.StaleBackoff, c.KillRestart = 2*time.Millisecond, 100*time.Millisecond
 			c.StreamBackoffMin, c.StreamBackoffMax = 10*time.Millisecond, 50*time.Millisecond
 			if c.Grace == 0 || c.Grace == budget.DefaultGrace {

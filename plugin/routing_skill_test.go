@@ -182,3 +182,86 @@ func runKeysSentence(t *testing.T, status string) string {
 	}
 	return rest[:j]
 }
+
+// TestWorkingSkillStatusNamesThePullRequestStates (the owner's ruling of
+// 2026-11-12): `runs ls` gained the state of the pull request a row carries --
+// `--state` takes the three words beside a run's own statuses and `--json`
+// carries `pr_state` on every row that has a pull request -- and the working
+// skill is where the user's agent learns which runs are waiting on a merge.
+// Neither list is typed twice here: the words come from the flag's own usage,
+// which is what --help prints and what internal/cli refuses an unknown word
+// against, and the key from runview.Row's own json tag.
+func TestWorkingSkillStatusNamesThePullRequestStates(t *testing.T) {
+	data, err := os.ReadFile("skills/working/reference/status.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := string(data)
+
+	// The words --state takes, read off the flag rather than repeated: the
+	// skill's own bullet lists a run's statuses and the pull request's states
+	// as one list of words, and this is the list the CLI answers to.
+	c := resolveSkillCommand(cli.NewRootCmd(), "runs", "ls")
+	if !c.known() || c.cmd == nil {
+		t.Fatal("fugaro runs ls does not resolve in the CLI tree, and the working skill documents it")
+	}
+	fl := c.cmd.Flags().Lookup("state")
+	if fl == nil {
+		t.Fatal("fugaro runs ls has no --state flag, and the working skill documents it")
+	}
+	bullet := stateBullet(t, status)
+	for _, w := range stateFlagWords(t, fl.Usage) {
+		if !strings.Contains(bullet, "`"+w+"`") {
+			t.Errorf("skills/working/reference/status.md's --state bullet does not name %q: the flag takes it", w)
+		}
+	}
+	// The fourth word is the one the flag refuses, so it is in no list the
+	// flag prints: the skill has to say it is refused, or a reader asking for
+	// the pull requests no run follows is sent to a flag that will not answer.
+	if !strings.Contains(bullet, "`orphan`") {
+		t.Error("skills/working/reference/status.md's --state bullet never names `orphan`: the flag refuses it and the skill has to say why a listing of runs cannot answer one")
+	}
+
+	// The key: runview.Row's own tag, so a rename fails here rather than
+	// leaving the skill naming a field the row no longer carries.
+	f, ok := reflect.TypeOf(runview.Row{}).FieldByName("PRState")
+	if !ok {
+		t.Fatal("runview.Row has no PRState field, and the working skill documents runs ls --json's keys")
+	}
+	key := strings.Split(f.Tag.Get("json"), ",")[0]
+	if !strings.Contains(runKeysSentence(t, status), "`"+key+"`") {
+		t.Errorf("skills/working/reference/status.md does not list %q among a run's keys: runs ls --json emits it on every row that has a pull request", key)
+	}
+}
+
+// stateBullet is the working skill's `--state` bullet, one line of the list of
+// narrowing flags: the pin reads the words the flag takes out of it.
+func stateBullet(t *testing.T, status string) string {
+	t.Helper()
+	const marker = "- `--state <state>`"
+	i := strings.Index(status, marker)
+	if i < 0 {
+		t.Fatalf("skills/working/reference/status.md no longer has a %q bullet: the pin reads the words --state takes out of it", marker)
+	}
+	rest := status[i:]
+	if j := strings.IndexByte(rest, '\n'); j >= 0 {
+		rest = rest[:j]
+	}
+	return rest
+}
+
+// stateFlagWords is the words a flag's usage lists in its parenthetical tail,
+// the list --help prints and the one internal/cli holds its two vocabularies
+// in.
+func stateFlagWords(t *testing.T, usage string) []string {
+	t.Helper()
+	i, j := strings.LastIndex(usage, "("), strings.LastIndex(usage, ")")
+	if i < 0 || j < i {
+		t.Fatalf("the --state usage (%q) lists no words in parentheses: the pin reads the flag's own list out of it", usage)
+	}
+	var out []string
+	for _, w := range strings.Split(usage[i+1:j], ",") {
+		out = append(out, strings.TrimSpace(w))
+	}
+	return out
+}

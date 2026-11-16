@@ -49,9 +49,8 @@ func TestAskConfirmNeverReadsOutsideAsk(t *testing.T) {
 		passed    []string
 		terminal  bool
 	}{
-		{"no --ask at all", []string{"yes"}, nil, true},
-		{"--ask registered and not passed", []string{"ask", "yes", "json"}, []string{"yes"}, true},
-		{"--yes with no --ask", []string{"ask", "yes"}, []string{"yes"}, true},
+		{"no --ask at all", nil, nil, true},
+		{"--ask registered and not passed", []string{"ask", "json"}, nil, true},
 		{"--json with no --ask", []string{"ask", "json"}, []string{"json"}, true},
 		{"no terminal and no --ask", []string{"ask"}, nil, false},
 	}
@@ -112,9 +111,9 @@ func assertAskConfirmRefuses(t *testing.T, isTerminal bool, registers []string, 
 // the marker says "agent" while the input says "a person is there", and the
 // marker wins.
 //
-// The other sessions that cannot answer — --json, --non-interactive, a pipe —
-// are the same refusal one row further down, and the markers are cleared for
-// them so the reason each row asserts is the reason it was refused for.
+// The other sessions that cannot answer — --json and a pipe — are the same
+// refusal one row further down, and the markers are cleared for them so the
+// reason each row asserts is the reason it was refused for.
 func TestAskConfirmRefusesInAnAgentSession(t *testing.T) {
 	for _, marker := range agentenv.AgentMarkers {
 		t.Run(marker, func(t *testing.T) {
@@ -134,13 +133,12 @@ func TestAskConfirmRefusesInAnAgentSession(t *testing.T) {
 		why      string
 	}{
 		{"--json at a terminal", true, []string{"ask", "json"}, "--json"},
-		{"--non-interactive at a terminal", true, []string{"ask", "non-interactive"}, "--non-interactive"},
 		{"a pipe", false, []string{"ask"}, "no terminal"},
 	}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
 			clearAgentMarkers(t)
-			assertAskConfirmRefuses(t, row.terminal, []string{"ask", "json", "non-interactive"}, row.why, row.passed...)
+			assertAskConfirmRefuses(t, row.terminal, []string{"ask", "json"}, row.why, row.passed...)
 		})
 	}
 }

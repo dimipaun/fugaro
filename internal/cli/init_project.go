@@ -387,7 +387,7 @@ func (s *projectStage) Left() initflow.Left {
 // copies of them would be two places to widen by accident.
 func (r *initRun) canType() bool {
 	o := r.o
-	return !o.nonInteractive && !o.asJSON && agentMarker(os.Getenv, r.stdinTerminal()) == "" && stdinIsTerminal(r.cmd.InOrStdin())
+	return !o.nonInteractive && !o.asJSON && agentMarker(os.Getenv, r.stdinTerminal()) == "" && r.stdinTerminal()
 }
 
 // canType is this stage's own reading of whether a person is at the terminal.
@@ -397,15 +397,13 @@ func (s *projectStage) canType() bool { return s.e.r.canType() }
 // to the project, and then the run's own answer to it (confirmNow). Nothing is
 // typed under it and no flag stands in for the person (T7,
 // docs/no-prompt-policy): creating the project, adding Firebase to it and
-// linking a billing account are initflow.Typed in both front doors, so --yes
-// never reaches them (stepConfirmation) and a person at their own terminal
-// reads the banner and the step goes on. A person who passed --yes is the one
-// way a person at a terminal leaves the step instead, and declined is what
-// says so.
+// linking a billing account take no answer but the person's in either front
+// door, so an answer a run carries never reaches them (stepConfirmation) and a
+// person at their own terminal reads the banner and the step goes on.
 func (s *projectStage) confirm(banner, question string) (bool, error) {
 	r := s.e.r
 	fmt.Fprintf(r.w, "⚠ CONFIRM: %s\n", banner)
-	if r.stepConfirmation(initflow.Typed) == stepLeave {
+	if r.stepConfirmation(false) == stepLeave {
 		return false, nil
 	}
 	ok, err := r.confirmNow(question)
@@ -519,7 +517,7 @@ func (s *projectStage) credentialNote() string {
 // names the flag that did not and the one way out of it.
 func (s *projectStage) declined(what string) error {
 	return &initflow.NeedsYouError{Left: initflow.Left{Stage: initflow.Project, Kind: initflow.LeftPrompt,
-		Text: "not confirmed (" + what + " was not confirmed): " + s.e.r.o.doorName() + " asks this step of a person at a real terminal and --yes never stands in for one — rerun " + selfCommand() + " " + s.e.r.o.doorName() + " in your own terminal window without --yes, read the banner, and the step goes on; nothing further was done"}}
+		Text: "not confirmed (" + what + " was not confirmed): " + s.e.r.o.doorName() + " asks this step of a person at a real terminal and no flag stands in for one — rerun " + selfCommand() + " " + s.e.r.o.doorName() + " in your own terminal window, read the banner, and the step goes on; nothing further was done"}}
 }
 
 func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {

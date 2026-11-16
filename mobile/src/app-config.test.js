@@ -171,6 +171,70 @@ test('the config ships with no installation in it', () => {
   assert.equal(RAW.includes('com.'), false, 'no reverse-DNS identity is committed here');
 });
 
+// --- ... and the same rule on the files the app's own tasks hold -------------
+//
+// The line above is `app.json`'s half of D125's fence. The fence itself is
+// wider than one file -- the identity is the owner's, it is set in the EAS
+// project (`eas env:set`) and resolved at build time by `app.config.js`
+// precisely so that no copy of the app built from this tree ships with one
+// baked in -- and a *source* file is the other place an identity would sit
+// without anything looking wrong (an App Links host, a store package named in a
+// comment, a deep link's scheme). So the task that adds the first screen's
+// ask-your-admin state and the pairing payload's refusal of an identity
+// (docs/mobile-auth, Task P4; D228's refusal is cheap partly because no
+// reverse-DNS string is committed for App Links) holds its own files to the
+// rule it asserts of the config.
+//
+// **Two questions, deliberately not one.** `src/app-config.ids.test.js` walks
+// every tracked file under `mobile/` and `docs/mobile/` for the OWNER'S exact
+// value, assembled from parts; this is the SHAPE, on the files this part
+// touches. The first catches the real identity wherever it is pasted; the
+// second is what fails the moment one of these files grows a plausible-looking
+// one that is nobody's yet -- and it can therefore be pinned by a mutation in
+// the file it is about.
+
+/** A reverse-DNS identity: the shape iOS's bundle identifier and Android's
+ * package name share, and the one a store account or an App Links host is
+ * written in. It is the tree's own pattern for the phrase
+ * (`internal/cli/docs_mobile_auth_test.go` scans the mobile-auth documents for
+ * exactly this shape), with one character of context added: the store prefix
+ * has to START a name, so a hostname that happens to carry one inside it --
+ * `…firebaseio.com.evil.example`, which `payload.test.js` refuses a URL for --
+ * is not read as an identity. */
+const REVERSE_DNS = /(?<![\w.])(?:com|org|net|io|ai|dev|co)\.[A-Za-z0-9]/;
+
+/** The files this part adds or changes, app-relative. `src/app-config.ids.test.js`
+ * is deliberately not one of them: it is that walk's own file, and it writes
+ * the owner's value nowhere. */
+const PART_FILES = Object.freeze([
+  'src/app/first-screen.js',
+  'src/app/first-screen.test.js',
+  'src/boundary.test.js',
+  'src/pairing/payload.test.js',
+]);
+
+test('no reverse-DNS identity in the files this part holds (D125, P4)', () => {
+  /** The files whose text carries an identity-shaped literal. */
+  const identities = (files) => files.filter(([, text]) => REVERSE_DNS.test(text)).map(([path]) => path);
+  // The positive control: a planted identity is flagged, so the walk below is
+  // not an assertion every file satisfies.
+  assert.deepEqual(identities([['src/app/x.js', "const store = 'com.example.sample';"]]), ['src/app/x.js']);
+  // ... and a database host is not an identity, including one that carries the
+  // string inside it (`…firebaseio.com.evil.example`, which `payload.test.js`
+  // refuses a URL for): the prefix has to start a name.
+  assert.deepEqual(
+    identities([['src/pairing/x.js', "const url = 'https://fp-1234-default-rtdb.firebaseio.com.evil.example';"]]),
+    [],
+  );
+
+  // ... and the tree: the files this part owns, read from disk, carry none.
+  // Mutation: paste any reverse-DNS identity into one of them and this fails
+  // naming it.
+  const files = PART_FILES.map((path) => [path, readFileSync(join(HERE, '..', path), 'utf8')]);
+  for (const [path, text] of files) assert.ok(text.length > 0, `${path} was read, not skipped`);
+  assert.deepEqual(identities(files), [], 'the identity is set in the EAS project, not in this app’s source');
+});
+
 test('the config is a config, and the entry it needs exists', () => {
   assert.equal(typeof CONFIG.expo, 'object');
   assert.equal(CONFIG.expo.name, 'Fugaro');

@@ -179,7 +179,7 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 		return nil, nil, dbErr("reading "+projectpolicy.PathRulesMarker(), err)
 	}
 	if markerFound && markerGen > projectpolicy.RulesVersion {
-		return nil, nil, userErr("the deployed security rules are generation %d (%s = %d) and this Fugaro's are generation %d: the rules this database runs under came from a newer Fugaro, and 'fugaro update --firebase-project %s' would deploy this binary's older rules over them and record generation %d in the marker. Upgrade Fugaro first ('fugaro upgrade'), then run 'fugaro update --firebase-project %s' again with the newer binary; 'fugaro doctor' reports this as policy-rules-skew",
+		return nil, nil, userErr("the deployed security rules are generation %d (%s = %d) and this Fugaro's are generation %d: the rules this database runs under came from a newer Fugaro, and 'fugaro update --firebase-project %s' would deploy this binary's older rules over them and record generation %d in the marker. Upgrade Fugaro first ('brew upgrade dimipaun/tap/fugaro'), then run 'fugaro update --firebase-project %s' again with the newer binary; 'fugaro doctor' reports this as policy-rules-skew",
 			markerGen, projectpolicy.PathRulesMarker(), markerGen, projectpolicy.RulesVersion, d.gcpProject, projectpolicy.RulesVersion, d.gcpProject)
 	}
 	// The credentials children's own generation is read and refused the same
@@ -197,7 +197,7 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 		return nil, nil, dbErr("reading "+rules.PathCredsRulesMarker(), err)
 	}
 	if credsFound && credsGen > rules.CredsRulesVersion {
-		return nil, nil, userErr("the deployed security rules carry credentials generation %d (%s = %d) and this Fugaro's are generation %d: the credentials children this database runs under came from a newer Fugaro, and 'fugaro update --firebase-project %s' would deploy this binary's older rules over them and record generation %d in the marker. Upgrade Fugaro first ('fugaro upgrade'), then run 'fugaro update --firebase-project %s' again with the newer binary",
+		return nil, nil, userErr("the deployed security rules carry credentials generation %d (%s = %d) and this Fugaro's are generation %d: the credentials children this database runs under came from a newer Fugaro, and 'fugaro update --firebase-project %s' would deploy this binary's older rules over them and record generation %d in the marker. Upgrade Fugaro first ('brew upgrade dimipaun/tap/fugaro'), then run 'fugaro update --firebase-project %s' again with the newer binary",
 			credsGen, rules.PathCredsRulesMarker(), credsGen, rules.CredsRulesVersion, d.gcpProject, rules.CredsRulesVersion, d.gcpProject)
 	}
 	// The workspace family's generation, read and refused the same way (W3 of the
@@ -233,7 +233,7 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 		return nil, nil, dbErr("reading "+rules.PathOrchestratorRulesMarker(), err)
 	}
 	if orchFound && orchGen > rules.OrchestratorRulesVersion {
-		return nil, nil, userErr("the deployed security rules carry orchestrator generation %d (%s = %d) and this Fugaro's are generation %d: the orchestrator subtree this database runs under came from a newer Fugaro, and 'fugaro update --firebase-project %s' would deploy this binary's older rules over them and record generation %d in the marker. Upgrade Fugaro first ('fugaro upgrade'), then run 'fugaro update --firebase-project %s' again with the newer binary",
+		return nil, nil, userErr("the deployed security rules carry orchestrator generation %d (%s = %d) and this Fugaro's are generation %d: the orchestrator subtree this database runs under came from a newer Fugaro, and 'fugaro update --firebase-project %s' would deploy this binary's older rules over them and record generation %d in the marker. Upgrade Fugaro first ('brew upgrade dimipaun/tap/fugaro'), then run 'fugaro update --firebase-project %s' again with the newer binary",
 			orchGen, rules.PathOrchestratorRulesMarker(), orchGen, rules.OrchestratorRulesVersion, d.gcpProject, rules.OrchestratorRulesVersion, d.gcpProject)
 	}
 	d.acts = nil

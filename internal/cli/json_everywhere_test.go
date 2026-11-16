@@ -15,13 +15,13 @@ import (
 // --json.
 func TestInitJSONOnARefusalBeforeAnyStage(t *testing.T) {
 	for name, args := range map[string][]string{
-		"missing inputs": {"setup", "--json", "--non-interactive"},
+		"missing inputs": {"setup", "--json"},
 		"bad flags":      {"update", "--json", "--forget", "--config-only"},
 		"repo, no repo":  {"setup", "--repo", "--json"},
 		// The refusal that names the other door: it is decided before anything
 		// is read, and it is still a refusal like the rest — a machine consumer
 		// gets one object whichever check stopped the run.
-		"a flag the other door takes": {"setup", "--json", "--forget", "--yes"},
+		"a flag the other door takes": {"setup", "--json", "--forget"},
 		"a creating flag on update":   {"update", "--json", "--create-project"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -62,7 +62,7 @@ func withoutArg(args []string, drop string) []string {
 // second object.
 func TestInitJSONPrintsOneObject(t *testing.T) {
 	firstRunEnv(t)
-	out, _, err := executeStdin(t, "", "setup", "--json", "--non-interactive")
+	out, _, err := executeStdin(t, "", "setup", "--json")
 	if err == nil {
 		t.Fatal("exit 0")
 	}

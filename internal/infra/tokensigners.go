@@ -76,9 +76,11 @@ const (
 // Managed is the installation's own managed deployment, as the local config
 // records it: Project is the GCP project the installation lives in (the
 // deployer account is there, tf.DeployerAccount) and Operators are the
-// principals the installation names (localcfg's terraform.operators), the ones
-// the module grants the token-creator role on that account to. The zero value
-// recognises nothing, so every managed grant is then a warning.
+// principals the installation names — localcfg's terraform.admins, the list
+// the module's own var.operators is fed from, which is where this field's name
+// comes from — the ones the module grants the token-creator role on that
+// account to. The zero value recognises nothing, so every managed grant is
+// then a warning.
 type Managed struct {
 	Project   string
 	Operators []string

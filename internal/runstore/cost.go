@@ -70,6 +70,23 @@ type Cost struct {
 	// stage cost", and they are 0 for a run with no gateway.
 	CacheReadTokens  int64 `json:"cache_read_tokens,omitempty"`
 	CacheWriteTokens int64 `json:"cache_write_tokens,omitempty"`
+	// ModelTokens is the run's token counts by model: the counts a
+	// repricing of the run reads, so `fugaro estimate` can price the run's
+	// own usage again on another model (F8). A model ID here is one the
+	// run's own path keyed usage under, never a string an upstream response
+	// claimed. On a run with a gateway these counts are what
+	// CacheReadTokens and CacheWriteTokens sum; a run without one records
+	// no such totals -- they are the gateway's -- so its per-model counts
+	// stand alone and a reader that wants a total sums these entries.
+	//
+	// The split is what each path could tell, so a zero is "this path had
+	// none or could not tell", never a guess: the gateway prices every call
+	// from pricing.Usage, whose cache writes keep their 5m and 1h TTLs
+	// apart, and a run without a gateway has the agent's per-model usage
+	// alone, whose single cache-creation count is booked as CacheWrite5m
+	// (the budget books it the same way). Empty for a run that recorded no
+	// tokens, and for every run written before the field existed.
+	ModelTokens map[string]ModelTokenCounts `json:"model_tokens,omitempty"`
 	// UsageUnparsed counts calls settled at their reservation because
 	// their usage could not be read.
 	UsageUnparsed int `json:"usage_unparsed,omitempty"`
@@ -90,6 +107,20 @@ type Cost struct {
 	// D10, P7). It is a fact about the prices, not about the run: the run
 	// charged, and over-counted on purpose.
 	CatalogStale bool `json:"catalog_stale,omitempty"`
+}
+
+// ModelTokenCounts is one model's token counts on a run (F8): what the gateway
+// priced for it, or what the agent reported for it on a run with no gateway.
+// Every count is written, zero included, so a member is never absent: a zero is
+// a count, and which paths could tell one from "used none" is ModelTokens' own
+// note. Web searches are not here: they are priced apart and a repricing of the
+// run's tokens does not carry them.
+type ModelTokenCounts struct {
+	Input        int64 `json:"input"`
+	Output       int64 `json:"output"`
+	CacheRead    int64 `json:"cache_read"`
+	CacheWrite5m int64 `json:"cache_write_5m"`
+	CacheWrite1h int64 `json:"cache_write_1h"`
 }
 
 // ModelBasis is the basis for an agent.auth mode.

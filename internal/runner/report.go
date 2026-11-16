@@ -90,14 +90,8 @@ func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 	for _, n := range notes {
 		fmt.Fprintf(&b, "**Note:** %s\n\n", n)
 	}
-	if len(rec.Stages) > 0 {
-		b.WriteString("| Stage | Duration |\n|---|---|\n")
-		for _, s := range rec.Stages {
-			d := time.Duration(s.DurationS * float64(time.Second)).Round(time.Second)
-			fmt.Fprintf(&b, "| %s | %s |\n", s.Name, d)
-		}
-		b.WriteString("\n")
-	}
+	b.WriteString(triageFailureLine(rec))
+	b.WriteString(stageTable(rec))
 	if rec.Outcome == runstore.OutcomeArtifacts {
 		b.WriteString(artifactsSection(rec))
 	}
@@ -121,6 +115,7 @@ func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 	// T4.2, D9, F19).
 	b.WriteString(rigorLine(rec.Rigor))
 	b.WriteString(toleratedSection(rec))
+	b.WriteString(deferralsSection(rec))
 	b.WriteString(testsLine(rec))
 	if rec.Cost != nil {
 		b.WriteString(CostLine(*rec.Cost) + "\n\n")
@@ -139,6 +134,103 @@ func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 	fmt.Fprintf(&b, "Transcripts and verify records: `%s` in the runs bucket.\n", location)
 	b.WriteString("\n" + gitprov.ReportMarker(rec.RunID) + "\n")
 	return b.String()
+}
+
+// stageTable is the report's stage table: one row per stage the run recorded,
+// naming the stage and the time it took. "" for a record that recorded none,
+// which is every run that ended before its first stage.
+//
+// A triage row whose round failed carries the mark triageRowMarks answers
+// instead of a bare name (D1846): the row said "triage 1s" for a call that
+// bought no verdict, which is exactly the shape a reader took for a judge that
+// ran. It is the table row the report's own failure line above it is read with,
+// and the two are written from one record.
+func stageTable(rec *runstore.Record) string {
+	if len(rec.Stages) == 0 {
+		return ""
+	}
+	marks := triageRowMarks(rec)
+	var b strings.Builder
+	b.WriteString("| Stage | Duration |\n|---|---|\n")
+	for i, s := range rec.Stages {
+		d := time.Duration(s.DurationS * float64(time.Second)).Round(time.Second)
+		fmt.Fprintf(&b, "| %s%s | %s |\n", s.Name, marks[i], d)
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// triageFailureLine is the one line the report carries above its stage table
+// when a triage round failed (D1846): which review rounds' calls failed and the
+// one-line cause the record kept for each, and what the fail-safe did — the
+// judge did not run for those rounds, so every finding the mode's table blocks
+// blocked and the fixer was handed them as the round's own work. A pull request
+// under it therefore carries a fix commit for findings no judge ever weighed,
+// which is the fact a reader of the body cannot get from the table alone.
+//
+// "" for a record carrying no failed round, which is every ordinary run and
+// every record written before the cause existed: a round that answered has
+// nothing to say here, and a line over no failure would read as one.
+func triageFailureLine(rec *runstore.Record) string {
+	if rec.Triage == nil {
+		return ""
+	}
+	var parts []string
+	for _, rnd := range rec.Triage.Rounds {
+		if !rnd.Failed {
+			continue
+		}
+		part := fmt.Sprintf("round %d", rnd.Round)
+		if rnd.Cause != "" {
+			part += ": " + inlineText(rnd.Cause)
+		}
+		parts = append(parts, part)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("**Triage:** the judge did not run for %s, so the fail-safe blocked every finding the mode's table blocks.\n\n", strings.Join(parts, "; "))
+}
+
+// triageRowMarks answers, for each row of rec.Stages, the mark that row carries
+// where its triage round failed: " (failed: <cause>)", or " (failed)" for a
+// round whose record kept no cause — one written before the field existed, and
+// the shape a hand-edited record has. "" for every other row, and for the rows
+// of a record that triaged nothing.
+//
+// The rows and the rounds are paired from the end of both lists, which is the
+// direction the record's own order makes right: both are in the order the calls
+// were made, a stage's retried attempt appends a row of its own *before* the
+// row of the round it served (stage's retry loop re-enters stageOnce, which is
+// what records the timing), and a round that bought no call at all — the
+// working directory that could not be made — is recorded with no row. So the
+// last triage row is the last round's, and whatever a round's row does not have
+// is behind it. The mark is the record's own cause through inlineText, because
+// it reaches a markdown table cell: a cause carrying a `|` or a newline would
+// end the row it sits in.
+func triageRowMarks(rec *runstore.Record) []string {
+	marks := make([]string, len(rec.Stages))
+	if rec.Triage == nil {
+		return marks
+	}
+	var rows []int
+	for i, s := range rec.Stages {
+		if s.Name == stageTriage {
+			rows = append(rows, i)
+		}
+	}
+	for k := 0; k < len(rows) && k < len(rec.Triage.Rounds); k++ {
+		row, rnd := rows[len(rows)-1-k], rec.Triage.Rounds[len(rec.Triage.Rounds)-1-k]
+		if !rnd.Failed {
+			continue
+		}
+		if rnd.Cause == "" {
+			marks[row] = " (failed)"
+			continue
+		}
+		marks[row] = " (failed: " + inlineText(rnd.Cause) + ")"
+	}
+	return marks
 }
 
 // artifactsSection is the report's Artifacts section (design §9) for a
@@ -353,6 +445,62 @@ func toleratedSection(rec *runstore.Record) string {
 	}
 	b.WriteString("\n")
 	return b.String()
+}
+
+// deferralsSection is the report's list of the findings the run did not fix
+// and left to a follow-up (T-TR9, D1843): the same lines the pull request's
+// status section carries, under the report's own heading, plus the command
+// that files them.
+//
+// "" for a record carrying no block, which is every run that deferred nothing
+// — and for a block holding no entry, which a hand-edited record can carry: a
+// section over an empty list would claim a decision no run made.
+func deferralsSection(rec *runstore.Record) string {
+	df := rec.Deferred
+	if df == nil || len(df.Findings) == 0 {
+		return ""
+	}
+	return "#### Deferred (follow-ups)\n\n" + deferralLines(df) + "\n" + followupsLine(rec.RunID) + "\n"
+}
+
+// deferralLines is one line per finding whose deferral took effect: the key it
+// is known by (the one a follow-up task carries), the reviewer's own summary
+// of the finding and the one-line why the deferral took effect, with a line
+// saying how many more the run deferred where the record's cap cut the list
+// (runstore.MaxDeferred). The pull request's status section and the report
+// carry the same lines, which is why they are built here once and not in
+// either renderer.
+//
+// The summary and the why are the reviewer's and the judge's words about an
+// untrusted diff, and the record is launcher-writable, so both go through
+// inlineText: a sentence carrying a newline would end its own bullet — and a
+// line after it would be read as Markdown of the report's — and a mention or a
+// marker in one must not reach the report as either.
+func deferralLines(df *runstore.DeferredFindings) string {
+	var b strings.Builder
+	for _, f := range df.Findings {
+		fmt.Fprintf(&b, "- `%s`: %s — %s\n", inlineText(f.Key), inlineText(f.Summary), inlineText(f.Reason))
+	}
+	if df.Total > len(df.Findings) {
+		// The list is not the whole answer, and it says so rather than passing
+		// its last line off as the last finding the run deferred. The gap is
+		// not always the record's cap: NewDeferred also drops an entry a
+		// follow-up cannot be built from, so what is unlisted is "some of" the
+		// total and never the run's last ones.
+		fmt.Fprintf(&b, "- and %s the record does not list, of %s this run deferred\n",
+			Plural(df.Total-len(df.Findings), "finding"), Plural(df.Total, "finding"))
+	}
+	return b.String()
+}
+
+// followupsLine is the sentence both the pull request and the report end the
+// deferral list with: the command that turns the findings into follow-up tasks
+// (T-TR10), which refuses until the pull request is merged, so the sentence
+// says whose act the merge is (D1842: a run marks its pull request ready and
+// never merges it) and names the run exactly, because a lookup resolves an
+// ending only once one accepts it.
+func followupsLine(runID string) string {
+	return fmt.Sprintf("Run `fugaro followups %s` after merging: it turns these findings into follow-up tasks, and refuses until this pull request is merged.\n", inlineText(runID))
 }
 
 // toleratedCell renders a reviewer's title into the one table cell it can

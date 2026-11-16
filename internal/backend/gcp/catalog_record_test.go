@@ -70,6 +70,7 @@ func recordSpec(t *testing.T) gcp.CatalogBuildSpec {
 		WorkflowSecrets: []config.Secret{{Name: "npm-token", Env: "NPM_TOKEN"}},
 		Bucket:          "gs://fugaro-runs-proj-1234",
 		Selftest:        []byte(`{"skip_verify":true,"tools":"critical"}`),
+		TemplateSalt:    strings.Repeat("1", 64),
 	}
 }
 
@@ -149,7 +150,8 @@ func TestCatalogRecordDecodesStrictly(t *testing.T) {
 		"ENTRY": spec.Entry, "COMMIT": spec.Definition.SourceCommit,
 		"CONTEXT_COMMIT": spec.ContextCommit, "CONTEXT_SHA256": spec.ContextSHA256,
 		"GENERATION": strconv.FormatInt(spec.Definition.Generation, 10),
-		"SHA256":     spec.Definition.SHA256, "BASE": spec.Base, "IMAGE": spec.Image,
+		"SHA256":     spec.Definition.SHA256, "TEMPLATE_SALT": spec.TemplateSalt,
+		"BASE": spec.Base, "IMAGE": spec.Image,
 		"TAG": spec.Definition.SHA256, "BUILD_ID": recordBuildID,
 		"image_digest": recordImageDigest, "base_digest": recordBaseDigest, "built_at": recordBuiltAt,
 	})
@@ -163,7 +165,8 @@ func TestCatalogRecordDecodesStrictly(t *testing.T) {
 		Version: 1, Entry: spec.Entry, SourceCommit: spec.Definition.SourceCommit,
 		ContextCommit: spec.ContextCommit, ContextSHA256: spec.ContextSHA256,
 		DefinitionGeneration: spec.Definition.Generation, DefinitionSHA256: spec.Definition.SHA256,
-		BaseRef: spec.Base, BaseDigest: recordBaseDigest, Image: spec.Image,
+		TemplateSalt: spec.TemplateSalt,
+		BaseRef:      spec.Base, BaseDigest: recordBaseDigest, Image: spec.Image,
 		ContentTag: spec.Definition.SHA256, ImageDigest: recordImageDigest,
 		BuildID: recordBuildID, BuiltAt: at,
 	}
@@ -292,7 +295,8 @@ exit "$CURL_EXIT"
 		"COMMIT=" + spec.Definition.SourceCommit,
 		"CONTEXT_COMMIT=" + spec.ContextCommit, "CONTEXT_SHA256=" + spec.ContextSHA256,
 		"GENERATION=" + strconv.FormatInt(spec.Definition.Generation, 10),
-		"SHA256=" + spec.Definition.SHA256, "BASE=" + spec.Base, "IMAGE=" + spec.Image,
+		"SHA256=" + spec.Definition.SHA256, "TEMPLATE_SALT=" + spec.TemplateSalt,
+		"BASE=" + spec.Base, "IMAGE=" + spec.Image,
 		"TAG=" + spec.Definition.SHA256, "BUILD_ID=" + recordBuildID,
 		// What the reads cut out of the script would have left it: the step's
 		// own variables, under the names its script reads them by.

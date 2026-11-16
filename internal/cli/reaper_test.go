@@ -764,19 +764,58 @@ func TestReaperRefusesWhereNothingIsConfigured(t *testing.T) {
 }
 
 // TestReaperCommandNeedsNoBatchBackend: the command never opens the seam's
-// backend, so a project config that names its Batch resources is still a
-// Cloud Run installation's -- `backend: cloud-batch` stays refused, which is
-// Task 10's to lift and not this task's. The config below names no backend at
-// all, which is Cloud Run.
+// backend -- it reads the installation's facts out of the project config and
+// talks to the Batch and Compute APIs itself -- so the pass runs on both kinds
+// of installation: one whose config carries a `batch:` block while its
+// `backend:` still names Cloud Run, and one that SELECTS the backend.
+//
+// The second is the installation this command exists for, because a Batch run's
+// VM is what it sweeps, and it is the case the enable (plan Task 10) makes
+// reachable: before that commit the name was refused and this pass could only
+// ever run on a project config that named no backend at all.
 func TestReaperCommandNeedsNoBatchBackend(t *testing.T) {
 	newReaperRig(t, true)
 	if _, _, err := execute(t, "reaper", "--dry-run"); err != nil {
 		t.Fatalf("fugaro reaper in a Cloud Run installation with a batch: block: %v", err)
 	}
-	// And the refusal localcfg still makes is untouched by any of this.
-	if _, err := localcfg.Parse([]byte("version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: my-runs\n" +
-		"backend: cloud-batch\nrepos:\n  acme/app: { provider: github, workflows: [web] }\n")); err == nil {
-		t.Error("localcfg accepts `backend: cloud-batch`, which only the enable task may do")
+	// The same rig, its config now selecting the backend. The name is one
+	// localcfg accepts since the enable, and what the pass reads is still the
+	// block's own facts rather than the backend the config names.
+	rig := newReaperRig(t, true)
+	selectBatchBackendInTheConfig(t, backend.CloudBatch)
+	job := rig.addQueuedJob(t, theRun, reaperQueueDeadline()+time.Hour)
+	rig.addLeakedVM(t, otherRun, reaperMaxAge()+time.Hour)
+
+	out, _, err := execute(t, "reaper", "--dry-run")
+	if err != nil {
+		t.Fatalf("fugaro reaper in an installation that selects %s: %v", backend.CloudBatch, err)
+	}
+	if !strings.Contains(out, job) {
+		t.Errorf("the pass did not report the job it judged (%s):\n%s", job, out)
+	}
+	if len(rig.bf.Deletes()) != 0 || len(rig.cf.Deletes()) != 0 {
+		t.Errorf("a dry run deleted %v and %v", rig.bf.Deletes(), rig.cf.Deletes())
+	}
+}
+
+// selectBatchBackendInTheConfig writes `backend: <name>` into the project
+// config the rig selected, which is the one file a command's selection reads.
+// It is a top-level key like the rest of that file, so it goes on its own line
+// at the top.
+func selectBatchBackendInTheConfig(t *testing.T, name string) {
+	t.Helper()
+	path := os.Getenv("FUGARO_CONFIG")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append([]byte("backend: "+name+"\n"), b...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if lc, err := localcfg.Load(path); err != nil {
+		t.Fatalf("the rig's config does not parse with backend: %s: %v", name, err)
+	} else if lc.Backend() != name {
+		t.Fatalf("the rig's config selects %q, want %s", lc.Backend(), name)
 	}
 }
 

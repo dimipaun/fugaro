@@ -24,7 +24,11 @@ of AK10, without which AK6b's release may not ship** (§6 item 11: the credentia
 the deployed service is guarded in the same release). **E7 is met as of 2026-11-08** (the flip below),
 so a `fugaro review --pr N` is
 admitted where it was refused; what no live installation has measured is either cloud path, which is
-**Check 330**.
+**Check 330**. **Check 330 is written and NOT RUN**: task **AK8** wrote its summary row and its
+`## Check 330` section into [docs/gcp-live-checklist.md](../gcp-live-checklist.md), and
+`bash scripts/live-checks/check330.sh` — with the fake-tool suite `check330_test.sh` beside it — is
+the script the owner runs, so the only thing left between this folder and that reading is the owner's
+own run of it, on a sandbox installation and a sandbox repository, never `belong`.
 
 **Reconciled with `docs/model-crafts` on 2026-11-10** (that folder's **D1638** and **F26**). The owner
 ruled that **api-key-review is NOT superseded by model-crafts; model-crafts builds on it** — so

@@ -232,3 +232,65 @@ func TestTheCoordinatorServiceRefusesAPortThatIsNotOne(t *testing.T) {
 		t.Fatalf("Serve(PORT=not-a-port) = %v, want the port refusal", err)
 	}
 }
+
+// recordingDoor is a door that remembers being mounted, so a test can tell
+// "the routes were added" from "the service answered 404 for another reason".
+type recordingDoor struct{ mounted *Service }
+
+func (d *recordingDoor) Mount(svc *Service) { d.mounted = svc }
+
+// TestTheDoorRefusesToEnableWithoutTheDeviceDelivery is D2126 (the coordinator
+// plan, answered 2026-11-11): the delivery of a sign-in flow to the paired
+// phone is a task of its own, and the door refuses to be switched on without
+// it. An enabled door without the delivery is a person asked to approve a flow
+// with nothing to type the number into, on the public internet, which is the
+// half-built state the ruling forbids serving.
+//
+// The value below is the one the command passes and not an argument a test
+// chose: mcpauth.DeviceDeliveryBuilt — the same constant, named in the package
+// that carries the door, because naming it here would be the import cycle
+// Door's own comment is about — is false in this tree (M12b is not built), so
+// an installation that turns the front door on is refused rather than served
+// half-built. M12b flips that constant and nothing else.
+func TestTheDoorRefusesToEnableWithoutTheDeviceDelivery(t *testing.T) {
+	door := &recordingDoor{}
+	svc, err := FrontDoor(FrontDoorSpec{Enabled: true, Delivered: false, Door: door})
+	if !errors.Is(err, ErrDeviceDeliveryMissing) {
+		t.Fatalf("an enabled front door with no delivery = (%v, %v); want ErrDeviceDeliveryMissing", svc, err)
+	}
+	if svc != nil {
+		t.Errorf("the refusal handed back a service: %v", svc)
+	}
+	if door.mounted != nil {
+		t.Error("the refused front door mounted the door anyway")
+	}
+
+	// The other two states: delivered and enabled mounts, and off is the empty
+	// service that answers as it did before M12.
+	delivered := &recordingDoor{}
+	on, err := FrontDoor(FrontDoorSpec{Enabled: true, Delivered: true, Door: delivered})
+	if err != nil {
+		t.Fatalf("an enabled front door with the delivery was refused: %v", err)
+	}
+	if delivered.mounted != on {
+		t.Error("the enabled front door did not mount the door it was given")
+	}
+	off, err := FrontDoor(FrontDoorSpec{})
+	if err != nil {
+		t.Fatalf("the front door that was never turned on was refused: %v", err)
+	}
+	if off.Handler() == on.Handler() {
+		t.Error("the two front doors share a handler: the off one is an empty mux and the on one carries the door's routes")
+	}
+
+	// And the two wiring mistakes are refusals rather than a service that looks
+	// healthy: a door handed to a front door that is off (the switch and the
+	// server disagreeing), and an enabled front door with nothing to mount
+	// (a revision that would answer 404 where its metadata belongs).
+	if svc, err := FrontDoor(FrontDoorSpec{Door: delivered}); err == nil {
+		t.Errorf("a front door told it is off, handed a door, = %v; want the refusal", svc)
+	}
+	if svc, err := FrontDoor(FrontDoorSpec{Enabled: true, Delivered: true}); err == nil {
+		t.Errorf("an enabled front door with no server = %v; want the refusal", svc)
+	}
+}

@@ -1,0 +1,11 @@
+{
+  "key_id": "key_1",
+  "entitlement_id": "ent_1",
+  "workspace_id": "example-portal",
+  "tier": "team",
+  "kind": "paid",
+  "seats": 3,
+  "issued_at": "2026-02-11T08:00:00Z",
+  "paid_through": "2026-03-10T11:00:00Z",
+  "last_seen": "2026-02-20T07:15:00Z"
+}

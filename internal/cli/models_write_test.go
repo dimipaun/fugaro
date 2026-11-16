@@ -109,10 +109,10 @@ workflows:
 // modelsWriteRepoPins is a repository's own file pinning the caller's models:
 // the shape `models rm`'s warning is read off. An empty model leaves that key
 // out, so a file may pin one role and nothing else.
-func modelsWriteRepoPins(coder, reviewer, background string) string {
+func modelsWriteRepoPins(coder, reviewer, background, vision string) string {
 	models := ""
 	for _, r := range []struct{ key, model string }{
-		{"coder", coder}, {"reviewer", reviewer}, {"background", background},
+		{"coder", coder}, {"reviewer", reviewer}, {"background", background}, {"vision", vision},
 	} {
 		if r.model != "" {
 			models += "    " + r.key + ": " + r.model + "\n"
@@ -192,7 +192,7 @@ func modelsWriteLocalConfig(t *testing.T, path string) *localcfg.Config {
 // own, so a session cannot be steered by a model name.
 func TestModelsCommandsPrintAHostileIDEscaped(t *testing.T) {
 	home, _ := modelsWriteHome(t)
-	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("vendor/model-x", "", ""))
+	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("vendor/model-x", "", "", ""))
 	// The newline is the shape every models write refuses on its own rule; the
 	// escape byte is what no provider grammar has room for.
 	hostile := "vendor/model-\x1b[31mred\nline`whoami`"
@@ -204,12 +204,12 @@ func TestModelsCommandsPrintAHostileIDEscaped(t *testing.T) {
 		args func(id string) []string
 	}{
 		{"add", func(id string) []string {
-			return []string{"models", "add", id, "--price-in", "1", "--price-out", "2", "--yes"}
+			return []string{"models", "add", id, "--price-in", "1", "--price-out", "2"}
 		}},
 		{"use", func(id string) []string {
-			return []string{"models", "use", "owner/repo-a", "coder", id, "--yes"}
+			return []string{"models", "use", "owner/repo-a", "coder", id}
 		}},
-		{"rm", func(id string) []string { return []string{"models", "rm", id, "--yes"} }},
+		{"rm", func(id string) []string { return []string{"models", "rm", id} }},
 	} {
 		for _, id := range []string{hostile, csi} {
 			out, errOut, err := execute(t, c.args(id)...)
@@ -237,9 +237,9 @@ func TestModelsCommandsPrintAHostileIDEscaped(t *testing.T) {
 		what string
 		args []string
 	}{
-		{"add", []string{"models", "add", csi, "--price-in", "1", "--price-out", "2", "--yes"}},
-		{"rm", []string{"models", "rm", csi, "--yes"}},
-		{"use", []string{"models", "use", "owner/repo-a", "coder", csi, "--yes"}},
+		{"add", []string{"models", "add", csi, "--price-in", "1", "--price-out", "2"}},
+		{"rm", []string{"models", "rm", csi}},
+		{"use", []string{"models", "use", "owner/repo-a", "coder", csi}},
 	} {
 		_, _, err := execute(t, c.args...)
 		if err == nil || !strings.Contains(ErrorText(err), "vendor/model-") {

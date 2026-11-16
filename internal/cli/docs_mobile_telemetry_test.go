@@ -30,10 +30,12 @@ import (
 // document other than the plan and its two registrations wrote - which is the
 // reading the plan itself performed, and the reason its block moved.
 //
-// What this pin deliberately does not assert: anything about an app. No task of
-// Phase 7 is built, so there is no behaviour to hold. The claims here are about
-// documents, about two files that must not be in the tree, and about the app's
-// dependency list still not naming the SDKs.
+// What this pin deliberately does not assert: how the app behaves on a device.
+// Nothing here reads the app at run time, and no check in the register can be
+// answered without one. The claims below are about documents, about the two
+// native config files that are never committed, about the files Phase 7 has
+// written into the tree, and about the app's dependency list naming the SDKs
+// the plan's flags are read by.
 const (
 	telemetryPlan         = "docs/plans/2026-10-19-mobile-telemetry.md"
 	telemetryMobileReadme = "docs/mobile/README.md"
@@ -95,6 +97,18 @@ func telemetryCiteable(t *testing.T, plan string) map[string]bool {
 // `D113b` would put the walk's count three rows out for no reason.
 var telemetryDNumberRE = regexp.MustCompile(`\bD([0-9]{3})\b`)
 
+// telemetryCheckNumbers are the three checks the plan takes, read off its own
+// section 12 heading rather than listed in a document's prose: the numbers are
+// what the register's rows and sections below are read for.
+var telemetryCheckNumbers = []string{"120", "121", "122"}
+
+// telemetryCheckRowRE matches a register summary row's first cell: the number
+// between two pipes, alone. It is anchored on the closing `|`, so a number cited
+// inside another row's prose is not a row of its own.
+func telemetryCheckRowRE(number string) *regexp.Regexp {
+	return regexp.MustCompile(`(?m)^\|\s*` + number + `\s*\|`)
+}
+
 // telemetryDocs walks docs/ and returns every markdown file in it, as a
 // repository-relative path. The walk is the assertion's control as well as its
 // input: a walk that read nothing would pass the block check silently, so the
@@ -122,8 +136,19 @@ func telemetryDocs(t *testing.T) []string {
 }
 
 // TestTelemetryPlanTakesTheNumbersThatWereFree is the headline pin: the block
-// the plan takes is free, the checks it takes are unwritten, and the document
-// says so where a reader looks for it.
+// the plan takes is free, the checks it takes are registered - each of the three
+// with the row in the summary table and the `## Check N:` section below it that
+// P7.5 writes, both of them saying the check is owner-run and unrun - and the
+// document says so where a reader looks for it.
+//
+// The register half moved when P7.5 ran. Before it, the assertion was the
+// opposite one: a written `## Check 120` section meant the phase's text and the
+// register disagreed, because the plan's own rule is that the phase is built
+// before the checks that read it are written. It is now the pairing that is
+// pinned, which is the assertion docs_checks_145_149_test.go makes for its work
+// and docs_mobile_checks_test.go for 81, 82 and 89: the register asserts the
+// pairing per work rather than register-wide, because the backstop that would
+// assert it once (TestChecklistChecksAreGuarded) is deliberately absent.
 //
 // The block half is a walk rather than a list, and it is the half that would
 // have caught the draft this replaces. Mutations (each run and restored):
@@ -155,19 +180,47 @@ func TestTelemetryPlanTakesTheNumbersThatWereFree(t *testing.T) {
 		}
 	}
 
-	// The register half: the numbers the plan takes are not written yet. A
-	// written `## Check 120` section would mean P7.5 had run, and a `## Check
-	// 111` section that had gone missing would mean the reading the plan took
-	// its block after had moved.
+	// The register half: the numbers the plan takes are where P7.5 put them, and
+	// the reading the plan took its block after has not moved. Either half of a
+	// registration alone is a number a reader cannot use - a row with no section
+	// points at steps that are not written, and a section with no row is a check
+	// nothing points at - and the three are owner-run, so a section that read as
+	// a pass is a live claim nobody made. A `## Check 111` section that had gone
+	// missing would mean the reading the plan took its block after had moved.
 	register := readDoc(t, telemetryRegister)
 	for _, section := range []string{"## Check 111", "## Check 112", "## Check 113"} {
 		if !strings.Contains(register, section) {
 			t.Errorf("%s has no %q section: the telemetry plan read the register as carrying 111-113 and took 120-122 after them, so this reading is what chose the block", telemetryRegister, section)
 		}
 	}
-	for _, section := range []string{"## Check 120", "## Check 121", "## Check 122"} {
-		if strings.Contains(register, section) {
-			t.Errorf("%s carries a %q section: checks 120-122 are written by P7.5, after the phase is built, and a written section means this plan's own text and the register disagree", telemetryRegister, section)
+	for _, number := range telemetryCheckNumbers {
+		heading := "\n## Check " + number + ":"
+		i := strings.Index(register, heading)
+		if i < 0 {
+			t.Errorf("%s has no `## Check %s:` section: P7.5 writes the three checks the plan takes, and a check is never run before its text is in the register", telemetryRegister, number)
+			continue
+		}
+		if !telemetryCheckRowRE(number).MatchString(register) {
+			t.Errorf("%s has no `| %s |` row: the section written below it is the steps, and the summary table is where a reader finds them", telemetryRegister, number)
+		}
+		// Bounded by the next `## ` heading, and flattened, because the register's
+		// prose wraps: a section that says "no agent runs any step of\nit" says the
+		// same thing as one that fits it on a line, and a pin that missed it would
+		// be a pin on the line breaks rather than on the claim.
+		section := register[i+1:]
+		if end := strings.Index(section, "\n## "); end >= 0 {
+			section = section[:end]
+		}
+		flat := strings.ToLower(flattenDoc(section))
+		for _, want := range []string{
+			"**not run.**",
+			// The register's own rule for an owner-run check: no agent runs any
+			// step of it, and the text has to say so.
+			"no agent runs any step of it",
+		} {
+			if !strings.Contains(flat, want) {
+				t.Errorf("Check %s's section does not say %q: the three are owner-run and have not been run, and a section that leaves either half out reads as something an agent did", number, want)
+			}
 		}
 	}
 
@@ -372,9 +425,11 @@ func TestTelemetryPlanLinksResolve(t *testing.T) {
 // switch names, and the app's dependency list names the SDKs the switches are
 // read by. The first half is the plan's "nothing here is built" claim from the
 // side a reader can check -- the names an implementer has to write down; the
-// second half moved when P7.1a wired the SDKs in, and what it pins now is that
-// the three packages the plan names are the ones the app declares, and that the
-// telemetry module the flags will be read from is still P7.2's and P7.3's.
+// second half moved when P7.1a wired the SDKs in, P7.2 landed the app's
+// statement and P7.3 the allow-list, so what it pins now is that the three
+// packages the plan names are the ones the app declares, and that the module
+// the flags are read in holds both halves: P7.2's `notice.js` and P7.3's
+// `events.js` with the seven events D256's answer fixes.
 func TestTelemetryPlanNamesTheFlagsItDependsOn(t *testing.T) {
 	plan := readDoc(t, telemetryPlan)
 	for _, want := range []string{
@@ -405,8 +460,39 @@ func TestTelemetryPlanNamesTheFlagsItDependsOn(t *testing.T) {
 			t.Errorf("mobile/package.json does not name %s: P7.1a wired the three packages in, and the plan's Task P7.1 names them as the dependency the flags depend on", want)
 		}
 	}
-	if _, err := os.Stat("../../mobile/src/telemetry"); err == nil {
-		t.Errorf("mobile/src/telemetry exists: the plan's telemetry module is P7.2's and P7.3's, and neither is built")
+	// P7.2 built the module's first half: the statement the app shows and the
+	// privacy URL it refuses -- with `shared/url`'s validator, whose host list
+	// is still the owner's D124 answer and ships empty -- live in
+	// `mobile/src/telemetry/notice.js`, and `mobile/src/app/root.js` renders
+	// them as the shell's last child, after the body. The statement is the half
+	// of it the owner's ruling of 2026-10-30 (D731, which supersedes D255 and
+	// orders the plan's section 6, section 7.4 and P7.2 amended) leaves standing,
+	// and the plan's own status lines and P7.2 section say so -- including that
+	// the task was built ahead of that amendment, and that the statement names
+	// the reporters the build still carries. What the plan's section
+	// 7.4 reads from this directory -- the event module and the scan that holds
+	// it, which admits exactly one collection call site -- is P7.3's, built, and T3.1's.
+	notice := "../../mobile/src/telemetry/notice.js"
+	if _, err := os.Stat(notice); err != nil {
+		t.Errorf("%s is gone: P7.2 ships the app's statement and the privacy link there, and mobile/src/app/root.js renders both", notice)
+	}
+	for _, name := range []string{
+		"mobile/src/telemetry/events.js",
+		"mobile/src/telemetry/analytics-calls.test.js",
+		"mobile/src/telemetry/events.test.js",
+	} {
+		if _, err := os.Stat("../../" + name); err != nil {
+			t.Errorf("%s is missing: P7.3 wrote the allow-list and the two fences the plan's section 7.4 names, and the module the native flags are read in is that one", name)
+		}
+	}
+	events := readDoc(t, "mobile/src/telemetry/events.js")
+	for _, want := range []string{
+		"'app_launch'", "'account_added'", "'account_switched'", "'screen_shown'",
+		"'command_refused'", "'pairing_finished'", "'crash_reported'",
+	} {
+		if !strings.Contains(events, want) {
+			t.Errorf("mobile/src/telemetry/events.js does not name %s: section 7.2's allow-list is the seven events D256's answer fixes, and none may be dropped from the module they are sent from", want)
+		}
 	}
 }
 

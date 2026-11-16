@@ -16,12 +16,10 @@ import (
 // 8 step 4, design compute-backend.md §4.4).
 //
 // Every one of them fires only for an installation whose project config selects
-// backend: cloud-batch, and internal/localcfg refuses that name until the
-// enable task (Task 10). So nothing here changes any path an installation takes
-// today -- the plan's Global Constraint 12 -- and Task 10 is what makes these
-// lines reachable. The one that outlives that enable is the artifact refusal
-// (Global Constraint 13): Task 10 lifts the backend-name refusal and must leave
-// that one standing.
+// backend: cloud-batch -- a name config validation accepts since the enable
+// (Task 10), so these are checks a real installation meets. The artifact
+// refusal is the one that is not about the backend name at all (Global
+// Constraint 13): the enable lifted that name and left this refusal standing.
 //
 // The artifact boundary has two arms and this file is only one of them. This
 // arm is offline and per-checkout, so it judges the recipe this checkout
@@ -33,14 +31,16 @@ import (
 // repository layer the ref holds of the same name, which is the recipe that
 // actually runs (TestAnArtifactRecipeAtTheRefShadowsTheTasksCarriedTextOnCloudBatch)
 // -- or, for a repository recipe (named, or the one agent.recipe names), the
-// file in this launcher's working tree. The runner reads a repository recipe at
-// the task's ref -- the repository's base branch unless the launch names
-// another -- so neither arm sees the recipe the runner will read when the two
-// differ: that residual is recorded in the plan's Task 10 step 5 inventory,
-// which must close it before the name is selectable, and
-// TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef pins it. A boundary
-// enforced only here would be a hole the moment the name is selectable, which
-// is exactly what Global Constraint 13 exists to prevent.
+// file in this launcher's working tree, and then the same name at the task's
+// ref (repoRecipeAtRef, the enable's plan Task 10 step 5 entry 6,
+// TestTheArtifactLaunchGateJudgesTheRefNotTheWorkingTree). The runner reads a
+// repository recipe at that ref -- the repository's base branch unless the
+// launch names another -- and the launcher's read of it is of its own last
+// fetch, so the two can still differ: that is why the boundary's closure is the
+// runner's own refusal (FUGARO_BACKEND) and this file's arm is offline and
+// per-checkout. A boundary enforced only here would be a hole the moment the
+// name is selectable, which is exactly what Global Constraint 13 exists to
+// prevent.
 //
 // NOT written here, and why, so a reader of Task 8's step 4 does not have to
 // reconstruct it: design §4.4's item 2 (docker: true requires a Docker-capable
@@ -60,8 +60,7 @@ import (
 // are about a backend no other installation selects, and about an installation
 // whose project is the one the file is being judged for -- and it is
 // deliberately a pure function of the project config, the fugaro.yaml and the
-// recipe the checkout resolves, so it is testable without a project (the
-// backend name cannot be selected in this build).
+// recipe the checkout resolves, so it is testable without a project.
 //
 // The project guard is the one budgetProblems, providerProblems, cascadeProblems
 // and computeProblems carry: a config selected for another project is not this
@@ -106,6 +105,21 @@ func batchValidateProblems(lc *localcfg.Config, cfg *config.Config, rcp *recipe.
 		if is.Field == "" {
 			ps = append(ps, config.Problem{Path: "batch.machine_type", Message: is.Message})
 		}
+	}
+
+	// The seal's pair (design compute-backend.md §1.6): an installation that
+	// mints budget tokens cannot launch a run on Batch at all, so a config that
+	// selects the backend and mints is refused here rather than at
+	// jobs.create's doorstep, after a token was minted and dropped.
+	//
+	// Offline this is the config's own arm -- a budget backend that is not off,
+	// with a database for this CLI to read a policy from. The other arm of
+	// budgetMintOn's answer, a published policy with the mode off, needs a read
+	// this file does not make, and `fugaro doctor` is where it is answered
+	// (doctorBatchBudgetSeal asks budgetMintOn itself, so the two readers of
+	// the pair cannot disagree about the shapes a config can hold).
+	if on, _ := budgetBackendOn(lc); on {
+		ps = append(ps, config.Problem{Path: "backend", Message: "this installation selects backend: cloud-batch and its budget backend is on (budget.mode with budget.rtdb_url), so every launch of it mints a budget token -- and a Batch job has no carrier for the token's seal key, so every launch is refused before the job is created (docs/design/budget-token-channel.md; docs/design/compute-backend.md §1.6). Minting is the installation's, not a run's: there is no per-run fallback, and the installation has to stay on backend: cloud-run"})
 	}
 
 	// The artifact boundary (Global Constraint 13, design artifact-runs.md
@@ -229,6 +243,31 @@ func artifactUnreadOnBatchRefusal(repo string) string {
 // directory's checkout holds the ref it launches.
 func artifactShadowedOnBatchRefusal(name, repo, ref string) string {
 	return fmt.Sprintf("a run on cloud-batch whose recipe this launcher cannot resolve is refused: the recipe %s travels in this task as text, but a run does not necessarily read it -- the repository layer at %s is read first, so a .fugaro/recipes/%s.yaml at %s is the recipe that runs, its mode included, whatever text the task carries. Nothing here can read %s's repository layer (%s is read from a checkout of its own; this directory has none that holds the ref), so nothing on this path can tell an artifact-producing recipe from any other -- and an artifact-producing run is never launched on cloud-batch, because a Batch run's account is not per-repository (docs/design/artifact-runs.md §8.5 and D11). Run this launch from a checkout of %s that holds %s, and the recipe the run reads there is the one judged", name, ref, name, ref, repo, ref, repo, ref)
+}
+
+// artifactRepoRecipeAtRefRefusal is the launch's fourth shape of the same
+// boundary (Global Constraint 13): on cloud-batch, a launch whose recipe is a
+// repository FILE this launcher resolved from the working tree and whose same
+// file at the task's ref this checkout cannot read.
+//
+// It is the repository-recipe half of artifactShadowedOnBatchRefusal's hole,
+// and it is the same hole: the recipe a run uses is the one at its ref, not the
+// one this launcher read, so a working tree whose recipe is mode: implement
+// says nothing about a base branch whose file of that name is mode: artifact.
+// Two launches reach it -- `fugaro run --recipe <a repository recipe>`, and a
+// launch that names no recipe at all, whose recipe is the one agent.recipe in
+// the ref's fugaro.yaml names (a first run; a follow-up never reads it) -- and
+// both are resolved from this checkout's working tree (recipeForLaunch) for the
+// same reason: it is the only copy the launcher has. The ref cannot always be
+// asked of it (a checkout that has the branch but has not fetched it holds no
+// ref for the run), and that is the fail-closed direction, at the cost stated
+// plainly: such a launch is refused unless this directory's checkout holds the
+// ref it launches.
+//
+// readErr is the read's own failure, carried into the message so its reader can
+// tell "fetch the ref" from "repair the checkout".
+func artifactRepoRecipeAtRefRefusal(readErr error, repo, ref string) string {
+	return fmt.Sprintf("a run on cloud-batch whose recipe this launcher cannot resolve is refused: this launch's recipe is the repository's own file, read from this launcher's working tree, while a run reads the same file at %s out of %s (so a tree whose recipe is mode: implement says nothing about a ref whose file of that name is mode: artifact). The ref could not be read from this checkout (%s), so nothing on this path can tell an artifact-producing recipe from any other -- and an artifact-producing run is never launched on cloud-batch, because a Batch run's account is not per-repository (docs/design/artifact-runs.md §8.5 and D11). Run this launch from a checkout of %s that holds %s, and the recipe the run reads there is the one judged", ref, repo, oneLineCLI(readErr.Error()), repo, ref)
 }
 
 // isSelectableBackend reports whether name is one of the backends

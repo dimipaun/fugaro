@@ -1,0 +1,11 @@
+{
+  "id": "org_example",
+  "name": "Example Ltd",
+  "type": "customer",
+  "terms": {
+    "version": "2026-10-27",
+    "accepted_at": "2026-02-10T11:00:00Z"
+  },
+  "reseller_id": null,
+  "created_at": "2026-02-10T11:00:00Z"
+}

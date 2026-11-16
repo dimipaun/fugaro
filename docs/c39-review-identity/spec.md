@@ -100,6 +100,20 @@ same `gcp.ProjectJobName` shape with a review suffix"); what this design fixes i
   test pins that the two sets are disjoint, because an account in both would be refused everywhere and the
   review job could never mint.
 
+**What the deployment admits and this derivation cannot (2026-11-13).** The set the service *starts with* is
+not this one, and never was: `AuthConfig.ReviewJobAccounts` is built from the deployment's own table
+(`FUGARO_REVIEW_JOB_ACCOUNTS`, the rows `internal/infra`'s `ProjectReviewJobs` writes into the service's
+environment), because the service reads its own environment and no policy (D143). C1's first piece makes the
+two differ by exactly **one** row, on purpose: an installation that has opted into the service and declares
+no profile at all deploys the single implicit default review job (`internal/infra`'s `implicitReviewVariant`,
+the owner's requirement of 2026-11-13), whose `(profile, provider, account)` triple no profile publishes — so
+the "one input" bullet above describes the **policy-derived** variants, and that row is admitted by the
+deployment's table alone. What the row buys its caller is one gate further in: the pairing (§3.2) still
+requires the account to be admitted to the run identity's repository by the policy's admissions, and
+carrying the class through for a project that publishes no profile is C1's second piece. The derivation
+above does not change, and neither does its invariant: the two sides agree over every profile-derived
+variant, which is what `TestReviewAccountsAreTheNamesProjectJobsDeploys` reads.
+
 ### 2.3 What a review account never gets
 
 The class buys three routes and no privileges beyond them. In particular a review account:
@@ -845,9 +859,11 @@ is *another command*. This slice's reading of it, stated because a reviewer must
   service's variable is built by the same run from that node: the update's credentials stage
   (`internal/cli/init_credentials.go`) reads it and hands the list to `internal/infra/tfvars.go`'s
   `Credentials()` (`:290`), which takes the local configuration's own list when it states one and the node's
-  otherwise — the keep rule §5.4 states, applied here because the credentials stage runs before the policy
-  stage (`internal/cli/init_stages.go:168`–`:187`): what it reads is the node the previous `fugaro update`
-  left, which is exactly where a second operator's machine finds a list its own config does not carry. Nothing
+  otherwise — the keep rule §5.4 states, applied here because this member is written by the installation
+  stage, which runs before the policy one, and the read behind it is memoized for the whole run
+  (`init.go`'s `effectiveVerifiers` through `CarriedCredentialsService`): what it reads is the node the
+  previous `fugaro update` left, which is exactly where a second operator's machine finds a list its own
+  config does not carry. Nothing
   is added to the upgrade for it: no
   command, no flag and no second local configuration file, and an installation whose published policy names
   no verifier keeps the variable null and the route unreachable while the service starts as it does today.

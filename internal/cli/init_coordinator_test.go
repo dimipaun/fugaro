@@ -26,7 +26,8 @@ const coordinatorAccount = "fugaro-coordinator@proj-1234.iam.gserviceaccount.com
 func TestTheCoordinatorIsOffByDefault(t *testing.T) {
 	r := newFBRig(t)
 	r.historyImage()
-	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
+	fakeTerminal(t)
+	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err != nil {
 		t.Fatal(err)
 	}
 	if v, ok := r.tfvars(t)["coordinator"]; ok {
@@ -66,7 +67,7 @@ func TestTheCoordinatorOptInIsRecordedAndKept(t *testing.T) {
 		t.Fatalf("the opt-in is not recorded in the local config")
 	}
 
-	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := r.tfvars(t)["coordinator"]; !ok {

@@ -38,7 +38,7 @@ func readinessPolicy(t *testing.T, f *cloud, spec RepoSpec, policy bool) (RepoSp
 		t.Fatal(err)
 	}
 	ex.PolicyExists = policy
-	got, missing, err := Readiness(context.Background(), f.c, spec, ex, false)
+	got, missing, err := Readiness(context.Background(), f.c, spec, ex, false, "update")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func readinessPolicyErr(t *testing.T, f *cloud, spec RepoSpec, policy bool) (Rep
 		t.Fatal(err)
 	}
 	ex.PolicyExists = policy
-	return Readiness(context.Background(), f.c, spec, ex, false)
+	return Readiness(context.Background(), f.c, spec, ex, false, "update")
 }
 
 // readinessPolicyPlanErr is readinessPolicyErr under --plan-only: Readiness is
@@ -66,7 +66,7 @@ func readinessPolicyPlanErr(t *testing.T, f *cloud, spec RepoSpec, policy bool) 
 		t.Fatal(err)
 	}
 	ex.PolicyExists = policy
-	return Readiness(context.Background(), f.c, spec, ex, true)
+	return Readiness(context.Background(), f.c, spec, ex, true, "update")
 }
 
 // The other half of D11's gate, which nothing pinned before (the review of
@@ -223,10 +223,15 @@ func TestReadinessBlocksAJobThatCannotReadAPublishedPolicy(t *testing.T) {
 			t.Errorf("the gate does not say %q: %s", want, gate)
 		}
 	}
-	// The check job calls no model and reads no policy: it is not gated by a
-	// requirement about reading one.
-	if !got.Check.DeployJob {
-		t.Errorf("the check job is not deployed: %v", missing)
+	// The check job calls no model and reads no policy, so the requirement
+	// above was never about it — and it is not in this repository's plan at
+	// all any more (D1900, IS2; the emission rule itself is
+	// TestNoRepoCheckJobEmitted). What is left to pin is that none of the
+	// gates is the check job's.
+	for _, m := range missing {
+		if m.Check {
+			t.Errorf("the check job answered the policy requirement: %v", m)
+		}
 	}
 }
 

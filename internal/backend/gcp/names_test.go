@@ -1192,6 +1192,248 @@ func TestTheTokenPrefixIsTheTokenPackages(t *testing.T) {
 	}
 }
 
+// reportsDeniedPrefixes are the areas of the runs bucket the reports job's two
+// grants must not reach: the token objects a queued run's budget lease is
+// delivered through, the job's own cache/, the locks/ a run serialises on and
+// the shared issue store a launcher writes. Every one of them is a write
+// someone else owns, and a listing there is a peer repository's records.
+var reportsDeniedPrefixes = []string{
+	TokenBucketPrefix, "cache", "locks", IssuesBucketPrefix, CatalogBucketPrefix,
+}
+
+// reportsAccount is the account id the installation module gives the reports
+// job, spelled here rather than imported: internal/infra/tf owns the guard's
+// constant, and the titles this file builds are the module's own copy of the
+// same string.
+const reportsAccount = "fugaro-reports"
+
+// reportsGrantedPrefixes reads the object halves out of a condition and
+// returns what it grants, so a test can ask what a request would reach rather
+// than only whether some substring is present.
+func reportsGrantedPrefixes(t *testing.T, expr string) (objects []string, listing string) {
+	t.Helper()
+	for _, clause := range strings.Split(expr, " || ") {
+		if rest, ok := strings.CutPrefix(clause, `resource.name.startsWith("projects/_/buckets/`); ok {
+			path, ok := strings.CutSuffix(rest, `")`)
+			if !ok {
+				t.Fatalf("clause %q is not an object clause", clause)
+			}
+			_, prefix, ok := strings.Cut(path, "/objects/")
+			if !ok {
+				t.Fatalf("clause %q names no object path", clause)
+			}
+			objects = append(objects, prefix)
+			continue
+		}
+		if rest, ok := strings.CutPrefix(clause, `api.getAttribute('`+objectListPrefixAttr+`', '').startsWith("`); ok {
+			p, ok := strings.CutSuffix(rest, `")`)
+			if !ok {
+				t.Fatalf("clause %q is not a listing clause", clause)
+			}
+			listing = p
+			continue
+		}
+		t.Fatalf("clause %q is neither clause kind", clause)
+	}
+	return objects, listing
+}
+
+// TestReportsReadConditionCarriesBothClauses: the reports job's read grant on
+// the runs bucket is one binding with two halves and neither of them is
+// optional. The object half is what lets the job read a run record — a
+// condition on resource.name grants no listing at all, because a List request
+// names no object (docs/design/bucket-iam.md §2.3, live check 7's 403). The
+// listing half is what lets it find one: the job lists runs/<slug>/ to collect
+// a repository's records.
+//
+// Mutation (run, restore): drop either half and this test names the clause
+// that is missing, which is the job failing on its first run — a listing
+// refused, or a record read refused.
+func TestReportsReadConditionCarriesBothClauses(t *testing.T) {
+	const bucket = "fugaro-runs-proj-1234"
+	got := ReportsReadCondition(bucket)
+	want := `resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/runs/") || ` +
+		`api.getAttribute('storage.googleapis.com/objectListPrefix', '').startsWith("runs/")`
+	if got != want {
+		t.Fatalf("ReportsReadCondition = %q, want %q", got, want)
+	}
+	objects, listing := reportsGrantedPrefixes(t, got)
+	if len(objects) != 1 || objects[0] != ReportsReadPrefix+"/" {
+		t.Errorf("the object half grants %v, want the one %q: the job reads every repository's records, and what it reads is written by the launchers under that prefix", objects, ReportsReadPrefix+"/")
+	}
+	if listing != ReportsReadPrefix+"/" {
+		t.Errorf("the listing half grants %q, want %q: the job lists each slug's records under the read prefix", listing, ReportsReadPrefix+"/")
+	}
+	if ReportsReadPrefix != JobBucketPrefixes[0] {
+		t.Errorf("ReportsReadPrefix = %q, want the first of JobBucketPrefixes (%v): the records the job reports on are the ones the jobs write", ReportsReadPrefix, JobBucketPrefixes)
+	}
+}
+
+// TestReportsWriteConditionCarriesBothClauses: the reports job's write grant is
+// the same shape over reports/, and objectUser rather than objectViewer is
+// ruling 3 — the job the prefix's one writer (E4). The object half carries the
+// get, write, overwrite and delete of a stored report and of the year's
+// roll-up; the listing half is what a later period reads to find them, the way
+// today's reader lists a checkout's folder twice over.
+func TestReportsWriteConditionCarriesBothClauses(t *testing.T) {
+	const bucket = "fugaro-runs-proj-1234"
+	got := ReportsWriteCondition(bucket)
+	want := `resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/reports/") || ` +
+		`api.getAttribute('storage.googleapis.com/objectListPrefix', '').startsWith("reports/")`
+	if got != want {
+		t.Fatalf("ReportsWriteCondition = %q, want %q", got, want)
+	}
+	objects, listing := reportsGrantedPrefixes(t, got)
+	if len(objects) != 1 || objects[0] != ReportsBucketPrefix+"/" {
+		t.Errorf("the object half grants %v, want the one %q", objects, ReportsBucketPrefix+"/")
+	}
+	if listing != ReportsBucketPrefix+"/" {
+		t.Errorf("the listing half grants %q, want %q", listing, ReportsBucketPrefix+"/")
+	}
+	// The launcher's own write condition is not this one and does not grow
+	// this prefix: a person reads a stored report through the bucket-wide
+	// objectViewer they already hold, and a second writer on reports/ is what
+	// ruling 3 forbids.
+	if strings.Contains(LauncherBucketCondition(bucket), "/objects/"+ReportsBucketPrefix+"/") {
+		t.Errorf("LauncherBucketCondition covers %s/: the job is the prefix's one writer", ReportsBucketPrefix)
+	}
+}
+
+// TestReportsConditionJoinsItsClausesWithOr: the two halves are joined with
+// " || " and never with " && ". This is the shape a reader reaches for first
+// and it is the one that matches nothing: no single request carries both a
+// named object and a listing prefix — a get carries no objectListPrefix and a
+// list names no object — so a conjunction refuses every request the job makes
+// while still reading, in review, like a grant that carries both halves.
+//
+// The join is also the one ProjectBucketCondition already builds, byte for
+// byte, and each half here is that builder's own clause: a condition that
+// differs in one byte is another binding, and internal/infra/tf compares the
+// module's expressions against these builders.
+//
+// Mutation (run, restore): change the join to " && " and this test fails on
+// the conjunction; change a clause by one byte and it fails against the
+// builder the guard reads.
+func TestReportsConditionJoinsItsClausesWithOr(t *testing.T) {
+	const bucket = "fugaro-runs-proj-1234"
+	for _, c := range []struct {
+		name   string
+		got    string
+		prefix string
+	}{
+		{"ReportsReadCondition", ReportsReadCondition(bucket), ReportsReadPrefix},
+		{"ReportsWriteCondition", ReportsWriteCondition(bucket), ReportsBucketPrefix},
+	} {
+		if strings.Contains(c.got, " && ") {
+			t.Errorf("%s joins its clauses with \" && \": no request carries both, so the job is refused everything it does: %q", c.name, c.got)
+		}
+		want := strings.Join([]string{
+			projectBucketPrefixClause(bucket, c.prefix),
+			projectBucketListClause(c.prefix),
+		}, " || ")
+		if c.got != want {
+			t.Errorf("%s = %q, want %q", c.name, c.got, want)
+		}
+		if clauses := strings.Split(c.got, " || "); len(clauses) != 2 {
+			t.Errorf("%s has %d clauses, want the object half and the listing half", c.name, len(clauses))
+		}
+		// The object half is ProjectBucketCondition's own clause for the same
+		// prefix, so the widened builder and this one cannot drift apart.
+		if objectHalf := strings.Split(c.got, " || ")[0]; objectHalf != ProjectBucketCondition(bucket, []string{c.prefix}) {
+			t.Errorf("%s's object half is %q, want ProjectBucketCondition's clause %q", c.name, objectHalf, ProjectBucketCondition(bucket, []string{c.prefix}))
+		}
+	}
+}
+
+// TestReportsConditionTitlesAreBuiltFromTheAccount: the two grants' condition
+// titles, which are how internal/infra/tf tells one conditioned grant from
+// another. The read title and the write title are distinct, because a plan
+// that swapped the two grants' conditions is a plan the guard refuses rather
+// than reads as the module's own, and neither is a title of the other kind.
+func TestReportsConditionTitlesAreBuiltFromTheAccount(t *testing.T) {
+	for _, c := range []struct{ got, want string }{
+		{ReportsReadConditionTitlePrefix, "fugaro-reports-read-"},
+		{ReportsWriteConditionTitlePrefix, "fugaro-reports-write-"},
+		{ReportsReadConditionTitle(reportsAccount), "fugaro-reports-read-fugaro-reports"},
+		{ReportsWriteConditionTitle(reportsAccount), "fugaro-reports-write-fugaro-reports"},
+	} {
+		if c.got != c.want {
+			t.Errorf("got %q, want %q", c.got, c.want)
+		}
+	}
+	for _, id := range []string{reportsAccount, "fugaro-history", "fugaro-catalog-check"} {
+		read, write := ReportsReadConditionTitle(id), ReportsWriteConditionTitle(id)
+		if read == write {
+			t.Errorf("the read and write titles of %s are both %q", id, read)
+		}
+		if strings.HasPrefix(read, ReportsWriteConditionTitlePrefix) || strings.HasPrefix(write, ReportsReadConditionTitlePrefix) {
+			t.Errorf("the read and write titles of %s are readable as each other: %q vs %q", id, read, write)
+		}
+	}
+}
+
+// TestReportsReadConditionCoversNoOtherPrefix: what the two grants must NOT
+// reach, read as requests rather than as substrings. The listing half is a
+// listing of one prefix and the object half an object path, so the root
+// listing, tokens/, cache/, locks/ and the issue store are all outside both —
+// the token objects especially, where a listing or a read would hand one run's
+// budget lease to the reports job (docs/design/budget-token-channel.md §7.2).
+//
+// Mutation (run, restore): widen either condition to the bucket — drop the
+// prefix from the object clause, or the trailing slash from the listing one —
+// and this test names the area the grant has reached.
+func TestReportsReadConditionCoversNoOtherPrefix(t *testing.T) {
+	const bucket = "fugaro-runs-proj-1234"
+	for _, c := range []struct {
+		name string
+		expr string
+	}{
+		{"ReportsReadCondition", ReportsReadCondition(bucket)},
+		{"ReportsWriteCondition", ReportsWriteCondition(bucket)},
+	} {
+		objects, listing := reportsGrantedPrefixes(t, c.expr)
+		// The full projects/_/buckets/<b>/objects/<p>/ path is what no
+		// request attribute ever carries: a listing clause naming it lists
+		// nothing at all (Check 340 of docs/gcp-live-checklist.md read both
+		// forms live and refused every listing under the full one).
+		if !strings.Contains(c.expr, `api.getAttribute('`+objectListPrefixAttr+`', '').startsWith("`) {
+			t.Errorf("%s's listing clause is not the request's own prefix: %q", c.name, c.expr)
+		}
+		if !strings.HasSuffix(listing, "/") {
+			t.Errorf("%s lists %q, which a prefix that merely begins with it (runs-old/) would match", c.name, listing)
+		}
+		for _, denied := range reportsDeniedPrefixes {
+			for _, granted := range objects {
+				if strings.HasPrefix(denied+"/", granted) {
+					t.Errorf("%s's object half %q covers %s/", c.name, granted, denied)
+				}
+			}
+			if strings.HasPrefix(denied+"/", listing) || strings.HasPrefix(listing, denied) {
+				t.Errorf("%s's listing half %q covers %s/", c.name, listing, denied)
+			}
+			if strings.Contains(c.expr, "/objects/"+denied+"/") || strings.Contains(c.expr, `"`+denied+`/"`) {
+				t.Errorf("%s names %s/, which is not its area: %q", c.name, denied, c.expr)
+			}
+		}
+		// Nor the other grant's prefix: the read grant is runs/ and the write
+		// one reports/, and a job granted the wrong one of the two is not the
+		// pair E4 ruled — an objectUser on runs/ is the write the launchers
+		// hold and the job must not.
+		other := ReportsBucketPrefix + "/"
+		if !strings.HasPrefix(c.name, "ReportsRead") {
+			other = ReportsReadPrefix + "/"
+		}
+		for _, granted := range objects {
+			if strings.HasPrefix(other, granted) {
+				t.Errorf("%s's object half %q covers the other binding's %s", c.name, granted, other)
+			}
+		}
+		if strings.HasPrefix(other, listing) {
+			t.Errorf("%s's listing half %q covers the other binding's %s", c.name, listing, other)
+		}
+	}
+}
+
 // TestEveryNameInThisFileIsUsed: every exported declaration of names.go is
 // named somewhere outside it. The file is the one definition of every name the
 // deployer, the install guard, doctor and the readers compare against, so a

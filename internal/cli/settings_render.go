@@ -139,10 +139,17 @@ func writeSettingsJSON(w io.Writer, r *settingsRead, rows []setting, now time.Ti
 func (r *settingsRead) sources(now time.Time) []settingsLayer {
 	at := now.UTC().Format(time.RFC3339)
 	out := []settingsLayer{{Layer: "default", ReadAt: at, Status: "ok"}}
-	if r.layer != nil {
+	if r.layer != nil || r.layerSide.answers() {
+		status, note := r.layerSide.sourceWords()
+		if note == "" && r.layer != nil {
+			// The layer half did not run (--offline, or an installation with no
+			// backend), or it ran and read neither side of the project's own
+			// layer: the cached copy is what the rows read, and this is the note
+			// it has always had.
+			status, note = "ok", "cached "+humanAge(r.layerAge)+" ago"
+		}
 		out = append(out, settingsLayer{
-			Layer: "project", ReadAt: at, DurationMS: r.layerMS, Status: "ok",
-			Note: "cached " + humanAge(r.layerAge) + " ago",
+			Layer: "project", ReadAt: at, DurationMS: r.layerMS, Status: status, Note: note,
 		})
 	}
 	if r.local != nil {
@@ -155,6 +162,20 @@ func (r *settingsRead) sources(now time.Time) []settingsLayer {
 			Layer: "repo", ReadAt: at, DurationMS: repo.ms, Status: repo.state,
 			Note: "repo:" + repo.name,
 		})
+	}
+	// The two cloud layers, each with the state it answered for itself: they are
+	// the last this read touches (spec §2.7) and the two that can be `unread`
+	// with a reason, which is the note a consumer shows beside a row rather than
+	// the same sentence repeated on every key.
+	for _, cl := range []settingsLayer{
+		{Layer: "policy", DurationMS: r.policy.ms, Status: r.policy.status, Note: r.policy.note},
+		{Layer: "caps", DurationMS: r.caps.ms, Status: r.caps.status, Note: r.caps.note},
+	} {
+		if cl.Status == "" {
+			continue
+		}
+		cl.ReadAt = at
+		out = append(out, cl)
 	}
 	return out
 }

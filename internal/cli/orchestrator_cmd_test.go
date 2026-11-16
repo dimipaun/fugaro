@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -41,25 +42,41 @@ func workItemUpsert(id, title string) orchestrator.Op {
 // that reaches no node is told apart from one that reads and survives: the
 // count is the proof, and the failure is what a reader sees when the proof does
 // not hold.
-func failEveryCall(t *testing.T) func() int {
+func failEveryCall(t *testing.T) *failedCalls {
 	t.Helper()
-	var (
-		mu    sync.Mutex
-		calls int
-	)
-	budgetTransport = roundTripFunc(func(*http.Request) (*http.Response, error) {
-		mu.Lock()
-		calls++
-		n := calls
-		mu.Unlock()
+	c := &failedCalls{}
+	budgetTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		c.mu.Lock()
+		c.reqs = append(c.reqs, r.Method+" "+r.URL.Path)
+		n := len(c.reqs)
+		c.mu.Unlock()
 		return nil, fmt.Errorf("this run must reach no database, and it made call %d", n)
 	})
 	t.Cleanup(func() { budgetTransport = nil })
-	return func() int {
-		mu.Lock()
-		defer mu.Unlock()
-		return calls
-	}
+	return c
+}
+
+// failedCalls is what failEveryCall saw: every request, as "METHOD path", in
+// the order it was made. The count is the proof a run reached no node; the
+// requests are what a caller reads to say WHICH node a command does reach —
+// a reading command reads the roles, and nothing else.
+type failedCalls struct {
+	mu   sync.Mutex
+	reqs []string
+}
+
+// count is how many requests were made.
+func (c *failedCalls) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.reqs)
+}
+
+// all is those requests, in order.
+func (c *failedCalls) all() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.reqs...)
 }
 
 // roundTripFunc is a transport of one function.
@@ -346,12 +363,17 @@ func TestStateBriefFencesAndCleansStoredText(t *testing.T) {
 
 // TestStateBriefOfflineReadsOnlyTheCache: D1243's print reads the file the
 // daemon writes and reaches no node at all — proved by a database client whose
-// every call fails, which the run never makes.
+// every call fails, which the run never makes. The file is placed through the
+// writer's own path, so a reader that drifted from the daemon's cache directory
+// would look for the brief somewhere the daemon never writes it.
 func TestStateBriefOfflineReadsOnlyTheCache(t *testing.T) {
 	f := newOrchestratorFixture(t)
 	seedOrchestratorState(t, f, workItemUpsert("web-fix", "fix the flaky test"))
-	cache := filepath.Join(t.TempDir(), "fugaro", "orchestrator", orchestratorTestID+".json")
-	t.Setenv("XDG_CACHE_HOME", filepath.Dir(filepath.Dir(filepath.Dir(cache))))
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	cache, err := orchestrator.BriefCachePath(os.Getenv, runtime.GOOS, orchestratorTestID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Dir(cache), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -413,7 +435,7 @@ func TestStateBriefOfflineReadsOnlyTheCache(t *testing.T) {
 	if !strings.Contains(err.Error(), "--brief") {
 		t.Errorf("the refusal does not name the flag it needs: %v", err)
 	}
-	if n := calls(); n != 0 {
+	if n := calls.count(); n != 0 {
 		t.Errorf("the offline runs made %d database calls, and reading no node at all is the whole of D1243", n)
 	}
 }
@@ -491,8 +513,8 @@ func TestEventsJSONMatchesTheSchema(t *testing.T) {
 }
 
 // TestCommandIsRegisteredOnce: the tree holds one orchestrator command, with
-// the three subcommands D1223 names and O8's daemon beside them, and nothing
-// else that answers to those names.
+// the three subcommands D1223 names, O8's daemon and CG4's listing beside
+// them, and nothing else that answers to those names.
 func TestCommandIsRegisteredOnce(t *testing.T) {
 	root := NewRootCmd()
 	var found []*cobra.Command
@@ -509,8 +531,11 @@ func TestCommandIsRegisteredOnce(t *testing.T) {
 		names = append(names, sub.Name())
 	}
 	slices.Sort(names)
-	if want := []string{"events", "patch", "run", "state"}; !slices.Equal(names, want) {
-		t.Errorf("orchestrator's subcommands are %v, and O5's three readers with O8's daemon are %v", names, want)
+	// O5's three readers, O8's daemon, CG4's listing, O9's unit and O11's
+	// one-time import: install, uninstall and status are that command family's
+	// own three, and nothing else joins it.
+	if want := []string{"events", "import", "install", "ls", "patch", "run", "state", "status", "uninstall"}; !slices.Equal(names, want) {
+		t.Errorf("orchestrator's subcommands are %v, and O5's three readers, O8's daemon, CG4's listing, O9's unit and O11's import are %v", names, want)
 	}
 	for _, sub := range found[0].Commands() {
 		for _, banned := range []string{"spawn", "retry"} {

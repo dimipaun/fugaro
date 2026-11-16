@@ -223,11 +223,11 @@ func coordinatorStoredView(ctx context.Context, env *fcli.Cloud, store *coordina
 // that refused it is the caller's, and it names the one role that admits the
 // read: /coordinator is readable by a signed-in reader through the rules, and
 // what admits an ADC against the project's IAM is
-// roles/firebasedatabase.viewer, which operators and launchers hold. Anything
+// roles/firebasedatabase.viewer, which the operators and the admins hold. Anything
 // else — an unreachable database, a bad address — is the host's.
 func coordinatorStoredErr(lc *localcfg.Config, err error) error {
 	if errors.Is(err, rtdb.ErrPermission) {
-		return fcli.UserErr("project %s's database refused the read: /coordinator is readable by a signed-in reader and by the database role its caller holds (roles/firebasedatabase.viewer, which terraform.launchers and terraform.operators have); ask an owner to add you (%v)", lc.Name, err)
+		return fcli.UserErr("project %s's database refused the read: /coordinator is readable by a signed-in reader and by the database role its caller holds (roles/firebasedatabase.viewer, which terraform.operators and terraform.admins have); ask an owner to add you (%v)", lc.Name, err)
 	}
 	return fcli.RemoteErr(err)
 }

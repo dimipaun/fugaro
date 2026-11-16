@@ -102,8 +102,12 @@ resource "google_logging_log_view" "runs" {
   depends_on = [google_logging_project_bucket_config.fugaro]
 }
 
+# The viewers read the same view (D684): a run's own output is most of what a
+# run is, and roles.md §4 gives the viewer the logs of the runs it may read.
+# A viewer who is also a launcher or an operator is one member of this set, so
+# no one holds the grant twice.
 resource "google_logging_log_view_iam_member" "runs" {
-  for_each = var.log_isolation ? toset(concat(var.launchers, var.operators)) : toset([])
+  for_each = var.log_isolation ? toset(concat(var.launchers, var.operators, var.viewers)) : toset([])
 
   parent   = "projects/${var.project}"
   location = "global"

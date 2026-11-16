@@ -223,21 +223,30 @@ func impersonateVerifier(ctx context.Context, ts oauth2.TokenSource, account str
 // It is a package variable so a test replaces it: no test mints a real
 // credential, and no value this returns or refuses with reaches an error, a
 // log line or an output.
+var reviewReadIdentity = func(ctx context.Context, serviceURL string) (string, error) {
+	return personIdentity(ctx, serviceURL, "a pull request's head is read")
+}
+
+// personIdentity is the mint both callers of the service present: the read
+// above, and the launch that asks for a run's slip (internal/cli/run.go,
+// slipIdentity). what names the work the token is minted FOR, which is the
+// whole of what the two differ in — the identity is the same one, in the same
+// way, for the same reason, and a refusal has to read as the work it stopped.
 //
 // The mint is the coordinator's own small mint respelled
 // (ee/coordinator/cli, coordinatorPersonIdentity) rather than shared with it:
 // that package imports this one, so this one cannot import it back, and the
-// alternative -- lifting the mint into internal/ -- is a change to files this
-// task does not hold.
-var reviewReadIdentity = func(ctx context.Context, serviceURL string) (string, error) {
+// alternative -- lifting the mint into internal/ -- is a change to files the
+// read's own task did not hold.
+func personIdentity(ctx context.Context, serviceURL, what string) (string, error) {
 	if _, err := reviewGcloudLookPath(reviewGcloudBin); err != nil {
-		return "", userErr("a pull request's head is read with a token the installation's credentials service mints for you, and the service verifies you by your own Google ID token: the %s command that mints one is not on PATH. Install the Google Cloud CLI (https://cloud.google.com/sdk/docs/install) and run `%s auth login`", reviewGcloudBin, reviewGcloudBin)
+		return "", userErr("%s with a token the installation's credentials service mints for you, and the service verifies you by your own Google ID token: the %s command that mints one is not on PATH. Install the Google Cloud CLI (https://cloud.google.com/sdk/docs/install) and run `%s auth login`", what, reviewGcloudBin, reviewGcloudBin)
 	}
 	cctx, cancel := context.WithTimeout(ctx, reviewIdentityTimeout)
 	defer cancel()
 	out, err := reviewGcloudRun(cctx, "auth", "print-identity-token", "--quiet")
 	if err != nil {
-		return "", userErr("your own Google ID token could not be minted for the installation's credentials service at %s, and a pull request's head is read with a token the service mints for you: run `%s auth login`, or `%s auth application-default login`, and try again", safetext.Field(serviceURL), reviewGcloudBin, reviewGcloudBin)
+		return "", userErr("your own Google ID token could not be minted for the installation's credentials service at %s, and %s with a token the service mints for you: run `%s auth login`, or `%s auth application-default login`, and try again", safetext.Field(serviceURL), what, reviewGcloudBin, reviewGcloudBin)
 	}
 	tok := strings.TrimSpace(string(out))
 	if tok == "" || len(tok) > reviewIdentityMaxBytes || !reviewPrintableToken(tok) {

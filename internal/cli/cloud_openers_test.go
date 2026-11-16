@@ -21,11 +21,14 @@ import (
 )
 
 // The seam's second implementation is opened from an installation's own facts
-// (plan 2026-10-19-compute-backend.md Task 8 step 1). Nothing selects it --
-// internal/localcfg refuses `backend: cloud-batch` until the enable task -- so
-// these tests open the opener map directly, by name, and hold the two things
-// that make the registration worth having: the map keeps backend.Open's
-// contract, and the options the Batch entry builds are the project config's.
+// (plan 2026-10-19-compute-backend.md Task 8 step 1). The rig's config SELECTS
+// it -- `backend: cloud-batch` is a name internal/localcfg accepts since the
+// enable (Task 10), which is what makes this fixture the installation a real
+// one is rather than a config that could only have been written by hand -- so
+// these tests reach the second backend through the same map a launch does.
+// What they hold is the two things that make the registration worth having:
+// the map keeps backend.Open's contract, and the options the Batch entry
+// builds are the project config's.
 
 // batchRig is a project config whose Batch backend is opened against the Cloud
 // Batch and Cloud Logging fakes, plus the fake itself. gid is the recorded
@@ -46,6 +49,7 @@ func newBatchRig(t *testing.T, gid int) *batchRig {
 		gidLine = fmt.Sprintf("  socket_gid: %d\n", gid)
 	}
 	cfg := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: my-runs\n" +
+		"backend: " + backend.CloudBatch + "\n" +
 		"endpoints: { batch: " + rig.bf.URL + "/, logging: " + rig.lf.URL + "/, no_auth: true }\n" +
 		"batch:\n" +
 		"  image: us-east5-docker.pkg.dev/proj-1234/fugaro/fugaro:1\n" +
@@ -94,24 +98,36 @@ func TestCloudOpenersHoldBackendOpensContract(t *testing.T) {
 	openers := rig.openers(gcp.Options{GCPProject: rig.lc.GCPProject, Region: rig.lc.Region,
 		Endpoints: gcp.Endpoints{Run: run.URL + "/", NoAuth: true}})
 
-	// The installation's own answer: no name in the config is Cloud Run.
-	if got := rig.lc.Backend(); got != backend.CloudRun {
-		t.Fatalf("a config that names no backend selects %q, want %s", got, backend.CloudRun)
+	// The installation's own answer: this fixture selects Batch, and the name
+	// it selects is the backend it opens -- the map is never consulted for a
+	// name the config did not write.
+	if got := rig.lc.Backend(); got != backend.CloudBatch {
+		t.Fatalf("a config that names %s selects %q", backend.CloudBatch, got)
 	}
-	for _, name := range []string{"", backend.CloudRun, backend.CloudBatch} {
-		want := backend.CloudRun
-		if name == backend.CloudBatch {
-			want = backend.CloudBatch
-		}
+	// And a config that names no backend still selects Cloud Run: the enable
+	// added a second name a project can choose and changed no default.
+	plain, err := localcfg.Parse([]byte("version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: my-runs\n" +
+		"repos:\n  acme/app: { provider: github, workflows: [web] }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := plain.Backend(); got != backend.CloudRun {
+		t.Errorf("a config that names no backend selects %q, want %s", got, backend.CloudRun)
+	}
+	for _, tc := range []struct{ name, want string }{
+		{"", backend.CloudBatch}, // the installation's own answer
+		{backend.CloudRun, backend.CloudRun},
+		{backend.CloudBatch, backend.CloudBatch},
+	} {
 		be, err := backend.Open(ctx, rig.lc.Backend(), openers)
-		if name != "" {
-			be, err = backend.Open(ctx, name, openers)
+		if tc.name != "" {
+			be, err = backend.Open(ctx, tc.name, openers)
 		}
 		if err != nil {
-			t.Fatalf("opening %q: %v", name, err)
+			t.Fatalf("opening %q: %v", tc.name, err)
 		}
-		if got := be.Codec().Backend(); got != want {
-			t.Errorf("opening %q gave the %s backend, want %s", name, got, want)
+		if got := be.Codec().Backend(); got != tc.want {
+			t.Errorf("opening %q gave the %s backend, want %s", tc.name, got, tc.want)
 		}
 	}
 	// The two names an installation can select, and no third: Local is a
@@ -299,9 +315,10 @@ func TestDockerRunNeedsARecordedGid(t *testing.T) {
 //
 // The first half is the backfill: existingLaunch is called with the Batch
 // backend the opener built, on a run whose result.json records a Batch job, and
-// the record it writes must say cloud-batch. That is a backend no installation
-// can select today, so it is the only place this write site can be exercised
-// against a platform that is not Cloud Run.
+// the record it writes must say cloud-batch. The rig's config SELECTS that
+// backend since the enable (Task 10), so this is the write site exercised
+// against a platform that is not Cloud Run on an installation that really
+// chooses it.
 func TestLaunchRecordNamesTheBackendTheLaunchRanOn(t *testing.T) {
 	ctx := context.Background()
 	rig := newBatchRig(t, 412)

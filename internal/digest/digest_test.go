@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/tier"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
 
@@ -763,7 +764,7 @@ func TestDigestHasNoPersonField(t *testing.T) {
 	for _, typ := range []reflect.Type{
 		reflect.TypeOf(Digest{}), reflect.TypeOf(Run{}), reflect.TypeOf(Flag{}),
 		reflect.TypeOf(FlagCount{}), reflect.TypeOf(Stage{}), reflect.TypeOf(Summary{}),
-		reflect.TypeOf(Period{}), reflect.TypeOf(Figures{}),
+		reflect.TypeOf(Period{}), reflect.TypeOf(Figures{}), reflect.TypeOf(Challengers{}),
 	} {
 		for i := range typ.NumField() {
 			name := strings.ToLower(typ.Field(i).Name)
@@ -1103,6 +1104,11 @@ func fullRecord(t *testing.T) runstore.Record {
 		},
 		Backlog:       []string{"20261021-01"},
 		BacklogClosed: []string{"20261021-02"},
+		// The pair block, as the champion's arm: the report reads which arm a
+		// record is, and a challenger arm would not be a row of this report at
+		// all (TestDigestCountsChallengersApart), so the record the walk plants
+		// its strings in is the arm that is shown.
+		AB: &task.AB{PairID: "pair-1", Arm: task.ABArmChampion},
 	}
 }
 
@@ -1181,5 +1187,149 @@ func TestDigestFailureExampleOffTheRunTableShortID(t *testing.T) {
 	}
 	if want := "| `0-a1b2` | succeeded |"; !strings.Contains(out, want) {
 		t.Errorf("the run table lacks %q, the row the off-table example collides with:\n%s", want, out)
+	}
+}
+
+// challengerRun is one challenger-arm record of the period: the shadow a
+// sampled launch started beside its champion (A1.1, A2.1, D554), which pushes
+// nothing, opens nothing and reaches no developer.
+func challengerRun(t *testing.T, id, finished string, billed, notional float64, stages ...runstore.StageTiming) runstore.Record {
+	t.Helper()
+	rec := run(t, id, finished, billed, notional, stages...)
+	rec.AB = &task.AB{
+		PairID:           "pair-1",
+		Arm:              task.ABArmChallenger,
+		Publish:          task.ABPublishNone,
+		Challenger:       "deepseek/chat-x",
+		ChallengerSource: task.ABChallengerOwner,
+	}
+	return rec
+}
+
+// TestDigestCountsChallengersApart (A4.5, D568): a challenger arm is a shadow,
+// so the digest counts it apart from every figure it takes over the
+// repository's runs -- the header's counts and dollars, the rows, the flags,
+// the failure classes, the recipe medians, the stage figures and the tier
+// expectations a calibration reads -- and counts the period's challengers in
+// one line of its own. A report whose figures an experiment moved is a report
+// a reader cannot take for the repository's own (D568); the pair's champion,
+// which is the run the developer got, is a run like any other (D554).
+func TestDigestCountsChallengersApart(t *testing.T) {
+	p := week43(t)
+	// The pair's champion: the run the developer got, marked as the first arm.
+	// Its block changes nothing here, and it carries a tier, so the calibration
+	// figures below are a set a challenger must not join.
+	champion := run(t, "20261021-090000-aaaa", "2026-10-21T09:00:00Z", 1.00, 0.10,
+		runstore.StageTiming{Name: "implement", Calls: counted(20), Agents: counted(0)},
+		runstore.StageTiming{Name: "review", Calls: counted(20), Agents: counted(0), ModelUSD: 0.10})
+	champion.AB = &task.AB{PairID: "pair-1", Arm: task.ABArmChampion}
+	champion.Tier = &runstore.TierRecord{Tier: tier.Small, ExpectedUSD: 1, ExpectedMinutes: 30}
+	// An ordinary run of the period, in neither arm.
+	other := run(t, "20261023-090000-dddd", "2026-10-23T09:00:00Z", 0.20, 0)
+
+	// The pair's two challengers. The first carries everything a row is read
+	// from -- it is halted, so it is flagged and its class is a failure's, its
+	// stage runs the other model, and its tier is another one -- so a report
+	// that counted it as a run like any other would show all of it.
+	halted := challengerRun(t, "20261022-090000-bbbb", "2026-10-22T09:00:00Z", 8.00, 0.25,
+		runstore.StageTiming{Name: "implement", Calls: counted(90), Agents: counted(9)})
+	halted.Status = runstore.StatusHalted
+	halted.Outcome = runstore.OutcomeDraft
+	halted.BaseBranch = ""
+	halted.Halt = &runstore.Halt{Reason: runstore.HaltRunCap, Scope: "run", At: at(t, "2026-10-22T09:00:00Z")}
+	halted.Tier = &runstore.TierRecord{Tier: tier.Large, ExpectedUSD: 8, ExpectedMinutes: 240}
+	plain := challengerRun(t, "20261023-090000-cccc", "2026-10-23T09:00:00Z", 0.50, 0.05,
+		runstore.StageTiming{Name: "implement", Calls: counted(30), Agents: counted(0)})
+
+	with := Build([]runstore.Record{champion, halted, plain, other}, p)
+	without := Build([]runstore.Record{champion, other}, p)
+	out := string(Markdown(with))
+
+	// The main table's own line, and its rows: the period's figures are the
+	// figures of the runs the repository really ran.
+	if want := "): 2 in all, 2 shown, 0 flagged. Billed $1.20, notional $0.10."; !strings.Contains(out, want) {
+		t.Errorf("the report does not carry %q:\n%s", want, out)
+	}
+	var shown []string
+	for _, r := range with.Runs {
+		shown = append(shown, r.ID)
+	}
+	if want := []string{"20261021-090000-aaaa", "20261023-090000-dddd"}; !slices.Equal(shown, want) {
+		t.Errorf("the report shows %v, want the period's two runs that are not challengers: %v", shown, want)
+	}
+	if len(with.Failures) != 0 {
+		t.Errorf("the failures table holds %+v, want none: the period's one halt is a challenger's, and a halt is that arm's own loss", with.Failures)
+	}
+	if len(with.Expectations) != 1 || with.Expectations[0].Tier != string(tier.Small) {
+		t.Errorf("the calibration figures are %+v, want the champion's alone: a shadow's spend must not calibrate a tier (D568)", with.Expectations)
+	}
+
+	// Counted in one line of its own, and the report is otherwise the report it
+	// would have been: the same records without the pair's challengers.
+	if want := (Challengers{Runs: 2, Billed: mustMicros(t, "8.500000"), Notional: mustMicros(t, "0.300000")}); with.Challengers != want {
+		t.Errorf("the period's challenger arms = %+v, want %+v: the two runs and their own dollars", with.Challengers, want)
+	}
+	if without.Challengers != (Challengers{}) {
+		t.Errorf("a period that held no challenger counts %+v, want none", without.Challengers)
+	}
+	wantLine := "A/B challenger runs of this repository that finished in 2026-W43, counted apart from the figures above: 2 in all, billed $8.50, notional $0.30.\n\n"
+	if !strings.Contains(out, wantLine) {
+		t.Errorf("the report does not count the period's challengers apart:\n%s", out)
+	}
+	if rest := strings.Replace(out, wantLine, "", 1); rest != string(Markdown(without)) {
+		t.Errorf("the challenger arms changed the report:\n%s\nwant, with one line about them:\n%s", rest, Markdown(without))
+	}
+	// A challenger is not a row anywhere: neither its ID, nor the halt that
+	// stopped it, nor its figures.
+	for _, id := range []string{"20261022-090000-bbbb", "20261023-090000-cccc"} {
+		if strings.Contains(out, task.ShortRun(id)) {
+			t.Errorf("the report names the challenger %s:\n%s", id, out)
+		}
+	}
+	if len(with.Flags) != 0 {
+		t.Errorf("the period's flags = %+v, want none: the run that raised the one flag is a challenger's", with.Flags)
+	}
+
+	// A period whose every record is a challenger: the repository ran nothing
+	// of its own, and the report says so and counts the arms on their line.
+	only := Build([]runstore.Record{halted, plain}, p)
+	if only.Total.Runs != 0 || only.Challengers.Runs != 2 {
+		t.Errorf("a period of challengers alone = %+v with %+v, want no run of the repository's own and both arms counted apart", only.Total, only.Challengers)
+	}
+	if out := string(Markdown(only)); !strings.Contains(out, "No run of this repository finished in this period.") || !strings.Contains(out, wantLine) {
+		t.Errorf("a period of challengers alone does not read as one:\n%s", out)
+	}
+}
+
+// TestDigestUnchangedWithoutAB (A4.5): a run the launcher did not sample is the
+// run it always was. A report of records carrying no block, one of the same
+// records carrying the champion's own block -- the pair's first arm, which
+// publishes as an unsampled run (D554) -- and one carrying an arm outside the
+// vocabulary are byte-identical, and none of them counts anything apart: only
+// task.ABArmChallenger is a shadow, and a value outside the wire's own set is a
+// block no launcher of this build wrote rather than one a reader guesses at.
+func TestDigestUnchangedWithoutAB(t *testing.T) {
+	p := week43(t)
+	rec := run(t, "20261021-090000-aaaa", "2026-10-21T09:00:00Z", 1.00, 0.10,
+		runstore.StageTiming{Name: "implement", Calls: counted(20), Agents: counted(0)})
+	want := string(Markdown(Build([]runstore.Record{rec}, p)))
+
+	for _, tc := range []struct {
+		name string
+		ab   *task.AB
+	}{
+		{"no block at all", nil},
+		{"the champion's own block", &task.AB{PairID: "pair-1", Arm: task.ABArmChampion}},
+		{"an arm outside the vocabulary", &task.AB{PairID: "pair-1", Arm: task.ABArm("shadow")}},
+	} {
+		marked := rec
+		marked.AB = tc.ab
+		d := Build([]runstore.Record{marked}, p)
+		if got := string(Markdown(d)); got != want {
+			t.Errorf("%s changed the report:\n%s\nwant:\n%s", tc.name, got, want)
+		}
+		if d.Total.Runs != 1 {
+			t.Errorf("%s: the period counts %d runs, want the one record", tc.name, d.Total.Runs)
+		}
 	}
 }

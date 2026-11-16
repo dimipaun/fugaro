@@ -38,7 +38,8 @@
 //                               which the redactor reads as a repository)
 // Kept as the CLI wrote them, ONLY when the value is in the fixed CLI vocabulary
 // enumerated below (anything else is a refusal, never a pass-through): the enums
-// and flags (mode, stage, round, health, deadline, auth, verify, status, outcome,
+// and flags (the document's mode, a run's own rigor mode and the layer it came
+// from, stage, round, health, deadline, auth, verify, status, outcome,
 // connection.state), the numbers (ages, burn) and queued_note (a fixed sentence).
 // The clock is SHIFTED by this run's random offset so no real instant survives:
 // now, day, kill.at and the run IDs all come from the shifted clock, and every
@@ -127,9 +128,22 @@ export function timeShiftFromDraw(unit: number): number {
  * this object back out of the file and fails when the two drift apart.
  */
 export const VOCAB = {
-  // internal/budget/model.go: ModeObserve / ModeEnforce are the only two the
-  // watch document can carry (internal/watch/build.go's View.Mode).
+  // The DOCUMENT's own mode, not a run's: internal/budget/model.go's
+  // ModeObserve / ModeEnforce are the only two the watch document can carry
+  // (internal/watch/build.go's View.Mode, `$.mode`). A runs[] row's own mode
+  // is `rigorMode` below, which is a different vocabulary and a different key.
   mode: ['enforce', 'observe'],
+  // internal/rigor/mode.go's `Modes`: the five modes the rigor resolver can
+  // answer a run with, plus the `-` internal/watch/build.go's `dash` writes
+  // when the run's registry entry carries none (a run under rules that predate
+  // the children, which internal/budget/registry.go's Start then drops).
+  rigorMode: ['poc', 'startup', 'pro', 'critical', 'hotfix', '-'],
+  // internal/rigor/resolve.go's `Layers` minus `reached`: `reached` is the
+  // resolver's answer to a later moment asking again -- "hold what you already
+  // have" (D22) -- and the fold keeps the earlier, narrower layer instead, so
+  // no record's `from` and no row's `from` is ever `reached` (internal/runstore's
+  // KnownRigorFrom). Plus the same dash.
+  rigorFrom: ['area', 'repo', 'project', 'default', 'request', '-'],
   connectionState: ['live', 'stale', 'offline', 'refused', 'polling'],
   // Every name a runs[].stage can carry, which is the run's REGISTRY entry and
   // nothing else: internal/watch/build.go writes `dash(e.Stage)` into the row,
@@ -690,6 +704,16 @@ function scrubRun(
     models: (v, p) => (v === '-' ? '-' : typeof v === 'string' ? 'claude-sonnet-4-5-20250929' : refuse(p, 'not a string')),
     recipe: invent('example-recipe'),
     auth: oneOf(VOCAB.auth),
+    // CLI 0.23.0 (rigor-modes plan T1.7): the rigor mode the run resolved and
+    // the layer that decided it, which the run writes into its registry entry
+    // from its own record (`budget.AgentEntry.Mode`/`.From`). Both are words of
+    // the CLI's own tables, so they are KEPT like `stage` and `auth` rather than
+    // replaced -- they say how much care the run was asked for, never who asked
+    // or where it ran -- and `-` is what the row shows for an entry that carries
+    // neither. Named apart from `VOCAB.mode`, which is `$.mode`, the document's
+    // own budget switch.
+    mode: oneOf(VOCAB.rigorMode),
+    from: oneOf(VOCAB.rigorFrom),
     notional: bool,
     spent_usd: (v, p) => (v === null ? null : typeof v === 'number' ? INVENTED_SPEND[i % INVENTED_SPEND.length] : refuse(p, 'not a number')),
     // AgeSecs is *float64 in JSONRun: a queued row the registry has not

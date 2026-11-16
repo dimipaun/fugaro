@@ -162,6 +162,12 @@ func dropModelMounts(ws *WorkflowSpec) {
 //     covers has a build record, so no unattended build starts for an
 //     image nobody has built on purpose.
 //
+// door is the door the caller is running ("update", "setup"), and it names
+// the one command a missing secret's fix may print that is not a `secrets
+// set` line: the run's own door, for a name only the published node admits
+// (SecretFix). Every other fix is the same line whatever door reads it, so
+// this is the whole of what the caller's door decides.
+//
 // planOnly is fugaro update's --plan-only, and it exempts the refusals
 // that exist to stop a *change* rather than to describe a state: this function
 // returns one, for an existing job this apply would deploy without the backend
@@ -173,7 +179,7 @@ func dropModelMounts(ws *WorkflowSpec) {
 // problem: the gate above still reports MissingFirebase for that job, so the
 // plan prints the job as one that cannot be deployed until the backend is
 // configured.
-func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, planOnly bool) (RepoSpec, []Missing, error) {
+func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, planOnly bool, door string) (RepoSpec, []Missing, error) {
 	out := cloneRepoSpec(spec)
 	tg := target{project: spec.GCPProject, number: ex.ProjectNumber}
 	// A secret a repository's own Terraform module once created can stop
@@ -211,7 +217,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 		// store, so it is what an operator is asked to type, and no longer
 		// the --project-wide synonym (plan Task 2.1 step 3, the message
 		// half of finding 13) -- and the repository-copy command otherwise.
-		fix = SecretFix(spec, logical, "fugaro", func(s string) string { return s })
+		fix = SecretFix(spec, logical, "fugaro", door, func(s string) string { return s })
 		cand, isCandidate := spec.ProjectSecretCandidates[logical]
 		if !isCandidate {
 			return false, fix, nil
@@ -448,7 +454,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 			}
 		} else if entry := workflowCatalogEntry(ws); entry != "" {
 			// A catalog image is not a tag in the repository's own registry
-			// (spec.go's catalogJobImage routes a workflow that pins an entry
+			// (spec.go's jobImage routes a workflow that pins an entry
 			// through the installation's shared one), so hasLatest's question
 			// would be about a package this repository's build never writes
 			// and its answer would refuse the entry's job. Whether the entry
@@ -461,7 +467,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 			// catalog :latest tag to ask about, and the job runs it as written.
 			if !imageCatalogShipped {
 				built = false
-				reasons = append(reasons, gate{MissingImage, fmt.Sprintf("workflow %s's job runs the project image catalog's entry %s (%s), and no released fugaro publishes or reads the project policy's image_catalog key yet: this installation's fugaro is older than the release that does, so run fugaro update, or give the workflow an image: or dockerfile: block of its own and leave the catalog to a newer fugaro",
+				reasons = append(reasons, gate{MissingImage, fmt.Sprintf("workflow %s's job runs the project image catalog's entry %s (%s), and no released fugaro publishes or reads the project policy's image_catalog key yet: this installation's fugaro is older than the release that does, so run fugaro update, or take the job off the catalog (drop the workflow's image_name:, the repository's image_map entry, or the entry's default). A workflow's own image: or dockerfile: block cannot do it: the image the catalog gives its job is the one it runs, and those keys are ignored beside it (D1900)",
 					ws.Name, entry, ws.Image)})
 			} else if !imageContextShipped && ws.CatalogContext {
 				// The catalog's key is readable here, but this entry's own
@@ -520,7 +526,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 						fix = fmt.Sprintf("build it (fugaro image build %s)", entry)
 						if !imageCatalogShipped {
 							what = fmt.Sprintf("workflow %s's job runs the project image catalog's entry %s, and no released fugaro reads that key yet", ws.Name, entry)
-							fix = "run fugaro update, or give the workflow an image: or dockerfile: block of its own"
+							fix = "run fugaro update, or take the job off the catalog (drop the workflow's image_name:, the repository's image_map entry, or the entry's default), which its own image: or dockerfile: cannot do while the catalog gives its job an image (D1900)"
 						} else if !imageContextShipped && ws.CatalogContext {
 							what = fmt.Sprintf("workflow %s's job runs the project image catalog's entry %s, whose source names a build context, and no released fugaro reads that key yet", ws.Name, entry)
 							fix = "run fugaro update, or leave context: off the entry"
@@ -540,7 +546,6 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 		out.Workflows[name] = ws
 	}
 	if spec.Check != nil {
-		ready := true
 		var unresolved []string
 		// The provider credential's resolved ID, carried by the check job's
 		// own spec so the rebuild it submits names the secret it reads
@@ -575,7 +580,6 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 				continue
 			}
 			unresolved = append(unresolved, logical)
-			ready = false
 			missing = append(missing, Missing{Check: true, Kind: MissingSecret, Deployed: ex.CheckJob,
 				Reason: fmt.Sprintf("secret %s has no version: %s", logical, fix)})
 		}
@@ -597,7 +601,16 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 				out.Check.Env[runner.SecretEnvsVar] = redactionEnvs(out.Check.SecretEnv)
 			}
 		}
-		out.Check.DeployJob = ready || ex.CheckJob
+		// D1900: the per-repository check job is no longer emitted, so a
+		// repository that has none is never given one — a project's images are
+		// what its jobs run, and the check rebuilds the repository's own
+		// derived tag, which they no longer use. One that already exists stays
+		// deployed, and this is the only fact that says so: it is live state,
+		// which is what ex is, and dropping the three addresses from a spec the
+		// state holds them for would make fugaro update plan a retirement
+		// (retire.go) — a deletion, or a second command, and neither is this
+		// change (D1194).
+		out.Check.DeployJob = ex.CheckJob
 		// Paused unless there is at least one workflow and each has a
 		// record, so an empty list fails safe. The spec's runs bucket is
 		// bucketName(lc), the bucket builds record in (lc.RecordBucketURL).

@@ -1,0 +1,12 @@
+{
+  "id": "sub_1",
+  "organisation_id": "org_example",
+  "workspace_id": "ws_example",
+  "state": "active",
+  "seats": 3,
+  "price_id": "pri_team_monthly",
+  "starts_at": "2026-02-10T11:00:00Z",
+  "renews_at": "2026-03-10T11:00:00Z",
+  "ends_at": null,
+  "cancelled_at": null
+}

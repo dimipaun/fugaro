@@ -110,10 +110,11 @@ locals {
   # of an installation that opted in or not — keeps both (G9).
   #
   # It is FILLED, which is the flip itself (B1.13 part two, D500): the flip
-  # ships in 0.23.0, the release AFTER the proxy chain's, behind the owner's
-  # Check 191 and their go on it. No version gate holds this fill — it fires
-  # wherever the two inputs above hold — so the list must not be in a tag
-  # before the chain's own release is out and Check 191 has passed on it.
+  # ships in 0.26.0, the release after the proxy chain's and after the one
+  # that went out without it (the owner released the hold on 2026-11-16). No
+  # version gate holds this fill — it fires wherever the two inputs above
+  # hold — and `fugaro update` itself refuses the drop until the bundle holds
+  # the token (O8).
   # config.ProxiedGitSecretNames is the switch, this literal is held to it by
   # deploy/terraform's TestProxiedGitSecretNamesMatchTheModule, and the two are
   # filled in one commit. It moves nothing on its own: the repository's own

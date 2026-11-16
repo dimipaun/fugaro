@@ -66,14 +66,30 @@ func TestGoldenPlansAreCovered(t *testing.T) {
 		// for the same reason any other person-grant is, and the one grant of
 		// theirs the run does not cover whole is pinned below.
 		"installation-credentials": {"user:person-1@example.com"},
+		// The credentials service ON and NO profiles at all: the ONE implicit
+		// default review job (the owner's requirement of 2026-11-13) is
+		// planned here and nowhere else — its job, its own account and its two
+		// bucket grants, with no secret grant and no shared coding job beside
+		// them (TestGoldenImplicitReviewJobIsDeployedWithoutProfiles reads the
+		// whole of it). The fixture names no operator or launcher, so no
+		// person's grant is in this plan.
+		"installation-review": nil,
 		// The coordinator's opt-in ON (coordinator plan P5): its account, the
 		// account's two reads, its job and schedule, and the Firebase root's
 		// database grant to it. TestTheCoordinatorIsInTheOptInGoldensOnly
 		// holds the other goldens to planning none of it.
 		"installation-coordinator": nil,
-		"repo":                     {"user:launcher@example.com", "user:operator@example.com"},
-		"firebase":                 {"user:launcher@example.com", "user:operator@example.com", "user:extra@example.com", "user:owner@example.com", "group:editors@example.com"},
-		"firebase-coordinator":     {"user:launcher@example.com", "user:operator@example.com", "user:extra@example.com", "user:owner@example.com", "group:editors@example.com"},
+		// The viewer list ON (RS4, roles.md §4): the two goldens whose
+		// fixtures name a viewer, and the only plans that carry the viewer's
+		// grants at all. The members are on the review screen's list here for
+		// the reason every other person's grant is — the list is what makes a
+		// person a person to the cover — and TestGoldenViewerPlans reads each
+		// plan's set of changes naming one back.
+		"installation-viewers": {"user:viewer@example.com", "group:auditors@example.com"},
+		"firebase-viewers":     {"user:viewer@example.com", "group:auditors@example.com", "user:launcher@example.com", "user:operator@example.com", "user:extra@example.com", "user:owner@example.com", "group:editors@example.com"},
+		"repo":                 {"user:launcher@example.com", "user:operator@example.com"},
+		"firebase":             {"user:launcher@example.com", "user:operator@example.com", "user:extra@example.com", "user:owner@example.com", "group:editors@example.com"},
+		"firebase-coordinator": {"user:launcher@example.com", "user:operator@example.com", "user:extra@example.com", "user:owner@example.com", "group:editors@example.com"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := goldenPlan(t, name)
@@ -623,8 +639,8 @@ func TestTheCoordinatorIsInTheOptInGoldensOnly(t *testing.T) {
 		},
 		"firebase-coordinator": {"module.firebase.google_project_iam_member.coordinator_database[0]"},
 	}
-	for _, name := range []string{"installation", "installation-accounts", "installation-managed", "installation-credentials", "installation-adopt",
-		"installation-coordinator", "firebase", "firebase-same-project", "firebase-adopt", "firebase-coordinator",
+	for _, name := range []string{"installation", "installation-accounts", "installation-managed", "installation-credentials", "installation-review", "installation-adopt",
+		"installation-coordinator", "installation-viewers", "firebase", "firebase-same-project", "firebase-adopt", "firebase-coordinator", "firebase-viewers",
 		"installation-catalog-add-repo"} {
 		var got []string
 		for _, rc := range goldenPlan(t, name).ResourceChanges {
@@ -636,5 +652,243 @@ func TestTheCoordinatorIsInTheOptInGoldensOnly(t *testing.T) {
 		if !slices.Equal(got, want[name]) {
 			t.Errorf("%s plans the coordinator resources %v, want %v", name, got, want[name])
 		}
+	}
+}
+
+// viewerMembers are the two members the viewer fixtures name (one person, one
+// group, internal/infra's installation-viewers and firebase-viewers
+// tfvars), and the only members in any golden that hold a viewer's grants.
+const (
+	viewerPerson = "user:viewer@example.com"
+	viewerGroup  = "group:auditors@example.com"
+)
+
+var viewerMembers = []string{viewerGroup, viewerPerson}
+
+// viewerGrants is every change of golden's plan that names a viewer member, by
+// address, with the role it carries. An address that names one is a grant to
+// them: the modules key every member resource by the member's own value, so the
+// set of these is the whole of what that plan gives a viewer.
+func viewerGrants(t *testing.T, golden string) map[string]string {
+	t.Helper()
+	got := map[string]string{}
+	for _, rc := range goldenPlan(t, golden).ResourceChanges {
+		for _, m := range viewerMembers {
+			if strings.Contains(rc.Address, m) {
+				got[rc.Address] = str(rc.Change.After["role"])
+			}
+		}
+	}
+	return got
+}
+
+// viewerGrantsWithConditions is viewerGrants with each grant's IAM condition:
+// the plan spells a grant bound under no condition as an empty list.
+func viewerGrantsWithConditions(t *testing.T, golden string) map[string][]any {
+	t.Helper()
+	got := map[string][]any{}
+	for _, rc := range goldenPlan(t, golden).ResourceChanges {
+		for _, m := range viewerMembers {
+			if strings.Contains(rc.Address, m) {
+				conds, _ := rc.Change.After["condition"].([]any)
+				got[rc.Address] = conds
+			}
+		}
+	}
+	return got
+}
+
+// The viewer gets no token-minter role (roles.md §8 R1). The minter is what
+// makes a person's identity a claim the database's rules read, so a viewer who
+// held it could mint anyone the Firebase project's people — the launcher's and
+// operator's own identities included — and the read-only list would be a
+// courtesy: the Firebase root grants it to local.people, which is the launchers
+// and the operators, and the viewer list is deliberately not part of it.
+//
+// Fails when local.people is widened to local.readers (the viewers are read
+// from the database through that one) or the viewer's own grant is written
+// through the signer account's resource.
+func TestViewerGetsNoMinterRole(t *testing.T) {
+	if got := viewerGrants(t, "firebase-viewers"); len(got) == 0 {
+		t.Fatal("the firebase-viewers golden grants a viewer nothing: this test can no longer read it")
+	}
+	var minted []string
+	for _, rc := range goldenPlan(t, "firebase-viewers").ResourceChanges {
+		if !strings.Contains(rc.Address, "google_service_account_iam_member.minter[") {
+			continue
+		}
+		for _, m := range viewerMembers {
+			if strings.Contains(rc.Address, m) {
+				minted = append(minted, rc.Address)
+			}
+		}
+	}
+	if len(minted) > 0 {
+		t.Errorf("the Firebase root mints for a viewer: %v; a viewer must not be able to claim an identity, roles.md §4", minted)
+	}
+	// The minter's own bindings are still there for the people who run: the
+	// absence above is the viewer's, not an empty role.
+	for _, m := range []string{"user:launcher@example.com", "user:operator@example.com"} {
+		want := `module.firebase.google_service_account_iam_member.minter["` + m + `"]`
+		var found bool
+		for _, rc := range goldenPlan(t, "firebase-viewers").ResourceChanges {
+			if rc.Address == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("the firebase-viewers golden has no %s: the minter grant this test reads the viewer's absence against is gone", want)
+		}
+	}
+}
+
+// The viewer gets no job-runner role and no launch surface at all (roles.md §8
+// R1, §4): no fugaroJobRunner, no roles/run.invoker on a job, no launcher role,
+// no serviceAccountUser and no secretAccessor. A viewer reads a run; starting
+// one, acting as its account and reading a secret's value are the launcher's
+// and the job's, and the installation root is where each of them is granted.
+//
+// Fails when the installation module writes a viewer's grant through one of
+// those resources.
+func TestViewerGetsNoJobRunner(t *testing.T) {
+	got := viewerGrants(t, "installation-viewers")
+	if len(got) == 0 {
+		t.Fatal("the installation-viewers golden grants a viewer nothing: this test can no longer read it")
+	}
+	for addr, role := range got {
+		if strings.HasPrefix(role, "roles/run.") || role == "projects/proj-1234/roles/fugaroJobRunner" ||
+			role == "projects/proj-1234/roles/fugaroLauncher" || role == "roles/iam.serviceAccountUser" ||
+			role == "roles/secretmanager.secretAccessor" || strings.HasPrefix(role, "projects/proj-1234/roles/fugaroBuild") {
+			t.Errorf("%s grants a viewer %q: a viewer launches nothing and reads no secret, roles.md §4", addr, role)
+		}
+	}
+	// The launch surface itself is in this plan — the root creates the job
+	// runner's role, which is what a launcher is granted on each job — so the
+	// viewer's absence above is the viewer's, and not a module that was handed
+	// no launcher and no job either.
+	var runner bool
+	for _, rc := range goldenPlan(t, "installation-viewers").ResourceChanges {
+		if rc.Address != "module.installation.google_project_iam_custom_role.job_runner" {
+			continue
+		}
+		runner = true
+		var perms []string
+		for _, p := range rc.Change.After["permissions"].([]any) {
+			perms = append(perms, p.(string))
+		}
+		if !slices.Contains(perms, "run.jobs.run") {
+			t.Errorf("the installation-viewers golden's job runner role holds %v: it is the launch surface this test reads the viewer's absence against", perms)
+		}
+	}
+	if !runner {
+		t.Error("the installation-viewers golden creates no job runner role: the plan this test reads the viewer's absence against is not the installation's")
+	}
+}
+
+// The viewer's cloud grants are roles.md §4's list and nothing else (RS4 of
+// docs/roles-scopes/implementation-plan.md): the read-only job role on the
+// project, the runs-bucket read (D683: objectViewer on the whole bucket, under
+// no condition, because listing needs storage.objects.list, which a condition
+// on an object's name cannot grant), the isolated log view (D684) and the
+// Firebase project's reads: the database, the spend history, and the
+// serviceusage consumer that history's Firestore call needs. The two goldens
+// whose fixtures name a viewer
+// are the only plans that carry any of it — an installation with an empty
+// viewer list applies exactly today's plan (roles.md §8 R1) — and each plan's
+// set of changes naming a viewer member is exact, so a grant nobody wrote down
+// here fails this test rather than passing unseen. That exactness is the point
+// of the list: no job_runner, no token minter, no state bucket, no
+// secretAccessor, and no grant of any other role to a viewer.
+//
+// The positive half is what the modules define: a viewer's read is the row
+// roles.md §4 names, on the resource the grant is the module's own (the
+// project role, the runs bucket, the log view, the Firebase project's
+// reads).
+func TestGoldenViewerPlans(t *testing.T) {
+	named := viewerGrants
+	for _, c := range []struct {
+		golden string
+		// module is the root's own module prefix: each golden's plan holds the
+		// changes of its own root alone, so the two roots' halves are two
+		// goldens and neither plan can carry the other's.
+		module string
+		roles  map[string]string
+	}{
+		{"installation-viewers", "module.installation", map[string]string{
+			// The read-only job role: the fugaroLauncher role minus
+			// run.executions.cancel, so a viewer reads a run and its
+			// execution and cannot cancel one.
+			"google_project_iam_member.viewer": "projects/proj-1234/roles/" + ViewerRole,
+			// The whole-bucket read, through the resource the launchers read
+			// the bucket through: one role, one bucket, one set of bindings.
+			"google_storage_bucket_iam_member.runs_reader": "roles/storage.objectViewer",
+			// The isolated log view (D684), through the members resource the
+			// launchers and operators read their runs' logs through.
+			"google_logging_log_view_iam_member.runs": "roles/logging.viewAccessor",
+		}},
+		{"firebase-viewers", "module.firebase", map[string]string{
+			"google_project_iam_member.viewer":           "roles/firebasedatabase.viewer",
+			"google_project_iam_member.datastore_viewer": "roles/datastore.viewer",
+			// The Firestore client's quota project, which the spend
+			// history's read needs: the same set as datastore.viewer, the
+			// viewer included, because a datastore.viewer without it is a
+			// read Firestore refuses.
+			"google_project_iam_member.usage_consumer": "roles/serviceusage.serviceUsageConsumer",
+		}},
+	} {
+		t.Run(c.golden, func(t *testing.T) {
+			want := map[string]string{}
+			for typ, role := range c.roles {
+				for _, m := range viewerMembers {
+					want[c.module+"."+typ+`["`+m+`"]`] = role
+				}
+			}
+			got := named(t, c.golden)
+			for addr, role := range want {
+				if got[addr] != role {
+					t.Errorf("%s: %s is not in the plan with role %q (it carries %q)", c.golden, addr, role, got[addr])
+				}
+				delete(got, addr)
+			}
+			for addr, role := range got {
+				t.Errorf("%s: %s grants %q to a viewer, and roles.md §4 names no such grant", c.golden, addr, role)
+			}
+			// No viewer's grant is conditioned, which is D683's answer for
+			// the one that could be: a condition narrows what an object's
+			// name may be, and listing the bucket needs
+			// storage.objects.list, which a condition on an object's name
+			// cannot grant — so a conditioned read is either a viewer who
+			// cannot list or a bucket the cover refuses outright.
+			for addr, conds := range viewerGrantsWithConditions(t, c.golden) {
+				if len(conds) > 0 {
+					t.Errorf("%s: %s binds a viewer under a condition (%v), and roles.md D683 answers the bucket read with no condition", c.golden, addr, conds)
+				}
+			}
+		})
+	}
+
+	// The role resource itself: the launcher's permissions minus
+	// run.executions.cancel and no other. RolePermissions pins the same list
+	// for the cover, and TestViewerRoleHasNoCancelPermission reads the two
+	// against each other.
+	var role *ResourceChange
+	for _, rc := range goldenPlan(t, "installation-viewers").ResourceChanges {
+		if rc.Address == "module.installation.google_project_iam_custom_role.fugaro_viewer[0]" {
+			change := rc
+			role = &change
+		}
+	}
+	if role == nil {
+		t.Fatal("installation-viewers plans no module.installation.google_project_iam_custom_role.fugaro_viewer[0]: the viewer's read-only job role is not defined")
+	}
+	if got := str(role.Change.After["role_id"]); got != ViewerRole {
+		t.Errorf("the viewer's role carries role_id %q, want %q", got, ViewerRole)
+	}
+	var got []string
+	for _, p := range role.Change.After["permissions"].([]any) {
+		got = append(got, p.(string))
+	}
+	if want := slices.Sorted(slices.Values(RolePermissions[ViewerRole])); !slices.Equal(slices.Sorted(slices.Values(got)), want) {
+		t.Errorf("the viewer's role holds %v, want %v", got, want)
 	}
 }

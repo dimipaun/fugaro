@@ -1413,6 +1413,35 @@ func TestReviewModeBitbucketForkRefusedSameRepoAccepted(t *testing.T) {
 	}
 }
 
+// TestReviewModeSameRepoPRByConsumerOwner: the pull request a proxied run
+// reviews is written by the very account its own token comments as — the
+// owner of the credential the run goes through — and it is still reviewed.
+// On Bitbucket that follows from the same-repository rule alone, which
+// consults no identity at all; the run's own identity is a set now (T13,
+// F20, the project's node listing every token's account UUID), and a
+// same-repository pull request is not the run's own work whoever wrote it,
+// so this path is deliberately unchanged.
+//
+// Mutation (make checkReviewAuthor's Bitbucket branch refuse a
+// same-repository pull request whose author is anywhere in that set): this
+// test fails, finding the consumer owner's own pull request refused.
+func TestReviewModeSameRepoPRByConsumerOwner(t *testing.T) {
+	h := newHarness(t, bitbucketCfg(t), reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	pushReviewBranch(t, h, "feature", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+	})
+	addPR(h, 7, "feature", "")
+	h.provider.State.PRs[0].AuthorID = "712020:00000000-0000-4000-8000-00000000b07e"
+	h.provider.State.PRs[0].AuthorLogin = "fugaro-bot"
+	rec, err := h.run(t, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Outcome != runstore.OutcomeReviewed {
+		t.Fatalf("the consumer owner's own pull request was refused: rec = %+v", rec)
+	}
+}
+
 // TestReviewModeBitbucketForkWithAbbreviatedHashStillRefusedWithNote:
 // owner ruling 2026-10-13's own reproduction case for item 2 — the fake
 // provider above always gives a full 40-hex SHA (from `git rev-parse`),

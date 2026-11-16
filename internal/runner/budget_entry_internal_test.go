@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -21,6 +22,24 @@ func TestRegistryEntryRecipe(t *testing.T) {
 	}
 	r.rec.Recipe = nil
 	if e := r.registryEntry(); e.Recipe != "" {
+		t.Fatalf("entry = %+v", e)
+	}
+}
+
+// The registry entry carries the rigor mode the run resolved and the layer
+// that won it, read from the record the runner just folded them into: a live
+// row in `fugaro watch` is built from this entry, so the two are one value
+// (rigor-modes plan T1.7, F40).
+func TestRegistryEntryMode(t *testing.T) {
+	r := &run{spec: &task.Spec{Repo: "acme/app", Task: "x"}, cfg: &config.Config{},
+		rec: &runstore.Record{Rigor: &runstore.RigorRecord{Mode: rigor.Critical, From: rigor.FromArea}}}
+	if e := r.registryEntry(); e.Mode != "critical" || e.From != "area" {
+		t.Fatalf("entry = %+v", e)
+	}
+	// A record with no rigor block — every record written before the mode
+	// existed — names neither, and the entry carries neither.
+	r.rec.Rigor = nil
+	if e := r.registryEntry(); e.Mode != "" || e.From != "" {
 		t.Fatalf("entry = %+v", e)
 	}
 }

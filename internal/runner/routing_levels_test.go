@@ -274,8 +274,8 @@ func TestRoutingTriageRunsTheReviewersModel(t *testing.T) {
 			t.Error("reviewStages has a triage entry: pinSlots gives every entry a slot of its own, so level 2's model would be pinned twice")
 		}
 	}
-	if got, want := len(pr.pinSlots()), 3+len(reviewStages); got != want {
-		t.Errorf("%d pin slots, want the three role slots and one per review level (%d): a level's model is pinned once (pinSlots)", got, want)
+	if got, want := len(pr.pinSlots()), 4+len(reviewStages); got != want {
+		t.Errorf("%d pin slots, want the three role slots, the vision slot and one per review level (%d): a level's model is pinned once (pinSlots)", got, want)
 	}
 }
 

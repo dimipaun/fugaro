@@ -6,16 +6,21 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // bitbucketTokenConfig is the operator's decision to hold one workspace or
 // project access token for the whole project, and the one profile that mounts
-// it. Publishing it is what BW-T2.3 adds to the publish path: the node's
-// bitbucket_token block is DERIVED from project_secrets.bitbucket-token
-// (projectpolicy.DeriveBitbucketToken, D473/D493) the way the accounts block
-// is derived from claude_accounts, and the policy's own decoder refuses a
-// profile that mounts the token without one.
+// it — the shape the owner's ruling of 2026-11-14 refuses at the publish, since
+// the job such a profile is deployed for holds no credential of the provider it
+// serves (D2302, projectpolicy.CheckSharedJobProfile). No publish of this
+// release writes it (TestPublishRefusesAProfileThatMountsTheBitbucketToken);
+// what reads it is the migration, which is handed a node published before the
+// ruling and this machine's config together
+// (TestUpdateMigrationDerivesTheBitbucketBlockFromLocalConfig), and the
+// decoder, which is deliberately not given the ruling's rule
+// (TestPolicyShowReadsABitbucketProfileInsideTheBlock).
 const bitbucketTokenConfig = "project_secrets:\n" +
 	"  bitbucket-token: { allow_data_to: [workspace-a/repo-a] }\n" +
 	"profiles:\n" +
@@ -29,14 +34,25 @@ const bitbucketTokenConfig = "project_secrets:\n" +
 const bitbucketTokenWithoutAProfile = "project_secrets:\n" +
 	"  bitbucket-token: { allow_data_to: [workspace-a/repo-a, workspace-a/api-*] }\n"
 
+// bitbucketProfileWithoutTheMount is the same operator decision with the mount
+// the publish now refuses left off the profile: the Bitbucket profile a shared
+// project job is deployed for, holding no credential of its own (D2302). The
+// block is derived from it exactly as it is from a config that names no profile
+// at all, so the derivation is read through a config an operator can still
+// publish.
+const bitbucketProfileWithoutTheMount = "project_secrets:\n" +
+	"  bitbucket-token: { allow_data_to: [workspace-a/repo-a] }\n" +
+	"profiles:\n" +
+	"  standard: { provider: bitbucket, cpu: 1, memory: 2Gi, timeout_class: 6h, allow_repos: [bitbucket/workspace-a/repo-a] }\n"
+
 // TestPolicyPublishWritesTheBitbucketTokenBlock: the published node carries the
 // block the token's reach is read from, and it carries none at all when the
 // config derives none — the two states that mean "this token reaches no
 // repository" (D493).
 func TestPolicyPublishWritesTheBitbucketTokenBlock(t *testing.T) {
-	f := newProjectFixture(t, bitbucketTokenConfig)
+	f := newProjectFixture(t, bitbucketProfileWithoutTheMount)
 	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
-		t.Fatalf("publishing a profile that mounts the project's Bitbucket token: %v", err)
+		t.Fatalf("publishing a Bitbucket profile that mounts nothing: %v", err)
 	}
 	bt := publishedPolicy(t, f).BitbucketToken
 	if bt == nil {
@@ -125,44 +141,75 @@ func TestPolicyPublishWritesTheBitbucketAPIRoots(t *testing.T) {
 	}
 }
 
-// TestPolicyPublishRefusesABitbucketProfileAdmittingAnUnlistedRepository: a
+// TestPolicyShowRefusesABitbucketProfileAdmittingAnUnlistedRepository: a
 // profile that mounts the token admits only what the block admits
-// (projectpolicy.validBitbucketProfileRepos), and the publish is where the
-// operator reads that — with the file to fix and the two steps to take.
-func TestPolicyPublishRefusesABitbucketProfileAdmittingAnUnlistedRepository(t *testing.T) {
-	f := newProjectFixture(t, "project_secrets:\n"+
-		"  bitbucket-token: { allow_data_to: [workspace-a/repo-a] }\n"+
-		"profiles:\n"+
-		"  standard: { provider: bitbucket, cpu: 1, memory: 2Gi, timeout_class: 6h, allow_repos: [bitbucket/workspace-a/repo-b], secrets: [bitbucket-token] }\n")
-	_, _, err := execute(t, "project", "policy", "publish")
+// (projectpolicy.validBitbucketProfileRepos). That rule's door is the reader
+// now, not the publish: a publish cannot reach this node's state at all, since
+// the owner's ruling of 2026-11-14 refuses a mounting profile one step earlier
+// (TestPublishRefusesAProfileThatMountsTheBitbucketToken) — and that is exactly
+// why the reader must still hold it, because the node below is what every
+// installation that published before the ruling carries. It is refused with the
+// file to fix and the two steps to take.
+func TestPolicyShowRefusesABitbucketProfileAdmittingAnUnlistedRepository(t *testing.T) {
+	f := newProjectFixture(t, "")
+	put(t, f, &projectpolicy.Policy{
+		Version:        projectpolicy.Version,
+		Budget:         projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5},
+		AllowRepos:     []string{"bitbucket/workspace-a/repo-b"},
+		BitbucketToken: &projectpolicy.BitbucketToken{AllowRepos: []string{"bitbucket/workspace-a/repo-a"}},
+		Profiles: map[string]projectpolicy.Profile{projectpolicy.DefaultProfileName: {JobProfile: config.JobProfile{
+			Provider:     "bitbucket",
+			CPU:          1,
+			Memory:       "2Gi",
+			TimeoutClass: "6h",
+			AllowRepos:   []string{"bitbucket/workspace-a/repo-b"},
+			Secrets:      []string{config.BitbucketSecret},
+		}}},
+	})
+	_, _, err := execute(t, "project", "policy", "show")
 	if err == nil {
-		t.Fatal("publishing a profile that admits a repository the token's block does not was allowed")
+		t.Fatal("a node whose profile admits a repository the token's block does not was read as a policy")
 	}
 	for _, want := range []string{"bitbucket/workspace-a/repo-b", "project_secrets.bitbucket-token.allow_data_to", "local config", "publish again"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
 	}
-	if f.db.Value(projectpolicy.PathShared()) != nil {
-		t.Error("a node was written anyway")
-	}
 }
 
-// TestPolicyPublishAcceptsAnAllowListedBitbucketProfile: the other side of the
+// TestPolicyShowReadsABitbucketProfileInsideTheBlock: the other side of the
 // same rule. One allow_data_to entry may serve a whole workspace (D464), so a
-// profile admitting repositories the entry's pattern matches publishes, and the
+// profile admitting repositories the entry's pattern matches is read, and the
 // block keeps the pattern rather than the expansion.
-func TestPolicyPublishAcceptsAnAllowListedBitbucketProfile(t *testing.T) {
-	f := newProjectFixture(t, "project_secrets:\n"+
-		"  bitbucket-token: { allow_data_to: [\"workspace-a/*\"] }\n"+
-		"profiles:\n"+
-		"  standard: { provider: bitbucket, cpu: 1, memory: 2Gi, timeout_class: 6h, allow_repos: [bitbucket/workspace-a/repo-a, bitbucket/workspace-a/repo-b], secrets: [bitbucket-token] }\n")
-	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
-		t.Fatalf("publishing a profile inside the token's block: %v", err)
+//
+// The node is put directly because no publish of this release writes one: the
+// decoder does not ask the ruling's rule, and that is the point of reading this
+// one here — a node published before the ruling stays readable rather than
+// turning into a refusal every `fugaro update` has to meet (the deployer, not
+// the reader, is where such a node is stopped). The same node is refused when a
+// publish reaches its config, which is what the operator's fix goes through.
+func TestPolicyShowReadsABitbucketProfileInsideTheBlock(t *testing.T) {
+	f := newProjectFixture(t, "")
+	put(t, f, &projectpolicy.Policy{
+		Version:        projectpolicy.Version,
+		Budget:         projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5},
+		AllowRepos:     []string{"bitbucket/workspace-a/repo-a", "bitbucket/workspace-a/repo-b"},
+		BitbucketToken: &projectpolicy.BitbucketToken{AllowRepos: []string{"bitbucket/workspace-a/*"}},
+		Profiles: map[string]projectpolicy.Profile{projectpolicy.DefaultProfileName: {JobProfile: config.JobProfile{
+			Provider:     "bitbucket",
+			CPU:          1,
+			Memory:       "2Gi",
+			TimeoutClass: "6h",
+			AllowRepos:   []string{"bitbucket/workspace-a/repo-a", "bitbucket/workspace-a/repo-b"},
+			Secrets:      []string{config.BitbucketSecret},
+		}}},
+	})
+	out, _, err := execute(t, "project", "policy", "show")
+	if err != nil {
+		t.Fatalf("reading a node whose profile stays inside the token's block: %v", err)
 	}
-	bt := publishedPolicy(t, f).BitbucketToken
-	if bt == nil || !slices.Equal(bt.AllowRepos, []string{"bitbucket/workspace-a/*"}) {
-		t.Fatalf("bitbucket_token = %+v, want the workspace pattern the operator allow-listed", bt)
+	if !strings.Contains(out, "bitbucket_token.allow_repos: bitbucket/workspace-a/*") {
+		t.Errorf("policy show does not print the workspace pattern the operator allow-listed:\n%s", out)
 	}
 }
 

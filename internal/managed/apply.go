@@ -102,9 +102,9 @@ var (
 	// terraform, no gate inputs.
 	ErrRequest = errors.New("the managed apply has nothing to run")
 	// ErrNotConfirmed is D55's confirmation rule refusing the step: the
-	// session asking for the apply is not one that may apply a plan of this
-	// class — a coding agent's session in a project the read did not say is
-	// managed, or a session with neither a terminal nor a marker. It is a
+	// session asking for the apply is not one that may apply the saved plan —
+	// a coding agent's session in a project the read did not say is managed,
+	// or a session with neither a terminal nor a marker. It is a
 	// refusal and not a fallback: nothing is applied.
 	ErrNotConfirmed = errors.New("this session may not confirm the apply")
 )
@@ -124,6 +124,32 @@ type Fact struct {
 	Reason string
 	// Err is IsManaged's error, when the read could not be made.
 	Err error
+}
+
+// AuditRecorder writes the admission record of the verdict a managed apply
+// reached: the step, the verdict, the rules and the findings, into the audit
+// family the other gated commands write to (M6, D1014, D1025, and the owner's
+// ruling of 2026-11-11 that puts `fugaro managed apply` in that set).
+//
+// Why it is an interface the caller implements rather than a write made here.
+// The record is written with the OPERATOR's own credentials, into the prefix a
+// run's job account has no grant above, and this package holds no cloud client
+// at all (Fact's own split, and statebucket.go's): what this command knows is
+// the judged plan — the document the digest is taken of, the verdict and the
+// findings — and what the caller knows is the creation fact in force, the
+// identity the write runs as and the client to make it with.
+//
+// Why its failure is the command's failure. A record is what makes the
+// difference between "this program ran" and "this program ran and here is what
+// it did": an apply that could not leave one is an apply nobody can account for
+// afterwards, so Apply returns the error rather than printing a warning beside
+// a success (D1014).
+type AuditRecorder interface {
+	// Record writes one record of the verdict the apply reached, and a
+	// non-nil error stops the command: from the refusal path, before the
+	// refusal is returned, and from the admission path, after the saved plan
+	// has been applied.
+	Record(ctx context.Context, c Converge) error
 }
 
 // Request is everything a managed apply is told. Every field is set by the
@@ -213,6 +239,13 @@ type Request struct {
 	// Imports are the import blocks the root's discovery wrote: an import is
 	// admitted only when its address and ID are exactly one of them.
 	Imports []tf.ImportKey
+	// Recorder writes the audit record of the verdict this apply reached: the
+	// refusal it returns, or the admission of the plan it applied (D1014, and
+	// the ruling of 2026-11-11 that puts this command in the gate's set). It is
+	// required — a nil one is refused (ready) — because an apply that leaves no
+	// record is the state D1014 exists to end, and a caller that forgot it must
+	// not get an apply that looks accounted for.
+	Recorder AuditRecorder
 	// Access and Impersonator are D75's resolution: whether the deployer
 	// account is there, whether this caller may assume it, and the assumption
 	// itself. A nil one is refused rather than treated as nothing to check.
@@ -226,11 +259,21 @@ type Request struct {
 // Result is what an apply did, for the caller that prints it. Changed is false
 // when the plan was empty, in which case nothing was gated and nothing was
 // applied.
+//
+// Warning is why the apply gate opened without a recorded budget amount
+// (enable.go, D1545): the budget-evidence warning raised when the project is
+// managed but its creation fact records none. It sits beside Verdict rather
+// than inside it because it is not a finding about the plan — the verdict's own
+// Warnings are that — and it is the one finding the apply carries itself: it is
+// printed before anything is read, and it joins the verdict's findings in the
+// audit record the apply writes (Request.Recorder). Empty for a gate opened on
+// a recorded amount, and empty on the zero Result.
 type Result struct {
 	Changed  bool
 	PlanPath string
 	PlanHash string
 	Verdict  Verdict
+	Warning  string
 }
 
 // RefusedError is the gate's refusal, carried out of Apply with the verdict
@@ -389,6 +432,16 @@ func Apply(ctx context.Context, r Request) (Result, error) {
 	if err := r.Enable.Refuse(); err != nil {
 		return Result{}, err
 	}
+	// The budget-evidence warning (D1545): the gate can open without a
+	// recorded amount (enable.go), and a gate that opened for a reason nobody
+	// is told about is the failure the warning exists to prevent — so the
+	// session reads it here, before anything is read or applied, and it is
+	// carried on the Result as well. The sentence names the owner's own command
+	// and no environment variable, and it is this program's own text (ApplyGate
+	// built it), so it is not bounded again here.
+	if w := r.Enable.Warning(); w != "" && r.Out != nil {
+		fmt.Fprintln(r.Out, w)
+	}
 	if len(r.Session) > 0 {
 		return Result{}, r.refuseSession()
 	}
@@ -454,8 +507,9 @@ func Apply(ctx context.Context, r Request) (Result, error) {
 		}
 		if !changed {
 			// Nothing to change: there is no plan to gate and none to apply,
-			// and an empty plan is not a verdict.
-			res = Result{Changed: false}
+			// and an empty plan is not a verdict. The gate's own warning is
+			// still carried, because it was told to the session above.
+			res = Result{Changed: false, Warning: r.Enable.Warning()}
 			return nil
 		}
 		res, run = r.gateAndApply(ctx, t, cred, planPath)
@@ -514,6 +568,8 @@ func (r Request) ready() error {
 		return fmt.Errorf("%w: nothing builds the terraform of %s, and an apply with no terraform to run as the deployer runs nothing", ErrRequest, r.what())
 	case r.Cover == nil:
 		return fmt.Errorf("%w: no cover, and a managed plan is admitted by the managed cover of %s or by nothing", ErrRequest, r.what())
+	case r.Recorder == nil:
+		return fmt.Errorf("%w: nothing writes the audit record of %s, and an apply that leaves no trail fails the command it was made for (D1014)", ErrRequest, r.what())
 	case r.Access == nil || r.Impersonator == nil:
 		return fmt.Errorf("%w: nothing resolves the deployer account of %s, and an apply that cannot run as it is refused rather than run as the operator", ErrRequest, r.what())
 	}
@@ -578,11 +634,24 @@ func (r Request) spec(t *tf.TF) Spec {
 }
 
 // gateAndApply is the second half of Apply, inside the deployer's assumption:
-// the hash, the gate, the re-check and the apply, in that order.
+// the hash, the gate, the re-check, the apply and the record, in that order.
 func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, planPath string) (Result, error) {
 	before, err := planHash(planPath)
 	if err != nil {
 		return Result{}, fmt.Errorf("%w: the saved plan of %s: %w", ErrRequest, r.what(), safetext.FieldErr(err))
+	}
+	// The document the verdict is digested against (D1022) is the JSON terraform
+	// prints for this plan — the bytes the gate's own rules parse — and not the
+	// plan file's, which is terraform's binary format and what the hash above
+	// names and the apply re-checks. It is read here and the gate reads it again
+	// below (Gate is tf.TF.ShowJSON plus the rules), which is the pair
+	// `fugaro update`'s gate step reads for the same reason: two reads of one
+	// immutable saved plan, with nothing planning or applying between them, are
+	// one artifact — and handing the gate a document read outside it would be the
+	// seam managed.Spec deliberately does not have.
+	doc, err := t.ShowJSON(ctx, planPath)
+	if err != nil {
+		return Result{}, fmt.Errorf("reading the saved plan of %s: %w", r.what(), safetext.FieldErr(err))
 	}
 	v, err := Gate(ctx, planPath, r.spec(t))
 	if err != nil {
@@ -590,7 +659,28 @@ func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, pl
 		// zero Verdict it returns is not OK either.
 		return Result{}, fmt.Errorf("gating the plan of %s: %w", r.what(), safetext.FieldErr(err))
 	}
-	res := Result{Changed: true, PlanPath: planPath, PlanHash: before, Verdict: v}
+	// D1545's split is the gate's; what a content finding means is the COMMAND's,
+	// and this command's answer, since the owner's ruling of 2026-11-11, is the
+	// one every other command in the set gives: the plan is applied with the
+	// finding recorded and reported, and `fugaro doctor` reads the record back.
+	// The command is in the set now, so the half of the ruling that reads
+	// "records and warns (AuditRecord, doctor)" has the record to stand on. A
+	// finding that refused the plan anyway would be the pre-ruling answer, and
+	// one that was applied with no record would be worse than either: the plan
+	// changed the project and nothing kept what the gate saw about it.
+	findings := RuleLines(v.Warnings)
+	// The budget-evidence warning (Apply, above) is a fact about the project
+	// rather than a finding about the plan, and it is in the record with the
+	// plan's own findings rather than beside them: D1545's list of what warns
+	// names it, so a record that carried the plan's findings and dropped this
+	// one would report the step as cleaner than the gate found it. It is not
+	// printed again below — Apply printed it before the plan was read.
+	warnings := findings
+	if w := r.Enable.Warning(); w != "" {
+		warnings = append([]string{w}, warnings...)
+	}
+	conv := r.converge(doc, v, findings, warnings)
+	res := Result{Changed: true, PlanPath: planPath, PlanHash: before, Verdict: v, Warning: r.Enable.Warning()}
 	if !v.OK {
 		// The refusal is a hard return: there is no "apply anyway" here, and
 		// the only action a false verdict permits is a confirmation, which in
@@ -598,12 +688,42 @@ func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, pl
 		// Its sentence is the mode's own (advice): the refusal a person reads
 		// says what to do about it, and in a managed project that is the
 		// owner's object and not a flag of this command.
-		return res, &RefusedError{Verdict: v, Advice: r.advice(v)}
+		//
+		// The record is written BEFORE the refusal is returned, so a refusal is
+		// recorded too (D1025) — an owner whose plan was refused wants the
+		// record more than anyone — and a record that could not be written
+		// fails the command (D1014).
+		//
+		// Both sentences stay in the chain when it does (a %w each), the way
+		// the CLI gate's admit chains the same pair: the refusal is what
+		// errors.Is and errors.As find, so the session still reads why nothing
+		// was applied, and the write's own cause is in the message beside it
+		// rather than in place of it. A refusal replaced by the writer's error
+		// would leave "nothing was applied" with no reason, which is the one
+		// thing the session has to act on. Which of the two the command EXITS
+		// with is the caller's mapping and not this sequence's: the refusal is
+		// what this command's own mapping reads first, so a record that could
+		// not be written is reported under the refusal it was refused with.
+		refusal := &RefusedError{Verdict: v, Advice: r.advice(v)}
+		if werr := r.Recorder.Record(ctx, conv); werr != nil {
+			return res, fmt.Errorf("%w: %w", refusal, werr)
+		}
+		return res, refusal
 	}
+	// The findings are printed before the confirmation and not after the apply,
+	// so the person answering the question answers about the plan they have been
+	// warned about (Request.confirm's own rule, which prints D59's warning for
+	// the same reason). A session with a marker is not asked, and it reads them
+	// here as well: what left the cover tables is something the session that
+	// applies the plan should know while it is still doing so.
+	printWarnings(r.Out, findings)
 	// The session's own leg of D55's rule, asked here because this is the one
 	// moment all three of its inputs exist: the fact was read before terraform
 	// ran, the verdict that admits the plan has just been read, and Conditions
-	// is what the session says about who is there.
+	// is what the session says about who is there. The verdict that reaches it
+	// is one the gate did not refuse, which a warned plan is as much as an
+	// admitted one (Converge.Refuse): a content finding is D1545's tripwire and
+	// not a fence, and the confirmation is asked for the plan either way.
 	if err := r.confirm(v, before); err != nil {
 		return res, err
 	}
@@ -622,9 +742,120 @@ func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, pl
 		fmt.Fprintf(r.Out, "applying the saved plan of %s as %s\n", r.what(), safetext.Field(cred.Account()))
 	}
 	if err := t.Apply(ctx, planPath); err != nil {
-		return res, safetext.FieldErr(err)
+		// A failed apply is not an apply that applied nothing: terraform
+		// creates, updates and deletes what it can before it stops, and the
+		// plan the gate judged has landed in the project whether or not this
+		// call returned zero (spec §6, and `fugaro update`'s applyAndRecord
+		// records a failed apply for the same reason). Since D1545 the record
+		// is also the only control left standing on a content finding, and a
+		// root authored by the session the gate stands over could put an
+		// off-table grant, an off-table type or an unlisted delete of a
+		// non-data-bearing type before a resource that is sure to fail: the
+		// change would land, nothing would be recorded, and `fugaro doctor`
+		// would have nothing to warn about. So the record of the plan that was
+		// judged is written here too, and the apply's own failure is what the
+		// session reads — in terraform's output and in the error below.
+		applyErr := safetext.FieldErr(err)
+		if werr := r.Recorder.Record(ctx, conv); werr != nil {
+			// Both sentences stay in the chain, as they do above: the apply's
+			// own cause is what classifies the exit, and a trail that could not
+			// be left is in the message beside it rather than in place of what
+			// terraform said.
+			return res, fmt.Errorf("%w: %w", applyErr, werr)
+		}
+		return res, applyErr
+	}
+	// The record is written AFTER the plan is applied and never before it (spec
+	// §6, D1014), and what reaches this line is an apply that ran and returned
+	// zero. The paths that return above have each answered for themselves: a
+	// refused plan is recorded as the refusal it is, and a step whose apply
+	// never ran — a confirmation the person declined, a saved plan that changed
+	// between the gate and here — records nothing, because an admission for it
+	// would be a record of something that did not happen.
+	if err := r.Recorder.Record(ctx, conv); err != nil {
+		return res, err
 	}
 	return res, nil
+}
+
+// converge is the verdict as the value the record is written from: one of the
+// gate's three answers, built here from the verdict and never beside it, so a
+// record cannot say "admitted" about a plan the gate refused or "warned" about
+// one nothing applied (AuditRecordFor reads the same three).
+//
+// The step is one a plan gate judges: the gate judged a saved plan, and money
+// or permanent is not something this command does at all.
+//
+// findings are the plan's own content findings and warnings are everything the
+// record carries — the same list with the budget-evidence warning in front of
+// it. They differ in exactly one place: the rules a warned record names say what
+// the gate refused to refuse, and the budget-evidence warning is not something
+// the gate's rules had anything to say about, so a plan with no findings of its
+// own keeps the plain sentences even when the project's own warning is in the
+// record with it.
+func (r Request) converge(doc []byte, v Verdict, findings, warnings []string) Converge {
+	switch {
+	case !v.OK:
+		// A refusal can carry findings too (ConvergeRefusedWithWarnings): the
+		// integrity rules stopped the plan and the content rules raised
+		// something beside them, and a record that named only the first would
+		// drop what the gate saw about the rest of the plan.
+		return ConvergeRefusedWithWarnings(doc, RuleLines(v.Refusals), warnings)
+	case len(warnings) == 0:
+		return ConvergeAdmitted(doc, appliedRules(false))
+	default:
+		return ConvergeWarned(doc, appliedRules(len(findings) > 0), warnings)
+	}
+}
+
+// appliedRules is what the record of an apply says applied the plan: the three
+// rules the gate ran (`fugaro update`'s admittedRules is the same list, and the
+// two are kept in step by their tests rather than by a shared value, since each
+// names its own document).
+//
+// warned tells the two answers apart, and every sentence is false of the other
+// one: a plan the gate raised findings about is not one whose cover admitted
+// every change, and a plan whose integrity rules refused nothing did pass them.
+// A record may not carry a rule that is false of the plan it digests, which is
+// why this is a parameter and not one list of three sentences that are nearly
+// right in both cases.
+func appliedRules(warned bool) []string {
+	guard := "the guard refused no delete and no replace of the plan"
+	cover := "the managed cover admitted every change of the plan"
+	costs := "the cost list blocked no attribute of the plan"
+	if warned {
+		guard = "the guard refused no delete and no replace that D1551's classification protects: a removal of a non-data-bearing type did not refuse this plan, and the record of it holds that as a warning (D1545)"
+		cover = "the managed cover refused no change of this plan that its integrity rules judge: the changes it did not announce did not refuse it, and the record of it holds them as warnings (D1545)"
+		costs = "the cost list refused no attribute of the plan: a blocked attribute did not refuse it, and the record of it holds it as a warning (D1545)"
+	}
+	return []string{guard, cover, costs}
+}
+
+// managedWarnedLine is what a managed apply prints above the findings the gate
+// recorded and did not refuse on (D1545), and it is the whole of what a reader
+// has to understand: the plan is applied anyway, the cover tables and the guard
+// are a tripwire rather than a fence, and what they named is in the record of
+// this apply. The sentence names the mechanism rather than the gap in it, and no
+// flag, variable or mark — a recipe for reaching past a control has no business
+// in the text a session reads (Converge's own NotConverged follows the same
+// rule).
+const managedWarnedLine = "the gate recorded the findings below: they fired and did not refuse this plan, because D1545 makes the cover tables and the guard a tripwire that records and warns, and a blocked cost attribute and a project with no recorded budget apply the same way — the plan is applied with them, and they are in this apply's audit record"
+
+// printWarnings is the line above the findings and the findings under it, one
+// per line, as RuleLines rendered them — the same lines the record holds and the
+// same lines `fugaro update` prints for the same reason. They are not bounded
+// again here: every part of a finding was bounded where its rule built it
+// (plan.go's refusalWhy says why one of them is not Field's cut), and bounding
+// the assembled line a second time would cut a removal rule's identity in the
+// middle, which is the one part of the line its reader has to act on.
+func printWarnings(w io.Writer, findings []string) {
+	if w == nil || len(findings) == 0 {
+		return
+	}
+	fmt.Fprintln(w, managedWarnedLine)
+	for _, f := range findings {
+		fmt.Fprintf(w, "  %s\n", f)
+	}
 }
 
 // advice is the sentence a refusal ends with, when the mode has one: a
@@ -650,20 +881,26 @@ func (r Request) advice(v Verdict) string {
 	return ""
 }
 
-// confirm is D55's rule, and this is the caller that reaches its managed case:
-// initflow.CanConfirmManaged is the one predicate, its zero Managed is today's
-// rule word for word, and the value asked with here is this apply's own three
-// facts — the creation fact the marker read answered, the verdict that
-// admitted the plan, and whether the whole-project inventory fell back (D59,
-// Task 4.5).
+// confirm is D55's rule, in the two halves initflow decides it in: the gate's
+// verdict stands in for this step's confirmation (initflow.GateStandsIn, whose
+// zero Managed is today's rule word for word), or a person at a real terminal
+// is there to give it (initflow.CanConfirmRun). The value asked with here is
+// this apply's own three facts — the creation fact the marker read answered,
+// the verdict that admitted the plan, and whether the whole-project inventory
+// fell back (D59, Task 4.5).
 //
-// The step's class is YesOrTyped because that is the class this apply is: the
-// gate judged a saved plan, which is what a YesOrTyped step is, and money or
-// permanent — a project, billing, a secret — is not something this command
+// The step is one a plan gate judges: the gate judged a saved plan, and money
+// or permanent — a project, billing, a secret — is not something this command
 // does at all. The zero Conditions is refused, which is the direction a caller
 // that forgot falls in: a session with neither a marker nor a terminal has no
 // confirmation to give, and the answer to that is no apply rather than an
 // apply nobody confirmed.
+//
+// The third term the class system had here — the answer a run carries of its
+// own, which a YesOrTyped step took with no session needed at all — is gone
+// with the classes and is not replaced: this command's own session carries no
+// such answer (managedConditions), and the flag that used to put one there is
+// gone too (T11 of docs/no-prompt-policy).
 //
 // A session the rule admits is then one of two. A coding agent's, in a managed
 // project with an admitted plan the inventory did not fall back on, is D55's
@@ -673,6 +910,13 @@ func (r Request) advice(v Verdict) string {
 // and what it changes: having a terminal is what makes a confirmation
 // possible, not a confirmation, and an apply in a project with no agent must
 // not run on a person's terminal without the person saying so.
+//
+// The question is the plan's own identity and nothing else, and that is the
+// point of asking it here rather than of the verdict: D1545's warnings (the
+// budget-evidence one and the verdict's own) are printed BEFORE this is
+// reached, each on its own line, so the person answers about the plan they
+// have been warned about rather than about a question that folded the warnings
+// into its own sentence.
 //
 // The refusal names what refused in the words initflow already produces: the
 // reason is decided in one place, and a caller that printed its own version of
@@ -690,7 +934,7 @@ func (r Request) confirm(v Verdict, hash string) error {
 	if fallback && r.Out != nil {
 		fmt.Fprintln(r.Out, safetext.MultiLine(r.Inventory.Why()))
 	}
-	if !initflow.CanConfirmManaged(initflow.YesOrTyped, r.Conditions, initflow.Managed{Managed: r.Fact.Managed, Admitted: v.OK, Fallback: fallback}) {
+	if !initflow.GateStandsIn(r.Conditions, initflow.Managed{Managed: r.Fact.Managed, Admitted: v.OK, Fallback: fallback}) && !initflow.CanConfirmRun(r.Conditions) {
 		if marker := r.Conditions.Agent; marker != "" {
 			// The reason is initflow's own sentence, which is where D55's
 			// rule is decided; the fallback's own sentence is appended rather

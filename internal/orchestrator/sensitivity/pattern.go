@@ -224,9 +224,12 @@ func hasAlternation(match string) bool {
 // this list has no cheaper class to admit anything to.
 //
 // A row whose glob doublestar cannot read matches nothing for the same reason.
-// Every caller merges lists a layer validated at load, so a row that slipped
-// past that is a rule that silently never fires rather than a match nobody can
-// explain — the failure mode D1502 refuses at load, kept on the safe side here.
+// Every caller measures its rows with Validate first — a run's lists where they
+// are loaded, and the two CLI readers that hold a file's own bytes at the read
+// (internal/cli's securityMatchable, which drops what Validate refuses) — so a
+// row that slipped past both is a rule that silently never fires rather than a
+// match nobody can explain: the failure mode D1502 refuses at load, kept on the
+// safe side here.
 //
 // The matching is doublestar's, so the cost of a row is doublestar's: linear in
 // the path for the stars and `**`, and, for the one shape that is not linear,

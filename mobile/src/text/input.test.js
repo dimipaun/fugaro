@@ -39,6 +39,7 @@ import test from 'node:test';
 import { CONFIRM_CUE, REFUSAL as CONFIRM_REFUSAL } from '../../../shared/confirm/index.js';
 import { COMMAND, NOT_UNDERSTOOD_REPLY } from '../../../shared/command/index.js';
 import { MemorySecureStore, SecretStore, secret } from '../accounts/index.js';
+import { LICENCE_STATE_CODES, LICENCE_STATES } from '../licence/state.js';
 import { createMailboxClient } from '../mailbox/client.js';
 import { MemoryConnection } from '../mailbox/connection.js';
 import { macOf } from '../mailbox/mac.js';
@@ -88,9 +89,17 @@ const MOVED_TARGET = Object.freeze({
   headSha: 'b'.repeat(40),
 });
 
+/** A licence port that says the installation has lapsed (S6.3; D436, T12): what
+ * the client asks before it mints, signs or writes anything. It is the client's
+ * port and not `licence/state.js`'s, because what this screen has to prove is
+ * that its classification REACHES the client -- the reading itself is that
+ * module's own test. */
+function lapsedPort() {
+  return Object.freeze({ at: async () => Object.freeze({ state: LICENCE_STATES.LAPSED, claims: null }) });
+}
+
 /**
  * A paired phone, its database, and the typed pipeline over its real client.
- *
  * `now` is a variable rather than a clock: nothing here reads the time, and a
  * test that wants "ten minutes later" says so. The id sources are counters, so
  * a failure is a stable string rather than a random one.
@@ -114,6 +123,7 @@ async function harness(options = {}) {
     newId: () => `m-${++minted}`,
     secrets: SECRETS,
     heartbeatIntervalMs: INTERVAL_MS,
+    ...(options.licence === undefined ? {} : { licence: options.licence }),
   });
 
   // **The phone has looked before it types.** P6.10's gate fails closed on a
@@ -564,6 +574,31 @@ test('a launch passes straight through to the agent, through the mailbox client'
   assert.equal(h.inbox()[0][1].text, 'kick off the nightly build');
   // And nothing is left waiting for a confirmation.
   assert.deepEqual((await h.input.awaiting()).actions, []);
+});
+
+test('a launch on a lapsed licence is refused by the client, and never written', async () => {
+  // The classification has to REACH the client, and this is what says it does.
+  // A launch is the owner's own words (D162 sends it as text), so at the write
+  // path it is the same bytes as chatter: a launch that travelled without its
+  // verb would be an ordinary message -- kept at any state, written to the
+  // inbox -- and the design's §4.3 ("a lapsed launch never reaches the inbox")
+  // would be false through this screen while every test here stayed green.
+  const h = await harness({ licence: lapsedPort() });
+  const refused = await h.input.propose({ text: 'kick off the nightly build', verb: 'launch' });
+
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, LICENCE_STATE_CODES.LAPSED, 'the licence’s own code, carried unchanged');
+  assert.deepEqual(h.inbox(), [], 'nothing reached the inbox');
+  assert.deepEqual((await h.input.awaiting()).actions, [], 'and nothing is waiting to be confirmed');
+
+  // The SAME port keeps ordinary chatter, so the refusal above is the
+  // classification's doing and not the port refusing everything (T12: a lapse
+  // removes the launch and the configuration, not the conversation).
+  const chatter = await h.input.submit('ship the release notes');
+  assert.equal(chatter.ok, true);
+  assert.equal(chatter.outcome, INPUT_OUTCOME.SENT);
+  assert.equal(h.inbox().length, 1);
+  assert.equal(h.inbox()[0][1].text, 'ship the release notes');
 });
 
 // ---------------------------------------------------------------------------

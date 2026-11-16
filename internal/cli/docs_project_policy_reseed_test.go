@@ -63,8 +63,8 @@ func TestDocsProjectPolicyPublishAfterDeleteReseedsTheList(t *testing.T) {
 		}
 	}
 	build := sourceOfFunc(t, "project_cmd.go", "buildProjectPolicy")
-	if !strings.Contains(build, "if old != nil {") || !strings.Contains(build, "pol.CloneURLs = old.CloneURLs") {
-		t.Error("buildProjectPolicy carries clone_urls without the old-node guard (or dropped the assignment): the pages' \"clone_urls goes with the delete\" is now wrong")
+	if !strings.Contains(build, "pol.CloneURLs = lc.CloneURLsEffective(oldCloneURLs)") {
+		t.Error("buildProjectPolicy no longer takes clone_urls from the config through the keep rule: the pages' \"the node's clone_urls block goes with the delete, unless the config states one\" is about the node half of that rule, so it is now wrong")
 	}
 	node := sourceOfFunc(t, "project_cmd.go", "policyNodeBytes")
 	if !strings.Contains(node, "if !exists {") || !strings.Contains(node, "return node, nil") {

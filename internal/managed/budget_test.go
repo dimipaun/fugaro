@@ -38,25 +38,22 @@ func closedGate(t *testing.T, r BudgetRead) Enable {
 }
 
 // Every way the apply-time read can fail to answer with an amount, each
-// leaving the gate closed with its own sentence. The nine failures are the
-// task's own list — the marker's version 1, an absent marker, an amount of 0
-// or below, a currency that is not there, a marker naming another project, a
-// read that could not be made at all, and an object that is malformed,
-// oversized or has trailing data (the last three the same answer, because
-// ReadBudget refuses a shape it cannot parse before it looks at anything else)
-// — plus the two answers the second read adds.
+// leaving the gate closed with its own sentence. The failures are the task's
+// own list — an absent marker, an amount of 0 or below, a currency that is not
+// there, a marker naming another project, a read that could not be made at all,
+// and an object that is malformed, oversized or has trailing data (the last
+// three the same answer, because ReadBudget refuses a shape it cannot parse
+// before it looks at anything else) — plus the two answers the second read
+// adds. The one case that is NOT here is the marker's version 1: a managed
+// creation fact that records no amount is the case D1545 takes, and it opens
+// the gate WITH A WARNING rather than a refusal
+// (TestApplyGateOpensWithAWarningOnAVersionOneMarker).
 func TestApplyGateRefusesEveryReadThatAnsweredNoAmount(t *testing.T) {
-	const reason = "gs://fugaro-runs-proj-1234/fugaro/managed.json records no budget amount for aurora"
 	for _, tc := range []struct {
 		what string
 		read BudgetRead
 		want []string
 	}{
-		{
-			what: "the marker is version 1: managed, and no amount recorded",
-			read: BudgetRead{Project: project, Managed: true, Reason: reason},
-			want: []string{"has no budget recorded", "fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC", "fugaro setup --create-project --managed --budget N --budget-currency CCC --billing-account ID", reason},
-		},
 		{
 			what: "the marker is absent",
 			read: BudgetRead{Project: project, ManagedReason: "gs://fugaro-runs-proj-1234/fugaro/managed.json is not there (or cannot be read), so aurora was not created by a managed run"},
@@ -172,22 +169,129 @@ func TestApplyGateRefusesEveryReadThatAnsweredNoAmount(t *testing.T) {
 	}
 }
 
-// The refusal a reader acts on is one line, whatever the read put in it: a
-// reason can come from an object someone else wrote, and a newline in it must
-// not become a line of this program's output.
+// The text a reader acts on is one line, whatever the read put in it: a reason
+// can come from an object someone else wrote, and a newline in it must not
+// become a line of this program's output. Both halves are checked — the refusal
+// of a project the marker did not place, and the version-1 warning D1545
+// attaches to a managed creation fact that records no amount.
 func TestApplyGateRefusalIsOneLine(t *testing.T) {
-	_, err := ApplyGate(BudgetRead{Project: project, Managed: true, Reason: "no amount\r\nsecond line\x00"})
+	bad := "no amount\r\nsecond line\x00"
+	_, err := ApplyGate(BudgetRead{Project: project, ManagedReason: bad})
 	if err == nil {
 		t.Fatal("ApplyGate refused nothing")
 	}
-	if strings.ContainsAny(err.Error(), "\r\x00") || strings.Count(err.Error(), "\n") != 0 {
-		t.Errorf("the refusal carries the reason's own control characters: %q", err.Error())
+	oneLine(t, "the refusal", err.Error())
+	gate, err := ApplyGate(BudgetRead{Project: project, Managed: true, Reason: bad})
+	if err != nil {
+		t.Fatalf("a version-1 marker was refused, and D1545 takes it with a warning: %v", err)
+	}
+	if w := gate.Warning(); w == "" {
+		t.Fatal("the version-1 warning is empty, so the session is told nothing")
+	} else {
+		oneLine(t, "the warning", w)
 	}
 }
 
-// The only thing that opens the gate is a read that answered with an amount
-// above 0 and a currency — and then the pair is carried, whole, so what the
-// apply runs under is the amount the owner chose and not a default.
+// oneLine fails the test when text carries a carriage return, a NUL or a
+// newline: this program's output a reader acts on is one line.
+func oneLine(t *testing.T, what, text string) {
+	t.Helper()
+	if strings.ContainsAny(text, "\r\x00") || strings.Count(text, "\n") != 0 {
+		t.Errorf("%s carries the reason's own control characters: %q", what, text)
+	}
+}
+
+// D1545's one exception (budget.go): a managed creation fact that records no
+// amount — the marker's version 1 — opens the gate WITH A WARNING rather than a
+// refusal, because the read answered that the project is managed and what is
+// missing is only the evidence that the owner chose a budget. The gate is open
+// (Refuse nil) and the warning names the reason and the owner's own commands,
+// and it names no environment variable.
+func TestApplyGateOpensWithAWarningOnAVersionOneMarker(t *testing.T) {
+	const reason = "gs://fugaro-runs-proj-1234/fugaro/managed.json records no budget amount for aurora"
+	gate, err := ApplyGate(BudgetRead{Project: project, Managed: true, Reason: reason})
+	if err != nil {
+		t.Fatalf("a version-1 marker was refused, and D1545 takes it with a warning: %v", err)
+	}
+	if err := gate.Refuse(); err != nil {
+		t.Fatalf("the gate a version-1 read opened refuses: %v", err)
+	}
+	w := gate.Warning()
+	if w == "" {
+		t.Fatal("the gate opened with no warning, so the session is told nothing about the missing budget")
+	}
+	for _, want := range []string{project, "has no budget recorded", reason,
+		"fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC",
+		"fugaro setup --create-project --managed --budget N --budget-currency CCC --billing-account ID"} {
+		if !strings.Contains(w, want) {
+			t.Errorf("the warning %q does not carry %q", w, want)
+		}
+	}
+	if strings.Contains(w, "FUGARO_") || strings.Contains(w, "export ") {
+		t.Errorf("the warning %q names an environment variable, which its reader would take as a way around the owner", w)
+	}
+	// The gate carries no amount, because there was none to carry, and it is
+	// open on the warning alone.
+	if gate.Budget() != (Budget{}) {
+		t.Errorf("the warned gate carries %+v, want the zero Budget", gate.Budget())
+	}
+	// And a warning is not a way through the other failures: a read that also
+	// errored, one whose recorded figure fails Check, and a project the marker
+	// did not place all still refuse.
+	for _, r := range []BudgetRead{
+		{Project: project, Managed: true, Reason: reason, Err: errors.New("5xx")},
+		{Project: project, Managed: true, Reason: reason, OK: true, Amount: 0, Currency: "USD"},
+		{Project: project, Reason: reason},
+	} {
+		if _, err := ApplyGate(r); err == nil {
+			t.Errorf("a read %+v opened the gate", r)
+		}
+	}
+}
+
+// M4 and the marker's own rule: a marker this build cannot place leaves the
+// gate CLOSED and an error, whatever its reason — an unreadable object, a
+// version this build does not know, and one naming another project are three
+// faces of the same fail-closed answer, and none of them opens the gate. This
+// is the direction every mistake here has to fall in (Global Constraint 3).
+func TestMarkerChecksFailClosed(t *testing.T) {
+	for _, tc := range []struct {
+		what string
+		read BudgetRead
+	}{
+		{
+			what: "the marker cannot be read",
+			read: BudgetRead{Project: project, ManagedReason: "gs://fugaro-runs-proj-1234/fugaro/managed.json is not there (or cannot be read)"},
+		},
+		{
+			what: "the marker is a version this build does not know",
+			read: BudgetRead{Project: project, ManagedReason: "gs://fugaro-runs-proj-1234/fugaro/managed.json is not a marker for aurora: version 9, and this build reads up to 2"},
+		},
+		{
+			what: "the marker names another project",
+			read: BudgetRead{Project: project, ManagedReason: "gs://fugaro-runs-proj-1234/fugaro/managed.json names project proj-9999, not proj-1234"},
+		},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			gate := closedGate(t, tc.read)
+			_, err := ApplyGate(tc.read)
+			if err == nil {
+				t.Fatal("the marker check opened the gate")
+			}
+			if !strings.Contains(err.Error(), "is not managed") || !strings.Contains(err.Error(), tc.read.ManagedReason) {
+				t.Errorf("the refusal %v does not carry the marker's own reason %q", err, tc.read.ManagedReason)
+			}
+			if gate.Warning() != "" {
+				t.Errorf("a refused read left a warning %q, want none", gate.Warning())
+			}
+		})
+	}
+}
+
+// One thing that opens the gate is a read that answered with an amount above 0
+// and a currency — and then the pair is carried, whole, so what the apply runs
+// under is the amount the owner chose and not a default. (The other thing is
+// the version-1 warning, TestApplyGateOpensWithAWarningOnAVersionOneMarker.)
 func TestApplyGateOpensOnlyOnARecordedAmount(t *testing.T) {
 	gate, err := ApplyGate(BudgetRead{Project: project, Amount: 12000, Currency: "EUR", OK: true, Managed: true})
 	if err != nil {
@@ -236,8 +340,11 @@ func TestBudgetValidIsTheMarkersOwnPair(t *testing.T) {
 // closed, is refused before anything is assumed, planned or applied — and the
 // terraform the Request would have run is never built.
 func TestApplyRefusesEveryCallerWhoseBudgetReadDidNotAnswer(t *testing.T) {
-	// The gate a read of a managed project with no recorded amount leaves.
-	gate := closedGate(t, BudgetRead{Project: project, Managed: true, Reason: "records no budget amount"})
+	// The gate a read of a project the marker did not place leaves: closed. A
+	// managed project with no recorded amount does NOT leave a closed gate any
+	// more (D1545 opens it with a warning), so the closed gate this test needs
+	// is the not-managed answer.
+	gate := closedGate(t, BudgetRead{Project: project, ManagedReason: "no creation fact for aurora"})
 	n := 0
 	// Over the whole product of the run's conditions and the three states the
 	// fact can be in, because a caller that reaches Apply by another route

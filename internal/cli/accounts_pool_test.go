@@ -125,7 +125,7 @@ func accountsPoolBlock(t *testing.T, path string) string {
 func TestPoolAddReplacesTheWholeMemberListInPlace(t *testing.T) {
 	path := accountsPoolHome(t, "")
 
-	out, _, err := execute(t, "accounts", "pool", "add", "claude", "key-one", "oauth-two", "oauth-one", "--yes")
+	out, _, err := execute(t, "accounts", "pool", "add", "claude", "key-one", "oauth-two", "oauth-one")
 	if err != nil {
 		t.Fatalf("accounts pool add: %v\n%s", err, out)
 	}
@@ -158,7 +158,7 @@ func TestPoolAddReplacesTheWholeMemberListInPlace(t *testing.T) {
 func TestPoolAddWritesANewPoolWithFailoverByDefault(t *testing.T) {
 	path := accountsPoolHome(t, "")
 
-	_, _, err := execute(t, "accounts", "pool", "add", "fresh", "oauth-one", "key-one", "--yes")
+	_, _, err := execute(t, "accounts", "pool", "add", "fresh", "oauth-one", "key-one")
 	if err != nil {
 		t.Fatalf("accounts pool add: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestPoolAddWritesANewPoolWithFailoverByDefault(t *testing.T) {
 func TestPoolAddStrategyFlag(t *testing.T) {
 	path := accountsPoolHome(t, "")
 
-	_, _, err := execute(t, "accounts", "pool", "add", "fresh", "oauth-one", "oauth-two", "--strategy", "round-robin", "--yes")
+	_, _, err := execute(t, "accounts", "pool", "add", "fresh", "oauth-one", "oauth-two", "--strategy", "round-robin")
 	if err != nil {
 		t.Fatalf("accounts pool add --strategy: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestPoolAddStrategyFlag(t *testing.T) {
 	}
 
 	before := readFileString(t, path)
-	out, _, err := execute(t, "accounts", "pool", "add", "fresh", "oauth-one", "--strategy", "spread", "--yes")
+	out, _, err := execute(t, "accounts", "pool", "add", "fresh", "oauth-one", "--strategy", "spread")
 	if err == nil {
 		t.Fatalf("a strategy outside the vocabulary was written:\n%s", out)
 	}
@@ -227,7 +227,7 @@ func TestPoolAddRefusesWhatTheBlockRefuses(t *testing.T) {
 			path := accountsPoolHome(t, "")
 			before := readFileString(t, path)
 
-			args := append(append([]string{"accounts", "pool", "add"}, tc.args...), "--yes")
+			args := append([]string{"accounts", "pool", "add"}, tc.args...)
 			out, _, err := execute(t, args...)
 			if err == nil {
 				t.Fatalf("the write was not refused:\n%s", out)
@@ -249,7 +249,7 @@ func TestPoolAddRefusesWhatTheBlockRefuses(t *testing.T) {
 func TestPoolAddAcceptsTheBuiltInVertex(t *testing.T) {
 	path := accountsPoolHome(t, "")
 
-	out, _, err := execute(t, "accounts", "pool", "add", "routes", "oauth-one", "vertex", "--yes")
+	out, _, err := execute(t, "accounts", "pool", "add", "routes", "oauth-one", "vertex")
 	if err != nil {
 		t.Fatalf("accounts pool add with vertex: %v\n%s", err, out)
 	}
@@ -276,7 +276,7 @@ func TestPoolAddRefusesAFlowMemberList(t *testing.T) {
 	path := accountsPoolHomeWith(t, flow)
 	before := readFileString(t, path)
 
-	out, _, err := execute(t, "accounts", "pool", "add", "flow", "oauth-one", "key-one", "--yes")
+	out, _, err := execute(t, "accounts", "pool", "add", "flow", "oauth-one", "key-one")
 	if err == nil {
 		t.Fatalf("a flow member list was written:\n%s", out)
 	}
@@ -296,13 +296,13 @@ func TestPoolAddRefusesAFlowMemberList(t *testing.T) {
 func TestPoolRmDropsThePoolAndAnEmptyBlock(t *testing.T) {
 	path := accountsPoolHome(t, "")
 
-	if _, _, err := execute(t, "accounts", "pool", "rm", "routes", "--yes"); err != nil {
+	if _, _, err := execute(t, "accounts", "pool", "rm", "routes"); err != nil {
 		t.Fatalf("accounts pool rm: %v", err)
 	}
 	if block := accountsPoolBlock(t, path); strings.Contains(block, "name: routes") {
 		t.Errorf("the pool was not removed:\n%s", block)
 	}
-	out, _, err := execute(t, "accounts", "pool", "rm", "claude", "--yes")
+	out, _, err := execute(t, "accounts", "pool", "rm", "claude")
 	if err != nil {
 		t.Fatalf("accounts pool rm (last): %v\n%s", err, out)
 	}
@@ -318,23 +318,42 @@ func TestPoolRmDropsThePoolAndAnEmptyBlock(t *testing.T) {
 	}
 }
 
-// TestPoolRmRefusesWhileACraftNamesThePool: a craft whose access names the pool
+// TestPoolRmClearsTheCraftThatNamedThePool: a craft whose access names the pool
 // would be left pointing at nothing — no credential would serve its calls, and
-// the config would load with an access that resolves to no grant. The refusal
-// names the craft, and nothing is written.
-func TestPoolRmRefusesWhileACraftNamesThePool(t *testing.T) {
+// the config would load with an access that resolves to no grant. The access is
+// cleared with the pool it named instead, because refusing here would name a
+// step the owner cannot take: nothing in this release writes a crafts key (the
+// migration is its only writer, and the generic settings path refuses a
+// family-owned row), so the only way through a refusal would be a hand edit.
+// It is the treatment `accounts rm` gives the crafts that named the credential
+// it removes.
+func TestPoolRmClearsTheCraftThatNamedThePool(t *testing.T) {
 	path := accountsPoolHomeWith(t, accountsPoolCredentials+accountsPoolCraftsOnPool+accountsPoolPools)
-	before := readFileString(t, path)
 
-	out, _, err := execute(t, "accounts", "pool", "rm", "claude", "--yes")
-	if err == nil {
-		t.Fatalf("the pool a craft names was removed:\n%s", out)
+	out, _, err := execute(t, "accounts", "pool", "rm", "claude")
+	if err != nil {
+		t.Fatalf("accounts pool rm with a craft naming the pool: %v\n%s", err, out)
 	}
-	if !strings.Contains(err.Error(), "crafts.senior-review.access names pools.claude") {
-		t.Errorf("the refusal does not name the craft that would be left with nothing: %v", err)
+	lc, err := localcfg.Parse([]byte(readFileString(t, path)))
+	if err != nil {
+		t.Fatalf("the config this command wrote does not read back: %v", err)
 	}
-	if got := readFileString(t, path); got != before {
-		t.Errorf("the refused write changed the file:\n%s", got)
+	if _, ok := accountsPoolOf(lc, "claude"); ok {
+		t.Errorf("pools.claude is still declared after the removal: %+v", lc.Pools)
+	}
+	if got := lc.Crafts.Of(config.CraftSeniorReview).Access; got != "" {
+		t.Errorf("crafts.senior-review.access = %q, want the key cleared with the pool it named", got)
+	}
+	if got := lc.Crafts.Of(config.CraftSeniorReview).Model; got != "claude-opus-5-5" {
+		t.Errorf("crafts.senior-review.model = %q, want the model half left alone", got)
+	}
+	// The crafts that named something else are not this removal's: only the
+	// accesses naming the pool go.
+	if got := lc.Crafts.Of(config.CraftCoder).Access; got != "router-one" {
+		t.Errorf("crafts.coder.access = %q, want the credential it named before", got)
+	}
+	if !strings.Contains(out, "clear crafts.senior-review.access, which named it") {
+		t.Errorf("the sentence does not name the craft key it cleared:\n%s", out)
 	}
 }
 
@@ -345,7 +364,7 @@ func TestPoolRmRefusesAPoolThatIsNotDefined(t *testing.T) {
 	path := accountsPoolHome(t, "")
 	before := readFileString(t, path)
 
-	_, _, err := execute(t, "accounts", "pool", "rm", "claud", "--yes")
+	_, _, err := execute(t, "accounts", "pool", "rm", "claud")
 	if err == nil {
 		t.Fatal("an undefined pool was removed without a complaint")
 	}
@@ -381,7 +400,7 @@ func TestPoolWritesRefuseInAgentSession(t *testing.T) {
 				before := readFileString(t, path)
 				t.Setenv(marker, "1")
 
-				out, _, err := execute(t, append(tc.args, "--yes")...)
+				out, _, err := execute(t, tc.args...)
 				if err == nil {
 					t.Fatalf("the write landed in a coding agent's session:\n%s", out)
 				}
@@ -497,7 +516,7 @@ func TestAccountsAddTypeRefusesATypeNoRunCouldServe(t *testing.T) {
 			path := accountsPoolHome(t, "")
 			before := readFileString(t, path)
 
-			out, _, err := execute(t, "accounts", "add", "team-a", "--repos", "acme/app", "--type", tc.typ, "--yes")
+			out, _, err := execute(t, "accounts", "add", "team-a", "--repos", "acme/app", "--type", tc.typ)
 			if err == nil {
 				t.Fatalf("--type %q was accepted:\n%s", tc.typ, out)
 			}
@@ -545,7 +564,7 @@ func TestAccountsAddTypeRefusesToRetypeACredential(t *testing.T) {
 	path := accountsAddFixture(t, accountsPoolTypedLocal)
 	before := readFileString(t, path)
 
-	_, _, addErr := executeStdin(t, "", "accounts", "add", "key-one", "--repos", "owner/repo-a", "--type", "claude-oauth", "--yes")
+	_, _, addErr := executeStdin(t, "", "accounts", "add", "key-one", "--repos", "owner/repo-a", "--type", "claude-oauth")
 
 	if addErr == nil {
 		t.Fatalf("the credential key-one, defined as anthropic, was retyped as claude-oauth")
@@ -565,7 +584,7 @@ func TestAccountsAddTypeRefusesToRetypeACredential(t *testing.T) {
 func TestAccountsAddTypeKeepsASameTypedCredential(t *testing.T) {
 	path := accountsAddFixture(t, accountsPoolTypedLocalSameType)
 
-	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "key-one", "--repos", "owner/repo-a", "--type", "claude-oauth", "--yes")
+	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "key-one", "--repos", "owner/repo-a", "--type", "claude-oauth")
 	if err != nil {
 		t.Fatalf("accounts add --type claude-oauth beside a claude-oauth credential: %v\n%s", err, out)
 	}
@@ -590,7 +609,7 @@ func TestAccountsAddTypeKeepsASameTypedCredential(t *testing.T) {
 func TestAccountsAddTypeWritesTheCredentialEntry(t *testing.T) {
 	accountsAddFixture(t, accountsAddLocal)
 
-	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "acme/app", "--type", "claude-oauth", "--yes")
+	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "acme/app", "--type", "claude-oauth")
 	if err != nil {
 		t.Fatalf("accounts add --type: %v\n%s", err, out)
 	}

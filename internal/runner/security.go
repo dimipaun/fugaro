@@ -3,15 +3,24 @@ package runner
 import (
 	"context"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/orchestrator/sensitivity"
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 // The security escalation (docs/security-classification/implementation-plan.md
 // SC6, D1507, D1508, D1509): the run's own diff is classified against the list
 // in force, and a diff that matches a row turns review level 3 on for the run.
+//
+// The list in force is the one resolution (SC9, D1506, D1511): the engine's
+// floor, the project layer the task carried and the base branch's own rows,
+// unioned — securityList below. The project layer and the repository's block
+// are the ones the run resolved against at bootstrap, so the escalation and the
+// review the run then pays for are decided by the same two lists a reader sees
+// in `fugaro security paths`.
 //
 // The read is (*Repo).ChangedFiles against securityBase below — roundRigor's
 // own read, except that a follow-up is measured against its pull request's
@@ -46,6 +55,71 @@ import (
 // level's model, the same-model rule, a provider-served effort — because those
 // are about *which* model the level runs and not about whether it runs.
 
+// securityForcedLevels is the levels this run's own request forces on above the
+// owner's floor: review level 3, when the task asked for it or the project
+// layer the task carried answers always_level_3 (SC10, D1517, D1503). It is
+// resolveLevels' forcing input (plan.go), so the request is part of the one
+// resolution a run makes at bootstrap rather than a second pass over it: the
+// levels the record carries, the plan the run builds and every reader of them
+// are the same answer, and the refusals a floored level meets — D722's `none`
+// under the floor, an allowed_models list that does not name the level's model
+// — are raised where the launcher can still be told, which is the answer
+// --review-levels and the escalation's own row get for their levels.
+//
+// The request only turns the level on: `security: false` forces nothing, and it
+// is not an exemption from the escalation (D1517). Nothing here is fenced or
+// allow-listed, exactly as --mode's own raise needs neither: there is no value
+// of it that asks for a weaker review.
+//
+// A layer that wrote the level's own off-switch does not defeat the request:
+// the forced resolution clears it (plan.go's forcedLevelsAreRaiseOnly), which
+// is the raise-only rule the escalation's row is held to as well. The layer's
+// setting is the project's, and a task that asks for the strongest review, or a
+// project whose layer puts every run of it at level 3, is the statement that
+// only turns the level on — the reason there is nothing to warn about here,
+// where the escalation warns about the switch it overrides (escalateSecurity).
+//
+// A mode: review recipe forces nothing, and warns: such a recipe allows exactly
+// one review step and nothing else (recipe.Parse), so the level the request
+// asks for has no step to run in, and config's resolver refuses every other
+// level of it (config's reviewOnlyLevel). Refusing the run over a request it
+// cannot honour would kill a job already paid for — the reachable case is a
+// review run of a project whose layer sets always_level_3, and `fugaro review`
+// goes through the same launch — so the run keeps the levels it resolved and
+// the warning names the request and the reason, which is F9's rule for the
+// escalation's own row. The launcher drops it the same way and says so before
+// the job starts (internal/cli's launchReviewLevelsAsk), so a launch made by
+// this release resolves the levels without the request and never reaches this
+// warning: what does is a task written by hand, or one carrying the field from
+// a release whose launcher had no such read.
+func (r *run) securityForcedLevels() []policy.Level {
+	if !r.securityRequested() {
+		return nil
+	}
+	if r.rcp != nil && r.rcp.Mode == recipe.ModeReview {
+		r.d.Log.Warn("the run asks for the strongest review and its recipe is mode: review, which allows exactly one review step and nothing else: review level 3 has no step to run in, so the run keeps the levels it resolved",
+			"recipe", r.rcp.Name)
+		return nil
+	}
+	return []policy.Level{policy.LevelL3}
+}
+
+// securityRequested reports whether this run asks for the strongest review it
+// can get: the task carries `security: true`, which is the field `fugaro run
+// --security` writes (D1517), or the project layer the task carried sets
+// security.always_level_3, which is every run of that project (D1503).
+//
+// The layer is the one the run resolved against at bootstrap — r.cfg's, merged
+// over the base branch's own file — so a branch cannot carry the switch that
+// decides its own review, the way it cannot carry the list the escalation
+// classifies against (securityList).
+func (r *run) securityRequested() bool {
+	if r.spec != nil && r.spec.Security {
+		return true
+	}
+	return r.cfg != nil && r.cfg.Layer != nil && r.cfg.Layer.Security != nil && r.cfg.Layer.Security.AlwaysLevel3
+}
+
 // securityBase is the revision the escalation's read starts from: the run's
 // own work (workBase) for a first run, the commit the pull request's base was
 // at when the run started (follow.baseSHA) for a follow-up, so the whole pull
@@ -77,6 +151,25 @@ func (r *run) securityBase() string {
 	return r.workBase()
 }
 
+// securityList is the list in force for this run (SC9, D1506, D1511): the
+// engine's floor, the project layer the task carried and the repository's own
+// rows, unioned by config.SecurityPatterns.
+//
+// Both written halves are the ones this run resolved against at bootstrap: r.cfg
+// is the base branch's own file resolved over the task's layer (resolveConfig),
+// so a branch cannot carry the list that governs its own review, and the layer
+// arrives with the task rather than from the branch's checkout.
+//
+// A run with no resolved config — a state no seam is reached in, and which a
+// test's bare run stands for — resolves the floor alone, which is the least the
+// escalation can ask for and never less than the run would have.
+func (r *run) securityList() config.SecurityList {
+	if r.cfg == nil {
+		return config.SecurityPatterns(nil, nil).List()
+	}
+	return config.SecurityPatterns(r.cfg.Security, r.cfg.Layer).List()
+}
+
 // escalateSecurity classifies the run's diff and, on a match, turns review
 // level 3 on and rebuilds the plan so the adversarial step is in it. The diff
 // is securityBase's: the run's own work, or the whole pull request for a
@@ -91,9 +184,7 @@ func (r *run) securityBase() string {
 // not move, because a mode raise would rewrite the round counts and the
 // findings policy for a change whose only new fact is its paths (D1508).
 //
-// In this slice the list in force is the floor alone (sensitivity.Floor); SC9
-// re-points it at the one resolution, and the record member does not change
-// shape when it does.
+// The list it classifies against is securityList's.
 func (r *run) escalateSecurity(ctx context.Context, at string) {
 	if levelOn(r.levels, policy.LevelL3) {
 		return
@@ -104,7 +195,7 @@ func (r *run) escalateSecurity(ctx context.Context, at string) {
 			"at", at, "err", r.redact(err.Error()))
 		return
 	}
-	matched := sensitivity.Match(paths, sensitivity.Floor())
+	matched := sensitivity.Match(paths, r.securityList().Patterns())
 	if len(matched) == 0 {
 		return
 	}
@@ -182,7 +273,7 @@ func (r *run) escalateSecurityAtFinalize(ctx context.Context) {
 			"at", runstore.SecurityAtFinalize, "err", r.redact(err.Error()))
 		return
 	}
-	matched := sensitivity.Match(paths, sensitivity.Floor())
+	matched := sensitivity.Match(paths, r.securityList().Patterns())
 	if len(matched) == 0 {
 		return
 	}

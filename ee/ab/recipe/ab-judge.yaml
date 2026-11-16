@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+# See ee/LICENSE for the terms.
+version: 1
+name: ab-judge
+description: Judge a sampled pair's two patches blind and record the verdict
+use_when: A repository has pairs whose arms are both complete; the coordinator's scheduled judge run picks it, and a person launches it to judge a pair again.
+mode: evaluate
+steps:
+  - ab_judge: {}

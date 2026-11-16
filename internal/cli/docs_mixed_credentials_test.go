@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/recipe"
 )
 
@@ -32,8 +33,9 @@ import (
 // §11.1-§11.2, rung 2), or, since 2026-11-05, by the project's
 // `default_claude_account` where that stage's own model is an Anthropic one
 // (rung 4, which an `oauth` run also uses for every stage) — and use it for
-// the senior `review` (level 2) and the adversarial `adversarial` (level 3)
-// stages only.
+// the three stages of the mix and no others: the senior `review` (level 2), the
+// adversarial `adversarial` (level 3) and the `triage` judge that weighs a
+// round's findings before the fix takes them (D1851).
 // The stage rule is an allow-list rather than a denylist, so every other stage
 // is refused: `implement`, `review_first` (level 1 is the cheap first line and
 // runs on the coder's model), `fix`, `plan`, and any stage a later recipe adds.
@@ -60,8 +62,27 @@ import (
 // TestDocsMultiModelNamesTheReviewOnTheRunsOwnKey and
 // TestDocsMixedCredentialsCorrectsTheStaleMissingList are those two pins.
 
+// rungTwoKeys is the mix's allow-list as the documents enumerate the stage keys
+// that name the account: `stages.review.claude_account`,
+// `stages.adversarial.claude_account` or `stages.triage.claude_account`. A page
+// that stops at the two reviews sends a reader who wants the judge on the
+// account to a key it believes is refused, so the enumeration is read off the
+// launch's own list (config.MixedAccountStages) rather than spelled again here:
+// a stage that joins or leaves the mix fails the pins that use this, and the
+// pages are corrected with it.
+func rungTwoKeys(stages []string) string {
+	quoted := make([]string, 0, len(stages))
+	for _, stage := range stages {
+		quoted = append(quoted, "`stages."+stage+".claude_account`")
+	}
+	if len(quoted) < 2 {
+		return strings.Join(quoted, "")
+	}
+	return strings.Join(quoted[:len(quoted)-1], ", ") + " or " + quoted[len(quoted)-1]
+}
+
 // TestDocsMixedCredentialsRecordsTheRuling: the design note carries the rule
-// as its own section, with the two stages it may serve, the two it may never
+// as its own section, with the stages it may serve, the two it may never
 // serve, the second-provider refusal, the threat model and the failure
 // behaviour the tasks B1-B6 follow.
 func TestDocsMixedCredentialsRecordsTheRuling(t *testing.T) {
@@ -70,10 +91,12 @@ func TestDocsMixedCredentialsRecordsTheRuling(t *testing.T) {
 
 	// The stages are read from the recipe's own step names, so a step renamed
 	// in the tree fails here rather than leaving the document naming a stage
-	// no run has.
+	// no run has. `triage` is a runner stage and not a recipe step (D1851), so
+	// it is named as the tree names it (config.RunStages).
 	for _, want := range []string{
 		"`" + string(recipe.StepReview) + "`",
 		"`" + string(recipe.StepAdversarial) + "`",
+		"`triage`",
 		"`implement`",
 		"`review_first`",
 	} {
@@ -81,14 +104,31 @@ func TestDocsMixedCredentialsRecordsTheRuling(t *testing.T) {
 			t.Errorf("%s §11 never names %s: the rule is about which stages the account may serve", path, want)
 		}
 	}
-	// The two stages the account may serve are the whole of the allow-list, and
-	// the sentence that permits them is where a reader learns the rule is a
+	// The stages the account may serve are the whole of the allow-list, and the
+	// sentence that permits them is where a reader learns the rule is a
 	// permission rather than a ban: read with "and no other stage", a rule that
-	// named a third stage and said nothing else would still fail here.
-	permitted := fmt.Sprintf("the account serves `%s` and `%s` and no other stage",
-		recipe.StepReview, recipe.StepAdversarial)
+	// named one more stage and said nothing else would still fail here. The
+	// names come off the launch's own list (config.MixedAccountStages), so a
+	// stage added to the mix fails here rather than leaving the document a
+	// stage behind the launch.
+	quoted := make([]string, 0, len(config.MixedAccountStages))
+	for _, stage := range config.MixedAccountStages {
+		quoted = append(quoted, "`"+stage+"`")
+	}
+	permitted := fmt.Sprintf("the account serves %s and no other stage",
+		strings.Join(quoted[:len(quoted)-1], ", ")+" and "+quoted[len(quoted)-1])
 	if !strings.Contains(section, permitted) {
-		t.Errorf("%s §11 does not state the allow-list as %q: the account may serve exactly those two stages, and a rule that lists refusals instead lets the next stage a recipe adds read as permitted", path, permitted)
+		t.Errorf("%s §11 does not state the allow-list as %q: the account may serve exactly those stages, and a rule that lists refusals instead lets the next stage a recipe adds read as permitted", path, permitted)
+	}
+	// The rung-2 keys are enumerated where the reader learns how the account is
+	// named, and an enumeration that stops at the two reviews is what a stage
+	// joining the mix leaves behind: the sentence is read with the list's own
+	// names, so `triage` leaving this clause fails here rather than after an
+	// operator has been told the key for it is refused.
+	rungTwo := "`stages.<stage>.claude_account` on " +
+		strings.Join(quoted[:len(quoted)-1], ", ") + " or " + quoted[len(quoted)-1]
+	if !strings.Contains(section, rungTwo) {
+		t.Errorf("%s §11 does not name the rung-2 keys as %q: the stage's own key is what names the account, on every stage of the allow-list and not only on the first two", path, rungTwo)
 	}
 	for _, want := range []string{
 		// The rule, the one credential it permits and the two keys that may
@@ -267,19 +307,32 @@ func TestDocsMultiModelRecordsTheReviewAccountException(t *testing.T) {
 		"one",
 		"`review`",
 		"`adversarial`",
+		"`triage`",
 		"`review_first`",
 		"design/mixed-credentials.md",
+		// The bullet names the keys that decide the mix, so a reader who meets
+		// the rule here is sent to the stage's own key for all three stages and
+		// not only for the reviews.
+		rungTwoKeys(config.MixedAccountStages),
 	} {
 		if !strings.Contains(bullet, want) {
 			t.Errorf("%s §5's refusal bullet never says %q: a reader who takes it for the whole rule reads a mixed run as refused", path, want)
 		}
 	}
 
+	// The mix is three stages since triage joined it (D1851), and §3's sentence
+	// is quoted with that count: this guard is what makes a stage added to or
+	// removed from config.MixedAccountStages fail here rather than pass on a
+	// count the sentence no longer has.
+	if len(config.MixedAccountStages) != 3 {
+		t.Fatalf("config.MixedAccountStages holds %v; the sentence pinned below is the mix's three-stage rule", config.MixedAccountStages)
+	}
 	key := flattenDoc(docSection(t, path, doc, "## 3. The key"))
 	for _, want := range []string{
 		"stage-scoped Claude OAuth account",
 		"`review`",
 		"`adversarial`",
+		"`triage`",
 		"`implement`",
 		"`review_first`",
 		"a second provider's key",
@@ -289,11 +342,12 @@ func TestDocsMultiModelRecordsTheReviewAccountException(t *testing.T) {
 		"design/mixed-credentials.md",
 		// The two keys that admit the mix, and the condition on the second: the
 		// project default an oauth run uses for every stage is a way in for the
-		// two mixed stages where their own model is an Anthropic one, and no
+		// three mixed stages where their own model is an Anthropic one, and no
 		// further (the owner's ruling of 2026-11-05).
 		"by the project's `default_claude_account` where that stage's own model is an Anthropic one",
 		"stages.review.claude_account",
-		"the default is a way in for those two stages and for no others",
+		rungTwoKeys(config.MixedAccountStages),
+		"the default is a way in for those three stages and for no others",
 		// The run's own anthropic-api-key mount is not a third credential of
 		// this kind: it is what an api-key job already carries for the gateway.
 		"anthropic-api-key",
@@ -426,6 +480,50 @@ func TestSecurityMdStatesTheMixedRunResidual(t *testing.T) {
 	// hardening, and §11 keeps it unbuilt.
 	if !strings.Contains(limits, "it is not built") {
 		t.Errorf("%s's residual says the review stage's own job execution without saying it is not built: the fix a reader could assume exists is the one this document has to deny", path)
+	}
+}
+
+// TestNoPageEnumeratesTheMixShort is the scan the review of this change asked
+// for: the allow-list is three stages (config.MixedAccountStages) and the pages
+// that state it are prose, so only a scan keeps a page a stage behind — the
+// shape that left a two-stage enumeration in the design note, in both spots of
+// the user doc and in this file's own header while §11's headline already said
+// three. Two things are read, in the seven files that state the mix or the
+// stage vocabulary its account keys are written on: each names the judge, and
+// none carries either of the two stale enumerations, because that is the
+// sentence a reader is sent to when the third stage is dropped.
+func TestNoPageEnumeratesTheMixShort(t *testing.T) {
+	for _, path := range []string{
+		"docs/design/mixed-credentials.md",
+		"docs/multi-model.md",
+		"SECURITY.md",
+		"fugaro.yaml",
+		"docs/api-key-review/reconciliation.md",
+		"docs/model-crafts/reconciliation.md",
+		// The page that lists the stage names a `stages.<stage>.claude_account`
+		// segment may be: the same vocabulary (config.RunStages, which triage
+		// joined with D1851), so it goes stale the same way.
+		"docs/project-claude-accounts.md",
+	} {
+		doc := flattenDoc(readDoc(t, path))
+		// The scan has to move with the pages that state the mix: a file that
+		// stopped naming the account-choice keys would pass the two assertions
+		// below without saying anything at all.
+		if !strings.Contains(doc, "claude_account") {
+			t.Errorf("%s no longer names an account-choice key: this scan has to move with the pages that state the mix", path)
+			continue
+		}
+		if !strings.Contains(doc, "triage") {
+			t.Errorf("%s states the mix and never names `triage`: the account may serve every stage of config.MixedAccountStages, and a page that leaves the judge out sends an operator to a key it believes is refused", path)
+		}
+		for _, stale := range []string{
+			"`stages.review.claude_account` or `stages.adversarial.claude_account`",
+			"`stages.<stage>.claude_account` on `review` or `adversarial`",
+		} {
+			if strings.Contains(doc, stale) {
+				t.Errorf("%s enumerates the rung-2 keys as %q: the stage's own key names the account on every stage of the allow-list (%s), and not on the first two", path, stale, config.MixedStageChoice())
+			}
+		}
 	}
 }
 

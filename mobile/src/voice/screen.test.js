@@ -43,10 +43,12 @@ import { FakeStt } from '../audio/stt.js';
 import { FakeTts } from '../audio/tts.js';
 import { createMailboxClient } from '../mailbox/client.js';
 import { MemoryConnection } from '../mailbox/connection.js';
+import { LICENCE_SPEECH, LICENCE_STATE_CODES, LICENCE_STATES } from '../licence/state.js';
 import { GATE_CODES } from '../mailbox/gate.js';
 import { macOf } from '../mailbox/mac.js';
 import { MemoryMailboxStore } from '../mailbox/store.js';
 import { QUEUE_CAP, createVoiceScreen } from './screen.js';
+import { DIALOGUE_OUTCOME, createVoiceDialogue } from './dialogue.js';
 import { INTERRUPT_SWITCH } from './interrupt.js';
 import { createPipelineSpeaker } from './speaker.js';
 
@@ -131,6 +133,10 @@ async function harness(options = {}) {
     newId: () => `m-${++clientIds}`,
     secrets: SECRETS,
     heartbeatIntervalMs: INTERVAL_MS,
+    // S6.3's port, wired only where a test asks for a state: the app's own
+    // default is the unenforced one, which is what every other test here runs
+    // against.
+    ...(options.licence === undefined ? {} : { licence: options.licence }),
   });
   const screen = createVoiceScreen({
     pipeline,
@@ -167,6 +173,14 @@ async function harness(options = {}) {
     },
   };
 }
+
+/**
+ * S6.3's port, held at the lapse: what the real `createLicenceState` answers
+ * once the grace period is over, so a test's lapse is the state module's
+ * vocabulary rather than a string of its own.
+ */
+const lapsedPort = () =>
+  Object.freeze({ at: async () => Object.freeze({ state: LICENCE_STATES.LAPSED, claims: null }) });
 
 /** A digest carrying one severity, which is the field this screen reads. */
 const digestOf = (severity) => ({ severity });
@@ -267,6 +281,36 @@ test('one utterance at a time: two queued updates are spoken one after the other
   await settle();
   assert.deepEqual(h.tts.spoken(), ['the first', 'the second']);
   assert.deepEqual(h.screen.state().queued, []);
+});
+
+test('a held queue speaks nothing at any boundary, and letting it go drains it', async () => {
+  const h = await harness({ switch: INTERRUPT_SWITCH.ON });
+  h.screen.setDigest(digestOf(SEVERITY.failed));
+
+  // VS1.1's session holds the queue while it is paused or over, because the
+  // stop that pauses it cancels the utterance in flight -- and that cancel is
+  // itself an `utterance` event, so the queue's next update would otherwise be
+  // spoken into the call the pause exists for.
+  assert.deepEqual({ ...h.screen.setHeld(true) }, { ok: true, held: true });
+  h.screen.offer({ text: 'a run failed', severity: SEVERITY.failed });
+  assert.deepEqual(h.tts.spoken(), [], 'a held queue is not spoken, though the boundary is free');
+  assert.deepEqual(h.screen.state().queued, [{ text: 'a run failed', severity: 'failed' }], 'and nothing is dropped');
+
+  // No boundary drains it while it is held: the switch off and on again is the
+  // boundary that would speak it, and it speaks nothing.
+  h.screen.setSwitch(INTERRUPT_SWITCH.OFF);
+  h.screen.setSwitch(INTERRUPT_SWITCH.ON);
+  assert.deepEqual(h.tts.spoken(), [], 'and no boundary in between speaks it');
+
+  assert.deepEqual({ ...h.screen.setHeld(false) }, { ok: true, held: false });
+  assert.deepEqual(h.tts.spoken(), ['a run failed'], 'letting go is the boundary it goes out on');
+  assert.deepEqual(h.screen.state().queued, []);
+
+  // Re-stating the same value is not a refusal and says nothing new -- and a
+  // hold that is not a boolean is refused rather than stored.
+  assert.deepEqual({ ...h.screen.setHeld(false) }, { ok: true, held: false });
+  assert.deepEqual(h.tts.spoken(), ['a run failed'], 'and it is not said twice');
+  assert.deepEqual({ ...h.screen.setHeld('yes') }, { ok: false, code: 'bad-held', field: 'held' });
 });
 
 // --- the plan, sentence four -----------------------------------------------
@@ -416,6 +460,7 @@ test('the poll\'s presence goes through that same guard, which is the path the a
   const stub = {
     send: async () => Object.freeze({ ok: true }),
     poll: async () => Object.freeze({ ok: true, presence: { state: 'gone', reason: 'nonsense' } }),
+    licenceRefusal: async () => null,
   };
   const screen = createVoiceScreen({ pipeline: h.pipeline, client: stub, now: h.now, holder: PHONE });
 
@@ -498,6 +543,52 @@ test('a transcript that arrives while offline is refused too, and nothing is wri
   assert.equal(h.writes(), before, 'nothing reached the store');
   assert.deepEqual(h.screen.state().refused, { code: 'offline', field: 'presence' });
   assert.equal(h.screen.state().transcript.text, 'run the tests', 'and what was heard is still shown');
+});
+
+test('offline and lapsed at once: the licence answers this door, and the network does not', async () => {
+  // The masking the design forbids (§5.7, and §4.4's rule that "a lapse may not
+  // be the reason the app hears nothing"): a lapsed owner must
+  // not be told "the orchestrator is offline", which sends them to wait for a
+  // network that is not the problem, when the way out is the key screen.
+  //
+  // This screen's own refusal sits in FRONT of `client.send` -- it has to, or a
+  // write would escape while offline -- so on its own it would answer a lapsed
+  // launch with its own offline code. Both states are true of the one utterance
+  // here: no heartbeat was ever planted, and the port is held at the lapse.
+  const h = await harness({ licence: lapsedPort() });
+  await h.screen.poll();
+  assert.equal(h.screen.state().offline, true, 'the orchestrator is not there');
+  const before = h.writes();
+
+  // The refusal is SPOKEN (`state.js`'s own sentence, through the app's
+  // speaker), so the utterance is played out the way every other one in this
+  // file is.
+  const refused = h.screen.accept('run the release', { verb: 'launch' });
+  await settle();
+  h.tts.finish();
+  const accepted = await refused;
+  assert.equal(accepted.ok, false);
+  assert.equal(accepted.code, LICENCE_STATE_CODES.LAPSED, 'the licence\'s answer, and not this screen\'s');
+  assert.deepEqual(h.tts.spoken(), [LICENCE_SPEECH[LICENCE_STATE_CODES.LAPSED]],
+    'the owner hears the licence\'s own sentence, which names the key screen');
+  await settle();
+  assert.equal(h.writes(), before, 'nothing reached the store');
+  // Not recorded as this screen's own: `refused` is what THIS screen refused,
+  // and the licence's refusal is the client's, returned as the client's (the
+  // rule P6.10's stale refusal follows too).
+  assert.equal(h.screen.state().refused, null);
+
+  // The control, on the wiring the app ships today (no licence port, so no
+  // opinion): this screen's own refusal stands exactly where it stood, code and
+  // record both. Without it the assertion above could be an offline refusal
+  // that some other change replaced, rather than the licence answering.
+  const plain = await harness();
+  await plain.screen.poll();
+  assert.deepEqual(
+    { ...(await plain.screen.accept('run the release', { verb: 'launch' })) },
+    { ok: false, code: 'offline', field: 'presence' },
+  );
+  assert.deepEqual(plain.screen.state().refused, { code: 'offline', field: 'presence' }, 'and it is recorded here');
 });
 
 // --- the plan, sentence three ----------------------------------------------
@@ -666,6 +757,15 @@ test('the screen is built from a pipeline, a client, a clock and a holder, and s
   const deps = { pipeline: h.pipeline, client: h.client, now: h.now, holder: PHONE };
   assert.throws(() => createVoiceScreen({ ...deps, pipeline: {} }), TypeError);
   assert.throws(() => createVoiceScreen({ ...deps, client: { send: () => {} } }), TypeError);
+  // A client this screen can send with and poll but not ASK about the licence
+  // is a wiring failure too (S6.3): `accept` asks it before its own offline
+  // refusal, and a screen that refused offline otherwise would be answering
+  // "the orchestrator is offline" for a licence's reason.
+  assert.throws(
+    () => createVoiceScreen({ ...deps, client: { send: () => {}, poll: () => {} } }),
+    TypeError,
+    'the licence question is part of the client this screen needs',
+  );
   assert.throws(() => createVoiceScreen({ ...deps, now: 'now' }), TypeError);
   assert.throws(() => createVoiceScreen({ ...deps, holder: '' }), TypeError);
   assert.throws(() => createVoiceScreen({ ...deps, switch: 'sometimes' }), TypeError);
@@ -713,6 +813,56 @@ test('a final transcript goes to the spoken dialogue when the app wires one in (
 
   assert.deepEqual(plain.pathsWritten().filter((path) => path.includes('/inbox/')),
     [`mailbox/${UID}/inbox/m-1`], 'without a dialogue the words are a message');
+});
+
+test('a spoken launch on a lapsed licence is refused by the client, and never written', async () => {
+  // S6.3's rule, at the seam P6.12 built: **a lapsed launch never reaches the
+  // inbox** (the design's §4.3). The dialogue is wired the way the app wires it
+  // -- its `send` IS the screen's `accept` -- and the client holds a licence at
+  // the lapse, so this is the whole voice path from the resolved command to the
+  // store. It holds because the verb the machine classified the sentence as
+  // travels with it: a launch and agent text are the same bytes at the write
+  // path, so without the classification a lapsed launch would be written as
+  // ordinary chatter.
+  const wired = await harness({ licence: lapsedPort() });
+  const dialogue = createVoiceDialogue({
+    pipeline: wired.pipeline,
+    send: wired.screen.accept,
+    now: wired.now,
+    newId: () => 'u-1',
+  });
+  // The phone looks before it writes (P6.10's gate fails closed on a consumer
+  // nothing has observed), so that the chatter below is written and the launch's
+  // silence is the licence's doing rather than the gate's.
+  await wired.plantHeartbeat();
+  await wired.screen.poll();
+
+  // The refusal is SPOKEN (`state.js`'s own sentence, through the app's
+  // speaker), so the utterance is played out the way every other one in this
+  // file is.
+  const refused = dialogue.propose({ text: 'Fugaro, launch the release', verb: 'launch' });
+  await settle();
+  wired.tts.finish();
+  const launch = await refused;
+  assert.equal(launch.ok, false);
+  assert.equal(launch.code, LICENCE_STATE_CODES.LAPSED);
+  // What the dialogue carries back is the code and the field, not the client's
+  // whole refusal (P6.12's own rule, and the one its offline test pins), so the
+  // proof that the owner was TOLD is the spoken sentence itself.
+  assert.deepEqual(wired.tts.spoken(), [LICENCE_SPEECH[LICENCE_STATE_CODES.LAPSED]],
+    'the owner hears the licence’s own sentence, and not a network one');
+  await settle();
+  assert.deepEqual(wired.pathsWritten().filter((path) => path.includes('/inbox/')), [],
+    'a lapsed launch is not written, and nothing else was sent in its place');
+
+  // The same phone, the same port, and agent text. The lapse keeps the chatter
+  // (T12), so the refusal above is the classification's doing and not a client
+  // that refuses everything.
+  const said = await dialogue.utterance('hello there');
+  assert.equal(said.outcome, DIALOGUE_OUTCOME.SENT);
+  await settle();
+  assert.deepEqual(wired.pathsWritten().filter((path) => path.includes('/inbox/')),
+    [`mailbox/${UID}/inbox/m-1`], 'the chatter is still the owner’s, and still travels');
 });
 
 test('the screen shows what it is doing, in one frozen snapshot', async () => {

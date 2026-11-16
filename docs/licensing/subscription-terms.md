@@ -5,11 +5,11 @@ counsel returned, which carries no date or version number in its own text). It r
 of 2026-10-27 that followed the owner's answers, and reorganises the agreement by plan: Parts A to
 G, sections 1 to 34. Counsel has approved the text, including section 7.3 (Crash reports and
 diagnostics) as revised on 2026-10-31 to the owner's ruling that crash reporting is opt-in
-and off by default. It is not an offer, and nobody has agreed to it: the Licensor's name, jurisdiction, address, privacy notice URL
+and off by default. It binds a Customer only once that Customer accepts it under section 1.2. The Licensor's name, jurisdiction, address, privacy notice URL
 and notice address were filled in by the owner on 2026-10-30. These are the "Fugaro Subscription Terms" that the
 business licence in [`ee/LICENSE`](../../ee/LICENSE), [`console/LICENSE.md`](../../console/LICENSE.md)
 and [`mobile/LICENSE.md`](../../mobile/LICENSE.md) refers to as published "at https://fugaro.dev/legal/subscription-terms";
-the text is in force only once the owner publishes it
+the text is published at that address (live on 2026-11-11)
 ([implementation plan, L4.3](implementation-plan.md#l43--publish-the-subscription-terms-owner-run-after-counsel)).
 
 **How to read it.** Parts A to G are the agreement text, as counsel wrote it, with Markdown for

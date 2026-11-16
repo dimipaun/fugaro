@@ -23,8 +23,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/secretname"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -56,6 +58,25 @@ workflows:
 // the proxy on for workspace-a/repo-a.
 const brokeringConfig = "project_secrets:\n  bitbucket-token:\n    allow_data_to: [workspace-a/repo-a]\n    proxy: true\n" +
 	"repos:\n  workspace-a/repo-a: { provider: bitbucket, workflows: [app] }\n"
+
+// brokeringVariantsConfig is brokeringConfig with two named Claude accounts
+// workspace-a/repo-a may run a workflow under, and — when on — the repository
+// recorded as applied with the credentials service ON. The record is what an
+// ordinary `fugaro update --repo` writes for a root its apply deployed with the
+// service on (localcfg.RecordSwitch over infra.CredentialsServiceServes), and a
+// record that is true is an apply whose agent.auth was cascade; a cascade
+// repository's root deploys the default variant of its workflow and no other
+// (infra.WorkflowAccounts), so team-a and team-b are the variants that
+// repository has no job — and no job account — for.
+func brokeringVariantsConfig(on bool) string {
+	repo := "repos:\n  workspace-a/repo-a: { provider: bitbucket, workflows: [app]"
+	if on {
+		repo += ", credentials_service_ready: true"
+	}
+	return "project_secrets:\n  bitbucket-token:\n    allow_data_to: [workspace-a/repo-a]\n    proxy: true\n" +
+		"claude_accounts:\n  team-a: { allow_data_to: [workspace-a/repo-a] }\n  team-b: { allow_data_to: [workspace-a/repo-a] }\n" +
+		repo + " }\n"
+}
 
 // brokeringRig is a doctor rig inside a checkout of workspace-a/repo-a, whose
 // installation's update deployed the credentials service (the block is in its
@@ -123,6 +144,25 @@ func newBrokeringNoServiceRig(t *testing.T) *brokeringRig {
 	r := newBrokeringCheckout(t, false)
 	addLocalLines(t, r.doctorRig, brokeringConfig)
 	putProjectSecret(t, r.sm, "aurora", config.BitbucketSecret, []byte("bundle-token-value"))
+	return r
+}
+
+// newBrokeringVariantsRig is the same checkout with two named Claude accounts
+// allowed for the repository, and with the switch's own record written (on) or
+// left out (off): the row's accounts are the ones a repository's root deploys,
+// so the two names matter only where that root deploys no job for them.
+func newBrokeringVariantsRig(t *testing.T, on bool) *brokeringRig {
+	t.Helper()
+	r := newBrokeringCheckout(t, true)
+	addLocalLines(t, r.doctorRig, brokeringVariantsConfig(on))
+	putProjectSecret(t, r.sm, "aurora", config.BitbucketSecret, []byte("bundle-token-value"))
+	// Both named accounts have their token stored project-wide, which is where
+	// an account's allow_data_to puts it: a name with no token anywhere is
+	// doctor's own hard failure (claude-accounts-stored, which carries no
+	// severity), and that is not the state this rig is about.
+	for _, name := range []string{"team-a", "team-b"} {
+		putProjectSecret(t, r.sm, "aurora", config.ClaudeAccountSecret(name), []byte("account-token-value"))
+	}
 	return r
 }
 
@@ -526,34 +566,170 @@ func TestDoctorBrokeringCredentialsServiceDeployed(t *testing.T) {
 
 }
 
+// TestDoctorCredentialsServiceDeployedCountsTheDeployedVariants: the row
+// compares the service's caller table with the invoker grants, and the table is
+// every account the local config allows a repository — deliberately a superset,
+// since a row no run is ever minted for is the fail-closed direction
+// (infra.CredentialsJobAccounts). What holds a grant is narrower: a repository
+// ON the switch is a cascade one (the record the local config carries is
+// infra.CredentialsServiceServes as the apply that wrote it built it, so a
+// record that is true is an apply whose auth was config.AuthCascade), and a
+// cascade repository's root deploys the default variant of each workflow and no
+// other (infra.WorkflowAccounts). Counting the named variants' accounts
+// reported a working installation as one whose service admits nobody — the
+// false warning the live Check 191 stopped on — while a repository OFF the
+// switch keeps the whole allowed set, which is the warning that says
+// proxy: true is inert for it.
+func TestDoctorCredentialsServiceDeployedCountsTheDeployedVariants(t *testing.T) {
+	// deployed is the service itself, up and serving, with the grant the
+	// repository's DEFAULT job account holds: neither named account of the rig
+	// is on the policy at all, which is what a cascade root leaves.
+	deployed := func(t *testing.T, r *brokeringRig) {
+		t.Helper()
+		r.svcs.AddService(infra.CredentialsServiceName)
+		r.svcs.SetServicePolicy(infra.CredentialsServiceName,
+			gcpfake.Binding{Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}})
+		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
+	}
+
+	t.Run("a switched repository counts its default variant alone", func(t *testing.T) {
+		r := newBrokeringVariantsRig(t, true)
+		deployed(t, r)
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("doctor: %v", err)
+		}
+		cs := checksByID(o, "credentials-service-deployed")
+		if len(cs) != 1 || !cs[0].OK {
+			t.Fatalf("credentials-service-deployed = %+v, want one ok check: the repository is on the switch and its default job holds the grant, and an account of a variant its cascade root deploys no job for can never hold one", cs)
+		}
+	})
+
+	t.Run("a repository off the switch still names the variants", func(t *testing.T) {
+		r := newBrokeringVariantsRig(t, false)
+		deployed(t, r)
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		cs := checksByID(o, "credentials-service-deployed")
+		if len(cs) != 1 || cs[0].OK || cs[0].Severity != "warning" {
+			t.Fatalf("credentials-service-deployed = %+v, want one warning: the local config records no apply of this repository's root with the service on, and the local config states no agent.auth of its own, so the row keeps the whole allowed set rather than guessing which variants that root deployed", cs)
+		}
+		for _, want := range []string{"workspace-a/repo-a (app_team-a)", "workspace-a/repo-a (app_team-b)"} {
+			if !strings.Contains(cs[0].Problem, want) {
+				t.Errorf("the warning does not name %s, and a repository off the switch keeps the whole allowed set: %q", want, cs[0].Problem)
+			}
+		}
+	})
+
+	t.Run("a switched repository whose default job lacks the grant", func(t *testing.T) {
+		r := newBrokeringVariantsRig(t, true)
+		r.svcs.AddService(infra.CredentialsServiceName)
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		cs := checksByID(o, "credentials-service-deployed")
+		if len(cs) != 1 || cs[0].OK || cs[0].Severity != "warning" {
+			t.Fatalf("credentials-service-deployed = %+v, want one warning", cs)
+		}
+		if !strings.Contains(cs[0].Problem, "workspace-a/repo-a (app)") {
+			t.Errorf("the warning does not name the repository's own deployed job, which is the account the service does not admit: %q", cs[0].Problem)
+		}
+		for _, unwanted := range []string{"app_team-a", "app_team-b"} {
+			if strings.Contains(cs[0].Problem, unwanted) {
+				t.Errorf("the warning names %s, a variant this repository's cascade root deploys no job for: %q", unwanted, cs[0].Problem)
+			}
+		}
+	})
+
+	t.Run("a grant on a variant the repository does not deploy does not make the row clean", func(t *testing.T) {
+		r := newBrokeringVariantsRig(t, true)
+		// The account of a variant the cascade root deploys no job for holds
+		// the invoker grant on its own — a leftover of the apply before the
+		// switch, or a policy written by hand — and the account the run is
+		// actually launched under holds none. The row is about whether the
+		// jobs this repository runs can reach the service, so the row may not
+		// come out clean on a grant no job of its can use.
+		r.svcs.AddService(infra.CredentialsServiceName)
+		r.svcs.SetServicePolicy(infra.CredentialsServiceName,
+			gcpfake.Binding{Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app_team-a")}})
+
+		o, err := r.doctor(t)
+		if err != nil {
+			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
+		}
+		cs := checksByID(o, "credentials-service-deployed")
+		if len(cs) != 1 || cs[0].OK || cs[0].Severity != "warning" {
+			t.Fatalf("credentials-service-deployed = %+v, want one warning: the repository's own deployed job holds no grant, and one held by a variant it deploys no job for is not a grant its runs can use", cs)
+		}
+		if !strings.Contains(cs[0].Problem, "workspace-a/repo-a (app)") {
+			t.Errorf("the warning does not name the repository's own deployed job: %q", cs[0].Problem)
+		}
+	})
+}
+
 // TestDoctorCredentialsServiceDeployedSpeaksThePhrasesCheck191Matches: the live
-// check's `proxied` row decides whether the sandbox repository is served by
-// reading this line, and it tells its arms apart by their words — the row's
-// JSON carries no account list, so the words are the only handle it has
-// (scripts/live-checks/check191.sh, its `switch_state`). A rewording here is not
-// a break the check reports as one: the arm becomes one the reading does not
-// know, and the check records that as unmeasured (exit 2, nothing launched)
-// rather than as a switch that is on. That is the safe direction, and it is why
-// each phrase is pinned on the Go side of the contract, where a reword lands.
-// The arm that matters most is the installation that carries no service at all:
-// its runs hold their own Bitbucket token, and a `proxied: PASS` over it is the
-// lie this whole reading exists to refuse.
+// check's `proxied` row reads this line, and it tells its arms apart by their
+// words — the row's JSON carries nothing a reader outside the Go code can branch
+// on (scripts/live-checks/check191.sh, its `switch` reading). The check stops on
+// the arms where the service cannot serve a run at all: an installation with no
+// service, where proxy: true brokers nothing, and a service that admits every
+// job account and holds nothing to serve a model credential out of, where every
+// model call of a run is refused — the states its own prerequisites name, and
+// the two where a `proxied: PASS` would launch three runs against a service that
+// answers none of them.
+//
+// The arms the check reads PAST are the ones about the invoker grant: the switch
+// is the credentials service's own IAM policy crossed with the repository's own
+// jobs, because the released doctor names accounts of workflow variants a
+// switched repository does not deploy, so a sentence about accounts decides
+// nothing there. Those two arms are also the ones
+// doctorCredentialsServiceDeployed returns BEFORE doctorCredentialsServiceServing
+// — the read that sees the bundle — so the check reads the bundle itself in that
+// state rather than reading the arm as a service that can serve a run.
+//
+// Every phrase is pinned on the Go side of the contract, where a reword lands: a
+// sentence this file stops speaking is an arm the check does not place, and the
+// check records that as unmeasured (exit 2, nothing launched) rather than as a
+// switch that is on. That is the safe direction. The reverse is pinned too: an
+// arm listed as one the check must NOT place carries no other arm's phrase, so a
+// needle that came to match two arms fails here — doctor's arms for a read that
+// failed carry "may invoke it could not be checked" in their own sentence, and a
+// check that read that tail as the custom-role arm would report an installation
+// nobody could read as one whose only open question was the grant.
 func TestDoctorCredentialsServiceDeployedSpeaksThePhrasesCheck191Matches(t *testing.T) {
+	// deployed is the service every arm after the first two starts from: there,
+	// admitting this installation's one job account, with the bundle container
+	// its own apply creates and no version in it.
 	deployed := func(t *testing.T) *brokeringRig {
 		t.Helper()
 		r := newBrokeringRig(t)
 		r.svcs.AddService(infra.CredentialsServiceName)
 		r.svcs.SetServicePolicy(infra.CredentialsServiceName,
 			gcpfake.Binding{Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}})
+		return r
+	}
+	// serving is the same service with a version in its bundle, which is the one
+	// state whose line is silent.
+	serving := func(t *testing.T) *brokeringRig {
+		t.Helper()
+		r := deployed(t)
 		r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token")))
 		return r
 	}
-	// The healthy arm is the one case with no phrase: the reading answers `on`
-	// from its silence, so any line written there is an arm it does not know.
 	cases := []struct {
 		arm    string
 		phrase string
-		build  func(t *testing.T) *brokeringRig
+		// unplaced is an arm the check must NOT place: its line carries none of
+		// the phrases below, so the check records it as unmeasured (exit 2,
+		// nothing launched).
+		unplaced bool
+		build    func(t *testing.T) *brokeringRig
 	}{
 		{
 			arm:    "the installation carries no service",
@@ -561,7 +737,37 @@ func TestDoctorCredentialsServiceDeployedSpeaksThePhrasesCheck191Matches(t *test
 			build:  newBrokeringNoServiceRig,
 		},
 		{
-			arm:    "the service is deployed and a job account may not invoke it",
+			arm:    "the block is written and Cloud Run has no service",
+			phrase: "Cloud Run has no service",
+			build:  newBrokeringRig,
+		},
+		{
+			arm:    "the service's bundle holds no version",
+			phrase: "it admits nobody: every job account may invoke it, and",
+			build:  deployed,
+		},
+		{
+			arm:    "the newest bundle version is disabled",
+			phrase: "it admits nobody: every job account may invoke it, and",
+			build: func(t *testing.T) *brokeringRig {
+				t.Helper()
+				r := deployed(t)
+				r.sm.DisableVersions(r.putBundle(t, brokeringBundleDoc(t, credsValue(t, "token"))))
+				return r
+			},
+		},
+		{
+			arm:    "the verify route admits nobody",
+			phrase: "admits nobody on the verify route",
+			build: func(t *testing.T) *brokeringRig {
+				t.Helper()
+				r := serving(t)
+				addLocalLines(t, r.doctorRig, "verifier_accounts: []\n")
+				return r
+			},
+		},
+		{
+			arm:    "a job account the service does not admit",
 			phrase: "grants no roles/run.invoker to",
 			build: func(t *testing.T) *brokeringRig {
 				t.Helper()
@@ -571,13 +777,8 @@ func TestDoctorCredentialsServiceDeployedSpeaksThePhrasesCheck191Matches(t *test
 			},
 		},
 		{
-			arm:    "the block is written and Cloud Run has no service",
-			phrase: "Cloud Run has no service",
-			build:  newBrokeringRig,
-		},
-		{
 			arm:    "a role doctor cannot judge",
-			phrase: "could not be checked",
+			phrase: "a custom role on its or the project's policy could not be read",
 			build: func(t *testing.T) *brokeringRig {
 				t.Helper()
 				r := newBrokeringRig(t)
@@ -588,19 +789,35 @@ func TestDoctorCredentialsServiceDeployedSpeaksThePhrasesCheck191Matches(t *test
 			},
 		},
 		{
-			arm:    "the verify route admits nobody",
-			phrase: "admits nobody on the verify route",
+			// The catch-all arm for a read that failed before the service was
+			// ever looked at. Its sentence carries "whether its callers may
+			// invoke it could not be checked", which is why the custom-role
+			// needle above is that arm's own clause and not that tail: a check
+			// that matched the tail would read this arm as one about the grant.
+			arm:      "a read that failed before the service was looked at",
+			unplaced: true,
 			build: func(t *testing.T) *brokeringRig {
 				t.Helper()
-				r := deployed(t)
-				addLocalLines(t, r.doctorRig, "verifier_accounts: []\n")
+				r := newBrokeringCheckout(t, true)
+				// A repository whose provider the local config does not name:
+				// infra.CredentialsJobAccounts refuses it, which is this arm.
+				addLocalLines(t, r.doctorRig, "repos:\n  workspace-a/repo-a: { workflows: [app] }\n")
+				putProjectSecret(t, r.sm, "aurora", config.BitbucketSecret, []byte("bundle-token-value"))
 				return r
 			},
 		},
 		{
 			arm:   "every job account may invoke it, with a version in the bundle",
-			build: deployed,
+			build: serving,
 		},
+	}
+	// placed is every phrase the check DOES place an arm by, which is what an
+	// arm listed as unplaced must carry none of.
+	var placed []string
+	for _, c := range cases {
+		if c.phrase != "" {
+			placed = append(placed, c.phrase)
+		}
 	}
 	for _, c := range cases {
 		t.Run(c.arm, func(t *testing.T) {
@@ -612,9 +829,20 @@ func TestDoctorCredentialsServiceDeployedSpeaksThePhrasesCheck191Matches(t *test
 			if len(cs) != 1 {
 				t.Fatalf("the state emitted %d credentials-service-deployed checks, want exactly one: %+v", len(cs), cs)
 			}
+			if c.unplaced {
+				if cs[0].Problem == "" {
+					t.Fatalf("this arm is listed as one the check does not place, and its line is empty — an empty line is the serving arm, which the check reads past")
+				}
+				for _, p := range placed {
+					if strings.Contains(cs[0].Problem, p) {
+						t.Errorf("check191.sh must not place this arm, and its line carries the phrase %q it places another one by: %q", p, cs[0].Problem)
+					}
+				}
+				return
+			}
 			if c.phrase == "" {
 				if cs[0].Problem != "" {
-					t.Fatalf("the healthy arm carries a problem: check191.sh answers `on` from its silence, and a line here reads as an arm it does not know: %q", cs[0].Problem)
+					t.Fatalf("the serving arm carries a problem: check191.sh places this arm by its silence, and a line here reads as one it does not place: %q", cs[0].Problem)
 				}
 				return
 			}
@@ -2267,5 +2495,235 @@ func TestDoctorCheckBitbucketTokenRefusedInAgentSession(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// intakeMember is the secrets intake's own account as a project IAM policy
+// spells it, in the installation project every rig uses: the account
+// modules/installation/intake.tf creates and every DS2.2 grant names.
+func intakeMember() string {
+	return "serviceAccount:" + tf.IntakeAccountID + "@" + initProject + ".iam.gserviceaccount.com"
+}
+
+// intakeWriteRole is the dynamic class's write role as a policy names it: a
+// project-level custom role's name is the role's id under the project's.
+func intakeWriteRole() string {
+	return "projects/" + initProject + "/roles/" + tf.IntakeSecretsRole
+}
+
+// intakeFence is the condition every write grant of the intake is bound under
+// (DS2.2): the one condition the class's writes and the service's prefix
+// accessor share.
+func intakeFence() *gcpfake.IAMCondition {
+	return &gcpfake.IAMCondition{
+		Title:      gcp.DynamicSecretNamesConditionTitle,
+		Expression: gcp.DynamicSecretNamesCondition(),
+	}
+}
+
+// useIntakeIAM points the rig's config at an IAM fake holding the dynamic
+// class's write role as modules/installation/intake.tf defines it. The check
+// asks the IAM API what a custom role carries, so a rig without one would
+// report the intake's own role as one nobody read rather than answer the
+// question the test is about.
+func useIntakeIAM(t *testing.T, r *brokeringRig) {
+	t.Helper()
+	iam := gcpfake.NewIAM(t)
+	cfg := strings.Replace(r.cfg, "endpoints: { ", "endpoints: { iam: "+iam.URL+"/, ", 1)
+	if cfg == r.cfg {
+		t.Fatal("the rig's config carries no endpoints block to point at the IAM fake")
+	}
+	if err := os.WriteFile(r.cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r.cfg = cfg
+	role := "projects/" + initProject + "/roles/" + tf.IntakeSecretsRole
+	iam.AddRole(initProject, tf.IntakeSecretsRole, "Fugaro secrets intake (the conditioned writes)", false)
+	iam.SetRolePermissions(role, "secretmanager.secrets.create", "secretmanager.secrets.delete", "secretmanager.versions.add")
+	// Both roles the class defines, as modules/installation/intake.tf does: a
+	// role the fake does not know is one the check reports as unread, and a
+	// lister that cannot be read is a second line about a state the case is not
+	// about.
+	lister := "projects/" + initProject + "/roles/" + tf.SecretListerRole
+	iam.AddRole(initProject, tf.SecretListerRole, "Fugaro secret lister (the names, never a value)", false)
+	iam.SetRolePermissions(lister, "secretmanager.secrets.list")
+}
+
+// setIntakePolicy writes the rig's project policy with bindings beside the
+// operator's own roles/owner, which every other check of the rig reads.
+func setIntakePolicy(t *testing.T, r *brokeringRig, bindings ...gcpfake.Binding) {
+	t.Helper()
+	all := append([]gcpfake.Binding{
+		{Role: "roles/owner", Members: []string{"user:owner@example.com"}},
+	}, bindings...)
+	r.crm.SetPolicy(initProject, all...)
+}
+
+// TestDoctorIntakeHasNoAccessor is DS4.2's red step and its subject. The
+// intake is the one account that creates, adds a version to and deletes the
+// dynamic containers, and DS2.2 gives it no way to read one: its grants are the
+// two roles of the class, under the name fence. A project policy that gives the
+// account a role carrying secretmanager.versions.access — a Secret Manager
+// role, or a basic one, which reads through the project's own grant — or binds
+// its write role without the fence, or names the account without ever giving it
+// the write role, is a finding an operator has to act on; an installation where
+// the account is deployed and fenced, and one where no grant names it at all,
+// are measurements.
+func TestDoctorIntakeHasNoAccessor(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		bindings []gcpfake.Binding
+		finding  string
+		absent   string
+	}{
+		{
+			name: "the account holds an accessor",
+			bindings: []gcpfake.Binding{
+				{Role: intakeWriteRole(), Members: []string{intakeMember()}, Condition: intakeFence()},
+				{Role: "roles/secretmanager.secretAccessor", Members: []string{intakeMember()}},
+			},
+			finding: "secretmanager.secretAccessor",
+		},
+		{
+			name: "the write grant is bound without the fence",
+			bindings: []gcpfake.Binding{
+				{Role: intakeWriteRole(), Members: []string{intakeMember()}},
+			},
+			finding: "name-prefix condition",
+		},
+		{
+			// A basic role reads values through the project's own grant, and
+			// the same run's reader sweep names its holders: a measurement that
+			// called this account reader-free would contradict it.
+			name: "the account holds a basic role",
+			bindings: []gcpfake.Binding{
+				{Role: intakeWriteRole(), Members: []string{intakeMember()}, Condition: intakeFence()},
+				{Role: "roles/owner", Members: []string{intakeMember()}},
+			},
+			finding: "roles/owner",
+		},
+		{
+			// Half an installation: the account is there, the grant that makes
+			// it the class's writer is not. Nothing of the class works, and the
+			// fence the measurement would otherwise report is not bound at all.
+			name: "no binding gives it the write role",
+			bindings: []gcpfake.Binding{
+				{Role: "projects/" + initProject + "/roles/" + tf.SecretListerRole, Members: []string{intakeMember()}},
+			},
+			finding: intakeWriteRole(),
+		},
+		{
+			name: "deployed under the fence",
+			bindings: []gcpfake.Binding{
+				{Role: intakeWriteRole(), Members: []string{intakeMember()}, Condition: intakeFence()},
+			},
+			absent: "holds no role that reads a secret's value",
+		},
+		{name: "no grant names the account", absent: "no secrets intake is deployed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newBrokeringRig(t)
+			useIntakeIAM(t, r)
+			setIntakePolicy(t, r, tc.bindings...)
+			o, _ := r.doctor(t)
+			found := checksByID(o, "secrets-intake")
+			if len(found) != 1 {
+				t.Fatalf("doctor emitted %d secrets-intake checks, want exactly one:\n%+v", len(found), found)
+			}
+			c := found[0]
+			if tc.finding != "" {
+				if c.OK || c.Severity != "warning" {
+					t.Fatalf("secrets-intake = ok=%v severity=%q, want a warning: %+v", c.OK, c.Severity, c)
+				}
+				if !strings.Contains(c.Problem, tc.finding) {
+					t.Errorf("the warning does not name %q: %s", tc.finding, c.Problem)
+				}
+				if !strings.Contains(c.Fix, "remove-iam-policy-binding") && !strings.Contains(c.Fix, selfCommand()+" update") {
+					t.Errorf("the warning's fix names no action: %s", c.Fix)
+				}
+				return
+			}
+			if !c.OK || c.Severity != "info" {
+				t.Fatalf("secrets-intake = ok=%v severity=%q, want a measurement: %+v", c.OK, c.Severity, c)
+			}
+			if !strings.Contains(c.Problem, tc.absent) {
+				t.Errorf("the measurement does not say %q: %s", tc.absent, c.Problem)
+			}
+		})
+	}
+}
+
+// TestDoctorFlagsUnparseableSecretName: a container of the installation's
+// project whose name carries the fugaro_u_/fugaro_p_ prefix the intake's write
+// fence admits and no grammar admits is one the intake may version and delete
+// and no reader can ever resolve (R1, R12). Doctor names it, and leaves a
+// container whose name the grammar admits alone.
+func TestDoctorFlagsUnparseableSecretName(t *testing.T) {
+	r := newBrokeringRig(t)
+	good := secretname.UserPrefix + "123_account-token"
+	digitless := secretname.UserPrefix + "abc_account-token"
+	uppercase := secretname.ProjectPrefix + "Account_Token"
+	for _, id := range []string{good, digitless, uppercase} {
+		r.sm.Seed(id, map[string]string{gcp.LabelManaged: gcp.ManagedValue}, nil)
+	}
+	o, _ := r.doctor(t)
+	found := checksByID(o, "dynamic-secret-name")
+	if len(found) != 2 {
+		t.Fatalf("doctor emitted %d dynamic-secret-name checks, want one per unreadable name:\n%+v", len(found), found)
+	}
+	var problems string
+	for _, c := range found {
+		if c.OK || c.Severity != "warning" {
+			t.Errorf("dynamic-secret-name = ok=%v severity=%q, want a warning: %+v", c.OK, c.Severity, c)
+		}
+		if !strings.Contains(c.Fix, "grammar") {
+			t.Errorf("the warning's fix does not say what a name has to be: %s", c.Fix)
+		}
+		problems += c.Problem + "\n"
+	}
+	for _, want := range []string{digitless, uppercase} {
+		if !strings.Contains(problems, want) {
+			t.Errorf("no line names the unreadable name %s:\n%s", want, problems)
+		}
+	}
+	if strings.Contains(problems, good) {
+		t.Errorf("a name the grammar admits was flagged:\n%s", problems)
+	}
+}
+
+// TestDoctorNamesLegacyOpenPools: the migration that gave pools an owner left
+// every pool that predated owners marked legacy_open, which is a pool served to
+// whoever asks (D1942). Doctor names those pools and asks an admin to give each
+// an owner, and says nothing about a pool that has one.
+func TestDoctorNamesLegacyOpenPools(t *testing.T) {
+	r := newBrokeringRig(t)
+	node, err := json.Marshal(doctorPolicy(func(p *projectpolicy.Policy) {
+		p.CraftPools = []config.Pool{
+			{Name: "reviewers", Members: []string{config.CredentialVertex}, LegacyOpen: true},
+			{Name: "auditors", Members: []string{config.CredentialVertex}, Owner: "owner@example.com"},
+		}
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.publishPolicyNode(t, string(node))
+
+	o, _ := r.doctor(t)
+	found := checksByID(o, "pools-legacy-open")
+	if len(found) != 1 {
+		t.Fatalf("doctor emitted %d pools-legacy-open checks, want exactly one:\n%+v", len(found), found)
+	}
+	c := found[0]
+	if c.OK || c.Severity != "warning" {
+		t.Fatalf("pools-legacy-open = ok=%v severity=%q, want a warning: %+v", c.OK, c.Severity, c)
+	}
+	if !strings.Contains(c.Problem, "reviewers") {
+		t.Errorf("the warning does not name the legacy-open pool: %s", c.Problem)
+	}
+	if strings.Contains(c.Problem, "auditors") {
+		t.Errorf("the warning names a pool that has an owner: %s", c.Problem)
+	}
+	if !strings.Contains(c.Fix, "owner") {
+		t.Errorf("the fix does not ask for an owner: %s", c.Fix)
 	}
 }

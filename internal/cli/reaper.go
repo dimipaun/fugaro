@@ -87,11 +87,11 @@ const (
 // and the environment is reached for only where nothing named a config at all
 // (reaperPass).
 //
-// Nothing here makes `backend: cloud-batch` selectable. The reaper's project
-// config carries a batch: block, which a config may carry while its own
-// `backend:` still names Cloud Run -- Task 8's allowlist said so -- and
-// internal/localcfg refuses `backend: cloud-batch` until the task that turns
-// it on. The reaper never opens the seam's backend at all: it reads the
+// The reaper's project config carries a batch: block, which a config may carry
+// while its own `backend:` still names Cloud Run -- Task 8's allowlist said so
+// -- so this command runs on both kinds of installation and asks the config for
+// the facts it needs rather than for the backend. The reaper never opens the
+// seam's backend at all: it reads the
 // installation's facts out of the config and talks to the Batch and Compute
 // APIs itself.
 func newReaperCmd() *cobra.Command {

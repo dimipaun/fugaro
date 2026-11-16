@@ -77,11 +77,17 @@ commit authors are the owner under **three email addresses on three different do
 the runner identity `Fugaro <fugaro@users.noreply.invalid>` (389) and `dependabot[bot]` (8
 mechanical version bumps; its 14 `Signed-off-by` trailers are the only sign-offs in the
 history). PR authors ever: the owner's account, `app/fugaro-dev`, `app/dependabot`. Commit
-trailers credit AI models as co-authors (about 8,900 `Co-authored-by` lines). No outside human
-contributor appears. *Consequence, for the owner and counsel, not decided here:* (a) whether any
+trailers credit AI models as co-authors (about 8,900 `Co-authored-by` lines). One outside human
+contributor has appeared since: `paulkore` (2 commits, #1665 and #1673, merged 2026-11-03), whose
+pull requests the CLA assistant reported as signed by all committers. A `.mailmap` at the repository root maps the owner's
+billmybank.com and youkno.ai addresses to the lattica.com one for display; the stored commits are unchanged. *Consequence, for the owner and counsel, not decided here:* (a) whether any
 organisation behind the email domains has a claim on work committed under its address; (b)
 how AI-assisted authorship bears on the copyright the enterprise licence rests on. Neither blocks
 the 0.11.0 slice; both bear on D305.
+
+**Answered by the owner, 2026-11-11 (L0.1):** (a) no organisation behind the email domains has a
+claim; (b) AI-assisted authorship needs no change to the licence, the CLA or the commit trailers;
+and D307's notices meet the dependencies' licence terms. This closes L0.1.
 
 **F4 — Rule (internal contradiction): "nothing gets moved out of the core" vs the later
 candidates.** The candidates are already core: `console/` (released, F5), `mobile/`, the
@@ -423,7 +429,8 @@ unused.
   the binary carries code under the enterprise licence; a test (plan L2.1, from 0.11.0) refuses a
   non-empty tag list without those labels, and the label change is its own slice (plan L5) with an
   OWNER-RUN counsel review. (c) A user who wants a pure-MIT binary builds from source without the
-  tag; whether to also publish a pure-MIT artifact is open for that release. (d) The repository's
+  tag; whether to also publish a pure-MIT artifact was open for that release and **the owner ruled
+  2026-11-11: yes, publish a pure-MIT build** beside the mixed-licence one (plan L5.3). (d) The repository's
   `go vet -tags` loop in `ci.yml` does not vet `//go:build ee` files today; the workspaces plan adds
   the tag to it when the first such file lands. (e) The three published images
   (`images/base/Dockerfile`, `images/history/Dockerfile`, `images/credentials/Dockerfile`) each
@@ -432,7 +439,7 @@ unused.
   otherwise (an input for that plan).
 - **O1 — Counsel (OWNER-RUN, task L0.1):** the `ee/LICENSE` text and licensor line (T1), the CLA
   text for the hosted app (D304), F3 (a) and (b), and whether D307's notices meet the dependencies'
-  terms.
+  terms. All answered 2026-11-11 (see F3).
 - **O2 — D301 and GitHub's detector.** F27: GitHub reports `other` for a repository whose root
   `LICENSE` carries a scope statement ahead of the MIT text. D301's statement sits after line 1 but
   is still extra text, so Check 130 will most likely show "other" rather than "MIT" (U1). The owner
@@ -559,7 +566,7 @@ for the correct number of user seats, and leaves to those Terms the Licensor's i
 further description of a user seat, the ownership of subscribers' modifications (clause 2.1), any
 patent licence (clause 10.1) and what may be kept after termination (clause 11.3).
 [subscription-terms.md](subscription-terms.md) is a **first draft of those Terms for counsel to
-review: not reviewed by counsel and not in force**, with every commercial term in brackets for the
+review: not reviewed by counsel and, at that date, not in force** (since approved and published on 2026-11-11), with every commercial term in brackets for the
 owner, a list of the owner's commercial questions and a list of questions for counsel. Its defined
 terms follow the licence's ("Agreement", "Licensor", "production", "user seat"); it treats the MIT
 core as outside the Subscription; and it describes the licence key only as D308's design intent
@@ -607,7 +614,7 @@ L4.5). What changed in the draft:
 
 Still open: the Enterprise seat floor (the owner's) and the late-payment interest rate (counsel's).
 The draft's counsel list gains the items the session added. The licence files, the CLA and
-`LICENSING.md` are not edited, and the draft is still **not in force**.
+`LICENSING.md` are not edited, and the draft was then still not in force (published since 2026-11-11).
 
 
 ## Amendment 2026-10-27 (the Subscription Terms URL)

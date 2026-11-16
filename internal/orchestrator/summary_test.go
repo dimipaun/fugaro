@@ -85,4 +85,18 @@ func TestSummaryIsGeneratedAndCapped(t *testing.T) {
 	if !strings.Contains(capped, "capped") {
 		t.Error("the capped summary does not say that it was cut")
 	}
+
+	// A field the summary lists is a field a session reading it can act on,
+	// and the spec is the one a session writes itself: printed for the item
+	// that carries one, and absent — not printed empty — for the item that
+	// carries none, which is an item the daemon labels with no spec at all.
+	named := s
+	named.WorkItems = append([]orchestrator.WorkItem(nil), s.WorkItems...)
+	named.WorkItems[0].Spec = "forge-labels"
+	if out := orchestrator.Summarize(named); !strings.Contains(out, "    spec: forge-labels\n") {
+		t.Errorf("the summary does not name a work item's spec:\n%s", out)
+	}
+	if out := orchestrator.Summarize(s); strings.Contains(out, "spec:") {
+		t.Errorf("the summary prints a spec for an item that carries none:\n%s", out)
+	}
 }

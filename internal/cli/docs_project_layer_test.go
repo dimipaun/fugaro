@@ -201,6 +201,65 @@ func TestDocsProjectLayerSaysRoutingIsApplied(t *testing.T) {
 	}
 }
 
+// TestDocsProjectLayerSaysTheSecurityListIsResolved: the page said, in bold,
+// that no run reads the two security halves, that the list in force is still
+// the engine's own floor of 43 rows and that doctor's finding about a written
+// row cannot fire — which the resolution made false (SC9, D1506, D1511). The
+// list a run matches a change against, the one `fugaro security paths` prints
+// and the one `fugaro doctor` counts are one resolution of the floor, the
+// project layer and the repository, so a reader who believed the page would
+// write a project-layer row expecting nothing to read it.
+//
+// The second half is which of those rows doctor measures: a project layer's row
+// is shared by every repository of the project, so the page may not claim the
+// finding covers it (the review finding on this change — a finding whose fix
+// the reader cannot apply is worse than none).
+//
+// The pinned sentence about `always_level_3` and the per-run request that goes
+// with it moved with SC10, which landed both halves: the page said the pair
+// "arrives with the forced level" and that `fugaro run` had no `--security`
+// request yet, and both are false now — the switch and the request are
+// resolution inputs, and the flag is what writes the task's own field. The
+// switch's image gate is pinned too: the page named 0.22.0 alone for it, and
+// the release whose runner acts on the key is one more, so a page keeping the
+// old sentence would tell a project that every job image on 0.22.0 is enough.
+//
+// Mutation (verified, run and restored): restore the paragraph's bold lead —
+// "**0.22.0 decodes and validates both halves; no run reads them yet.**" — and
+// the file where the layer is sketched, and this fails naming both.
+func TestDocsProjectLayerSaysTheSecurityListIsResolved(t *testing.T) {
+	doc := readDoc(t, "docs/project-layer.md")
+	for _, want := range []string{
+		"the readers resolve them",
+		"what a run matches a change against, what `fugaro security paths` prints and what `fugaro doctor` counts are that one resolution",
+		"the floor's rows and the repository's as if the project had written none",
+		"a layer applies only to a file that names its `project:` and `gcp_project:`",
+		"the one row it reports is one **this repository's own file** wrote that matches no path in the base",
+		"it is counted like the floor's rows and never measured",
+		"a row they refuse is dropped from the list rather than matched as written",
+		"`always_level_3` and the per-run request that goes with it turn review level 3 on when the run resolves its levels",
+		"Writing `always_level_3` needs one release more: 0.22.0 decodes the key and acts on nothing",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/project-layer.md lacks %q: the page is where a reader learns that both halves are read, and by whom", want)
+		}
+	}
+	for _, notWant := range []string{
+		"no run reads them yet",
+		"no run reads it yet",
+		"is still the engine's own floor of 43 rows",
+		"a written row are computed against that same floor",
+		"cannot be reported until a run resolves the list from the layers",
+		"arrive with the list's resolution (SC9) and the escalation (SC10)",
+		"`fugaro run` has no `--security` request today",
+		"the per-run request that goes with the switch arrives with the escalation below",
+	} {
+		if strings.Contains(doc, notWant) {
+			t.Errorf("docs/project-layer.md still says %q, which the resolution made false: the floor, the project's rows and the repository's are one list, and a run, `fugaro security paths` and `fugaro doctor` all read it", notWant)
+		}
+	}
+}
+
 // TestDocsProjectLayerShowsEveryFlagOfTheCommandsItShows is the other half of
 // TestDocsProjectLayerCommandsExist: that one checks the docs' flags are real,
 // and this one checks a real flag is in the docs. A flag an operator needs is
@@ -461,26 +520,27 @@ func TestNoShippedTextNamesTheRetiredOAuthGate(t *testing.T) {
 
 // TestDocsProjectLayerStatesThePolicyVersionItShips: docs/project-layer.md's
 // reference paragraph said, in the present tense, that "the policy is version 2
-// from fugaro 0.8.5" — and the bump to version 4 raises `projectpolicy.Version`
-// (VersionSince[4] = "0.14.0", the release that states the Bitbucket token's
-// block in the node), so the sentence must name the version and release this
-// tree writes. The paragraph now leads with version 4 and keeps version 3 as
-// the node that came before it, which is what the table says.
+// from fugaro 0.8.5" — and the bump to version 8 raises `projectpolicy.Version`
+// (VersionSince[8] = "0.26.0", the release whose own config states the binaries
+// block, AR1), so the sentence must name the version and release this tree
+// writes. The paragraph now leads with version 8 and keeps version 7 as the node
+// that came before it, which is what the table says.
 //
 // The version the page names is read from the constants rather than typed
 // twice, so the next bump fails here instead of shipping a page describing
 // another release's node.
 //
-// Mutation (verified, run and restored): put the old sentence back — "The
-// policy is version 2 from fugaro 0.8.5, the release that enforces a job
-// profile's admission list" — and this test fails naming it.
+// Mutation (verified, run and restored): put back the clause the bump
+// replaced — "the release that states the escalation ladder's model grades in
+// it" for "the release whose own config states the binaries block" — and this
+// test fails naming the sentence it wants.
 func TestDocsProjectLayerStatesThePolicyVersionItShips(t *testing.T) {
 	doc := readDoc(t, "docs/project-layer.md")
 	rel, ok := projectpolicy.VersionRelease(projectpolicy.Version)
 	if !ok {
 		t.Fatalf("projectpolicy.VersionSince has no row for Version %d, and this page names the release each version came in", projectpolicy.Version)
 	}
-	want := fmt.Sprintf("**The policy is version %d from fugaro %s, the release that states the Bitbucket token's block in it**", projectpolicy.Version, rel)
+	want := fmt.Sprintf("**The policy is version %d from fugaro %s, the release whose own config states the binaries block**", projectpolicy.Version, rel)
 	if !strings.Contains(doc, want) {
 		t.Errorf("docs/project-layer.md does not say %q: the page describes the node this release writes, and projectpolicy.Version/%d is that node", want, projectpolicy.Version)
 	}
@@ -561,7 +621,7 @@ func TestDocsProjectLayerSaysWhatTiesARepositoryToAProject(t *testing.T) {
 		"There is **no registration record**",
 		"the runs bucket's `runs/<slug>/` prefixes and Firestore's `spendDaily`",
 		"Discovery stays **optional and explicit**",
-		"| `fugaro project sync [--github-app-id <id>] [--github-app-key] [--yes]` |",
+		"| `fugaro project sync [--bitbucket <workspace>] [--bitbucket-project <key>] [--check] [--github-app-id <id>] [--github-app-key]` |",
 		"The **enrolled** against the **seen**",
 		"the ones the allow-list does not already admit, in **one batch, with no confirmation**",
 		"the discovery answer has shipped too",
@@ -590,6 +650,103 @@ func TestDocsProjectLayerSaysWhatTiesARepositoryToAProject(t *testing.T) {
 	}
 }
 
+// TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes pins §5's published
+// policy table, row by row. The table is the only place an operator reads what
+// a run does with each key of the node, and the `binaries` member shipped
+// without a row at all (review finding on AR0 of binary-allow-rule): the
+// reference described every key of the node but the one that release added, and
+// nothing read the table, so the gap was silent. `providers` is the precedent
+// the row has to follow — a key this release decodes, validates and accepts and
+// no run applies yet — and `binaries` is the one row whose *written block* is a
+// statement at publish time, which the row has to state because a publisher
+// reading it is deciding whether to write `{"allow": []}` or nothing — and
+// because the database keeps no member for an empty list, so the spelling a
+// publisher writes is one the node cannot hold (the review finding on AR0: the
+// row promised a difference at the node that exists only at the publish).
+//
+// E2's `model_grades` row is the same kind of row for the same reason: the
+// member is decoded, validated and accepted by this release and read by no run
+// of it (the ladder's rungs arrive with later tasks), so the row has to say so
+// rather than leave an operator believing a published grade is what their runs
+// spend on — and it has to say that a grade nobody sets is no grade, because
+// that is the answer a rung's refusal prints.
+//
+// The row set is pinned as a list rather than derived from the Policy struct:
+// the table groups the four `budget` members into one row and deliberately
+// leaves out the members whose effect is not a run's (base_branch, credentials,
+// accounts, clone_urls, the crafts), so a reflection over the struct would
+// refuse the table as it stands. What the list catches is the removal of a row
+// and the return of a claim the row no longer carries.
+//
+// Mutation (verified, run and restored): delete the `binaries` row — this fails
+// naming it; put "decoded, validated and accepted, **not applied**" back as the
+// row's whole description without the written-block half — it fails naming that;
+// delete the `model_grades` row — it fails naming the key the table stopped
+// describing.
+func TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes(t *testing.T) {
+	const header = "| Policy key | What the run does with it today |"
+	doc := readDoc(t, "docs/project-layer.md")
+	i := strings.Index(doc, header)
+	if i < 0 {
+		t.Fatalf("docs/project-layer.md's §5 has no %q table: the reference for the node's keys has moved", header)
+	}
+	// The `|---|` separator sits between the header and the first key row.
+	rows := strings.Split(doc[i+len(header):], "\n")
+	for len(rows) > 0 && !strings.HasPrefix(rows[0], "| `") {
+		rows = rows[1:]
+	}
+	var keys []string
+	for _, line := range rows {
+		if !strings.HasPrefix(line, "| `") {
+			break
+		}
+		cell, _, _ := strings.Cut(strings.TrimPrefix(line, "| "), " |")
+		for _, key := range strings.Split(cell, ", ") {
+			keys = append(keys, strings.Trim(key, "`"))
+		}
+	}
+	want := []string{
+		"version",
+		"budget.mode", "budget.per_run_usd", "budget.max_run_tokens", "budget.allowed_models",
+		"model_prices",
+		"allow_repos",
+		"providers",
+		"binaries",
+		"model_grades",
+		"routing",
+		"profiles",
+	}
+	if !slices.Equal(keys, want) {
+		t.Errorf("docs/project-layer.md's policy table lists %v, want %v: every key of the node the page describes has a row, and a member that ships without one is invisible to the operator reading what a run does with it", keys, want)
+	}
+	for _, want := range []string{
+		"| `binaries` | decoded, validated and accepted, **not applied**",
+		"the block is the owner's grant of the paths a run may add a binary at",
+		"no run does that yet",
+		"the one key of this table whose *written block* is a statement at publish time and not at admission time",
+		"the database keeps no member for an empty list, so the node never *holds* that spelling",
+		"an empty block and a write of nothing leave the same node, and both admit nothing",
+		"A version-5 reader lists the key as unknown and enforces no rule at all, which is why the node is version 6",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/project-layer.md's `binaries` row lacks %q: the row is where an operator reads what the member does today and what writing an empty one means", want)
+		}
+	}
+	for _, want := range []string{
+		"| `model_grades` | decoded, validated and accepted, **not applied**",
+		"the project's two grades for the escalation ladder",
+		"the model its rung runs and the credential or pool its calls go out on",
+		"A grade nobody sets is no grade: the rung that needs one refuses and asks, never a hidden default",
+		"a repository's `model_grades:` block is dropped and recorded by the merge",
+		"the rungs that spend on it arrive with the ladder's own tasks",
+		"A version-6 reader lists the key as unknown and runs every rung on whatever its own configuration said, which is why the node is version 7",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/project-layer.md's `model_grades` row lacks %q: the row is where an operator reads what the grades do today, that they are the project's own, and what an unset one means", want)
+		}
+	}
+}
+
 // TestDocsProjectLayerSaysTheAdmissionsAndTheSkewWarning: the publish row of
 // docs/project-layer.md is the operator's only description of what a publish
 // writes, and C1.2 added two things to it that the row did not carry before —
@@ -600,18 +757,19 @@ func TestDocsProjectLayerSaysWhatTiesARepositoryToAProject(t *testing.T) {
 //
 // Mutation (verified, run and restored): delete the admissions sentence from the
 // row — this fails naming the order; delete the warning sentence — it fails
-// naming the warning; restore "an account's `allow_data_to` admits" in place of
-// "an account **a profile names** admits" — it fails naming the accounts that
-// are published (security review m-4: the row claimed every account's
-// allow_data_to publishes a child, and the code publishes the accounts some
-// profile names, which is narrower); delete the cascade-refusal clause — it
-// fails naming it (security review M-1's behaviour is described here too).
+// naming the warning; drop the repository-entry half of the sources sentence —
+// it fails naming the accounts that are published (security review m-4: the row
+// claimed every account's allow_data_to publishes a child, and the code
+// publishes the accounts a profile or a repository entry names, which is
+// narrower); delete the cascade-refusal clause — it fails naming it (security
+// review M-1's behaviour is described here too).
 func TestDocsProjectLayerSaysTheAdmissionsAndTheSkewWarning(t *testing.T) {
 	doc := readDoc(t, "docs/project-layer.md")
 	for _, want := range []string{
 		"`config/policy/repos/$slug` holding the **names** of its admitted accounts",
-		"each repository an account **a profile names** admits gets a child",
-		"an account the config defines but no profile names admits nothing a run reads",
+		"each repository an account admits gets a child",
+		"`repos.<owner/name>.claude_accounts`, qualified by that entry's provider",
+		"an account the config defines but neither names admits nothing a run reads",
 		"is written **before** the shared node while the widening half follows it",
 		"leaves the installation tighter than the config asked and never looser",
 		"The diff also **warns** when the node it wrote carries a member an older",
@@ -627,7 +785,8 @@ func TestDocsProjectLayerSaysTheAdmissionsAndTheSkewWarning(t *testing.T) {
 	help := newProjectPolicyPublishCmd().Long
 	for _, want := range []string{
 		"holding the NAMES of its admitted accounts",
-		"an account a profile names admits",
+		"Each repository an account admits also gets a child",
+		"repos.<owner/name>.claude_accounts, qualified by that entry's provider",
 		"an account this config defines but",
 		"narrowed before the shared node and widened",
 		"tighter than the config asked, never looser",

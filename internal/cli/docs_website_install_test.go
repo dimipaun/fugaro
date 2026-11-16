@@ -14,6 +14,9 @@ package cli
 //     verbatim in the file its `source:` names (README.md's "## Getting
 //     started" or docs/release.md); `build` equals .goreleaser.yaml's
 //     builds[0]; the archive's name template and extension equal archives[0];
+//     the archive's note names every archive that file builds, under the name
+//     each one's own template gives it (from 0.13.0 a release publishes a
+//     mixed-licence archive and a pure-MIT one beside it);
 //     the Homebrew line equals homebrew_casks[0]'s owner, tap and cask; and
 //     the go install path carries README.md's "development only" marker.
 //   - TestWebsiteInstallFactsNameNoUnbuiltPlatform: the reader-facing platform
@@ -185,6 +188,26 @@ func readGoreleaser(t *testing.T) goreleaserFile {
 		t.Fatal(".goreleaser.yaml carries no builds[0], archives[0] or homebrew_casks[0]; this test's pins are stale")
 	}
 	return f
+}
+
+// archiveReaderName turns one of .goreleaser.yaml's archive name templates into
+// the name the site writes for a reader: GoReleaser's fields become the
+// placeholders a reader fills in, and the archive's own format the extension it
+// downloads as. The site's wording is pinned to the release's, so a renamed
+// archive fails here rather than living on the page under its old name.
+func archiveReaderName(a goreleaserArchive) string {
+	name := a.NameTemplate
+	for _, r := range []struct{ field, placeholder string }{
+		{"{{ .Version }}", "<version>"},
+		{"{{ .Os }}", "<os>"},
+		{"{{ .Arch }}", "<arch>"},
+	} {
+		name = strings.ReplaceAll(name, r.field, r.placeholder)
+	}
+	if len(a.Formats) > 0 {
+		name += "." + a.Formats[0]
+	}
+	return name
 }
 
 // readmeSection returns one of README.md's "## " sections, heading included,
@@ -361,6 +384,20 @@ func TestWebsiteInstallFactsMatchTheRepository(t *testing.T) {
 	}
 	if !slices.Contains(gl.Archives[0].Formats, archive.Extension) {
 		t.Errorf("%s: archive extension = %q, .goreleaser.yaml archives[0].formats = %v", installFactsPath, archive.Extension, gl.Archives[0].Formats)
+	}
+	// Both archives a release publishes, under the names .goreleaser.yaml gives
+	// them: from 0.13.0 one download is the mixed-licence build and the other is
+	// the same binary without the `ee/` code, under the MIT licence alone (the
+	// owner's ruling of 2026-11-11; plan task L5.3), so a note that describes
+	// "the archive" as the only download describes half of what a reader finds
+	// on the Releases page.
+	for _, a := range gl.Archives {
+		if want := archiveReaderName(a); !strings.Contains(archive.Note, want) {
+			t.Errorf("%s: the archive note %q does not name %q, the %q archive .goreleaser.yaml builds", installFactsPath, archive.Note, want, a.ID)
+		}
+	}
+	if !strings.Contains(archive.Note, "Homebrew") || !strings.Contains(archive.Note, "MIT") {
+		t.Errorf("%s: the archive note %q does not say which of the two archives the Homebrew cask installs and that the other is under the MIT licence alone; the cask, `fugaro update` and the plugin pin follow the mixed-licence one", installFactsPath, archive.Note)
 	}
 	if archive.ReleasePage == "" || !strings.Contains(gettingStarted, archive.ReleasePage) {
 		t.Errorf("%s: archive release_page = %q, which %s's \"## Getting started\" does not print", installFactsPath, archive.ReleasePage, installReadmePath)

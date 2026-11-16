@@ -36,15 +36,18 @@
 // been taught rather than guessing at it, and every refusal names the file and the line.
 //
 // The stamp's own test reads the two release directories off the tree the way this file reads the
-// data file, rather than through a module: the changelog's own readers filter by what the stream
-// has released (`src/lib/changelog.mjs`), and the stamp's rule is the newest file of each half,
-// ahead of its release or not.
+// data file, and holds them to the rule the changelog holds them to (`src/lib/changelog.mjs`): a
+// notes file above its stream's `current` in `docs/release-streams.yaml` is the next release's
+// notes, written ahead of their release, and the stamp ignores it until the release commit moves
+// `current` (and the stamp) past it.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { REPO } from './lib/html.mjs'
+import { buildChangelog } from '../src/lib/changelog.mjs'
+import { parseYAML } from '../src/content.ts'
 
 /** The file every message below names. */
 const DATA = 'website/data/compatibility.yaml'
@@ -55,8 +58,6 @@ const STATUSES = ['supported', 'coming-soon', 'built-not-enabled', 'roadmap', 'n
 /** The two editions, and nothing else (D1522). */
 const EDITIONS = ['core', 'subscription']
 
-/** The groups whose spec table carried an Edition column, so whose rows carry an edition. */
-const EDITION_GROUPS = ['local-environment', 'console', 'mobile', 'forges', 'identity-and-roles']
 
 /** The spec's groups, in the spec's order (the plan's "Interfaces"). */
 const GROUP_IDS = [
@@ -85,6 +86,9 @@ const PRICE = /\$|\bcents?\b/i
 
 /** Where each half's release notes live: the CLI's own directory, and the console's (CM3). */
 const RELEASE_DIRS = { cli: 'docs/releases', console: 'docs/releases/console' }
+
+/** The release stream each half's notes belong to, in `docs/release-streams.yaml`. */
+const STREAM_NAMES = { cli: 'cli', console: 'console' }
 
 /** The name of a release notes file: the only name either directory holds that is a release. */
 const RELEASE_FILE = /^v(\d+)\.(\d+)\.(\d+)\.md$/
@@ -133,11 +137,34 @@ function releaseTags(dir) {
     })
 }
 
-/** Each half's newest release file: the tag its stamp must name (D1538). */
+/** The version a stream is at, from the release streams catalogue's text. */
+function streamCurrent(streamsText, name) {
+  const doc = parseYAML(streamsText, 'docs/release-streams.yaml')
+  const stream = (doc.streams ?? []).find((entry) => entry.name === name)
+  assert.ok(stream && /^\d+\.\d+\.\d+$/.test(String(stream.current)), `docs/release-streams.yaml has no x.y.z current for the ${name} stream`)
+  return releaseVersion(`v${stream.current}`)
+}
+
+/** Whether a tag is at or below a version triple. */
+function atOrBelow(tag, current) {
+  const v = releaseVersion(tag)
+  for (let i = 0; i < 3; i++) {
+    if (v[i] !== current[i]) return v[i] < current[i]
+  }
+  return true
+}
+
+/** The tags a stream has released: those not ahead of its `current`, newest first. */
+export function releasedTags(tags, current) {
+  return tags.filter((tag) => atOrBelow(tag, current))
+}
+
+/** Each half's newest released file: the tag its stamp must name (D1538). */
 function newestReleases() {
   const out = {}
+  const streams = repoFile('docs/release-streams.yaml')
   for (const [key, dir] of Object.entries(RELEASE_DIRS)) {
-    const tags = releaseTags(dir)
+    const tags = releasedTags(releaseTags(dir), streamCurrent(streams, STREAM_NAMES[key]))
     assert.ok(tags.length > 0, `${dir} holds no release file, so there is no release for as_of.${key} to name`)
     out[key] = tags[0]
   }
@@ -323,11 +350,8 @@ export function problems(doc) {
       if (row.edition !== undefined && !EDITIONS.includes(row.edition)) {
         out.push(`${where} carries the edition ${JSON.stringify(row.edition)}; the two are ${JSON.stringify(EDITIONS)} (D1522)`)
       }
-      if (EDITION_GROUPS.includes(group.id) && row.edition === undefined) {
-        out.push(`${where} carries no edition, and the spec's ${group.id} table has an Edition column`)
-      }
-      if (!EDITION_GROUPS.includes(group.id) && row.edition !== undefined) {
-        out.push(`${where} carries an edition, and the spec's ${group.id} table has no Edition column`)
+      if (row.edition === undefined) {
+        out.push(`${where} carries no edition, and every table on the page has an Edition column`)
       }
       if (typeof row.note !== 'string' || row.note === '') out.push(`${where} carries no note`)
       const needs = row.status === 'supported' || row.status === 'built-not-enabled'
@@ -439,9 +463,10 @@ test('the stamp names the newest release file of each half', () => {
     `${DATA} is stamped against a release that is not the newest of its half:\n${found.map((problem) => `  - ${problem}`).join('\n')}`,
   )
   for (const [key, dir] of Object.entries(RELEASE_DIRS)) {
+    const released = releasedTags(releaseTags(dir), streamCurrent(repoFile('docs/release-streams.yaml'), STREAM_NAMES[key]))
     assert.ok(
-      releaseTags(dir).length > 1,
-      `${dir} holds ${releaseTags(dir).length} release file(s), so a stamp fallen behind the newest (${newest[key]}) could not be told from one that names it, and the case below would prove nothing`,
+      released.length > 1,
+      `${dir} holds ${released.length} released file(s), so a stamp fallen behind the newest (${newest[key]}) could not be told from one that names it, and the case below would prove nothing`,
     )
   }
 })
@@ -449,7 +474,7 @@ test('the stamp names the newest release file of each half', () => {
 test('a stamp behind the newest release file is refused', () => {
   const newest = newestReleases()
   for (const [key, dir] of Object.entries(RELEASE_DIRS)) {
-    const older = releaseTags(dir)[1]
+    const older = releasedTags(releaseTags(dir), streamCurrent(repoFile('docs/release-streams.yaml'), STREAM_NAMES[key]))[1]
     assert.ok(older, `${dir} holds no release file below its newest (${newest[key]}), so this case cannot plant a stamp one release behind`)
     const anchor = key === 'cli' ? `as_of:\n  cli: ${newest.cli}` : `  console: ${newest.console}`
     const plant = key === 'cli' ? `as_of:\n  cli: ${older}` : `  console: ${older}`
@@ -459,6 +484,27 @@ test('a stamp behind the newest release file is refused', () => {
       `A stamp one release behind the newest ${dir}/vX.Y.Z.md must be refused: the release PR that writes the notes moves the stamp with them (docs/release.md, "Before you tag"), and a tree that skipped it would publish a page naming the release before this one.`,
     )
   }
+})
+
+test('a notes file ahead of its stream\'s current is ignored, and a released one newer than the stamp is refused', () => {
+  const tags = ['v0.25.0', 'v0.24.0', 'v0.23.0']
+  const current = releaseVersion('v0.24.0')
+  assert.deepEqual(releasedTags(tags, current), ['v0.24.0', 'v0.23.0'], 'a file above current is the next release\'s notes and is not a released file')
+  assert.deepEqual(stampProblems({ as_of: { cli: 'v0.24.0', console: 'v0.1.0' } }, { cli: releasedTags(tags, current)[0], console: 'v0.1.0' }), [])
+  refused(
+    stampProblems({ as_of: { cli: 'v0.23.0', console: 'v0.1.0' } }, { cli: releasedTags(tags, current)[0], console: 'v0.1.0' }),
+    'writes as_of.cli as "v0.23.0"',
+    'A stamp behind the newest released file must still be refused when a file ahead of current exists.',
+  )
+  refused(
+    stampProblems({ as_of: { cli: 'v0.25.0', console: 'v0.1.0' } }, { cli: releasedTags(tags, current)[0], console: 'v0.1.0' }),
+    'writes as_of.cli as "v0.25.0"',
+    'A stamp ahead of every released file is refused: only the release commit moves current and the stamp together.',
+  )
+})
+
+test('the stamp rule and the changelog agree on the newest released CLI file', () => {
+  assert.equal(newestReleases().cli, buildChangelog()[0].tag)
 })
 
 test('a status outside the five, and an edition outside the two, are refused', () => {
@@ -525,12 +571,12 @@ test("the Claude OAuth row carries D1539's sentence, and no other row names term
 
 test('a date and a price in a row are refused', () => {
   refused(
-    planted('        note: "The same Expo codebase as iOS."', '        note: "The same Expo codebase as iOS, planned for 2027."'),
+    planted('        note: "The same app as iOS."', '        note: "The same app as iOS, planned for 2027."'),
     'carries a date',
     'A row must carry no date: an unbuilt row promises none (D1523), and a date on the page is a claim the repository cannot back.',
   )
   refused(
-    planted('        note: "No plan for email."', '        note: "No plan for email; Slack costs $5 a month."'),
+    planted('        note: "Alongside Slack and Teams."', '        note: "Alongside Slack and Teams; Slack costs $5 a month."'),
     'carries a price',
     'A row must carry no price: the page carries none, so no note may add one.',
   )
@@ -538,7 +584,7 @@ test('a date and a price in a row are refused', () => {
 
 test('a Web row, and a group the spec does not have, are refused', () => {
   refused(
-    planted('      - name: "Android"', '      - name: "Web"\n        status: coming-soon\n        edition: subscription\n        note: "From the same Expo codebase."\n      - name: "Android"'),
+    planted('      - name: "Android"', '      - name: "Web"\n        status: coming-soon\n        edition: subscription\n        note: "From the same app."\n      - name: "Android"'),
     'carries a Web row',
     'A Web row must be refused: there is no web build, so F7/D1521 removes the row rather than giving it a status.',
   )

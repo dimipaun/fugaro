@@ -103,7 +103,7 @@ import type {
   RunsSummaryView,
 } from '../shared/schema'
 import { sanitizeRefusal } from '../shared/sanitize'
-import { LIVE_STALE_AFTER_SECONDS, BurnHistory, buildLiveModel, renderLive } from './screens/live'
+import { LIVE_STALE_AFTER_SECONDS, BurnHistory, HourHistory, buildLiveModel, renderLive } from './screens/live'
 import type { FeedHealth, LiveModel } from './screens/live'
 import {
   SPEND_DEFAULT_CONTROLS,
@@ -216,6 +216,7 @@ import {
   renderLicenceOutcome,
 } from './screens/licence'
 import type { LicenceDrawn } from './screens/licence'
+import { SEATS_BUSY, buildSeats, fillSeats } from './screens/seats'
 import { MANAGED_BUSY, buildManagedModel, fillManaged } from './screens/managed'
 import { RETIREMENTS_BUSY, buildRetirementsModel, fillRetirements } from './screens/retirements'
 import type { OperationName } from '../main/ipc'
@@ -266,12 +267,25 @@ import {
 import type { GraphScreen, GraphScope } from './screens/graph'
 import type { GraphTab } from './graph/model'
 import {
+  MOVE_CANCEL_CLASS,
+  MOVE_CONFIRM_CLASS,
+  MOVE_OPEN_CLASS,
+  MOVE_TARGET_CLASS,
+  MOVE_TARGET_UNCHOSEN,
+  MOVE_UNDO_CLASS,
+  MOVE_UNREADABLE_WORD,
+  MoveFlow,
+  moveAnswerOf,
+} from './graph/move'
+import type { MoveRequest, MoveSheet } from './graph/move'
+import {
   SKEW_HEADLINES,
   hidesView,
   launchSupported,
   modelsListSupported,
   runsListPageSupported,
   runsSummarySupported,
+  seatsSupported,
 } from '../shared/version'
 import type { ReducedView, SkewElement, SkewFactory, SkewTheme } from '../shared/version'
 import { NOTICE_HIDE_DETAILS, NOTICE_SHOW_DETAILS } from '../shared/notice'
@@ -492,7 +506,7 @@ function methodOf(fugaro: unknown, name: string): ((args: unknown) => unknown) |
 }
 
 /**
- * ReadBridge is the twenty-one reads the screens make (Task 3.4c; console L5b
+ * ReadBridge is the twenty-two reads the screens make (Task 3.4c; console L5b
  * added `statsRuns`, Bitbucket credentials T1.2 added `coordinatorStatus`,
  * GV2.3b added `planStatus`, coordinator v2 K3 added `coordinatorShow`, K5 added
  * `coordinatorIntents`, console 0.119.0 added `summaryRuns` -- the
@@ -505,7 +519,9 @@ function methodOf(fugaro: unknown, name: string): ((args: unknown) => unknown) |
  * subscriptions plan's S2.7 added `readLicence`, the licence key's own section of
  * the same tab -- **the one read here that spawns no child at all**, because the
  * console keeps that key itself -- and the graph plan's CG9b added `graphWatch`,
- * the same tab's live feed of the graph document), named one
+ * the same tab's live feed of the graph document, and the subscriptions plan's
+ * S4.2 added `readSeats`, the same tab's advisory seat estimate of who launches
+ * jobs on the installation), named one
  * by one for the reason `CompatibilityBridge` names one: this file should reach
  * for exactly the operations it draws, and a reader should be able to see which
  * those are without reading the preload.
@@ -537,9 +553,10 @@ export interface ReadBridge {
   policyShow(args: Readonly<Record<string, unknown>>): Promise<unknown>
   environmentReport(args: Readonly<Record<string, unknown>>): Promise<unknown>
   readLicence(args: Readonly<Record<string, unknown>>): Promise<unknown>
+  readSeats(args: Readonly<Record<string, unknown>>): Promise<unknown>
 }
 
-/** readBridgeFrom is the twenty-one reads over the structural bridge. A missing
+/** readBridgeFrom is the twenty-two reads over the structural bridge. A missing
  * member answers `null` rather than rejecting, and so does a member that fails
  * to answer -- by throwing before it returns, or by returning a promise that
  * rejects, which is what `invoke` does on a channel with nothing behind it.
@@ -583,6 +600,7 @@ export function readBridgeFrom(fugaro: unknown): ReadBridge {
     policyShow: (args) => ask('policyShow', args),
     environmentReport: (args) => ask('environmentReport', args),
     readLicence: (args) => ask('readLicence', args),
+    readSeats: (args) => ask('readSeats', args),
   }
 }
 
@@ -813,6 +831,38 @@ export interface LinkBridge {
 export function linkBridgeFrom(fugaro: unknown): LinkBridge {
   const ask = (name: string, args: Readonly<Record<string, unknown>>): Promise<unknown> => askMember(fugaro, name, args)
   return { openPullRequest: (args) => ask('openPullRequest', args) }
+}
+
+/**
+ * MoveBridge is the Graph screen's one write: `roadmap.move`, a task of the
+ * project's roadmap record dragged into another release or out of every one
+ * (GV3.2, design section 5.1 rule 14). It is a bridge of its own rather than a
+ * member of `ReadBridge` for `LaunchBridge`'s reason: that interface is the reads
+ * a screen is drawn from, and this one **writes the record every console of this
+ * project reads**.
+ *
+ * **It is handed two ids and one boolean.** `node` is the graph document key of
+ * the row that was dragged and `toRelease` the record's key for the box it was
+ * dropped on (the empty string for the unassign) -- both ids that document
+ * printed, checked against it in the main process before any word is built -- and
+ * `confirmed` decides which half of the operation runs: absent or false answers
+ * the move's own command line and starts no child, and true runs it, and only if
+ * the argv this console drew is the argv main builds. **No renderer here states a
+ * task id, a release name or a flag**: what the CLI reads is spelled out of the
+ * document the console last read, so a title can never reach a command line.
+ *
+ * It is answered the way the other writes are: a member that is missing or fails
+ * to answer is `null`, and the sheet draws a sentence it could not read rather
+ * than claiming a move. A reply that arrived is one `RoadmapMoveAnswer` (a
+ * preview, or §6.24's outcome for the confirmed half).
+ */
+export interface MoveBridge {
+  moveRoadmapTask(args: Readonly<Record<string, unknown>>): Promise<unknown>
+}
+
+export function moveBridgeFrom(fugaro: unknown): MoveBridge {
+  const ask = (name: string, args: Readonly<Record<string, unknown>>): Promise<unknown> => askMember(fugaro, name, args)
+  return { moveRoadmapTask: (args) => ask('moveRoadmapTask', args) }
 }
 
 /**
@@ -1096,6 +1146,28 @@ export interface WheelEventLike {
   readonly deltaY: number
   readonly ctrlKey: boolean
   preventDefault(): void
+}
+
+/**
+ * DragEventLike is the one field of a drag this file reads: the transfer a
+ * browser writes a drag's payload into, which is what makes a drag start at all
+ * (`dragstart`), and which the move reads nothing back out of -- the task a drag
+ * carries is held in the entry's own closure, so nothing a page writes into a
+ * transfer can name a task (`wireGraph`).
+ *
+ * Structural, for the reason `KeyEventLike` is: a case drives this under
+ * `vitest` with an object it built, and a real `DragEvent` satisfies it.
+ */
+export interface DragEventLike {
+  readonly dataTransfer?: { setData(type: string, value: string): void } | null
+  preventDefault(): void
+}
+
+/** dragOn attaches a drag listener to a real node, with the same cast and for the
+ * same reason `keydownOn` documents: `Element`'s own signature types the argument
+ * as `Event`, which declares none of the fields these handlers read. */
+function dragOn(node: Element, name: string, listener: (event: DragEventLike) => void): void {
+  node.addEventListener(name, listener as unknown as EventListener)
 }
 
 /** wheelOn attaches a wheel listener to a real node, with the same cast and for
@@ -2461,11 +2533,12 @@ export const LIVE_POLL_MS = 1000
 /**
  * LIVE_RIGOR_TTL_MS is how long the Live screen's rigor join is kept: 15,000 ms.
  *
- * The mode on a Live row is a **join**, not a frame field: `watch --json`
- * answers `JSONRun`, which carries no rigor block, so the mode comes from
- * `runs ls --json` and is matched to the row by run id (`rigorIndex`,
- * `shared/rigor.ts`). That read is a CLI invocation of its own, and it is
- * deliberately **not** the poll's: the poll runs at `LIVE_POLL_MS`, and a
+ * The mode on a Live row is a **join**: `watch --json` answers `JSONRun`, whose
+ * own `mode`/`from` are the run's mode and layer and nothing else of its rigor
+ * block, so the block comes from `runs ls --json` and is matched to the row by
+ * run id (`rigorIndex`, `shared/rigor.ts`). That read is a CLI invocation of
+ * its own, and it is deliberately **not** the poll's: the poll runs at
+ * `LIVE_POLL_MS`, and a
  * `runs ls` every second would be sixty invocations a minute for a fact that is
  * written once, at the run's bootstrap.
  *
@@ -2895,6 +2968,7 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
     railBridge,
     launchBridge: launchBridgeFrom(scope.fugaro),
     settingsBridge: settingsBridgeFrom(scope.fugaro),
+    moveBridge: moveBridgeFrom(scope.fugaro),
     licenceBridge: licenceBridgeFrom(scope.fugaro),
     linkBridge: linkBridgeFrom(scope.fugaro),
     rows,
@@ -2999,9 +3073,13 @@ interface DashboardDeps {
    * settings-edit plan's C3): the console's second write, and the one that
    * changes a file on disk rather than starting a run. */
   readonly settingsBridge: SettingsBridge
+  /** moveBridge is the Graph screen's own write (`roadmap.move`, GV3.2): the
+   * console's third write, and the one that changes what every other console of
+   * the project is drawn from. */
+  readonly moveBridge: MoveBridge
   /** licenceBridge is the Project tab's licence key (`licence.save`, S2.7): the
-   * console's third write, and the one that keeps a credential the console hands
-   * to every child it spawns. */
+   * console's fourth write, and the one that writes and spawns nothing -- it
+   * keeps a credential the console hands to every child it spawns. */
   readonly licenceBridge: LicenceBridge
   /** linkBridge is the Coordinator's numbers (`link.openPullRequest`, K2a): the
    * one operation that leaves this window, and the only one handed a triple
@@ -3032,15 +3110,17 @@ interface DashboardDeps {
  * figures in it rather than at an empty panel that fills in later.
  */
 async function mountDashboard(deps: DashboardDeps): Promise<void> {
-  const { document, surface, gate, bridge, rail, railBridge, launchBridge, settingsBridge, licenceBridge, linkBridge, wiring, navigator, header } =
+  const { document, surface, gate, bridge, rail, railBridge, launchBridge, settingsBridge, moveBridge, licenceBridge, linkBridge, wiring, navigator, header } =
     deps
   const factory = surface.factory
   const theme = CONSOLE_THEME
 
-  // The Live screen's own state, kept across polls: the burn window accumulates
-  // samples, so it must outlive a drawing. A fresh one per poll would be a
-  // one-bar sparkline forever.
+  // The Live screen's own state, kept across polls: the two windows accumulate
+  // samples, so they must outlive a drawing. A fresh pair per poll would be a
+  // one-bar sparkline forever, and the hour line would never be longer than the
+  // five-minute one.
   let history = new BurnHistory()
+  let hourHistory = new HourHistory()
   const live: {
     drawn: Drawn | null
     inFlight: boolean
@@ -3514,7 +3594,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // which is the second of the two conditions the design gives `silent`
     // (section 4.1). A read that was refused sets it above.
     rail.setState(feed.stale ? 'silent' : 'running')
-    const model = buildLiveModel(decoded.value, history, feed, live.rigor)
+    const model = buildLiveModel(decoded.value, history, feed, live.rigor, hourHistory)
     setGauge({ notionalUsd: model.total.notionalUsd, countedUsd: model.total.countedUsd, capUsd: model.total.dailyCapUsd })
     // The kill banner is the `kill` view. It is asked for through the gate --
     // the one door -- with an empty drawing, because what a reduced console
@@ -3522,7 +3602,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // answer decides whether the model the screen is handed carries the kill
     // state at all.
     const mayDrawKill = gate.drawScreen('kill', () => undefined) === 'drawn'
-    const drawn = renderLive(factory, mayDrawKill ? model : killWithheld(model), theme)
+    // The caps are the second view this screen withholds (`caps` beside `kill`
+    // above), and the answer travels the same way the kill banner's does: as a
+    // model the screen is handed, so a figure the gate withheld is one the
+    // gauge cannot draw back later.
+    const drawn = renderLive(factory, mayDrawKill ? model : killWithheld(model), theme, hidesView(gate.compatibility, 'caps'))
     live.drawn = drawn
     replace(drawn)
     wireRuns(drawn, model)
@@ -3833,6 +3917,62 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     const tree = graphTree
     if (tree === null) return null
     return classed(tree, BUSY_SLOT_CLASS)[0] ?? null
+  }
+
+  /**
+   * moveFlowNow is the move's flow, built on first use.
+   *
+   * **It is the port that makes the fence a fence.** `roadmap.move` is the one
+   * door the flow knocks on, and what this file hands it is the preload surface
+   * and `replyData` -- so a missing bridge, a thrown refusal and an answer this
+   * build cannot read are one shape on the sheet (`MoveRead`), and the flow
+   * itself never reaches a source, a read or a child.
+   *
+   * **One flow lives as long as one installation's screen.** It holds the request
+   * a confirmation is about and the last move the record applied -- which is what
+   * an undo inverts -- and both are facts about the checkout the console is
+   * driving; `forgetLive` drops it with the screen, so a way back is never
+   * offered across two installations.
+   */
+  let moveFlow: MoveFlow | null = null
+  /**
+   * **The two gestures in flight live out here, with the flow, and not inside
+   * `wireGraph`.** Every redraw wires a freshly drawn tree, so a variable
+   * declared in there is a new one per drawing: the key the row's button opened
+   * the sheet for would be gone by the time the select's own change listener --
+   * a listener of the drawing that very redraw made -- read it, and the sheet
+   * would answer nothing whatever a person chose.
+   */
+  let dragging: string | null = null
+  let choosing: string | null = null
+  /**
+   * **moveTurn is which gesture the sheet on screen is the answer to**, and it
+   * lives out here with the two above for the same reason.
+   *
+   * A preview is a child, so its answer lands after whatever the operator did
+   * next: a second drop, another choice from the list, Escape, or the
+   * confirmation of the sheet already up. A drawing made from an answer to a
+   * gesture that is over is the defect this number exists for -- a sheet showing
+   * one release while the flow holds the request for another is a confirmation
+   * that runs what is not drawn -- so every gesture takes a new turn, and a
+   * continuation draws only while its own turn is still the one in hand.
+   */
+  let moveTurn = 0
+  const takeMoveTurn = (): number => {
+    moveTurn += 1
+    return moveTurn
+  }
+  const moveFlowNow = (): MoveFlow => {
+    moveFlow ??= new MoveFlow({
+      move: async (args) => {
+        const { node, toRelease, confirmed } = args
+        const answer = replyData(await moveBridge.moveRoadmapTask({ node, toRelease, confirmed }))
+        if (!answer.ok) return { ok: false, sentence: answer.sentence }
+        const read = moveAnswerOf(answer.data)
+        return read === null ? { ok: false, sentence: MOVE_UNREADABLE_WORD } : { ok: true, answer: read }
+      },
+    })
+    return moveFlow
   }
 
   /** graphScreenNow is the screen, built on first use. The worker is started
@@ -4422,6 +4562,25 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   const FIT_BUTTON: FocusTarget = { classes: ['graph-fit'] }
   const VIEW_BUTTON: FocusTarget = { classes: ['graph-view'] }
 
+  /** CONFIRM_BUTTON, CANCEL_BUTTON, UNDO_BUTTON and TARGET_SELECT are the move
+   * sheet's own four stops (GV3.2). Each is the control the phase it was drawn in
+   * is answered with -- the confirming button while a command line is in hand,
+   * Cancel for every sheet that has no move to run, the way back after the record
+   * applied one, and the select of the boxes while the sheet is choosing -- so
+   * the keyboard lands on the button a person would press, and never on one the
+   * drawing left out. */
+  const CONFIRM_BUTTON: FocusTarget = { classes: [MOVE_CONFIRM_CLASS] }
+  const CANCEL_BUTTON: FocusTarget = { classes: [MOVE_CANCEL_CLASS] }
+  const UNDO_BUTTON: FocusTarget = { classes: [MOVE_UNDO_CLASS] }
+  const TARGET_SELECT: FocusTarget = { classes: [MOVE_TARGET_CLASS] }
+
+  /** moveStop is a record task's own row: the element the sheet was opened from,
+   * where the keyboard goes back when the move is closed or declined. It may not
+   * be in the tree the close draws -- a move that was applied put the row in
+   * another box -- and the row survives that: the key is the document's and the
+   * box it is drawn inside is not part of it. */
+  const moveStop = (key: string): FocusTarget => ({ classes: ['graph-scope-node'], attribute: 'data-key', value: key })
+
   /** stopOf is where the keyboard is, read off a tree the panel holds: the target
    * naming `document.activeElement` when that element is one of the tree's own,
    * and `null` when the keyboard is anywhere else -- another screen, the rail, or
@@ -4756,6 +4915,205 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     if (view !== undefined) {
       surface.nodeOf(view).addEventListener('click', () => {
         redraw(screen.change({ view: screen.current.view === 'graph' ? 'list' : 'graph' }), VIEW_BUTTON)
+      })
+    }
+
+    /**
+     * The move (GV3.2, and design section 5.1 rule 14).
+     *
+     * **The renderer's whole payload is two ids its own drawing put on two
+     * elements**: the row's `data-key` and the target box's `data-release`. This
+     * function never builds a word of a command line and never reads a title --
+     * it hands the pair to the flow, and the sheet it draws is the answer the
+     * main process composed out of the document it checked the pair against.
+     *
+     * **Every gesture ends in the same sheet.** A drop, the row's own button and
+     * the select of the boxes all call `openMove`, which goes to a **preview**
+     * (`confirmed: false`) -- a call that starts no child -- and the sheet that
+     * comes back is what a person confirms or declines. Undo is the flow's
+     * inverse move, previewed the same way, so there is no path from this screen
+     * to a move nobody was shown.
+     */
+    /** drawMove puts one sheet on the drawing -- `null` closes it -- and leaves
+     * the keyboard on the control that sheet is answered with. */
+    const drawMove = (sheet: MoveSheet | null, focus: FocusTarget | null): void => {
+      redraw(screen.change({ move: sheet }), focus)
+    }
+
+    /** openMove previews one move and draws the answer: the reading sheet while
+     * the record is being asked, then the command line it answered with, or the
+     * sentence a refusal came with. **The answer is drawn only while this gesture
+     * is still the current one**: a drop on another box, the list's own choice or
+     * an Escape replaces the sheet, and the reading this call started is then an
+     * answer to a question nobody is asking -- drawn anyway, it is a sheet
+     * showing one move over the request of another, and the confirming click
+     * would run the move the flow holds rather than the one on screen. */
+    const openMove = (node: string, toRelease: string): void => {
+      const mine = takeMoveTurn()
+      choosing = null
+      drawMove({ request: { node, toRelease }, answer: null, sentence: null }, CANCEL_BUTTON)
+      void moveFlowNow()
+        .preview({ node, toRelease })
+        .then((sheet) => {
+          if (mine !== moveTurn || sheet === null) return
+          drawMove(sheet, sheet.answer === null ? CANCEL_BUTTON : CONFIRM_BUTTON)
+        })
+    }
+
+    /** closeMove is Cancel, and the Escape that stands for it: the request is
+     * dropped by the flow, so nothing is sent, and the keyboard goes back to the
+     * row the move was about. A preview still reading is dropped with the request
+     * it was made for -- the answer would otherwise put the sheet back up over
+     * the row a person has just gone back to. */
+    const closeMove = (): void => {
+      takeMoveTurn()
+      const flow = moveFlowNow()
+      const key = choosing ?? flow.pending?.node ?? null
+      flow.decline()
+      choosing = null
+      drawMove(null, key === null ? DRAWING_STOP : moveStop(key))
+    }
+
+    /** confirmMove runs the move the sheet drew -- the flow answers `null` for a
+     * second press, a stale key or a declined sheet, and sends nothing -- and is
+     * followed by a re-read of the drawing, whatever the record answered. A move
+     * it applied leaves the document in hand the one from before it, so the way
+     * back would be refused as stale; a **refused** one is the record saying the
+     * release it holds is not the one this console drew, which leaves the sheet's
+     * own `in` field, the drawing behind it and the `--expect` of every next
+     * move about a record that is no longer there. */
+    const confirmMove = (): void => {
+      const mine = takeMoveTurn()
+      void moveFlowNow()
+        .confirm()
+        .then(async (sheet) => {
+          if (sheet === null || mine !== moveTurn) return
+          const applied = sheet.answer?.outcome?.status === 'applied'
+          drawMove(sheet, applied ? UNDO_BUTTON : CANCEL_BUTTON)
+          await readScope(claim(), graphRead.start())
+          // The sheet is drawn again over the fresh document, and the keyboard
+          // goes to the button that answers it in the light of what the record
+          // said: a reader who confirmed with the keyboard is left on the way
+          // back rather than nowhere.
+          if (mine !== moveTurn) return
+          drawMove(sheet, applied ? UNDO_BUTTON : CANCEL_BUTTON)
+        })
+    }
+
+    /** undoMove is the inverse move, previewed like any other: it does not run
+     * anything, it puts a sheet up. Its answer is dropped while a newer gesture
+     * is in hand, exactly as `openMove`'s is. */
+    const undoMove = (): void => {
+      const mine = takeMoveTurn()
+      void moveFlowNow()
+        .undo()
+        .then((sheet) => {
+          if (mine !== moveTurn || sheet === null) return
+          drawMove(sheet, sheet.answer === null ? CANCEL_BUTTON : CONFIRM_BUTTON)
+        })
+    }
+
+    for (const row of classed(drawn, 'graph-scope-node')) {
+      const key = row.getAttribute('data-key') ?? ''
+      if (row.getAttribute('draggable') !== 'true') continue
+      dragOn(surface.nodeOf(row), 'dragstart', (event) => {
+        // The key is held in this closure and written to the transfer as well:
+        // the transfer is what a browser needs to start a drag at all, and what
+        // the drop below reads is the closure, so the payload of a drag is never
+        // the thing that decides which task moves.
+        dragging = key
+        event.dataTransfer?.setData('text/plain', key)
+      })
+      dragOn(surface.nodeOf(row), 'dragend', () => {
+        dragging = null
+      })
+    }
+
+    /** dropOn makes one element a place a task can be dropped on: a release box,
+     * or the lane's unassigned group -- which is the empty key the operation
+     * declares for taking a task out of every release (D2114). */
+    const dropOn = (element: Drawn, toRelease: string): void => {
+      const node = surface.nodeOf(element)
+      dragOn(node, 'dragover', (event) => {
+        // A drop happens only over a target that said the drag was welcome, and
+        // that answer is also the cursor a person reads as "this box".
+        if (dragging === null) return
+        event.preventDefault()
+      })
+      dragOn(node, 'drop', (event) => {
+        const moved = dragging
+        dragging = null
+        if (moved === null) return
+        event.preventDefault()
+        openMove(moved, toRelease)
+      })
+    }
+    for (const box of classed(drawn, 'graph-scope-box')) {
+      dropOn(box, box.getAttribute('data-release') ?? '')
+    }
+    for (const group of classed(drawn, 'graph-scope-unassigned')) dropOn(group, '')
+
+    for (const button of classed(drawn, MOVE_OPEN_CLASS)) {
+      const key = button.getAttribute('data-key') ?? ''
+      surface.nodeOf(button).addEventListener('click', () => {
+        // The keyboard's way into a move: the sheet opens on the list of boxes
+        // and nothing is asked of the record until one is chosen. It is a gesture
+        // like any other, so it takes the turn: a preview still reading for the
+        // sheet that was up must not draw itself over this one.
+        takeMoveTurn()
+        choosing = key
+        drawMove({ request: null, answer: null, sentence: null }, TARGET_SELECT)
+      })
+    }
+
+    const target = classed(drawn, MOVE_TARGET_CLASS)[0]
+    if (target !== undefined) {
+      surface.nodeOf(target).addEventListener('change', () => {
+        const key = choosing
+        if (key === null) return
+        const chosen = valueOf(surface, target)
+        // The control opens on its own not-yet-chosen option
+        // (`MOVE_TARGET_UNCHOSEN`), which is a value no box key can be and is
+        // not a choice: the sheet stays up with nothing asked of the record,
+        // exactly as it does before anyone has touched the list.
+        if (chosen === MOVE_TARGET_UNCHOSEN) return
+        openMove(key, chosen)
+      })
+    }
+    const confirmButton = classed(drawn, MOVE_CONFIRM_CLASS)[0]
+    if (confirmButton !== undefined) {
+      const node = surface.nodeOf(confirmButton)
+      node.addEventListener('click', () => {
+        confirmMove()
+      })
+      keydownOn(node, (event: KeyEventLike) => {
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          closeMove()
+        }
+      })
+    }
+    const cancelButton = classed(drawn, MOVE_CANCEL_CLASS)[0]
+    if (cancelButton !== undefined) {
+      surface.nodeOf(cancelButton).addEventListener('click', () => {
+        closeMove()
+      })
+    }
+    const undoButton = classed(drawn, MOVE_UNDO_CLASS)[0]
+    if (undoButton !== undefined) {
+      surface.nodeOf(undoButton).addEventListener('click', () => {
+        undoMove()
+      })
+    }
+    const sheet = classed(drawn, 'graph-move')[0]
+    if (sheet !== undefined) {
+      // Escape closes the sheet from wherever the keyboard is inside it, exactly
+      // as it closes the inspector: a confirmation is answered with two buttons
+      // and a key, and Cancel is the one that writes nothing.
+      keydownOn(surface.nodeOf(sheet), (event: KeyEventLike) => {
+        if (event.key !== 'Escape') return
+        event.preventDefault()
+        closeMove()
       })
     }
 
@@ -5257,6 +5615,14 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * line. */
   const projectsLicenceRead = sectionRead({ factory, theme })
 
+  /** projectsSeatsRead is the tab's **ninth** section (the subscriptions plan's
+   * S4.2): the advisory estimate of who launches jobs on this installation,
+   * drawn beside the seats the licence key carries. It reads a command of its
+   * own -- `fugaro seats --json` -- and it is the one section of this tab whose
+   * subject is a **contract pricing rule** rather than a running thing: a count
+   * of people, never a figure of what this installation spent. */
+  const projectsSeatsRead = sectionRead({ factory, theme })
+
   /** leaveProjects ends those sections' busy state when the operator moves to
    * another tab: nothing is in flight for a screen nobody is looking at. */
   leaveProjects = () => {
@@ -5268,6 +5634,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     projectsAccountKeysRead.end()
     projectsCredentialsServiceRead.end()
     projectsLicenceRead.end()
+    projectsSeatsRead.end()
   }
 
   /**
@@ -5365,6 +5732,13 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * such verb and answers `unknown command "ls"` -- a failure the operator can
      * do nothing about. The floor is asked **before** the read goes out. */
     const modelsTooOld = !modelsListSupported(gate.compatibility.cliVersion ?? '')
+    /** seatsTooOld is whether the CLI in use predates the seat estimate
+     * (`seatsSupported`). `fugaro seats` landed in v0.21.0, and every CLI above
+     * this console's supported set answers `ok`, so a 0.20.x installation is a
+     * CLI the tab reads and one that answers `unknown command "seats"` for this
+     * read -- a failure the operator can do nothing about. The floor is asked
+     * **before** the read goes out, like the models panel's. */
+    const seatsTooOld = !seatsSupported(gate.compatibility.cliVersion ?? '')
     /** model and modelsSentence are what `models ls` last answered on this
      * visit, and `modelsOut` says a read of it is in flight. */
     let models: ModelsListView | null = null
@@ -5445,6 +5819,25 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * is drawn only while the panel that sent it is still the one on screen
      * (`settingsEditor`'s own rule, one section over). */
     let licenceDrawn: LicenceDrawn | null = null
+    /** seats, seatsSentence, seatsOut and seatsAttempt are the seat estimate's
+     * own read (`seats.read`, the subscriptions plan's S4.2): the document
+     * `fugaro seats --json` printed, the CLI's own sentence for a read that was
+     * refused, whether one is in flight and which attempt it was. The document
+     * is held **whole and unread**, for `licence`'s reason: the section reads
+     * its own reply.
+     *
+     * **seatsPainted is what the licence's own landing is checked against**: the
+     * seats panel draws the key's seat count out of the licence section's model,
+     * so a licence that lands after the estimate has been drawn has to be able
+     * to repaint this panel with it -- and only when the panel is on screen and
+     * no read of its own is in flight, which is what keeps a landing from
+     * clearing another read's mark. */
+    let seats: unknown = null
+    let seatsSentence: string | null = null
+    let seatsOut = false
+    let seatsToken = 0
+    let seatsAttempt = 0
+    let seatsPainted = false
     /** bodyModel is the model the body is drawn from, or null when the body holds
      * something that is not one -- a refusal, or nothing yet. The policy and
      * doctor reads repaint the body **only** when it holds a model: a landing
@@ -5548,6 +5941,13 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         // this tab whose read is not a child process.
         if (licenceOut) {
           projectsLicenceRead.mark(licenceToken, drawn.licence, drawn.licenceSlot, LICENCE_BUSY)
+        }
+        // The seat estimate (S4.2), the last host the frame mounts: its mark goes
+        // up on its own section like the eight above, and its read is the one
+        // section of this tab whose child reads the installation's bucket --
+        // every run of the last 90 days, one `task.json` apiece.
+        if (seatsOut) {
+          projectsSeatsRead.mark(seatsToken, drawn.seats, drawn.seatsSlot, SEATS_BUSY)
         }
       }
       return drawn
@@ -5906,6 +6306,35 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       wireLicence(painted)
     }
 
+    /** paintSeats fills the ninth section from what `seats.read` answered, and
+     * from the licence section's own model: the estimate is one document and the
+     * figure it is compared against is the key's, which this section does not
+     * read for itself (`buildSeats` finds the seats row `buildLicence` made, so
+     * the number an operator reads here is the number they read one panel over).
+     *
+     * It is handed both documents as they arrived, because the section reads its
+     * own reply. **It is also what the licence's own landing calls**, so a key
+     * that arrives after the estimate repaints this panel with its seat count --
+     * guarded by `seatsPainted` and `!seatsOut` at that call site, because a
+     * repaint blanks the section and the mark of a read that is still out lives
+     * in a slot inside it. */
+    const paintSeats = (): void => {
+      const drawn = mount(false)
+      clearSection(drawn.seats, drawn.seatsSlot)
+      seatsPainted = true
+      fillSeats(
+        factory,
+        buildSeats({
+          raw: seats,
+          licence: buildLicence({ raw: licence, because: licenceSentence }),
+          because: seatsSentence,
+          tooOld: seatsTooOld,
+          version: gate.compatibility.cliVersion ?? '',
+        }),
+        drawn.seats,
+      )
+    }
+
     /**
      * wireLicence binds the paste: the one control of this section that writes
      * anything.
@@ -6167,6 +6596,42 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       // on.
       projectsLicenceRead.settle(licenceToken)
       paintLicence()
+      // The seat estimate is drawn beside this key whatever this read answered
+      // (`seatsPainted` and `!seatsOut`: the panel is on screen and no read of
+      // its own is in flight), because its comparison is the key's seat count --
+      // a licence that just landed is the one fact this section was missing, and
+      // a licence that was **replaced** by a paste is a new figure for it.
+      if (seatsPainted && !seatsOut) paintSeats()
+    }
+
+    /**
+     * loadSeats makes the seat estimate's read, `seats.read`, and draws the
+     * ninth section from it.
+     *
+     * The reply is a `Snapshot` wrapping the CLI's own document (`documentOf`),
+     * and the document is handed to the builder **unread**: the section reads its
+     * own reply (`buildSeats`'s three rules), so a document this build does not
+     * understand is refused by the panel rather than decoded into three empty
+     * tables here. That is the same door the licence section takes, and it is
+     * this change's own choice: no decoder for this document exists, and a
+     * section that draws two figures and two tables checks every member of them
+     * itself.
+     */
+    const loadSeats = async (attempt: number): Promise<void> => {
+      const answer = documentOf(await bridge.readSeats({}))
+      if (seatsAttempt !== attempt) return
+      if (stale(mine)) return
+      seatsOut = false
+      seats = null
+      seatsSentence = null
+      if (!answer.ok) seatsSentence = answer.sentence
+      else seats = answer.data
+      // The mark is taken down through the section helper rather than by the
+      // filler, for the models read's reason: `fillSeats` writes beside the
+      // slot, so nothing else would remove the claim from the host it was made
+      // on.
+      projectsSeatsRead.settle(seatsToken)
+      paintSeats()
     }
 
     /** beginModels starts the second section's read and puts its mark up -- or,
@@ -6282,6 +6747,32 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       void loadLicence(licenceAttempt)
     }
 
+    /** markSeats puts the ninth section's mark up. */
+    const markSeats = (): void => {
+      if (!seatsOut || frame === null) return
+      projectsSeatsRead.mark(seatsToken, frame.seats, frame.seatsSlot, SEATS_BUSY)
+    }
+
+    /**
+     * beginSeats starts the seat estimate's read and puts its mark up -- or,
+     * below the command's floor, makes no read at all and draws the console's own
+     * sentence naming the version this panel needs (`beginModels`' shape). It is
+     * called on every visit, the budget's own read or not, for `beginModels`'s
+     * reason: a cached budget view drawn before anything is awaited is not what
+     * keeps this section waiting.
+     */
+    const beginSeats = (): void => {
+      if (!seatsTooOld) {
+        seatsAttempt += 1
+        seatsOut = true
+        seatsToken = projectsSeatsRead.start()
+      }
+      if (frame === null) mount(true)
+      else markSeats()
+      if (seatsTooOld) paintSeats()
+      else void loadSeats(seatsAttempt)
+    }
+
     /** beginSettings starts the third section's read and puts its mark up. It
      * is called on every visit, the budget's own read or not: a cached budget
      * view drawn before anything is awaited is not what keeps the settings panel
@@ -6332,6 +6823,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       // own mark up, and the visit that begins the other reads begins this one
       // too.
       beginLicence()
+      // The seat estimate's read is the sixth of them (S4.2), started after the
+      // frame's own marks for `beginLicence`'s reason exactly.
+      beginSeats()
       void loadManaged(managedAttempt)
       void loadPolicy(policyAttempt)
       void loadDoctor(doctorAttempt)
@@ -6372,6 +6866,17 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       licenceAttempt += 1
       licenceOut = true
       licenceToken = projectsLicenceRead.start()
+      // The seat estimate's read is taken with the rest (S4.2). It is the tab's
+      // one read whose child lists the installation's bucket, so it is the one
+      // that answers last -- and taking its token here is what lets its panel
+      // draw the moment it does, rather than behind the budget's read. Below the
+      // command's floor there is no seats read at all (`seatsTooOld`): the panel
+      // is then drawn by the same branch the models panel uses below its own.
+      if (!seatsTooOld) {
+        seatsAttempt += 1
+        seatsOut = true
+        seatsToken = projectsSeatsRead.start()
+      }
       const fresh = frame === null
       const drawn = mount(true)
       if (!fresh) {
@@ -6382,6 +6887,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         markManaged()
         markCredentialsService()
         markLicence()
+        markSeats()
       }
       void load(token)
       if (modelsTooOld) paintModels()
@@ -6391,6 +6897,8 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       void loadPolicy(policyAttempt)
       void loadDoctor(doctorAttempt)
       void loadLicence(licenceAttempt)
+      if (seatsTooOld) paintSeats()
+      else void loadSeats(seatsAttempt)
     }
 
     // The view this screen opens on, if this session has already read it, is
@@ -8183,6 +8691,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     live.rigor = new Map()
     live.rigorAt = 0
     history = new BurnHistory()
+    hourHistory = new HourHistory()
     // Spend's two documents and the views read from them are this
     // installation's: the caps are its budget, and a cached view carries its
     // figures. The next installation is read afresh rather than drawn from
@@ -8207,6 +8716,16 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // from positions computed for a checkout that is gone.
     graph.screen?.dispose()
     graph.screen = null
+    // And the move in hand is that installation's too: the request a confirm
+    // would send, the answer an undo inverts and the two gestures in flight are
+    // all about the record the console just left -- a drag whose `dragend` never
+    // came would otherwise make the next drop move this installation's key. The
+    // turn is taken as well, so a preview still reading for the old record draws
+    // nothing over the drawing that replaces it.
+    moveFlow = null
+    takeMoveTurn()
+    dragging = null
+    choosing = null
     graph.readAt = 0
     // The scope is the same kind of fact: the plan scope's document belongs to
     // the installation that is gone, so the next one opens on the scope the

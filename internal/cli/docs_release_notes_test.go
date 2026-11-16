@@ -317,12 +317,22 @@ func TestReleaseNotesV090ClaimsHoldInTheTree(t *testing.T) {
 		{"project repos rm", ""},
 		{"image refresh", ""},
 	} {
+		path, flag := notesStep(c.path, c.flag)
 		words := c.path
-		cmd := notesCommand(t, c.path)
+		cmd := notesCommand(t, path)
 		if c.flag != "" {
 			words += " --" + c.flag
-			if cmd.Flags().Lookup(notesFlag(c.flag)) == nil {
-				t.Errorf("fugaro %s has no --%s flag (the step says `--%s`), and %s tells an operator to run it", c.path, notesFlag(c.flag), c.flag, releaseNotesV090)
+			switch {
+			case flag == "":
+				// A flag the translation drops has nothing left to look up, so the
+				// step is held to its absence instead: notesStep says the bare
+				// command is this step's answer now, and a --local back on that door
+				// would make the note's spelling a live flag again.
+				if cmd.Flags().Lookup(c.flag) != nil {
+					t.Errorf("fugaro %s has --%s again, and %s tells an operator to run `fugaro %s --%s`: the flag the tree dropped is what the bare command does now", path, c.flag, releaseNotesV090, path, c.flag)
+				}
+			case cmd.Flags().Lookup(notesFlag(flag)) == nil:
+				t.Errorf("fugaro %s has no --%s flag (the step says `--%s`), and %s tells an operator to run it", path, notesFlag(flag), c.flag, releaseNotesV090)
 			}
 		}
 		// The command must end where the notes' span or its argument does: a
@@ -455,6 +465,26 @@ func notesFlag(flag string) string {
 		return "firebase-project"
 	}
 	return flag
+}
+
+// notesStep is the step under the names the tree carries today, which is the two
+// translations of the command word and its flag together: `fugaro upgrade` is
+// `fugaro update` since U4 of docs/plugin-user-scope/implementation-plan.md
+// (D948, D950 — one command), and `--local` is the flag none of them has any
+// more, because what the retired command did behind it is what plain
+// `fugaro update` does under a coding agent's marker. So a step that named
+// `fugaro upgrade --local` resolves to the bare `fugaro update`, and the loop
+// above holds it to that flag's absence rather than to a lookup that could only
+// fail. The notes' own spelling stays theirs (D9), the same way notesCommand
+// and notesFlag leave `fugaro init` and `--firebase` in the document.
+func notesStep(path, flag string) (string, string) {
+	if path == "upgrade" {
+		path = "update"
+		if flag == "local" {
+			flag = ""
+		}
+	}
+	return path, flag
 }
 
 func commandAt(t *testing.T, path ...string) *cobra.Command {

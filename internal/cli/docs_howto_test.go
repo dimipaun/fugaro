@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// The five operator how-tos the short setup page points at. docs/gcp-setup.md
+// The seven operator how-tos the short setup page points at. docs/gcp-setup.md
 // is capped at 60 lines (TestDocsGCPSetupStaysShort), so the topics the page
 // before it carried live one file each under docs/how-to/ and the page links
 // them. The list is what the pin below walks in both directions: a page that
@@ -19,6 +19,8 @@ var gcpSetupHowTos = []string{
 	"offboarding.md",
 	"retiring-a-workflow.md",
 	"teammates.md",
+	"orchestrator-cutover.md",
+	"model-ab-testing.md",
 }
 
 // TestDocsGCPSetupLinksEveryHowTo: the page is the short one, so each topic it

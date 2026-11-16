@@ -17,6 +17,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/escalation"
 	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/gitops"
@@ -561,6 +562,38 @@ func TestShadowChallengerNotInOwnerListHalts(t *testing.T) {
 	// the owner's list alone.
 	if len(g.agent.calls) != 0 || pushes() != 0 {
 		t.Fatalf("a refused arm ran a stage or pushed: calls %d, pushes %d", len(g.agent.calls), pushes())
+	}
+}
+
+// TestShadowChallengerCarryingAGradeRefuses: a task that names a model grade
+// and is a challenger arm says two different things about the one model the arm
+// exists to name, and the run refuses the arm rather than let the grade land on
+// it. Letting it land would record a challenger whose calls ran on the graded
+// model, and the champion's own coder was read off the configuration before the
+// grade resolved (championCoder), so the pair would compare two models neither
+// arm was launched to compare (D555, D559). Nothing at bootstrap can choose
+// between the two, so the arm is refused by name and the record says why.
+func TestShadowChallengerCarryingAGradeRefuses(t *testing.T) {
+	spec := armTask(challengerModel)
+	spec.ModelGrade = escalation.Strong
+	g, _ := armGWSpec(t, armCfg(t), "50", spec, armLayer)
+	pushes := countPushes(t, g.harness)
+	rec, err := g.run(t, implement("feature"), review("ship", 0))
+	if err == nil {
+		t.Fatal("a task naming a model grade was run as a challenger arm")
+	}
+	refusedArm(t, rec)
+	// The reason is the conflict's own, not a grade the project happens not to
+	// set: an arm refused for another cause would leave the reader looking for a
+	// grade to publish while the task actually asks for two coder models.
+	for _, want := range []string{"is a challenger arm", "model grade", string(escalation.Strong), "ab: block"} {
+		if !strings.Contains(rec.Reason, want) {
+			t.Fatalf("the reason does not name %q: %q", want, rec.Reason)
+		}
+	}
+	if len(g.agent.calls) != 0 || pushes() != 0 || len(g.provider.State.PRs) != 0 {
+		t.Fatalf("a refused arm ran a stage or published: calls %d, pushes %d, PRs %d",
+			len(g.agent.calls), pushes(), len(g.provider.State.PRs))
 	}
 }
 

@@ -822,21 +822,34 @@ func TestDoctorUpdateItemsAreOneCommand(t *testing.T) {
 		t.Errorf("--all does not carry the check's own text:\n%s", all)
 	}
 
-	// A check `fugaro update` does not put right on its own is not an update
-	// item: what differs for plugin-install is the installed plugin, so the
-	// line names the update that writes the pin and Claude Code's own install
-	// from it, rather than the update alone.
+	// A check whose own state `fugaro update` does not put right is not an
+	// update item, whatever its ID's class. plugin-install *is* one since D942
+	// (U3 of docs/plugin-user-scope/implementation-plan.md): the plugin stage
+	// installs the plugin on this machine now, so the class's command is what
+	// repairs "no plugin on this machine" and an older one. U3 turned this
+	// block around — it asserted the opposite until then, which is the
+	// executable form of the class comment's old "not here yet" note — and the
+	// line keeps Claude Code's by-hand form beside the command, because a
+	// machine with no claude on PATH has nothing else (noClaudeHint says the
+	// same, and the check's own fix string carries it too).
 	for id, want := range map[string]string{
-		"plugin-install": "`fugaro update`",
+		"plugin-install": "`fugaro update`, or install it in Claude Code",
 	} {
 		c := doctorCheck{ID: id, Severity: "warning", Problem: "what is wrong here",
 			Fix: "a fix long enough that the default view prints the short form instead: " + strings.Repeat("and its own words ", 10)}
-		if got := doctorClassOf(c); got == doctorClassUpdate {
-			t.Errorf("%s is an update item, and fugaro update does not do this: %q", id, got)
+		if got := doctorClassOf(c); got != doctorClassUpdate {
+			t.Errorf("%s is %q, want %q: the plugin stage installs the plugin, so fugaro update is its remedy", id, got, doctorClassUpdate)
+		}
+		if got := doctorClassOf(c); got == doctorClassMeasure {
+			t.Errorf("%s is a measurement, and a measurement nothing acts on is the silent pass the classes exist to prevent", id)
 		}
 		line := doctorItemLine(t, c)
 		if !strings.Contains(line, want) {
-			t.Errorf("%s's line does not name %s: %q", id, want, line)
+			t.Errorf("%s's line does not name %q: %q", id, want, line)
+		}
+		// And its own long text is not the line: --all and --json carry it.
+		if strings.Contains(line, "its own words") {
+			t.Errorf("%s's line prints the check's own long fix: %q", id, line)
 		}
 	}
 
@@ -919,7 +932,7 @@ func TestDoctorNeverHidesAFinding(t *testing.T) {
 	// installation that did not answer, which is a finding whatever it says
 	// (TestDoctorReadFailureIsCounted).
 	for _, id := range []string{
-		"cli-version", "plugin-install", "cosign", "provider-price-catalog",
+		"cli-version", "cosign", "provider-price-catalog",
 		"provider-zdr-unverified",
 		"routing-resolution", "routing-cache-markers", "project-layer", "project-layer-drift",
 		"shared-config", "shared-config-differs", "xdg-temp-dir", "policy-published",
@@ -935,6 +948,27 @@ func TestDoctorNeverHidesAFinding(t *testing.T) {
 		if checksFail([]doctorCheck{c}, true) {
 			t.Errorf("%s is a measurement and fails doctor: %+v", id, c)
 		}
+	}
+
+	// plugin-pin joined the allow-list with D942 (U3 of
+	// docs/plugin-user-scope/implementation-plan.md): the state it measures is
+	// the un-wired checkout, which is the normal one now that the merge which
+	// wrote a pin is deleted (D949). Filed as audit it was counted by the
+	// default view's pointer line, so the one screen the owner reads most said
+	// "1 more finding" over a checkout with nothing wrong with it. Its finding
+	// states are the update class — a pin this binary does not match, a foreign
+	// wiring — which is what keeps them on that screen, so the two ends are
+	// pinned together here.
+	pin := doctorCheck{ID: "plugin-pin", Severity: "info", Problem: "no fugaro marketplace in .claude/settings.json"}
+	if got := doctorClassOf(pin); got != doctorClassMeasure {
+		t.Errorf("the un-wired plugin-pin is %q, want %q: it is the normal state, not a finding (D942)", got, doctorClassMeasure)
+	}
+	if out := doctorDefaultOutput(t, []doctorCheck{pin}); strings.Contains(out, "more finding") || strings.Contains(out, "plugin-pin") {
+		t.Errorf("the un-wired checkout is printed or counted by the default view:\n%s", out)
+	}
+	stale := doctorCheck{ID: "plugin-pin", Severity: "warning", Problem: "the plugin is pinned at fugaro@0.1.0, and this fugaro is 0.2.0", Fix: "run `fugaro update`"}
+	if got := doctorClassOf(stale); got != doctorClassUpdate {
+		t.Errorf("a pin this binary does not match is %q, want %q: nothing acts on it otherwise", got, doctorClassUpdate)
 	}
 
 	// The per-instance IDs of those same sweeps are findings: runs-bucket-iam-1
@@ -1134,8 +1168,13 @@ func doctorCleanState(t *testing.T, r *doctorRig, root string) *doctorRig {
 	}
 	t.Setenv("PATH", r.dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	// No installed plugin of this machine's own: what Claude Code installed is
-	// read from a directory the test owns.
+	// read from a directory the test owns — and that machine has Fugaro's
+	// plugin, which is what a clean installation is since D942 (U3 of
+	// docs/plugin-user-scope/implementation-plan.md): the plugin on this
+	// machine is what carries the skills, so an installation with none is one
+	// with something to do, whatever its checkout pins.
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	installUserPlugin(t, "0.2.0")
 	return r
 }
 

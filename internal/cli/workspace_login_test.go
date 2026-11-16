@@ -59,7 +59,7 @@ func TestWorkspaceLoginRefusesWhenThisProjectIsAMemberOfNothing(t *testing.T) {
 	if _, _, err := execute(t, workspaceAddArgs()...); err != nil {
 		t.Fatalf("workspace add: %v", err)
 	}
-	if _, _, err := execute(t, "workspace", "rm", "workspace-alpha", "--yes"); err != nil {
+	if _, _, err := execute(t, "workspace", "rm", "workspace-alpha"); err != nil {
 		t.Fatalf("workspace rm: %v", err)
 	}
 	if out, _, err := execute(t, "workspace", "login", "workspace-alpha"); err == nil {

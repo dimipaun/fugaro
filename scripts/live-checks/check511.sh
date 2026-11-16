@@ -459,6 +459,12 @@ step_scale_to_zero() {
 # on the service is what iam.tf writes — and it is never printed.
 step_token() {
   TOKEN=$(gcloud auth print-identity-token --audiences="$SERVICE_URL" 2>"$SCRATCH/token.err" | head -n 1 || true)
+  # --audiences is accepted for a service account only: an operator signed in as
+  # a person gets the refusal "Invalid account type", and the token gcloud mints
+  # for a person without it is the one Cloud Run's IAM front end accepts.
+  if [ -z "$TOKEN" ] && grep -q "Invalid account type" "$SCRATCH/token.err" 2>/dev/null; then
+    TOKEN=$(gcloud auth print-identity-token 2>"$SCRATCH/token.err" | head -n 1 || true)
+  fi
   [ -n "$TOKEN" ] || die "gcloud could not mint an identity token for ${SERVICE_URL} ($(last_line "$(cat "$SCRATCH/token.err" 2>/dev/null || true)")): the check's requests have to pass the service's IAM front end the way a run's do. Run 'gcloud auth print-identity-token --audiences=$SERVICE_URL' here yourself to read the error"
 }
 

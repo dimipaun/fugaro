@@ -37,7 +37,9 @@ module "installation" {
   enable_vertex             = var.enable_vertex
   manage_apis               = var.manage_apis
   launchers                 = var.launchers
+  launcher_accounts         = var.launcher_accounts
   operators                 = var.operators
+  viewers                   = var.viewers
   launcher_bucket_condition = var.launcher_bucket_condition
   budget                    = var.budget
   alert_email               = var.alert_email
@@ -49,7 +51,9 @@ module "installation" {
   coordinator               = var.coordinator
   mcp_server                = var.mcp_server
   catalog_check             = var.catalog_check
+  reports                   = var.reports
   credentials_service       = var.credentials_service
+  intake                    = var.intake
   project_secrets           = var.project_secrets
   managed_deployer_scoped   = var.managed_deployer_scoped
 }

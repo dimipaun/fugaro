@@ -156,18 +156,19 @@ func TestRefreshRefusesCustomBase(t *testing.T) {
 	r.check(t, refreshYAML)
 }
 
-// 2026-10-08 decision: --yes does not bypass the custom-base refusal: the
-// full command, given --yes and no terminal at all, still stops with the
-// exact same one-line fix as without --yes.
-func TestRefreshYesStillRefusesCustomBase(t *testing.T) {
+// The person at the terminal is what confirms a step (T7), and it confirms
+// nothing here: the full command, at a real terminal, still stops at
+// preflight's custom-base refusal with the same one-line fix.
+func TestRefreshCustomBaseRefusedAtTheTerminal(t *testing.T) {
 	useVersion(t, "0.5.1")
 	useSelf(t)
 	r := newAnchorModeRig(t, refreshYAML, true)
 	r.appendConfig(t, "base_images: {base: "+refreshHost+"/fugaro-base/fugaro-base:dev-abc}\n")
 	noRecordReads(t)
-	out, _, err := executeStdin(t, "", "image", "refresh", "--workflow", "api", "--yes")
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, "", "image", "refresh", "--workflow", "api")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "base_images.base is "+refreshHost+"/fugaro-base/fugaro-base:dev-abc") ||
-		!strings.Contains(err.Error(), "then rerun fugaro image refresh --workflow api --yes") {
+		!strings.Contains(err.Error(), "then rerun fugaro image refresh --workflow api") {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
 	r.check(t, refreshYAML)
@@ -217,14 +218,11 @@ func TestRefreshAgainKeepsEveryFlag(t *testing.T) {
 	if got := (refreshOptions{}).again(); got != "fugaro image refresh" {
 		t.Errorf("no flags: %q", got)
 	}
-	// 2026-10-08 decision: a rerun of a run given --yes keeps it, so an
-	// unattended run that stops still reruns unattended.
-	o.yes = true
-	if got := o.again(); got != want+" --yes" {
-		t.Errorf("with --yes:\n%s\nwant:\n%s", got, want+" --yes")
-	}
-	if got := (refreshOptions{yes: true}).again(); got != "fugaro image refresh --yes" {
-		t.Errorf("--yes alone: %q", got)
+	// The line names no flag that stands in for a confirmation, whatever the
+	// run's own options carry (T11): --yes is gone from this command, so a
+	// printed line that named it would be refused on the flag.
+	if got := (refreshOptions{yes: true}).again(); got != "fugaro image refresh" {
+		t.Errorf("a run carrying its own answer: %q", got)
 	}
 }
 
@@ -460,7 +458,6 @@ func TestRefreshRefusedInAgentSession(t *testing.T) {
 				fakeTerminal(t)
 				args := []string{"image", "refresh", "--repo", "acme/app"}
 				if yes {
-					args = append(args, "--yes")
 				}
 				_, _, err := executeStdin(t, "", args...)
 				if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro image refresh applies cloud changes: "+initflow.AgentRefusal(marker)) {
@@ -484,14 +481,11 @@ func TestRefreshNeedsATerminal(t *testing.T) {
 	}
 }
 
-// 2026-10-08 decision: --yes needs no terminal at all (stdin not a terminal,
-// as executeStdin's strings.Reader always is), and no --json or
-// --plan-only exist to combine with it.
-func TestRefreshHasYesButNoJSONOrPlanOnly(t *testing.T) {
+// The command defines neither --json nor --plan-only: what confirms a step is
+// the person at the terminal, and neither mode has a word for that, so each is
+// refused as an unknown flag rather than read.
+func TestRefreshHasNoJSONOrPlanOnly(t *testing.T) {
 	cmd := newImageRefreshCmd()
-	if f := cmd.Flags().Lookup("yes"); f == nil {
-		t.Fatal("fugaro image refresh has no --yes flag")
-	}
 	for _, name := range []string{"json", "plan-only"} {
 		if f := cmd.Flags().Lookup(name); f != nil {
 			t.Fatalf("fugaro image refresh defines --%s, which the design excludes: %+v", name, f)
@@ -604,7 +598,11 @@ func TestRefreshStopsSayWhatFinished(t *testing.T) {
 				if strings.Contains(out, "is done") || strings.Contains(out, "next: run fugaro update --anchor") {
 					t.Errorf("a stopped run ended like a finished one:\n%s", out)
 				}
-				if !strings.Contains(out, "4. builds:") || strings.Index(out, "fugaro image refresh of acme/app") > strings.Index(out, "step 2, base:") {
+				// The plan is the review screen, printed whole before any step
+				// runs: its last row comes before the first step line — a tick
+				// for a step that ended and a cross for the one that failed on
+				// the row below.
+				if i, j := strings.Index(out, "  5. then, if this checkout's"), strings.Index(out, stepLineOf(reportLines(out), "base")); !strings.Contains(out, "4. builds:") || i < 0 || j < 0 || i > j {
 					t.Errorf("the plan is not printed first:\n%s", out)
 				}
 				if calls := r.calls(t); len(calls) != 0 {
@@ -615,23 +613,22 @@ func TestRefreshStopsSayWhatFinished(t *testing.T) {
 	}
 }
 
-// 2026-10-08 decision: under --yes, a failed build still stops the ones
-// after it, names what finished, and the rerun line to type back now
-// includes --yes too (again() carries it); none of this needs a terminal.
-// Mutation (run, restore): drop `if o.yes { args = append(args, "--yes") }`
-// from refreshOptions.again, and this test fails (the rerun line omits
-// --yes, so a copy-pasted rerun would ask for a terminal again).
-func TestRefreshYesFailureStopsAndRerunLineKeepsYes(t *testing.T) {
+// A failed build still stops the ones after it, names what finished, and the
+// rerun line to type back is the command that reaches the same steps at this
+// terminal (again()); the run itself is at a real terminal, where the person
+// being there is every confirmation it needs (T7).
+func TestRefreshFailureStopsAndNamesTheRerun(t *testing.T) {
 	useVersion(t, "0.5.1")
 	useSelf(t)
 	newAnchorModeRig(t, refreshYAML, true)
+	fakeTerminal(t)
 	ran := fakeSteps(t, "builds", remote(errors.New("503 from the cloud")))
-	out, _, err := executeStdin(t, "", "image", "refresh", "--workflow", "app", "--yes")
+	out, _, err := executeStdin(t, "", "image", "refresh", "--workflow", "app")
 	if ExitCode(err) != ExitRemoteError {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 	for _, want := range []string{"503 from the cloud", "stopped at step 4 (builds)", "steps finished: preflight, base, check job;",
-		"rerun fugaro image refresh --workflow app --yes in this checkout"} {
+		"rerun fugaro image refresh --workflow app in this checkout"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error lacks %q: %v", want, err)
 		}
@@ -713,8 +710,8 @@ func TestRefreshPreflightStopTexts(t *testing.T) {
 // terminal the command itself refuses before it plans anything — every step of
 // this run is confirmed by the person at the terminal who runs it, so a run
 // with none has nothing to confirm with (refuseRefreshHere, and
-// TestRefreshYesRunsEndToEndNoTerminal for the --yes way past it). The real
-// base step and the real check-job step run through runImageRefresh.
+// TestRefreshRunsEndToEndAtTheTerminal for the run that goes the whole way).
+// The real base step and the real check-job step run through runImageRefresh.
 // Mutation (run, restore): `iopts := &initOptions{yes: true, ...}` in
 // runImageRefresh: checkOpts fails (the options carry a flag that would stand
 // in for the confirmation).
@@ -790,8 +787,11 @@ func TestRefreshConfirmationsNeedTheOwnerAndNoFlag(t *testing.T) {
 			if n := len(r.run.Patches()); n != 1 {
 				t.Fatalf("%d patches, want 1 (the check job moved):\n%s", n, out)
 			}
-			if !strings.Contains(out, "updated the daily image check job") {
-				t.Errorf("the check job was not updated:\n%s", out)
+			// The stage's own line is the run's output now (CL6): the screen's
+			// account of step 3 is one step line, and what the stage reports is
+			// in the run's log.
+			if log := writesALog(t, "image-refresh"); !strings.Contains(log, "updated the daily image check job") {
+				t.Errorf("the check job was not updated:\n%s", log)
 			}
 		})
 	}
@@ -839,9 +839,10 @@ func TestRefreshEndsWithTheAnchorNote(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
-		if strings.Join(*ran, ",") != "base,check job,builds" || !strings.Contains(out, "fugaro image refresh of acme/app is done") {
+		if strings.Join(*ran, ",") != "base,check job,builds" {
 			t.Fatalf("ran %v\n%s", *ran, out)
 		}
+		reported(t, out, "base", "check job", "builds")
 		if got := strings.Contains(out, "next: run fugaro update --anchor in this checkout"); got != tc.note {
 			t.Errorf("anchor note %v, want %v:\n%s", got, tc.note, out)
 		}
@@ -849,17 +850,103 @@ func TestRefreshEndsWithTheAnchorNote(t *testing.T) {
 	}
 }
 
-// 2026-10-08 decision: --yes runs the whole command end to end with no
-// terminal at all (a closed stdin, as executeStdin's strings.Reader always
-// is): the plan is printed first, the options every step gets carry yes, and
-// the run ends "is done" with no prompt anywhere.
-// Mutation (run, restore): drop `if yes { return nil }` from
-// refuseRefreshHere, and this test fails (it is refused for lacking a
-// terminal, same as without --yes).
-func TestRefreshYesRunsEndToEndNoTerminal(t *testing.T) {
+// TestRepoImageRefreshIsDisabled: D1900 (2026-11-09) disables repo-level
+// images and keeps the code, so every command that would build a
+// repository's own image answers the notice and exits 0 with nothing built.
+// They are here together because they are one decision: the derived build
+// (--local, --workflow and the fallthrough a project with no catalog takes),
+// the rebuild the repository's daily check job runs, and the refresh command,
+// which is the one that builds today (the red step).
+//
+// The tests of the machinery the ruling keeps run with repoImagesOff cleared
+// (TestMain), so this is the one test that reads the ruling itself: it turns
+// the switch on, and puts it back as it found it for whatever runs next.
+//
+// fugaro update is not one of them, and that is the difference between the
+// commands and the converge: update runs the same machinery in process (the
+// images stage, refreshBuilds), because a repository whose project names no
+// catalog image still runs its own (O4 b) and the HARD RULE says one update is
+// the whole upgrade. A refresh's non-building steps -- pinning the base image,
+// moving a checkout: clone workflow's job onto it -- are part of the same
+// answer: the command is what is disabled, not the work underneath it.
+func TestRepoImageRefreshIsDisabled(t *testing.T) {
+	if !repoImagesOffShipped {
+		t.Error("the CLI ships with repo-level images disabled (D1900): the notice is the release's behaviour, not a switch this test sets")
+	}
+	useVersion(t, "0.5.1")
+	useSelf(t)
+	noProjectLayerBucket(t)
+	t.Cleanup(func() { repoImagesOff = false })
+	repoImagesOff = true
+
+	t.Run("the per-workflow and local builds", func(t *testing.T) {
+		for _, args := range [][]string{
+			{"image", "build", "--workflow", "app"},
+			{"image", "build", "--local"},
+		} {
+			out, _, err := executeStdin(t, "", args...)
+			if err != nil {
+				t.Fatalf("%v: %v\n%s", args, err, out)
+			}
+			if !strings.Contains(out, repoImagesDisabledNotice) {
+				t.Errorf("%v answered %q, want the notice", args, out)
+			}
+		}
+	})
+
+	// A project that publishes no image catalog is the third: fugaro image
+	// build with no name falls through to the per-workflow path there, and that
+	// fallthrough is a repository-level build like the two above. It needs a
+	// checkout because which arm it takes -- a named entry's build, or this one
+	// -- is the catalog's answer.
+	t.Run("a project with no catalog", func(t *testing.T) {
+		fb, _ := cloudBuildCheckout(t, false)
+		out, _, err := executeBuild(t, "image", "build")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if n := buildPosts(fb); n != 0 {
+			t.Fatalf("the build submitted %d Cloud Builds, want none", n)
+		}
+		if !strings.Contains(out, repoImagesDisabledNotice) {
+			t.Errorf("a bare image build answered %q, want the notice", out)
+		}
+	})
+
+	t.Run("the check job's rebuild", func(t *testing.T) {
+		out, _, err := executeStdin(t, "", "image", "check", "--job")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if !strings.Contains(out, repoImagesDisabledNotice) {
+			t.Errorf("the repository's check job answered %q, want the notice", out)
+		}
+	})
+
+	t.Run("the refresh command", func(t *testing.T) {
+		fb := useFakeBuilder(t)
+		out, _, err := executeStdin(t, "", "image", "refresh")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if len(fb.specs) != 0 {
+			t.Fatalf("the refresh submitted a repository-level build: %+v", fb.specs)
+		}
+		if !strings.Contains(out, repoImagesDisabledNotice) {
+			t.Errorf("the refresh answered %q, want the notice", out)
+		}
+	})
+}
+
+// A run at a real terminal, with nothing typed, goes through the whole
+// command: the plan is printed first, the options every step gets carry no flag
+// standing in for a confirmation (T7), and the run ends with the reporter's
+// closing line and no prompt anywhere.
+func TestRefreshRunsEndToEndAtTheTerminal(t *testing.T) {
 	useVersion(t, "0.5.1")
 	useSelf(t)
 	newAnchorModeRig(t, refreshYAML, true)
+	fakeTerminal(t)
 	var seen *initOptions
 	old := newRefreshSteps
 	newRefreshSteps = func(r *initRun, e *initEngine, p *refreshPlan) refreshSteps {
@@ -872,56 +959,199 @@ func TestRefreshYesRunsEndToEndNoTerminal(t *testing.T) {
 		}
 	}
 	t.Cleanup(func() { newRefreshSteps = old })
-	out, _, err := executeStdin(t, "", "image", "refresh", "--yes")
-	if err != nil {
-		t.Fatalf("%v\n%s", err, out)
-	}
-	if seen == nil || !seen.yes {
-		t.Fatalf("the steps did not get yes=true: %+v", seen)
-	}
-	if !strings.Contains(out, "fugaro image refresh of acme/app is done") {
-		t.Errorf("did not finish:\n%s", out)
-	}
-	if i, j := strings.Index(out, "fugaro image refresh of acme/app ("), strings.Index(out, "step 2, base:"); i < 0 || j < 0 || i > j {
-		t.Errorf("the plan is not printed first:\n%s", out)
-	}
-}
-
-// Requirement: when step 3 finds the daily image check job missing for a
-// repository whose spec has one, that fact is repeated in the final
-// summary so it is not just a line that scrolled past steps 3 and 4.
-// Mutation (run, restore): remove the t.checkJobMissing block in
-// runImageRefresh after the builds step, and this test fails (the note
-// appears only once instead of twice).
-func TestRefreshFinalSummaryRepeatsMissingCheckJob(t *testing.T) {
-	useVersion(t, "0.5.1")
-	useSelf(t)
-	newAnchorModeRig(t, refreshYAML, true)
-	fakeTerminal(t)
-	old := newRefreshSteps
-	newRefreshSteps = func(r *initRun, e *initEngine, p *refreshPlan) refreshSteps {
-		return refreshSteps{
-			base: func(context.Context) error { return nil },
-			reload: func(context.Context) (*refreshTarget, error) {
-				return &refreshTarget{lc: p.lc, cfg: p.cfg}, nil
-			},
-			checkJob: func(_ context.Context, t *refreshTarget) error {
-				fmt.Fprintln(r.w, "  the daily image check job was not found, though this repository's spec has one: run fugaro update --repo in the checkout to deploy it (nothing was updated)")
-				t.checkJobMissing = true
-				return nil
-			},
-			builds: func(context.Context, *refreshTarget) error { return nil },
-		}
-	}
-	t.Cleanup(func() { newRefreshSteps = old })
 	out, _, err := executeStdin(t, "", "image", "refresh")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if n := strings.Count(out, "was not found"); n < 2 {
-		t.Fatalf("the missing check job is mentioned %d time(s), want at least twice (step 3, and the final summary):\n%s", n, out)
+	if seen == nil || seen.yes || seen.nonInteractive || seen.asJSON || seen.planOnly {
+		t.Fatalf("the steps got an option that stands in for a confirmation: %+v", seen)
 	}
-	if i, j := strings.Index(out, "is done"), strings.LastIndex(out, "was not found"); i < 0 || j < 0 || j > i {
-		t.Errorf("the repeated note does not come before the done line:\n%s", out)
+	reported(t, out, "base", "check job", "builds")
+	if i, j := strings.Index(out, "  5. then, if this checkout's"), strings.Index(out, stepLineOf(reportLines(out), "base")); i < 0 || j < 0 || i > j {
+		t.Errorf("the plan is not printed first:\n%s", out)
+	}
+}
+
+// Requirement (D1900, IS2): step 3 over a repository whose spec carries a daily
+// check and whose cloud holds none — the state Readiness leaves every such
+// repository in, since it deploys a check job only where one already exists —
+// says the job is not deployed and names no command. The remedy that line
+// printed before, `fugaro update --repo`, deploys no check job either, so it
+// sent the reader in a loop; the run still finishes, with nothing updated.
+func TestRefreshSaysAMissingCheckJobIsNotDeployed(t *testing.T) {
+	out, err := refreshRealCheckJob(t, false)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	// Step 3's own line is the run's output, which the default view keeps in the
+	// log (CL6, D1352): the screen has the step's line and the closing one.
+	log := writesALog(t, "image-refresh")
+	line := ""
+	for _, l := range strings.Split(log, "\n") {
+		if strings.Contains(l, "is not deployed") {
+			line = l
+		}
+	}
+	if line == "" {
+		t.Fatalf("step 3 does not say the check job is not deployed:\n%s", log)
+	}
+	if strings.Contains(line, "fugaro ") {
+		t.Errorf("the missing check job's line names a command, and none deploys one (D1900):\n%s", line)
+	}
+	if !strings.Contains(out, markDone+" check job") {
+		t.Errorf("the run did not finish its third step with nothing updated:\n%s", out)
+	}
+}
+
+// The command's own view (CL6): one line per step in the default view (D1354),
+// the run's own lines kept and shown again under --verbose, the stop sentence
+// the plugin skill quotes kept as the error's own, and the run in a log under
+// the command's name (D1352). The tests drive the command from its argv, as the
+// ones above do; what each stage prints on its own is pinned in
+// image_refresh_steps_test.go.
+
+// refreshWithTheRealCheckJob runs the standalone command over a rig whose third
+// step is the real one: the base step and the builds are stubbed (they need the
+// cloud), while the daily image check job's own line — the stage line the
+// default view stops showing — is the stage's, printed through the run's own
+// output.
+func refreshWithTheRealCheckJob(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	return refreshRealCheckJob(t, true, args...)
+}
+
+// refreshRealCheckJob is refreshWithTheRealCheckJob with the cloud's own side of
+// step 3 in the caller's hands: job says whether the rig's cloud holds the daily
+// image check job, while the reloaded spec carries one either way (the spec half
+// of the missing-job branch).
+func refreshRealCheckJob(t *testing.T, job bool, args ...string) (string, error) {
+	t.Helper()
+	useVersion(t, "0.5.1")
+	useSelf(t)
+	r := newAnchorModeRig(t, refreshYAML, true)
+	fakeTerminal(t)
+	slug, label := checkJobOwner(t, "github", "acme/app")
+	oldRef, newRef := managedRef("base", "0.4.0"), managedRef("base", "0.5.1")
+	if job {
+		spec, _ := json.Marshal(infra.CheckJobSpec{Repo: "acme/app", BaseImages: map[string]string{"base": oldRef}})
+		r.run.SetJob(gcp.CheckJobName(slug), map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRole: gcp.RoleCheck, gcp.LabelRepo: label}, oldRef)
+		r.run.SetJobEnv(gcp.CheckJobName(slug), map[string]string{infra.CheckSpecEnv: string(spec)})
+	}
+	old := newRefreshSteps
+	newRefreshSteps = func(rr *initRun, e *initEngine, p *refreshPlan) refreshSteps {
+		return refreshSteps{
+			base: func(context.Context) error { return nil },
+			reload: func(context.Context) (*refreshTarget, error) {
+				lc := *p.lc
+				lc.BaseImages = map[string]string{"base": newRef}
+				return &refreshTarget{lc: &lc, cfg: p.cfg, kinds: []string{"base"},
+					spec: infra.RepoSpec{Name: "acme/app", Slug: slug, Label: label,
+						Check: &infra.CheckSpec{Job: gcp.CheckJobName(slug), DeployJob: true}}}, nil
+			},
+			checkJob: func(ctx context.Context, tg *refreshTarget) error { return rr.refreshCheckJob(ctx, tg) },
+			builds:   func(context.Context, *refreshTarget) error { return nil },
+		}
+	}
+	t.Cleanup(func() { newRefreshSteps = old })
+	out, _, err := executeStdin(t, "", append([]string{"image", "refresh", "--workflow", "app"}, args...)...)
+	return out, err
+}
+
+// TestImageRefreshDefaultIsOneLinePerStep: the default view is the plan, one
+// line per step and the closing line (D1354). The three "step N, name:" headers
+// are gone and each stage's own lines are the run's own output — kept in the
+// log (D1352) and shown again under --verbose — instead of the screen's account
+// of the step.
+func TestImageRefreshDefaultIsOneLinePerStep(t *testing.T) {
+	out, err := refreshWithTheRealCheckJob(t)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	reported(t, out, "base", "check job", "builds")
+	// One line per step and no more: stepName reads a line's leading token, so
+	// three lines are three steps.
+	if got := strings.Join(stepNames(out), ","); got != "base,check,builds" {
+		t.Errorf("the step lines are %q, want one line per step (base, check job, builds):\n%s", got, out)
+	}
+	for _, gone := range []string{
+		"step 2, base:", "step 3, the daily image check job:", "step 4, builds:",
+		"updated the daily image check job",
+	} {
+		if strings.Contains(out, gone) {
+			t.Errorf("the default view still prints %q:\n%s", gone, out)
+		}
+	}
+	// The plan is still printed first, and the reporter's closing line is the
+	// last one: the command's own "is done" is what it replaces.
+	if i, j := strings.Index(out, "fugaro image refresh of acme/app ("), strings.Index(out, markDone+" base"); i < 0 || j < 0 || i > j {
+		t.Errorf("the plan is not printed before the steps (plan at %d, steps at %d):\n%s", i, j, out)
+	}
+	if strings.Contains(out, "is done") {
+		t.Errorf("the run still ends with its own done line rather than the reporter's closing one:\n%s", out)
+	}
+}
+
+// TestImageRefreshVerboseUnchanged: --verbose is today's view — the stream the
+// default view moved into the log reaches the terminal as well — and the steps
+// are the same ones (D1354, G10).
+func TestImageRefreshVerboseUnchanged(t *testing.T) {
+	out, err := refreshWithTheRealCheckJob(t, "--verbose")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "updated the daily image check job") {
+		t.Errorf("--verbose does not show the run's own lines:\n%s", out)
+	}
+	reported(t, out, "base", "check job", "builds")
+}
+
+// TestImageRefreshStoppedAtStepKeepsItsSentence: the stop message is the
+// plugin skill's (states.md quotes `stopped at step N`, and its own reason
+// names the steps that finished and the rerun line), so the reporter's account
+// is added beside it and never in place of it: the step that failed is the
+// reporter's line, the sentence is the command's error, and the run ends
+// failed.
+func TestImageRefreshStoppedAtStepKeepsItsSentence(t *testing.T) {
+	useVersion(t, "0.5.1")
+	useSelf(t)
+	newAnchorModeRig(t, refreshYAML, true)
+	fakeTerminal(t)
+	ran := fakeSteps(t, "builds", remote(errors.New("503 from the cloud")))
+	out, _, err := executeStdin(t, "", "image", "refresh", "--workflow", "app")
+	if ExitCode(err) != ExitRemoteError {
+		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
+	}
+	const sentence = "fugaro image refresh stopped at step 4 (builds), steps finished: preflight, base, check job; " +
+		"once that is fixed, rerun fugaro image refresh --workflow app in this checkout: finished steps say No changes"
+	if err == nil || !strings.Contains(err.Error(), "503 from the cloud; "+sentence) {
+		t.Errorf("the stop sentence changed or was wrapped: %v", err)
+	}
+	if got := strings.Join(*ran, ","); got != "base,check job,builds" {
+		t.Errorf("ran %s, want base,check job,builds: a step after the stop ran, or one before it did not", got)
+	}
+	if !strings.Contains(out, markFailed+" builds: 503 from the cloud") {
+		t.Errorf("the step that failed is not the reporter's:\n%s", out)
+	}
+	// G8: the failure prints the log's path, and the run closes on the failure
+	// rather than on a done.
+	if !strings.Contains(out, "full output: ") {
+		t.Errorf("the failed run points at no log:\n%s", out)
+	}
+	if lines := reportLines(out); !strings.HasPrefix(lines[len(lines)-1], "Failed in ") {
+		t.Errorf("the run's last line is not the reporter's failure:\n%s", out)
+	}
+}
+
+// TestImageRefreshWritesALog: the run keeps a log under the command's own name
+// (D1352), and the log is the run's full output — the stage line the default
+// view stopped showing is in it.
+func TestImageRefreshWritesALog(t *testing.T) {
+	out, err := refreshWithTheRealCheckJob(t)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	log := writesALog(t, "image-refresh")
+	if !strings.Contains(log, "updated the daily image check job") {
+		t.Errorf("the log does not hold the stage's own line:\n%s", log)
 	}
 }

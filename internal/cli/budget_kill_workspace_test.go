@@ -170,7 +170,7 @@ func TestWorkspaceResumeRefusesInAnAgentSession(t *testing.T) {
 	// in for the owner here: the help this branch publishes says the session is
 	// refused, and a version of that sentence that a --yes could pass would be
 	// the claim this package is not allowed to make.
-	_, _, err = execute(t, "budget", "resume", "--workspace", "workspace-alpha", "--yes")
+	_, _, err = execute(t, "budget", "resume", "--workspace", "workspace-alpha")
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("budget resume --workspace --yes in a coding agent's session: %v, want the owner-only refusal", err)
 	}
@@ -203,15 +203,15 @@ func TestWorkspaceKillDoesNotStopAnotherWorkspace(t *testing.T) {
 	h.project(t, "workspace-alpha").db.Set(budget.PathProject, "workspace-alpha")
 	before, selectedBefore := other.db.Value(""), selected.db.Value("")
 
-	if _, _, err := execute(t, "budget", "kill", "--workspace", "workspace-alpha", "--all", "--yes"); err == nil ||
+	if _, _, err := execute(t, "budget", "kill", "--workspace", "workspace-alpha", "--all"); err == nil ||
 		!strings.Contains(err.Error(), "name one scope") {
 		t.Errorf("--workspace with --all: %v, want a refusal naming the one scope", err)
 	}
-	if _, _, err := execute(t, "budget", "kill", "--workspace", "workspace-alpha", "--project", "workspace-beta", "--yes"); err == nil ||
+	if _, _, err := execute(t, "budget", "kill", "--workspace", "workspace-alpha", "--project", "workspace-beta"); err == nil ||
 		!strings.Contains(err.Error(), "--project") {
 		t.Errorf("--workspace with --project: %v, want a refusal, not a write into whatever --project names", err)
 	}
-	if _, _, err := execute(t, "budget", "kill", "--workspace", "workspace-nowhere", "--yes"); err == nil ||
+	if _, _, err := execute(t, "budget", "kill", "--workspace", "workspace-nowhere"); err == nil ||
 		!strings.Contains(err.Error(), "workspace-nowhere") {
 		t.Errorf("an unknown workspace: %v, want a refusal naming it", err)
 	}
@@ -220,7 +220,7 @@ func TestWorkspaceKillDoesNotStopAnotherWorkspace(t *testing.T) {
 		t.Fatal("a refused kill wrote a database")
 	}
 
-	if _, _, err := execute(t, "budget", "kill", "--workspace", "workspace-alpha", "--yes", "--reason", "runaway spend"); err != nil {
+	if _, _, err := execute(t, "budget", "kill", "--workspace", "workspace-alpha", "--reason", "runaway spend"); err != nil {
 		t.Fatalf("budget kill --workspace: %v", err)
 	}
 	if on, _ := wsKillStop(t, h.project(t, "workspace-alpha").db, "workspace-alpha"); !on {
@@ -311,7 +311,7 @@ func TestWorkspaceKillRefusesHTTP2Debug(t *testing.T) {
 	t.Setenv("GODEBUG", "http2debug=2")
 
 	for _, verb := range []string{"kill", "resume"} {
-		_, _, err := execute(t, "budget", verb, "--workspace", "workspace-alpha", "--yes")
+		_, _, err := execute(t, "budget", verb, "--workspace", "workspace-alpha")
 		if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "http2debug") {
 			t.Errorf("budget %s --workspace under GODEBUG=http2debug: %v, want the refusal every cloud command makes: Go would print the person's bearer token to stderr", verb, err)
 		}
@@ -333,7 +333,7 @@ func TestWorkspaceKillRefusesADatabaseThatIsNotTheWorkspaces(t *testing.T) {
 	db := h.project(t, "workspace-alpha").db
 
 	// No /fugaro/project at all: the state the ownership check passes.
-	if _, _, err := execute(t, "budget", "kill", "--workspace", "workspace-alpha", "--yes"); err == nil ||
+	if _, _, err := execute(t, "budget", "kill", "--workspace", "workspace-alpha"); err == nil ||
 		!strings.Contains(err.Error(), "/fugaro/project") {
 		t.Errorf("a workspace database with no /fugaro/project: %v, want the refusal that it is not this project's budget database", err)
 	}
@@ -344,7 +344,7 @@ func TestWorkspaceKillRefusesADatabaseThatIsNotTheWorkspaces(t *testing.T) {
 	// And a database that names another project, which is the same refusal with
 	// the name check's own sentence.
 	db.Set(budget.PathProject, "some-other-project")
-	if _, _, err := execute(t, "budget", "kill", "--workspace", "workspace-alpha", "--yes"); err == nil ||
+	if _, _, err := execute(t, "budget", "kill", "--workspace", "workspace-alpha"); err == nil ||
 		!strings.Contains(err.Error(), "some-other-project") {
 		t.Errorf("a workspace database belonging to another project: %v, want the refusal naming it", err)
 	}
@@ -355,7 +355,7 @@ func TestWorkspaceKillRefusesADatabaseThatIsNotTheWorkspaces(t *testing.T) {
 	// The workspace's own database, marked with its own name, goes through:
 	// the two checks are refusals of the wrong database and not of this scope.
 	db.Set(budget.PathProject, "workspace-alpha")
-	if _, _, err := execute(t, "budget", "kill", "--workspace", "workspace-alpha", "--yes"); err != nil {
+	if _, _, err := execute(t, "budget", "kill", "--workspace", "workspace-alpha"); err != nil {
 		t.Fatalf("budget kill --workspace on the workspace's own database: %v", err)
 	}
 	if on, _ := wsKillStop(t, db, "workspace-alpha"); !on {

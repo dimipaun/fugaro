@@ -289,7 +289,7 @@ func NeedsBuild(ctx context.Context, c *Clients, spec RepoSpec, versions map[str
 		// The skips are clone's and the catalog's: clone runs the
 		// installation's base image and builds nothing, and a catalog
 		// entry's image is not this repository's own tag either (spec.go's
-		// catalogJobImage routes such a job through the installation's
+		// jobImage routes such a job through the installation's
 		// shared registry), so the record looked for below is one no build
 		// of this repository would ever write. A checkout: shared workflow
 		// does have an image to build — a dependency-layer one, shared with
@@ -347,8 +347,21 @@ type SecretStep struct {
 // synonym, and is what this function used to print, but it is no longer the
 // spelling any message suggests. The eligibility answer stays spec's own
 // (ProjectSecretCandidates), never a second one here.
-func SecretFix(spec RepoSpec, logical, bin string, quote func(string) string) string {
+//
+// A name only the node admits is the one case where that command cannot be
+// printed at all, and the line is the run's own door instead (door, the door
+// name its caller is running: "update", "setup"). `secrets set` decides its
+// scope from the local config alone, and the local config admits this name
+// nowhere: it refuses --project-wide, and its bare form stores the
+// repository's own copy -- the very flip the answer above exists to avoid
+// (spec.ProjectSecretNodeOnly, initsecrets' Left, which spells the same line
+// for the same reason). The door's own secrets stage reads the node, so it
+// stores the value in the container that decision picks.
+func SecretFix(spec RepoSpec, logical, bin, door string, quote func(string) string) string {
 	if _, ok := spec.ProjectSecretCandidates[logical]; ok {
+		if spec.ProjectSecretNodeOnly[logical] {
+			return bin + " " + door
+		}
 		return bin + " secrets set " + quote(logical)
 	}
 	return bin + " secrets set " + quote(logical) + " --repo " + quote(spec.Name)
@@ -357,8 +370,9 @@ func SecretFix(spec RepoSpec, logical, bin string, quote func(string) string) st
 // SecretCommands are the fugaro secrets set steps of the repository's
 // secrets that have no version anywhere, sorted by name: the value comes
 // from stdin or a hidden prompt, never argv, and the Claude token is made
-// by the user, in their own terminal. bin names the binary and quote makes
-// one shell word of a name, both as the caller prints commands.
+// by the user, in their own terminal. bin names the binary, door the door the
+// caller is running ("update", "setup") and quote makes one shell word of a
+// name, all as the caller prints commands.
 //
 // Each step's command names the scope that name is stored at by default
 // (D2): the project's for a name spec's own eligibility accepts
@@ -374,18 +388,29 @@ func SecretFix(spec RepoSpec, logical, bin string, quote func(string) string) st
 // account the pair that mints the token and stores it stands instead: the
 // account is one the config already declares, so `accounts add` would have
 // nothing to declare and only a profile to choose for itself.
-func SecretCommands(spec RepoSpec, versions map[string]bool, bin string, quote func(string) string) []SecretStep {
+func SecretCommands(spec RepoSpec, versions map[string]bool, bin, door string, quote func(string) string) []SecretStep {
 	var out []SecretStep
 	for _, logical := range slices.Sorted(maps.Keys(spec.Secrets)) {
 		if versions[logical] {
+			continue
+		}
+		st := SecretStep{Name: logical, What: spec.Secrets[logical], Optional: OptionalSecret(logical)}
+		// A name only the node admits has no `secrets set` line at all
+		// (SecretFix): its step is the run's own door, which stores the value
+		// in the container its own node-read decision picks. The switch below
+		// is about the commands that store a value, and this step stores none
+		// -- the door prompts -- so the value-file suffix and the Claude
+		// token's own pairs are not its.
+		if spec.ProjectSecretNodeOnly[logical] {
+			st.Commands = []string{SecretFix(spec, logical, bin, door, quote)}
+			out = append(out, st)
 			continue
 		}
 		// The command is the one place that decides the scope (SecretFix),
 		// read here as the same line Readiness prints as a Missing's fix: the
 		// bare command for a name this repository may use project-wide (D2),
 		// the repository-copy command otherwise.
-		set := SecretFix(spec, logical, bin, quote)
-		st := SecretStep{Name: logical, What: spec.Secrets[logical], Optional: OptionalSecret(logical)}
+		set := SecretFix(spec, logical, bin, door, quote)
 		switch {
 		case logical == config.ClaudeOAuthToken:
 			st.Commands = []string{"claude setup-token", set}

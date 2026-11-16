@@ -60,7 +60,7 @@
 
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join, posix, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { deflateSync } from 'node:zlib'
 
@@ -86,6 +86,8 @@ import { CAPTURE_PIXELS, LIVE_SCREEN, OMISSIONS, PICKER_SCREEN, RUN_ID, RUN_SCRE
 import { FAILURE_SENTENCE, exitCodeFor, failureLine, installFailureHandler } from '../../tools/screenshots/failure'
 import type { RunProcess } from '../../tools/screenshots/failure'
 import { STUB_COMMAND_KEYS } from './stub'
+import { reportedMode } from '../support/fsMode'
+import { itHostRoute } from '../support/hostRoute'
 
 /** CONSOLE_ROOT is the console package, from this file's own location: the
  * fixtures are read from the tree rather than from a copy of it. */
@@ -103,7 +105,7 @@ function fixture(name: string): string {
 // ---------------------------------------------------------------------------
 
 describe('the run refuses to start against anything but its own fixture', () => {
-  const scratch = '/tmp/fugaro-console-screenshots-abc123'
+  const scratch = resolve('/tmp/fugaro-console-screenshots-abc123')
   const isolation: Isolation = Object.freeze({
     scratch,
     home: join(scratch, 'home'),
@@ -150,7 +152,7 @@ describe('the run refuses to start against anything but its own fixture', () => 
         userDataDir: null,
         real: { home: '/Users/somebody', xdgConfigHome: null },
       })
-    }).toThrow(/refuses to start: HOME is the operator's home directory \(\/Users\/somebody\)/)
+    }).toThrow(`refuses to start: HOME is the operator's home directory (${resolve('/Users/somebody')})`)
   })
 
   it("refuses the operator's real XDG_CONFIG_HOME even when it is inside a scratch-looking path", () => {
@@ -181,7 +183,7 @@ describe('the run refuses to start against anything but its own fixture', () => 
         userDataDir: null,
         real: { home: '/Users/somebody', xdgConfigHome: null },
       })
-    }).toThrow(/TMPDIR is \/var\/folders\/xx, which is outside/)
+    }).toThrow(`TMPDIR is ${resolve('/var/folders/xx')}, which is outside`)
   })
 
   it('refuses a profile outside the scratch tree', () => {
@@ -192,7 +194,9 @@ describe('the run refuses to start against anything but its own fixture', () => 
         userDataDir: '/Users/somebody/Library/Application Support/Fugaro Console',
         real: { home: '/Users/somebody', xdgConfigHome: null },
       })
-    }).toThrow(/--user-data-dir is \/Users\/somebody\/Library\/Application Support\/Fugaro Console, which is outside/)
+    }).toThrow(
+      `--user-data-dir is ${resolve('/Users/somebody/Library/Application Support/Fugaro Console')}, which is outside`,
+    )
   })
 
   it('refuses an environment with no HOME, no XDG_CONFIG_HOME or no TMPDIR at all', () => {
@@ -757,7 +761,7 @@ describe('a launch is checked against the store it seeds', () => {
     return { isolation, fixture, env: launchEnvironment({}, isolation) }
   }
 
-  it('accepts the store this run seeds, and probes from inside the scratch tree', async () => {
+  itHostRoute('accepts the store this run seeds, and probes from inside the scratch tree', async () => {
     const { isolation, fixture, env } = installed()
     try {
       const profile = fixture.newProfile()
@@ -781,7 +785,7 @@ describe('a launch is checked against the store it seeds', () => {
     }
   })
 
-  it('refuses a launch whose store chooses no installation, naming the prefixes the handshake would walk', async () => {
+  itHostRoute('refuses a launch whose store chooses no installation, naming the prefixes the handshake would walk', async () => {
     // D13's first run is the state the second launch used to have, and it is
     // the state that must never reach `launchConsole`: with nothing chosen the
     // handshake is `resolveBinary` over rule 4's list, and on the owner's Mac
@@ -802,7 +806,7 @@ describe('a launch is checked against the store it seeds', () => {
     }
   })
 
-  it('refuses a store that names another binary, naming the path it resolved', async () => {
+  itHostRoute('refuses a store that names another binary, naming the path it resolved', async () => {
     // A store the run did not write: every row names another executable, which
     // is what a store pointing at a real installation looks like from here. The
     // check has to refuse it, and the sentence has to name the path, because
@@ -846,7 +850,7 @@ describe('a launch is checked against the store it seeds', () => {
     }
   })
 
-  it('refuses a profile with no store, and one the console will not read', async () => {
+  itHostRoute('refuses a profile with no store, and one the console will not read', async () => {
     const { isolation, fixture, env } = installed()
     try {
       const empty = fixture.newProfile()
@@ -1658,7 +1662,7 @@ describe('what the run’s own documents promise about it', () => {
       reached.add(file)
       const source = readFileSync(join(CONSOLE_ROOT, file), 'utf8')
       for (const match of source.matchAll(/from '(\.[^']+)'/g)) {
-        const base = join(dirname(file), match[1] ?? '')
+        const base = posix.join(posix.dirname(file), match[1] ?? '')
         for (const candidate of [`${base}.ts`, `${base}/index.ts`]) {
           if (existsSync(join(CONSOLE_ROOT, candidate))) {
             queue.push(candidate)
@@ -1741,7 +1745,7 @@ describe('the one scratch tree a run owns', () => {
         expect(statSync(directory).isDirectory(), `${directory} was not created`).toBe(true)
         // 0700: the store the run writes lives in one of these, and the
         // operator's own directories are the shape it is kept to.
-        expect(statSync(directory).mode & 0o777).toBe(0o700)
+        expect(statSync(directory).mode & 0o777).toBe(reportedMode(0o700))
       }
     } finally {
       rmSync(first.scratch, { recursive: true, force: true })

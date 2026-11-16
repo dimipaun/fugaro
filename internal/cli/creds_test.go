@@ -388,12 +388,15 @@ func TestCredsSetRefusesUnknownKeyAndOversizeDoc(t *testing.T) {
 	// for it, so it is a bundle credential like any other and
 	// TestCredsSetAcceptsTheAppKeyAsABundleEntry is where that is asserted.
 	// What stays refused is a name no bundle key can be, whatever it looks
-	// like.
+	// like, and one key of the Bitbucket token family (D2350), which IS a
+	// bundle key and is not written here yet
+	// (TestCredsSetRefusesTheBitbucketTokenFamily).
 	for _, name := range []string{
 		"not-a-credential",
 		// The namespace is reserved but the suffix is not a name any policy
 		// can admit: a key no account can be named.
 		config.ClaudeOAuthTokenPrefix + strings.Repeat("a", config.MaxClaudeAccountNameLen+1),
+		config.BitbucketTokenKey("ci"),
 	} {
 		_, _, err := executeStdin(t, value+"\n", "creds", "set", name)
 		if err == nil || ExitCode(err) != ExitUserError {
@@ -456,48 +459,90 @@ func TestCredsSetRefusesUnknownKeyAndOversizeDoc(t *testing.T) {
 	}
 }
 
-// The provider key's name is a key of the document (AK6b: the service reads it
-// as the third-party route's credential) and NOT one this command writes: its
-// value is a mapping of three fields, and this command's write builds a scalar
-// node for every name that is not the read consumer's, so the document it
-// would build is one the loader hands back.
+// TestCredsSetRefusesTheBitbucketTokenFamily: a member of the family of named
+// Bitbucket tokens (config.BitbucketTokenKey, D2350) is a key the credentials
+// service's loader reads and this command does not write yet. It is refused at
+// the door — the same refusal a name that is no bundle key gets, before the
+// project is opened, with the value unread and the document untouched.
 //
-// The refusal is at the door and not at the loader, and that placement is what
-// this test is for: the step between the two is the VALUE being read from the
-// operator — a hidden prompt or stdin — and that is the one step of this
-// command a refusal cannot take back. So nothing of a value piped in is read
-// at all, which the absence of the read's own "dropped the value's trailing
-// newline" line shows, and the cloud is not opened either.
-func TestCredsSetRefusesTheProviderKeyBeforeReadingIt(t *testing.T) {
+// What the refusal is about is the RELEASE THE DOCUMENT WOULD LAND ON and not
+// the key's shape, and the last two assertions are what holds that: the loader
+// reads the very key this write refuses. The family's reader is a credentials
+// service newer than the one an installation may have deployed, and a service
+// refuses the WHOLE document for a key it does not know — a service-wide
+// refusal, every caller of it halted, coding runs included — so the write is
+// held back until the guard that judges the release SERVING the bundle lands
+// with the command that writes the family as a whole: the token's type and
+// coverage, its local record and its verified scopes are the same task's (T11),
+// and a bundle entry written here alone would be a token no other half of the
+// feature can see.
+func TestCredsSetRefusesTheBitbucketTokenFamily(t *testing.T) {
+	f := credsFixtureFor(t)
+	f.seed(t, []byte(config.ClaudeOAuthToken+": "+credsValue(t, "existing")+"\n"))
+	before := f.value(t)
+	value := credsValue(t, "ours")
+	for _, name := range []string{config.BitbucketTokenKey("ci"), config.BitbucketTokenKey("workspace")} {
+		out, _, err := executeStdin(t, value+"\n", "creds", "set", name)
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("creds set %q = %v, want a user error", name, err)
+		}
+		if strings.Contains(out, value) || strings.Contains(err.Error(), value) {
+			t.Errorf("the refusal echoed the value: stdout %q, err %q", out, err)
+		}
+		if !strings.Contains(err.Error(), "Nothing was read and nothing was written") {
+			t.Errorf("the refusal does not say nothing happened: %v", err)
+		}
+	}
+	if n := len(f.Requests()); n != 0 {
+		t.Fatalf("%d request(s) were made for a refused name: the refusal is not before the cloud", n)
+	}
+	if n := f.writes(); n != 0 {
+		t.Fatalf("%d version(s) written", n)
+	}
+	if got := f.value(t); got != before {
+		t.Errorf("the document changed: %q", got)
+	}
+	key := config.BitbucketTokenKey("ci")
+	if _, kind, _, ok := credsvc.CredentialKey(key); !ok || kind != credsvc.KindGit {
+		t.Errorf("CredentialKey(%q) = %q, %v; the key this write refuses is one the loader reads", key, kind, ok)
+	}
+	if _, err := credsvc.ParseBundle([]byte(key + ": " + credsValue(t, "token") + "\n")); err != nil {
+		t.Errorf("the loader refuses the key this write refuses: %v", err)
+	}
+}
+
+// The provider key's name is a key of the document AND one this command writes
+// (AK10: the value is the mapping credsvc's providerValue reads, and the write
+// here is the read consumer's, one kind over). What still refuses it at the
+// door is --generate, and that refusal is this test's subject: the mode writes
+// a review-signing key and nothing else, and it is placed before the project is
+// opened and before the value is read — the value is the one step of this
+// command a refusal cannot take back, and a provider key has an upstream page
+// to copy it from.
+//
+// What the write itself is refused for is the service's own release, and that
+// is creds_skew_test.go's, where the Cloud Run endpoint the guard reads exists.
+func TestCredsSetRefusesToGenerateTheProviderKey(t *testing.T) {
 	f := credsFixtureFor(t)
 	f.seed(t, []byte(config.ClaudeOAuthToken+": "+credsValue(t, "existing")+"\n"))
 	before := f.value(t)
 	value := credsValue(t, "provider")
 
-	out, errOut, err := executeStdin(t, value+"\n", "creds", "set", config.ProviderKeySecret)
+	out, errOut, err := executeStdin(t, value+"\n", "creds", "set", config.ProviderKeySecret, "--generate")
 	if err == nil || ExitCode(err) != ExitUserError {
-		t.Fatalf("creds set %s = %v, want a user error", config.ProviderKeySecret, err)
-	}
-	if !strings.Contains(err.Error(), "Nothing was read and nothing was written") {
-		t.Errorf("the refusal does not say nothing happened: %v", err)
+		t.Fatalf("creds set %s --generate = %v, want a user error", config.ProviderKeySecret, err)
 	}
 	if strings.Contains(errOut, "trailing newline") || strings.Contains(out, value) {
 		t.Errorf("the value piped in was read: stdout %q, stderr %q", out, errOut)
 	}
 	if n := len(f.Requests()); n != 0 {
-		t.Fatalf("%d request(s) were made for a name this command does not write: the refusal is not before the cloud", n)
+		t.Fatalf("%d request(s) were made for a name this command does not generate: the refusal is not before the cloud", n)
 	}
 	if n := f.writes(); n != 0 {
 		t.Fatalf("%d version(s) written, want none", n)
 	}
 	if got := f.value(t); got != before {
 		t.Errorf("the document changed: %q", got)
-	}
-	// And the name is not one the other door accepts either: --generate writes
-	// the review-signing family and refuses this name for its own reason, so
-	// the two refusals cannot drift into one.
-	if _, _, err := executeStdin(t, value+"\n", "creds", "set", config.ProviderKeySecret, "--generate"); err == nil || ExitCode(err) != ExitUserError {
-		t.Fatalf("creds set %s --generate = %v, want a user error", config.ProviderKeySecret, err)
 	}
 }
 

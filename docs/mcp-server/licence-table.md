@@ -8,12 +8,14 @@ the endpoint's half: the authorize POST takes the device's act as a shape of its
 is spent once and a family ages, all of it proved by the ID token and by no device key, so M-a's
 first requirement is not met — the endpoint cannot tell a paired device from any other holder of
 one, which is H1's accepted residual risk — and the delivery of a flow to that device, with no QR of
-the flow's binding rendered and no launcher reading the page, is built nowhere and carried by no
-task of this plan; M7 is built except the reading of the installation's published state its lists
-come from, which no task of this plan carries; M8 is built except the wiring that would serve its
-four read tools, which no binary has and no task of this plan carries; M9 is not started, and the
-launch-override fence it was to wait on is declined for v1 and left unbuilt (the owner's ruling of
-2026-11-09); this folder approves no task.**
+the flow's binding rendered and no launcher reading the page, is built nowhere and carried by M12b,
+which M12 waits on; M12 is built — the front door mounted on the service, the reading of the
+installation's published state its lists come from, M8's four read tools served from a binary and the
+two bounds the open registration endpoint is accepted under are all its — and the door stays dormant
+until an installation turns it on, which no release writes the flag for yet (D934), because a build
+without M12b's delivery refuses to enable it (D2126); M9 is not started, and the launch-override
+fence it was to wait on is declined for v1 and left unbuilt (the owner's ruling of 2026-11-09);
+this folder approves no task.**
 
 
 **This file is a table, and it is not a gate.** The owner ruled on 2026-11-07 that he would clear the
@@ -48,11 +50,13 @@ only tests reach). The three answers that appear below are:
 
 - **yes** — a package of the module is in `./cmd/fugaro`'s dependency graph, so its code is linked
   into the binary a person runs;
-- **no, compiled with `ee/coordinator/mcpauth`** — the module is imported by that package, which
-  `go build ./...` compiles, and **no binary links it**: nothing outside `ee/` imports the front
-  door, which is what `TestNoBinaryLinksTheFrontDoorYet` holds and what **M5b** — built on the
-  server's side, with M-a's first requirement unmet — is the prerequisite for relaxing
-  ([implementation-plan.md](implementation-plan.md) §3);
+- **no without the `ee` tag, compiled with `ee/coordinator/mcpauth`** — the module is imported by
+  that package, which `go build ./...` compiles, and **an untagged binary links nothing of it**:
+  nothing outside `ee/` imports the front door, and **M12** is what names it from inside `ee/` —
+  `ee/coordinator/cli`, the front door's own command, which `ee/register` puts in the tagged tree,
+  so `go list -deps -tags ee ./cmd/fugaro` carries it and the untagged reading does not. The
+  release sets that tag only where it relabels every licence label together, and the deployable
+  front door's revision runs the tagged image ([implementation-plan.md](implementation-plan.md) §3);
 - **no, and no Go file here imports it** — the module is in the build list because a dependency's
   own `go.mod` requires it, and the requirer is named in the row. Its code is not compiled, linked
   or tested by anything in this repository.
@@ -99,11 +103,11 @@ permissive in effect; both are noted under the table rather than left for the re
 | new | `github.com/google/go-querystring` | v1.2.0 | `Copyright (c) 2013 Google. All rights reserved.`; no title line — `LICENSE`, standard BSD 3-clause text, third clause `Neither the name of Google Inc. nor the names of its` (SPDX: BSD-3-Clause) | no, and no Go file here imports it (`zitadel/oidc`'s `go.mod` requires it) | — |
 | new | `github.com/gorilla/securecookie` | v1.1.2 | `Copyright (c) 2023 The Gorilla Authors. All rights reserved.`; no title line — `LICENSE`, standard BSD 3-clause text, third clause `Neither the name of Google Inc. nor the names of its` (SPDX: BSD-3-Clause) | no, and no Go file here imports it (`zitadel/oidc`'s `go.mod` requires it) | — |
 | new | `github.com/jeremija/gosubmit` | v0.2.8 | `Copyright 2022 Jerko Steiner`; the file carries **no title line** — `LICENSE`, body is the standard MIT text (SPDX: MIT) | no, and no Go file here imports it (`zitadel/oidc`'s `go.mod` requires it) | — |
-| new | `github.com/muhlemmer/gu` | v0.3.1 | `This is free and unencumbered software released into the public domain.`; **no copyright holder line** — the text dedicates the authors' copyright interest to the public domain and names nobody — `LICENSE`, the standard Unlicense text, closing `For more information, please refer to <https://unlicense.org>` (SPDX: Unlicense) | **no, compiled with `ee/coordinator/mcpauth`** through `zitadel/oidc`, which imports it, and linked into no binary | — |
+| new | `github.com/muhlemmer/gu` | v0.3.1 | `This is free and unencumbered software released into the public domain.`; **no copyright holder line** — the text dedicates the authors' copyright interest to the public domain and names nobody — `LICENSE`, the standard Unlicense text, closing `For more information, please refer to <https://unlicense.org>` (SPDX: Unlicense) | **no untagged, yes with `-tags ee`**: compiled with `ee/coordinator/mcpauth` through `zitadel/oidc`, which imports it, and linked into the tagged binary since **M12** | — |
 | new | `github.com/muhlemmer/httpforwarded` | v0.1.0 | `Copyright (c) 2009 The Go Authors. All rights reserved.` and `Copyright (c) 2016 Tim Heckman. All rights reserved.`; no title line — `LICENSE`, standard BSD 3-clause text, third clause `Neither the name of Google Inc. nor the names of its` (SPDX: BSD-3-Clause) | no, and no Go file here imports it (`zitadel/oidc`'s `go.mod` requires it) | — |
 | new | `github.com/rs/cors` | v1.11.1 | `Copyright (c) 2014 Olivier Poitrey <rs@dailymotion.com>`; the file carries **no title line** — `LICENSE`, body is the standard MIT text (SPDX: MIT) | no, and no Go file here imports it (`zitadel/oidc`'s `go.mod` requires it) | — |
-| new | `github.com/zitadel/oidc/v3` | v3.51.17 | `Apache License` / `Version 2.0, January 2004`; **`LICENSE` carries no copyright holder line** — the module's `NOTICE` reads `Copyright The zitadel/oidc Contributors` — `LICENSE`, standard Apache 2.0 text (SPDX: Apache-2.0) | **no, compiled with `ee/coordinator/mcpauth`**, which imports its `pkg/oidc` package, and linked into no binary | — |
-| new | `github.com/zitadel/schema` | v1.3.2 | `Copyright (c) 2023 The Gorilla Authors. All rights reserved.`; no title line — `LICENSE`, standard BSD 3-clause text, third clause `Neither the name of Google Inc. nor the names of its` (SPDX: BSD-3-Clause) | **no, compiled with `ee/coordinator/mcpauth`** through `zitadel/oidc`, which imports it, and linked into no binary | — |
+| new | `github.com/zitadel/oidc/v3` | v3.51.17 | `Apache License` / `Version 2.0, January 2004`; **`LICENSE` carries no copyright holder line** — the module's `NOTICE` reads `Copyright The zitadel/oidc Contributors` — `LICENSE`, standard Apache 2.0 text (SPDX: Apache-2.0) | **no untagged, yes with `-tags ee`**: compiled with `ee/coordinator/mcpauth`, which imports its `pkg/oidc` package, and linked into the tagged binary since **M12** | — |
+| new | `github.com/zitadel/schema` | v1.3.2 | `Copyright (c) 2023 The Gorilla Authors. All rights reserved.`; no title line — `LICENSE`, standard BSD 3-clause text, third clause `Neither the name of Google Inc. nor the names of its` (SPDX: BSD-3-Clause) | **no untagged, yes with `-tags ee`**: compiled with `ee/coordinator/mcpauth` through `zitadel/oidc`, which imports it, and linked into the tagged binary since **M12** | — |
 | bumped | `github.com/bmatcuk/doublestar/v4` | v4.10.2 → v4.10.4 | `The MIT License (MIT)`; `Copyright (c) 2014 Bob Matcuk` — `LICENSE`, body is the standard MIT text (SPDX: MIT) | **yes** | — |
 | bumped | `github.com/go-jose/go-jose/v4` | v4.1.4 → v4.1.6 | `Apache License` / `Version 2.0, January 2004`; **the file carries no copyright holder line and the module ships no `NOTICE`** — `LICENSE`, standard Apache 2.0 text (SPDX: Apache-2.0) | **yes** | — |
 | bumped | `github.com/go-logr/logr` | v1.4.3 → v1.4.4 | `Apache License` / `Version 2.0, January 2004`; **no copyright holder line in the file, and no `NOTICE`** — `LICENSE`, standard Apache 2.0 text (SPDX: Apache-2.0) | **yes** | — |
@@ -132,9 +136,12 @@ permissive in effect; both are noted under the table rather than left for the re
   fugaro binary** — the bumps to `doublestar/v4`, `go-jose/v4`, `go-logr/logr`, `x/text`, `x/sync`
   and the three `otel` modules — and **every one of them was already linked into it before this
   branch**, at the lower version: what the branch changes about them is a version, not a dependency.
-  **Three modules are compiled and linked into nothing** (`zitadel/oidc`, which
-  `ee/coordinator/mcpauth` imports, and `zitadel/schema` and `muhlemmer/gu`, which it reaches through
-  that library), and **twelve are imported by no Go file in this repository at all**: eight new ones
+  **Three modules are compiled by every build here and linked into the binary only under the `ee`
+  tag** (`zitadel/oidc`, which `ee/coordinator/mcpauth` imports, and `zitadel/schema` and
+  `muhlemmer/gu`, which it reaches through that library): **M12** put the front door's own command
+  in the tagged tree, so `go list -deps -tags ee ./cmd/fugaro` carries all three and an untagged
+  build carries none of them — all three licences are permissive either way, so what the tag changes
+  is the binary's contents and not the clearance, and **twelve are imported by no Go file in this repository at all**: eight new ones
   that `zitadel/oidc`'s `go.mod` requires, three bumps (`testify`, `go.yaml.in/yaml/v3`, `x/tools`)
   that the library's own tests reach, and the one module whose `go.mod` line is new without its
   version moving (`kr/text`, reached from `gopkg.in/yaml.v3`'s tests).

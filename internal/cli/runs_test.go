@@ -12,6 +12,7 @@ import (
 	"io"
 	"maps"
 	"math"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -1583,13 +1584,12 @@ func TestLsLauncherShortFormAndClip(t *testing.T) {
 // --watch, diagnose and the degraded watch all share) and printRows (the table
 // and the --json document) -- end to end against the Batch fake.
 //
-// It is necessarily a rig and not the ordinary cloud fixture: `backend:
-// cloud-batch` is refused by config validation until the enable task (design
-// compute-backend.md §8.1, plan Task 10), so the only way a test reaches a
-// Batch-backed read is by handing the loader the backend the opener would build
-// (cloud_openers_test.go's rig). What it holds is the rule, not the wiring: one
-// run, its record never finalized, its job FAILED with the platform's own
-// preemption in its status events.
+// This is the enable's own acceptance case (plan Task 10, design §8.1): the
+// rig's config SELECTS `backend: cloud-batch`, which config validation accepts
+// since that task, and the run it launches is one whose record never
+// finalized while the job's own report says the platform preempted it. What
+// it holds is the rule, not the wiring: one run, its record never finalized,
+// its job FAILED with the platform's own preemption in its status events.
 //
 // The evidence here is the event's wording and not the reserved exit code:
 // that code has one home (`internal/backend/batch`'s preemptExitCode, whose own
@@ -2867,4 +2867,143 @@ func statusNamesIn(e ast.Expr) []string {
 		return true
 	})
 	return out
+}
+
+// TestLsLeavesARunUnDerivedWhenTheJobCannotSaySo: the two negatives the
+// enable's acceptance case owes (plan Task 10's Tests), each of them a way the
+// preemption derivation could be wrongly applied to a Batch run, end to end
+// through the loader `runs ls`, `runs ls --watch`, `diagnose` and the degraded
+// watch all share:
+//
+//   - a job the platform will not answer for leaves the run underived. A read
+//     that fails is not a preemption, and a live run must never be shown as
+//     failed by a job the reader could not read (design §1.3);
+//   - a run whose own record is finalized is never derived, however its job
+//     reads: the record is the run's own account of itself, and a platform
+//     fact about the machine it ran on does not overwrite it.
+//
+// Both cases run the same fixture as TestLsDerivesAPreemptedRunFromTheBatchJob
+// -- a selecting cloud-batch installation, a launch and no result.json, a job
+// FAILED with the platform's preemption in its report -- so what they vary is
+// the one fact they are about.
+func TestLsLeavesARunUnDerivedWhenTheJobCannotSaySo(t *testing.T) {
+	ctx := context.Background()
+	const runID = "20260919-120000-abcd"
+	// preempted is the fixture above: a launched run, no record, a job whose
+	// report says the VM was reclaimed.
+	preempted := func(t *testing.T) (*batchRig, *cloudEnv, lsFilter, *runstore.Store, string) {
+		t.Helper()
+		rig := newBatchRig(t, 412)
+		be := rig.batchBackend(t)
+		ref, err := be.Launch(ctx, backend.LaunchSpec{
+			Repo:     backend.RepoRef{Repo: backendtest.Repo, Slug: backendtest.Slug},
+			Workflow: backendtest.Workflow,
+			RunID:    runID,
+		})
+		if err != nil {
+			t.Fatalf("Launch: %v", err)
+		}
+		bucket, err := blobx.Open(ctx, "file://"+t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { bucket.Close() })
+		s := runstore.Open(bucket.Bucket, backendtest.Slug, runID)
+		if err := s.WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: runID, Execution: ref.Name}); err != nil {
+			t.Fatal(err)
+		}
+		rig.bf.SetState(ref.Job, "FAILED")
+		rig.bf.SetStatusEvents(ref.Job, map[string]any{
+			"type": "STATUS_CHANGED", "description": "Task state is FAILED",
+			"taskState": "FAILED", "taskExecution": map[string]any{"exitCode": 50000},
+		}, map[string]any{
+			"type": "STATUS_CHANGED", "description": "The task's VM was preempted",
+		})
+		env := &cloudEnv{lc: rig.lc, bucket: bucket, be: be}
+		f := lsFilter{runRef: backendtest.Slug + "/" + runID, warn: io.Discard}
+		return rig, env, f, s, ref.Job
+	}
+
+	t.Run("a job the platform will not answer for", func(t *testing.T) {
+		rig, env, f, _, job := preempted(t)
+		// The read is refused, which is the state a permission the operator
+		// revoked or an API outage leaves behind: what is known is that this
+		// reader cannot say what the job is, and nothing more.
+		rig.bf.RefusePath("/jobs/"+job, http.StatusForbidden, "PERMISSION_DENIED", "IAM_PERMISSION_DENIED", "denied")
+		rows, err := loadRows(ctx, env, f, time.Now())
+		if err != nil {
+			t.Fatalf("loadRows: %v", err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("loadRows returned %d rows, want 1", len(rows))
+		}
+		if rows[0].Status == string(runstore.StatusFailed) || rows[0].Derived != "" {
+			t.Fatalf("a job this reader could not read derived a status: %+v", rows[0])
+		}
+	})
+
+	t.Run("a run whose own record is finalized", func(t *testing.T) {
+		_, env, f, s, _ := preempted(t)
+		// The record the runner wrote before it exited, on a job the platform
+		// then reclaimed: the two facts disagree, and the run's own wins.
+		if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: runID, Repo: backendtest.Repo,
+			Workflow: backendtest.Workflow, Status: runstore.StatusSucceeded, StartedAt: time.Now().UTC()}); err != nil {
+			t.Fatal(err)
+		}
+		rows, err := loadRows(ctx, env, f, time.Now())
+		if err != nil {
+			t.Fatalf("loadRows: %v", err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("loadRows returned %d rows, want 1", len(rows))
+		}
+		if rows[0].Status != string(runstore.StatusSucceeded) || rows[0].Derived != "" {
+			t.Fatalf("the derivation overwrote the run's own record: %+v", rows[0])
+		}
+		if rows[0].Reason == runview.ReasonPreempted {
+			t.Fatalf("the finalized row carries the preemption reason: %+v", rows[0])
+		}
+	})
+}
+
+// TestRunRetryIsTheSameChain: a retry is not a new chain. --retry relaunches
+// the stored task as it stands — createTask does not run for one — so the run
+// it starts is that same run, in the chain that task already names, carrying
+// the chain figure it already held, and the retry takes no limits of its own to
+// compute anything else with (D1053, taskFlags). What is left of the chain is
+// resolved at that run's own launch, in the job (L5), where it can read the
+// run's own ledger; nothing here recomputes it, which is why the figure below
+// is the one the stored task has rather than the one this chain has left now.
+//
+// Mutation (a retry that renames the run, or that drops its link and starts a
+// chain of its own): the run id or the previous_run is no longer the stored
+// task's, which this test finds.
+func TestRunRetryIsTheSameChain(t *testing.T) {
+	f := chainRig(t)
+	usd := chainUSD
+	// The chain's record states 4 of its 5 dollars — it has moved on since the
+	// follow-up's task was written — so a computation now would write 1, not
+	// the 3 that task carries.
+	seedChainPRRoot(t, f, chainRun, 4, task.Overrides{MaxUSD: &usd})
+	stored := 3.0
+	spec := followUpSpec(chainFu, chainRun, chainRun, 7)
+	spec.Overrides = task.Overrides{MaxUSD: &stored}
+	seedSpec(t, f, spec, false)
+
+	// The flags that write a task are refused with --retry, the chain ones
+	// among them: a retry has no task to write them into.
+	wantRefused(t, f, "it takes no --max-usd", "run", "--retry", chainFu, "--max-usd", "1")
+	if _, _, err := execute(t, "run", "--retry", chainFu); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want the stored task retried", n)
+	}
+	got := chainTask(t, f, chainFu)
+	if got.RunID != chainFu || got.PreviousRun != chainRun {
+		t.Fatalf("retry = run %s continuing %s, want the same run (%s) continuing the same chain (%s)", got.RunID, got.PreviousRun, chainFu, chainRun)
+	}
+	if o := got.Overrides; o.MaxUSD == nil || *o.MaxUSD != stored {
+		t.Fatalf("overrides = %+v, want the %v dollars the stored task already carried", o, stored)
+	}
 }

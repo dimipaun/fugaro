@@ -17,6 +17,7 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -31,6 +32,7 @@ import (
 	"github.com/spf13/cobra"
 	"rsc.io/qr"
 
+	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/budget/token"
@@ -38,6 +40,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/mailbox/keychain"
+	"github.com/dimipaun/fugaro/internal/mobileauth"
 )
 
 // The pairing fixture: a project config whose budget backend is the RTDB fake,
@@ -90,6 +93,13 @@ func newPairFixture(t *testing.T, me string, edit ...func(*string, *pairFixture)
 		t.Fatal(err)
 	}
 	t.Setenv("FUGARO_CONFIG", path)
+	// The installation has converged: `fugaro update` migrates the two lists
+	// above into the grants node (RS3), and the node — not the file's lists —
+	// is what places a pairing caller (RS8, D1588): person-1 an admin at
+	// project scope, person-2 an operator.
+	f.pairSeedGrants(t,
+		pairGrant(t, pairMe, accesslib.RoleAdmin, "project"),
+		pairGrant(t, pairLauncher, accesslib.RoleOperator, "project"))
 	f.db.Set("fugaro/project", "aurora")
 	f.db.Set(budget.PathMark, auroraMark())
 	marker, err := json.Marshal(infra.ProjectMarker{Version: 1, Name: "aurora", GCPProject: "proj-1234"})
@@ -104,12 +114,46 @@ func newPairFixture(t *testing.T, me string, edit ...func(*string, *pairFixture)
 		t.Fatal(err)
 	}
 
-	prevNow, prevUser, prevKeys := pairNow, authenticatedUser, pairKeychain
+	prevNow, prevUser, prevKeys, prevMe := pairNow, authenticatedUser, pairKeychain, pairMeLookup
 	pairNow = func() time.Time { return pairT0 }
 	authenticatedUser = func(context.Context, *localcfg.Config) (string, error) { return me, nil }
+	// The credential the command would read is this fixture's caller, so no
+	// test reaches Google's userinfo endpoint.
+	pairMeLookup = func(context.Context) (string, error) { return accesslib.Member(me) }
 	pairKeychain = func() keychain.Store { return f.keys }
-	t.Cleanup(func() { pairNow, authenticatedUser, pairKeychain = prevNow, prevUser, prevKeys })
+	t.Cleanup(func() { pairNow, authenticatedUser, pairKeychain, pairMeLookup = prevNow, prevUser, prevKeys, prevMe })
 	return f
+}
+
+// pairGrant is one stored grant, written as the node holds it: the member the
+// address makes and the scope in its canonical spelling.
+func pairGrant(t *testing.T, address string, role accesslib.Role, scope string) accesslib.Grant {
+	t.Helper()
+	member, err := accesslib.Member(address)
+	if err != nil {
+		t.Fatalf("the fixture's grant member: %v", err)
+	}
+	parsed, err := accesslib.ParseScope(scope)
+	if err != nil {
+		t.Fatalf("the fixture's grant scope %q: %v", scope, err)
+	}
+	return accesslib.Grant{User: member, Role: role, Scope: parsed}
+}
+
+// pairSeedGrants replaces the installation's grants node with grants, through
+// the document the node is written with, so what the fixture holds is what a
+// migration would have written.
+func (f *pairFixture) pairSeedGrants(t *testing.T, grants ...accesslib.Grant) {
+	t.Helper()
+	raw, err := accesslib.Encode(grants)
+	if err != nil {
+		t.Fatalf("the fixture's grants do not encode: %v", err)
+	}
+	var doc any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("the fixture's grants document does not decode: %v", err)
+	}
+	f.db.Set(accesslib.PathNode, doc)
 }
 
 // pairRun runs the command under a bare root, because the real tree has no
@@ -411,13 +455,115 @@ func TestPairRoleDefaultsToPairingUsersRole(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "role operator") {
+	if !strings.Contains(out, "role admin") {
 		t.Fatalf("output does not inherit the pairing user's role:\n%s", out)
 	}
 }
 
-func TestPairRoleAboveCallerRefused(t *testing.T) {
+// TestPairInheritsHighestProjectRole: the device inherits the pairing user's
+// highest PROJECT-scope role and nothing else. A device node records a role and
+// no scope, so a repository-scoped role — however high — is not one it can
+// carry (RS8, D1588), and the caller's own role is read from the grants node
+// rather than from the installation's IAM lists: this one is on neither list
+// and holds an admin at github/acme/* beside an operator at project scope, and
+// the device is the operator.
+func TestPairInheritsHighestProjectRole(t *testing.T) {
+	f := newPairFixture(t, "person-3@example.com")
+	f.pairSeedGrants(t,
+		pairGrant(t, "person-3@example.com", accesslib.RoleAdmin, "github/acme/*"),
+		pairGrant(t, "person-3@example.com", accesslib.RoleOperator, "project"))
+	out, _, err := pairPair(t, f, token.Fingerprint(pairKeyBytes))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "role operator") {
+		t.Fatalf("a device did not inherit the highest project-scope role:\n%s", out)
+	}
+	allowlist, _ := f.db.Value("config/admin/devices").(map[string]any)
+	if len(allowlist) != 1 {
+		t.Fatalf("the allowlist is %v, want exactly the one device the pairing wrote", f.db.Value("config/admin/devices"))
+	}
+	for _, child := range allowlist {
+		if node, _ := child.(map[string]any); node["role"] != "operator" {
+			t.Fatalf("the device node's role is %v, want operator: a repository-scoped admin is not a role a device can carry", node["role"])
+		}
+	}
+}
+
+// TestPairRefusesRepoScopedOnlyUser: a caller the grants place only outside the
+// project — in repositories, or everywhere — cannot pair. No repository-scoped
+// role is one a device could carry (RS8, D1588), and the refusal names the
+// member and the scope that would place them, before anything is minted or
+// written.
+func TestPairRefusesRepoScopedOnlyUser(t *testing.T) {
+	f := newPairFixture(t, "person-4@example.com")
+	f.pairSeedGrants(t,
+		pairGrant(t, "person-4@example.com", accesslib.RoleAdmin, "github/acme/*"),
+		pairGrant(t, "person-4@example.com", accesslib.RoleViewer, "all-repos"))
+	out, _, err := pairRun(t, "--json")
+	// The door the sentence names writes a role's WHOLE project-scope list, so
+	// the sentence says so: an admin who ran it as printed would otherwise hand
+	// the caller a grant and take it from every other operator (foldProjectGrants).
+	pairAssertUnplaced(t, f, out, err, "user:person-4@example.com", "project scope", "whole list", "named beside you")
+
+	// The same answer for a caller the installation's IAM lists still name: the
+	// node places a caller now, and the lists are only the migration's source.
+	f = newPairFixture(t, pairMe)
+	f.pairSeedGrants(t, pairGrant(t, pairMe, accesslib.RoleAdmin, "github/acme/*"))
+	out, _, err = pairRun(t, "--json")
+	pairAssertUnplaced(t, f, out, err, "user:"+pairMe, "project scope")
+}
+
+// TestPairRefusesInstallationWithoutGrantsNode is the other half of the same
+// refusal: the grants node itself is absent, which is an installation that has
+// not run the release that migrates the two IAM lists into it (RS3). A device
+// paired here would inherit nothing, so the refusal names the absent node, the
+// one command that writes it — `fugaro update` — and the precondition that
+// command has (a list naming a `user:` member; an installation whose lists name
+// no address stays absent, TestAMigrationWithNoUserMemberWritesNoNode), rather
+// than a grant to ask an admin for. It still mints and writes nothing.
+func TestPairRefusesInstallationWithoutGrantsNode(t *testing.T) {
 	f := newPairFixture(t, pairMe)
+	f.db.Set(accesslib.PathNode, nil)
+	out, _, err := pairRun(t, "--json")
+	reason := pairAssertUnplaced(t, f, out, err, accesslib.PathNode, selfCommand()+" update", "user: member")
+	if strings.Contains(reason, "update --operator") {
+		t.Fatalf("an absent node reads as a missing grant: %q", reason)
+	}
+}
+
+// pairAssertUnplaced holds a caller the grants place outside the project to
+// RS8's rule: the wire code a console switches on, the facts the sentence names
+// and no pairing token, device node or pairing subtree behind the refusal. It
+// returns the reason so a caller can hold it to more than the words every
+// unplaced refusal shares.
+func pairAssertUnplaced(t *testing.T, f *pairFixture, out string, err error, wants ...string) string {
+	t.Helper()
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want exit 1", err)
+	}
+	events := pairLines(t, out)
+	if len(events) != 1 || events[0].Code != pairRefusedUnplaced {
+		t.Fatalf("events = %v, want one refused with %q", events, pairRefusedUnplaced)
+	}
+	for _, want := range wants {
+		if !strings.Contains(events[0].Reason, want) {
+			t.Fatalf("refusal %q does not name %q", events[0].Reason, want)
+		}
+	}
+	if n := len(f.iam.SignCalls()); n != 0 {
+		t.Fatalf("a refused caller still minted a pairing token (%d signJwt calls)", n)
+	}
+	for _, w := range f.pairWriteState() {
+		if w != nil {
+			t.Fatalf("a refused caller wrote %v", w)
+		}
+	}
+	return events[0].Reason
+}
+
+func TestPairRoleAboveCallerRefused(t *testing.T) {
+	f := newPairFixture(t, pairLauncher)
 	_, _, err := pairRun(t, "--role", "admin")
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want exit 1", err)
@@ -446,13 +592,436 @@ func TestPairRoleLowersToViewer(t *testing.T) {
 	}
 }
 
+// TestPairRoleFlagOnlyLowersTheResolvedRole is the flag's ceiling: D224 puts the
+// allowlist's answer for the administered address on the node, so --role is a
+// bound on that answer and not a way around it. An operator who may not name a
+// role above their own may not name one above the entry's either — here the
+// operator holds admin and their own entry says operator, so the refusal is the
+// entry's and not the caller's — and where the flag may lower at all it is the
+// first entry of an address that it lowers (see the disagreement below).
+func TestPairRoleFlagOnlyLowersTheResolvedRole(t *testing.T) {
+	// Above the resolved role, and equal to the operator's own: the entry's
+	// answer, not the caller's grant, is what refuses it.
+	f := newPairFixture(t, pairMe)
+	f.pairSeedEntry(pairDevA, pairMe, "operator")
+	out, _, err := pairRun(t, "--json", "--role", "admin")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want exit 1", err)
+	}
+	events := pairLines(t, out)
+	if len(events) != 1 || events[0].Event != pairEventRefused || events[0].Code != pairRefusedRoleAbove {
+		t.Fatalf("events = %v, want one refused with %q", events, pairRefusedRoleAbove)
+	}
+	for _, want := range []string{"operator", "admin"} {
+		if !strings.Contains(events[0].Reason, want) {
+			t.Fatalf("the refusal %q does not name %q: an operator told only that the role is above something cannot tell which entry to fix", events[0].Reason, want)
+		}
+	}
+	if n := len(f.iam.SignCalls()); n != 0 {
+		t.Fatalf("a refused role still called signJwt %d times", n)
+	}
+	f.pairOnlySeededEntries(t, pairDevA)
+
+	// The role the entry already carries: admitted, and written as it is.
+	f = newPairFixture(t, pairMe)
+	f.pairSeedEntry(pairDevA, pairMe, "operator")
+	if _, _, err := pairPair(t, f, token.Fingerprint(pairKeyBytes), "--role", "operator"); err != nil {
+		t.Fatal(err)
+	}
+	if _, role := f.pairEntryWritten(t, pairDevA); role != "operator" {
+		t.Fatalf("--role operator wrote %q, want operator: a second device of an address carries the role its entry already resolves to", role)
+	}
+}
+
+// TestPairRefusesAnAddressItsOwnAllowlistCannotRead is the writer's half of P1's
+// fail-closed rule. The administered email is what the allowlist resolves a role
+// from, and an entry whose email cannot be canonicalised refuses the WHOLE
+// resolution — every pairing in the installation, not just this one — so the
+// command holds the address it is about to write to NormalizeEmail first.
+//
+// userEmail's own checks are not that check: it refuses an unverified address, a
+// service account and an address carrying a separator, and admits a single-label
+// domain, a domain literal, an address with no "@" and one with a non-ASCII byte.
+// Any of those written here would be this command breaking the installation it
+// was pairing into, and the node it wrote would be the reason.
+func TestPairRefusesAnAddressItsOwnAllowlistCannotRead(t *testing.T) {
+	for name, address := range map[string]string{
+		"a single-label domain": "dimi@localhost",
+		"a domain literal":      "dimi@[192.0.2.1]",
+		"no domain at all":      "dimi",
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newPairFixture(t, pairMe)
+			authenticatedUser = func(context.Context, *localcfg.Config) (string, error) { return address, nil }
+
+			out, _, err := pairRun(t, "--json")
+			if err == nil || ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want exit 1", err)
+			}
+			events := pairLines(t, out)
+			if len(events) != 1 || events[0].Event != pairEventRefused || events[0].Code != pairRefusedEmail {
+				t.Fatalf("events = %v, want one refused with %q", events, pairRefusedEmail)
+			}
+			if !strings.Contains(events[0].Reason, address) {
+				t.Fatalf("the refusal %q does not name the address the endpoint answered with", events[0].Reason)
+			}
+			if n := len(f.iam.SignCalls()); n != 0 {
+				t.Fatalf("a refused pairing minted %d tokens, want none: the address is checked before anything is minted", n)
+			}
+			for _, w := range f.pairWriteState() {
+				if w != nil {
+					t.Fatalf("a refused pairing wrote %v", w)
+				}
+			}
+		})
+	}
+}
+
+// TestPairRoleDisagreementRefused is the other direction of the ceiling, and it
+// is the one that keeps the allowlist readable: an address resolves to ONE role
+// (P1's rule, and the reason two exact entries that disagree are ErrAmbiguous),
+// so a device that lowered itself below the entry its own address already has
+// would not record a second opinion — it would leave every later pairing of that
+// address unable to resolve at all. The command refuses that write before it
+// makes it, and names the one alternative that works.
+func TestPairRoleDisagreementRefused(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	f.pairSeedEntry(pairDevA, pairMe, "operator")
+	out, _, err := pairRun(t, "--json", "--role", "viewer")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want exit 1", err)
+	}
+	events := pairLines(t, out)
+	if len(events) != 1 || events[0].Event != pairEventRefused || events[0].Code != pairRefusedRoleDisagrees {
+		t.Fatalf("events = %v, want one refused with %q", events, pairRefusedRoleDisagrees)
+	}
+	for _, want := range []string{pairMe, "operator", "viewer", "pair revoke"} {
+		if !strings.Contains(events[0].Reason, want) {
+			t.Fatalf("the refusal %q does not name %q: an operator who is told only that the role is wrong cannot tell what to pair instead or what to remove", events[0].Reason, want)
+		}
+	}
+	if n := len(f.iam.SignCalls()); n != 0 {
+		t.Fatalf("a refused role still called signJwt %d times", n)
+	}
+	f.pairOnlySeededEntries(t, pairDevA)
+}
+
+// TestPairAmbiguousAllowlistRefused: an installation whose entries for one
+// address disagree is a state this command will not write into — but one it can
+// still meet, from a hand-written node or a writer that is not this command — and
+// it must say which state it met. P1 refuses the whole resolution for such an
+// address (ErrAmbiguous, deliberately: picking a winner between two roles for one
+// key is a rule nobody wrote), so the pairing refuses and names both roles and
+// the deletion that repairs it, rather than reporting the allowlist as
+// unreadable.
+func TestPairAmbiguousAllowlistRefused(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	f.pairSeedEntry(pairDevA, pairMe, "operator")
+	f.pairSeedEntry(pairDevB, pairMe, "viewer")
+	out, _, err := pairRun(t, "--json")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want exit 1", err)
+	}
+	events := pairLines(t, out)
+	if len(events) != 1 || events[0].Event != pairEventRefused || events[0].Code != pairRefusedAllowlistAmbiguous {
+		t.Fatalf("events = %v, want one refused with %q", events, pairRefusedAllowlistAmbiguous)
+	}
+	for _, want := range []string{"operator", "viewer", "pair revoke"} {
+		if !strings.Contains(events[0].Reason, want) {
+			t.Fatalf("the refusal %q does not name %q", events[0].Reason, want)
+		}
+	}
+	if n := len(f.iam.SignCalls()); n != 0 {
+		t.Fatalf("a refused pairing minted %d tokens, want none", n)
+	}
+	f.pairOnlySeededEntries(t, pairDevA, pairDevB)
+}
+
+// pairSeedEntry puts one allowlist entry on the node as `fugaro pair` writes
+// it: the uid is the node's key, the administered email is the entry's address
+// (an address or a whole domain) and the role is the role it was written with.
+func (f *pairFixture) pairSeedEntry(uid, email, role string) {
+	f.db.Set(rules.PathDevices+"/"+uid, map[string]any{
+		"name": "seed", "email": email, "role": role, "at": pairT0.UTC().Format(time.RFC3339),
+	})
+}
+
+// pairEntryWritten is the entry a completed pairing wrote: the fixture holds the
+// entries the test seeded, so the one that is not one of them is the command's.
+func (f *pairFixture) pairEntryWritten(t *testing.T, seeded ...string) (string, string) {
+	t.Helper()
+	allowlist, ok := f.db.Value(rules.PathDevices).(map[string]any)
+	if !ok {
+		t.Fatalf("the allowlist is %v, want an object", f.db.Value(rules.PathDevices))
+	}
+	known := map[string]bool{}
+	for _, uid := range seeded {
+		known[uid] = true
+	}
+	for uid, child := range allowlist {
+		if known[uid] {
+			continue
+		}
+		node, ok := child.(map[string]any)
+		if !ok {
+			t.Fatalf("the device node %s is %v, want an object", uid, child)
+		}
+		email, _ := node[mobileauth.NodeFieldEmail].(string)
+		role, _ := node[mobileauth.NodeFieldRole].(string)
+		return email, role
+	}
+	t.Fatalf("the pairing wrote no entry beside the %d the test seeded", len(seeded))
+	return "", ""
+}
+
+// TestPairDeviceNodeNamesMatchMobileauth is the writer's half of P2's rule: the
+// node's administered email and role are named by internal/mobileauth's own
+// constants, so that the writer and every reader share one spelling — and a Go
+// struct tag cannot hold a constant, so the tags are held to them here rather
+// than spelled twice by hand and drifting. `pair ls` reads the same two.
+func TestPairDeviceNodeNamesMatchMobileauth(t *testing.T) {
+	typ := reflect.TypeOf(pairDeviceNode{})
+	for field, want := range map[string]string{
+		"Email": mobileauth.NodeFieldEmail,
+		"Role":  mobileauth.NodeFieldRole,
+	} {
+		f, ok := typ.FieldByName(field)
+		if !ok {
+			t.Fatalf("pairDeviceNode has no %s field: the writer writes the node's children through it", field)
+		}
+		if got := f.Tag.Get("json"); got != want {
+			t.Fatalf("pairDeviceNode.%s is written as %q, want %q: internal/mobileauth names the child and P2's PathDevices comment is what holds the writer and the reader to one spelling", field, got, want)
+		}
+	}
+}
+
+// TestPairRoleResolvedFromTheAllowlistEntries is D224 and the spec's own rule
+// ("an exact email overrides its domain's role"), resolved once, at the write.
+// The domain entry grants the HIGHER role and the pairing operator is an admin,
+// so every way of not resolving — writing the caller's own role, or reading the
+// domain's entry for an address an exact entry names — writes admin; the entry
+// that names the address is what settles it.
+func TestPairRoleResolvedFromTheAllowlistEntries(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	f.pairSeedEntry(pairDevA, "example.com", "operator")
+	f.pairSeedEntry(pairDevB, pairMe, "viewer")
+	out, _, err := pairPair(t, f, token.Fingerprint(pairKeyBytes))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "role viewer") {
+		t.Fatalf("the pairing did not resolve the exact entry over its domain's:\n%s", out)
+	}
+	if email, role := f.pairEntryWritten(t, pairDevA, pairDevB); role != "viewer" || email != pairMe {
+		t.Fatalf("the entry written is %q/%q, want %s/viewer", email, role, pairMe)
+	}
+
+	// A domain entry alone is the whole of what admits its members: the address
+	// is on no exact entry, so the domain's role is what the node carries — the
+	// domain rule applied at administration (D223) and recorded on the entry.
+	f = newPairFixture(t, pairMe)
+	f.pairSeedEntry(pairDevA, "example.com", "operator")
+	if _, _, err := pairPair(t, f, token.Fingerprint(pairKeyBytes)); err != nil {
+		t.Fatal(err)
+	}
+	if email, role := f.pairEntryWritten(t, pairDevA); role != "operator" || email != pairMe {
+		t.Fatalf("the entry written is %q/%q, want %s/operator: a domain entry's role is resolved at the write", email, role, pairMe)
+	}
+
+	// An address no entry names is the pairing's own entry to write, and the
+	// role is the one the operator already holds (the allowlist has nothing to
+	// resolve for them).
+	f = newPairFixture(t, pairMe)
+	f.pairSeedEntry(pairDevA, "other.example", "viewer")
+	if _, _, err := pairPair(t, f, token.Fingerprint(pairKeyBytes)); err != nil {
+		t.Fatal(err)
+	}
+	if _, role := f.pairEntryWritten(t, pairDevA); role != "admin" {
+		t.Fatalf("an address no entry names was written %q, want the operator's own admin", role)
+	}
+}
+
+// TestPairUnreadableAllowlistEntryRefused is the allowlist half of the refusal:
+// a node whose administered email is not a value this build reads names nobody,
+// and P1 refuses a whole resolution over it — so the pairing refuses instead of
+// writing the caller's own (wider) role past an entry that might have been the
+// narrower one for them. It names the node, because the node is what an admin
+// fixes, and it echoes the value never.
+func TestPairUnreadableAllowlistEntryRefused(t *testing.T) {
+	const value = "Dimi Paun <dimi@example.com>"
+	for name, seed := range map[string]func(*pairFixture){
+		"an address this build does not read": func(f *pairFixture) { f.pairSeedEntry(pairDevA, value, "viewer") },
+		"a domain that is not a domain":       func(f *pairFixture) { f.pairSeedEntry(pairDevA, "not a domain", "viewer") },
+		"an empty email":                      func(f *pairFixture) { f.pairSeedEntry(pairDevA, "", "viewer") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newPairFixture(t, pairMe)
+			seed(f)
+			out, _, err := pairRun(t, "--json")
+			if err == nil || ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want exit 1", err)
+			}
+			events := pairLines(t, out)
+			if len(events) != 1 || events[0].Event != pairEventRefused || events[0].Code != pairRefusedAllowlistUnreadable {
+				t.Fatalf("events = %v, want one refused with %q", events, pairRefusedAllowlistUnreadable)
+			}
+			if !strings.Contains(events[0].Reason, pairDevA) {
+				t.Fatalf("the refusal does not name the node an admin must fix: %q", events[0].Reason)
+			}
+			if strings.Contains(events[0].Reason, value) {
+				t.Fatalf("the refusal echoes the value it refused: %q", events[0].Reason)
+			}
+			if n := len(f.iam.SignCalls()); n != 0 {
+				t.Fatalf("a refused pairing minted %d tokens, want none: the allowlist is read before anything is minted", n)
+			}
+			f.pairOnlySeededEntries(t, pairDevA)
+		})
+	}
+}
+
+// TestPairEntryInAnotherSpellingOfTheAddressIsNamed is the property the guard in
+// pairAllowlistNames exists for, and it is the difference between refusing and
+// granting: an entry that names the address in a spelling this build folds to
+// the same canonical form (a domain written in capitals) is an entry that NAMES
+// it, so the pairing goes to Resolve, which refuses it — its stored form is not
+// the one this package writes — instead of falling through to the branch that
+// writes the caller's own role. A raw comparison answers "absent" here, and the
+// pairing then writes the caller's own admin over a node whose writer meant
+// viewer; the same address paired twice is then two entries that disagree, which
+// P1 refuses (ErrAmbiguous) for every later pairing of it.
+func TestPairEntryInAnotherSpellingOfTheAddressIsNamed(t *testing.T) {
+	for name, seed := range map[string]string{
+		"an exact entry whose domain is capitals": "person-1@EXAMPLE.COM",
+		"a domain entry in capitals":              "EXAMPLE.COM",
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newPairFixture(t, pairMe)
+			f.pairSeedEntry(pairDevA, seed, "viewer")
+			out, _, err := pairRun(t, "--json")
+			if err == nil || ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want exit 1: %s names the address, so the role the pairing writes is Resolve's to refuse", err, seed)
+			}
+			events := pairLines(t, out)
+			if len(events) != 1 || events[0].Event != pairEventRefused || events[0].Code != pairRefusedAllowlistUnreadable {
+				t.Fatalf("events = %v, want one refused with %q", events, pairRefusedAllowlistUnreadable)
+			}
+			if !strings.Contains(events[0].Reason, pairMe) {
+				t.Fatalf("the refusal does not name the address it cannot resolve: %q", events[0].Reason)
+			}
+			if strings.Contains(events[0].Reason, seed) {
+				t.Fatalf("the refusal echoes the stored spelling: %q", events[0].Reason)
+			}
+			if n := len(f.iam.SignCalls()); n != 0 {
+				t.Fatalf("a refused pairing minted %d tokens, want none: the allowlist is read before anything is minted", n)
+			}
+			f.pairOnlySeededEntries(t, pairDevA)
+		})
+	}
+}
+
+// pairOnlySeededEntries holds a refusal to leaving the allowlist as it found it:
+// the seeded nodes (and nothing else), no pairing subtree and no keychain item.
+func (f *pairFixture) pairOnlySeededEntries(t *testing.T, seeded ...string) {
+	t.Helper()
+	allowlist, ok := f.db.Value(rules.PathDevices).(map[string]any)
+	if !ok || len(allowlist) != len(seeded) {
+		t.Fatalf("the allowlist is %v, want exactly the %d entries the test seeded", f.db.Value(rules.PathDevices), len(seeded))
+	}
+	for _, uid := range seeded {
+		if v := f.db.Value(rules.PathDevices + "/" + uid); v == nil {
+			t.Fatalf("the seeded entry %s is gone: %v", uid, allowlist)
+		}
+	}
+	if v := f.db.Value("pairing"); v != nil {
+		t.Fatalf("a refused pairing wrote the pairing subtree: %v", v)
+	}
+	if len(f.keys.Keys) != 0 {
+		t.Fatalf("a refused pairing wrote the keychain: %v", f.keys.Keys)
+	}
+}
+
+// TestPairResolvedRoleAboveOwnRefused: the resolver's answer can be above the
+// pairing operator's own role — an entry written by an admin, a caller who has
+// since been demoted — and a device may not be more than the person pairing it
+// (RS8). It is refused rather than clamped: a clamp would record a role the
+// allowlist does not carry, and the fix (an admin writes the entry) is one
+// sentence away.
+func TestPairResolvedRoleAboveOwnRefused(t *testing.T) {
+	f := newPairFixture(t, pairLauncher)
+	f.pairSeedEntry(pairDevA, pairLauncher, "admin")
+	out, _, err := pairRun(t, "--json")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want exit 1", err)
+	}
+	events := pairLines(t, out)
+	if len(events) != 1 || events[0].Event != pairEventRefused || events[0].Code != pairRefusedRoleAbove {
+		t.Fatalf("events = %v, want one refused with %q", events, pairRefusedRoleAbove)
+	}
+	for _, want := range []string{"admin", "operator"} {
+		if !strings.Contains(events[0].Reason, want) {
+			t.Fatalf("the refusal %q does not name %q", events[0].Reason, want)
+		}
+	}
+	if n := len(f.iam.SignCalls()); n != 0 {
+		t.Fatalf("a refused pairing minted %d tokens, want none", n)
+	}
+	f.pairOnlySeededEntries(t, pairDevA)
+}
+
+// TestPairUnverifiedEmailReadsTheUserinfoAnswer is D226 against the response it
+// actually reads: the refusal is init_members.go's userEmail — the shape
+// init_members.go already uses — and what it refuses is the endpoint's own
+// `email_verified: false`, with the address it names. pairMeLookup is left
+// alone: the identity the pairing inherits its role from is a different read.
+func TestPairUnverifiedEmailReadsTheUserinfoAnswer(t *testing.T) {
+	verified := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"email":%q,"email_verified":%t}`, pairMe, verified)
+	}))
+	defer srv.Close()
+
+	f := newPairFixture(t, pairMe)
+	authenticatedUser = func(ctx context.Context, _ *localcfg.Config) (string, error) {
+		return userEmail(ctx, srv.Client(), srv.URL)
+	}
+	out, _, err := pairRun(t, "--json")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want exit 1", err)
+	}
+	events := pairLines(t, out)
+	if len(events) != 1 || events[0].Event != pairEventRefused || events[0].Code != pairRefusedEmail {
+		t.Fatalf("events = %v, want one refused with %q", events, pairRefusedEmail)
+	}
+	if !strings.Contains(events[0].Reason, "is not verified") || !strings.Contains(events[0].Reason, pairMe) {
+		t.Fatalf("the refusal %q does not name the unverified address as userEmail does", events[0].Reason)
+	}
+	if n := len(f.iam.SignCalls()); n != 0 {
+		t.Fatalf("an unverified address minted %d tokens, want none", n)
+	}
+
+	// The same endpoint answering `email_verified: true` is the address the node
+	// takes: the check is the response, not a missing field.
+	verified = true
+	f = newPairFixture(t, pairMe)
+	authenticatedUser = func(ctx context.Context, _ *localcfg.Config) (string, error) {
+		return userEmail(ctx, srv.Client(), srv.URL)
+	}
+	if _, _, err := pairPair(t, f, token.Fingerprint(pairKeyBytes)); err != nil {
+		t.Fatal(err)
+	}
+	if email, role := f.pairEntryWritten(t); email != pairMe || role != "admin" {
+		t.Fatalf("the entry written is %q/%q, want %s/admin", email, role, pairMe)
+	}
+}
+
 func TestPairUnplacedCallerRefused(t *testing.T) {
 	newPairFixture(t, "person-3@example.com")
 	_, _, err := pairRun(t)
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want exit 1", err)
 	}
-	for _, want := range []string{"user:person-3@example.com", "terraform.operators", "terraform.launchers"} {
+	for _, want := range []string{"user:person-3@example.com", "project scope"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("refusal %q does not name %q", err, want)
 		}
@@ -644,7 +1213,7 @@ func TestPairInteractiveWithoutATerminalRefusesAndReadsNothing(t *testing.T) {
 }
 
 func TestPairJSONRefusalExitCodes(t *testing.T) {
-	newPairFixture(t, pairMe)
+	newPairFixture(t, pairLauncher)
 	out, _, err := pairRun(t, "--json", "--role", "admin")
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("operator-fixable refusal: err = %v, want exit 1", err)
@@ -1174,7 +1743,7 @@ func TestPairDeviceNodeHoldsNoSecret(t *testing.T) {
 	if want := []string{"at", "email", "name", "role"}; !slices.Equal(keys, want) {
 		t.Fatalf("the device node holds %v, want %v and nothing else", keys, want)
 	}
-	if node["name"] != "phone-a" || node["email"] != pairMe || node["role"] != "operator" || node["at"] == "" {
+	if node["name"] != "phone-a" || node["email"] != pairMe || node["role"] != "admin" || node["at"] == "" {
 		t.Fatalf("the device node is %v", node)
 	}
 	raw, err := json.Marshal(node)
@@ -1368,17 +1937,17 @@ func TestPairEmailNotOperatorsRefused(t *testing.T) {
 }
 
 // TestPairMeFailureIsNotUnplaced: the identity the command reads has a refusal
-// of its own. Dropping lc.Me's error told an operator whose identity could not
-// be read that they were on neither of the installation's lists — a fixable
-// credential problem reported as a list problem, and the wrong wire code for a
-// console to act on.
+// of its own. Dropping its error told an operator whose identity could not be
+// read that they held no role to inherit — a fixable credential problem
+// reported as a placing problem, and the wrong wire code for a console to act
+// on.
 func TestPairMeFailureIsNotUnplaced(t *testing.T) {
 	f := newPairFixture(t, pairMe)
 	prev := pairMeLookup
 	t.Cleanup(func() { pairMeLookup = prev })
 
-	pairMeLookup = func(context.Context, *localcfg.Config) (string, error) {
-		return "", errors.New("cannot tell who you are: set user in the local config or git config user.email")
+	pairMeLookup = func(context.Context) (string, error) {
+		return "", errors.New("cannot read the credential you are using: no Google credentials")
 	}
 	out, _, err := pairRun(t, "--json")
 	if err == nil || ExitCode(err) != ExitUserError {
@@ -1388,9 +1957,9 @@ func TestPairMeFailureIsNotUnplaced(t *testing.T) {
 	if len(events) != 1 || events[0].Code != pairRefusedIdentity {
 		t.Fatalf("events = %v, want one refused with %q", events, pairRefusedIdentity)
 	}
-	for _, absent := range []string{"terraform.operators", "terraform.launchers", "neither of this installation's lists"} {
+	for _, absent := range []string{"project scope", "holds no role"} {
 		if strings.Contains(events[0].Reason, absent) {
-			t.Fatalf("an identity failure reads as a list failure: %q", events[0].Reason)
+			t.Fatalf("an identity failure reads as a placing failure: %q", events[0].Reason)
 		}
 	}
 	if n := len(f.iam.SignCalls()); n != 0 {
@@ -1398,8 +1967,8 @@ func TestPairMeFailureIsNotUnplaced(t *testing.T) {
 	}
 
 	// A failure the error itself classes as remote keeps exit 2.
-	pairMeLookup = func(context.Context, *localcfg.Config) (string, error) {
-		return "", remote(errors.New("asking who you are: the identity endpoint is unreachable"))
+	pairMeLookup = func(context.Context) (string, error) {
+		return "", remote(errors.New("reading the credential: the userinfo endpoint is unreachable"))
 	}
 	out, _, err = pairRun(t, "--json")
 	if err == nil || ExitCode(err) != ExitRemoteError {
@@ -2033,6 +2602,21 @@ func (f *pairFixture) pairSeedItem(t *testing.T, uid string) (string, string) {
 	return name, value
 }
 
+// pairSeedPush writes the push node §3.4 puts beside the device node, as the
+// registration principal leaves it: that installation's one registration for
+// the account, with the children the design gives the node — the platform, the
+// preferences and the sender's own ledger — so a revoke that deleted the node
+// deletes all of them with it. The token is the phone's own registration and
+// no Fugaro credential, and it is spelled as a fixture rather than as a value
+// a real provider would mint.
+func (f *pairFixture) pairSeedPush(uid string) {
+	f.db.Set(pairPushPath(uid), map[string]any{
+		"token": "fcm-registration-for-tests", "platform": "ios", "updated_at": pairT0.UnixMilli(),
+		"prefs":  map[string]any{"runs": false},
+		"ledger": map[string]any{"sent": map[string]any{"at": pairT0.UnixMilli()}},
+	})
+}
+
 // pairKeychainSpy is the keychain with the moment of its Delete recorded. M4's
 // order is the assertion, and it is not "the item was deleted" but "the item was
 // deleted when the device node was already gone": the two are different
@@ -2115,8 +2699,8 @@ func TestRevokeNeverDeletesTheAuthUser(t *testing.T) {
 	if doc == nil {
 		t.Fatalf("the %s event carries no document: %v", pairEventRevoked, events[0])
 	}
-	if want := []string{rules.PathDevices + "/" + pairDevA}; !slices.Equal(doc.Wrote, want) {
-		t.Fatalf("wrote = %v, want the device node alone: the Auth user is not this command's to delete", doc.Wrote)
+	if want := []string{rules.PathDevices + "/" + pairDevA, pairPushPath(pairDevA)}; !slices.Equal(doc.Wrote, want) {
+		t.Fatalf("wrote = %v, want the two nodes the act deleted (%v): the Auth user is not this command's to delete, and the pairing session's node is the sweep's", doc.Wrote, want)
 	}
 	if len(doc.Warnings) != 0 || len(doc.Refused) != 0 {
 		t.Fatalf("document = %+v, want no warnings and no refusals", doc)
@@ -2131,6 +2715,168 @@ func TestRevokeNeverDeletesTheAuthUser(t *testing.T) {
 	}
 	if !strings.Contains(text, "Auth user is not deleted") || !strings.Contains(text, "sweep") {
 		t.Fatalf("the text output does not say the Auth user survives and that the sweep removes it:\n%s", text)
+	}
+}
+
+// TestRevokeDeletesThePushNodeWithTheDeviceNode is §3.4's one revocation act:
+// `fugaro pair revoke` deletes the push node config/admin/push/$uid in the same
+// act as config/admin/devices/$uid, so the registration's token, platform,
+// prefs and ledger go with the pairing instead of outliving it on a timer
+// (§7, Q10(i)), and both nodes are what the act reports it deleted.
+func TestRevokeDeletesThePushNodeWithTheDeviceNode(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	f.pairSeedDevice(pairDevA, "phone-a")
+	f.pairSeedItem(t, pairDevA)
+	f.pairSeedPush(pairDevA)
+
+	out, _, err := pairRun(t, "revoke", "--uid", pairDevA, "--json")
+	if err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	events := pairLines(t, out)
+	if len(events) != 1 || events[0].Event != pairEventRevoked || events[0].Revoke == nil {
+		t.Fatalf("events = %v, want one %s carrying a document", events, pairEventRevoked)
+	}
+	want := []string{rules.PathDevices + "/" + pairDevA, pairPushPath(pairDevA)}
+	if !slices.Equal(events[0].Revoke.Wrote, want) {
+		t.Fatalf("wrote = %v, want %v: the device node first, because it is what the rules read and its deletion is the revocation, and the push node with it", events[0].Revoke.Wrote, want)
+	}
+	if v := f.db.Value(pairPushPath(pairDevA)); v != nil {
+		t.Fatalf("the push node survived the revoke: %v", v)
+	}
+	// The node's children went with it — the token, the platform, the prefs and
+	// the ledger are one subtree — and the tree itself goes when its last child
+	// does, which is what makes a re-pairing start from nothing.
+	if v := f.db.Value(pairPushRoot); v != nil {
+		t.Fatalf("%s survived the revoke: %v", pairPushRoot, v)
+	}
+}
+
+// TestRevokeWithoutAPushNodeIsNotAnError: pairing writes no push node at all
+// (§3.4: the pairing session carries no registration token), so a device that
+// never registered holds none, and its revoke must not read the node's absence
+// as a failure — deleting a node that is not there is the no-op the database
+// makes it.
+func TestRevokeWithoutAPushNodeIsNotAnError(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	f.pairSeedDevice(pairDevA, "phone-a")
+	f.pairSeedItem(t, pairDevA)
+
+	out, _, err := pairRun(t, "revoke", "--uid", pairDevA)
+	if err != nil {
+		t.Fatalf("revoke of a device that holds no push node: %v", err)
+	}
+	if !strings.Contains(out, pairPushPath(pairDevA)) {
+		t.Fatalf("the output does not name the push node the act deleted:\n%s", out)
+	}
+	if v := f.db.Value(pairPushPath(pairDevA)); v != nil {
+		t.Fatalf("a push node exists after the revoke: %v", v)
+	}
+}
+
+// TestRevokeLeavesTheAllowlistClosedToALaterRegistration is §3.4's rule 2 read
+// from this command's side: the node the rules read is the DEVICE node, so a
+// registration that arrives after a revoke — the write the design permits, a
+// create at the sibling — admits nobody. The phone stays off the allowlist and
+// the node that write leaves is the orphan the sender reaps, not a live
+// registration.
+//
+// Half of the sentence is a later task's: `fugaro mailbox`, the consumer that
+// applies the app's registration message, is P5.2.4's and does not exist in
+// this tree, so what the test writes here is the node that message lands in
+// rather than the consumer's own path. What the command is held to is its own
+// half: it leaves no device node for such a write to build a send on.
+func TestRevokeLeavesTheAllowlistClosedToALaterRegistration(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	f.pairSeedDevice(pairDevA, "phone-a")
+	f.pairSeedItem(t, pairDevA)
+	f.pairSeedPush(pairDevA)
+	if _, _, err := pairRun(t, "revoke", "--uid", pairDevA); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+
+	f.pairSeedPush(pairDevA)
+
+	if v := f.db.Value(rules.PathDevices + "/" + pairDevA); v != nil {
+		t.Fatalf("a write at the sibling re-admitted the device: the device node is %v, and the rules admit nobody without it (userClaim, D166)", v)
+	}
+	if v := f.db.Value(pairPushPath(pairDevA)); v == nil {
+		t.Fatal("the later registration wrote nothing, so this test holds the command to nothing: it is the sibling's write that the design permits and the sender's reaping that covers")
+	}
+}
+
+// TestRepairStartsFromAnEmptyPushNode: a pairing after a revoke writes the
+// device node and the delivery and no push node at all (§3.4), so the phone
+// registers from nothing. Neither half of the revoked account's registration
+// survives it — the node is deleted, and a re-pairing mints a device uid of
+// its own and inherits no node from the one the revoke removed.
+func TestRepairStartsFromAnEmptyPushNode(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	f.pairSeedDevice(pairDevA, "phone-a")
+	f.pairSeedItem(t, pairDevA)
+	f.pairSeedPush(pairDevA)
+	if _, _, err := pairRun(t, "revoke", "--uid", pairDevA); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+
+	uid := pairFixedRand(t)
+	f.pairSeedRequest(uid, pairKey)
+	if _, _, err := pairRunIn(t, token.Fingerprint(pairKeyBytes), "--name", "phone-b"); err != nil {
+		t.Fatalf("pairing again after a revoke: %v", err)
+	}
+	if got := f.pairDeviceUID(t); got == pairDevA {
+		t.Fatalf("the second pairing wrote device %s, the uid the revoke deleted: a pairing mints its own", got)
+	}
+	if v := f.db.Value(pairPushRoot); v != nil {
+		t.Fatalf("%s is not empty after a re-pairing: %v; pairing writes the device node and the delivery and no push node, so the phone registers from nothing", pairPushRoot, v)
+	}
+}
+
+// TestRevokePushDeleteFailureIsNotSuccess: §3.4's second deletion is what
+// bounds the registration's lifetime by the pairing, so a revoke that could not
+// delete the push node must not report success. The device node is already gone
+// by then — the phone is off the allowlist, and the sender's send condition
+// needs both nodes — but the node holding the registration token is still
+// there, and the refusal says so and names it.
+//
+// The keychain item is deleted even on that path, and that is the one place
+// this act departs from "the step that failed stops the ones after it": the
+// device node is gone, so a second `fugaro pair revoke` is refused as nothing
+// to revoke, and this command would never remove the item again. A leftover
+// key with no command that deletes it is worse than a leftover push node, which
+// is a write away for an admin and is what the sender's reaping exists for.
+func TestRevokePushDeleteFailureIsNotSuccess(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	f.pairSeedDevice(pairDevA, "phone-a")
+	itemName, _ := f.pairSeedItem(t, pairDevA)
+	f.pairSeedPush(pairDevA)
+	f.db.Deny(pairPushRoot)
+
+	out, _, err := pairRun(t, "revoke", "--uid", pairDevA, "--json")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want exit 1: a revoke that could not delete the push node is not a success", err)
+	}
+	events := pairLines(t, out)
+	last := events[len(events)-1]
+	if last.Event != pairEventRefused || last.Code != pairRefusedDatabaseAdmin {
+		t.Fatalf("events = %v, want a %s with code %q", events, pairEventRefused, pairRefusedDatabaseAdmin)
+	}
+	if !strings.Contains(last.Reason, pairPushPath(pairDevA)) {
+		t.Fatalf("the refusal does not name the push node it could not delete: %q", last.Reason)
+	}
+	for _, e := range events {
+		if e.Event == pairEventRevoked {
+			t.Fatalf("a failed revoke emitted the %s event: %v", pairEventRevoked, events)
+		}
+	}
+	if v := f.db.Value(rules.PathDevices + "/" + pairDevA); v != nil {
+		t.Fatalf("the device node survived: its deletion is the revocation, and it is the one step the deny does not touch (%v)", v)
+	}
+	if v := f.db.Value(pairPushPath(pairDevA)); v == nil {
+		t.Fatal("a write the database denied deleted the push node anyway")
+	}
+	if _, ok := f.keys.Keys[itemName]; ok {
+		t.Fatal("the MAC keychain item survived a revoke whose device node is already gone: no second revoke could ever remove it")
 	}
 }
 

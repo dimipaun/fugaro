@@ -24,6 +24,11 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
+// imageGateRemedy is the move every image-gate refusal names: fugaro update's
+// images stage is the one way a job image moves onto a newer base, now that
+// the repository-level image commands are disabled (IS2).
+const imageGateRemedy = "Run fugaro update in its checkout"
+
 func TestCheckRecipeImage(t *testing.T) {
 	f := newCloudFixture(t)
 	env := fileEnv(t, f)
@@ -58,7 +63,7 @@ func TestCheckRecipeImage(t *testing.T) {
 		}
 		if tc.wantErr != "" && err != nil {
 			for _, want := range []string{"recipe mine needs a job image whose runner knows recipes (fugaro 0.5.0 or later)",
-				"Run fugaro image refresh --repo acme/app --workflow web in its checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session", "this release's base base image", "--recipe default"} {
+				imageGateRemedy + ", in your own terminal window (never in a coding agent's session", "this release's base base image", "--recipe default"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("%q: %v lacks %q", tc.baseRef, err, want)
 				}
@@ -70,8 +75,33 @@ func TestCheckRecipeImage(t *testing.T) {
 	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.4.1")
 	err := checkRecipeImage(context.Background(), env, appSlug, spec, "", &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "fugaro.yaml's agent.recipe needs a job image") || strings.Contains(err.Error(), "--recipe default") ||
-		!strings.Contains(err.Error(), "it verifies this release's base image and pins it by digest through the installation's remote repository, points") {
+		!strings.Contains(err.Error(), "its images stage verifies this release's base image, pins it by digest through the installation's remote repository and rebuilds") {
 		t.Fatalf("agent.recipe: %v", err)
+	}
+}
+
+// TestImageGateRefusalCarriesTheCauseMarker: the refusal an image gate writes is
+// what a person's log holds when a launch is turned away over a job image older
+// than the Fugaro its job would run, and `fugaro troubleshoot` answers that class
+// from the log alone by matching a marker inside that sentence
+// (causeMarkerJobImage, troubleshootCauses). A refusal that stopped carrying it
+// would leave that failure — the owner's own, reported 2026-11-15 — unanswered
+// again, and the launch here is the smallest one that really is refused.
+func TestImageGateRefusalCarriesTheCauseMarker(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x",
+		Recipe: &task.Recipe{Name: "mine", Source: "repo"}}
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.4.1")
+	err := checkRecipeImage(context.Background(), env, appSlug, spec, "base", &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("an image older than the recipe gate needs was accepted")
+	}
+	if !strings.Contains(err.Error(), causeMarkerJobImage) {
+		t.Errorf("the refusal does not carry the marker troubleshoot reads for this class (%q): %v", causeMarkerJobImage, err)
+	}
+	if !strings.Contains(err.Error(), imageGateRemedy) {
+		t.Errorf("the refusal no longer names the move the cause answers with: %v", err)
 	}
 }
 
@@ -377,6 +407,212 @@ func TestRecipesSkewRefusesReviewLevelsOnOldImage(t *testing.T) {
 	// node (D722, G1) by a runner at reviewLevelsSince or later alone.
 	if ask := reviewLevelsAsk(config.Levels{}, nil, nil, []policy.Level{policy.LevelL2}, false); ask != "the owner's review-level floor" {
 		t.Errorf("the owner's floor asked %q", ask)
+	}
+}
+
+// TestRecipesSkewRefusesSlotOnOldImage: a launch whose pair names a slot needs
+// a job image whose runner acts on it (B1.1, slotSince, D728). A runner that
+// only decodes the field is not enough: handed a challenger at a review slot
+// it runs the whole coding loop on the challenger's coder model — publish:
+// none keeps that harmless, and it is still a paid run of the entire loop
+// where the pair means one review over the champion's own patch (B1.2). The
+// gate is written on the key's presence, so a pair spelling the coder slot out
+// is judged too, and a task with no block or a block naming no slot — the coder
+// pair A1.1 and A3.3 write — is never gated at all. A base image that is not a
+// release cannot be dated, so it only warns, and an image at the release or
+// later is not gated.
+func TestRecipesSkewRefusesSlotOnOldImage(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	const championRun = "20261028-090000-1a2b"
+	challenger := func(slot task.ABSlot) *task.AB {
+		return &task.AB{PairID: "20261029-120000-abcd", Arm: task.ABArmChallenger, Publish: task.ABPublishNone,
+			Challenger: "invented-challenger-1", ChallengerSource: task.ABChallengerOwner,
+			Slot: slot, ChampionRun: championRun}
+	}
+	coder := challenger(task.ABSlotCoder)
+	coder.ChampionRun = ""
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web",
+		Task: "x", AB: challenger(task.ABSlotL2)}
+	if ask := slotAsk(spec); ask != "the task's ab.slot (l2)" {
+		t.Fatalf("ask = %q, want the slot the launcher wrote", ask)
+	}
+	check := func(baseRef string) (string, error) {
+		var warn bytes.Buffer
+		writeBuildRecord(t, f, appSlug, "web", baseRef)
+		err := checkSlotImage(context.Background(), env, appSlug, spec, "base", slotAsk(spec), &warn)
+		return warn.String(), err
+	}
+	old := shiftRelease(t, slotSince, -1)
+	warn, err := check("ghcr.io/dimipaun/fugaro-base:" + old)
+	if err == nil || !strings.Contains(err.Error(), "needs a job image whose runner knows the A/B pair's slot (ab.slot, ab.champion_run) (fugaro "+slotSince+" or later)") || ExitCode(err) != ExitUserError {
+		t.Fatalf("%s: warn = %q, err = %v", old, warn, err)
+	}
+	if warn != "" {
+		t.Errorf("%s: warning %q, want none", old, warn)
+	}
+	if warn, err := check("ghcr.io/dimipaun/fugaro-base:" + slotSince); err != nil {
+		t.Fatalf("%s: warn = %q, err = %v", slotSince, warn, err)
+	}
+	warn, err = check("us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c")
+	if err != nil {
+		t.Fatalf("dev base: %v", err)
+	}
+	if !strings.Contains(warn, "not a release base image") {
+		t.Errorf("dev base: warning %q, want the not-a-release note", warn)
+	}
+	// The same launch on a checkout: clone workflow, whose job has no derived
+	// image and so no build record, and the gate raises checkCloneImageSince's
+	// threshold on base_images.base itself.
+	lc := *env.lc
+	lc.BaseImages = map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:" + old}
+	var cloneWarn bytes.Buffer
+	err = checkCloneSlotImage(&lc, spec, slotAsk(spec), &cloneWarn)
+	if err == nil || !strings.Contains(err.Error(), "fugaro "+slotSince+" or later") || !strings.Contains(err.Error(), "release "+old) || ExitCode(err) != ExitUserError {
+		t.Fatalf("clone %s: warn = %q, err = %v", old, cloneWarn.String(), err)
+	}
+	lc.BaseImages["base"] = "ghcr.io/dimipaun/fugaro-base:" + slotSince
+	if err := checkCloneSlotImage(&lc, spec, slotAsk(spec), &bytes.Buffer{}); err != nil {
+		t.Fatalf("clone %s: %v", slotSince, err)
+	}
+	// The pairs that ask nothing: a task with no block at all, one whose block
+	// names no slot (the coder pair A3.3 samples, whose challenger is the
+	// second full run A2.1 already honours), and one spelling coder out — the
+	// last is gated, because the gate judges the key's presence and not which
+	// slot it names.
+	quiet := *spec
+	quiet.AB = nil
+	if ask := slotAsk(&quiet); ask != "" {
+		t.Errorf("a task with no pair block asked %q, want nothing", ask)
+	}
+	quiet.AB = &task.AB{PairID: "20261029-120000-abcd", Arm: task.ABArmChampion}
+	if ask := slotAsk(&quiet); ask != "" {
+		t.Errorf("a pair naming no slot asked %q, want nothing", ask)
+	}
+	quiet.AB = coder
+	if ask := slotAsk(&quiet); ask != "the task's ab.slot (coder)" {
+		t.Errorf("a coder pair spelled out asked %q, want the slot", ask)
+	}
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+old)
+	if err := checkSlotImage(context.Background(), env, appSlug, &quiet, "base", "", &bytes.Buffer{}); err != nil {
+		t.Fatalf("a launch that asks nothing: %v", err)
+	}
+}
+
+// TestSlotSinceHasAReleaseBullet: slotSince names 0.24.0, which is not tagged,
+// so docs/release.md's Before-you-tag list is what holds the constant to the
+// release actually cut — the job every other *Since constant's bullet does.
+// Nothing else ties the number the gate accepts to the release whose runner
+// replays a reviewer pair's champion patch, and a release that landed the
+// replay elsewhere would otherwise keep refusing images that have it.
+func TestSlotSinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `slotSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no slotSince bullet: the checklist is where a release verifies the constant")
+	}
+	if !strings.Contains(bullet, "currently `\""+slotSince+"\"`") {
+		t.Errorf("docs/release.md's slotSince bullet does not carry the constant's release (%q)", slotSince)
+	}
+	for _, want := range []string{"ab.slot", "not tagged yet", "checkSlotImage", "checkCloneSlotImage", "slotAsk"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's slotSince bullet does not say %q", want)
+		}
+	}
+	// The constant names the replay's release, not the field's: a bullet that
+	// promised the field alone would have a release verify against an image
+	// that decodes the slot and then runs the whole loop on the challenger.
+	if !strings.Contains(bullet, "B1.2") || !strings.Contains(bullet, "replay") {
+		t.Errorf("docs/release.md's slotSince bullet does not name the replay half the release must carry")
+	}
+}
+
+// evaluateFixtureKind is the step kind this package's test binary registers as
+// mode: evaluate's own, so that a recipe the launcher resolves can hold a step
+// the parser accepts: the production registration is ee/register's, and an
+// untagged test binary carries none (recipe.RegisterStepKind says a test that
+// owns such a step registers it the same way).
+const evaluateFixtureKind recipe.StepKind = "evaluate_fixture"
+
+func init() {
+	if err := recipe.RegisterStepKind(evaluateFixtureKind, recipe.ModeEvaluate); err != nil {
+		panic("cli_test: " + err.Error())
+	}
+}
+
+// evaluateFixtureRecipe is a project recipe of the judge run's mode: one
+// registered step, which is the whole of what the mode's shape is.
+const evaluateFixtureRecipe = "version: 1\nname: judge-pairs\nmode: evaluate\nsteps:\n  - evaluate_fixture: {}\n"
+
+// TestAnEvaluateLaunchGatesOnTheImageThatKnowsMode: a task carrying mode is
+// refused outright by a runner older than evaluateSince — "evaluate" is not a
+// value its task validation knows, and the decode is strict — so a judge launch
+// must not reach such a job at all, with the launch already paid for and
+// nothing judged. The gate reads the task's own field rather than the recipe's
+// constructs, which is the only thing that can judge this launch: an evaluate
+// recipe's text trips none of the parse-time gates (recipeSinceFor would take
+// it at recipesSince), and the mode is what the launcher writes.
+//
+// Mutation (drop the spec.Mode == ModeEvaluate block from freshLaunchGates):
+// the launch against the 0.7.0 image is admitted and a job starts on a runner
+// that refuses its task.
+func TestAnEvaluateLaunchGatesOnTheImageThatKnowsMode(t *testing.T) {
+	t.Run("a job image older than the mode", func(t *testing.T) {
+		f := newCloudFixture(t)
+		projectRecipesFixture(t, f, map[string]string{"judge-pairs": evaluateFixtureRecipe})
+		writeBuildRecord(t, f, appSlug, "web", release070)
+		wantRefused(t, f, "needs a job image whose runner knows mode: evaluate (fugaro "+evaluateSince+" or later)",
+			"run", "--repo", "acme/app", "--recipe", "judge-pairs", "Judge the pairs the manifest names")
+	})
+	t.Run("a job image at the release", func(t *testing.T) {
+		f := newCloudFixture(t)
+		projectRecipesFixture(t, f, map[string]string{"judge-pairs": evaluateFixtureRecipe})
+		writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+evaluateSince)
+		if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261111-100000-abcd", "--recipe", "judge-pairs", "Judge the pairs the manifest names"); err != nil {
+			t.Fatal(err)
+		}
+		if got := readSpec(t, f, "20261111-100000-abcd").Mode; got != recipe.ModeEvaluate {
+			t.Fatalf("task mode = %q, want %q", got, recipe.ModeEvaluate)
+		}
+	})
+}
+
+// TestEvaluateSinceHasAReleaseBullet: evaluateSince names 0.24.0, which is not
+// tagged, so docs/release.md's Before-you-tag list is what holds the constant
+// to the release actually cut — the job every other *Since constant's bullet
+// does. Nothing else ties the number the gate accepts to the release whose
+// runner reads a task's mode: evaluate, and a release that landed the mode
+// elsewhere would otherwise keep refusing images that run it.
+func TestEvaluateSinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `evaluateSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no evaluateSince bullet: the checklist is where a release verifies the constant")
+	}
+	if !strings.Contains(bullet, "currently `\""+evaluateSince+"\"`") {
+		t.Errorf("docs/release.md's evaluateSince bullet does not carry the constant's release (%q)", evaluateSince)
+	}
+	for _, want := range []string{"not tagged yet", "mode: evaluate", "task validation", "recipesSince"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's evaluateSince bullet does not say %q", want)
+		}
+	}
+	// The constant names the release whose runner reads the mode, and the bullet
+	// has to say so: a bullet that promised the recipe alone would have a
+	// release verify against an image that parses the mode and refuses the task
+	// carrying it.
+	if !strings.Contains(bullet, "task") || !strings.Contains(bullet, "A5.2") {
+		t.Errorf("docs/release.md's evaluateSince bullet does not name the runner half the release must carry")
 	}
 }
 
@@ -994,16 +1230,22 @@ func TestRecipesSkewRefusesReviewLevelsWithoutABuildRecord(t *testing.T) {
 // nil): the 0.15.0 launch below succeeds.
 func TestRecipesSkewRefusesTheOwnerFloorOnOldImage(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
-	publishPolicy(t, f, `{"version":4,"allow_repos":["github/acme/*"],"review_floor":{"pro":["l3"]}}`)
+	// The node is the current version's, so policyImageGate judges the image
+	// first: a job image older than the release that introduced the node's
+	// version is refused there, before the floor's own gate is reached. That
+	// is what the 0.15.0 image meets below, and it is the refusal that matters
+	// to the owner (the run never starts on an image that cannot read the node,
+	// floor or no floor).
+	publishPolicy(t, f, `{"version":6,"allow_repos":["github/acme/*"],"review_floor":{"pro":["l3"]}}`)
 	isolateCache(t)
 	testutil.IsolateGit(t)
 	t.Chdir(t.TempDir())
 	writeBuildRecord(t, f.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.15.0")
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--mode", "pro", "--run-id", "20261007-100000-abcd", "Fix it.")
-	if err == nil || !strings.Contains(err.Error(), "the owner's review-level floor") || ExitCode(err) != ExitUserError {
-		t.Fatalf("0.15.0: err = %v, want the floor's refusal", err)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("0.15.0: err = %v, want a user-error refusal of the old image", err)
 	}
-	writeBuildRecord(t, f.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.16.0")
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+projectpolicy.VersionSince[projectpolicy.Version])
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--mode", "pro", "--run-id", "20261007-100000-abce", "Fix it."); err != nil {
 		t.Fatalf("0.16.0: %v", err)
 	}
@@ -1690,7 +1932,7 @@ func TestRunRefusesTheNoneModelOnAnOlderBaseImage(t *testing.T) {
 				"needs a job image whose runner knows " + noneModelKnows,
 				"fugaro " + noneModelSince + " or later",
 				"ghcr.io/dimipaun/fugaro-base:" + c.rel + ", release " + c.rel,
-				"fugaro image refresh --repo acme/other --workflow svc",
+				imageGateRemedy,
 				"; or write it as none: true in fugaro.yaml",
 			} {
 				if !strings.Contains(err.Error(), want) {
@@ -1759,7 +2001,7 @@ func TestRunRefusesTheLayersNoneModelOnAnOlderBaseImage(t *testing.T) {
 	for _, want := range []string{
 		"the project layer's defaults.agent.levels (read for acme/other)",
 		"needs a job image whose runner knows " + noneModelKnows,
-		"fugaro image refresh --repo acme/other --workflow " + config.ImplicitWorkflow,
+		imageGateRemedy,
 		"write it as none: true in the project layer's defaults.agent.levels and publish it again",
 	} {
 		if !strings.Contains(err.Error(), want) {
@@ -1962,7 +2204,7 @@ func TestRunRefusesTheStopFractionOnAnOlderBaseImage(t *testing.T) {
 				"needs a job image whose runner knows " + stopFractionKnows(true, false),
 				"fugaro " + stopFractionSince + " or later",
 				"ghcr.io/dimipaun/fugaro-base:" + c.rel + ", release " + c.rel,
-				"fugaro image refresh --repo acme/other --workflow svc",
+				imageGateRemedy,
 				"; or remove agent.review_stop_fraction from fugaro.yaml",
 			} {
 				if !strings.Contains(err.Error(), want) {
@@ -2062,7 +2304,7 @@ func TestRunRefusesTheLayersStopFractionOnAnOlderBaseImage(t *testing.T) {
 			for _, want := range []string{
 				"the project layer's defaults.agent.review_stop_fraction (read for acme/other)",
 				"needs a job image whose runner knows " + stopFractionKnows(false, true),
-				"fugaro image refresh --repo acme/other --workflow " + config.ImplicitWorkflow,
+				imageGateRemedy,
 				"remove defaults.agent.review_stop_fraction from the project layer and publish it again",
 			} {
 				if !strings.Contains(err.Error(), want) {
@@ -2412,7 +2654,7 @@ func TestLauncherRefusesTriageOnAnOlderImage(t *testing.T) {
 				"needs a job image whose runner knows " + triageKnows,
 				"fugaro " + triageSince + " or later",
 				"ghcr.io/dimipaun/fugaro-base:" + c.rel + ", release " + c.rel,
-				"fugaro image refresh --repo acme/other --workflow svc",
+				imageGateRemedy,
 				"; or remove agent.triage from fugaro.yaml",
 			} {
 				if !strings.Contains(err.Error(), want) {
@@ -2558,5 +2800,432 @@ func TestTriageSinceIsTheReleaseTheDocsName(t *testing.T) {
 	repoSchema := readDoc(t, "schemas/fugaro.schema.json")
 	if want := "Needs fugaro " + triageSince; !strings.Contains(repoSchema, want) {
 		t.Errorf("fugaro.yaml's schema does not name the release agent.triage ships in: want %q", want)
+	}
+}
+
+// TestRecipesSkewRefusesEscalationOnOldImage: a recipe holding the escalation
+// constructs — a review step's hand_over, or the rebase step — needs a job
+// image whose runner holds them, which is one release for both
+// (escalationSince, E5), and the catalog's three escalation recipes are held to
+// that release by name as well (escalationRecipeNamed). 0.22.0 knows every
+// other recipe construct and refuses both outright, so the whole recipe would
+// die at bootstrap with the launch already paid for: the gate turns that into a
+// refusal at the launcher's terminal, for a derived image (checkRecipeImage), a
+// checkout: clone workflow's base image (checkCloneRecipeImage), a repository
+// recipe (repoRecipeForGate) and a project recipe (the embedded text,
+// embeddedRecipeOf) alike.
+func TestRecipesSkewRefusesEscalationOnOldImage(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	escalate, ok := recipe.CatalogText("escalate")
+	if !ok {
+		t.Fatal("no catalog recipe escalate")
+	}
+	rebase, ok := recipe.CatalogText("rebase")
+	if !ok {
+		t.Fatal("no catalog recipe rebase")
+	}
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x",
+		Recipe: &task.Recipe{Name: "escalate", Source: string(recipe.SourceCatalog), YAML: string(escalate)}}
+	check := func(baseRef string) (string, error) {
+		var warn bytes.Buffer
+		writeBuildRecord(t, f, appSlug, "web", baseRef)
+		err := checkRecipeImage(context.Background(), env, appSlug, spec, "base", &warn)
+		return warn.String(), err
+	}
+	// The newest release tagged when the constructs were added: it knows every
+	// other construct a recipe can carry and still refuses both.
+	warn, err := check("ghcr.io/dimipaun/fugaro-base:0.22.0")
+	if err == nil || !strings.Contains(err.Error(), "recipe escalate needs a job image whose runner knows recipes (fugaro 0.23.0 or later)") || ExitCode(err) != ExitUserError {
+		t.Fatalf("0.22.0: warn = %q, err = %v", warn, err)
+	}
+	if warn != "" {
+		t.Errorf("0.22.0: warning %q, want none", warn)
+	}
+	if warn, err := check("ghcr.io/dimipaun/fugaro-base:0.23.0"); err != nil {
+		t.Fatalf("0.23.0: warn = %q, err = %v", warn, err)
+	}
+	warn, err = check("us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c")
+	if err != nil {
+		t.Fatalf("dev base: %v", err)
+	}
+	if !strings.Contains(warn, "not a release base image") {
+		t.Errorf("dev base: warning %q, want the not-a-release note", warn)
+	}
+	// The rebase step is the other construct of the same release.
+	spec.Recipe = &task.Recipe{Name: "rebase", Source: string(recipe.SourceCatalog), YAML: string(rebase)}
+	if _, err := check("ghcr.io/dimipaun/fugaro-base:0.22.0"); err == nil ||
+		!strings.Contains(err.Error(), "recipe rebase needs a job image whose runner knows recipes (fugaro 0.23.0 or later)") {
+		t.Fatalf("rebase on 0.22.0: err = %v", err)
+	}
+	// The name floor: merge-judge is the third of the ladder's recipes and
+	// E6's, so the catalog does not hold its file yet, and a task naming it is
+	// held to the same release as the two that carry the constructs.
+	spec.Recipe = &task.Recipe{Name: "merge-judge", Source: string(recipe.SourceCatalog)}
+	if _, err := check("ghcr.io/dimipaun/fugaro-base:0.22.0"); err == nil ||
+		!strings.Contains(err.Error(), "recipe merge-judge needs a job image whose runner knows recipes (fugaro 0.23.0 or later)") {
+		t.Fatalf("merge-judge on 0.22.0: err = %v", err)
+	}
+	// A launch on a checkout: clone workflow, whose job has no derived image
+	// and so no build record: the gate raises checkCloneImageSince's threshold
+	// on base_images.base itself.
+	lc := *env.lc
+	lc.BaseImages = map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:0.22.0"}
+	var cloneWarn bytes.Buffer
+	if err := checkCloneRecipeImage(context.Background(), &lc, spec, &cloneWarn); err == nil ||
+		!strings.Contains(err.Error(), "recipe merge-judge needs a job image whose runner knows recipes (fugaro 0.23.0 or later)") ||
+		!strings.Contains(err.Error(), "release 0.22.0") {
+		t.Fatalf("clone: warn = %q, err = %v", cloneWarn.String(), err)
+	}
+	// A repository recipe is that repository's own file, whatever it is
+	// called: it is judged by the constructs it carries, which is what the
+	// rp arm of recipeSinceFor reads. Its name is deliberately not one of the
+	// catalog's — one that were would still be the repository's file.
+	recipeCheckout(t, f, "", map[string]string{
+		".fugaro/recipes/hand-over.yaml": "version: 1\nname: hand-over\nsteps:\n  - review: { max_rounds: 1, hand_over: true }\n",
+		".fugaro/recipes/plain.yaml":     "version: 1\nname: plain\nsteps:\n  - first_line: {}\n  - review: { bounce: first_line }\n",
+		".fugaro/recipes/rebase.yaml":    "version: 1\nname: rebase\nsteps:\n  - first_line: {}\n  - review: { bounce: first_line }\n",
+	})
+	other := mustSlug("github", "acme/other")
+	writeBuildRecord(t, f, other, "svc", "ghcr.io/dimipaun/fugaro-base:0.22.0")
+	spec.Repo, spec.Workflow = "acme/other", "svc"
+	spec.Recipe = &task.Recipe{Name: "hand-over", Source: string(recipe.SourceRepo)}
+	if err := checkRecipeImage(context.Background(), env, other, spec, "base", &bytes.Buffer{}); err == nil ||
+		!strings.Contains(err.Error(), "recipe hand-over needs a job image whose runner knows recipes (fugaro 0.23.0 or later)") {
+		t.Fatalf("a repository recipe with hand_over: %v", err)
+	}
+	// The control, and the reason the gate is the constructs and not the
+	// name: a repository recipe called `rebase` (or any other name) that
+	// carries neither construct is judged by the constructs it does carry,
+	// and 0.22.0 knows those.
+	spec.Recipe.Name = "rebase"
+	if err := checkRecipeImage(context.Background(), env, other, spec, "base", &bytes.Buffer{}); err != nil {
+		t.Fatalf("a repository recipe named rebase with no rebase step: %v", err)
+	}
+	spec.Recipe.Name = "plain"
+	if err := checkRecipeImage(context.Background(), env, other, spec, "base", &bytes.Buffer{}); err != nil {
+		t.Fatalf("a repository recipe with no escalation construct: %v", err)
+	}
+	// A project recipe is neither the catalog's name nor a file in the
+	// checkout: it reaches the task as embedded text, and that text is the
+	// only place its constructs can be read — escalationRecipeNamed requires
+	// the catalog source, and repoRecipeForGate reads a file this task never
+	// named — so the embedded-text arm is what holds such a recipe to
+	// escalationSince. Both constructs, since either one of them is what the
+	// job image must know.
+	for _, tc := range []struct{ name, yaml string }{
+		{"project-hand-over", "version: 1\nname: project-hand-over\nsteps:\n  - review: { max_rounds: 1, hand_over: true }\n"},
+		{"project-rebase", "version: 1\nname: project-rebase\nsteps:\n  - rebase: {}\n"},
+	} {
+		spec.Recipe = &task.Recipe{Name: tc.name, Source: string(recipe.SourceProject), YAML: tc.yaml}
+		err := checkRecipeImage(context.Background(), env, other, spec, "base", &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "recipe "+tc.name+" needs a job image whose runner knows recipes (fugaro 0.23.0 or later)") {
+			t.Fatalf("a project recipe with %s on 0.22.0: %v", tc.name, err)
+		}
+	}
+	// The control, as for the repository recipes above: the same source with
+	// no escalation construct is judged at recipesSince, which 0.22.0 knows.
+	spec.Recipe = &task.Recipe{Name: "project-plain", Source: string(recipe.SourceProject),
+		YAML: "version: 1\nname: project-plain\nsteps:\n  - first_line: {}\n  - review: { bounce: first_line }\n"}
+	if err := checkRecipeImage(context.Background(), env, other, spec, "base", &bytes.Buffer{}); err != nil {
+		t.Fatalf("a project recipe with no escalation construct: %v", err)
+	}
+}
+
+// TestEscalationSinceHasAReleaseBullet: escalationSince names 0.23.0, which is
+// not tagged, so docs/release.md's Before-you-tag list is what holds the
+// constant to the release actually cut — the job every other *Since constant's
+// bullet does (TestAdversarialSinceHasAReleaseBullet). Nothing else ties the
+// number the gate accepts to the release that ships hand_over and the rebase
+// step, and a release that landed them elsewhere would otherwise keep refusing
+// images that can run them.
+func TestEscalationSinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `escalationSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no escalationSince bullet: the checklist is where a release verifies the constant")
+	}
+	if !strings.Contains(bullet, "currently `\""+escalationSince+"\"`") {
+		t.Errorf("docs/release.md's escalationSince bullet does not carry the constant's release (%q)", escalationSince)
+	}
+	for _, want := range []string{"hand_over", "rebase", "not tagged yet"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's escalationSince bullet does not say %q", want)
+		}
+	}
+}
+
+// TestPairImageWhy: a pair is dropped when either judge of the job image — the
+// installation's base image or the base its build record was built FROM —
+// predates abSince, and sampled on when neither can show a release at all.
+func TestPairImageWhy(t *testing.T) {
+	const base = "ghcr.io/dimipaun/fugaro-base:"
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}
+	for _, tc := range []struct{ name, baseImage, recordRef, want string }{
+		{"no judge can date the image", "", "-", ""},
+		{"old base image", base + "0.13.9", "-", pairOldImage},
+		{"base image at abSince", base + abSince, "-", ""},
+		{"old record base", "", base + "0.13.9", pairOldImage},
+		{"record base at abSince", "", base + abSince, ""},
+		{"record base is a dev build", "", "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c", ""},
+		{"record names no base", "", "", ""},
+		{"current base, old record", base + abSince, base + "0.13.9", pairOldImage},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			env := fileEnv(t, f)
+			if tc.baseImage != "" {
+				env.lc.BaseImages = map[string]string{config.BaseKind: tc.baseImage}
+			}
+			if tc.recordRef != "-" {
+				writeBuildRecord(t, f, appSlug, "web", tc.recordRef)
+			}
+			if got := pairImageWhy(context.Background(), env, appSlug, spec); got != tc.want {
+				t.Fatalf("pairImageWhy = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// visionSkewHead is configSkewHead with the vision slot written: the key
+// visionSince's launch gate judges, which V1 gave the two homes every
+// project-layer key has (config.Scopes: InProject | InRepo) and which no
+// release before V3 refused a launch over.
+const visionSkewHead = "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nagent: { auth: api-key, models: { vision: deepseek/deepseek-v4.1-flash } }\n"
+
+// visionSkewLayer is the project layer TestRunRefusesTheLayersVisionOnAnOlderBaseImage
+// publishes: testProjectLayer's own text with the vision slot written under
+// defaults.agent.models, the second home the key has. It is written with
+// nothing under it — a null leaf — because that is the shape that tells the
+// gate's reader from the resolved value: the layer's text writes the key, an
+// older runner's KnownFields decoder refuses it whatever it holds, and
+// ProjectLayer.SetsDefault answers false for a null while the gate has to fire.
+const visionSkewLayer = "version: 1\nproject: aurora\ngcp_project: proj-1234\ndefaults:\n  git: { provider: github }\n  agent: { auth: api-key, models: { vision: } }\nprofiles:\n  svc:\n    commands: { build: sh build.sh, test: sh test.sh }\ndefault_profile: svc\n"
+
+// TestVisionSinceRefusesAnOlderImage is visionSince's launch gate and V3's red
+// step: before it, a task whose job image predates the release launched against
+// a configuration carrying agent.models.vision and died inside the runner, at
+// bootstrap, on a key nobody could do anything about any more. The judge is the
+// workflow's build record, as it is for every other per-workflow image gate
+// (checkImageSince), and the key is what is judged and not the model it names:
+// an older runner's decoder refuses the line whatever it holds.
+func TestVisionSinceRefusesAnOlderImage(t *testing.T) {
+	f := newCloudFixture(t)
+	older := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, visionSince, -1)
+	configSkewCheckout(t, f, visionSkewHead+configSkewWorkflow)
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", older)
+	_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the launch refused", err)
+	}
+	for _, want := range []string{
+		"fugaro.yaml's agent.models.vision of acme/other",
+		"knows the vision slot (agent.models.vision)",
+		"fugaro " + visionSince + " or later",
+		older + ", release " + shiftRelease(t, visionSince, -1),
+		imageGateRemedy,
+		"; or remove agent.models.vision from fugaro.yaml",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%v lacks %q", err, want)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("%d executions, want none", n)
+	}
+}
+
+// TestVisionSinceAllowsTheReleaseItself: the boundary is the constant's own —
+// one release below is refused, the constant's release and one above launch —
+// and a configuration that writes no vision slot is never held to it, which is
+// the shape every other key's gate has (a file that writes nothing asks the
+// older runner for nothing).
+func TestVisionSinceAllowsTheReleaseItself(t *testing.T) {
+	below, above := shiftRelease(t, visionSince, -1), shiftRelease(t, visionSince, 1)
+	for _, c := range []struct {
+		rel     string
+		refused bool
+	}{
+		{below, true},
+		{visionSince, false},
+		{above, false},
+	} {
+		t.Run(c.rel, func(t *testing.T) {
+			f := newCloudFixture(t)
+			configSkewCheckout(t, f, visionSkewHead+configSkewWorkflow)
+			writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+c.rel)
+			_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+			if !c.refused {
+				if err != nil {
+					t.Fatalf("release %s: err = %v, want launched", c.rel, err)
+				}
+				return
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want the launch refused", err)
+			}
+		})
+	}
+	t.Run("a file that writes no vision slot", func(t *testing.T) {
+		f := newCloudFixture(t)
+		configSkewCheckout(t, f, configSkewHead+configSkewWorkflow)
+		writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+below)
+		if _, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task"); err != nil {
+			t.Fatalf("err = %v, want launched: the gate is the key's", err)
+		}
+	})
+}
+
+// TestRunRefusesTheLayersVisionOnAnOlderBaseImage: the key's other home is the
+// project layer, and the subject says so — that key is the operator's to remove
+// and it breaks every repository of the project whose job image is older, while
+// the repository's own file says nothing about it. The layer writes the key
+// with nothing under it, so a gate that read the resolved slot or the layer's
+// SetsDefault would launch a run that dies at bootstrap on a line the operator
+// did write.
+func TestRunRefusesTheLayersVisionOnAnOlderBaseImage(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, visionSkewLayer)
+	dir := layerCheckout(t, f, minimalAnchored)
+	registerOtherLocally(t, f)
+	commitRef(t, dir, "main")
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, visionSince, -1))
+	_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the launch refused", err)
+	}
+	for _, want := range []string{
+		"the project layer's defaults.agent.models.vision (read for acme/other)",
+		"knows the vision slot (the project layer's defaults.agent.models.vision)",
+		imageGateRemedy,
+		"remove defaults.agent.models.vision from the project layer",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%v lacks %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "fugaro.yaml's agent.models.vision") {
+		t.Errorf("the refusal blames the repository's file, which writes no vision slot: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+}
+
+// TestRunRefusesVisionOnACloneWorkflowsOlderBaseImage: a checkout: clone
+// workflow's job has no derived image and so no build record to judge, so the
+// gate judges base_images.base's own release (checkCloneImageSince) and names
+// the fix that image has — fugaro update --base base — rather than an image
+// refresh of a workflow that is never built. The boundary is the constant's
+// own, as it is on the built-image route: one release below is refused, the
+// constant's release launches.
+func TestRunRefusesVisionOnACloneWorkflowsOlderBaseImage(t *testing.T) {
+	for _, c := range []struct {
+		rel     string
+		refused bool
+	}{
+		{shiftRelease(t, visionSince, -1), true},
+		{visionSince, false},
+	} {
+		t.Run(c.rel, func(t *testing.T) {
+			f := newCloudFixture(t)
+			base := "ghcr.io/dimipaun/fugaro-base:" + c.rel
+			f.appendConfig(t, "base_images: {base: "+base+"}\n")
+			configSkewCheckout(t, f, visionSkewHead+
+				"workflows:\n  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n")
+			_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+			if !c.refused {
+				if err != nil {
+					t.Fatalf("release %s: err = %v, want launched", c.rel, err)
+				}
+				return
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want the launch refused", err)
+			}
+			for _, want := range []string{
+				"fugaro.yaml's agent.models.vision of acme/other",
+				"knows the vision slot (agent.models.vision)",
+				"Run fugaro update --base base",
+				base,
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%v lacks %q", err, want)
+				}
+			}
+			if n := len(f.run.Executions()); n != 0 {
+				t.Fatalf("%d executions, want none", n)
+			}
+		})
+	}
+}
+
+// TestVisionSinceIsTheReleaseTheDocsName holds visionSince to the readers that
+// state its number: docs/release.md's Before-you-tag bullet and the
+// descriptions of the three schemas both new members live in — the vision slot
+// in fugaro.schema.json and project-layer.schema.json, and the two members' rows
+// in settings.schema.json, V1's key and V2's price member. It is the
+// planningSince test's shape, and it is what makes a release verify the number
+// against the tag it cuts: every other reader moves with the constant and stays
+// green at any number.
+func TestVisionSinceIsTheReleaseTheDocsName(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `visionSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no visionSince bullet: the checklist is where a release verifies the constant")
+	}
+	if !strings.Contains(bullet, "currently `\""+visionSince+"\"`") {
+		t.Errorf("docs/release.md's visionSince bullet does not carry the constant's release (%q)", visionSince)
+	}
+	// The two members shipped in tag v0.23.0, so the bullet names that tag and
+	// not a number still to be cut: a later number refuses a 0.23.0 or 0.24.0
+	// image whose readers do know the key.
+	for _, want := range []string{"agent.models.vision", "defaults.agent.models.vision", "image_tokens", "checkVisionImage", "checkCloneVisionImage", "policyImageTokensRefusal", "v0.23.0"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's visionSince bullet does not say %q", want)
+		}
+	}
+	if strings.Contains(bullet, "not tagged yet") {
+		t.Errorf("docs/release.md's visionSince bullet calls the release uncut, and %s is the tag that carries both members: the number is a cut one", visionSince)
+	}
+	// The schemas' own rows: the slot's line in each of the two files an
+	// operator writes it in, and the two registry rows settings.schema.json
+	// carries — a row block rather than a line, since a row's key, default and
+	// description are three lines of the unrolled document.
+	for _, tc := range []struct{ file, anchor, want string }{
+		{"schemas/fugaro.schema.json", `"vision": { "$ref": "#/$defs/modelName"`, "refuses the key"},
+		{"schemas/project-layer.schema.json", `"vision": { "type": "string", "maxLength": 100`, "refuses the key"},
+		{"schemas/settings.schema.json", `"agent.models.vision": {`, "refuses the key"},
+		{"schemas/settings.schema.json", `"layer.defaults.agent.models.vision": {`, "refuses the key"},
+		{"schemas/settings.schema.json", `"model_prices.*.image_tokens": {`, "refuses the member"},
+	} {
+		lines := strings.Split(readDoc(t, tc.file), "\n")
+		at := -1
+		for i, l := range lines {
+			if strings.Contains(l, tc.anchor) {
+				at = i
+				break
+			}
+		}
+		if at < 0 {
+			t.Errorf("%s: no row carries %q", tc.file, tc.anchor)
+			continue
+		}
+		end := min(at+4, len(lines))
+		row := strings.Join(lines[at:end], "\n")
+		if want := "Fugaro before " + visionSince + " " + tc.want; !strings.Contains(row, want) {
+			t.Errorf("%s's %q row does not say %q:\n%s", tc.file, tc.anchor, want, row)
+		}
 	}
 }

@@ -725,6 +725,57 @@ func TestGitHubPullRequestDraftByTitle(t *testing.T) {
 	}
 }
 
+// TestGitHubPullRequestByBranchFindsAMergedParent covers F30's parent lookup
+// (`fugaro followups`): the pull request a branch opened is asked for by
+// branch, never by a number the job-written record carries, and the answer's
+// state decides whether the parent merged.
+//
+// state=all rather than find's state=open, because the caller's whole question
+// is whether the parent merged, and GitHub reports merged only on the pull
+// request itself: the number the list answers with is read back through
+// getPull. The fixture pins every query parameter, so a reader that asked for
+// open pull requests only — and would answer "no pull request" for every
+// merged parent — fails here rather than in the run that filed nothing.
+func TestGitHubPullRequestByBranchFindsAMergedParent(t *testing.T) {
+	got, found, err := open(t, "pull_by_branch_merged.json").PullRequestByBranch(ctx, branchName)
+	if err != nil || !found || got.Number != 12 || got.State != gitprov.PRMerged || got.SourceBranch != branchName {
+		t.Fatalf("got %+v, found %v, %v", got, found, err)
+	}
+}
+
+// TestGitHubPullRequestByBranchNone: a branch no pull request was ever opened
+// from is an answer — found false, no error — rather than a failure, so the
+// caller can say so instead of reporting a broken host.
+func TestGitHubPullRequestByBranchNone(t *testing.T) {
+	got, found, err := open(t, "pull_by_branch_none.json").PullRequestByBranch(ctx, branchName)
+	if err != nil || found || got != (gitprov.PRInfo{}) {
+		t.Fatalf("got %+v, found %v, %v", got, found, err)
+	}
+}
+
+// TestGitHubPullRequestByBranchNewest: sort=created&direction=desc asks the
+// host for the newest pull request of the branch first and per_page=1 caps the
+// reply, but a reply carrying more than one is still read as the host ordered
+// it — the first entry is the one read back. The fixture holds a read-back for
+// #12 alone, so an adapter that reached for the older entry fails here.
+func TestGitHubPullRequestByBranchNewest(t *testing.T) {
+	got, found, err := open(t, "pull_by_branch_newest.json").PullRequestByBranch(ctx, branchName)
+	if err != nil || !found || got.Number != 12 || got.State != gitprov.PRMerged {
+		t.Fatalf("got %+v, found %v, %v", got, found, err)
+	}
+}
+
+// TestGitHubPullRequestByBranchListFailure: a listing that fails is an error,
+// not "this branch opened nothing", so a caller that must not file a follow-up
+// without knowing what became of the parent stops rather than proceeds on an
+// answer it never got.
+func TestGitHubPullRequestByBranchListFailure(t *testing.T) {
+	_, found, err := open(t, "pull_by_branch_list_fails.json").PullRequestByBranch(ctx, branchName)
+	if err == nil || found || !strings.Contains(err.Error(), "finding the pull request for "+branchName) {
+		t.Fatalf("found %v, err = %v", found, err)
+	}
+}
+
 // TestGitAuthReadOnlyPermissions is A2.1's credential boundary for a
 // challenger arm: the token the arm's clone is made with asks GitHub for the
 // reads a checkout needs and no write anywhere, and the credential it answers

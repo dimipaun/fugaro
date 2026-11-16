@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/escalation"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
 )
@@ -1227,6 +1228,140 @@ func TestABUnknownArmRefused(t *testing.T) {
 	}
 }
 
+// TestABSlotVocabulary: the slot's vocabulary is closed, like the arm's, the
+// publish's and the source's (D728), and each of its four values is accepted
+// on the arms that may carry it. A champion carries the pair's slot too: the
+// slot says what the pair varies, which is the launcher's claim about the pair
+// and not about this arm.
+func TestABSlotVocabulary(t *testing.T) {
+	const pairID = "20261029-120000-abcd"
+	const championRun = "20261028-090000-1a2b"
+	validate := func(t *testing.T, ab *AB) error {
+		t.Helper()
+		s := Spec{Version: 1, RunID: pairID, Repo: "owner/repo-a", Ref: "main", Task: "do it", AB: ab}
+		return s.Validate()
+	}
+	for _, slot := range ABSlots {
+		ab := abChallenger(pairID)
+		ab.Slot = slot
+		if slot.IsReviewer() {
+			ab.ChampionRun = championRun
+		}
+		if err := validate(t, ab); err != nil {
+			t.Errorf("a challenger at slot %q: %v", slot, err)
+		}
+		if err := validate(t, &AB{PairID: pairID, Arm: ABArmChampion, Slot: slot}); err != nil {
+			t.Errorf("a champion of a pair at slot %q: %v", slot, err)
+		}
+	}
+	// The three review slots are the ones whose challenger reads the
+	// champion's patch; coder is the second full run (D555, B1.2).
+	for _, slot := range []ABSlot{ABSlotL1, ABSlotL2, ABSlotL3} {
+		if !slot.IsReviewer() {
+			t.Errorf("slot %q is not read as a review slot", slot)
+		}
+	}
+	if ABSlotCoder.IsReviewer() {
+		t.Error("the coder slot is read as a review slot: a coder pair runs a second coding loop, not a replay")
+	}
+	// A near miss is a launcher's bug, not a slot.
+	for _, slot := range []ABSlot{"L2", "l4", "review", " l2", "l2 ", "coder reviewer"} {
+		ab := abChallenger(pairID)
+		ab.Slot, ab.ChampionRun = slot, championRun
+		err := validate(t, ab)
+		if err == nil || !strings.Contains(err.Error(), "ab.slot") {
+			t.Errorf("ab.slot %q = %v, want a refusal naming ab.slot", slot, err)
+		}
+	}
+}
+
+// TestABSlotDefaultsToCoder: a block naming no slot is a coder pair, which is
+// what every block written before the field means by silence (D728) — the
+// field is additive, so A1.1's own tasks and records still read as the pair
+// they were, and a coder pair writes no slot key back.
+func TestABSlotDefaultsToCoder(t *testing.T) {
+	ab := abChallenger("20261029-120000-abcd")
+	if got := ab.EffectiveSlot(); got != ABSlotCoder {
+		t.Errorf("a block with no slot reads as %q, want %q", got, ABSlotCoder)
+	}
+	if ab.EffectiveSlot().IsReviewer() {
+		t.Error("a block with no slot reads as a review pair")
+	}
+	if got := (&AB{}).EffectiveSlot(); got != ABSlotCoder {
+		t.Errorf("an empty block reads as %q, want %q", got, ABSlotCoder)
+	}
+	s := Spec{Version: 1, RunID: "20261029-120000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it", AB: ab}
+	data, err := s.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{`"slot"`, `"champion_run"`} {
+		if strings.Contains(string(data), key) {
+			t.Fatalf("a coder pair writes %s: %s", key, data)
+		}
+	}
+	got, err := Parse(data)
+	if err != nil {
+		t.Fatalf("a coder pair's own task: %v", err)
+	}
+	if got.AB == nil || got.AB.EffectiveSlot() != ABSlotCoder {
+		t.Fatalf("parsed block = %+v, want a coder pair", got.AB)
+	}
+	// A task written before the field, as the bucket holds it.
+	old := `{"version":1,"run_id":"20261029-120000-abcd","repo":"owner/repo-a","ref":"main","task":"do it",` +
+		`"ab":{"pair_id":"20261029-120000-abcd","arm":"challenger","publish":"none",` +
+		`"challenger":"invented-challenger-1","challenger_source":"owner"}}`
+	before, err := Parse([]byte(old))
+	if err != nil {
+		t.Fatalf("an A1.1 task: %v", err)
+	}
+	if before.AB.EffectiveSlot() != ABSlotCoder {
+		t.Errorf("an A1.1 challenger reads as %q, want %q", before.AB.EffectiveSlot(), ABSlotCoder)
+	}
+}
+
+// TestABReviewerSlotNeedsChampionRun: a pair at a review slot has a champion
+// to replay (D728), so its challenger's block names that run and no other
+// shape does. The champion's run ID is what the replay reads the patch from
+// (B1.2): a challenger without one has nothing to review, and a block that
+// carries one for a pair that runs a second coding loop names a run nothing
+// reads.
+func TestABReviewerSlotNeedsChampionRun(t *testing.T) {
+	const pairID = "20261029-120000-abcd"
+	const championRun = "20261028-090000-1a2b"
+	validate := func(t *testing.T, ab *AB) error {
+		t.Helper()
+		s := Spec{Version: 1, RunID: pairID, Repo: "owner/repo-a", Ref: "main", Task: "do it", AB: ab}
+		return s.Validate()
+	}
+	for _, slot := range []ABSlot{ABSlotL1, ABSlotL2, ABSlotL3} {
+		ab := abChallenger(pairID)
+		ab.Slot = slot
+		if err := validate(t, ab); err == nil || !strings.Contains(err.Error(), "champion_run") {
+			t.Errorf("a challenger at slot %q naming no champion = %v, want a refusal naming champion_run", slot, err)
+		}
+		ab.ChampionRun = "not-a-run-id"
+		if err := validate(t, ab); err == nil || !strings.Contains(err.Error(), "champion_run") {
+			t.Errorf("a challenger at slot %q naming %q = %v, want a refusal naming champion_run", slot, ab.ChampionRun, err)
+		}
+		ab.ChampionRun = championRun
+		if err := validate(t, ab); err != nil {
+			t.Errorf("a challenger at slot %q replaying %s: %v", slot, championRun, err)
+		}
+	}
+	// A coder pair's challenger runs the whole task and a champion is the run
+	// its own block names: neither has a champion run to name.
+	coder := abChallenger(pairID)
+	coder.ChampionRun = championRun
+	if err := validate(t, coder); err == nil || !strings.Contains(err.Error(), "champion_run") {
+		t.Errorf("a coder pair's challenger naming a champion run = %v, want a refusal naming champion_run", err)
+	}
+	champion := &AB{PairID: pairID, Arm: ABArmChampion, Slot: ABSlotL2, ChampionRun: championRun}
+	if err := validate(t, champion); err == nil || !strings.Contains(err.Error(), "champion_run") {
+		t.Errorf("a champion naming a champion run = %v, want a refusal naming champion_run", err)
+	}
+}
+
 // TestSpecWithoutABIsByteIdentical: a launch that sampled nothing writes no
 // ab key at all, so its task.json is byte-for-byte what the release before
 // this field wrote. That is what keeps every unsampled launch readable by a
@@ -1574,6 +1709,105 @@ func TestFollowUpOfRefusesAnEmptyRun(t *testing.T) {
 	} {
 		if _, err := Parse([]byte("{" + head + `,"follow_up_of":` + doc + "}")); err != nil {
 			t.Errorf("Parse refused %s: %v", doc, err)
+		}
+	}
+}
+
+// TestTaskModelGradeRoundTrip: the grade a task names (Spec.ModelGrade, E4)
+// survives a marshal and a parse, and a spec that names none carries no key
+// at all — the property every new task field has, since the release before it
+// reads the bytes and refuses an unknown member.
+//
+// The refusals beside it are G11's first half: the field takes one of the
+// ladder's two grade names and never a model or a credential, so a spec that
+// names one is refused where it is written rather than resolved into a call
+// the project never chose.
+func TestTaskModelGradeRoundTrip(t *testing.T) {
+	s := Spec{Version: 1, RunID: "20261112-101500-a1b2", Repo: "acme/server", Ref: "main", Task: "x",
+		ModelGrade: escalation.Strongest}
+	data, err := s.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"model_grade": "strongest"`) {
+		t.Fatalf("model_grade did not survive the marshal: %s", data)
+	}
+	got, err := Parse(data)
+	if err != nil {
+		t.Fatalf("parse of %s: %v", data, err)
+	}
+	if got.ModelGrade != escalation.Strongest {
+		t.Errorf("model_grade = %q, want %q", got.ModelGrade, escalation.Strongest)
+	}
+	// A spec that names no grade is byte-identical to what the release before
+	// the field wrote: no key, not an empty one.
+	none := s
+	none.ModelGrade = ""
+	plain, err := none.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(plain), "model_grade") {
+		t.Errorf("a spec with no grade carries the key: %s", plain)
+	}
+	if _, err := Parse(plain); err != nil {
+		t.Errorf("a spec with no grade is refused: %v", err)
+	}
+	for _, doc := range []string{
+		`"anthropic/claude-opus-5.5"`, // a model ID, which is what G11 forbids here
+		`"openrouter-main"`,           // a credential or pool name
+		`"Strong"`,                    // the name, spelled as an enum is not
+		`"strongest "`,                // a trailing space, which a hand-written task carries
+	} {
+		if _, err := Parse([]byte(`{"version":1,"run_id":"20261112-101500-a1b2","repo":"acme/server","ref":"main","task":"x","model_grade":` + doc + `}`)); err == nil {
+			t.Errorf("model_grade %s: Parse accepted a spec that names no grade", doc)
+		} else if !strings.Contains(err.Error(), "model_grade") {
+			t.Errorf("model_grade %s: refusal %q does not mention the field", doc, err)
+		}
+	}
+}
+
+// TestTaskImportanceRoundTrip: a follow-up's importance (FollowUpOf.Importance,
+// D2040) survives a marshal and a parse, and the field left out is legal and
+// carries no key — a follow-up filed by hand, and every one filed before the
+// field, has no importance rather than a default one, because empty is "nobody
+// classified this" and not "minor".
+func TestTaskImportanceRoundTrip(t *testing.T) {
+	s := Spec{Version: 1, RunID: "20261112-101500-a1b2", Repo: "acme/server", Ref: "main", Task: "x",
+		FollowUpOf: &FollowUpOf{Run: "20261111-090000-3c4d", Keys: []string{"9f2a1c"}, Importance: ImportanceImportant}}
+	data, err := s.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"importance": "important"`) {
+		t.Fatalf("importance did not survive the marshal: %s", data)
+	}
+	got, err := Parse(data)
+	if err != nil {
+		t.Fatalf("parse of %s: %v", data, err)
+	}
+	if got.FollowUpOf == nil || got.FollowUpOf.Importance != ImportanceImportant {
+		t.Errorf("follow_up_of.importance = %+v, want %q", got.FollowUpOf, ImportanceImportant)
+	}
+	// The field left out: legal, and no key on the wire.
+	none := s
+	none.FollowUpOf = &FollowUpOf{Run: s.FollowUpOf.Run, Keys: s.FollowUpOf.Keys}
+	plain, err := none.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(plain), "importance") {
+		t.Errorf("a follow-up with no importance carries the key: %s", plain)
+	}
+	if _, err := Parse(plain); err != nil {
+		t.Errorf("a follow-up with no importance is refused: %v", err)
+	}
+	for _, doc := range []string{`"urgent"`, `"Important"`, `"major"`, `"important "`} {
+		_, err := Parse([]byte(`{"version":1,"run_id":"20261112-101500-a1b2","repo":"acme/server","ref":"main","task":"x","follow_up_of":{"run":"20261111-090000-3c4d","importance":` + doc + `}}`))
+		if err == nil {
+			t.Errorf("importance %s: Parse accepted a value outside the vocabulary", doc)
+		} else if !strings.Contains(err.Error(), "importance") {
+			t.Errorf("importance %s: refusal %q does not mention the field", doc, err)
 		}
 	}
 }

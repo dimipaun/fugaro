@@ -232,9 +232,14 @@ version Fugaro wants and which install answers.
 
 **The one-screen doctor.** In the default view the two IDs read: `plugin-pin` — a repository that opts in
 to the pin, and whether it matches this binary; `plugin-install` — the plugin on this machine, and whether
-it is this binary's release. Neither changes class to `measure`; `plugin-install` changes from measure to
-update, which is the class the owner's own list in `CLAUDE.md` puts it in ("the plugin pin: what `doctor`
-already reports").
+it is this binary's release. `plugin-install` changes from measure to update, which is the class the owner's
+own list in `CLAUDE.md` puts it in ("the plugin pin: what `doctor` already reports") — the plugin stage
+installs the plugin on this machine, so `fugaro update` is what repairs it. `plugin-pin` keeps its update
+class for the states that are wrong (a pin this binary does not match, a foreign wiring) and takes the
+measure one for the state that is not: a repository whose `.claude/settings.json` wires nothing, which is
+the normal one now that no merge writes a pin (D949). Filed as audit that state was counted by the pointer
+line, so the one screen the owner reads most said "1 more finding" over a checkout with nothing wrong with
+it; as a measurement it is printed by `--all` and `--json` and counted in no view's total.
 
 ## 7. The session-start nudge (D945, D946, D947, D951, D952)
 
@@ -284,7 +289,7 @@ skipped check only under `--all`, in its own words, and counts it in no view's t
 | Is the plugin on this machine this binary's release? | yes — `plugin-install`, from Claude Code's `installed_plugins.json` (`internal/pluginwire/status.go:221`, `installState`) |
 | Does the checkout open the plugin the repository pins? | yes — `plugin-pin`, from `.claude/settings.json` |
 | Is the repository's image on this release's base? | yes — `base-image`, from the local project config (`doctorProject.BaseImages`) |
-| Does a workflow's job carry what the local config would write now? | yes where the local config is readable — `image-config-<workflow>` |
+| Does a workflow's job carry what the local config would write now? | **no.** `image-config-<workflow>` answers from the build record in the runs bucket (`doctor_layer.go:464`), which needs credentials; offline the check is skipped, one per workflow the checkout's own `fugaro.yaml` lists that the ordinary run emits the check for — a workflow that builds from a `dockerfile:` and one the project's image catalog gives an image to get no such check at all (`doctor_layer.go:389`, `imageConfigWorkflows`) |
 | Is the **published policy node** this binary's version? | **no.** It lives in the project's Realtime Database; reading it needs credentials. `fugaro update --check` already says so in its own words (`upgrade.go:501`, `checkPolicyCaveat`) |
 | Is the **deployed security rules generation** this binary's? | **no**, for the same reason (`upgrade.go:568`, `checkRulesCaveat`) |
 | Is a **newer release** available? | **no, and it is a network call — opt-in only (D952)** |
@@ -299,14 +304,24 @@ offline verdicts where a newer CLI would be the only fix.
 **The exact skill sentence (D947).** `working`'s opening and `setup`'s first step say, once, in the
 skill's own voice:
 
-> At the start of a session, run `fugaro doctor --offline --json` once. If any check comes back with
-> `skipped: false` and `ok: false`, tell the user in one sentence what it is — in plain words, not the
-> check's own text — and offer the one command that fixes it: `fugaro update`, in their own terminal
-> window, not through the agent. A coding agent's session cannot apply cloud changes, by design: never
-> look for a flag or another command that would let this session apply those writes, and never unset the
-> marker that says this session is one. If everything `--offline` could check is ok, say nothing and
-> carry on: a session that opens with a status report nobody asked for is the failure this sentence
-> exists to avoid.
+> At the start of a session, run `fugaro doctor --offline --json` once. If its `ok` is false, or any check is
+> `ok: false` with a `severity` other than `info`, tell the user in one sentence what it is — in plain words,
+> not the check's own text — and offer the fix that check prints: `fugaro update`, where that `fix` is its own,
+> in their own terminal window, not through the agent; otherwise that `fix` itself, as printed — a pin newer
+> than this binary names `brew upgrade`. A check `--offline` did not run comes back `skipped: true` with
+> severity `info`, and is not one of these. A coding agent's session cannot apply cloud changes, by design:
+> never look for a flag or another command that would let this session apply those writes, and never unset the
+> marker that says this session is one. If everything `--offline` could check is ok, say nothing and carry on: a
+> session that opens with a status report nobody asked for is the failure this sentence exists to avoid.
+
+**Not every warning is `fugaro update`'s.** With the trigger keyed on severity, the checks that reach the
+sentence include ones the update does not put right: a pin newer than this binary names `brew upgrade` and
+says the update never moves a pin down, and a foreign marketplace is the user's own decision
+(`internal/pluginwire/status.go`, `Newer` and `Foreign`); a login unit that could not be read or rendered
+names the shell or the file (`internal/cli/doctor.go`, `orchestrator-unit`). So the sentence offers `fugaro
+update` only where the check's own `fix` is that command's line, and relays the check's own fix otherwise —
+the rule doctor's human output already follows — and `plugin/update_skill_test.go` fails if either skill
+offers it unconditionally.
 
 **Half of that is not new wording, and that is the point.** The last two sentences are
 `plugin/skills/upgrade/SKILL.md:27`'s, already pinned verbatim by `plugin/upgrade_skill_test.go:18,20`
@@ -336,16 +351,16 @@ than when it was written: nothing else in the tree will ever take those two entr
   already installed at user scope), and removes them.
 - **It never commits.** The change is the working tree's, like every other edit this CLI makes to a
   checkout's files; the user reviews it with `git diff` and commits it or does not.
-- **`--yes` confirms it; a terminal asks.** It is a local file write on this machine, the same class the
+- **A person at their own real terminal confirms it.** It is a local file write on this machine, the same class the
   pin's own write was confirmed by. Refusing to remove without a typed confirmation would be the second
   command the HARD RULE forbids, in the shape of "run `fugaro update`, then answer a question you did not
   expect".
-- **In a coding agent's session the diff is printed and nothing is written**, `--yes` included. The
+- **In a coding agent's session the diff is printed and nothing is written**. The
   removal is a change to a file the repository commits, and an agent does not decide that. The stage says
   the exact line to run in the user's own terminal.
 - **`fugaro` never unsets the marker to get around this**, and no flag, environment variable or
   "non-interactive" mode exists that would. The refusal is the one `fugaro update` already makes for the
-  writes that reach outside the machine (its own help text, `--yes`), and it stays a refusal.
+  writes that reach outside the machine (its own help text), and it stays a refusal.
 - **A pin that is not removable is not a failure.** A file that is not valid JSON, a fork's marketplace, a
   pin whose ref is not a release tag: each is left exactly as it is, with the existing refusal text, and
   the run continues to the next stage. `update` is converging a machine, not validating a repository.
@@ -373,7 +388,7 @@ than when it was written: nothing else in the tree will ever take those two entr
     job (check, explain, hand over the one command) is the job that stays.
   - `plugin/skills_lint_test.go:583`'s `userRunsAllowed` names `fugaro upgrade`; it becomes `fugaro
     update` (already in the list) and `fugaro upgrade` is removed.
-  - `plugin/skills_lint_test.go:749`'s `upgradeYesOnly` allows `--yes` on `fugaro upgrade` in a
+  - `plugin/skills_lint_test.go:749`'s `upgradeYesOnly` allows `fugaro upgrade` in a
     `user-runs` block and on nothing else; it is re-pointed at `fugaro update`, which is now the command
     that carries the cloud half.
   - `plugin/upgrade_skill_test.go` becomes `plugin/update_skill_test.go` and is rewritten against the
@@ -553,8 +568,8 @@ correctness condition, and [implementation-plan.md](implementation-plan.md)'s ta
 ## 12. What this work does not do
 
 - **It writes no code.** Four documents, one commit.
-- **It does not change `fugaro update`'s cloud behaviour**, its confirmations, its typed project names,
-  its `--yes` coverage or the checkout stage's parked-cloud machinery for an agent session.
+- **It does not change `fugaro update`'s cloud behaviour**, its confirmations, its typed project names
+  or the checkout stage's parked-cloud machinery for an agent session.
 - **It does not move the *skills' content* into the image or a package manager.** The plugin reaches people
   through Claude Code's marketplace, which is what the `claude` CLI speaks; a second distribution channel
   is a separate decision and is not taken here.

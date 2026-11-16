@@ -23,6 +23,7 @@ import (
 	"gocloud.dev/blob/memblob"
 	"gocloud.dev/gcerrors"
 
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -216,6 +217,74 @@ func TestRecordRoundTripsToleratedFindings(t *testing.T) {
 	}
 	if len(got.Reviews) != 1 || got.Reviews[0].Findings != 2 {
 		t.Fatalf("old record reviews = %+v, want the round it always carried", got.Reviews)
+	}
+}
+
+// TestRecordRoundTripsChainRaises is the raise entry's own round trip
+// (docs/run-limit-carry-over L9, D1061): a raise a launcher made on the chain
+// this run began — who, when, why, and each dimension's figure before and
+// after — survives as the root run's own block, the member is the wire name a
+// reader outside this binary reads, the field is additive (the version does
+// not move, an empty list is omitted, and a record written before it existed
+// decodes unchanged), and the figures are the dimension's own unit on both
+// sides of the write.
+func TestRecordRoundTripsChainRaises(t *testing.T) {
+	s := newStore(t)
+	at := time.Date(2026, 11, 13, 9, 30, 0, 0, time.UTC)
+	raises := []ChainRaise{{
+		By: "someone@example.com", At: at, Reason: "the senior review round needs one more pass",
+		Limits: []ChainRaiseLimit{
+			{Dimension: USD, From: 4_000_000, To: 6_000_000},
+			{Dimension: Time, From: 2700, To: 5400},
+		},
+	}}
+	rec := &Record{Version: 1, RunID: runID, Status: StatusSucceeded, Outcome: OutcomeReady,
+		StartedAt: time.Now().UTC(), ChainRaises: raises}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadRecord(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.ChainRaises, raises) {
+		t.Fatalf("ReadRecord chain_raises = %+v, want %+v", got.ChainRaises, raises)
+	}
+	// The units are the dimension's own, which is the unit the chain's reader
+	// prints and the launch reply carries (L6, L7): micro-dollars for the
+	// money, seconds for the wall time.
+	if got.ChainRaises[0].Limits[0].From != 4_000_000 || got.ChainRaises[0].Limits[0].To != 6_000_000 {
+		t.Errorf("the money figures = %+v, want micro-dollars", got.ChainRaises[0].Limits[0])
+	}
+	if got.Version != 1 {
+		t.Errorf("version = %d, want 1: the field is additive", got.Version)
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"chain_raises"`) {
+		t.Fatalf("a record with a raise does not encode the member a reader looks for: %s", data)
+	}
+
+	// Empty is omitted, so a chain nobody raised writes the record it always
+	// wrote rather than an empty list.
+	data, err = json.Marshal(&Record{Version: 1, RunID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "chain_raises") {
+		t.Fatalf("a record with no raise encoded the field: %s", data)
+	}
+
+	// A record written before this field existed still parses, without one.
+	old := `{"version":1,"run_id":"` + runID + `","status":"succeeded","stage":"writeback","outcome":"ready","cost_usd":1,"started_at":"2026-09-26T22:15:30Z"}`
+	if err := s.PutFile(ctx, "result.json", []byte(old), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.ReadRecord(ctx)
+	if err != nil || got.ChainRaises != nil {
+		t.Fatalf("old record = %+v, %v, want no raise block", got, err)
 	}
 }
 
@@ -532,6 +601,32 @@ func TestNewTriageBoundsWhatItStores(t *testing.T) {
 	}
 	if tr := NewTriage(nil); tr != nil {
 		t.Errorf("NewTriage(nil) = %+v, want nil", tr)
+	}
+}
+
+// TestNewTriageKeepsACauseOnlyForAFailedRound: the cause is why a round failed
+// and the field is the round's own, so the two cannot disagree in the record —
+// a round the constructor did not store as failed carries no cause whatever the
+// caller passed with it, and a cause longer than MaxTriageLine is clipped like
+// the reason and the group are. It is clipped here as well as where it is read
+// off the call (internal/runner's triageCause) because this constructor is what
+// writes the record: a caller that handed it a paragraph would otherwise put
+// one in the run's own document, which every listing reads.
+func TestNewTriageKeepsACauseOnlyForAFailedRound(t *testing.T) {
+	answered := NewTriage([]TriageRound{{Round: 1, Mode: rigor.Pro, Level: policy.LevelL2, Cause: "a cause on a round that answered"}})
+	if answered == nil || answered.Rounds[0].Cause != "" {
+		t.Errorf("NewTriage = %+v, want the cause dropped for a round that is not failed", answered)
+	}
+	long := strings.Repeat("x", MaxTriageLine+50)
+	failed := NewTriage([]TriageRound{{Round: 1, Mode: rigor.Pro, Level: policy.LevelL2, Failed: true, Cause: long}})
+	if failed == nil {
+		t.Fatal("NewTriage dropped a round whose call failed")
+	}
+	if got := len([]rune(failed.Rounds[0].Cause)); got != MaxTriageLine {
+		t.Errorf("cause length = %d, want %d", got, MaxTriageLine)
+	}
+	if !failed.Rounds[0].Failed {
+		t.Errorf("the round = %+v, want the failure it was given kept", failed.Rounds[0])
 	}
 }
 
@@ -1251,6 +1346,80 @@ func TestRecordHaltRoundTrip(t *testing.T) {
 	}
 }
 
+// TestHaltWorkspaceRefusalIsAdditive: the marker a workspace's refusal leaves
+// on a run's halt (docs/stateless-orchestrator/reconciliation.md U12, D2022's
+// O19) is written only where a workspace refused the run, and a halt without one
+// is the record this project wrote before the field existed — byte for byte,
+// because a reader that predates the field, and an installation that deploys no
+// workspace at all, must see the record they always saw.
+func TestHaltWorkspaceRefusalIsAdditive(t *testing.T) {
+	at := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	plain := Halt{Reason: HaltBudgetUnavailable, Scope: "run", At: at, Detail: "d"}
+	data, err := json.Marshal(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The bytes of a halt no workspace refused, pinned: an added key here would
+	// be a record every reader of the old shape has to be taught about.
+	const want = `{"reason":"budget_unavailable","scope":"run","at":"2026-10-02T12:00:00Z","detail":"d"}`
+	if string(data) != want {
+		t.Fatalf("a halt no workspace refused is written\n %s\nwant\n %s", data, want)
+	}
+	// And on a whole record: the halt node carries the four keys it carried
+	// before, and nothing beside them.
+	recData, err := json.Marshal(&Record{Version: 1, RunID: runID, Status: StatusHalted, Halt: &plain})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(recData), "workspace_refusal") {
+		t.Fatalf("a record no workspace refused names the marker: %s", recData)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(recData, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var haltNode map[string]json.RawMessage
+	if err := json.Unmarshal(doc["halt"], &haltNode); err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for k := range haltNode {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	if !slices.Equal(keys, []string{"at", "detail", "reason", "scope"}) {
+		t.Fatalf("a halt no workspace refused carries the keys %v, want the four it always carried", keys)
+	}
+
+	// Each of the workspace's three refusals survives the round trip, so the
+	// value the wire carries is the value the record keeps.
+	for _, reason := range gateway.WorkspaceRefusals() {
+		marked := plain
+		marked.WorkspaceRefusal = reason
+		markedData, err := json.Marshal(marked)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var back Halt
+		if err := json.Unmarshal(markedData, &back); err != nil {
+			t.Fatal(err)
+		}
+		if back != marked || back.WorkspaceRefusal != reason {
+			t.Fatalf("the workspace's %s refusal round-tripped to %+v", reason, back)
+		}
+	}
+
+	// A record written before the field existed reads as one no workspace
+	// refused — never as an empty refusal, and never as an error.
+	var old Halt
+	if err := json.Unmarshal([]byte(want), &old); err != nil {
+		t.Fatal(err)
+	}
+	if old.WorkspaceRefusal != "" || old != plain {
+		t.Fatalf("the old record's halt read as %+v", old)
+	}
+}
+
 // TestRecordABRoundTrip: the pair block survives the record's round trip
 // unchanged, and the patch object's own two facts with it (A2.1 uploads one
 // for both arms, capped, with the truncation recorded rather than hidden).
@@ -1278,6 +1447,46 @@ func TestRecordABRoundTrip(t *testing.T) {
 	}
 	if got.PatchObject != rec.PatchObject || !got.PatchTruncated {
 		t.Fatalf("ReadRecord patch = %q, truncated %v, want %q, true", got.PatchObject, got.PatchTruncated, rec.PatchObject)
+	}
+}
+
+// TestRecordABSlotRoundTrip: the slot and the champion's run survive the
+// record's round trip (D728, B1.1), and a record whose block carries neither —
+// every record A1.1's release wrote — still reads as the coder pair it was:
+// the field is additive, so the format's version stays 1 and an old reader
+// sees the block it always saw.
+func TestRecordABSlotRoundTrip(t *testing.T) {
+	s := newStore(t)
+	championRun := "20261028-090000-1a2b"
+	ab := &task.AB{PairID: runID, Arm: task.ABArmChallenger, Publish: task.ABPublishNone,
+		Challenger: "invented-challenger-1", ChallengerSource: task.ABChallengerOwner,
+		Slot: task.ABSlotL2, ChampionRun: championRun}
+	rec := &Record{Version: 1, RunID: runID, Status: StatusSucceeded, Outcome: OutcomeNone,
+		StartedAt: time.Now().UTC(), AB: ab}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadRecord(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AB == nil || got.AB.Slot != task.ABSlotL2 || got.AB.ChampionRun != championRun {
+		t.Fatalf("ReadRecord ab = %+v, want slot %q and champion run %q", got.AB, task.ABSlotL2, championRun)
+	}
+	// The record A1.1 wrote, with a block that names no slot.
+	old := `{"version":1,"run_id":"` + runID + `","status":"succeeded","stage":"writeback",` +
+		`"outcome":"none","cost_usd":1,"started_at":"2026-09-26T22:15:30Z",` +
+		`"ab":{"pair_id":"` + runID + `","arm":"challenger","publish":"none",` +
+		`"challenger":"invented-challenger-1","challenger_source":"owner"}}`
+	if err := s.PutFile(ctx, "result.json", []byte(old), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := s.ReadRecord(ctx)
+	if err != nil {
+		t.Fatalf("an A1.1 record: %v", err)
+	}
+	if before.AB == nil || before.AB.EffectiveSlot() != task.ABSlotCoder {
+		t.Fatalf("an A1.1 record = %+v, want a coder pair", before.AB)
 	}
 }
 

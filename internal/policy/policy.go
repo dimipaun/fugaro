@@ -547,6 +547,23 @@ type Layer struct {
 	// themselves come from the merge's first layer, the project's own: F12 and
 	// D1628 make a later layer's a value it may not have.
 	Craft CraftLayer
+	// Grades is this layer's block of the escalation ladder's model grades
+	// (docs/outer-loop-escalation E2, D2039): the model each grade runs and the
+	// credential or pool its calls go out on. The zero value sets none, which
+	// leaves the earlier layers' own alone (see Grades).
+	//
+	// A grade is the project's own, and only the merge's first layer may set
+	// one: a later layer's entry is dropped and recorded, which is stricter
+	// than the craft block beside it, where a layer may select a credential the
+	// project named (G3, tightenGrades).
+	//
+	// Nothing builds a layer with it yet — the builders are the runner's and
+	// the CLI's, and they are the two the merge's first layer already comes
+	// from (policyCeiling) — so until E4's resolver ships, Effective.Grades is
+	// empty for every run and a resolver wired to it would read "the project
+	// sets no grade" as "no grade anywhere", which is the state D2039 makes the
+	// rung refuse in.
+	Grades Grades
 }
 
 // ReviewFloor is the levels the owner requires a run of mode to run, in the

@@ -510,7 +510,7 @@ Interactive, it reads one of the three. `fugaro image refresh`
 refuses to build when there is no terminal, or with `--json`: it prints the proposal (as JSON under
 `--json`) and exits non-zero, unless `--on-divergence` names the choice —
 `--on-divergence=fork`, `--on-divergence=adopt=<repository>`, `--on-divergence=pin`. The flag is the
-only way to answer without a terminal, and like today's `--yes` (`internal/cli/image_refresh.go`) it
+only way to answer without a terminal, and like every confirmation in this CLI it
 is **refused in a coding agent's session**. Exit codes: an unanswered proposal exits 1
 (`ExitUserError`), a flag that names a repository the lock does not hold, or one whose image is not
 a superset, exits 1 with that reason; a build or a job update that failed remotely exits 2
@@ -610,7 +610,7 @@ An entry is **eligible** when both hold:
 The clean-up never removes an image a job still points at — never one a job still points at,
 whatever its age. `fugaro image prune` removes every eligible entry in one pass — the eligibility is
 a rule, so no per-image judgement is asked of the operator — prints each one as it does, asks once
-before the first delete (today's confirmation shape; `--yes` answers it unattended, never in a
+before the first delete (today's confirmation shape: the owner answers it at their own real terminal, never in a
 coding agent's session), and has `--dry-run`, which prints the list and deletes nothing. The registry image is deleted first and the lock entry second, generation-matched by
 the same rule as §3.4's write (`blobx.DeleteIf` for a delete), so a crash between the two leaves an
 entry whose digest the registry no longer has, which

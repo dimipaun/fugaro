@@ -538,13 +538,10 @@ func TestConfigInitWritesTheMinimalFile(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "fugaro.yaml")); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := execute(t, "config", "init", "--project", "aurora"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--yes") {
-		t.Fatalf("without --yes: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "fugaro.yaml")); err == nil {
-		t.Fatal("written without --yes")
-	}
-	out, _, err := execute(t, "config", "init", "--project", "aurora", "--base-branch", "develop", "--yes")
+	// It asks nothing and takes no flag for the write (T11 of
+	// docs/no-prompt-policy): the file it writes is a repository file,
+	// reviewed and committed like any other, so one run is one write.
+	out, _, err := execute(t, "config", "init", "--project", "aurora", "--base-branch", "develop")
 	if err != nil || !strings.Contains(out, "wrote") {
 		t.Fatalf("out %q, %v", out, err)
 	}
@@ -552,10 +549,10 @@ func TestConfigInitWritesTheMinimalFile(t *testing.T) {
 	if want := minimalAnchored + "git:\n  base_branch: develop\n"; string(data) != want {
 		t.Fatalf("fugaro.yaml = %q, want %q", data, want)
 	}
-	if _, _, err := execute(t, "config", "init", "--project", "aurora", "--base-branch", "develop", "--yes"); err != nil {
+	if _, _, err := execute(t, "config", "init", "--project", "aurora", "--base-branch", "develop"); err != nil {
 		t.Fatalf("rerun on the same file: %v", err)
 	}
-	if _, _, err := execute(t, "config", "init", "--project", "aurora", "--profile", "svc", "--yes"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "never overwrites") {
+	if _, _, err := execute(t, "config", "init", "--project", "aurora", "--profile", "svc"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "never overwrites") {
 		t.Fatalf("a different existing file: %v", err)
 	}
 }
@@ -568,7 +565,7 @@ func TestConfigInitRefusesWithoutALayer(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "fugaro.yaml")); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := execute(t, "config", "init", "--project", "aurora", "--yes")
+	_, _, err := execute(t, "config", "init", "--project", "aurora")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "publishes no project layer") {
 		t.Fatalf("err = %v", err)
 	}
@@ -584,9 +581,8 @@ func TestConfigInitRefusesWithoutALayer(t *testing.T) {
 // os.OpenFile in writeMinimalFugaroYAML (config_init.go) to 0o600, and
 // this test fails: the written file is rw------- instead of rw-r--r--.
 // TestConfigInitAsksNothing: the command is non-interactive by design, so it
-// writes with no terminal and asks nothing — the run without --yes is a refusal
-// that names the flag (exit 1, the file printed), which is not a question a
-// person answers (D1540).
+// writes with no terminal and asks nothing, and no flag stands in for a
+// question nobody is asked (D1540).
 func TestConfigInitAsksNothing(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
@@ -595,7 +591,7 @@ func TestConfigInitAsksNothing(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "fugaro.yaml")); err != nil {
 		t.Fatal(err)
 	}
-	out, _, err := execute(t, "config", "init", "--project", "aurora", "--yes")
+	out, _, err := execute(t, "config", "init", "--project", "aurora")
 	if err != nil {
 		t.Fatalf("config init: %v\n%s", err, out)
 	}
@@ -615,7 +611,7 @@ func TestConfigInitWritesFileMode0644(t *testing.T) {
 	}
 	old := syscall.Umask(0)
 	defer syscall.Umask(old)
-	if _, _, err := execute(t, "config", "init", "--project", "aurora", "--yes"); err != nil {
+	if _, _, err := execute(t, "config", "init", "--project", "aurora"); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(filepath.Join(dir, "fugaro.yaml"))
@@ -637,7 +633,7 @@ func TestConfigInitWritesTheNamedProfile(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "fugaro.yaml")); err != nil {
 		t.Fatal(err)
 	}
-	out, _, err := execute(t, "config", "init", "--project", "aurora", "--profile", "svc", "--yes")
+	out, _, err := execute(t, "config", "init", "--project", "aurora", "--profile", "svc")
 	if err != nil || !strings.Contains(out, "wrote") {
 		t.Fatalf("out %q, %v", out, err)
 	}
@@ -658,7 +654,7 @@ func TestConfigInitOmitsAnExplicitMainBaseBranch(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "fugaro.yaml")); err != nil {
 		t.Fatal(err)
 	}
-	out, _, err := execute(t, "config", "init", "--project", "aurora", "--base-branch", "main", "--yes")
+	out, _, err := execute(t, "config", "init", "--project", "aurora", "--base-branch", "main")
 	if err != nil || !strings.Contains(out, "wrote") {
 		t.Fatalf("out %q, %v", out, err)
 	}
@@ -678,10 +674,10 @@ func TestConfigInitRejectsBadProfileAndBranchShapes(t *testing.T) {
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
 	layerCheckout(t, f, minimalAnchored)
-	if _, _, err := execute(t, "config", "init", "--project", "aurora", "--profile", "not a profile!", "--yes"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "is not a profile name") {
+	if _, _, err := execute(t, "config", "init", "--project", "aurora", "--profile", "not a profile!"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "is not a profile name") {
 		t.Fatalf("bad --profile: %v", err)
 	}
-	if _, _, err := execute(t, "config", "init", "--project", "aurora", "--base-branch", "main\nagent:\n  auth: api-key", "--yes"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "is not a plain git branch name") {
+	if _, _, err := execute(t, "config", "init", "--project", "aurora", "--base-branch", "main\nagent:\n  auth: api-key"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "is not a plain git branch name") {
 		t.Fatalf("a newline in --base-branch: %v", err)
 	}
 }
@@ -702,7 +698,7 @@ func TestConfigInitRefusesAnUnresolvableProfile(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "fugaro.yaml")); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := execute(t, "config", "init", "--project", "aurora", "--profile", "ghost", "--yes")
+	_, _, err := execute(t, "config", "init", "--project", "aurora", "--profile", "ghost")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "would not resolve against project") {
 		t.Fatalf("err = %v", err)
 	}
@@ -722,11 +718,11 @@ func TestConfigInitIsIdempotentWithoutTheNetwork(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "fugaro.yaml")); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := execute(t, "config", "init", "--project", "aurora", "--yes"); err != nil {
+	if _, _, err := execute(t, "config", "init", "--project", "aurora"); err != nil {
 		t.Fatal(err)
 	}
 	noLayerBucketReads(t)
-	out, _, err := execute(t, "config", "init", "--project", "aurora", "--yes")
+	out, _, err := execute(t, "config", "init", "--project", "aurora")
 	if err != nil || !strings.Contains(out, "already this minimal file") {
 		t.Fatalf("out %q, err %v", out, err)
 	}
@@ -741,7 +737,7 @@ func TestConfigInitRefusesADifferentFileWithoutTheNetwork(t *testing.T) {
 	layerCheckout(t, f, minimalAnchored+
 		"workflows:\n  web: { commands: { build: make, test: make test } }\n")
 	noLayerBucketReads(t)
-	_, _, err := execute(t, "config", "init", "--project", "aurora", "--yes")
+	_, _, err := execute(t, "config", "init", "--project", "aurora")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "never overwrites") {
 		t.Fatalf("err = %v", err)
 	}
@@ -772,7 +768,7 @@ func TestConfigInitHandlesATOCTOURaceAgainstADifferentFile(t *testing.T) {
 		}
 		return real(path, text)
 	}
-	_, _, err := execute(t, "config", "init", "--project", "aurora", "--yes")
+	_, _, err := execute(t, "config", "init", "--project", "aurora")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "never overwrites") {
 		t.Fatalf("err = %v", err)
 	}
@@ -784,7 +780,7 @@ func TestConfigInitHandlesATOCTOURaceAgainstADifferentFile(t *testing.T) {
 
 // Item 4, the other race outcome: the file that won the race happens to
 // be byte-identical to what this command would have written itself (two
-// concurrent `config init --yes` runs) — that must still exit 0, not
+// concurrent `config init` runs) — that must still exit 0, not
 // refuse.
 func TestConfigInitHandlesATOCTOURaceAgainstTheSameFile(t *testing.T) {
 	f := newCloudFixture(t)
@@ -802,19 +798,20 @@ func TestConfigInitHandlesATOCTOURaceAgainstTheSameFile(t *testing.T) {
 		}
 		return real(path, text)
 	}
-	out, _, err := execute(t, "config", "init", "--project", "aurora", "--yes")
+	out, _, err := execute(t, "config", "init", "--project", "aurora")
 	if err != nil || !strings.Contains(out, "already this minimal file") {
 		t.Fatalf("out %q, err %v", out, err)
 	}
 }
 
-// Item 8: config init's Long text documents the dry-run exit code and the
+// Item 8: config init's Long text documents that the write takes no flag
+// (the dry run the flag used to be the other half of is gone with it) and the
 // orchestrator's ruling that, unlike config publish, it never refuses in
 // a coding-agent session.
-func TestConfigInitLongDocumentsDryRunAndAgentSessions(t *testing.T) {
+func TestConfigInitLongDocumentsNoFlagAndAgentSessions(t *testing.T) {
 	cmd := newConfigInitCmd()
-	if !strings.Contains(cmd.Long, "exits 1") {
-		t.Errorf("Long does not document the dry-run exit code: %q", cmd.Long)
+	if !strings.Contains(cmd.Long, "takes no flag for the write") {
+		t.Errorf("Long does not document that the write takes no flag: %q", cmd.Long)
 	}
 	if !strings.Contains(cmd.Long, "coding-agent session") {
 		t.Errorf("Long does not document the agent-session ruling: %q", cmd.Long)
@@ -833,7 +830,7 @@ func TestConfigInitDoesNotRefuseInAnAgentSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("CLAUDECODE", "1")
-	out, _, err := execute(t, "config", "init", "--project", "aurora", "--yes")
+	out, _, err := execute(t, "config", "init", "--project", "aurora")
 	if err != nil || !strings.Contains(out, "wrote") {
 		t.Fatalf("refused in an agent session: out %q, err %v", out, err)
 	}

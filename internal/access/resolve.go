@@ -3,6 +3,7 @@ package access
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -156,22 +157,29 @@ func Allowed(in Input, caller string, action Action, repo string) bool {
 		return false
 	}
 	if rule.project {
-		return effectiveAtProject(in, caller).AtLeast(rule.min)
+		return EffectiveAtProject(in, caller).AtLeast(rule.min)
 	}
 	return Effective(in, caller, repo).AtLeast(rule.min)
 }
 
-// effectiveAtProject is caller's role at project scope: admin for an implicit
-// admin, and otherwise the highest role of the grants that name them with the
-// project scope (an all-repos or repository grant holds no project-level
-// thing, F19).
+// EffectiveAtProject returns caller's role at project scope: admin for an
+// implicit admin, and otherwise the highest role of the grants that name them
+// with the project scope (an all-repos or repository grant holds no
+// project-level thing, F19). Anything else — an empty caller, a grant whose
+// role or scope this package did not parse — resolves to RoleNone, and the
+// highest role wins by Rank.
+//
+// A project-level action asks it (Allowed), and so does a paired device's own
+// role: a device node records a role and no scope (D1588), so what a device may
+// hold is exactly what its pairing user holds here, and a caller whose grants
+// are all repository-scoped holds nothing a device could carry.
 //
 // It gates on Scope.Valid for the same reason Effective does, and it is the
 // half where skipping it would matter most: a grant whose kind is ScopeProject
 // but whose value this package did not parse (a project scope carrying
 // repositories) would otherwise read as project admin, which is the role that
 // hands out every other. The kind alone is not the scope.
-func effectiveAtProject(in Input, caller string) Role {
+func EffectiveAtProject(in Input, caller string) Role {
 	if caller == "" {
 		return RoleNone
 	}
@@ -210,14 +218,16 @@ func isImplicit(in Input, caller string) bool {
 // A credential it cannot read — no Google credentials, a token whose userinfo
 // refuses, an address a grant member could not carry, a service account's
 // address, an unverified address — returns an error and no member, so a caller
-// that ignores the error still holds nothing that could match a grant.
+// that ignores the error still holds nothing that could match a grant. The
+// service account's is the one of those a caller acts on rather than prints,
+// and it says which it is (ErrServiceAccount).
 func Caller(ctx context.Context) (string, error) {
 	address, err := credentialEmail(ctx)
 	if err != nil {
 		return "", err
 	}
 	if strings.HasSuffix(strings.ToLower(address), serviceAccountSuffix) {
-		return "", fmt.Errorf("the credential is a service account's (%s is not a person the grants can name)", address)
+		return "", fmt.Errorf("%w (%s is not a person the grants can name)", ErrServiceAccount, address)
 	}
 	member, err := Member(address)
 	if err != nil {
@@ -225,6 +235,21 @@ func Caller(ctx context.Context) (string, error) {
 	}
 	return member, nil
 }
+
+// ErrServiceAccount is the refusal Caller returns for a service account's
+// credential, and it is a sentinel because what it carries is a fact a caller
+// decides on rather than one it prints: such a credential is not a person, and
+// a command whose check is about people — the settings and policy writes
+// (RS6b) — admits it without asking, which is what keeps `fugaro config
+// publish FILE` and `fugaro project policy publish` working under one, as
+// docs/settings-commands requires of those two doors.
+//
+// It is deliberately not "the credential could not be read". Every OTHER way
+// Caller fails — no Google credentials, an outage, an address the provider has
+// not verified — is a question left unanswered, and a caller that reads that as
+// "nobody in particular" turns its check off exactly when the credential is
+// broken, which is when a check is worth having.
+var ErrServiceAccount = errors.New("the credential is a service account's")
 
 // serviceAccountSuffix is how a service account's address ends. Such a
 // credential is not a person: grants are members, and a member is an address a

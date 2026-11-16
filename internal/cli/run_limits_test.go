@@ -219,7 +219,7 @@ func TestRunGatesTheLimitsOnTheImage(t *testing.T) {
 		t.Fatalf("err = %v, want the launch refused on the image", err)
 	}
 	for _, want := range []string{"a chain limit (--max-usd, --max-tokens, --max-time, --max-review-rounds)",
-		"fugaro " + launchLimitsSince + " or later", "fugaro image refresh"} {
+		"fugaro " + launchLimitsSince + " or later", imageGateRemedy} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("err = %v, want it to name %q", err, want)
 		}
@@ -273,7 +273,7 @@ func TestRunRefusesTheLimitsOnARetryOfAStoredTask(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want the retry of a limit-bearing task refused on the image", err)
 	}
-	for _, want := range []string{chainLimitsSubject, "fugaro " + launchLimitsSince + " or later", "fugaro image refresh"} {
+	for _, want := range []string{chainLimitsSubject, "fugaro " + launchLimitsSince + " or later", imageGateRemedy} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("err = %v, want it to name %q", err, want)
 		}

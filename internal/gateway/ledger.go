@@ -32,6 +32,35 @@ func (s *Server) haltedMessage() (string, bool) {
 	return s.haltMsg, s.halt != nil
 }
 
+// refusalNow is the sentence this call is refused with before anything of it
+// is read, and whether there is one: the run's own halt, which refuses every
+// call of every stage, or a stage limit's stop, which refuses the stage it
+// stopped and nothing else (T7.2). The two are read in that order because a
+// run-wide halt is the wider one: after a cap halt even the checkpoint stage
+// is refused, and after a stage stop only the stopped stage is.
+//
+// A call that arrives with no stage running is refused by the stage it has no
+// stage to belong to (handleMessages' own "no stage is running"), so the stop
+// reads the name of the stage that is there.
+func (s *Server) refusalNow() (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.halt != nil {
+		return s.haltMsg, true
+	}
+	return s.stoppedStageLocked()
+}
+
+// stoppedStageLocked is refusalNow's stage half: the sentence a stopped
+// stage's calls are refused with, and whether the running stage is the
+// stopped one. The caller holds s.mu.
+func (s *Server) stoppedStageLocked() (string, bool) {
+	if s.stoppedStage == "" || s.stage == nil || s.stage.st.Name != s.stoppedStage {
+		return "", false
+	}
+	return s.stageStopMsg, true
+}
+
 // reserve holds w for a call, and returns 0. In enforce mode a call whose
 // worst case can't fit under the cap even with nothing else in flight
 // (used + w > cap) is refused with 403 and halts the run: it and every
@@ -40,7 +69,17 @@ func (s *Server) haltedMessage() (string, bool) {
 // refused with a retryable 429 and no halt: the cap may well hold once
 // they settle. In observe mode a call is counted and logged instead,
 // never refused.
+//
+// A stage limit decides first (T7.2): it is the tighter bound, its stage
+// budget being a fraction of the cap this reserve enforces, and the stop it
+// leaves is the stopped stage's own, never a run-wide halt (stageLimitLocked).
 func (s *Server) reserve(ctx context.Context, st *stageState, w pricing.Micros) (refusal string, status int) {
+	s.mu.Lock()
+	msg, status := s.stageLimitLocked(st, w)
+	s.mu.Unlock()
+	if status != 0 {
+		return msg, status
+	}
 	if s.o.Lease != nil {
 		return s.reserveLease(ctx, st, w)
 	}
@@ -82,6 +121,63 @@ func (s *Server) reserve(ctx context.Context, st *stageState, w pricing.Micros) 
 	return "", 0
 }
 
+// stageLimitLocked is the stage limit's decision on a call about to reserve w,
+// and it is asked before the cap's own arithmetic (T7.2). A stage limit is
+// tighter than the cap by construction -- a stage budget is a fraction of it --
+// so the call the limit refuses is a call the cap would have admitted, and the
+// reason the run records has to be the stage's.
+//
+// A limit that stops is a stop of the stage the call belongs to, and nothing
+// wider: s.halt stays nil, so the runner's next stage -- the checkpoint call
+// T7.2 leaves admissible -- is served as any stage is. The stop is delivered on
+// Halted() exactly once, as a halt is, because the runner's halt watcher is
+// what records it and stops the agent (T7.3 turns it into a checkpoint); a
+// second delivery, from a later run-wide halt, would panic on the closed
+// channel (deliverLocked).
+//
+// In observe mode the stop is counted and logged instead, exactly as the cap's
+// would-halt is: observe is the mode a repository runs under to see what
+// enforcing would do to it, so a limit that refused there would be enforcing in
+// the one mode that promises it never does. Nothing is stopped, nothing is
+// delivered, and st.rep.WouldHalt is the figure a reader of the stage's report
+// counts those calls by (the cap's would-halts are in the same field).
+//
+// The caller holds s.mu.
+func (s *Server) stageLimitLocked(st *stageState, w pricing.Micros) (string, int) {
+	l := s.o.StageLimit
+	if l == nil {
+		return "", 0
+	}
+	if msg, stopped := s.stoppedStageLocked(); stopped {
+		// The backstop: a call that read no refusal of its own -- one that
+		// passed ServeHTTP before the stage was stopped -- is refused by the
+		// stop like every other call of the stopped stage.
+		return msg, http.StatusForbidden
+	}
+	dec := l.Stop(StageLimitView{
+		Stage:  st.st,
+		Report: st.rep,
+		Ended:  s.ended,
+		Ledger: s.ledgerLocked(),
+		Needed: w,
+	})
+	if dec.Reason == "" {
+		return "", 0
+	}
+	if s.o.Mode == Observe {
+		st.rep.WouldHalt++
+		s.log.Warn("budget: stage would stop (observe)", "stage", st.st.Name,
+			"reason", logValue(dec.Reason), "detail", logValue(dec.Detail))
+		return "", 0
+	}
+	h := Halt{Reason: dec.Reason, Scope: "run", Detail: dec.Detail, At: time.Now().UTC()}
+	msg := "fugaro: budget halted: " + haltText(h)
+	s.stoppedStage, s.stageStopMsg = st.st.Name, msg
+	s.deliverLocked(h)
+	s.log.Warn("budget: stage stopped", "stage", st.st.Name, "reason", logValue(dec.Reason), "detail", logValue(dec.Detail))
+	return msg, http.StatusForbidden
+}
+
 // charge is how a call settles.
 type charge struct {
 	amount       pricing.Micros
@@ -117,19 +213,27 @@ type charge struct {
 	// that did not go through the service, which settles as it always did.
 	// It decides whether the call is notional or money (C1.16, D140).
 	tier string
-	// cacheRead is the call's reported cache-read tokens, which is what the
-	// next switch's cache-miss cost is estimated from (F24). It is kept for
-	// every call, whatever served it: the call a switch follows is as often
-	// an ordinary one as a tier A one. It means something only when usageRead
-	// says the call reported usage at all.
-	cacheRead int64
-	// cacheWrite is the call's reported cache-write tokens, both TTLs
-	// together. It is summed into the run's total and read for nothing else:
-	// it is what the run's own record needs to answer design §3's
-	// prompt-caching risk (a compressed session's cache prefix can change,
-	// turning cheap reads into dearer writes), and like cacheRead it means
-	// something only when usageRead is set.
-	cacheWrite int64
+	// usage is the call's reported token counts as the gateway priced them,
+	// which is what the run's cache totals are summed from and what its
+	// per-model token counts are keyed by (G1.2). The counts are the call's
+	// own, whatever served it: the call a switch follows is as often an
+	// ordinary one as a tier A one, and the cache reads here are what the
+	// switch's cache-miss cost is estimated from (F24). The cache writes keep
+	// their 5m and 1h TTLs apart -- a response that reported one unsplit count
+	// is booked at the dearest write the request allowed (usageAcc.usage) --
+	// which is the split the run's record answers design §3's prompt-caching
+	// risk with (a compressed session's cache prefix can change, turning cheap
+	// reads into dearer writes).
+	usage pricing.Usage
+	// pricedModel is the model the gateway priced this call under: the model
+	// the request named, which the gateway admitted as a pin and charged the
+	// table's rates for. It is what the per-model token counts are keyed by,
+	// and it is not the charge's `model`, which is the serving model an
+	// upstream response named: that is the upstream's claim, and it may be a
+	// snapshot of the pin or another model entirely. The dollars follow the
+	// claim (that is where the money went); the counts a repricing of the run
+	// reads back follow the run's own choice.
+	pricedModel string
 	// usageRead is true for a call whose usage this gateway read (its report,
 	// complete or partial). A call that settled with no usage -- one that
 	// never reached the upstream, a relayed model or provider error, a
@@ -175,13 +279,22 @@ func (s *Server) settle(st *stageState, w pricing.Micros, c charge) {
 	// and a switch after it must record itself unmeasured rather than as a
 	// miss that cost nothing (F24).
 	if c.usageRead {
-		s.lastCacheRead, s.lastCacheKnown = c.cacheRead, true
+		s.lastCacheRead, s.lastCacheKnown = c.usage.CacheRead, true
 		// The run's cache totals are of the calls whose usage was read, for
 		// the same reason the switch estimate is: a call that reported none
 		// says nothing about what the run had cached, and adding its zero
 		// would read as a cache that did nothing (P12, F24).
-		s.cacheRead = int64(satAdd(pricing.Micros(s.cacheRead), pricing.Micros(c.cacheRead)))
-		s.cacheWrite = int64(satAdd(pricing.Micros(s.cacheWrite), pricing.Micros(c.cacheWrite)))
+		s.cacheRead = int64(satAdd(pricing.Micros(s.cacheRead), pricing.Micros(c.usage.CacheRead)))
+		s.cacheWrite = int64(satAdd(pricing.Micros(s.cacheWrite), pricing.Micros(c.usage.CacheWrite5m+c.usage.CacheWrite1h)))
+		// The run's token counts by the model the gateway priced this call
+		// under, which its record carries so `fugaro estimate` can price the
+		// run's usage again on another model (G1.2, F8). The same gate, the
+		// same calls and the same place as the totals above, and deliberately
+		// so: summed here rather than into a stage's report, a call that
+		// settles after its stage's report was taken is in the run's figures
+		// either way, and the per-model sums and the cache totals stay the
+		// same tokens counted two ways.
+		s.modelTokens[c.pricedModel] = addUsage(s.modelTokens[c.pricedModel], c.usage)
 	} else {
 		s.lastCacheRead, s.lastCacheKnown = 0, false
 	}
@@ -441,6 +554,21 @@ func satAdd(a, b pricing.Micros) pricing.Micros {
 		return math.MaxInt64
 	}
 	return a + b
+}
+
+// addUsage adds two reported counts, kind by kind, saturating at the largest
+// int64 the way satAdd does for money: a stage's per-model sum is bounded,
+// never wrapped.
+func addUsage(a, b pricing.Usage) pricing.Usage {
+	add := func(x, y int64) int64 { return int64(satAdd(pricing.Micros(x), pricing.Micros(y))) }
+	return pricing.Usage{
+		Input:        add(a.Input, b.Input),
+		CacheWrite5m: add(a.CacheWrite5m, b.CacheWrite5m),
+		CacheWrite1h: add(a.CacheWrite1h, b.CacheWrite1h),
+		CacheRead:    add(a.CacheRead, b.CacheRead),
+		Output:       add(a.Output, b.Output),
+		WebSearches:  add(a.WebSearches, b.WebSearches),
+	}
 }
 
 // satMul multiplies an amount by n ≥ 0, saturating.

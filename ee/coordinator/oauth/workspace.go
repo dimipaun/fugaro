@@ -218,14 +218,17 @@ func TokenHash(value string) string {
 // **The shape is the member's front door's, field for field**, and a test in
 // this package holds the two to each other (TestExchangeTakesTheFrontDoorsShapes). It is
 // a type of this package's rather than an alias of that one for one reason: no
-// non-test file here may name the MCP front door's package. That package mounts
-// an open registration endpoint with neither of spec.md §8's two bounds built
-// yet, so it ships with a guard — its own TestNoBinaryLinksTheFrontDoorYet —
-// that refuses ANY file a binary links which names it, and a library that merely
-// borrowed its types would look exactly like a front door being wired. W4 wires
+// non-test file here may name the MCP front door's package. That package is the
+// front door's own server — one process, on the front door's own revision —
+// while this one is the exchange a member's coordinator serves, so a borrowing
+// here would tie this library to that service's wiring. M12 built that wiring
+// and deleted the guard that used to enforce this (TestNoBinaryLinksTheFrontDoorYet,
+// which failed on any file a binary links that named the package), so what holds
+// the line now is the layering itself: a library that merely borrowed those
+// types would still look exactly like a front door being wired. W4 wires
 // nothing (the owner's ruling of 2026-11-07), so the borrowing is at the test
 // level, and the conversion between this type and that one is the wiring's: one
-// struct literal, in the task that deletes the guard.
+// struct literal, in the task that wires the two.
 type Limits struct {
 	MinRigor rigor.Mode
 	MaxRigor rigor.Mode

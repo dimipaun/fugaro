@@ -376,7 +376,7 @@ func TestSurveySetupIsTheProjectOwnOrSaysWhyNot(t *testing.T) {
 
 	// A node that was read: its own map and switch, and still no reason.
 	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
-	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":4,"image_map":{"acme/app":"go"},"bake_repos":false}`))
+	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":5,"image_map":{"acme/app":"go"},"bake_repos":false}`))
 	doc = surveyDoc(t)
 	if doc.Setup.Unread != "" {
 		t.Errorf("a policy node that was read is reported unread: %q", doc.Setup.Unread)
@@ -387,7 +387,7 @@ func TestSurveySetupIsTheProjectOwnOrSaysWhyNot(t *testing.T) {
 
 	// The node's map without a bake switch: absent means baking, and the
 	// document reports that default rather than leaving the member out.
-	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":4,"image_map":{"acme/app":"go"}}`))
+	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":5,"image_map":{"acme/app":"go"}}`))
 	doc = surveyDoc(t)
 	if !doc.Setup.BakeRepos || doc.Setup.Unread != "" {
 		t.Errorf("setup = %+v, want bake_repos true (a node that states no switch bakes) and no reason", doc.Setup)

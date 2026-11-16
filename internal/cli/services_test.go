@@ -184,7 +184,7 @@ func servicesStamp(t *testing.T, plain []string) string {
 
 // forEachCheckoutState runs body in the two states a launcher can be in about
 // the repository's checkout: with one — the operator's own, where fugaro.yaml
-// is readable and catalog.Applies can be asked — and without one, which is
+// is readable and the resolver can be asked — and without one, which is
 // every launch the desktop console spawns (`fugaro run --repo` from a private
 // empty directory) and every `fugaro run --repo` from anywhere else. The stamp
 // has to be the deployed entry's in BOTH, and the without is the half that

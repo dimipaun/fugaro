@@ -58,7 +58,8 @@ resolves to the project's default credential.
 Every half names where it came from: the layer that wrote it (repo, local or
 project), the craft it was inherited from, or default when nothing set it. A
 pool holding two or more Claude OAuth credentials serves nothing until the
-project's subscription-spread switch is on, and the row says so.
+project's subscription-spread switch is on — the switch this machine's own
+config writes — and the row says so.
 
 The read is offline: it reads this checkout's fugaro.yaml, the installation's
 own config and the project layer file the last cloud read cached, and reaches
@@ -146,7 +147,7 @@ func runCraftLs(cmd *cobra.Command, o *craftLsOptions) error {
 	if lc != nil {
 		project = lc.Name
 	}
-	eff, ps := craft.Resolve(craftLsLayers(cmd, lc, project), false)
+	eff, ps := craft.Resolve(craftLsLayers(cmd, lc, project), craftLsSpread(lc))
 	doc := craftLsDoc{Version: craftLsDocVersion, Project: project}
 	for _, name := range config.CraftNames {
 		e := eff[name]
@@ -183,6 +184,22 @@ func craftLsConfig(cmd *cobra.Command, o cloudOptions) (*localcfg.Config, error)
 		return nil, nil
 	}
 	return lc, announce(o, sel, lc)
+}
+
+// craftLsSpread is the project's subscription-spread switch as this machine
+// knows it: the installation's own config, which is where the owner writes it
+// (`fugaro settings set subscription_spread`) and the value the publish that
+// carries it to the policy node reads (localcfg's SubscriptionSpreadEffective).
+// An unset key is off, the field's own default and the answer a run reads of a
+// node that carries no member; the one case this offline read cannot see is a
+// node another machine turned on, whose member this machine holds no copy of.
+//
+// It is read here because the SERVES column states what a run will do with the
+// access, and a run reads this switch: resolving with a hardcoded false printed
+// `no: the subscription-spread switch is off` on the machine whose config had
+// just turned it on, for the pool the switch exists to serve.
+func craftLsSpread(lc *localcfg.Config) bool {
+	return lc != nil && lc.SubscriptionSpread != nil && *lc.SubscriptionSpread
 }
 
 // craftLsLayers are the layers the resolver reads, narrowest first -- the

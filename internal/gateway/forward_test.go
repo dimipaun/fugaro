@@ -470,9 +470,10 @@ func TestImagesReservedAtCeiling(t *testing.T) {
 }
 
 // overridePrices is the project config's model_prices row for a model the
-// catalog does not price: token rates and nothing else — the wire format has
-// no image field at all (internal/pricing/overrides.go), so a model priced
-// this way has no image rate and `pricing.Model.ImageTokens` is 0.
+// catalog does not price: token rates, and no image_tokens member at all. A
+// row that leaves the member out adds a model the table does not know with no
+// ceiling (internal/pricing/overrides.go, Override.ImageTokens), so a model
+// priced this way has no image rate and `pricing.Model.ImageTokens` is 0.
 func overridePrices(t *testing.T) *pricing.Table {
 	t.Helper()
 	table, err := pricing.Embedded().With(pricing.Overrides{"claude-custom-1": {InputPerM: 1, OutputPerM: 2, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.1}})
@@ -480,6 +481,52 @@ func overridePrices(t *testing.T) *pricing.Table {
 		t.Fatal(err)
 	}
 	return table
+}
+
+const (
+	// visionModel is what a run writes in agent.models.vision: a model priced
+	// with rates and no image_tokens member, so its own images are refused and
+	// the sentence that names it has a price to point at.
+	visionModel = "claude-vision-1"
+	// pricedVision is the other half of that slot's cases: a vision model whose
+	// row carries the per-image ceiling V2 added, which leaves the owner
+	// nothing to set.
+	pricedVision = "claude-vision-2"
+)
+
+// visionPrices is overridePrices plus the two rows the vision cases need.
+func visionPrices(t *testing.T) *pricing.Table {
+	t.Helper()
+	var ceiling int64 = 1500
+	table, err := pricing.Embedded().With(pricing.Overrides{
+		"claude-custom-1": {InputPerM: 1, OutputPerM: 2, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.1},
+		visionModel:       {InputPerM: 1, OutputPerM: 2, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.1},
+		pricedVision:      {InputPerM: 1, OutputPerM: 2, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.1, ImageTokens: &ceiling},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return table
+}
+
+// imageBlock is one base64 image content block: what Claude Code puts into the
+// next request after a Read of a picture.
+func imageBlock(data string) string {
+	return `{"type":"image","source":{"type":"base64","media_type":"image/png","data":"` + data + `"}}`
+}
+
+// postRefusal posts body in st's stage and returns the refusal's sentence,
+// failing the test if the call was accepted.
+func postRefusal(t *testing.T, h *harness, st Stage, body string) string {
+	t.Helper()
+	h.gw.EndStage()
+	h.gw.BeginStage(st)
+	resp, b := h.post(body)
+	if resp.StatusCode != 400 {
+		t.Fatalf("status %d: %s", resp.StatusCode, b)
+	}
+	_, m := apiError(t, b)
+	return m
 }
 
 // TestImagesRefusedWithoutCeiling: an image block on a model with no image
@@ -497,13 +544,13 @@ func TestImagesRefusedWithoutCeiling(t *testing.T) {
 	h.gw.EndStage()
 	h.gw.BeginStage(Stage{Name: "implement", Model: "claude-custom-1", Background: haiku})
 	png := base64.StdEncoding.EncodeToString(make([]byte, 30))
-	body := msgBlocks("claude-custom-1", 100, `{"type":"image","source":{"type":"base64","media_type":"image/png","data":"`+png+`"}}`)
+	body := msgBlocks("claude-custom-1", 100, imageBlock(png))
 	before := h.fake.Count()
 	resp, b := h.post(body)
 	if resp.StatusCode != 400 {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
-	if _, m := apiError(t, b); m != "fugaro: model claude-custom-1 is priced without an image rate (the price table's image_tokens, a per-image token ceiling): an image block can't be reserved without one. model_prices sets token rates only" {
+	if _, m := apiError(t, b); m != "fugaro: model claude-custom-1 is priced without an image rate (the price table's image_tokens, a per-image token ceiling): an image block can't be reserved without one. set agent.models.vision to a model that can read images, and price that model's images with model_prices' image_tokens" {
 		t.Errorf("message %q", m)
 	}
 	if h.fake.Count() != before {
@@ -512,6 +559,112 @@ func TestImagesRefusedWithoutCeiling(t *testing.T) {
 	if v := h.gw.EndStage().Violations; len(v) != 1 {
 		t.Errorf("violations %q", v)
 	}
+}
+
+// TestImageRefusalNamesModelPricesImageTokens (V4, D2009, F15): the sentence an
+// image on an unpriced model is refused with names the keys that fix it — the
+// vision slot and the image member of model_prices, which V2 added — instead of
+// ending on the dead end it used to. "model_prices sets token rates only" was
+// true of the owner's only price lever and useless to the owner reading it: no
+// provider model could be given an image rate at all until V2.
+//
+// Mutation (restore the old wording): both assertions are red — the sentence
+// names no key the owner can set, and it still ends on the dead end.
+func TestImageRefusalNamesModelPricesImageTokens(t *testing.T) {
+	png := base64.StdEncoding.EncodeToString(make([]byte, 30))
+	m := postRefusal(t, newHarnessWith(t, func(o *Options) { o.Prices = overridePrices(t) }),
+		Stage{Name: "implement", Model: "claude-custom-1", Background: haiku},
+		msgBlocks("claude-custom-1", 100, imageBlock(png)))
+	for _, want := range []string{"agent.models.vision", "model_prices' image_tokens"} {
+		if !strings.Contains(m, want) {
+			t.Errorf("the refusal %q does not name %q, the fix the owner has", m, want)
+		}
+	}
+	if strings.Contains(m, "model_prices sets token rates only") {
+		t.Errorf("the refusal %q still ends on the dead end", m)
+	}
+}
+
+// TestImageRefusalNamesTheVisionSlotWhenItIsEmpty (V4, D2009, V1's slot): a run
+// that writes no agent.models.vision is told to set one — the fix that exists
+// for the case it met — and the sentence is an instruction to write the key,
+// never a claim about what the key holds, because this run holds nothing.
+//
+// Mutation (name the slot only when the pin carries a model): the sentence is
+// the price one and this test is red.
+func TestImageRefusalNamesTheVisionSlotWhenItIsEmpty(t *testing.T) {
+	png := base64.StdEncoding.EncodeToString(make([]byte, 30))
+	m := postRefusal(t, newHarnessWith(t, func(o *Options) { o.Prices = overridePrices(t) }),
+		Stage{Name: "implement", Model: "claude-custom-1", Background: haiku},
+		msgBlocks("claude-custom-1", 100, imageBlock(png)))
+	if !strings.Contains(m, "set agent.models.vision to a model that can read images") {
+		t.Errorf("the refusal %q does not tell a run with no vision model to set one", m)
+	}
+	if strings.Contains(m, "agent.models.vision is") {
+		t.Errorf("the refusal %q names a model for a slot this run leaves empty", m)
+	}
+}
+
+// TestImageRefusalPricesTheConfiguredVisionModel (V4, D2009, V2's member): a
+// run whose slot names a model the price table gives no image rate is told to
+// price THAT ID's images, the model its stages will run and the ceiling that
+// matters. A slot already priced for images leaves the sentence about the model
+// this call named, because the owner has nothing left to set — the run
+// configures a model that can read the image, and pricing the model this call
+// named is the fix that remains its own.
+//
+// Mutation (always call the slot's model unpriced): the second case is red.
+// Mutation (price the call's model instead of the slot's): the first is red.
+func TestImageRefusalPricesTheConfiguredVisionModel(t *testing.T) {
+	png := base64.StdEncoding.EncodeToString(make([]byte, 30))
+	for _, tc := range []struct {
+		name         string
+		vision       string
+		want, absent string
+	}{
+		{
+			name:   "a vision model with no image rate",
+			vision: visionModel,
+			want:   "agent.models.vision is " + visionModel + ", which is priced without an image rate too: price that ID's images with model_prices' image_tokens",
+		},
+		{
+			name:   "a vision model whose images are priced",
+			vision: pricedVision,
+			want:   "price that model's images with model_prices' image_tokens",
+			absent: "agent.models.vision is",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := postRefusal(t, newHarnessWith(t, func(o *Options) { o.Prices = visionPrices(t) }),
+				Stage{Name: "implement", Model: "claude-custom-1", Background: haiku, Vision: tc.vision},
+				msgBlocks("claude-custom-1", 100, imageBlock(png)))
+			if !strings.Contains(m, tc.want) {
+				t.Errorf("the refusal %q does not name %q", m, tc.want)
+			}
+			if tc.absent != "" && strings.Contains(m, tc.absent) {
+				t.Errorf("the refusal %q names %q, a state this run is not in", m, tc.absent)
+			}
+		})
+	}
+}
+
+// TestImageRefusalStaysARefusal (V4): the sentence changed and the rule did
+// not. An image the stage's own model cannot reserve is refused and the call is
+// never forwarded, and the vision slot is carried for the sentence and is not a
+// pin: a call that names it is refused like any other model the stage does not
+// run, so a slot can never widen what a stage may call.
+//
+// Mutation (add the vision slot to the stage's pins): the second call is
+// forwarded and this test is red.
+func TestImageRefusalStaysARefusal(t *testing.T) {
+	png := base64.StdEncoding.EncodeToString(make([]byte, 30))
+	h := newHarnessWith(t, func(o *Options) { o.Prices = visionPrices(t) })
+	st := Stage{Name: "implement", Model: "claude-custom-1", Background: haiku, Vision: visionModel}
+	h.gw.EndStage()
+	h.gw.BeginStage(st)
+	refused(t, h, msgBlocks("claude-custom-1", 100, imageBlock(png)), "priced without an image rate")
+	h.gw.BeginStage(st)
+	refused(t, h, msg("claude-vision-1", 100), "not pinned for stage implement")
 }
 
 // TestModelPricesOnlyModelTakesTextWithoutAnImageRate: the same model takes a

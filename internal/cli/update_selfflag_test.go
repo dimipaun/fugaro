@@ -35,10 +35,10 @@ func unmanagedUpdateRig(t *testing.T) *initRig {
 
 // updateBudgetArgs is the owner's own command line: `fugaro update` given the
 // budget once — the trio the doors take together (--budget,
-// --budget-currency and --billing-account) — under --yes, which covers
-// update's ordinary steps.
+// --budget-currency and --billing-account) — at the owner's own terminal,
+// where the person being there is what confirms update's ordinary steps.
 func updateBudgetArgs(extra ...string) []string {
-	return append([]string{"update", "--yes", "--budget", "50", "--budget-currency", "USD", "--billing-account", billingAcc}, extra...)
+	return append([]string{"update", "--budget", "50", "--budget-currency", "USD", "--billing-account", billingAcc}, extra...)
 }
 
 // TestUpdateOnAnUnmanagedInstallationFlagsItAndNeedsNoSecondCommand is the
@@ -51,6 +51,7 @@ func updateBudgetArgs(extra ...string) []string {
 // forbids.
 func TestUpdateOnAnUnmanagedInstallationFlagsItAndNeedsNoSecondCommand(t *testing.T) {
 	r := unmanagedUpdateRig(t)
+	fakeTerminal(t)
 	out, errOut, err := executeStdin(t, "", updateBudgetArgs()...)
 	if err != nil {
 		t.Fatalf("fugaro update with the budget: %v\n%s\n%s", err, out, errOut)
@@ -132,20 +133,27 @@ func seedFlagFact(t *testing.T, r *initRig, m managed.Marker) {
 // which the read that requires the label cannot do: it drops the object), tells
 // it is this project's fact recording the amount it was given, and writes the
 // half that is missing.
+//
+// The object the earlier run left is the version its own release wrote, count
+// and all (D1013), because that is the state an installation one release behind
+// is really in — and the same run's marker step converges it (D1543,
+// update_marker_version.go), so what the owner ends with, in one command, is
+// the label written and the fact the version this build writes.
 func TestUpdateFinishesAFlagWhoseLabelWriteFailed(t *testing.T) {
 	r := unmanagedUpdateRig(t)
 	seedFlagFact(t, r, managed.Marker{
 		Version:    managed.MarkerVersionBuilds,
 		GCPProject: initProject,
 		Budget:     &managed.Budget{Amount: 50, Currency: "USD"},
-		// The object's own default bound: the seed is what a flag writes.
-		MaxImageBuilds: managed.DefaultImageBuilds,
+		// The count the release behind's flag recorded.
+		MaxImageBuilds: managed.MinImageBuilds,
 	})
 	// The premise, so the test cannot pass on a state that was already managed:
 	// the label is what is missing, and the read that requires both refuses.
 	if managedFlagIsManaged(t, r) {
 		t.Fatal("the seeded state already reads as managed, so this test proves nothing about finishing it")
 	}
+	fakeTerminal(t)
 	out, errOut, err := executeStdin(t, "", updateBudgetArgs()...)
 	if err != nil {
 		t.Fatalf("fugaro update with the budget over a half-written flag: %v\n%s\n%s", err, out, errOut)
@@ -158,8 +166,11 @@ func TestUpdateFinishesAFlagWhoseLabelWriteFailed(t *testing.T) {
 	if !managedFlagIsManaged(t, r) {
 		t.Error("the managed read does not believe the installation the run finished flagging")
 	}
-	if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); !ok || !strings.Contains(got, `"amount":50`) {
-		t.Errorf("gs://%s/%s = %q, want the fact the earlier run wrote, recording the amount", initRunsBucket, managed.MarkerObject, got)
+	if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); !ok || !strings.Contains(got, `"amount":50`) || !strings.Contains(got, `"version":4`) {
+		t.Errorf("gs://%s/%s = %q, want the amount the earlier run recorded in the version this build writes: the label the run wrote finishes the flag, and its marker step converges the fact (D1543)", initRunsBucket, managed.MarkerObject, got)
+	}
+	if got, _ := managedFlagAt(t, r.gcs, initRunsBucket); strings.Contains(got, "max_image_builds") {
+		t.Errorf("gs://%s/%s = %q, want no image build count: this release records none", initRunsBucket, managed.MarkerObject, got)
 	}
 	said := out + errOut
 	for _, want := range []string{"left the creation fact", "no second command"} {
@@ -179,11 +190,11 @@ func TestUpdateFinishesAFlagWhoseLabelWriteFailed(t *testing.T) {
 func TestUpdateDoesNotFinishAFactThatRecordsAnotherAmount(t *testing.T) {
 	r := unmanagedUpdateRig(t)
 	seedFlagFact(t, r, managed.Marker{
-		Version:        managed.MarkerVersionBuilds,
-		GCPProject:     initProject,
-		Budget:         &managed.Budget{Amount: 75, Currency: "EUR"},
-		MaxImageBuilds: managed.DefaultImageBuilds,
+		Version:    managed.MarkerVersionNoBuilds,
+		GCPProject: initProject,
+		Budget:     &managed.Budget{Amount: 75, Currency: "EUR"},
 	})
+	fakeTerminal(t)
 	out, errOut, err := executeStdin(t, "", updateBudgetArgs()...)
 	if err != nil {
 		t.Fatalf("fugaro update with the budget over a fact recording another amount: %v\n%s\n%s", err, out, errOut)
@@ -208,66 +219,6 @@ func TestUpdateDoesNotFinishAFactThatRecordsAnotherAmount(t *testing.T) {
 	}
 }
 
-// TestUpdateDoesNotFinishAFactThatRecordsAnotherBuildBound: the amount is the
-// one this run was given and the fact is not one the flag writes, for the other
-// figure it carries. The bound is what the statement printed above the write
-// promises — one billable build per invocation (D1013) — and a fact holding the
-// project's applies to a larger count is an object recorded by hand rather than
-// by any run of ours: completing it with the label would make the project
-// managed at a bound this run never stated, so the figure that took effect
-// would not be the one the owner read. The run writes neither mark and says
-// what is there.
-func TestUpdateDoesNotFinishAFactThatRecordsAnotherBuildBound(t *testing.T) {
-	r := unmanagedUpdateRig(t)
-	seedFlagFact(t, r, managed.Marker{
-		Version:    managed.MarkerVersionBuilds,
-		GCPProject: initProject,
-		Budget:     &managed.Budget{Amount: 50, Currency: "USD"},
-		// In the marker's own range, so the object is one the read believes:
-		// the bound is a figure this build accepts and not the default.
-		MaxImageBuilds: 1000,
-	})
-	before, ok := managedFlagAt(t, r.gcs, initRunsBucket)
-	if !ok {
-		t.Fatalf("the seed wrote no gs://%s/%s", initRunsBucket, managed.MarkerObject)
-	}
-	out, errOut, err := executeStdin(t, "", updateBudgetArgs()...)
-	if err != nil {
-		t.Fatalf("fugaro update with the budget over a fact recording another bound: %v\n%s\n%s", err, out, errOut)
-	}
-	if l := r.crm.Labels(initProject)[managed.ProjectLabelKey]; l != "" {
-		t.Errorf("the run wrote %s=%q on a fact holding the project's applies to another bound", managed.ProjectLabelKey, l)
-	}
-	if managedFlagIsManaged(t, r) {
-		t.Error("the managed read believes a project the run did not flag")
-	}
-	// The object is untouched: neither half of this run's write happened.
-	if after, _ := managedFlagAt(t, r.gcs, initRunsBucket); after != before {
-		t.Errorf("gs://%s/%s = %q, want the fact the earlier run wrote (%q)", initRunsBucket, managed.MarkerObject, after, before)
-	}
-	said := out + errOut
-	// Both figures are named, and so is the one the statement above the write
-	// promised — the statement this run printed before it asked for either mark.
-	for _, want := range []string{
-		"it was not flagged",
-		"one build per invocation",
-		"records the budget amount 50 USD",
-		"holds this project's applies to 1000 billable builds per invocation",
-		"where the flag this step would finish records 1",
-		"neither mark was written",
-	} {
-		if !strings.Contains(said, want) {
-			t.Errorf("the warning does not say %q:\n%s", want, said)
-		}
-	}
-	if strings.Contains(said, "left the creation fact") {
-		t.Errorf("the run claims to have finished a fact recording another bound:\n%s", said)
-	}
-	if strings.Contains(said, "no second command") {
-		t.Errorf("the run claimed to have flagged the installation:\n%s", said)
-	}
-}
-
 // TestUpdateDoesNotFinishAFactAboutAnotherProject: the other side of the same
 // check, and the one that decides whether the completion writes anything at
 // all. The object is in this project's runs bucket — proved by number and
@@ -278,11 +229,11 @@ func TestUpdateDoesNotFinishAFactThatRecordsAnotherBuildBound(t *testing.T) {
 func TestUpdateDoesNotFinishAFactAboutAnotherProject(t *testing.T) {
 	r := unmanagedUpdateRig(t)
 	seedFlagFact(t, r, managed.Marker{
-		Version:        managed.MarkerVersionBuilds,
-		GCPProject:     "someone-elses-project",
-		Budget:         &managed.Budget{Amount: 50, Currency: "USD"},
-		MaxImageBuilds: managed.DefaultImageBuilds,
+		Version:    managed.MarkerVersionNoBuilds,
+		GCPProject: "someone-elses-project",
+		Budget:     &managed.Budget{Amount: 50, Currency: "USD"},
 	})
+	fakeTerminal(t)
 	out, errOut, err := executeStdin(t, "", updateBudgetArgs()...)
 	if err != nil {
 		t.Fatalf("fugaro update with the budget over a fact about another project: %v\n%s\n%s", err, out, errOut)
@@ -361,6 +312,7 @@ func TestUpdateDoesNotFlagAProjectWhoseStateIsElsewhere(t *testing.T) {
 	// self-flag.
 	r.appendConfig(t, "terraform: { state_bucket: fugaro-tfstate-elsewhere }\n")
 	r.gcs.AddBucket("fugaro-tfstate-elsewhere", initProjectNumber, map[string]string{"fugaro": "tfstate"})
+	fakeTerminal(t)
 	out, errOut, err := executeStdin(t, "", updateBudgetArgs()...)
 	if err != nil {
 		t.Fatalf("fugaro update with the budget and a state bucket the config names: %v\n%s\n%s", err, out, errOut)
@@ -400,6 +352,7 @@ func TestUpdateDoesNotFlagAProjectWhoseStateIsElsewhere(t *testing.T) {
 func TestSetupDoesNotFlagAnUnmanagedInstallation(t *testing.T) {
 	r := unmanagedUpdateRig(t)
 	args := append([]string{"setup"}, updateBudgetArgs()[1:]...)
+	fakeTerminal(t)
 	out, errOut, err := executeStdin(t, "", args...)
 	if err != nil {
 		t.Fatalf("fugaro setup with the budget on an existing installation: %v\n%s\n%s", err, out, errOut)
@@ -430,6 +383,11 @@ func TestUpdateSelfFlagRefusesInsideAFugaroRun(t *testing.T) {
 		t.Run(marker, func(t *testing.T) {
 			r := unmanagedUpdateRig(t)
 			t.Setenv(marker, "x")
+			// The run's own process is not a coding agent's session, so it is the
+			// person at the terminal who confirms the converge's ordinary steps
+			// and this run reaches the fence rather than stopping at the first
+			// step that asks.
+			fakeTerminal(t)
 			out, errOut, err := executeStdin(t, "", updateBudgetArgs()...)
 			if err == nil {
 				t.Fatalf("a Fugaro run's process flagged the installation:\n%s\n%s", out, errOut)
@@ -459,11 +417,11 @@ func TestUpdateSelfFlagRefusesInsideAFugaroRun(t *testing.T) {
 // TestUpdatePlanOnlyFlagsNothing: --plan-only creates and changes nothing, and
 // the self-flag's whole output is the two marks that take the installation's
 // typed confirmation away. A preview that wrote them would turn a consent gate
-// off on a read-only flag's word — and the update's own help says, in as many
-// words, that this door never takes --yes because it changes nothing on a
-// flag's word. So the same command line as the HARD RULE's test, with
-// --plan-only, leaves the installation exactly as unmanaged as it found it,
-// and says nothing about flagging it.
+// off on a read-only flag's word — and --plan-only's own help says it creates
+// nothing, and creating nothing is the whole of what a preview may do. So the
+// same command line as the HARD RULE's test, with --plan-only, leaves the
+// installation exactly as unmanaged as it found it, and says nothing about
+// flagging it.
 func TestUpdatePlanOnlyFlagsNothing(t *testing.T) {
 	r := unmanagedUpdateRig(t)
 	out, errOut, err := executeStdin(t, "", updateBudgetArgs("--plan-only")...)

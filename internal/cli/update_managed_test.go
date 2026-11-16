@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // update_managed_test.go: `fugaro update`'s steps under the managed gate (M1,
@@ -149,79 +150,83 @@ func stepLineInLog(t *testing.T, got, head string) string {
 	return ""
 }
 
-// M1's red step. A managed project, a coding agent's session, and a plan that
-// removes an address the owner's list does not name: today the run is refused
-// before the stage is reached — the session reads the coding agent's own
-// refusal, and nothing about the plan — and after this task the refusal is the
-// GATE's, with the gate's own sentence, because the plan is what refused it.
+// T9's red step (D1545), and the one that says what this gate is now: a
+// managed project, a coding agent's session, and plans whose only rules are the
+// cover tables' — a delete of a grant no list holds, and a replace whose create
+// half grants the world. D1551 classifies both types as not data-bearing, so
+// the delete rule does not keep them either, and D1545 turns what is left into
+// a record-and-warn: the step APPLIES, and the rules that fired reach the
+// session and the record instead of the refusal they used to be.
 //
-// The three assertions are the three halves of that: the gate's sentence is
-// what the session reads, the guard's own managed advice is not (a session
-// that read that one would be told to hand the step over rather than what
-// about the plan was refused), and nothing was applied.
+// What this pins is the pair the ruling is a bet on. A gate that kept refusing
+// fails here, and so does one that applied the plan without recording what the
+// tables did not announce: the warning an owner reads afterwards is the whole
+// of the control the tables still are (the second half of the ruling, "harden
+// the record", is TestDoctorFlagsAnOutOfTableGrant's).
 //
-// And the left-for-you is the owner's own command rather than the plan
-// refusal's (gateDeleteLeft, spec §4.3's "For the owner"): this plan removes an
-// object --allow-delete admits, so the refusal leaves the command the owner has
-// always run, with the address the gate refused, and neither "a person files an
-// issue" nor a prompt — the first sends them to work that does not close the
-// loop the refusal opened, and the second asks for a typing no refusal reaches
-// past.
-func TestUpdateManagedStageRefusesARemoval(t *testing.T) {
+// The two arms are the two shapes content arrives in: a change whose delete
+// half the classification does not protect, and one whose create half the grant
+// table does not hold. Neither is refused, so there is no left-for-you and no
+// command here: what the owner has is the record.
+func TestUpdateManagedOutOfTableGrantAppliesAndIsRecorded(t *testing.T) {
 	const a = "user:a@example.com"
-	address := `module.installation.google_storage_bucket_iam_member.state["` + a + `"]`
-	r := updateManagedRig(t)
-	updating(t, r)
-	r.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
+	for _, tc := range []struct {
+		name string
+		plan planChange
+	}{
+		{"a delete of a grant no list holds", grantChange("state", a, "roles/storage.objectAdmin", "delete")},
+		{"a replace whose create half grants the world", outsiderReplace()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			address := tc.plan["address"].(string)
+			r := updateManagedRig(t)
+			updating(t, r)
+			r.setPlan(t, tc.plan)
 
-	got, err := updateRun(t, r, "update", "--yes")
-	if err == nil {
-		t.Fatalf("the run applied a plan a managed project refuses:\n%s", got)
-	}
-	if !strings.Contains(got, managedmode.NotConverged) {
-		t.Errorf("the session does not read the gate's own sentence:\n%s", got)
-	}
-	if !strings.Contains(got, address) {
-		t.Errorf("the gate's refusal does not name the address it refused:\n%s", got)
-	}
-	if strings.Contains(got, initManagedDeleteAdvice) {
-		t.Errorf("the session reads the guard's managed advice, which is not this refusal:\n%s", got)
-	}
-	if n := len(r.ran(t, "apply")); n != 0 {
-		t.Errorf("%d terraform apply(s) ran: the gate refused the plan and nothing may be applied", n)
-	}
-	if code := ExitCode(err); code != ExitUserError {
-		t.Errorf("exit %d, want %d: a refusal is the user's and not a failure", code, ExitUserError)
-	}
-	// And the refusal is on the record (D1014, M6): the gate judged a document
-	// and refused it, and a refusal nobody can read afterwards is half of the
-	// audit this design exists for.
-	recs := audits(t, r)
-	if len(recs) != 1 || recs[0].Verdict != managedmode.AuditRefused {
-		t.Fatalf("%d record(s) after a refused step, want one refused: %+v", len(recs), recs)
-	}
-	if !strings.Contains(strings.Join(recs[0].Rules, "\n"), address) {
-		t.Errorf("the record does not name the rule that refused, so an owner cannot audit it: %+v", recs[0])
-	}
-
-	left := leftFor(got, initflow.Installation, initflow.LeftCommand)
-	if left == "" {
-		t.Fatalf("a removal the owner's own --allow-delete admits left them no command:\n%s", got)
-	}
-	want := "fugaro update --allow-delete '" + address + "'"
-	if !strings.Contains(left, want) {
-		t.Errorf("the left-for-you is not the owner's own command (%q):\n%s", want, left)
-	}
-	for _, never := range []string{"a person files an issue", "type the project's name"} {
-		if strings.Contains(left, never) {
-			t.Errorf("the removal's left-for-you says %q, which is not what a removal the owner can approve leaves them:\n%s", never, left)
-		}
-	}
-	// This fixture's before view names no object of its own (an IAM member's
-	// view is role, member and bucket), and the identity is printed with that
-	// said rather than with a cut or an invented one.
-	if !strings.Contains(left, "does not identify") {
-		t.Errorf("the left-for-you does not say what the plan's before view identifies:\n%s", left)
+			got, err := updateRun(t, r, "update")
+			if err != nil {
+				t.Fatalf("a plan whose rules are the cover tables' was refused, and D1545 records and warns them instead: %v\n%s", err, got)
+			}
+			if strings.Contains(got, managedmode.NotConverged) {
+				t.Errorf("the session reads the gate's refusal for a plan it admitted:\n%s", got)
+			}
+			// Two applies, and both are this plan: the installation stage's
+			// own and installation-2's, the stage that re-applies the root once
+			// the images stage has moved the base image the scheduled jobs run
+			// FROM (R7). The rig scripts one plan for the root, so the second
+			// step is admitted on the same document — which is what makes this
+			// count two rather than one.
+			if n := len(r.ran(t, "apply")); n != 2 {
+				t.Fatalf("%d terraform apply(s) ran, want the two the gate admitted (the installation stage's and installation-2's):\n%s", n, got)
+			}
+			// The warning is what the session that applied the plan reads. It
+			// is not decoration: D1545's accepted price is that the tables warn
+			// instead of refusing, and a warning nobody reads is the refusal
+			// removed with nothing in its place.
+			if !strings.Contains(got, gateContentWarning) {
+				t.Errorf("the session does not read the warning line:\n%s", got)
+			}
+			if !strings.Contains(got, address) {
+				t.Errorf("the warning lines do not name the change they are about (%q):\n%s", address, got)
+			}
+			// And the rule is on the record, which is where it outlives the
+			// session that read it.
+			recs := audits(t, r)
+			if len(recs) != 2 || recs[0].Verdict != managedmode.AuditWarned || recs[1].Verdict != managedmode.AuditWarned {
+				t.Fatalf("%d record(s) after an applied step, want two warned — one per admitted step: %+v", len(recs), recs)
+			}
+			if !strings.Contains(strings.Join(recs[0].Warnings, "\n"), address) {
+				t.Errorf("the record does not carry the rule that fired, so an owner cannot audit it: %+v", recs[0])
+			}
+			if len(recs[0].Rules) == 0 {
+				t.Errorf("the record states no rule at all, so what admitted the plan is unreadable: %+v", recs[0])
+			}
+			// Nothing was refused, so nothing is left for the owner: D1012's
+			// delete question is asked of a refusal, and this step had none.
+			if left := leftFor(got, initflow.Installation, initflow.LeftCommand); left != "" {
+				t.Errorf("an applied step left the owner a command (%q), and no refusal sent them there:\n%s", left, got)
+			}
+		})
 	}
 }
 
@@ -260,7 +265,7 @@ func TestUpdateManagedRemovalLeavesTheIdentityThePlanCarries(t *testing.T) {
 	updating(t, r)
 	r.setPlan(t, ch)
 
-	got, err := updateRun(t, r, "update", "--yes")
+	got, err := updateRun(t, r, "update")
 	if err == nil {
 		t.Fatalf("the run applied a plan that removes a bucket:\n%s", got)
 	}
@@ -297,7 +302,7 @@ func TestUpdateManagedRemovalNoFlagAdmitsLeavesNoCommand(t *testing.T) {
 	updating(t, r)
 	r.setPlan(t, ch)
 
-	got, err := updateRun(t, r, "update", "--yes")
+	got, err := updateRun(t, r, "update")
 	if err == nil {
 		t.Fatalf("the run applied a plan that removes a moved object:\n%s", got)
 	}
@@ -347,22 +352,20 @@ func outsiderReplace() planChange {
 // rule, and --allow-delete shapes the installation, so the run that passes it
 // stands the WHOLE gate down (initRun.gateUnderway) and nothing reads the plan
 // again. That is right while the delete rule is the only thing that refused, and
-// it is how a plan the cover or the cost list refused as well would be applied
-// with no rule left to read it — an outsider's grant, a GPU the cost list
-// blocks — with the owner told the removal was theirs alone.
+// it is how a plan another rule refused as well would be applied with no rule
+// left to read it — an authoritative IAM resource beside it, a grant the cover
+// tables do not hold — with the owner told the removal was theirs alone.
 //
-// The four plans are that one shape from four sides: a bucket this installation
-// removes (the guard's refusal, which --allow-delete does reach) beside a change
-// no list reaches at all, one address that is both — the job below replaced,
-// where the guard refuses the removal and the cost list the GPU its create half
-// states, so the address is on the list the flag clears and the flag would still
-// apply what the cost list blocked — and a replace whose CREATE half no rule
-// read, which the flag would apply as it stands (a grant to allUsers). The
-// left-for-you has to be the plan refusal's, with no command, and nothing may be
-// applied. The mutation this is for is a gateDeleteLeft that asks what the
-// plan's addresses are and never which rule refused, and one that treats a
-// replace as the pure removal its address looks like: every arm hands the owner
-// a command that applies the other refusal.
+// The two arms are that one shape from the two sides the gate still has refusals
+// on: a bucket this installation removes (the guard's refusal, which
+// --allow-delete does reach) beside a change D1549 keeps refusing, and beside a
+// change D1545 only WARNS about. The second is the arm T9 adds, and it is the
+// harder one to keep: nothing in the verdict is false for it, because the
+// warning is not a refusal, and the command offered would apply a grant no rule
+// of this gate ever recorded. The left-for-you has to be the plan refusal's,
+// with no command, and nothing may be applied. The mutation this is for is a
+// gateDeleteLeft that asks what the plan's addresses are and never which rule
+// refused: every arm hands the owner a command that applies the other change.
 func TestUpdateManagedMixedRefusalsLeaveTheRemovalNoCommand(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -376,18 +379,17 @@ func TestUpdateManagedMixedRefusalsLeaveTheRemovalNoCommand(t *testing.T) {
 		plan  []planChange
 		names string
 	}{
-		{"a grant the cover refuses beside the removal",
+		{"a grant the cover does not announce beside the removal",
 			[]planChange{uploadsBucketRemoval(), grantChange("runs_outsider", "user:a@example.com", "roles/storage.objectViewer", "create")}, "user:a@example.com"},
-		{"a job the cost list blocks beside the removal", []planChange{uploadsBucketRemoval(), gpuJobPlan()}, "nvidia-l4"},
-		{"a replace the cost list blocks at the removal's own address", []planChange{gpuJobReplace()}, "nvidia-l4"},
-		{"a replace whose create half grants the world", []planChange{outsiderReplace()}, "allUsers"},
+		{"an authoritative IAM resource beside the removal",
+			[]planChange{uploadsBucketRemoval(), change("module.installation.google_storage_bucket_iam_binding.runs", "create")}, "google_storage_bucket_iam_binding.runs"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := updateManagedRig(t)
 			updating(t, r)
 			r.setPlan(t, tc.plan...)
 
-			got, err := updateRun(t, r, "update", "--yes")
+			got, err := updateRun(t, r, "update")
 			if err == nil {
 				t.Fatalf("the run applied a plan a managed project refuses:\n%s", got)
 			}
@@ -408,38 +410,50 @@ func TestUpdateManagedMixedRefusalsLeaveTheRemovalNoCommand(t *testing.T) {
 				t.Errorf("the refusal is not the plan's own:\n%s", refused)
 			}
 			if strings.Contains(got, "--allow-delete") {
-				t.Errorf("the run offers --allow-delete for a plan another rule refused as well:\n%s", got)
+				t.Errorf("the run offers --allow-delete for a plan another rule refused or warned about as well:\n%s", got)
 			}
 		})
 	}
 }
 
-// The other side of the create-half question, so that it is not read as "a
-// replace is never the owner's": a replace whose create half the cover admits
-// is a removal --allow-delete clears like any other, and the command stays. The
-// mutation this is for is the check answering too much — refusing the command
-// for every change carrying a create, which is what asking the cover about the
-// whole change rather than about what it creates would do (the cover refuses
-// that change for its delete half, which is the half the flag clears).
-func TestUpdateManagedCoveredReplaceLeavesTheCommand(t *testing.T) {
+// The create half of a replace under T9, and the arm that moved: a replace
+// whose create half the cover admits used to be a removal --allow-delete
+// cleared, with the command left for the owner. D1551 classifies a Cloud Run job
+// as not data-bearing, so the replace's delete half is a WARNING now and the
+// plan is admitted whole — the create half the cover admits beside it is why
+// this arm has no refusal in it at all, which is what makes it the pin on the
+// guard's own half of D1551 rather than on the cover's (the two of them name the
+// one address, and the record holds both lines).
+//
+// A gate that kept refusing the replace fails here, and so does one that applied
+// it without the warning: the record is the whole of what an owner can read
+// afterwards about a change no list announced.
+func TestUpdateManagedJobReplaceAppliesWithAWarning(t *testing.T) {
 	ch := coveredJobReplace()
+	address := ch["address"].(string)
 	r := updateManagedRig(t)
 	updating(t, r)
 	r.setPlan(t, ch)
 
-	got, err := updateRun(t, r, "update", "--yes")
-	if err == nil {
-		t.Fatalf("the run applied a plan that replaces a job:\n%s", got)
+	got, err := updateRun(t, r, "update")
+	if err != nil {
+		t.Fatalf("a replace D1551 does not protect was refused, and D1545 applies it with a warning: %v\n%s", err, got)
 	}
-	if n := len(r.ran(t, "apply")); n != 0 {
-		t.Errorf("%d terraform apply(s) ran: the gate refused the plan", n)
+	if n := len(r.ran(t, "apply")); n != 2 {
+		t.Fatalf("%d terraform apply(s) ran, want the two the gate admitted (the installation stage's and installation-2's):\n%s", n, got)
 	}
-	left := leftFor(got, initflow.Installation, initflow.LeftCommand)
-	if left == "" {
-		t.Fatalf("a replace whose create half the cover admits left the owner no command:\n%s", got)
+	if !strings.Contains(got, gateContentWarning) || !strings.Contains(got, address) {
+		t.Errorf("the session does not read the guard's warning about %s, which is the only thing that says the replace happened:\n%s", address, got)
 	}
-	if want := "fugaro update --allow-delete " + ch["address"].(string); !strings.Contains(left, want) {
-		t.Errorf("the left-for-you does not carry the owner's command (%q):\n%s", want, left)
+	recs := audits(t, r)
+	if len(recs) != 2 || recs[0].Verdict != managedmode.AuditWarned || recs[1].Verdict != managedmode.AuditWarned {
+		t.Fatalf("%d record(s) after an applied replace, want two warned — one per admitted step: %+v", len(recs), recs)
+	}
+	if !strings.Contains(strings.Join(recs[0].Warnings, "\n"), address) {
+		t.Errorf("the record does not carry the delete rule's warning, so an owner cannot audit the replace: %+v", recs[0])
+	}
+	if left := leftFor(got, initflow.Installation, initflow.LeftCommand); left != "" {
+		t.Errorf("an applied step left the owner a command (%q), and no refusal sent them there:\n%s", left, got)
 	}
 }
 
@@ -480,7 +494,7 @@ func TestUpdateManagedProjectJobRemovalLeavesNoCommand(t *testing.T) {
 	updating(t, r)
 	r.setPlan(t, jobAndGrant()...)
 
-	got, err := updateRun(t, r, "update", "--yes")
+	got, err := updateRun(t, r, "update")
 	if err == nil {
 		t.Fatalf("the run applied a plan that replaces a project job:\n%s", got)
 	}
@@ -507,7 +521,7 @@ func TestUpdateManagedProjectJobRemovalLeavesNoCommand(t *testing.T) {
 	r2 := updateManagedRig(t)
 	updating(t, r2)
 	r2.setPlan(t, jobAndGrant()...)
-	got2, err2 := updateRun(t, r2, "update", "--yes", "--allow-delete", grant, "--allow-delete", job)
+	got2, err2 := updateRun(t, r2, "update", "--allow-delete", grant, "--allow-delete", job)
 	if err2 == nil || !strings.Contains(got2, "retiring a project job is not supported yet") {
 		t.Errorf("the owner's own run with the flags the refusal would have offered did not refuse the project job (err %v):\n%s", err2, got2)
 	}
@@ -654,20 +668,26 @@ func TestGateRefusalOfTellsAPlanRefusalFromAnUnjudgedStep(t *testing.T) {
 // admits and the COVER refuses is refused all the same, and refused by the
 // gate. The guard is only one of the two gates a managed plan is read by
 // (managed.Spec hands the same document to both), and a step wired to the
-// guard alone would apply a plan the review's own cover would have stopped —
-// a grant to a member the review never listed, which is what this plan is.
+// guard alone would apply a plan the review's own cover would have stopped.
+//
+// The fixture is an authoritative IAM resource and not the grant this test used
+// to carry: an IAM member outside the grant table is one of the cover's CONTENT
+// rules now (D1545 applies it with a warning, TestUpdateManagedOutOfTableGrant-
+// AppliesAndIsRecorded), so it can no longer witness a cover refusal at all.
+// What still refuses whatever the change is — and so what this half of the pair
+// is: the class D1549 keeps.
 //
 // M1's SEC shape is the same one from the other side: the gate's refusal is
 // what the session reads (never the confirmation the step would have asked),
 // nothing is applied, and the rule that fired is on the record, so an owner
 // can read which rule stopped an unattended run.
 func TestUpdateManagedStageRefusesAPlanTheCoverDoesNotCover(t *testing.T) {
-	const outsider = "user:not-listed@example.com"
+	const binding = "module.installation.google_storage_bucket_iam_binding.runs"
 	r := updateManagedRig(t)
 	updating(t, r)
-	r.setPlan(t, grantChange("state", outsider, "roles/storage.objectViewer", "create"))
+	r.setPlan(t, change(binding, "create"))
 
-	got, err := updateRun(t, r, "update", "--yes")
+	got, err := updateRun(t, r, "update")
 	if err == nil {
 		t.Fatalf("the run applied a plan the cover of its own review refuses:\n%s", got)
 	}
@@ -691,7 +711,7 @@ func TestUpdateManagedStageRefusesAPlanTheCoverDoesNotCover(t *testing.T) {
 	// "cover" is the word internal/managed's own verdict uses for this half of
 	// the gate (its coverGate); it is a literal here because the constant is
 	// that package's.
-	if !strings.Contains(rules, "cover: ") || !strings.Contains(rules, outsider) {
+	if !strings.Contains(rules, "cover: ") || !strings.Contains(rules, binding) {
 		t.Errorf("the record does not name the cover as the rule that refused, so an owner cannot audit it: %+v", recs[0])
 	}
 }
@@ -707,7 +727,7 @@ func TestUpdateManagedStageAdmitsAnAdditivePlan(t *testing.T) {
 	updating(t, r)
 	r.setPlan(t, change(additive, "create"))
 
-	got, err := updateRun(t, r, "update", "--yes")
+	got, err := updateRun(t, r, "update")
 	if !strings.Contains(got, initflow.AgentProceeded("CLAUDECODE")) {
 		t.Fatalf("the admitted step does not say it proceeded:\n%s", got)
 	}
@@ -718,8 +738,8 @@ func TestUpdateManagedStageAdmitsAnAdditivePlan(t *testing.T) {
 		t.Errorf("an additive plan was refused by the gate:\n%s", got)
 	}
 	recs := audits(t, r)
-	if len(recs) != 1 || recs[0].Verdict != managedmode.AuditAdmitted {
-		t.Fatalf("%d record(s) after an admitted step, want one admitted: %+v", len(recs), recs)
+	if len(recs) != 2 || recs[0].Verdict != managedmode.AuditAdmitted || recs[1].Verdict != managedmode.AuditAdmitted {
+		t.Fatalf("%d record(s) after an admitted step, want two admitted — one per admitted step: %+v", len(recs), recs)
 	}
 	// The digest is of the bytes the rules read, which for this rig is the
 	// plan terraform printed — and the record is written only after the apply,
@@ -767,7 +787,7 @@ func TestUpdateManagedConvergesTheLauncherGrantUpgrade(t *testing.T) {
 		r := updateManagedRig(t)
 		launcherGrant(t, r, gcp.LegacyLauncherBucketConditionTitle, gcp.LegacyLauncherBucketCondition(bucket))
 
-		got, err := updateRun(t, r, "update", "--yes")
+		got, err := updateRun(t, r, "update")
 		if err != nil {
 			t.Fatalf("a managed project's fugaro update left an installation at the previous version behind: %v\n%s", err, got)
 		}
@@ -783,8 +803,8 @@ func TestUpdateManagedConvergesTheLauncherGrantUpgrade(t *testing.T) {
 			t.Errorf("the admitted step does not say it proceeded:\n%s", got)
 		}
 		recs := audits(t, r)
-		if len(recs) != 1 || recs[0].Verdict != managedmode.AuditAdmitted {
-			t.Fatalf("%d record(s) after the upgrade, want one admitted: %+v", len(recs), recs)
+		if len(recs) != 2 || recs[0].Verdict != managedmode.AuditAdmitted || recs[1].Verdict != managedmode.AuditAdmitted {
+			t.Fatalf("%d record(s) after the upgrade, want two admitted — one per admitted step: %+v", len(recs), recs)
 		}
 		// And the record says what admitted THIS plan. Its rules are what an
 		// owner reads back and checks against the plan they kept, so on a plan
@@ -809,24 +829,34 @@ func TestUpdateManagedConvergesTheLauncherGrantUpgrade(t *testing.T) {
 		}
 	})
 
-	// The narrow half: the gate admits the replaces this binary's own upgrade
-	// makes and nothing else. A replace from a condition no release of Fugaro
-	// wrote is refused as it always was — this is the same world with one field
-	// of the before view moved, and a matcher that had stopped reading the
-	// condition would apply it.
-	t.Run("a replace from another condition is still refused", func(t *testing.T) {
+	// And the half T9 moved. The matcher's narrowness used to be why a replace
+	// from a condition no release of Fugaro wrote was refused, and D1551 takes
+	// that job away from it: an IAM member is not data-bearing, so the replace
+	// is admitted with a warning whatever its condition says. What the matcher
+	// still decides is what the RECORD claims — a plan it did not match must
+	// not read as one this binary's own upgrade made, which is the line an
+	// owner checks the upgrade against the plan they kept.
+	t.Run("a replace from another condition applies without the upgrade's rule", func(t *testing.T) {
 		r := updateManagedRig(t)
 		launcherGrant(t, r, "someone-else", `resource.name.startsWith("projects/_/buckets/`+bucket+`/objects/")`)
 
-		got, err := updateRun(t, r, "update", "--yes")
-		if err == nil {
-			t.Fatalf("the run applied a replace from a condition no release wrote:\n%s", got)
+		got, err := updateRun(t, r, "update")
+		if err != nil {
+			t.Fatalf("a replace D1551 does not protect was refused, and D1545 applies it with a warning: %v\n%s", err, got)
 		}
-		if !strings.Contains(got, managedmode.NotConverged) {
-			t.Errorf("the refusal is not the gate's own:\n%s", got)
+		if n := len(r.ran(t, "apply")); n != 2 {
+			t.Fatalf("%d terraform apply(s) ran, want the two the gate admitted (the installation stage's and installation-2's):\n%s", n, got)
 		}
-		if n := len(r.ran(t, "apply")); n != 0 {
-			t.Errorf("%d terraform apply(s) ran for a replace the gate refused", n)
+		recs := audits(t, r)
+		if len(recs) != 2 || recs[0].Verdict != managedmode.AuditWarned || recs[1].Verdict != managedmode.AuditWarned {
+			t.Fatalf("%d record(s) after an applied replace, want two warned — one per admitted step: %+v", len(recs), recs)
+		}
+		rules := strings.Join(recs[0].Rules, "\n")
+		if strings.Contains(rules, "matched out of this plan") {
+			t.Errorf("the record claims this binary's own upgrade made a replace it did not match:\n%s", rules)
+		}
+		if !strings.Contains(strings.Join(recs[0].Warnings, "\n"), `runs_launcher["`+a+`"]`) {
+			t.Errorf("the record does not carry the rule that fired, so an owner cannot audit the replace: %+v", recs[0])
 		}
 	})
 }
@@ -882,7 +912,7 @@ func TestUpdateReadsTheGateBeforeAnyWrite(t *testing.T) {
 		updating(t, r)
 		r.setPlan(t, change(additive, "create"))
 
-		got, err := updateRun(t, r, "update", "--yes")
+		got, err := updateRun(t, r, "update")
 		if !strings.Contains(got, initflow.AgentProceeded("CLAUDECODE")) {
 			t.Fatalf("the step the gate admitted did not say so (err %v):\n%s", err, got)
 		}
@@ -893,8 +923,8 @@ func TestUpdateReadsTheGateBeforeAnyWrite(t *testing.T) {
 		if n := markReads(r); n == 0 {
 			t.Error("the run applied a plan without ever reading the runs bucket's managed marker: the write is not gated on the read")
 		}
-		if recs := audits(t, r); len(recs) != 1 || recs[0].Verdict != managedmode.AuditAdmitted {
-			t.Errorf("the admitted step left %+v, want one admitted record", recs)
+		if recs := audits(t, r); len(recs) != 2 || recs[0].Verdict != managedmode.AuditAdmitted || recs[1].Verdict != managedmode.AuditAdmitted {
+			t.Errorf("the admitted steps left %+v, want two admitted records", recs)
 		}
 	})
 
@@ -921,7 +951,7 @@ func TestUpdateReadsTheGateBeforeAnyWrite(t *testing.T) {
 			updating(t, r)
 			r.setPlan(t, change(additive, "create"))
 
-			got, err := updateRun(t, r, "update", "--yes")
+			got, err := updateRun(t, r, "update")
 			if n := len(r.ran(t, "apply")); n != 0 {
 				t.Errorf("%d terraform apply(s) ran in a session whose gate was never opened:\n%s", n, got)
 			}
@@ -956,7 +986,7 @@ func TestUpdateReadsTheGateBeforeAnyWrite(t *testing.T) {
 		updating(t, r)
 		r.setPlan(t, change(additive, "create"))
 
-		got, err := updateRun(t, r, "update", "--yes")
+		got, err := updateRun(t, r, "update")
 		if err == nil {
 			t.Fatalf("a mark that could not be read was read as an answer:\n%s", got)
 		}
@@ -1043,8 +1073,8 @@ func TestUpdateRevokedMidRunKeepsTheOwnersTerminal(t *testing.T) {
 	_ = e.converge(t.Context())
 
 	got := out.String()
-	if n := len(r.ran(t, "apply")); n != 1 {
-		t.Errorf("%d terraform apply(s) ran in a project the second read found unmanaged, want the one the owner's terminal answers:\n%s", n, got)
+	if n := len(r.ran(t, "apply")); n != 2 {
+		t.Errorf("%d terraform apply(s) ran in a project the second read found unmanaged, want the two the owner's terminal answers (the installation stage's and installation-2's):\n%s", n, got)
 	}
 	if strings.Contains(got, initflow.GateOrdinary()) || strings.Contains(got, initflow.GateProceeded()) {
 		t.Errorf("the revoked run applied a step under the gate's own sentence:\n%s", got)
@@ -1110,38 +1140,62 @@ func coveredJobReplace() planChange {
 	return ch
 }
 
-// The gate's refusals are refusals in the owner's own terminal too, and the two
-// a person's run can reach are the two halves of what it judges: a plan the
-// cover refuses (a grant to somebody the review did not list) and a plan the
-// cost list blocks. Neither falls back to the confirmation the step would have
-// had: the run stops in the gate's own sentence and nothing is applied.
-//
-// Why the cost arm is the one that has to be here. It is the arm whose plan is
-// INSIDE the run's cover — the control below runs the same plan in a project
-// that is not managed, where the person at the terminal answers it with nothing
-// typed (T7) and the step is "covered by the run confirmation", with no
-// question of its own — so a gateStep that swallowed a refusal (returning
-// false, nil where the gate said no) would hand this step to a confirmation
-// that says yes, and the plan would be applied. And it is the arm a gate that
-// judged only the cover would pass: the outsider's grant is the cover's own
-// refusal, and this one is the cost list's.
-func TestUpdateManagedRefusalsHoldAtATerminal(t *testing.T) {
-	costPlan := gpuJobPlan()
-	outsiderGrant := grantChange("runs_outsider", "user:a@example.com", "roles/storage.objectViewer", "create")
+// iamBindingCreate is one of D1549's two shapes a plan reaches the gate with: an
+// authoritative IAM resource, which no release of Fugaro's own tree writes — a
+// binding is the whole policy of the object it is on, so the module writes
+// per-member grants instead, and a plan carrying one is not a document this
+// binary produced.
+func iamBindingCreate() planChange {
+	return change("module.installation.google_storage_bucket_iam_binding.runs", "create")
+}
 
+// The other: an ordinary installation type pointed at a project that is not
+// this run's. Nothing about the plan is destructive and nothing about it is
+// data — the object is simply not this installation's, and the modules never
+// write a project other than the one the run is for.
+func anotherProject() planChange {
+	return planChange{
+		"address": uploadsBucket,
+		"type":    "google_storage_bucket",
+		"change": map[string]any{"actions": []string{"create"}, "before": map[string]any{},
+			"after": map[string]any{"project": "somebody-elses-project"}},
+	}
+}
+
+// The gate's refusals are refusals in the owner's own terminal too: a plan the
+// cover refuses never falls back to the confirmation the step would have had —
+// the run stops in the gate's own sentence, nothing is applied, and what the
+// step leaves is the refusal in place of the prompt it would have printed.
+//
+// Both arms are D1549's kind, the half T9 left refusing: an authoritative IAM
+// resource, which no release of Fugaro's own tree writes, and an ordinary
+// installation type pointed at another project. What a person at a terminal
+// reaches here is a plan no confirmation reaches, so the refusal names an issue
+// rather than a command. The other half — a grant to somebody the review did
+// not list, a plan the cost list blocks — is D1545's, and it is recorded and
+// warned instead of refused
+// (TestUpdateManagedOutOfTableGrantAppliesAndIsRecorded).
+//
+// Why the projection arm is the one that has to be here. It is the arm whose
+// plan is otherwise ordinary — the control below runs the same plan in a
+// project that is not managed and it is applied there — so a gateStep that
+// swallowed a refusal (returning false, nil where the gate said no) would hand
+// this step to a confirmation that says yes, and the plan would be applied. And
+// it is the arm a gate that judged only the IAM rule would pass.
+func TestUpdateManagedRefusalsHoldAtATerminal(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		plan planChange
 		// names is the fact the refusal has to be about, in the refusal's own
-		// words: the member neither list holds, and the accelerator the cost
-		// list's GPU entry read. A run that stopped for any other reason — a
+		// words: the authoritative resource's address, and the project the
+		// plan pointed a bucket at. A run that stopped for any other reason — a
 		// missing grant, an unreadable plan — would stop without it. It is read
 		// in the log the refused step's line names, where the gate's sentence is
 		// whole (the owner's feedback of 2026-11-09).
 		names string
 	}{
-		{"an outsider's grant", outsiderGrant, "user:a@example.com"},
-		{"a plan the cost list blocks", costPlan, "nvidia-l4"},
+		{"an authoritative IAM resource", iamBindingCreate(), "google_storage_bucket_iam_binding.runs"},
+		{"a resource of another project", anotherProject(), "somebody-elses-project"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := updateManagedRig(t) // a coding agent's session is unset below: this is a terminal's
@@ -1215,7 +1269,7 @@ func TestUpdateManagedRefusalsHoldAtATerminal(t *testing.T) {
 			// text says nothing about an issue, which is the promise this arm
 			// makes).
 			if !strings.Contains(refused, "a person files an issue with this line") {
-				t.Errorf("the refusal is not the plan's own, which is what a cover or a cost refusal leaves:\n%s", refused)
+				t.Errorf("the refusal is not the plan's own, which is what a cover's refusal leaves:\n%s", refused)
 			}
 			if !strings.Contains(refused, "refused by ") {
 				t.Errorf("the refusal does not name the rule that refused, in the gate's own words:\n%s", refused)
@@ -1241,10 +1295,11 @@ func TestUpdateManagedRefusalsHoldAtATerminal(t *testing.T) {
 		})
 	}
 
-	// The control for the cost arm: the same plan, the same terminal, a project
-	// that is not managed — the person at the terminal answers it with nothing
-	// typed (T7), no question about the step, and it is applied. That is what
-	// the gate's refusal holds back.
+	// The control for the projection arm: the same plan, the same terminal, a
+	// project that is not managed. No gate stands there, so nothing refuses the
+	// plan: the step asks its own confirmation, the person at the terminal is
+	// the answer to it (T7), and the plan is applied. That is what the refusal
+	// above holds back.
 	r := updateRig(t)
 	// A project of Fugaro's own that is not managed: the marker names it, so
 	// the review is a run confirmation a person answers by being there
@@ -1256,16 +1311,19 @@ func TestUpdateManagedRefusalsHoldAtATerminal(t *testing.T) {
 	fakeTerminal(t)
 	noAgentSession(t)
 	updating(t, r)
-	r.setPlan(t, costPlan)
+	r.setPlan(t, anotherProject())
 	got, _, err := executeStdin(t, "", "update")
 	if err != nil {
-		t.Fatalf("the cost-blocked plan was not applied in a project that is not managed: %v\n%s", err, got)
+		t.Fatalf("the plan the gate refuses was not applied in a project that is not managed: %v\n%s", err, got)
 	}
-	if !strings.Contains(got, "covered by the run confirmation") {
-		t.Errorf("the control's step was not covered by the run's one confirmation, so it does not witness what the gate's refusal holds back:\n%s", got)
+	if strings.Contains(got, managedmode.NotConverged) {
+		t.Errorf("a project that is not managed stopped in the managed gate's sentence, so the control does not witness what the refusal above holds back:\n%s", got)
 	}
-	if n := len(r.ran(t, "apply")); n != 1 {
-		t.Errorf("%d terraform apply(s) in the control run, want the one:\n%s", n, got)
+	if !strings.Contains(got, "⚠ CONFIRM (project "+initProjectName+", GCP project "+initProject+"): applies") {
+		t.Errorf("the control's step did not ask its own confirmation, so it does not witness what the gate's refusal holds back:\n%s", got)
+	}
+	if n := len(r.ran(t, "apply")); n != 2 {
+		t.Errorf("%d terraform apply(s) in the control run, want the two (the installation stage's and installation-2's):\n%s", n, got)
 	}
 }
 
@@ -1273,30 +1331,36 @@ func TestUpdateManagedRefusalsHoldAtATerminal(t *testing.T) {
 // had: --yes covers what it always covered, nothing asks a new question, and no
 // record is written about a decision this design never made.
 //
-// The count of reads is where "keeps every behaviour" is measured. Two calls
-// name the marker object in a person's run, and the second is the one this
-// design adds: the gate reads the marks per command (D1015) in the owner's
-// session too, because whether to show a prompt at all is the question those
-// marks answer (the ruling of 2026-11-01). It is a read and nothing else — no
-// verdict is reached for this run, nothing is applied on it, and the count is
-// the whole of what it costs. A change that makes an owner's run read the mark
-// a third time, or that makes this read reach a write, fails here.
+// The count of reads is where "keeps every behaviour" is measured. One call
+// names the marker object for the installation's own fact, and one more for
+// each gated step the run has: the gate reads the marks per step (D1015) in
+// the owner's session too, because whether to show a prompt at all is the
+// question those marks answer (the ruling of 2026-11-01). An ordinary update
+// has two gated steps — the installation stage's own and installation-2's,
+// which this rig's run makes because its config records no base image for the
+// images stage to leave alone, so the root is applied again for the scheduled
+// jobs (R7) — and three reads is the whole of what the marks cost it. Each is
+// a read and nothing else: no verdict is reached for this run, nothing is
+// applied on it. A change that makes an owner's run read the mark more times
+// than it has gated steps, or that makes one of those reads reach a write,
+// fails here.
 func TestUpdateManagedLeavesAnOwnersRunAlone(t *testing.T) {
 	const additive = "module.installation.google_service_account.scheduler"
 	r := updateRig(t)
 	r.markedRuns(t, "", "") // the runs bucket, and no mark of any kind in it
+	fakeTerminal(t)
 	updating(t, r)
 	r.setPlan(t, change(additive, "create"))
 
-	got, err := updateRun(t, r, "update", "--yes")
+	got, err := updateRun(t, r, "update")
 	if err != nil {
 		t.Fatalf("an owner's run on an unmanaged project failed: %v\n%s", err, got)
 	}
 	if n := len(r.ran(t, "apply")); n == 0 {
-		t.Errorf("--yes stopped covering the installation step:\n%s", got)
+		t.Errorf("the owner's own terminal stopped covering the installation step:\n%s", got)
 	}
-	if n := markReads(r); n != 2 {
-		t.Errorf("an owner's run read the managed marker %d time(s), want two: the installation's own fact read, and the one the gate makes to know whether to ask at all", n)
+	if n := markReads(r); n != 3 {
+		t.Errorf("an owner's run read the managed marker %d time(s), want three: the installation's own fact read, and the one each of the run's two gated steps makes to know whether to ask at all", n)
 	}
 	if strings.Contains(got, initflow.AgentProceeded("CLAUDECODE")) {
 		t.Errorf("a person's run printed the coding agent's own sentence:\n%s", got)
@@ -1341,8 +1405,13 @@ func TestUpdateManagedTerminalAsksNothing(t *testing.T) {
 	if !strings.Contains(got, initflow.GateProceeded()) {
 		t.Errorf("the run does not say what decided the step:\n%s", got)
 	}
-	if !strings.Contains(got, "Review: project ") {
-		t.Errorf("the run took no confirmation and printed no review of what it would do:\n%s", got)
+	// The review is the run's own account of what it would do, and the gate
+	// stands in for the confirmation it used to precede: the screen is the
+	// steps (§9.2), so it is read from the log the run keeps, and -v brings it
+	// back to the terminal.
+	whole := got + newestLog(t, "update")
+	if !strings.Contains(whole, "Review: project ") {
+		t.Errorf("the run took no confirmation and printed no review of what it would do:\n%s", whole)
 	}
 	recs := audits(t, r)
 	if len(recs) == 0 {
@@ -1359,6 +1428,58 @@ func TestUpdateManagedTerminalAsksNothing(t *testing.T) {
 	}
 	if admitted == 0 {
 		t.Errorf("the day holds no admission for a step that applied: %+v", recs)
+	}
+}
+
+// TestUpdateManagedDefaultViewShowsTheStepsOnly: the owner's third word on the
+// subject (2026-11-13) is what §9.2 promised all along — one line per step and
+// the closing line. In a managed project nothing else of the run's own account
+// reaches the screen: not the review it would print for a confirmation, not the
+// goal sentence, not the shared config's publish, not the plugin stage's claude
+// subprocess. Every one of them is in the log the run keeps, which is what makes
+// the screen's silence the routing's doing and not a run that printed none of
+// it, and -v is what brings them back (initRun.stageDetail).
+//
+// The rig is a checkout with a plugin to install and the owner's own terminal:
+// the session the review is printed for, and the one where the gate stands in
+// for the confirmation the review used to precede.
+func TestUpdateManagedDefaultViewShowsTheStepsOnly(t *testing.T) {
+	const additive = "module.installation.google_service_account.scheduler"
+	r := updateRig(t)
+	r.managedRuns(t, initProjectName, initProject)
+	isolateGateCredentials(t)
+	fakeTerminal(t)
+	updating(t, r)
+	r.setPlan(t, change(additive, "create"))
+	dir := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", initProjectName, ""))
+	t.Chdir(dir)
+	checkoutFile(t, filepath.Join(dir, ".claude", "settings.json"), wiredAt("v0.5.0"))
+	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
+	useFakeClaude(t, f)
+
+	out, errOut, _ := executeStdin(t, "", "update")
+	got := out + errOut
+	log := newestLog(t, "update")
+	for _, prose := range []string{"Review: project ", "Who gets access", "will do (project ", "published the shared config", "running: "} {
+		if strings.Contains(got, prose) {
+			t.Errorf("the default view of a managed update printed %q:\n%s", prose, got)
+		}
+		if !strings.Contains(log, prose) {
+			t.Errorf("the run printed no %q at all: the screen's silence about it is not the routing's doing, so this arm proves nothing\n%s", prose, log)
+		}
+	}
+	// The other half of the promise: the steps and the closing line are what is
+	// left on the screen.
+	lines := reportLines(out)
+	if l := stepLineOf(lines, "installation"); !strings.HasPrefix(l, markDone+" installation ") {
+		t.Errorf("the applied step is not on the screen: %q\n%s", l, got)
+	}
+	if l := stepLineOf(lines, "preflight"); !strings.HasPrefix(l, markDone+" preflight") {
+		t.Errorf("the run's first step is not on the screen: %q\n%s", l, got)
+	}
+	if last := lines[len(lines)-1]; !strings.HasPrefix(last, "Done in ") && !strings.HasPrefix(last, "Failed in ") {
+		t.Errorf("the closing line is %q, want the reporter's summary\n%s", last, got)
 	}
 }
 
@@ -1432,24 +1553,14 @@ func TestUpdateManagedTerminalControlKeepsTheRefusal(t *testing.T) {
 	}
 }
 
-// The plugin pin's write is a step `fugaro update` makes on a managed project
-// with nothing asked: "Write this to .claude/settings.json? [y/N]" is the
-// question it used to be, and the gate being underway is the whole of what
-// admits it now, with the diff still printed and nothing typed. The stage is
-// called directly, which is the call the loop makes for a step that is not
-// SelfConfirming, and the stdin is EMPTY: a stage that asked would get no
-// answer and write nothing, so the file being wired at all is the assertion
-// about the question.
-//
-// The two worlds a project that is NOT managed has (T7): a person at the
-// terminal answers the write by being there, with nothing typed and nothing
-// read, and a session with nobody at it is left the step, refused without a
-// read. Those are the control that keeps the gate's branch from being a stage
-// that simply stopped asking, and the mutation they catch: the wiring's
-// managed branch taken on anything but the project's own marks (gateUnderway
-// answering true for every project) — the pipe arm would then write the file
-// under the gate's own sentence with nobody there at all.
-func TestUpdateManagedPluginWiringAsksNothing(t *testing.T) {
+// The plugin stage asks nothing and reads nothing, in every world it can run
+// in — managed or not, a person at the terminal or nobody. The question it used
+// to ask was the settings write's ("Write this to .claude/settings.json?
+// [y/N]"), and that write went with the merge (U2, D949): what is left is the
+// install in Claude Code, which no terminal and no --yes decides, and the file
+// an older fugaro left comes out of all four worlds byte for byte. The stage is
+// called directly, which is the call the loop makes, and the stdin is EMPTY.
+func TestUpdateManagedPluginStageAsksNothing(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	for _, tc := range []struct {
 		name     string
@@ -1462,6 +1573,8 @@ func TestUpdateManagedPluginWiringAsksNothing(t *testing.T) {
 		{"not managed, nobody at the terminal", false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			f := testutil.NewClaudePluginFake(t, "[]", "[]")
+			f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
 			settings := wiringCheckout(t, settingsWithOthers)
 			withTerminal(t, tc.terminal)
 			e, out := stageEngine(t, "", &initOptions{})
@@ -1471,45 +1584,24 @@ func TestUpdateManagedPluginWiringAsksNothing(t *testing.T) {
 			if tc.managed {
 				e.r.gate = &initGate{managed: true}
 			}
+			useFakeClaude(t, f)
 			s := newPluginStage(e)
-			_, err := s.Apply(t.Context(), initflow.Env{Interactive: tc.terminal})
-			got, _ := os.ReadFile(settings)
-			written := string(got) != settingsWithOthers
-			if !strings.Contains(out.String(), "extraKnownMarketplaces") {
-				t.Fatalf("the step printed no diff of what it would write:\n%s", out.String())
+			if _, err := s.Apply(t.Context(), initflow.Env{Interactive: tc.terminal}); err != nil {
+				t.Fatalf("the plugin step was stopped (%v), and it has nothing to ask:\n%s", err, out.String())
+			}
+			if got, _ := os.ReadFile(settings); string(got) != settingsWithOthers {
+				t.Errorf("the step wrote the checkout's settings:\n%s", got)
 			}
 			if spy.read {
-				t.Errorf("the step read the input: nothing is typed at this write any more (T7):\n%s", out.String())
+				t.Errorf("the step read the input: nothing is typed at this step any more (U2, D949):\n%s", out.String())
 			}
-			if strings.Contains(out.String(), "[y/N]") || strings.Contains(out.String(), "confirmed by --yes") {
-				t.Errorf("the step was asked for what neither the terminal nor --yes gives:\n%s", out.String())
+			for _, bad := range []string{"[y/N]", "extraKnownMarketplaces", initflow.GateOrdinary()} {
+				if strings.Contains(out.String(), bad) {
+					t.Errorf("the step says %q, and it writes nothing in the checkout:\n%s", bad, out.String())
+				}
 			}
-			if tc.managed {
-				if err != nil {
-					t.Fatalf("a managed project was stopped: %v\n%s", err, out.String())
-				}
-				if !written {
-					t.Errorf("the settings were not wired, so the gate's verdict did not stand in for the y/N:\n%s", out.String())
-				}
-				if !strings.Contains(out.String(), initflow.GateOrdinary()) {
-					t.Errorf("the write does not say what decided it:\n%s", out.String())
-				}
-				return
-			}
-			if strings.Contains(out.String(), initflow.GateOrdinary()) {
-				t.Errorf("a project that is not managed printed the managed gate's sentence:\n%s", out.String())
-			}
-			if tc.terminal {
-				if err != nil {
-					t.Fatalf("a person's own terminal was stopped: %v\n%s", err, out.String())
-				}
-				if !written {
-					t.Errorf("the settings were not wired at the person's own terminal:\n%s", out.String())
-				}
-				return
-			}
-			if err == nil || written {
-				t.Fatalf("the settings were wired with nobody at the terminal (err %v):\n%s", err, out.String())
+			if calls := callArgs(f.Calls(t)); !slices.ContainsFunc(calls, func(a []string) bool { return slices.Equal(a, argsInstall) }) {
+				t.Errorf("the machine's own install did not happen: %q\n%s", calls, out.String())
 			}
 		})
 	}
@@ -1557,11 +1649,12 @@ func TestUpdateManagedNeverAdmitsTheSecretsStage(t *testing.T) {
 // --provision-batch at all. A clean plan verdict cannot reach it (D1026: the
 // gate narrows, and a stage --yes never covered has nothing to narrow).
 //
-// The credentials service's own stage is gone (DON1, the owner's ruling of
-// 2026-11-05): the deploy is part of every installation's own confirmed apply
-// now, so there is no stage and no flag for an agent's session to be refused
-// at. What keeps it out of a session is pinCredentialsImage's own guard, which
-// is tested where it lives (init_credentials_test.go,
+// The credentials service's own block is not a stage of its own (DON1, the
+// owner's ruling of 2026-11-05): it is written by every installation's own
+// confirmed apply now, and the service's own image is moved by the stage after
+// the policy migration. What keeps both out of an agent's session is the guard
+// they share (init_stages.go's ensureCredentialsService and moveCredentialsImage),
+// which is tested where it lives (init_credentials_test.go,
 // TestUpdateInAnAgentSessionPinsNoCredentialsImage).
 func TestUpdateManagedLeavesComputeOwnerRun(t *testing.T) {
 	name := initflow.Compute
@@ -1578,7 +1671,7 @@ func TestUpdateManagedLeavesComputeOwnerRun(t *testing.T) {
 	// setup's, and the refusal says so before anything runs.
 	r2 := updateManagedRig(t)
 	updating(t, r2)
-	got, err := updateRun(t, r2, "update", "--yes", "--provision-batch")
+	got, err := updateRun(t, r2, "update", "--provision-batch")
 	if err == nil || !strings.Contains(got, "fugaro update does not take --provision-batch") {
 		t.Errorf("this door took --provision-batch (err %v):\n%s", err, got)
 	}
@@ -1587,11 +1680,116 @@ func TestUpdateManagedLeavesComputeOwnerRun(t *testing.T) {
 	}
 }
 
+// The credentials-service stage is in the gate's own set, and this is the entry
+// no other test can drop silently: a coding agent's session never reaches the
+// gate here at all — the stage's own skip answers a marker first
+// (init_stages.go's newCredentialsStage returns credentialsSessionHeld, and the
+// loop checks every stage before it runs any), so the entry's whole answer is
+// the one a PERSON at the terminal on a managed project gets.
+//
+// The shape is therefore that person: the installation root planned for a
+// change §4.1 refuses to apply (an authoritative IAM resource, D1549's kind:
+// a bucket removal now leaves the owner a command, T9), and the fourth read of
+// its saved plan — the credentials stage's own — refused. The two arms are the
+// entry's own answer and its mutation: under the gate the step is left for the
+// owner and the run carries on, and with the entry dropped the same refusal
+// stops the run instead and leaves the owner nothing.
+func TestUpdateManagedGatesTheCredentialsServiceStage(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		remove bool
+	}{
+		{"under the gate", false},
+		{"entry dropped", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.remove {
+				delete(gatedStages, initflow.CredentialsService)
+				t.Cleanup(func() { gatedStages[initflow.CredentialsService] = true })
+			}
+			got, applies := credentialsStageRun(t)
+			if tc.remove {
+				// The run stops where the gate used to stand: the stage refuses
+				// the plan itself either way — nothing applies a plan nothing
+				// admitted — and what the entry decides is WHO answers that
+				// refusal, the loop turning it into the owner's own step with
+				// the entry and into a run failure without it.
+				if stopped := stoppedStage(got); stopped != initflow.CredentialsService {
+					t.Fatalf("the run stopped at %s, want the credentials-service stage:\n%s", stopped, got)
+				}
+				if strings.Contains(got, "left for you ("+initflow.CredentialsService+", ") {
+					t.Errorf("a stage this door does not gate left the owner a step, which is the answer the entry exists to give:\n%s", got)
+				}
+				return
+			}
+			if applies != 3 {
+				t.Errorf("%d applies reached the fake, want the installation stage's two (its own and the intake's re-apply, DS4.1) and installation-2's alone: the credentials stage's plan was refused and nothing of it may be applied:\n%s", applies, got)
+			}
+			if s := stoppedStage(got); s != "(the summary names no failed stage)" {
+				t.Fatalf("the run failed at %s: the gate's refusal is the owner's step, not a failure:\n%s", s, got)
+			}
+			// LeftRefused and not LeftCommand: the plan carries no removal, so
+			// the owner's --allow-delete admits nothing of it (gateDeleteLeft
+			// finds no listable address) and what the gate leaves is D1012's
+			// refusal step, a verdict with no command to run.
+			left := leftFor(got, initflow.CredentialsService, initflow.LeftRefused)
+			if left == "" {
+				t.Fatalf("the credentials-service stage was not left for the owner:\n%s", got)
+			}
+			for _, want := range []string{"managed gate refused this step", "an authoritative IAM resource"} {
+				if !strings.Contains(left, want) {
+					t.Errorf("the step left for the owner does not name %q:\n%s", want, left)
+				}
+			}
+		})
+	}
+}
+
+// credentialsStageRun is one `fugaro update` at the owner's own terminal
+// on a managed project, with the plan the gate refuses in front of the
+// credentials-service stage. The installation root's saved plan is shown more
+// than once in a run — every stage that judges that root reads it again — and
+// the credentials stage's own read is the ELEVENTH of them (the installation stage reads its plan three times, the intake's re-apply of the same root three more, DS4.1, and installation-2 — the stage that applies the root again for the scheduled jobs, whose preview pass and step read it four times, R7), so the refused
+// document is the last step of the ordered list (faketerraform's keyed script
+// consumes a list in order and repeats its last step). A run that reads the
+// root one more time before this stage leaves the list a step short, and the
+// test then fails on the credentials stage being applied instead of left,
+// rather than passing quietly.
+//
+// Returns the run's own output, and the applies that reached the fake.
+func credentialsStageRun(t *testing.T) (string, int) {
+	t.Helper()
+	r := newConvergeRig(t, staleNode(t))
+	publishCredentialsImage(t, r.imagesRig, convergeRelease)
+	seedCredentialsService(t, r.imagesRig, oldCredentialsRef(convergePrev))
+	r.script["show -json"] = r.script["show"]
+	r.script["plan@installation"] = map[string]any{"exit": 2}
+	admitted := map[string]any{"stdout": planJSON(t, change("module.installation.google_service_account.scheduler", "create"))}
+	refused := map[string]any{"stdout": planJSON(t, iamBindingCreate())}
+	r.script["show@installation"] = []any{admitted, admitted, admitted, admitted, admitted, admitted, admitted, admitted, admitted, admitted, refused}
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"credentials_service": credentialsServiceOutput(),
+		// The intake this run deploys: its block is written by the same stage,
+		// and its audience comes back from the same outputs.
+		"intake": intakeServiceOutput(),
+	})}
+	r.save(t)
+	r.managedRuns(t, initProjectName, initProject)
+	isolateGateCredentials(t)
+	currentRelease(t)
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update")
+	if err != nil {
+		out += ErrorText(err)
+	}
+	return out + errOut, len(r.ran(t, "apply"))
+}
+
 // A run whose own arguments shape the installation is refused the gate, and it
 // is refused it for the reason §3.2 gives those arguments: the cover's Listed
 // members are read from THIS run's options (accessLists reads spec.Launchers,
 // spec.Operators and the budget admins into tf.Cover.Listed), so a session that
-// passed --launcher, --operator or --budget-admin would have the gate judge a
+// passed --operator, --admin or --budget-admin would have the gate judge a
 // plan against the list it just wrote — §4.1's rules 4 and 5 refuse exactly the
 // grant such a plan makes, and the flag would walk around both by making it
 // covered. --budget with --billing-account sets the cover's Billing the same
@@ -1603,7 +1801,7 @@ func TestUpdateManagedLeavesComputeOwnerRun(t *testing.T) {
 // widening flag would have had admitted is refused in the session's own words,
 // nothing is applied, and — the property a flag asked beside the door has — the
 // gate read nothing and no record exists, because no verdict was ever made. The
-// plan grants a member the run's own --launcher would have listed, which is the
+// plan grants a member the run's own --operator would have listed, which is the
 // exact shape the hole was found with.
 func TestUpdateManagedRefusesASessionWideningFlag(t *testing.T) {
 	const outsider = "user:not-listed@example.com"
@@ -1619,8 +1817,8 @@ func TestUpdateManagedRefusesASessionWideningFlag(t *testing.T) {
 		// config names its shared budget backend.
 		rig func(t *testing.T) *initRig
 	}{
-		{"launcher", []string{"--launcher", outsider}, nil},
 		{"operator", []string{"--operator", outsider}, nil},
+		{"admin", []string{"--admin", outsider}, nil},
 		{"budget-admin", []string{"--firebase-project", fpID, "--budget-admin", outsider}, func(t *testing.T) *initRig {
 			r := newFBRig(t)
 			r.managedRuns(t, initProjectName, initProject)
@@ -1645,7 +1843,7 @@ func TestUpdateManagedRefusesASessionWideningFlag(t *testing.T) {
 			updating(t, r)
 			r.setPlan(t, grantChange("state", outsider, "roles/storage.objectViewer", "create"))
 
-			got, err := updateRun(t, r, append([]string{"update", "--yes"}, tc.args...)...)
+			got, err := updateRun(t, r, append([]string{"update"}, tc.args...)...)
 			if err == nil {
 				t.Fatalf("a session that shaped the installation ran to the end:\n%s", got)
 			}
@@ -1690,7 +1888,7 @@ func TestUpdateManagedRulesStageUnderTheGate(t *testing.T) {
 	updating(t, r)
 	r.setPlan(t, change("module.installation.google_service_account.scheduler", "create"))
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	got := out + errOut
 	if err != nil {
 		t.Fatalf("a managed project's agent session did not deploy the rules generation (%v):\n%s", err, got)
@@ -1790,7 +1988,7 @@ func TestUpdateManagedPolicyStageUnderTheGate(t *testing.T) {
 	// states: the migration is the one write, and it loosens nothing.
 	db.Set(projectpolicy.PathShared(), v3Node(nil))
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	got := out + errOut
 	if err != nil {
 		t.Fatalf("a managed project's agent session did not publish the policy node (%v):\n%s", err, got)
@@ -1851,7 +2049,7 @@ func TestUpdateManagedPolicyStageRefusesTheTypedLoosening(t *testing.T) {
 	// publish would raise what every run of the project is admitted by.
 	db.Set(projectpolicy.PathShared(), staleBudgetNodeAt(3))
 
-	got, err := updateRun(t, r, "update", "--yes")
+	got, err := updateRun(t, r, "update")
 	if err == nil {
 		t.Fatalf("a managed project's agent session published a looser node:\n%s", got)
 	}
@@ -1866,7 +2064,7 @@ func TestUpdateManagedPolicyStageRefusesTheTypedLoosening(t *testing.T) {
 	if !strings.Contains(line, managedmode.NotConverged) {
 		t.Errorf("the policy step is the user's in a sentence that is not the gate's: %s", line)
 	}
-	if !strings.Contains(line, "the step's confirmation class is Typed, which no plan gate admits (D1026)") {
+	if !strings.Contains(line, "the step is one no plan gate judges, whatever the document says (D1026)") {
 		t.Errorf("the refusal does not name the class rule that refused the node: %s", line)
 	}
 	if strings.Contains(line, initflow.AgentRefusal("CLAUDECODE")) {
@@ -1924,7 +2122,7 @@ func TestUpdateManagedPolicyStageRefusesTheAccountChoiceKeys(t *testing.T) {
 	r.setPlan(t, change("module.installation.google_service_account.scheduler", "create"))
 	db.Set(projectpolicy.PathShared(), staleBudgetNode())
 
-	got, err := updateRun(t, r, "update", "--yes")
+	got, err := updateRun(t, r, "update")
 	if err == nil {
 		t.Fatalf("a managed project's agent session set the accounts the review credential goes out on:\n%s", got)
 	}
@@ -1936,7 +2134,7 @@ func TestUpdateManagedPolicyStageRefusesTheAccountChoiceKeys(t *testing.T) {
 	if !strings.Contains(line, managedmode.NotConverged) {
 		t.Errorf("the policy step is the user's in a sentence that is not the gate's: %s", line)
 	}
-	if !strings.Contains(line, "the step's confirmation class is Typed, which no plan gate admits (D1026)") {
+	if !strings.Contains(line, "the step is one no plan gate judges, whatever the document says (D1026)") {
 		t.Errorf("the refusal does not name the class rule that refused the node: %s", line)
 	}
 	account, stages := accountMembersOn(t, db)
@@ -1974,7 +2172,7 @@ func TestUpdateManagedRefusesTheFirstPolicyPublish(t *testing.T) {
 	// the catalog check job needs this installation's base image to run from.
 	r.appendConfig(t, catalogConfigYAML+"base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc}\n")
 
-	got, err := updateRun(t, r, "update", "--yes")
+	got, err := updateRun(t, r, "update")
 	if err == nil {
 		t.Fatalf("a managed project's agent session wrote the first policy node:\n%s", got)
 	}
@@ -2068,7 +2266,7 @@ func TestUpdateManagedWorkspaceStageUnderTheGate(t *testing.T) {
 		"cap": map[string]any{"monthly_micros": 25_000_000},
 	})
 
-	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	out, errOut, err := executeStdin(t, "", "update")
 	got := out + errOut
 	if err != nil {
 		t.Fatalf("a managed project's agent session did not publish the workspace node (%v):\n%s", err, got)
@@ -2104,11 +2302,11 @@ func TestUpdateManagedWorkspaceStageUnderTheGate(t *testing.T) {
 
 // TestWorkspaceMemberPublishRefusesInAnAgentSession is the fence itself, one
 // step below the run that test above drives: a publish that ADMITS something to
-// the group is refused in a coding agent's session whatever the class says of
-// it (D1555, the same fence as D1552's), and what refuses it is the widening
-// (p.widens) read beside the session's own marker rather than the class typed
-// over it. The refusal is classified GateRefusedClass, because the document WAS
-// judged and it is the step's class that no plan gate admits (D1026), and what
+// the group is refused in a coding agent's session whatever the document says
+// of it (D1555, the same fence as D1552's), and what refuses it is the widening
+// (p.widens) read beside the session's own marker rather than any verdict about
+// the node. The refusal is classified GateRefusedUnjudged, because the step is
+// one no plan gate judges whatever the document looks like (D1026), and what
 // stands beside it is the stage's own command (Left) — the one thing an agent's
 // report to its owner can act on.
 //
@@ -2133,14 +2331,14 @@ func TestWorkspaceMemberPublishRefusesInAnAgentSession(t *testing.T) {
 	if !errors.As(err, &ge) {
 		t.Fatalf("the refusal is %v, want the gate's own sentence", err)
 	}
-	if ge.Refusal != initflow.GateRefusedClass {
-		t.Errorf("the refusal is classified %v, want %v: the document was judged and it is the class no plan gate admits, so what is left for the owner is the step's own command and not an issue about a plan", ge.Refusal, initflow.GateRefusedClass)
+	if ge.Refusal != initflow.GateRefusedUnjudged {
+		t.Errorf("the refusal is classified %v, want %v: the step is one no plan gate judges, so what is left for the owner is the step's own command and not an issue about a plan", ge.Refusal, initflow.GateRefusedUnjudged)
 	}
 	if !strings.Contains(ge.Reason, managedmode.NotConverged) {
 		t.Errorf("the refusal does not carry the gate's sentence: %q", ge.Reason)
 	}
-	if !strings.Contains(ge.Reason, "Typed") {
-		t.Errorf("the refusal does not name the class that refused the node: %q", ge.Reason)
+	if !strings.Contains(ge.Reason, "no plan gate judges") {
+		t.Errorf("the refusal does not name what refused the node: %q", ge.Reason)
 	}
 	if got, want := s.Left().Text, selfCommand()+" update"; got != want {
 		t.Errorf("the refusal's own command is %q, want %q: the owner runs this themselves", got, want)
@@ -2154,12 +2352,11 @@ func TestWorkspaceMemberPublishRefusesInAnAgentSession(t *testing.T) {
 
 // And the one write the gate never admits: a publish that puts a project in the
 // group the published node does not carry. The record decides who is in the
-// workspace, so the step is initflow.Typed (D846) and D1026 admits no plan
-// gate's answer for a Typed step, whatever the mark says: the node keeps what
-// it had, nothing is written, and nothing is recorded about it. The session
-// reads the gate's sentence and not the session's own — this step's document
-// WAS admitted by the rules the stage answered, so what refused it is the class
-// and not the fact that a coding agent is running it.
+// workspace, so the step is one no plan gate judges (D846's widening read as
+// D1026's unjudged step, whatever the mark says): the node keeps what it had,
+// nothing is written, and nothing is recorded about it. The session reads the
+// gate's sentence and not the session's own — the step's own widening is what
+// refused it, and not the fact that a coding agent is running it.
 func TestUpdateManagedWorkspaceStageRefusesTheTypedWidening(t *testing.T) {
 	r, db := updateBudgetRig(t)
 	r.managedRuns(t, initProjectName, initProject)
@@ -2177,7 +2374,7 @@ func TestUpdateManagedWorkspaceStageRefusesTheTypedWidening(t *testing.T) {
 		"cap":     map[string]any{"monthly_micros": 25_000_000},
 	})
 
-	got, err := updateRun(t, r, "update", "--yes")
+	got, err := updateRun(t, r, "update")
 	if err == nil {
 		t.Fatalf("a managed project's agent session admitted a member to the workspace:\n%s", got)
 	}
@@ -2189,7 +2386,7 @@ func TestUpdateManagedWorkspaceStageRefusesTheTypedWidening(t *testing.T) {
 	if !strings.Contains(line, managedmode.NotConverged) {
 		t.Errorf("the workspace step is the user's in a sentence that is not the gate's: %s", line)
 	}
-	if !strings.Contains(line, "the step's confirmation class is Typed, which no plan gate admits (D1026)") {
+	if !strings.Contains(line, "the step is one no plan gate judges, whatever the document says (D1026)") {
 		t.Errorf("the refusal does not name the class rule that refused the node: %s", line)
 	}
 	if strings.Contains(line, initflow.AgentRefusal("CLAUDECODE")) {
@@ -2236,7 +2433,7 @@ func TestUpdateManagedRefusesTheFirstWorkspacePublish(t *testing.T) {
 	db.Set(projectpolicy.PathShared(), v3Node(nil))
 	r.appendConfig(t, wsOwnerTable+wsOwnerCap)
 
-	got, err := updateRun(t, r, "update", "--yes")
+	got, err := updateRun(t, r, "update")
 	if err == nil {
 		t.Fatalf("a managed project's agent session wrote the workspace's first record:\n%s", got)
 	}
@@ -2245,7 +2442,7 @@ func TestUpdateManagedRefusesTheFirstWorkspacePublish(t *testing.T) {
 		t.Fatalf("the run did not reach the workspace stage, so nothing here was judged:\n%s", got)
 	}
 	line := stepLineInLog(t, got, head)
-	if !strings.Contains(line, "the step's confirmation class is Typed, which no plan gate admits (D1026)") {
+	if !strings.Contains(line, "the step is one no plan gate judges, whatever the document says (D1026)") {
 		t.Errorf("the refusal does not name the class rule that refused the first record: %s", line)
 	}
 	if v := db.Value(projectpolicy.PathWorkspace(initProjectName)); v != nil {
@@ -2286,5 +2483,73 @@ func TestUpdateManagedWorkspaceStageRefusesAnEmptyNode(t *testing.T) {
 	}
 	for _, rec := range audits(t, r) {
 		t.Errorf("a step that was never judged left a record: %+v", rec)
+	}
+}
+
+// TestUpdateFirebaseProjectKeepsItsOwnConfirmationOnAManagedProject: what a
+// managed project's member actually meets when their own `fugaro update` plans
+// the workspace grant. W7's Terraform half binds the workspace's account to
+// firebasedatabase.instances.get in each member's own project, and the plan
+// that carries it is the FIREBASE root's — planned only by `fugaro update
+// --firebase-project` (the Firebase stage skips without the flag). That flag
+// shapes the installation rather than converging it as it is, and a shaped run
+// keeps no gate at all (initRun.gateable), so:
+//
+//   - the managed cover never judges this plan, on a world whose marks say the
+//     project is managed: the run writes no audit record, and what refuses the
+//     step is not the gate's sentence. TestTheWorkspaceBindingIsNotCovered
+//     (internal/infra/tf) holds the cover's answer to a plan it IS handed; this
+//     holds that no run hands it this one.
+//   - the step is left to the member's OWNER and not applied: the binding is
+//     the Firebase stage's own typed confirmation's to apply, once per member,
+//     at the owner's own terminal, which a coding agent's session cannot give.
+func TestUpdateFirebaseProjectKeepsItsOwnConfirmationOnAManagedProject(t *testing.T) {
+	// The world the other managed tests use — the run's marks say managed, so a
+	// gate that judged anything would have written a record — with the Firebase
+	// project's own clients, because --firebase-project is what plans the root
+	// the binding lives in.
+	r := newFBRigFor(t, initProject)
+	r.managedRuns(t, initProjectName, initProject)
+	t.Setenv("CLAUDECODE", "1")
+	isolateGateCredentials(t)
+	updating(t, r.initRig)
+	r.appendConfig(t, wsPin)
+	r.setPlan(t, change("module.installation.google_service_account.scheduler", "create"))
+	r.setPlanAt(t, "firebase", change("module.firebase.google_project_iam_member.workspace_read[0]", "create"))
+
+	got, err := updateRun(t, r.initRig, "update", "--firebase-project", initProject)
+	if err == nil {
+		t.Fatalf("a coding agent's session ran the Firebase step that binds the workspace's account:\n%s", got)
+	}
+	// The flag is the whole of the cause, and it is asserted rather than told:
+	// the same options without it are gateable, in this very world.
+	shaped := &initRun{o: &initOptions{door: updateDoor.name, firebase: initProject}}
+	if shaped.gateable() {
+		t.Errorf("a run whose own flag shapes the installation is gateable: the plan it writes would be judged by a gate that must never judge what an argument just wrote")
+	}
+	if plain := (&initRun{o: &initOptions{door: updateDoor.name}}); !plain.gateable() {
+		t.Errorf("a plain update is not gateable, so this test's world is not the managed one its other assertions rest on")
+	}
+	// No step of the run was judged, so the cover's refusal is not what stopped
+	// it.
+	if recs := audits(t, r.initRig); len(recs) != 0 {
+		t.Errorf("the run wrote %d audit record(s), want none: the run that plans this binding has no gate, so the managed cover never saw the plan and did not refuse it", len(recs))
+	}
+	// The coding agent's own refusal, the command the owner is left with, and no
+	// apply of that root: the step is the member's owner's to take. The step's
+	// line in the run's list is truncated (the whole sentence is in the log the
+	// line prints the path of), so what is matched is the opening clause that
+	// line always carries — initflow.AgentRefusal's first words.
+	if !strings.Contains(got, "a coding agent's session is present") {
+		t.Errorf("the session does not read the refusal a step it cannot confirm is left with:\n%s", got)
+	}
+	if strings.Contains(got, "no confirmation reaches past a refusal (D1012)") {
+		t.Errorf("the run reads the gate's own refusal of a plan, so this plan was judged after all:\n%s", got)
+	}
+	if !strings.Contains(got, "fugaro update --firebase-project "+initProject) {
+		t.Errorf("the owner is not left the command that applies the step:\n%s", got)
+	}
+	if applies := r.ran(t, "apply"); len(applies) != 0 {
+		t.Errorf("%d terraform apply(s) ran, want none: this run applied a step a coding agent's session may not confirm", len(applies))
 	}
 }

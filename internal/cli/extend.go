@@ -4,23 +4,30 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The seams one binary ships with (design ee-boundary-moves.md §5). One
 // binary carries the released CLI and the commands the owner moves out of the
 // core, and the moved code reaches this tree through this file alone: a
-// registry that adds commands, and a hook for the one call the launch makes
-// into the coordinator's record. Everything here is inert — with nothing
-// registered and nothing set, the tree and every launch are exactly what the
-// core builds. `ee/register` is what fills them (§5.5), and no core caller
-// sets either.
+// registry that adds commands, a hook for the one call the launch makes into
+// the coordinator's record, and the launch planner model A/B testing asks
+// before a first run's task is written. Everything here is inert — with
+// nothing registered and nothing set, the tree and every launch are exactly
+// what the core builds. `ee/register` is what fills them (§5.5), and no core
+// caller sets any of them.
 
 // RegisterCommand adds a command to the root tree. One binary ships (T21), so
 // a command the owner moves out of the core joins the tree the released CLI
@@ -142,14 +149,243 @@ func declareLaunch(ctx context.Context, env *cloudEnv, slug string, spec *task.S
 	return d(ctx, &Cloud{env: env}, slug, spec)
 }
 
-// paidCommandNames are the command names whose code this build does not carry:
-// the commands the owner moves out of the core, and the ones that never lived
-// there — `graph` is ee/'s from the start (D1362). A core build shows a stub
-// for each name it does not hold rather than leaving the name unknown to cobra,
+// PlannedRun is a first run a planner is asked about, before its task is
+// written: the launch's own resolved facts, so the decision to sample a pair
+// is made on the same commit and the same task the run would start with
+// (D558, D571). Everything a planner needs that is not here is in the task it
+// is handed — the project layer the run reads among it, whose own ab block is
+// D556's challenger list — or behind Cloud.
+type PlannedRun struct {
+	// Cloud is the launch's own environment, for the reads only the planner
+	// knows how to make (today's challenger records, the published policy).
+	Cloud *Cloud
+	// Slug is the repository's storage slug, Repo the repository itself.
+	Slug string
+	Repo string
+	// Commit is the commit the run is cut from: the ref resolved in this
+	// machine's checkout of the repository, the ref itself when it is already
+	// a full commit SHA, and empty where this machine holds no checkout that
+	// has it. A launch from outside one names a branch the launcher cannot
+	// resolve, and a planner that needs the commit then resolves it itself.
+	Commit string
+	// Spec is the task as it would be launched, a copy: a planner that keeps
+	// or edits it changes nothing about the run.
+	Spec *task.Spec
+	// Chosen is whether the caller named the run id (--run-id). D558 samples
+	// the first runs of code tasks and never a launch whose id a person chose.
+	Chosen bool
+	// Config is the configuration the run will read (launchLevelsConfig): the
+	// repository's file at the ref when this machine holds a checkout of it,
+	// else the project layer the task carries resolved over the anchoring that
+	// layer applies to, and the empty configuration where there is neither.
+	Config *config.Config
+	// Policy is the policy this launch resolves — the launcher's own merge of
+	// the deployed ceiling, the default branch's fugaro.yaml, this
+	// repository's file at the ref and this launch's chain limits
+	// (chainLimitPolicyOf) — which is the merge a challenger's admission is
+	// judged by (D556). It is not the runner's whole bootstrap merge: a
+	// project that publishes a policy after this job's environment was
+	// deployed has the node's own keys applied there and not here, and the
+	// runner re-checks every challenger at bootstrap (A2.1). Providers and
+	// Prices are the routing table and the price table this launch resolves,
+	// both nil when there is none.
+	Policy    policy.Effective
+	Providers map[string]config.ModelProvider
+	Prices    *pricing.Table
+	// ServiceHeldKey is whether the credentials service holds this
+	// installation's provider key, so that the job it starts opens the
+	// provider keyless. It is the same switch that decides whether the job is
+	// handed the service's address (credentialsServiceLaunchEnv).
+	ServiceHeldKey bool
+}
+
+// Pair is what a planner answers about a launch: the pair it means to sample
+// — the champion's ab block and the challenger's task — or, with no
+// Challenger, the reason it sampled none (Skip). The champion's block is
+// written onto the task the launch was already building; the challenger's
+// task is read for the arm's own two facts — its run id and its ab block —
+// and the launcher starts it from the champion's launched task, so the arms
+// cannot drift apart (D555, D571).
+type Pair struct {
+	Champion   task.AB
+	Challenger *task.Spec
+	// Skip is why the planner sampled nothing, on a Pair it returns with no
+	// Challenger: one of its closed reasons (D556), which the launcher prints
+	// as its one skip line and carries in fugaro run --json. Empty is the
+	// answer with nothing to say — not eligible, or the rate's own roll said
+	// no — and a nil Pair says the same thing.
+	Skip string
+}
+
+// LaunchPlanner is the build's A/B planner: the one call a launch makes
+// before it samples a pair. An untagged build registers none, so its launches
+// sample nothing (D550): the model A/B feature is the Subscription Edition's,
+// and this hook is the MIT core's whole half of it. `ee/register/ab_launch.go`
+// is what installs the tagged build's planner.
+type LaunchPlanner func(ctx context.Context, run PlannedRun) (*Pair, error)
+
+// RegisterLaunchPlanner installs the build's launch planner. It refuses a
+// second call, so nothing can quietly replace what a tagged build installed
+// (§5.5), and it refuses nil: "sample nothing" is the absence of a
+// registration, not a planner that plans nothing.
+func RegisterLaunchPlanner(p LaunchPlanner) error {
+	if launchPlannerSet {
+		return errors.New("the launch planner is already set")
+	}
+	if p == nil {
+		return errors.New("the launch planner is nil")
+	}
+	launchPlanner, launchPlannerSet = p, true
+	return nil
+}
+
+// planning reports whether this build has a planner at all. The launch path
+// asks it first, so an untagged build's launch does none of the work a pair
+// would need — no price table, no credential read, no budget read — and
+// prints nothing of its own (D550).
+func planning() bool { return launchPlanner != nil }
+
+// planLaunch asks the build's planner whether this launch samples a pair,
+// handing it the launch's own resolved facts and the environment behind
+// Cloud. A build with no planner never reaches it.
+func planLaunch(ctx context.Context, env *cloudEnv, run PlannedRun) (*Pair, error) {
+	p := launchPlanner
+	if p == nil {
+		return nil, nil
+	}
+	run.Cloud = &Cloud{env: env}
+	return p(ctx, run)
+}
+
+// RecipeManifest is the build's manifest builder for one registered catalog
+// recipe: the objects a mode: evaluate launch leaves under its run's own prefix
+// for the recipe's registered step to read back. The pair a judge step judges
+// is decided here, on the launching machine, rather than by the step, which the
+// job's own grant keeps to a single prefix — the same division the report
+// manifest makes (digestManifest), and D550's "the plumbing is the core's, what
+// it holds is the build's".
+//
+// warn is the launch's own stderr, for the lines a builder has to say.
+type RecipeManifest func(ctx context.Context, run PlannedRun, warn io.Writer) ([]byte, error)
+
+// RegisterRecipeManifest installs the build's manifest builder for a catalog
+// recipe, by the recipe's own name. It refuses a name no registered catalog
+// recipe holds — a builder under a name nothing can launch is a manifest that
+// would never be written, and a name misspelled in ee/register would be silent
+// otherwise — and it refuses a second builder for one recipe, so nothing can
+// quietly replace what a tagged build installed (§5.5).
+func RegisterRecipeManifest(name string, b RecipeManifest) error {
+	if _, ok := recipe.CatalogText(name); !ok {
+		return fmt.Errorf("recipe %s is not a catalog recipe this build holds, and a manifest builder is registered under the recipe whose launches write it", name)
+	}
+	if b == nil {
+		return fmt.Errorf("registering the manifest builder for %s: it is nil", name)
+	}
+	if _, dup := recipeManifests[name]; dup {
+		return fmt.Errorf("registering the manifest builder for %s: it is already registered", name)
+	}
+	recipeManifests[name] = b
+	return nil
+}
+
+// writeRecipeManifest leaves the manifest a mode: evaluate launch's recipe
+// builder answers, under the run's own prefix, before its task exists. Nothing
+// is written for a launch of any other recipe, so the object stays absent the
+// way an older release left it, and a launch whose builder refuses starts
+// nothing and leaves nothing (§4 step 1 of the run design, as --attach does).
+//
+// The task is handed to the builder as a copy, through plannedRun: a builder
+// judges the launch on exactly the facts the run will start with, and it cannot
+// change the run by editing what it was handed. The size cap is the reader's
+// own (runstore.MaxRecordBytes): a manifest past it could be written here and
+// never read back by the step it was written for.
+//
+// Only a launch whose task carries a catalog recipe can write one: every
+// registered builder is a catalog recipe's (RegisterRecipeManifest), and a
+// launch whose recipe the runner chooses from the repository's own
+// fugaro.yaml carries none in its task — the launcher would be guessing at a
+// name, and a manifest under the wrong recipe's name is read by nothing.
+func writeRecipeManifest(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec, s *runstore.Store, warn io.Writer) error {
+	if spec.Recipe == nil || spec.Recipe.Source != string(recipe.SourceCatalog) {
+		return nil
+	}
+	b, ok := recipeManifests[spec.Recipe.Name]
+	if !ok {
+		return nil
+	}
+	run, why := plannedRun(ctx, env, o, slug, spec)
+	if why != "" {
+		return userErr("recipe %s needs the manifest its launch writes, but %s", spec.Recipe.Name, why)
+	}
+	run.Cloud = &Cloud{env: env}
+	body, err := b(ctx, run, warn)
+	if err != nil {
+		return err
+	}
+	if len(body) > runstore.MaxRecordBytes {
+		return userErr("recipe %s's manifest is %d bytes, over the %d the reader takes, so it would be written and never read", spec.Recipe.Name, len(body), runstore.MaxRecordBytes)
+	}
+	return s.PutFile(ctx, runstore.ManifestName, body, "application/json")
+}
+
+// paidCommand is one command name whose code this build does not carry — the
+// commands the owner moves out of the core, and the ones that never lived
+// there: `graph` (D1362) and `ab` (D570) are ee/'s from the start — with the
+// one thing that differs between such names.
+type paidCommand struct {
+	name string
+	// noStub is whether a core build says nothing about the name at all,
+	// leaving it to cobra's own "unknown command", rather than showing the
+	// stub below. It is set for a name a core build may not speak of, which
+	// is the one name that is itself the Subscription's subject: the stub's
+	// sentence carries the command's own name, so a stub for `licence` would
+	// be the licence notice D523 forbids a core build to print (F6: an
+	// untagged build has no licence command and never warns about a licence;
+	// the core never reads a key, D524).
+	noStub bool
+}
+
+// paidCommands are the command names whose code this build does not carry, in
+// the order a reader sees them. They are one list, and the two questions asked
+// of it are answered from it: which names the CLI answers to — what
+// PaidCommandNames answers, what the clidoc table's paid sections and the
+// plugin's own skill checks read — and which of them a core build shows a stub
+// for.
+var paidCommands = []paidCommand{
+	{name: "report"},
+	{name: "ab"},
+	{name: "coordinator"},
+	{name: "graph"},
+	{name: "licence", noStub: true},
+}
+
+// paidCommandNames are the names above, in the order they are written.
+func paidCommandNames() []string {
+	names := make([]string, 0, len(paidCommands))
+	for _, c := range paidCommands {
+		names = append(names, c.name)
+	}
+	return names
+}
+
+// stubCommandNames are the paid names a core build answers with newPaidStub:
+// every name above that a core build may speak of. A core build shows a stub
+// for a name it does not hold rather than leaving the name unknown to cobra,
 // whose "unknown command" would mislead a source builder and the app into
-// thinking the name was never part of the CLI (D522). A build whose edition is
-// ee gets no stub: applyExtensions says why.
-var paidCommandNames = []string{"report", "coordinator", "graph"}
+// thinking the name was never part of the CLI (D522). A paid name it may not
+// name at all — `licence`, whose absence from an untagged build is D524's and
+// F6's — is left out, and the untagged tree answers cobra's own "unknown
+// command" for it, exactly as it does for a name no build has. A build whose
+// edition is ee gets no stub for any of them: applyExtensions says why.
+func stubCommandNames() []string {
+	names := make([]string, 0, len(paidCommands))
+	for _, c := range paidCommands {
+		if !c.noStub {
+			names = append(names, c.name)
+		}
+	}
+	return names
+}
 
 // newPaidStub is the command a build shows for a paid name it carries no code
 // for. It refuses, non-zero, with the one message D522 fixes, and it carries
@@ -183,7 +419,7 @@ func applyExtensions(root *cobra.Command) {
 	for _, name := range names {
 		root.AddCommand(registrations[name]())
 	}
-	for _, name := range paidCommandNames {
+	for _, name := range stubCommandNames() {
 		if core.rootCommands[name] {
 			// The core command is the one that ships: its stub would take the
 			// name over rather than stand in for absent code. What counts is
@@ -287,4 +523,13 @@ var (
 	// record" (D535).
 	launchDeclarer    LaunchDeclarer
 	launchDeclarerSet bool
+	// launchPlanner is the build's A/B planner, and launchPlannerSet what
+	// makes RegisterLaunchPlanner refuse a second call. Nil is the untagged
+	// build's state, and it means "sample nothing" (D550).
+	launchPlanner    LaunchPlanner
+	launchPlannerSet bool
+	// recipeManifests are the build's manifest builders, by catalog recipe
+	// name. Empty is the untagged build's state, and it means "no launch writes
+	// a manifest" (D550).
+	recipeManifests = map[string]RecipeManifest{}
 )

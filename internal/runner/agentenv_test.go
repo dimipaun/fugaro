@@ -226,6 +226,184 @@ func TestManagedSettingsDenyBinaryReadsInReviewStages(t *testing.T) {
 	}
 }
 
+// TestTextOnlyCoderIsDeniedBinaryReads: a stage whose own model is priced
+// without an image rate is denied a Read of every image kind, exactly as a
+// review stage is. The gateway refuses a request carrying an image for such a
+// model (internal/gateway/forward.go), and Claude Code puts what a Read
+// returned into the next Messages body as a base64 image block, so one Read
+// of a golden PNG ends the stage — the failure the issue reports, at
+// `implement` rather than at `review` (D2014). The rule is a permission and
+// not the brief's sentence, for the reason settings.go's own comment gives
+// about the review path: the coder runs with --dangerously-skip-permissions
+// and a full Read tool, and a prompt is not a permission.
+//
+// Mutation (a constant denyBinaries=false in agent.DenyRules): the implement
+// and fix stages carry the web tools alone and this test fails.
+func TestTextOnlyCoderIsDeniedBinaryReads(t *testing.T) {
+	g := providerRun(t, providerPinned(t), "enforce", "50", nil, "acme/app")
+	if m, ok := g.deps.Spend.Prices.Lookup(deepseek); !ok || m.ImageTokens != 0 {
+		t.Fatalf("the coder's price row is %+v (found %v), want one with no image rate", m, ok)
+	}
+	var denies [][]string
+	read := func(inner step) step {
+		return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+			_, deny, _ := settingsEnv(t, g.harness)
+			denies = append(denies, deny)
+			return inner(t, ctx, req)
+		}
+	}
+	rec, err := g.run(t, read(implement("feature")), read(review("changes", 1)), read(idle), read(review("ship", 0)))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	names := stageNames(rec)
+	if !eq(names, "implement", "review", "fix", "review") || len(denies) != len(names) {
+		t.Fatalf("stages = %v, with %d settings read", names, len(denies))
+	}
+	for i, name := range names {
+		for _, ext := range agent.ImageReadExtensions() {
+			if rule := "Read(**/*." + ext + ")"; !slices.Contains(denies[i], rule) {
+				t.Errorf("stage %s: %s is not denied: %v", name, rule, denies[i])
+			}
+		}
+	}
+}
+
+// TestReviewStageKeepsItsDenyList: a review stage is denied the image reads
+// whatever its own model's price row says. That half of the list was never
+// about the model — the built review input names a binary file with its size
+// and never attaches it (reviewinput.go's binaryRule) — so the reviewer of a
+// run that has an image rate still must not Read the PNG it could send.
+// D2014's rule is added to this list, never in place of it: the review
+// stage's settings carry the web tools and one Read rule per image kind and
+// nothing else.
+func TestReviewStageKeepsItsDenyList(t *testing.T) {
+	g := newGW(t, pinnedConfig(t), "observe", "")
+	if m, ok := g.deps.Spend.Prices.Lookup(opus); !ok || m.ImageTokens == 0 {
+		t.Fatalf("the reviewer's price row is %+v (found %v), want one with an image rate", m, ok)
+	}
+	var denies [][]string
+	read := func(inner step) step {
+		return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+			_, deny, _ := settingsEnv(t, g.harness)
+			denies = append(denies, deny)
+			return inner(t, ctx, req)
+		}
+	}
+	rec, err := g.run(t, read(implement("feature")), read(review("changes", 1)), read(idle), read(review("ship", 0)))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	names := stageNames(rec)
+	if !eq(names, "implement", "review", "fix", "review") || len(denies) != len(names) {
+		t.Fatalf("stages = %v, with %d settings read", names, len(denies))
+	}
+	for i, name := range names {
+		want := name == "review"
+		for _, ext := range agent.ImageReadExtensions() {
+			rule := "Read(**/*." + ext + ")"
+			if got := slices.Contains(denies[i], rule); got != want {
+				t.Errorf("stage %s: %s is denied = %v, want %v: %v", name, rule, got, want, denies[i])
+			}
+		}
+		for _, rule := range denies[i] {
+			if !strings.HasPrefix(rule, "Read(") && !slices.Contains([]string{"WebSearch", "WebFetch"}, rule) {
+				t.Errorf("stage %s: unexpected rule %q: %v", name, rule, denies[i])
+			}
+		}
+	}
+}
+
+// TestClaudeCoderKeepsItsTools: a coder whose own price row has an image rate
+// gains no deny rule at all (D2016). It can send what it reads, so the read
+// is not the stage's death, and the web tools it already had are the whole of
+// its list.
+func TestClaudeCoderKeepsItsTools(t *testing.T) {
+	g := newGW(t, gwConfig(t, "  first_line_review: off\n"), "observe", "")
+	if m, ok := g.deps.Spend.Prices.Lookup(sonnet); !ok || m.ImageTokens == 0 {
+		t.Fatalf("the coder's price row is %+v (found %v), want one with an image rate", m, ok)
+	}
+	var denies [][]string
+	read := func(inner step) step {
+		return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+			_, deny, _ := settingsEnv(t, g.harness)
+			denies = append(denies, deny)
+			return inner(t, ctx, req)
+		}
+	}
+	rec, err := g.run(t, read(implement("feature")), read(review("changes", 1)), read(idle), read(review("ship", 0)))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	names := stageNames(rec)
+	if !eq(names, "implement", "review", "fix", "review") || len(denies) != len(names) {
+		t.Fatalf("stages = %v, with %d settings read", names, len(denies))
+	}
+	for i, name := range names {
+		if name == "review" {
+			continue
+		}
+		got := slices.Clone(denies[i])
+		slices.Sort(got)
+		if !slices.Equal(got, []string{"WebFetch", "WebSearch"}) {
+			t.Errorf("stage %s: the settings deny %v, want the web tools alone", name, denies[i])
+		}
+	}
+}
+
+// TestTextOnlyCoderWithNoGatewayKeepsItsImageReads: a run whose calls reach no
+// gateway refuses nothing, denies nothing and must say nothing. It writes no
+// managed settings file at all (writeManagedSettings' first rule), so the
+// coder runs under no deny list, and the brief it is handed carries no image
+// rule either: a coder told it is denied a read it can make, and pointed at a
+// price its own installation has no gateway to charge, learns to read past the
+// rule rather than to keep it.
+//
+// The coder here is pinned to a Claude ID the run's own price table has no row
+// for — an ID newer than the shipped table, which is what a repository pins
+// before the table carries it, and one the gateway would serve and price at
+// the table's maximum (forward.go's modelFor) — so this is the case a rule
+// read off the price row alone would get wrong. The budget off builds no table
+// at all, and a provider-served coder is refused at bootstrap without the
+// gateway, so this is the shape the case really has.
+//
+// Mutation (denyBinaryReads' price-row answer without its gatewayOn): the
+// implement stage's brief gains the rule and this test fails.
+func TestTextOnlyCoderWithNoGatewayKeepsItsImageReads(t *testing.T) {
+	const coder = "claude-opus-6"
+	g := newGW(t, strings.Replace(pinnedConfig(t), "coder: "+sonnet, "coder: "+coder, 1), "off", "")
+	if g.deps.Spend.Prices != nil {
+		t.Fatalf("the budget-off run built a price table: %+v", g.deps.Spend.Prices)
+	}
+	if _, ok := pricing.Embedded().Lookup(coder); ok {
+		t.Fatalf("%s has a price row: this test is about a model the run's own table does not carry", coder)
+	}
+	h := g.harness
+	var under []bool
+	read := func(inner step) step {
+		return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+			_, err := os.Stat(h.deps.ManagedSettingsPath)
+			under = append(under, err == nil)
+			return inner(t, ctx, req)
+		}
+	}
+	rec, err := h.run(t, read(implement("feature")), read(review("ship", 0)))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if len(under) != 2 || len(h.agent.calls) != 2 {
+		t.Fatalf("%d settings reads for %d agent calls, want implement and review", len(under), len(h.agent.calls))
+	}
+	for i, file := range under {
+		if file {
+			t.Errorf("call %d ran under a managed settings file, in a run whose calls reach no gateway", i)
+		}
+	}
+	if sys := h.agent.calls[0].AppendSystemPrompt; strings.Contains(sys, "Never read an image") || strings.Contains(sys, "*.png") {
+		t.Errorf("the coder's brief claims an image read is denied:\n%s", sys)
+	}
+}
+
 func TestGatewayRunKeepsRealKeyFromAgent(t *testing.T) {
 	g := newGW(t, gwConfig(t, ""), "observe", "")
 	h := g.harness

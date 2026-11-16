@@ -179,8 +179,7 @@ its members with the list on the command line: it is the whole list every time,
 so a member you leave out is dropped.
 
 Run it at your own terminal: a pool decides where a project's calls may be
-spent and whose key they may carry, so a coding agent's session is refused,
---yes included.`,
+spent and whose key they may carry, so a coding agent's session is refused.`,
 		Args: cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAccountsPoolAdd(cmd, args[0], args[1:], o)
@@ -188,7 +187,6 @@ spent and whose key they may carry, so a coding agent's session is refused,
 	}
 	f := cmd.Flags()
 	f.StringVar(&o.strategy, "strategy", "", "how the pool walks its members: failover (the default: try them in order) or round-robin (share the load). Left out, a pool that exists keeps the strategy it has")
-	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
 	return cmd
 }
 
@@ -198,6 +196,9 @@ spent and whose key they may carry, so a coding agent's session is refused,
 func runAccountsPoolAdd(cmd *cobra.Command, name string, members []string, o accountsPoolWriteOptions) error {
 	sel, lc, err := settingsSelection()
 	if err != nil {
+		return err
+	}
+	if err := accessGateProject(cmd.Context(), lc, nil, "nothing was written", "declaring a model pool"); err != nil {
 		return err
 	}
 	// The pool this command would write, judged by the block's own rule
@@ -278,7 +279,7 @@ func newAccountsPoolRmCmd() *cobra.Command {
 		Use:   "rm NAME",
 		Short: "Remove a pool from this project's config",
 		Long: `Remove pools.<NAME> from this project's config: the pool goes, and a craft whose
-access names it is refused rather than left pointing at nothing.
+access names it is cleared with it rather than left pointing at nothing.
 
 It removes the pool from the installation's config only. A repository that
 selected the pool keeps its own file untouched, and this release's fugaro update
@@ -287,11 +288,10 @@ this config's pools, which is MC4's job, so the removal withdraws nothing from
 the node.
 
 Run it at your own terminal: a pool decides where a project's calls may be
-spent, so a coding agent's session is refused, --yes included.`,
+spent, so a coding agent's session is refused.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runAccountsPoolRm(cmd, args[0], o) },
 	}
-	cmd.Flags().BoolVar(&o.yes, "yes", false, "confirm the removal without a prompt")
 	return cmd
 }
 
@@ -300,20 +300,22 @@ func runAccountsPoolRm(cmd *cobra.Command, name string, o accountsPoolWriteOptio
 	if err != nil {
 		return err
 	}
+	if err := accessGateProject(cmd.Context(), lc, nil, "nothing was written", "removing a model pool"); err != nil {
+		return err
+	}
 	pool, ok := accountsPoolOf(lc, name)
 	if !ok {
 		return userErr("pools.%s is not defined in %s, which defines %s: nothing was written",
 			pluginwire.Printable(name), sel.Path, accountsPoolNames(lc.Pools))
 	}
-	// A craft that names the pool is refused rather than left pointing at
-	// nothing: removing it would leave a config whose access resolves to no
-	// credential at all, and the sentence names the craft to point elsewhere.
-	for _, craft := range config.CraftNames {
-		if access := lc.Crafts.Of(craft).Access; access != "" && access == name {
-			return userErr("crafts.%s.access names pools.%s, so removing it would leave that craft with nothing to spend: point crafts.%s at another credential or pool first, then run this again; nothing was written",
-				craft, pluginwire.Printable(name), craft)
-		}
-	}
+	// A craft whose access names the pool is cleared with it, on the same bytes:
+	// the pool is going, so an access left behind resolves to no credential at
+	// all, and the key is one no command of this release writes — the migration
+	// is its only writer (init_craft_migrate.go) and the generic path refuses a
+	// family-owned row (settings_set.go) — so a refusal would name a step the
+	// owner cannot take. It is the treatment `accounts rm` gives the crafts that
+	// named the typed entry it removes (craftsNaming).
+	cleared := craftsNaming(lc, name)
 	old, err := settingsReadDocument(settingsTarget{kind: settingsDocLocal, path: sel.Path})
 	if err != nil {
 		return err
@@ -323,10 +325,21 @@ func runAccountsPoolRm(cmd *cobra.Command, name string, o accountsPoolWriteOptio
 	if err != nil {
 		return userErr("pools.%s: %v", pluginwire.Printable(name), err)
 	}
+	for _, craft := range cleared {
+		n, err := yamledit.RemoveKeyWithOptions(next, []string{"crafts", craft, "access"},
+			yamledit.RemoveOptions{DropEmptyParents: true})
+		if err != nil {
+			return userErr("crafts.%s.access: %v", craft, err)
+		}
+		next = n
+	}
 	if _, err := localcfg.Parse(next); err != nil {
 		return userErr("the local config this would write does not read back: %v", err)
 	}
 	what := fmt.Sprintf("remove pools.%s (members %s)", pluginwire.Printable(name), strings.Join(pool.Members, ", "))
+	if len(cleared) > 0 {
+		what += fmt.Sprintf("; clear %s, which named it and would have nothing to spend without it", craftAccessKeys(cleared))
+	}
 	command := "fugaro accounts pool rm " + quoteWord(name)
 	return applySettingsEdit(cmd, lc, settingsEdit{
 		Path:    sel.Path,

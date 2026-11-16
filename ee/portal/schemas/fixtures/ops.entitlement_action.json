@@ -1,0 +1,7 @@
+{
+  "entitlement_id": "ent_1",
+  "action": "seats",
+  "seats": 5,
+  "ends_at": null,
+  "reason": null
+}

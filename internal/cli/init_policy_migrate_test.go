@@ -13,7 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -22,10 +22,9 @@ import (
 )
 
 // init_policy_migrate_test.go is the policy node's migration in place
-// (init_policy_migrate.go): the stage `fugaro update` runs and the step
-// `fugaro upgrade` runs, driven here directly — the two front doors' own
-// tests are update_test.go's and upgrade_test.go's, and what this file is
-// about is what either of them does to the node.
+// (init_policy_migrate.go): the policy stage `fugaro update` runs, driven here
+// directly — the door's own tests are update_test.go's, and what this file is
+// about is what the door does to the node.
 //
 // Every test is hermetic: the gcpfake RTDB of the fixture, the fixture's own
 // local config, and no cloud.
@@ -75,7 +74,7 @@ func (h *migrationRig) apply(t *testing.T, yes bool) (string, error) {
 // managedGate makes the rig's run one whose project reads as managed: the
 // answer initGate.underway gives, which is the reading the rest of init makes
 // for "is this project managed" and the one the in-flight guard takes (the
-// update door passes it; `fugaro upgrade` has no gate and passes false).
+// update door passes it; a caller under no gate passes false).
 func (h *migrationRig) managedGate() *migrationRig {
 	h.s.e.r.gate = &initGate{managed: true}
 	return h
@@ -129,6 +128,33 @@ func v3Node(extra map[string]any) map[string]any {
 	return n
 }
 
+// refusedOlderVersion is a policy version this binary's strict reader refuses
+// (ReadsVersion) while the migration chain still carries it (Migratable): the
+// node an installation holds between the binary upgrade and `fugaro update`,
+// which is the state every fixture about a carried node has to name.
+//
+// It is computed from the chain's own tables rather than counted back from
+// Version, because the count moved under the fixtures twice: each shape-free
+// step (migrate.go) is a version this reader answers with its own node, so
+// `Version - 1` and `Version - 2` stop meaning "a node this reader refuses" the
+// moment the version before them is shape-free, and a fixture spelling them
+// passes through the read it was written to fail — the test then fails
+// somewhere else, in the gate that never heard of the node.
+func refusedOlderVersion(t *testing.T) int {
+	t.Helper()
+	for v := projectpolicy.Version - 1; v >= 1; v-- {
+		if projectpolicy.ReadsVersion(v) {
+			continue
+		}
+		if !projectpolicy.Migratable(v) {
+			t.Fatalf("policy version %d is refused by this reader and no migration step reaches it, so no fixture can be built from it: this binary's Version is %d", v, projectpolicy.Version)
+		}
+		return v
+	}
+	t.Fatalf("every policy version below this binary's %d is read as this reader's own, so no older node is refused: check projectpolicy's shape-free steps", projectpolicy.Version)
+	return 0
+}
+
 // v3NodeMountingTheBitbucketToken is a version-3 node whose only profile
 // mounts the project's Bitbucket credential: the node whose migration cannot
 // state the block that credential is bounded by, and so the node that needs
@@ -159,7 +185,7 @@ func TestUpdateMigratesAV3PolicyNodeAfterConfirmation(t *testing.T) {
 	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
 		t.Fatalf("the node is version %d, want %d", got, projectpolicy.Version)
 	}
-	if !strings.Contains(out, "published (version 3) and rewritten in place as version 4") {
+	if !strings.Contains(out, fmt.Sprintf("published (version 3) and rewritten in place as version %d", projectpolicy.Version)) {
 		t.Errorf("the confirmation diff does not say what it rewrote and as what:\n%s", out)
 	}
 	if !strings.Contains(out, "⚠ CONFIRM (project aurora)") {
@@ -649,6 +675,95 @@ func TestUpdatePublishesTheFirstPolicyNodeForTheTriageSwitch(t *testing.T) {
 	}
 }
 
+// TestUpdatePublishesTheFirstPolicyNodeForTheSubscriptionSwitch is the same
+// member class once more for the pools' subscription switch (F22, D1622,
+// D1636): the switch is read off the published node and nowhere else, and
+// while it is off a pool of two or more subscriptions serves nothing, so a
+// project whose owner had turned it on — `settings set subscription_spread
+// true` at their own terminal — and which never published a node would leave
+// the owner's own act in a file no run reads. The first publish of the one
+// command is what carries it (the HARD RULE), and the value here is the true
+// the spread is turned on with.
+func TestUpdatePublishesTheFirstPolicyNodeForTheSubscriptionSwitch(t *testing.T) {
+	f := newProjectFixture(t, "subscription_spread: true\n")
+	h := newMigrationRig(t, f, &initOptions{})
+
+	st, err := h.s.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo {
+		t.Fatalf("the check says %s %q, want the first publish left to do", st.State, st.Detail)
+	}
+	if !strings.Contains(st.Detail, "the pools' subscription switch") {
+		t.Errorf("the check does not name the switch this config states: %q", st.Detail)
+	}
+	plan, err := h.s.Plan(context.Background(), initflow.Env{Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.NothingToDo {
+		t.Errorf("the plan leaves the first publish out: %+v", plan)
+	}
+
+	fakeTerminal(t)
+	h.cmd.SetIn(strings.NewReader("aurora\n"))
+	out, err := h.apply(t, false)
+	if err != nil {
+		t.Fatalf("the first publish was refused: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "subscription_spread") {
+		t.Errorf("the diff the operator confirmed does not name the switch it creates the node with:\n%s", out)
+	}
+	p := publishedPolicy(t, f)
+	if p.SubscriptionSpread == nil || !*p.SubscriptionSpread {
+		t.Fatalf("the published node carries subscription_spread %v, want the true the config writes", p.SubscriptionSpread)
+	}
+}
+
+// TestUpdatePublishesTheFirstPolicyNodeForTheCloneURLs is the same member class
+// for the block the local config states (SD5, D842): the URL a run clones from
+// is read off the published node — no job's environment carries it — so a
+// project whose owner had written the block and which had never published a
+// node had left where its runs clone from in a file no run reads. The file is
+// the block's source from this release on, so a first publish that skipped it
+// is the one state where a written block reaches no run at all.
+func TestUpdatePublishesTheFirstPolicyNodeForTheCloneURLs(t *testing.T) {
+	f := newProjectFixture(t, "clone_urls:\n  github/acme/app: https://github.com/acme/app\n")
+	h := newMigrationRig(t, f, &initOptions{})
+
+	st, err := h.s.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo {
+		t.Fatalf("the check says %s %q, want the first publish left to do", st.State, st.Detail)
+	}
+	if !strings.Contains(st.Detail, "the clone URLs") || strings.Contains(st.Detail, "the bake switch") {
+		t.Errorf("the check names a member this config does not state: %q", st.Detail)
+	}
+	plan, err := h.s.Plan(context.Background(), initflow.Env{Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.NothingToDo {
+		t.Errorf("the plan leaves the first publish out: %+v", plan)
+	}
+
+	fakeTerminal(t)
+	h.cmd.SetIn(strings.NewReader("aurora\n"))
+	out, err := h.apply(t, false)
+	if err != nil {
+		t.Fatalf("the first publish was refused: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "this publish creates the node") || !strings.Contains(out, "clone_urls") {
+		t.Errorf("the diff the operator confirmed does not name the block it creates the node with:\n%s", out)
+	}
+	if got := publishedPolicy(t, f).CloneURL("github/acme/app"); got != "https://github.com/acme/app" {
+		t.Errorf("the published node carries %q for github/acme/app, want the URL the config states", got)
+	}
+}
+
 // catalogConfigWithNoRepos rewrites the fixture's config so the project lists no
 // repository while the catalog the fixture's extra block states stays: a first
 // publish from it would write a node whose allow-list admits nothing, which is
@@ -673,10 +788,10 @@ func setCatalogConfigWithNoRepos(t *testing.T, f *projectFixture) {
 // TestUpdatePolicyFirstPublishIsRefusedWithoutAConfirmation: the node the stage
 // now writes when nothing is published is the one every run of the project is
 // admitted by from here on, chosen where none was, so it is the operator's own
-// write and not one a session makes: --yes does not stand in for the project's
-// name, and a session with no terminal is refused — the confirmation D846
-// reserves for the boundary every run is admitted by, and the class a coding
-// agent's session never reaches under the managed gate (D1026).
+// write and not one a session makes: no flag stands in for the project's
+// name (T11 removed --yes), and a session with no terminal is refused — the
+// confirmation D846 reserves for the boundary every run is admitted by, and the
+// step a coding agent's session never reaches under the managed gate (D1026).
 //
 // A config that lists no repository is the publisher's own warning instead
 // (#1674): that node admits nothing, so every run of the project stops before
@@ -690,10 +805,12 @@ func TestUpdatePolicyFirstPublishIsRefusedWithoutAConfirmation(t *testing.T) {
 
 	out, err := h.apply(t, true)
 	if err == nil {
-		t.Fatalf("--yes published the project's first policy node with no terminal:\n%s", out)
+		t.Fatalf("a run with no confirmation published the project's first policy node with no terminal:\n%s", out)
 	}
-	if !strings.Contains(err.Error(), "does not stand in") {
-		t.Errorf("the refusal does not say that --yes is no stand-in: %v", err)
+	for _, want := range []string{"no flag stands in", "The project's own name is what confirms it"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
 	}
 	if v := f.db.Value(projectpolicy.PathShared()); v != nil {
 		t.Fatalf("the refused publish wrote a node: %v", v)
@@ -743,14 +860,16 @@ func TestUpdatePolicyMigrationLeavesAMalformedNodeUntouched(t *testing.T) {
 	}
 }
 
-// TestUpgradePolicyStepSurfacesRunsInFlight: `fugaro upgrade`'s own policy step
-// is the one door left that refuses a node write for the runs in flight, and it
-// is the door that is NOT the whole upgrade: the person there is in the middle
-// of something else and a node of theirs is being published, so the refusal
-// costs them nothing the HARD RULE promises them. `fugaro update` — the one
-// command the upgrade is — answers the same state with inflightQuiet and never
-// refuses (TestUpdatePolicyMigrationWritesUnderRunsInFlight).
-func TestUpgradePolicyStepSurfacesRunsInFlight(t *testing.T) {
+// TestTheRefusingInflightAnswerStopsTheWrite drives the refusal through the
+// answer no door passes any more (inflightAsk): `fugaro update` — the one
+// command the upgrade is — answers the runs in flight with inflightQuiet and
+// never refuses (TestUpdatePolicyMigrationWritesUnderRunsInFlight), and U4 of
+// docs/plugin-user-scope/implementation-plan.md deleted the second door that
+// passed this one. The answer is kept, and kept first, because it is the enum's
+// zero value: a door that forgot to pass one refuses the write rather than
+// making it, and of the two that is the safe side. This is what pins that the
+// value still refuses.
+func TestTheRefusingInflightAnswerStopsTheWrite(t *testing.T) {
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
 	f.db.Set("agents", map[string]any{"proj-1234": map[string]any{"run-1": map[string]any{"repo": "github/acme/app"}}})
@@ -763,9 +882,9 @@ func TestUpgradePolicyStepSurfacesRunsInFlight(t *testing.T) {
 	// --yes is the flag the in-flight refusal tells the operator to pass
 	// once they have read what the migration does, exactly as --delete
 	// does with it: without it, a run that read the node stops the write.
-	err = policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, false, h.s.e.r.conditions(), inflightAsk)
+	err = policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, false, false, h.s.e.r.conditions(), inflightAsk)
 	if err == nil {
-		t.Fatalf("a run in flight did not stop `fugaro upgrade`'s policy step:\n%s", h.out)
+		t.Fatalf("a run in flight did not stop the write:\n%s", h.out)
 	}
 	if !strings.Contains(err.Error(), "run(s) are in flight") || !strings.Contains(err.Error(), "fugaro runs ls") {
 		t.Errorf("the refusal is not the in-flight one: %v", err)
@@ -779,48 +898,6 @@ func TestUpgradePolicyStepSurfacesRunsInFlight(t *testing.T) {
 	}
 	if got := nodeVersionOn(t, f.db); got != 3 {
 		t.Errorf("the node moved to version %d while a run was in flight", got)
-	}
-}
-
-// TestUpgradePolicyStepRefusesTheWriteWhileARunIsInFlight drives the step
-// itself, not the constant: the refusal is the upgrade door's answer to the
-// runs in flight (upgrade.go's inflightAsk) and this is what pins it — flipping
-// that call site to inflightQuiet lets the migration through here, which is the
-// whole of the difference between the two doors. A test that called
-// policyMigrationConfirm with the constant would pass whatever the door passes.
-//
-// No --yes, and a terminal: the refusal is what stands in its place, and it is
-// asked before the typed confirmation a person would otherwise be given.
-func TestUpgradePolicyStepRefusesTheWriteWhileARunIsInFlight(t *testing.T) {
-	r := upgradeRigWithGitHubAppID(t)
-	db := gcpfake.NewRTDB(t)
-	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
-	db.Set(budget.PathProject, initProjectName)
-	db.Set(budget.PathMode, budget.ModeEnforce)
-	db.Set(budget.PathLimits, map[string]any{"maxReserveMicros": 5_000_000})
-	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5, rtdb_url: "+db.URL+", firebase_project: \""+initProject+"\" }\n")
-	db.SetRules([]byte(`{"rules":{".read":false}}`))
-	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
-	db.Set(projectpolicy.PathShared(), v3Node(nil))
-	db.Set("agents", map[string]any{initProjectName: map[string]any{"run-1": map[string]any{"repo": "acme/app"}}})
-
-	fakeTerminal(t)
-	out := &syncBuf{}
-	cmd := NewRootCmd()
-	cmd.SetOut(out)
-	cmd.SetErr(&syncBuf{})
-	cmd.SetIn(strings.NewReader("aurora\n"))
-	u := &upgradeCtx{cmd: cmd, w: out, loc: pluginwire.Location{Root: r.root}}
-
-	got := policyStep(context.Background(), u)
-	if got.state != stepFailed || got.code != ExitUserError {
-		t.Fatalf("the policy step is %s (exit %d): %s\n%s", got.state, got.code, got.reason, out)
-	}
-	if !strings.Contains(got.reason, "run(s) are in flight") {
-		t.Errorf("the refusal is not the in-flight one: %s", got.reason)
-	}
-	if v := nodeVersionOn(t, db); v != 3 {
-		t.Errorf("the node moved to version %d while a run was in flight", v)
 	}
 }
 
@@ -933,7 +1010,7 @@ func TestUpdatePolicyManagedMigrationUnderAMarkerKeepsTheRefusal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, true, true, h.s.e.r.conditions(), inflightQuiet)
+	err = policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, true, true, false, h.s.e.r.conditions(), inflightQuiet)
 	if err == nil {
 		t.Fatalf("a coding agent's session wrote a managed project's policy with a run in flight:\n%s", h.out)
 	}
@@ -1043,7 +1120,7 @@ func TestUpgradePolicyReseedAsksAboutRunsInFlightBeforeItWritesTheFile(t *testin
 		t.Fatal(err)
 	}
 
-	err = policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, false, h.s.e.r.conditions(), inflightAsk)
+	err = policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, false, false, h.s.e.r.conditions(), inflightAsk)
 	if err == nil {
 		t.Fatalf("a run in flight did not stop the re-seed:\n%s", h.out)
 	}
@@ -1143,8 +1220,9 @@ func TestUpdatePolicyMigrationVerifiesTheNodeItWrote(t *testing.T) {
 // verification. Migrate short-circuits on a node already at this version, so a
 // run of it over the bytes read back never reaches the reader gate — the gate
 // it ran judged the document the walk was about to write, not what the database
-// now holds. This node is version 4 and unreadable (the budget block is strict),
-// which is the write a version-only check would have called verified.
+// now holds. This node is at this Fugaro's own version and unreadable (the
+// budget block is strict), which is the write a version-only check would have
+// called verified.
 func TestUpdatePolicyMigrationVerifyReadsTheNodeBack(t *testing.T) {
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
@@ -1282,6 +1360,83 @@ func TestUpdateMigrationDerivesTheBitbucketBlockFromLocalConfig(t *testing.T) {
 	}
 	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
 		t.Errorf("the node is version %d, want %d", got, projectpolicy.Version)
+	}
+}
+
+// TestUpdateConvergesALocalConfigThatMountsTheBitbucketToken: the owner's
+// ruling of 2026-11-14 refuses a profile mounting the Bitbucket credential at
+// `fugaro project policy publish`, and it must not reach this stage. The
+// installation this test is handed is the one the ruling left in the field: a
+// local config that mounts the credential in a profile, which this repository
+// published without complaint before the ruling, with a node that has drifted
+// from it. The stage builds its node through the same build the publish command
+// takes (policyNodeForPublish), so a refusal in that build would stop `fugaro
+// update` whole, before the Terraform apply, and leave the operator editing the
+// file by hand — the one step an update must never need (the HARD RULE).
+//
+// What the stage writes is the config's own node, the mount included: taking
+// the entry off the file here would delete a credential from per-repository job
+// configs the operator may need it on (D473), which is a rewrite of their
+// decision and no stage's to make. The publish command and the deployer are
+// where the entry is refused.
+//
+// The budget below is the node's own and the file's is the fixture's 5, which
+// is the drift that takes this run through the publish half
+// (policyConfigDrift → publishPlanFor) rather than through the migration chain
+// alone — the half the reviewer found uncovered.
+func TestUpdateConvergesALocalConfigThatMountsTheBitbucketToken(t *testing.T) {
+	f := newProjectFixture(t, bitbucketTokenConfig)
+	node := v3Node(v3NodeMountingTheBitbucketToken())
+	node["budget"] = map[string]any{"mode": "enforce", "per_run_usd": 9}
+	f.db.Set(projectpolicy.PathShared(), node)
+	h := newMigrationRig(t, f, &initOptions{})
+
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("the update refused a local config whose profile mounts %s, the installation the ruling left in the field: %v\n%s", config.BitbucketSecret, err, out)
+	}
+	p := publishedPolicy(t, f)
+	if p.Budget.PerRunUSD != 5 {
+		t.Errorf("the node's budget is %v, want the file's 5: the stage did not reach the publish half, so this test pins nothing about it\n%s", p.Budget.PerRunUSD, out)
+	}
+	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
+		t.Errorf("the node is version %d, want %d", got, projectpolicy.Version)
+	}
+	pr, ok := p.Profiles[projectpolicy.DefaultProfileName]
+	if !ok {
+		t.Fatalf("profiles = %v, want the config's own", p.ProfileNames())
+	}
+	if !slices.Contains(pr.Secrets, config.BitbucketSecret) {
+		t.Errorf("profiles.%s.secrets = %v: the stage rewrote the operator's profile, whose mount is theirs to take off (D473) — the publish command and the deployer refuse it, and this stage converges the installation instead", projectpolicy.DefaultProfileName, pr.Secrets)
+	}
+}
+
+// TestUpdateFirstPublishesALocalConfigThatMountsTheBitbucketToken is the same
+// convergence at the other door into the publish half: a project that has never
+// published a node and whose config states a member only the node can carry
+// (firstPolicyPublish). The write there is the node the same build makes, so a
+// refusal in the build stops an installation that has nothing published at all
+// from ever publishing, with the same hand edit demanded of the operator.
+func TestUpdateFirstPublishesALocalConfigThatMountsTheBitbucketToken(t *testing.T) {
+	f := newProjectFixture(t, catalogConfigYAML+bitbucketTokenConfig)
+	h := newMigrationRig(t, f, &initOptions{})
+	fakeTerminal(t)
+	h.cmd.SetIn(strings.NewReader("aurora\n"))
+
+	out, err := h.apply(t, false)
+	if err != nil {
+		t.Fatalf("the first publish refused a local config whose profile mounts %s: %v\n%s", config.BitbucketSecret, err, out)
+	}
+	p := publishedPolicy(t, f)
+	if p.ImageCatalog == nil {
+		t.Fatalf("the node carries no catalog, so this run never reached the first publish:\n%s", out)
+	}
+	pr, ok := p.Profiles[projectpolicy.DefaultProfileName]
+	if !ok {
+		t.Fatalf("profiles = %v, want the config's own", p.ProfileNames())
+	}
+	if !slices.Contains(pr.Secrets, config.BitbucketSecret) {
+		t.Errorf("profiles.%s.secrets = %v, want the config's own mount", projectpolicy.DefaultProfileName, pr.Secrets)
 	}
 }
 
@@ -1567,7 +1722,7 @@ func TestPolicyPublishRefusesOverUnknownFields(t *testing.T) {
 		"version": projectpolicy.Version, "budget": map[string]any{"mode": "enforce", "per_run_usd": 5},
 		"allow_repos": []string{"github/acme/app"}, "future_key": true,
 	})
-	_, _, err := execute(t, "project", "policy", "publish", "--yes")
+	_, _, err := execute(t, "project", "policy", "publish")
 	if err == nil {
 		t.Fatal("the publish went ahead over a node carrying a key it does not know")
 	}
@@ -1579,76 +1734,42 @@ func TestPolicyPublishRefusesOverUnknownFields(t *testing.T) {
 	assertNamesTheBinaryUpgrade(t, err.Error())
 }
 
-// TestUpgradePolicyStepSkipsTheDatabaseTheRulesStageSkips is the second door of
-// the same write: `fugaro upgrade`'s policy step reaches the migration with no
-// rules stage in front of it at all (the step is last, and the rules stage is
-// `fugaro update`'s), so the step is where a gate the rules stage holds and the
-// migration does not is invisible. It answers the same two shapes as the update
-// probe (unadoptedShapes, the config recording no Firebase project, and one
-// recording the installation's own with a database that is not its own) through
-// one shared predicate, and the probe is the same: every fact the write needs,
-// and another installation's node exactly as it was.
-func TestUpgradePolicyStepSkipsTheDatabaseTheRulesStageSkips(t *testing.T) {
-	for _, s := range unadoptedShapes {
-		t.Run(s.name, func(t *testing.T) {
-			_, db, root := unadoptedRig(t, s)
-			out := &syncBuf{}
-			cmd := NewRootCmd()
-			cmd.SetOut(out)
-			cmd.SetErr(&syncBuf{})
-			u := &upgradeCtx{cmd: cmd, w: out, loc: pluginwire.Location{Root: root}}
-			// --yes, or the step stops at the typed confirmation and the probe
-			// never reaches the write it is about.
-			u.o.yes = true
-
-			r := policyStep(context.Background(), u)
-			if r.state != stepSkipped {
-				t.Fatalf("the policy step is %s, want skipped: %s", r.state, r.reason)
-			}
-			for _, want := range s.wants {
-				if !strings.Contains(r.reason, want) {
-					t.Errorf("the skip does not name %q: %q", want, r.reason)
-				}
-			}
-			unadoptedAssertions(t, db)
-		})
-	}
-}
-
-// TestUpgradeRunsThePolicyMigration: the upgrade step is the same migration,
-// in the same place in the sequence (the owner's rule of 2026-10-30: the
-// whole upgrade is one command, whichever door the user is in).
-func TestUpgradeRunsThePolicyMigration(t *testing.T) {
-	names := make([]string, len(upgradeSteps))
-	for i, s := range upgradeSteps {
+// TestThePolicyQuestionIsTheFourthStep: the read-only mode of the one command
+// asks about the node last, after the plugin, the checkout's own cloud half and
+// the rules, and what it asks there is the check and not the stage — the node
+// is in the project's Realtime Database and not in the checkout, so the whole
+// answer the mode can give is that it cannot tell (update_check.go's
+// policyCheck; TestUpdateCheckReportsEveryStep pins the line it prints).
+func TestThePolicyQuestionIsTheFourthStep(t *testing.T) {
+	names := make([]string, len(checkSteps))
+	for i, s := range checkSteps {
 		names[i] = s.name
 	}
-	if want := []string{"pin", "plugin", "cloud", "rules", "policy"}; !slices.Equal(names, want) {
+	if want := []string{"plugin", "cloud", "rules", "policy"}; !slices.Equal(names, want) {
 		t.Fatalf("the steps are %v, want %v", names, want)
 	}
-	if got := reflect.ValueOf(upgradeSteps[4].run).Pointer(); got != reflect.ValueOf(policyStep).Pointer() {
+	if got := reflect.ValueOf(checkSteps[3].run).Pointer(); got != reflect.ValueOf(policyCheck).Pointer() {
 		t.Error("the policy step is registered under some other function")
 	}
 }
 
-// TestUpgradePolicyCheckMakesNoCloudCall: --check's own description, the
-// command's help and the upgrade skill all promise it makes no cloud call and
-// needs no credentials. The published node is not in the checkout — it is in
-// the project's Realtime Database — so the step says it cannot tell instead of
+// TestPolicyCheckMakesNoCloudCall: fugaro update --check's own description, the
+// door's help and the skill all promise it makes no cloud call and needs no
+// credentials. The published node is not in the checkout — it is in the
+// project's Realtime Database — so the check says it cannot tell instead of
 // reading it. The read is denied on the fake for the length of this test and
 // the stage's own check is run under the same denial, so the skip above is a
 // skip and not a denial that failed quietly.
-func TestUpgradePolicyCheckMakesNoCloudCall(t *testing.T) {
+func TestPolicyCheckMakesNoCloudCall(t *testing.T) {
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), v3Node(nil))
 	f.db.DenyRead(projectpolicy.PathShared())
 	out := &syncBuf{}
 	cmd := NewRootCmd()
 	cmd.SetOut(out)
-	u := &upgradeCtx{cmd: cmd, w: out, loc: pluginwire.Location{Root: f.dir}}
-	u.o.check = true
+	u := &stepCtx{cmd: cmd, w: out, loc: pluginwire.Location{Root: f.dir}}
 
-	r := policyStep(context.Background(), u)
+	r := policyCheck(context.Background(), u)
 	if r.state != stepSkipped {
 		t.Fatalf("the step is %s, want skipped: %s", r.state, r.reason)
 	}
@@ -1674,41 +1795,6 @@ func TestUpgradePolicyCheckMakesNoCloudCall(t *testing.T) {
 		t.Fatalf("the denied read went through, so the skip above proves nothing: %s / %s", st.State, st.Detail)
 	case !strings.Contains(st.Detail, "Permission denied"):
 		t.Fatalf("the skip does not name the read that was denied: %s", st.Detail)
-	}
-}
-
-// TestUpgradePolicyStepSkipsWhereItCannotWrite: the step is skipped, not
-// failed, in the two runs that never write the cloud here — and both say
-// where the write happens instead.
-func TestUpgradePolicyStepSkipsWhereItCannotWrite(t *testing.T) {
-	for _, tc := range []struct {
-		name, marker string
-		local        bool
-		want         string
-	}{
-		{"--local", "", true, "--local"},
-		{"an agent session", "CLAUDECODE", false, "coding agent"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newProjectFixture(t, "")
-			f.db.Set(projectpolicy.PathShared(), v3Node(nil))
-			out := &syncBuf{}
-			cmd := NewRootCmd()
-			cmd.SetOut(out)
-			u := &upgradeCtx{cmd: cmd, w: out, loc: pluginwire.Location{Root: f.dir},
-				agent: agentMarker(func(string) string { return tc.marker }, false)}
-			u.o.local = tc.local
-			r := policyStep(context.Background(), u)
-			if r.state != stepSkipped {
-				t.Fatalf("the step is %s, want skipped: %s", r.state, r.reason)
-			}
-			if !strings.Contains(r.reason, tc.want) {
-				t.Errorf("the skip does not say why (%q): %s", tc.want, r.reason)
-			}
-			if got := nodeVersionOn(t, f.db); got != 3 {
-				t.Errorf("the node moved to version %d", got)
-			}
-		})
 	}
 }
 
@@ -1751,7 +1837,7 @@ func TestPolicyWriteAsksNoTypedNameOfAPersonOnAManagedProject(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return h, f, policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, managed, h.s.e.r.conditions(), inflightAsk)
+		return h, f, policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, managed, false, h.s.e.r.conditions(), inflightAsk)
 	}
 	// refused is the two sessions that can answer neither by being there nor by
 	// --yes: the run is stopped without a line being read, and the node does
@@ -1864,7 +1950,7 @@ func TestPolicyWriteAsksNoTypedNameOfAPersonOnAManagedProject(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, true, h.s.e.r.conditions(), inflightAsk); err != nil {
+		if err := policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, true, false, h.s.e.r.conditions(), inflightAsk); err != nil {
 			t.Fatalf("--ask with a y did not confirm the write: %v\n%s", err, h.out)
 		}
 		if got := nodeVersionOn(t, f.db); got == 3 {
@@ -1991,5 +2077,5 @@ func firstPublishRigErr(t *testing.T, extra string, terminal bool, o *initOption
 	if !m.firstPublish {
 		t.Fatalf("the rig planned a publish of a node that is there, so this is not the first node")
 	}
-	return h, f, policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, true, h.s.e.r.conditions(), inflightAsk)
+	return h, f, policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, true, false, h.s.e.r.conditions(), inflightAsk)
 }

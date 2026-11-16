@@ -14,7 +14,7 @@ type member struct {
 	val json.RawMessage
 }
 
-// object is a JSON object that keeps its key order, so a merge changes only
+// object is a JSON object that keeps its key order, so a rewrite changes only
 // the keys it means to change.
 type object []member
 
@@ -135,9 +135,18 @@ func objectAt(o object, key string) (sub object, present bool, err error) {
 	return sub, true, nil
 }
 
-func marshalString(s string) json.RawMessage {
-	b, _ := json.Marshal(s)
-	return b
+// stringAt reads key of o as a string, "" when it is absent or not one: the
+// read side never fails on a shape it does not recognise.
+func stringAt(o object, key string) string {
+	raw, ok := o.get(key)
+	if !ok {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) != nil {
+		return ""
+	}
+	return s
 }
 
 // pretty renders o with two-space indentation and a final newline.

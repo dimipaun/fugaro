@@ -28,7 +28,7 @@ func TestProjectSecretCoverageProjectCopyIsNotMissing(t *testing.T) {
 	if !versions["bitbucket-token"] {
 		t.Error("versions[bitbucket-token] = false, want the project-wide copy's enabled version to cover the name")
 	}
-	for _, st := range SecretCommands(spec, versions, "fugaro", func(s string) string { return s }) {
+	for _, st := range SecretCommands(spec, versions, "fugaro", "update", func(s string) string { return s }) {
 		if st.Name == "bitbucket-token" {
 			t.Errorf("a covered name is still listed missing: %+v", st)
 		}
@@ -59,7 +59,7 @@ func TestProjectSecretCoverageDisabledProjectVersionIsMissing(t *testing.T) {
 	if versions["bitbucket-token"] {
 		t.Error("versions[bitbucket-token] = true, want false: every project version is disabled")
 	}
-	steps := SecretCommands(spec, versions, "fugaro", func(s string) string { return s })
+	steps := SecretCommands(spec, versions, "fugaro", "update", func(s string) string { return s })
 	if !slices.ContainsFunc(steps, func(st SecretStep) bool { return st.Name == "bitbucket-token" }) {
 		t.Fatalf("steps = %+v, want the name still missing", steps)
 	}
@@ -94,7 +94,7 @@ func TestProjectSecretCoverageNeitherStoredNamesProjectWideFix(t *testing.T) {
 		t.Error("versions[bitbucket-token] = true with nothing stored anywhere")
 	}
 	var got string
-	for _, st := range SecretCommands(spec, versions, "fugaro", func(s string) string { return s }) {
+	for _, st := range SecretCommands(spec, versions, "fugaro", "update", func(s string) string { return s }) {
 		if st.Name == "bitbucket-token" {
 			got = st.Commands[0]
 		}
@@ -130,7 +130,7 @@ func TestProjectSecretCoverageUnlistedRepoIsNotCovered(t *testing.T) {
 				t.Errorf("versions[%s] = true for a repository the allow-list excludes", logical)
 			}
 			var got string
-			for _, st := range SecretCommands(spec, versions, "fugaro", func(s string) string { return s }) {
+			for _, st := range SecretCommands(spec, versions, "fugaro", "update", func(s string) string { return s }) {
 				if st.Name == logical {
 					got = st.Commands[0]
 				}

@@ -499,6 +499,9 @@ describe('the scrub: the keys the live run shapes write', () => {
     job: 'x-job', profile: 'x-profile', provider: 'x-provider', account: 'x-account',
     launched_by: 'x-launcher', credential: 'x-credential', waiting_until: WAITING,
     plan_task: 'x-plan/x-task',
+    // CLI 0.23.0 (rigor-modes plan T1.7): the mode a live run resolved and
+    // the layer that decided it, both words of the CLI's own tables.
+    mode: 'pro', from: 'repo',
     status: 'succeeded', outcome: 'ready', failed: false,
     pr_url: 'https://example.invalid/example-owner/example-repo/pull/1', pr_number: 1,
   }

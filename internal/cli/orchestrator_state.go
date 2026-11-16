@@ -6,15 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
@@ -129,14 +126,16 @@ type orchestratorBriefCache struct {
 }
 
 // orchestratorCachePath is the daemon's cached brief for one orchestrator id:
-// $XDG_CACHE_HOME/fugaro/orchestrator/<id>.json, placed through
-// localcfg.UserDir the way the name check's cache is.
+// $XDG_CACHE_HOME/fugaro/orchestrator/<id>.json. The place is the writer's own
+// — internal/orchestrator.BriefCachePath, which the daemon writes through — so
+// the two ends of the file cannot drift into reading one path and writing
+// another.
 func orchestratorCachePath(getenv func(string) string, id string) (string, error) {
-	dir, err := localcfg.UserDir(getenv, runtime.GOOS, localcfg.DirCache)
+	path, err := orchestrator.BriefCachePath(getenv, runtime.GOOS, id)
 	if err != nil {
 		return "", userErr("the daemon's cached brief cannot be placed: %v", err)
 	}
-	return filepath.Join(dir, "fugaro", "orchestrator", id+".json"), nil
+	return path, nil
 }
 
 // readOrchestratorBriefCache reads the cached brief, with the path it read so
@@ -252,42 +251,20 @@ func runOrchestratorEvents(cmd *cobra.Command, o *orchestratorEventsOptions) err
 	if err != nil {
 		return err
 	}
-	path, err := orchestrator.PathAudit(lc.Name)
+	// The read is internal/orchestrator's, which is the front door's get_events
+	// too: the order is the server's stamp's (D1230) and --since is cut on the
+	// server's clock, and one function reads the log for both surfaces so they
+	// cannot come to answer differently.
+	read, err := orchestrator.ReadAudit(ctx, db, lc.Name, since)
 	if err != nil {
-		return userErr("%v", err)
-	}
-	var raw map[string]orchestrator.Entry
-	_, err = db.Get(ctx, path, &raw)
-	if err != nil {
-		return dbErr(lc, err, false)
-	}
-	// The log is a map keyed by the entry's derived id, so the order is read
-	// off the stamp the server gave each entry (D1230) and never off the keys.
-	entries := make([]orchestrator.Entry, 0, len(raw))
-	for _, e := range raw {
-		entries = append(entries, e)
-	}
-	slices.SortFunc(entries, func(a, b orchestrator.Entry) int {
-		if c := a.At.Compare(b.At); c != 0 {
-			return c
-		}
-		return strings.Compare(a.ID, b.ID)
-	})
-	doc := orchestratorEventsDoc{Version: orchestratorOutputVersion, Kind: "events", ID: lc.Name, Events: entries}
-	if since > 0 {
-		now, ok := db.ServerNow()
-		if !ok {
+		if errors.Is(err, orchestrator.ErrNoServerTime) {
 			return userErr("the database answered without its own clock, and --since cuts the log at the server's time rather than this machine's (D1230)")
 		}
-		cut := now.Add(-since)
-		doc.Since = cut.UTC().Format(time.RFC3339)
-		kept := entries[:0]
-		for _, e := range entries {
-			if !e.At.Before(cut) {
-				kept = append(kept, e)
-			}
-		}
-		doc.Events = kept
+		return dbErr(lc, err, false)
+	}
+	doc := orchestratorEventsDoc{Version: orchestratorOutputVersion, Kind: "events", ID: lc.Name, Events: read.Entries}
+	if !read.Since.IsZero() {
+		doc.Since = read.Since.Format(time.RFC3339)
 	}
 	w := cmd.OutOrStdout()
 	if o.json {

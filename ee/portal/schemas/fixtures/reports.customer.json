@@ -1,0 +1,6 @@
+{
+  "organisation_id": "org_example",
+  "name": "Example Ltd",
+  "channel": "direct",
+  "amount_micros": 24000000
+}

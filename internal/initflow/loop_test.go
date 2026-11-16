@@ -201,11 +201,12 @@ func TestStageOrderMatchesDependencies(t *testing.T) {
 	// database with (workspace_create.go, W3) — the workspace record the
 	// owner's `fugaro update` publishes (update_workspace.go / D1292), the
 	// project layer and its one local file (init_layer_stage.go), the
-	// checkout's own steps inside fugaro update (init_checkout_upgrade.go) and
-	// the compute backend's provisioning, which the design puts last
+	// checkout's own steps inside fugaro update (init_checkout_upgrade.go), the credentials service's image moving onto this release's after the policy migration (init_stages.go's newCredentialsStage), the
+	// login unit that runs the orchestrator daemon (init_orchestrator_stage.go,
+	// O9) and the compute backend's provisioning, which the design puts last
 	// (compute-backend §8.1 task 6).
-	if len(names) != 17 {
-		t.Fatalf("the design has seventeen stages, got %v", names)
+	if len(names) != 19 {
+		t.Fatalf("the design has nineteen stages, got %v", names)
 	}
 	pos := map[string]int{}
 	for i, n := range names {
@@ -220,7 +221,7 @@ func TestStageOrderMatchesDependencies(t *testing.T) {
 		}
 	}
 	// The order the dogfooding run found by hand.
-	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Repository, Rules, Policy, WorkspaceProject, Workspace, Layer, Checkout, Compute}
+	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Repository, Rules, Policy, CredentialsService, WorkspaceProject, Workspace, Layer, Checkout, Unit, Compute}
 	if !slices.Equal(names, want) {
 		t.Errorf("order = %v, want %v", names, want)
 	}
@@ -969,22 +970,22 @@ type mode struct {
 func modes() []mode {
 	out := func() io.Writer { return &bytes.Buffer{} }
 	return []mode{
-		{"--yes", Options{Yes: true, Terminal: true, Out: out()}},
-		{"--non-interactive", Options{NonInteractive: true, Terminal: true, Out: out()}},
-		{"--non-interactive --yes", Options{NonInteractive: true, Yes: true, Terminal: true, Out: out()}},
+		{"a run that carries its own answer", Options{Yes: true, Terminal: true, Out: out()}},
+		{"a run that never prompts", Options{NonInteractive: true, Terminal: true, Out: out()}},
+		{"a run that never prompts and carries its own answer", Options{NonInteractive: true, Yes: true, Terminal: true, Out: out()}},
 		{"--json", Options{JSON: true, Terminal: true, Out: out()}},
-		{"--json --yes", Options{JSON: true, Yes: true, Terminal: true, Out: out()}},
+		{"--json, a run that carries its own answer", Options{JSON: true, Yes: true, Terminal: true, Out: out()}},
 		{"no terminal", Options{Out: out()}},
-		{"no terminal --yes", Options{Yes: true, Out: out()}},
+		{"no terminal, a run that carries its own answer", Options{Yes: true, Out: out()}},
 		{"agent env", Options{Terminal: true, Agent: "CLAUDECODE", Out: out()}},
-		{"agent env --yes", Options{Yes: true, Terminal: true, Agent: "CLAUDECODE", Out: out()}},
-		{"agent env --yes --non-interactive", Options{Yes: true, NonInteractive: true, Terminal: true, Agent: "CLAUDECODE", Out: out()}},
+		{"agent env, a run that carries its own answer", Options{Yes: true, Terminal: true, Agent: "CLAUDECODE", Out: out()}},
+		{"agent env, a run that carries its own answer and never prompts", Options{Yes: true, NonInteractive: true, Terminal: true, Agent: "CLAUDECODE", Out: out()}},
 		{"terminal", Options{Terminal: true, Out: out()}},
 	}
 }
 
 // selfStage is an engine-like stage: it is let run without a terminal and
-// refuses itself unless it was given --yes or may prompt.
+// refuses itself unless it carries its own answer or may prompt.
 type selfStage struct {
 	*fake
 	refused bool
@@ -1154,8 +1155,8 @@ func TestAgentErrorFromAStageIsNeedsYou(t *testing.T) {
 // stopped in the gate's sentence — is the one thing it must not print (the
 // deadlock CV1 is about: every new repository of the project blocked behind a
 // confirmation nobody can answer). A step the gate never reached a verdict on
-// says so rather than blaming a cover that read nothing. And a step whose
-// CLASS no plan gate covers (D1026) is the OWNER's own to run: that one keeps
+// says so rather than blaming a cover that read nothing. And a step no plan
+// gate judges at all (D1026) is the OWNER's own to run: that one keeps
 // the stage's Left, because "the one command the owner runs themselves" is
 // what spec §4.3 requires of a refusal and the whole of what an agent's report
 // to its owner is for.
@@ -1197,10 +1198,10 @@ func TestARefusedStepIsNeverTheStagesOwnPrompt(t *testing.T) {
 			notText: []string{"type the project's name", "fugaro update"},
 		},
 		{
-			what: "a step whose confirmation class no plan gate covers", refusal: GateRefusedClass, left: commandLeft,
+			what: "a step no plan gate may judge", refusal: GateRefusedUnjudged, left: commandLeft,
 			wantKind: LeftCommand,
 			wantText: []string{"fugaro update"},
-			// The class refusal is NOT a plan outside the cover (D1026 refused
+			// The D1026 refusal is NOT a plan outside the cover (it refused
 			// the step, not the document), and it must not be told to file an
 			// issue: the owner runs this one themselves (spec §4.3), which is
 			// the whole of what an agent's report to them is for.
@@ -1261,7 +1262,7 @@ func TestARefusedStepIsNeverTheStagesOwnPrompt(t *testing.T) {
 				if strings.Contains(out.String(), "left for you ("+Installation+", prompt)") {
 					t.Errorf("the refused step printed the stage's own prompt:\n%s", out.String())
 				}
-				if sh.refusal != GateRefusedClass {
+				if sh.refusal != GateRefusedUnjudged {
 					if cmds := lf.PrintedCommands(); len(cmds) != 0 {
 						t.Errorf("the refused step printed the commands %q: no command helps, so listing one is the same mistake as the prompt", cmds)
 					}
@@ -1371,61 +1372,40 @@ func TestARefusalBlockIsThreeShortLines(t *testing.T) {
 	}
 }
 
-func TestNoTerminalErrorDropsTheYesHintForAnAgent(t *testing.T) {
+func TestNoTerminalErrorSaysATerminalAndNeverAFlag(t *testing.T) {
 	plain := (&NoTerminalError{Stage: "installation"}).Error()
-	if !strings.Contains(plain, "--yes") {
-		t.Errorf("%q: without an agent the hint stays", plain)
+	if !strings.Contains(plain, "needs a real terminal") || strings.Contains(plain, "--") {
+		t.Errorf("%q: without an agent the refusal names the terminal the step needs, and no flag", plain)
 	}
 	agent := (&NoTerminalError{Stage: "installation", Agent: "CLAUDECODE"}).Error()
-	if strings.Contains(agent, "--yes") || !strings.Contains(agent, "coding agent") {
+	if strings.Contains(agent, "needs a real terminal") || !strings.Contains(agent, "coding agent") {
 		t.Errorf("%q", agent)
 	}
 }
 
-// The zero value of ConfirmClass is Typed, the strictest: a caller that names
-// no class — a zero value, a field nobody set, a class left out of a table —
-// refuses a confirmation rather than giving one, the direction every mistake in
-// this package falls (as with Managed's zero value, and Covers and Removes
-// being methods rather than fields). --yes at a real terminal is the sharpest
-// way to say it: the permissive class takes it, the strictest does not.
-func TestZeroConfirmClassIsTheStrictest(t *testing.T) {
-	if ConfirmClass(0) != Typed {
-		t.Fatalf("the zero ConfirmClass is %d, want Typed (%d): a caller that names no class must not be handed the permissive one", ConfirmClass(0), Typed)
-	}
-	all := Conditions{Yes: true, Terminal: true}
-	if got, want := CanConfirm(ConfirmClass(0), all), CanConfirm(Typed, all); got != want || got {
-		t.Errorf("CanConfirm(zero class, --yes at a terminal) = %v, want %v (the Typed rule)", got, want)
-	}
-	if !CanConfirm(YesOrTyped, all) {
-		t.Error("YesOrTyped no longer takes --yes at a terminal")
-	}
-	if YesOrTyped == Typed {
-		t.Error("the two classes are no longer distinct")
-	}
-}
-
-func TestCanConfirm(t *testing.T) {
-	type c = Conditions
-	term := c{Terminal: true}
+// CanConfirmRun is the run's own one confirmation — the step the run announces
+// and then applies, at the person's own answer — and it is the whole rule of
+// who may give a money-or-permanent one: a person at a real terminal, and a
+// coding agent's session, a pipe, --json and a run that never prompts never.
+// There is no class to pick a permissive answer from any more (T12), so the
+// rule is one predicate and the caller's own questions (--ask, --plan-only) are
+// read where they belong.
+func TestCanConfirmRun(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		class ConfirmClass
-		cond  Conditions
-		want  bool
+		name string
+		cond Conditions
+		want bool
 	}{
-		{"typed at a terminal", Typed, term, true},
-		{"typed, --yes", Typed, c{Terminal: true, Yes: true}, false},
-		{"typed, --non-interactive", Typed, c{Terminal: true, NonInteractive: true}, false},
-		{"typed, --json", Typed, c{Terminal: true, JSON: true}, false},
-		{"typed, no terminal", Typed, c{}, false},
-		{"typed, agent", Typed, c{Terminal: true, Agent: "CLAUDECODE"}, false},
-		{"yes covers", YesOrTyped, c{Yes: true}, true},
-		{"yes is not enough for an agent", YesOrTyped, c{Yes: true, Terminal: true, Agent: "AI_AGENT"}, false},
-		{"typed route for the covered class", YesOrTyped, term, true},
-		{"covered class, nothing", YesOrTyped, c{}, false},
+		{"a person at a real terminal", Conditions{Terminal: true}, true},
+		{"--json", Conditions{Terminal: true, JSON: true}, false},
+		{"no terminal", Conditions{}, false},
+		{"a run that carries its own answer", Conditions{Terminal: true, Yes: true}, false},
+		{"a run that never prompts", Conditions{Terminal: true, NonInteractive: true}, false},
+		{"a coding agent's session", Conditions{Terminal: true, Agent: "CLAUDECODE"}, false},
+		{"a coding agent's session, no terminal", Conditions{Agent: "AI_AGENT"}, false},
 	} {
-		if got := CanConfirm(tc.class, tc.cond); got != tc.want {
-			t.Errorf("%s: CanConfirm = %v, want %v", tc.name, got, tc.want)
+		if got := CanConfirmRun(tc.cond); got != tc.want {
+			t.Errorf("%s: CanConfirmRun = %v, want %v", tc.name, got, tc.want)
 		}
 	}
 }
@@ -1467,7 +1447,7 @@ func TestPlanOnlyNeverPassesYes(t *testing.T) {
 // The run's one confirmation covers the ordinary stages and nothing that is
 // money, permanent, a secret or someone else's repository.
 func TestRunCovers(t *testing.T) {
-	want := map[string]bool{Installation: true, Firebase: true, Images: true, Installation2: true, Repository: true, Rules: true}
+	want := map[string]bool{Installation: true, Firebase: true, Images: true, Installation2: true, Repository: true, Rules: true, CredentialsService: true}
 	for _, name := range Names() {
 		if got := RunCovers(name); got != want[name] {
 			t.Errorf("RunCovers(%s) = %v, want %v", name, got, want[name])
@@ -1535,8 +1515,14 @@ func TestYesCoversOnlyDeclaredStages(t *testing.T) {
 	}
 }
 
-// Over every mode: the one confirmation is taken by a person at a real
-// terminal and by nothing else, exactly like a Typed step.
+// Over every mode the loop can be run in: the one confirmation is taken by a
+// person at a real terminal and by nothing else. It is the rule the run reads
+// when it decides whether its own announced step is answered, so a mode that
+// reached it without a person — a pipe, --json, a coding agent's session, a run
+// that carries an answer of its own, a run that never prompts — is a
+// confirmation nobody gave. The rows are the loop's own options rather than a
+// table written here: a run whose options say nobody can answer, and whose
+// predicate answered true anyway, would be the whole bug this test is for.
 func TestCanConfirmRunMatrix(t *testing.T) {
 	for _, m := range modes() {
 		t.Run(m.name, func(t *testing.T) {
@@ -1544,9 +1530,6 @@ func TestCanConfirmRunMatrix(t *testing.T) {
 			want := c.Terminal && !c.Yes && !c.NonInteractive && !c.JSON && c.Agent == ""
 			if got := CanConfirmRun(c); got != want {
 				t.Errorf("CanConfirmRun(%+v) = %v, want %v", c, got, want)
-			}
-			if CanConfirmRun(c) != CanConfirm(Typed, c) {
-				t.Errorf("the run confirmation is not the Typed rule")
 			}
 		})
 	}
@@ -1917,7 +1900,7 @@ func TestLoopAStageThatLeftSomethingIsNotATick(t *testing.T) {
 	stages := fakes(&log, Preflight, Checkout)
 	stages[0].(*fake).status = Status{State: Done}
 	stages[1].(*fake).outLeft = &Left{Stage: Checkout, Kind: LeftCommand,
-		Text: "run fugaro upgrade's cloud half in your terminal"}
+		Text: "run fugaro update's cloud half in your terminal"}
 	opts := yesOpts()
 	opts.Out = &out
 	opts.Report = reporterTo(&out, report.Options{})
@@ -1934,7 +1917,7 @@ func TestLoopAStageThatLeftSomethingIsNotATick(t *testing.T) {
 	if strings.HasPrefix(line, m.done) {
 		t.Errorf("a stage with a step left for the user printed the tick:\n%s", got)
 	}
-	if !strings.Contains(got, "left for you (checkout, command): run fugaro upgrade's cloud half in your terminal") {
+	if !strings.Contains(got, "left for you (checkout, command): run fugaro update's cloud half in your terminal") {
 		t.Errorf("the left-for-you block is missing:\n%s", got)
 	}
 	if res.ExitCode() != 1 {
@@ -2072,6 +2055,45 @@ left for you (secrets, prompt): run fugaro update in your terminal
 `
 	if out.String() != want {
 		t.Errorf("the account without a reporter changed:\n%s\nwant:\n%s", out.String(), want)
+	}
+}
+
+// A stage whose writes are all on this machine is not blocked by a stage that
+// stopped ahead of it (D954, U8): the plugin stage runs although images waits
+// for you, its own line says which stop it ran past, and every stage after it
+// still waits for that stop. The marker is about what the stage reads — a
+// stage that reads no cloud is not the one a stopped cloud stage leaves in an
+// unknown state — which is why it runs past a needs-you stop and would run
+// past any other.
+func TestMachineLocalStageRunsPastAStop(t *testing.T) {
+	var log []string
+	stages := fakes(&log, Preflight, Images, Plugin, Repository)
+	stages[0].(*fake).status = Status{State: Done}
+	stages[1].(*fake).status = Status{State: NeedsYou, Detail: "the images need a credential only you have"}
+	res, err := Run(context.Background(), stages, yesOpts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st := states(res); st[Images] != NeedsYou || st[Plugin] != Changed || st[Repository] != Blocked {
+		t.Fatalf("states %v, want images %s, plugin %s (the marker runs past the stop) and repository %s", st, NeedsYou, Changed, Blocked)
+	}
+	var line, after string
+	for _, r := range res.Stages {
+		switch r.Name {
+		case Plugin:
+			line = r.Detail
+		case Repository:
+			after = r.Detail
+		}
+	}
+	if want := "machine-local: ran although " + Images + " waits for you"; !strings.HasPrefix(line, want) {
+		t.Errorf("the stage that ran past the stop reads %q, want %q first", line, want)
+	}
+	if after != "waits for "+Images {
+		t.Errorf("the stage behind it reads %q, want it still waiting for %s", after, Images)
+	}
+	if res.ExitCode() != 1 {
+		t.Errorf("exit %d, want 1: the run still has a stage left for the user", res.ExitCode())
 	}
 }
 

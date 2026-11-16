@@ -374,6 +374,13 @@ func hitByLine(names []string) (hitBy []string, line string) {
 	return hitBy, line
 }
 
+// HitBy is hitByLine's two answers for a caller that has the names from the
+// store and needs both: the names as data, which is what `update --json`'s
+// `resolved_issues` carries, and the line a person reads. It is the same
+// builder the pass itself uses, so a caller never joins the names a second
+// way.
+func HitBy(names []string) (hitBy []string, line string) { return hitByLine(names) }
+
 // localPart is a name as a person reads it: the reporter field holds the
 // member string the credential answered with, which is an address, and an
 // address is printed as its local part and never whole (F10). Anything with

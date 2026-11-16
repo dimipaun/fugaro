@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -61,11 +62,14 @@ import (
 // caller's own credentials, which a test has no account for and no way to
 // inject: the interface (buildPricer, image_cost.go) is what a test hands a
 // book of its own.
-var newBuildPricer = func(lc *localcfg.Config) buildPricer {
-	// The user's own credentials name the installation's project as the quota
-	// project: the catalog is a global API, and an ADC without a quota project
-	// is refused by it (budget.CatalogCreds).
-	return budget.NewPricer(lc.GCPProject, budget.CatalogCreds{})
+//
+// creds is which account the read is billed to, and the two callers differ: a
+// person's build names the installation's project as the quota project (the
+// catalog is a global API, and an ADC without one is refused by it), and the
+// catalog check job's own service account is billed for its own (budget's
+// CatalogCreds).
+var newBuildPricer = func(project string, creds budget.CatalogCreds) buildPricer {
+	return budget.NewPricer(project, creds)
 }
 
 // buildPricerCache is one command's price lookups, and it exists because
@@ -86,7 +90,7 @@ type buildPricerCache struct{ pricer buildPricer }
 // by every later lease of the same command.
 func (c *buildPricerCache) one(lc *localcfg.Config) buildPricer {
 	if c.pricer == nil {
-		c.pricer = newBuildPricer(lc)
+		c.pricer = newBuildPricer(lc.GCPProject, budget.CatalogCreds{})
 	}
 	return c.pricer
 }
@@ -141,34 +145,84 @@ type buildLease struct {
 // is priced from one catalog read — budget.Pricer's own rule, which a command
 // that opened a lease per build and built a pricer per lease would break.
 func openBuildLease(ctx context.Context, w io.Writer, lc *localcfg.Config, repo, slug string, pricers *buildPricerCache) (*buildLease, error) {
-	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
-		// The backend's own door (budgetDBFor) refuses with a sentence for an
-		// operator; here the answer is not a refusal but a build that runs
-		// uncounted, so the line is stated from the build's side: what this
-		// build is, and what would make it a leased one.
-		fmt.Fprintf(w, "fugaro: warning: project %s has no Firebase budget backend (budget.rtdb_url is not set in its project config), so this build takes no lease and nothing counts its cost: `fugaro update --firebase-project %s` in the checkout adds one (D1543)\n",
-			lc.Name, firebaseProjectIDWord(lc.GCPProject))
+	return openLease(ctx, w, leaseArgs{
+		lc: lc, repo: repo, slug: slug,
+		machine: lc.Build.MachineType, region: lc.BuildRegion(),
+		pricer: func() buildPricer { return pricers.one(lc) },
+		// The identity a person's build leases under, which is the account
+		// `fugaro run` is asked to run as.
+		who: func(ctx context.Context) (string, error) {
+			me, err := lc.Me(ctx)
+			if err != nil {
+				return "", userErr("%v", err)
+			}
+			return me, nil
+		},
+		noBackend: fmt.Sprintf("fugaro: warning: project %s has no Firebase budget backend (budget.rtdb_url is not set in its project config), so this build takes no lease and nothing counts its cost: `fugaro update --firebase-project %s` in the checkout adds one (D1543)\n",
+			lc.Name, firebaseProjectIDWord(lc.GCPProject)),
+	})
+}
+
+// leaseArgs is everything one build's lease is taken from, gathered so that the
+// two callers that open one share every step after the doors below: the CLI at a
+// checkout, whose values are its project config's, and the catalog check job,
+// whose values are its own assignment's and whose credentials are its service
+// account's (openCatalogJobLease).
+//
+// lc is the config the three database guards below are asked with
+// (budgetDBFor, checkDBProject, requireOwnBudgetDB). The job has no local
+// config and builds a minimal one holding exactly the two fields those three
+// read — the project's name and its GCP project — rather than restating the
+// questions: the ownership question is the one thing in this file that must not
+// have a second wording (requireOwnBudgetDB's own doc says why).
+type leaseArgs struct {
+	w       io.Writer
+	lc      *localcfg.Config
+	repo    string
+	slug    string
+	machine string
+	region  string
+	// pricer is built once a lease is really taken, never for a build that will
+	// not be leased at all (buildPricerCache's own rule: an installation with no
+	// budget backend holds no permission on the Cloud Billing catalog).
+	pricer    func() buildPricer
+	who       func(context.Context) (string, error)
+	noBackend string
+}
+
+// openLease is the one build-lease opener: the guards every writer into the
+// budget database asks, the reclaim of what a dead process left, and the take.
+//
+// noBackend is the line an installation with no budget backend is told instead
+// of being refused, and it is the caller's because the two callers say it about
+// different things: a checkout is told to add the backend, and the catalog check
+// job is told what the missing backend means for a nightly job nobody is
+// watching. See this file's header for why that is a warning and a build that
+// runs uncounted rather than a refusal.
+func openLease(ctx context.Context, w io.Writer, a leaseArgs) (*buildLease, error) {
+	if a.lc.Budget == nil || a.lc.Budget.RTDBURL == "" {
+		fmt.Fprint(w, a.noBackend)
 		return nil, nil
 	}
-	_, db, err := budgetDBFor(ctx, lc)
+	_, db, err := budgetDBFor(ctx, a.lc)
 	if err != nil {
 		return nil, err
 	}
-	if err := checkDBProject(ctx, db, lc); err != nil {
+	if err := checkDBProject(ctx, db, a.lc); err != nil {
 		return nil, err
 	}
-	if err := requireOwnBudgetDB(ctx, lc, db, "nothing was built"); err != nil {
+	if err := requireOwnBudgetDB(ctx, a.lc, db, "nothing was built"); err != nil {
 		return nil, err
 	}
-	who, err := lc.Me(ctx)
+	who, err := a.who(ctx)
 	if err != nil {
-		return nil, userErr("%v", err)
+		return nil, err
 	}
 	id, err := buildLeaseIDGenerator()
 	if err != nil {
 		return nil, remote(err)
 	}
-	cost := newImageCost(lc, db, repo, slug, who, pricers.one(lc))
+	cost := newImageCost(db, a.machine, a.region, a.repo, a.slug, who, a.pricer())
 	if n, err := cost.reclaim(ctx); err != nil {
 		return nil, err
 	} else if n > 0 {
@@ -192,6 +246,59 @@ func openBuildLease(ctx context.Context, w io.Writer, lc *localcfg.Config, repo,
 			oneLine(advisory.Detail))
 	}
 	return &buildLease{cost: cost, lease: l, started: time.Now()}, nil
+}
+
+// openCatalogJobLease is the catalog check job's door of openLease (D1554): the
+// nightly job submits a build for every entry of the published catalog whose
+// inputs moved, and it is a build a person is not watching, so it leases each
+// one exactly as a checkout's build does — same estimator, same caps, same
+// verdict (D1543, D1548).
+//
+// Where its values come from, since it has no checkout and no local config: the
+// project's name and GCP project are the job's own environment, the database URL
+// is the same budget.rtdb_url every other job of the installation carries
+// (CatalogCheck renders it into this job's env), the Firebase project is its
+// assignment's, the machine type and the region are its assignment's, and the
+// identity is its own service account — the one account the installation module
+// grants its own database role to (catalogcheck.tf's two data permissions, and
+// no lifecycle one), because a lease is an IAM write and not a rules one: an
+// access token carries the permissions its principal holds and the rules'
+// /buildleases family is denied whole to every client token (internal/budget's
+// rules, which is why the lease path is an IAM grant at all).
+//
+// The three guards are called rather than restated. They are asked with a config
+// holding exactly what they read — Name, GCPProject, the Firebase project and
+// the database URL — so the database a lease is written into is proved to be
+// this installation's own by the same function that proves it for every other
+// writer, which is the one thing here that may not have a second wording
+// (requireOwnBudgetDB's doc).
+//
+// The identity is derived from the job's own account name and project rather
+// than read from a metadata call: the figure is informational (BuildLease.By),
+// and the job is deployed by fugaro update, which knows both.
+func openCatalogJobLease(ctx context.Context, w io.Writer, e catalogJobEnv, s catalogCheckSpec, repo, slug string) (*buildLease, error) {
+	return openLease(ctx, w, leaseArgs{
+		lc: &localcfg.Config{
+			Name: e.name, GCPProject: e.gcpProject,
+			// NoAuth here is the test world's, exactly as it is for every other
+			// client this job opens (checkEndpoints, the check job's own
+			// endpoints): the job's service account is the real one.
+			Endpoints: localcfg.Endpoints{NoAuth: checkEndpoints.NoAuth},
+			Budget:    &localcfg.Budget{RTDBURL: e.budgetURL, FirebaseProject: s.FirebaseProject},
+		},
+		repo: repo, slug: slug,
+		machine: s.MachineType, region: s.BuildRegion,
+		pricer: func() buildPricer {
+			// A job is not a person: the price lookup names no quota project and
+			// is billed to the job's own (budget.CatalogCreds' two kinds).
+			return newBuildPricer(e.gcpProject, budget.CatalogCreds{ServiceAccount: true})
+		},
+		who: func(context.Context) (string, error) {
+			return tf.CatalogCheckAccountID + "@" + e.gcpProject + ".iam.gserviceaccount.com", nil
+		},
+		noBackend: fmt.Sprintf("fugaro: warning: project %s has no Firebase budget backend (FUGARO_RTDB_URL is not set in this job's environment), so the builds it submits take no lease and nothing counts their cost: `fugaro update --firebase-project %s` in the checkout adds one, and the next fugaro update re-deploys this job with it (D1543)\n",
+			e.name, firebaseProjectIDWord(e.gcpProject)),
+	})
 }
 
 // settle records what the submitted build spent and gives the rest of the

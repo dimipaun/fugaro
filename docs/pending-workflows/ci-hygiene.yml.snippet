@@ -1,0 +1,37 @@
+# The `hygiene` step for .github/workflows/ci.yml's `check` job. It is not a
+# workflow of its own -- it is the two lines below, which go into that job
+# immediately after its last step:
+#
+#       - run: go vet -tags firebase ./...
+#
+# so that the job ends like this:
+#
+#       - run: go vet -tags firebase ./...
+#       - name: hygiene
+#         run: scripts/ci-hygiene.sh
+#
+# Why they are staged here rather than written into the file: a Fugaro run
+# cannot push a `.github/workflows/**` change (GitHub refuses the push), so a
+# workflow change is staged in this directory for a person to copy in.
+# docs/pending-workflows/README.md's `## ci-hygiene.yml.snippet` section is
+# where the copy-in is written out.
+#
+# What the step runs: scripts/ci-hygiene.sh, one bash script with no
+# dependencies beyond git and awk. It fails the job (exit 1, one line per
+# violation) on a tracked file whose name ends in -E, .orig, .bak, .rej or ~
+# -- the `sed -i` leftovers a pull request committed in the week of 2026-11-10,
+# which carry no licence notice and reddened `TestEEFilesCarryTheNotice` and
+# `TestDocsEELicensed` on main -- and it prints `warn:` lines, without failing,
+# for two shapes that took main's CI red the same week: a test that builds a
+# literal-year `time.Date` in a function that also reaches the process clock
+# (`TestRotateReturnsAFreshPair` aged out of its 7-day idle bound on
+# 2026-11-13) and an assertion that bounds `time.Since(...)` by a literal
+# duration under 60s (`TestRedactPassesAreBounded`, under -race).
+#
+# The `check` job is where it belongs rather than a job of its own: it needs no
+# Go toolchain to speak of and no artifact, it finishes in about a second, and
+# `check` is already the job a pull request waits on for gofmt and the vet
+# passes.
+
+      - name: hygiene
+        run: scripts/ci-hygiene.sh

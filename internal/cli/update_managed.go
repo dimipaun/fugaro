@@ -54,14 +54,13 @@ import (
 //
 // What the gate can never do here. It can only narrow. A stage it does not
 // open keeps today's refusal exactly — the secrets stage is never asked about
-// (with a secret, the session has nothing the gate could read), and the
-// Credentials and Compute stages are `noYes` in the stage table and are not
-// gated (spec §4.2: they create an identity and provision money-bearing
-// infrastructure, and neither is a plan the gate can bound). A step whose
-// class is Typed is refused by the Converge itself, whatever the plan looked
-// like (D1026), and a step the gate does not admit falls back to its own
-// confirmation, which in a coding agent's session is the refusal it always
-// was.
+// (with a secret, the session has nothing the gate could read), and the Compute
+// stage is `noYes` in the stage table and is not gated (spec §4.2: it
+// provisions money-bearing infrastructure, which is not a plan the gate can
+// bound). A step no plan gate may judge is refused by the Converge itself,
+// whatever the plan looked like (D1026), and a step the gate does not admit
+// falls back to its own confirmation, which in a coding agent's session is the
+// refusal it always was.
 
 // gatedStages are the stages of this run the gate may open (D1016, spec §4.2):
 // the Terraform plan stages, whose steps are the roots Fugaro embeds and whose
@@ -85,9 +84,9 @@ import (
 // through the registry and writes this machine's config — it plans nothing, so
 // the pair this gate judges a Terraform stage with has no document to read),
 // secrets (spec §3.2: never admitted, and an agent's session is where a secret
-// would have to be typed), plugin (local files), credentials and compute
-// (`noYes` in the stage table today and under a managed project), the layer
-// stage and the checkout's own steps.
+// would have to be typed), plugin (local files), compute (`noYes` in the stage
+// table and under a managed project: it provisions money-bearing
+// infrastructure), the layer stage and the checkout's own steps.
 //
 // The workspace stage is here with the policy one, and for the same reason: its
 // document is the node it publishes (docs/workspaces/spec.md §6 — W2's publish
@@ -95,11 +94,11 @@ import (
 // policy stage's two, the database is this installation's (D1017) and the node
 // is one this binary's own may write over. What the gate may never admit there
 // is a publish that admits more to the group than the node already carries:
-// that step is initflow.Typed (D846) and D1026 admits no plan gate's answer for
-// a Typed step, so the one write that decides who is in the group stays the
-// owner's own word and never a mark's (SEC, rule 1); a coding agent's session
-// is refused the widening whatever the class says, which is the fence D1555
-// puts in the class's place (gateStep).
+// that step is money or permanent (D846) and D1026 admits no plan gate's answer
+// for one, so the one write that decides who is in the group stays the owner's
+// own word and never a mark's (SEC, rule 1); a coding agent's session is
+// refused the widening whatever the gate says, which is the fence D1555 puts in
+// the class's place (gateStep).
 //
 // The policy stage's own two branches that write NO node are outside the gate
 // as well, and they are the ones this map cannot express: D854's bare re-seed
@@ -113,7 +112,23 @@ var gatedStages = map[string]bool{
 	initflow.Repository:    true,
 	initflow.Rules:         true,
 	initflow.Policy:        true,
-	initflow.Workspace:     true,
+	// The credentials-service stage is the installation root planned once more
+	// (the stage after the policy one, whose one change is the service's image),
+	// so its document is a saved plan exactly as Installation2's is — the same
+	// root, the same kinds, and the same gate. Its own position in the run is
+	// not this map's business: the gate judges the plan in front of it, and the
+	// loop reaches this stage after the policy migration either way.
+	//
+	// This entry answers for a PERSON at a terminal and never for a coding
+	// agent's session, which is the opposite of how the entries above read: the
+	// stage's own skip returns credentialsSessionHeld for a marker before the
+	// loop asks this map at all (newCredentialsStage, and every stage is
+	// checked before it is run), so a session reads the refusal it always read
+	// and pays for no read here. What the entry decides is what becomes of the
+	// refusal the stage makes either way — the owner's own step with it, a run
+	// failure without it (TestUpdateManagedGatesTheCredentialsServiceStage).
+	initflow.CredentialsService: true,
+	initflow.Workspace:          true,
 }
 
 // initGate is this run's use of the gate: M6's helper, and the one read of the
@@ -150,6 +165,25 @@ type initGate struct {
 // for a project the last read said is not managed.
 func (g *initGate) underway() bool { return g != nil && g.managed && !g.g.revoked }
 
+// factVersion is the version of the creation fact this run's own gate read
+// answered with, and 0 where it answered none (no object there, an object that
+// is not this project's marker, or a read that did not answer at all — the
+// helper keeps whatever it read even when it returns an error, and the caller
+// here drops it only on the paths where gateRun gave the run no gate).
+//
+// It is exported to the converge's steps and not to the plan: what it is for is
+// a step that reads the object ITSELF deciding, before its own read, whether
+// there is anything there for it to do (update_marker_version.go). A step that
+// judged by it what to write would be judging by a fact read at the head of a
+// run, which is exactly what D1015 refuses — this is a version the run already
+// paid for, used to skip a read and never to stand in for one.
+func (g *initGate) factVersion() int {
+	if g == nil {
+		return 0
+	}
+	return g.g.marks.Version
+}
+
 // gateRun reads the managed project's marks for this run, once, before the
 // loop's first stage (update_managed.go's one read per command, D1015).
 //
@@ -185,7 +219,7 @@ func (e *initEngine) gateRun(ctx context.Context) error {
 	// The refusal is the user's to read and the run's to stop: it is returned
 	// whole (a user error, exit 1), and nothing after it runs — no stage, no
 	// write, no record.
-	return askDecide(r.w, askFlags{ask: r.o.ask, yes: r.o.yes}, r.gateUnderway(), r.conditions())
+	return askDecide(r.w, askFlags{ask: r.o.ask}, r.gateUnderway(), r.conditions())
 }
 
 // gateable is whether this door has a gate for this run at all. A run whose own
@@ -234,7 +268,7 @@ func (e *initEngine) managedStage(name string) bool {
 //
 // Such a run is refused the gate and keeps today's coding-agent refusal, whole
 // and unmoved, and the reason is the same one §3.2 gives for the flags
-// themselves. --launcher, --operator and --budget-admin are the members the
+// themselves. --operator, --admin and --budget-admin are the members the
 // run's own review lists (accessLists reads them from this run's options into
 // the cover's Listed), so a gate asked with one of them would be judging a
 // plan against the list that argument just wrote: a plan granting that member
@@ -362,7 +396,7 @@ func restoreAsk(c initflow.Conditions, ask bool) initflow.Conditions {
 // (init_plugin_stage.go) and the lines the review prints about them. It is
 // gateUnderway with --ask struck out, and it is the whole of what the flag does
 // to this door beyond its own line: the steps whose documents the gate judges
-// ask the same question through initflow.GateConfirms (gateStep), which
+// ask the same question through initflow.GateStandsIn (gateStep), which
 // Conditions.Ask answers false to, and the gate's own read, admit and record
 // are untouched either way.
 //
@@ -412,6 +446,15 @@ func gateSentence(marker string) string {
 	}
 	return initflow.GateProceeded()
 }
+
+// gateContentWarning is the line a gated step prints above the rules the gate
+// recorded and did not refuse on (D1545). It is the whole of what a reader has
+// to understand to read the lines under it — that the plan applies anyway, and
+// that the tables are a tripwire rather than a fence — and it names no flag,
+// no variable and no mark, because a rule that fired is something to read and
+// not something to reach past. It says nothing about the step's confirmation:
+// whether the verdict replaces it is decided after this line and elsewhere.
+const gateContentWarning = "the gate recorded the rules below: they fired and did not refuse this plan, because D1545 makes the cover tables and the guard a tripwire that records and warns, and a blocked cost attribute applies the same way — they are in this step's audit record"
 
 // gateNamesAnIAMCall is the one sentence such a step leaves behind: what is
 // still there, why nothing removed it here, and the door the owner's own run
@@ -502,21 +545,70 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 		// about the plan could not be read.
 		return true, &initflow.GatedError{Reason: gateUnreadable, Err: err, Refusal: initflow.GateRefusedUnread}
 	}
-	class := gateClass()
-	conv := managedmode.ConvergeRefused(doc, class, refusedRules(verdict))
-	if verdict.OK {
-		conv = managedmode.ConvergeAdmitted(doc, class, admittedRules(upgrade))
+	// A plan that would retire a project job is refused whatever the verdict
+	// said, and this is the one rule of it that D1545's split does not reach:
+	// the module protects that job from deletion and nothing lifts it, so an
+	// apply removes the launchers' grants and then fails, leaving the job
+	// unlaunchable (infra.RefuseProjectJobDeletes, called beside the guard at
+	// init.go's own guard).
+	//
+	// It is asked HERE because the verdict is what decides whether that guard
+	// runs at all: a step the gate admits skips it (`if !gated`), and D1551
+	// classifies google_cloud_run_v2_job as not data-bearing, so the replace a
+	// profile's removal plans is a warning the gate now admits — the rule would
+	// otherwise be lost with the refusal that used to carry it. The plan is
+	// parsed from the same bytes the gate judged, so the two read one document.
+	//
+	// This is reported in the task's pull request: D1551 decides the delete
+	// rule by TYPE and no type tells the project module's job from any other
+	// Cloud Run job, while this rule reads the ADDRESS. Keeping it refused is
+	// this change's decision, taken because the alternative is an apply that
+	// always fails.
+	if retire := projectJobRefusal(doc); retire != "" {
+		verdict.OK = false
+		verdict.Refusals = append(verdict.Refusals, managedmode.Refusal{Gate: retireGate, Why: retire})
 	}
-	m, err := g.g.admit(ctx, class, conv)
+	// The gate's three answers are built from the verdict and never beside it
+	// (managed.Converge's own rule): a rule that fired and did not refuse goes
+	// to the Converge's warnings, so the record says which rules they were and
+	// the step still applies (D1545). A REFUSED plan carries them too when the
+	// gate raised them beside the rules that stopped it
+	// (ConvergeRefusedWithWarnings): the record of a refusal names both, so an
+	// owner reads what the gate saw about the rest of the plan and not only what
+	// refused it (the ruling of 2026-11-11). The lines are managed.RuleLines',
+	// the same rendering the record of an apply uses, so a finding reads the
+	// same way wherever it is filed.
+	warnings := managedmode.RuleLines(verdict.Warnings)
+	var conv managedmode.Converge
+	switch {
+	case !verdict.OK:
+		conv = managedmode.ConvergeRefusedWithWarnings(doc, managedmode.RuleLines(verdict.Refusals), warnings)
+	case len(warnings) == 0:
+		conv = managedmode.ConvergeAdmitted(doc, admittedRules(upgrade, false))
+	default:
+		conv = managedmode.ConvergeWarned(doc, admittedRules(upgrade, true), warnings)
+	}
+	m, err := g.g.admit(ctx, conv)
 	if err != nil {
 		return true, r.gateRefused(err, doc, verdict, cover, imports)
+	}
+	if len(warnings) > 0 {
+		// The tripwire's own line, and it is printed whether or not the
+		// verdict goes on to replace this step's confirmation: a rule that
+		// fired is something the reader of this screen has to be able to see,
+		// and D1545's whole accepted price is that the tables warn instead of
+		// refusing — a warning nobody reads is a refusal that was removed.
+		fmt.Fprintf(r.w, "  %s\n", gateContentWarning)
+		for _, w := range warnings {
+			fmt.Fprintf(r.w, "    %s\n", w)
+		}
 	}
 	// D55's one rule, asked with this run's conditions — a coding agent's
 	// session or the owner's own terminal, which is the whole of who may
 	// reach this code — and the verdict M6's helper just built: a gate that
 	// admitted this document replaces the confirmation for this step, and
 	// anything else keeps it.
-	if !initflow.GateConfirms(class, r.conditions(), m) {
+	if !initflow.GateStandsIn(r.conditions(), m) {
 		return false, nil
 	}
 	fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
@@ -552,12 +644,11 @@ func (s *rulesStage) gateStep(ctx context.Context) (bool, error) {
 	if err != nil {
 		return true, &initflow.GatedError{Reason: gateUnreadable, Err: err, Refusal: initflow.GateRefusedUnread}
 	}
-	class := gateClass()
-	m, err := r.gate.g.admit(ctx, class, managedmode.ConvergeAdmitted(doc, class, rulesAdmittedRules))
+	m, err := r.gate.g.admit(ctx, managedmode.ConvergeAdmitted(doc, rulesAdmittedRules))
 	if err != nil {
 		return true, &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: gateRefusalOf(err)}
 	}
-	if !initflow.GateConfirms(class, r.conditions(), m) {
+	if !initflow.GateStandsIn(r.conditions(), m) {
 		return false, nil
 	}
 	fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
@@ -608,10 +699,6 @@ func (s *policyMigrateStage) gateStep(ctx context.Context, m *policyMigration) (
 	if !r.gateUnderway() || !m.writesNode() {
 		return false, nil
 	}
-	class := gateClass()
-	if len(m.loosening()) > 0 {
-		class = initflow.Typed
-	}
 	doc := m.payload()
 	if len(doc) == 0 {
 		// A node write with no bytes to write is the stage's own contract
@@ -619,13 +706,21 @@ func (s *policyMigrateStage) gateStep(ctx context.Context, m *policyMigration) (
 		// the one thing this gate must never hand to a write.
 		return true, &initflow.GatedError{Reason: gateUnreadable, Err: errors.New("the policy node this step would publish is empty"), Refusal: initflow.GateRefusedUnread}
 	}
-	conv := managedmode.ConvergeAdmitted(doc, class, policyAdmittedRules)
-	mg, err := r.gate.g.admit(ctx, class, conv)
+	conv := managedmode.ConvergeAdmitted(doc, policyAdmittedRules)
+	if len(m.loosening()) > 0 {
+		// A publish that loosens a ceiling, sets an account-choice key or
+		// writes the project's first node is a step no plan gate judges,
+		// whatever the document looks like (D1026): the record decides who is
+		// admitted to the project, so nothing here stands in for the owner's
+		// own word and nothing is recorded for it.
+		conv = managedmode.ConvergeUnjudged(doc, policyAdmittedRules)
+	}
+	mg, err := r.gate.g.admit(ctx, conv)
 	if err != nil {
 		return true, &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: gateRefusalOf(err)}
 	}
 	marker := agentMarker(os.Getenv, s.e.r.stdinTerminal())
-	if !initflow.GateConfirms(class, r.conditions(), mg) {
+	if !initflow.GateStandsIn(r.conditions(), mg) {
 		// The publish that widens the node is the owner's own step, and the
 		// fence on it is the session's rather than its class's (D1552): a
 		// loosening is what refuses here — m.loosening() is the node's
@@ -653,7 +748,7 @@ func (s *policyMigrateStage) gateStep(ctx context.Context, m *policyMigration) (
 		// inventory is not a verdict about this document either.
 		if len(m.loosening()) > 0 && marker != "" {
 			refused := conv.Refuse()
-			return true, &initflow.GatedError{Reason: refused.Error(), Err: refused, Refusal: initflow.GateRefusedClass}
+			return true, &initflow.GatedError{Reason: refused.Error(), Err: refused, Refusal: initflow.GateRefusedUnjudged}
 		}
 		return false, nil
 	}
@@ -689,27 +784,22 @@ var policyAdmittedRules = []string{
 // said: the record decides who is in the group, so a member this stage adds —
 // and the whole membership, on a workspace that has no published record yet —
 // may only be the owner's own word and never a mark's. A first publish is that
-// class for the policy stage's reason (M3): the document is chosen where none
+// step for the policy stage's reason (M3): the document is chosen where none
 // was, and a session that edited `workspace_members` in the YAML by hand would
 // otherwise publish the group's whole membership behind a mark. Every other
-// publish — a plain rewrite, a migration, a removal — is the ordinary
-// YesOrTyped step the gate may stand in for, which is what the workspaces design
-// says of this write ("it runs under the gate `update` already opens", §6;
-// reconciliation F32 names it the cloud write of the two that the gate ADMITS).
+// publish — a plain rewrite, a migration, a removal — is the ordinary step the
+// gate may stand in for, which is what the workspaces design says of this write
+// ("it runs under the gate `update` already opens", §6; reconciliation F32
+// names it the cloud write of the two that the gate ADMITS).
 //
 // The widening's refusal is read off p.widens and the session's own marker
-// rather than off the class (D1555): the class is the second thing that refuses
-// one, and a fence read off a class the same release deletes would leave the
-// membership unfenced. What a widening therefore still is, class or no class,
-// is a step the gate never admits and a coding agent's session never writes.
+// (D1555): a fence read off a class the same release deletes would have left
+// the membership unfenced. What a widening therefore still is is a step the
+// gate never admits and a coding agent's session never writes.
 func (s *workspaceStage) gateStep(ctx context.Context, p *workspacePublication) (bool, error) {
 	r := s.e.r
 	if !r.gateUnderway() {
 		return false, nil
-	}
-	class := gateClass()
-	if len(p.widens) > 0 {
-		class = initflow.Typed
 	}
 	doc := p.body
 	if len(doc) == 0 {
@@ -718,24 +808,31 @@ func (s *workspaceStage) gateStep(ctx context.Context, p *workspacePublication) 
 		// the one thing this gate must never hand to a write.
 		return true, &initflow.GatedError{Reason: gateUnreadable, Err: errors.New("the workspace node this step would publish is empty"), Refusal: initflow.GateRefusedUnread}
 	}
-	conv := managedmode.ConvergeAdmitted(doc, class, workspaceAdmittedRules)
-	mg, err := r.gate.g.admit(ctx, class, conv)
+	conv := managedmode.ConvergeAdmitted(doc, workspaceAdmittedRules)
+	if len(p.widens) > 0 {
+		// The record decides who is in the group, so a publish that admits a
+		// member — the whole membership on a workspace that has no published
+		// record yet included — is a step no plan gate judges, whatever the
+		// document looks like (D1026): nothing stands in for the owner's own
+		// word and nothing is recorded for it.
+		conv = managedmode.ConvergeUnjudged(doc, workspaceAdmittedRules)
+	}
+	mg, err := r.gate.g.admit(ctx, conv)
 	if err != nil {
 		return true, &initflow.GatedError{Reason: err.Error(), Err: err, Refusal: gateRefusalOf(err)}
 	}
 	marker := agentMarker(os.Getenv, s.e.r.stdinTerminal())
-	if !initflow.GateConfirms(class, r.conditions(), mg) {
+	if !initflow.GateStandsIn(r.conditions(), mg) {
 		// The publish that admits something to the group is the owner's own
-		// step, and the fence on it is the session's rather than its class's
-		// (D1555, the same fence as D1552's): a widening is what refuses here —
-		// p.widens is every write that puts more in the group, the first record
-		// which chooses the whole of it included — and the marker is what asks
-		// it, so the fence keeps refusing a coding agent's session when the
-		// class system goes (D1555's own reason for the fence being this one
-		// and not Typed). The class stays beside it for everything else: it is
-		// what D1026 keeps out of a plan gate's reach, and a step this gate
-		// admits is one the rules above admitted, so what the sentence below
-		// names is the class rule and no rule that passed.
+		// step, and the fence on it is the session's (D1555, the same fence as
+		// D1552's): a widening is what refuses here — p.widens is every write
+		// that puts more in the group, the first record which chooses the whole
+		// of it included — and the marker is what asks it, which is what keeps
+		// refusing a coding agent's session now the class system is gone
+		// (D1555's own reason for the fence being this one). What D1026 keeps
+		// out of a plan gate's reach is the step itself: a widening is one no
+		// plan gate may judge, so the sentence below names that rule and no
+		// rule that passed.
 		//
 		// The sentence is the coding agent's alone, and the person at a real
 		// terminal on a managed project is not asked for the typed name (the
@@ -752,7 +849,7 @@ func (s *workspaceStage) gateStep(ctx context.Context, p *workspacePublication) 
 		// inventory is not a verdict about this document either.
 		if len(p.widens) > 0 && marker != "" {
 			refused := conv.Refuse()
-			return true, &initflow.GatedError{Reason: refused.Error(), Err: refused, Refusal: initflow.GateRefusedClass}
+			return true, &initflow.GatedError{Reason: refused.Error(), Err: refused, Refusal: initflow.GateRefusedUnjudged}
 		}
 		return false, nil
 	}
@@ -824,6 +921,41 @@ func (r *initRun) applyAndRecord(ctx context.Context, t *tf.TF) error {
 // two judge a document the binary or the database holds, and the sentence a
 // session reads must not name a shape the step never had.
 const gateUnreadable = "the managed gate did not admit this step: the document it was to judge could not be produced, and a document nobody could read is never applied here (D1012)"
+
+// retireGate is the name the record gives the one rule asked beside the verdict
+// and never by it (retireRefusal): the record's rules are what an owner reads
+// back, and this one has to be told apart from the guard's and the cover's —
+// what it refuses is not a judgement about what the plan contains, and no
+// delete list and no cover table can clear it.
+const retireGate = "retire"
+
+// projectJobRefusal is infra's project-job rule as the gate asks it, "" when the
+// plan does not carry one: a plan that deletes or replaces the Cloud Run job of
+// a project module refuses, and it is D1549's kind of rule rather than D1545's.
+//
+// Why the gate asks it at all. The rule lives in the step's own guard
+// (init.go's guard, which asks it before tf.Guard), and a step the gate ADMITS
+// never reaches that guard — the admission is what replaces the step's decision
+// — so a rule nobody asked beside the verdict is a rule D1545 switched off
+// without meaning to: D1551 classifies google_cloud_run_v2_job as not
+// data-bearing, which makes the replace a removed profile plans a warning, and
+// a warning is not a refusal. Nothing about this rule is content: the plan
+// cannot be applied, so there is no question for the owner to answer.
+//
+// The bytes are the document the gate itself judged, and a document this
+// binary cannot parse is the gate's own failure rather than this one's: it
+// never reaches here (managed.Gate refuses it first), and answering "" keeps
+// this rule from claiming a verdict about bytes nobody read.
+func projectJobRefusal(doc []byte) string {
+	var plan tf.Plan
+	if err := json.Unmarshal(doc, &plan); err != nil {
+		return ""
+	}
+	if err := infra.RefuseProjectJobDeletes(&plan); err != nil {
+		return err.Error()
+	}
+	return ""
+}
 
 // gateRefused is the GatedError of a step this gate did not admit, from the
 // error M6's admit answered with, the plan's own bytes, the verdict they were
@@ -1011,16 +1143,6 @@ func (r *initRun) gateDeleteLeft(reason string, doc []byte, verdict managedmode.
 	}, true
 }
 
-// gateClass is the confirmation class of a step the gate judges: these are the
-// ordinary applies of their stages, asked with confirmOrdinary, and an
-// ordinary step is initflow.YesOrTyped in both doors (D12's answer of
-// 2026-10-20). It is a function rather than a literal at each call site so
-// there is one place to read what class the gate was asked about, and it is
-// deliberately not r.stepClass(): that one answers for the Firestore
-// database's location, which is Typed in one door and not a step this gate
-// ever sees.
-func gateClass() initflow.ConfirmClass { return initflow.YesOrTyped }
-
 // admittedRules is what the record says admitted the plan: the rules Gate ran,
 // in the order it ran them (internal/managed/plan.go), each one true of the
 // plan the record digests. A record that said only "admitted" would be one an
@@ -1038,36 +1160,40 @@ func gateClass() initflow.ConfirmClass { return initflow.YesOrTyped }
 // digests — and an owner reading it back cannot check a rule against the plan
 // unless the rule says what the gate did. The empty case is the three sentences
 // every record this program wrote before the issues grant holds, unchanged.
-func admittedRules(upgrade []string) []string {
-	const costs = "the cost list blocked no attribute of the plan"
-	if len(upgrade) == 0 {
-		return []string{
-			"the guard refused no delete and no replace, so the plan removes nothing of fugaro's own (the owner's delete list admits no removal in the embedded roots)",
-			"the cover of the embedded roots admitted every change in the plan",
-			costs,
+//
+// warned is true when the verdict recorded CONTENT rules and did not refuse on
+// them (D1545: managed.Converge.Warned). Two of the three sentences above are
+// false of such a plan and are written as what the gate did instead: the guard
+// DID admit every removal of a type D1551's classification does not protect,
+// and the cost list is not asked to refuse a blocked attribute at all. A record
+// may not carry a rule that is false of the plan it digests — a rule an owner
+// cannot check against the plan is worse than no rule — so this parameter is
+// the verdict's own answer and never a caller's preference, and the rules that
+// fired are the record's warnings beside it.
+func admittedRules(upgrade []string, warned bool) []string {
+	guard := "the guard refused no delete and no replace, so the plan removes nothing of fugaro's own (the owner's delete list admits no removal in the embedded roots)"
+	cover := "the cover of the embedded roots admitted every change in the plan"
+	costs := "the cost list blocked no attribute of the plan"
+	if len(upgrade) > 0 {
+		guard = "the guard refused no delete and no replace this binary's own upgrade does not make, so the plan removes nothing of fugaro's own (the owner's delete list admits no removal in the embedded roots)"
+		cover = "the cover of the embedded roots admitted every change in the plan, each of the upgrade's replaces asked as the create it makes (its removal half is this binary's own, and no rule of the cover read it)"
+	}
+	if warned {
+		// The same two facts with the half D1551 and D1545 took out of them:
+		// what the guard did not refuse is what the classification does not
+		// protect, and the cover's integrity rules are the ones that still
+		// refuse.
+		guard = "the guard refused no delete and no replace, so the plan removes nothing of fugaro's own that D1551's classification protects (the owner's delete list admits no removal in the embedded roots)"
+		cover = "the cover of the embedded roots refused no change of this plan that its integrity rules judge — the changes it did not announce did not refuse it, and they are this record's warnings (D1545)"
+		costs = "the cost list refused no attribute of the plan — a blocked attribute did not refuse it, and it is one of this record's warnings (D1545)"
+		if len(upgrade) > 0 {
+			guard = "the guard refused no delete and no replace this binary's own upgrade does not make, so the plan removes nothing of fugaro's own that D1551's classification protects (the owner's delete list admits no removal in the embedded roots)"
+			cover = "the cover of the embedded roots refused no change of this plan that its integrity rules judge, each of the upgrade's replaces asked as the create it makes (its removal half is this binary's own, and no rule of the cover read it) — the changes it did not announce did not refuse it, and they are this record's warnings (D1545)"
 		}
 	}
-	return []string{
-		"the guard refused no delete and no replace this binary's own upgrade does not make, so the plan removes nothing of fugaro's own (the owner's delete list admits no removal in the embedded roots)",
-		"the cover of the embedded roots admitted every change in the plan, each of the upgrade's replaces asked as the create it makes (its removal half is this binary's own, and no rule of the cover read it)",
-		costs,
-		"the replaces this binary's own upgrade makes were matched out of this plan, both halves of each change compared before it was named (infra.LauncherGrantUpgrade): " + safetext.FieldListLine(upgrade),
-	}
-}
-
-// refusedRules is the verdict's refusals as the rules that fired, one per
-// refusal, in the gate's own gate/address/why shape. They are what the
-// refusal sentence names after NotConverged and what the audit record holds,
-// and internal/managed bounds them where it renders them: a rule can quote a
-// plan, and a plan is not this program's text.
-func refusedRules(v managedmode.Verdict) []string {
-	rules := make([]string, 0, len(v.Refusals))
-	for _, ref := range v.Refusals {
-		why := ref.Gate + ": " + ref.Why
-		if ref.Address != "" {
-			why = ref.Gate + ": " + ref.Address + " — " + ref.Why
-		}
-		rules = append(rules, why)
+	rules := []string{guard, cover, costs}
+	if len(upgrade) > 0 {
+		rules = append(rules, "the replaces this binary's own upgrade makes were matched out of this plan, both halves of each change compared before it was named (infra.LauncherGrantUpgrade): "+safetext.FieldListLine(upgrade))
 	}
 	return rules
 }

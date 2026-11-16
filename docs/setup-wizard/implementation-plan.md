@@ -257,9 +257,8 @@ above is the list it must not lose.
    on a decision. Every one of these is answered as recommended except **D12**,
    whose answer is the other way: §5's D12 paragraph is the contract W5.1
    builds and W0.1's matrix asserts.
-4. **The wizard never softens a confirmation.** `--yes`, `--non-interactive`,
-   `--json`, a pipe and an agent session behave exactly as
-   `internal/initflow`'s `YesCovers`/`CanConfirm` say today; W0.1's matrix is the
+4. **The wizard never softens a confirmation.** `--json`, a pipe and an agent session behave exactly as
+   `internal/initflow`'s `CanConfirm` says today; W0.1's matrix is the
    test both front doors must pass. After **D12** three rows of it may never be
    relaxed — **creating the project, linking the billing account and the
    Firestore database's location, all three `setup`'s** (the first two are
@@ -288,7 +287,7 @@ above is the list it must not lose.
    `runCovered` can express the answer, and no test written against
    `YesCovers` can pin it — W0.1's second table pins the call sites instead.
    One more confirmation is typed by a *different* decision — the offer to
-   enable `cloudbilling.googleapis.com` (D3, W4.4), which `--yes` never covers
+   enable `cloudbilling.googleapis.com` (D3, W4.4), which no flag covers
    either — so this list is D12's rows and not every typed step in the work.
 5. **The rename does not touch the cloud.** W2.x changes text, comments and
    descriptions only: no Terraform resource, variable name or path moves, so an
@@ -301,7 +300,7 @@ above is the list it must not lose.
    never restated — by every other task, because two copies of the list are two
    lists that drift.
 8. **The billing picker runs only where `canType()` says yes.** Under `--json`,
-   `--non-interactive`, no TTY or an agent session the run uses today's
+   no TTY or an agent session the run uses today's
    `guided()` line and lists nothing (D6, W4.3).
 
 ---
@@ -666,7 +665,7 @@ and D10 was answered as recommended on 2026-10-20, so it is free to start too.*
 are enforced in two places, and a pin that confuses them asserts something
 false:
 
-1. **The stage rows.** Which *stages* `--yes` covers, read from
+1. **The stage rows.** Which *stages* the owner's confirmation covers, read from
    `internal/initflow/stage.go`'s `runCovered` map through
    `RunCovers(name) = runCovered[name] && YesCovers(name)`, and which stages
    declare `noYes`. Five are covered (`Installation`, `Firebase`, `Images`,
@@ -707,8 +706,7 @@ false:
    different ways of saying "this did not happen", which is why the table
    asserts each row's own shape rather than a single rule over `LeftKind`.
 
-Both tables are crossed with five run modes — `--yes`, `--non-interactive`
-(with and without `--yes`), `--json`, no terminal, and an agent session — and
+Both tables are crossed with three run modes — `--json`, no terminal, and an agent session — and
 assert for each the state the loop reaches. The file reuses today's harness
 (`internal/initflow/loop_test.go`'s `TestYesDoesNotCoverCreateOrBilling` is the
 stage table's seed) and adds the agent and `--json` columns, which no single
@@ -975,10 +973,10 @@ offering to create a second one. **D11 was answered as recommended on
 builds.
 **Tests.** `TestSetupAsksCreateOrAdoptWithCreateDefault`,
 `TestSetupAdoptsWhenTheUserTypesAnExistingID`,
-`TestSetupCreatesOnlyWithTheTypedConfirmation` (and that `--yes` does not
+`TestSetupCreatesOnlyWithTheTypedConfirmation` (and that no flag does
 cover it — W0.1's matrix gains a row), `TestSetupOnAnExistingInstallationConvergesAndSaysSo`,
 `TestEveryWizardQuestionHasAFlag` (**new**, a table: question → flag → the
-`Missing()` name `--non-interactive` prints, so the contract is enforced
+`Missing()` name a non-terminal session prints, so the contract is enforced
 mechanically), `TestSetupOutsideACheckoutSkipsTheRepositoryQuestion` (pinned
 here as pass-through; W3.4 owns the wording).
 **Red step.** `TestEveryWizardQuestionHasAFlag` first.
@@ -1200,7 +1198,7 @@ cloud; this skill writes `fugaro.yaml` and opens the pull request" — and every
 `fugaro init --repo --plan-only` / `fugaro init --repo --retire` it hands the
 user becomes `fugaro update --plan-only` / `fugaro update --retire`.
 **What does not change.** Every sentence that is a *claim about behaviour*
-("`--yes` never covers creating a project") stays true and stays; only the
+("no flag covers creating a project") stays true and stays; only the
 command's name moves. The dated records are untouched (Convention 11) —
 including **`docs/coordinator/**`, `docs/mobile/**` and
 `docs/in-job-review/**`**, which this task's list carried until **D9 was
@@ -1384,7 +1382,7 @@ ownership — the way the typed banner already requires. Region is untouched her
 **Interfaces.** The question's shape: `prompt(label, def, valid)` keeps its
 three-tries contract; a second suggestion is a new parameter or a
 `promptChoice` helper — the task's call, and the review asks that the
-`--non-interactive` refusal still names **every** missing flag in one error.
+no-terminal refusal still names **every** missing flag in one error.
 **Tests.** `TestProjectIDDefaultIsFugaroName`, `TestProjectIDSuggestionIsTheCredentialProjectSecond`,
 `TestProjectIDIsCheckedBeforeAnyCreate`, `TestProjectIDDefaultIsSanitised`
 (a project name with capitals, spaces or a leading digit yields a legal id),
@@ -1450,14 +1448,14 @@ below lives beside the gate it pins, in
 stage; outside a checkout it skips the question and prints one line saying how to
 enrol one later. `update` never enrols silently (W5.1 owns that side). The four
 `resolveRepoTarget` refusals keep their substance and change their verb — and
-one row moves: onboarding a repository the run was not told about is **covered
-by `--yes`** after D12, where it was `Typed` before. **The flip is W5.1's, and
+one row moves: onboarding a repository the run was not told about is **confirmed
+at the owner's own real terminal** after D12, where it was `Typed` before. **The flip is W5.1's, and
 it does not arrive in this task.** D12's owner is W5.1, the rows that move are
 `internal/cli` call sites, and the one this row names is `init_repo_gate.go`'s
 `confirmRepo`; W0.1's matrix records it as `Typed` with `covered after W5.1`
 beside it, and W5.1's commit flips that row and this task's assertion in the same
 change. So the question this task adds **authorizes nothing on its own**: it is
-asked in the wizard and answered yes by default at a terminal, and under `--yes`
+asked in the wizard and answered yes by default at a terminal, and without a terminal
 the gate behind it is unchanged — `canConfirmRepo()` is still false there and the
 step is still `needs-you` with the opt-in line — until W5.1 relaxes the call
 site. This task therefore asserts the row **as it stands today**, and W5.1's
@@ -1487,7 +1485,7 @@ carries), `internal/cli/setup.go` (the stage is registered first),
 the **apply** order; the wizard's **questions** are all asked up front, before
 `initflow.Run` starts applying. The new `wizardStage` implements
 `initflow.InputStage`: its `Missing()` returns every question's flag (so
-`--non-interactive` produces one error naming all of them, exactly as today's
+a non-terminal session produces one error naming all of them, exactly as today's
 `gatherInputs` does), its `Check` is `done` once the answers are complete and
 `needs-you` before, and its `Left()` is the unanswered question with its
 `LeftKind` — `prompt` at a terminal, `command` otherwise. This is the task that
@@ -1573,14 +1571,14 @@ followed by a gcloud call),
 interactive wizard), `internal/cli/init_inputs.go` (the billing question joins
 the wizard's questions), `internal/cli/billing_prompt_test.go` (**new**).
 **What it changes (D6).** When `canType()` is true — a real terminal, not
-`--non-interactive`, not `--json`, not an agent session — the billing question
+`--json`, not an agent session — the billing question
 lists the open accounts by number with display name and id, picks by number,
 takes a single account as the default, and on none says the one clear thing
 about creating one in the console and prints today's guided `gcloud billing
 projects link` line. When `canType()` is false, **nothing is listed and the
 run behaves exactly as today** (Global Constraint 8). The account id still goes
-through the existing typed banner before any link, and `--yes` still never
-covers it (W0.1's matrix gains a row). What is picked is **not** stored anywhere
+through the existing typed banner before any link, and no flag stands in for
+it (W0.1's matrix gains a row). What is picked is **not** stored anywhere
 but where it is today.
 **Tests.** `TestPickerOffersOpenAccountsByNumber`,
 `TestPickerPicksByNumberAndReasksOnNonsense`,
@@ -1604,7 +1602,7 @@ picker does not exist, and it is the test that keeps the reversal narrow.
 **What it changes (D3).** The three cases, and nothing else:
 - the quota project **is** the project being set up → the wizard may offer to
   enable `cloudbilling.googleapis.com`, behind a **typed** confirmation that
-  `--yes` never covers, naming the project and the API;
+  no flag covers, naming the project and the API;
 - the quota project is **another** project → refuse, and print the exact
   `gcloud services enable cloudbilling.googleapis.com --project <quota>` line
   plus who to ask;
@@ -1694,14 +1692,14 @@ from `Names()`. Its refusals, each with a test:
   means.
 And its contract. **This is D12's answer of 2026-10-20, which overruled the
 recommendation this task was first drafted against**, so read it here rather
-than from §5's recommendation: `update` under `--yes` covers **everything
+than from §5's recommendation: `update` at the owner's own real terminal covers **everything
 `update` owns** — the five stages `internal/initflow/stage.go`'s `runCovered`
 names, `Installation`, `Firebase`, `Images`, `Installation2` and `Repository`,
 **and** every step *within* them that is money or permanent. A Cloud Build, the
 Firestore database's location, replacing a registry tag and onboarding an
 unlisted repository are **covered when `update` asks for them**: a CI job that
 upgrades the CLI and has to rebuild an image gets the build, not `needs-you` and
-exit code 1. `update --yes` is total over its own stage set; what it does **not**
+exit code 1. `update` at a real terminal is total over its own stage set; what it does **not**
 own it cannot cover, and the three rows that may never be relaxed are all
 `setup`'s: **creating the project** and **linking the billing account** — which
 `update` refuses outright and never reaches — and **the Firestore database's
@@ -1710,8 +1708,8 @@ therefore where the confirmations live.
 
 **Where that is implemented, and it is not `runCovered`.** `runCovered` is a map
 of **five stage names** read once, by
-`RunCovers(name) = runCovered[name] && YesCovers(name)`: it says whether `--yes`
-covers a whole *stage*, and it has no within-stage rule to change. The four
+`RunCovers(name) = runCovered[name] && YesCovers(name)`: it said whether a confirmation flag
+covered a whole *stage*, and it has no within-stage rule to change. The four
 steps D12 moves are per-call-site guards inside the stage's own apply, and each
 of them is `askTyped` or `canConfirmTyped(initflow.Typed, r.conditions())`:
 
@@ -1723,7 +1721,7 @@ of them is `askTyped` or `canConfirmTyped(initflow.Typed, r.conditions())`:
 | onboarding an unlisted repository | `internal/cli/init_repo_gate.go`'s `confirmRepo` | typed (owner/name typed at the prompt) |
 
 So this task changes those **four call sites** — making the ones `update` owns
-apply under `--yes`, and leaving `setup`'s typed — and it changes nothing in
+apply at the owner's own real terminal, and leaving `setup`'s typed — and it changes nothing in
 `internal/initflow/stage.go` but that map's doc comment, which this answer
 falsifies: the three `noYes` stages
 (`Project`, `Secrets`, `Compute`) and the five covered ones stay exactly as they
@@ -1741,14 +1739,14 @@ and `initRun` can carry it). The task's own call is how that door reaches
 W0.1's file carries the stage-level rows and the call-site rows as two separate
 assertions (see its own entry), and the rows D12 moves are flipped there in this
 commit.
-`update` with neither `--yes` nor a terminal plans only, as `initflow.Run`
+`update` with no terminal plans only, as `initflow.Run`
 already says.
 **Tests.** `TestUpdateRefusesCreateProjectAndLinkBilling`,
 `TestUpdateWithoutAnInstallationNamesSetup`,
 `TestUpdateLeavesAnUnenrolledRepositoryAloneAndExitsOne`,
 `TestUpdateUnderYesCoversEveryStageItOwns` (every stage `update` registers
-applies under `--yes`), and **`TestUpdateAppliesTheFourStepsItOwns`** — the
-call-site half, and the part D12 wrote: `update --yes` applies the Cloud Build,
+applies at the owner's own real terminal), and **`TestUpdateAppliesTheFourStepsItOwns`** — the
+call-site half, and the part D12 wrote: `update` at a real terminal applies the Cloud Build,
 the Firestore location, the registry-tag replacement and the unlisted
 repository's onboarding with no typed confirmation, each asserted at its own
 call site rather than through `YesCovers`; **planting the bug** in either
@@ -1882,7 +1880,7 @@ Each needs its own plan amendment and the owner's go.
   critical path is nine steps; a task that touches two of the wizard's files at
   once lengthens it. Stated rather than hidden.
 - **D12's answer is the newest thing in the plan, and it is the one that moves
-  behaviour rather than text.** `update --yes` now covers a Cloud Build, the
+  behaviour rather than text.** `update` at a real terminal now covers a Cloud Build, the
   Firestore location and a registry-tag replacement, and `setup` keeps the three
   rows that may never be relaxed. The risk is not the answer but its **reach** —
   and, as with every other part of D12, the reach is at the **call sites**: W5.1

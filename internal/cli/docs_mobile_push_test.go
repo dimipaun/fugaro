@@ -9,9 +9,9 @@ import (
 )
 
 // TestDocsMobilePushDesignIsWritten (mobile plan Task P5.2,
-// SECURITY-SENSITIVE, UNSCHEDULED):
+// SECURITY-SENSITIVE, approved by the owner on 2026-11-14):
 // the design for push notifications to the phone exists, says plainly that it
-// is design only and that nothing follows it until the owner approves a task,
+// is design only and that the approval of the task builds nothing,
 // covers what the brief asked for — what is sent, the channel, where the push
 // tokens live, what sends them, rate limiting, the user controls, the threat
 // model, the failure modes, the cost, the privacy statement and the
@@ -261,8 +261,14 @@ func TestDocsMobilePushIsIndexedAndPlanned(t *testing.T) {
 		t.Fatalf("%s's entry runs to the end of the plan: no following task", heading)
 	}
 	entry := rest[:end]
+	// The status the entry carries, and the one it may not: the owner approved
+	// P5.2 on 2026-11-14 (the heading, the Phase 5 tables and the Cross-task row
+	// say so too), and the word the entry carried while the task was unscheduled
+	// is the drift this guard is about — a reader who opens P5.2 at its own line
+	// would be told the work is unscheduled, which is what the plan said until
+	// the approval and is no longer true of it.
 	for _, want := range []string{
-		"UNSCHEDULED",
+		"APPROVED by the owner on 2026-11-14",
 		"design/push-notifications.md",
 		"Check 88",
 		"SECURITY-SENSITIVE",
@@ -270,6 +276,9 @@ func TestDocsMobilePushIsIndexedAndPlanned(t *testing.T) {
 		if !strings.Contains(heading+entry, want) {
 			t.Errorf("%s's P5.2 entry lacks %q", "docs/mobile/implementation-plan.md", want)
 		}
+	}
+	if strings.Contains(heading+entry, "UNSCHEDULED") {
+		t.Errorf("%s's P5.2 entry still says %q, though the owner approved the task on 2026-11-14: the entry is where a reader who opens P5.2 reads its status, and the plan's other phases record an approval in the heading", "docs/mobile/implementation-plan.md", "UNSCHEDULED")
 	}
 	// The entry this design's pull request edits must name its files rather
 	// than the placeholder a task with no design leaves behind: "Files. None
@@ -1020,16 +1029,25 @@ func TestDocsMobilePushQuotesThePlanAsItStandsAfterThisPR(t *testing.T) {
 // depending on nothing (`| P5.1–P5.3 | — | D115, D121, D123 |`). A reader
 // scheduling from that table would schedule the sender before the node and the
 // command it needs exist. The prerequisites are recorded the way P3.6's row
-// names P6.3: in the "Depends on" cell, with the state the plan's Phase 6 rows
-// carry — the owner approved Phase 6 on 2026-10-18 (`approved 2026-10-18`, the
-// phrase TestDocsMobilePlanPhase6IsApproved pins on every P6.N row), so the
-// block and the row mark P6.4 **merged** (#601, the generation in the tree) and
-// P6.6 approved and not built, rather than carrying the pre-approval
-// "proposed, NOT APPROVED" this guard was first written against.
+// names P6.3: in the "Depends on" cell, with the state `main` carries — the
+// owner approved Phase 6 on 2026-10-18 (`approved 2026-10-18`, the phrase
+// TestDocsMobilePlanPhase6IsApproved pins on every P6.N row), so the block and
+// the row mark P6.4 **merged** (#601, the generation in the tree), rather than
+// carrying the pre-approval "proposed, NOT APPROVED" this guard was first
+// written against.
+//
+// Two states moved after that, and the guard follows the tree rather than the
+// sentence it was written with: P6.6 was "approved and not built" and is built
+// now (`internal/cli/pair.go` is the file that says so, which is the needle
+// below), and the task that is still not built is P6.7 — `internal/cli/mailbox.go`
+// does not exist — which is where the "not built" needle now bites. The plan
+// carries both as dated amendments, and the owner approved P5.2 itself on
+// 2026-11-14, which is the status TestDocsMobilePushIsIndexedAndPlanned pins.
 //
 // Mutation (verified, run and restored): put "proposed, NOT APPROVED" back into
-// the P5.2 dependency row or into its Depends-on block, or drop "merged"/"#601"
-// from the row: this test fails, each way.
+// the P5.2 dependency row or into its Depends-on block, drop "merged"/"#601"
+// from the row, or drop `internal/cli/pair.go` from it: this test fails, each
+// way.
 func TestDocsMobilePushPlanRecordsTheDesignsPrerequisites(t *testing.T) {
 	const docPath = "docs/mobile/design/push-notifications.md"
 	const planPath = "docs/mobile/implementation-plan.md"
@@ -1060,7 +1078,7 @@ func TestDocsMobilePushPlanRecordsTheDesignsPrerequisites(t *testing.T) {
 	if depends == "—" || depends == "-" {
 		t.Errorf("%s records P5.2 as depending on nothing (%q), though the design's Q2 makes P6.4 a prerequisite and §3.4 makes P6.6 the command that writes both nodes", planPath, depends)
 	}
-	for _, want := range []string{"**P6.4**", "**P6.6**", "approved 2026-10-18", "#601", "not built"} {
+	for _, want := range []string{"**P6.4**", "**P6.6**", "approved 2026-10-18", "#601", "not built", "internal/cli/pair.go"} {
 		if !strings.Contains(depends, want) {
 			t.Errorf("%s's P5.2 dependency row does not name %q: %s", planPath, want, depends)
 		}

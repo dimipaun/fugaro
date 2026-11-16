@@ -3,14 +3,19 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/orchestrator/sensitivity"
+	"github.com/dimipaun/fugaro/internal/runner"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -47,10 +52,11 @@ type securityDocShape struct {
 
 // securityNoKeyYAML is the file every fixture here commits: a valid fugaro.yaml
 // that names the project and the base branch and carries no security key at
-// all, which is the state of every repository in this slice (the key is SC7's
-// and SC8's). TestSecurityPathsOnARepositoryWithNoKeyIsTheFloor holds the "no
-// key" half of that claim against the text itself rather than against this
-// comment.
+// all, which is the state of most repositories. It is what makes the list in
+// force the floor alone here, with this machine's layer cache isolated as every
+// test in this file has it (securityCheckout).
+// TestSecurityPathsOnARepositoryWithNoKeyIsTheFloor holds the "no key" half of
+// that claim against the text itself rather than against this comment.
 var securityNoKeyYAML = baseBranchYAML("git: { provider: github, base_branch: main }\n")
 
 // securityCheckout makes the working directory a checkout of repo whose base
@@ -59,6 +65,10 @@ var securityNoKeyYAML = baseBranchYAML("git: { provider: github, base_branch: ma
 // the list at that checkout's base branch, so every test here starts in one.
 func securityCheckout(t *testing.T, repo, yaml string) string {
 	t.Helper()
+	// The project layer's half of the list comes from this machine's cached copy
+	// of the published layer (modelsLayer), so a test that did not isolate the
+	// cache would read whatever layer the machine running it happens to hold.
+	isolateCache(t)
 	baseBranchCheckout(t, repo, yaml, "main")
 	dir, err := os.Getwd()
 	if err != nil {
@@ -109,8 +119,8 @@ func securityFloorRows() []securityRow {
 }
 
 // TestSecurityPathsPrintsTheListInForce is the read's own test: without --check
-// the command prints the list in force — in this slice the floor alone, every
-// row with its source layer — and the document says which repository, which
+// the command prints the list in force — the floor alone here, every row with
+// its source layer — and the document says which repository, which
 // project and which base branch it answered for.
 func TestSecurityPathsPrintsTheListInForce(t *testing.T) {
 	securityCheckout(t, "acme/app", securityNoKeyYAML)
@@ -303,8 +313,10 @@ func TestSecurityPathsCheckFailsClosedOnAnUnplaceablePath(t *testing.T) {
 // force carries the layer it came from, out of D1512's three words, and the
 // document names the layer the floor's rows carry once, so a reader can tell
 // the engine's own rows from a project's and a repository's without scanning
-// the list. In this slice the list is the floor alone (D1504), so every row is
-// `floor`.
+// the list. The repository here writes no key and this machine holds no cached
+// layer, so the list is the floor alone (D1504) and every row is `floor`; the
+// two written layers are TestSecurityPathsResolvesTheRepositorysRowsAtTheBase's
+// and TestSecurityPathsCarriesTheProjectLayersRows'.
 func TestSecurityPathsNamesTheSourceLayerOfEveryRow(t *testing.T) {
 	securityCheckout(t, "acme/app", securityNoKeyYAML)
 
@@ -320,7 +332,7 @@ func TestSecurityPathsNamesTheSourceLayerOfEveryRow(t *testing.T) {
 			continue
 		}
 		if row.source != "floor" {
-			t.Errorf("security.patterns[%d] (%s) has source %q, want %q: no project key and no repository key exists in this slice", i, row.name, row.source, "floor")
+			t.Errorf("security.patterns[%d] (%s) has source %q, want %q: this repository writes no security key and this machine holds no cached layer for the project", i, row.name, row.source, "floor")
 		}
 	}
 	if doc.Security.Count == 0 {
@@ -331,8 +343,8 @@ func TestSecurityPathsNamesTheSourceLayerOfEveryRow(t *testing.T) {
 // TestSecurityPathsReadsTheBaseAndNotTheWorktree is D1518's property, and the
 // whole of this command's safety: the list in force is read at the base branch,
 // so a change cannot carry the rule that governs its own review. The working
-// tree here says a different project from the committed base — the one thing
-// this slice reads at the ref — and the document has to carry the base's.
+// tree here says a different project from the committed base — one of the things
+// this reads at the ref — and the document has to carry the base's.
 func TestSecurityPathsReadsTheBaseAndNotTheWorktree(t *testing.T) {
 	dir := securityCheckout(t, "acme/app", securityNoKeyYAML)
 	working := strings.Replace(securityNoKeyYAML, "project: aurora", "project: bramble", 1)
@@ -411,9 +423,9 @@ func TestSecurityPathsNamesItsFieldsInTheContract(t *testing.T) {
 
 // TestSecurityPathsOnARepositoryWithNoKeyIsTheFloor: a repository whose
 // fugaro.yaml carries no security key resolves to the floor alone and never to
-// nothing (D1504). This slice has no key at all, so what the test holds is the
-// negative half — the file really writes none — and the positive one: the list
-// in force is sensitivity.Floor(), row for row.
+// nothing (D1504). What the test holds is the negative half — the file really
+// writes none — and the positive one: with no project layer cached on this
+// machine the list in force is sensitivity.Floor(), row for row.
 func TestSecurityPathsOnARepositoryWithNoKeyIsTheFloor(t *testing.T) {
 	if strings.Contains(securityNoKeyYAML, "security") {
 		t.Fatal("the fixture writes a security key, so this test would pass on a resolution that read one")
@@ -536,5 +548,368 @@ func TestSecurityPathsOpensNoBucket(t *testing.T) {
 	}
 	if doc.Security.Count != len(securityFloorRows()) {
 		t.Errorf("security.count = %d, want the floor's %d rows", doc.Security.Count, len(securityFloorRows()))
+	}
+}
+
+// securityOwnRowsYAML is a repository whose own file writes a security: block:
+// the fallback's half of the resolution (D1500). The row it writes is on no
+// floor row and in no routine tree this test reads, so the only list that can
+// carry it is the resolution's.
+const securityOwnRowsYAML = "version: 1\nproject: aurora\ngit: { provider: github, base_branch: main }\n" +
+	"security:\n  patterns:\n    - { name: payments, match: \"internal/payments/**\", category: credentials }\n" +
+	"workflows:\n  web: { commands: { build: sh b.sh, test: sh t.sh } }\n"
+
+// securityAlternationMatch is the match of a row sensitivity.Pattern.Validate
+// refuses for what it costs rather than for what it means: 33 `{a,aa}` groups,
+// the most a MaxPatternMatch-long row can spend (198 of its 200 characters),
+// each one a re-entry into doublestar's matcher with the alternative spliced in.
+//
+// securityAlternationPath is what makes that row expensive, and is the shape
+// hasAlternation's measurement was taken against: a path the alternation can
+// consume one or two runs of, so every group doubles what doublestar has to
+// explore. Measured on this tree with sensitivity.Match, one path and one row:
+// 12 groups 0.7 ms, 16 groups 12.6 ms, 20 groups 179 ms, 22 groups 729 ms,
+// 24 groups 3.0 s — the doubling continues to the 33 a bounded row allows.
+var (
+	securityAlternationMatch = strings.Repeat("{a,aa}", 33)
+	securityAlternationPath  = strings.Repeat("a", 66)
+)
+
+// securityUnusableRowYAML is a repository whose own file writes two rows: one a
+// reader may match and one it may not.
+func securityUnusableRowYAML() string {
+	return "version: 1\nproject: aurora\ngit: { provider: github, base_branch: main }\n" +
+		"security:\n  patterns:\n" +
+		"    - { name: payments, match: \"internal/payments/**\", category: credentials }\n" +
+		"    - { name: evil, match: \"" + securityAlternationMatch + "\", category: credentials }\n" +
+		"workflows:\n  web: { commands: { build: sh b.sh, test: sh t.sh } }\n"
+}
+
+// TestSecurityPathsDoesNotMatchARowTheMatcherCannotUse: this reader matches the
+// repository's own rows, so it measures them as a run's load measures them
+// (sensitivity.Pattern.Validate, in internal/config's own rules) before any of
+// them reaches sensitivity.Match. A row the matcher refuses is not in the list
+// in force, is not matched and is not counted, the valid row beside it still is,
+// and the command says on stderr which row it passed over and why — the answer a
+// person diagnosing a security block needs, and a refusal rather than a hang.
+//
+// Mutation checked by removing the drop from securityMatchable: the three
+// assertions here fail, and the test beside this one —
+// TestSecurityPathsAnswersAPathTheRefusedRowWouldHaveCost — stops answering. The
+// measurement was put back afterwards.
+func TestSecurityPathsDoesNotMatchARowTheMatcherCannotUse(t *testing.T) {
+	securityCheckout(t, "acme/app", securityUnusableRowYAML())
+
+	out, errOut, err := execute(t, "security", "paths", "--check", "internal/payments/legacy.go")
+	if err != nil {
+		t.Fatalf("fugaro security paths: %v\n%s", err, out)
+	}
+	if !strings.Contains(errOut, "evil") || !strings.Contains(errOut, "alternation") {
+		t.Errorf("stderr = %q, want the refused row and sensitivity.Pattern.Validate's own reason", errOut)
+	}
+	if !strings.Contains(out, "payments") {
+		t.Errorf("the answer does not name the valid row beside it:\n%s", out)
+	}
+
+	list, listErr, err := execute(t, "security", "paths")
+	if err != nil {
+		t.Fatalf("fugaro security paths: %v\n%s", err, list)
+	}
+	if want := "internal/payments/**"; !strings.Contains(list, want) {
+		t.Errorf("the printed list does not carry the valid row beside it (want %s):\n%s", want, list)
+	}
+	if strings.Contains(list, securityAlternationMatch) {
+		t.Errorf("the printed list carries the row the matcher refuses:\n%s", list)
+	}
+	if !strings.Contains(listErr, "evil") {
+		t.Errorf("stderr without --check = %q, want the refused row said there too: the list is what it is missing from", listErr)
+	}
+
+	doc := securityDoc(t, "security", "paths", "--check", "internal/payments/legacy.go")
+	if doc.Error != "" {
+		t.Errorf("error = %q, want the read to have answered: a refused row is dropped, not a file that could not be read", doc.Error)
+	}
+	want := append(securityFloorRows(), securityRow{"payments", "internal/payments/**", "credentials", "repo"})
+	got := securityRows(doc)
+	if len(got) != len(want) {
+		t.Fatalf("security.patterns = %d rows, want the floor's %d and the repository's one", len(got), len(securityFloorRows()))
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("security.patterns[%d] = %+v, want %+v", i, got[i], w)
+		}
+	}
+	if doc.Security.Count != len(want) {
+		t.Errorf("security.count = %d, want the list's own %d: a row no reader matches is not in the list in force", doc.Security.Count, len(want))
+	}
+	if len(doc.Checked) != 1 || doc.Checked[0].Matched == nil || doc.Checked[0].Matched.Name != "payments" {
+		t.Errorf("checked = %+v, want the repository's valid row answering for internal/payments/legacy.go", doc.Checked)
+	}
+}
+
+// TestSecurityPathsAnswersAPathTheRefusedRowWouldHaveCost is the hang itself, on
+// its own so that it is the one thing it fails as: the fixture's second row
+// matched against securityAlternationPath is hours of doublestar (the numbers
+// are on that variable), so a reader that took the row as written would not
+// answer at all. Mutation checked by removing the drop from
+// securityMatchable: this test does not fail, it stops answering — `go test -run
+// TestSecurityPathsAnswersAPathTheRefusedRowWouldHaveCost -timeout 30s` times
+// out. The measurement was put back afterwards.
+func TestSecurityPathsAnswersAPathTheRefusedRowWouldHaveCost(t *testing.T) {
+	securityCheckout(t, "acme/app", securityUnusableRowYAML())
+
+	out, errOut, err := execute(t, "security", "paths", "--check", securityAlternationPath)
+	if err != nil {
+		t.Fatalf("fugaro security paths --check %s: %v", securityAlternationPath, err)
+	}
+	if !strings.Contains(out, securityAlternationPath) {
+		t.Errorf("the answer does not name the path it was asked about:\n%s", out)
+	}
+	if strings.Contains(errOut, "error") {
+		t.Errorf("stderr = %q, want the row said and no failure: the path is placeable and the list in force answers it", errOut)
+	}
+}
+
+// TestSecurityPathsRefusesABlockOverTheRowBound: a block that writes more rows
+// than a layer may hold is one no run holds either (sensitivity.MaxPatterns, the
+// bound beside a row's own that sensitivity.Match's note rests on), and there is
+// no per-row answer to a count — so the block is refused whole, the answer is the
+// floor alone, and the `error` member says the bound that was broken rather than
+// a list of 101 rows reading like a list a run would carry.
+func TestSecurityPathsRefusesABlockOverTheRowBound(t *testing.T) {
+	rows := make([]string, 0, sensitivity.MaxPatterns+1)
+	for i := 0; i <= sensitivity.MaxPatterns; i++ {
+		rows = append(rows, fmt.Sprintf("    - { name: r%d, match: \"internal/t%d/**\", category: artifacts }", i, i))
+	}
+	securityCheckout(t, "acme/app", "version: 1\nproject: aurora\ngit: { provider: github, base_branch: main }\n"+
+		"security:\n  patterns:\n"+strings.Join(rows, "\n")+"\n"+
+		"workflows:\n  web: { commands: { build: sh b.sh, test: sh t.sh } }\n")
+
+	out, errOut, err := execute(t, "security", "paths", "--check", "internal/t0/x.go")
+	if err != nil {
+		t.Fatalf("fugaro security paths: %v\n%s", err, out)
+	}
+	if !strings.Contains(errOut, "floor alone") {
+		t.Errorf("stderr = %q, want the block refused and the floor named as what is printed", errOut)
+	}
+	doc := securityDoc(t, "security", "paths", "--check", "internal/t0/x.go")
+	if !strings.Contains(doc.Error, fmt.Sprint(sensitivity.MaxPatterns)) {
+		t.Errorf("error = %q, want the bound the block broke", doc.Error)
+	}
+	floor := securityFloorRows()
+	if doc.Security.Count != len(floor) {
+		t.Errorf("security.count = %d, want the floor's %d: a refused block's rows are not in force", doc.Security.Count, len(floor))
+	}
+	if len(doc.Checked) != 1 || doc.Checked[0].Sensitive {
+		t.Errorf("checked = %+v, want the path answered no: no row of the refused block is matched", doc.Checked)
+	}
+}
+
+// TestSecurityPathsResolvesTheRepositorysRowsAtTheBase: the repository's own
+// rows are part of the list in force (SC9, D1506, D1511), they carry the source
+// `repo`, and they are read at the base branch and never from the working copy
+// (D1518). The working tree here writes a different row from the committed base,
+// so a read of the working copy would print a list that is not the run's.
+func TestSecurityPathsResolvesTheRepositorysRowsAtTheBase(t *testing.T) {
+	dir := securityCheckout(t, "acme/app", securityOwnRowsYAML)
+	working := strings.Replace(securityOwnRowsYAML, "internal/payments/**", "internal/rogues/**", 1)
+	if working == securityOwnRowsYAML {
+		t.Fatal("the fixture no longer writes the row, so this test would pass on two identical files")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(working), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	doc := securityDoc(t, "security", "paths")
+
+	rows := securityRows(doc)
+	if want := len(securityFloorRows()) + 1; len(rows) != want {
+		t.Fatalf("security.patterns = %d rows, want the floor's %d and the repository's one", len(rows), want)
+	}
+	if doc.Security.Count != len(rows) {
+		t.Errorf("security.count = %d, want the list's own %d", doc.Security.Count, len(rows))
+	}
+	want := securityRow{"payments", "internal/payments/**", "credentials", "repo"}
+	if got := rows[len(rows)-1]; got != want {
+		t.Errorf("the last row = %+v, want %+v: a repository's own block is read at the base ref and carries the source repo", got, want)
+	}
+	for i, row := range rows[:len(rows)-1] {
+		if row != securityFloorRows()[i] {
+			t.Errorf("security.patterns[%d] = %+v, want the floor's %+v: a repository's rows are added beside the floor's", i, row, securityFloorRows()[i])
+		}
+	}
+}
+
+// securityProjectLayerYAML is a project layer whose security: block writes one
+// row (D1501), in the shape the layer cache holds: the same text the published
+// layer carries.
+const securityProjectLayerYAML = "version: 1\nproject: aurora\ngcp_project: proj-1234\n" +
+	"security:\n  patterns:\n    - { name: settlements, match: \"internal/settlements/**\", category: credentials }\n"
+
+// TestSecurityPathsCarriesTheProjectLayersRows: the project layer's rows are the
+// list's middle half (SC9, D1506, D1511) and carry the source `project`. This
+// command reads no bucket (§6.23), so the layer it reads is this machine's
+// cached copy of the published one — the read `fugaro models ls` makes — and a
+// machine that holds it gets the project's rows with no warning beside them.
+func TestSecurityPathsCarriesTheProjectLayersRows(t *testing.T) {
+	// The checkout first: it isolates the cache, so the layer is written into the
+	// same cache the command will read.
+	securityCheckout(t, "acme/app", securityAnchoredYAML)
+	if err := localcfg.SaveLayerCache(os.Getenv, "aurora", localcfg.SharedCacheEntry{
+		GCPProject: "proj-1234", Bucket: "fugaro-runs-proj-1234", CheckedAt: time.Now(), YAML: securityProjectLayerYAML,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	doc := securityDoc(t, "security", "paths")
+
+	rows := securityRows(doc)
+	if want := len(securityFloorRows()) + 1; len(rows) != want {
+		t.Fatalf("security.patterns = %d rows, want the floor's %d and the project layer's one", len(rows), want)
+	}
+	want := securityRow{"settlements", "internal/settlements/**", "credentials", "project"}
+	if got := rows[len(rows)-1]; got != want {
+		t.Errorf("the last row = %+v, want %+v: the cached layer's row is in force and carries the source project", got, want)
+	}
+
+	out, errOut, err := execute(t, "security", "paths")
+	if err != nil {
+		t.Fatalf("fugaro security paths: %v\n%s", err, out)
+	}
+	if errOut != "" {
+		t.Errorf("stderr = %q, want nothing: this machine holds the layer the list was read from", errOut)
+	}
+}
+
+// TestSecurityPathsSaysSoWhenTheProjectLayerIsNotCached: a machine that holds no
+// cached copy of the project's layer prints the floor's rows and the
+// repository's without the project's, which the document's shape cannot say
+// (every member of it is the console's contract, §6.23). The command says so on
+// stderr, in both forms of the document, and the `error` member stays what it
+// was — the repository's own file, which was read.
+func TestSecurityPathsSaysSoWhenTheProjectLayerIsNotCached(t *testing.T) {
+	securityCheckout(t, "acme/app", securityAnchoredYAML)
+
+	out, errOut, err := execute(t, "security", "paths")
+	if err != nil {
+		t.Fatalf("fugaro security paths: %v\n%s", err, out)
+	}
+	if !strings.Contains(errOut, "aurora") || !strings.Contains(errOut, "layer") {
+		t.Errorf("stderr = %q, want the project whose layer is missing and that it is the layer", errOut)
+	}
+	_, jsonErr, err := execute(t, "security", "paths", "--json")
+	if err != nil {
+		t.Fatalf("fugaro security paths --json: %v", err)
+	}
+	if jsonErr != errOut {
+		t.Errorf("--json stderr = %q, want %q: the missing layer is not something the document can carry", jsonErr, errOut)
+	}
+
+	doc := securityDoc(t, "security", "paths")
+	if doc.Project != "aurora" || doc.Error != "" {
+		t.Errorf("project = %q, error = %q, want the file read and no error member: a missing cached layer is not a read that failed", doc.Project, doc.Error)
+	}
+	if doc.Security.Count != len(securityFloorRows()) {
+		t.Errorf("security.count = %d, want the floor's %d rows: the project's rows are not on this machine to be read", doc.Security.Count, len(securityFloorRows()))
+	}
+}
+
+// securityOwnRepeatYAML is a repository that writes a row under a name its
+// project layer already spends: the write D1506 makes a union drop, and the one
+// a person makes by narrowing a project's row in their own file.
+const securityOwnRepeatYAML = "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: github, base_branch: main }\n" +
+	"security:\n  patterns:\n    - { name: payments, match: \"internal/payments/legacy/**\", category: artifacts }\n" +
+	"workflows:\n  web: { commands: { build: sh b.sh, test: sh t.sh } }\n"
+
+// securityProjectPaymentsLayerYAML is a project layer writing the name the
+// fixture above repeats.
+const securityProjectPaymentsLayerYAML = "version: 1\nproject: aurora\ngcp_project: proj-1234\n" +
+	"security:\n  patterns:\n    - { name: payments, match: \"internal/payments/**\", category: credentials }\n"
+
+// securityOtherGCPYAML is a repository of the same project on another GCP
+// project: project aurora's layer is anchored to proj-1234, so this file's runs
+// resolve without it. It is the second half of the anchor rule — a layer is not
+// a file's just because the project name is.
+var securityOtherGCPYAML = "version: 1\nproject: aurora\ngcp_project: proj-9999\ngit: { provider: github, base_branch: main }\n" +
+	"workflows:\n  web: { commands: { build: sh b.sh, test: sh t.sh } }\n"
+
+// TestSecurityPathsDoesNotApplyALayerTheFileIsNotAnchoredTo: this machine reads
+// a cached layer by project name, and a run applies it only to a file whose
+// project: and gcp_project: are the layer's (internal/runner/runner.go's
+// ResolveConfig, whose Applied is config.ProjectLayer.Applies — the one spelling
+// of the rule both reads ask). A file that names the project and no GCP project,
+// or another one, is not that file, so the cached layer is not in force here
+// either: the command prints the floor's rows and the repository's alone, says
+// on stderr why the project's are missing, and answers as the runner's own
+// resolution over the same bytes does — which is what this test holds it to.
+func TestSecurityPathsDoesNotApplyALayerTheFileIsNotAnchoredTo(t *testing.T) {
+	for _, tc := range []struct{ name, yaml string }{
+		{"no gcp project", securityNoKeyYAML},
+		{"another gcp project", securityOtherGCPYAML},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			securityCheckout(t, "acme/app", tc.yaml)
+			if err := localcfg.SaveLayerCache(os.Getenv, "aurora", localcfg.SharedCacheEntry{
+				GCPProject: "proj-1234", Bucket: "fugaro-runs-proj-1234", CheckedAt: time.Now(), YAML: securityProjectLayerYAML,
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			rc := runner.ResolveConfig([]byte(tc.yaml), &task.ProjectLayer{YAML: securityProjectLayerYAML}, "aurora", "main")
+			if rc.LayerErr != nil {
+				t.Fatal(rc.LayerErr)
+			}
+			if rc.Applied {
+				t.Fatalf("a run applies the layer to this file, so the fixture is not the mismatch it means to be: %s", tc.yaml)
+			}
+
+			out, errOut, err := execute(t, "security", "paths")
+			if err != nil {
+				t.Fatalf("fugaro security paths: %v\n%s", err, out)
+			}
+			if strings.Contains(out, "settlements") {
+				t.Errorf("the table carries the cached layer's row:\n%s", out)
+			}
+			if !strings.Contains(errOut, "aurora") || !strings.Contains(errOut, "not in force") {
+				t.Errorf("stderr = %q, want the project and that its layer is not in force for this file", errOut)
+			}
+
+			doc := securityDoc(t, "security", "paths")
+			if got := securityRows(doc); !slices.Equal(got, securityFloorRows()) {
+				t.Errorf("the list in force = %+v, want the floor's %d rows: the layer a run does not apply is not in force here either", got, len(securityFloorRows()))
+			}
+		})
+	}
+}
+
+// TestSecurityPathsSaysWhenARowIsDropped: a repository's row under a name the
+// project layer already spends is not in force — the project's row is — and the
+// command says so on stderr rather than leaving the difference between the
+// file's author's belief and the list in force unsaid (config.SecurityIgnoredRow,
+// F10, D1506). The document itself carries the project's row and the source
+// `project`, and the repository's narrower glob appears nowhere in it.
+func TestSecurityPathsSaysWhenARowIsDropped(t *testing.T) {
+	securityCheckout(t, "acme/app", securityOwnRepeatYAML)
+	if err := localcfg.SaveLayerCache(os.Getenv, "aurora", localcfg.SharedCacheEntry{
+		GCPProject: "proj-1234", Bucket: "fugaro-runs-proj-1234", CheckedAt: time.Now(), YAML: securityProjectPaymentsLayerYAML,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	out, errOut, err := execute(t, "security", "paths")
+	if err != nil {
+		t.Fatalf("fugaro security paths: %v\n%s", err, out)
+	}
+	if !strings.Contains(errOut, "payments") || !strings.Contains(errOut, "not in force") {
+		t.Errorf("stderr = %q, want the dropped row and that it is not in force", errOut)
+	}
+	if strings.Contains(out, "internal/payments/legacy/**") {
+		t.Errorf("the table carries the repository's dropped row:\n%s", out)
+	}
+
+	doc := securityDoc(t, "security", "paths")
+	want := securityRow{"payments", "internal/payments/**", "credentials", "project"}
+	if got := securityRows(doc); len(got) != len(securityFloorRows())+1 || got[len(got)-1] != want {
+		t.Errorf("the list in force = %+v, want the floor's rows and %+v: the repository's row of that name does not take the project's away", got, want)
 	}
 }

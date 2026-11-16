@@ -43,8 +43,12 @@ it is recorded here as **unperformed** rather than reported as done. **Two sente
 as of the same date, and are corrected rather than deleted**: `docs/coordinator/` is no longer
 *"plan only"* — its P1–P5 are built, in `ee/coordinator/` since the ee-reorg plan's E2.1b — and
 `docs/credentials-service/` no longer is either: its service is deployed by every `fugaro update`
-(DON1). What is still true of both is what this folder's dependency actually rests on: neither
-sibling's own parts that this plan waits for are built.
+(DON1). **A third has gone stale since that date, and is corrected the same way (2026-11-11):**
+`ee/orchestrator/`, the package this re-plan's parts land in, is no longer empty — it holds the
+stateless plan's O17 and O18 (`handoff.go`, `batch.go`, merged 2026-11-08 and 2026-11-09) — and
+**none of this folder's own parts P0–P9 is built**, so the status line above still reads true of
+this folder's own work. What is still true of both is what this folder's dependency actually rests
+on: neither sibling's own parts that this plan waits for are built.
 
 | File | What it is |
 | --- | --- |
@@ -148,7 +152,8 @@ it claims no check number either way and takes the next free one at merge time (
   that work's D196 **(B)**, so it gets **its own** resident service and every orchestrator,
   this one included, reaches it **as a client**; this plan's P4/P5 no longer block it.
 - [docs/design/v1.md](../design/v1.md) §2 — the non-goal the spec's *"carries PRs through to
-  merge"* contradicts: *"Auto-merge. Fugaro never merges."* (§3 #22, **D18**).
+  merge"* contradicted: *"Auto-merge. Fugaro never merges."* (§3 #22, **D18**). **Amended
+  2026-11-10 by `docs/outer-loop-escalation`:** the non-goal now reads "No merge outside the orchestrator's gated rule".
 - [SECURITY.md](../../SECURITY.md) — the trust assumptions every credential question here
   inherits: the launcher's reach, that a run is the untrusted party, and the accepted
   blast-radius paragraphs of `docs/design/project-centric.md` §4.1 (§3 #20, #46, **D4**).

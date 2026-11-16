@@ -43,7 +43,10 @@ func settingsWriteHomeWith(t *testing.T, extra string) (home, localPath string) 
 // takes the current directory's checkout, which is what these tests exercise.
 func settingsWriteCheckout(t *testing.T, fugaroYAML string) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	testutil.Git(t, dir, "init", "-q")
 	if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(fugaroYAML), 0o600); err != nil {
 		t.Fatal(err)
@@ -86,7 +89,7 @@ func TestSettingsSetRefusesAKeyOwnedByAnotherFamily(t *testing.T) {
 func TestSettingsSetRefusesALayerTheKeyMayNotBeSetIn(t *testing.T) {
 	_, localPath := settingsWriteHome(t)
 	before := readFileString(t, localPath)
-	_, _, err := execute(t, "settings", "set", "max_parallel", "4", "--layer", "repo", "--yes")
+	_, _, err := execute(t, "settings", "set", "max_parallel", "4", "--layer", "repo")
 	if err == nil {
 		t.Fatal("settings set wrote max_parallel at --layer repo, which the registry does not allow")
 	}
@@ -105,7 +108,7 @@ func TestSettingsSetRefusesALayerTheKeyMayNotBeSetIn(t *testing.T) {
 func TestSettingsSetRefusesAValueTheLoaderRefuses(t *testing.T) {
 	_, localPath := settingsWriteHome(t)
 	before := readFileString(t, localPath)
-	_, _, err := execute(t, "settings", "set", "update_check", "maybe", "--layer", "local", "--yes")
+	_, _, err := execute(t, "settings", "set", "update_check", "maybe", "--layer", "local")
 	if err == nil {
 		t.Fatal("settings set wrote a value the local config's loader refuses")
 	}
@@ -122,7 +125,7 @@ func TestSettingsSetRefusesAValueTheLoaderRefuses(t *testing.T) {
 func TestSettingsSetRepoLayerWithoutRepoUsesTheCurrentCheckout(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML(""))
-	out, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--yes")
+	out, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -137,7 +140,7 @@ func TestSettingsSetRepoLayerWithoutRepoUsesTheCurrentCheckout(t *testing.T) {
 func TestSettingsSetRepoLayerOutsideACheckoutIsRefused(t *testing.T) {
 	settingsWriteHome(t)
 	t.Chdir(t.TempDir())
-	_, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--yes")
+	_, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo")
 	if err == nil {
 		t.Fatal("settings set guessed a repository for --layer repo outside a checkout")
 	}
@@ -153,7 +156,7 @@ func TestSettingsSetRefusesInAnAgentSessionEvenWithYes(t *testing.T) {
 	_, localPath := settingsWriteHome(t)
 	before := readFileString(t, localPath)
 	t.Setenv("CLAUDECODE", "1")
-	out, _, err := execute(t, "settings", "set", "max_parallel", "5", "--layer", "local", "--yes")
+	out, _, err := execute(t, "settings", "set", "max_parallel", "5", "--layer", "local")
 	if err == nil {
 		t.Fatal("settings set wrote the local config from a coding agent's session")
 	}
@@ -181,7 +184,7 @@ func TestSettingsSetRepoLayerIsAllowedInAnAgentSession(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML(""))
 	t.Setenv("CLAUDECODE", "1")
-	out, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--yes")
+	out, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -202,7 +205,7 @@ func TestCeilingLooseningRefusesInAnAgentSession(t *testing.T) {
 	before := readFileString(t, path)
 
 	agentSession(t)
-	_, _, err := execute(t, "settings", "set", "budget.per_run_usd", "50", "--layer", "repo", "--yes")
+	_, _, err := execute(t, "settings", "set", "budget.per_run_usd", "50", "--layer", "repo")
 	if err == nil {
 		t.Fatal("a coding agent's session loosened a repository's ceiling")
 	}
@@ -239,7 +242,7 @@ func TestSettingsSetRepoLayerRefusesALooseningInAnAgentSession(t *testing.T) {
 	path := settingsWriteCheckout(t, settingsRepoYAML("budget:\n  per_run_usd: 10\n"))
 	before := readFileString(t, path)
 	t.Setenv("CLAUDECODE", "1")
-	out, _, err := execute(t, "settings", "set", "budget.per_run_usd", "50", "--layer", "repo", "--yes")
+	out, _, err := execute(t, "settings", "set", "budget.per_run_usd", "50", "--layer", "repo")
 	if err == nil {
 		t.Fatal("a coding agent's session loosened a repository's ceiling")
 	}
@@ -262,7 +265,7 @@ func TestSettingsSetRepoLayerRefusesALooseningInAnAgentSession(t *testing.T) {
 func TestSettingsSetBacksUpAndWritesAtomically(t *testing.T) {
 	_, localPath := settingsWriteHome(t)
 	before := readFileString(t, localPath)
-	out, _, err := execute(t, "settings", "set", "commit_name", "person-1", "--layer", "local", "--yes")
+	out, _, err := execute(t, "settings", "set", "commit_name", "person-1", "--layer", "local")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -372,7 +375,7 @@ func withoutSettingsRunOwn(s string) string {
 // and every line the write does not have to touch survive it (D847).
 func TestSettingsSetKeepsTheRestOfTheFile(t *testing.T) {
 	_, localPath := settingsWriteHomeWith(t, "# the owner's own note, which an edit must not eat\n")
-	out, _, err := execute(t, "settings", "set", "commit_name", "person-1", "--layer", "local", "--yes")
+	out, _, err := execute(t, "settings", "set", "commit_name", "person-1", "--layer", "local")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -393,10 +396,10 @@ func TestSettingsSetKeepsTheRestOfTheFile(t *testing.T) {
 func TestSettingsAddAndRemoveOnAListKey(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML(""))
-	if out, _, err := execute(t, "settings", "set", "git.pr.labels", "--add", "bug", "--layer", "repo", "--yes"); err != nil {
+	if out, _, err := execute(t, "settings", "set", "git.pr.labels", "--add", "bug", "--layer", "repo"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if out, _, err := execute(t, "settings", "set", "git.pr.labels", "--add", "urgent", "--layer", "repo", "--yes"); err != nil {
+	if out, _, err := execute(t, "settings", "set", "git.pr.labels", "--add", "urgent", "--layer", "repo"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	got := readFileString(t, path)
@@ -405,7 +408,7 @@ func TestSettingsAddAndRemoveOnAListKey(t *testing.T) {
 			t.Errorf("fugaro.yaml does not carry %q:\n%s", want, got)
 		}
 	}
-	if out, _, err := execute(t, "settings", "set", "git.pr.labels", "--remove", "bug", "--layer", "repo", "--yes"); err != nil {
+	if out, _, err := execute(t, "settings", "set", "git.pr.labels", "--remove", "bug", "--layer", "repo"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	got = readFileString(t, path)
@@ -420,11 +423,11 @@ func TestSettingsAddAndRemoveOnAListKey(t *testing.T) {
 func TestSettingsRefusesEmptyingAListKey(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML(""))
-	if out, _, err := execute(t, "settings", "set", "git.pr.labels", "--add", "bug", "--layer", "repo", "--yes"); err != nil {
+	if out, _, err := execute(t, "settings", "set", "git.pr.labels", "--add", "bug", "--layer", "repo"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	before := readFileString(t, path)
-	_, _, err := execute(t, "settings", "set", "git.pr.labels", "--remove", "bug", "--layer", "repo", "--yes")
+	_, _, err := execute(t, "settings", "set", "git.pr.labels", "--remove", "bug", "--layer", "repo")
 	if err == nil {
 		t.Fatal("--remove emptied the list")
 	}
@@ -441,10 +444,10 @@ func TestSettingsRefusesEmptyingAListKey(t *testing.T) {
 // place (spec §4.3).
 func TestSettingsUnsetRemovesTheKeyRatherThanWritingTheDefault(t *testing.T) {
 	_, localPath := settingsWriteHome(t)
-	if out, _, err := execute(t, "settings", "set", "commit_name", "person-1", "--layer", "local", "--yes"); err != nil {
+	if out, _, err := execute(t, "settings", "set", "commit_name", "person-1", "--layer", "local"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if out, _, err := execute(t, "settings", "unset", "commit_name", "--layer", "local", "--yes"); err != nil {
+	if out, _, err := execute(t, "settings", "unset", "commit_name", "--layer", "local"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	got := readFileString(t, localPath)
@@ -473,7 +476,7 @@ func TestSettingsUnsetOfACeilingAsksNothing(t *testing.T) {
 // with a sentence and exit 0, so an idempotent script does not fail (spec §4.3).
 func TestSettingsUnsetOfNothingIsAnExitZeroSentence(t *testing.T) {
 	settingsWriteHome(t)
-	out, _, err := execute(t, "settings", "unset", "commit_name", "--layer", "local", "--yes")
+	out, _, err := execute(t, "settings", "unset", "commit_name", "--layer", "local")
 	if err != nil {
 		t.Fatalf("unset of nothing = %v, want exit 0", err)
 	}
@@ -489,7 +492,7 @@ func TestSettingsUnsetOfNothingIsAnExitZeroSentence(t *testing.T) {
 // line, and it is `next: fugaro update` — never a list of steps (spec §1).
 func TestSettingsSetPrintsOnlyFugaroUpdateNext(t *testing.T) {
 	settingsWriteHome(t)
-	out, _, err := execute(t, "settings", "set", "commit_name", "person-1", "--layer", "local", "--yes")
+	out, _, err := execute(t, "settings", "set", "commit_name", "person-1", "--layer", "local")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -512,7 +515,7 @@ func TestSettingsSetWritesNothingInTheCloud(t *testing.T) {
 		t.Setenv(k, "")
 	}
 	_, localPath := settingsWriteHome(t)
-	out, _, err := execute(t, "settings", "set", "commit_name", "person-1", "--layer", "local", "--yes")
+	out, _, err := execute(t, "settings", "set", "commit_name", "person-1", "--layer", "local")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -549,9 +552,9 @@ func TestTheThreeEditorsPreserveBytesTheSameWay(t *testing.T) {
 		key   string
 		added string
 	}{
-		{"local config", localPath, []string{"settings", "set", "commit_name", "person-1", "--layer", "local", "--yes"}, "commit_name", "commit_name: person-1"},
-		{"project layer", layerPath, []string{"settings", "set", "layer.defaults.agent.max_budget_usd", "30", "--layer", "project", "--yes"}, "layer.defaults.agent.max_budget_usd", "max_budget_usd: 30"},
-		{"fugaro.yaml", repoPath, []string{"settings", "set", "git.base_branch", "develop", "--layer", "repo", "--yes"}, "git.base_branch", "base_branch: develop"},
+		{"local config", localPath, []string{"settings", "set", "commit_name", "person-1", "--layer", "local"}, "commit_name", "commit_name: person-1"},
+		{"project layer", layerPath, []string{"settings", "set", "layer.defaults.agent.max_budget_usd", "30", "--layer", "project"}, "layer.defaults.agent.max_budget_usd", "max_budget_usd: 30"},
+		{"fugaro.yaml", repoPath, []string{"settings", "set", "git.base_branch", "develop", "--layer", "repo"}, "git.base_branch", "base_branch: develop"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -605,7 +608,7 @@ func TestSettingsGetOnAKeySetNowhereIsTheDefaultRowAndExitZero(t *testing.T) {
 // so `get` is the read and not a second default-printing path.
 func TestSettingsGetShowsTheRowOfAKeyALayerSets(t *testing.T) {
 	settingsWriteHome(t)
-	if out, _, err := execute(t, "settings", "set", "commit_name", "person-1", "--layer", "local", "--yes"); err != nil {
+	if out, _, err := execute(t, "settings", "set", "commit_name", "person-1", "--layer", "local"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	out, _, err := execute(t, "settings", "get", "commit_name")
@@ -662,7 +665,7 @@ func TestSettingsSetUnknownKeyHintNamesOnlyKeysItCouldWrite(t *testing.T) {
 		{"agent.modl", "agent.auth"},
 	} {
 		t.Run(c.key, func(t *testing.T) {
-			_, _, err := execute(t, "settings", "set", c.key, "1", "--layer", "local", "--yes")
+			_, _, err := execute(t, "settings", "set", c.key, "1", "--layer", "local")
 			if err == nil {
 				t.Fatalf("settings set wrote the unknown key %s", c.key)
 			}
@@ -766,7 +769,7 @@ func settingsAddLands(t *testing.T, key string) bool {
 	if strict, ok := settingsProbeItems[key]; ok {
 		item = strict
 	}
-	_, _, err := execute(t, "settings", "set", key, "--add", item, "--layer", layer, "--yes")
+	_, _, err := execute(t, "settings", "set", key, "--add", item, "--layer", layer)
 	return err == nil
 }
 
@@ -779,7 +782,7 @@ func settingsAddLands(t *testing.T, key string) bool {
 // from this refusal to the next one.
 func TestSettingsSetUnknownKeyHintNamesOnlyRowsTheWriteAccepts(t *testing.T) {
 	settingsWriteHome(t)
-	_, _, err := execute(t, "settings", "set", "budget.mod", "1", "--layer", "local", "--yes")
+	_, _, err := execute(t, "settings", "set", "budget.mod", "1", "--layer", "local")
 	if err == nil {
 		t.Fatal("settings set wrote the unknown key budget.mod")
 	}
@@ -806,7 +809,7 @@ func TestSettingsSetUnknownKeyHintNamesOnlyRowsTheWriteAccepts(t *testing.T) {
 // where `--add` on a scalar ends.
 func TestSettingsSetAddHintNamesOnlyListKeysTheWriteAccepts(t *testing.T) {
 	settingsWriteFixtures(t)
-	_, _, err := execute(t, "settings", "set", "budget.mod", "--add", settingsProbeItem, "--layer", "local", "--yes")
+	_, _, err := execute(t, "settings", "set", "budget.mod", "--add", settingsProbeItem, "--layer", "local")
 	if err == nil {
 		t.Fatal("settings set --add wrote the unknown key budget.mod")
 	}
@@ -907,6 +910,10 @@ func TestSettingsGenericKeyIsSpec44sAllowlist(t *testing.T) {
 		// spelling — the pattern, not a concrete spelling of it.
 		"workflows.*.commands.test", "workflows.*.image.apt", "workflows.*.secrets",
 		"layer.profiles.*.image.apt", "layer.profiles.*.cache.*.key", "layer.ab.rate",
+		// D1173 (G10): the four rows of a repository's own entry that a person
+		// writes are the generic path's; the machine-written vertex and
+		// credentials_service_ready beside them stay the project family's.
+		"repos.*.provider", "repos.*.base_branch", "repos.*.workflows", "repos.*.github_app_id",
 	}
 	for _, key := range allowed {
 		if !settingsGenericKey(key) {
@@ -916,7 +923,7 @@ func TestSettingsGenericKeyIsSpec44sAllowlist(t *testing.T) {
 	refused := []string{
 		"endpoints.compute", "terraform.state_bucket", "policy_generation", "layer_generation",
 		"credentials_service.url", "budget.rtdb_url", "budget.firebase_api_key",
-		"name", "runs_bucket", "bucket_url", "repos.*.base_branch",
+		"name", "runs_bucket", "bucket_url", "repos.*.vertex",
 		"providers.*.base_url", "bitbucket_api_roots", "model_prices", "routing.claude",
 		// The registry's other wildcard rows, and the blocks the layer's own
 		// file holds that this design hands to no command of this path.
@@ -947,7 +954,7 @@ func TestSettingsSetRefusesEveryKeyOutsideSpec44(t *testing.T) {
 		"jobs.reports.paused", "jobs.catalog_check.paused",
 	} {
 		t.Run(key, func(t *testing.T) {
-			out, _, err := execute(t, "settings", "set", key, "x", "--yes")
+			out, _, err := execute(t, "settings", "set", key, "x")
 			if err == nil {
 				t.Fatalf("settings set wrote %s:\n%s", key, out)
 			}
@@ -971,7 +978,7 @@ func TestSettingsSetRefusesASensitiveKeyAndNeverPrintsItsValue(t *testing.T) {
 	_, localPath := settingsWriteHome(t)
 	before := readFileString(t, localPath)
 	const value = "not-a-real-credential-value"
-	out, _, err := execute(t, "settings", "set", "budget.firebase_api_key", value, "--layer", "local", "--yes")
+	out, _, err := execute(t, "settings", "set", "budget.firebase_api_key", value, "--layer", "local")
 	if err == nil {
 		t.Fatalf("settings set wrote a sensitive row:\n%s", out)
 	}
@@ -1134,7 +1141,7 @@ func TestSettingsSetTreatsEveryBooleanSpellingAsTurningAFollowupKeyOn(t *testing
 		t.Error("the config decoder reads followup.allow_public: yes as false")
 	}
 	// And the other direction: false is not a widening, so --yes writes it.
-	if out, _, err := execute(t, "settings", "set", "followup.allow_public", "false", "--layer", "repo", "--yes"); err != nil {
+	if out, _, err := execute(t, "settings", "set", "followup.allow_public", "false", "--layer", "repo"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if got := readFileString(t, path); !strings.Contains(got, "allow_public: false") {
@@ -1168,7 +1175,7 @@ func TestSettingsSetComparesACeilingAgainstTheValueARunGets(t *testing.T) {
 
 	// Tightening under the same layer is the ordinary write, which is what
 	// makes the comparison a comparison and not "always a widening".
-	if out, _, err := execute(t, "settings", "set", "budget.per_run_usd", "5", "--layer", "repo", "--yes"); err != nil {
+	if out, _, err := execute(t, "settings", "set", "budget.per_run_usd", "5", "--layer", "repo"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if got := readFileString(t, path); !strings.Contains(got, "per_run_usd: 5") {
@@ -1205,7 +1212,7 @@ func TestSettingsSetRefusesASymlinkedFugaroYAML(t *testing.T) {
 	}
 	t.Chdir(dir)
 	before := readFileString(t, target)
-	_, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--yes")
+	_, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo")
 	if err == nil {
 		t.Fatal("settings set wrote through a symlinked fugaro.yaml")
 	}
@@ -1232,7 +1239,7 @@ func TestSettingsSetRepoLayerRefusesACheckoutOfAnotherProject(t *testing.T) {
 	other := strings.Replace(settingsRepoYAML(""), "project: aurora", "project: other", 1)
 	path := settingsWriteCheckout(t, other)
 	before := readFileString(t, path)
-	_, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--yes")
+	_, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo")
 	if err == nil {
 		t.Fatal("settings set edited a checkout of another project")
 	}
@@ -1252,7 +1259,7 @@ func TestSettingsSetRepoLayerRefusesACheckoutOfAnotherProject(t *testing.T) {
 func TestSettingsSetRefusesAMapKey(t *testing.T) {
 	_, localPath := settingsWriteHome(t)
 	before := readFileString(t, localPath)
-	out, _, err := execute(t, "settings", "set", "workflows.*.commands.test", "go test", "--yes")
+	out, _, err := execute(t, "settings", "set", "workflows.*.commands.test", "go test")
 	if err == nil {
 		t.Fatalf("settings set wrote a map entry:\n%s", out)
 	}
@@ -1292,7 +1299,7 @@ func TestSettingsSetConcreteWildcardKeyWrites(t *testing.T) {
 	}
 	settingsNoBackup(t, path)
 
-	if _, _, err := execute(t, "settings", "set", "workflows.web.commands.test", "go test -race ./...", "--layer", "repo", "--yes", "--executable-changes"); err != nil {
+	if _, _, err := execute(t, "settings", "set", "workflows.web.commands.test", "go test -race ./...", "--layer", "repo", "--executable-changes"); err != nil {
 		t.Fatalf("writing a concrete spelling of a wildcard row was refused: %v", err)
 	}
 	cfg, ps := config.Parse([]byte(readFileString(t, path)))
@@ -1318,7 +1325,7 @@ func TestSettingsSetConcreteWildcardKeyCreatesTheBlock(t *testing.T) {
 	before := readFileString(t, path)
 	noTerminal(t)
 
-	out, _, err := execute(t, "settings", "set", "layer.profiles.svc.description", "the service profile", "--layer", "project", "--yes")
+	out, _, err := execute(t, "settings", "set", "layer.profiles.svc.description", "the service profile", "--layer", "project")
 	if err != nil {
 		t.Fatalf("writing one key of a block the layer file does not hold was refused: %v\n%s", err, out)
 	}
@@ -1352,7 +1359,7 @@ func TestSettingsSetConcreteWildcardKeyRefusesALayerTheRowMayNotBeSetIn(t *testi
 
 	// workflows.*.dockerfile is a repository-only row (config.Scopes), so the
 	// project layer is a layer it may not be set in.
-	_, _, err := execute(t, "settings", "set", "workflows.api.dockerfile", "Dockerfile", "--layer", "project", "--yes")
+	_, _, err := execute(t, "settings", "set", "workflows.api.dockerfile", "Dockerfile", "--layer", "project")
 	if err == nil {
 		t.Fatal("settings set wrote a repository-only row at --layer project")
 	}
@@ -1378,7 +1385,7 @@ func TestSettingsSetWritesBudgetModeAndPerDayUsd(t *testing.T) {
 		{"budget.per_day_usd", "25"},
 	} {
 		t.Run(c.key, func(t *testing.T) {
-			if _, _, err := execute(t, "settings", "set", c.key, c.value, "--layer", "repo", "--yes"); err != nil {
+			if _, _, err := execute(t, "settings", "set", c.key, c.value, "--layer", "repo"); err != nil {
 				t.Fatalf("settings set refused %s, which D1179 gives the generic path: %v", c.key, err)
 			}
 			cfg, ps := config.Parse([]byte(readFileString(t, path)))
@@ -1415,7 +1422,7 @@ func TestSettingsSetWritesBudgetModeAndPerDayUsd(t *testing.T) {
 // (D1906).
 func TestSettingsSetWritesTheBakeSwitch(t *testing.T) {
 	_, path := settingsWriteHome(t)
-	out, _, err := execute(t, "settings", "set", "bake_repos", "false", "--layer", "local", "--yes")
+	out, _, err := execute(t, "settings", "set", "bake_repos", "false", "--layer", "local")
 	if err != nil {
 		t.Fatalf("settings set refused the bake switch: %v\n%s", err, out)
 	}
@@ -1430,7 +1437,7 @@ func TestSettingsSetWritesTheBakeSwitch(t *testing.T) {
 	// The map is not a generic scalar: the write is refused with the command
 	// that does check its entry, and the file keeps the switch it just took.
 	before := readFileString(t, path)
-	_, _, err = execute(t, "settings", "set", "image_map", "x", "--layer", "local", "--yes")
+	_, _, err = execute(t, "settings", "set", "image_map", "x", "--layer", "local")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro image map") {
 		t.Fatalf("settings set on the map: exit %d, err %v", ExitCode(err), err)
 	}
@@ -1449,7 +1456,7 @@ func TestSettingsSetLiteralStarIsStillRefused(t *testing.T) {
 	path := settingsWriteCheckout(t, settingsRepoYAML(""))
 	before := readFileString(t, path)
 
-	out, _, err := execute(t, "settings", "set", "workflows.*.commands.test", "go test ./...", "--layer", "repo", "--yes")
+	out, _, err := execute(t, "settings", "set", "workflows.*.commands.test", "go test ./...", "--layer", "repo")
 	if err == nil {
 		t.Fatalf("settings set wrote the literal * spelling of a wildcard row:\n%s", out)
 	}
@@ -1474,12 +1481,12 @@ func TestSettingsSetConcreteKeyOfAnUnlistedRowIsRefused(t *testing.T) {
 	path := settingsWriteCheckout(t, settingsRepoYAML(""))
 	before := readFileString(t, path)
 
-	for _, key := range []string{"repos.web.base_branch", "providers.corp.base_url", "claude_accounts.corp.allow_data_to"} {
+	for _, key := range []string{"repos.web.vertex", "providers.corp.base_url", "claude_accounts.corp.allow_data_to"} {
 		t.Run(key, func(t *testing.T) {
 			if _, _, ok := settingsWriteLookup(key); ok {
 				t.Errorf("settingsWriteLookup(%q) resolved a wildcard row the allowlist does not carry", key)
 			}
-			out, _, err := execute(t, "settings", "set", key, "x", "--layer", "repo", "--yes")
+			out, _, err := execute(t, "settings", "set", key, "x", "--layer", "repo")
 			if err == nil {
 				t.Fatalf("settings set wrote %s:\n%s", key, out)
 			}
@@ -1496,20 +1503,21 @@ func TestSettingsSetConcreteKeyOfAnUnlistedRowIsRefused(t *testing.T) {
 
 // TestSettingsSetRefusesAWildcardRowOutsideTheGenericKeys: the pattern lookup
 // resolves a wildcard registry row only for a spelling settingsGenericKeys
-// carries, so a concrete spelling of the project family's `repos.*.*` or the
-// models family's `providers.*.*` is refused like any other key the generic
-// path does not write, and nothing is written.
+// carries, so a concrete spelling of a row outside it — a repository's
+// machine-written `repos.*.vertex`, whose four neighbours are the generic
+// path's (D1173), or the models family's `providers.*.*` — is refused like any
+// other key the generic path does not write, and nothing is written.
 func TestSettingsSetRefusesAWildcardRowOutsideTheGenericKeys(t *testing.T) {
 	_, localPath := settingsWriteHome(t)
 	before := readFileString(t, localPath)
-	for _, key := range []string{"repos.web.base_branch", "providers.corp.base_url"} {
+	for _, key := range []string{"repos.web.vertex", "providers.corp.base_url"} {
 		t.Run(key, func(t *testing.T) {
 			// The rule itself, so the test says which of the two reasons the
 			// refusal has: this key resolves no row here at all.
 			if _, _, ok := settingsWriteLookup(key); ok {
 				t.Errorf("settingsWriteLookup(%q) resolved a wildcard row the generic allowlist does not carry", key)
 			}
-			out, _, err := execute(t, "settings", "set", key, "x", "--yes")
+			out, _, err := execute(t, "settings", "set", key, "x")
 			if err == nil {
 				t.Fatalf("settings set wrote %s:\n%s", key, out)
 			}
@@ -1572,7 +1580,7 @@ func TestSettingsSetAddEntryMapMember(t *testing.T) {
 	}
 	settingsNoBackup(t, path)
 
-	out, _, err := execute(t, "settings", "set", "workflows.web.commands.rerun_failed", "--add-entry", "command=go test -race -run {id} ./...", "--layer", "repo", "--yes", "--executable-changes")
+	out, _, err := execute(t, "settings", "set", "workflows.web.commands.rerun_failed", "--add-entry", "command=go test -race -run {id} ./...", "--layer", "repo", "--executable-changes")
 	if err != nil {
 		t.Fatalf("writing one member of a mapping was refused: %v\n%s", err, out)
 	}
@@ -1612,7 +1620,7 @@ func TestSettingsSetAddEntryObjectListEntry(t *testing.T) {
 	}
 	settingsNoBackup(t, path)
 
-	out, _, err := execute(t, "settings", "set", "workflows.web.secrets", "--add-entry", "name=ci-token", "--add-entry", "env=CI_TOKEN", "--layer", "repo", "--yes")
+	out, _, err := execute(t, "settings", "set", "workflows.web.secrets", "--add-entry", "name=ci-token", "--add-entry", "env=CI_TOKEN", "--layer", "repo")
 	if err != nil {
 		t.Fatalf("adding an object-list entry was refused: %v\n%s", err, out)
 	}
@@ -1642,7 +1650,7 @@ func TestSettingsSetAddEntryCreatesTheBlock(t *testing.T) {
 	path := settingsWriteCheckout(t, settingsRepoYAML(""))
 	noTerminal(t)
 
-	out, _, err := execute(t, "settings", "set", "workflows.web.secrets", "--add-entry", "name=ci-token", "--add-entry", "env=CI_TOKEN", "--layer", "repo", "--yes")
+	out, _, err := execute(t, "settings", "set", "workflows.web.secrets", "--add-entry", "name=ci-token", "--add-entry", "env=CI_TOKEN", "--layer", "repo")
 	if err != nil {
 		t.Fatalf("adding an entry to a block the file does not hold was refused: %v\n%s", err, out)
 	}
@@ -1669,8 +1677,8 @@ func TestSettingsSetAddEntryRefusesTwoEntries(t *testing.T) {
 		name string
 		args []string
 	}{
-		{"two map members", []string{"settings", "set", "workflows.web.commands.rerun_failed", "--add-entry", "command=go test ./...", "--add-entry", "each={id}", "--layer", "repo", "--yes"}},
-		{"two object-list entries", []string{"settings", "set", "workflows.web.secrets", "--add-entry", "name=ci-token", "--add-entry", "name=qa-token", "--layer", "repo", "--yes"}},
+		{"two map members", []string{"settings", "set", "workflows.web.commands.rerun_failed", "--add-entry", "command=go test ./...", "--add-entry", "each={id}", "--layer", "repo"}},
+		{"two object-list entries", []string{"settings", "set", "workflows.web.secrets", "--add-entry", "name=ci-token", "--add-entry", "name=qa-token", "--layer", "repo"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, _, err := execute(t, tc.args...)
@@ -1707,7 +1715,7 @@ func TestSettingsSetRemoveEntryTakesOneOfADuplicateKey(t *testing.T) {
 		t.Fatalf("the fixture holds %d secrets, want the duplicate the removal is about", len(before.Workflows["web"].Secrets))
 	}
 
-	if _, _, err := execute(t, "settings", "set", "workflows.web.secrets", "--remove-entry", "app-token", "--layer", "repo", "--yes"); err != nil {
+	if _, _, err := execute(t, "settings", "set", "workflows.web.secrets", "--remove-entry", "app-token", "--layer", "repo"); err != nil {
 		t.Fatalf("removing one entry of a duplicate key was refused: %v", err)
 	}
 	cfg, ps := config.Parse([]byte(readFileString(t, path)))
@@ -1733,8 +1741,8 @@ func TestSettingsSetAddEntryRefusesABlockWithNoKeyField(t *testing.T) {
 	path := settingsWriteCheckout(t, settingsRepoWithEntries)
 	before := readFileString(t, path)
 	for _, args := range [][]string{
-		{"settings", "set", "workflows.web.cache", "--add-entry", "key=go.sum", "--layer", "repo", "--yes"},
-		{"settings", "set", "workflows.web.cache", "--remove-entry", "go.sum", "--layer", "repo", "--yes"},
+		{"settings", "set", "workflows.web.cache", "--add-entry", "key=go.sum", "--layer", "repo"},
+		{"settings", "set", "workflows.web.cache", "--remove-entry", "go.sum", "--layer", "repo"},
 	} {
 		out, _, err := execute(t, args...)
 		if err == nil {
@@ -1760,7 +1768,7 @@ func TestSettingsSetAddEntryRefusesAMapTheFileDoesNotHold(t *testing.T) {
 	path := settingsWriteCheckout(t, settingsRepoYAML(""))
 	before := readFileString(t, path)
 	for _, pair := range []string{"command=go test -run {id} ./...", "each={id}"} {
-		out, _, err := execute(t, "settings", "set", "workflows.web.commands.rerun_failed", "--add-entry", pair, "--layer", "repo", "--yes")
+		out, _, err := execute(t, "settings", "set", "workflows.web.commands.rerun_failed", "--add-entry", pair, "--layer", "repo")
 		if err == nil {
 			t.Fatalf("--add-entry %s built half of a map the file did not hold:\n%s", pair, out)
 		}
@@ -1785,7 +1793,7 @@ func TestSettingsSetRemoveEntryRefusesToEmptyTheList(t *testing.T) {
 	before := readFileString(t, path)
 	noTerminal(t)
 	for _, args := range [][]string{
-		{"settings", "set", "workflows.web.secrets", "--remove-entry", "app-token", "--layer", "repo", "--yes"},
+		{"settings", "set", "workflows.web.secrets", "--remove-entry", "app-token", "--layer", "repo"},
 		{"settings", "set", "workflows.web.secrets", "--remove-entry", "app-token", "--layer", "repo", "--dry-run", "--json"},
 	} {
 		out, _, err := execute(t, args...)
@@ -1817,9 +1825,9 @@ func TestSettingsSetEntryFlagsRefuseAKeyThatIsNotAnEntryBlock(t *testing.T) {
 		name string
 		args []string
 	}{
-		{"a scalar key", []string{"settings", "set", "budget.per_run_usd", "--add-entry", "foo=bar", "--layer", "repo", "--yes"}},
-		{"a string-list key", []string{"settings", "set", "workflows.web.commands.reports", "--add-entry", "foo=bar", "--layer", "repo", "--yes"}},
-		{"a scalar key on the removal side", []string{"settings", "set", "budget.per_run_usd", "--remove-entry", "foo", "--layer", "repo", "--yes"}},
+		{"a scalar key", []string{"settings", "set", "budget.per_run_usd", "--add-entry", "foo=bar", "--layer", "repo"}},
+		{"a string-list key", []string{"settings", "set", "workflows.web.commands.reports", "--add-entry", "foo=bar", "--layer", "repo"}},
+		{"a scalar key on the removal side", []string{"settings", "set", "budget.per_run_usd", "--remove-entry", "foo", "--layer", "repo"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, _, err := execute(t, tc.args...)
@@ -1844,7 +1852,7 @@ func TestSettingsSetRemoveEntryRefusesTwoEntries(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoWithEntries)
 	before := readFileString(t, path)
-	args := []string{"settings", "set", "workflows.web.secrets", "--remove-entry", "app-token", "--remove-entry", "ci-token", "--layer", "repo", "--yes"}
+	args := []string{"settings", "set", "workflows.web.secrets", "--remove-entry", "app-token", "--remove-entry", "ci-token", "--layer", "repo"}
 	out, _, err := execute(t, args...)
 	if err == nil {
 		t.Fatalf("settings set took two entries away in one invocation:\n%s", out)
@@ -1866,7 +1874,7 @@ func TestSettingsSetAddEntryRefusesOneFieldTwice(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoWithEntries)
 	before := readFileString(t, path)
-	args := []string{"settings", "set", "workflows.web.secrets", "--add-entry", "name=ci-token", "--add-entry", "env=CI_TOKEN", "--add-entry", "env=CI_TOKEN_LEGACY", "--layer", "repo", "--yes"}
+	args := []string{"settings", "set", "workflows.web.secrets", "--add-entry", "name=ci-token", "--add-entry", "env=CI_TOKEN", "--add-entry", "env=CI_TOKEN_LEGACY", "--layer", "repo"}
 	out, _, err := execute(t, args...)
 	if err == nil {
 		t.Fatalf("settings set named one member twice and wrote it:\n%s", out)
@@ -1890,7 +1898,7 @@ func TestSettingsSetAddEntryRefusesAnEntryWithNothingBesideItsName(t *testing.T)
 	path := settingsWriteCheckout(t, settingsRepoWithEntries)
 	before := readFileString(t, path)
 	for _, name := range []string{"ci-token", "app-token"} {
-		out, _, err := execute(t, "settings", "set", "workflows.web.secrets", "--add-entry", "name="+name, "--layer", "repo", "--yes")
+		out, _, err := execute(t, "settings", "set", "workflows.web.secrets", "--add-entry", "name="+name, "--layer", "repo")
 		if err == nil {
 			t.Fatalf("--add-entry name=%s was accepted with no member beside it:\n%s", name, out)
 		}
@@ -1938,7 +1946,7 @@ func TestSettingsSetAddEntrySecretsMemberIsATypedWidening(t *testing.T) {
 		t.Run(marker, func(t *testing.T) {
 			noTerminal(t) // every one of the six is an agent's session with no terminal
 			t.Setenv(marker, "1")
-			out, _, err := execute(t, "settings", "set", "workflows.web.secrets", "--add-entry", "name=ci-token", "--add-entry", "env=CI_TOKEN", "--layer", "repo", "--yes")
+			out, _, err := execute(t, "settings", "set", "workflows.web.secrets", "--add-entry", "name=ci-token", "--add-entry", "env=CI_TOKEN", "--layer", "repo")
 			if err == nil {
 				t.Fatalf("--yes lifted the fence for a secrets member:\n%s", out)
 			}
@@ -1951,7 +1959,7 @@ func TestSettingsSetAddEntrySecretsMemberIsATypedWidening(t *testing.T) {
 		})
 	}
 
-	if out, _, err := execute(t, "settings", "set", "workflows.web.secrets", "--add-entry", "name=ci-token", "--add-entry", "env=CI_TOKEN", "--layer", "repo", "--yes"); err != nil {
+	if out, _, err := execute(t, "settings", "set", "workflows.web.secrets", "--add-entry", "name=ci-token", "--add-entry", "env=CI_TOKEN", "--layer", "repo"); err != nil {
 		t.Fatalf("--yes did not answer the widening outside a coding agent's session: %v\n%s", err, out)
 	}
 	if !strings.Contains(readFileString(t, path), "ci-token") {
@@ -1972,10 +1980,10 @@ func TestSettingsSetEntryFlagsNameOneEdit(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"an add beside an add-entry", []string{"settings", "set", "workflows.web.secrets", "--add", "a", "--add-entry", "name=b", "--layer", "repo", "--yes"}, "different edits"},
-		{"an add-entry beside a remove-entry", []string{"settings", "set", "workflows.web.secrets", "--add-entry", "name=b", "--remove-entry", "b", "--layer", "repo", "--yes"}, "different edits"},
-		{"a value beside an add-entry", []string{"settings", "set", "workflows.web.secrets", "x", "--add-entry", "name=b", "--layer", "repo", "--yes"}, "one key"},
-		{"no entry at all", []string{"settings", "set", "workflows.web.secrets", "--add-entry", "nodots", "--layer", "repo", "--yes"}, "field=value"},
+		{"an add beside an add-entry", []string{"settings", "set", "workflows.web.secrets", "--add", "a", "--add-entry", "name=b", "--layer", "repo"}, "different edits"},
+		{"an add-entry beside a remove-entry", []string{"settings", "set", "workflows.web.secrets", "--add-entry", "name=b", "--remove-entry", "b", "--layer", "repo"}, "different edits"},
+		{"a value beside an add-entry", []string{"settings", "set", "workflows.web.secrets", "x", "--add-entry", "name=b", "--layer", "repo"}, "one key"},
+		{"no entry at all", []string{"settings", "set", "workflows.web.secrets", "--add-entry", "nodots", "--layer", "repo"}, "field=value"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, _, err := execute(t, tc.args...)
@@ -2004,10 +2012,10 @@ func TestSettingsSetRepoLayerChecksTheRepoFlag(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"a repo with a local write", []string{"settings", "set", "commit_name", "person-1", "--layer", "local", "--repo", "owner/repo-a", "--yes"}, "--layer repo"},
-		{"a repo with a layer write", []string{"settings", "set", "layer.default_profile", "svc", "--layer", "project", "--repo", "owner/repo-a", "--yes"}, "--layer repo"},
-		{"a repo that is not owner/name", []string{"settings", "set", "git.base_branch", "develop", "--layer", "repo", "--repo", "notarepo", "--yes"}, "owner/name"},
-		{"a repo with no remembered checkout", []string{"settings", "set", "git.base_branch", "develop", "--layer", "repo", "--repo", "owner/repo-a", "--yes"}, "remembered"},
+		{"a repo with a local write", []string{"settings", "set", "commit_name", "person-1", "--layer", "local", "--repo", "owner/repo-a"}, "--layer repo"},
+		{"a repo with a layer write", []string{"settings", "set", "layer.default_profile", "svc", "--layer", "project", "--repo", "owner/repo-a"}, "--layer repo"},
+		{"a repo that is not owner/name", []string{"settings", "set", "git.base_branch", "develop", "--layer", "repo", "--repo", "notarepo"}, "owner/name"},
+		{"a repo with no remembered checkout", []string{"settings", "set", "git.base_branch", "develop", "--layer", "repo", "--repo", "owner/repo-a"}, "remembered"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2038,7 +2046,7 @@ func TestSettingsSetRepoLayerPicksTheNamedCheckout(t *testing.T) {
 	bPath := filepath.Join(settingsCheckout(t, home, "owner/repo-b", settingsRepoYAML("")), "fugaro.yaml")
 	aBefore, bBefore := readFileString(t, aPath), readFileString(t, bPath)
 
-	_, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--repo", "owner/repo-c", "--yes")
+	_, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--repo", "owner/repo-c")
 	if err == nil {
 		t.Fatal("settings set wrote a repository this machine does not remember")
 	}
@@ -2049,7 +2057,7 @@ func TestSettingsSetRepoLayerPicksTheNamedCheckout(t *testing.T) {
 		t.Error("the refused write changed a remembered checkout's fugaro.yaml")
 	}
 
-	if out, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--repo", "owner/repo-b", "--yes"); err != nil {
+	if out, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--repo", "owner/repo-b"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if got := readFileString(t, bPath); !strings.Contains(got, "base_branch: develop") {
@@ -2068,7 +2076,7 @@ func TestSettingsSetReparsesTheRepoAndLayerDocuments(t *testing.T) {
 	settingsWriteHome(t)
 	repoPath := settingsWriteCheckout(t, settingsRepoYAML(""))
 	repoBefore := readFileString(t, repoPath)
-	_, _, err := execute(t, "settings", "set", "git.provider", "nosuchforge", "--layer", "repo", "--yes")
+	_, _, err := execute(t, "settings", "set", "git.provider", "nosuchforge", "--layer", "repo")
 	if err == nil {
 		t.Fatal("settings set wrote a provider the repository's loader refuses")
 	}
@@ -2081,7 +2089,7 @@ func TestSettingsSetReparsesTheRepoAndLayerDocuments(t *testing.T) {
 
 	layerPath := settingsWriteLayerFile(t, "profiles:\n  svc:\n    cpu: \"1\"\n")
 	layerBefore := readFileString(t, layerPath)
-	_, _, err = execute(t, "settings", "set", "layer.default_profile", "nosuchprofile", "--layer", "project", "--yes")
+	_, _, err = execute(t, "settings", "set", "layer.default_profile", "nosuchprofile", "--layer", "project")
 	if err == nil {
 		t.Fatal("settings set wrote a default profile the layer's loader refuses")
 	}
@@ -2290,7 +2298,7 @@ func TestSettingsSetAgentBudgetLowerIsNotTyped(t *testing.T) {
 	// the ordinary write there too.
 	settingsWriteLayerFile(t, "defaults:\n  agent:\n    max_budget_usd: 30\n")
 	noTerminal(t)
-	if out, _, err := execute(t, "settings", "set", "layer.defaults.agent.max_budget_usd", "20", "--layer", "project", "--yes"); err != nil {
+	if out, _, err := execute(t, "settings", "set", "layer.defaults.agent.max_budget_usd", "20", "--layer", "project"); err != nil {
 		t.Fatalf("a lowered layer default is the ordinary write: %v\n%s", err, out)
 	}
 }
@@ -2350,7 +2358,7 @@ func TestSettingsSetAgentBudgetRaiseFromTheDefaultRefusedInAnAgentSession(t *tes
 	before := readFileString(t, path)
 	t.Setenv("CLAUDECODE", "1")
 
-	out, _, err := execute(t, "settings", "set", "agent.max_budget_usd", "1000", "--layer", "repo", "--yes")
+	out, _, err := execute(t, "settings", "set", "agent.max_budget_usd", "1000", "--layer", "repo")
 	if err == nil {
 		t.Fatal("a budget raised from the built-in default was written in a coding agent's session")
 	}
@@ -2387,10 +2395,10 @@ func TestSettingsSetTheNewTypedRowsAreRefusedInAnAgentSession(t *testing.T) {
 				args []string
 				yaml string
 			}{
-				{"a name added to followup.trusted", []string{"settings", "set", "followup.trusted", "--add", "100000002", "--layer", "repo", "--yes"}, trusted},
-				{"an agent budget raised", []string{"settings", "set", "agent.max_budget_usd", "1000", "--layer", "repo", "--yes"}, ""},
-				{"an agent token cap taken to 0", []string{"settings", "set", "agent.max_run_tokens", "0", "--layer", "repo", "--yes"}, tokens},
-				{"an agent token cap unset", []string{"settings", "unset", "agent.max_run_tokens", "--layer", "repo", "--yes"}, tokens},
+				{"a name added to followup.trusted", []string{"settings", "set", "followup.trusted", "--add", "100000002", "--layer", "repo"}, trusted},
+				{"an agent budget raised", []string{"settings", "set", "agent.max_budget_usd", "1000", "--layer", "repo"}, ""},
+				{"an agent token cap taken to 0", []string{"settings", "set", "agent.max_run_tokens", "0", "--layer", "repo"}, tokens},
+				{"an agent token cap unset", []string{"settings", "unset", "agent.max_run_tokens", "--layer", "repo"}, tokens},
 			} {
 				t.Run(c.name, func(t *testing.T) {
 					path := settingsWriteCheckout(t, settingsRepoYAML(c.yaml))
@@ -2437,7 +2445,7 @@ func TestSettingsSetWritesMode0600AndLeavesNoTemporaryBehind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, _, err := execute(t, "settings", "set", "commit_name", "person-1", "--layer", "local", "--yes"); err != nil {
+	if out, _, err := execute(t, "settings", "set", "commit_name", "person-1", "--layer", "local"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	fi, err := os.Stat(localPath)
@@ -2472,12 +2480,12 @@ func TestSettingsSetNoOpOnADocumentThatDoesNotReadBack(t *testing.T) {
 	path := settingsWriteLayerFile(t, "governance:\n  review_ratio: 1\nnonsense: 1\n")
 	before := readFileString(t, path)
 
-	_, _, err := execute(t, "settings", "set", "layer.governance.review_ratio", "2", "--layer", "project", "--yes")
+	_, _, err := execute(t, "settings", "set", "layer.governance.review_ratio", "2", "--layer", "project")
 	if err == nil || !strings.Contains(err.Error(), "would not read back") {
 		t.Fatalf("a change to a document that does not read back = %v, want the reparse refusal", err)
 	}
 
-	out, _, err := execute(t, "settings", "set", "layer.governance.review_ratio", "1", "--layer", "project", "--yes")
+	out, _, err := execute(t, "settings", "set", "layer.governance.review_ratio", "1", "--layer", "project")
 	if err != nil {
 		t.Fatalf("a no-op on a document that does not read back: %v\n%s", err, out)
 	}
@@ -2491,7 +2499,7 @@ func TestSettingsSetNoOpOnADocumentThatDoesNotReadBack(t *testing.T) {
 	// The unset path holds the same order: a key that is not in the document
 	// is not a write, so the document's own state is not reported as this
 	// command's failure.
-	_, _, err = execute(t, "settings", "unset", "layer.governance.max_subagents", "--layer", "project", "--yes")
+	_, _, err = execute(t, "settings", "unset", "layer.governance.max_subagents", "--layer", "project")
 	if err != nil {
 		t.Fatalf("unsetting a key the document does not carry: %v", err)
 	}
@@ -2540,7 +2548,7 @@ func TestSettingsCeilingBaseIsNeverLooserThanTheFile(t *testing.T) {
 	}
 
 	noAgentSession(t)
-	if out, _, err := execute(t, "settings", "set", "budget.per_run_usd", "40", "--layer", "repo", "--yes"); err != nil {
+	if out, _, err := execute(t, "settings", "set", "budget.per_run_usd", "40", "--layer", "repo"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if got := readFileString(t, path); !strings.Contains(got, "per_run_usd: 40") {
@@ -2607,7 +2615,7 @@ func TestSettingsSetWritingZeroThatRemovesACapIsAWidening(t *testing.T) {
 
 			// A cap where no layer held one is the ordinary write: it takes
 			// nothing away, so it is not the widening.
-			if out, _, err := execute(t, "settings", "set", c.key, c.cap, "--layer", c.layer, "--yes"); err != nil {
+			if out, _, err := execute(t, "settings", "set", c.key, c.cap, "--layer", c.layer); err != nil {
 				t.Fatalf("the first write of a cap: %v\n%s", err, out)
 			}
 			before := readFileString(t, path)
@@ -2643,6 +2651,7 @@ func TestSettingsSetWritingZeroThatRemovesACapIsAWidening(t *testing.T) {
 // so these commands must read it.
 func TestSettingsSelectionReadsTheCheckoutsProject(t *testing.T) {
 	isolateProjects(t, t.TempDir())
+	settingsBucketAt(t)
 	writeProject(t, "aurora", "proj-1")
 	writeProject(t, "borealis", "proj-2")
 	t.Chdir(gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: borealis\n"))

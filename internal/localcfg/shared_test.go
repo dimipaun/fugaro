@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
 )
 
@@ -142,6 +143,15 @@ func TestSharedSubsetNeverLeaksOwnerOrPersonalFields(t *testing.T) {
 	golden(t, "shared.golden.yaml", out)
 	if _, err := Parse(out); err != nil {
 		t.Errorf("published file does not parse: %v", err)
+	}
+	// The published document carries the version every Fugaro of this
+	// installation can read, whatever the file it came from says: ConfigVersion
+	// 2 renamed the two lists in the terraform block, and this copy has no
+	// terraform block, so a published 2 would stop an un-upgraded teammate's
+	// Fugaro with "version 2 is newer than the 1 this Fugaro writes" for a
+	// document that says nothing version 2 is about.
+	if got := lc.Shared().Version; got != SharedVersion {
+		t.Errorf("the published config is version %d, want %d", got, SharedVersion)
 	}
 	// The receiver is untouched — including the routing switch, which is the
 	// operator's own and stays in their config after it has been published to
@@ -346,6 +356,47 @@ func TestMergeSharedKeepsThePublishedBatchBlock(t *testing.T) {
 	}
 }
 
+// TestSharedNeverPublishesTheBackendName: the `batch:` block is published for
+// the reason above, and `backend:` is not, and the difference is what
+// publishes them can be judged. An operator reading doctor's Batch findings
+// sees the machine's own config; a launcher who wrote `backend: cloud-batch`
+// into the runs bucket would move every teammate with no local config onto VMs,
+// on a block that same launcher chose, with no check in the way — the
+// escalation plan 2026-10-19-compute-backend.md Task 10 step 4 forbids. So the
+// choice is the writing machine's own, in both directions: Shared drops it and
+// MergeShared never adopts a published one.
+//
+// Mutation (verified, kept in the test): put `keep(&out.BackendName,
+// published.BackendName)` back into MergeShared and the merge assertions fail;
+// drop `s.BackendName = ""` from Shared and the golden comparison does.
+func TestSharedNeverPublishesTheBackendName(t *testing.T) {
+	lc := sharedBase(t, "backend: cloud-batch\n")
+	if lc.BackendName != backend.CloudBatch {
+		t.Fatalf("the fixture's own config lost the name: %q", lc.BackendName)
+	}
+	s := lc.Shared()
+	if s.BackendName != "" {
+		t.Errorf("Shared() published the backend choice %q", s.BackendName)
+	}
+	if out, err := s.Marshal(); err != nil {
+		t.Fatal(err)
+	} else if strings.Contains(string(out), "backend") {
+		t.Errorf("the published file carries the key:\n%s", out)
+	}
+	if lc.BackendName != backend.CloudBatch {
+		t.Errorf("the receiver changed: %q", lc.BackendName)
+	}
+	// A published object that carries the key is not merged back in either,
+	// whether the local config names a backend or nothing at all: the merge
+	// output is what goes into the runs bucket, so no name it sees — the
+	// published one or the merging machine's own — may reach it.
+	for _, local := range []*Config{sharedBase(t, ""), sharedBase(t, "backend: cloud-run\n")} {
+		if got := MergeShared(sharedBase(t, "backend: cloud-batch\n"), local); got.BackendName != "" {
+			t.Errorf("MergeShared wrote the backend %q into the file it publishes", got.BackendName)
+		}
+	}
+}
+
 func TestMergeSharedScalars(t *testing.T) {
 	existing := sharedBase(t, "log_view: projects/my-project/locations/global/buckets/bkt/views/vw\nscheduler_region: us-east4\nmax_parallel: 5\nwatch: { burn_alert_usd_per_hour: 3 }\nbase_images: { base: ex.example/a:1 }\ncompute_prices: { us-central1: { vcpu_second_usd: 0.0001, gib_second_usd: 0.00001 }, us-east1: { vcpu_second_usd: 0.0002, gib_second_usd: 0.00002 } }\n")
 	local := sharedBase(t, "scheduler_region: us-central1\nmax_parallel: 9\nbase_images: { base: ex.example/b:2 }\ncompute_prices: { us-central1: { vcpu_second_usd: 0.0003, gib_second_usd: 0.00003 } }\n")
@@ -455,6 +506,80 @@ func TestMergeSharedNeverCarriesClaudeAccounts(t *testing.T) {
 	}
 	if len(local.ClaudeAccounts) != 1 {
 		t.Error("MergeShared cleared the local claude_accounts")
+	}
+}
+
+// TestMergeSharedNeverCarriesARepositorysAccounts: the repository-level half of
+// the same allow-list — a repos entry's own claude_accounts is what admits a
+// repository whose runs are not on a profile job (docs/project-claude-accounts.md
+// §3) — is never published either. It travels in the same map as the entry's
+// provider and workflows, so the block that clears the top-level key has to
+// clear this one field by field: a shared file that carried it would let whoever
+// writes the runs bucket add a repository to an account's admission, and the
+// machine that published the policy next would derive the admission they wrote.
+// The entry itself stays, which is the control: everything else about it is
+// published, and a copy that dropped the whole entry would be a different bug
+// wearing this one's test.
+func TestMergeSharedNeverCarriesARepositorysAccounts(t *testing.T) {
+	const entry = "repos:\n  acme/web: { provider: github, workflows: [web], claude_accounts: [acme-personal] }\n"
+	local := sharedBase(t, entry)
+	published := sharedBase(t, strings.ReplaceAll(entry, "acme-personal", "other-account"))
+	if len(local.Repos["acme/web"].ClaudeAccounts) != 1 || len(published.Repos["acme/web"].ClaudeAccounts) != 1 {
+		t.Fatalf("fixtures: %+v %+v", local.Repos, published.Repos)
+	}
+	for name, got := range map[string]*Config{"shared": local.Shared(), "merged": MergeShared(published, local), "nil published": MergeShared(nil, local)} {
+		repo := got.Repos["acme/web"]
+		if len(repo.ClaudeAccounts) != 0 {
+			t.Errorf("%s: repos.acme/web.claude_accounts = %v", name, repo.ClaudeAccounts)
+		}
+		if repo.Provider != "github" || len(repo.Workflows) != 1 {
+			t.Errorf("%s: repos.acme/web = %+v, want the entry's own fields kept", name, repo)
+		}
+		out, _ := got.Marshal()
+		if strings.Contains(string(out), "claude_accounts") {
+			t.Errorf("%s: output carries a claude_accounts key:\n%s", name, out)
+		}
+	}
+	if len(local.Repos["acme/web"].ClaudeAccounts) != 1 {
+		t.Error("the merge cleared the local entry's own list")
+	}
+}
+
+// TestParseRefusesARepositorysAccountsWithoutAProvider: the account an entry
+// names is published provider-qualified, and a `repos` key states owner/name
+// and no provider of its own — the entry's provider field is the only place a
+// per-repository job's provider is stated — so an entry that names accounts and
+// none is a name the publish could not canonicalise. It is refused where the
+// file is read rather than at publish, which is the door the owner's own
+// command edits.
+func TestParseRefusesARepositorysAccountsWithoutAProvider(t *testing.T) {
+	_, err := Parse([]byte(`version: 1
+name: aurora
+gcp_project: my-project
+region: us-central1
+runs_bucket: my-runs
+repos:
+  acme/web: { workflows: [web], claude_accounts: [acme-personal] }
+`))
+	if err == nil {
+		t.Fatal("a repos entry that names accounts and no provider parsed")
+	}
+	for _, want := range []string{"repos.acme/web.claude_accounts", "provider"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	// The entry with the provider is the control: the rule is the missing
+	// provider and not the key.
+	if _, err := Parse([]byte(`version: 1
+name: aurora
+gcp_project: my-project
+region: us-central1
+runs_bucket: my-runs
+repos:
+  acme/web: { provider: github, workflows: [web], claude_accounts: [acme-personal] }
+`)); err != nil {
+		t.Fatalf("a repos entry that names its provider was refused: %v", err)
 	}
 }
 

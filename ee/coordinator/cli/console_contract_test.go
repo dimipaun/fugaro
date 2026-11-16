@@ -11,7 +11,11 @@ package cli
 // own internal/cli/docs_desktop_console_test.go carries the same checks for
 // every section whose command is still in the core, and skips §6.13 and §8's
 // coordinator row (consoleMovedSections, consoleMovedRows), because an untagged
-// build compiles neither the command nor the shapes it documents.
+// build compiles neither the command nor the shapes it documents. §6.25, the
+// roadmap group's `move` (GV3.1), is checked here for the same reason and in the
+// same place: it is the section this package's own document is written in, and a
+// file under ee/ that named the console's contract twice would be the second
+// exception the boundary test's list exists to keep countable.
 
 import (
 	"go/ast"
@@ -751,5 +755,78 @@ func TestConsoleContractNamesOnlyRealIntentsFlags(t *testing.T) {
 		if name != "" && !real[name] {
 			t.Errorf("%s's §8 row names --%s, which coordinator intents has no flag for", coordinatorContractPath, name)
 		}
+	}
+}
+
+// moveContractSection is the contract's §6.25, the move's own document, from its
+// heading to §7 — the section after it, so a check cannot pass on a flag named
+// in §6.24's tables beside it.
+func moveContractSection(t *testing.T) string {
+	t.Helper()
+	doc := readFileString(t, "../../../console/docs/json-contract.md")
+	const head = "### 6.25 "
+	i := strings.Index(doc, head)
+	if i < 0 {
+		t.Fatalf("console/docs/json-contract.md no longer carries the %q section the move is documented in", head)
+	}
+	body := doc[i:]
+	if j := strings.Index(body, "\n## 7."); j >= 0 {
+		body = body[:j]
+	}
+	if len(body) < 800 {
+		t.Fatalf("the contract's §6.25 is %d bytes: the section boundary moved and this check would read almost nothing", len(body))
+	}
+	return body
+}
+
+// TestRoadmapMoveIsDocumentedAsTheConsoleReadsIt holds the move's contract
+// section to the command: the heading is the argv the console will pass, every
+// --flag the section names is a flag the command has, and the word the schema
+// uses for a task with no assignment is the one the section writes. A document
+// that promised the console a flag is the drift this catches; the section is
+// read here because the command is under ee/ and the core's own contract test
+// cannot name its flags.
+func TestRoadmapMoveIsDocumentedAsTheConsoleReadsIt(t *testing.T) {
+	body := moveContractSection(t)
+	const head = "### 6.25 `fugaro coordinator roadmap move"
+	if !strings.HasPrefix(body, head) {
+		t.Fatalf("the contract's §6.25 heading is not the command's argv any more: want a heading starting %q", head)
+	}
+	heading := strings.SplitN(body, "\n", 2)[0]
+	cmd := newCoordinatorRoadmapMoveCmd()
+	for _, want := range []string{"--to", "--expect", "--json"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the contract's §6.25 never names %s, which is part of the argv the console composes", want)
+		}
+		if cmd.Flags().Lookup(strings.TrimPrefix(want, "--")) == nil {
+			t.Errorf("the move has no %s, and the contract documents it as the command's own flag", want)
+		}
+	}
+	for _, want := range []string{"--to", "--json"} {
+		if !strings.Contains(heading, want) {
+			t.Errorf("the contract's §6.25 heading does not name %s, which the argv the console passes carries: %q", want, heading)
+		}
+	}
+	named := 0
+	for _, line := range strings.Split(body, "\n") {
+		if !strings.Contains(line, "newCoordinatorRoadmapMoveCmd") {
+			continue
+		}
+		named++
+		for _, m := range coordinatorFlagRE.FindAllStringSubmatch(line, -1) {
+			name := strings.TrimRight(m[1], "-")
+			if name == "" || name == "json" {
+				continue
+			}
+			if cmd.Flags().Lookup(name) == nil {
+				t.Errorf("the contract's §6.25 names --%s as a flag of newCoordinatorRoadmapMoveCmd, and the command has no such flag", name)
+			}
+		}
+	}
+	if named == 0 {
+		t.Fatalf("the contract's §6.25 no longer names newCoordinatorRoadmapMoveCmd: this check would pass vacuously")
+	}
+	if !strings.Contains(body, coordinatorMoveNone) {
+		t.Errorf("the contract's §6.25 never names %q: it is the word an unassigned task is expected as (D2114) and the one that takes a task out of every release", coordinatorMoveNone)
 	}
 }

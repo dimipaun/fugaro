@@ -213,11 +213,33 @@ func TestRegistryOwnerNamesACommand(t *testing.T) {
 	families := []string{
 		"settings set", "models", "rigor", "rigor floor", "accounts", "secrets",
 		"config", "budget", "project", "setup", "update", "workspace",
+		// The four keys a checkout's `fugaro.yaml` is opened with, which
+		// `fugaro config init` writes and no edit lands on (D1178): the token is
+		// this table's, and the read's own map is where it becomes the command's
+		// name (settingsOwnerCommands).
+		"config init",
+		// The keys of the machine's own config that no command edits — the
+		// Issues section's two nudge thresholds (G12): the token names the file
+		// they are stated in, as `config` and `config init` name theirs, and the
+		// read's map names `fugaro update`, which writes it.
+		"config local",
 		// The image map's own family (D1906): the key is the project's image
 		// policy per repository and `fugaro image map set` is what writes it, so
 		// the row names that command rather than `fugaro project`, which writes
 		// the project's other policy keys and not this one.
 		"image map",
+		// The six orchestrator ceilings (G12): the block is stated in the
+		// machine's own config and `fugaro project policy publish` is what
+		// carries it to the node, and the token is this block's own rather than
+		// `project` — that one is a family of settingsFamilyCommands, so naming
+		// it would refuse the six keys by name of `fugaro project` and print a
+		// bare command for keys no subcommand of it edits.
+		"project policy",
+		// The clone URLs' family, the image map's twin: an entry is keyed by a
+		// canonical repository name and its value is held to the node's own
+		// rule, so `fugaro project clone-url` is where the two are checked
+		// against each other (settings spec §5.6, D842).
+		"project clone-url",
 	}
 	for _, r := range Rows() {
 		ok := false
@@ -308,5 +330,47 @@ func TestSettingsRegistryHasIssuesKeys(t *testing.T) {
 		if r.Owner == "" || r.Doc == "" {
 			t.Errorf("%s: Owner = %q and Doc = %q, and a row a reader can act on names both", tc.key, r.Owner, r.Doc)
 		}
+	}
+}
+
+// TestEscalationRegistryKeysAreLocalOnly: the ladder's thresholds decide when a
+// stalled item comes off its normal recipe, what it runs on then and at what
+// cost it is merged under the gate, so the local config is their only store
+// (E3, D2032, G3) — a row advertising the project layer or the shared file
+// would name a store the key cannot have, and the read would offer an edit the
+// write then refuses. Their owner is the generic path, which is what puts the
+// owner's own hand and the coding agent's fence in front of them at all.
+func TestEscalationRegistryKeysAreLocalOnly(t *testing.T) {
+	for _, key := range []string{
+		"escalation.r2_after_hours",
+		"escalation.r2_after_attempts",
+		"escalation.r3_after_hours",
+		"escalation.r2_coder",
+		"escalation.critical_path_factor",
+		"escalation.cost_ceiling",
+		"escalation.merge_judge",
+		"escalation.ready_drafts",
+		"escalation.modes.*.r2_after_hours",
+		"escalation.modes.*.r2_after_attempts",
+		"escalation.modes.*.r3_after_hours",
+		"escalation.modes.*.r2_coder",
+	} {
+		r, ok := Lookup(key)
+		if !ok {
+			t.Errorf("%s: no registry row, so the read cannot name a key the file holds", key)
+			continue
+		}
+		if !slices.Equal(r.Layers, []string{LayerLocal}) {
+			t.Errorf("%s: Layers = %v, want the local config alone — a threshold is authority, and no shared layer may hold it", key, r.Layers)
+		}
+		if r.Owner != "settings set" {
+			t.Errorf("%s: Owner = %q, want the generic path, the door that carries the typed form and the coding agent's fence", key, r.Owner)
+		}
+		if r.Doc != docEscalation {
+			t.Errorf("%s: Doc = %q, want %q", key, r.Doc, docEscalation)
+		}
+	}
+	if r, ok := Lookup("escalation.ready_drafts"); !ok || r.TypedWhy == "" {
+		t.Error("escalation.ready_drafts carries no TypedWhy, so turning the daemon's readiness authority on is written unasked (D2046)")
 	}
 }

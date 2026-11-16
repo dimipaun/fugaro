@@ -467,15 +467,18 @@ func (s *Server) check(st Stage, p parsed, m pricing.Model) string {
 }
 
 // pinOf is the gateway's own RequestPin: the stage's two pins, the stage's
-// own max_tokens bound, and the stage's name as the refusal names it. Where is
-// spelled here so that the refusal reads exactly as it did before the check
-// was shared with the credentials service: "model X is not pinned for stage
-// implement".
+// own max_tokens bound, the run's vision slot, and the stage's name as the
+// refusal names it. Where is spelled here so that the refusal reads exactly as
+// it did before the check was shared with the credentials service: "model X is
+// not pinned for stage implement". Vision is handed on as a pointer and always
+// non-nil: this caller has a stage and a repository's configuration behind it,
+// and "" is the run that writes no vision slot (imageRefusal).
 func pinOf(st Stage) RequestPin {
 	return RequestPin{
 		Models:          []string{st.Model, st.Background},
 		Where:           "stage " + st.Name,
 		Model:           st.Model,
+		Vision:          &st.Vision,
 		MaxOutputTokens: st.MaxOutputTokens,
 	}
 }
@@ -548,9 +551,48 @@ func checkRequest(p parsed, m pricing.Model, pin RequestPin, prices *pricing.Tab
 	// in it (run 20261021-002046-31cc). p.images is the request's own count,
 	// so a text-only call on the same model is never refused.
 	if p.images > 0 && m.ImageTokens <= 0 {
-		return fmt.Sprintf("model %s is priced without an image rate (the price table's image_tokens, a per-image token ceiling): an image block can't be reserved without one. model_prices sets token rates only", logValue(p.model))
+		return imageRefusal(p.model, pin, prices)
 	}
 	return ""
+}
+
+// imagePriceFix is the lever every caller of the image rule has: an image
+// ceiling is the owner's to set, and the table the call was judged by carries
+// the project's own model_prices block whichever caller asked (a run's gateway
+// and the credentials service both price a call by it).
+const imagePriceFix = "price that model's images with model_prices' image_tokens"
+
+// visionPin is where the image rule points an owner whose run has no model for
+// an image: the config key internal/config reads as Agent.VisionModel. The
+// gateway spells it rather than reading it, because a repository's
+// configuration is not the gateway's and a name is all a sentence needs.
+const visionPin = "agent.models.vision"
+
+// imageRefusal is the sentence an image on a model with no image rate is
+// refused with, and it names the fix its own caller has (D2009, F15).
+//
+// One rule serves two callers and they have different levers (checkRequest):
+// a run's stage, whose owner configures the repository, and the credentials
+// service, which has no stage, no repository configuration and no vision slot
+// — telling that one to set agent.models.vision would be the same dead end the
+// sentence ended on before it. RequestPin.Vision is what tells them apart: a
+// stage says what the run configured, and the service says nothing at all.
+func imageRefusal(model string, pin RequestPin, prices *pricing.Table) string {
+	s := fmt.Sprintf("model %s is priced without an image rate (the price table's image_tokens, a per-image token ceiling): an image block can't be reserved without one", logValue(model))
+	switch {
+	case pin.Vision == nil:
+		return s + ". " + imagePriceFix
+	case *pin.Vision == "":
+		return s + ". set " + visionPin + " to a model that can read images, and " + imagePriceFix
+	}
+	// The run names a model for images, so the price it needs is that model's:
+	// a stage runs it rather than the model this call named. One already priced
+	// for images needs nothing, and the sentence then stays about the model the
+	// call named, whose own images are the ones that could be priced.
+	if v, _ := modelFor(prices, *pin.Vision); v.ImageTokens <= 0 {
+		return fmt.Sprintf("%s. %s is %s, which is priced without an image rate too: price that ID's images with model_prices' image_tokens", s, visionPin, logValue(*pin.Vision))
+	}
+	return s + ". " + imagePriceFix
 }
 
 // sameModel: the same ID, or two spellings the table resolves to one
@@ -718,7 +760,6 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request, rt route
 type outcome struct {
 	charge
 	settled, pricedAs, servingModel, errorType string
-	usage                                      pricing.Usage // reported
 }
 
 func zeroOutcome(model string, sent bool) outcome {
@@ -747,7 +788,7 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 
 	first, firstSent, err := s.upstreamRequest(ctx, r, rt, body)
 	if err != nil {
-		if s.o.Upstream.Kind == KindService && errors.Is(err, errServiceUnidentified) {
+		if rt.provider == nil && s.o.Upstream.Kind == KindService && errors.Is(err, errServiceUnidentified) {
 			// C1.15 (service.go), D143: a service call this job cannot
 			// present its own identity on is a run the service cannot serve
 			// at all. The metadata server is the only place the job's ID
@@ -763,9 +804,9 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 	}
 	up, sent, resp, err, lost := s.sendRetryingOnce(ctx, first, firstSent, func() (*http.Request, *atomic.Bool, error) {
 		return s.upstreamRequest(ctx, r, rt, body)
-	}, p.model)
+	}, p.model, rt.provider != nil)
 	if err != nil {
-		if s.o.Upstream.Kind == KindService && s.serviceUnreachable(w, s.base, r.Context()) {
+		if rt.provider == nil && s.o.Upstream.Kind == KindService && s.serviceUnreachable(w, s.base, r.Context()) {
 			// C1.15 (service.go), D143: an unreachable credentials service
 			// halts the run -- it never falls back to a credential of the
 			// job's own, which this upstream has none of. Nothing reached
@@ -800,13 +841,19 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		return zeroOutcome(p.model, true), lost
 	}
 	*status = resp.StatusCode
-	if s.o.Upstream.Kind == KindService {
+	if rt.provider == nil && s.o.Upstream.Kind == KindService {
 		// C1.15 (service.go): what the service said about this call is read
 		// here, where it leaves the upstream and before a byte of it reaches
 		// the agent -- the tier the call settles by, the credential's name,
 		// the switch, and the refusals that are the service's own answer and
 		// are never relayed. A model answer (2xx, or a model error the
 		// service relayed) is not touched: it goes on to the pump below.
+		//
+		// A routed call is never one of these, even beside a service
+		// upstream: it went to the provider's own endpoint (withRoute,
+		// upstreamRequest), so its answer is the provider's and carries no
+		// tier -- read as the service's, it would halt the run for an answer
+		// that is exactly what R6/D1634 keep on the runner path.
 		st, done, served, probes := s.serviceAnswer(w, resp, true)
 		*tier = served // "" when the answer carried none, which is a halt or a relayed error
 		*probed = probes
@@ -948,10 +995,15 @@ var upstreamRetryDelay = 250 * time.Millisecond
 // settles once, from the attempt that answered -- or at the reservation an
 // attempt that never answered leaves standing (the last value below).
 //
-// A service upstream (C1.15, KindService) is not retried here: the service
-// retries its own calls across the credentials it holds, inside the one
-// answer it gives this gateway, and D143 makes an unreachable service a halt
-// rather than a call this gateway sends again.
+// A call a service upstream answers (C1.15, KindService) is not retried here:
+// the service retries its own calls across the credentials it holds, inside
+// the one answer it gives this gateway, and D143 makes an unreachable service
+// a halt rather than a call this gateway sends again. That is the service's
+// calls and not the upstream's kind: a switched api-key run's provider routes
+// sit beside the same service upstream (R6, D1634), a routed call is the
+// provider's own and no one else's, and it is retried here exactly as it is
+// beside the Anthropic upstream — routed says which of the two this call is,
+// because only the caller holds the route.
 //
 // What the narrow form costs, stated: the first attempt may have reached an
 // upstream that then generated and answered nothing, and this gateway read no
@@ -983,10 +1035,10 @@ var upstreamRetryDelay = 250 * time.Millisecond
 // `granted` with nothing to show for it. A first attempt that answered a
 // status is not this: the upstream refused that call or asked for it later,
 // and generated nothing this gateway has to account for.
-func (s *Server) sendRetryingOnce(ctx context.Context, up *http.Request, sent *atomic.Bool, next func() (*http.Request, *atomic.Bool, error), model string) (*http.Request, *atomic.Bool, *http.Response, error, bool) {
+func (s *Server) sendRetryingOnce(ctx context.Context, up *http.Request, sent *atomic.Bool, next func() (*http.Request, *atomic.Bool, error), model string, routed bool) (*http.Request, *atomic.Bool, *http.Response, error, bool) {
 	resp, err := s.client.Do(up)
 	reason, status := upstreamRetryReason(resp, err)
-	if reason == "" || s.o.Upstream.Kind == KindService || ctx.Err() != nil {
+	if reason == "" || (s.o.Upstream.Kind == KindService && !routed) || ctx.Err() != nil {
 		return up, sent, resp, err, false
 	}
 	lost := reason == "transport" && sent.Load()
@@ -1213,12 +1265,19 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, w pricing.Micros, p
 		floor = min(pricing.WithFee(t.acc.reported, fee), w)
 	}
 	o.usage = u
+	// The model this call is priced under, which is the one the request named
+	// and not the serving model the response's own message_start carried: the
+	// per-model token counts the run's record keeps hang off this one (G1.2).
+	// The serving model is the claim the dollars follow (ByModel), and a
+	// response naming a snapshot of the pin, or a model the table doesn't
+	// know at all, must not key the run's own counts.
+	o.pricedModel = p.model
 	o.model = serving
 	o.sent = true
 	o.tokens = u.Input + u.CacheWrite5m + u.CacheWrite1h + u.CacheRead + u.Output
 	// What this call had cached is what a switch after it re-reads (F24), and
 	// it is known because this call's usage was read.
-	o.cacheRead, o.cacheWrite, o.usageRead = u.CacheRead, u.CacheWrite5m+u.CacheWrite1h, true
+	o.usageRead = true
 	if !partial {
 		o.amount, o.settled = max(reported, floor), settledUsage
 		if pr != nil && t.acc.hasReported {
@@ -1374,16 +1433,35 @@ var hopByHop = map[string]bool{
 // dropResponseHeaders never reach the agent: they identify the
 // organization behind the real key, or set state on the gateway's origin.
 //
-// The credentials service's answer headers are three more of them (C1.15,
+// The credentials service's answer headers are four more of them (C1.15,
 // service.go), and they are dropped for every upstream kind rather than only
 // under a service one: the tier is what C1.16 charges the call by, the name
-// is which of the project's credentials answered, and the switch is which
-// credential a call moved between. The agent is the one party that must never
-// learn the set of credentials its project holds (D143), and every later
-// upstream kind that answers with them would have to remember this list.
+// is which of the project's credentials answered, the switch is which
+// credential a call moved between, and the probe is which tiers were tried.
+// The agent is the one party that must never learn the set of credentials its
+// project holds (D143), and every later upstream kind that answers with them
+// would have to remember this list.
+//
+// The workspace's headroom header is the fifth (W7, workspace_headroom.go),
+// and the figure it carries is the workspace's own — its month across all of
+// its members, per budget.WorkspaceRoom — which is delivered to a member's job
+// and to no one else on that side (spec §5: the service answers the calling
+// member's job service account "and no one else"). So it joins the four above
+// rather than travelling beside them: the gateway reads it where they are read
+// (before this copy, so the run's own process has it through DeliveredHeadroom)
+// and the agent is handed the model's answer without it.
+//
+// The workspace's refusal marker is the sixth (workspace_refusal.go), and it
+// joins them for the headroom's reason and one of its own: the marker is the
+// workspace's own statement about itself, delivered to the calling member's
+// job, and it is between the two binaries rather than part of any answer the
+// agent is handed. A refusal is not relayed at all (D143), so the drop is the
+// belt to that brace — a 2xx that carried the header would still not reach the
+// agent with it.
 var dropResponseHeaders = map[string]bool{
 	"Anthropic-Organization-Id": true, "Set-Cookie": true, "Set-Cookie2": true,
 	HeaderTier: true, HeaderCredential: true, HeaderSwitch: true, HeaderProbe: true,
+	WorkspaceHeadroomHeader: true, WorkspaceRefusalHeader: true,
 }
 
 func copyResponseHeaders(dst, src http.Header, decoded bool) {

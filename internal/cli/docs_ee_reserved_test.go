@@ -136,7 +136,7 @@ func TestDocsEELicensed(t *testing.T) {
 		eeBornHere,
 		"their own licence",
 		"](license)",
-		"not published yet",
+		"subscription terms (published at",
 		"nothing outside `ee/` imports anything under `ee/`",
 		"spdx-license-identifier: licenseref-fugaro-subscription",
 		// The key rule, stated for a reader of the folder (S0.6, the

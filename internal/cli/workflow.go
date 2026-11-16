@@ -142,15 +142,11 @@ func workflowFlags(cmd *cobra.Command, o *workflowOptions) {
 	f := cmd.Flags()
 	settingsAimFlags(cmd, &o.project, &o.config)
 	f.StringVar(&o.repo, "repo", "", "the repository whose fugaro.yaml to edit (owner/name, or a path inside its checkout); default: the current directory's checkout")
-	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
-	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this write would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes")
+	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this write would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed")
 }
 
 // runWorkflowAdd is `workflow add`: create the block with the keys --set names.
 func runWorkflowAdd(cmd *cobra.Command, name string, o workflowOptions) error {
-	if err := askConflict(askFlags{ask: o.ask, yes: o.yes}); err != nil {
-		return err
-	}
 	if err := workflowNameProblem(name); err != nil {
 		return err
 	}
@@ -195,9 +191,6 @@ func runWorkflowAdd(cmd *cobra.Command, name string, o workflowOptions) error {
 // runWorkflowRm is `workflow rm`: remove the block, every key of it, and nothing
 // else.
 func runWorkflowRm(cmd *cobra.Command, name string, o workflowOptions) error {
-	if err := askConflict(askFlags{ask: o.ask, yes: o.yes}); err != nil {
-		return err
-	}
 	if err := workflowNameProblem(name); err != nil {
 		return err
 	}
@@ -363,7 +356,7 @@ func workflowApply(cmd *cobra.Command, w workflowWrite) error {
 	if err != nil {
 		return err
 	}
-	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: w.o.ask, yes: w.o.yes}, managed.Managed, settingsEditConditions(cmd, edit)); err != nil {
+	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: w.o.ask}, managed.Managed, settingsEditConditions(cmd, edit)); err != nil {
 		return err
 	}
 	edit.Managed = managed

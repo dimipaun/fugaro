@@ -29,7 +29,22 @@ type EnvVar struct {
 // TestPlatformEnvIsWhatTheBackendsReserve, so a platform variable added there
 // without being added here is a failing test rather than an environment a
 // launch can silently rewrite. Not to be written to.
-var PlatformEnvNames = []string{"FUGARO_BUCKET", "FUGARO_BACKEND", "FUGARO_GCP_PROJECT", "FUGARO_PROJECT", "FUGARO_REGION"}
+var PlatformEnvNames = []string{"FUGARO_BUCKET", BackendEnv, "FUGARO_GCP_PROJECT", "FUGARO_PROJECT", "FUGARO_REGION"}
+
+// BackendEnv is the job environment variable that carries the platform's own
+// name (backend.CloudRun or backend.CloudBatch): internal/infra writes it into
+// every job (infra.BackendEnv is the same spelling, held together by
+// internal/infra's TestPlatformEnvIsWhatTheBackendsReserve), and it is what a
+// process inside a job can ask which backend it is running on -- the runner's
+// own reads use it, because a run's record and the platform's reads are not
+// always available to the code deciding whether a shape may run here
+// (internal/runner's artifact refusal on Batch).
+//
+// It is the NAME and never a capability: what a reader does with it is compare
+// it with one of the two constants above, and a value that is neither (an
+// empty environment, a hand-made job) is "not the backend in question" rather
+// than an error.
+const BackendEnv = "FUGARO_BACKEND"
 
 // ImageEntryEnv is the job environment variable internal/infra sets to the name
 // of the project image_catalog entry a job's image was deployed from, on a job

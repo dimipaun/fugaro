@@ -231,7 +231,7 @@ design.** The credentials service **ships dormant**, so the cloud senior reviewe
 enabled for the installation**:
 
 - **the opt-in is the owner's**: `fugaro update --provision-credentials` — a typed confirmation at a
-  real terminal, never `--yes`, refused in a coding agent's session — and the bundle must hold the App
+  real terminal, refused in a coding agent's session — and the bundle must hold the App
   key the mint signs with (`fugaro creds set github-app-key`). Both are the credentials service's own
   documented steps, not new ones this design adds;
 - **the service must admit the review job's own account, and it does not today.** The variant is a

@@ -10,7 +10,7 @@ import (
 )
 
 // catalogBlock is a project image catalog whose one entry is the default, so
-// the webapp's workflows name nothing of their own and PIC5's catalogJobImage
+// the webapp's workflows name nothing of their own and PIC5's jobImage
 // routes their jobs through the entry (reconciliation §3.1 step 3).
 const catalogBlock = `
 image_catalog:
@@ -39,7 +39,7 @@ func catalogReadiness(t *testing.T, f *cloud, spec RepoSpec, shipped bool) (Repo
 	// The policy gate is a different question (D11) and this fixture carries
 	// no Firebase backend, so the project has published no policy here.
 	ex.PolicyExists = false
-	got, missing, err := Readiness(context.Background(), f.c, spec, ex, false)
+	got, missing, err := Readiness(context.Background(), f.c, spec, ex, false, "update")
 	if err != nil {
 		t.Fatal(err)
 	}

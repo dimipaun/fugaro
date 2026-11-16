@@ -1,0 +1,17 @@
+{
+  "id": "ent_1",
+  "organisation_id": "org_example",
+  "workspace_id": "ws_example",
+  "source": "purchase",
+  "row": "team-monthly",
+  "tier": "team",
+  "kind": "paid",
+  "seats": 3,
+  "starts_at": "2026-02-10T11:00:00Z",
+  "ends_at": "2026-03-10T11:00:00Z",
+  "status": "active",
+  "air_gapped": false,
+  "created_at": "2026-02-10T11:00:00Z",
+  "bound_at": "2026-02-11T08:00:00Z",
+  "rebindable_at": null
+}

@@ -1,0 +1,67 @@
+{
+  "version": 2,
+  "project": "example-project",
+  "gcp_project": "example-gcp-project",
+  "run_operators": [
+    "user:operator@example.com",
+    "user:second-operator@example.com",
+    "group:fugaro-operators@example.com",
+    "domain:example.com"
+  ],
+  "admins": [
+    "user:admin@example.com",
+    "group:fugaro-admins@example.com",
+    "serviceAccount:fugaro-admin@example-project.iam.gserviceaccount.com"
+  ],
+  "grants": [
+    {
+      "user": "user:admin@example.com",
+      "role": "admin",
+      "scope": "project",
+      "known": ["github/example-owner/example-repo", "github/example-owner/other-repo"]
+    },
+    {
+      "user": "user:operator@example.com",
+      "role": "operator",
+      "scope": "github/example-owner/*",
+      "known": ["github/example-owner/example-repo", "github/example-owner/other-repo"]
+    },
+    {
+      "user": "user:second-operator@example.com",
+      "role": "operator",
+      "scope": "github/example-owner/example-repo",
+      "known": ["github/example-owner/example-repo"]
+    },
+    {
+      "user": "user:pipeline@example.com",
+      "role": "operator",
+      "scope": "github/example-owner/example-repo,github/example-owner/other-repo",
+      "known": ["github/example-owner/example-repo", "github/example-owner/other-repo"]
+    },
+    {
+      "user": "user:reviewer@example.com",
+      "role": "viewer",
+      "scope": "all-repos",
+      "known": ["github/example-owner/example-repo", "github/example-owner/other-repo"]
+    },
+    {
+      "user": "user:elsewhere@example.com",
+      "role": "viewer",
+      "scope": "bitbucket/another-owner/*",
+      "known": []
+    }
+  ],
+  "effective": [
+    { "user": "user:admin@example.com", "repo": "github/example-owner/example-repo", "role": "admin" },
+    { "user": "user:operator@example.com", "repo": "github/example-owner/example-repo", "role": "operator" },
+    { "user": "user:pipeline@example.com", "repo": "github/example-owner/example-repo", "role": "operator" },
+    { "user": "user:reviewer@example.com", "repo": "github/example-owner/example-repo", "role": "viewer" },
+    { "user": "user:second-operator@example.com", "repo": "github/example-owner/example-repo", "role": "operator" }
+  ],
+  "legacy": [
+    { "member": "group:fugaro-operators@example.com", "role": "operator" },
+    { "member": "domain:example.com", "role": "operator" },
+    { "member": "group:fugaro-admins@example.com", "role": "admin" },
+    { "member": "serviceAccount:fugaro-admin@example-project.iam.gserviceaccount.com", "role": "admin" }
+  ]
+}

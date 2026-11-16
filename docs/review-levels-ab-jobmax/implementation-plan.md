@@ -2,7 +2,7 @@
 
 ## Status
 
-**Status as of 2026-11-10: in progress, about 24/40 merged; see [docs/status.md](../status.md) for the current table.** The owner approved every task on 2026-10-30, with these
+**Ruling 2026-11-16: the orchestrator (`fugaro:orchestrator`) replaces `/jobmax`. J1.2, J1.3 and T1.1–T1.3 are closed as superseded (no `jobmax.auto_launch` is built); T3.1 and V1.3 are WAITING on a re-plan against the orchestrator and the config-ownership registry and are not approved to launch as written; V1.2 is unchanged. X2 and Check 273, which measure J1.2's skill, are not touched here and are the owner's to close or re-point.** **Status as of 2026-11-10: in progress, about 24/40 merged; see [docs/status.md](../status.md) for the current table.** The owner approved every task on 2026-10-30, with these
 exceptions: T2.1 and T2.2 stay draft until the processor is named (O4); O1 and O2 are counsel's; T3.2
 (O6), the checks X1 and X2 write (270–273) and every OWNER-RUN part below are the owner's. The owner
 also named L5.2's model: `claude-opus-5-5` as this repository's level-2 reviewer. *(**Superseded
@@ -307,6 +307,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 - **Depends on:** L1.1, L4.1 and L1.2 (the same files, at earlier levels). Must land before A3.3.
 - **Red step:** an unknown field `slot` is refused.
 - **Commit:** `task, runstore: the A/B pair's slot`.
+- **Done (PR "task, runstore: the A/B pair's slot (B1.1, D728)")**. Red first: `TestABSlotVocabulary`, `TestABSlotDefaultsToCoder` and `TestABReviewerSlotNeedsChampionRun` failed to build (`undefined: ABSlots`, `ab.Slot undefined`, `unknown field Slot in struct literal of type AB`), and `TestRecipesSkewRefusesSlotOnOldImage` with `undefined: slotSince`, `undefined: checkSlotImage`, `undefined: checkCloneSlotImage` — an A1.1 task carrying a `slot` key is refused by the strict decoder, which is the field's own red step. The slot is a fourth closed vocabulary beside the arm, the publish and the source (`task.ABSlot`, `ABSlots`, and `IsReviewer` as the one reader that tells the coder apart from the three review levels), and the empty spelling is the value rather than a hole (`AB.EffectiveSlot`), because every block A1.1 wrote means coder by saying nothing and re-reading it must not turn it into a pair nobody could score: `Slot` and `ChampionRun` are additive on `task.schema.json` and `result.schema.json` in this commit, `version` stays 1, and a coder pair writes neither key. `ChampionRun` is refused on everything but a challenger at a review slot — a champion is the run its own block names, and a coder pair's challenger runs the whole task itself — and on such a challenger it is judged by `ValidRunID`, the way `run_id` is, because B1.2 looks the patch up under it. **`slotSince` is 0.24.0 and not 0.23.0, by L1.2's own version rule**: the number is the release whose runner acts on the slot, which is B1.2's replay, and a release that cut between this commit and that one would carry the field and not the replay — a runner that decodes the slot and does not replay it runs the whole coding loop on the challenger's model, which `ab.publish: none` keeps harmless and which is still the wrong run and a wrong figure at the pair's cost. The gate is declared here (`slotAsk`, `checkSlotImage`, `checkCloneSlotImage`) and wired by B1.4, which is the launch that writes a slot once the champion's patch exists (the shared-files table's `internal/cli/run.go` writers are L1.2 and L3.2 alone); what it judges is the key being present and not its value, and a launch asking nothing is never gated. Both `docs/release.md`'s Before-you-tag list (`slotSince`'s bullet, held by `TestSlotSinceHasAReleaseBullet`) and `docs/rigor-modes/reconciliation.md`'s image-skew census (35 → 36, in its own commit as that folder's rule requires) move with the constant, and `docs/model-ab-testing/implementation-plan.md` carries the amendment: D555 holds for a coder pair and is amended for reviewer slots by D728, A1.1's interfaces name the two keys, and A3.3 depends on B1.1 and B1.2 for a pair that names a slot.
 
 #### B1.2 The reviewer replay (MIT mechanism)
 
@@ -355,8 +356,11 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 - **Depends on:** #1367 (`working/SKILL.md`).
 - **Red step:** the new test fails on the current skill.
 - **Commit:** `plugin: job max in the parallelism skill`.
+- **Done (PR #1413, `da056ce7`).** Landed 2026-10-30, before this line was written, with the three files the **Files** line names and nothing else; its commit subject is the **Commit** line's own with the pull request's number appended. The task was picked up again on 2026-11-12, and nothing was re-implemented: the definition (`plugin/skills/parallelism/SKILL.md:33`), the three techniques (line 35), the one-yes-per-batch default with the `/jobmax` exception (line 122) and the `working` pointer (line 16) are the text #1413 wrote, both gates are green, and the run's change is the pin `TestParallelismSkillDefinesJobMax` was missing — the stub technique's own clause, "so neither side waits", which the skill's bold markers had split off from the name the test matched, so a skill keeping the name and dropping the clause passed. [Evidence, clause by clause](../review-levels-ab-jobmax-j1.1-already-landed.md).
 
 #### J1.2 The `/jobmax` skill (D729, D730 as ruled)
+
+**Closed as superseded 2026-11-16 (the owner's ruling): the orchestrator (`fugaro:orchestrator`) replaces `/jobmax`, so no `jobmax` skill is written.** Nothing below is built from this task; its text is kept as the record.
 
 - **Files:** `plugin/skills/jobmax/SKILL.md` (new), `plugin/jobmax_skill_test.go` (new), `plugin/plugin_test.go` (it pins exactly five skills), `plugin/skills/parallelism/SKILL.md` (the `/jobmax` exception to "one yes per batch", only with the opt-in on), `plugin/.claude-plugin/plugin.json` (description).
 - **Interfaces:**
@@ -376,6 +380,8 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 - **Commit:** `plugin: /jobmax launches every ready task of a plan`.
 
 #### J1.3 The owner's opt-in: `jobmax.auto_launch` (D730 as ruled)
+
+**Closed as superseded 2026-11-16 (the owner's ruling): the orchestrator replaces `/jobmax`, so no `jobmax.auto_launch` is built and D730's opt-in has nothing to switch.** Nothing below is built from this task; its text is kept as the record.
 
 - **Files:** `internal/localcfg/localcfg.go`, `internal/localcfg/localcfg_test.go`, `internal/cli/project_cmd.go` (the owner's publish into `settings`, and `project show --json`), `internal/cli/project_enroll_test.go` (where `project show` is tested), `console/docs/json-contract.md`.
 - **Interfaces:** `jobmax: { auto_launch: false }` in the owner's project config, decoded strictly: a boolean, default `false`, and any other key under `jobmax:` refused. It is published only by the owner, into the same owner-written `settings` node as the crash switch (O9 as ruled), never through the launcher-writable shared configuration. The owner can turn it off again at any time. `fugaro project show --json` prints `settings.jobmax_auto_launch: true|false|null`, and `null` (unreadable) means off.
@@ -398,6 +404,8 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 
 #### T1.1 The `settings` node and the switch `telemetry.crash_reports` (D732, D734, O9 as ruled)
 
+**Closed as superseded 2026-11-16 (the owner's ruling): with J1.3 gone the `settings` node has no second tenant, and the owner-written switches are re-planned against the config-ownership registry (docs/config-ownership), which is where an owner-only value now lives.** Nothing below is built from this task; its text is kept as the record.
+
 - **Files:** `internal/localcfg/localcfg.go`, `internal/localcfg/shared.go` (`Shared()` is a deny-list: it sets `Telemetry = nil` as it does `UpdateCheck`), `internal/cli/sharedcfg.go` (`sharedForbidden`), `internal/localcfg/localcfg_test.go`, `internal/cli/project_cmd.go` (the owner's publish writes `settings`), `internal/budget/rules/rules.json.tmpl` (the rules entry), `internal/budget/rules/rules_test.go`, `internal/budget/rules/emulator_test.go`.
 - **Interfaces:** produces `localcfg.Telemetry{CrashReports *bool}` (nil means true) in the owner's project config. The owner's `fugaro project policy publish` writes it to a neutral **`settings` node beside the budget node** in the installation's database. The rules let the owner write it, let any signed-in user of the installation read it, and let nothing else write it. It never goes through the launcher-writable shared configuration. The owner asked why the earlier recommendation put the switch under `budget show`. The reason was only that `budget show` was the online read the console already ran; the switch is not a budget fact, and the node is neutral by the owner's ruling.
 - **Tests:** `TestTelemetryCrashReportsDefaultTrue`, `TestTelemetryNotInShared`, `TestTelemetrySharedForbidden`, `TestPublishWritesSettings`, and the rules tests: the owner writes, a user reads, a user cannot write, and a run token cannot write.
@@ -410,6 +418,8 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 
 #### T1.2 `fugaro project show --json` prints the settings (O9 as ruled)
 
+**Closed as superseded 2026-11-16 (the owner's ruling): it printed T1.1's node, which is not built; the same reading is re-planned with the registry.** Nothing below is built from this task; its text is kept as the record.
+
 - **Files:** `internal/cli/project_cmd.go`, `internal/cli/project_enroll_test.go`, `console/docs/json-contract.md`.
 - **Interfaces:** the document gains `settings: { crash_reports: true|false|null }`. `null` means the node could not be read (offline, signed out, no database), and the console then sends nothing (D734).
 - **Tests:** `TestProjectShowSettings`, `TestProjectShowSettingsUnknownIsNull`.
@@ -419,6 +429,8 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 - **Commit:** `project show: the installation's settings`.
 
 #### T1.3 The console may run `fugaro project show --json` (O9 as ruled)
+
+**Closed as superseded 2026-11-16 (the owner's ruling): it allow-listed T1.2's argv, which is not built; the allow-list row is re-planned with the registry.** Nothing below is built from this task; its text is kept as the record.
 
 - **Files:** `console/src/main/ipc.ts` (`CONSOLE_OPERATIONS` gains the exact argv), `console/src/main/spawn.ts` if its allow-list lists argvs, their pinning tests in `console/test/unit/`, `docs/design/desktop-console.md` (the §5.1 table).
 - **Interfaces:** a new allow-listed argv, `project show --json`, which `.claude/rules/console.md` marks security-sensitive: an independent review, its pinning tests and the §5.1 row.
@@ -456,7 +468,9 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 
 #### T3.1 The app: opt-out Crashlytics, no Analytics (D731, D734)
 
-- **Files:** `mobile/package.json` and `mobile/package-lock.json` (drop `@react-native-firebase/analytics`), `mobile/app.config.js`, `mobile/src/app-config.test.js` and `mobile/src/app-config.ids.test.js` (they pin the analytics plugin), `mobile/firebase.json` (`crashlytics_auto_collection_enabled: false`, Analytics keys removed), `mobile/src/telemetry/index.js` (new: the module's only entry point), `mobile/src/telemetry/crash.js` (new: the one `setCrashlyticsCollectionEnabled(` call, from the settings node), `mobile/src/telemetry/crash.test.js` (new), `mobile/src/telemetry/scan.test.js` (new: the §7.4 scan as amended in T0.1, since P7.2/P7.3 are unbuilt), `website/src/pages/privacy.astro` (the app paragraph: Crashlytics, opt-out, no Analytics) and `website/test/privacy.mjs` (its `APP_TELEMETRY` list names the analytics package, so the page and the test move with the package in one task), `docs/releases/mobile/` (the release's notes).
+**WAITING on a re-plan, 2026-11-16 (the owner's ruling), not approved to launch as written:** it reads T1.1's `settings` node, now closed, so it is re-planned later against the orchestrator and the config-ownership registry. D731 and D734 stand.
+
+- **Files:** `mobile/package.json` and `mobile/package-lock.json` (drop `@react-native-firebase/analytics`), `mobile/app.config.js`, `mobile/src/app-config.test.js` and `mobile/src/app-config.ids.test.js` (they pin the analytics plugin), `mobile/firebase.json` (`crashlytics_auto_collection_enabled: false`, Analytics keys removed), `mobile/src/telemetry/index.js` (new: the module's only entry point), `mobile/src/telemetry/crash.js` (new: the one `setCrashlyticsCollectionEnabled(` call, from the settings node), `mobile/src/telemetry/crash.test.js` (new), `mobile/src/telemetry/scan.test.js` (new: the §7.4 scan as amended in T0.1, since P7.2/P7.3 are unbuilt — **amended 2026-11-11: P7.2 is built and P7.3 is not**, P7.2 having landed ahead of T0.1's amendment (the sequencing is recorded in `docs/plans/2026-10-19-mobile-telemetry.md`'s P7.2 section), so this scan lands beside P7.2's `notice.test.js`), `mobile/src/telemetry/notice.js` and `mobile/src/telemetry/notice.test.js` (**added 2026-11-11**: P7.2's statement names Analytics while the app ships it, and `notice.test.js` reads `mobile/package.json` and fails until the clause leaves with the package — so this task's removal empties the statement of it), `website/src/pages/privacy.astro` (the app paragraph: Crashlytics, opt-out, no Analytics) and `website/test/privacy.mjs` (its `APP_TELEMETRY` list names the analytics package, so the page and the test move with the package in one task), `docs/releases/mobile/` (the release's notes).
 - **Interfaces:** after sign-in, the app reads `settings/crash_reports` from the installation's database (T1.1's node; O9 as ruled), and follows later changes while signed in. Before sign-in, or if the node cannot be read, collection stays off and unsent reports are deleted (U2).
 - **Tests:** `crash: off until signed in`, `crash: follows the settings node, including a later change`, `scan: exactly one setCrashlyticsCollectionEnabled call site, no analytics import`.
 - **Command:** `cd mobile && npm test`, then `cd website && npm run check`.
@@ -518,6 +532,8 @@ processor (O4). No agent edits the Terms.
 
 #### V1.3 The iterations bar on the Run screen
 
+**WAITING on a re-plan, 2026-11-16 (the owner's ruling), not approved to launch as written:** it depends on T1.2 and J1.3, both closed, so it is re-planned later against the orchestrator and the config-ownership registry.
+
 - **Files:** `internal/cli/diagnose.go` and its test (the document the Run screen reads), `console/docs/json-contract.md`, `console/src/shared/schema.ts` (`RECORD_KEYS`; `closed()` refuses unknown keys), `console/src/renderer/screens/run.ts`, `console/src/renderer/theme/screens.css`, `console/test/unit/run.test.ts`, `docs/design/console-styling.md`.
 - **Interfaces:** `diagnose --json` gains each level's rounds used and its cap. No console decoder reads `reviews` today. The Run screen draws one bar per level.
 - **Tests:** `run: iterations bar per level`.
@@ -538,6 +554,7 @@ processor (O4). No agent edits the Terms.
 - **Depends on:** L4.2, T2.1, T3.1. #620, which is open and edits the same register, merges or rebases first.
 - **Red step:** none. It is a register entry, and the Go docs tests check the register's format and numbers.
 - **Commit:** `checklist: checks 270-272 for review levels and crash reports`.
+- **Blocked (2026-11-15): T3.1 is not built.** L4.2 and T2.1 are on `main` and T3.1 is not, so no row and no section were written into `docs/gcp-live-checklist.md` and 270–273 stay unused. **Read 271's `crash_reports: false` against the console as built**: it is T2.1 as this block describes it, and what shipped is the owner's ruling of 2026-10-31 — the console's own per-user `<userData>/crash.json`, off when it is absent. [Evidence, command by command](../review-levels-ab-jobmax-x1-blocked.md).
 
 ### X2 Check 273, written into the register
 

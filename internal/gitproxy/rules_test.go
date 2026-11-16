@@ -766,6 +766,69 @@ func TestRulesReviewRunCommentsOnlyOnFPR(t *testing.T) {
 	}
 }
 
+// TestRulesReadOnlyIdentityWritesNothing: Identity.ReadOnly is the class a
+// run's claims cannot carry - the installation's review-only job, which is
+// served a read-only credential on every other route (D1065). Its fpr names
+// the pull requests it REVIEWS, so the comment rule alone would hand it a
+// write its token set refuses. The class refuses every write instead, and
+// leaves every read exactly as any other caller's: reading is what that job
+// is for.
+func TestRulesReadOnlyIdentityWritesNothing(t *testing.T) {
+	review := Identity{Run: "run-r", PRs: []int{9, 11}, ReadOnly: true}
+
+	// The reads a review needs: the fetch, which is where the diff and the
+	// files come from, and the REST reads of the pull request it reviews.
+	for _, tc := range []struct{ name, method, url string }{
+		{"the fetch", "GET", "https://bitbucket.org/acme/sandbox.git/info/refs?service=git-upload-pack"},
+		{"the ref advertisement", "GET", "https://bitbucket.org/acme/sandbox.git/info/refs?service=git-receive-pack"},
+		{"the repository read", "GET", "https://api.bitbucket.org/2.0/repositories/acme/sandbox"},
+		{"the commit read", "GET", "https://api.bitbucket.org/2.0/repositories/acme/sandbox/commit/abcdefabcdef"},
+		{"the pull-request list", "GET", "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests"},
+		{"the pull request", "GET", "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/9"},
+		{"the comment list", "GET", "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/9/comments"},
+	} {
+		req := classify(t, tc.method, tc.url)
+		if got := Decide(req, review, jobRepo, admittedBlock()); !got.Allow {
+			t.Errorf("%s from a read-only identity = %+v, want an allow", tc.name, got)
+		}
+	}
+
+	// A push of the run's own branch, which is the one ref a writing run may
+	// move: the class refuses it, and the reason is the class and not the ref.
+	push := Request{
+		Kind:        KindPush,
+		Repo:        jobRepo,
+		UpdatesRead: true,
+		Updates:     []RefUpdate{{Old: oidA, New: oidB, Ref: "refs/heads/" + runBranch, HashLen: 40}},
+	}
+	if got := Decide(push, review, jobRepo, admittedBlock()); got.Allow || got.Reason != ReasonReadOnly {
+		t.Errorf("a push from a read-only identity = %+v, want %q", got, ReasonReadOnly)
+	}
+
+	// The three REST writes the adapter makes, each on the pull request fpr
+	// names - so no rule above the class is what refuses them.
+	for _, tc := range []struct{ name, method, url string }{
+		{"the create", "POST", "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests"},
+		{"the update", "PUT", "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/9"},
+		{"the comment", "POST", "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/9/comments"},
+	} {
+		req := classify(t, tc.method, tc.url)
+		if got := Decide(req, review, jobRepo, admittedBlock()); got.Allow || got.Reason != ReasonReadOnly {
+			t.Errorf("%s from a read-only identity = %+v, want %q", tc.name, got, ReasonReadOnly)
+		}
+	}
+
+	// The class is the whole of it: an identity with the same claims that is
+	// not read-only keeps the comment its fpr names, which is what a
+	// review-mode run of a per-repository job is.
+	comment := classify(t, "POST", "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/9/comments")
+	writing := review
+	writing.ReadOnly = false
+	if got := Decide(comment, writing, jobRepo, admittedBlock()); !got.Allow {
+		t.Errorf("the same comment from an identity that is not read-only = %+v, want an allow", got)
+	}
+}
+
 // TestRulesNoBranchNoPush: without fb there is no branch a push could move,
 // and the refusal is named for that and not for the ref the caller chose - the
 // caller's ref is not what was wrong with the request.

@@ -4,13 +4,19 @@
 package mcpauth
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/zitadel/oidc/v3/pkg/oidc"
 )
@@ -41,6 +47,24 @@ import (
 // rule** (D928), and this is the earlier of the two doors on purpose: a client
 // that could never receive a code here is refused with a message naming the
 // rule, rather than registering and failing at a person's sign-in.
+//
+// **And the endpoint is bounded twice, which is what spec.md §8 asks of an open
+// registration endpoint** (M12, reconciliation.md §4a): a source is limited in
+// how many registrations it may make (sourceLimiter), and every record the
+// endpoint writes has a lifetime the store reaches by prefix whether or not
+// anybody ever asks for it again (RegistrationTTL, SweepExpired below). The two
+// are one decision and not two features: what makes openness affordable is that
+// neither a single source nor a single record can be used to fill the store.
+//
+// **The other unauthenticated write of the flow carries the same pair**, and
+// the review of this branch is why it does: the authorize GET writes one
+// pending request per call and needed only one registered client to be looped,
+// so a sweep with a fixed budget per interval could not keep up with writes
+// nothing bounded — and the sweep's own page is sized against that window
+// (authorizeWindow, sweepPage). What holds for the registration endpoint holds
+// for it: a bound on what one source may write per interval, and a sweep that
+// removes what is admitted inside the interval after it, are the same two facts
+// whichever of the two doors the traffic arrives at.
 
 const (
 	// maxClientNameBytes bounds the name a client gives itself. The name is a
@@ -90,6 +114,219 @@ type registrationResponse struct {
 	Scope                   string   `json:"scope"`
 }
 
+// The per-source bounds spec.md §8 asks for (M12), one for each of the two
+// unauthenticated writes of the flow. Their figures are the shape and the
+// owner's to set, like every other lifetime and ceiling in this package.
+const (
+	// registerWindow is the period one source's registrations are counted
+	// over, and registerPerWindow how many of them are admitted in it. Ten a
+	// minute is far more than a client needs — a client registers once — and
+	// small enough that a source writing registrations for everybody else
+	// fills the store at a rate the sweep below clears.
+	registerWindow    = time.Minute
+	registerPerWindow = 10
+	// authorizeWindow is the same period on the GET that records a pending
+	// request, and authorizePerWindow how many of those one source is admitted
+	// in it. Thirty a minute is a person signing in — with a retry, a second
+	// tab, a browser that re-requests — by a wide margin, and it is the figure
+	// the sweep's own page is sized against: thirty a minute for one interval
+	// is four hundred and fifty records, which is less than one page of the
+	// sweep (sweepPage), so what one source may write in an interval is what
+	// one sweep run removes. A shared address pays for this bound the way it
+	// pays for the registration endpoint's, and the direction of that cost is
+	// the fail-safe one: a person at a busy address waits a moment, where an
+	// unbounded loop leaves the store to somebody else's script.
+	authorizeWindow    = time.Minute
+	authorizePerWindow = 30
+	// maxSources bounds each limiter's own map. A limiter that grew one entry
+	// per source would be a record in memory that a stranger chooses the size
+	// of, which is the same class of unbounded write the limit exists to
+	// refuse — and a source cannot choose how many entries it holds: the value
+	// it may send is the one the platform's front end overwrites or appends
+	// to, and the key is that address — or, for IPv6, the one /64 an
+	// allocation gives it, however many addresses in it the caller rotates
+	// through (registerSource, sourceKey).
+	maxSources = 4096
+)
+
+// sourceLimiter is one counting window per source, in memory, and it is the
+// shape both unauthenticated writes of the flow are bounded by: the
+// registration POST (registerWindow) and the authorize GET (authorizeWindow).
+//
+// **In memory and not in the store, and the difference is a decision.** A
+// bound that survives a restart would have to be a record per source in the
+// store whose own address is the one shape D922's hashes-only rule cannot
+// cover: a source is an IP address, it is personal data the moment it is
+// written down, and the bucket's whole design is that a reader of it holds
+// nothing about a caller. What is lost by keeping it in memory is a restart's
+// worth of counting — and, for the same reason, the count is one *instance's*:
+// the front door is capped at a single instance, which is what makes this
+// window the window the docs state (coordinator.tf), because with the
+// platform's own ceiling an attacker's traffic would buy it an instance per
+// window. What it can reach by making the door restart is a fresh window for
+// itself, and a door that is restarting is not serving clients.
+//
+// The window is per source and not global on purpose: a global bound would let
+// one source refuse everybody else's write, which is a denial of service with
+// this door's own help.
+type sourceLimiter struct {
+	window    time.Duration
+	perWindow int
+	mu        sync.Mutex
+	seen      map[string]sourceWindowState
+}
+
+type sourceWindowState struct {
+	start time.Time
+	count int
+}
+
+func newSourceLimiter(window time.Duration, perWindow int) *sourceLimiter {
+	return &sourceLimiter{window: window, perWindow: perWindow, seen: map[string]sourceWindowState{}}
+}
+
+// allow reports whether one more write from source is admitted at now, and
+// counts it when it is. A source the map has never seen starts its window here;
+// a window that has run out starts again.
+//
+// A map that is full of live windows refuses the new source rather than
+// evicting one of them: the entries are held for one window each, the refusal
+// is temporary, and dropping a live entry to make room would be handing a
+// caller the ability to reset somebody else's window — which is exactly the
+// denial of service the per-source shape is chosen to avoid.
+func (l *sourceLimiter) allow(source string, now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if w, ok := l.seen[source]; ok && now.Sub(w.start) < l.window {
+		if w.count >= l.perWindow {
+			return false
+		}
+		w.count++
+		l.seen[source] = w
+		return true
+	}
+	if len(l.seen) >= maxSources {
+		l.evict(now)
+		if len(l.seen) >= maxSources {
+			return false
+		}
+	}
+	l.seen[source] = sourceWindowState{start: now, count: 1}
+	return true
+}
+
+// evict drops the windows that have run out, which is the only eviction that
+// can never hand a caller a reset: a source with a live window keeps it.
+func (l *sourceLimiter) evict(now time.Time) {
+	for source, w := range l.seen {
+		if now.Sub(w.start) >= l.window {
+			delete(l.seen, source)
+		}
+	}
+}
+
+// registerSource is which source one write of the flow is counted against, on
+// either of the two endpoints that have a bound (register.go, authorize.go).
+//
+// **It is the rightmost entry of X-Forwarded-For, or the peer address when
+// there is no header** — and the choice between the two ends of that header is
+// the whole of the selection. A caller can send an X-Forwarded-For of its own,
+// and the platform's front end appends the address it saw to whatever arrived,
+// so the *leftmost* entry is a value the caller wrote and the rightmost is the
+// one Cloud Run's load balancer put there. Counting by the leftmost entry
+// would be counting by a value an attacker chooses a fresh one of per request,
+// which is a bound that admits everything.
+//
+// A peer address with no port — a unix socket, a test's own request — is used
+// as it stands rather than refused: an unidentifiable source counting as one
+// source is the fail-safe direction, and the alternative is an endpoint that
+// refuses to register a client because its address did not parse.
+//
+// What the entry is then *counted as* is sourceKey's question and not this
+// one's: the value read here is not what a window is keyed by, because rotating
+// through the addresses of one allocation is free for the caller (sourceKey).
+func registerSource(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		entries := strings.Split(xff, ",")
+		for i := len(entries) - 1; i >= 0; i-- {
+			if entry := strings.TrimSpace(entries[i]); entry != "" {
+				return sourceKey(entry)
+			}
+		}
+	}
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil && host != "" {
+		return sourceKey(host)
+	}
+	return sourceKey(r.RemoteAddr)
+}
+
+// ipv6SourceBits is how much of an IPv6 address is one source (sourceKey): one
+// allocation, which is the /64 every registry hands one subscriber.
+const ipv6SourceBits = 64
+
+// sourceKey is the address a source is counted as.
+//
+// **An IPv6 source is its /64 and not its address, and that is the whole of
+// the function.** Rotating through the addresses of one allocation is free —
+// any host in a /64 may take any address in it — so an address-keyed bound is
+// no bound against a caller holding one /64: 4,096 of them fill the limiter's
+// own map, and a map that is full refuses the source that is not in it, which
+// is the global denial of service the per-source shape was chosen to avoid
+// (registerLimiter.allow). Counting the prefix makes that rotation one source
+// with one window, at the price of counting the addresses of one allocation
+// together — which is what an allocation is: one subscriber.
+//
+// **A /64 and not a /56**, because refusing a caller that did nothing is the
+// failure this bound is shaped around: the neighbours inside one access
+// network's shorter prefix are strangers to each other, and a bound that counts
+// them together refuses their registrations over a stranger's. What the /64
+// costs instead is map entries — a caller holding a larger allocation holds
+// several /64s, each an entry — and that cost falls on the traffic of whoever
+// is doing the rotating.
+//
+// **An IPv4 address is counted as itself, and so is a v4-mapped one.** The
+// second half is not a detail: `::ffff:198.51.100.7` masked to a /64 is
+// `::/64`, which every IPv4 caller shares, so a prefix applied without
+// unmapping first would put every IPv4 client in the world in one window.
+// Anything that does not parse as an address — an empty header, a peer name —
+// is counted as it stands, which is registerSource's fail-safe direction too.
+func sourceKey(addr string) string {
+	ip, err := netip.ParseAddr(addr)
+	if err != nil {
+		return addr
+	}
+	if ip.Is4() || ip.Is4In6() {
+		return ip.Unmap().String()
+	}
+	prefix, err := ip.Prefix(ipv6SourceBits)
+	if err != nil {
+		return addr
+	}
+	return prefix.Masked().String()
+}
+
+// tooManyRegistrations is the refusal of a source past its window.
+//
+// The status is 429 and the body is RFC 6749 §5.2's shape with that
+// specification's own code for it, written here rather than through
+// oauthError: the vendor's vocabulary is a closed set of constructors with no
+// `temporarily_unavailable` in it, and `server_error`, which it does have,
+// tells a client that retrying is pointless when retrying is exactly what the
+// header says to do.
+//
+// The description is a fixed sentence and never the source it refused: a
+// source is an address, and a public endpoint's body is not a place one is
+// written down — neither the caller's own, which is personal data the store
+// deliberately does not hold, nor anything that would tell a caller what the
+// door counts it as.
+func tooManyRegistrations(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", strconv.Itoa(int(registerWindow/time.Second)))
+	writeJSONStatus(w, http.StatusTooManyRequests, map[string]string{
+		"error":             "temporarily_unavailable",
+		"error_description": "too many registrations from this source: the endpoint is open to everyone, and this is the bound that keeps one source from writing records for all of them",
+	})
+}
+
 // serveRegister writes one client registration.
 //
 // The two things it does not do are the two a registration endpoint is usually
@@ -97,6 +334,17 @@ type registrationResponse struct {
 // no credential. What it does do is check every redirect URI before anything is
 // written, so a refusal leaves no record at all.
 func (s *Server) serveRegister(w http.ResponseWriter, r *http.Request) {
+	// The bound first, before the body is read: a source past its window is
+	// refused for the cost of one map lookup, and a request that will be
+	// refused anyway is not one to spend a body read on.
+	if !s.registrations.allow(registerSource(r), s.now()) {
+		tooManyRegistrations(w)
+		return
+	}
+	// And the sweep, which is triggered by the traffic that writes the records
+	// it removes (maybeSweep). It runs after the refusal above and before this
+	// registration's own write, on a request that was admitted.
+	s.maybeSweep(r.Context())
 	var req registrationRequest
 	if err := readJSONBody(w, r, &req); err != nil {
 		writeOAuthError(w, http.StatusBadRequest, oauthError(oidc.ErrInvalidRequest(),
@@ -164,7 +412,17 @@ func (s *Server) serveRegister(w http.ResponseWriter, r *http.Request) {
 		TokenEndpointAuthMethod: string(oidc.AuthMethodNone),
 		GrantTypes:              []string{string(oidc.GrantTypeCode), string(oidc.GrantTypeRefreshToken)},
 		ResponseTypes:           []string{"code"},
-		Scope:                   strings.Join(ScopeVocabulary, " "),
+		// The scope a registration answers is the default rather than the
+		// whole vocabulary (R1), and this member is where a client reads what
+		// it should ask for: a registration that answered
+		// "tasks:read tasks:write state:read state:write" would have every MCP
+		// client request the scope that rewrites the orchestrator's state, and
+		// the door an installation is wired with narrows nothing
+		// (coordinator_serve.go leaves Config.Limits at its zero value), so the
+		// client would be handed it. DefaultScopes is the list
+		// `requestedScopes` answers an authorization that names no scope with,
+		// which is what makes the two defaults one.
+		Scope: strings.Join(DefaultScopes, " "),
 	})
 }
 
@@ -270,4 +528,293 @@ func readJSONBody(w http.ResponseWriter, r *http.Request, into any) error {
 		return err
 	}
 	return nil
+}
+
+// The registration's own lifetime, which is the second bound of spec.md §8
+// (M12, reconciliation.md §4a).
+//
+// RegistrationTTL is how long a registration lives once no family names it, and
+// the figure is the shape and the owner's to set like every other lifetime
+// here. **The rule is "and no family names it" rather than the age alone**, and
+// the direction it errs in is deliberate: a client that is still refreshing
+// keeps the registration its chain was minted against however old it is,
+// because removing that record would end a working session at a janitor's hand
+// — while a registration nobody has ever signed in through, or whose last
+// chain was revoked, or that was made by a stranger who never came back, is
+// exactly the record D928's openness leaves behind and this one takes away.
+const RegistrationTTL = 30 * 24 * time.Hour
+
+// Swept is what one sweep removed, by shape. It is an answer rather than a
+// count because the three shapes are three different records failing three
+// different ways, and the log line an operator reads is the only place the
+// difference is visible at all.
+type Swept struct {
+	Registrations int
+	Requests      int
+	Codes         int
+}
+
+// sweepInterval is how often a request may carry a sweep. The sweep is a
+// janitor: nobody asked for it, its work is not the caller's answer, and a
+// door under a loop must not run one per request — the interval is what turns
+// "every write triggers it" into "at most one sweep per interval, run by
+// whichever write arrived first".
+const sweepInterval = 15 * time.Minute
+
+// sweepPage is how many records one sweep run examines in each prefix, and it
+// is the second half of what makes the sweep keep up (the first being the
+// windows above).
+//
+// **A prefix is read a page at a time and never whole.** The listing and the
+// per-record reads and deletes are what a run costs, so a prefix of any size
+// costs at most one page of them — which is what keeps a run inside
+// sweepTimeout once a prefix has grown, and a run that does not finish inside
+// its bound removes nothing at all. The page is also a page the *next* run
+// resumes from without a cursor: what a run removed has left the list, so the
+// next run's page is the records after it — and a page whose records are all
+// live is a page that does not move until they are not, which is the same
+// direction this sweep errs in everywhere else: the cost of a page that
+// examines nothing is one page per interval, and the cost of the records behind
+// it is their own lifetime.
+//
+// It is bigger than what one source may write in one interval on either open
+// endpoint, which is the figure that matters: thirty authorize requests a
+// minute for one interval is four hundred and fifty records (authorizeWindow),
+// so the writes the window admits are the writes one run removes.
+const sweepPage = 500
+
+// sweepTimeout bounds a sweep (maybeSweep), which runs on a context no caller
+// can cancel and so needs a bound of its own. It is the order
+// ee/coordinator/sweep.go's finalWriteGrace and auditedCall's auditEntryGrace
+// are of, because it is the same shape: the door's own bound on housekeeping
+// that is not the caller's answer.
+const sweepTimeout = 30 * time.Second
+
+// maybeSweep runs the store's sweep, at most once per sweepInterval, inside the
+// request that triggered it.
+//
+// **It is synchronous, and it runs on the caller's values without its
+// cancellation.** Synchronous, because a goroutine per trigger would be a
+// second writer running beside the door's own answers with a lifecycle nothing
+// owns, on a platform that may freeze the CPU the moment the response is
+// written — and a context of its own would be the same thing with the freeze
+// hidden in it. Detached from the cancellation, because the sweep is this
+// door's own housekeeping and not the caller's work: on the caller's context, a
+// trigger that disconnected would cancel the sweep *and* spend the interval,
+// so the second bound of the open registration endpoint would be one an
+// attacker could switch off by hanging up — and the cheapest trigger of all is
+// the unauthenticated GET (authorize.go), which anybody can poll and close. The
+// timeout is what the caller pays for that instead: this request waits for the
+// sweep, and the sweep waits for the store for at most sweepTimeout, which is a
+// bound on a janitor and not on an answer that is owed.
+//
+// The instant is written before the work and not after it: a sweep that fails
+// or times out would otherwise be retried by every registration until one of
+// them succeeded, which is the burst the interval exists to prevent. What that
+// buys is at most one sweep per interval, and it is never a claim that the work
+// is done — a sweep a store refused is a sweep the next interval runs again.
+//
+// A failure is a log line and never an answer: this caller asked to register a
+// client, not to hear about the store's janitor, and a registration refused
+// because a sweep failed would be an outage caused by housekeeping.
+func (s *Server) maybeSweep(ctx context.Context) {
+	s.sweepMu.Lock()
+	now := s.now()
+	due := s.sweptAt.IsZero() || now.Sub(s.sweptAt) >= sweepInterval
+	if due {
+		s.sweptAt = now
+	}
+	s.sweepMu.Unlock()
+	if !due {
+		return
+	}
+	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sweepTimeout)
+	defer cancel()
+	swept, err := s.store.SweepExpired(sctx)
+	if err != nil {
+		s.logger.Warn("mcpauth: the record sweep did not finish", "error", err)
+		return
+	}
+	if swept != (Swept{}) {
+		s.logger.Info("mcpauth: the record sweep removed expired records",
+			"registrations", swept.Registrations, "requests", swept.Requests, "codes", swept.Codes)
+	}
+}
+
+// SweepExpired is the bound on what is stored: every registration no family
+// names and every single-use record of the flow whose moment has passed is
+// removed.
+//
+// **It is the store's operation and not the endpoint's** (Store.SweepExpired
+// says why), and it is written over the record layouthere because the second
+// bound belongs to the endpoint that writes these records: the registrations
+// are M5's and M12's, and the two flow records are here because a sweep that
+// reached only registrations would leave the unauthenticated GET's own lever —
+// one record per request, answered or abandoned — growing for as long as
+// somebody kept pulling it.
+//
+// The order is families first, then the three prefixes, and the order matters
+// for one reason: what a registration is judged by is whether any family names
+// it, and what a spent code's marker is judged by is whether the family it
+// names can still be revoked — and both answers come out of one read of the
+// families rather than a read per record. A record that disappears between the
+// list and the read is skipped rather than reported: something else — a
+// rotation's revoke, another sweep — took it, and a sweep is not an audit of
+// its own prefixes.
+//
+// **What it leaves is the direction it errs in.** A client a family still names
+// stays; a spent code whose family is still revocable stays; a record whose
+// expiry is not stated stays; a record whose expiry is in the future stays.
+// Every one of those is a record kept too long rather than a record removed too
+// early, which is the only way round that a lifecycle nobody watches can be
+// wrong.
+func (r records) SweepExpired(ctx context.Context) (Swept, error) {
+	var swept Swept
+	named, families, err := r.families(ctx)
+	if err != nil {
+		return swept, err
+	}
+	now := r.clock()
+	keys, err := r.objs.listUpTo(ctx, clientPrefix, sweepPage)
+	if err != nil {
+		return swept, err
+	}
+	for _, key := range keys {
+		var c Client
+		if err := r.get(ctx, key, &c); err != nil {
+			if errors.Is(err, errMissing) {
+				continue
+			}
+			return swept, err
+		}
+		// A registration with no stated lifetime is kept, which is the same
+		// rule as the records below and a rule this one needs for its own
+		// reason: the record an operator writes by hand carries no CreatedAt
+		// (D929's pre-registered client), and a client nobody registered
+		// through this endpoint is not one this endpoint's bound may end.
+		// A record at its own moment is kept for that reason too — the
+		// moment has to have passed, which is the same strict reading the two
+		// single-use shapes get below.
+		if named[c.ID] || c.CreatedAt.IsZero() || !now.After(c.CreatedAt.Add(RegistrationTTL)) {
+			continue
+		}
+		if err := r.objs.delete(ctx, key); err != nil {
+			return swept, err
+		}
+		swept.Registrations++
+	}
+	if swept.Requests, err = r.sweepSingleUse[Request](ctx, requestPrefix, now, nil); err != nil {
+		return swept, err
+	}
+	if swept.Codes, err = r.sweepSingleUse[Code](ctx, codePrefix, now, families); err != nil {
+		return swept, err
+	}
+	return swept, nil
+}
+
+// families is the sweep's one read of the family records, in both of the shapes
+// it judges a record by: the client ids they name, which is what keeps a
+// registration past its own lifetime, and the records themselves by their own
+// id, which is what keeps a spent code's marker.
+//
+// One read answers both because the two questions are about the same objects: a
+// family record is written by the mint and deleted by the revoke, and its client
+// id is the registration the whole chain belongs to. A family whose id is empty
+// is a record no build of this package wrote and one nothing can look up, which
+// is the same reading `aged` gives a family whose age is unknown.
+func (r records) families(ctx context.Context) (map[string]bool, map[string]Family, error) {
+	keys, err := r.objs.list(ctx, familyPrefix)
+	if err != nil {
+		return nil, nil, err
+	}
+	named := make(map[string]bool, len(keys))
+	byID := make(map[string]Family, len(keys))
+	for _, key := range keys {
+		var f Family
+		if err := r.get(ctx, key, &f); err != nil {
+			if errors.Is(err, errMissing) {
+				continue
+			}
+			return nil, nil, err
+		}
+		if f.ClientID != "" {
+			named[f.ClientID] = true
+		}
+		if f.ID != "" {
+			byID[f.ID] = f
+		}
+	}
+	return named, byID, nil
+}
+
+// sweepSingleUse removes the records of one single-use prefix whose own moment
+// has passed — spent or not — and leaves a spent code's marker while the family
+// it names can still be revoked.
+//
+// It reads the marker first, and that is not an optimization: a spent record is
+// the same object under the same key with a marker in it (spentRecord), so a
+// sweep that decoded the shape first would meet its own marker as a record
+// that no longer decodes and stop there. The marker carries the moment the
+// record it replaced stopped being readable — written by consume out of the
+// record itself and kept across BindCodeFamily's rewrite — which is what makes
+// a spent code removable at all: a spent code holds no expiry of its own, and
+// without that field its marker would outlive the code it stands for by
+// forever.
+//
+// **A spent code's marker is read for the family it names as well as for its
+// lifetime.** A spent code is the only single-use record a later presentation
+// can act on: the second exchange is refused as already redeemed and the family
+// the first one minted is revoked, which is the replay OAuth 2.1 §4.1.3 asks
+// for (ConsumeCode's own note). So the marker is kept for as long as that
+// revocation would mean anything — while the family it names is in the store
+// and inside both of its own bounds — and the code's moment is then the
+// earliest moment its marker may go rather than the moment it goes. A family
+// the store no longer holds was revoked already, and one past `aged` can be
+// rotated no longer, so a marker kept for either names a chain nothing can act
+// on; and a family is the only thing here that bounds the marker, because
+// nothing else deletes a family and a marker kept for one forever is exactly
+// the growth this sweep exists to end.
+//
+// A record with no stated expiry is left exactly where a record a family names
+// is left: the marker of a record written before this field existed decodes
+// with the zero time, and the sweep is not the place to guess.
+func (r records) sweepSingleUse[T expiring](ctx context.Context, prefix string, now time.Time, families map[string]Family) (int, error) {
+	keys, err := r.objs.listUpTo(ctx, prefix, sweepPage)
+	if err != nil {
+		return 0, err
+	}
+	removed := 0
+	for _, key := range keys {
+		data, _, err := r.objs.read(ctx, key)
+		if errors.Is(err, errMissing) {
+			continue
+		}
+		if err != nil {
+			return removed, err
+		}
+		var marker spentRecord
+		var expires time.Time
+		if marker = spentMarkerIn(data); marker.Consumed {
+			expires = marker.ExpiresAt
+		} else {
+			var rec T
+			if err := decode(data, &rec); err != nil {
+				return removed, fmt.Errorf("%s: %w", key, err)
+			}
+			expires = rec.expiresAt()
+		}
+		if expires.IsZero() || !now.After(expires) {
+			continue
+		}
+		if marker.Consumed && marker.FamilyID != "" {
+			if f, ok := families[marker.FamilyID]; ok && !f.aged(now) {
+				continue
+			}
+		}
+		if err := r.objs.delete(ctx, key); err != nil {
+			return removed, err
+		}
+		removed++
+	}
+	return removed, nil
 }

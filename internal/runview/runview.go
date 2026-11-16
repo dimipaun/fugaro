@@ -241,6 +241,34 @@ type Row struct {
 	TaskPR   int `json:"task_pr,omitempty"`
 	RecordPR int `json:"record_pr,omitempty"`
 	PR       int `json:"pr,omitempty"`
+	// PRState is the state of the pull request this row carries, in the
+	// vocabulary of the owner's 2026-11-12 ruling: `live` (a run is going on
+	// it), `ready` (no run is going and it waits only on a merge), `stalled`
+	// (it had a run, no run is going, and it is not ready). The fourth word,
+	// `orphan` — a pull request no run ever produced or follows — is one no
+	// listing of runs can answer, because such a pull request has no row.
+	//
+	// It is the last state a run recorded of the pull request and not the
+	// pull request's state now: no forge is read, so one merged or closed
+	// after the run that left it `ready` still reads `ready`.
+	//
+	// A review run is on the pull request its task reviews, which its record
+	// names only at the artifact stage that ends the review, so such a row
+	// carries this field while `PR` beside it is still empty.
+	//
+	// It is the LISTING's computation and not Join's: whether a run is going
+	// on a pull request is a fact about every run of that pull request, and
+	// Join sees one. A read that holds a window of runs groups them by the
+	// pull request they carry, takes the newest run of each group that says
+	// what the pull request is (an outcome of `ready` or `draft`, so a rebase
+	// or a review that changed nothing about it does not decide) and marks
+	// every row of it with the answer (internal/cli's markPRStates), so the
+	// field is empty on a row that carries no pull request and on every
+	// document whose read is not a window — `diagnose --json`'s `row`, which
+	// holds the one run it diagnoses and drops the state rather than answer
+	// from a single run of a pull request — and `omitempty` is what keeps
+	// that absence out of their JSON, as it does for the fields beside it.
+	PRState string `json:"pr_state,omitempty"`
 	// Pushed means the run updated its branch, and PushedHead is the
 	// commit it pushed; see Pushed.
 	Pushed     bool       `json:"pushed"`

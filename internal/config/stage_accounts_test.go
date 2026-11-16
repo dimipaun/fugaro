@@ -82,7 +82,12 @@ func TestCheckStageAccountMixIsTheB0Ruling(t *testing.T) {
 		{name: "oauth names one account", auth: "oauth", stages: map[string]string{"review": "acme-overflow"}},
 		{name: "oauth names none", auth: "oauth", stages: nil},
 		// "Never under another auth": neither vertex nor cascade reaches a Claude
-		// OAuth credential, so an account there could never be used.
+		// OAuth credential, so an account there could never be used. Under
+		// cascade the readers of the machine's own keys drop the operator's
+		// project-wide accounts before asking this function
+		// (CascadeSkippedStageAccounts), so a cascade row here is a *declared*
+		// account of the run's own and not the state a cascade repository
+		// usually reaches.
 		{name: "vertex refused", auth: "vertex", stages: map[string]string{"review": "acme-overflow"},
 			want: [][]string{{"stages.review.claude_account", "this run's is vertex"}}},
 		{name: "cascade refused", auth: "cascade", stages: map[string]string{"review": "acme-overflow"},
@@ -115,6 +120,47 @@ func TestCheckStageAccountMixIsTheB0Ruling(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestCascadeSkippedStageAccountsIsTheCascadeExemption is the rule Check 191
+// asked for: the account-choice keys are the *operator's* project-wide default
+// for the stages they name, so a cascade repository of the same project — the
+// one auth whose credential comes from the credentials service's own tiers —
+// is not refused for keys it never wrote. Every other auth keeps the map it
+// passed, so the refusal under vertex is the caller's own.
+func TestCascadeSkippedStageAccountsIsTheCascadeExemption(t *testing.T) {
+	deklared := map[string]string{"review": "acme-overflow", "adversarial": "acme-personal"}
+	for _, auth := range []string{"api-key", "oauth", "vertex", ""} {
+		got, note := CascadeSkippedStageAccounts(auth, deklared)
+		if note != "" {
+			t.Errorf("auth %q: note = %q, want none", auth, note)
+		}
+		if len(got) != len(deklared) || got["review"] != "acme-overflow" || got["adversarial"] != "acme-personal" {
+			t.Errorf("auth %q: stages = %v, want the caller's own map", auth, got)
+		}
+	}
+	// A project that names no stage account says nothing: the note is about
+	// keys the operator wrote, and a cascade repository of a project without
+	// them must not be told about a rule it never met.
+	for _, none := range []map[string]string{nil, {}, {"review": ""}} {
+		got, note := CascadeSkippedStageAccounts(AuthCascade, none)
+		if note != "" {
+			t.Errorf("stages %v: note = %q, want none", none, note)
+		}
+		if len(got) != len(none) {
+			t.Errorf("stages %v: got %v, want the caller's own map", none, got)
+		}
+	}
+	// Under cascade every declared stage is skipped, sorted, and the sentence
+	// is the one the launch and `fugaro validate` print.
+	got, note := CascadeSkippedStageAccounts(AuthCascade, deklared)
+	if len(got) != 0 {
+		t.Errorf("cascade stages = %v, want none: no account of the project's reaches a cascade run", got)
+	}
+	want := "project stage accounts do not apply to a cascade repository: adversarial, review skipped"
+	if note != want {
+		t.Errorf("note = %q, want %q", note, want)
 	}
 }
 
@@ -338,5 +384,149 @@ func TestAccountStagesAReleasedImageKnowsIsRunStagesMinusThisReleases(t *testing
 		if AccountStageHeldBack(stage) {
 			t.Errorf("AccountStageHeldBack(%q) = true: only a stage of a run can be held back from the node", stage)
 		}
+	}
+}
+
+// poolCreds is the credentials block the pool tests read: one of each type
+// this release ships, so a member's name says its type and a test need not
+// restate the block.
+var poolCreds = []Credential{
+	{Name: "acme-oauth", Type: CredentialTypeClaudeOAuth},
+	{Name: "acme-key", Type: CredentialTypeAnthropic},
+	{Name: "acme-router", Type: CredentialTypeOpenRouter},
+}
+
+// TestPoolMembersKeepTheOrderAndCarryTheType pins the pool read the walk
+// stands on: the members in the order the pool lists them — the order is what
+// failover walks (D1632), so a set would lose the only thing the list is for —
+// each with the type it was defined with and the path that serves it, and the
+// built-in vertex placed without any layer defining it (D1624).
+func TestPoolMembersKeepTheOrderAndCarryTheType(t *testing.T) {
+	p := Pool{Name: "acme-pool", Members: []string{"acme-router", "vertex", "acme-oauth", "acme-key"}}
+	want := []PoolMember{
+		{Name: "acme-router", Type: CredentialTypeOpenRouter, Path: CredentialPathRunner},
+		{Name: "vertex", Type: CredentialTypeVertex, Path: CredentialPathRunner},
+		{Name: "acme-oauth", Type: CredentialTypeClaudeOAuth, Path: CredentialPathCredsvc},
+		{Name: "acme-key", Type: CredentialTypeAnthropic, Path: CredentialPathCredsvc},
+	}
+	got := PoolMembers(p, poolCreds)
+	if len(got) != len(want) {
+		t.Fatalf("PoolMembers = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("PoolMembers[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+	// A member of a type nothing serves is carried rather than dropped: a
+	// caller refusing the pool has to name which member it could not place.
+	unplaced := PoolMembers(Pool{Members: []string{"acme-future"}},
+		[]Credential{{Name: "acme-future", Type: CredentialTypeOpenAI}})
+	if len(unplaced) != 1 || unplaced[0].Name != "acme-future" || unplaced[0].Path != "" {
+		t.Fatalf("PoolMembers = %+v, want the member carried with no path", unplaced)
+	}
+}
+
+// TestPoolHasVertexMember pins D1626's F8 clause: the built-in vertex is the
+// member that makes a pool un-enforceable under budget.mode: enforce, and the
+// reader that has to refuse the pool asks for it by name.
+func TestPoolHasVertexMember(t *testing.T) {
+	for _, tc := range []struct {
+		members []string
+		want    string
+	}{
+		{[]string{"acme-oauth", "acme-key"}, ""},
+		{[]string{"acme-oauth", "vertex"}, CredentialVertex},
+		{[]string{"vertex", "acme-oauth"}, CredentialVertex},
+		{[]string{"acme-router"}, ""},
+	} {
+		if got := PoolHasVertexMember(Pool{Members: tc.members}, poolCreds); got != tc.want {
+			t.Errorf("PoolHasVertexMember(%v) = %q, want %q", tc.members, got, tc.want)
+		}
+	}
+}
+
+// TestPoolMemberServesModelSplitsTheTwoSpellings pins F23/D1637's rule: the
+// credentials that reach Anthropic itself and Vertex take Claude's own ID, an
+// OpenRouter member takes the ID its own provider's route claims, and neither
+// takes the other's. It is the whole of "as written": there is no per-member
+// mapping, so the two spellings cannot both serve one craft's model string.
+//
+// The OpenRouter row is the one that has to be asked of the member rather than
+// of the run's providers: "acme-router" owns one spelling and a second provider
+// owns the other, and a member that named the second would be a member the
+// run's routes could not send the model to at all.
+func TestPoolMemberServesModelSplitsTheTwoSpellings(t *testing.T) {
+	providers := map[string]ModelProvider{
+		"acme-router": {
+			Kind: ModelProviderKind, BaseURL: "https://router.example/api", Auth: "bearer",
+			Models: []string{"anthropic/claude-sonnet-5.5", "deepseek/*"},
+		},
+		"acme-other": {
+			Kind: ModelProviderKind, BaseURL: "https://other.example/api", Auth: "bearer",
+			Models: []string{"meta/llama-4"},
+		},
+	}
+	const direct, routed, other = "claude-sonnet-5-5", "anthropic/claude-sonnet-5.5", "deepseek/deepseek-v4-flash"
+	for _, tc := range []struct {
+		member PoolMember
+		model  string
+		want   bool
+	}{
+		{PoolMember{Name: "acme-oauth", Type: CredentialTypeClaudeOAuth}, direct, true},
+		{PoolMember{Name: "acme-oauth", Type: CredentialTypeClaudeOAuth}, routed, false},
+		{PoolMember{Name: "acme-key", Type: CredentialTypeAnthropic}, direct, true},
+		{PoolMember{Name: CredentialVertex, Type: CredentialTypeVertex}, direct, true},
+		{PoolMember{Name: CredentialVertex, Type: CredentialTypeVertex}, other, false},
+		{PoolMember{Name: "acme-router", Type: CredentialTypeOpenRouter}, routed, true},
+		{PoolMember{Name: "acme-router", Type: CredentialTypeOpenRouter}, other, true},
+		{PoolMember{Name: "acme-router", Type: CredentialTypeOpenRouter}, direct, false},
+		// The member's own provider, not another one of the run's: acme-other
+		// serves llama alone, so it is no member of a pool the coder's Claude
+		// route ID goes out on — however many providers the run holds.
+		{PoolMember{Name: "acme-other", Type: CredentialTypeOpenRouter}, routed, false},
+		// A member naming no provider this run holds serves nothing.
+		{PoolMember{Name: "acme-gone", Type: CredentialTypeOpenRouter}, routed, false},
+		{PoolMember{Name: "acme-oauth", Type: CredentialTypeOpenAI}, direct, false},
+		{PoolMember{Name: "acme-oauth"}, direct, false},
+	} {
+		if got := PoolMemberServesModel(tc.member, tc.model, providers); got != tc.want {
+			t.Errorf("PoolMemberServesModel(%+v, %q) = %v, want %v", tc.member, tc.model, got, tc.want)
+		}
+	}
+}
+
+// TestPoolModelProblemsRefusesAMemberThatDoesNotServeTheModel pins the refusal
+// the rule above is for: a pool is admitted only if every member serves the
+// model as written, and the problem names the member that does not — a reader
+// told only that "the pool is refused" would have to find which member did it.
+func TestPoolModelProblemsRefusesAMemberThatDoesNotServeTheModel(t *testing.T) {
+	providers := map[string]ModelProvider{"acme-router": {
+		Kind: ModelProviderKind, BaseURL: "https://router.example/api", Auth: "bearer",
+		Models: []string{"deepseek/*"},
+	}}
+	// A pool of the two direct types serves a Claude ID and is admitted.
+	if ps := PoolModelProblems(Pool{Name: "p", Members: []string{"acme-oauth", "acme-key"}},
+		poolCreds, "claude-sonnet-5-5", providers, "agent.crafts.coder.access"); len(ps) != 0 {
+		t.Fatalf("a pool every member serves was refused: %v", ps)
+	}
+	// Mixed with a credential whose provider does not serve a Claude ID: the
+	// member is named, and the key the pool was named by is where it is
+	// reported.
+	ps := PoolModelProblems(Pool{Name: "p", Members: []string{"acme-oauth", "acme-router"}},
+		poolCreds, "claude-sonnet-5-5", providers, "agent.crafts.coder.access")
+	if len(ps) != 1 {
+		t.Fatalf("problems = %v, want the one member that does not serve the model", ps)
+	}
+	for _, want := range []string{"agent.crafts.coder.access", "acme-router", "claude-sonnet-5-5"} {
+		if !strings.Contains(ps[0].String(), want) {
+			t.Errorf("the problem does not name %q: %s", want, ps[0].String())
+		}
+	}
+	// The built-in vertex serves Claude's own ID and is placed without a
+	// definition, so a pool it is the last member of is admitted.
+	if ps := PoolModelProblems(Pool{Name: "p", Members: []string{"acme-key", "vertex"}},
+		poolCreds, "claude-sonnet-5-5", providers, "agent.crafts.coder.access"); len(ps) != 0 {
+		t.Fatalf("a pool of the key and the built-in vertex was refused: %v", ps)
 	}
 }

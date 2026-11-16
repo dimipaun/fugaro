@@ -626,11 +626,11 @@ func IsServiceHeldSecretEnv(env, name string) bool {
 // deploy/terraform's TestProxiedGitSecretNamesMatchTheModule, and read beside
 // the module's own bitbucket_proxied input.
 //
-// It is FILLED, and that is B1.13 part two: the flip ships in 0.23.0 — the
+// It is FILLED, and that is B1.13 part two: the flip ships in 0.26.0 — the
 // release after the proxy chain's, which is the one `proxySince` names (0.22.0,
-// internal/cli/recipes_skew.go), the owner's ruling of 2026-11-09 — behind the
-// owner's Check 191 on the released chain and their go on it (D500, G1; the
-// plan's B1.13 and its S1 row). The module's mirror, the guard test and the
+// internal/cli/recipes_skew.go), and after 0.23.0, which went out without it;
+// the owner released the hold on 2026-11-16 (D500, G1; the plan's B1.13 and
+// its S1 row). The module's mirror, the guard test and the
 // tftest runs moved in that one commit. Two gates still stand in front of the
 // drop, and both are per repository: the installation opted in, and the
 // published node's block admits the repository with `proxy: true`. So filling
@@ -638,14 +638,10 @@ func IsServiceHeldSecretEnv(env, name string) bool {
 // proxied repository's job gives up the mount and the accessor its run no
 // longer reads.
 //
-// There is no version gate on that fill, and that is the one thing this list
-// needs a person for: the drop is compiled in and fires wherever the two gates
-// above hold, so a tree carrying this list shipped as 0.22.0 would take a
-// proxied installation's mount away one release early — with the operator
-// steps that go with it a release away, and before Check 191 has run on the
-// chain. The fill therefore merges only once the chain's own release (0.22.0)
-// is tagged and Check 191 has passed on it, which is what the branch carrying
-// it waits for.
+// There is no version gate on that fill: the drop is compiled in and fires
+// wherever the two gates above hold. What keeps it from stranding a proxied
+// run is `fugaro update`, which refuses the drop until the bundle holds the
+// token and names the one command that stores it (O8).
 var ProxiedGitSecretNames = []string{BitbucketSecret}
 
 // ProviderBySecret is the provider whose key is the secret named secret.
@@ -919,11 +915,12 @@ func checkProviderURL(s string) error {
 }
 
 // CheckProviderAuth is the auth rule for models routed to a provider: the
-// coder, the reviewer and the background model that a provider claims need
-// agent.auth api-key. oauth is a subscription credential that cannot leave
-// Anthropic, and vertex is Claude on Vertex; neither can carry a provider
-// key, so a provider-claimed model is refused under either of them. The
-// owner's ruling of 2026-11-04 (task B0) permits exactly one mix of
+// coder, the reviewer, the background model and — when it is set — the vision
+// model that a provider claims need agent.auth api-key. oauth is a subscription
+// credential that cannot leave Anthropic, and vertex is Claude on Vertex;
+// neither can carry a provider key, so a provider-claimed model is refused
+// under either of them. The owner's ruling of 2026-11-04 (task B0) permits
+// exactly one mix of
 // credentials and leaves this function's answer unchanged: an api-key run
 // may declare one stage-scoped Claude OAuth account for its review and
 // adversarial stages, beside the provider key its coder runs on
@@ -948,6 +945,7 @@ func CheckProviderAuth(a Agent, providers map[string]ModelProvider) []Problem {
 		{"agent.models.coder", a.ModelFor(RoleCoder)},
 		{"agent.models.reviewer", a.ModelFor(RoleReviewer)},
 		{"agent.models.background", a.Models.Background},
+		{"agent.models.vision", a.VisionModel()},
 	} {
 		name, _, ok := ProviderFor(providers, r.model)
 		if !ok {
@@ -971,8 +969,8 @@ func CheckProviderAuth(a Agent, providers map[string]ModelProvider) []Problem {
 // a provider's calls are real dollars (and an injected agent could send what
 // the pins would stop), so the owner's default is enforce. mode is the run's
 // effective budget mode ("" and "off" are the gateway off); bg is the run's
-// effective background model. One problem per role that names a provider
-// model.
+// effective background model. One problem per pin that names a provider model,
+// the vision slot's included when it is set.
 func CheckProviderGateway(a Agent, bg string, providers map[string]ModelProvider, mode string) []Problem {
 	if mode == "enforce" {
 		return nil
@@ -986,6 +984,7 @@ func CheckProviderGateway(a Agent, bg string, providers map[string]ModelProvider
 		{"agent.models.coder", a.ModelFor(RoleCoder)},
 		{"agent.models.reviewer", a.ModelFor(RoleReviewer)},
 		{"agent.models.background", bg},
+		{"agent.models.vision", a.VisionModel()},
 	} {
 		if _, _, ok := ProviderFor(providers, r.model); ok {
 			ps = append(ps, Problem{Path: r.path, Message: fmt.Sprintf("%s is served by a provider, %s", CodeSpan(r.model), why)})
@@ -1037,6 +1036,7 @@ func CheckProviderPolicy(a Agent, allowed []string, repo string, providers map[s
 		{"agent.models.coder", a.ModelFor(RoleCoder)},
 		{"agent.models.reviewer", a.ModelFor(RoleReviewer)},
 		{"agent.models.background", a.Models.Background},
+		{"agent.models.vision", a.VisionModel()},
 		{"agent.model", a.Model},
 	} {
 		// agent.model is the role models' default: said once, under the role.
@@ -1089,11 +1089,25 @@ func claimed(providers map[string]ModelProvider, model string) bool {
 // which the three already judge, and one that is off has no model to read
 // (LevelSetting.validate refuses none beside one).
 //
+// The vision slot is a pin of its own too, and one a stage runs rather than
+// only one a rule judges: a coder that cannot read an image runs it (V7,
+// D2002), so a Claude model there under provider pins is a call to Anthropic
+// this rule has to see, exactly as a level's own model is. It is read whether
+// or not this run's coder would move — the image rate that decides that is the
+// price table's, which this rule does not read, and a run that stores a key it
+// ends up not needing is the cheap side of that (PinnedModels, which every
+// other pin rule already reads, holds the same four).
+//
 // Callers ask this only where the gateway is on and enforcing: without it a
 // provider model is refused (CheckProviderGateway) and every call would go to
 // Anthropic, which AnthropicKeyNeeded decides.
 func NeedsAnthropicKey(a Agent, providers map[string]ModelProvider, repo string) bool {
 	models := []string{a.ModelFor(RoleCoder), a.ModelFor(RoleReviewer), EffectiveBackground(a, providers)}
+	if vision := a.VisionModel(); vision != "" {
+		// An unset slot is no model at all, and an empty ID matches no route:
+		// it is left out rather than counted as the direct call it is not.
+		models = append(models, vision)
+	}
 	for _, l := range []*LevelSetting{a.Levels.L1, a.Levels.L2, a.Levels.L3} {
 		if l != nil && l.Model != "" {
 			models = append(models, l.Model)

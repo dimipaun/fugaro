@@ -331,8 +331,111 @@ jobs:
         with:
           pattern: fugaro-base-*-image
           merge-multiple: true
+      # A nightly run rebuilds the LATEST RELEASE TAG's tree and would push it
+      # under that release's own tags (:VERSION, :VERSION-arch and, when the
+      # tag tops its major, :MAJOR), so before #1745 every quiet night moved
+      # three tags onto a build whose only difference from the published one
+      # was the clock: the tree had not changed at all. The base builds
+      # reproducibly now (images/build-base.sh takes SOURCE_DATE_EPOCH from the
+      # tree's own commit, and the exporter's rewrite-timestamp covers the
+      # files the build itself dates), so "has anything changed?" is a question
+      # the registry can answer, and this step asks it BEFORE anything is
+      # pushed -- which is the only place it can be asked: once the push has
+      # happened, the tag has moved.
+      #
+      # Two answers, cheapest first. An image's config digest is the identity of
+      # every byte of it, and an unchanged tree rebuilds to the same one, so
+      # comparing it with the published manifest's own config.digest decides the
+      # common case in one registry read, with no pull at all. When the digests
+      # disagree the rebuild differs by something the tree does not decide (a
+      # byproduct that escaped images/base/byproducts.sh, a package archive that
+      # moved under a pin), which is a different question from "is this the same
+      # base?": so the fallback compares what the image IS -- /etc/fugaro/base.json
+      # (the pins it says it was built with), the fugaro binary (Version and
+      # Commit are linked into it, so a tree that is not the published one
+      # cannot answer "same" here), and the packages dpkg recorded. docker cp
+      # reads those out of an image without starting a container, which is what
+      # lets the arm64 image be read on this amd64 runner.
+      #
+      # Only a nightly or a dispatch can be decided here. A tag push always
+      # pushes (and signs, and writes the -pinned tag): the release path must
+      # never become a run that signs nothing because a tag happened to exist.
+      - name: Is the base already published?
+        id: unchanged
+        if: github.event_name != 'push'
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -eu
+          repo=ghcr.io/dimipaun/fugaro-base
+          # What a base image is, as bytes a shell can hash.
+          # Every read is checked, and a read that fails returns 1 rather than
+          # a hash: bash turns errexit off inside a command substitution, so
+          # without the guards a docker create or docker cp that failed would
+          # fall through to the sha256sum below, which happily hashes the empty
+          # input and prints a digest -- and two empty answers compare equal,
+          # which turns "I could not read the image" into `unchanged=true` and
+          # skips the publish. An unread image is an unknown answer, and unknown
+          # means publish (below).
+          fingerprint() {
+            cid=$(docker create "$1") || return 1
+            dir=$(mktemp -d)
+            docker cp "$cid:/etc/fugaro/base.json" "$dir/base.json" || return 1
+            docker cp "$cid:/usr/local/bin/fugaro" "$dir/fugaro" || return 1
+            docker cp "$cid:/var/lib/dpkg/status" "$dir/dpkg-status" || return 1
+            docker rm -f "$cid" >/dev/null
+            {
+              sha256sum "$dir/base.json" "$dir/fugaro" | cut -d' ' -f1
+              grep -E '^(Package|Version): ' "$dir/dpkg-status" | LC_ALL=C sort
+            } | sha256sum | cut -d' ' -f1
+            rm -rf "$dir"
+          }
+          unchanged=true
+          for arch in amd64 arm64; do
+            gunzip -c "fugaro-base-$arch.tar.gz" | docker load
+            want=$(docker image inspect --format '{{.Id}}' fugaro-base:ci)
+            got=""
+            # A tag that does not exist yet (the first publish of a version) and
+            # a registry that cannot answer look the same from here, and both
+            # have to end in a publish: an unknown answer may not stop this job,
+            # and a push of bytes the tag already names moves nothing.
+            if manifest=$(docker buildx imagetools inspect --raw "$repo:$VERSION-$arch" 2>/dev/null); then
+              got=$(printf '%s' "$manifest" | jq -r '.config.digest // empty')
+            fi
+            why="nothing published under $VERSION-$arch yet"
+            same=false
+            if [ -n "$got" ] && [ "$got" = "$want" ]; then
+              same=true
+              why="the published image is this build, byte for byte"
+            elif docker pull --quiet "$repo:$VERSION-$arch" >/dev/null 2>&1; then
+              why="the published image differs from this build"
+              # Only a read that answered on both sides may be compared: a
+              # fingerprint that failed gives no answer, and an unknown answer
+              # has to publish rather than skip.
+              if a=$(fingerprint "$repo:$VERSION-$arch") && b=$(fingerprint fugaro-base:ci) \
+                 && [ -n "$a" ] && [ "$a" = "$b" ]; then
+                same=true
+                why="same pins, same binary and same packages as the published image"
+              elif [ -z "${a:-}" ] || [ -z "${b:-}" ]; then
+                why="an image could not be read, so this build is published"
+              fi
+            fi
+            [ "$same" = true ] || unchanged=false
+            echo "$arch: $why"
+          done
+          echo "unchanged=$unchanged" >> "$GITHUB_OUTPUT"
+          if [ "$unchanged" = true ]; then
+            {
+              echo '### fugaro-base'
+              echo "- $repo:$VERSION already names this build: nothing was pushed and the tags stay where they are"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Push per architecture and publish the index
         id: index
+        # Skipped only when the step above proved the tags already name this
+        # build. A tag push is never skipped: the sign and -pinned steps below
+        # need the digest this one reports.
+        if: github.event_name == 'push' || steps.unchanged.outputs.unchanged != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_ACTOR: ${{ github.actor }}

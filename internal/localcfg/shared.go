@@ -12,6 +12,13 @@ import (
 // SharedMaxBytes caps the published file when read back.
 const SharedMaxBytes = 64 << 10
 
+// SharedVersion is the version of the published shared config (Shared), and it
+// is not ConfigVersion: what ConfigVersion 2 renamed is the terraform block,
+// which the published copy does not carry, and a version a reader does not know
+// is refused by name — so the published document keeps the spelling every
+// Fugaro of this installation can read, however new the file it came from is.
+const SharedVersion = 1
+
 // Shared is the installation-wide, non-secret part of the config, the part
 // that is published to the runs bucket. It drops what is owner-only
 // (terraform:), personal (user:, commit_name:, commit_email:, endpoints:), derived (bucket_url, the
@@ -67,6 +74,17 @@ const SharedMaxBytes = 64 << 10
 // result is only marshalled, and Marshal only reads.
 func (c *Config) Shared() *Config {
 	s := *c
+	// The published document is version 1 whatever the file it was read from
+	// says, because the version is what a READER refuses by name and the
+	// published document is the one thing here a teammate's older Fugaro meets
+	// first: ConfigVersion 2 renamed the two lists in the terraform block, and
+	// this copy carries no terraform block at all (dropped on the next line),
+	// so nothing in it is version 2's. Publishing this machine's 2 would stop
+	// every teammate whose Fugaro is not upgraded yet with "version 2 is newer
+	// than the 1 this Fugaro writes ... then run fugaro update" — a sentence
+	// naming a command they cannot run until the shared config they are
+	// refused by is readable again.
+	s.Version = SharedVersion
 	s.Terraform = Terraform{}
 	s.User = ""
 	// commit_name and commit_email are personal for the reason user: is
@@ -99,12 +117,41 @@ func (c *Config) Shared() *Config {
 	// who could write this key into the runs bucket's shared file would be
 	// choosing where a run sends the Bitbucket token.
 	s.BitbucketAPIRoots = nil
+	// BitbucketTokens is operator-only for project_secrets' reason, and the
+	// drop carries one of its own that is sharper: the block is what a request
+	// is matched against — a record's coverage decides which token carries
+	// which call (R1, D2351) — so a launcher who could write it into the runs
+	// bucket's shared file would be stating its own token's reach, the one
+	// fact the operator's local config is the only writer of. It travels to a
+	// run through the policy node instead, and it is dropped here besides so
+	// that an older CLI's strict ParseShared never meets the key at all: a
+	// shared file carrying it stops an un-upgraded teammate with "field
+	// bitbucket_tokens not found in type localcfg.Config", a lockout over a
+	// block none of their runs reads.
+	s.BitbucketTokens = nil
+	// CloneURLs is the owner's policy too, and travels the same way: `fugaro
+	// project policy publish` copies it into the policy node, which the runner
+	// reads and fails closed on. A launcher who could write this key into the
+	// runs bucket's shared file would be choosing where every teammate's runs
+	// clone from (SD5, D842), which is the directory the run's own slug, locks
+	// and budget session name. ParseShared refuses the key besides, because a
+	// shared config carrying it was not written by the converge.
+	s.CloneURLs = nil
 	// Profiles are the owner's policy, published through `fugaro project
 	// policy publish` into the policy node — not through the shared config a
 	// launcher can write (the node is what the runner reads and fails closed
 	// on). Dropping them here keeps the shared file to what it was before
 	// phase 3 added profiles.
 	s.Profiles = nil
+	// MobileAllow is the owner's own for clone_urls' reason and one of its own:
+	// the block is who may use the project from a phone, with the role each
+	// entry carries, so a launcher who could write it into the runs bucket's
+	// shared file would be admitting itself to every teammate's runs with
+	// whatever role it named. It travels to the node through `fugaro project
+	// policy publish`, which is the write the deployed rules read, and it is
+	// dropped here besides so that a published file never carries it at all:
+	// internal/cli's ParseShared refuses the key by name.
+	s.MobileAllow = nil
 	s.UpdateCheck = nil
 	// Issues is local-only for update_check's reason: the nudge is a line the
 	// section prints on the machine reading it, and no other machine acts on
@@ -113,6 +160,14 @@ func (c *Config) Shared() *Config {
 	// ParseShared from refusing a shared file whole over keys it does not
 	// know.
 	s.Issues = nil
+	// Escalation is local-only and sharpest of all: the ladder's thresholds
+	// decide when a stalled item is taken off its recipe, what it runs on then
+	// and at what cost it is merged under the gate, so a launcher who could
+	// write the block into the runs bucket's shared file would be choosing how
+	// every teammate's runs merge (D2032, G3). ParseShared refuses the key
+	// besides, because a shared config carrying it was not written by the
+	// converge.
+	s.Escalation = nil
 	// The operator's rotation record is local-only for update_check's reason,
 	// one credential at a time: secret_rotation_days is how often the person
 	// who holds the provider accounts means to rotate them, and secret_expires
@@ -123,6 +178,17 @@ func (c *Config) Shared() *Config {
 	s.SecretExpires = nil
 	s.Build.ServiceAccount = ""
 	s.BaseBranch = ""
+	// BackendName is dropped for BaseBranch's reason, and one of its own: it
+	// is a whole backend for every machine that reads the file, and the
+	// checks that keep that safe are `fugaro doctor`'s, which reads the
+	// selected config on the machine running it and is what the enable task
+	// puts in front of the name -- not something a launch consults. A
+	// launcher who could write `backend: cloud-batch` into the runs bucket
+	// would therefore move every teammate who has no local config onto VMs
+	// with a `batch:` block they wrote, while the machine that ran the
+	// provisioning and the doctor reading never sees the file at all
+	// (docs/design/shared-config.md §4; the reader refuses the key besides).
+	s.BackendName = ""
 	// ReviewFloor is the owner's policy and travels the way BaseBranch does,
 	// through `fugaro project policy publish` into the policy node. It is
 	// dropped here for a sharper reason than the keys above it: the floor is
@@ -139,6 +205,14 @@ func (c *Config) Shared() *Config {
 	// besides, because a shared config carrying it was not written by the
 	// converge.
 	s.VerifierAccounts = nil
+	// Binaries is the owner's policy as well, and it travels the floor's way,
+	// into the policy node — and it is dropped here for a sharper reason than
+	// the floor's: the block is the grant that decides which bytes a run may
+	// add, so a launcher who could write it into the runs bucket's shared file
+	// would be admitting its own payload to every teammate's runs, which is the
+	// rule reading itself out of the way. ParseShared refuses the key besides,
+	// because a shared config carrying it was not written by the converge.
+	s.Binaries = nil
 	// ImageCatalog travels the verifier list's way and is dropped here for a
 	// sharper reason than the floor's: the catalog decides which image a run's
 	// job executes in and which Dockerfile is fetched to build it, so a
@@ -188,6 +262,19 @@ func (c *Config) Shared() *Config {
 	s.DefaultClaudeAccount = ""
 	s.ClaudeAccountStages = nil
 	s.ClaudeAccountAuto = false
+	// The aliases the choice keys may hold are dropped with them and for their
+	// reason, one step nearer the credential: a published alias would name an
+	// account in a file any launcher can write, which is the way around the
+	// account's own allow_data_to these keys are local-only to close
+	// (docs/account-aliases, D2090). A launcher on another machine reads no
+	// alias, exactly as it reads no default_claude_account today, and
+	// ParseShared refuses the key besides.
+	s.ClaudeAccountAliases = nil
+	// The subscription switch goes with them, for their reason and one of its
+	// own: it is the owner's own act about the terms his subscriptions are held
+	// under (D1622), and a launcher who could write it into the shared file
+	// could spread a project across subscriptions nobody agreed to spread.
+	s.SubscriptionSpread = nil
 	// The workspace keys are local-only, and the pin is the sharpest of them:
 	// the shared file is written into the runs bucket, which any launcher of
 	// the project can write, so a launcher who could put a workspace_pin there
@@ -201,18 +288,32 @@ func (c *Config) Shared() *Config {
 	s.WorkspacePin = WorkspacePin{}
 	s.WorkspaceMembers = nil
 	s.WorkspaceCap = nil
-	s.Repos = withoutBaseBranches(c.Repos)
+	s.Repos = withoutRepoLocalKeys(c.Repos)
 	return &s
 }
 
-// withoutBaseBranches is a copy of repos with every base_branch cleared.
-func withoutBaseBranches(repos map[string]Repo) map[string]Repo {
+// withoutRepoLocalKeys is a copy of repos with the two keys of an entry that
+// are never published cleared: base_branch, which comes from the checkout's
+// reviewed fugaro.yaml, and claude_accounts, which is the operator's own
+// admission statement — the repository-level half of the trust anchor T1 keeps
+// in the operator-only local config (see Shared's own note on claude_accounts,
+// and named-oauth-tokens.md §3).
+//
+// claude_accounts is stripped for the reason the top-level block is: the file
+// is written into the runs bucket, which any launcher of the project can write,
+// so an entry published here would let one add a repository to an account's
+// admission by editing that file — and the machine that then published the
+// policy would derive an admission the owner never made. ParseShared refuses
+// the key besides, because a shared config carrying one was not written by the
+// converge.
+func withoutRepoLocalKeys(repos map[string]Repo) map[string]Repo {
 	if repos == nil {
 		return nil
 	}
 	out := make(map[string]Repo, len(repos))
 	for k, r := range repos {
 		r.BaseBranch = ""
+		r.ClaudeAccounts = nil
 		out[k] = r
 	}
 	return out
@@ -242,7 +343,7 @@ func MergeShared(published, local *Config) *Config {
 	if !SameInstallation(published, local) {
 		return out
 	}
-	out.Repos = withoutBaseBranches(mergeRepoRecords(published.Repos, out.Repos))
+	out.Repos = withoutRepoLocalKeys(mergeRepoRecords(published.Repos, out.Repos))
 	out.BaseImages = unionMaps(published.BaseImages, local.BaseImages)
 	out.ModelPrices = unionMaps(published.ModelPrices, local.ModelPrices)
 	out.ComputePrices = unionMaps(published.ComputePrices, local.ComputePrices)
@@ -253,7 +354,6 @@ func MergeShared(published, local *Config) *Config {
 	}
 	keep(&out.Region, published.Region)
 	keep(&out.RegistryHost, published.RegistryHost)
-	keep(&out.BackendName, published.BackendName)
 	keep(&out.LogView, published.LogView)
 	keep(&out.ImageSource, published.ImageSource)
 	keep(&out.SchedulerRegion, published.SchedulerRegion)

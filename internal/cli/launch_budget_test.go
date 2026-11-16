@@ -14,6 +14,7 @@ import (
 
 	"gocloud.dev/blob"
 
+	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
@@ -39,10 +40,23 @@ type launchBudgetFixture struct {
 
 func newLaunchBudget(t *testing.T, mode string) *launchBudgetFixture {
 	t.Helper()
+	return newLaunchBudgetWith(t, mode)
+}
+
+// newLaunchBudgetWith is newLaunchBudget with extra members written into its
+// budget block, which is where an installation's own per-run caps live: the
+// token cap (budget.max_run_tokens) is the one a chain read has no database
+// counterpart for, and the one a test about an unreadable ledger turns on.
+func newLaunchBudgetWith(t *testing.T, mode string, members ...string) *launchBudgetFixture {
+	t.Helper()
 	iam := gcpfake.NewIAMCredentials(t)
 	iam.AddSigner(testSigner)
 	f := &launchBudgetFixture{cloudFixture: newCloudFixture(t, "iam_credentials: "+iam.URL+"/"), db: gcpfake.NewRTDB(t), iam: iam}
-	f.appendConfig(t, "budget: { mode: "+mode+", per_run_usd: 5, firebase_project: proj-1234, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
+	extra := ""
+	for _, m := range members {
+		extra += m + ", "
+	}
+	f.appendConfig(t, "budget: { mode: "+mode+", per_run_usd: 5, "+extra+"firebase_project: proj-1234, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 		", firebase_api_key: "+settingsFakeAPIKey+" }\n")
 	f.db.Set("fugaro/project", "aurora")
 	// The database a real installation runs against carries Fugaro's own mark
@@ -55,9 +69,12 @@ func newLaunchBudget(t *testing.T, mode string) *launchBudgetFixture {
 	f.db.Set("config/caps/global", map[string]any{"dailyMicros": 100 * usd1, "perRunMicros": 10 * usd1})
 	f.db.Set("config/caps/defaults", map[string]any{"repoDailyMicros": 50 * usd1, "repoPerRunMicros": 5 * usd1})
 	f.db.Set("config/limits", map[string]any{"maxReserveMicros": 5 * usd1})
-	// The job image's runner reads the sealed token: a launch that mints is
-	// judged against it (the seal gate, sealSince).
-	writeBuildRecord(t, f.cloudFixture, appSlug, "web", releaseSeal)
+	// The job image's runner is a current release's: a launch that mints is
+	// judged against it (the seal gate, sealSince), and a launch under a
+	// published policy is judged against it too (policyImageGate, releasePolicy)
+	// — a fixture that published this release's node onto an older image is a
+	// run that halts at bootstrap, which is the state that gate refuses.
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", releasePolicy)
 	return f
 }
 
@@ -78,6 +95,25 @@ func readToken(t *testing.T, f *cloudFixture, run string) string {
 }
 
 const budgetRun = "20261002-100000-abcd"
+
+// launchReadIsNotTheBudget reports whether one of a launch's database calls is
+// a read it makes whatever the budget's mode is, and is therefore not a budget
+// read: the project policy's node, which the launch's own admission and skew
+// gates read (plan task 1.5 step 4), and the roles node, which its role check
+// reads (plan task RS6a). Two tests below pin that a launch whose budget is off
+// — or whose pre-check was skipped — makes no other call: no cap, no kill
+// switch, no lease, no token.
+func launchReadIsNotTheBudget(r gcpfake.Request) bool {
+	if r.Method != "GET" {
+		return false
+	}
+	for _, part := range []string{"config/policy/", "policyRules", accesslib.PathNode} {
+		if strings.Contains(r.Path, part) {
+			return true
+		}
+	}
+	return false
+}
 
 func runBudget(t *testing.T, extra ...string) (string, string, error) {
 	t.Helper()
@@ -450,7 +486,12 @@ func newOffModeBudget(t *testing.T, budget string) *launchBudgetFixture {
 	f.appendConfig(t, budget)
 	f.db.Set("fugaro/project", "aurora")
 	f.db.Set("config/mode", "enforce")
-	writeBuildRecord(t, f.cloudFixture, appSlug, "web", releaseSeal)
+	// The record is the policy release's and not the seal's: this fixture is
+	// the one tests publish a policy onto, and the launcher holds a job image
+	// to the release that introduced the node's version (policyImageGate) — a
+	// seal-release record under a published policy is a run that halts at
+	// bootstrap.
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", releasePolicy)
 	return f
 }
 
@@ -470,7 +511,7 @@ func TestLauncherMintsATokenWhenAPolicyExistsAndTheLocalModeIsOff(t *testing.T) 
 	// an empty allow_repos is deny-all (plan task 1.5), so a policy that names
 	// no repository would refuse the launch before the mint decision these
 	// subtests are about.
-	policy := `{"version":4,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["github/acme/*"]}`
+	policy := `{"version":5,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["github/acme/*"]}`
 
 	t.Run("no policy, no token", func(t *testing.T) {
 		f := newOffModeBudget(t, "")
@@ -552,7 +593,7 @@ func TestLaunchReadsThePolicyOnce(t *testing.T) {
 	f := newOffModeBudget(t, "")
 	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 		", firebase_api_key: "+settingsFakeAPIKey+" }\n")
-	publishPolicy(t, f, `{"version":4,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["*"]}`)
+	publishPolicy(t, f, `{"version":5,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["*"]}`)
 	if _, _, err := runBudget(t); err != nil {
 		t.Fatal(err)
 	}
@@ -587,7 +628,7 @@ func TestLaunchRefusesADeniedPolicyRead(t *testing.T) {
 	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 		", firebase_api_key: "+settingsFakeAPIKey+" }\n")
 	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
-	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":4,"budget":{"mode":"enforce","per_run_usd":5}}`))
+	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":5,"budget":{"mode":"enforce","per_run_usd":5}}`))
 	f.db.DenyRead(projectpolicy.PathShared())
 	_, _, err := runBudget(t)
 	if err == nil || ExitCode(err) != ExitUserError {
@@ -617,7 +658,7 @@ func TestLaunchRefusesAPolicyKeyThisFugaroDoesNotKnow(t *testing.T) {
 	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 		", firebase_api_key: "+settingsFakeAPIKey+" }\n")
 	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
-	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":4,"allow_repo":["acme/*"]}`))
+	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":5,"allow_repo":["acme/*"]}`))
 	_, _, err := runBudget(t)
 	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "allow_repo") {
 		t.Fatalf("err = %v, want a refusal naming the unknown key", err)
@@ -650,7 +691,7 @@ func TestLaunchRefusesAPolicyKeyThisFugaroDoesNotKnow(t *testing.T) {
 // for a policy he wrote himself.
 func TestLaunchClassifiesAMalformedPolicyAsTheUsersOwnError(t *testing.T) {
 	for name, node := range map[string]string{
-		"a budget the decoder refuses": `{"version":4,"budget":{"mode":"nonsense"}}`,
+		"a budget the decoder refuses": `{"version":5,"budget":{"mode":"nonsense"}}`,
 		"a node with no version":       `{"budget":{"mode":"enforce"}}`,
 		"not a JSON object":            `["budget"]`,
 	} {
@@ -683,7 +724,18 @@ func TestLaunchClassifiesAnUnreachablePolicyReadAsRemote(t *testing.T) {
 		t.Fatal(err)
 	}
 	addr := l.Addr().String()
-	l.Close() // nothing answers on that port now
+	// The port stays held and every connection is dropped: a closed port can be
+	// taken by another test's server between the close and the launch.
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
 	f := newOffModeBudget(t, "")
 	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: http://"+addr+", token_signer: "+testSigner+
 		", firebase_api_key: "+settingsFakeAPIKey+" }\n")
@@ -1009,13 +1061,14 @@ func TestNoBudgetCheckSkipsOnlyPrecheck(t *testing.T) {
 	}
 	// The mint still happens, and the pre-check's own reads did not: the only
 	// calls left are the policy read the launch makes for itself (its
-	// admission and skew gates, plan task 1.5 step 4), never a cap, a kill
-	// switch or a lease.
+	// admission and skew gates, plan task 1.5 step 4) and the roles node the
+	// launch's role check reads (plan task RS6a), never a cap, a kill switch
+	// or a lease.
 	if len(f.iam.SignCalls()) != 1 || readToken(t, f.cloudFixture, budgetRun) == "" || !launchedAny(f) {
 		t.Fatal("the skip must still mint and launch")
 	}
 	for _, r := range f.db.Requests() {
-		if r.Method != "GET" || !strings.Contains(r.Path, "config/policy/") && !strings.Contains(r.Path, "policyRules") {
+		if !launchReadIsNotTheBudget(r) {
 			t.Fatalf("--no-budget-check skipped the pre-check, but the launch made a budget read: %s %s", r.Method, r.Path)
 		}
 	}
@@ -1048,9 +1101,11 @@ func TestBudgetOffSkipsEverything(t *testing.T) {
 			// kill switch, no registry, no token. It does read whether the
 			// project has published a policy, with the operator's own
 			// credentials, because a published policy means the run needs an
-			// identity whatever the mode is (task 1.3 step 2).
+			// identity whatever the mode is (task 1.3 step 2), and the roles
+			// node, because the launch's role check reads it whatever the mode
+			// is too (plan task RS6a).
 			for _, r := range db.Requests() {
-				if r.Method != "GET" || !strings.Contains(r.Path, "config/policy/") && !strings.Contains(r.Path, "policyRules") {
+				if !launchReadIsNotTheBudget(r) {
 					t.Fatalf("a budget-off launch made a database call it should not: %s %s", r.Method, r.Path)
 				}
 			}
@@ -1311,15 +1366,15 @@ const proxiedServiceURL = "https://fugaro-credentials-abc-uc.a.run.app"
 // proxy: true — the ONE source of that half (G15), and the pair that makes a
 // run of the repository proxied.
 const proxiedBlock = "credentials_service: { url: " + proxiedServiceURL + " }\n"
-const proxiedPolicy = `{"version":4,"allow_repos":["bitbucket/workspace-a/repo-a"],"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":true}}`
-const notProxiedPolicy = `{"version":4,"allow_repos":["bitbucket/workspace-a/repo-a"],"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":false}}`
+const proxiedPolicy = `{"version":5,"allow_repos":["bitbucket/workspace-a/repo-a"],"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":true}}`
+const notProxiedPolicy = `{"version":5,"allow_repos":["bitbucket/workspace-a/repo-a"],"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":false}}`
 
 // proxiedPolicyOtherRepo is a node that brokers Bitbucket access (proxy: true)
 // but names another repository in its bitbucket_token block: the launch's own
 // allow-list admits proxiedRepo, so nothing else refuses it, and what the two
 // halves of proxiedness disagree about is only whether THIS repository's runs
 // are brokered (G15's AdmitRepo, proxiedRepo's last check).
-const proxiedPolicyOtherRepo = `{"version":4,"allow_repos":["bitbucket/workspace-a/repo-a"],"bitbucket_token":{"allow_repos":["bitbucket/workspace-b/repo-b"],"proxy":true}}`
+const proxiedPolicyOtherRepo = `{"version":5,"allow_repos":["bitbucket/workspace-a/repo-a"],"bitbucket_token":{"allow_repos":["bitbucket/workspace-b/repo-b"],"proxy":true}}`
 
 // addProxiedRepo enrolls proxiedRepo in a launch fixture: the local config
 // entry (inside the repos block the fixture writes, which is why the file is
@@ -1372,10 +1427,20 @@ func proxiedLaunchSpec() (string, *task.Spec) {
 // after the one the work was first slotted for and not the plan's spent 0.15.0
 // number).
 //
+// The gate is called directly rather than through `fugaro run`, the way the
+// Batch half below is and for a reason of the same kind: the pair of node and
+// image a row's refusal needs — an image older than proxySince, and a node
+// this reader reads — is one no launch has. policyImageGate (run_allowlist.go)
+// judges every readable node's version against the release its image carries,
+// and the oldest version this reader reads is version 5, whose release is
+// 0.23.0: a launch on an image older than proxySince is refused there first,
+// with its own sentence. The lockstep this test exists for is unchanged, and
+// it is asserted here where it lives.
+//
 // The cases beside it are what makes the refusal proxiedness' and not the
-// image's: a repository the published node does not proxy is launched on the
+// image's: a repository the published node does not proxy is admitted on the
 // very same image (G9), and a proxied repository on an image at proxySince or
-// later is launched too. The rows between them take each half of proxiedness
+// later is admitted too. The rows between them take each half of proxiedness
 // away on its own — a node that brokers Bitbucket access but does not admit
 // this repository, an installation that carries no service, and a repository
 // whose own switch is off — because a launch that is not proxied is judged by
@@ -1425,11 +1490,14 @@ func TestLaunchRefusesProxiedRunOnOldImage(t *testing.T) {
 				if storedTaskFor(t, f.cloudFixture, slug) {
 					t.Error("the refused launch stored a task")
 				}
+			case !tc.refused && err != nil && imageGateOnly(err, tc.base):
+				// Every node this reader reads is version 5 or later, whose release
+				// (0.23.0) carries the proxy, so an image older than that is
+				// refused by policyImageGate before any proxy question. What these
+				// rows hold is that the refusal is that gate's and not the proxy's.
+				return
 			case !tc.refused && err != nil:
 				t.Fatalf("a launch that is not proxied (or is on a current image) was refused: %v", err)
-			}
-			if !tc.refused && !launchedAny(f) {
-				t.Error("an admitted launch started no execution")
 			}
 		})
 	}
@@ -1442,7 +1510,8 @@ func TestLaunchRefusesProxiedRunOnOldImage(t *testing.T) {
 // installation's own config rather than from the job — so a run there could
 // not reach the service at all, while its job no longer mounts the token.
 //
-// Batch is not selectable in this build, so the gate is called with the env a
+// The gate reads the backend out of the job's environment, which a launch
+// carries rather than a test's config, so it is called with the env a
 // launcher's own would carry (backendNamed, as checkArtifactLaunch's tests
 // do). What refuses is proxiedness and the backend together: the same gate
 // admits the same launch on the Cloud Run backend, and a repository the node
@@ -1518,4 +1587,14 @@ func TestProxySinceHasAReleaseBullet(t *testing.T) {
 			t.Errorf("docs/release.md's proxySince bullet does not say %q", want)
 		}
 	}
+}
+
+// imageGateOnly reports whether err is policyImageGate's refusal of a node
+// the image at base is older than, with none of the proxy refusal's words.
+func imageGateOnly(err error, base string) bool {
+	rel, ok := projectpolicy.VersionRelease(projectpolicy.Version - 1)
+	if !ok || !strings.Contains(err.Error(), "needs a job image whose runner knows policy version") {
+		return false
+	}
+	return !strings.Contains(err.Error(), "Bitbucket proxy") && !strings.HasSuffix(base, ":"+rel)
 }

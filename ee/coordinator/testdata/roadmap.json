@@ -1,0 +1,128 @@
+{
+  "plans": [
+    {
+      "schema": 1,
+      "plan": "plans/2026-10-15-desktop-console-v2",
+      "stream": "console",
+      "source": {
+        "repo": "acme/app",
+        "path": "docs/plans/2026-10-15-desktop-console-v2.graph.json",
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "graph_schema": 3
+      },
+      "tasks": [
+        {
+          "id": "V2.1",
+          "title": "The graph's document, its key and its scope",
+          "kind": "task",
+          "size": 2,
+          "version": "0.110"
+        },
+        {
+          "id": "V2.5.3",
+          "title": "Drag, preview, confirm, undo",
+          "version": "0.110"
+        },
+        {
+          "id": "V2.6",
+          "title": "The release write, owner-run",
+          "kind": "task",
+          "version": "0.111"
+        }
+      ],
+      "edges": [
+        {"task": "V2.5.3", "needs": "V2.1"},
+        {"task": "V2.6", "needs": "V2.5.3"}
+      ]
+    },
+    {
+      "schema": 1,
+      "plan": "plans/2026-11-02-mobile-auth",
+      "stream": "mobile",
+      "source": {
+        "repo": "acme/app",
+        "path": "docs/plans/2026-11-02-mobile-auth.graph.json",
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "graph_schema": 3
+      },
+      "tasks": [
+        {
+          "id": "M1",
+          "title": "Sign in on the phone",
+          "kind": "task",
+          "size": 3,
+          "version": "0.200"
+        },
+        {
+          "id": "M2",
+          "title": "The refresh token in the keychain",
+          "version": "0.200"
+        }
+      ],
+      "edges": [
+        {"task": "M2", "needs": "M1"}
+      ]
+    },
+    {
+      "schema": 1,
+      "plan": "plans/2026-11-05-cli-doctor",
+      "stream": "cli",
+      "source": {
+        "repo": "acme/app",
+        "path": "docs/plans/2026-11-05-cli-doctor.graph.json",
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "graph_schema": 3
+      },
+      "tasks": [
+        {
+          "id": "C1",
+          "title": "Doctor reports the roadmap record",
+          "version": "0.24"
+        }
+      ],
+      "edges": []
+    }
+  ],
+  "releases": [
+    {
+      "schema": 1,
+      "id": "0.110",
+      "stream": "console",
+      "name": "Cherry",
+      "state": "open",
+      "order": 1,
+      "by": "person-1@example.com",
+      "at": "2026-11-01T09:00:00Z"
+    },
+    {
+      "schema": 1,
+      "id": "0.200",
+      "stream": "mobile",
+      "name": "Falcon",
+      "state": "open",
+      "order": 1,
+      "by": "person-1@example.com",
+      "at": "2026-11-01T09:00:00Z"
+    },
+    {
+      "schema": 1,
+      "id": "0.109",
+      "stream": "console",
+      "name": "Blackberry",
+      "state": "finished",
+      "order": 0,
+      "by": "person-2@example.com",
+      "at": "2026-10-20T09:00:00Z"
+    }
+  ],
+  "edges": [
+    {
+      "schema": 1,
+      "task": "plans/2026-11-02-mobile-auth/M1",
+      "needs": "plans/2026-10-15-desktop-console-v2/V2.1",
+      "reason": "the phone's sign-in reads the document shape the console plan wrote",
+      "by": "person-1@example.com",
+      "at": "2026-11-02T09:30:00Z"
+    }
+  ]
+}

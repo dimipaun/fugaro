@@ -78,6 +78,18 @@ const (
 	CallCommentList Call = "comment_list" // GET .../pullrequests/{id}/comments
 )
 
+// writes reports whether a REST call writes anything at Bitbucket: the three
+// calls a write's rule exists for (CheckPRWrite). Every other call this file
+// names is a read, and the two sets are the whole of the classification: a
+// call added here without a decision about which one it is belongs to neither.
+func (c Call) writes() bool {
+	switch c {
+	case CallPRCreate, CallPRUpdate, CallPRComment:
+		return true
+	}
+	return false
+}
+
 // The refusal classes. They are the reasons a Verdict carries when it refuses,
 // and Classify's errors carry them too, so one vocabulary covers the whole
 // file and the service audits a refusal it took at any of the three steps the
@@ -124,6 +136,15 @@ const (
 	// ReasonBodyMalformed is a write whose body is not the JSON object the
 	// adapter sends, or one that names a key twice.
 	ReasonBodyMalformed = "body_malformed"
+	// ReasonReadOnly is a write from a read-only identity (Identity.ReadOnly):
+	// the installation's review-only job, which is served a read-only
+	// credential everywhere else and whose fpr names the pull requests it
+	// REVIEWS. It is named apart from ReasonNoRunBranch because the two are
+	// different facts — a review-mode run of a per-repository job carries no
+	// branch either and does write the comments its fpr names — and an
+	// operator reading the line has to be able to tell a job that may not
+	// write from a run that has nothing to write to.
+	ReasonReadOnly = "read_only"
 )
 
 // Refusal is Classify's answer for a request it will not name. Reason is one
@@ -176,14 +197,20 @@ type Request struct {
 }
 
 // Identity is what the rules know about the run that is asking: B1.5 fills it
-// from a verified identity's claims (fb and fpr) and never from the request.
+// from a verified identity's claims (fb and fpr), from the class of the job
+// the verified account belongs to, and never from the request.
 //
-// There is no separate "review run" field, because a review or artifact run is
+// There is no "review run" claim field, because a review or artifact run is
 // exactly the identity without a branch: the launcher mints no fb for one
-// (G6), and fb's absence is the whole of the difference. A second field could
-// only ever disagree with the branch - and a run whose two halves disagreed
-// would be the one shape where "may this push?" and "may this write a pull
-// request?" were answered from different facts.
+// (G6), and fb's absence is the whole of the difference between the claims.
+// The class is a different fact and is not one a claim could carry: the
+// launcher mints the same claims (fpr, no fb) for the installation's
+// review-only job and for a review-mode run of a per-repository job
+// (`fugaro run --recipe review-only`), and only the first of the two is
+// read-only — the review-only job is served a read-only credential on every
+// other route (github.ReviewTokenPermissions, D1065), so a write of it here
+// would be reach that set exists to not have, while the second keeps its own
+// token and the comments its fpr names (reviewmode.go's reviewMayComment).
 type Identity struct {
 	// Run is the run id (fr). It names the run in an audit line.
 	Run string
@@ -193,6 +220,12 @@ type Identity struct {
 	// PRs are the pull requests this identity may comment on (fpr): the one
 	// a follow-up continues, or the ones a review run reviews.
 	PRs []int
+	// ReadOnly reports that this identity may write nothing at all: the
+	// caller is the installation's review-only job (credsvc's review class,
+	// C3.9a), whose fpr names the pull requests it reviews. Decide refuses
+	// every write of such an identity and lets every read of it through, so
+	// the claim of it that would otherwise allow a comment is never read.
+	ReadOnly bool
 }
 
 // PRFacts are what the service read for itself about the pull request a write
@@ -631,7 +664,10 @@ func canonicalRepo(workspace, repo string) (string, error) {
 // repository the job account is, and only then the action. A fetch and a ref
 // advertisement - the receive-pack one included, since it moves no ref - are
 // allowed there. A push is decided on the refs the caller read with
-// ReadUpdateRequest, ref by ref, before any pack byte is forwarded (G2).
+// ReadUpdateRequest, ref by ref, before any pack byte is forwarded (G2). A
+// write from a read-only identity is refused before either, and the reads it
+// makes are allowed exactly as any other caller's: reading is what that
+// identity is for.
 func Decide(req Request, id Identity, repo string, block *projectpolicy.BitbucketToken) Verdict {
 	if block == nil || !projectpolicy.AdmitRepo(block.AllowRepos, repo) {
 		return Verdict{Reason: ReasonNotAdmitted}
@@ -655,8 +691,22 @@ func Decide(req Request, id Identity, repo string, block *projectpolicy.Bitbucke
 		// fetch of the same repository returns.
 		return Verdict{Allow: true, Reason: string(req.Kind)}
 	case KindPush:
+		if id.ReadOnly {
+			return Verdict{Reason: ReasonReadOnly}
+		}
 		return decidePush(req, id)
 	case KindREST:
+		if id.ReadOnly && req.Call.writes() {
+			// The review-only job is served a read-only credential on every
+			// other route, and its fpr names the pull requests it REVIEWS -
+			// so the comment rule is the write its claims would otherwise
+			// allow, and the class is the only fact that tells this identity
+			// from a review-mode run of a per-repository job, which keeps its
+			// token and the comments its fpr names. Every write is refused
+			// here for that one reason: which writes a caller may make is one
+			// question, asked in one place.
+			return Verdict{Reason: ReasonReadOnly}
+		}
 		return Verdict{Allow: true, Reason: string(req.Call)}
 	}
 	return Verdict{Reason: ReasonCallNotAllowed}

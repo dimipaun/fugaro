@@ -135,6 +135,17 @@ func (r *run) applyChallenger(a *config.Agent) error {
 	if !r.shadow {
 		return nil
 	}
+	// A grade and an arm answer the same question — which coder model this run
+	// is — and the grade would land on the arm's answer: the record would name
+	// a challenger whose calls ran on the graded model, while the champion's
+	// model was read off the coder before the grade resolved (championCoder),
+	// so the pair would compare two models neither arm was launched to compare
+	// (D555, D559). Nothing here can choose between the two, so the arm is
+	// refused by name; whether a graded run may be sampled at all belongs to
+	// the ladder's launches and the sampler, elsewhere.
+	if g := r.spec.ModelGrade; g != "" {
+		return r.refuseArm(fmt.Sprintf("this task names the model grade %q and is a challenger arm: an arm is compared by the coder model it names, and a grade replaces that model, so the run would record a challenger whose calls ran on another one. Launch the arm without a model_grade, or the graded run without an ab: block", g))
+	}
 	ch := r.spec.AB.Challenger
 	switch {
 	case r.ab == nil || len(r.ab.Challengers) == 0:
@@ -396,6 +407,7 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 	dec := Decide(records, sha, decidedRound, pol, r.rec.OwnerDecisions)
 	r.rec.Tolerated = r.toleratedRecord(pol, decidedRound)
 	r.rec.Accepted = r.acceptedRecord(pol, decidedRound)
+	r.recordCapDeferrals()
 	// The answer is replaced whole here for the champion's reason (finalize,
 	// runner.go): the one reason this fires on is Decide's own, and the kind it
 	// came with is the one the replacement keeps (Decision, D995).

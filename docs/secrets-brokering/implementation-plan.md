@@ -15,6 +15,15 @@ spec, the reconciliation wins.
   commit and the test that prove it, what blocks each remaining task and which of them can launch
   now. The release table below is historical:
   0.14.0 through 0.20.3 shipped without the proxy chain.
+- **2026-11-10: the later slices S2–S5 are planned** ("Later slices, planned 2026-11-10" below):
+  B2.1–B2.9, B3.1–B3.10, B4.1–B4.11 and B5.1–B5.9, read against the tree in reconciliation §10. All
+  four of the old bullets are kept; the OpenRouter upstream (dynamic-delivery's DS3.5) and pool
+  selection in the service (model-crafts' MC6) are other plans' tasks. The owner answered
+  **D2070–D2080 on 2026-11-10, all as recommended**, and the owner's 2026-11-10 "approve all tasks"
+  ruling approves B2.1–B5.9, each keeping its own gate. Since the census, B1.7 (`bdf845e9f`, #1987), B1.10
+  (`b6e53acd0`, #2091) and B1.11 (`efbe928c8`, #2096) have merged; B1.13 part two is #2166, held on
+  Check 191, whose first run on 2026-11-10 found the sandbox repository off the switch (`6e319b650`,
+  #2284; reconciliation F29).
 - **The owner's answers of 2026-10-27 that shape the plan** (reconciliation §5):
   - **D490:** S0 in **0.13.0**; the Bitbucket proxy (S1) in **0.14.0** — the owner moved S1's proxy
     chain to **0.15.0** on 2026-10-30 (below), so 0.14.0 carries only S1's inert and data-only
@@ -127,10 +136,10 @@ not one whose branch fails `task.BranchRE` (G6).
 | --- | --- | --- | --- |
 | **S0** | **0.13.0** | The secret-reader audit as a tested doc, the guard, doctor's Secret Manager sweep and deployer read, Check 190 written and run | Yes: no behaviour change except doctor findings |
 | **S1** | **0.15.0**, then the flip after it (O7) | The Bitbucket proxy for per-repository jobs of opted-in installations and the re-planned Bitbucket S2 tasks ship in 0.15.0 (owner, 2026-10-30); 0.14.0 ships only the inert and data-only pieces — policy v4 with the block and the `proxy` switch (BW-T2.1, BW-T2.3), the API-root pin (BW-T2.8), the bundle's Bitbucket token (B1.2), the proxy's parser and rules (B1.3, B1.4), the empty flip list (B1.8) and the operator draft (B1.13 part one); Check 191 runs against the released 0.15.0; the flip (B1.13 part two) and Check 192 follow in the next release | Inert on upgrade: a repository is proxied only when the owner publishes `proxy: true` (B1.7); the mount stays until the flip list is filled (B1.13); in 0.14.0 no run is proxied at all, whatever the node says. The policy v4 bump itself is a lockstep upgrade (D477) |
-| **S2** | unscheduled | Every `agent.auth` mode through the service (D498) | — |
-| **S3** | unscheduled | Workflow `secrets:` through a vault fetch (D491) | — |
-| **S4** | unscheduled | The build exception's exit: builds and the image check through the service (D491, U4) | — |
-| **S5** | unscheduled | Shared project jobs at the service (the credentials plan's C3.9), then Bitbucket shared jobs (D505) | — |
+| **S2** | unscheduled | Every `agent.auth` mode through the service (D498): `api-key` and `oauth` on the switch, then their mounts dropped (B2.1–B2.9; D2070–D2072 answered) | Until B2.7's flip: every mount stays |
+| **S3** | unscheduled | Workflow `secrets:` through a vault fetch (D491, D1267): the record, the route, the grant, the runner's fetch, then the flip (B3.1–B3.10; D2073–D2075 answered) | Until B3.8's flip: a mounted value always wins |
+| **S4** | unscheduled | The build exception's exit: builds and the image check through the service (D491, U4), gated on Check 195 (B4.1–B4.11; D2076, D2077 answered) | Until B4.9's flip |
+| **S5** | unscheduled | Shared project jobs at the service (the credentials plan's C3.9 general half), then Bitbucket shared jobs (D505) (B5.1–B5.9; D2078, D2079 answered) | Until B5.7's flip |
 
 Considered and not planned: the spec's RTDB token store (D494), GitHub through the proxy (D497b),
 an HTTP health route and minimum instances (D501), an agent sandbox (O1), a launcher skew constant
@@ -644,37 +653,567 @@ plan; this table says what happens to each task, and the levels below include th
 As written in [../bitbucket-workspace-token/implementation-plan.md](../bitbucket-workspace-token/implementation-plan.md),
 moved to 0.14.0 and, for T2.1 and T2.3, amended as the re-planned table above says (O2).
 
-### Later slices (unscheduled; each planned in detail when the owner schedules it)
+### Later slices, planned 2026-11-10 (S2–S5; approved 2026-11-10)
 
-- **B2.1 (S2, D498):** wire `api-key`, `oauth` and the provider routes through the service, so an
-  opted-in job of any `agent.auth` has a model credential again; Vertex stays out.
-- **B3.1 (S3, D491):** a vault fetch: the runner gets the workflow's `secrets:` from the service at
-  bootstrap; the job loses its accessors; a flip list and an owner-run check, as S1.
-- **B4.1 (S4, D491, U4):** builds and the image check fetch their credential from the service under
-  a build caller class; the build rows leave the table.
-- **B5.1 (S5, D505):** shared project jobs admitted by profile at the service (C3.9); then
-  docs/bitbucket-workspace-token's T2.2, T2.4, T2.6 and T2.7 against the proxy.
+The four bullets this heading carried (B2.1, B3.1, B4.1, B5.1) are planned below as tasks. The reading
+behind them is [reconciliation.md](reconciliation.md) §10: every one is **kept**, none is superseded or
+merged whole, and two pieces are other plans' tasks and are **not** re-planned here — the OpenRouter
+upstream in the service is dynamic-delivery's **DS3.5** (#2288, in a run), and pool selection inside the
+service is model-crafts' **MC6** (not started). The decisions that shape it, **D2070–D2080, were
+answered by the owner on 2026-11-10, all as recommended**, so every task that names one stands as
+written to its recommendation. **Tasks B2.1–B5.9 are approved** by the owner's 2026-11-10 "approve all
+tasks" ruling, and each keeps its own gate: its "Depends on" and "Serialize after" lines (the open
+pull requests listed below), Check 195 before S4's code tasks (B4.2's gate), and every owner-run check
+and the owner's go before each flip (R8). No release is assigned (the 2026-11-07 census, "It assigns
+no release"); the order is D2080's, S2 → S5 → S3 → S4. **Tension T7 (reconciliation §10.4) is
+accepted with D2070–D2080: DS3.5 stays as built**, and S2's drop keeps to R6. **An independent review (round 1, 2026-11-10)** made B2.1 decide from an
+`update`-written record rather than the caller's header (D2070 amended before any answer, R7), took
+B3.2's workflow from the verified job account, said what B2.3's URL already moves (git, signing),
+added B2.7's publish refusal under D2071, narrowed B4.3's GitHub token to `contents: read`, and put
+the in-flight test on every flip.
+
+**Conventions these slices add.** Every task under `internal/credsvc`, `internal/creds`,
+`internal/gateway`, `internal/gitproxy`, `deploy/terraform/**`, `internal/infra/**` or `SECURITY.md` is
+**level 3: opus + mandatory independent review** (`.claude/rules/credentials-service.md`,
+`.claude/rules/terraform.md`); a Terraform task runs the B1.8 command shape (each affected root under
+its own `TF_DATA_DIR`, `tflint`, `sh deploy/terraform/scan.sh`, `go test -tags terraform
+./internal/infra/...`, golden plans regenerated by `scripts/gen-golden-plans.sh`). Every flip follows
+R8 (D500): an empty flip list first, an owner-run check before, the owner's go, the flip, the check's
+`--after-flip` run, and `### For operators` saying "run `fugaro update`" (CLAUDE.md's HARD RULE; the
+re-apply is believed safe in flight because a running execution keeps what it mounted — U9, UNVERIFIED, which Checks 193, 194, 196 and 197 each measure with a run in flight). No agent runs a
+live step; the sandbox is installation `fugaro`, never `belong`.
+
+| # | Constraint (S2–S5) | Pinned by |
+| --- | --- | --- |
+| G16 | A non-cascade repository's run is served only what `update`'s record for that repository allows (its auth, and for `oauth` the accounts its workflows name), never what the caller says; a missing or mismatched declaration is refused, never read as the cascade (R7) | B2.1 |
+| G17 | A repository's job never loses a mount before the service serves that credential to the image the job runs: the URL first, the drop behind a flip list (D2072) | B2.3, B2.7, B3.8, B4.9, B5.7 |
+| G18 | No credential value in a record under `creds/`, an audit line, an error or a run record | B3.1, B3.2, B4.3 |
+| G19 | A workflow secret is served only to the per-repository job account of that repository **and that workflow** (the verified account, never a header), and never to a review, shared, launcher or person caller | B3.2 |
+| G20 | A build caller is served only its own repository's credential; on GitHub a read-only installation token, never the App key (R5) | B4.3 |
+| G21 | A shared coding caller is served only for the identity's repository, and only when that repository is one of its profile's | B5.1, B5.3 |
+| G22 | `ServiceHeldSecretNames` (#907) and `ProxiedGitSecretNames` (B1.13, #2166) are not touched by any task here; each flip list here is its own | every flip task |
+
+**Attacker's view, added.** The agent holds the run identity and the job's ID token (F5), so it can
+send any `X-Fugaro-Auth-Mode` it likes or none (G16: the service decides from `update`'s record, and a
+header that disagrees is refused), call the workflow-secrets route for its own workflow only (G19: the
+workflow is the verified job account's, never a header; it already reads those values from the
+runner's environment, F4, no reach change), and on a shared job
+name any repository its identity names (G21 binds it to the profile; D475 is the accepted residue).
+
+#### S2: every `agent.auth` mode through the service (D498; decisions D2070–D2072)
+
+##### B2.1: The service serves a non-cascade repository only its recorded auth (D2070, G16) — SECURITY-SENSITIVE
+
+- **Files:** `internal/creds/repoauth.go` (new: the record `creds/repoauth/<slug>` — the repository's
+  `agent.auth` and, for `oauth`, the accounts its workflows name — written by `update`, read by the
+  service; the database rules already deny every run identity `creds/`), `internal/creds/repoauth_test.go`
+  (new), `internal/creds/boundary_test.go`, `internal/credsvc/wire.go` (request headers
+  `HeaderAuthMode` = `X-Fugaro-Auth-Mode` and `HeaderAuthAccount` = `X-Fugaro-Auth-Account`: the
+  run's statement, checked against the record and never trusted alone; a header sent twice refused as
+  `CredentialHeaders` refuses one), `internal/credsvc/cascade.go` (`candidates`, after the admission it
+  computes today: a repository whose record says `oauth` keeps only the tier-A credential of the
+  declared account, which must be one the record names; `api-key` keeps tier B only; a repository with
+  a non-cascade record whose call declares nothing, or declares another mode or account, is refused —
+  never served the cascade; a repository with no record, or a `cascade` record, keeps today's list),
+  `internal/credsvc/authmode_test.go` (new). The writer of the record is B2.3.
+- **Interfaces produced:** `creds.RepoAuth{Auth string; Accounts []string}` and its path; `narrowToRepoAuth(cands []creds.Credential, rec *creds.RepoAuth, mode, account string) ([]creds.Credential, []Tried, error)`; the two header names, which B2.2 mirrors.
+- **Schema/rules/config change:** a new record under `creds/`, inside the subtree the rules already close to runs.
+- **Tests:** `TestRepoAuthRecordHoldsNoValue`, `TestBoundaryDeniesRunsTheRepoAuthRecord`, `TestAuthModeOAuthServesOnlyARecordedAccount`, `TestAuthModeOAuthRefusesAnAccountTheRecordDoesNotName`, `TestAuthModeAPIKeyServesTierBOnly`, `TestAuthModeMissingDeclarationOnANonCascadeRepositoryRefused`, `TestAuthModeMismatchedDeclarationRefused`, `TestAuthModeNeverWidensTheAdmission`, `TestNoRecordIsTheCascade`, `TestAuthModeHeaderSentTwiceRefused`, `TestAuthModeRefusalWritesOneAuditLine`; the cascade's own tests stay green.
+- **Command:** `go test ./internal/creds/ -run 'RepoAuth|TestBoundary' -count=1 && go test ./internal/credsvc/ -run 'TestAuthMode|TestNoRecordIsTheCascade|Cascade' -count=1`
+- **Red step:** `TestAuthModeMissingDeclarationOnANonCascadeRepositoryRefused`: today an `oauth` repository's call with no header would be served the whole cascade, tier B included (`cascade.go:28-31`).
+- **Depends on:** **D2070** (written to (a)). **Serialize after** model-crafts' **MC6** (`cascade.go`; the narrowing is expressed over its pool shape) and dynamic-delivery's **DS3.4** if scheduled (`wire.go`). **Reviewer tier:** opus + mandatory independent review (level 3).
+- **Commit:** `credsvc: a run that declares oauth or api-key is served only that, inside its admission`
+
+##### B2.2: The runner sends a switched `api-key` or `oauth` run through the service (F30) — SECURITY-SENSITIVE
+
+- **Files:** `internal/runner/gateway.go` (`gatewayUpstream`: an `api-key` or `oauth` run whose
+  environment carries `FUGARO_CREDENTIALS_SERVICE_URL` takes `serviceUpstream`, declaring its auth and,
+  for `oauth`, its account; `gatewayOn` is true for such a run in `observe` or `enforce`),
+  `internal/runner/routing.go` (`GatewayOn` keeps its two-argument answer for the readers that hold no
+  run; a new `ServiceSwitchedAuth(auth string) bool`), `internal/gateway/service.go` (the upstream sends
+  the two headers), `internal/gateway/service_contract_test.go` (`TestServiceAuthHeadersMirrorCredsvc`),
+  `internal/runner/service_auth_test.go` (new).
+- **Interfaces consumed:** B2.1's headers. **Produced:** `gateway.Upstream.AuthMode`, `gateway.Upstream.Account`.
+- **Tests:** `TestSwitchedAPIKeyRunGoesThroughTheService`, `TestSwitchedOAuthRunStartsTheGateway`, `TestSwitchedRunSendsItsModeAndAccount`, `TestUnswitchedAPIKeyRunUnchanged`, `TestUnswitchedOAuthRunHasNoGateway`, `TestSwitchedRunWithBudgetOffRefusedAtBootstrap` (D2071), `TestServiceAuthHeadersMirrorCredsvc`.
+- **Command:** `go test ./internal/runner/ -run 'TestSwitched|TestUnswitched' -count=1 -timeout 20m && go test ./internal/gateway/ -run 'MirrorsCredsvc|TestServiceAuthHeaders' -count=1`
+- **Red step:** `TestSwitchedAPIKeyRunGoesThroughTheService`: today the upstream is `anthropic` with the mounted key (`gateway.go:281-283`).
+- **Depends on:** B2.1; **D2071**. **Serialize after** open **#2274** (MC5: `internal/runner/gateway.go`, `routing.go`, `runner.go`) and **#2275** (`internal/gateway/service.go`), and dynamic-delivery's **DS1.5** (`internal/gateway/service.go`). **Reviewer tier:** opus + mandatory independent review (level 3).
+- **Commit:** `runner: an api-key or oauth run on the switch calls the service and declares its auth`
+
+##### B2.3: The switch admits `api-key` and `oauth`, every mount kept (D2071, D2072, G17) — SECURITY-SENSITIVE
+
+- **Files:** `internal/infra/spec.go` (`CredentialsServiceServes(installed, ready bool, auth, mode string)`:
+  `cascade` as today; `api-key` and `oauth` when the mode is `observe` or `enforce`, read from
+  `Inputs.Policy` as B1.8b reads the node; a second answer `ModelSecretsServed(serves bool, auth string) string`
+  — `all` for `cascade`, `anthropic` for an auth in `config.ServiceServedAuths`, `none` otherwise — which
+  replaces the bare `credentialsServiceOn` at the `dropModelMounts` call), `internal/infra/readiness.go`
+  (`dropModelMounts` takes the answer: `anthropic` drops `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN`,
+  never a `FUGARO_PROVIDER_KEY_` (R6)), `internal/config/providers.go` (`ServiceServedAuths = []string{}`),
+  `internal/cli/init_credentials.go` (`recordCredentialsServiceReady`: ready means the bundle holds the
+  credential the auth needs — the named account for `oauth`, `anthropic-api-key` for `api-key`),
+  `internal/cli/run.go` (`credentialsServiceLaunchEnv` passes the mode),
+  `deploy/terraform/gcp/modules/workflow/sa.tf` (the model-secret accessor drop at `sa.tf:137`/`:150`
+  keys on a new `model_secrets_served` input — `all`, `anthropic` or `none` — instead of on
+  `credentials_service != null` alone; the invoker grant at `sa.tf:211` stays on the variable),
+  `deploy/terraform/gcp/modules/workflow/variables.tf`, `deploy/terraform/gcp/modules/repo/workflows.tf`,
+  `deploy/terraform/gcp/modules/repo/variables.tf`, `deploy/terraform/gcp/roots/repo/variables.tf`,
+  `deploy/terraform/terraform_test.go` (`TestModelSecretsServedValidationMatchesGo`: the module's
+  `validation` block holds the three values Go writes; only the two model clauses of `sa.tf:137` move
+  onto the input, and the App-key and proxied-git clauses stay keyed on `credentials_service`, so
+  #907 and B1.13 do not regress), `internal/cli/update_repoauth.go` (new: writes B2.1's
+  `creds/repoauth/<slug>` record from the repository's `fugaro.yaml` on each `update --repo`),
+  `internal/cli/update_repoauth_test.go` (new), `.claude/rules/credentials-service.md` (its sentence
+  that the switch needs `agent.auth` to be the cascade becomes "a cascade, or an `api-key` or `oauth`
+  repository in `observe` or `enforce`"),
+  `deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl`, `internal/infra/tf/testdata/golden/*`;
+  tests in `internal/infra/spec_test.go`, `internal/cli/run_credentials_env_test.go`,
+  `internal/cli/update_switch_test.go`.
+- **Schema/rules/config change:** a module input with a default of `all`, so every root applied before
+  this task plans exactly as before.
+- **Tests:** `TestServesAPIKeyAndOAuthWhenTheModeIsOn`, `TestServesNoAPIKeyOrOAuthWithBudgetOff`, `TestEmptyServiceServedAuthsKeepsEveryNonCascadeMount`, `TestCascadeStillDropsItsMounts`, `TestModelSecretsServedValidationMatchesGo`, `TestAppKeyAndProxiedGitClausesStayOnTheVariable`, `TestUpdateWritesTheRepoAuthRecord`, `TestSwitchedAPIKeyGitHubRunMintsThroughTheService`, `TestUpdateSwitchHoldsOffARepoWhoseGitCredentialIsNotInTheBundle`, `TestLaunchEnvCarriesTheURLForASwitchedAPIKeyRepository`, `TestUpdateSwitchRecordsReadyForTheNamedOAuthAccount`, `TestUpdateSwitchHoldsOffAnOAuthRepoWhoseAccountIsNotInTheBundle`; `TestUpdateLeavesARunInFlightRunning` stays green; the tftest run.
+- **Command:** B1.8's Terraform command for the `repo` and `installation` roots, then `go test ./internal/infra/ ./deploy/terraform/ -run 'TestServes|ServiceServedAuths|TestCascadeStillDrops|TestModelSecretsServed|TestAppKeyAndProxiedGit' -count=1 && GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestLaunchEnvCarries|TestUpdateSwitch|TestUpdateWritesTheRepoAuthRecord|TestSwitchedAPIKeyGitHubRun|TestUpdateLeavesARunInFlightRunning' -count=1`
+- **Red step:** `TestServesAPIKeyAndOAuthWhenTheModeIsOn`: `spec.go:288` answers false for `api-key`.
+- **Depends on:** **D2071**, **D2072** (written to (a) of each). It can run beside B2.1 (no shared file), but **the URL is not inert**: with it set, the GitHub provider opens keyless and mints through the service (`internal/gitprov/providers/providers.go:117-124`), a Bitbucket repository with `proxy: true` is proxied (`internal/runner/project.go:494`), and review signing goes through the service — which is F29's point, and why this task's readiness also requires the bundle to hold the git credential the repository's provider needs. Only the **model** path waits for B2.2; every mount stays. **Serialize after** open **#2166** (B1.13: `spec.go`, `readiness.go`, `providers.go`, `sa.tf`, `terraform_test.go`, the tftest), **#2170** (`spec.go`, `readiness.go`, `run.go`), **#2282** and **#1994** (`spec.go`), **#2202** (`init_credentials.go`, `run.go`), **#2250**, **#2246**, **#2240** (`run.go`). **Reviewer tier:** opus + mandatory independent review (level 3: Terraform, IAM).
+- **Commit:** `infra, terraform: api-key and oauth repositories reach the service, and keep their mounts until the flip`
+
+##### B2.4: Doctor and SECURITY for S2 — SECURITY-SENSITIVE (security claims)
+
+- **Files:** `internal/cli/doctor_brokering.go` (`model-key-in-agent` and the switch's held-off reason
+  name the mode and the missing bundle entry for an `api-key` or `oauth` repository),
+  `internal/cli/doctor_brokering_test.go`, `SECURITY.md` (a switched `api-key` or `oauth` run's calls
+  are served by the service; its job still mounts the key until the flip; a Bitbucket repository on
+  the switch can now be proxied, F29), `website/content/security.md` (regenerated),
+  `docs/secrets-brokering/secret-readers.md` (E1's `what` cell: the model credentials leave at S2 for
+  every auth but Vertex), `internal/cli/docs_security_test.go`.
+- **Tests:** `TestDoctorBrokeringNamesWhyAnOAuthRepoIsOffTheSwitch`, `TestDoctorBrokeringNamesBudgetOffForAnAPIKeyRepo`, a pin for the new SECURITY sentence; `TestDocsSecretReadersTableShape`.
+- **Command:** `go run ./internal/clidoc && go test ./internal/cli/ -run 'Docs|TestDoctorBrokering' -count=1 && go test ./deploy/terraform/ -run 'TestEverySecretReader|TestSecretReadersDoc' -count=1`
+- **Red step:** the SECURITY pin before the sentence.
+- **Depends on:** B2.2, B2.3. **Serialize after** **#2166** (`doctor_brokering.go`, `SECURITY.md`, `secret-readers.md`), **#2270** (`SECURITY.md`), **#2237** (`secret-readers.md`). **Reviewer tier:** opus + mandatory independent review.
+- **Commit:** `doctor, SECURITY: api-key and oauth repositories on the credentials service`
+
+##### B2.5: Check 193 written
+
+- **Files:** `scripts/live-checks/check193.sh` (new, with `--after-flip`), `scripts/live-checks/check193_test.sh` (new), `scripts/live_checks_test.go` (its row), `docs/secrets-brokering/check193-steps.md` (new), `docs/gcp-live-checklist.md` (row and section 193), `docs/secrets-brokering/README.md` (index row), `internal/cli/docs_secrets_brokering_test.go` (`TestDocsCheck193IsRegistered`).
+- **What it measures:** on installation `fugaro`, an `api-key` and an `oauth` sandbox repository on the switch: a run of each is served by the service (its audit line names the credential), the `oauth` run is refused an account it did not declare, and a Bitbucket one of them published with `proxy: true` pushes through the proxy (F29). `--after-flip`: neither job mounts its model credential, a run still succeeds, and a run started **before** the re-apply finishes (U9).
+- **Tests:** `check193_test.sh` (the project guard, `--dry-run` creates nothing, `--after-flip` asserts no model mount); `TestDocsCheck193IsRegistered`.
+- **Command:** `bash scripts/live-checks/check193_test.sh && go test ./scripts/ -run TestLiveCheckScripts -count=1 && go test ./internal/cli/ -run Docs -count=1`
+- **Red step:** `TestDocsCheck193IsRegistered` before the row exists.
+- **Depends on:** B2.3, B2.4. **Serialize after** **#2270**, **#2202**, **#2183** (`docs/gcp-live-checklist.md`). **Reviewer tier:** standard.
+- **Commit:** `live-checks: Check 193, api-key and oauth through the credentials service, written`
+
+##### B2.6: Check 193 — OWNER-RUN
+
+- **The owner types,** on the released build that carries B2.1–B2.5 (`brew upgrade dimipaun/tap/fugaro`), installation `fugaro` only: `fugaro update` (and `fugaro update --repo` from each sandbox checkout), then `CHECK193_REPOS=<api-key repo>,<oauth repo> bash scripts/live-checks/check193.sh --dry-run`, the same without `--dry-run`, and pastes the `CHECK 193 RESULT` block back. No agent runs any step.
+- **Depends on:** B2.5 and a release carrying it.
+
+##### B2.7: The S2 flip (D2072, G17) — SECURITY-SENSITIVE, owner-gated
+
+- **Files:** `internal/config/providers.go` (`ServiceServedAuths = []string{"api-key", "oauth"}`), `deploy/terraform/terraform_test.go` (the mirror on the real list), `internal/cli/recipes_skew.go` (`serviceAuthSince`: the launcher refuses a switched `api-key` or `oauth` repository's run on an image below it, as `proxySince` does at `recipes_skew.go:130`), `internal/cli/launch_budget.go` (the refusal's call), `internal/cli/launch_budget_test.go`, `internal/cli/project_cmd.go` and its test (under D2071 (a): `fugaro project policy publish` refuses to lower the budget mode to `off` while a repository of an auth in `ServiceServedAuths` is switched, because the mode is read at `update` and its jobs then hold no mount; D2071 answered as recommended), `docs/secrets-brokering/secret-readers.md` (E1's model credentials leave for switched repositories), `.claude/rules/credentials-service.md` (a rule: `ServiceServedAuths` changes only with the owner's go), `internal/infra/tf/testdata/golden/*`, and the release's `### For operators` ("run `fugaro update`").
+- **Tests:** `TestFilledServiceServedAuthsDropsTheAnthropicMountsOnly`, `TestFilledServiceServedAuthsKeepsProviderKeys` (R6), `TestLaunchRefusesASwitchedAPIKeyRunOnAnOldImage`, `TestPolicyPublishRefusesModeOffWhileARepositoryIsSwitched`, `TestModelSecretsServedValidationMatchesGo`; `TestUpdateLeavesARunInFlightRunning`.
+- **Command:** B2.3's command, plus `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestLaunchRefusesASwitched|TestPolicyPublishRefusesModeOff' -count=1`
+- **Red step:** a copy of `TestFilledServiceServedAuthsDropsTheAnthropicMountsOnly` on the real list fails while it is empty.
+- **Depends on:** B2.6 PASS and the owner's go; ships in the release after the one B2.6 ran on. **Reviewer tier:** opus + mandatory independent review.
+- **Commit:** `config, terraform: switched api-key and oauth repositories give up their model mounts`
+
+##### B2.8: Check 193 `--after-flip` — OWNER-RUN
+
+- **The owner types,** on the release carrying B2.7: `fugaro update`, `fugaro update --repo` from each sandbox checkout with a run of that repository in flight, then `bash scripts/live-checks/check193.sh --after-flip`, and pastes the block back.
+- **Depends on:** B2.7 on a release.
+
+##### B2.9: Check 193's runs recorded
+
+- **Files:** `docs/gcp-live-checklist.md` (section 193's run records). **Command:** `go test ./internal/cli/ -run Docs -count=1`. **Red step:** none (a record).
+- **Depends on:** B2.6 (first commit), B2.8 (second). **Reviewer tier:** standard.
+- **Commit:** `docs(live-checks): Check 193's run` / `docs(live-checks): Check 193's after-flip run`
+
+#### S3: workflow `secrets:` through a vault fetch (D491, D1267; decisions D2073–D2075)
+
+##### B3.1: `fugaro update` records each repository's fetchable workflow secrets (D2073, G18) — SECURITY-SENSITIVE
+
+- **Files:** `internal/creds/workflowsecrets.go` (new: the record at `creds/workflowsecrets/<slug>`, one entry per workflow — its secrets' env names and container IDs, never a value; for D2077 (a), the workflow's build secrets too), `internal/creds/workflowsecrets_test.go` (new), `internal/creds/boundary_test.go` (a run identity is denied the path), `internal/cli/update_workflowsecrets.go` (new: writes the record from the answer `infra.SecretMounts`, `internal/infra/spec.go:1061`, computes for the mounts — the operator-local allow-list's answer, F33), `internal/cli/update_workflowsecrets_test.go` (new), `internal/cli/update.go` (registration in the converge).
+- **Interfaces produced:** `creds.WorkflowSecrets` and its path; consumed by B3.2 and B4.3.
+- **Tests:** `TestWorkflowSecretsRecordHoldsNoValue`, `TestBoundaryDeniesRunsTheWorkflowSecretsRecord`, `TestUpdateWritesTheWorkflowSecretsTheJobMounts`, `TestUpdateWorkflowSecretsFollowTheAllowList`, `TestUpdateLeavesARunInFlightRunning`.
+- **Command:** `go test ./internal/creds/ -run 'WorkflowSecrets|TestBoundary' -count=1 && GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestUpdateWritesTheWorkflowSecrets|TestUpdateWorkflowSecrets|TestUpdateLeavesARunInFlightRunning' -count=1`
+- **Red step:** `TestUpdateWritesTheWorkflowSecretsTheJobMounts`: no record is written today.
+- **Depends on:** **D2073** (written to (a)). **Serialize after** dynamic-delivery's **DS4.1** (`internal/cli/update.go`) and **DS2.4** if scheduled. **Reviewer tier:** opus + mandatory independent review.
+- **Commit:** `creds, update: the workflow secrets each repository's job may fetch, by name`
+
+##### B3.2: The service's workflow-secrets route (G18, G19) — SECURITY-SENSITIVE
+
+- **Files:** `internal/credsvc/workflowsecrets.go` (new: `POST` under a new `WorkflowSecretsPath`; per-repository job callers only, bound through `JobAccount.Repo`; the workflow is the **verified** account's — `JobAccount` (`internal/credsvc/server.go:199-203`) gains `Workflow`, filled by `JobAccountsFor` from `RepoJob.Workflow` — and never `X-Fugaro-Run-Job`, which decides nothing (`internal/credsvc/auth.go`, the header's comment) and is only recorded; one workflow's job is never served another's secrets, as each job account reads only its own today (`deploy/terraform/gcp/modules/workflow/sa.tf:148-151`); liveness and the kill switches per call; each value read from its container with the service's own account, a failed read failing closed), `internal/credsvc/workflowsecrets_test.go` (new), `internal/credsvc/wire.go` (the path, request and answer), `internal/credsvc/server.go` (`servedRoute`; `JobAccount.Workflow`), `internal/credsvc/audit.go` (purpose `workflow-secret`), `internal/credsvc/slip_test.go` (`TestServedRoutesAreExactly` gains the route).
+- **Tests:** `TestWorkflowSecretsServesTheRecordedSecretsOfTheCallersRepository`, `TestWorkflowSecretsRefusesAnotherRepositorysWorkflow`, `TestWorkflowSecretsRefusesAnotherWorkflowOfTheSameRepository`, `TestWorkflowSecretsIgnoresTheRunJobHeader`, `TestJobAccountsCarryTheirWorkflow`, `TestWorkflowSecretsRefusesSharedReviewLauncherAndPersonCallers`, `TestWorkflowSecretsRefusesAnEndedRun`, `TestWorkflowSecretsFailedReadFailsClosed`, `TestWorkflowSecretsNoValueInAuditOrError`, `TestWorkflowSecretsOneAuditLinePerRefusal`, `TestServedRoutesAreExactly`, `TestServiceHasNoAdminRoutes`.
+- **Command:** `go test ./internal/credsvc/ -run 'TestWorkflowSecrets|TestJobAccountsCarryTheirWorkflow|TestServedRoutesAreExactly|TestServiceHasNoAdminRoutes' -count=1`
+- **Red step:** `TestWorkflowSecretsServesTheRecordedSecretsOfTheCallersRepository`: the route does not exist.
+- **Depends on:** B3.1. **Serialize after** open **#2162** (`server.go`) and dynamic-delivery's **DS3.4** (`wire.go`). **Reviewer tier:** opus + mandatory independent review.
+- **Commit:** `credsvc: a repository's job fetches its own workflow secrets from the service`
+
+##### B3.3: The service may read each workflow secret's container (D2074), inert — SECURITY-SENSITIVE
+
+- **Files:** `deploy/terraform/gcp/modules/workflow/sa.tf` (a `google_secret_manager_secret_iam_member` for the service's account on each workflow secret the job mounts, when `credentials_service` is set; the job's own grant untouched), `deploy/terraform/gcp/modules/workflow/variables.tf` and `deploy/terraform/gcp/roots/repo/variables.tf` (`credentials_service` gains the service's account email), `internal/infra/spec.go` (`repoCredentialsService` carries it), `internal/infra/tf/cover.go` (`grantRules`: the service's account as a secret-level accessor in a repository root — a new principal kind there, added on purpose), `deploy/terraform/secret_readers_test.go` and `docs/secrets-brokering/secret-readers.md` (E7: the per-container grants), `deploy/terraform/terraform_test.go` (`TestServiceWorkflowSecretGrantsMatchTheJobsMounts`; `TestCredentialsServiceGrantsAreTheOneBundle` stays green — the new grants are the repository root's, not `credentials.tf`'s), `deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl`, `internal/infra/tf/testdata/golden/*`.
+- **Tests:** `TestServiceWorkflowSecretGrantsMatchTheJobsMounts`, `TestNoServiceGrantWithoutTheService`, `TestEverySecretReaderIsAListedException`, `TestSecretReadersDocMatchesTheTable`, the tftest.
+- **Command:** B1.8's Terraform command, then `go test ./deploy/terraform/ ./internal/infra/... -run 'TestServiceWorkflowSecretGrants|TestNoServiceGrant|TestEverySecretReader|TestSecretReadersDoc|Cover' -count=1`
+- **Red step:** `TestServiceWorkflowSecretGrantsMatchTheJobsMounts`: no such grant exists.
+- **Depends on:** **D2074** (written to (a)). **Serialize after** **#2166** (`sa.tf`, `terraform_test.go`, the tftest, `secret-readers.md`, `spec.go`), **#2237** (`secret_readers_test.go`, `secret-readers.md`), dynamic-delivery's **DS2.2** (`secret_readers_test.go`, `secret-readers.md`, `terraform_test.go`), and B2.3 (`spec.go`, `sa.tf`). **Reviewer tier:** opus + mandatory independent review (level 3: IAM, cover tables).
+- **Commit:** `terraform: the credentials service may read each workflow secret its repository's jobs mount`
+
+##### B3.4: The runner fetches what its job does not mount (F4, D143) — SECURITY-SENSITIVE
+
+- **Files:** `internal/runner/workflowsecrets.go` (new: at bootstrap, when `FUGARO_CREDENTIALS_SERVICE_URL` is set and a declared secret's variable is absent from the job's environment, one fetch through the service client, values into the runner's environment and `r.addSecret` for redaction; a mounted value always wins, so the flip is a no-op either way), `internal/runner/workflowsecrets_test.go` (new), `internal/runner/runner.go` (the call before `secretEnvs`, `runner.go:2786`), `internal/gateway/service.go` (the client call, signed as every service call is).
+- **Tests:** `TestBootstrapFetchesMissingWorkflowSecretsFromTheService`, `TestBootstrapPrefersTheMountedValue`, `TestFetchedSecretsAreRedacted`, `TestReviewRunFetchedSecretsNeverReachTheAgent` (`runner.go:2779-2817` holds for fetched values too), `TestServiceDownHaltsTheRunBeforeTheAgent`, `TestNoServiceURLNoFetch`.
+- **Command:** `go test ./internal/runner/ -run 'TestBootstrapFetches|TestBootstrapPrefers|TestFetchedSecrets|TestReviewRunFetched|TestServiceDownHalts|TestNoServiceURLNoFetch' -count=1 -timeout 20m`
+- **Red step:** `TestBootstrapFetchesMissingWorkflowSecretsFromTheService`: today the run fails "secret … is not set".
+- **Depends on:** B3.2. **Serialize after** **#2274** and **#2256** (`runner.go`), **#2275** and dynamic-delivery's **DS1.5** (`internal/gateway/service.go`), and B2.2. **Reviewer tier:** opus + mandatory independent review.
+- **Commit:** `runner: fetch a workflow secret the job does not mount from the credentials service`
+
+##### B3.5: SECURITY and the audit for S3 (D2075) — SECURITY-SENSITIVE (security claims)
+
+- **Files:** `SECURITY.md` (the service reads workflow secrets; a run's start depends on the service, with D501's cold start and D1934's heartbeat; the reach does not change, F4), `website/content/security.md` (regenerated), `docs/secrets-brokering/secret-readers.md` (E1's `what` cell and E5's exit — `never` under D2075 (a) — the edit D1267's handoff names), `deploy/terraform/secret_readers_test.go` (E5's row if its exit is carried there), `internal/cli/docs_security_test.go`.
+- **Tests:** the SECURITY pin; `TestDocsSecretReadersTableShape`; `TestSecretReadersDocMatchesTheTable`.
+- **Command:** `go run ./internal/clidoc && go test ./internal/cli/ -run Docs -count=1 && go test ./deploy/terraform/ -run 'TestEverySecretReader|TestSecretReadersDoc' -count=1`
+- **Red step:** the SECURITY pin before the sentence.
+- **Depends on:** B3.3, B3.4, **D2075**. **Serialize after** B2.4 (`SECURITY.md`, `secret-readers.md`). **Reviewer tier:** opus + mandatory independent review.
+- **Commit:** `SECURITY, docs: workflow secrets through the credentials service`
+
+##### B3.6: Check 194 written
+
+- **Files:** `scripts/live-checks/check194.sh` (new, with `--after-flip`), `scripts/live-checks/check194_test.sh` (new), `scripts/live_checks_test.go`, `docs/secrets-brokering/check194-steps.md` (new), `docs/gcp-live-checklist.md` (row and section 194), `docs/secrets-brokering/README.md` (index row), `internal/cli/docs_secrets_brokering_test.go` (`TestDocsCheck194IsRegistered`).
+- **What it measures:** a sandbox repository with one per-repository and one project workflow secret: the record names both and no value; a run's verify sees both; another repository's job is refused them; `--after-flip`: the job mounts neither, its account holds no accessor on either, a run still sees both, and a run in flight at the re-apply finishes (U9).
+- **Command:** `bash scripts/live-checks/check194_test.sh && go test ./scripts/ -run TestLiveCheckScripts -count=1 && go test ./internal/cli/ -run Docs -count=1`
+- **Red step:** `TestDocsCheck194IsRegistered` before the row exists.
+- **Depends on:** B3.4, B3.5. **Serialize after** B2.5 (`docs/gcp-live-checklist.md`, `README.md`, the docs test). **Reviewer tier:** standard.
+- **Commit:** `live-checks: Check 194, workflow secrets fetched from the credentials service, written`
+
+##### B3.7: Check 194 — OWNER-RUN
+
+- **The owner types,** on a release carrying B3.1–B3.6, installation `fugaro` only: `fugaro update`, `fugaro update --repo` from the sandbox checkout, `CHECK194_REPO=<sandbox repository> bash scripts/live-checks/check194.sh --dry-run`, then without `--dry-run`, and pastes the block back.
+- **Depends on:** B3.6 on a release.
+
+##### B3.8: The S3 flip (G17) — SECURITY-SENSITIVE, owner-gated
+
+- **Files:** `internal/config/providers.go` (`VaultFetchedSecretClasses = []string{"workflow"}`, added empty by this task's first commit and filled by its second), `internal/infra/spec.go` (`SecretMounts` leaves a switched repository's workflow secrets unmounted when the class is listed; review runs unchanged), `deploy/terraform/gcp/modules/workflow/sa.tf` (the job's accessor on them dropped; the service's from B3.3 stays), `deploy/terraform/terraform_test.go` (the mirror guard), `deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl`, `internal/infra/tf/testdata/golden/*`, `internal/cli/recipes_skew.go` (`vaultSince`) and `internal/cli/launch_budget.go` (the launch refusal on an older image), `internal/cli/launch_budget_test.go`, `docs/secrets-brokering/secret-readers.md` (E1), `.claude/rules/credentials-service.md` (the list's rule), the release's `### For operators`.
+- **Tests:** `TestVaultFetchedClassesMatchTheModule`, `TestEmptyVaultListChangesNothing`, `TestFilledVaultListDropsWorkflowMountsAndAccessors`, `TestFilledVaultListKeepsAnUnswitchedRepository`, `TestLaunchRefusesAVaultRunOnAnOldImage`; `TestUpdateLeavesARunInFlightRunning`.
+- **Command:** B1.8's Terraform command, then `go test ./internal/infra/ ./deploy/terraform/ -run 'VaultFetched|VaultList' -count=1 && GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestLaunchRefusesAVaultRun|TestUpdateLeavesARunInFlightRunning' -count=1`
+- **Red step:** `TestVaultFetchedClassesMatchTheModule`: neither side exists.
+- **Depends on:** B3.7 PASS and the owner's go (the second commit). **Serialize after** B2.7 (`providers.go`, `recipes_skew.go`, `launch_budget.go`, `.claude/rules/credentials-service.md`) and B3.3 (`sa.tf`). **Reviewer tier:** opus + mandatory independent review.
+- **Commit:** `config, terraform: switched repositories fetch their workflow secrets and stop mounting them`
+
+##### B3.9: Check 194 `--after-flip` — OWNER-RUN
+
+- **The owner types,** on the release carrying B3.8: `fugaro update`, `fugaro update --repo` with a run in flight, `bash scripts/live-checks/check194.sh --after-flip`, and pastes the block back.
+- **Depends on:** B3.8 on a release.
+
+##### B3.10: Check 194's runs recorded
+
+- **Files:** `docs/gcp-live-checklist.md`. **Command:** `go test ./internal/cli/ -run Docs -count=1`. **Red step:** none (a record).
+- **Depends on:** B3.7 (first commit), B3.9 (second). **Reviewer tier:** standard.
+- **Commit:** `docs(live-checks): Check 194's run` / `docs(live-checks): Check 194's after-flip run`
+
+#### S4: builds and the image check through the service (D491, U4; decisions D2076, D2077)
+
+##### B4.1: Check 195 written (U4, U10)
+
+- **Files:** `scripts/live-checks/check195.sh` (new), `scripts/live-checks/check195_test.sh` (new), `scripts/live_checks_test.go`, `docs/secrets-brokering/check195-steps.md` (new), `docs/gcp-live-checklist.md` (row and section 195), `docs/secrets-brokering/README.md` (index row), `internal/cli/docs_secrets_brokering_test.go` (`TestDocsCheck195IsRegistered`).
+- **What it measures:** in installation `fugaro`'s project, a throwaway IAM-only Cloud Run service (asserted with `gcloud run services get-iam-policy`, as Check 190 does) and a throwaway build account granted `roles/run.invoker` on it alone; a Cloud Build whose step, running as that account, fetches an ID token from the metadata server for the service's URL and calls it; PASS on a 200, the token's `email` claim printed, never the token. The script deletes everything it created.
+- **Command:** `bash scripts/live-checks/check195_test.sh && go test ./scripts/ -run TestLiveCheckScripts -count=1 && go test ./internal/cli/ -run Docs -count=1`
+- **Red step:** `check195_test.sh`'s public-invoker case before the guard exists.
+- **Depends on:** none. **Serialize after** B3.6 (`docs/gcp-live-checklist.md`, `README.md`, the docs test). **Reviewer tier:** standard.
+- **Commit:** `live-checks: Check 195, a Cloud Build step calls an IAM-only Cloud Run service, written`
+
+##### B4.2: Check 195 — OWNER-RUN
+
+- **The owner types:** `bash scripts/live-checks/check195.sh --dry-run`, then without `--dry-run`, and pastes the block back. **Gate:** a FAIL stops S4 and returns to the owner as a decision (the build rows E3 and E6 then stay listed exceptions, exit `never`).
+- **Depends on:** B4.1.
+
+##### B4.3: The service's build caller class (R5, D2076, D2077, G20) — SECURITY-SENSITIVE
+
+- **Files:** `internal/credsvc/auth.go` (`AuthConfig.BuildAccounts`, `VerifyBuild`: a verified Google ID token whose `email` is one repository's build account), `internal/credsvc/server.go` (`BuildAccountsFor`, beside `JobAccountsFor` at `server.go:233`, from `gcp.BuildServiceAccountID`, `internal/backend/gcp/names.go:251`), `internal/credsvc/build.go` (new: `POST` under `BuildCredentialsPath` — on GitHub an installation token for the bound repository with `contents: read` alone — narrower than the read set `githubread.go` mints for a person — minted beside that path; on Bitbucket the bundle's token (D2076 (a)); the workflows' build secrets from B3.1's record through B3.2's reader (D2077 (a))), `internal/credsvc/build_test.go` (new), `internal/credsvc/wire.go`, `internal/credsvc/audit.go` (purpose `build`), `internal/credsvc/slip_test.go` (`TestServedRoutesAreExactly`), `internal/cli/credentials_serve.go` (wiring), `internal/cli/credentials_serve_test.go`.
+- **Tests:** `TestBuildCallerServedOnlyItsOwnRepository`, `TestBuildCallerGetsAReadOnlyGitHubTokenNeverTheKey`, `TestBuildCallerTokenIsContentsReadOnly`, `TestBuildCallerRefusedOnRunRoutes`, `TestRunCallerRefusedOnTheBuildRoute`, `TestBuildAccountsAreTheNamesTheRepoRootDeploys`, `TestBuildCallerOneAuditLinePerRefusal`, `TestServedRoutesAreExactly`, `TestServiceHasNoAdminRoutes`.
+- **Command:** `go test ./internal/credsvc/ -run 'TestBuild|TestRunCallerRefusedOnTheBuildRoute|TestServedRoutesAreExactly|TestServiceHasNoAdminRoutes' -count=1 && go test ./internal/cli/ -run 'TestCredentialsServe' -count=1`
+- **Red step:** `TestBuildCallerServedOnlyItsOwnRepository`: a build account is refused as an unknown caller today.
+- **Depends on:** B4.2 PASS, B3.2, **D2076**, **D2077**. **Serialize after** open **#2237** (`auth.go`, `credentials_serve.go`), **#2162** (`server.go`), **#2202** (`credentials_serve.go` neighbours) and B5.1 (`auth.go`, `server.go`). **Reviewer tier:** opus + mandatory independent review.
+- **Commit:** `credsvc: a repository's build is a caller, served only its own repository's credentials`
+
+##### B4.4: The build account may call the service (inert) — SECURITY-SENSITIVE
+
+- **Files:** `deploy/terraform/gcp/modules/repo/build.tf` (a `google_cloud_run_v2_service_iam_member` giving the build account `roles/run.invoker` on the service when `credentials_service` is set, as `modules/workflow/sa.tf:211` does for a job account), `deploy/terraform/gcp/modules/repo/variables.tf`, `internal/infra/tf/cover.go` (`grantRules`: the build account as an invoker of the service — a new principal kind for that grant, added on purpose), `deploy/terraform/terraform_test.go` (`TestBuildAccountInvokesOnlyTheService`), `deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl`, `internal/infra/tf/testdata/golden/*`.
+- **Command:** B1.8's Terraform command, then `go test ./deploy/terraform/ ./internal/infra/... -run 'TestBuildAccountInvokes|Cover' -count=1`
+- **Red step:** `TestBuildAccountInvokesOnlyTheService`: no grant exists.
+- **Depends on:** B4.2 PASS. Runs beside B4.3 (no shared file). **Serialize after** B3.3 (`terraform_test.go`, the tftest, `cover.go`, golden) and **#2166**. **Reviewer tier:** opus + mandatory independent review.
+- **Commit:** `terraform: a repository's build account may invoke the credentials service`
+
+##### B4.5: The build and the image check fetch from the service — SECURITY-SENSITIVE
+
+- **Files:** `internal/cli/gitcred.go` (with `FUGARO_CREDENTIALS_SERVICE_URL` set, `fugaro image git-credential` fetches from B4.3's route with a metadata ID token instead of reading `GIT_TOKEN` or `GITHUB_APP_KEY`; without it, unchanged), `internal/cli/gitcred_test.go`, `images/derived/cloudbuild.yaml` (the credential step passes the URL), `internal/backend/gcp/build.go` and `internal/backend/gcp/catalog.go` (a switched repository's request carries the URL; `availableSecrets` unchanged until B4.9), `internal/backend/gcp/build_test.go`, `internal/backend/gcp/catalog_test.go`, `internal/cli/imagecheck.go` and `internal/cli/imagecheck_test.go` (the check job fetches the same way).
+- **Tests:** `TestGitCredentialFetchesFromTheServiceWhenSet`, `TestGitCredentialUnchangedWithoutTheService`, `TestGitCredentialNeverPrintsTheValue`, `TestBuildRequestCarriesTheServiceURL`, `TestCatalogBuildRequestCarriesTheServiceURL`, `TestImageCheckFetchesFromTheService`.
+- **Command:** `go test ./internal/backend/gcp/ -run 'TestBuildRequest|TestCatalogBuildRequest' -count=1 && GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestGitCredential|TestImageCheck' -count=1`
+- **Red step:** `TestGitCredentialFetchesFromTheServiceWhenSet`: the helper reads only its environment today.
+- **Depends on:** B4.3, B4.4. **Serialize after** open **#2255** and **#2171** if they reach `internal/backend/gcp` or `images/derived` before merging (today they touch the catalog copy and bake files, not these). **Reviewer tier:** opus + mandatory independent review.
+- **Commit:** `image: a build and the image check fetch their credentials from the service`
+
+##### B4.6: SECURITY and the audit for S4 — SECURITY-SENSITIVE (security claims)
+
+- **Files:** `SECURITY.md` (a build's credential comes from the service; on Bitbucket the reach is unchanged under D2076 (a)), `website/content/security.md`, `docs/secrets-brokering/secret-readers.md` (E3, E6), `internal/cli/docs_security_test.go`, `docs/credentials-service/runbook.md` (rotation writes one copy once B4.9 lands).
+- **Command:** `go run ./internal/clidoc && go test ./internal/cli/ -run Docs -count=1 && go test ./deploy/terraform/ -run 'TestEverySecretReader|TestSecretReadersDoc' -count=1`
+- **Red step:** the SECURITY pin before the sentence.
+- **Depends on:** B4.5. **Serialize after** B3.5. **Reviewer tier:** opus + mandatory independent review.
+- **Commit:** `SECURITY, docs: builds take their credentials from the service`
+
+##### B4.7: Check 196 written
+
+- **Files:** `scripts/live-checks/check196.sh` (new, with `--after-flip`), `scripts/live-checks/check196_test.sh` (new), `scripts/live_checks_test.go`, `docs/secrets-brokering/check196-steps.md` (new), `docs/gcp-live-checklist.md` (row and section 196), `docs/secrets-brokering/README.md`, `internal/cli/docs_secrets_brokering_test.go` (`TestDocsCheck196IsRegistered`).
+- **What it measures:** a GitHub and a Bitbucket sandbox repository: an image build and the image check succeed with credentials from the service, another repository's build account is refused; `--after-flip`: the build account holds no accessor and the build request carries no `availableSecrets`, and a build still succeeds.
+- **Command:** `bash scripts/live-checks/check196_test.sh && go test ./scripts/ -run TestLiveCheckScripts -count=1 && go test ./internal/cli/ -run Docs -count=1`
+- **Red step:** `TestDocsCheck196IsRegistered` before the row exists.
+- **Depends on:** B4.5, B4.6. **Serialize after** B4.1. **Reviewer tier:** standard.
+- **Commit:** `live-checks: Check 196, builds through the credentials service, written`
+
+##### B4.8: Check 196 — OWNER-RUN
+
+- **The owner types,** on a release carrying B4.3–B4.7: `fugaro update`, `fugaro update --repo` from each sandbox checkout, `fugaro image refresh` there, then `bash scripts/live-checks/check196.sh --dry-run` and without it, and pastes the block back.
+- **Depends on:** B4.7 on a release.
+
+##### B4.9: The S4 flip — SECURITY-SENSITIVE, owner-gated
+
+- **Files:** `internal/config/providers.go` (`BuildServedSecretClasses`, empty, then `{"git", "build"}`), `deploy/terraform/gcp/modules/repo/build.tf` (`google_secret_manager_secret_iam_member.build` dropped for a switched repository), `deploy/terraform/gcp/modules/repo/check.tf` (its `secret_key_ref` mounts dropped likewise), `internal/backend/gcp/build.go` and `internal/backend/gcp/catalog.go` (no `availableSecrets` for a switched repository), `internal/infra/spec.go` (the repository's `build_secrets` empty when switched), `deploy/terraform/terraform_test.go` (mirror guard), the tftest, golden plans, `deploy/terraform/secret_readers_test.go` and `docs/secrets-brokering/secret-readers.md` (E3, E6 leave for switched repositories), `.claude/rules/credentials-service.md`, the release's `### For operators`.
+- **Tests:** `TestBuildServedClassesMatchTheModule`, `TestEmptyBuildListChangesNothing`, `TestFilledBuildListDropsTheBuildAccessor`, `TestFilledBuildListDropsTheCheckMounts`, `TestSwitchedBuildRequestHasNoAvailableSecrets`; `TestUpdateLeavesARunInFlightRunning`.
+- **Command:** B1.8's Terraform command, then `go test ./internal/infra/ ./internal/backend/gcp/ ./deploy/terraform/ -run 'BuildServed|BuildList|TestSwitchedBuildRequest' -count=1 && GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestUpdateLeavesARunInFlightRunning' -count=1`
+- **Red step:** `TestBuildServedClassesMatchTheModule`: neither side exists.
+- **Depends on:** B4.8 PASS and the owner's go. **Serialize after** B3.8 (`providers.go`, `spec.go`, the rules file). **Reviewer tier:** opus + mandatory independent review.
+- **Commit:** `config, terraform: a switched repository's build account gives up its secrets`
+
+##### B4.10: Check 196 `--after-flip` — OWNER-RUN
+
+- **The owner types,** on the release carrying B4.9: `fugaro update`, `fugaro update --repo`, `fugaro image refresh`, `bash scripts/live-checks/check196.sh --after-flip`, and pastes the block back.
+- **Depends on:** B4.9 on a release.
+
+##### B4.11: Checks 195 and 196 recorded
+
+- **Files:** `docs/gcp-live-checklist.md`. **Command:** `go test ./internal/cli/ -run Docs -count=1`. **Red step:** none.
+- **Depends on:** B4.2, B4.8, B4.10 (one commit each). **Reviewer tier:** standard.
+- **Commit:** `docs(live-checks): Check 195's run` / `Check 196's run` / `Check 196's after-flip run`
+
+#### S5: shared project jobs at the service, then Bitbucket shared jobs (D505, C3.9; decisions D2078, D2079)
+
+##### B5.1: The service admits a coding run on a shared job, for its profile's repositories (D2078, F40, G21) — SECURITY-SENSITIVE
+
+- **Files:** `internal/credsvc/auth.go` (`AuthConfig.SharedJobAccounts` becomes `[]SharedJobAccount{Email, Profile, Repos}`, still asked about the verified `email` and never the `X-Fugaro-Run-Job` header, `auth.go:310-324`; `Identity.Profile`), `internal/credsvc/server.go` (`SharedJobAccountsFor`, `server.go:277`, answers the bound shape from the published profiles; the model path and the GitHub mint admit the class when the identity's repository is one of the profile's), `internal/credsvc/cascade.go` (`admittedAccounts` for a shared caller: the profile's accounts that the repository's admission also holds), `internal/credsvc/review_test.go` (its `TestSharedJobCallerIsStillRefusedOnEveryRoute` is replaced by the coding half's tests below), `internal/credsvc/sharedjobs_test.go` (`TestSharedAndReviewSetsAreDisjoint` and `TestSharedJobAccountsAreTheNamesProjectJobsDeploys` stay, reshaped for the bound type), `internal/credsvc/auth_test.go`, `internal/cli/credentials_serve.go` (wiring).
+- **Tests:** `TestSharedCodingCallerServedForAProfileRepository`, `TestSharedCodingCallerRefusedForARepositoryOutsideItsProfile`, `TestSharedCodingCallerAdmittedOnlyTheProfilesAccounts`, `TestSharedCodingCallerRefusedOnTheBitbucketRoute` (until B5.3), `TestSharedJobAccountsAreTheNamesProjectJobsDeploys`, `TestSharedAndReviewSetsAreDisjoint`, `TestReviewCallerUnchanged`.
+- **Command:** `go test ./internal/credsvc/ -run 'TestSharedCoding|TestSharedJobAccounts|TestSharedAndReview|TestReviewCaller|Cascade' -count=1 && go test ./internal/cli/ -run 'TestCredentialsServe' -count=1`
+- **Red step:** `TestSharedCodingCallerServedForAProfileRepository`: refused whole today.
+- **Depends on:** **D2078**. **Serialize after** open **#2237** (`auth.go`, `credentials_serve.go`), **#2162** and **#2202** (`server.go`, `sharedjobs_test.go`; #2202 also `review_test.go`), **MC6** and B2.1 (`cascade.go`). **Reviewer tier:** opus + mandatory independent review.
+- **Commit:** `credsvc: a coding run on a shared project job is served for its profile's repositories`
+
+##### B5.2: A shared job reaches the service, every mount kept (G17) — SECURITY-SENSITIVE
+
+- **Files:** `internal/cli/run.go` (`credentialsServiceLaunchEnv` hands the URL to a project job whose profile is switched, where `run.go:4594` refuses every `job != ""` today), `internal/cli/project_job_test.go` (`TestLaunchHandsTheServiceURLToASwitchedProjectJob`; `TestOAuthLaunchOntoASharedProjectJobIsRefusedBeforeLaunch` stays), `internal/infra/projectjobs.go` (the profile's switch: the installation has the service and the profile's auth is one it serves; the job's env carries nothing new), `internal/infra/projectjobs_test.go`, `deploy/terraform/gcp/modules/project/sa.tf` (the shared job account's `roles/run.invoker` on the service), `deploy/terraform/gcp/modules/project/variables.tf`, `deploy/terraform/gcp/roots/installation/tests/project_job.tftest.hcl`, `deploy/terraform/terraform_test.go`, `internal/infra/tf/testdata/golden/*`.
+- **Tests:** `TestLaunchHandsTheServiceURLToASwitchedProjectJob` and `TestLaunchKeepsAnUnswitchedProjectJobOffTheService` (`internal/cli/project_job_test.go`), `TestProjectJobKeepsItsMountsBeforeTheFlip` (`internal/infra/projectjobs_test.go`), `TestProjectJobAccountGetsTheInvokerGrant` (`deploy/terraform/terraform_test.go`), the tftest.
+- **Command:** B1.8's Terraform command for the `installation` root, then `go test ./internal/infra/ -run 'ProjectJob' -count=1 && go test ./deploy/terraform/ -run 'TestProjectJobAccountGetsTheInvokerGrant' -count=1 && GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestLaunchHands|TestLaunchKeeps|TestOAuthLaunchOntoASharedProjectJob' -count=1`
+- **Red step:** `TestLaunchHandsTheServiceURLToASwitchedProjectJob`: no URL today.
+- **Depends on:** B5.1. **Serialize after** **#2237** (`projectjobs_test.go`), **#2170**, **#2202**, **#2250**, **#2246**, **#2240** (`run.go`), B2.3 (`run.go`, `terraform_test.go`). **Reviewer tier:** opus + mandatory independent review.
+- **Commit:** `cli, terraform: a switched profile's shared job reaches the credentials service`
+
+##### B5.3: The Bitbucket proxy serves a shared job (G21) — SECURITY-SENSITIVE
+
+- **Files:** `internal/credsvc/bitbucketproxy.go` (the binding for a shared caller: the classified repository equals the identity's, is one of the profile's, and is admitted by the published block with `proxy: true`), `internal/credsvc/bitbucketproxy_test.go`, `internal/runner/project.go` (`proxiedBitbucket` drops the `project` refusal at `project.go:491`), `internal/runner/gitproxy_test.go`.
+- **Tests:** `TestBitbucketRouteServesASharedCallerForAProfileRepository`, `TestBitbucketRouteRefusesASharedCallerOutsideItsProfile`, `TestBitbucketRouteRefusesASharedCallerForAnUnproxiedRepository`, `TestProxiedSharedJobReadsNoToken`; `TestProxyFalseUnchanged` stays.
+- **Command:** `go test ./internal/credsvc/ -run 'TestBitbucketRoute' -count=1 && go test ./internal/runner/ -run 'TestProxied|TestProxyFalseUnchanged' -count=1 -timeout 20m`
+- **Red step:** `TestBitbucketRouteServesASharedCallerForAProfileRepository`: the shared caller is refused.
+- **Depends on:** B5.2. **Serialize after** **#2202** and **#2162** (`bitbucketproxy_test.go`). **Reviewer tier:** opus + mandatory independent review.
+- **Commit:** `credsvc, runner: a shared job's Bitbucket repository goes through the proxy`
+
+##### B5.4: SECURITY and the audit for S5 — SECURITY-SENSITIVE (security claims)
+
+- **Files:** `SECURITY.md` (a shared coding run is served for its profile's repositories; the residue D475), `website/content/security.md`, `docs/secrets-brokering/secret-readers.md` (E2), `internal/cli/docs_security_test.go`.
+- **Command:** `go run ./internal/clidoc && go test ./internal/cli/ -run Docs -count=1 && go test ./deploy/terraform/ -run 'TestEverySecretReader|TestSecretReadersDoc' -count=1`
+- **Red step:** the SECURITY pin before the sentence.
+- **Depends on:** B5.3. **Serialize after** B2.4. **Reviewer tier:** opus + mandatory independent review.
+- **Commit:** `SECURITY, docs: shared project jobs through the credentials service`
+
+##### B5.5: Check 197 written
+
+- **Files:** `scripts/live-checks/check197.sh` (new, with `--after-flip`), `scripts/live-checks/check197_test.sh` (new), `scripts/live_checks_test.go`, `docs/secrets-brokering/check197-steps.md` (new), `docs/gcp-live-checklist.md` (row and section 197), `docs/secrets-brokering/README.md`, `internal/cli/docs_secrets_brokering_test.go` (`TestDocsCheck197IsRegistered`).
+- **What it measures:** a GitHub profile and (after D2079) a Bitbucket profile of proxied sandbox repositories: a coding run on each shared job is served by the service; an identity for a repository outside the profile is refused; `--after-flip`: the shared job mounts no model credential (and, for Bitbucket, no token), and a run in flight at the re-apply finishes.
+- **Command:** `bash scripts/live-checks/check197_test.sh && go test ./scripts/ -run TestLiveCheckScripts -count=1 && go test ./internal/cli/ -run Docs -count=1`
+- **Red step:** `TestDocsCheck197IsRegistered` before the row exists.
+- **Depends on:** B5.3, B5.4. **Serialize after** B4.7. **Reviewer tier:** standard.
+- **Commit:** `live-checks: Check 197, shared project jobs through the credentials service, written`
+
+##### B5.6: Check 197 — OWNER-RUN
+
+- **The owner types,** on a release carrying B5.1–B5.5: `fugaro update`, `fugaro project policy publish`, then `bash scripts/live-checks/check197.sh --dry-run` and without it, and pastes the block back.
+- **Depends on:** B5.5 on a release.
+
+##### B5.7: The S5 flip — SECURITY-SENSITIVE, owner-gated
+
+- **Files:** `internal/config/providers.go` (`SharedJobServedClasses`, empty, then `{"model"}`), `internal/infra/projectjobs.go` (`projectAccountMount` mounts no model credential for a switched profile), `deploy/terraform/gcp/modules/project/sa.tf` and `job.tf` (the accessor and mount dropped), `deploy/terraform/terraform_test.go` (mirror guard), the installation tftest, golden plans, `deploy/terraform/secret_readers_test.go` and `docs/secrets-brokering/secret-readers.md` (E2), `.claude/rules/credentials-service.md`, the release's `### For operators`. The App key stays under `ServiceHeldSecretNames` (#907), G22.
+- **Tests:** `TestSharedJobServedClassesMatchTheModule`, `TestEmptySharedJobListChangesNothing`, `TestFilledSharedJobListDropsTheModelMounts`, `TestFilledSharedJobListKeepsTheAppKey`; `TestUpdateLeavesARunInFlightRunning`.
+- **Command:** B1.8's Terraform command for the `installation` root, then `go test ./internal/infra/ ./deploy/terraform/ -run 'SharedJobServed|SharedJobList' -count=1 && GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestUpdateLeavesARunInFlightRunning' -count=1`
+- **Red step:** `TestSharedJobServedClassesMatchTheModule`: neither side exists.
+- **Depends on:** B5.6 PASS and the owner's go. **Serialize after** B4.9 (`providers.go`, the rules file) and B5.2. **Reviewer tier:** opus + mandatory independent review.
+- **Commit:** `config, terraform: a switched profile's shared job gives up its model credentials`
+
+##### B5.8: Check 197 `--after-flip` — OWNER-RUN
+
+- **The owner types,** on the release carrying B5.7: `fugaro update` with a shared-job run in flight, `bash scripts/live-checks/check197.sh --after-flip`, and pastes the block back.
+- **Depends on:** B5.7 on a release.
+
+##### B5.9: Check 197's runs recorded
+
+- **Files:** `docs/gcp-live-checklist.md`. **Command:** `go test ./internal/cli/ -run Docs -count=1`. **Red step:** none.
+- **Depends on:** B5.6 (first commit), B5.8 (second). **Reviewer tier:** standard.
+- **Commit:** `docs(live-checks): Check 197's run` / `Check 197's after-flip run`
+
+**Then, in docs/bitbucket-workspace-token** (not re-planned here): **T2.2** depends on **B5.3**, and
+its "mounts the token" behaviour is what **D2079** decides (under (a) it deploys a shared Bitbucket job
+only for an all-proxied profile and mounts no token, after B5.7); **T2.4** depends on B5.3 and carries
+D1982's one sentence; **T2.6**'s phase-3 half and **T2.7** (Check 181) follow T2.2 there.
+
+#### Levels, edges and shared files for S2–S5
+
+**Edges:** B2.1→B2.2; {B2.2, B2.3}→B2.4; {B2.3, B2.4}→B2.5→B2.6→B2.7→B2.8; {B2.6, B2.8}→B2.9.
+B3.1→B3.2→B3.4; {B3.3, B3.4}→B3.5; {B3.4, B3.5}→B3.6→B3.7→B3.8→B3.9; {B3.7, B3.9}→B3.10.
+B4.1→B4.2→{B4.3, B4.4}; B3.2→B4.3; {B4.3, B4.4}→B4.5→B4.6; {B4.5, B4.6}→B4.7→B4.8→B4.9→B4.10;
+{B4.2, B4.8, B4.10}→B4.11. B5.1→B5.2→B5.3→B5.4; {B5.3, B5.4}→B5.5→B5.6→B5.7→B5.8; {B5.6, B5.8}→B5.9.
+Decisions: D2070→B2.1; D2071→{B2.2, B2.3}; D2072→{B2.3, B2.7}; D2073→B3.1; D2074→B3.3; D2075→B3.5;
+D2076, D2077→B4.3; D2078→B5.1; D2079→docs/bitbucket-workspace-token's T2.2. Outside edges: MC6→{B2.1,
+B5.1}; #2274, #2275→B2.2; #2166→{B2.3, B2.4, B3.3, B4.4}.
+
+| Slice | Level | Tasks (concurrent) |
+| --- | --- | --- |
+| S2 | 0 | B2.1, B2.3 |
+| S2 | 1 | B2.2 |
+| S2 | 2 | B2.4 |
+| S2 | 3 | B2.5 |
+| S2 | 4 | B2.6 (OWNER-RUN, on a release) |
+| S2 | 5 | B2.7, B2.9 (first commit) |
+| S2 | 6 | B2.8 (OWNER-RUN, on the next release) |
+| S2 | 7 | B2.9 (second commit) |
+| S3 | 0 | B3.1, B3.3 |
+| S3 | 1 | B3.2 |
+| S3 | 2 | B3.4 |
+| S3 | 3 | B3.5 |
+| S3 | 4 | B3.6 |
+| S3 | 5 | B3.7 (OWNER-RUN) |
+| S3 | 6 | B3.8, B3.10 (first commit) |
+| S3 | 7 | B3.9 (OWNER-RUN), then B3.10 (second commit) |
+| S4 | 0 | B4.1 |
+| S4 | 1 | B4.2 (OWNER-RUN, the gate) |
+| S4 | 2 | B4.3, B4.4 |
+| S4 | 3 | B4.5 |
+| S4 | 4 | B4.6 |
+| S4 | 5 | B4.7 |
+| S4 | 6 | B4.8 (OWNER-RUN) |
+| S4 | 7 | B4.9, B4.11 (first commits) |
+| S4 | 8 | B4.10 (OWNER-RUN), then B4.11 (last commit) |
+| S5 | 0 | B5.1 |
+| S5 | 1 | B5.2 |
+| S5 | 2 | B5.3 |
+| S5 | 3 | B5.4 |
+| S5 | 4 | B5.5 |
+| S5 | 5 | B5.6 (OWNER-RUN) |
+| S5 | 6 | B5.7, B5.9 (first commit) |
+| S5 | 7 | B5.8 (OWNER-RUN), then B5.9 (second commit) |
+
+The levels are **within** a slice. Across slices they run in D2080's order, and two slices may overlap
+only where the shared-files table below has no file written by both at the same time; where it does,
+the earlier slice's task goes first.
+
+**Critical path (D2080's order):** MC6 → B2.1 → B2.2 → B2.4 → B2.5 → B2.6 (owner) → B2.7 → B2.8
+(owner) → B2.9; then B5.1 → B5.2 → B5.3 → B5.4 → B5.5 → B5.6 (owner) → B5.7 → B5.8 (owner); then
+docs/bitbucket-workspace-token's T2.2. S3 (B3.1 → B3.2 → B3.4 → B3.5 → B3.6 → owner → B3.8 → owner)
+and S4 (B4.1 → owner gate → B4.3 → B4.5 → B4.6 → B4.7 → owner → B4.9 → owner) hang off it, with B4.3
+waiting on B3.2. Each slice is sequential where an interface forces it (a route before its caller, a
+caller before its check, a check before its flip); the owner-run checks and the releases between them
+are the long poles, not the code.
+
+**Shared files** (every file two of these tasks write; within a slice no level holds two writers):
+
+| File | Writers (slice/level) |
+| --- | --- |
+| `internal/credsvc/cascade.go` | B2.1 (S2/0), B5.1 (S5/0); MC6 first |
+| `internal/creds/boundary_test.go` | B2.1 (S2/0), B3.1 (S3/0) |
+| `internal/credsvc/wire.go` | B2.1 (S2/0), B3.2 (S3/1), B4.3 (S4/2) |
+| `internal/credsvc/server.go`, `audit.go`, `slip_test.go` | B3.2 (S3/1), B4.3 (S4/2), B5.1 (S5/0, `server.go` only) |
+| `internal/credsvc/auth.go`, `internal/cli/credentials_serve.go` | B4.3 (S4/2), B5.1 (S5/0) |
+| `internal/gateway/service.go` | B2.2 (S2/1), B3.4 (S3/2) |
+| `internal/runner/gateway.go`, `routing.go` | B2.2 (S2/1) only |
+| `internal/runner/runner.go` | B3.4 (S3/2) only |
+| `internal/infra/spec.go` | B2.3 (S2/0), B3.3 (S3/0), B3.8 (S3/6), B4.9 (S4/7) |
+| `internal/infra/readiness.go` | B2.3 (S2/0) only |
+| `internal/infra/projectjobs.go`, `projectjobs_test.go` | B5.2 (S5/1), B5.7 (S5/6) |
+| `internal/config/providers.go`, `.claude/rules/credentials-service.md` | B2.3 (S2/0, `providers.go` only), B2.7 (S2/5), B3.8 (S3/6), B4.9 (S4/7), B5.7 (S5/6) |
+| `internal/cli/run.go` | B2.3 (S2/0), B5.2 (S5/1) |
+| `internal/cli/recipes_skew.go`, `launch_budget.go`, `launch_budget_test.go` | B2.7 (S2/5), B3.8 (S3/6) |
+| `.claude/rules/credentials-service.md` | B2.3 (S2/0), then the flips (row above) |
+| `deploy/terraform/gcp/modules/workflow/sa.tf` | B2.3 (S2/0), B3.3 (S3/0), B3.8 (S3/6) |
+| `deploy/terraform/gcp/modules/project/sa.tf` | B5.2 (S5/1), B5.7 (S5/6) |
+| `deploy/terraform/gcp/modules/repo/build.tf` | B4.4 (S4/2), B4.9 (S4/7) |
+| `deploy/terraform/terraform_test.go`, the tftests, the golden plans | B2.3 (S2/0), B2.7 (S2/5), B3.3 (S3/0), B3.8 (S3/6), B4.4 (S4/2), B4.9 (S4/7), B5.2 (S5/1), B5.7 (S5/6) |
+| `internal/infra/tf/cover.go` | B3.3 (S3/0), B4.4 (S4/2) |
+| `deploy/terraform/secret_readers_test.go` | B3.3 (S3/0), B3.5 (S3/3), B4.9 (S4/7), B5.7 (S5/6) |
+| `docs/secrets-brokering/secret-readers.md` | B2.4 (S2/2), B2.7 (S2/5), B3.3 (S3/0), B3.5 (S3/3), B3.8 (S3/6), B4.6 (S4/4), B4.9 (S4/7), B5.4 (S5/3), B5.7 (S5/6) |
+| `SECURITY.md`, `website/content/security.md`, `internal/cli/docs_security_test.go` | B2.4 (S2/2), B3.5 (S3/3), B4.6 (S4/4), B5.4 (S5/3) |
+| `docs/gcp-live-checklist.md`, `docs/secrets-brokering/README.md`, `internal/cli/docs_secrets_brokering_test.go`, `scripts/live_checks_test.go` | B2.5 (S2/3), B2.9, B3.6 (S3/4), B3.10, B4.1 (S4/0), B4.7 (S4/5), B4.11, B5.5 (S5/4), B5.9 (`docs/gcp-live-checklist.md` only for the records) |
+| `internal/cli/doctor_brokering.go` | B2.4 (S2/2) only |
+
+**Open pull requests these tasks must serialize after** (`gh pr list --state open`, 2026-11-10):
+**#2166** (B1.13 part two, held on Check 191: `spec.go`, `readiness.go`, `providers.go`, `sa.tf`,
+`terraform_test.go`, the repo tftest, `secret-readers.md`, `doctor_brokering.go`, `SECURITY.md`, the
+rules file), **#2274** (MC5: `internal/runner/gateway.go`, `routing.go`, `runner.go`), **#2275** (W7:
+`internal/gateway/service.go`, `terraform_test.go`), **#2237** (DS2.1: `internal/credsvc/auth.go`,
+`credentials_serve.go`, `secret_readers_test.go`, `secret-readers.md`, `projectjobs_test.go`),
+**#2162** (DS3.1: `internal/credsvc/server.go`, `sharedjobs_test.go`, `bitbucketproxy_test.go`),
+**#2202** (AR0: `init_credentials.go`, `run.go`, `recipes_skew.go`, `sharedjobs_test.go`,
+`bitbucketproxy_test.go`, `docs/gcp-live-checklist.md`), **#2170** (IS1: `spec.go`, `readiness.go`,
+`run.go`), **#2282** and **#1994** (`spec.go`), **#2256** (`runner.go`), **#2250**, **#2246**, **#2240**
+(`run.go`), **#2270** and **#2183** (`SECURITY.md`, `docs/gcp-live-checklist.md`), **#2288** (DS3.5:
+T7, accepted with D2070–D2080: DS3.5 stays as built). None of them is a dependency of meaning except #2166 (the flip pattern R8 copies) and #2274 (MC5,
+which MC6 needs); the rest are one-file serializations.
+
+**Checks 193–197** (owner-run; 198–199 reserved and unused):
+
+| Check | What it measures | Written by | Run by |
+| --- | --- | --- | --- |
+| 193 | `api-key` and `oauth` through the service; a non-cascade Bitbucket repository proxied (F29); after the flip, no model mount and a run in flight finishes (U9) | B2.5 | the owner, B2.6 and B2.8 |
+| 194 | Workflow secrets fetched from the service; after the flip, no mount or accessor | B3.6 | the owner, B3.7 and B3.9 |
+| 195 | A Cloud Build step calls an IAM-only Cloud Run service as the build account (U4, U10) | B4.1 | the owner, B4.2 (the S4 gate) |
+| 196 | Builds and the image check through the service; after the flip, no build accessor | B4.7 | the owner, B4.8 and B4.10 |
+| 197 | Coding runs on shared jobs, GitHub and Bitbucket, through the service; after the flip, no model mount | B5.5 | the owner, B5.6 and B5.8 |
+
+**Release actions.** Each flip task (B2.7, B3.8, B4.9, B5.7) carries its release's `### For operators`
+entry in its own PR: "run `fugaro update`", plus, for B4.9, that `update` rebuilds the images behind
+its own confirmation. No other step is asked of an operator (HARD RULE).
 
 ## Decisions to tasks
 
 | Decision | Tasks |
 | --- | --- |
 | D490 | Slices table; B0.1–B0.5 in 0.13.0; S1's proxy chain in 0.15.0 (0.14.0 ships its inert and data-only pieces, owner, 2026-10-30); T1.1's pointer (the other plan) |
-| D491 | B0.1's exit column; B3.1; B4.1 |
+| D491 | B0.1's exit column; S3 (B3.1–B3.10); S4 (B4.1–B4.11) |
 | D492 | T1.1, T1.2 unchanged; B1.10 (D462 ends per repository) |
 | D493 | The re-planned S2 table; BW-T2.1, BW-T2.3 (amended), BW-T2.8; B1.4 replaces T2.9; B1.13 replaces T2.11 |
 | D494 | B1.1, B1.5, B1.6 (no token store task) |
 | D495 | B1.6, B1.7 |
 | D496 | B1.3, B1.4, B1.5 |
 | D497 | (a) B1.1 (as amended, O5); (b) none, deferred |
-| D498 | B2.1; B1.9's `model-key-in-agent` |
+| D498 | S2 (B2.1–B2.9); B1.9's `model-key-in-agent` |
 | D499 | B0.2 |
 | D500 | B1.8, B1.13, B1.14 |
 | D501/D502 | No minimum instances or probe in any task; B0.3's deployer read; B1.10 states the consequence; B1.7 (opt-in and `proxy: true` only) |
 | D503 | B0.3 (a); B1.9 (b)–(d) (`bitbucket-direct` on any opted-in installation) and the spec's "token invalid" |
 | D504 | B1.5 (G8); B1.10 (and the cancel window) |
-| D505 | B1.7 (per-repository only); B5.1 |
+| D505 | B1.7 (per-repository only); S5 (B5.1–B5.9) |
 | D506 | B1.2; B1.12 step 2 |
+| D2070 (answered 2026-11-10, as recommended) | B2.1 |
+| D2071 (answered 2026-11-10, as recommended) | B2.2, B2.3 |
+| D2072 (answered 2026-11-10, as recommended) | B2.3, B2.7 |
+| D2073 (answered 2026-11-10, as recommended) | B3.1 |
+| D2074 (answered 2026-11-10, as recommended) | B3.3 |
+| D2075 (answered 2026-11-10, as recommended) | B3.5 (E5's exit) |
+| D2076, D2077 (answered 2026-11-10, as recommended) | B4.3 |
+| D2078 (answered 2026-11-10, as recommended) | B5.1 |
+| D2079 (answered 2026-11-10, as recommended) | docs/bitbucket-workspace-token's T2.2, after B5.3 and B5.7 |
+| D2080 (answered 2026-11-10, as recommended) | The order of S2–S5 and the critical path of "Later slices, planned 2026-11-10" |
 
 ## Parallel execution
 
@@ -742,7 +1281,8 @@ writers):
 | 190 | git fetch, blobless clone and a >32 MiB push through a throwaway, IAM-only Cloud Run proxy; cold start; timeout (F13, F14, U2, U7, U8) | B0.4 | the owner, B0.5 |
 | 191 | S1 end to end before the flip; every refusal of G2–G4 and G12, audited; G8 | B1.11 | the owner, B1.12 |
 | 192 | After the flip: no mount, no accessor, runs still work | B1.11 | the owner, B1.14 |
-| 193–199 | Reserved and unused | — | — |
+| 193–197 | S2–S5's checks: see "Checks 193–197" under "Later slices, planned 2026-11-10" | B2.5, B3.6, B4.1, B4.7, B5.5 | the owner |
+| 198–199 | Reserved and unused | — | — |
 
 ## Risks
 

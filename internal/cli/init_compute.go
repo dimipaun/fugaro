@@ -17,15 +17,14 @@ import (
 
 // The compute stage: the Batch backend's installation-level provisioning
 // (design docs/design/compute-backend.md §3.2, §3.7, §8.1 task 6). It is the
-// owner's step, and it is behind --provision-batch: what it changes is not
-// what an installation needs, `backend: cloud-batch` stays refused by config
-// validation until the enable task (§8.1 task 9), and a run that never asks
+// owner's step, and it is behind --provision-batch: what it creates is money
+// and infrastructure `fugaro update` does not apply, and a run that never asks
 // for it never reaches this root.
 //
 // It is money and it is permanent — a preloaded boot image's Cloud Build, a
 // Cloud NAT's hours, a custom role and a scheduled job — so --yes cannot
-// cover it (the stage is registered noYes, and askTyped's own class refuses it
-// too) and its confirmation is the owner's own session: a person at a real
+// cover it (the stage is registered noYes, and the step is one no answer a run
+// carries reaches either) and its confirmation is the owner's own session: a person at a real
 // terminal is what applies it, and nothing is typed at them (D1540). A coding
 // agent's session is refused rather than left for the owner like a session
 // that merely cannot answer (D1555, Apply), and what it reads beside the
@@ -144,7 +143,7 @@ func (s *computeStage) Apply(ctx context.Context, _ initflow.Env) (initflow.Outc
 	}
 	if plan == nil {
 		s.changes = &infra.PlanCounts{}
-		fmt.Fprintln(r.w, "No changes: the compute backend's provisioning matches the plan.")
+		fmt.Fprintln(r.stageDetail(), "No changes: the compute backend's provisioning matches the plan.")
 		return initflow.Outcome{Detail: "No changes"}, nil
 	}
 	r.planBlock(plan)
@@ -377,14 +376,34 @@ func (s *computeStage) prepare(ctx context.Context) error {
 		schedulerRegion = r
 	}
 	spec := infra.ComputeSpec{
-		Project:            e.spec.Project,
-		ProjectNumber:      fmt.Sprint(number),
-		Region:             e.spec.Region,
-		SchedulerRegion:    schedulerRegion,
-		Network:            infra.DefaultNetwork(e.spec.Project),
-		Subnetwork:         infra.DefaultSubnetwork(e.spec.Project, e.spec.Region),
-		Names:              infra.ComputeNamesFor(),
-		ManageAPIs:         e.spec.ManageAPIs,
+		Project:         e.spec.Project,
+		ProjectNumber:   fmt.Sprint(number),
+		Region:          e.spec.Region,
+		SchedulerRegion: schedulerRegion,
+		Network:         infra.DefaultNetwork(e.spec.Project),
+		Subnetwork:      infra.DefaultSubnetwork(e.spec.Project, e.spec.Region),
+		Names:           infra.ComputeNamesFor(),
+		ManageAPIs:      e.spec.ManageAPIs,
+		// The launchers, and beside them the admins: this root's var.launchers
+		// is what roles/batch.jobsEditor and serviceAccountUser on the run
+		// accounts are for, and its var.operators hold actAs on the preload
+		// account and nothing else (modules/compute/iam.tf, design
+		// compute-backend §8.1 task 6). spec.Launchers is the list this run
+		// treats as launchers — the operators the derive builds, admins
+		// included, because an admin operates too — which is the same pair the
+		// installation and repository roots take and union themselves
+		// (infra.tfvars.go's launchersWithOperators).
+		//
+		// The admins are NOT subtracted back out of it. A member on both lists
+		// — what defaultMembers writes for a one-person installation, and
+		// where the migration's collapse to the highest role leaves every
+		// launcher who was also an operator — would lose roles/batch.jobsEditor
+		// relative to the shape before the rename, and an installation whose
+		// two lists hold the same person would provision a launcher list of
+		// nobody. The widening the other way (an admin who was not a launcher
+		// gaining the grant) is what the roles' own rank says, and this stage
+		// never applies it on --yes: it prints the plan and asks for the
+		// project's name typed at a real terminal.
 		Launchers:          e.spec.Launchers,
 		Operators:          e.spec.Operators,
 		RunAccounts:        runAccounts,

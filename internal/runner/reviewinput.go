@@ -291,7 +291,7 @@ func treeSizes(ctx context.Context, repo *gitops.Repo, rev string, paths []strin
 // safe: the bytes of a path that is never diffed are never carried, the cut's
 // own note tells the reviewer where to read the rest, and the review stage's
 // managed settings deny the reads that would put an image block in a request
-// (internal/agent/settings.go's deniedBinaryReads).
+// (internal/agent/settings.go's imageReadExtensions).
 func reviewTextDiff(ctx context.Context, repo *gitops.Repo, rng string, paths []string) (string, []string, error) {
 	var b strings.Builder
 	var binary []string

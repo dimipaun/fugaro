@@ -23,13 +23,28 @@ type Request struct {
 	Model              string
 	MaxBudgetUSD       float64
 	JSONSchema         string // optional structured-output schema
-	// SettingSources, when non-empty, is passed as --setting-sources: the
-	// settings levels Claude Code loads for this session. A review-mode
-	// stage passes ReviewSettingSources, the user level alone, so the
-	// reviewed checkout's own project and local settings never load. It is
-	// the flag and not a settings key: setting-source selection has no
+	// SettingSources is passed as --setting-sources: the settings levels
+	// Claude Code loads for this session. A review-mode stage passes
+	// ReviewSettingSources, the user level alone, so the reviewed
+	// checkout's own project and local settings never load. It is the flag
+	// and not a settings key: setting-source selection has no
 	// managed-settings form at all.
+	//
+	// nil means "say nothing", and that is the flag's absence, which is
+	// Claude Code's own default set of levels. A non-nil empty slice means
+	// "no level at all" and is passed as an empty value, which is the only
+	// spelling of that: the flag with nothing after it. The distinction is
+	// the security-relevant one — a stage that must load no settings
+	// source (the triage judge, F25/F29) would silently load the user's
+	// own settings if its empty list were dropped as an empty flag.
 	SettingSources []string
+	// Tools is passed as --tools: the built-in tools the session may use,
+	// nil for the CLI's default set and a non-nil empty slice for none at
+	// all, spelled the same way and for the same reason as
+	// SettingSources. A stage that must change nothing uses the empty
+	// slice: a judge with the coding tools could edit the checkout it was
+	// asked only to read (F25).
+	Tools []string
 	// StrictMCPConfig passes --strict-mcp-config: only servers named by
 	// --mcp-config are used and every other MCP configuration is ignored. A
 	// review-mode stage sets it and passes no --mcp-config at all, so the
@@ -118,8 +133,11 @@ func Args(req Request) []string {
 	if req.JSONSchema != "" {
 		args = append(args, "--json-schema", req.JSONSchema)
 	}
-	if len(req.SettingSources) > 0 {
+	if req.SettingSources != nil {
 		args = append(args, "--setting-sources", strings.Join(req.SettingSources, ","))
+	}
+	if req.Tools != nil {
+		args = append(args, "--tools", strings.Join(req.Tools, ","))
 	}
 	if req.StrictMCPConfig {
 		args = append(args, "--strict-mcp-config")

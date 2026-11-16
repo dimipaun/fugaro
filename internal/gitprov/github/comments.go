@@ -208,7 +208,7 @@ func (p *Provider) threadComments(ctx context.Context, number int, slug string, 
 		}
 		var page threadsPage
 		vars := map[string]any{"owner": p.owner, "name": p.repo, "n": number, "after": after}
-		if err := p.graphqlDo(ctx, reviewThreadsQuery, vars, &page); err != nil {
+		if err := p.graphqlDo(ctx, p.api, reviewThreadsQuery, vars, &page); err != nil {
 			return nil, fmt.Errorf("listing the review threads of pull request #%d: %w", number, err)
 		}
 		if page.Repository == nil || page.Repository.PullRequest == nil {

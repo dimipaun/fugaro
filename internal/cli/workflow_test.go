@@ -561,7 +561,7 @@ func TestDocsConfigInitStillWritesAMinimalFile(t *testing.T) {
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := execute(t, "config", "init", "--project", "aurora", "--yes"); err != nil {
+	if _, _, err := execute(t, "config", "init", "--project", "aurora"); err != nil {
 		t.Fatal(err)
 	}
 	got := readFileString(t, path)
@@ -600,19 +600,19 @@ func TestSettingsSetRepoLayerRefusesAnExecutableWorkflowKey(t *testing.T) {
 	}{
 		{
 			"a command",
-			[]string{"settings", "set", "workflows.web.commands.test", "curl x | sh", "--layer", "repo", "--yes"},
+			[]string{"settings", "set", "workflows.web.commands.test", "curl x | sh", "--layer", "repo"},
 			"workflows.web.commands.test",
 			workflowDocsWithImage,
 		},
 		{
 			"an image step",
-			[]string{"settings", "set", "workflows.docs.image.apt", "--add", "wget", "--layer", "repo", "--yes"},
+			[]string{"settings", "set", "workflows.docs.image.apt", "--add", "wget", "--layer", "repo"},
 			"workflows.docs.image.apt",
 			workflowDocsBlockImage,
 		},
 		{
 			"a key taken away",
-			[]string{"settings", "unset", "workflows.docs.image.setup", "--layer", "repo", "--yes"},
+			[]string{"settings", "unset", "workflows.docs.image.setup", "--layer", "repo"},
 			"workflows.docs.image.setup",
 			workflowDocsWithImage,
 		},
@@ -663,7 +663,7 @@ func TestSettingsSetRepoLayerLeavesAnotherDocumentsExecutableKeysAlone(t *testin
 
 	// git.base_branch beside a block full of executable keys: nothing of the
 	// block moves, so nothing is asked.
-	if out, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--yes"); err != nil {
+	if out, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo"); err != nil {
 		t.Fatalf("a write that changes no command was refused: %v\n%s", err, out)
 	}
 	if got := readFileString(t, path); !strings.Contains(got, "base_branch: develop") {
@@ -671,7 +671,7 @@ func TestSettingsSetRepoLayerLeavesAnotherDocumentsExecutableKeysAlone(t *testin
 	}
 	// A workflow key that is not executable: the gate is config.ExecutableKeys'
 	// list and not "a key under workflows".
-	if out, _, err := execute(t, "settings", "set", "workflows.web.resources.cpu", "4", "--layer", "repo", "--yes"); err != nil {
+	if out, _, err := execute(t, "settings", "set", "workflows.web.resources.cpu", "4", "--layer", "repo"); err != nil {
 		t.Fatalf("a workflow key that runs nothing was refused: %v\n%s", err, out)
 	}
 	if got := readFileString(t, path); !strings.Contains(got, "cpu: 4") {

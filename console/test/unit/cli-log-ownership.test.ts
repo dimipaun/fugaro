@@ -26,6 +26,7 @@ import { SPAWN_LOG_ENV } from '../../src/main/spawnlog'
 import { CliSource } from '../../src/source/cli'
 import type { ChildSpawner } from '../../src/main/spawn'
 import { installStub } from './stub'
+import { itHostRoute } from '../support/hostRoute'
 
 const counts = vi.hoisted(() => ({ opened: 0, closed: 0 }))
 
@@ -60,7 +61,7 @@ describe('the spawn log a source opens for itself', () => {
     counts.closed = 0
   })
 
-  it('is closed when create refuses a binary whose version is not one', async () => {
+  itHostRoute('is closed when create refuses a binary whose version is not one', async () => {
     const stub = installStub(directory(), { commands: { version: { stdout: 'not a version\n', code: 1 } } })
     await expect(
       CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: ENV }),
@@ -84,7 +85,7 @@ describe('the spawn log a source opens for itself', () => {
     expect(counts.closed).toBe(counts.opened)
   })
 
-  it('is closed by close(), once', async () => {
+  itHostRoute('is closed by close(), once', async () => {
     const stub = installStub(directory(), {
       commands: { version: { stdout: '1.4.2\n' }, 'runs ls': { stdout: '{}\n' } },
     })
@@ -98,7 +99,7 @@ describe('the spawn log a source opens for itself', () => {
 })
 
 describe('a log the caller injected', () => {
-  it('is left open by a live feed that ends, so the next child still gets its line', async () => {
+  itHostRoute('is left open by a live feed that ends, so the next child still gets its line', async () => {
     // Review round 5 of PR 478: `startSidecar`'s `finish()` closed the writer it
     // was handed, so the first live feed that ended ended the log for every
     // child after it -- three spawns, two lines, against design section 5.1 rule

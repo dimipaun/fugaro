@@ -455,6 +455,15 @@ func raiseAdvice(rec *runstore.Record, key, yamlName, nodeName string) string {
 		return fmt.Sprintf("merge a change to %s in `fugaro.yaml` on the default branch (a raise on the run's own branch is ignored)", yamlName)
 	case policy.SourceBranch:
 		return fmt.Sprintf("raise %s in `fugaro.yaml` on this run's branch (it cannot exceed the project config's ceiling or the default branch's value)", yamlName)
+	case policy.SourceChain:
+		// The figure is the chain's, and a chain's limit is the root launch's
+		// own number, which lives in that run's stored task and nowhere else
+		// (D1046): it is not in any fugaro.yaml this run could write, and a
+		// launch can only tighten what a chain has left (D1052). Raising it is
+		// the L9 rewrite of the root's task, with the reason recorded — the
+		// one supported path, which is why this advice names the run rather
+		// than a file.
+		return fmt.Sprintf("raise %s in the run that began this chain (the chain's limit is the root launch's figure, and no fugaro.yaml and no later launch can raise it)", yamlName)
 	}
 	if key == policy.KeyPerRunUSD {
 		return fmt.Sprintf("raise %s in the project config and run `fugaro update`", nodeName)

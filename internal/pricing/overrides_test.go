@@ -8,8 +8,14 @@ import (
 )
 
 func TestOverridesRoundTrip(t *testing.T) {
+	// One entry writes an image rate and the other leaves it out:
+	// FUGARO_MODEL_PRICES is the third carrier of model_prices (D2001), so
+	// the round trip has to keep an explicit 0 a ceiling the owner wrote and
+	// an absent member absent — omitempty must not drop the first, and
+	// nothing may turn the second into a 0.
+	zero := int64(0)
 	o := Overrides{
-		"claude-alpha-1": {InputPerM: 4.4, OutputPerM: 22, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.05, WebSearchPer1k: 10},
+		"claude-alpha-1": {InputPerM: 4.4, OutputPerM: 22, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.05, WebSearchPer1k: 10, ImageTokens: &zero},
 		"claude-new-9":   {InputPerM: 3, OutputPerM: 15, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.1, LongContext: &Tier{AboveInputTokens: 200_000, InputPerM: 6, OutputPerM: 22.5}},
 	}
 	s, err := o.Env()
@@ -66,6 +72,7 @@ func TestOverridesRejectBad(t *testing.T) {
 		"missing input":     `{"claude-alpha-1":{"output_per_m":20}}`,
 		"missing output":    `{"claude-alpha-1":{"input_per_m":4}}`,
 		"input above 1000":  `{"claude-alpha-1":{"input_per_m":1000.5,"output_per_m":20}}`,
+		"negative images":   `{"claude-alpha-1":{"input_per_m":4,"output_per_m":20,"image_tokens":-1}}`,
 		"multiplier 11":     `{"claude-alpha-1":{"input_per_m":4,"output_per_m":20,"cache_write_1h":11}}`,
 		"unknown field":     `{"claude-alpha-1":{"input_per_m":4,"output_per_m":20,"batch":0.5}}`,
 		"alias key":         `{"sonnet":{"input_per_m":4,"output_per_m":20}}`,
@@ -97,31 +104,43 @@ func TestOverridesRejectBad(t *testing.T) {
 		"search":    {InputPerM: 4, OutputPerM: 20, WebSearchPer1k: math.NaN()},
 		"tier zero": {InputPerM: 4, OutputPerM: 20, LongContext: &Tier{InputPerM: 8, OutputPerM: 30}},
 	} {
-		if _, err := (Overrides{"claude-alpha-1": r}).Env(); err == nil {
+		ov := Override{Rates: r}
+		if _, err := (Overrides{"claude-alpha-1": ov}).Env(); err == nil {
 			t.Errorf("Env() accepted %s", name)
 		}
-		if _, err := testTable().With(Overrides{"claude-alpha-1": r}); err == nil {
+		if _, err := testTable().With(Overrides{"claude-alpha-1": ov}); err == nil {
 			t.Errorf("With() accepted %s", name)
 		}
+	}
+	// The image ceiling is held to the same rule on every entry point, not
+	// only where the wire is parsed: a negative one would shrink the
+	// reservation's bound.
+	negative := int64(-1)
+	bad := Overrides{"claude-alpha-1": {Rates: opusLike(), ImageTokens: &negative}}
+	if _, err := bad.Env(); err == nil {
+		t.Error("Env() accepted a negative image ceiling")
+	}
+	if _, err := testTable().With(bad); err == nil {
+		t.Error("With() accepted a negative image ceiling")
 	}
 }
 
 func TestWithOverridesReplacesModel(t *testing.T) {
 	tb := testTable()
-	replacement := Rates{InputPerM: 4.4, OutputPerM: 22, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.1}
-	added := Rates{InputPerM: 1, OutputPerM: 2, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.1}
+	replacement := Override{Rates: Rates{InputPerM: 4.4, OutputPerM: 22, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.1}}
+	added := Override{Rates: Rates{InputPerM: 1, OutputPerM: 2, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.1}}
 	got, err := tb.With(Overrides{"claude-alpha-1": replacement, "claude-new-9": added})
 	if err != nil {
 		t.Fatal(err)
 	}
 	m, ok := got.Lookup("claude-alpha-1@20260101")
-	if !ok || !reflect.DeepEqual(m.Rates, replacement) {
+	if !ok || !reflect.DeepEqual(m.Rates, replacement.Rates) {
 		t.Errorf("replaced through its alias: %+v %v", m.Rates, ok)
 	}
 	if m.ContextTokens != 1_000_000 || m.ImageTokens != 6000 || m.MaxOutputTokens != 128_000 {
 		t.Errorf("the model's limits must survive a price override: %+v", m)
 	}
-	if n, ok := got.Lookup("claude-new-9"); !ok || !reflect.DeepEqual(n.Rates, added) || n.ImageTokens != 0 {
+	if n, ok := got.Lookup("claude-new-9"); !ok || !reflect.DeepEqual(n.Rates, added.Rates) || n.ImageTokens != 0 {
 		t.Errorf("added: %+v %v (images unpriced for a model the table doesn't know)", n, ok)
 	}
 	// An override keyed by an alias replaces the model it names.
@@ -129,7 +148,7 @@ func TestWithOverridesReplacesModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m, _ := got2.Lookup("claude-alpha-1"); !reflect.DeepEqual(m.Rates, replacement) {
+	if m, _ := got2.Lookup("claude-alpha-1"); !reflect.DeepEqual(m.Rates, replacement.Rates) {
 		t.Errorf("alias key: %+v", m.Rates)
 	}
 	if len(got2.Models) != len(tb.Models) {
@@ -148,8 +167,8 @@ func TestWithOverridesReplacesModel(t *testing.T) {
 }
 
 func TestWithRefusesTwoKeysForOneModel(t *testing.T) {
-	a := Rates{InputPerM: 1, OutputPerM: 5, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.1}
-	b := Rates{InputPerM: 9, OutputPerM: 45, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.1}
+	a := Override{Rates: Rates{InputPerM: 1, OutputPerM: 5, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.1}}
+	b := Override{Rates: Rates{InputPerM: 9, OutputPerM: 45, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.1}}
 	// The ID and its alias both price the same model: whichever the map
 	// visited last would win, so the pair is refused, every time.
 	for i := 0; i < 50; i++ {

@@ -159,7 +159,11 @@ func TestRunPRPrintsPRBranch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := markDone + " launch " + task.ShortRun(fuID) + " (follow-up of PR #7, after " + task.ShortRun(rootID) + ")\n  branch fugaro/" + rootID + "\n  logs https://"
+	// The chain line is the launch reply's own (L7, D1056): a follow-up joins
+	// the pull request's chain, whose root is the run the branch is named for,
+	// and the two runs are that run and the one this launch started — the count
+	// `runs show` of the new run reads once its record links it into the chain.
+	want := markDone + " launch " + task.ShortRun(fuID) + " (follow-up of PR #7, after " + task.ShortRun(rootID) + ")\n  branch fugaro/" + rootID + "\n  chain " + rootID + " (2 runs, UNENFORCED)\n  logs https://"
 	if !strings.HasPrefix(out, want) {
 		t.Fatalf("output:\n%s\nwant prefix:\n%s", out, want)
 	}

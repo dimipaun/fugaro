@@ -174,12 +174,13 @@ export const RIGOR_ABSENT = '-'
  * names, keyed by run id.
  *
  * **It is the Live screen's join, and the reason one is needed.** `watch --json`
- * carries no rigor block -- the live shape is `JSONRun`, the block lives on the
- * record (`runview.Row`, which `runs ls --json` and `diagnose --json` both
- * answer with) -- so a Live row's mode is read from the run list and matched to
- * the row by id. This is the one place a `runs ls` row becomes a key: the id is
- * the row's `run`, or its `run_id` where the CLI wrote the older spelling (the
- * same pair `projects.ts` reads, in the same order).
+ * carries a run's mode and layer (`JSONRun`'s own `mode`/`from`, CLI 0.23.0) and
+ * nothing else of the block -- the block lives on the record (`runview.Row`,
+ * which `runs ls --json` and `diagnose --json` both answer with) -- so a Live
+ * row's rigor is read from the run list and matched to the row by id. This is
+ * the one place a `runs ls` row becomes a key: the id is the row's `run`, or
+ * its `run_id` where the CLI wrote the older spelling (the same pair
+ * `projects.ts` reads, in the same order).
  *
  * A row that names no run, or whose block this reader will not show, is simply
  * **absent from the index** -- a run the index does not know is drawn with no

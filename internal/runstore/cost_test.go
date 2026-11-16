@@ -2,6 +2,7 @@ package runstore
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -145,5 +146,62 @@ func TestCostCacheFieldsRoundTrip(t *testing.T) {
 	if data2, _ := json.Marshal(Cost{ModelUSD: 1}); strings.Contains(string(data2), "cache_read_tokens") ||
 		strings.Contains(string(data2), "cache_write_tokens") {
 		t.Errorf("a zero cache total was not omitted: %s", data2)
+	}
+}
+
+// TestCostModelTokensRoundTrip (F8, G1.1): the run's cost keeps its tokens per
+// model, which is what a repricing of the run reads -- the counts a run's own
+// calls used, model by model, so `fugaro estimate` can price them again on
+// another model. The wire spelling is pinned because readers outside this
+// binary draw result.json, and a wire field never changes meaning.
+func TestCostModelTokensRoundTrip(t *testing.T) {
+	c := Cost{ModelUSD: 1.23, ModelTokens: map[string]ModelTokenCounts{
+		"claude-opus-5-5":  {Input: 1200, Output: 340, CacheRead: 40000, CacheWrite5m: 900, CacheWrite1h: 100},
+		"claude-haiku-4-5": {Input: 10, Output: 5},
+	}}
+	data, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got Cost
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.ModelTokens, c.ModelTokens) {
+		t.Fatalf("round trip: got %+v, want %+v", got.ModelTokens, c.ModelTokens)
+	}
+	var wire struct {
+		ModelTokens map[string]map[string]int64 `json:"model_tokens"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]int64{"input": 1200, "output": 340, "cache_read": 40000, "cache_write_5m": 900, "cache_write_1h": 100}
+	if !reflect.DeepEqual(wire.ModelTokens["claude-opus-5-5"], want) {
+		t.Fatalf("model_tokens[claude-opus-5-5] = %v, want %v", wire.ModelTokens["claude-opus-5-5"], want)
+	}
+	// A model the path could not split, or that read no cache, carries its
+	// zeroes rather than a short entry: every model's entry has the same five
+	// counts, so a reader never has to tell absent from zero.
+	if len(wire.ModelTokens["claude-haiku-4-5"]) != len(want) {
+		t.Fatalf("model_tokens[claude-haiku-4-5] = %v, want all %d counts", wire.ModelTokens["claude-haiku-4-5"], len(want))
+	}
+}
+
+// TestCostModelTokensOmittedWhenEmpty (G1.1): a run that recorded no per-model
+// tokens writes no key at all, so every record written before the field
+// existed, and every run whose path filled nothing, keeps its bytes.
+func TestCostModelTokensOmittedWhenEmpty(t *testing.T) {
+	for name, c := range map[string]Cost{
+		"nil":   NewCost(1, 0, BasisAPIList),
+		"empty": {ModelUSD: 1, ModelTokens: map[string]ModelTokenCounts{}},
+	} {
+		data, err := json.Marshal(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), "model_tokens") {
+			t.Errorf("%s map is written: %s", name, data)
+		}
 	}
 }

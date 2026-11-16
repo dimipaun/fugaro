@@ -46,13 +46,18 @@ the existing CI on `main` for the post-flight suite. The migration default is
 **Pro** (D19). What this branch builds changes two things for a repository that
 configures nothing: its runs resolve and record Pro, and Pro's per-run budget
 default is 0.85 of the deployed cap (T6.1). It does **not** change what "ready"
-means yet: `runner.Decide` takes no mode until Slice 3 (the run loop that applies
-the mode) is built, and that is the slice that will change readiness for an
-unconfigured repository. The loud migration note plus the one-line pin
-`rigor.default: critical` are what a repository uses to keep today's behaviour;
-the security-sensitive tier (the D18 floors) stays **Critical**, so every claim
-that a cut "relaxes nothing" or is "byte-identical to today" holds for
-**Critical mode only**.
+means for such a repository: Slice 3 is built — the run loop applies the mode, so
+the modes decide readiness today — but `runner.Decide` reads a mode's blocking row
+only where the repository opted in (`rigor.Config.Configured`: a `rigor:` block, or
+a project `defaults.rigor`), and a repository that configures nothing still blocks
+on every finding it did not fix. The loud migration note plus the one-line pin
+`rigor.default: critical` are what a repository uses to keep today's behaviour.
+The security-sensitive tier is **not a mode floor in this tree**: T1.5's built-in
+sensitive-path floors are unbuilt, and what the runner guarantees a
+security-sensitive diff today is review level 3, forced on a matching path
+whatever mode the run resolved — the escalation raises a level and never the mode.
+Every claim that a cut "relaxes nothing" or is "byte-identical to today" is
+therefore about **Critical mode only**.
 
 The owner's 2026-10-20 spec was written without seeing this repository, so
 several of its premises moved work: the top-level `review:` configuration it
@@ -148,20 +153,31 @@ operators` section:
 
 - **Not implemented.** Not in full: the decisions are answered and the plan's
   [OWNER APPROVAL GATE](implementation-plan.md#owner-approval-gate) is passed, and
-  part of the plan is built — Slice 0, Slice 1's mode layers and where they show
-  (the run record, `fugaro runs ls`, `fugaro diagnose`, the pull request's status
-  line, and the run's own `fugaro run --mode`/`--path` request), T2.1–T2.3 of
-  Slice 2 (a score the run loop does not act on yet), the backlog (T4.3–T4.7),
-  T5.1 (the task field that request travels in, `task.Spec.Rigor` and
-  `task.Spec.Paths`, with its image-skew gate), T5.2 (a follow-up keeps the mode
-  its pull request recorded and may only raise it) and the per-mode budgets
-  (T6.1). The rest is not: Slice 3, which is what would make the mode decide
-  readiness, Slice 5's Hotfix gate, ready PR and recorded follow-up task
-  (T5.3–T5.5), and Slices 7 and 8.
-- **Not a product document.** When the modes ship they get one —
-  `docs/rigor-modes.md`, the plan's T7.1 — and this folder is where the design
-  and the plan live until then. The two are separate on purpose: a folder that is
-  a plan ages into a design record, and a product document is a promise.
+  most of the plan is built — Slice 0; Slice 1's mode layers and everywhere they
+  show (the run record, `fugaro runs ls`, `fugaro diagnose`, the pull request's
+  status line, and the run's own `fugaro run --mode`/`--path` request); Slice 2's
+  score **and Slice 3, which is what puts it to work** — where the repository
+  opted in, the run loop splits each round's findings by the mode's own table and
+  settles the pull request on the same answer, so the mode decides what a run
+  blocks, what it files and whether the pull request it opens is ready or stays a
+  draft; the backlog (T4.3–T4.7); T5.1 (the task field that request travels in,
+  `task.Spec.Rigor` and `task.Spec.Paths`, with its image-skew gate); T5.2 (a
+  follow-up keeps the mode its pull request recorded and may only raise it); the
+  per-mode budgets (T6.1, and T6.2's `fugaro budget preview --mode`); and T7.1,
+  the product document this folder's promise now lives on
+  ([docs/rigor-modes.md](../rigor-modes.md)). What is left is the plan's own list:
+  T1.5's built-in sensitive-path floors — the security tier's own Critical floor,
+  and the one task the plan hands to an operator rather than to a run —
+  Slice 5's Hotfix gate, its ready PR and the recorded follow-up task
+  (T5.3–T5.5) — the gate being the one piece
+  [docs/rigor-modes.md](../rigor-modes.md) names as missing — T6.3's per-mode
+  `typical:` line, and the documentation tasks (T7.2, T8.1, T8.3).
+- **Not a product document — the product document is
+  [`docs/rigor-modes.md`](../rigor-modes.md).** This folder is where the design,
+  the reconciliation and the plan live, and the two are separate on purpose: a
+  folder that is a plan ages into a design record, and a product document is a
+  promise. The promise is written on that page, for a reader who wants to use
+  the modes rather than to build them.
 - **Not the record of what is built.** This folder is documents: the slices say
   what would touch what, and the commits on the branch are what wrote each one.
 

@@ -61,7 +61,7 @@ func repoCapsOf(t *testing.T, f *budgetFixture, slug string) map[string]any {
 func TestBudgetSetBareRepoIsTheCheckout(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	f.Checkout(t, "")
-	out, _, err := execute(t, "budget", "set", "--repo", "--daily", "5", "--yes")
+	out, _, err := execute(t, "budget", "set", "--repo", "--daily", "5")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,9 +103,9 @@ func TestBudgetSetBareRepoMatchesTheExplicitForm(t *testing.T) {
 		}
 		return doneInRE.ReplaceAllString(out, "Done in 0s"), f.db.Value(budget.PathCapsRepo(appSlug))
 	}
-	bare, bareNode := run("--repo", "--daily", "5", "--yes")
-	named, namedNode := run("--repo", "acme/app", "--daily", "5", "--yes")
-	eq, eqNode := run("--repo=acme/app", "--daily", "5", "--yes")
+	bare, bareNode := run("--repo", "--daily", "5")
+	named, namedNode := run("--repo", "acme/app", "--daily", "5")
+	eq, eqNode := run("--repo=acme/app", "--daily", "5")
 	if bare != named {
 		t.Errorf("`--repo` printed\n%s\nand `--repo acme/app` printed\n%s", bare, named)
 	}
@@ -125,7 +125,7 @@ func TestBudgetSetRepoValueWinsOverTheCheckout(t *testing.T) {
 	f.addRepo(t, "acme/other")
 	f.Checkout(t, "")
 	other := mustSlug("github", "acme/other")
-	if _, _, err := execute(t, "budget", "set", "--repo", "acme/other", "--daily", "5", "--yes"); err != nil {
+	if _, _, err := execute(t, "budget", "set", "--repo", "acme/other", "--daily", "5"); err != nil {
 		t.Fatal(err)
 	}
 	if repoCapsOf(t, f, other) == nil {
@@ -161,7 +161,7 @@ func TestBudgetSetRepoFlagRefusesATypo(t *testing.T) {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
 			f := newBudgetFixture(t, "")
 			f.Checkout(t, "")
-			_, _, err := execute(t, append([]string{"budget", "set"}, append(tc.args, "--daily", "5", "--yes")...)...)
+			_, _, err := execute(t, append([]string{"budget", "set"}, append(tc.args, "--daily", "5")...)...)
 			if err == nil || ExitCode(err) != ExitUserError {
 				t.Fatalf("err = %v, want a user error", err)
 			}
@@ -199,7 +199,7 @@ func TestBudgetSetBareRepoWithoutACheckoutRefuses(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newBudgetFixture(t, "")
 			tc.setup(t)
-			_, _, err := execute(t, "budget", "set", "--repo", "--daily", "5", "--yes")
+			_, _, err := execute(t, "budget", "set", "--repo", "--daily", "5")
 			if err == nil || ExitCode(err) != ExitUserError {
 				t.Fatalf("err = %v, want a user error", err)
 			}
@@ -220,9 +220,9 @@ func TestBudgetSetBareRepoWithoutACheckoutRefuses(t *testing.T) {
 // spelled, and one of them must never be picked for the person.
 func TestBudgetSetRepoAndGlobalStillRefuseTogether(t *testing.T) {
 	for _, args := range [][]string{
-		{"--global", "--repo", "--daily", "5", "--yes"},
-		{"--global", "--repo", "acme/app", "--daily", "5", "--yes"},
-		{"--defaults", "--repo", "--daily", "5", "--yes"},
+		{"--global", "--repo", "--daily", "5"},
+		{"--global", "--repo", "acme/app", "--daily", "5"},
+		{"--defaults", "--repo", "--daily", "5"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			f := newBudgetFixture(t, "")
@@ -242,7 +242,7 @@ func TestBudgetSetRepoAndGlobalStillRefuseTogether(t *testing.T) {
 	// A bare --repo alone is one scope, and needs no other flag to be one.
 	f := newBudgetFixture(t, "")
 	f.Checkout(t, "")
-	if _, _, err := execute(t, "budget", "set", "--repo", "--daily", "5", "--yes"); err != nil {
+	if _, _, err := execute(t, "budget", "set", "--repo", "--daily", "5"); err != nil {
 		t.Fatalf("a bare --repo on its own was not read as a scope: %v", err)
 	}
 }
@@ -267,7 +267,7 @@ func TestBudgetKillResumeBareRepoIsTheCheckout(t *testing.T) {
 	if f.db.Value(budget.PathKillGlobal) != nil {
 		t.Error("a bare --repo kill set the project-wide switch")
 	}
-	out, _, err = execute(t, "budget", "resume", "--repo", "--yes")
+	out, _, err = execute(t, "budget", "resume", "--repo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +290,7 @@ func TestBudgetKillBareRepoWithoutACheckoutRefuses(t *testing.T) {
 		t.Run(verb, func(t *testing.T) {
 			f := newBudgetFixture(t, "")
 			t.Chdir(t.TempDir())
-			_, _, err := execute(t, "budget", verb, "--repo", "--yes")
+			_, _, err := execute(t, "budget", verb, "--repo")
 			if err == nil || ExitCode(err) != ExitUserError {
 				t.Fatalf("err = %v, want a user error", err)
 			}
@@ -440,7 +440,7 @@ func TestBudgetRepoFlagHelpSaysWhichSubcommands(t *testing.T) {
 func TestBudgetSetRepoAcceptsThisCheckoutsPath(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	f.Checkout(t, "")
-	out, _, err := execute(t, "budget", "set", "--repo", ".", "--daily", "5", "--yes")
+	out, _, err := execute(t, "budget", "set", "--repo", ".", "--daily", "5")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -489,7 +489,7 @@ func TestBudgetSetRepoPathIsJudgedAgainstTheProjectTheFlagsSelect(t *testing.T) 
 	// (aurora, the fixture's) is what a --repo path would be judged against.
 	t.Chdir(t.TempDir())
 	cfg := writeOtherProjectConfig(t, f, "acme/other")
-	out, _, err := execute(t, "budget", "set", "--config", cfg, "--repo", checkout, "--daily", "5", "--yes")
+	out, _, err := execute(t, "budget", "set", "--config", cfg, "--repo", checkout, "--daily", "5")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -516,7 +516,7 @@ func TestBudgetSetRepoRefusesAPathOutsideTheProject(t *testing.T) {
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "https://github.com/acme/other.git")
 	t.Chdir(dir)
-	_, _, err := execute(t, "budget", "set", "--repo", ".", "--daily", "5", "--yes")
+	_, _, err := execute(t, "budget", "set", "--repo", ".", "--daily", "5")
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want a user error", err)
 	}

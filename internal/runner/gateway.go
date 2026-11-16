@@ -23,12 +23,161 @@ import (
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/tier"
 )
 
 // VertexBudgetRefusal is what a Vertex workflow under a budget in enforce
 // mode is told: the gateway can't yet be relied on to cap Vertex spend.
 // fugaro validate, fugaro update and the runner's bootstrap all say it.
 const VertexBudgetRefusal = "Vertex budgets are not supported yet: use budget.mode observe or off for this repository (see docs/gcp-live-checklist.md, check 20)"
+
+// VertexPoolRefusal is what a pool holding a Vertex member is told under
+// budget.mode: enforce (D1626, F8). It is VertexBudgetRefusal with the reason
+// the pool is refused added in front, so the remedy — the same one — stays
+// spelled once: a pool is admitted where a Vertex run is, and refused where a
+// Vertex run is refused.
+//
+// It is a function and not a constant because the sentence names the member
+// the pool lists, which is the operator's own key: a reader told only that
+// "the pool is refused" would have to find which of its members did it.
+func VertexPoolRefusal(pool, member string) string {
+	return fmt.Sprintf("the pool %s lists the Vertex credential %s, and %s", pool, member, VertexBudgetRefusal)
+}
+
+// The exhaustion signals, one row per credential type (F5, D1634): what a
+// credential of each type says when it has nothing left to serve with, and the
+// one table "this credential is spent" is read from. A failover moves on
+// nothing else — an attempt that ended on a signal here was refused by the
+// credential that served it and not by anything about the work, so the next
+// member is what a failover would serve the stage with — and this table is
+// therefore what a pool's failover stands on, wherever one is built.
+//
+// Where one is built today is not this path. A pool on the runner path cannot
+// serve one stage's model with one member and then the next (poolchoice.go's
+// head works that out from the routes the gateway accepts), so ordered
+// failover belongs to the credentials service (MC6); what this tree reads the
+// table for is the OAuth subscription allowance's own sentence, by way of
+// signalPhrases and oauthLimitPhrases (subscriptionUsageLimit). The reading
+// helpers below are the table's Phrase half; the status and the error type a
+// failover would ask of a row are recorded beside it, and their callers are
+// the tests that pin every row until one is built.
+//
+// F5 is unverified (docs/model-crafts/reconciliation.md §5): the exact set of
+// statuses and bodies each provider returns on exhaustion is not something
+// this tree can observe, and the table is deliberately narrow for that reason,
+// leaning the safe way the phrases it inherited from oauthLimitPhrases do. A
+// signal it does not know leaves the stage failing with the agent's own words
+// quoted, while a signal it wrongly knows would move the owner's run off a
+// credential that was answering.
+//
+// Two halves of one signal sit in a row because they arrive by different roads:
+//
+//   - Status and Type are what the upstream answered with, and they are what
+//     the gateway relays — a provider route's error as the status and the API
+//     error type (internal/gateway's providerError), a direct Anthropic answer
+//     verbatim. No code here reads them: the runner never holds an upstream
+//     answer, only the agent's result text. They are the row's own statement
+//     of the signal, and TestPoolExhaustionSignals is what consumes them — it
+//     builds each row's upstream answer from them and asserts that the text
+//     the gateway makes of it is one this table reads. A status a row claims
+//     and a phrase that answer does not produce is a row the test refuses.
+//   - Phrase is what the attempt's own text says about it, matched as a
+//     substring of the lowercased text, and it is the half a reader of the
+//     table takes: the OAuth row's phrases are read by the runner through
+//     signalPhrases (oauthLimitPhrases, subscriptionUsageLimit), and the rows
+//     of every type are read by credentialExhaustedText where a failover is
+//     built. A row with no Phrase is a signal this table records and does not
+//     claim to read: Vertex answers with Google's own error body, which
+//     reaches the agent verbatim, and no phrase here guesses
+//     its wording — the stage then fails with those words quoted, which is the
+//     direction to fail in. A row with no Status is a phrase no status
+//     carries: the OAuth subscription allowance is spent inside a session that
+//     is answering normally, and the only witness is the CLI's own sentence
+//     about it.
+//
+// A credential type absent from the table has no signal at all, and an answer
+// from it is never read as exhaustion.
+var exhaustionSignals = map[string][]exhaustionSignal{
+	config.CredentialTypeClaudeOAuth: {
+		{Status: 429, Type: "rate_limit_error", Phrase: `"type":"rate_limit_error"`,
+			Why: "the subscription's rate limit"},
+		{Phrase: "claude ai usage limit", Why: "the subscription's usage limit"},
+		{Phrase: "hit your limit", Why: "the subscription's usage limit"},
+	},
+	config.CredentialTypeAnthropic: {
+		{Status: 429, Type: "rate_limit_error", Phrase: `"type":"rate_limit_error"`,
+			Why: "the key's rate limit"},
+		{Status: 529, Type: "overloaded_error", Phrase: `"type":"overloaded_error"`,
+			Why: "Anthropic is overloaded"},
+	},
+	config.CredentialTypeOpenRouter: {
+		{Status: 429, Type: "rate_limit_error", Phrase: `"type":"rate_limit_error"`,
+			Why: "the provider's rate limit"},
+		{Status: 402, Type: "invalid_request_error", Phrase: "the provider answered with status 402",
+			Why: "the provider's account is out of credit"},
+	},
+	config.CredentialTypeVertex: {
+		{Status: 429, Type: "rate_limit_error", Why: "the project's quota"},
+		{Status: 503, Type: "overloaded_error", Why: "Vertex is overloaded"},
+	},
+}
+
+// exhaustionSignal is one way one credential type says it is spent.
+type exhaustionSignal struct {
+	// Status is the HTTP status the upstream answers with, 0 for a signal
+	// that is not a status at all.
+	Status int
+	// Type is the API error type that status arrives under, "" when the
+	// status has none of its own.
+	Type string
+	// Phrase is matched as a substring of the lowercased attempt text, "" for
+	// a signal whose wording this table does not claim to know.
+	Phrase string
+	// Why names the signal as a person reads it, for the line that says which
+	// signal moved a run.
+	Why string
+}
+
+// credentialExhaustedText reports whether an attempt's own text says the
+// credential of this type is spent. It is the table's Phrase half as a yes or
+// no, asked by whoever is deciding whether to move an attempt off a credential
+// — a failover, where one is built (the runner path's is not: see the table's
+// head) — and it is closed on purpose: the phrases are shapes rather than
+// English, for the reason the phrases it inherited record.
+func credentialExhaustedText(typ, text string) bool {
+	return exhaustionWhy(typ, text) != ""
+}
+
+// exhaustionWhy names the signal an attempt's text carries, "" when the text
+// carries none: credentialExhaustedText's answer as a clause, so a caller that
+// has to say which signal moved an attempt off a credential has the table's
+// own words for it rather than a second reading of the text.
+func exhaustionWhy(typ, text string) string {
+	if text == "" {
+		return ""
+	}
+	lower := strings.ToLower(text)
+	for _, s := range exhaustionSignals[typ] {
+		if s.Phrase != "" && strings.Contains(lower, s.Phrase) {
+			return s.Why
+		}
+	}
+	return ""
+}
+
+// signalPhrases are the text shapes the credential type's row records, in the
+// order it records them: the table read as a list of phrases, so a reader that
+// has to name the shapes themselves (oauthLimitPhrases) takes them from here
+// rather than restating them.
+func signalPhrases(typ string) []string {
+	var out []string
+	for _, s := range exhaustionSignals[typ] {
+		if s.Phrase != "" {
+			out = append(out, s.Phrase)
+		}
+	}
+	return out
+}
 
 // coderPinPath is where config's own checks point a problem with the coder
 // pin: the first of internal/config's pinPaths, the string every
@@ -195,18 +344,131 @@ func (r *run) reviewClassRun() bool {
 // rules all ask one function, so no reader can answer it differently. The auth
 // it asks about is the run's model path's (modelAuth), never the file's own:
 // the class is what decides where a review container's calls go.
+//
+// An api-key or oauth run on the switch is the one addition (B2.2, F30):
+// GatewayOn cannot answer for it — an oauth auth is not one the gateway ever
+// carried, and an api-key auth is carried for a run that holds the key, which
+// this one does not — so the run's own switch is asked beside it, and only in
+// the modes that start a gateway at all. A run whose mode is off is refused in
+// bootstrap rather than left with no gateway and no credential (D2071,
+// applyRouting), so this arm is never the one that decides such a run's fate.
 func (r *run) gatewayOn() bool {
-	return GatewayOn(r.modelAuth(), r.spend.Mode)
+	return GatewayOn(r.modelAuth(), r.spend.Mode) || (r.serviceSwitched() && r.spend.On())
+}
+
+// serviceSwitched reports whether this run's model calls go through the
+// installation's credentials service because its repository is on the switch
+// (B2.2, F30): its auth is one the service serves (ServiceSwitchedAuth) and
+// this job's environment carries the service's URL
+// (credentialsServiceURLEnv). The URL is the whole of it — it is what the
+// installation's own root hands a switched repository's job (B2.3, D2072), and
+// the flip list (config.ServiceServedAuths) is not read here on purpose: it is
+// empty until B2.7 fills it, and a run keyed on it would ignore the URL that
+// arrived first, which is exactly the rollout D2072 orders.
+//
+// A local run is never switched (D149, as for cascade): `fugaro exec` runs on
+// the developer's own credentials, has no installation identity and no path to
+// a private service, so a developer whose environment happens to carry the
+// variable is not sent through one.
+func (r *run) serviceSwitched() bool {
+	return !r.d.Local && ServiceSwitchedAuth(r.modelAuth()) && envLookup(r.d.Env, credentialsServiceURLEnv) != ""
+}
+
+// servedAuth is the auth this run's model path is spelled as for the arms that
+// know the four auths and nothing about the switch: agent.BuildEnv and
+// agent.GatewayVars build the agent's environment from it, and the record's
+// per-stage ServedBy is named from it.
+//
+// A switched run is spelled cascade, for the reason a review class run is
+// (modelAuth): every arm the switch needs already exists for that auth — no
+// credential of the job's is mounted or handed over, the gateway holds the
+// per-run token Claude Code presents, and the upstream is the credentials
+// service — and the auths it is switched *from* name the opposite in
+// internal/agent: an oauth auth with a gateway is refused there
+// ("auth: oauth never goes through the gateway"), and an api-key auth with a
+// gateway keeps ANTHROPIC_API_KEY's mount as the credential the agent's calls
+// are made with, which is the one thing a switched run does not have. So
+// internal/agent keeps every refusal and fence it has, and the switch is
+// spelled where the run's own auth is read for the environment, exactly as the
+// class is.
+func (r *run) servedAuth() string {
+	if r.serviceSwitched() {
+		return config.AuthCascade
+	}
+	return r.modelAuth()
+}
+
+// serviceSwitchModeRefusal is D2071's refusal of a switched repository whose
+// installation has the budget off: the mode is the switch's own condition,
+// because the gateway is what reaches the service and the gateway exists only
+// in observe and enforce. The remedy is the operator's, either way: raise the
+// mode, or take the repository off the switch from its own checkout.
+func (r *run) serviceSwitchModeRefusal() error {
+	mode := r.spend.Mode
+	if mode == "" {
+		mode = policy.ModeOff
+	}
+	return fmt.Errorf("agent.auth is %s and this job carries the credentials service's URL (%s), so this repository is on the switch, and this installation's budget mode is %s: the service is reached through the gateway, which only budget.mode %s or %s starts, so this run has no way to the credential the installation serves it and does not fall back to one of its own (D2071, D143) — set budget.mode to %s or %s in the project policy and publish it (fugaro project policy publish), or take this repository off the switch (fugaro update --repo) and its runs keep their own credential", r.modelAuth(), credentialsServiceURLEnv, mode, policy.ModeObserve, policy.ModeEnforce, policy.ModeObserve, policy.ModeEnforce)
 }
 
 // gateway is where the agent's model calls go, nil until the gateway runs.
 func (r *run) gateway() *agent.Gateway { return r.gwAgent }
+
+// GatewayStageLimitFunc builds the gateway's per-stage governor for one run
+// (plan T7.2, D331): the governance the run resolved, the tier it was
+// dispatched at and the run's own cap, which is the figure a stage budget is a
+// fraction of. The limits themselves are governance's and live in
+// ee/governance (D527, D530); the gateway knows only the hook.
+type GatewayStageLimitFunc func(g policy.Governance, t tier.Tier, cap pricing.Micros) gateway.StageLimit
+
+// gatewayStageLimitFunc is the installed builder. The core ships none, and a
+// gateway started by an untagged build has no StageLimit at all: it enforces
+// the run's spend cap, the lease's sub-cap and the stage's pinned models and no
+// per-stage budget, exactly as it did before the hook existed (D522, G10).
+var gatewayStageLimitFunc GatewayStageLimitFunc
+
+// SetGatewayStageLimit installs the gateway's stage-limit builder, refusing a
+// second call: the edition of a build is decided once, by ee/register, and a
+// builder that could be replaced after it would be a way to drop a tagged
+// binary's stage budgets. A nil builder is refused for the same reason a nil
+// function is in SetStage: it would silently mean "this build enforces
+// nothing", which is what not calling this at all already says.
+func SetGatewayStageLimit(f GatewayStageLimitFunc) error {
+	if gatewayStageLimitFunc != nil {
+		return errors.New("runner: the gateway stage limit is already set")
+	}
+	if f == nil {
+		return errors.New("runner: the gateway stage limit needs a builder")
+	}
+	gatewayStageLimitFunc = f
+	return nil
+}
+
+// gatewayStageLimit is what startGateway hands the gateway: the governor the
+// run's own governance makes, or nil in a build that carries no builder.
+//
+// It is read once, at start, and never replaced: the limits are the ones the
+// run resolved and the tier it was dispatched at, both of which are settled by
+// then (resolvePolicy runs before the gateway starts), and the cap is the run's
+// own — a stage budget is a fraction of it, so a run whose cap is 0 (observe
+// with no cap at all) has no stage budget to enforce either.
+func (r *run) gatewayStageLimit() gateway.StageLimit {
+	f := gatewayStageLimitFunc
+	if f == nil {
+		return nil
+	}
+	return f(r.policy.Governance, r.spec.Tier, r.spend.Cap)
+}
 
 // startGateway starts the run's gateway and makes the agent's environment
 // point at it. The real credential stays here.
 func (r *run) startGateway(ctx context.Context) error {
 	s := r.spend
 	o := gateway.Options{Prices: s.Prices, Cap: s.Cap, Log: r.d.Log, EndStageWait: r.d.GatewayStageWait}
+	// The run's own governance, resolved a stage before this: the stage
+	// budgets, the review ratio and the fan-out stop the gateway enforces per
+	// stage (T7.2). It is nil in a build that carries no limits.
+	o.StageLimit = r.gatewayStageLimit()
 	o.Mode = gateway.Observe
 	if s.Mode == "enforce" {
 		o.Mode = gateway.Enforce
@@ -276,7 +538,18 @@ func (r *run) startGateway(ctx context.Context) error {
 // service's review class's and the job holds none, so an upstream built from
 // the review job's own file — oauth, whose arm is refused here — is exactly
 // what must not happen.
+//
+// An api-key or oauth run on the switch is the service arm too, and it is
+// asked first (B2.2, F30): the switch replaces this run's own credential with
+// the service's, so the api-key arm below — which is the mounted key, the very
+// credential the switch takes the repository off (F31, D2072) — must not be
+// reached for it. What is left of the run's own auth is the declaration
+// serviceUpstream makes, which is the whole reason the auth is still read
+// here.
 func (r *run) gatewayUpstream(ctx context.Context) (gateway.Upstream, error) {
+	if r.serviceSwitched() {
+		return r.serviceUpstream()
+	}
 	up := gateway.Upstream{BaseURL: r.d.GatewayUpstream}
 	switch r.modelAuth() {
 	case "api-key":
@@ -326,12 +599,21 @@ func cascadeLocalRefusal() error {
 	return fmt.Errorf("agent.auth is %s and this is a local run: %s runs on the developer's own credentials and never through the credentials service (D149). Use agent.auth api-key or oauth locally", config.AuthCascade, execName)
 }
 
-// serviceUpstream is the credentials service's upstream for a cascade run
-// (C1.15, D135): the service's URL from the job's environment, and the two
-// identities every call carries -- the job's Google ID token, minted from
-// the metadata server for the service's own URL, and the run's own Firebase
-// ID token. No credential of the job's is anywhere in it: the whole point of
-// the cascade is that the job holds none (D143).
+// serviceUpstream is the credentials service's upstream (C1.15, D135): the
+// service's URL from the job's environment, and the two identities every call
+// carries -- the job's Google ID token, minted from the metadata server for the
+// service's own URL, and the run's own Firebase ID token. No credential of the
+// job's is anywhere in it: the whole point of the cascade is that the job holds
+// none (D143).
+//
+// Two runs reach it: a cascade run (and, through the same arm, a review class
+// run, whose model path is spelled cascade), and an api-key or oauth run whose
+// repository is on the switch (B2.2, F30). The second declares what it is —
+// its auth, and for oauth the account it was launched on — because the service
+// holds the call to the record `fugaro update` wrote for that repository and
+// refuses a declaration the record does not name (D2070 (a), B2.1). The
+// declaration is a statement and never evidence, and it is the runner's: the
+// gateway drops any the agent sent (service.go's serviceUpstream).
 //
 // Everything it refuses, it refuses before a call is made, because each of
 // these is a run that cannot be served at all:
@@ -340,16 +622,18 @@ func cascadeLocalRefusal() error {
 //     the developer's own environment, has no installation identity and no
 //     network path to a private service, and gains nothing by being routed
 //     through one. A cascade auth locally is a mistake in the file, said so
-//     rather than reached for.
+//     rather than reached for, and a switched run is not a local one at all
+//     (serviceSwitched).
 //   - a job with no credentials service. The installation has not opted in
 //     (D147), so there is no service to call and no credential anywhere this
 //     run may use.
 //   - a run with no budget identity. The run's own token is what the service
 //     verifies the run with (C1.10); without it the service can only refuse,
-//     and a cascade run is always admitted by the budget backend (C1.19), so
-//     this is a fact about how the run was started and not about the service.
+//     and a run on this upstream is always admitted by the budget backend
+//     (C1.19), so this is a fact about how the run was started and not about
+//     the service.
 //   - a test upstream. Deps.GatewayUpstream redirects the api-key and vertex
-//     kinds to a stand-in; a cascade run's destination is the installation's
+//     kinds to a stand-in; this upstream's destination is the installation's
 //     own service and nothing else, so a test that set both is told rather
 //     than silently sent to the service.
 //
@@ -366,16 +650,16 @@ func (r *run) serviceUpstream() (gateway.Upstream, error) {
 	}
 	url := envLookup(r.d.Env, credentialsServiceURLEnv)
 	if url == "" {
-		return gateway.Upstream{}, fmt.Errorf("starting the gateway: agent.auth is %s and this job has no credentials service: %s is not set, so the installation has not opted into one (D147) and this run has no credential of its own to fall back to (D143)", config.AuthCascade, credentialsServiceURLEnv)
+		return gateway.Upstream{}, fmt.Errorf("starting the gateway: agent.auth is %s and this job has no credentials service: %s is not set, so the installation has not opted into one (D147) and this run has no credential of its own to fall back to (D143)", r.modelAuth(), credentialsServiceURLEnv)
 	}
 	if r.d.GatewayUpstream != "" {
-		return gateway.Upstream{}, fmt.Errorf("starting the gateway: a cascade run's upstream is the installation's own credentials service (%s), not a test upstream", credentialsServiceURLEnv)
+		return gateway.Upstream{}, fmt.Errorf("starting the gateway: a run whose auth is %s has the installation's own credentials service (%s) as its upstream, not a test upstream", r.modelAuth(), credentialsServiceURLEnv)
 	}
 	r.mu.Lock()
 	sess := r.sess
 	r.mu.Unlock()
 	if sess == nil {
-		return gateway.Upstream{}, errors.New("starting the gateway: a cascade run has no run identity: the budget backend is what admitted it, and the credentials service verifies the run by the identity that admitted it")
+		return gateway.Upstream{}, fmt.Errorf("starting the gateway: a run whose auth is %s has no run identity: the budget backend is what admitted it, and the credentials service verifies the run by the identity that admitted it", r.modelAuth())
 	}
 	job, err := r.jobName()
 	if err != nil {
@@ -387,17 +671,40 @@ func (r *run) serviceUpstream() (gateway.Upstream, error) {
 		// above -- but an upstream that reports no job is one the gateway
 		// refuses anyway (validate), and a run that got here with none
 		// should stop where the reason is known rather than there.
-		return gateway.Upstream{}, errors.New("starting the gateway: a cascade run has no Cloud Run job name to report")
+		return gateway.Upstream{}, fmt.Errorf("starting the gateway: a run whose auth is %s has no Cloud Run job name to report", r.modelAuth())
 	}
-	return gateway.Upstream{
-		Kind:    gateway.KindService,
-		BaseURL: url,
-		Service: &gateway.Service{
-			Job:        job,
-			RunIDToken: sess.IDToken(),
-			IDToken:    func(ctx context.Context) (string, error) { return metadataIDToken(ctx, r.d.Env, url) },
-		},
-	}, nil
+	svc := &gateway.Service{
+		Job:        job,
+		RunIDToken: sess.IDToken(),
+		IDToken:    func(ctx context.Context) (string, error) { return metadataIDToken(ctx, r.d.Env, url) },
+	}
+	// The slip this run claimed at its start (DS1.5): the gateway presents it
+	// on every call it proxies, which is how a cascade run is served a
+	// per-user, pool-owned or shared credential at all (D1933, R9). A run
+	// that holds none — an installation whose service has no slip routes, a
+	// claim that did not land — sends none, and the service decides.
+	if hold := r.slipHold(); hold != nil {
+		svc.SlipID, svc.SlipClaim = hold.id, hold.secret
+	}
+	up := gateway.Upstream{Kind: gateway.KindService, BaseURL: url, Service: svc}
+	if auth := r.modelAuth(); ServiceSwitchedAuth(auth) {
+		// What this run's own repository goes out on, declared so the service
+		// can hold the call to that repository's record (D2070 (a), B2.1). A
+		// cascade run declares nothing: the record the service narrows it to
+		// is its own repository's already, and "" is the contract's "no
+		// declaration" (credsvc.RequestFromHTTP).
+		up.AuthMode = auth
+		if auth == "oauth" {
+			// The account this run was launched on, spelled as a message
+			// spells one: the run's own selection, "" being the account a run
+			// that named none uses (config.DefaultClaudeAccount). It is what
+			// the service reads the repository's accounts against, so a run
+			// launched on an account that repository's record does not name is
+			// refused rather than served another's.
+			up.Account = selectedName(r.launchAccount())
+		}
+	}
+	return up, nil
 }
 
 // execName is what a local invocation is called, for the sentences that have
@@ -545,14 +852,21 @@ func (r *run) beginGatewayStage(name string) {
 
 // stageSpec is the set the gateway admits while a stage runs: the model the
 // stage's own pins name (stageModel — a review level's own model is its
-// stage's, L4.5), the background model, and the stage's output limit per call.
-// A set that named the role slot where the pins name a level's own model would
-// refuse every call of the stage as not pinned for it.
+// stage's, L4.5), the background model, the run's vision slot and the stage's
+// output limit per call. A set that named the role slot where the pins name a
+// level's own model would refuse every call of the stage as not pinned for it.
+// The vision slot is carried for the stages a coder-role pin does not cover —
+// the reviewer's, whose model is never moved (D2004) — where an image the
+// stage's own model cannot reserve is still refused, and what the slot changes
+// is the sentence the owner reads (the gateway's image refusal, V4, D2009). A
+// coder-role stage runs the vision model outright (applyVision, V7), so its
+// slot is the answer to a question the stage no longer asks.
 func (r *run) stageSpec(name string) gateway.Stage {
 	return gateway.Stage{
 		Name:            name,
 		Model:           r.stageModel(name),
 		Background:      r.backgroundModel(),
+		Vision:          r.cfg.Agent.VisionModel(),
 		MaxOutputTokens: r.cfg.Agent.MaxOutputFor(stageRole(name)),
 	}
 }
@@ -706,7 +1020,14 @@ func gatewayHalt(gh gateway.Halt) runstore.Halt {
 	if scope == "" {
 		scope = "run"
 	}
-	return runstore.Halt{Reason: runstore.HaltReason(gh.Reason), Scope: scope, At: gh.At.UTC(), Detail: gh.Detail}
+	return runstore.Halt{Reason: runstore.HaltReason(gh.Reason), Scope: scope, At: gh.At.UTC(), Detail: gh.Detail,
+		// The workspace's own marker travels with the halt and nowhere else
+		// (gateway.Halt.WorkspaceRefusal): the gateway read it off the
+		// refusal the workspace's credentials service answered, so this is
+		// the service's statement about itself and not something the run
+		// inferred. It is carried into the record verbatim, and the runner
+		// decides nothing with it.
+		WorkspaceRefusal: gh.WorkspaceRefusal}
 }
 
 // closeGateway stops the gateway, once, and takes the run's model cost from
@@ -734,6 +1055,11 @@ func (r *run) closeGateway() {
 	// what the splits (model_by, route_by) are built from.
 	r.gwUsed, r.gwNotional = led.Used, led.Notional
 	r.gwCacheRead, r.gwCacheWrite = led.CacheReadTokens, led.CacheWriteTokens
+	// The run's token counts by model are the ledger's, like the totals
+	// beside them and for the same reason: a call that settled after its
+	// stage's wait ran out is in them (G1.2, F8). The two are the same calls'
+	// tokens, so a reader that sums these entries gets exactly those totals.
+	r.modelTokens = modelTokenCounts(led.ModelTokens)
 	// The run's own model figure is the ledger's totals plus the stages the
 	// ledger never saw, an account stage's own among them (P11, P12): the
 	// ledger's figure alone would drop them from the record here, at the last
@@ -784,10 +1110,19 @@ func (r *run) checkManagedDirWritable() error {
 // so an infra_error), an api-key run that enforces without a cap halts (a
 // policy, so a halt), and a run through the gateway needs prices for its
 // models and a managed settings directory it can write.
-func (r *run) checkBudget() error {
+func (r *run) checkBudget(ctx context.Context) error {
 	auth, s := r.cfg.Agent.Auth, r.spend
 	if auth == "vertex" && s.Mode == "enforce" {
 		return errors.New(VertexBudgetRefusal)
+	}
+	// A pool one of the run's crafts goes out on that lists the built-in
+	// Vertex credential is refused here for VertexBudgetRefusal's own reason:
+	// those calls are the project's own GCP service, so the run above this
+	// line's own case cannot cap them either (D1626, F8).
+	if s.Mode == "enforce" {
+		if reason := r.vertexPoolRefusal(ctx); reason != "" {
+			return errors.New(reason)
+		}
 	}
 	// With the backend the caps are the database's too, and the session has
 	// already judged them (Admit): an enforcing run with none halted there.
@@ -800,6 +1135,12 @@ func (r *run) checkBudget() error {
 	// repository and api-key auth, whatever the mode: refused before any
 	// call, naming the rule.
 	if err := r.checkProviderModels(); err != nil {
+		return err
+	}
+	// A pool every member of which serves the stage's model as written
+	// (F23, D1637): judged here, before any stage, and not at the stage that
+	// would find out.
+	if err := r.checkPoolModels(ctx); err != nil {
 		return err
 	}
 	// The allow-list bounds the models whatever the credential or the mode. The
@@ -820,6 +1161,12 @@ func (r *run) checkBudget() error {
 	priced := func(a config.Agent) []config.Problem { return config.CheckPins(a, s.Prices) }
 	if ps := r.checkLevels(priced); len(ps) > 0 {
 		return refusal("the models can't be priced under the budget", ps)
+	}
+	// The run's images, judged with the pins above: a coder that can't read
+	// one is refused here, before any stage spends, when the task names a
+	// picture — and warned about when the repository alone tracks one (V5).
+	if err := r.checkImages(ctx); err != nil {
+		return err
 	}
 	for _, w := range config.PinWarnings(r.cfg.Agent, s.Prices) {
 		r.d.Log.Warn("model pin: "+w.String(), "code", w.Code)

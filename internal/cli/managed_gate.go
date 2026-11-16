@@ -40,15 +40,15 @@ import (
 //	gate, err := readManagedGate(ctx, env, facts)         // marks, ownership
 //	if err != nil { return err }
 //	// the command judges ITS OWN document with ITS OWN rules, and builds a
-//	// managed.Converge from the class, the bytes it read and the rules
-//	m, err := gate.admit(ctx, class, conv)                // re-read, verdict
+//	// managed.Converge from the bytes it read and the rules
+//	m, err := gate.admit(ctx, conv)                       // re-read, verdict
 //	if err != nil { return err }                          // the gate refused it
-//	if !initflow.CanConfirmManaged(class, cond, m) { ... }// the command's own rule
+//	if !initflow.GateStandsIn(cond, m) { ... }            // the command's own rule
 //	// the command's write
 //	if err := gate.recorded(ctx); err != nil { return err }// after the write
 //
 // Why the verdict is handed back as an initflow.Managed rather than as a
-// boolean. That value is the rule D55 already has (initflow.CanConfirmManaged),
+// boolean. That value is the rule D55 already has (initflow.GateStandsIn),
 // and its zero value is "not managed", so a command that never read the gate —
 // or that ignored the error and carried on — keeps today's refusal exactly. A
 // helper that answered "you may proceed" as an error-or-nil would be a second
@@ -124,8 +124,8 @@ type managedGateFacts struct {
 	// the budget database already asks.
 	Declined string
 	// Identity is the account the write ran as, when the command knows better
-	// than the credentials do (the deployer account of `managed apply`); an
-	// empty one is filled from the credentials in force.
+	// than the credentials do; an empty one is filled from the credentials in
+	// force, which is what every command in the gate's own set passes.
 	Identity string
 	// AgentMarker is the session's own environment marker, "" for a person at a
 	// terminal. It is recorded rather than trusted: it says what the session
@@ -152,9 +152,12 @@ type managedGate struct {
 	facts managedGateFacts
 	// marks is the creation fact the most recent read answered with: the one
 	// readManagedGate made, and then the one admit re-read immediately before
-	// the write (D1024). It is what the record names, so the fact a run acted
-	// under is the one in force at the write and not the one in force when the
-	// session started.
+	// the write (D1024), or the one Record re-read for a step that writes
+	// through internal/managed. It is what the record names, so the fact a run
+	// acted under is the one in force at the write and not the one in force
+	// when the session started; only a read that answered managed replaces it,
+	// so a re-read that answered "not managed", or that did not answer at all,
+	// leaves the fact the step acted under in place.
 	marks managed.MarkFacts
 	// managed is whether both marks were there at readManagedGate.
 	managed bool
@@ -228,17 +231,18 @@ func readManagedGate(ctx context.Context, env managedGateEnv, facts managedGateF
 //
 // The value it returns is what the step's confirmation is decided under, field
 // for field: whether the project is managed, whether the gate admitted THIS
-// document, and whether the whole-project inventory fell back. The class is
-// passed beside the verdict because D1026's rule is not this file's to restate:
-// a class the gate does not cover keeps the confirmation it has today whatever
-// the plan looked like, and initflow.CanConfirmManaged is where that is decided.
+// document, and whether the whole-project inventory fell back. D1026's rule is
+// not this file's to restate: a step no plan gate may judge is refused by the
+// Converge itself (managed.ConvergeUnjudged, built at the call site that read
+// the diff), so Admitted is false for it here and the step keeps the
+// confirmation it has today whatever the plan looked like.
 //
 // A refused plan is this call's own error, and it is the gate's own sentence
 // (managed.NotConverged, with the rules that fired) rather than the coding
 // agent's: the session reads why the document was refused. It is returned for
-// every class the gate covers and for no other, and the refusal is recorded
-// before it is returned.
-func (g *managedGate) admit(ctx context.Context, class initflow.ConfirmClass, conv managedmode.Converge) (initflow.Managed, error) {
+// every step the gate may judge at all and for no other, and the refusal is
+// recorded before it is returned.
+func (g *managedGate) admit(ctx context.Context, conv managedmode.Converge) (initflow.Managed, error) {
 	// The document a previous call admitted is spent by the time this one is
 	// made: the step it was admitted for has either recorded it or is being
 	// asked again for a new plan. Only the branch at the end of this call that
@@ -276,7 +280,11 @@ func (g *managedGate) admit(ctx context.Context, class initflow.ConfirmClass, co
 	}
 	g.marks = fresh
 	m := initflow.Managed{Managed: true, Admitted: conv.Refuse() == nil, Fallback: g.facts.InventoryFallback}
-	if !m.Covers(class) {
+	if conv.Unjudged() {
+		// A step no plan gate may judge has no verdict this call could refuse
+		// on and none it could record: it keeps the confirmation it has, and
+		// what stands in a session's way is the caller's own fence, which reads
+		// the same fact off the Converge it built (D1026).
 		return m, nil
 	}
 	if err := conv.Refuse(); err != nil {
@@ -323,6 +331,60 @@ func (g *managedGate) recorded(ctx context.Context) error {
 	return g.record(ctx, *conv)
 }
 
+// Record writes the record of a verdict this gate never admitted through
+// admit, and it is what puts `fugaro managed apply` in the gate's set (the
+// owner's ruling of 2026-11-11): that command judges its own plan inside
+// internal/managed — managed.Apply reaches the gate itself, with the plan, the
+// confirmation and the apply in one place — and hands the verdict back here, so
+// the admission and the refusal of an apply leave the same one record every
+// other command in the set leaves, by the same write (record). It satisfies
+// managed.AuditRecorder.
+//
+// Why the marks are read again (D1024). A record names the creation fact that
+// was in force, and for every other command in the set that read happens in
+// admit, immediately before the command's own write. This command's write is
+// internal/managed's, so the moment that corresponds to it is here, and the
+// fact the record names is the one in force at the record rather than the one
+// in force when the session started.
+//
+// Where the second read finds the project is no longer managed, the record is
+// still written, with the marks the apply ran under — and that is the opposite
+// of what admit does with the same answer, deliberately. admit is asked for a
+// PERMISSION, and a permission a revocation has ended is not one to grant; this
+// is asked for the ACCOUNT of a step that already happened, and a record
+// withheld because the project stopped being managed afterwards would erase the
+// one trace of an apply that landed. The step is recorded as what it was.
+//
+// A second read that does not answer at all is treated the same way here, for
+// the same reason: the record names the marks this command read before the apply
+// ran, and a failed re-read is a lost refinement rather than a fact to withhold
+// the account over. Failing the step instead would be worse than the gap it
+// closes — the plan is applied by then, so the session would read an error
+// about a write that succeeded and the trail would be missing exactly when an
+// owner needs it (D1014 is about a step whose trail cannot be left, and this
+// one is written). The re-read is what makes the record name the fact in force
+// at the write; where it cannot be made, the fact the step acted under is the
+// one that is true of the step.
+//
+// A gate nobody read, and a project whose marks are not there at all, write
+// nothing (D1025): those steps are an ordinary installation's, whose decisions
+// a person made at a terminal, and there is no managed project for a record to
+// be about.
+func (g *managedGate) Record(ctx context.Context, conv managedmode.Converge) error {
+	if !g.managed {
+		return nil
+	}
+	fresh, err := managed.ReadMarkFacts(ctx, g.env.s, g.env.crm, g.env.lc.Name, g.env.lc.GCPProject)
+	// Where this read answered managed, its answer is the better fact to name;
+	// where it did not — "not managed" or an error, which are the same case
+	// here — the marks the step ran under stay, and the record is written with
+	// them (the paragraph above).
+	if err == nil && fresh.Managed {
+		g.marks = fresh
+	}
+	return g.record(ctx, conv)
+}
+
 // record writes one record of one verdict, with the operator's own credentials
 // into the runs bucket's owner-only prefix. Both the refusal (from admit) and
 // the admission (from recorded) come through here, so a record cannot say
@@ -358,14 +420,14 @@ func (g *managedGate) record(ctx context.Context, conv managedmode.Converge) err
 		return nil
 	}
 	if isAccessDenied(err) {
-		return userErr("the step's audit record could not be written to gs://%s, and a managed apply that leaves no trail fails the command (D1014): the operator's own account needs storage.objects.create under %s there",
+		return userErr("the step's audit record could not be written to gs://%s, and a managed step that leaves no trail fails the command (D1014): the operator's own account needs storage.objects.create under %s there",
 			safetext.Field(g.env.lc.RunsBucketName()), safetext.Field(managedmode.AuditPrefix))
 	}
 	return remote(fmt.Errorf("writing the audit record of %s for %s: %w", safetext.Field(g.facts.Subcommand), safetext.Field(g.env.lc.Name), safetext.FieldErr(err)))
 }
 
 // identity is the account a record names: the caller's own when it named one
-// (the deployer account of `managed apply`), and otherwise the credentials in
+// (no command in the gate's set does today), and otherwise the credentials in
 // force, as the account they belong to. It is the first thing an owner asks of
 // a record — "who ran this in my project" — so a record whose identity could
 // not be established at all is refused by the writer rather than written with

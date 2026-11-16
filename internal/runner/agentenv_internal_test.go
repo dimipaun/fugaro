@@ -429,3 +429,55 @@ func TestImageEnvDropsThePlatformNames(t *testing.T) {
 		}
 	}
 }
+
+// TestDenyBinaryReadsIsOnlyAnsweredWhereTheGatewayCarriesTheStage: the image
+// read is denied because the gateway refuses the image block a Read puts in
+// the next request, so a stage the gateway does not carry keeps its reads.
+// Two such stages exist, and neither is refused anything: a run whose calls
+// reach no gateway writes no managed settings file at all, and a stage the
+// run's Claude OAuth account serves goes straight to Anthropic on that
+// account's token (stageDirect), which serves the image. Answering off the
+// price row alone would forbid both a read the stage can make — and a model
+// the run's table has no row for is not a model the gateway lacks: it serves
+// one, priced at the table's maximum, and refuses an image for it
+// (forward.go's modelFor).
+//
+// Mutation (drop the gatewayOn and stageDirect conditions from
+// denyBinaryReads): the budget-off and the account-served stages below are
+// denied, and this test fails.
+func TestDenyBinaryReadsIsOnlyAnsweredWhereTheGatewayCarriesTheStage(t *testing.T) {
+	// The gateway carries this run (api-key, enforcing) and its coder's model
+	// has no price row: the read is denied.
+	r := stagePinsRun(t, "vendor/model-a", "claude-opus-5", "")
+	if !r.denyBinaryReads("implement") {
+		t.Error("the gateway-carried coder is not denied its image reads")
+	}
+	// The same run with the budget off reaches no gateway and writes no
+	// managed settings file: nothing refuses the image and nothing denies it.
+	r.spend = Spend{Mode: "off"}
+	if r.denyBinaryReads("implement") {
+		t.Error("a coder whose calls reach no gateway is denied its image reads")
+	}
+
+	// A stage the account serves is the second such stage: its model is a
+	// Claude ID the run's price table has no row for, and the endpoint the
+	// account's token reaches serves an image the stage sends it.
+	a := mixedStageRun(t, map[string]string{"triage": "acme-overflow"})
+	a.cfg.Agent.Models.Reviewer = "claude-opus-6"
+	if got := a.stageModel("triage"); got != "claude-opus-6" {
+		t.Fatalf("the triage stage's model is %q, want the reviewer's own", got)
+	}
+	if a.denyBinaryReads("triage") {
+		t.Error("a stage the Claude account serves is denied the image reads its endpoint would serve")
+	}
+	// The same run's coder is still denied: it is the account, and not the
+	// model, that the answer turns on.
+	if !a.denyBinaryReads("implement") {
+		t.Error("the account-served run's coder is not denied its image reads")
+	}
+	// And the review half is untouched by either: the reviewer never sends
+	// what it reads whatever the model it runs.
+	if !a.denyBinaryReads("review") {
+		t.Error("the review stage is not denied its image reads")
+	}
+}

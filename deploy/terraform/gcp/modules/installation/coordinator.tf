@@ -66,6 +66,21 @@ locals {
   # hide: an opt-in with no coordinator, which would otherwise plan nothing and
   # say nothing.
   mcp_server_on = var.mcp_server != null && local.coordinator_on
+
+  # The two lists the front door resolves an identity by (D933), reduced to the
+  # entries it reads. It is the installation's own list and not one machine's
+  # config (finding M-f): var.launchers and var.operators are what an operator
+  # applied to this installation, and the entry below is rendered onto the
+  # revision's own environment, which a caller, a token and a run cannot reach.
+  # The reduction is D923's — only exact `user:` entries — and it is the same
+  # one credentials.tf makes for its read mint, one file over. What it buys is
+  # that the entry carries the names the door reads and nothing else: a `domain:`
+  # or a `group:` member an operator put on the installation's list is not
+  # published to a public service's environment, and the door's own reading
+  # reduces the entries a second time (roster.go's userEntries) so that a
+  # hand-edited revision is held to the same rule.
+  front_door_launchers = [for m in var.launchers : m if startswith(m, "user:")]
+  front_door_operators = [for m in var.operators : m if startswith(m, "user:")]
 }
 
 resource "google_service_account" "coordinator" {
@@ -303,24 +318,26 @@ resource "google_cloud_scheduler_job" "coordinator_sweep" {
 # private key, a Bitbucket read at the credentials service and
 # firebasedatabase.admin over the FP, and an identity holding any of those
 # behind a public endpoint would make spec.md §8's "there is no credential to
-# reach" false the day the front door is turned on. This one holds two grants —
-# the runs bucket's read, below, and the store's objects, in mcpauth_store.tf —
-# and nothing else in this tree or the Firebase root grants it anything: no
-# secret, no database, no actAs, which is the narrowest account the design names
-# for M4.
+# reach" false the day the front door is turned on. This one holds three grants
+# — the runs bucket's read, below, the store's objects, in mcpauth_store.tf, and
+# the database's read, in state_read.tf — and nothing else in this tree or the
+# Firebase root grants it anything: no secret, no database write, no actAs,
+# which is the narrowest account the design names for M4.
 #
 # It is created with the front door's own opt-in and not with the coordinator's:
 # an installation that opted into the coordinator for its read-only view
 # acquires no account at all, which is the same rule the service and the
 # binding follow.
 #
-# The database half of what a front door needs is NOT here and deliberately so:
-# the store binding is D935, whose bucket and one binding live in
-# mcpauth_store.tf — beside the bucket they bind rather than in this file,
+# The account's other two grants are NOT here and deliberately so: the store
+# binding is D935, whose bucket and one binding live in mcpauth_store.tf, and
+# the database's read is O16b, whose role and one binding live in
+# state_read.tf — each beside the resource it binds rather than in this file,
 # which names this account exactly twice (the runs bucket's read below, and the
 # service's own identity) and must keep doing so. What this account reaches is
-# therefore the runs bucket (D932) and the store's objects (D935), and nothing
-# else.
+# therefore the runs bucket (D932), the store's objects (D935) and the
+# orchestrator's own node, read-only, in the coordinator's Firebase project
+# (O16b), and nothing else.
 resource "google_service_account" "mcp_server" {
   count = local.mcp_server_on ? 1 : 0
 
@@ -331,7 +348,7 @@ resource "google_service_account" "mcp_server" {
   depends_on = [google_project_service.this]
 }
 
-# The runs bucket, read-only, and one of the account's two grants: a run's
+# The runs bucket, read-only, and one of the account's three grants: a run's
 # recorded
 # artefacts — its logs and its diff — are what the tools behind this port
 # answer with (D932), and the answer the owner did not choose (streaming Cloud
@@ -375,10 +392,11 @@ resource "google_storage_bucket_iam_member" "mcp_server_runs_reader" {
 # no credential-shaped environment name, which
 # coordinator_service_test.go's TestCoordinatorServiceIsPublicAndCarriesNoCredential
 # holds against this very block — and the identity behind the port is an
-# account whose whole reach is the runs bucket's read and the store it writes
-# its own records to, so a stolen access token reaches the tools its scopes
-# name and nothing else (spec.md §8, "What a stolen access token reaches":
-# there is no credential to reach).
+# account whose whole reach is the runs bucket's read (D932), the store it
+# writes its own records to (D935) and the orchestrator's own node, read-only
+# (O16b), so a stolen access token reaches the tools its scopes name and
+# nothing else (spec.md §8, "What a stolen access token reaches": there is no
+# credential to reach).
 #
 # M9's launch grant is deliberately absent, and the absence is the design:
 # spawn_task is the one privilege this work adds, it belongs to M9's own
@@ -440,8 +458,21 @@ resource "google_cloud_run_v2_service" "coordinator_front_door" {
     # installation pays for around the clock. The concurrency and rate limits
     # that bound a caller's cost are the front door's own and are enforced at
     # M9's single launch point, not here.
+    #
+    # **And one instance at most, which is what makes the two per-source bounds
+    # the bounds the docs state.** They are counted in the process's own memory
+    # (register.go, sourceLimiter), so the window a source is refused past is
+    # one instance's — and the platform's own ceiling of about a hundred
+    # instances is scaled by the caller's traffic, which makes the caller under
+    # the bound the one buying the instances: a single source would get a
+    # hundred windows a minute on each of the two open writes, which is a rate
+    # nobody set and no sweep can keep up with. A second instance buys this door
+    # nothing it cannot serve from the first: it answers one person's sign-in
+    # and a small team's tool calls, and a cold start is what a caller pays for
+    # either way.
     scaling {
       min_instance_count = 0
+      max_instance_count = 1
     }
 
     containers {
@@ -467,11 +498,13 @@ resource "google_cloud_run_v2_service" "coordinator_front_door" {
       # The state the front door serves, in the names the sweep already reads:
       # the project, the Firebase project and database the coordinator's
       # subtrees live in, and the runs bucket a run's artefacts (its logs and
-      # its diff) are read from (D932). None of them is a credential, no entry
-      # here has a value_source, and naming the database is not a grant on it:
-      # what this account may read there is D935's store binding, which is the
-      # one binding mcpauth_store.tf writes, so the front door reaches the runs
-      # bucket and the store's own bucket and nothing else. The store's URL is
+      # its diff) are read from (D932). None of them is a credential and no
+      # entry here has a value_source. Naming the database is not a grant on it
+      # either: the read this account has there is O16b's own, whose role and
+      # one binding live in state_read.tf, so what the front door reaches is
+      # the runs bucket (D932), the store's own bucket (D935, the one binding
+      # mcpauth_store.tf writes) and the orchestrator's node, read-only (O16b),
+      # and nothing else. The store's URL is
       # deliberately not an entry yet: the process that opens it (M5) names the
       # bucket it was handed, and the name it must be handed is the installation
       # output mcpauth_store_bucket.
@@ -499,6 +532,36 @@ resource "google_cloud_run_v2_service" "coordinator_front_door" {
       env {
         name  = "FUGARO_COORDINATOR_REPOS"
         value = jsonencode(var.coordinator.repos)
+      }
+      # D934's switch as the process reads it, and the door's whole
+      # configuration beside it (M12). The entry is the one thing that turns
+      # the door on and it is written by the same condition as the account, the
+      # service and the allUsers binding: "off" is the absence of the binding
+      # (the amendment of 2026-11-04) and the absence of this entry together,
+      # which is one fact rendered twice rather than a second switch. A
+      # revision without it mounts no route at all (ee/coordinator's FrontDoor)
+      # and answers exactly what this service answered before M12.
+      #
+      # Its value is a JSON document and not a flag, because the door needs
+      # three things and none of them is a credential: the ORIGIN this service
+      # answers on (the authorization server's identifier and the audience of
+      # every token it mints — Cloud Run's deterministic service URL, built
+      # from the service name, the project's number and the region, all three
+      # of which this template holds), and the installation's two member lists
+      # in the reduced form above.
+      #
+      # The URL is Cloud Run's deterministic one and the template builds it
+      # itself, because the service's own `uri` attribute is computed by the
+      # apply that creates this resource: an entry naming it would be the
+      # service depending on itself, which Terraform refuses. The project's
+      # number comes from budget.tf's own data source, which is read here too.
+      env {
+        name = "FUGARO_MCP_FRONT_DOOR"
+        value = jsonencode({
+          issuer    = "https://${var.mcp_server.service}-${data.google_project.this[0].number}.${var.region}.run.app"
+          launchers = local.front_door_launchers
+          operators = local.front_door_operators
+        })
       }
 
       # The port is left unnamed, and that is the HTTP/1.1 default: Cloud Run's

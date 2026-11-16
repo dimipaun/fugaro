@@ -8,9 +8,10 @@ package cli
 // headline table, the decisions D1350-D1362 with the owner's answers of
 // 2026-11-06, the tensions T1-T6, the slices, the checks and the UNVERIFIED
 // rows) and the two plans -- implementation-plan-output.md (CL1-CL12, part A,
-// the CLI's own output) and implementation-plan-graph.md (CG1-CG13, part B, the
-// console's graph). It adds no code, and no task in it is approved, so nothing
-// here pins a command, a flag or an option.
+// the CLI's own output) and implementation-plan-graph.md (CG1-CG13c, part B, the
+// console's graph, its endpoint slice split into CG13a, CG13b and CG13c). It adds
+// no code, and no task in it is approved but the endpoint slice the owner asked
+// for on 2026-11-11, so nothing here pins a command, a flag or an option.
 //
 // What it does pin is the half of these documents that rots silently:
 //
@@ -185,7 +186,7 @@ var cocgStatusRE = regexp.MustCompile(`(?m)^\*\*Status as of 2026-11-10: [^*]*\*
 // current. The index, the reconciliation and the two plans carry the same line,
 // so a document that dropped it would leave a reader taking an in-progress plan
 // for one nobody may build from.
-const cocgStatusLine = "**Status as of 2026-11-10: in progress, 19/30 merged; see [docs/status.md](../status.md) for the current table.**"
+const cocgStatusLine = "**Status as of 2026-11-10: in progress, 24/32 merged; see [docs/status.md](../status.md) for the current table.**"
 
 // TestDocsCliOutputConsoleGraphStatusLines: the folder's status is stated in
 // one line in every document but the owner's spec, and the line names the

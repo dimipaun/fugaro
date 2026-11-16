@@ -188,7 +188,7 @@ func TestClaudeAccountForResolvesTheStagesOwnKey(t *testing.T) {
 		{"", "acme-personal"},            // the run's own resolution
 	}
 	for _, tc := range cases {
-		got, err := claudeAccountFor(context.Background(), env, "acme/other", "", tc.stage, "", co)
+		got, err := claudeAccountFor(context.Background(), env, "acme/other", "", tc.stage, "", co, nameWritten)
 		if err != nil {
 			t.Fatalf("stage %q: %v", tc.stage, err)
 		}
@@ -321,7 +321,7 @@ func TestClaudeAccountForTheMixMatrix(t *testing.T) {
 					if mixed {
 						want = "acme-overflow"
 					}
-					got, err := claudeAccountFor(context.Background(), env, "acme/other", "", stage, "", co)
+					got, err := claudeAccountFor(context.Background(), env, "acme/other", "", stage, "", co, nameWritten)
 					if err != nil {
 						t.Fatalf("stage %q: %v", stage, err)
 					}
@@ -340,7 +340,7 @@ func TestClaudeAccountForTheMixMatrix(t *testing.T) {
 	t.Run("a coder no provider route serves", func(t *testing.T) {
 		for _, stage := range config.MixedAccountStages {
 			env, co := mixCaseWith(t, claudeAccountsConfig, "default_claude_account: acme-overflow\n", claudeReviewer, claudeReviewer, mixEnforce)
-			got, err := claudeAccountFor(context.Background(), env, "acme/other", "", stage, "", co)
+			got, err := claudeAccountFor(context.Background(), env, "acme/other", "", stage, "", co, nameWritten)
 			if err != nil {
 				t.Fatalf("stage %q: %v", stage, err)
 			}
@@ -377,7 +377,7 @@ func TestClaudeAccountForLandsAMixedRunOnTheMixsAccount(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			env, co := mixCase(t, tc.keys, tc.reviewer, mixEnforce)
-			got, err := claudeAccountFor(context.Background(), env, "acme/other", "", "", "", co)
+			got, err := claudeAccountFor(context.Background(), env, "acme/other", "", "", "", co, nameWritten)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -391,7 +391,7 @@ func TestClaudeAccountForLandsAMixedRunOnTheMixsAccount(t *testing.T) {
 	// none.
 	t.Run("a coder no provider route serves", func(t *testing.T) {
 		env, co := mixCaseWith(t, claudeAccountsConfig, "default_claude_account: acme-overflow\n", claudeReviewer, claudeReviewer, mixEnforce)
-		got, err := claudeAccountFor(context.Background(), env, "acme/other", "", "", "", co)
+		got, err := claudeAccountFor(context.Background(), env, "acme/other", "", "", "", co, nameWritten)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -404,7 +404,7 @@ func TestClaudeAccountForLandsAMixedRunOnTheMixsAccount(t *testing.T) {
 	// a way round it.
 	t.Run("a flag naming another account", func(t *testing.T) {
 		env, co := mixCase(t, stagesBlock("review", "acme-overflow"), claudeReviewer, mixEnforce)
-		_, err := claudeAccountFor(context.Background(), env, "acme/other", "acme-personal", "", "", co)
+		_, err := claudeAccountFor(context.Background(), env, "acme/other", "acme-personal", "", "", co, nameWritten)
 		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "only applies to a workflow whose agent.auth is oauth") {
 			t.Fatalf("err = %v, want the refusal of a named account on an api-key run", err)
 		}
@@ -415,7 +415,7 @@ func TestClaudeAccountForLandsAMixedRunOnTheMixsAccount(t *testing.T) {
 	// anything is started.
 	t.Run("a second, differing account", func(t *testing.T) {
 		env, co := mixCase(t, "default_claude_account: acme-overflow\n"+stagesBlock("review", "acme-personal"), claudeReviewer, mixEnforce)
-		_, err := claudeAccountFor(context.Background(), env, "acme/other", "", "", "", co)
+		_, err := claudeAccountFor(context.Background(), env, "acme/other", "", "", "", co, nameWritten)
 		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "second credential") {
 			t.Fatalf("err = %v, want the one-account refusal", err)
 		}
@@ -583,7 +583,7 @@ func TestClaudeAccountForReadsTheSentinelDefaultAsNoAccount(t *testing.T) {
 	sentinel := "default_claude_account: " + config.DefaultClaudeAccount + "\n"
 	t.Run("the key declares no mix", func(t *testing.T) {
 		env, co := mixCase(t, sentinel, claudeReviewer, "budget: { mode: observe, per_run_usd: 5 }\n")
-		got, err := claudeAccountFor(context.Background(), env, "acme/other", "", "review", "", co)
+		got, err := claudeAccountFor(context.Background(), env, "acme/other", "", "review", "", co, nameWritten)
 		if err != nil {
 			t.Fatalf("err = %v, want no refusal: the sentinel names no account", err)
 		}
@@ -593,14 +593,14 @@ func TestClaudeAccountForReadsTheSentinelDefaultAsNoAccount(t *testing.T) {
 	})
 	t.Run("the key is no second credential", func(t *testing.T) {
 		env, co := mixCase(t, sentinel+stagesBlock("adversarial", "acme-overflow"), claudeReviewer, mixEnforce)
-		got, err := claudeAccountFor(context.Background(), env, "acme/other", "", "review", "", co)
+		got, err := claudeAccountFor(context.Background(), env, "acme/other", "", "review", "", co, nameWritten)
 		if err != nil {
 			t.Fatalf("err = %v, want no refusal: the sentinel is not an account the stage key could disagree with", err)
 		}
 		if got != config.DefaultClaudeAccount {
 			t.Fatalf("review account = %q, want %q", got, config.DefaultClaudeAccount)
 		}
-		if got, err = claudeAccountFor(context.Background(), env, "acme/other", "", "adversarial", "", co); err != nil || got != "acme-overflow" {
+		if got, err = claudeAccountFor(context.Background(), env, "acme/other", "", "adversarial", "", co, nameWritten); err != nil || got != "acme-overflow" {
 			t.Fatalf("adversarial account = %q, err = %v: the stage's own key is served as written", got, err)
 		}
 	})
@@ -614,7 +614,7 @@ func TestClaudeAccountForReadsTheSentinelDefaultAsNoAccount(t *testing.T) {
 func TestClaudeAccountForRefusesAMixThatWouldBeASecondAccount(t *testing.T) {
 	env, co := mixCase(t, "default_claude_account: acme-overflow\n"+stagesBlock("review", "acme-personal"),
 		claudeReviewer, mixEnforce)
-	_, err := claudeAccountFor(context.Background(), env, "acme/other", "", "adversarial", "", co)
+	_, err := claudeAccountFor(context.Background(), env, "acme/other", "", "adversarial", "", co, nameWritten)
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want a refusal", err)
 	}
@@ -634,7 +634,7 @@ func TestClaudeAccountForRefusesAMixTheModeCannotCarry(t *testing.T) {
 	for _, mode := range []string{"off", "observe"} {
 		t.Run(mode, func(t *testing.T) {
 			env, co := mixCase(t, "default_claude_account: acme-overflow\n", claudeReviewer, "budget: { mode: "+mode+", per_run_usd: 5 }\n")
-			_, err := claudeAccountFor(context.Background(), env, "acme/other", "", "review", "", co)
+			_, err := claudeAccountFor(context.Background(), env, "acme/other", "", "review", "", co, nameWritten)
 			if ExitCode(err) != ExitUserError {
 				t.Fatalf("err = %v, want a refusal", err)
 			}
@@ -657,7 +657,7 @@ func TestClaudeAccountForHoldsTheDeclaredAccountsToTheAllowList(t *testing.T) {
 	f.appendConfig(t, "claude_accounts:\n  acme-elsewhere:\n    allow_data_to: [\"acme/person-1\"]\n"+
 		stagesBlock("review", "acme-elsewhere")+"default_claude_account: acme-elsewhere\n")
 	env := gcsEnv(t, f)
-	_, err := claudeAccountFor(context.Background(), env, "acme/other", "", "", "", nil)
+	_, err := claudeAccountFor(context.Background(), env, "acme/other", "", "", "", nil, nameWritten)
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "acme-elsewhere") {
 		t.Fatalf("err = %v, want the allow-list refusal", err)
 	}
@@ -686,7 +686,7 @@ func TestClaudeAccountForHoldsTheDefaultWhereRungFourCanApply(t *testing.T) {
 		// provider model, so nothing about this run is Claude's: the default is
 		// not a way into any stage and is not judged.
 		env, co := mixCaseWith(t, mixElsewhereConfig, mixElsewhereDefault, mixCoderModel, mixCoderModel, mixEnforce)
-		got, err := claudeAccountFor(context.Background(), env, "acme/other", "", "review", "", co)
+		got, err := claudeAccountFor(context.Background(), env, "acme/other", "", "review", "", co, nameWritten)
 		if err != nil {
 			t.Fatalf("err = %v, want no refusal: the default can never apply to this run", err)
 		}
@@ -706,14 +706,14 @@ func TestClaudeAccountForHoldsTheDefaultWhereRungFourCanApply(t *testing.T) {
 		if co == nil {
 			t.Fatal("checkoutConfig found no checkout")
 		}
-		got, err := claudeAccountFor(context.Background(), env, "acme/other", "", "", "", co)
+		got, err := claudeAccountFor(context.Background(), env, "acme/other", "", "", "", co, nameWritten)
 		if err != nil {
 			t.Fatalf("err = %v, want no refusal: acme-overflow is this run's own account", err)
 		}
 		if got != "acme-overflow" {
 			t.Fatalf("account = %q, want acme-overflow (agent.oauth_token's rung)", got)
 		}
-		got, err = claudeAccountFor(context.Background(), env, "acme/other", "acme-personal", "", "", co)
+		got, err = claudeAccountFor(context.Background(), env, "acme/other", "acme-personal", "", "", co, nameWritten)
 		if err != nil {
 			t.Fatalf("err = %v, want no refusal: the flag's own account is allowed here", err)
 		}
@@ -725,7 +725,7 @@ func TestClaudeAccountForHoldsTheDefaultWhereRungFourCanApply(t *testing.T) {
 		// The mix is admitted for this stage, so the default is a name this run
 		// will use — and it is not one the repository may use.
 		env, co := mixCaseWith(t, mixElsewhereConfig, mixElsewhereDefault, claudeReviewer, mixCoderModel, mixEnforce)
-		_, err := claudeAccountFor(context.Background(), env, "acme/other", "", "review", "", co)
+		_, err := claudeAccountFor(context.Background(), env, "acme/other", "", "review", "", co, nameWritten)
 		if ExitCode(err) != ExitUserError {
 			t.Fatalf("err = %v, want the allow-list refusal", err)
 		}
@@ -747,7 +747,7 @@ func TestClaudeAccountForHoldsTheDefaultWhereRungFourCanApply(t *testing.T) {
 		if co == nil {
 			t.Fatal("checkoutConfig found no checkout")
 		}
-		_, err := claudeAccountFor(context.Background(), env, "acme/other", "", "", "", co)
+		_, err := claudeAccountFor(context.Background(), env, "acme/other", "", "", "", co, nameWritten)
 		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "acme-elsewhere") {
 			t.Fatalf("err = %v, want the allow-list refusal", err)
 		}
@@ -759,7 +759,7 @@ func TestClaudeAccountForHoldsTheDefaultWhereRungFourCanApply(t *testing.T) {
 		f := newCloudFixture(t)
 		f.appendConfig(t, mixElsewhereConfig+mixElsewhereDefault)
 		env := gcsEnv(t, f)
-		_, err := claudeAccountFor(context.Background(), env, "acme/other", "", "", "", nil)
+		_, err := claudeAccountFor(context.Background(), env, "acme/other", "", "", "", nil, nameWritten)
 		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "acme-elsewhere") {
 			t.Fatalf("err = %v, want the allow-list refusal", err)
 		}

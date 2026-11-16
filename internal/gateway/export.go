@@ -83,6 +83,17 @@ type RequestPin struct {
 	// (the stage's own model: a stage's limit does not hold the background
 	// model's calls). "" is none.
 	Model string
+	// Vision is the run's agent.models.vision: the model a stage runs instead
+	// when its own cannot read an image. It is a pointer because "this caller
+	// configures no vision model" and "this caller has no configuration at
+	// all" are two answers a string cannot tell apart — the gateway's own path
+	// has a stage and a repository behind it and always says what the run
+	// configured, the empty string when the slot is empty, while the
+	// credentials service has no stage and no repository to read and passes
+	// none at all. The image refusal tells them apart with it and not with the
+	// sentence's own spelling, so neither caller is offered a lever it cannot
+	// pull (imageRefusal, forward.go; D2009).
+	Vision *string
 	// MaxOutputTokens bounds max_tokens for Model's calls only; 0 is no bound.
 	MaxOutputTokens int64
 }

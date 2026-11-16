@@ -90,6 +90,25 @@ type Upstream struct {
 	// validate refuses a service upstream that carries an in-job credential
 	// (D143).
 	Service *Service
+	// AuthMode is the auth the run's own repository goes out on, declared to
+	// the credentials service on every call (HeaderAuthMode, B2.2). It is
+	// only read with KindService, and only "api-key" and "oauth" are declared:
+	// a cascade run's repository auth is what the service already holds, and
+	// a vertex run never reaches the service at all. Empty sends no
+	// declaration, which the service refuses for a repository it cannot
+	// otherwise place (D2070 (a)).
+	//
+	// It is also what admits Routes beside this upstream: an api-key
+	// declaration is a switched api-key run, whose provider keys stay on the
+	// runner path (R6, D1634), so the models its routes claim are the
+	// provider's and the rest are the service's (validateRoutes).
+	AuthMode string
+	// Account names the Claude account an oauth run goes out on, declared
+	// beside AuthMode (HeaderAuthAccount) and empty for every other auth. The
+	// service reads it against the accounts the repository's record names, so
+	// a run that declares one the record does not have is refused rather than
+	// served another.
+	Account string
 }
 
 // Options configure a gateway.
@@ -97,7 +116,9 @@ type Options struct {
 	Upstream Upstream
 	// Routes send the models they claim to a provider, each with its own
 	// credential; every other model goes to Upstream. Only with the
-	// anthropic upstream.
+	// anthropic upstream, or with a service upstream that declares api-key
+	// (B2.2: a switched api-key run's provider keys stay on the runner path,
+	// R6/D1634).
 	Routes []Route
 	Prices *pricing.Table
 	Mode   Mode
@@ -114,6 +135,14 @@ type Options struct {
 	// EndStageWait bounds how long EndStage waits for a stage's calls in
 	// flight; 0 is 30 s. Tests shorten it.
 	EndStageWait time.Duration
+	// StageLimit, when set, is the per-stage governor this run enforces: what
+	// a stage may spend before the gateway stops it, above the run's own cap
+	// (plan T7.2, D331, D332). It is nil in the core — a gateway with none
+	// enforces the run's spend cap, the lease's sub-cap and the stage's pinned
+	// models, exactly as it did before the hook existed — and the limits
+	// behind it are ee/governance's (D527, D530). It is set once, before
+	// Start, and never replaced.
+	StageLimit StageLimit
 	// OnServiceAnswer, when set, is called once for every answer the
 	// credentials service gives (KindService, C1.15): the tier a Messages
 	// call settles by (C1.16's ledger hook), the credential's name a run
@@ -144,6 +173,7 @@ type Stage struct {
 	Name            string // implement, review, fix
 	Model           string // the role's model (main agent and subagents)
 	Background      string // the background model; "" when unset
+	Vision          string // the run's agent.models.vision, which the image refusal names; not a pin, and "" when unset
 	MaxOutputTokens int64  // bounds max_tokens on Model's requests only; 0: none
 }
 
@@ -212,12 +242,75 @@ type StageReport struct {
 	Waited       int // calls told to retry (429) because in-flight calls held the budget
 }
 
+// StageLimit is the per-stage governor a gateway consults: the stage budget,
+// the token ceiling, the review ratio and the fan-out stop behind it are
+// governance's, and they are ee/governance's (plan T7.2, D331, D332; D527,
+// D530). The gateway knows the hook and nothing of the policy behind it, and
+// Options.StageLimit is nil in the core: an untagged build bounds no stage and
+// enforces exactly what it enforced before the hook existed (D522).
+//
+// Both methods are called with this package's lock held, from the goroutine of
+// the call they are about, so an implementation must not block, take a lock or
+// call back into the gateway. Neither may keep what it is handed: a
+// StageLimitView carries the running stage's live counters.
+type StageLimit interface {
+	// Begin is called for every stage the gateway begins, with the stages it
+	// has already ended: the review ratio is a rule about one stage relative
+	// to another, and the stage it reads — implement — is in Ended.
+	Begin(v StageLimitView)
+	// Stop is the decision before a call that reserves up to Needed. A Reason
+	// stops the stage: in enforce mode the call is refused with 403 and every
+	// later call of that stage is refused with it, and in observe mode the call
+	// is admitted and the stop is counted in the stage's report and logged, as
+	// the cap's own would-halt is (observe never refuses). The run's own cap is
+	// unaffected, and the next stage the run opens is admitted as any stage is —
+	// a governance stop is scoped to the stage it stopped, because the runner
+	// opens one more stage after it (T7.2's checkpoint call). An empty Reason
+	// admits the call, and the cap decides as it always did.
+	Stop(v StageLimitView) StageStop
+}
+
+// StageLimitView is what a StageLimit is handed: the gateway's own stage and
+// its report so far, the reports of the stages already ended, the run's ledger
+// and the call's worst case.
+type StageLimitView struct {
+	Stage  Stage
+	Report StageReport
+	// Ended are the reports of the stages this gateway has ended, by the name
+	// each ran under. The gateway owns the map: a limit reads it and never
+	// writes it.
+	Ended map[string]StageReport
+	// Ledger is the run's money so far, for a limit whose bound is about the
+	// run rather than the stage (T8.2's expectation threshold).
+	Ledger Ledger
+	// Needed is the worst case of the call about to reserve, and 0 for Begin.
+	Needed pricing.Micros
+}
+
+// StageStop is a limit's refusal of the call it was asked about: the reason
+// the run record's own vocabulary carries (a governance halt reason), and the
+// detail the halt and the run log show. A stop is not a run-wide halt: the
+// stage is what it stops.
+type StageStop struct {
+	Reason string
+	Detail string
+}
+
 // Halt says why the gateway stopped forwarding calls.
 type Halt struct {
 	Reason string // "run_cap"; with a lease also repo_daily_cap, global_daily_cap, no_cap, kill_switch
 	Scope  string // "run", "repo" or "global"; "" is "run"
 	Detail string // "run cap $20.00 reached ($19.84 spent, $1.30 needed)"; with nothing spent, "cannot hold a call that needs up to"
-	At     time.Time
+	// WorkspaceRefusal, when set, says the workspace's own credentials
+	// service refused this call, and which of the workspace's refusals it
+	// was: one of the three gateway.WorkspaceRefusals (workspace_refusal.go).
+	// It is read off the refusal the service answered and from nowhere else,
+	// so it is set only where the service said so — never inferred from a
+	// reason, a scope or a detail, which a member's own service writes the
+	// same way. Empty for every other halt, which is every halt this gateway
+	// wrote before the marker existed.
+	WorkspaceRefusal string
+	At               time.Time
 }
 
 // Ledger is the run's money: what the cap grants, what settled calls
@@ -239,6 +332,16 @@ type Ledger struct {
 	// figure.
 	CacheReadTokens  int64
 	CacheWriteTokens int64
+	// ModelTokens is the same calls' token counts by the model the gateway
+	// priced each of them under: the model the request named, which the
+	// gateway admitted as a pin and charged the table's rates for (G1.2,
+	// F8). It is deliberately not keyed by the serving model a response
+	// named, which is what ByModel's dollars follow: that name is the
+	// upstream's claim -- a snapshot suffix, or another model entirely --
+	// and the counts a repricing of the run reads back have to be the run's
+	// own. A call whose usage the gateway could not read is in no key, as it
+	// is in no total above. Empty for a run that read no usage at all.
+	ModelTokens map[string]pricing.Usage
 }
 
 // Server is a running gateway.
@@ -296,15 +399,48 @@ type Server struct {
 	// ones included, since a cascade run's cache behaviour is as much its
 	// own as its money is. They reach the run's record through the Ledger
 	// (P12).
-	cacheRead   int64
-	cacheWrite  int64
+	cacheRead  int64
+	cacheWrite int64
+	// modelTokens is the run's token counts by the model the gateway priced
+	// each call under (G1.2, F8): the run's own counts, which reach its
+	// record through the Ledger the way the cache totals beside them do.
+	// They are summed here rather than in a stage's report for the same
+	// reason the totals are -- a call that settles after its stage's report
+	// was taken is in the run's figures and in no stage's -- and the gate is
+	// the same `usageRead`, so the per-model sums and the cache totals are
+	// the same tokens counted two ways, exactly.
+	modelTokens map[string]pricing.Usage
 	halt        *Halt
 	haltMsg     string
-	wouldHalted bool           // observe: enforce would have halted by now
-	granted     pricing.Micros // lease: the sum of what the lease granted, less what was released
-	flight      *topUp         // lease: the top-up in flight, if any
-	stage       *stageState
-	onLedger    func(Ledger, pricing.Micros) // tests: called after every ledger change
+	// haltDelivered records that the halt was sent on haltCh (which is then
+	// closed): the gateway delivers one halt per server, and a stage limit's
+	// stop is delivered before any run-wide halt can be.
+	haltDelivered bool
+	wouldHalted   bool           // observe: enforce would have halted by now
+	granted       pricing.Micros // lease: the sum of what the lease granted, less what was released
+	flight        *topUp         // lease: the top-up in flight, if any
+	stage         *stageState
+	// ended are the reports of the stages this gateway has ended, by the name
+	// each ran under: what a stage limit reads to compare one stage with
+	// another (the review ratio's implement stage). A gateway with no limit
+	// keeps them all the same, and a run has one report per stage name.
+	ended map[string]StageReport
+	// stoppedStage is the stage a limit stopped, and stageStopMsg the sentence
+	// its later calls are refused with. It is not s.halt: a run-wide halt
+	// refuses every stage, while a governance stop refuses the stage it
+	// stopped and leaves the stage the runner opens after it — the checkpoint
+	// — admissible (T7.2).
+	stoppedStage string
+	stageStopMsg string
+	// wsHeadroom and wsHeadroomSet are the room the workspace's own service
+	// last delivered on an answer (WorkspaceHeadroomHeader), and whether it
+	// ever delivered one. It is ADVISORY: the run's own cap is Options.Cap
+	// and the workspace's cap is the service's, which refuses the call
+	// itself. A gateway told nothing holds no workspace figure at all, so it
+	// stops no run on the workspace's account.
+	wsHeadroom    pricing.Micros
+	wsHeadroomSet bool
+	onLedger      func(Ledger, pricing.Micros) // tests: called after every ledger change
 }
 
 // stageState is a running stage; its calls hold it until they settle.
@@ -342,7 +478,9 @@ func Start(ctx context.Context, o Options) (*Server, error) {
 		ln:     ln,
 		haltCh: make(chan Halt, 1),
 
-		countSlots: make(chan struct{}, maxCountsInFlight),
+		modelTokens: map[string]pricing.Usage{},
+		ended:       map[string]StageReport{},
+		countSlots:  make(chan struct{}, maxCountsInFlight),
 	}
 	if s.log == nil {
 		s.log = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -443,6 +581,15 @@ func (o Options) validate() error {
 		if !validJobName(u.Service.Job) {
 			return errors.New("gateway: the service upstream reports no Cloud Run job name")
 		}
+		// The claim is all or nothing: the service reads a call that
+		// presents a slip's id and no claim secret as a request it does not
+		// read (credsvc.verifyCallSlip), so a run holding half of one would
+		// be refused on every call for a shape this gateway let through. A
+		// run holding neither is the one of an installation whose service
+		// serves no slip route, and is admitted as it always was.
+		if (u.Service.SlipID == "") != (u.Service.SlipClaim == "") {
+			return errors.New("gateway: the service upstream carries half a slip: the slip's id and the claim secret are presented together or not at all")
+		}
 	case "vertex":
 		if u.Token == nil {
 			return errors.New("gateway: the vertex upstream has no token source")
@@ -521,16 +668,28 @@ func (s *Server) Ledger() Ledger {
 }
 
 func (s *Server) ledgerLocked() Ledger {
+	l := Ledger{Granted: pricing.Micros(math.MaxInt64), Used: s.used, Notional: s.notional, Reserved: s.reserved,
+		CacheReadTokens: s.cacheRead, CacheWriteTokens: s.cacheWrite, ModelTokens: copyUsage(s.modelTokens)}
 	if s.o.Lease != nil {
-		return Ledger{Granted: s.granted, Used: s.used, Notional: s.notional, Reserved: s.reserved,
-			CacheReadTokens: s.cacheRead, CacheWriteTokens: s.cacheWrite}
+		l.Granted = s.granted
+	} else if s.o.Mode == Enforce {
+		l.Granted = s.o.Cap
 	}
-	g := pricing.Micros(math.MaxInt64)
-	if s.o.Mode == Enforce {
-		g = s.o.Cap
+	return l
+}
+
+// copyUsage is the run's per-model counts as a reader takes them: a copy, so
+// that a Ledger is a snapshot and a call settling after it cannot change what
+// its holder read.
+func copyUsage(by map[string]pricing.Usage) map[string]pricing.Usage {
+	if len(by) == 0 {
+		return nil
 	}
-	return Ledger{Granted: g, Used: s.used, Notional: s.notional, Reserved: s.reserved,
-		CacheReadTokens: s.cacheRead, CacheWriteTokens: s.cacheWrite}
+	out := make(map[string]pricing.Usage, len(by))
+	for m, u := range by {
+		out[m] = u
+	}
+	return out
 }
 
 // BeginStage starts allowing st's models. A stage still running is ended
@@ -543,6 +702,12 @@ func (s *Server) BeginStage(st Stage) {
 		ByModel: map[string]pricing.Micros{},
 		ByRoute: map[string]pricing.Micros{},
 	}}
+	// The stage is begun before a limit sees it: a limit that keeps per-stage
+	// state of its own is told which stage it is now about, and the reports
+	// of the stages before it are handed over as the gateway holds them.
+	if l := s.o.StageLimit; l != nil {
+		l.Begin(StageLimitView{Stage: st, Ended: s.ended, Ledger: s.ledgerLocked()})
+	}
 }
 
 // EndStage stops allowing calls, waits (at most 30 s) for the stage's
@@ -570,6 +735,9 @@ func (s *Server) EndStage() StageReport {
 		s.log.Warn("budget: stage ended with calls still in flight", "stage", st.st.Name)
 	}
 	rep := s.stageReport(st)
+	s.mu.Lock()
+	s.ended[st.st.Name] = rep
+	s.mu.Unlock()
 	s.reportStage(rep)
 	return rep
 }
@@ -706,7 +874,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if msg, halted := s.haltedMessage(); halted {
+	if msg, halted := s.refusalNow(); halted {
 		writeHalt(w, msg)
 		if !rt.count {
 			s.logCall(callLog{stage: s.stageName(), model: rt.pathModel, status: http.StatusForbidden, pricedAs: pricedTable, settled: settledZero,

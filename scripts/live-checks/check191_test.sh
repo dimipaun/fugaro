@@ -10,6 +10,10 @@ set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 script=$here/check191.sh
+# The probe: the file the owner copies into the sandbox repository as its own
+# check command, and the one that makes the seven attempts. It is tested here
+# too — the check can only read what it wrote.
+probe=$here/check191-probe.sh
 work=$(mktemp -d)
 kept=()
 cleanup_all() {
@@ -145,8 +149,22 @@ run)
     exit 1
     ;;
   esac
+  # The three runs this check launches, told apart by the recipe the CLI is
+  # given: the working run is launched with --recipe test-and-fix (whose one
+  # check step runs the repository's own commands.test — the probe), the review
+  # probe with --recipe review-only, and the ended-run probe with no recipe at
+  # all. A run launched with a recipe that is neither is not a run this check
+  # would launch, so the fake refuses it rather than reading it as one of them.
   kind=work
-  if has --recipe "$@"; then kind=review; fi
+  case "$(flag --recipe "$@")" in
+  "") ;;
+  test-and-fix) ;;
+  review-only) kind=review ;;
+  *)
+    echo "fugaro run: this fake answers --recipe test-and-fix and --recipe review-only only" >&2
+    exit 1
+    ;;
+  esac
   # The CLI's own rule for a mode: review recipe (internal/recipe's
   # reviewPRCounts, enforced in internal/cli/run.go): review-only reviews
   # exactly one pull request, so a launch that does not name one is refused
@@ -197,10 +215,53 @@ for line in open(path).read().splitlines() if os.path.exists(path) else []:
     row = {"run": repo.replace("/", "-") + "/" + rid, "run_id": rid,
            "repo": repo, "terminal": True}
     if kind == "ended":
-        # The probe whose outcome was written before its launch: it must not be
-        # served at all, so it pushed nothing and opened no pull request.
-        row.update({"status": "halted", "pushed": False,
-                    "reason": "the run has ended: its outcome is written"})
+        # The probe whose outcome was written before its launch, as its record
+        # really reads on a correct installation: its FIRST call is the bootstrap
+        # git traffic, which a proxied runner rewrites to this execution's
+        # loopback forwarder (internal/runner's credentialVars, startProxiedGit,
+        # openCheckout) — the gateway that makes the model calls starts only
+        # after that checkout is open — and the service refuses it before there
+        # is a route at all. So the record carries GIT's own sentence: the URL it
+        # could not access (the forwarder's /v1/bitbucket/proxy/ route, a
+        # loopback endpoint derived per execution) and the status it was
+        # answered. The body is application/json and git prints no body
+        # (internal/credsvc/wire.go's WriteWireError), and the service's own
+        # sentence never reaches a run (D143), so no wire type and no sentence of
+        # the service's can be in this record: a check that looked for either
+        # here, or in the run's log, could never pass. It pushed nothing and
+        # opened no pull request, and the service wrote no line for it.
+        forwarder = ("opening checkout /workspace: git fetch --quiet origin main: "
+                     "exit status 128: fatal: unable to access "
+                     "'http://127.0.0.1:41234/v1/bitbucket/proxy/" + repo + ".git/': "
+                     "The requested URL returned error: 403")
+        row.update({"status": "infra_error", "pushed": False, "reason": forwarder})
+        if mode == "ended-pushed":
+            # The write landed and the service's own lines say nothing about it:
+            # a runner without the proxy pushed with the job's own mounted
+            # token, so the row measures nothing about the service.
+            row.update({"pushed": True, "pr": 65})
+        if mode == "ended-503":
+            # The service answered, and its answer was not the identity refusal:
+            # state_unavailable is what it says when it cannot read the run's
+            # outcome, which is the one state where the ended-run refusal is
+            # never reached.
+            row.update({"reason": forwarder.replace("error: 403", "error: 503")})
+        if mode == "ended-elsewhere":
+            # The run got past its checkout: the record is the MODEL call's
+            # refusal, the gateway's own constant naming the wire type. That is
+            # the one reading a check must not take for a pass — the run reached
+            # a call this row does not measure, and its git traffic did not go
+            # through the forwarder.
+            refused = ("the credentials service refused this run's identity "
+                       "(unverified_run_identity)")
+            row.update({"status": "halted",
+                        "reason": "halted: budget_unavailable: " + refused,
+                        "halt": {"reason": "budget_unavailable", "scope": "run",
+                                 "at": "2026-11-11T16:31:30Z", "detail": refused}})
+        if mode == "ended-unrefused":
+            # The probe ran to an ordinary end with nothing refused and nothing
+            # written: whatever served it, its calls never reached the service.
+            row.update({"status": "failed", "reason": "the agent made no commits"})
     elif mode == "run-failed":
         # A real run's task commits one line, so the row a repository whose run
         # pushed nothing (or opened no pull request) answers with is the one the
@@ -220,18 +281,68 @@ logs)
   rid=${1:-}
   kind=$(sed -n "s/^$rid\t//p" "$state/runs" 2>/dev/null | head -n 1 | cut -f1)
   case "$kind" in
-  ended) echo "fatal: the run has ended: its outcome is written" ;;
-  review) echo "CHK191 attempt=push refused=yes answer=403" ;;
+  ended)
+    # What the run's own log really carries: the runner's own line about the
+    # failed bootstrap — git's sentence, naming the forwarder and the status —
+    # and, for the mode whose record is the MODEL call's refusal, the halt the
+    # gateway wrote. Neither carries the service's own sentence, which is
+    # nowhere in the run (D143); a case that sets
+    # FAKE_FUGARO_LOG_MODE=service-sentence puts it in, for the one reading that
+    # must never be taken from a log.
+    if [ "$mode" = ended-elsewhere ]; then
+      echo "fugaro: budget halted: the credentials service refused this run's identity (unverified_run_identity)"
+    else
+      echo "fugaro: run failed: opening checkout /workspace: git fetch --quiet origin main: exit status 128: fatal: unable to access 'http://127.0.0.1:41234/v1/bitbucket/proxy/sandbox/repo.git/': The requested URL returned error: 403"
+    fi
+    if [ "${FAKE_FUGARO_LOG_MODE:-}" = service-sentence ]; then
+      echo "fatal: the run has ended: its outcome is written"
+    fi
+    ;;
+  review)
+    # A review run's own report. `review-silent` is the state a review run whose
+    # agent made no attempt leaves (nothing POINTS a review run at the service —
+    # the runner gives its agent no git credential and no forwarder rewrite, and
+    # a mode: review recipe runs no repository command — so an empty reading says
+    # the attempt did not reach the service, not that it cannot), `review-served`
+    # is the agent reporting a push the service answered, `review-garbled` is a
+    # line that is not the one the attempt asks for, and the default is a run
+    # that reported a refusal.
+    case "$mode" in
+    review-silent) ;;
+    review-served) echo "CHK191 attempt=push refused=no answer=200" ;;
+    review-garbled) echo "CHK191 attempt=push refused=maybe answer=none" ;;
+    *) echo "CHK191 attempt=push refused=yes answer=403" ;;
+    esac
+    ;;
   *)
-    for attempt in other-repository other-ref tag ref-delete other-pull-request merge workspaces; do
-      refused=yes
-      answer=403
-      if [ "$mode" = unreported ] && [ "$attempt" = tag ]; then
-        refused=no
-        answer=200
-      fi
-      echo "CHK191 attempt=$attempt refused=$refused answer=$answer"
-    done
+    # The probe's own lines, as the run's check step writes them: the container
+    # prints one per attempt. `no-probe` is the repository that carries no
+    # probe at all — its check step ran something else — and `probe-unavailable`
+    # is the probe stopping on one of its own guards, which reports all seven
+    # as attempts it could not make rather than reporting six of seven.
+    # `served-empty` is the one a git call the proxy SERVED leaves: git prints
+    # nothing when it succeeds, so the probe's own line carries no token after
+    # `answer=` at all (test_the_probe_reports_an_attempt_the_proxy_served pins
+    # that at the probe's level).
+    if [ "$mode" != no-probe ]; then
+      for attempt in other-repository other-ref tag ref-delete other-pull-request merge workspaces; do
+        refused=yes
+        answer=403
+        if [ "$mode" = probe-unavailable ]; then
+          refused=none
+          answer=no_other_repository_named
+        fi
+        if [ "$mode" = unreported ] && [ "$attempt" = tag ]; then
+          refused=no
+          answer=200
+        fi
+        if [ "$mode" = served-empty ] && [ "$attempt" = other-ref ]; then
+          refused=no
+          answer=""
+        fi
+        echo "CHK191 attempt=$attempt refused=$refused answer=$answer"
+      done
+    fi
     ;;
   esac
   ;;
@@ -255,7 +366,7 @@ to a subcommand that is not here, or with a flag that is not in its list, fails
 with exit 2, so an invented or misspelled flag cannot hide in any call — and no
 write subcommand is callable at all.
 """
-import json, os, re, sys
+import json, os, sys
 
 STATE = os.environ["FAKE_GCLOUD_STATE"]
 LOG = os.environ["FAKE_LOG_DIR"]
@@ -268,8 +379,10 @@ with open(os.path.join(LOG, "gcloud.calls"), "a") as fh:
 ALLOWED = {
     ("auth", "print-access-token"): (),
     ("run", "jobs", "list"): ("--project", "--region", "--format"),
+    ("run", "services", "get-iam-policy"): ("--project", "--region", "--format"),
     ("secrets", "list"): ("--project", "--format"),
     ("secrets", "get-iam-policy"): ("--project", "--format"),
+    ("secrets", "versions", "list"): ("--project", "--format"),
     ("logging", "read"): ("--project", "--freshness", "--limit", "--format"),
 }
 sub = None
@@ -311,9 +424,58 @@ elif sub == ("run", "jobs", "list"):
     if flag("--region") != "us-east5":
         sys.stderr.write("ERROR: (gcloud) this check reads us-east5 only\n")
         sys.exit(1)
+    if mode == "no-job-list":
+        # The read failing, which is a different thing from a list that holds no
+        # job of the repository: the caller may not list jobs in this project.
+        sys.stderr.write("ERROR: (gcloud) PERMISSION_DENIED: the caller does not have permission to list jobs in this project\n")
+        sys.exit(1)
     sys.stdout.write(state("jobs.json", "[]\n"))
+elif sub == ("run", "services", "get-iam-policy"):
+    # The credentials service's OWN IAM policy, which is where the switch is
+    # read: answered for that one service and no other, so a check that asked
+    # about another service (or about no service at all) gets the NOT_FOUND
+    # Cloud Run answers it with.
+    if flag("--region") != "us-east5":
+        sys.stderr.write("ERROR: (gcloud) this check reads us-east5 only\n")
+        sys.exit(1)
+    named = [a for a in args[3:] if not a.startswith("--")]
+    if named != ["fugaro-credentials"]:
+        sys.stderr.write("ERROR: (gcloud) NOT_FOUND: service %s\n"
+                         % " ".join(named))
+        sys.exit(1)
+    if mode == "no-service-policy":
+        # The read of the policy itself failing, which is a different thing from
+        # the service not being there: the caller may not getIamPolicy.
+        sys.stderr.write("ERROR: (gcloud) PERMISSION_DENIED: the caller does not have permission to get the IAM policy of this service\n")
+        sys.exit(1)
+    sys.stdout.write(state("service-policy.json", '{"bindings":[]}\n'))
 elif sub == ("secrets", "list"):
+    if mode == "no-secret-list":
+        # The read failing, which is a different thing from a listing that holds
+        # no such container: the caller may not list secrets in this project.
+        sys.stderr.write("ERROR: (gcloud) PERMISSION_DENIED: the caller does not have permission to list secrets in this project\n")
+        sys.exit(1)
     sys.stdout.write(state("secrets.json", "[]\n"))
+elif sub == ("secrets", "versions", "list"):
+    # The credentials service's bundle container's own versions, which is where
+    # the check reads whether the service has anything to serve a run out of: it
+    # is answered for the container the listing names and no other, so a check
+    # that asked about a name it invented (or about no container at all) gets
+    # the NOT_FOUND Secret Manager answers it with.
+    listed = json.loads(state("secrets.json", "[]\n"))
+    ids = [s.get("name", "").rsplit("/", 1)[-1] for s in listed
+           if isinstance(s, dict)]
+    named = [a for a in args[3:] if not a.startswith("--")]
+    if len(named) != 1 or named[0] not in ids:
+        sys.stderr.write("ERROR: (gcloud) NOT_FOUND: no secret named %s\n"
+                         % " ".join(named))
+        sys.exit(1)
+    if mode == "no-bundle-versions":
+        # The read of the container's versions failing, which is a different
+        # thing from a container with no version in it.
+        sys.stderr.write("ERROR: (gcloud) PERMISSION_DENIED: the caller does not have permission to list versions of this secret\n")
+        sys.exit(1)
+    sys.stdout.write(state("bundle-versions.json", "[]\n"))
 elif sub == ("secrets", "get-iam-policy"):
     # The policy is answered for the containers the list fixture holds and no
     # other: a check that asked about a name the installation never created
@@ -333,35 +495,29 @@ elif sub == ("logging", "read"):
     # `ok` for a call it served, one `request_refused` per refusal), and one
     # refusal line per refusal, which is where the CLASS is written down
     # (internal/credsvc/bitbucketproxy.go's refuseProxyReason). The ended run's
-    # refusal is NOT audited (the service answers it before there is a verified
-    # identity) and so gets neither.
+    # refusal is NOT audited (the service answers it before there is a route at
+    # all) and so gets neither — which is what the ended-identity row reads: no
+    # line for that run is the ended identity having reached no route, and
+    # `ended-served` is the hole, the same run answered by the route.
     #
     # Every read is counted, and so is every read OF ONE RUN: `lagging-log`
     # answers a run's first read with three of its classes and the rest from its
     # second read on, which is what Cloud Logging's ingestion lag looks like to a
     # check that reads a run once and believes the answer.
-    # The classes the real service writes for the working run's seven attempts,
-    # read from what the run's task asked for. Six are fixed by the attempt
-    # alone; the other-pull-request one is not, and that is the rule this fake
-    # exists to hold: gitproxy.Decide refuses a call that names another
-    # repository with other_repository BEFORE the pull-request write rules can
-    # answer other_pull_request (internal/gitproxy/rules.go), so the class
-    # depends on the repository the attempt names — and a task that names no
-    # repository settles neither, so no line is written for that attempt and the
-    # check's row for it cannot be read.
+    # The classes the real service writes for the working run's seven attempts.
+    # They are fixed by the attempt alone, because the PROBE names every target:
+    # the repository it reads and pushes to is the run's own, the two
+    # pull-request attempts name a pull request of the run's own repository (a
+    # call naming another repository is refused for the repository with
+    # other_repository BEFORE the pull-request write rules can answer
+    # other_pull_request — internal/gitproxy/rules.go — so the probe's
+    # other-pull-request attempt is a write to a pull request of this repository
+    # that is not the run's own, and the class it earns is pinned by this test's
+    # own case for the probe), and the last two are paths the proxy does not
+    # name at all.
     def work_classes(rid, repo):
-        task = ""
-        task_path = os.path.join(STATE, "tasks", rid + ".md")
-        if os.path.exists(task_path):
-            task = open(task_path).read()
-        m = re.search(r"comment on pull request (\d+) in (\S+)", task)
-        pr = None
-        if m:
-            pr = "other_pull_request" if m.group(2) == repo else "other_repository"
-        want = ["other_repository", "other_ref", "tag_ref", "ref_delete"]
-        if pr:
-            want.append(pr)
-        return want + ["call_not_allowed", "call_not_allowed"]
+        return ["other_repository", "other_ref", "tag_ref", "ref_delete",
+                "other_pull_request", "call_not_allowed", "call_not_allowed"]
 
     calls = 0
     calls_path = os.path.join(LOG, "logging.calls")
@@ -373,23 +529,59 @@ elif sub == ("logging", "read"):
     path = os.path.join(STATE, "runs")
     for line in open(path).read().splitlines() if os.path.exists(path) else []:
         rid, kind, repo = line.split("\t")
-        if kind == "ended":
-            continue
         reads = 0
         reads_path = os.path.join(LOG, "logging.reads-" + rid)
         if os.path.exists(reads_path):
             reads = int(open(reads_path).read().strip() or "0")
         with open(reads_path, "w") as fh:
             fh.write(str(reads + 1))
+        if kind == "ended" and mode != "ended-served":
+            # An ended run leaves NO line: its identity is refused before there
+            # is a route at all, and every route that answers a call writes
+            # exactly one audit line (internal/credsvc's ServeHTTP verifies
+            # before every branch; bitbucketproxy_test.go's
+            # TestBitbucketRouteEndedRun pins 403 with zero audit lines). The
+            # `ended-served` mode is the hole: a line for the ended run is the
+            # service having answered it.
+            continue
+        if mode == "review-no-served-line" and kind == "review":
+            # A review run whose own agent reported its push SERVED and whose
+            # lines hold nothing at all for it: the sentence has no service line
+            # behind it, which is the reading this row must not take for a
+            # finding about the proxy.
+            continue
         common = {"message": "credsvc: audit", "run": rid,
                   "repository": "bitbucket/workspace-a/repo-a",
                   "job": "fugaro-workspace-a-repo-a-web-0123456789ab",
                   "caller": "fugaro-b-1@fugaro-dev.iam.gserviceaccount.com",
                   "credential": "bitbucket-token"}
-        out.append({"jsonPayload": dict(common, purpose="github_read", status="ok")})
-        want = work_classes(rid, repo) if kind == "work" else ["no_run_branch"]
+        # The served line: `ok` for a call the route forwarded. The ended run of
+        # the mode above reaches the route at all, so its line is a git one and
+        # nothing refuses it — the hole the ended-identity row exists for.
+        out.append({"jsonPayload": dict(common,
+                                        purpose="git" if kind == "ended" else "github_read",
+                                        status="ok")})
+        if kind == "ended":
+            want = []
+        elif kind == "work":
+            want = work_classes(rid, repo)
+        else:
+            want = ["no_run_branch"]
         if mode == "missing-tag-refusal" and kind == "work":
             want = [c for c in want if c != "tag_ref"]
+        # The class a review identity's push is refused under is the SERVICE's
+        # answer, not this check's expectation: it is read_only when the run is
+        # the installation's review-only job (bitbucketproxy sets the identity
+        # read-only from the JOB's class, and Decide refuses every push of it
+        # before the push rules are read) and no_run_branch when it is not
+        # read-only and carries no fb. `review-not-admitted` is the third answer
+        # an installation can give — the published block's own rule about the
+        # REPOSITORY, decided before any rule about what an identity may write —
+        # which settles nothing about a push and is what this row must fail on.
+        if mode == "review-read-only" and kind == "review":
+            want = ["read_only"]
+        if mode == "review-not-admitted" and kind == "review":
+            want = ["not_admitted"]
         if mode == "no-review-refusal" and kind == "review":
             want = []
         if mode == "lagging-log" and reads == 0:
@@ -491,6 +683,113 @@ CURL_EOF
   chmod +x "$1/bin/curl"
 }
 
+# ------------------------------------------------------------------ the probe
+# scripts/live-checks/check191-probe.sh is the sandbox repository's own check
+# command — the one file the OWNER copies in as scripts/chk191-probe.sh and names
+# in that repository's fugaro.yaml — so it is where Check 191's seven attempts are
+# really made, and what the check can only ever read is what this file wrote. The
+# fakes below answer it the way a run's container does: `git` asked about its own
+# checkout, and every write refused as the credentials service refuses one.
+write_probe_git() { # dir
+  mkdir -p "$1/bin"
+  cat >"$1/bin/git" <<'GIT_EOF'
+#!/usr/bin/env bash
+# A stand-in for `git`, for scripts/live-checks/check191-probe.sh's own case in
+# this test: the two questions the probe asks its checkout, and the writes it
+# aims at Bitbucket. Each write is refused the way the credentials service
+# refuses one — git's own sentence carrying the status it was answered, and a
+# non-zero exit — and FAKE_PROBE_MODE=served serves them instead, which is the
+# one reading Check 191 exists to find.
+set -euo pipefail
+printf 'git %s\n' "$*" >>"$FAKE_LOG_DIR/git.calls"
+mode=${FAKE_PROBE_MODE:-ok}
+case "${1:-}" in
+remote) printf 'https://bitbucket.org/workspace-a/repo-a.git\n' ;;
+rev-parse) printf 'fb\n' ;;
+tag) exit 0 ;;
+ls-remote)
+  if [ "$mode" = served ]; then exit 0; fi
+  printf "fatal: unable to access '%s': The requested URL returned error: 403\n" "${2:-}" >&2
+  exit 128
+  ;;
+push)
+  if [ "$mode" = served ]; then exit 0; fi
+  printf 'remote: HTTP 403: the credentials service refused this call\n' >&2
+  exit 128
+  ;;
+*) exit 2 ;;
+esac
+GIT_EOF
+  chmod +x "$1/bin/git"
+}
+
+write_probe_curl() { # dir
+  mkdir -p "$1/bin"
+  cat >"$1/bin/curl" <<'CURL_EOF'
+#!/usr/bin/env bash
+# A stand-in for `curl`, for the probe's own case in this test: it records the
+# method and the URL and NOTHING else — never a header, never a body — writes
+# what `-o` names, and prints the code where `-w '%{http_code}'` would.
+set -euo pipefail
+mode=${FAKE_PROBE_MODE:-ok}
+method=GET
+url=""
+out=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+  -X)
+    shift
+    method=${1:-GET}
+    ;;
+  -o)
+    shift
+    out=${1:-}
+    ;;
+  -w | --data | --data-raw) shift ;;
+  http://* | https://*) url=$1 ;;
+  esac
+  shift
+done
+printf 'curl %s %s\n' "$method" "$url" >>"$FAKE_LOG_DIR/curl.calls"
+code=403
+if [ "$mode" = served ]; then code=200; fi
+if [ -n "$out" ]; then printf 'refused\n' >"$out"; fi
+printf '%s' "$code"
+CURL_EOF
+  chmod +x "$1/bin/curl"
+}
+
+# run_probe DIR ENV...: the probe, run against the fakes with the environment a
+# proxied run's repository command is handed — the forwarder rewrite that is the
+# only place the loopback endpoint is written down (internal/runner's
+# credentialVars) — and with CHECK191_PROBE_LOG pointed at a file, which is where
+# the copy for the container's own stdout goes when there is no container. It
+# leaves probe_status, probe_out and probe_err behind.
+run_probe() { # run_probe DIR ENV...
+  local dir=$1
+  shift
+  local args=("$@")
+  mkdir -p "$dir/bin" "$dir/logs" "$dir/tmp"
+  write_probe_git "$dir"
+  write_probe_curl "$dir"
+  : >"$dir/logs/git.calls"
+  : >"$dir/logs/curl.calls"
+  probe_status=0
+  env PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
+    FAKE_LOG_DIR="$dir/logs" CHK191_PROBE_LOG="$dir/run.log" \
+    GIT_CONFIG_COUNT=3 \
+    GIT_CONFIG_KEY_2='url.http://127.0.0.1:41234/v1/bitbucket/proxy/.insteadOf' \
+    GIT_CONFIG_VALUE_2='https://bitbucket.org/' \
+    ${args[@]+"${args[@]}"} \
+    bash "$probe" >"$dir/out" 2>"$dir/err" || probe_status=$?
+  probe_out=$(cat "$dir/out")
+  probe_err=$(cat "$dir/err")
+}
+
+# The seven names, in the order the check prints them, for the cases that hold
+# every line of a probe run against it.
+probe_names=(other-repository other-ref tag ref-delete other-pull-request merge workspaces)
+
 # ------------------------------------------------------------------- the runs
 run_check() { # run_check DIR SCRIPT ENV... -- ARGS...
   local dir=$1 checked=$2
@@ -540,18 +839,30 @@ prepare() { # dir
   # The checkout the flip's doctor row is read in: the sandbox repository's own,
   # which is what the check's guard resolves before anything is launched.
   printf 'https://bitbucket.org/workspace-a/repo-a.git\n' >"$1/state/origins/$(printf '%s' "$1/checkout" | sed 's|^/||; s|/|_|g')"
-  # The published node: the sandbox repository is admitted with proxy: true.
+  # The published node: the sandbox repository is admitted with proxy: true, and
+  # the accounts block names it too — the model credential's OWN admission, which
+  # is a different list from the Bitbucket token's and the one a run's first
+  # model call is served under (internal/credsvc's admittedAccounts).
   cat >"$1/state/project-policy.json" <<'POLICY_EOF'
-{"project":"fugaro","policy":{"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":true}}}
+{"project":"fugaro","policy":{"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":true},"accounts":{"acct-one":{"allow_repos":["bitbucket/workspace-a/repo-a"]}}}}
 POLICY_EOF
   # `fugaro doctor --json`: the bitbucket-direct row the flip's step reads, and
-  # the credentials-service-deployed row the `proxied` step reads the switch
-  # from. This one is doctor's arm for an installation whose every job account
-  # may invoke the service — ok, and no problem line — which is the state the
-  # sandbox repository is on the switch in.
+  # the credentials-service-deployed row the `proxied` step reads for the one
+  # state that is doctor's own — an installation with no credentials service at
+  # all — and carries for context. This one is doctor's arm for an installation
+  # whose every job account may invoke the service — ok, and no problem line.
   cat >"$1/state/doctor.json" <<'DOCTOR_EOF'
 {"ok":true,"checks":[{"id":"credentials-service-deployed","ok":true,"class":"measure"},{"id":"bitbucket-direct","ok":true},{"id":"creds-service","ok":true}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
 DOCTOR_EOF
+  # The credentials service's OWN IAM policy, as `gcloud run services
+  # get-iam-policy fugaro-credentials --format=json` answers it: the grant the
+  # workflow module writes — one member, the job's own account, roles/run.invoker
+  # on that one service (deploy/terraform/gcp/modules/workflow/sa.tf). It is
+  # what the switch is read from, and the account is the one the repository's
+  # job in the listing below runs as.
+  cat >"$1/state/service-policy.json" <<'SVC_EOF'
+{"bindings":[{"role":"roles/run.invoker","members":["serviceAccount:fugaro-b-1@fugaro-dev.iam.gserviceaccount.com"]}]}
+SVC_EOF
   # The repository's jobs, as `gcloud run jobs list --format=json` answers them:
   # the v1 Job shape, whose service account and container env are at
   # spec.template.spec.template.spec. The mount names the DERIVED Secret Manager
@@ -579,12 +890,36 @@ JOBS_EOF
 [{"name":"projects/fugaro-dev/secrets/fugaro-project-fugaro-bitbucket-token-d874a0dfd2bd0854",
   "labels":{"fugaro":"managed","fugaro_project":"fugaro","fugaro_secret":"bitbucket-token"}},
  {"name":"projects/fugaro-dev/secrets/fugaro-project-fugaro-creds-bundle-3f1c2b4a5d6e7f80",
-  "labels":{"fugaro":"managed","fugaro_project":"fugaro","fugaro_secret":"creds-bundle"}}]
+  "labels":{"fugaro":"managed","fugaro_project":"fugaro"}}]
 SECRETS_EOF
+  # The credentials service's bundle container's versions, as `gcloud secrets
+  # versions list --format=json` answers them: the newest version (the highest
+  # NUMBER) is ENABLED, which is the one state a run can be launched in. The
+  # labels above carry no fugaro_secret: the real container deliberately does
+  # not (deploy/terraform/gcp/modules/installation/credentials.tf), because
+  # that label is what `fugaro update`'s discovery reads to decide which
+  # LOGICAL secret a container holds, and this one is not one of those.
+  cat >"$1/state/bundle-versions.json" <<'VERSIONS_EOF'
+[{"name":"projects/fugaro-dev/secrets/fugaro-project-fugaro-creds-bundle-3f1c2b4a5d6e7f80/versions/1","state":"DISABLED"},
+ {"name":"projects/fugaro-dev/secrets/fugaro-project-fugaro-creds-bundle-3f1c2b4a5d6e7f80/versions/2","state":"ENABLED"}]
+VERSIONS_EOF
   # The secret's own IAM policy: after the flip no job account holds a role on it.
   cat >"$1/state/secret-policy.json" <<'IAM_EOF'
 {"bindings":[{"role":"roles/secretmanager.secretAccessor","members":["serviceAccount:fugaro-credentials@fugaro-dev.iam.gserviceaccount.com"]}]}
 IAM_EOF
+}
+
+# grant_arm_doctor DIR: doctor's `credentials-service-deployed` row as the
+# RELEASED doctor answers it for a repository that is on the switch — the
+# invoker-grant arm, naming job accounts of workflow variants this repository
+# does not deploy (infra.CredentialsJobAccounts crosses every workflow with every
+# account the installation allows; measured on 2026-11-11). It is the state the
+# check reads the bundle ITSELF in: doctor answers that arm before it ever looks
+# at the bundle, so the row carries nothing about what the service has to serve.
+grant_arm_doctor() { # grant_arm_doctor DIR
+  cat >"$1/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","problem":"the credentials service fugaro-credentials is deployed and grants no roles/run.invoker to workspace-a/repo-a (web_belong), workspace-a/repo-a (web_bmb): a run of workspace-a/repo-a (web_belong), workspace-a/repo-a (web_bmb) that is on the switch would fail to fetch a model credential"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
 }
 
 # --------------------------------------------------------------- the test cases
@@ -602,6 +937,7 @@ test_dry_run() {
   # A row the plan did not measure reads INFO, never PASS: a plan is not a
   # reading, and a block that said PASS would be one nobody took.
   expect_contains "$out" "FACT proxied: INFO — planned" "dry run: a planned row is INFO"
+  expect_contains "$out" "FACT account-admitted: INFO — planned" "dry run: the account row is planned too"
   expect_contains "$out" "FACT refusal-tag-ref: INFO — planned" "dry run: a planned attempt is INFO"
   expect_contains "$err" "the throwaway run itself" "dry run: the plan names the run it would launch"
   # Nothing was launched, read or written.
@@ -720,24 +1056,151 @@ test_the_fake_run_refuses_an_id_the_cli_would_refuse() {
   if [ -s "$dir/state/runs" ]; then fail "the fake recorded a run it had refused"; fi
 }
 
+# The model credential's admission, which is a DIFFERENT list from the proxy's:
+# the service offers a run only a credential of an account whose own allow_repos
+# names its repository, so a node whose accounts block names none can never have
+# a shared Claude credential offered to a run of it. What the runs then meet is
+# the node's paid-fallback policy, so both of its answers are tested here: with
+# `oauth-only` (an absent credentials block, which is the state 0.23.1 measured
+# the halt in) every model call of theirs is refused, and with `auto` they would
+# be served by the project's paid key instead — a spend this row refuses to
+# launch on, since the bundle it would spend from is not a read the check makes.
+test_no_account_for_the_repository_stops_the_check() {
+  local dir=$work/noaccount
+  prepare "$dir"
+  # `accounts: none`: the state the published node was in when the working run
+  # halted on 0.23.1. No credentials block, so the fallback in force is the
+  # default oauth-only.
+  cat >"$dir/state/project-policy.json" <<'POLICY_EOF'
+{"project":"fugaro","policy":{"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":true},"accounts":{}}}
+POLICY_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 1 "no account: the check stops"
+  expect_contains "$out" "FACT account-admitted: FAIL" "no account: the row does not pass"
+  expect_contains "$out" "no account of the published node's accounts block admits workspace-a/repo-a" "no account: the row names the repository"
+  expect_contains "$out" "no shared Claude credential can ever serve a run of it" "no account: the row says what the account leg alone settles"
+  expect_contains "$out" "does not spend (oauth-only)" "no account: the row reads the fallback in force"
+  expect_contains "$out" "the working run below is refused at its first model call" "no account: the row says the working run is refused"
+  expect_contains "$out" "the review-only run is refused at its PAIRING" "no account: the row says the review run is refused at its pairing, where the fallback decides nothing"
+  expect_contains "$out" "the halt of 0.23.1" "no account: the row names the halt it exists for"
+  expect_contains "$out" "claude_accounts.<name>.allow_data_to" "no account: the row names the account's own list in the local config"
+  expect_contains "$out" "profiles.<profile>.claude_accounts" "no account: the row names the profile that must choose the account"
+  expect_contains "$out" "fugaro project policy publish" "no account: the row names the owner-run publish"
+  expect_contains "$out" "FACT run-launch: FAIL — not reached" "no account: nothing below the row was measured"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "no account: no run was launched"
+}
+
+# The other answer of the same gate: the node spends (`credentials.fallback:
+# auto`), so a call no shared account can serve is answered by the project's
+# paid key wherever the service's bundle holds it — it is a tier-B credential,
+# and internal/credsvc's `candidates` reads no admission for one. The row says
+# exactly that instead of the refusal the oauth-only arm states, because a
+# wording that claimed `state_unavailable` here would be false on the
+# installations this arm is for.
+test_a_spending_policy_names_the_paid_key_it_will_not_launch_on() {
+  local dir=$work/spending
+  prepare "$dir"
+  cat >"$dir/state/project-policy.json" <<'POLICY_EOF'
+{"project":"fugaro","policy":{"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":true},"credentials":{"fallback":"auto"},"accounts":{}}}
+POLICY_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 1 "a spending policy: the check still stops"
+  expect_contains "$out" "FACT account-admitted: FAIL" "a spending policy: the row does not pass"
+  expect_contains "$out" "credentials.fallback spends (auto)" "a spending policy: the row reads the fallback in force"
+  expect_contains "$out" "served by the project's paid key instead" "a spending policy: the row names what would serve the working run"
+  expect_contains "$out" "where the service's bundle holds that key, and refused at its first model call where it does not" "a spending policy: the row does not claim a refusal it cannot read"
+  expect_contains "$out" "the review-only run is refused at its PAIRING either way" "a spending policy: the row says the review run is refused in this arm too, the fallback no part of it"
+  expect_absent "$out" "state_unavailable" "a spending policy: the row names no refusal the service might not answer with"
+  expect_contains "$out" "fugaro project policy publish" "a spending policy: the row names the owner-run publish"
+  expect_contains "$out" "FACT run-launch: FAIL — not reached" "a spending policy: nothing below the row was measured"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "a spending policy: no run was launched"
+}
+
+# An account that admits ANOTHER repository is not one of this repository's: the
+# list is the per-repository decision (D3, projectpolicy.AdmitRepo), matched
+# segment against segment, so a node whose only account is repo-b's is the same
+# stop as a node with no accounts at all — and a check that read "some account
+# exists" would pass it and launch three runs into the halt.
+test_an_account_for_another_repository_stops_the_check() {
+  local dir=$work/otheracct
+  prepare "$dir"
+  cat >"$dir/state/project-policy.json" <<'POLICY_EOF'
+{"project":"fugaro","policy":{"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":true},"accounts":{"acct-b":{"allow_repos":["bitbucket/workspace-a/repo-b"]}}}}
+POLICY_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 1 "an account of another repository: the check stops"
+  expect_contains "$out" "FACT account-admitted: FAIL" "an account of another repository: the row does not pass"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "an account of another repository: no run was launched"
+}
+
+# The gate reads an ENTRY of the block, which is the task's own wording, and the
+# block is keyed by account-axis value rather than by Claude account: the
+# publisher keys the project's own paid key into it as anthropic-api-key--project
+# and provider-key--project (internal/projectpolicy's DeriveAccounts, and
+# config.AxisNonAccountValue names the two), so an entry naming one admits a run
+# to that TIER-B credential and no shared one. This test pins that reading and
+# the sentence that says so, so that a later change to the gate is a change here
+# too rather than a silent one: what the row must not do is call such an entry a
+# Claude account.
+test_an_entry_that_is_no_claude_account_still_passes_the_gate() {
+  local dir=$work/keyentry
+  prepare "$dir"
+  cat >"$dir/state/project-policy.json" <<'POLICY_EOF'
+{"project":"fugaro","policy":{"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":true},"accounts":{"anthropic-api-key--project":{"allow_repos":["bitbucket/workspace-a/repo-a"]}}}}
+POLICY_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 0 "the project's own key as the only entry: the gate passes on the entry it reads"
+  expect_contains "$out" 'FACT account-admitted: PASS — the published policy'"'"'s accounts block admits workspace-a/repo-a in the allow_repos of 1 entry (anthropic-api-key--project)' "the project's own key as the only entry: the row counts entries, not Claude accounts"
+  expect_contains "$out" "two of those values are no Claude account at all" "the project's own key as the only entry: the row says what the block's keys really are"
+  expect_contains "$out" "anthropic-api-key--project and provider-key--project" "the project's own key as the only entry: the row names both of the axis's non-account values"
+}
+
+# The red step for the two cases above: the copy below has the gate's own
+# condition neutralised (its `if [ ... ]; then` becomes `if false; then`, so the
+# arm is never taken whatever the policy holds — unlike an inverted comparison,
+# which would take it for a policy that DOES admit the repository), and with it
+# gone the very same policy runs past the row to its end — which is the whole of
+# what the gate is for, and what fails the moment the gate stops being
+# load-bearing.
+test_the_account_gate_is_what_stops_the_check() {
+  local dir=$work/nogate copy
+  prepare "$dir"
+  cat >"$dir/state/project-policy.json" <<'POLICY_EOF'
+{"project":"fugaro","policy":{"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":true},"accounts":{}}}
+POLICY_EOF
+  copy=$dir/check191-noaccountgate.sh
+  sed '/field_of account-admitted/s/^\( *\)if \[ .* \]; then$/\1if false; then/' "$script" >"$copy" 2>/dev/null || true
+  if [ ! -s "$copy" ] || cmp -s "$script" "$copy"; then
+    fail "red step: the copy is the script: the account gate's own comparison was not found to neutralise"
+    return 0
+  fi
+  run_check "$dir" "$copy"
+  expect_status "$status" 0 "red step: without the gate the run is not stopped"
+  expect_contains "$out" "CHECK 191 RESULT END (exit 0)" "red step: its block is a finished block"
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "red step: the runs are launched without the gate"
+}
+
 test_the_switch_being_off_stops_the_check() {
   local dir=$work/switchoff
   prepare "$dir"
-  # `fugaro doctor`'s arm for a repository the credentials service does not
-  # admit: the repository's own auth is not cascade, so its root wrote its job
-  # account no invoker grant, and the `proxy: true` the policy advertises is
-  # inert for it — its runs hold the token themselves. The check has to stop
-  # here rather than launch three real runs at the direct path.
-  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
-{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","class":"actionable","problem":"the credentials service fugaro-credentials is deployed and grants no roles/run.invoker to workspace-a/repo-a (web), workspace-a/plain (web): a run of workspace-a/repo-a (web), workspace-a/plain (web) that is on the switch would fail to fetch a model credential. The grant follows the switch, and the switch follows the repository's own agent.auth, so a repository of that list that does not run with agent.auth: cascade has the service held off for it: the published policy's proxy: true is inert there — it brokers nothing, and its runs hold their own Bitbucket token instead of being served one"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
-DOCTOR_EOF
+  # The service's OWN IAM policy, and the account it grants roles/run.invoker to
+  # is ANOTHER repository's job account: the account this repository's job runs
+  # as (fugaro-b-1, the one in the job listing) is not in it — which is what a
+  # repository whose root was never re-applied with the switch looks like, and
+  # what the published policy's proxy: true being inert for it means. The
+  # repository's own auth is not cascade, so its job mounts the token and its
+  # runs hold it themselves: the check has to stop here rather than launch three
+  # real runs at the direct path.
+  cat >"$dir/state/service-policy.json" <<'SVC_EOF'
+{"bindings":[{"role":"roles/run.invoker","members":["serviceAccount:fugaro-b-2@fugaro-dev.iam.gserviceaccount.com"]}]}
+SVC_EOF
   run_check "$dir" "$script"
   expect_status "$status" 1 "the switch off"
   expect_contains "$out" "FACT proxied: FAIL" "the switch off: the row does not pass"
   expect_contains "$out" "the credentials-service switch is OFF for workspace-a/repo-a" "the switch off: the row says what is off"
   expect_contains "$out" "agent.auth: cascade" "the switch off: the remedy names the auth"
   expect_contains "$out" "fugaro update --repo" "the switch off: the remedy names the apply"
-  expect_contains "$out" "grants no roles/run.invoker to workspace-a/repo-a" "the switch off: doctor's own problem is carried into the detail"
+  expect_contains "$out" "the policy grants nothing to: fugaro-b-1@fugaro-dev.iam.gserviceaccount.com" "the switch off: the row names the account the service does not admit"
   # Every row below is read from a run that goes through the service, so none
   # of them was reached and no run was launched to measure the direct path.
   expect_contains "$out" "FACT run-launch: FAIL — not reached" "the switch off: the rows below are not reached"
@@ -745,84 +1208,163 @@ DOCTOR_EOF
   expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "the switch off: no run launched"
 }
 
+# The switch is read for THIS repository and no other: the service's policy is
+# one document about every repository's accounts, and an installation can be on
+# the switch for one and off for another — modules/workflow/sa.tf grants each
+# job account its own member entry. A reading that passed the row on any grant
+# it found (which is what matching a name in doctor's sentence did) would pass a
+# repository whose own job cannot invoke the service at all.
+test_one_job_of_the_repository_without_the_grant_is_a_switch_that_is_off() {
+  local dir=$work/switchtwo
+  prepare "$dir"
+  # A second job of the SAME repository: a named Claude account runs the same
+  # workflow as its job and its own job account is derived from the workflow's,
+  # so a repository with two workflows (or two accounts) holds more than one —
+  # and the switch is on for it only while EVERY one of them may invoke the
+  # service.
+  python3 - "$dir/state/jobs.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+jobs = json.load(open(path))
+second = json.loads(json.dumps(jobs[0]))
+second["metadata"]["name"] = "fugaro-workspace-a-repo-a-web-bmb-abcdef012345"
+second["spec"]["template"]["spec"]["template"]["spec"]["serviceAccountName"] = \
+    "fugaro-b-3@fugaro-dev.iam.gserviceaccount.com"
+jobs.append(second)
+open(path, "w").write(json.dumps(jobs))
+PY
+  run_check "$dir" "$script"
+  expect_status "$status" 1 "a second job without the grant"
+  expect_contains "$out" "FACT proxied: FAIL" "a second job without the grant: the row does not pass"
+  expect_contains "$out" "the policy grants nothing to: fugaro-b-3@fugaro-dev.iam.gserviceaccount.com" \
+    "a second job without the grant: the row names the account the service does not admit"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "a second job without the grant: no run launched"
+}
+
 test_a_switch_the_check_cannot_read_is_unmeasured() {
   local dir=$work/switchunread
   prepare "$dir"
-  # The document doctor answers without the row the switch is read from: the
-  # check could not settle whether the repository is served, so the row is one
-  # it could NOT measure (exit 2) rather than a PASS over a fact nobody read.
-  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
-{"ok":true,"checks":[{"id":"bitbucket-direct","ok":true}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
-DOCTOR_EOF
+  # A CUSTOM role on the service's own policy, bound to this repository's job
+  # account: what it carries is the role's own definition, which this reading
+  # does not fetch (doctor resolves one through the IAM API; a check holds no
+  # such read). It says nothing about whether the account may invoke the
+  # service, so the row may be neither `on` nor `off`: it is one the check could
+  # NOT measure (exit 2) and nothing is launched over it.
+  cat >"$dir/state/service-policy.json" <<'SVC_EOF'
+{"bindings":[{"role":"projects/fugaro-dev/roles/deployer","members":["serviceAccount:fugaro-b-1@fugaro-dev.iam.gserviceaccount.com"]}]}
+SVC_EOF
   run_check "$dir" "$script"
-  expect_status "$status" 2 "doctor's document with no credentials-service-deployed row"
-  expect_contains "$out" "FACT proxied: FAIL" "an unread switch: the row is a FAIL"
-  expect_contains "$err" "could NOT measure proxied" "an unread switch: the check says it could not measure"
-  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "an unread switch: no run launched"
-  # The other shape: doctor's own arm for a grant it could not settle — a custom
-  # role on the service's or the project's policy that could not be read. It is
-  # not a switch that is off, so the row may not read as one.
-  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
-{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","problem":"the credentials service fugaro-credentials is deployed, and whether workspace-a/repo-a (web) may invoke it could not be checked: a custom role on its or the project's policy could not be read"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
-DOCTOR_EOF
+  expect_status "$status" 2 "a custom role on the service's policy"
+  expect_contains "$out" "FACT proxied: FAIL" "a custom role: the row is a FAIL"
+  expect_contains "$out" "state: unread" "a custom role: the row carries the state this check read"
+  expect_contains "$err" "could NOT measure proxied" "a custom role: the check says it could not measure"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "a custom role: no run launched"
+  # And a grant that holds only while a CONDITION does: the binding names the
+  # account and roles/run.invoker, and Cloud Run admits it only while a CEL
+  # expression this reading cannot evaluate holds. Reading that as a grant would
+  # pass the row on a switch that may be off by the time the runs reach it.
+  cat >"$dir/state/service-policy.json" <<'SVC_EOF'
+{"bindings":[{"role":"roles/run.invoker","members":["serviceAccount:fugaro-b-1@fugaro-dev.iam.gserviceaccount.com"],"condition":{"title":"a window","expression":"request.time < timestamp('2026-01-01T00:00:00Z')"}}]}
+SVC_EOF
   run_check "$dir" "$script"
-  expect_status "$status" 2 "doctor's arm for a grant it could not settle"
-  expect_contains "$out" "FACT proxied: FAIL" "an unsettled grant: the row is a FAIL"
-  expect_contains "$out" "state: unread" "an unsettled grant: the row carries the state this check read"
-  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "an unsettled grant: no run launched"
+  expect_status "$status" 2 "a conditional grant"
+  expect_contains "$out" "state: unread" "a conditional grant: the row carries the state this check read"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "a conditional grant: no run launched"
 }
 
-test_the_switch_is_read_from_doctor_s_whole_sentence() {
+# The read of the service's own policy is the switch, so a read that did not
+# answer is a row the check could not measure — never a PASS and never a FAIL
+# about the repository: nothing was read about it.
+test_a_service_policy_that_could_not_be_read_is_unmeasured() {
+  local dir=$work/switchpolicyread
+  prepare "$dir"
+  run_check "$dir" "$script" FAKE_GCLOUD_MODE=no-service-policy
+  expect_status "$status" 2 "the service's policy could not be read"
+  expect_contains "$out" "FACT proxied: FAIL" "an unread policy: the row is a FAIL"
+  expect_contains "$out" "own IAM policy could not be read" "an unread policy: the row says which read failed"
+  expect_contains "$err" "could NOT measure proxied" "an unread policy: the check says it could not measure"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "an unread policy: no run launched"
+}
+
+# The job list is the other half of the same read, so a list that did not answer
+# is the same row: nothing about the repository's job accounts was read, and the
+# check may not pass the switch on the policy's own bindings.
+test_a_job_list_that_could_not_be_read_is_unmeasured() {
+  local dir=$work/switchjobsread
+  prepare "$dir"
+  run_check "$dir" "$script" FAKE_GCLOUD_MODE=no-job-list
+  expect_status "$status" 2 "the job list could not be read"
+  expect_contains "$out" "FACT proxied: FAIL" "an unread job list: the row is a FAIL"
+  expect_contains "$out" "job list could not be read" "an unread job list: the row says which read failed"
+  expect_contains "$err" "could NOT measure proxied" "an unread job list: the check says it could not measure"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "an unread job list: no run launched"
+}
+
+# The other half of the read: the repository's REAL jobs. A repository the job
+# list does not hold has no job account whose grant could be read — the switch
+# is not something the policy alone answers, since it is on for a repository
+# only while the accounts of ITS OWN jobs are admitted.
+test_no_job_of_the_repository_is_unmeasured() {
+  local dir=$work/switchnojobs
+  prepare "$dir"
+  printf '[]\n' >"$dir/state/jobs.json"
+  run_check "$dir" "$script"
+  expect_status "$status" 2 "no job of the repository"
+  expect_contains "$out" "FACT proxied: FAIL" "no job of the repository: the row is a FAIL"
+  expect_contains "$out" "holds no job of workspace-a/repo-a" "no job of the repository: the row says what was missing"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "no job of the repository: no run launched"
+}
+
+# Measured on 2026-11-11: a repository's real job carries no FUGARO_REMOTE (the
+# clone URL is the policy's and the runner's to compute, never a launcher-writable
+# env); the job's own label fugaro_repo is what names the repository.
+test_a_job_is_the_repository_s_by_its_label() {
+  local dir=$work/switchlabel
+  prepare "$dir"
+  cat >"$dir/state/jobs.json" <<'JOBS_EOF'
+[{"metadata":{"name":"fugaro-workspace-a-repo-a-web-0123456789ab","labels":{"fugaro":"managed","fugaro_repo":"workspace-a-repo-a-27be4c45d773e3b9","fugaro_workflow":"web"}},
+  "spec":{"template":{"spec":{"template":{"spec":{
+    "serviceAccountName":"fugaro-b-1@fugaro-dev.iam.gserviceaccount.com",
+    "containers":[{"image":"example.invalid/base:0.15.0","env":[{"name":"FUGARO_RUN","value":"1"}]}]}}}}}},
+ {"metadata":{"name":"fugaro-workspace-a-repo-ab-web-111111111111","labels":{"fugaro":"managed","fugaro_repo":"workspace-a-repo-ab-27be4c45d773e3b9"}},
+  "spec":{"template":{"spec":{"template":{"spec":{
+    "serviceAccountName":"fugaro-b-9@fugaro-dev.iam.gserviceaccount.com",
+    "containers":[{"image":"example.invalid/base:0.15.0","env":[]}]}}}}}}]
+JOBS_EOF
+  run_check "$dir" "$script"
+  expect_absent "$out" "holds no job of workspace-a/repo-a" "a labelled job is the repository's"
+  expect_absent "$out" "fugaro-b-9@" "a repository whose slug only starts with this one's is not it"
+}
+
+test_the_switch_is_read_from_the_service_s_own_policy() {
   local dir=$work/switchlong
   prepare "$dir"
-  # Doctor's list of accounts grows with the installation, and the repository
-  # this check is about can be named far past the length a printed field is held
-  # to. The row must be read from doctor's whole sentence: a classification over
-  # a cut copy would answer "on" here, PASS `proxied`, and launch the three real
-  # runs at the direct path — the outcome this reading exists to prevent.
-  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
-{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","problem":"the credentials service fugaro-credentials is deployed and grants no roles/run.invoker to workspace-a/one (web), workspace-a/two (web), workspace-a/three (web), workspace-a/four (web), workspace-a/five (web), workspace-a/six (web), workspace-a/repo-a (web): a run of workspace-a/repo-a (web) that is on the switch would fail to fetch a model credential. The grant follows the switch, and the switch follows the repository's own agent.auth, so a repository of that list that does not run with agent.auth: cascade has the service held off for it: the published policy's proxy: true is inert there — it brokers nothing, and its runs hold their own Bitbucket token instead of being served one"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
-DOCTOR_EOF
+  # The regression this reading exists for, measured on 2026-11-11: doctor's
+  # `credentials-service-deployed` sentence crosses every workflow of the
+  # installation with every account it allows (infra.CredentialsJobAccounts), so
+  # the RELEASED doctor names job accounts of workflow VARIANTS this repository
+  # does not deploy — `(web_belong)`, `(web_bmb)` — for a repository that is on
+  # the switch, whose one real job holds roles/run.invoker on the service. A
+  # reading that matched the repository's name in that sentence answered `off`
+  # and stopped a check whose runs are served exactly as its other rows say. The
+  # switch is the service's own IAM policy and the repository's REAL jobs, and
+  # doctor's text is context. That arm is also the one doctor answers before it
+  # reads the bundle, so the check reads the bundle itself — here the default
+  # fixture, whose newest version is ENABLED — before it goes on to the runs.
+  grant_arm_doctor "$dir"
   run_check "$dir" "$script"
-  expect_status "$status" 1 "a repository named past the printed cap"
-  expect_contains "$out" "FACT proxied: FAIL" "a repository past the cap: the row is a FAIL"
-  expect_contains "$out" "the credentials-service switch is OFF for workspace-a/repo-a" "a repository past the cap: the row says what is off"
-  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "a repository past the cap: no run launched"
-}
-
-test_another_repositorys_missing_grant_is_not_this_repositorys_switch() {
-  local dir=$work/switchothers
-  prepare "$dir"
-  # Doctor names the accounts the service does not admit, and this one names two
-  # other repositories: the sandbox repository this check is about is admitted,
-  # so the switch is on for it and the check is not stopped by a neighbour's
-  # grant. The row must pass and the runs below must be launched.
-  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
-{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","problem":"the credentials service fugaro-credentials is deployed and grants no roles/run.invoker to workspace-a/repo-b (web), workspace-a/plain (web): a run of workspace-a/repo-b (web), workspace-a/plain (web) that is on the switch would fail to fetch a model credential"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
-DOCTOR_EOF
-  run_check "$dir" "$script"
-  expect_status "$status" 0 "another repository's missing grant"
-  expect_contains "$out" "FACT proxied: PASS" "another repository's missing grant: this repository's row passes"
-  expect_contains "$out" "FACT run-outcome: PASS" "another repository's missing grant: the check went on and launched its runs"
-  expect_contains "$(cat "$dir/logs/fugaro.calls")" "--run-id $(rid_of "$dir" work)" "another repository's missing grant: the working run was launched"
-}
-
-test_a_doctor_arm_the_reading_does_not_know_is_unmeasured() {
-  local dir=$work/switchother
-  prepare "$dir"
-  # Doctor's arm for a service whose bundle holds nothing to serve: every job
-  # account may invoke it, and every model call of a run against it is refused.
-  # It is none of the arms this reading knows, and it may not be read as a
-  # switch that is on — a PASS there would launch three runs on a service that
-  # can serve none of them.
-  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
-{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","problem":"the credentials service fugaro-credentials is deployed and serving, and it admits nobody: every job account may invoke it, and the bundle it serves from (fugaro-project-fugaro-creds-bundle-3f1c2b4a5d6e7f80) holds no version, so the loader fails closed and every model call of a run against it is refused"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
-DOCTOR_EOF
-  run_check "$dir" "$script"
-  expect_status "$status" 2 "doctor's empty-bundle arm"
-  expect_contains "$out" "FACT proxied: FAIL" "an arm this reading does not know: the row is a FAIL"
-  expect_contains "$out" "state: other" "an arm this reading does not know: the row carries the state it read"
-  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "an arm this reading does not know: no run launched"
+  expect_status "$status" 0 "doctor's sentence names variants the repository does not deploy"
+  expect_contains "$out" "FACT proxied: PASS" "variants named by doctor: the row passes"
+  expect_contains "$out" "on the service's own IAM policy" "variants named by doctor: the row says where the switch was read"
+  expect_contains "$out" "grants no roles/run.invoker to workspace-a/repo-a (web_belong)" "variants named by doctor: doctor's own text is carried for context"
+  expect_contains "$out" "FACT run-outcome: PASS" "variants named by doctor: the check went on and launched its runs"
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" "--run-id $(rid_of "$dir" work)" "variants named by doctor: the working run was launched"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "gcloud run services get-iam-policy fugaro-credentials" "variants named by doctor: the service's own policy is what was read"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "--region=us-east5" "variants named by doctor: the policy was read in the installation's own region"
+  # Doctor's grant arm is answered before doctor reads the bundle, so the bundle
+  # is read here: the check may not launch a run against a service that has
+  # nothing to serve a model credential out of.
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "gcloud secrets versions list fugaro-project-fugaro-creds-bundle-3f1c2b4a5d6e7f80" "variants named by doctor: the bundle's own versions are read"
 }
 
 test_an_installation_with_no_credentials_service_is_a_failure() {
@@ -852,41 +1394,197 @@ DOCTOR_EOF
   expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "a missing service: no run launched"
 }
 
-test_an_ok_arm_the_reading_does_not_know_is_unmeasured() {
-  local dir=$work/switchokother
+test_a_service_with_nothing_to_serve_stops_the_check() {
+  local dir=$work/switchnoserve
   prepare "$dir"
-  # Doctor's ok arm for a sentence this reading has not been taught: the two ok
-  # arms that mean "on" are the one with no problem at all and the one whose
-  # verify route was emptied, so anything else an ok row carries is one nobody
-  # here can settle. Answering `on` for it — which is what reading every ok arm
-  # but the no-service one as a switch that is on would do — passes `proxied`
-  # and launches three real runs at a state this check never read.
+  # Doctor's arm for the service that admits every job account and has nothing
+  # to serve a run's credential out of: the bundle holds no version. The switch
+  # is not what is wrong — the policy and the jobs are the sandbox's own — and
+  # every model call of a run against it is refused, so the three runs below
+  # would fail at their first call rather than measure the proxy. The row may not
+  # PASS, and nothing may be measured: exit 2.
   cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
-{"ok":true,"checks":[{"id":"credentials-service-deployed","ok":true,"severity":"info","problem":"the installation runs without one for now, and every run fetches its model credential the way it did before the service existed"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","problem":"the credentials service fugaro-credentials is deployed and serving, and it admits nobody: every job account may invoke it, and the bundle it serves from (fugaro-project-fugaro-creds-bundle-3f1c2b4a5d6e7f80) holds no version, so the loader fails closed and every model call of a run against it is refused; fugaro creds set NAME is the writer"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
 DOCTOR_EOF
   run_check "$dir" "$script"
-  expect_status "$status" 2 "an ok arm this reading does not know"
-  expect_contains "$out" "FACT proxied: FAIL" "an unknown ok arm: the row is a FAIL"
-  expect_contains "$out" "state: other" "an unknown ok arm: the row carries the state it read"
-  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "an unknown ok arm: no run launched"
+  expect_status "$status" 2 "doctor's empty-bundle arm"
+  expect_contains "$out" "FACT proxied: FAIL" "the empty bundle: the row does not pass"
+  expect_contains "$out" "has NOTHING TO SERVE" "the empty bundle: the row says what the service cannot do"
+  expect_contains "$out" "the bundle it serves from" "the empty bundle: doctor's own words are carried"
+  expect_contains "$err" "could NOT measure proxied" "the empty bundle: the check says it could not measure"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "the empty bundle: no run launched"
+  # The same state one read along: the bundle holds a version and Secret Manager
+  # will not serve it (a version that is not ENABLED), so the loader is refused
+  # and every model call of the run fails the same way.
+  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","problem":"the credentials service fugaro-credentials is deployed and serving, and it admits nobody: every job account may invoke it, and the newest version of the bundle it serves from (fugaro-project-fugaro-creds-bundle-3f1c2b4a5d6e7f80, version 4) is DISABLED, so the loader's read of it is refused and every model call of a run against it fails"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 2 "doctor's disabled-version arm"
+  expect_contains "$out" "FACT proxied: FAIL" "a disabled version: the row does not pass"
+  # The block carries the first 200 characters of doctor's sentence (the reader's
+  # `text` cap), so the assertion is on the words that fit rather than on the
+  # version state past them.
+  expect_contains "$out" "the newest version of the bundle" "a disabled version: doctor's own words are carried"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "a disabled version: no run launched"
 }
 
-test_the_verify_route_being_empty_is_still_a_switch_that_is_on() {
-  local dir=$work/switchokverify
+# The regression's own follow-on: in the state doctor answers about the invoker
+# grant it has NOT read the bundle (doctorCredentialsServiceDeployed returns the
+# missing-grant and the custom-role arm; doctorCredentialsServiceServing — the
+# read that sees the bundle — runs only when every job account is admitted), so
+# the check reads the bundle itself, and a service with nothing to serve stops it
+# exactly as doctor's own nothing-to-serve arms do. A row that passed here would
+# launch three real runs against a service that refuses every model call they
+# make — which is the state the check's own prerequisites name.
+test_a_bundle_with_nothing_to_serve_stops_the_check_under_doctor_s_grant_arm() {
+  local dir=$work/switchgrantbundle
   prepare "$dir"
-  # The one other ok arm that IS a repository on the switch: the service is
-  # deployed, every job account may invoke it and its bundle holds a version —
-  # only the route that asks whose verdict signature this is admits nobody, and
-  # that route answers nothing about a run's own push. Reading this arm as one
-  # it does not know would stop a check whose runs are served exactly as the row
-  # says.
+  grant_arm_doctor "$dir"
+  # The container the installation's own apply creates, with no version in it.
+  printf '[]\n' >"$dir/state/bundle-versions.json"
+  run_check "$dir" "$script"
+  expect_status "$status" 2 "a bundle with no version, under doctor's grant arm"
+  expect_contains "$out" "FACT proxied: FAIL" "no version under the grant arm: the row does not pass"
+  expect_contains "$out" "cannot serve a run's model credential out of its bundle" "no version under the grant arm: the row says what the service cannot do"
+  expect_contains "$out" "the bundle container holds no version at all" "no version under the grant arm: the row carries the reading's own words"
+  expect_contains "$out" "grants no roles/run.invoker to workspace-a/repo-a (web_belong)" "no version under the grant arm: doctor's own text is carried for context"
+  expect_contains "$err" "could NOT measure proxied" "no version under the grant arm: the check says it could not measure"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "no version under the grant arm: no run launched"
+  # The same state one read along: a version is there and Secret Manager will not
+  # serve it, so the loader is refused. The NEWEST version is the one that
+  # decides, and here that is version 2 — version 1 is ENABLED and is not it.
+  cat >"$dir/state/bundle-versions.json" <<'VERSIONS_EOF'
+[{"name":"projects/fugaro-dev/secrets/fugaro-project-fugaro-creds-bundle-3f1c2b4a5d6e7f80/versions/1","state":"ENABLED"},
+ {"name":"projects/fugaro-dev/secrets/fugaro-project-fugaro-creds-bundle-3f1c2b4a5d6e7f80/versions/2","state":"DISABLED"}]
+VERSIONS_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 2 "a disabled newest version, under doctor's grant arm"
+  expect_contains "$out" "FACT proxied: FAIL" "a disabled version under the grant arm: the row does not pass"
+  expect_contains "$out" "is DISABLED, which Secret Manager will not serve" "a disabled version under the grant arm: the row carries the state it read"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "a disabled version under the grant arm: no run launched"
+}
+
+# The bundle read is three answers — the secrets listing, the container's name in
+# it, and that container's versions — and a read that did not answer is a row the
+# check could NOT measure, never a PASS: the runs below it would be launched
+# against a service nobody settled.
+test_a_bundle_that_could_not_be_read_is_unmeasured() {
+  local dir=$work/switchbundleread
+  prepare "$dir"
+  # Doctor's grant arm, which is the only state the check reads the bundle in:
+  # a row doctor answers about the invoker grant carries nothing about what the
+  # service has to serve.
+  grant_arm_doctor "$dir"
+  run_check "$dir" "$script" FAKE_GCLOUD_MODE=no-secret-list
+  expect_status "$status" 2 "the secrets listing could not be read"
+  expect_contains "$out" "FACT proxied: FAIL" "an unread listing: the row does not pass"
+  expect_contains "$out" "gcloud secrets list exited non-zero" "an unread listing: the row says which read failed"
+  expect_contains "$err" "could NOT measure proxied" "an unread listing: the check says it could not measure"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "an unread listing: no run launched"
+  run_check "$dir" "$script" FAKE_GCLOUD_MODE=no-bundle-versions
+  expect_status "$status" 2 "the container's versions could not be read"
+  expect_contains "$out" "FACT proxied: FAIL" "unread versions: the row does not pass"
+  expect_contains "$out" "gcloud secrets versions list" "unread versions: the row says which read failed"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "unread versions: no run launched"
+  # A listing that holds no container with the name the bundle's derivation
+  # gives it. The installation's own apply creates exactly one, so none is a
+  # name this reading cannot settle — and it may not be read as "nothing to
+  # serve" either: the container that would have been read is not there to read.
+  python3 - "$dir/state/secrets.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+kept = [s for s in json.load(open(path))
+        if "creds-bundle" not in s.get("name", "")]
+open(path, "w").write(json.dumps(kept))
+PY
+  run_check "$dir" "$script"
+  expect_status "$status" 2 "no container is the bundle"
+  expect_contains "$out" "FACT proxied: FAIL" "no bundle container: the row does not pass"
+  expect_contains "$out" "is the credentials service bundle" "no bundle container: the row says what it could not name"
+  expect_contains "$out" "0 container(s) carry the name its derivation gives it" "no bundle container: the row carries the count it read"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "gcloud secrets versions list" "no bundle container: no versions are read of a container nobody named"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "no bundle container: no run launched"
+}
+
+# Doctor's arm for a read that failed altogether carries the same tail as its
+# custom-role arm ("may invoke it could not be checked", in "whether its callers
+# may invoke it could not be checked"), so a needle that matched that tail would
+# read an installation NOBODY could read as one whose only open question was the
+# invoker grant — and the check would go on to launch three runs on it. The
+# needle is the custom-role arm's own sentence, and this arm falls to the state
+# the check stops on.
+test_doctor_s_catch_all_unreadable_arm_is_unmeasured() {
+  local dir=$work/switchcatchall
+  prepare "$dir"
+  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","problem":"the installation has opted into the credentials service (fugaro-credentials), and the job accounts that may call it (the Cloud Run API is unavailable) could not be read: whether it is deployed and whether its callers may invoke it could not be checked"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 2 "doctor's catch-all unreadable arm"
+  expect_contains "$out" "FACT proxied: FAIL" "an installation nobody could read: the row does not pass"
+  expect_contains "$out" "state: other" "an installation nobody could read: the row carries the state it read"
+  expect_contains "$out" "could not be read" "an installation nobody could read: doctor's own words are carried"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "gcloud secrets versions list" "an installation nobody could read: the bundle is not read for an arm the check does not place"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "an installation nobody could read: no run launched"
+}
+
+test_a_doctor_row_the_reading_does_not_place_is_unmeasured() {
+  local dir=$work/switchother
+  prepare "$dir"
+  # Doctor's arm for a read of the bundle that did not answer: it is not the
+  # service's state, it is a question nobody here settled, and doctor itself
+  # counts it as one nothing could read. It is not an arm this reading places,
+  # so the row is one the check could NOT measure rather than a PASS.
+  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"info","problem":"the credentials service fugaro-credentials is deployed and every job account may invoke it, and the bundle (the Secret Manager API is unavailable) could not be read: whether there is a document for it to serve a run's credential out of could not be checked"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 2 "an arm this reading does not place"
+  expect_contains "$out" "FACT proxied: FAIL" "an unplaced arm: the row does not pass"
+  expect_contains "$out" "state: other" "an unplaced arm: the row carries the state it read"
+  expect_contains "$out" "could not be read" "an unplaced arm: doctor's own words are carried"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "an unplaced arm: no run launched"
+  # And a doctor that answers no such row at all: whether the installation can
+  # serve a run is exactly what nobody read, so it is the same row.
+  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":true,"checks":[],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 2 "doctor with no credentials-service-deployed row"
+  expect_contains "$out" "FACT proxied: FAIL" "no doctor row: the row does not pass"
+  expect_contains "$out" "the document carries none" "no doctor row: the row says the document carried none"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "no doctor row: no run launched"
+}
+
+test_doctor_s_row_is_context_and_never_the_decision() {
+  local dir=$work/switchcontext
+  prepare "$dir"
+  # The switch is the service's own policy and the repository's own jobs, so a
+  # serving arm of doctor's row — this one is the verify route emptied, a route
+  # no run of this check uses — decides nothing: the row passes on the two gcloud
+  # reads and the runs are launched.
   cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
 {"ok":true,"checks":[{"id":"credentials-service-deployed","ok":true,"severity":"info","problem":"the credentials service fugaro-credentials is deployed and serving, and it admits nobody on the verify route: every job account may invoke it and its bundle holds a version, and the verifier list it is deployed with is empty (this checkout's config writes verifier_accounts: [])"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
 DOCTOR_EOF
   run_check "$dir" "$script"
-  expect_status "$status" 0 "the verify route empty"
-  expect_contains "$out" "FACT proxied: PASS" "the verify route empty: every job account may still invoke the service"
-  expect_contains "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "the verify route empty: the runs are launched"
+  expect_status "$status" 0 "the verify route emptied"
+  expect_contains "$out" "FACT proxied: PASS" "the verify route emptied: the row passes on the service's own policy"
+  expect_contains "$out" "admits nobody on the verify route" "the verify route emptied: doctor's own words are carried"
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "the verify route emptied: the runs are launched"
+  # Doctor's arm for a grant it could not judge is context for the same reason:
+  # the grant is read from the service's own policy, so a custom role on it is
+  # answered there rather than here. It is one of the two arms doctor answers
+  # BEFORE it reads the bundle, so the bundle is read by the check first — the
+  # default fixture, whose newest version is ENABLED — and the row still passes
+  # on the two gcloud reads.
+  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","problem":"the credentials service fugaro-credentials is deployed, and whether workspace-a/repo-a (web) may invoke it could not be checked: a custom role on its or the project's policy could not be read"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 0 "doctor's arm for a grant it could not judge"
+  expect_contains "$out" "FACT proxied: PASS" "a grant doctor could not judge: the row passes on the service's own policy"
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "a grant doctor could not judge: the runs are launched"
 }
 
 test_happy_path() {
@@ -897,6 +1595,7 @@ test_happy_path() {
   local want calls
   for want in \
     "FACT proxied: PASS" \
+    "FACT account-admitted: PASS" \
     "FACT run-launch: PASS" \
     "FACT run-outcome: PASS" \
     "FACT refusal-other-repository: PASS" \
@@ -914,9 +1613,12 @@ test_happy_path() {
     expect_contains "$out" "$want" "happy path: $want"
   done
   # The three runs, each launched with the id this check built for it, the
-  # review one as a review-only run.
+  # working one with the recipe whose check step is the probe and the review one
+  # as a review-only run.
   calls=$(cat "$dir/logs/fugaro.calls")
-  expect_contains "$calls" "--run-id $(rid_of "$dir" work)" "happy path: the working run"
+  expect_contains "$(printf '%s\n' "$calls" | sed -n "/--run-id $(rid_of "$dir" work) /p")" \
+    "--recipe test-and-fix" \
+    "happy path: the working run's recipe is the one whose check step runs the probe"
   expect_contains "$calls" "--run-id $(rid_of "$dir" review)" "happy path: the review run"
   expect_contains "$calls" "--recipe review-only" "happy path: the review run is a review-only run"
   expect_contains "$calls" "--run-id $(rid_of "$dir" ended)" "happy path: the probe"
@@ -925,10 +1627,30 @@ test_happy_path() {
   # leave the runner failing the run ("the agent made no commits") and pushing a
   # draft anyway, so a row that read `pushed=yes` alone would pass over a probe
   # that measured a failure instead of the proxy.
+  #
+  # The attempts are NOT in the task any more: they are made by the repository's
+  # own check command, so a task that asked for them would be the model back in
+  # the measurement (which is what the provider's safeguards refused on
+  # 2026-11-15). This pins the other half of that: the task says so, and it is
+  # the probe's file the repository's fugaro.yaml has to name.
+  expect_contains "$(cat "$dir/state/tasks/$(rid_of "$dir" work).md")" \
+    "scripts/chk191-probe.sh" \
+    "happy path: the working run's task names the probe as its check step"
+  expect_absent "$(cat "$dir/state/tasks/$(rid_of "$dir" work).md")" \
+    "CHK191 attempt=" \
+    "happy path: the task does not ask the agent for an attempt line"
   expect_contains "$(cat "$dir/state/tasks/$(rid_of "$dir" work).md")" \
     "commit it, push your branch and open the pull request" \
     "happy path: the working run's task asks for a real run"
   expect_contains "$out" "opened pull request #41" "happy path: the run-outcome row carries the pull request"
+  # The ended probe is read from its own record — git's sentence, which names
+  # the forwarder the run's first call went to and the status the service
+  # answered it with — and from the service's own lines, which hold nothing for
+  # it. Neither the service's sentence nor a wire type is in the run (D143, and
+  # git prints no body), so this is the reading the row has.
+  expect_contains "$out" "unable to access 'http://127.0.0.1:41234/v1/bitbucket/proxy/" "happy path: the probe's refusal is read from its own record"
+  [ -f "$dir/logs/logging.reads-$(rid_of "$dir" ended)" ] ||
+    fail "happy path: the service's own lines are not read for the ended probe, so the row cannot say the ended identity reached no route"
   # The outcome node was written, read back and deleted, and it is the node the
   # service reads a run's outcome from.
   calls=$(cat "$dir/logs/curl.calls")
@@ -1002,27 +1724,189 @@ test_a_forbidden_attempt_the_run_did_not_report_is_a_failure() {
   expect_contains "$out" "FACT refusal-tag-ref: FAIL" "an unreported refusal: the fact names the attempt the run reported as served"
 }
 
-# The other-pull-request attempt has to name a pull request of the RUN'S OWN
-# repository. The rules refuse a call that names another repository for the
-# repository before they look at the pull request (internal/gitproxy/rules.go),
-# so an attempt pointed at CHECK191_OTHER_REPO earns other_repository and no
-# other_pull_request line exists for it at all: the row that reads that class is
-# left with nothing, which is a FAIL on a correct installation. The copy below
-# points the attempt at the other repository, and the fake service answers it
-# with the class the real rules would give it.
-test_the_other_pull_request_attempt_is_against_this_repository() {
-  local dir=$work/prrepo copy
+# The one shape of the probe's line a refusal does NOT carry: a git call the
+# proxy SERVED prints nothing when it succeeds, so the probe's own line leaves
+# the answer field empty (check191-probe.sh's words_of, pinned at the probe's
+# level by test_the_probe_reports_an_attempt_the_proxy_served). The check must
+# read that line as the finding it is — the call was answered instead of
+# refused — and not as a probe that differs: a reader that required a token
+# after `answer=` dropped the line, and the row then reported "the working run
+# reported NO line for the other-ref attempt", which sends its reader to the
+# probe instead of to the proxy.
+test_a_served_attempt_with_no_status_is_a_failure() {
+  local dir=$work/servedempty
   prepare "$dir"
-  copy=$dir/check191-otherrepo.sh
-  sed 's|comment on pull request \${OTHER_PR} in \${REPO}|comment on pull request ${OTHER_PR} in ${OTHER_REPO}|' "$script" >"$copy" 2>/dev/null || true
-  if [ ! -s "$copy" ] || cmp -s "$script" "$copy"; then
-    fail "the other-pull-request attempt: the copy is the script: the task's own line for the attempt was not found to point at the other repository"
-    return 0
-  fi
-  run_check "$dir" "$copy"
-  expect_status "$status" 1 "the other-pull-request attempt pointed at the other repository"
-  expect_contains "$out" "FACT refusal-other-pull-request: FAIL" "the other-pull-request attempt: the row with no line behind it"
-  expect_contains "$out" "FACT refusal-other-repository: PASS" "the other-pull-request attempt: the repository refusal still holds"
+  run_check "$dir" "$script" FAKE_FUGARO_MODE=served-empty
+  expect_status "$status" 1 "an attempt served with no status"
+  expect_contains "$out" "FACT refusal-other-ref: FAIL" "an attempt served with no status: the fact names the attempt"
+  expect_contains "$out" "the working run made the other-ref attempt and was SERVED" \
+    "an attempt served with no status: the row is the served finding"
+  expect_absent "$out" "reported NO line for the other-ref attempt" \
+    "an attempt served with no status: the row is not read as a probe that differs"
+  expect_contains "$out" "FACT refusal-tag-ref: PASS" \
+    "an attempt served with no status: the attempts that carry a refusal are still read"
+}
+
+# A repository whose own test command is not the probe reports no CHK191 line at
+# all, and that is ONE fact about the installation rather than seven findings
+# about the proxy: the working run's check step passed, so the run ends with no
+# push and no pull request (internal/runner's endWithoutPR, "every check passed:
+# nothing to fix"), and the run-outcome row would read FAIL for a cause the run
+# did not choose. Every row that needed the attempts is recorded as one this
+# check could not measure, with the step that adds the probe printed for its
+# owner — no model is asked for them, and the check cannot make them itself: a
+# run's identity is sealed to its own execution.
+test_a_repository_with_no_probe_is_refused_rather_than_failed() {
+  local dir=$work/noprobe name
+  prepare "$dir"
+  run_check "$dir" "$script" FAKE_FUGARO_MODE=no-probe
+  expect_status "$status" 2 "a repository whose test command is not the probe"
+  expect_contains "$out" "FACT run-outcome: FAIL" "no probe: the run-outcome row is reported, never a PASS nobody took"
+  expect_contains "$out" "not Check 191's probe" "no probe: the row names what is missing"
+  for name in refusal-other-repository refusal-ref-delete refusal-workspaces; do
+    expect_contains "$out" "FACT ${name}: FAIL" "no probe: the ${name} row is reported as one that was not measured"
+  done
+  expect_contains "$out" "scripts/chk191-probe.sh" "no probe: the file the owner has to copy in is named"
+  expect_contains "$out" "'The sandbox repository's half'" "no probe: the section of the steps doc is named"
+  expect_contains "$err" "copy scripts/live-checks/check191-probe.sh from Fugaro's repository into workspace-a/repo-a" \
+    "no probe: the owner's own step is printed, with the file and where it goes"
+  # The refusal carries the diff and not a pointer to it: the two lines the
+  # owner has to write are in the message itself.
+  expect_contains "$err" "test: CHK191_PROBE_OTHER_REPO=<workspace>/<another sandbox repo> CHK191_PROBE_OTHER_PR=<n> bash scripts/chk191-probe.sh" \
+    "no probe: the workflow line the owner has to write is in the refusal"
+  expect_contains "$err" "CHECK191_OTHER_REPO and CHECK191_OTHER_PR" \
+    "no probe: the refusal says which two values the probe is given"
+  expect_contains "$err" "this run could NOT measure" "no probe: the check says it could not measure"
+  expect_contains "$out" "CHECK 191 RESULT END (exit 2)" "no probe: the block ends as one that could not measure"
+  # The check stops where it cannot measure: the review run's row reads the
+  # working run's own pull request, which this run never opened.
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "--run-id $run_base-0002" "no probe: no review run is launched on it"
+}
+
+# The probe ran, and one of its own guards stopped an attempt before it made it:
+# the seven lines are all there, one of them saying the attempt was NOT made. A
+# row cannot be read from that — the class it needs is a refusal the service
+# never wrote — so it is recorded as one the check could not measure, with the
+# value the probe was missing named.
+test_an_attempt_the_probe_could_not_make_is_unmeasured() {
+  local dir=$work/probenone
+  prepare "$dir"
+  run_check "$dir" "$script" FAKE_FUGARO_MODE=probe-unavailable
+  expect_status "$status" 2 "an attempt the probe did not make"
+  expect_contains "$out" "FACT refusal-other-repository: FAIL" "an attempt the probe did not make: the row is reported"
+  expect_contains "$out" "the other-repository attempt was NOT made" "an attempt the probe did not make: the row says which attempt it was"
+  expect_contains "$out" "no_other_repository_named" "an attempt the probe did not make: the answer field is carried"
+  expect_contains "$out" "FACT run-outcome: PASS" "an attempt the probe did not make: the run's own half is still measured"
+}
+
+# ------------------------------------------------------------ the probe itself
+# The seven attempts are made by the probe, so this is where the path of each
+# one is pinned: what the check reads is one line per attempt, and every line's
+# worth depends on the call behind it having gone where it says. The
+# other-pull-request attempt is the one that has to name a pull request of the
+# RUN'S OWN repository: internal/gitproxy's Decide refuses a call that names
+# another repository with other_repository BEFORE it reads the pull-request
+# rules, so an attempt pointed at another repository would leave the row that
+# reads other_pull_request with nothing on a correct installation.
+test_the_probe_makes_the_seven_attempts_through_the_forwarder() {
+  local dir=$work/probe name calls
+  run_probe "$dir" CHK191_PROBE_OTHER_REPO=workspace-a/repo-b CHK191_PROBE_OTHER_PR=4
+  # It exits non-zero ON PURPOSE: a run whose check steps all pass ends with no
+  # push and no pull request at all (internal/runner's endWithoutPR), and the
+  # working run's pushed branch and pull request are the other half of what
+  # Check 191 measures.
+  expect_status "$probe_status" 1 "the probe's own exit"
+  for name in "${probe_names[@]}"; do
+    expect_contains "$probe_out" "CHK191 attempt=${name} refused=yes answer=403" "the probe: the ${name} attempt"
+  done
+  # Every line is written twice: to the command's own stdout, and to the
+  # container's own stdout, which is the log `fugaro logs` reads. A repository
+  # command's output reaches neither the run's log nor `fugaro logs` on its own
+  # (internal/verify's Run is called with no Stdout), so a probe that wrote only
+  # to its own stdout would report nothing the check can read.
+  expect_contains "$(cat "$dir/run.log")" "CHK191 attempt=workspaces refused=yes answer=403" \
+    "the probe: the lines are written to the container's own stdout"
+  calls=$(cat "$dir/logs/git.calls")
+  expect_contains "$calls" "git ls-remote https://bitbucket.org/workspace-a/repo-b.git" \
+    "the probe: the other repository is the one it was handed an attempt at"
+  expect_contains "$calls" "git push https://bitbucket.org/workspace-a/repo-a.git HEAD:refs/heads/chk191-other-ref" \
+    "the probe: the other-ref attempt leaves a branch no run owns"
+  expect_contains "$calls" "git push https://bitbucket.org/workspace-a/repo-a.git refs/tags/chk191-probe" \
+    "the probe: the tag attempt"
+  expect_contains "$calls" "git push https://bitbucket.org/workspace-a/repo-a.git :refs/heads/fb" \
+    "the probe: the delete names the run's own branch, the one ref the run pushes again at the end"
+  expect_contains "$calls" "git remote get-url origin" "the probe: this repository is read from the checkout's own origin"
+  calls=$(cat "$dir/logs/curl.calls")
+  expect_contains "$calls" "POST http://127.0.0.1:41234/v1/bitbucket/proxy/2.0/repositories/workspace-a/repo-a/pullrequests/4/comments" \
+    "the probe: the comment names a pull request of THIS repository"
+  expect_contains "$calls" "POST http://127.0.0.1:41234/v1/bitbucket/proxy/2.0/repositories/workspace-a/repo-a/pullrequests/4/merge" \
+    "the probe: the merge attempt"
+  expect_contains "$calls" "GET http://127.0.0.1:41234/v1/bitbucket/proxy/2.0/workspaces" \
+    "the probe: the workspace list"
+  expect_absent "$calls" "repo-b" "the probe: no pull-request attempt names another repository"
+  # Nothing but the method and the URL is ever handed to a call, and nothing of
+  # what came back is written where a reader could pick it up: the check holds no
+  # Bitbucket credential of its own, and the probe holds none at all.
+  expect_absent "$calls" "Authorization" "the probe: no call carries an authorization header"
+  expect_absent "$probe_out$probe_err" "bitbucket.org" "the probe: no URL of the repository reaches its output"
+  expect_absent "$(cat "$dir/run.log")" "/v1/bitbucket/proxy" "the probe: the forwarder's endpoint is not written to the run's log"
+}
+
+# An attempt that would have gone straight to Bitbucket is not made at all: a
+# repository whose runs are not proxied carries no insteadOf rewrite, and the
+# probe's seven lines all say the attempt was not made rather than reporting a
+# call the credentials service never saw. All seven or none — the check reads a
+# report of six as saying nothing about the seventh.
+test_the_probe_makes_no_attempt_without_a_forwarder() {
+  local dir=$work/probenofwd name
+  run_probe "$dir" GIT_CONFIG_KEY_2= GIT_CONFIG_VALUE_2=
+  expect_status "$probe_status" 1 "the probe without a forwarder"
+  for name in "${probe_names[@]}"; do
+    expect_contains "$probe_out" "CHK191 attempt=${name} refused=none answer=no_forwarder_rewrite" \
+      "the probe without a forwarder: the ${name} attempt is not made"
+  done
+  expect_absent "$(cat "$dir/logs/git.calls")" "git push" "the probe without a forwarder: no write was aimed anywhere"
+  expect_absent "$(cat "$dir/logs/curl.calls")" "curl " "the probe without a forwarder: no call was made"
+}
+
+# The two values the probe cannot know by itself, and what it does without them:
+# a probe that guessed at the other repository or at a pull-request number would
+# be pointing a write at something the check never named. The other six attempts
+# are still made — one guard stopping one attempt is not the probe stopping.
+test_the_probe_reports_the_values_it_was_not_given() {
+  local dir=$work/probenoval
+  run_probe "$dir"
+  expect_status "$probe_status" 1 "the probe with no values"
+  expect_contains "$probe_out" "CHK191 attempt=other-repository refused=none answer=no_other_repository_named" \
+    "the probe with no other repository: the read is not aimed at a guess"
+  expect_contains "$probe_out" "CHK191 attempt=other-pull-request refused=none answer=no_other_pull_request_named" \
+    "the probe with no pull request: the comment is not aimed at a guess"
+  expect_contains "$probe_out" "CHK191 attempt=merge refused=none answer=no_other_pull_request_named" \
+    "the probe with no pull request: the merge is not aimed at a guess either"
+  expect_contains "$probe_out" "CHK191 attempt=workspaces refused=yes answer=403" \
+    "the probe with no values: the attempts that name neither are still made"
+  expect_absent "$(cat "$dir/logs/curl.calls")" "pullrequests" "the probe with no pull request: no pull-request call was made"
+  expect_absent "$(cat "$dir/logs/git.calls")" "ls-remote" "the probe with no other repository: no other repository was read"
+}
+
+# The finding Check 191 exists for, at the probe's own level: a call the proxy
+# SERVES is reported as refused=no with the status it was answered with, and the
+# probe does not turn it into a pass. The check's own row for it is pinned in
+# test_a_forbidden_attempt_the_run_did_not_report_is_a_failure.
+test_the_probe_reports_an_attempt_the_proxy_served() {
+  local dir=$work/probeserved name
+  run_probe "$dir" FAKE_PROBE_MODE=served CHK191_PROBE_OTHER_REPO=workspace-a/repo-b CHK191_PROBE_OTHER_PR=4
+  # A git call that is served has no refusal to quote and git prints nothing on
+  # success, so the answer field of a served write is empty — refused=no is the
+  # whole of what it says, and that is the reading the check fails on.
+  for name in other-repository other-ref tag ref-delete; do
+    expect_contains "$probe_out" "CHK191 attempt=${name} refused=no answer=" \
+      "the probe served a write: the ${name} attempt is reported as served"
+  done
+  for name in other-pull-request merge workspaces; do
+    expect_contains "$probe_out" "CHK191 attempt=${name} refused=no answer=200" \
+      "the probe served a call: the ${name} attempt is reported as served with its status"
+  done
 }
 
 # A mode: review recipe is launched with the pull request it reviews, and
@@ -1059,13 +1943,125 @@ test_a_review_probe_launched_without_its_pull_request_is_a_failure() {
   expect_contains "$out" "never launched one" "a review probe with no --pr: the reason is the launch that never happened"
 }
 
-test_the_review_runs_push_refusal_is_asserted() {
+# The review-only run's push, and the class the row accepts. A review identity's
+# push is refused under read_only when the run is the installation's review-only
+# job (internal/credsvc's bucketproxy sets Identity.ReadOnly from the JOB's
+# class, and internal/gitproxy's Decide refuses every push of a read-only
+# identity before it reads the push rules) and under no_run_branch when it is not
+# read-only and carries no fb — the two shapes a review run can be launched in.
+# The row used to pin no_run_branch alone, which fails a correct installation
+# whose review runs are the review-only job; and not_admitted, which an earlier
+# run's log carried, is neither: it is the published block's own rule about the
+# REPOSITORY, decided before any rule about what an identity may write.
+test_the_review_runs_push_is_refused_under_no_run_branch() {
   local dir=$work/review
   prepare "$dir"
-  run_check "$dir" "$script" FAKE_GCLOUD_MODE=no-review-refusal
-  expect_status "$status" 1 "the review run's push"
-  expect_contains "$out" "FACT review-run: FAIL" "the review run's push: the fact"
+  run_check "$dir" "$script"
+  expect_status "$status" 0 "the review run's push"
+  expect_contains "$out" "FACT review-run: PASS" "the review run's push: the fact"
+  expect_contains "$out" "the service's own line carries the class no_run_branch" \
+    "the review run's push: the class the service's line carries is named"
+  expect_contains "$out" "The other of the two classes the rules can answer" \
+    "the review run's push: the class it did NOT read is named too"
   expect_contains "$out" "FACT ended-identity: PASS" "the review run's push: the rows after it were still measured"
+}
+
+test_a_review_run_of_the_review_only_job_is_refused_under_read_only() {
+  local dir=$work/reviewro
+  prepare "$dir"
+  run_check "$dir" "$script" FAKE_GCLOUD_MODE=review-read-only
+  expect_status "$status" 0 "a review run of the installation's review-only job"
+  expect_contains "$out" "FACT review-run: PASS" "the review-only job class: the fact"
+  expect_contains "$out" "the service's own line carries the class read_only" \
+    "the review-only job class: the class is read from the service's line, not pinned by the check"
+}
+
+test_a_review_runs_refusal_under_another_class_is_a_failure() {
+  local dir=$work/reviewclass
+  prepare "$dir"
+  # not_admitted is the answer a call earns before any rule about a push is read:
+  # the repository's own admission, which says nothing about what an identity may
+  # write. A row that took it for the push's class would pass over a run whose
+  # push was refused for a reason that has nothing to do with being review-only.
+  run_check "$dir" "$script" FAKE_GCLOUD_MODE=review-not-admitted
+  expect_status "$status" 1 "a review run refused under not_admitted"
+  expect_contains "$out" "FACT review-run: FAIL" "the wrong class: the fact"
+  expect_contains "$out" "not_admitted is neither" "the wrong class: the row says what the class it read settles"
+  expect_contains "$out" "FACT refusal-other-repository: PASS" "the wrong class: the working run's own rows still hold"
+}
+
+# The state a review run whose agent made no attempt leaves: an empty reading,
+# recorded as NOT MEASURED rather than failed, because a FAIL here would name a
+# hole in an installation that is correct. It is not a claim about the code —
+# the way from inside a run to the service is the runner's own loopback
+# forwarder, which attaches the run's identity to whatever arrives and drops the
+# caller's Authorization (internal/gateway's gitforward), so an agent in that
+# container which finds the port DOES reach it. What nothing does is point a
+# review run at it: the runner gives its agent no git credential and no
+# forwarder rewrite (internal/runner's refreshGitAuth) and a mode: review recipe
+# allows exactly one review step and no repository command (internal/recipe).
+test_a_review_run_that_reached_the_service_for_nothing_is_unmeasured() {
+  local dir=$work/reviewnone
+  prepare "$dir"
+  run_check "$dir" "$script" FAKE_GCLOUD_MODE=no-review-refusal
+  expect_status "$status" 2 "a review run whose push left no line"
+  expect_contains "$out" "FACT review-run: FAIL" "a review run whose push left no line: the row is reported, never a PASS nobody took"
+  expect_contains "$out" "no attempt that reached the service" \
+    "a review run whose push left no line: what is missing is named"
+  expect_contains "$out" "loopback forwarder" \
+    "a review run whose push left no line: the row says a review run does have a way to the service"
+  expect_contains "$out" "FACT ended-identity: PASS" "a review run whose push left no line: the rows after it were still measured"
+}
+
+# A review run's agent reporting a push the service ANSWERED, with the run's own
+# served call behind it in the service's lines: the finding this row exists for,
+# and it is the service's own line that makes it one. The row never prints it on
+# the agent's word alone.
+test_a_review_run_whose_push_was_served_is_a_failure() {
+  local dir=$work/reviewserved
+  prepare "$dir"
+  run_check "$dir" "$script" FAKE_FUGARO_MODE=review-served
+  expect_status "$status" 1 "a review run whose push was served"
+  expect_contains "$out" "FACT review-run: FAIL" "a served review push: the fact"
+  expect_contains "$out" "the review-only run's push was SERVED" "a served review push: the row says what happened"
+  expect_contains "$out" "the service's own lines carry the served call behind it" \
+    "a served review push: the row says what corroborates it"
+}
+
+# The same sentence from the agent with nothing in the service's own lines for
+# that run: uncorroborated, so the row records it as one it could not measure
+# rather than printing the finding on a model's word.
+test_a_review_run_that_says_its_push_was_served_with_no_service_line_is_unmeasured() {
+  local dir=$work/reviewservednone
+  prepare "$dir"
+  run_check "$dir" "$script" FAKE_FUGARO_MODE=review-served FAKE_GCLOUD_MODE=review-no-served-line
+  expect_status "$status" 2 "a served sentence with no service line behind it"
+  expect_contains "$out" "FACT review-run: FAIL" "a served sentence with no line behind it: the row is reported"
+  expect_contains "$out" "no service line behind it" \
+    "a served sentence with no line behind it: the row says what is missing"
+}
+
+test_a_review_run_that_made_no_attempt_is_unmeasured() {
+  local dir=$work/reviewsilent
+  prepare "$dir"
+  run_check "$dir" "$script" FAKE_FUGARO_MODE=review-silent
+  expect_status "$status" 2 "a review run that reported no attempt"
+  expect_contains "$out" "FACT review-run: FAIL" "a review run that reported no attempt: the row is reported"
+  expect_contains "$out" "no line for the push attempt" "a review run that reported no attempt: the row says what it read"
+}
+
+test_a_review_run_whose_line_is_not_the_one_asked_for_is_a_failure() {
+  local dir=$work/reviewgarbled
+  prepare "$dir"
+  # A line that is not the one this attempt asks for is not a reading about the
+  # proxy either way, and taking it for one — reading refused=maybe as the round
+  # below reads refused=no — would call a garbled report a hole in the
+  # installation.
+  run_check "$dir" "$script" FAKE_FUGARO_MODE=review-garbled
+  expect_status "$status" 1 "a review run whose line is not the one asked for"
+  expect_contains "$out" "FACT review-run: FAIL" "a garbled line: the row is reported"
+  expect_contains "$out" "refused=maybe" "a garbled line: the row carries what it read"
+  expect_contains "$out" "which is not the one line this attempt asks for" "a garbled line: the row says what it expected"
 }
 
 test_an_outcome_that_cannot_be_written_stops_the_check() {
@@ -1079,6 +2075,86 @@ test_an_outcome_that_cannot_be_written_stops_the_check() {
   expect_contains "$out" "FACT ended-identity: FAIL" "an unwritable outcome: the fact"
   expect_absent "$(cat "$dir/logs/fugaro.calls")" "--run-id $run_base-0003" "an unwritable outcome: no probe was launched"
   expect_contains "$out" "FACT scratch-removed: PASS" "an unwritable outcome: the scratch directory is still restored"
+}
+
+test_the_hole_the_ended_row_exists_for_is_a_failure() {
+  local dir=$work/endedserved
+  prepare "$dir"
+  # The service's own lines hold a line for the probe — a served git call — so
+  # the ended identity reached the proxy route: the hole this row exists for.
+  # The probe's own record is the correct one here, which is the point: a
+  # reading taken from the run's record alone would pass this run.
+  run_check "$dir" "$script" FAKE_GCLOUD_MODE=ended-served
+  expect_status "$status" 1 "a served ended run"
+  expect_contains "$out" "FACT ended-identity: FAIL" "a served ended run: the fact"
+  expect_contains "$out" "reached a route of the service instead of being refused as an identity" "a served ended run: the row says what it read"
+  expect_contains "$out" "status=ok" "a served ended run: the line it read is carried"
+}
+
+test_a_write_that_missed_the_service_is_unmeasured() {
+  local dir=$work/endeddirect
+  prepare "$dir"
+  # The probe pushed, and the service's own lines hold nothing for it: that
+  # write did not go through the service at all — this repository's job still
+  # mounts its own Bitbucket token and the runner used it the old way, which is
+  # a release whose runner carries no proxy (proxySince's own reason). The row
+  # is one the check could not measure, not a PASS over a write it cannot
+  # account for.
+  run_check "$dir" "$script" FAKE_FUGARO_MODE=ended-pushed
+  expect_status "$status" 2 "a write that missed the service"
+  expect_contains "$out" "FACT ended-identity: FAIL" "a write that missed the service: the fact"
+  expect_contains "$out" "did not go through the credentials service" "a write that missed the service: the row says what it read"
+  expect_contains "$out" "0.22.0" "a write that missed the service: the release that carries the runner half is named"
+  expect_contains "$out" "FACT restore: PASS" "a write that missed the service: the node is still restored"
+}
+
+test_a_probe_whose_record_names_no_forwarder_is_unmeasured() {
+  local dir=$work/endedelsewhere
+  prepare "$dir"
+  # The probe's record is the MODEL call's refusal — the gateway's own constant
+  # naming the wire type — and it wrote nothing, with no line in the service's
+  # own. That is the record a check must not read as a pass: the run got past its
+  # checkout, so its first call was not the git traffic this row measures, and a
+  # proxied runner's checkout is refused before the gateway exists. It is a run
+  # this check could not measure, not a pass about the proxy. The service's own
+  # sentence is put in the run's log as well, to say the reading is the record's:
+  # a check that looked for it in the log would pass this run.
+  run_check "$dir" "$script" FAKE_FUGARO_MODE=ended-elsewhere FAKE_FUGARO_LOG_MODE=service-sentence
+  expect_status "$status" 2 "a record naming no forwarder"
+  expect_contains "$out" "FACT ended-identity: FAIL" "a record naming no forwarder: the fact"
+  expect_contains "$out" "names no forwarder of this execution" "a record naming no forwarder: the row says what it read"
+  expect_contains "$out" "unverified_run_identity" "a record naming no forwarder: the gateway's constant is carried for context"
+  expect_contains "$out" "FACT restore: PASS" "a record naming no forwarder: the node is still restored"
+}
+
+test_a_probe_that_ran_to_an_end_and_wrote_nothing_is_unmeasured() {
+  local dir=$work/endedran
+  prepare "$dir"
+  # The probe ran to an ordinary end and wrote nothing, with no line in the
+  # service's own: a run that got as far as its own end was served somewhere,
+  # and the absence of any line says that was not the service — so the row is
+  # one the check could not measure rather than a PASS or a FAIL about the
+  # write-once outcome.
+  run_check "$dir" "$script" FAKE_FUGARO_MODE=ended-unrefused
+  expect_status "$status" 2 "a probe that ran to an end"
+  expect_contains "$out" "FACT ended-identity: FAIL" "a probe that ran to an end: the fact"
+  expect_contains "$out" "names no forwarder of this execution" "a probe that ran to an end: the row says what it read"
+}
+
+test_a_service_answer_that_is_not_the_refusal_is_a_failure() {
+  local dir=$work/ended503
+  prepare "$dir"
+  # The service answered the probe's first call, and its answer was not the
+  # identity refusal: state_unavailable is what it says when it cannot read the
+  # run's outcome, which is the one state where the ended-run refusal is never
+  # reached. The call went to the service — the record names this execution's
+  # forwarder — so this is a criterion that did not hold, not a row the check
+  # could not measure.
+  run_check "$dir" "$script" FAKE_FUGARO_MODE=ended-503
+  expect_status "$status" 1 "a service answer that is not the refusal"
+  expect_contains "$out" "FACT ended-identity: FAIL" "a service answer that is not the refusal: the fact"
+  expect_contains "$out" "answered its first call" "a service answer that is not the refusal: the row says what it read"
+  expect_contains "$out" "state_unavailable" "a service answer that is not the refusal: the 503 is named"
 }
 
 test_after_flip_happy_path() {
@@ -1251,25 +2327,53 @@ t test_repo_guard
 t test_the_run_id_must_name_today
 t test_the_run_id_base_must_be_todays_date_and_a_time
 t test_the_fake_run_refuses_an_id_the_cli_would_refuse
+t test_no_account_for_the_repository_stops_the_check
+t test_a_spending_policy_names_the_paid_key_it_will_not_launch_on
+t test_an_account_for_another_repository_stops_the_check
+t test_an_entry_that_is_no_claude_account_still_passes_the_gate
+t test_the_account_gate_is_what_stops_the_check
 t test_the_switch_being_off_stops_the_check
-t test_the_switch_is_read_from_doctor_s_whole_sentence
-t test_another_repositorys_missing_grant_is_not_this_repositorys_switch
+t test_one_job_of_the_repository_without_the_grant_is_a_switch_that_is_off
 t test_a_switch_the_check_cannot_read_is_unmeasured
-t test_a_doctor_arm_the_reading_does_not_know_is_unmeasured
+t test_a_service_policy_that_could_not_be_read_is_unmeasured
+t test_a_job_list_that_could_not_be_read_is_unmeasured
+t test_no_job_of_the_repository_is_unmeasured
+t test_a_job_is_the_repository_s_by_its_label
+t test_the_switch_is_read_from_the_service_s_own_policy
 t test_an_installation_with_no_credentials_service_is_a_failure
-t test_an_ok_arm_the_reading_does_not_know_is_unmeasured
-t test_the_verify_route_being_empty_is_still_a_switch_that_is_on
+t test_a_service_with_nothing_to_serve_stops_the_check
+t test_a_bundle_with_nothing_to_serve_stops_the_check_under_doctor_s_grant_arm
+t test_a_bundle_that_could_not_be_read_is_unmeasured
+t test_doctor_s_catch_all_unreadable_arm_is_unmeasured
+t test_a_doctor_row_the_reading_does_not_place_is_unmeasured
+t test_doctor_s_row_is_context_and_never_the_decision
 t test_happy_path
 t test_a_run_that_did_not_succeed_is_a_failure
 t test_a_refusal_the_service_wrote_no_class_line_for_is_a_failure
 t test_a_refusal_that_was_not_audited_is_a_failure
 t test_a_log_that_lags_is_waited_for
 t test_a_forbidden_attempt_the_run_did_not_report_is_a_failure
-t test_the_other_pull_request_attempt_is_against_this_repository
-t test_the_review_runs_push_refusal_is_asserted
+t test_a_served_attempt_with_no_status_is_a_failure
+t test_a_repository_with_no_probe_is_refused_rather_than_failed
+t test_an_attempt_the_probe_could_not_make_is_unmeasured
+t test_the_probe_makes_the_seven_attempts_through_the_forwarder
+t test_the_probe_makes_no_attempt_without_a_forwarder
+t test_the_probe_reports_the_values_it_was_not_given
+t test_the_probe_reports_an_attempt_the_proxy_served
+t test_the_review_runs_push_is_refused_under_no_run_branch
+t test_a_review_run_of_the_review_only_job_is_refused_under_read_only
+t test_a_review_runs_refusal_under_another_class_is_a_failure
+t test_a_review_run_that_reached_the_service_for_nothing_is_unmeasured
+t test_a_review_run_that_made_no_attempt_is_unmeasured
+t test_a_review_run_whose_line_is_not_the_one_asked_for_is_a_failure
 t test_the_review_probe_is_launched_with_the_pull_request_it_reviews
 t test_a_review_probe_launched_without_its_pull_request_is_a_failure
 t test_an_outcome_that_cannot_be_written_stops_the_check
+t test_the_hole_the_ended_row_exists_for_is_a_failure
+t test_a_write_that_missed_the_service_is_unmeasured
+t test_a_probe_whose_record_names_no_forwarder_is_unmeasured
+t test_a_probe_that_ran_to_an_end_and_wrote_nothing_is_unmeasured
+t test_a_service_answer_that_is_not_the_refusal_is_a_failure
 t test_after_flip_happy_path
 t test_after_flip_a_job_that_still_mounts_the_token_is_a_failure
 t test_after_flip_an_account_that_still_has_the_accessor_is_a_failure

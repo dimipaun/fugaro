@@ -83,7 +83,6 @@ func newWSCreateRig(t *testing.T, stdin, extra string) *wsCreateRig {
 	old := selfCommand
 	selfCommand = func() string { return "fugaro" }
 	t.Cleanup(func() { selfCommand = old })
-	canConfirmTyped = initflow.CanConfirm
 	out := &syncBuf{}
 	cmd := NewRootCmd()
 	cmd.SetOut(out)
@@ -365,7 +364,7 @@ func TestUpdateConvergesASplitWorkspaceOwnerInOneCommand(t *testing.T) {
 	// The step's line is the first clause of its reason and the log the whole of
 	// it (report.Brief), so the owner sees the skip on the screen and reads why
 	// it did not run — the pair, the config key and the way out — in the log.
-	if !strings.Contains(out, "– skipped      workspace-project this installation declares a workspace of its own") {
+	if !strings.Contains(out+newestLog(t, "update"), "– skipped      workspace-project this installation declares a workspace of its own") {
 		t.Errorf("the update's screen does not show the workspace's own project skipped for the split:\n%s", out)
 	}
 	whole := out + newestLog(t, "update")
@@ -531,16 +530,16 @@ func TestWorkspaceProjectStageConvergesACapWithoutAMember(t *testing.T) {
 	}
 }
 
-// TestWorkspaceProjectStageNeverConfirmsByYes: what the stage applies is an IAM
-// GRANT, and no run's one --yes covers a grant (spec §6). A coding agent's
-// session is refused for the same reason: the confirmation cannot be given
-// there at all.
-func TestWorkspaceProjectStageNeverConfirmsByYes(t *testing.T) {
+// TestWorkspaceProjectStageNeverConfirmsByTheRunsOwnAnswer: what the stage
+// applies is an IAM GRANT, and the run's own answer covers no grant (spec §6) —
+// the typed word is the owner's. A coding agent's session is refused for the
+// same reason: the confirmation cannot be given there at all.
+func TestWorkspaceProjectStageNeverConfirmsByTheRunsOwnAnswer(t *testing.T) {
 	for _, c := range []struct {
 		name  string
 		agent string
 	}{
-		{"--yes", ""},
+		{"the run's own answer", ""},
 		{"a coding agent", agentMarkers[0]},
 	} {
 		t.Run(c.name, func(t *testing.T) {

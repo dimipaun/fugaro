@@ -844,6 +844,14 @@ function licenceSplitFailures(html) {
     if (!element.includes('LicenseRef-Fugaro-Subscription') && !links(element, 'ee/LICENSE')) {
       out.push(`${what} does not name the licence the binary's ee/ code is under (LicenseRef-Fugaro-Subscription, ee/LICENSE): the released binary carries that code beside the MIT core, so a note that stops at the core describes a binary nobody downloads`)
     }
+    // And the split has a third part from the release that publishes both: one archive is the
+    // mixed-licence binary the cask installs, the other is the same binary without the `ee/`
+    // code, under the MIT licence alone. An element that says "the archives" carry that code
+    // describes a download a reader who wants no `ee/` code never gets (T3 (c), the owner's
+    // ruling of 2026-11-11; plan task L5.3).
+    if (!/fugaro-core/.test(text)) {
+      out.push(`${what} does not name the fugaro-core archive: from 0.13.0 a release publishes the mixed-licence archive and a pure-MIT one beside it, so an element that speaks of "the archives" as carrying ee/ code describes a download a reader who wants none never gets`)
+    }
   }
 
   const band = pageText(elements.find((element) => element.what === 'the `#licence` band').html)
@@ -920,6 +928,16 @@ test('every licence-element refusal fires on the defect it names', () => {
       what: `${BAND} stopping at the core's licence`,
       plant: (html) => editLicenceElement(html, BAND, (one) => one.replace(/ee\/LICENSE|LicenseRef-Fugaro-Subscription/g, 'LICENSING.md')),
       expected: /the `#licence` band does not name the licence the binary's ee\/ code is under/,
+    },
+    {
+      what: `${CARD} describing every archive as the mixed-licence one`,
+      plant: (html) => editLicenceElement(html, CARD, (one) => one.replace(/fugaro-core/g, 'fugaro')),
+      expected: /the Licence card does not name the fugaro-core archive/,
+    },
+    {
+      what: `${BAND} describing every archive as the mixed-licence one`,
+      plant: (html) => editLicenceElement(html, BAND, (one) => one.replace(/fugaro-core/g, 'fugaro')),
+      expected: /the `#licence` band does not name the fugaro-core archive/,
     },
   ]
 

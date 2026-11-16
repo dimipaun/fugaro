@@ -248,18 +248,19 @@ export function budgetFailures(dist, budgets) {
 // already reads a page. A command block is a command a reader copies, and it is counted
 // like any other visible text: the ceiling is a claim about the page, not about its prose.
 //
-// The pages D188 exempts — `/docs/`, `/security/`, `/changelog/`, `/legal/subscription-terms/`
-// and `/compatibility/` — are exempt from the **page** ceiling because the words on each are a
-// file's rather than a page's prose: a document of this repository on the first four, and
-// `website/data/compatibility.yaml` on the matrix's page. Their leads are still held to the lead
-// ceiling, since a lead is a page's own and every page has one.
+// The pages D188 exempts — `/docs/`, `/security/`, `/changelog/`, `/legal/subscription-terms/`,
+// `/compatibility/` and `/features/` — are exempt from the **page** ceiling because the words on
+// each are a file's rather than a page's prose: a document of this repository on the first four,
+// `website/data/compatibility.yaml` on the matrix's page and the feature matrix's table on the
+// features page. Their leads are still held to the lead ceiling, since a lead is a page's own and
+// every page has one.
 //
 // The list itself is not written here: it is `test/lib/exempt.mjs`'s `CEILING_PAGES`, which
 // `test/wording.mjs` holds equal to D188's own row. That file writes a second, narrower set —
 // `DOCUMENT_PAGES`, the four the ruling exempts because they render a document of this
-// repository — and the wording rules read that one: the matrix's page is a file this site owns
-// and renders, so it is exempt from the ceiling and still held to the retired word and D249's
-// framing (the module's header says why).
+// repository — and the wording rules read that one: each of the two data tables' pages is a file
+// this site owns and renders, so it is exempt from the ceiling and still held to the retired word
+// and D249's framing (the module's header says why).
 
 /** The words of a piece of text, the way a reader counts them. */
 function words(text) {

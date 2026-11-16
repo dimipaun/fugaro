@@ -579,6 +579,8 @@ Steps 2, 5 and 6 stand: `firebase.json` as it exists, the staged README updated,
 
 **Red step.** Write the register test before the sections exist. `Expected: FAIL` — `summary table names check 69a, no "## Check 69a" section`.
 
+**Amended 2026-11-14 (owner's request) — step 4's steps are a script now, and the sections say so.** The owner asked on 2026-11-14 for the checks still sitting in the register's Done sections to be written as scripts they run, and `scripts/live-checks/check69.sh` (with `check69_test.sh`, a fake `curl`, `openssl` and `npm` on PATH, no live action in its tests) is this task's half of that: it takes every step of 69a whose criterion is a command's — the origin over HTTPS and its certificate, the build and the deployed page's hash against it, the player greps, the download URLs with the release's own checksums, and the links — and 69b's step 4, and prints one `CHECK 69 RESULT` block with a `PASS` or a `FAIL` per fact. **Step 4 above is not rewritten**: the prose stays as the readable account of what the script does, and the sections and the two summary rows now name the script as how the check is run, with the browser halves — 69a's step 3 as a reader sees it, and 69b's steps 1 to 3 — printed as `MANUAL:` lines the script never fakes. Both rows stay **NOT RUN**. **69c is unaffected**: W2.3 has not written its section, so no step of it is scripted or prompted anywhere, and its scriptable half belongs in this script when that section lands.
+
 ### Task W2.3: The published ranges, and check 69c
 
 **Files:** `website/content/costs.json` (published from W0.3's output), `docs/gcp-live-checklist.md` (check 69c), `website/src/pages/caps-and-costs.astro` (the sample-size and window rendering, if W1.5 stubbed it).

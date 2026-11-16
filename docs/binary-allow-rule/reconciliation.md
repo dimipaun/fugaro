@@ -1,10 +1,11 @@
 # The binary allow rule and the no-verdict label: findings, decisions and open items
 
-**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
-approved.** The owner ruled on 2026-11-04 (§2's answers, each with the date and the one-line why);
+**Status: design answered by the owner 2026-11-04, with D990, D992 and D993 ruled 2026-11-15; AR0
+and AR2 landed (#2202, #2204); the owner approved ALL binary-allow-rule tasks (AR0–AR7) on
+2026-11-15.** The owner ruled on 2026-11-04 (§2's answers, each with the date and the one-line why);
 where an answer is **not the recommendation**, it says so. The 2026-11-04 ruling covers the *rule*'s
 decisions — D983–D989, D991 and D997. The **label**'s decisions (D994–D996) and D981, D982, D990,
-D992 and D993 were not part of it and stand as recommendations; that is stated again in §2's
+D992 and D993 were not part of it; D990, D992 and D993 were ruled on 2026-11-15, each as recommended (§2); that is stated again in §2's
 preamble, so no reader assumes more than the owner said. Where this file disagrees with
 [spec.md](spec.md), **this file wins**.
 
@@ -171,6 +172,18 @@ numstat side too; a path absent from the map is *unreadable*, and the design ref
 treating it as text (F1's rule: the check fails closed). AR4's `TestTheTwoReadingsPairByPath` pins
 this with a range whose two orderings differ, so an index-based pairing is red rather than latent.
 
+**F15 — the design's first draft took a readable pattern for an unreadable one, and AR0's red step
+named it first.** spec.md §2.1 and AR0's red step both made `website/public/**.png` an entry the
+task "exists to refuse". It is not one: `**` means "any depth" in doublestar only as a whole path
+segment, and inside one it matches like `*`, so that entry is a pattern the matcher reads — a lock
+over exactly one level, admitting `website/public/a.png` and refusing `website/public/deep/a.png`.
+Refusing it would be a sixth check, a second and stricter pattern language beside the one
+`rigor.areas` and `rebuild.paths` already share, which F8's count and F9 forbid. The shipped rule
+accepts it, AR0's `TestBinariesAllowTakesAMisplacedDoubleStar` pins the lock the owner actually gets,
+§2.1 and the red step are corrected to say so, and AR1 adds no check for it. What the "no lock that
+is not there" rule *does* cover is a pattern the matcher cannot read (`brand/[.png`), which is
+refused where it is written.
+
 ## 2. The decisions
 
 Each is written as a **recommendation** with the cost of the alternative, so that "as recommended"
@@ -178,8 +191,10 @@ needs no rewrite. **On 2026-11-04 the owner answered the rule's decisions: D983,
 D987, D988, D989, D991 and D997.** Each of the nine carries the date and a one-line *why* below, and
 **none of them deviates from the recommendation** — so no line in this folder says "not the
 recommendation", and the answer to each is the recommendation read as an answer. The decisions the
-owner did **not** rule on are **D981**, **D982**, **D990** and the label's **D992–D996**: they stand
+owner did **not** rule on that day are **D981**, **D982** and the label's **D994–D996**: they stand
 as recommendations only, and an implementation may not treat this section's date as covering them.
+**On 2026-11-15 the owner ruled D990, D992 and D993, each as recommended**, and approved all
+binary-allow-rule tasks (AR0–AR7).
 
 **D981 — the shape of the rule.** **Recommended (not ruled on 2026-11-04):** two members on the
 policy node —
@@ -252,7 +267,12 @@ happened to omit a block is the surprise this folder exists to remove. *Cost of 
 project's admissions on a machine whose local file was written before the key existed — the exact
 class of the HARD RULE in `CLAUDE.md` (a change `fugaro update` makes that nobody asked for).
 *Why:* a publish must never widen by omission, and a written empty block is the one way to say
-"take it away".
+"take it away". *Added 2026-11-10, on AR0's review:* the two spellings are the publisher's — an
+empty list is not a member the Realtime Database keeps (it stores an RTDB list as an object with
+numeric keys), so the node a written empty block leaves behind is the node a silent file leaves
+behind, and neither carries the block. The decision stands, and its mechanism for `binaries` when
+AR1 gives the file the key is the publish choosing between the node's block and none, never a
+member the database cannot hold.
 
 **D988 — where a refusal happens, and what it does.** **Answered 2026-11-04: as recommended** —
 both checks run in **finalize, before the pull request is settled**: an untracked stray is held out
@@ -281,12 +301,13 @@ already happened once: this design's first draft counted four committers and mis
 `shadowFinalize`. *Why:* one reading covers every committer, including the ones added later, and
 the diff finalize already holds is the reading.
 
-**D990 — the policy version.** **Recommended (not ruled on 2026-11-04):** **bump
-`projectpolicy.Version` 4 → 5**, add
-`VersionSince[5] = "0.20.0"` (the slot, implementation-plan.md §4), and carry the convergence test
-the HARD RULE asks for. A version-4
+**D990 — the policy version.** **Answered 2026-11-15: yes, as recommended — bump
+`projectpolicy.Version` 7 → 8** (written as 5 → 6 on 2026-11-04; versions 6 and 7 have since shipped,
+both in 0.24.0), add `VersionSince[8] = "0.26.0"` (the release that ships AR1), and carry the
+convergence test the HARD RULE asks for (an installation at version 7 converges through `fugaro
+update`: `TestInstallationAtPolicyVersion7ConvergesBinaries`). *Why:* a version-7
 image tolerates a new *top-level* key (it lands in `UnknownKeys`), so tolerating would not be
-fail-open — but it would be **fail-silent**: the owner publishes a path list, the version-4 image
+fail-open — but it would be **fail-silent**: the owner publishes a path list, the version-7 image
 refuses the very file the list admits, and the run ends a draft with nothing saying why. That is the
 "published change that silently does nothing" class `CLAUDE.md`'s HARD RULE forbids, and `fugaro
 update` refreshes the image in the same command, so the lockstep costs the operator nothing.
@@ -309,14 +330,14 @@ that says less than the reason already does. *Why:* `failed` already means a pol
 runner made, and a refused binary is exactly that; the label this folder adds is for the run nothing
 failed in.
 
-**D992 — what the agent is told.** **Recommended (not ruled on 2026-11-04):** the implement prompt
+**D992 — what the agent is told.** **Answered 2026-11-15: as recommended** — the implement prompt
 names the admitted paths and
 the cap, and the refusal sentence names the rule and says a repository cannot widen it. *Cost of the
 alternative:* saying nothing in the prompt keeps the prompt shorter and makes every run that needs to
 add an asset fail once before it finds out — a full retry round spent on a fact the run could have
 been given for one line.
 
-**D993 — what the pull request says.** **Recommended (not ruled on 2026-11-04):** one bounded line
+**D993 — what the pull request says.** **Answered 2026-11-15: as recommended** — one bounded line
 in the status section
 (`binaries: 2 admitted (…, …)`) when a run committed a binary at an admitted path, and the refusal
 in the run's reason and the PR's own status line when it did not. *Cost of the alternative:* saying

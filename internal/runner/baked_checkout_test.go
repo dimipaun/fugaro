@@ -27,7 +27,7 @@ const otherRemote = "https://github.com/evil/other.git"
 
 // bakedDir makes the directory a shared image lays a repository it baked out
 // in, named by the repository's storage slug, beside the work directory
-// (runner.go's bakedRepoRoot).
+// (runner.go's BakedRepoRoot).
 func bakedDir(t *testing.T, h *harness, slug string) string {
 	t.Helper()
 	dir := filepath.Join(filepath.Dir(h.deps.WorkDir), "baked", slug)

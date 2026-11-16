@@ -1182,9 +1182,9 @@ func TestWorkspaceSharedRefusesAMemberThatPublishedNoPolicy(t *testing.T) {
 // JobAccounts alone), so the two account classes the member's own installation
 // decides from its own published policy are not asked here.
 //
-// The installation refuses a shared project job whole until the phase-3 rules
-// land (Global Constraint 6, verifyJob, internal/credsvc/auth.go:682) and admits
-// a review-only job for its own account's pairing alone (pairReview,
+// The member's own service answers a shared project job for the repositories
+// its profile is bound to (verifyJob, C3.9's coding half) and admits a
+// review-only job for its own account's pairing alone (pairReview,
 // internal/credsvc/review.go:330; offeredToReview, internal/credsvc/cascade.go:139).
 // An account the owner's table names is a per-repository job HERE whatever the
 // member's own service would call it: the same account is served the pool on

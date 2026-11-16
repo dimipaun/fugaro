@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/ee/portal/schemas/workspaces.schema.json",
+  "title": "Portal workspaces and binding",
+  "description": "Workspaces and the act that attaches one to a Firebase project (portal plan P3.1; F25, D2196–D2198). A workspace is the portal's own object and it exists before any Fugaro installation does — a customer may pay first — so the project id is a nullable field of it rather than its identity. Binding is what mints the key, and one project id is bound by one workspace across every organisation (D2204). Every object here is closed, because ee/keyservice/wire_workspaces.go decodes it with DisallowUnknownFields.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/workspace"
+    },
+    {
+      "$ref": "#/$defs/bind"
+    }
+  ],
+  "$defs": {
+    "workspace": {
+      "type": "object",
+      "description": "One workspace, as its organisation's members read it.",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "organisation_id",
+        "name",
+        "project_id",
+        "entitlement_id",
+        "created_at",
+        "bound_at"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The workspace's portal id: what a Paddle transaction carries in its custom_data (D2192) and what an entitlement, a subscription and a statement line name. It is not the Firebase project id, which is project_id and is known only once the workspace is bound."
+        },
+        "organisation_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The organisation the workspace belongs to. A workspace is not shared between organisations: a project id bound once belongs to one workspace of one organisation (D2204)."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "The name the customer gave the workspace. It is what the screens show, and it is not the project id: a person names a workspace before they have set a project up."
+        },
+        "project_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-z][a-z0-9-]{4,28}[a-z0-9]$",
+          "description": "The Firebase project id this workspace is bound to, or null while it is unbound. It is the key's own workspace_id claim (TN2), and it is checked against Firebase's project-id grammar before it is put into a host name (D2205, F41). Null is the paid-but-not-set-up state the binding reminder is about (P7.1), not a project named nothing."
+        },
+        "entitlement_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The one entitlement that is active for this workspace, or null while nothing is granted. One active entitlement per workspace is the rule (D2204), so this is singular: a purchase supersedes a trial or the free seat there instead of standing beside it."
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the workspace was created, in UTC."
+        },
+        "bound_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "When the binding that minted this workspace's key happened, or null while none ever did. The 30-day rebind clock is the entitlement's and not this (D2198): the first rebind after a binding is not held by it, so an owner can undo a binding somebody else made."
+        }
+      }
+    },
+    "bind": {
+      "type": "object",
+      "description": "An owner's or admin's request to bind an entitlement to a project (P3.1). Nothing here proves the project belongs to the caller (D2201): the API checks that a Fugaro installation exists there (D2205) and that the id is shaped like a Firebase project id, and a binding somebody squatted is undone by the owner's own rebind and, in the last resort, by operations' transfer (D2204).",
+      "additionalProperties": false,
+      "required": [
+        "entitlement_id",
+        "project_id"
+      ],
+      "properties": {
+        "entitlement_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The entitlement to bind, which must be unbound, active and the caller's own organisation's. Binding it is what mints its key."
+        },
+        "project_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{4,28}[a-z0-9]$",
+          "description": "The Firebase project id the caller names, as text and never as a claim about who controls it."
+        }
+      }
+    }
+  }
+}

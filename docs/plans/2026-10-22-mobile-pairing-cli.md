@@ -474,7 +474,7 @@ fugaro pair [--name NAME] [--email ADDRESS] [--role ROLE] [--timeout D] [--json]
 | --- | --- | --- | --- |
 | `--name` | string | `""` | the device's name, for `pair ls` and the node's own field |
 | `--email` | string | `""` | **D226's administered email**; refused unless it is a verified address of the pairing operator (§12) |
-| `--role` | string | **the pairing user's own role** | **D225's role**, a field on the node, read by no rule in v1. **Inherited, not free** *(amended 2026-10-29, decision 13 answered)*: the device's role defaults to the role of the user doing the pairing, and `--role` may only **lower** it (`admin` > `operator` > `viewer`), never raise it above that user's role; a word above it is refused. Until the roles design (D446/S5.1) provides verified roles, the pairing user's role is read from the CLI's existing lists (`internal/cli/roles.go`: launchers and operators), launcher mapping to the device word `operator`; the lists hold no viewer or admin, so a `viewer` device is reached only by lowering |
+| `--role` | string | **the pairing user's own role** | **D225's role**, a field on the node, read by no rule in v1. **Inherited, not free** *(amended 2026-10-29, decision 13 answered)*: the device's role defaults to the role of the user doing the pairing, and `--role` may only **lower** it (`admin` > `operator` > `viewer`), never raise it above that user's role; a word above it is refused. Until the roles design (D446/S5.1) provides verified roles, the pairing user's role is read from the CLI's existing lists (`internal/cli/roles.go`: launchers and operators), launcher mapping to the device word `operator`; the lists hold no viewer or admin, so a `viewer` device is reached only by lowering. *(Amended 2026-11-13, P3 as shipped: the default is the role the allowlist resolves for the administered address — D224, resolved once at the write over the device nodes — and the pairing user's own role only where no entry names the address; `--role` may only lower that, and never below the entry the address already has, so a lower word is refused as `role_disagrees_with_entry` where an entry is in the way. Decision 13's amended answer is the full rule.)* |
 | `--timeout` | duration | `2m` | how long to wait for the phone's key and the typed code; **refused above `4m30s`** |
 
 **`--timeout` is capped below D165's token, and the token is sized to the wait.** The pairing token's
@@ -740,22 +740,39 @@ extending it is **P6.6's** — the one file the mobile plan gives it for this. I
 ### 7.2 The phone's half, stated as a contract (P6.8 consumes it)
 
 Scan → parse and **validate before anything is stored** → generate an X25519 key pair → show the code
-derived from the public key → write `{key, at}` to `pairing/$uid/request` once → sign in with
-the pairing token → read `pairing/$uid/delivery` → **refuse the whole payload unless the
+derived from the public key → sign in with the pairing token → write `{key, at}` to
+`pairing/$uid/request` once → read `pairing/$uid/delivery` → **refuse the whole payload unless the
 envelope opens, the version byte is this build's, and the AAD names this uid and this key** (§4.4) →
 store the device token and the MAC key **in secure storage only** (P3.1's rule) → store the
 configuration from the payload, not the scan (D199). The code is derived per pairing and never
 stored.
 
+**The token is exchanged before the request is written, and the listener is on the delivery child.**
+*(Amended 2026-11-11, P6.8: both were wrong as stated, and §2 (a) is what says so.)* The request
+node's rule is `PAIRING && newData.exists() && !data.exists()`, where `PAIRING` is the pairing claim
+(`auth.token.pu == auth.uid`, on a `p~` uid), so the write is an **authenticated** write: a phone
+that wrote first would be denied by the deployed document and the pairing could never start. The
+order above is therefore token first, write second — and what the old order was protecting is kept,
+because the write still happens before the operator can have typed anything (they type the code the
+CLI derived from the key in that node) and it is still written exactly once. The listener's path is
+the same class of mistake: the merged rules grant `.read` at `pairing/$uid/delivery` and **nowhere
+above it** — there is no `.read` at `pairing` or at `pairing/$uid`, which is a default deny — so a
+listener on the parent is refused, and P6.4's emulator fence reads exactly that child. The cost of
+the correction is that the deletion is no longer a second event the phone can see, so a `null` on the
+delivery child is the ordinary state before the write as much as it is the subtree's removal; §7.2's
+"say the pairing expired" is therefore answered from the instant the QR already carries. `expires_at`
+is the pairing token's own `exp` (`token.PairingLifetime` mints it as the wait plus slack), so no
+delivery can arrive after it, and a phone still waiting when it passes is waiting for nothing.
+
 **"Read" means a listener attached at sign-in, and the reason is §7.1 step 9.**
 *(Amended 2026-10-30, T3b.)* The CLI's wait ends when the **operator** types the code; the delivery
 is written in that instant and the whole `pairing/$uid` subtree is deleted in the next one, because
 the payload must not sit readable for the hour the `p~` ID token lives (§7.3.3, decision 2). The
-phone is not in that instant and cannot be: it signs in as soon as it has written its request — it
-holds the pairing token from the QR and needs nothing from the CLI to exchange it — and then has no
+phone is not in that instant and cannot be: it exchanges the pairing token it holds from the QR as
+soon as it has one to exchange — it needs nothing from the CLI for that — and then has no
 signal for when the code will be typed. A one-shot `get` issued *after* sign-in therefore races a
 window microseconds wide and loses it. What the contract requires is a **listener on
-`pairing/$uid` (a `value` observer) attached as soon as the token is exchanged**, holding the
+`pairing/$uid/delivery` (a `value` observer) attached as soon as the token is exchanged**, holding the
 delivery out of the first snapshot that carries one: Firebase dispatches the write and the later
 delete as two events, so a client that is watching receives the payload, and a client that asks
 afterwards is told the session is over. A read that arrives late is **not** a reason to re-pair
@@ -1073,7 +1090,7 @@ read from the CLI's launcher and operator lists (`internal/cli/roles.go`) and ma
 words (launcher to `operator`); `--role` only **lowers** it. Tests: `--role` above the pairing
 user's role **is refused** (exit 1, before any side effect); the default **inherits** the pairing
 user's role; a `viewer` device is reached **by lowering** an operator's role; a caller the lists
-cannot place has no role to inherit and is refused. Pairing counts **no seat** (decision 13).
+cannot place has no role to inherit and is refused. Pairing counts **no seat** (decision 13). *(Amended 2026-11-13, P3 as shipped: the flag's default is the role the allowlist resolves for the administered address, and the pairing user's own role only where no entry names the address; `--role` may only lower that, and where the address already has an entry a lower word is refused as `role_disagrees_with_entry` — a second entry that disagrees would leave the address unable to resolve at all. §18 decision 13 holds the amended answer.)*
 **Reviewer tier.** SECURITY-SENSITIVE — independent opus review. What a reviewer must confirm: that
 **nothing in the QR is a key or an identity**, and that the token's claims are `pu` alone.
 
@@ -1447,7 +1464,7 @@ plan diverges from the mobile plan's task text**, and they are the ones that hol
     launcher and operator lists) mapped to the device words (launcher to `operator`; the lists hold
     no viewer or admin yet, so a `viewer` device is reachable only by lowering). The role stays a
     **field on the device node** (D225), not a token claim. Pairing counts **no seats**: the seat
-    estimate (Terms 5.5) is the console's.
+    estimate (Terms 5.5) is the console's. **Amended 2026-11-13 (P3, as shipped):** the default is not the pairing user's own role outright — it is the role the allowlist resolves for the administered address (the device node's `email` and `role` children, D224 resolved once at the write, `internal/mobileauth`'s `Resolve`), which is the spec's own rule for the role field; the pairing user's own role (highest project-scope grant) is the default only where no entry names the address, which is the one case the allowlist cannot answer for. `--role` may only **lower** that, and never below the entry the address already has: an entry in the way refuses a lower word (`role_disagrees_with_entry`) rather than being overwritten by a second, disagreeing one, because one address resolves to one role and two entries that disagree leave it unresolvable for every later pairing. **The inherit-and-only-lower rule stands; what changed is which role is inherited** (D224's migration of the word out of the lists and onto the entry, 2026-10-22, is the reason).
     **Open point.** The exact source of the inherited role depends on the roles design (D446/S5.1)
     landing: the lists are a stand-in, and when verified roles exist T1's lookup is the one place
     that changes; the rule (inherit, lower only) does not.

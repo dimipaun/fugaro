@@ -12,6 +12,7 @@ import (
 	terraform "github.com/dimipaun/fugaro/deploy/terraform"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 func TestRepoWorkdirPath(t *testing.T) {
@@ -477,7 +478,7 @@ func TestNeedsBuildDedupesNamedAccountVariants(t *testing.T) {
 func TestSecretCommandsFollowTheScopeOfEachName(t *testing.T) {
 	versions := map[string]bool{"bitbucket-token": false, "claude-oauth-token": false, "sandbox-probe": false}
 	spec := sandboxSpec(t)
-	got := SecretCommands(spec, versions, "fugaro", func(s string) string { return s })
+	got := SecretCommands(spec, versions, "fugaro", "update", func(s string) string { return s })
 	want := []SecretStep{
 		{Name: "bitbucket-token", What: spec.Secrets["bitbucket-token"], Commands: []string{"fugaro secrets set bitbucket-token --repo acme/sandbox < PATH-TO-THE-VALUE-FILE"}},
 		{Name: "claude-oauth-token", What: spec.Secrets["claude-oauth-token"], Commands: []string{"claude setup-token", "fugaro secrets set claude-oauth-token --repo acme/sandbox"}},
@@ -491,10 +492,49 @@ func TestSecretCommandsFollowTheScopeOfEachName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got = SecretCommands(listed, versions, "fugaro", func(s string) string { return s })
+	got = SecretCommands(listed, versions, "fugaro", "update", func(s string) string { return s })
 	want[0] = SecretStep{Name: "bitbucket-token", What: listed.Secrets["bitbucket-token"], Commands: []string{"fugaro secrets set bitbucket-token < PATH-TO-THE-VALUE-FILE"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("commands with the allow-list entry:\n%+v\nwant:\n%+v", got, want)
+	}
+}
+
+// A name only the published node admits is the one case `secrets set` cannot
+// store on this machine at all: it decides its scope from the local config
+// alone, so its bare form writes the repository's own copy -- the copy that
+// then wins over the project's forever, the flip the whole precedence exists
+// to avoid -- and --project-wide is refused. The line for such a name is the
+// run's own door, whose secrets stage reads the node and stores the value in
+// the container that decision picks: the same line initsecrets' Left hands
+// the person for the same name.
+//
+// Mutation (run, restore): drop the ProjectSecretNodeOnly branch from
+// SecretFix and this test fails on the bare `fugaro secrets set
+// bitbucket-token` line -- the line that flips the scope.
+func TestSecretFixPointsANodeOnlyNameAtTheRunDoor(t *testing.T) {
+	in := sandboxInputs(t, m5Additions)
+	in.Policy = &projectpolicy.Policy{
+		Version:        projectpolicy.Version,
+		AllowRepos:     []string{"bitbucket/acme/sandbox"},
+		BitbucketToken: &projectpolicy.BitbucketToken{AllowRepos: []string{"bitbucket/acme/sandbox"}},
+	}
+	spec, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id := spec.ProjectSecretCandidates["bitbucket-token"]; id == "" || !spec.ProjectSecretNodeOnly["bitbucket-token"] {
+		t.Fatalf("the fixture is not the state this case is about: candidates %v, node-only %v", spec.ProjectSecretCandidates, spec.ProjectSecretNodeOnly)
+	}
+	plain := func(s string) string { return s }
+	if got, want := SecretFix(spec, "bitbucket-token", "fugaro", "update", plain), "fugaro update"; got != want {
+		t.Errorf("SecretFix = %q, want %q: a `secrets set` line stores the repository's own copy, which wins over the project's forever", got, want)
+	}
+	// The step is the door alone: the value is typed at the door's own prompt,
+	// so there is no value file to redirect and no token to mint here.
+	stored := map[string]bool{"claude-oauth-token": true, "sandbox-probe": true}
+	want := []SecretStep{{Name: "bitbucket-token", What: spec.Secrets["bitbucket-token"], Commands: []string{"fugaro update"}}}
+	if got := SecretCommands(spec, stored, "fugaro", "update", plain); !reflect.DeepEqual(got, want) {
+		t.Fatalf("steps:\n%+v\nwant:\n%+v", got, want)
 	}
 }
 
@@ -503,7 +543,7 @@ func TestSecretCommandsFollowTheScopeOfEachName(t *testing.T) {
 // is a line of its own.
 func TestSecretCommands(t *testing.T) {
 	spec := sandboxSpec(t)
-	got := SecretCommands(spec, map[string]bool{"bitbucket-token": true, "claude-oauth-token": false, "sandbox-probe": false}, "fugaro", func(s string) string { return s })
+	got := SecretCommands(spec, map[string]bool{"bitbucket-token": true, "claude-oauth-token": false, "sandbox-probe": false}, "fugaro", "update", func(s string) string { return s })
 	want := []SecretStep{
 		{Name: "claude-oauth-token", What: spec.Secrets["claude-oauth-token"], Commands: []string{"claude setup-token", "fugaro secrets set claude-oauth-token --repo acme/sandbox"}},
 		{Name: "sandbox-probe", What: spec.Secrets["sandbox-probe"], Commands: []string{"fugaro secrets set sandbox-probe --repo acme/sandbox < PATH-TO-THE-VALUE-FILE"}},
@@ -511,7 +551,7 @@ func TestSecretCommands(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("commands:\n%+v\nwant:\n%+v", got, want)
 	}
-	if got := SecretCommands(spec, map[string]bool{"bitbucket-token": true, "claude-oauth-token": true, "sandbox-probe": true}, "fugaro", func(s string) string { return s }); len(got) != 0 {
+	if got := SecretCommands(spec, map[string]bool{"bitbucket-token": true, "claude-oauth-token": true, "sandbox-probe": true}, "fugaro", "update", func(s string) string { return s }); len(got) != 0 {
 		t.Fatalf("every secret stored, still: %+v", got)
 	}
 
@@ -531,7 +571,7 @@ func TestSecretCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	stored := map[string]bool{"bitbucket-token": true, "claude-oauth-token": true, "sandbox-probe": true}
-	got = SecretCommands(named, stored, "fugaro", func(s string) string { return s })
+	got = SecretCommands(named, stored, "fugaro", "update", func(s string) string { return s })
 	want = []SecretStep{{Name: "claude-oauth-token-acme-personal", What: named.Secrets["claude-oauth-token-acme-personal"],
 		Commands: []string{"claude setup-token", "fugaro secrets set claude-oauth-token-acme-personal"}}}
 	if !reflect.DeepEqual(got, want) {
@@ -550,7 +590,7 @@ func TestSecretCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got = SecretCommands(served, stored, "fugaro", func(s string) string { return s })
+	got = SecretCommands(served, stored, "fugaro", "update", func(s string) string { return s })
 	want = []SecretStep{{Name: "claude-oauth-token-acme-personal", What: served.Secrets["claude-oauth-token-acme-personal"],
 		Commands: []string{"fugaro accounts add acme-personal --repos acme/sandbox --profile zeta"}}}
 	if !reflect.DeepEqual(got, want) {
@@ -574,7 +614,7 @@ func TestSecretCommandsNamesTheRepositoryItIsFor(t *testing.T) {
 	stored := map[string]bool{"bitbucket-token": true, "claude-oauth-token": true, "sandbox-probe": true}
 	for _, name := range []string{"acme/sandbox", "acme/other"} {
 		spec.Name = name
-		got := SecretCommands(spec, stored, "fugaro", func(s string) string { return s })
+		got := SecretCommands(spec, stored, "fugaro", "update", func(s string) string { return s })
 		want := "fugaro accounts add acme-personal --repos " + name + " --profile zeta"
 		if len(got) != 1 || len(got[0].Commands) != 1 || got[0].Commands[0] != want {
 			t.Fatalf("steps for %s:\n%+v\nwant one step %q", name, got, want)
@@ -627,7 +667,7 @@ func TestMissingKinds(t *testing.T) {
 	spec := sandboxSpec(t)
 	f.gcs.AddBucket(spec.Installation.RunsBucket, testProjectNumber, managed)
 	f.seedVersions(spec, "bitbucket-token")
-	_, missing, err := Readiness(ctx, f.c, spec, Existing{}, false)
+	_, missing, err := Readiness(ctx, f.c, spec, Existing{}, false, "update")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -770,16 +810,23 @@ func TestNeedsBuildSkipsACatalogEntry(t *testing.T) {
 }
 
 // The mixed repository: one workflow the catalog gives its image to, one that
-// builds its own (its dockerfile: is the override the catalog never reaches,
-// D1155 item 1). Only the second is offered a first build.
+// builds its own. api's dockerfile: is the shape that keeps it off the
+// catalog, and the project's catalog marks no default — the one state a
+// workflow that names no entry and needs no tag keeps its own image in (O4 b):
+// with a default marked, every workflow whose job it is not already routed
+// elsewhere runs it, whatever its own keys say (D1900). web is therefore
+// pinned at an entry rather than left to name nothing. Only the second
+// workflow is offered a first build.
 //
 // Mutation (run, restore): drop the catalog half of NeedsBuild's skip guard
 // and both workflows come back.
 func TestNeedsBuildForAMixedCatalogRepository(t *testing.T) {
 	ctx := context.Background()
 	f := newCloud(t)
-	in := budgetInputs(t, catalogBlock)
-	in.Cfg = parseCfg(t, []byte(strings.Replace(webappYAML, "  api:\n", "  api:\n    dockerfile: api.Dockerfile\n", 1)))
+	in := budgetInputs(t, strings.Replace(catalogBlock, "      default: true\n", "", 1))
+	in.Cfg = parseCfg(t, []byte(strings.Replace(
+		strings.Replace(webappYAML, "  web:\n", "  web:\n    image_name: base\n", 1),
+		"  api:\n", "  api:\n    dockerfile: api.Dockerfile\n", 1)))
 	spec, err := Repo(in)
 	if err != nil {
 		t.Fatal(err)
@@ -788,7 +835,7 @@ func TestNeedsBuildForAMixedCatalogRepository(t *testing.T) {
 		t.Fatalf("web runs entry %q: the fixture must route its job through the catalog", ws.CatalogEntry)
 	}
 	if ws := spec.Workflows["api"]; ws.CatalogEntry != "" {
-		t.Fatalf("api runs entry %q: its own dockerfile: must keep it off the catalog", ws.CatalogEntry)
+		t.Fatalf("api runs entry %q: with no default marked, the workflow that names nothing keeps the image this project builds for it (O4 b)", ws.CatalogEntry)
 	}
 	f.gcs.AddBucket(spec.Installation.RunsBucket, testProjectNumber, managed)
 	got, err := NeedsBuild(ctx, f.c, spec, allVersions(spec))

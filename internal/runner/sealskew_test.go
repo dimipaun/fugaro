@@ -21,7 +21,7 @@ import (
 // Mutation (run, restored): drop the marker-without-key refusal from
 // takeBudgetToken — the run then reads tokens/ with no key, and refuses
 // with the generic sealed-object error instead: the "predates the seal" and
-// "fugaro upgrade" checks fail.
+// "fugaro update" checks fail.
 func TestAOneBitMarkerIsALauncherThatPredatesTheSeal(t *testing.T) {
 	b := admissionRun(t, "github", "acme/app", "enforce", "50", "", capScript(3)...)
 	b.deps.Backend.TokenMarked, b.deps.Backend.TokenKey = true, nil
@@ -39,7 +39,7 @@ func TestAOneBitMarkerIsALauncherThatPredatesTheSeal(t *testing.T) {
 	if err == nil || rec == nil || rec.Status != runstore.StatusInfraError {
 		t.Fatalf("a run marked by a pre-seal launcher ran: rec = %+v, err = %v", rec, err)
 	}
-	for _, want := range []string{"predates the seal", "fugaro upgrade", "start a new run (fugaro run with the same task)"} {
+	for _, want := range []string{"predates the seal", "fugaro update", "start a new run (fugaro run with the same task)"} {
 		if !strings.Contains(rec.Reason, want) {
 			t.Errorf("the refusal does not say %q: %q", want, rec.Reason)
 		}

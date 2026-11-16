@@ -87,6 +87,13 @@ func newConfigPublishCmd() *cobra.Command {
 				return err
 			}
 			defer env.Close()
+			// The layer this publishes is what every repository of the project
+			// resolves and what every run of it reads, so it is a project-level
+			// surface: admin at project scope (F19), asked here, before this
+			// run's log exists — a run this turns away never began.
+			if err := settingsAccessGate(ctx, env.lc, "fugaro config publish"); err != nil {
+				return err
+			}
 			// This run's account and its log (D1352): one line per unit of work
 			// with the reporter's closing line last, and the full output of a
 			// run that printed one kept beside it.
@@ -151,11 +158,11 @@ func newConfigPublishCmd() *cobra.Command {
 				// record's agent_marker are one value.
 				var conv managedmode.Converge
 				conv, at = configPublishConverge(ctx, env, data, rec.lc != nil, gate.facts.AgentMarker)
-				m, aerr := gate.admit(ctx, initflow.YesOrTyped, conv)
+				m, aerr := gate.admit(ctx, conv)
 				if aerr != nil {
 					return aerr
 				}
-				if !initflow.CanConfirmManaged(initflow.YesOrTyped, initflow.Conditions{Agent: marker}, m) {
+				if !m.Removes() {
 					return refuseAgent()
 				}
 				fmt.Fprintln(cmd.OutOrStdout(), initflow.AgentProceeded(marker))

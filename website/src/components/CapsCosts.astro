@@ -127,8 +127,9 @@ const commands = readReference(reference)
 
 /**
  * The commands the guide prints, in the order a reader meets them: the caps and the mode,
- * what is set now, the estimate before a batch runs, the price table behind it, and both
- * halves of the kill switch.
+ * what is set now, the estimate before a batch runs, the price table behind it, both
+ * halves of the kill switch, and last what a reader needs once a chain has spent the
+ * limit its own launch set — the family that raises that one figure, and the raise itself.
  *
  * The same array is the coverage the guide owes — every subcommand of `fugaro budget` the
  * reference carries, checked just below, so a subcommand added to the command tree cannot
@@ -143,6 +144,11 @@ const GUIDE = [
   'fugaro budget prices',
   'fugaro budget kill',
   'fugaro budget resume',
+  // A chain's limit is the launch's own figure rather than a cap of this page's, and the
+  // raise is the command that moves it after the chain has spent it (D1041, D1046, D1061):
+  // the reference carries both headings, so the guide owes both or stops the build.
+  'fugaro budget chain',
+  'fugaro budget chain raise',
 ]
 
 /**

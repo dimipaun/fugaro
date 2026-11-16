@@ -62,6 +62,7 @@ import type {
   InstallationRef,
   JSONDoc,
   LiveFeed,
+  RoadmapMoveAnswer,
   Snapshot,
   SettingsEditSpawn,
   TextSnapshot,
@@ -642,6 +643,14 @@ export class FixtureSource implements FugaroSource {
     return this.#document('models.list', args)
   }
 
+  readSeats(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#document('seats.read', args)
+  }
+
+  listMembers(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#document('members.list', args)
+  }
+
   readSettings(args: ValidatedArguments): Promise<Snapshot> {
     return this.#document('settings.read', args)
   }
@@ -661,6 +670,14 @@ export class FixtureSource implements FugaroSource {
     _layer: string,
     _shown: readonly string[],
   ): Promise<SettingsEditSpawn> {
+    return Promise.reject(new SourceRefusal(FIXTURE_WRITES_NOTHING))
+  }
+
+  /** The roadmap record's move is the console's third write, and a recording
+   * refuses it for the reason it refuses the settings edit: the fixture holds
+   * documents, so it can neither preview a child's argv nor hold a record for one
+   * to be written against. */
+  roadmapMove(): Promise<RoadmapMoveAnswer> {
     return Promise.reject(new SourceRefusal(FIXTURE_WRITES_NOTHING))
   }
 

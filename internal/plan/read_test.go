@@ -466,3 +466,28 @@ func TestPlanRefusesAnOversizedArtifact(t *testing.T) {
 		t.Fatalf("an oversized artifact gave %v, want a refusal naming the bound", err)
 	}
 }
+
+// TestIDFromPath: a plan's id is where its artifact sits, and the two places a
+// plan is written — beside docs/ itself and in docs/plans/ — are the two a
+// launch's --plan-task spells.
+//
+// The rule moved here from internal/cli's plan status (P9c) because the
+// coordinator's publish derives the id the record keys a plan by from the same
+// artifact: two copies would be two plans for one graph, and the record would
+// hold both. The first case is the one that decides the rest — an artifact
+// under no directory of its own is named by its stem and nothing else. It is
+// named for the function rather than for the id, because state_test.go already
+// holds a TestPlanIDFromPath and that one is a different rule (which plan a
+// run's plan_task claim names).
+func TestIDFromPath(t *testing.T) {
+	for path, want := range map[string]string{
+		"docs/plan.graph.json":                    "plan",
+		"docs/plans/2026-10-25-a-plan.graph.json": "plans/2026-10-25-a-plan",
+		"docs/setup-wizard/graph.graph.json":      "setup-wizard",
+		"docs/a/b/c.graph.json":                   "a/b",
+	} {
+		if got := IDFromPath(path); got != want {
+			t.Errorf("IDFromPath(%q) = %q, want %q", path, got, want)
+		}
+	}
+}

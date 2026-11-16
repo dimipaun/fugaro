@@ -222,6 +222,23 @@ func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string
 	return h
 }
 
+// setTask replaces the task text the run bootstraps from: the bootstrap's own
+// checks read it (checkImages), and the harness's default names no file.
+func (h *harness) setTask(t *testing.T, text string) {
+	t.Helper()
+	h.setSpec(t, &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: text})
+}
+
+// setSpec is setTask for a task of another shape: the run reads its mode and
+// its pull requests off the spec too, and a test about what a mode does with
+// the same text has to hand the run both.
+func (h *harness) setSpec(t *testing.T, spec *task.Spec) {
+	t.Helper()
+	if err := h.store.WriteTask(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // useHTTPRemote replaces the harness's remote with the same files served
 // over HTTP behind basic auth that allow decides. Its host names no
 // provider, so the run names one up front, as `--provider github` would:

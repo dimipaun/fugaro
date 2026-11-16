@@ -1,0 +1,12 @@
+{
+  "id": "evt_1",
+  "at": "2026-02-10T11:00:00Z",
+  "kind": "purchase",
+  "organisation_id": "org_example",
+  "workspace_id": "ws_example",
+  "entitlement_id": "ent_1",
+  "amount_micros": 24000000,
+  "currency": "USD",
+  "seats": 3,
+  "channel": "direct"
+}

@@ -436,9 +436,10 @@ readiness branches that decide between them.
 
 - **Interface.** The rows of [spec.md](spec.md) §6 in
   `docs/managed-agent-converge/spec.md` §3.1: `fugaro image refresh`'s row re-written to what it still
-  does, an `fugaro image build` row for the catalog arm and the D1013 bound
-  (`internal/managed/builds.go:39`, which counts the builds one invocation may start and is called
-  rather than restated — no task here copies it), no row for a command that no longer exists, and
+  does, an `fugaro image build` row for the catalog arm and the D1013 bound it was written under — a
+  count of the builds one invocation may start, called rather than restated, and since removed with the
+  count itself by the no-prompt-policy work (its T10, D1543), so what a row here would call is a lease —
+  no row for a command that no longer exists, and
   **`--retire` admitted nowhere** — a retirement deletes and a Typed step is never admitted (D1026). The
   removal's tree check lands here (§6): the removed identifiers appear in no non-test file. It does
   **not** assert anything about `imageCatalogShipped` (`internal/cli/recipes_skew.go:176`,
@@ -487,7 +488,7 @@ readiness branches that decide between them.
      (it is what the sandbox runs from now on), and the check's own dollars recorded.
 
 - **Red step.** The register row and the section are the deliverable; `registerRow`-shaped pins
-  (`internal/cli/docs_check96_test.go:221`) and the ordering pin that a check is written above the
+  (`internal/cli/docs_check96_test.go:231`) and the ordering pin that a check is written above the
   highest written section (`internal/cli/docs_checks_145_149_test.go:179`) fail until both are written,
   and `website/test/checklist.mjs` reads the file's sections. Nothing here is `go test`-provable beyond
   that: **the check's own result is the owner's**, and the 0.20.0 tag follows it (§7).

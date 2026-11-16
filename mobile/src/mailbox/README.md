@@ -16,6 +16,7 @@ const client = createMailboxClient({
   keys,                       // a SecretStore (the Keychain port)
   store,                      // { write(path, value), read(path) } -- the database, behind a port
   connection,                 // { isOnline() } -- the SDK's own "would this be sent" flag (P6.10)
+  licence,                    // { at(now) } -- the app's licence state (S6.3; optional, see "The lapse")
   speaker,                    // { speak(text) } -- P3.4's seam (see "The audio stub" below)
   now,                        // D117's server-anchored now, in ms
   newId,                      // a fresh message id per call
@@ -27,7 +28,8 @@ await client.send('run 42 finished');   // ONE signed inbox message, fresh id
 await client.flush();                   // re-deliver what the outbox has not answered
 await client.poll();                    // reads, verifies, speaks, acks, reports presence
 client.pending();                       // the records the outbox has not answered, still retried
-client.unsent();                        // D167's unsent text: what the gate refused (see below)
+client.unsent();                        // D167's unsent text: what the gate or the licence refused
+client.licenceRefusal('run it', { verb: 'launch' });   // one write's answer, and NO write
 ```
 
 ## The write set is exactly two paths (D113)
@@ -243,12 +245,13 @@ client.pending();  // [] -- nothing was queued
   the connection gate **before** any read, write, key read or speak, so nothing
   reaches the SDK and nothing reaches its queue -- and `send` asks it once more
   at the write, for the reason the M1 note gives below the three rules. **A `message` is present
-  exactly when the GATE refused and nowhere else, and that is the shape a screen
-  may rely on.** A gated `send` -- and only that -- answers
-  `{ ok: false, code: <a `GATE_CODES` code>, field, message, told }`: the
-  sentence from `OFFLINE_SPEECH`, one table, so this module and the screens that
-  render it cannot end up saying two different things about one reason -- plus
-  whether it was spoken. A refused `flush` or `poll` answers the bare
+  exactly when the GATE or the LICENCE refused and nowhere else, and that is the
+  shape a screen may rely on.** A gated or lapsed `send` -- and only those --
+  answers `{ ok: false, code, field, message, told }`: the sentence from
+  `OFFLINE_SPEECH` for a `GATE_CODES` code, or from `LICENCE_SPEECH` for the
+  licence's `licence-lapsed` (S6.3), one table per refuser, so this module and
+  the screens that render it cannot end up saying two different things about one
+  reason -- plus whether it was spoken. A refused `flush` or `poll` answers the bare
   `{ ok: false, code, field }` (`refuse` in `client.js`), with **no `message`
   and no `told`**: there is nothing honest to say and nothing to speak. A poll
   is a read and may run with no screen in front of it, so a sentence spoken
@@ -264,10 +267,14 @@ client.pending();  // [] -- nothing was queued
   from `refuse` with no sentence attached, because those are failures this
   module has no decided sentence for and inventing one here would be this
   directory speaking for a screen. So the rule a screen must follow is: render
-  `refusal.message` **only for a `GATE_CODES` code**, and switch on `refusal.code`
-  for everything else -- a screen that renders `refusal.message` for a refused
-  flush, or for a refused too-long utterance, renders nothing, which is the
-  bug this paragraph exists to prevent.
+  `refusal.message` **only for a `GATE_CODES` code or for the licence's
+  `licence-lapsed`**, and switch on `refusal.code` for everything else -- a
+  screen that renders `refusal.message` for a refused flush, or for a refused
+  too-long utterance, renders nothing, which is the bug this paragraph exists to
+  prevent. The licence's sentence is `licence/state.js`'s and not this
+  directory's, for the reason `gate.js`'s is not: the state module owns what the
+  owner is told about a lapse, and two tables that render one reason are two
+  tables that drift.
 * **`send` asks the presence gate too**, over the **last poll's heartbeat,
   re-judged at the moment the owner speaks** -- not the verdict the poll
   computed. **It is asked twice, the second time at the write** (the review's
@@ -296,6 +303,58 @@ which is why a stale consumer is caught by an ordinary send and not only by a
 **An action that is gated offline is refused and NOT kept** -- the two rules meet
 there: nothing is written, and there is no unsent text either, because resending
 a destructive command means confirming it again.
+
+## The lapse (S6.3; D436, T12)
+
+The licence has its own refuser here, and it is the only one that is not about
+the network. `docs/design/lapse-read-only.md` §4.2 is the table, `state.js` owns
+it, and this client is where it is enforced -- because `send` is the app's one
+write path (D113), a lapse enforced anywhere else would be one a caller could
+walk around. It runs **before the connection gate**: both can be true of one
+utterance, and the licence's sentence names the way out (the key screen, which
+is never gated) while "try again when you are online" cannot help someone whose
+next launch is refused whatever the connection does.
+
+```js
+licence = { at: async (now) => ({ state: 'lapsed', claims: null }) };   // S6.3's port
+await client.send('launch the docs task', { verb: 'launch' });
+// { ok: false, code: 'licence-lapsed', field: 'licence',
+//   message: 'The Fugaro subscription has lapsed. I have not sent that. …', told: true }
+client.unsent();    // [{ text: 'launch the docs task', … }] -- kept, and never queued
+await client.send('cancel the docs refactor', { action: actionRecord });
+// { ok: true, … }  -- T12 keeps the cancel, and the kill switch, and every message
+```
+
+* **What it refuses is a CLASS, not a command.** The client asks `writeOf` what
+  the utterance will do -- the `verb` a caller classified a message as, or the
+  action record it carries -- and `state.js` answers, so a command nobody has
+  written yet cannot slip past. **The verb has to be handed in** (`options.verb`)
+  because D162's launch travels as an ordinary message: at this layer a launch
+  and a question are the same bytes.
+* **A kept write is never read at all.** A message, a cancel and the kill switch
+  are kept at every state, so the licence store is not opened for them
+  (`lapseRefusalAt` in `state.js` decides that, beside the set it is about).
+* **No port is the unenforced product, and it is the default.** A client built
+  without `licence` refuses nothing: there is nothing to enforce with until the
+  app has a verifier and a key service (D523), and a release that had not wired
+  one must not refuse a launch on a state it never read. A port that cannot be
+  asked (anything but `{ at }`) throws in the constructor, like every other port.
+* **A screen with a refusal of its own ASKS first, and the licence's answer
+  wins.** `licenceRefusal(text, options)` is the licence's answer for one write
+  and nothing else: it mints no id, touches no key and does not reach the store,
+  and it answers `null` -- "the licence has no opinion" -- for a kept class, a
+  state that keeps this write, or a client built with no port. It exists for the
+  voice screen, whose own offline pre-check sits in FRONT of `send` (it has to,
+  or a write would escape while P1.4 says offline) and would otherwise answer
+  "the orchestrator is offline" for a licence's reason -- the masking §5.7 and
+  §4.4 forbid, which sends the owner to wait for a network that is not the
+  problem. A screen cannot make the licence's refusal itself (the lapse is
+  decided here and nowhere else), so it asks the write path and returns what it
+  is told, recorded as the client's refusal rather than as its own. The question
+  classifies the write it is asked about exactly as `send` does, and reports a
+  refusal the same way -- spoken, and the text kept as `unsent()` for a message.
+* **A refusal is a sentence, from the licence's table** -- see the gate's
+  refusal-shape rule above, which now names both refusers.
 
 ## The limits of the gate, named
 
@@ -333,7 +392,7 @@ second one is not a second chance for a state the first one refused.
 **The unsent list grows, and nothing retires an entry.** `unsent` is an
 append-only array in the client's closure: one entry per gated utterance, for
 the life of the process, with no bound and no way for a screen to drop one --
-the client object is frozen to seven names (P3.6's contract test holds it
+the client object is frozen to eight names (P3.6's contract test holds it
 there), and none of them removes an entry. It is named here rather than left to
 be found, and the bound that exists is only a practical one: an entry is one
 utterance's text (`TEXT_MAX`, 4096 characters, one entry per push), the list is
@@ -438,20 +497,34 @@ cost of the false refusal is a phone that cannot speak.
 ## The mutation proof
 
 ```sh
-mobile/src/mailbox/mutation-proof.sh     # 57 guards, one planted bug each
+mobile/src/mailbox/mutation-proof.sh     # 73 guards, one planted bug each
 ```
 
 Every mutation disables exactly one guard and must make that guard's own suite
-fail: `client.js` and `client.test.js` for most of them, and -- since the fix
-round for PR #604 -- `mac.js` with `mac.test.js` (the tag comparison),
-`store.js` with `store.test.js` and, for the read's own-key rule, with
-`client.test.js` (its consequence for the outbox), and `src/app/root.js` with
-`write-path.test.js` (the one-write-path scan), each mutation naming its file
-and its suite. **Since P6.10 two more files carry guards of their own**:
+fail: `client.js` and `client.test.js` for most of them -- and, since S6.3,
+`src/licence/state.js` with `state.test.js` for the lapse's table (the kept set
+that closes, the kept write that is never read, and a key state the table has
+not learned) and `src/licence/index.js`
+with `verify.test.js` for the door (the rules it must not hand a screen) --
+and, since the fix round for PR #604, `mac.js` with `mac.test.js` (the tag
+comparison), `store.js` with `store.test.js` and, for the read's own-key rule,
+with `client.test.js` (its consequence for the outbox), and `src/app/root.js`
+with `write-path.test.js` (the one-write-path scan), each mutation naming its
+file and its suite. **Since P6.10 two more files carry guards of their own**:
 `gate.js` with `gate.test.js` (a connection that is not `true`, a consumer that
 is not verified, the unobserved refusal, and `clock-differs` keeping its own
 reason) and `connection.js` with `connection.test.js` (the double's constructor
-is no more generous than the gate). The store's SDK-queue guard is the one
+is no more generous than the gate). **Three more carry the launch's
+classification**, which is the one thing a lapse cannot recover on its own: a
+launch and an ordinary message are the same bytes in `send`, so the verb the
+confirm machine decided is threaded from the screen to the write path --
+`src/text/input.js` with `input.test.js` (the typed launch) and
+`src/voice/dialogue.js` and `src/voice/screen.js` with `screen.test.js` (the
+spoken one, through P6.12's dialogue) -- and **the fourth is that same screen's
+offline door**, where the licence's answer has to beat the screen's own (the
+masking §5.7 forbids), with `screen.test.js` again. (The licence question's
+own classification is a `client.js` guard, proved against `client.test.js`.)
+The store's SDK-queue guard is the one
 mutation proved **twice** -- against `store.test.js` and against
 `client.test.js` -- because "the SDK queue would have noticed" is the control
 the client's own claim rests on. It finds a working node rather than assuming
@@ -482,7 +555,7 @@ than a claim.
 | the queue is bypassed (`serial` calls the pass directly) | `two polls in flight together speak the message once, not twice` |
 | the pre-key `unsignable` check drops | `a text nobody can sign is refused as unsignable, and never as key-unreadable` |
 | the schema validation before the write drops | `a control character is refused with the schema's reason, and nothing is written` |
-| a `raw` write function is added to the client object | `the client object is exactly its seven names, and nothing else is on it` |
+| a `raw` write function is added to the client object | `the client object is exactly its eight names, and nothing else is on it` |
 | `sameTag` compares only the first eight hex characters (in `mac.js`) | `a tag that differs only past the eighth character is refused too` |
 | a read's node is assigned instead of defined (in `store.js`) | `a node named `__proto__` is an own key of the read, and pollutes nothing` -- and, run against `client.test.js`, `a message in a node named `__proto__` is read, spoken and acked like any other` |
 | an intermediate container is assigned instead of defined (in `store.js`) | the same test (the pollution half of it) |
@@ -521,6 +594,23 @@ than a claim.
 | a client with no connection port is built, and refuses to send (the review's BLOCKER) | `a client built without a connection refuses to send, and says why (the review's BLOCKER)` |
 | a clock that disagrees is its own reason, not offline's (in `gate.js`) | `a live, verified consumer may be sent to, and nothing else may` |
 | the store's SDK holds a write made with no connection (in `store.js`) | `a write made with no connection is held, not refused, and not stored` -- and, run against `client.test.js`, `the client never relies on the SDK's offline queue: nothing is ever issued` |
+| **The lapse (S6.3)** | |
+| the lapse refuses the writes it does not keep | `after the grace a launch is refused, and nothing is minted, signed or written` |
+| the lapse is asked about the ACTION RECORD, not only about the verb | `after the grace a merge is refused, and a confirm of one, while a cancel is written` |
+| the licence's refusal is spoken in the licence's own words | `after the grace a launch is refused, and nothing is minted, signed or written` |
+| a refused action is not kept as unsent text at a lapse either | `after the grace a merge is refused, and a confirm of one, while a cancel is written` |
+| the lapse is asked BEFORE the connection | `after the grace a launch is refused, and nothing is minted, signed or written` |
+| a licence port that cannot be asked is a wiring failure | `a licence port that cannot be asked is a wiring failure, like every other port` |
+| a kept write is kept without reading the licence store (in `src/licence/state.js`) | `the write path reads the port for the writes a lapse could refuse, and never for the ones it keeps` -- run against `src/licence/state.test.js` |
+| the kept set is closed: a write it does not name is refused at a lapse (in `src/licence/state.js`) | `a lapse keeps the message, the cancel and the kill switch, and refuses the launch, the merge and the configuration` -- run against `src/licence/state.test.js` |
+| a key state the table has not learned is read as working (in `src/licence/state.js`) | `a key state this table has not learned reads as the lapse, and refuses the launch` -- run against `src/licence/state.test.js` |
+| the lapse's rules are reached from a second file (a plant in `src/app/root.js`) | `the lapse's rules are reached by the write path alone` |
+| the door hands a rule out to every screen (a plant in `src/licence/index.js`) | `the door hands out the state's names and none of the write path's rules` -- run against `src/licence/verify.test.js` |
+| the typed launch does not take its classification to the write path (in `src/text/input.js`) | `a launch on a lapsed licence is refused by the client, and never written` -- run against `src/text/input.test.js` |
+| the spoken launch is handed to the sink without its classification (in `src/voice/dialogue.js`) | `a spoken launch on a lapsed licence is refused by the client, and never written` -- run against `src/voice/screen.test.js` |
+| the screen swallows the classification it was given (in `src/voice/screen.js`) | the same test -- run against `src/voice/screen.test.js` |
+| the licence question classifies nothing, so every write reads as chatter | `the licence can be asked about one write without writing it, which is what a screen asks first` |
+| the offline pre-check answers before the licence does (in `src/voice/screen.js`) | `offline and lapsed at once: the licence answers this door, and the network does not` -- run against `src/voice/screen.test.js` |
 
 Two of those mutations **survived** when the proof was first run, and both were
 fixed rather than argued away -- the two guards had no test that could tell them

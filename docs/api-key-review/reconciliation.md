@@ -109,7 +109,7 @@ stage.
 **F7 — Rule. A published stage account takes the review off the gateway, and nothing prefers the
 key.** `internal/runner/agentenv.go`'s `resolveMixedStages` runs only for an `api-key` run
 (`r.cfg.Agent.Auth != "api-key"` returns nil), reads the project policy's `ClaudeAccountStages` for
-`config.MixedAccountStages` (`internal/config/stage_accounts.go`: `review`, `adversarial`) and the
+`config.MixedAccountStages` (`internal/config/stage_accounts.go`: `review`, `adversarial`, `triage`) and the
 project's `DefaultClaudeAccount`, and puts the stage's account in `r.mixedStages`. From there
 `stageDirect` is true, `stagePins` returns nil, `stageAgentEnv` swaps the environment through
 `agent.OAuthStageEnv` and the stage goes **straight to Anthropic** — notional dollars, no gateway, no

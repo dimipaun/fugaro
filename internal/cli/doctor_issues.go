@@ -47,6 +47,14 @@ func doctorIssuesCheck(getenv func(string) string, goos string) *doctorCheck {
 	}
 	unfiled := 0
 	for _, i := range all {
+		// Filed on GitHub is filed: `issue submit` records the URL and the
+		// `submitted` status before anything is uploaded, so a record it wrote
+		// carries `uploaded: false` while being open on a public repository —
+		// counting it would print "not filed or uploaded yet" about an issue the
+		// line's own fix (`issue submit <number>`) then refuses as already filed.
+		if i.Status == issues.StatusSubmitted {
+			continue
+		}
 		if i.Status == issues.StatusPending || !i.Uploaded {
 			unfiled++
 		}

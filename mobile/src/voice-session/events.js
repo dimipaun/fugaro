@@ -9,7 +9,7 @@
 // (`mobile/src/audio/pipeline.js`), and this module never stores a copy of it
 // (F3, D206). The two meet at one stream: the native module emits the events
 // below, the machine in `machine.js` reduces them, and the controller (VS1.1,
-// not written yet) drives the pipeline from the answer.
+// `session.js`) drives the pipeline from the answer.
 //
 // **The contract is frozen here and nowhere else.** Both platforms emit the
 // *same* six kinds (§5: "Native → JS events, identical on both platforms"), so

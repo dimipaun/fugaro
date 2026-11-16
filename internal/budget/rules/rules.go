@@ -801,6 +801,39 @@ const PathBuildLeases = "buildleases"
 // this file to resolve a pinned citation.
 const PathOrchestrator = "orchestrator"
 
+// PathVoice is the voice policy subtree (docs/mobile/design/
+// voice-evaluation-switch.md §4.3; mobile plan Task P5.3.1, approved by the
+// owner on 2026-11-14, D123 and Q0 answered on 2026-10-19): the provider
+// allow-list an operator publishes per project, and the one node the switch's
+// server-side hop reads to answer whether a project serves voice remotely. It
+// carries the three fields the design names and no date — `providers`,
+// `direction` and `force_local` — because the register of what the owner read
+// about each provider lives with the hop and not in the policy node.
+//
+// The template carries `config/policy/voice/shared` and
+// `config/policy/voice/repos/$slug` field for field as `config/policy/shared`
+// and `config/policy/repos/$slug`: `TOKEN` on the shared node, `TOKEN &&
+// auth.token.fs == $slug` on a repository's, and `.write: false` on both. The
+// parent — this node — carries no grant at all, for the reason the package
+// comment above states for `config/policy`: an RTDB read grant sits where it
+// is written and cascades down, so a grant here would make **every project's**
+// voice policy readable by **every** run token of the installation. `USER` is
+// in neither grant, which is the design's point and not an omission: the phone
+// holds no read of `config/policy/**`, so the switch's "blocked by project
+// policy" state arrives as the hop's project-status answer rather than as a
+// read, and a signed-in user reads nothing anywhere under this subtree.
+//
+// It is what the document's generation 5 adds (internal/projectpolicy's
+// RulesVersion): a client holding the older marker would not know the grant is
+// there, and `fugaro update`'s rules stage is the migration that deploys it —
+// the same stage every generation is met through, and one that is safe while
+// runs are in flight.
+//
+// It sits below the macro table for PathMCPAuth's reason: a constant added
+// above it would move the lines internal/cli's voice-switch test reads out of
+// this file to resolve a pinned citation.
+const PathVoice = "config/policy/voice"
+
 // boundedMatch is a non-empty string of at most max characters, every one of
 // them in the pattern's set.
 func boundedMatch(max int, pattern string) string {

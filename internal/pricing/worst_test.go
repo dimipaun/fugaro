@@ -62,6 +62,39 @@ func TestWorstCaseImagesAtCeiling(t *testing.T) {
 	}
 }
 
+// TestImageRateIsReservedAsWorstCase: the owner's image_tokens enters exactly
+// one computation, the reservation's input bound, which grows by
+// images x ceiling (D2001, F2). It never touches the charge -- the ledger
+// prices what the response reports -- so the same ceiling only ever decides
+// how much of the budget a call carrying images holds while it is in flight.
+func TestImageRateIsReservedAsWorstCase(t *testing.T) {
+	// A ceiling no row in the table has, so the arithmetic can only be the
+	// owner's number.
+	rate := int64(9000)
+	tb, err := testTable().With(Overrides{"deepseek/deepseek-v4.1-flash": {Rates: sonnetLike(), ImageTokens: &rate}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, ok := tb.Lookup("deepseek/deepseek-v4.1-flash")
+	if !ok {
+		t.Fatal("the priced model got no row")
+	}
+	if m.ImageTokens != 9000 {
+		t.Fatalf("ImageTokens = %d, want the owner's 9000", m.ImageTokens)
+	}
+	for _, images := range []int64{0, 1, 3} {
+		got := m.WorstCase(Request{BodyBytes: 1000, ImageCount: images, MaxTokens: 0})
+		if want := Micros((1000 + ov + images*9000) * 2); got != want {
+			t.Errorf("%d image(s): %d µ$, want %d", images, got, want)
+		}
+	}
+	// The charge is the response's usage at the model's rates, whatever the
+	// ceiling reserved.
+	if got, want := m.Rates.Cost(Usage{Input: 1000, Output: 100}), Micros((1000*2)+100*10); got != want {
+		t.Errorf("Cost = %d µ$, want %d: the ceiling sits in the reservation, not the charge", got, want)
+	}
+}
+
 func TestWorstCaseRequestOverhead(t *testing.T) {
 	m := model(sonnetLike())
 	// A tiny body with tools is billed a tool-use system prompt the body
@@ -199,7 +232,7 @@ func TestWorstCaseBoundsActual(t *testing.T) {
 				o.LongContext = &Tier{AboveInputTokens: 1 + rng.Int64N(1_000_000), InputPerM: rate(0.01, 1000), OutputPerM: rate(0.01, 1000)}
 			}
 			var err error
-			if tb, err = tb.With(Overrides{"claude-alpha-1": o}); err != nil {
+			if tb, err = tb.With(Overrides{"claude-alpha-1": {Rates: o}}); err != nil {
 				t.Fatal(err)
 			}
 		}

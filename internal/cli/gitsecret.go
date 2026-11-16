@@ -7,6 +7,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // gitSecretID is the secret ID a live call site (a standalone image build,
@@ -14,17 +15,55 @@ import (
 // resolved from live state, checked against the grant the build account
 // actually holds. It is empty when the provider has no credential at all
 // (a provider neither Bitbucket nor GitHub).
-func gitSecretID(ctx context.Context, lc *localcfg.Config, spec infra.RepoSpec, what string) (string, error) {
+//
+// node is the project's published policy as this run read it, and it is what
+// makes the resolution the one the apply made: a repository whose bitbucket
+// token the node admits and this machine's config does not is granted the
+// project's copy by the apply, so a resolution that knew only the local
+// config would name the repository's own (versionless) container and the
+// clone would read nothing (projectSecretCandidate). Nil is a run that read
+// no node.
+func gitSecretID(ctx context.Context, lc *localcfg.Config, spec infra.RepoSpec, node *projectpolicy.Policy, what string) (string, error) {
 	logical, ok := infra.GitSecret(spec.Provider)
 	if !ok {
 		return "", nil
 	}
-	projectID, _ := infra.ProjectSecretCandidate(lc, logical, spec.Name)
+	projectID := projectSecretCandidate(lc, logical, spec.Name, spec.Provider, node)
 	// The project is the local config's, the same one the client below is
 	// built for: spec.GCPProject is that value (infra.Repo sets it from the
 	// same config), and the two must not be able to disagree about which
 	// project's secrets are being read.
 	return resolveGitSecretID(ctx, lc, lc.GCPProject, spec.Name, logical, spec.Secrets[logical], projectID, buildAccountMember(spec.BuildServiceAccountEmail), what)
+}
+
+// projectSecretCandidate is the project-wide copy a live resolution may fall
+// back on for logical: the local config's own answer
+// (infra.ProjectSecretCandidate), and the published node's when that answer
+// is no (infra.ProjectSecretCandidateFromNode) -- the local sources first and
+// the node asked only where it can change the answer, which is the order the
+// spec's own candidates are built in (projectSecretCandidates), so what a
+// build names and what the job mounts cannot disagree (SD17, G15).
+//
+// node is the node the run read, and nil is a run that read none: the local
+// answer is then the whole of it, which is what every caller answered before
+// this asked at all.
+func projectSecretCandidate(lc *localcfg.Config, logical, repo, provider string, node *projectpolicy.Policy) string {
+	if id, ok := infra.ProjectSecretCandidate(lc, logical, repo); ok {
+		return id
+	}
+	id, _ := infra.ProjectSecretCandidateFromNode(lc, logical, repo, provider, node)
+	return id
+}
+
+// nodePolicy is the project's published node for a caller that resolves a
+// secret ID rather than converging: this run's own memoized read
+// (policyReadOnce), mapped as the specs map it (repoPolicyInput). Nil is
+// every state in which this machine read no node -- the install has no budget
+// backend to hold one, or the read failed -- which is what a caller must fall
+// back to the local config on, and never "the project published nothing".
+func nodePolicy(ctx context.Context, p *policyReadOnce, lc *localcfg.Config) *projectpolicy.Policy {
+	node, found, err := p.read(ctx, lc)
+	return repoPolicyInput(lc, node, found, err)
 }
 
 // buildAccountMember is the IAM member form of a repository's build service

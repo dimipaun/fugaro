@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/preflight"
+	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -50,13 +51,13 @@ type refreshOptions struct {
 	// dir is the checkout to refresh ("" is the working directory).
 	dir string
 	// rerun, when set, is the whole line a stop names instead of again()
-	// (fugaro upgrade's own, which already names the checkout). It is
+	// (the caller's own, which already names the checkout). It is
 	// printed as it is: the caller must quote every word with quoteWord
 	// (and sanitise what it builds from), as again() does.
 	rerun string
 	// onPlan, when set, sees the plan once preflight is done, before
 	// anything changes. It is READ-ONLY and gets a copy (refreshPlan.snapshot):
-	// changing it changes nothing about the run (fugaro upgrade only needs
+	// changing it changes nothing about the run (the caller only needs
 	// current()). It fires BEFORE installOptions, which can still fail at
 	// step 1, so a caller must take the final state from the error runImageRefresh
 	// returns, never from the hook alone.
@@ -89,6 +90,13 @@ type refreshOptions struct {
 	// stage's own lines do. Nil for the command, whose own writer the refresh
 	// uses.
 	out io.Writer
+	// detail is where the calling run keeps its own account of itself, when one
+	// drives this refresh: the converge's stageDetail, so that the plan block
+	// below — the review screen of a refresh run as its own command, and one
+	// step's own account of itself under a converge — goes where the rest of
+	// that account goes (§9.2). Nil for the command, whose plan block is what
+	// the person at the terminal reads before the steps.
+	detail io.Writer
 }
 
 // checkoutName is how a message names the checkout: "this checkout" when
@@ -120,9 +128,6 @@ func (o refreshOptions) again() string {
 	}
 	for _, d := range o.expectDigests {
 		args = append(args, "--expect-digest", quoteWord(d))
-	}
-	if o.yes {
-		args = append(args, "--yes")
 	}
 	return strings.Join(args, " ")
 }
@@ -393,8 +398,9 @@ func newImageRefreshCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "refresh",
 		Short: "Move a repository onto this release's base image: pin it, point the daily image check job at it, rebuild what is stale",
-		Long: "Run it in the checkout of an onboarded repository, in your own terminal window\n" +
-			"(or with --yes, unattended: see below).\n\n" +
+		Long: "Run it in the checkout of an onboarded repository, in your own terminal window:\n" +
+			"every step that asks is confirmed there, and a session with no terminal leaves\n" +
+			"those steps for you.\n\n" +
 			"It prints the whole plan first, then, each step with its own confirmation:\n" +
 			"(2) resolves this release's base image of each selected workflow's kind at\n" +
 			"its -pinned tag, verifies its cosign signature, reads the digest back\n" +
@@ -412,33 +418,36 @@ func newImageRefreshCmd() *cobra.Command {
 			"(5) names fugaro update --anchor when fugaro.yaml lacks gcp_project.\n\n" +
 			"A base_images entry that is neither this release's pin nor a release image\n" +
 			"an earlier fugaro copied (a development or hand-pushed image) stops it\n" +
-			"before anything changes, with or\n" +
-			"without --yes: remove the entry from the local config, then rerun. It never\n" +
+			"before anything changes, whoever is there: remove the entry from the local\n" +
+			"config, then rerun. It never\n" +
 			"writes fugaro.yaml, never onboards a repository and never runs Terraform. A\n" +
-			"coding agent's session is refused, --yes included (there is still no --json\n" +
+			"coding agent's session is refused (there is still no --json\n" +
 			"or --plan-only to get around that). A run that stops says which steps\n" +
-			"finished and what to rerun, --yes included when it was given; a rerun skips\n" +
+			"finished and what to rerun; a rerun skips\n" +
 			"what is done. Exit codes: 0 done, 1 a refusal or a confirmation not given,\n" +
 			"2 a cloud failure.\n\n" +
-			"Unattended use: pass --yes to run it from CI or a script, with no terminal.\n" +
-			"It confirms every step that asks — the base pin and the check-job update;\n" +
+			"No flag confirms the steps that ask — the base pin and the check-job\n" +
+			"update — so a run with no terminal leaves them for you and says so;\n" +
 			"the billable builds ask nothing in any session, and it is the budget lease\n" +
 			"each of them takes that bounds them, where the installation has a budget\n" +
 			"backend at all (with none, no build leases anything and none is counted).\n" +
-			"Read the printed plan's build count first. --yes does not cover a coding\n" +
-			"agent's session (refused,\n" +
-			"same as without it) or a custom, dev or hand-pushed base image (still\n" +
-			"refused with the one-line fix); there is still no --json or --plan-only.",
+			"Read the printed plan's build count first. A custom, dev or hand-pushed\n" +
+			"base image is refused with the one-line fix; there is still no --json or\n" +
+			"--plan-only.",
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error { return runImageRefresh(cmd, o) },
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if repoImagesOff {
+				return repoImagesDisabled(cmd.OutOrStdout())
+			}
+			return runImageRefresh(cmd, o)
+		},
 	}
 	f := cmd.Flags()
 	f.StringVar(&o.repo, "repo", "", "owner/name (or a path inside its checkout) of the repository; it must be this checkout's origin (refresh reads fugaro.yaml from the checkout)")
 	f.StringArrayVar(&o.workflows, "workflow", nil, "a workflow to refresh (repeatable; default: every workflow in fugaro.yaml)")
 	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release base images come from, as for the converge (default ghcr.io/dimipaun)")
 	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "cross-check the digest of a base image's release signature, KIND=sha256:<hex>, as for the converge (repeatable)")
-	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmations this run would otherwise skip (the project's name typed at each step that asks) instead of applying on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the questions back. It cannot restore a confirmation the billable builds no longer have: those ask nothing in any session, and each leases its cost from the project's budget where the installation has one. Refused where nobody can answer them (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed; refused beside --yes")
-	f.BoolVar(&o.yes, "yes", false, "confirm every step that asks without asking (the base copy and the check-job update), and without a terminal: for CI or a script. The billable builds need no flag: they ask nothing in any session and each leases its cost from the project's budget where the installation has one. The plan is still printed first. Never confirmed in a coding agent's session (CLAUDECODE and the like): nothing is applied there, --yes included. Without --yes the steps that ask still need a real terminal, as always")
+	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmations this run would otherwise skip (the project's name typed at each step that asks) instead of applying on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the questions back. It cannot restore a confirmation the billable builds no longer have: those ask nothing in any session, and each leases its cost from the project's budget where the installation has one. Refused where nobody can answer them (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
@@ -478,8 +487,8 @@ var refreshStepNames = []string{"preflight", "base", "check job", "builds"}
 
 // refreshStopped is decision D12: the step's own error and exit code, which
 // steps finished, and the line to rerun (every flag kept: o.rerunLine). A
-// rerun line from fugaro upgrade already names the checkout, so no "in this
-// checkout" follows it.
+// rerun line a caller passes in (the converge's checkout stage) already names
+// the checkout, so no "in this checkout" follows it.
 func refreshStopped(step int, done []string, o refreshOptions, err error) error {
 	var as *refusedAsIs
 	if errors.As(err, &as) {
@@ -499,6 +508,53 @@ func refreshStopped(step int, done []string, o refreshOptions, err error) error 
 	}
 	return &ExitError{Code: ExitCode(err), Err: fmt.Errorf("%w; fugaro image refresh stopped at step %d (%s), steps finished: %s; once that is fixed, rerun %s%s: finished steps say No changes",
 		err, step, refreshStepNames[step-1], finished, o.rerunLine(), where)}
+}
+
+// refreshStepLines are steps 2 to 4 as they are printed: the name the reporter
+// gives the step, and the header line this command printed for it before it
+// had a reporter. The two live together so a caller-driven refresh's header
+// and this command's step line cannot drift apart, and so the number in the
+// stop sentence (refreshStepNames) stays the same step.
+var refreshStepLines = []struct{ name, header string }{
+	{"base", "step 2, base:"},
+	{"check job", "step 3, the daily image check job:"},
+	{"builds", "step 4, builds:"},
+}
+
+// refreshStep is one of steps 2 to 4 as one run prints it. A refresh this
+// command owns (refreshOptions.out is nil) prints the reporter's step: one
+// line, at the step's end, and nothing else on the default view (D1354). A
+// refresh a caller drives — the converge's checkout stage, through the cloud
+// step — prints the header line it has always printed: that run owns the
+// screen and has an account of its own, this refresh is one stage of it, and
+// its reporter is the caller's (CL5b), so no second account is opened beside
+// it.
+type refreshStep struct {
+	r      *initRun
+	name   string
+	header string
+	step   *report.Step
+}
+
+func (s *refreshStep) open() {
+	if s.r.rep == nil {
+		fmt.Fprintln(s.r.w, s.header)
+		return
+	}
+	s.step = s.r.rep.Step(s.name)
+}
+
+// end ends the step with the stage's error, and prints nothing at all for a
+// caller-driven run: its steps are the caller's own.
+func (s *refreshStep) end(err error) {
+	if s.step == nil {
+		return
+	}
+	if err != nil {
+		s.step.Failed(err, nil)
+		return
+	}
+	s.step.Done("")
 }
 
 // refreshSteps are steps 2 to 4; tests replace newRefreshSteps so the
@@ -538,9 +594,6 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
 		return err
 	}
-	if err := askConflict(askFlags{ask: o.ask, yes: o.yes}); err != nil {
-		return err
-	}
 	// yes carries --yes to r.confirm/r.ask (steps 2 and 3). Step 4 consumes
 	// it no longer: the billable builds ask nothing in any session (T4), and a
 	// build is bounded by the lease it takes, not by an answer. The steps
@@ -555,7 +608,7 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 	// proceed, and that refusal has to be this flag's sentence rather than the
 	// one a run without it would have read (managed_ask.go). Nothing is
 	// applied by either.
-	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask, yes: o.yes}, o.managed != nil, askConditions(cmd, false, false)); err != nil {
+	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask}, o.managed != nil, askConditions(cmd, false, false)); err != nil {
 		return err
 	}
 	if err := refuseRefreshHere(cmd, o.yes, o.managed); err != nil {
@@ -575,6 +628,10 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 		// The caller's writer, not the command's own: see refreshOptions.out.
 		r.w = runWriter{r: r, out: o.out}
 	}
+	if o.detail != nil {
+		// The caller's account of its own steps: see refreshOptions.detail.
+		r.detail = o.detail
+	}
 	p, err := refreshPreflight(ctx, o, iopts)
 	if err != nil {
 		return refreshStopped(1, nil, o, err)
@@ -593,31 +650,62 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 	// images stage) records the new base, and to step 3's reload, which
 	// reads it back: p.lcPath, both times.
 	e := &initEngine{r: r, lc: p.lc, spec: spec, path: p.lcPath, old: p.lcOld}
-	p.print(r.w)
+	// This command's account and log (D1352, D1354), opened here where its work
+	// starts: a run stopped above — a session that would make Go print the
+	// operator's requests, --ask's refusal, the gate's, preflight's, a local
+	// config this step cannot use — files no log, not even an empty one, and
+	// prints no step line. The plan below is the review screen and not part of
+	// the run's own output, so it reaches the log with nothing either way.
+	if o.out == nil {
+		sr := stepRunFor(cmd, "image-refresh", cmd.OutOrStdout())
+		defer sr.close()
+		r.rep, r.repLog = sr.rep, sr.log
+	}
+	pw := r.w
+	if o.detail != nil {
+		pw = o.detail
+	}
+	p.print(pw)
 	s := newRefreshSteps(r, e, p)
+	step := func(i int) *refreshStep {
+		return &refreshStep{r: r, name: refreshStepLines[i].name, header: refreshStepLines[i].header}
+	}
+	base, checkJob, builds := step(0), step(1), step(2)
 	done := []string{"preflight"}
-	fmt.Fprintln(r.w, "step 2, base:")
+	base.open()
 	if err := s.base(ctx); err != nil {
+		base.end(err)
 		return refreshStopped(2, done, o, err)
 	}
+	base.end(nil)
 	done = append(done, "base")
-	fmt.Fprintln(r.w, "step 3, the daily image check job:")
+	checkJob.open()
 	t, err := s.reload(ctx)
 	if err == nil {
 		err = s.checkJob(ctx, t)
 	}
 	if err != nil {
+		checkJob.end(err)
 		return refreshStopped(3, done, o, err)
 	}
+	checkJob.end(nil)
 	done = append(done, "check job")
-	fmt.Fprintln(r.w, "step 4, builds:")
+	builds.open()
 	if err := s.builds(ctx, t); err != nil {
+		builds.end(err)
 		return refreshStopped(4, done, o, err)
 	}
-	if t.checkJobMissing {
-		fmt.Fprintf(r.w, "note: step 3 found that the daily image check job was not found, though this repository's spec has one; run fugaro update --repo in %s to deploy it\n", o.checkoutName(p.root))
+	builds.end(nil)
+	// The note stays on the screen — it is the next command for this checkout —
+	// and goes into the run's log beside it, which is the run's full output
+	// (D1352).
+	note := sayThrough(r.rep, r.w)
+	refreshAnchorNote(ctx, note, p.root, o.checkoutName(p.root), t.lc)
+	if r.rep == nil {
+		// A refresh a caller drives is one stage of that run: its own line says
+		// this refresh is done, where the reporter's closing line says it for
+		// this command.
+		fmt.Fprintf(r.w, "fugaro image refresh of %s is done\n", p.repo)
 	}
-	refreshAnchorNote(ctx, r.w, p.root, o.checkoutName(p.root), t.lc)
-	fmt.Fprintf(r.w, "fugaro image refresh of %s is done\n", p.repo)
 	return nil
 }

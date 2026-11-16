@@ -1,6 +1,6 @@
 # Implementation plan: management commands for every configuration
 
-**Status as of 2026-11-10: in progress, 5/14 merged; see [docs/status.md](../status.md) for the current table.** Fourteen tasks, **G0–G13**, each with
+**Status as of 2026-11-10: in progress, 8/14 merged; see [docs/status.md](../status.md) for the current table.** Fourteen tasks, **G0–G13**, each with
 its files, its interface, its **red step** and its named tests. Every task is written against the tree
 of 2026-11-03 and every citation in it was resolved while writing. **Nothing here starts until the owner
 answers the decisions in [reconciliation.md](reconciliation.md) §4** — the tasks name the decision each
@@ -96,12 +96,12 @@ landed.
 
 ## G0. The generic writer's wildcard rows and the two budget keys (D1160, D1161, D1179). **SEC**
 
-- **Interface.** `settingsGenericKeys` (`internal/cli/settings_set.go:96`) gains the wildcard rows this
+- **Interface.** `settingsGenericKeys` (`internal/cli/settings_set.go:106`) gains the wildcard rows this
   design manages, **and the two budget keys D1179 gives the generic path** (`budget.mode`,
   `budget.per_day_usd`) — the two whose rows default to the generic owner while the allowlist refuses
-  them on purpose (F13), with the list's own comment (`:78`) rewritten beside them;
-  `settingsWriteLookup` (`:526`) and `settingsPatternMatch` (`:549`) are **reused unchanged**, and the
-  literal `*` refusal (`:501`) stays. A concrete key of a row the allowlist does not carry keeps today's
+  them on purpose (F13), with the list's own comment (`:88`) rewritten beside them;
+  `settingsWriteLookup` (`:550`) and `settingsPatternMatch` (`:573`) are **reused unchanged**, and the
+  literal `*` refusal (`:525`) stays. A concrete key of a row the allowlist does not carry keeps today's
   refusal, whose sentence names the nearest keys.
 - **Decided here, and tested:** writing one concrete key into a block the document does not hold
   **creates the block** (D1161's stated cost), and the created block is refused when its key may not be
@@ -118,16 +118,16 @@ landed.
 
 ## G1. `--add-entry` and `--remove-entry` (D1162, D1163, D1167). **SEC**
 
-- **Interface.** Two flags on `settingsWriteOptions` (`internal/cli/settings_set.go:261`) beside `--add`
-  and `--remove`, dispatched in the same switch (`:1646`) to `yamledit.UpsertSeqItemByKey` /
+- **Interface.** Two flags on `settingsWriteOptions` (`internal/cli/settings_set.go:294`) beside `--add`
+  and `--remove`, dispatched in the same switch (`:1831`) to `yamledit.UpsertSeqItemByKey` /
   `RemoveSeqItemByKey` (`internal/yamledit/yamledit.go:294`, `:351`) for an object list, and to a
   map-member write for a map. **One entry per invocation** (D1167); the entry's key field is the row's
   own, decided per block in this task's table and pinned by its tests.
 - **The classification.** An entry write goes through `settingsTypedWrite`
-  (`internal/cli/settings_set.go:1684`) unchanged, so adding a `secrets` member or an `allow_data_to`
+  (`internal/cli/settings_set.go:1878`) unchanged, so adding a `secrets` member or an `allow_data_to`
   value is a widening and takes the typed name (D1165).
 - **Red step.** `TestSettingsSetAddEntryMapMember` and `TestSettingsSetAddEntryObjectListEntry` — each
-  fails today with the *a key with a `*` is a map entry* refusal (`:501`). Then
+  fails today with the *a key with a `*` is a map entry* refusal (`:525`). Then
   `TestSettingsSetRemoveEntryTakesOneOfADuplicateKey`, `TestSettingsSetAddEntryRefusesTwoEntries` and
   `TestSettingsSetAddEntrySecretsMemberIsATypedWidening`.
 - **Files (≤6).** `internal/cli/settings_set.go`, `internal/cli/settings_write.go` (the entry's
@@ -137,7 +137,7 @@ landed.
 
 ## G2. The settings-write document's entry members (D1164, D1166)
 
-- **Interface.** `settingsWriteDocVersion` (`internal/cli/settings_set.go:2276`) and the schema's const
+- **Interface.** `settingsWriteDocVersion` (`internal/cli/settings_set.go:2482`) and the schema's const
   (`schemas/settings-write.schema.json:20`) **stay at `1`**, and the entry write's members are **added as
   optional ones**: `operation`, the entry's key field and the members the entry carries. Every version-1
   member keeps its name and its meaning, so the console's edit — which pins version 1
@@ -173,11 +173,11 @@ landed.
 ## G4. The project layer file's entries (D1175). **SEC**
 
 - **Interface.** Every entry of `<config home>/fugaro/projects/<name>.layer.yaml`
-  (`internal/localcfg/localcfg.go:1146`) — `profiles.*`, `defaults.*` (agent, git, rigor) and `ab.*` —
+  (`internal/localcfg/localcfg.go:1155`) — `profiles.*`, `defaults.*` (agent, git, rigor) and `ab.*` —
   written through G0 and G1 against `layerRows` (`internal/settings/registry.go:411`), with
   `config publish`'s reserved-key and executable-key refusals (`internal/cli/config_publish.go:309`)
   applied to the edit's own document. The layer's `--layer project` write keeps ending with
-  `next: fugaro update` (`internal/cli/settings_set.go:2067`).
+  `next: fugaro update` (`internal/cli/settings_set.go:2273`).
 - **Red step.** `TestSettingsSetLayerProfileEntryWritesTheLayerFile` and
   `TestSettingsSetLayerAbEntryWritesTheLayerFile` — each fails today with a refusal naming the generic
   allowlist. Then `TestSettingsSetLayerRefusesAReservedKey` and
@@ -225,10 +225,10 @@ landed.
 ## G7. `fugaro rigor floor`, with the typed project name (D1170). **SEC**
 
 - **Interface.** The floor's removal and lowering go through `confirmTypedStrict`
-  (`internal/cli/budget.go:250`) with **no `--yes`** standing in (D846, SD10), and the agent-session
+  (`internal/cli/budget.go:250`) with **no flag** standing in (D846, SD10), and the agent-session
   fence comes first — so a managed project's gate never sees the step (D1026).
-- **Red step.** `TestRigorFloorRemovalTakesTheProjectNameTyped` — a `--yes` on a removal is **refused**
-  with the typed prompt, which fails today because the command does not exist — then
+- **Red step.** `TestRigorFloorRemovalTakesTheProjectNameTyped` — a removal without the typed project
+  name is **refused** with the typed prompt, which fails today because the command does not exist — then
   `TestRigorFloorRefusesAnAgentSession` and `TestRigorFloorAddsAnEntryWithoutTheTypedForm`.
 - **Files (≤6).** `internal/cli/rigor.go` (the group of G6 above: whichever of G6 and this task lands
   first creates it; **G7 and the settings design's S7 were the same command**, `fugaro rigor floor`,
@@ -294,7 +294,7 @@ landed.
 ## G12. The registry's owner column (D1178, D1179)
 
 - **Interface.** The settings read resolves an owner through a **table of its own** instead of
-  `settingsFamilyCommands` (`internal/cli/settings_set.go:47`), which answers the write's refusal and
+  `settingsFamilyCommands` (`internal/cli/settings_set.go:48`), which answers the write's refusal and
   cannot be widened without refusing `max_parallel` and `update_check` (F11); the read's table names
   `fugaro settings set` for the default owner, and a command that exists or a sentence naming
   `fugaro setup` / `fugaro update` for every family. D1179's other half — the two budget keys the

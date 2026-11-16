@@ -37,9 +37,11 @@ table and, for repository usage, this machine's remembered checkouts (D793). One
    `allow_data_to` and `budget.allowed_models` (when set). A model `budget.allowed_models` leaves out is
    shown as refused for every repository.
 4. **Usage.** For each repository the project config records (`repos:`): its `agent.models.coder`,
-   `agent.models.reviewer` and `agent.models.background` (the effective background when unset,
-   `config.EffectiveBackground`), read from the repository's `fugaro.yaml` at its base branch in this
-   machine's checkout, resolved over the project layer when the machine holds the layer's cached copy.
+   `agent.models.reviewer`, `agent.models.background` (the effective background when unset,
+   `config.EffectiveBackground`) and `agent.models.vision` (D2013; the one pin with no fallback, so a
+   file that sets no slot draws an empty cell rather than the coder's model), read from the repository's
+   `fugaro.yaml` at its base branch in this machine's checkout, resolved over the project layer when the
+   machine holds the layer's cached copy.
    A repository with no checkout here is listed as `unknown (no checkout on this machine)`, never
    guessed. A row whose pin no route serves, or no price prices, is flagged with the refusal a launch
    would give.
@@ -57,7 +59,7 @@ limits, and whether a route of the selected project already claims it (and which
 the network (D788). A model the catalog does not carry is not found, and the output says so with the
 one way to use it anyway: `fugaro models add <id> --price-in X --price-out Y`.
 
-## 4. `fugaro models add <id> [--route NAME] [--price-in X --price-out Y] [--yes]`
+## 4. `fugaro models add <id> [--route NAME] [--price-in X --price-out Y]`
 
 Edits the **selected local project config** and nothing else (D780). In order:
 
@@ -81,14 +83,14 @@ Edits the **selected local project config** and nothing else (D780). In order:
    use the model); when it is absent, it stays absent (D786).
 5. **Check, show, back up, write.** The new file must parse with `localcfg.Parse` (strict) and pass
    the same provider, price and routing checks `fugaro validate` runs. The command prints the line diff,
-   asks for confirmation at a terminal (`--yes` confirms outside a terminal), backs up the old file to
+   asks for confirmation at a terminal, backs up the old file to
    `<file>.bak-<UTC timestamp>` (mode 0600) and writes the new one atomically (temporary file, rename,
    mode 0600). Only the keys it changes are rewritten: comments, ordering and every other key are kept
    byte for byte (D790, §9).
 6. **Hand off.** It prints `next: fugaro update` and, when a repository pins nothing that uses the
    model, `fugaro models use <repo> <role> <id>` as the way to use it.
 
-## 5. `fugaro models rm <id> [--yes]`
+## 5. `fugaro models rm <id>`
 
 The reverse of `add`, through the same check, diff, backup and atomic write: it drops the ID's exact
 entry from its route's `models` (a pattern that claims it is left, and the command says the ID stays
@@ -99,7 +101,7 @@ the warning says the next run of that repository fails at launch with a no-provi
 changed (`fugaro models use`) or the model is added back. `budget.allowed_models` is never left as an empty list,
 which the loader refuses: removing its last entry is refused with the reason.
 
-## 6. `fugaro models use <repo> <coder|reviewer|background> <id> [--yes]`
+## 6. `fugaro models use <repo> <coder|reviewer|background|vision> <id>`
 
 Prepares the change to the repository's own `fugaro.yaml` (`agent.models.<role>`), never silently
 (D781):
@@ -113,11 +115,12 @@ Prepares the change to the repository's own `fugaro.yaml` (`agent.models.<role>`
   the refusal and nothing is written; the message names the `models add` that would fix a missing
   claim or price.
 - It edits **only** that one line of the working tree's `fugaro.yaml` (inserting `agent.models` when
-  absent), keeping comments and every other byte, prints the diff, and asks for confirmation (`--yes`
-  outside a terminal). It never commits, pushes or opens a pull request: the change reaches runs when
+  absent), keeping comments and every other byte, prints the diff, and asks for confirmation. It never
+  commits, pushes or opens a pull request: the change reaches runs when
   the user's own branch is merged to the base branch, which is what every run reads.
-- The roles are the three keys `agent.models` has today. The review levels' own per-level models
-  (D720–D737) are added to `use` by the task that adds their keys (D791).
+- The roles are the four keys `agent.models` has today: `coder`, `reviewer`, `background` and, since the
+  vision-model work, `vision` (D2013). The review levels' own per-level models (D720–D737) are added to
+  `use` by the task that adds their keys (D791).
 - It writes the repository's file only, never the project layer, whose `agent.models` keys a launcher
   can write too (D792).
 
@@ -144,7 +147,7 @@ Prepares the change to the repository's own `fugaro.yaml` (`agent.models.<role>`
 - **No config write in a coding agent's session when the config is outside the repository.** `models
   add` and `models rm` write `~/.config/fugaro/projects/<project>.yaml`, outside every repository: under a
   coding agent's environment variable (`CLAUDECODE` and the like, `agentenv.Marker`) they print the diff
-  and the command for the user to run, and write nothing, `--yes` included (D789). `models use` writes the
+  and the command for the user to run, and write nothing (D789). `models use` writes the
   repository's own `fugaro.yaml` in the working tree, which an agent may edit anyway; it is allowed there.
   `ls` and `search` read only and run anywhere.
 - **No secret** is read, printed or stored by these commands. A new route's key is `fugaro secrets
@@ -172,3 +175,19 @@ Neither reads model configuration today. The console's model information comes f
 `fugaro diagnose`; it never reads `~/.config/fugaro` itself. A console models screen, when wanted, reads
 `fugaro models ls --json` the way the console reads every other CLI document, and writes nothing. The
 mobile app reads nothing of this. No console or mobile task is in this plan.
+
+## 11. The crafts, and the keys a run reads today
+
+A second model vocabulary exists beside this one (the model-crafts work,
+[project-claude-accounts.md](../project-claude-accounts.md) §14): a run's four **crafts** — coder,
+first-line review, senior review, security review — each carry a model (`agent.crafts.<craft>.model`
+in a repository's `fugaro.yaml`, or the project layer's `defaults.agent.crafts`) and an **access**,
+the credential or pool their calls go out on. `fugaro craft ls` reads both halves, offline.
+
+This spec is unchanged by it, and the boundary is one sentence: **a craft's model half is not yet
+what a run runs.** A run takes its models from `agent.models` and `agent.levels` (§6, §2), so
+`fugaro models use` is still the command that decides what a run codes and reviews with, and a craft
+that sets a model sets it for the read that shows it. A craft's **access** is a different family's
+key, written by the owner's own commands and never by this one
+([project-claude-accounts.md](../project-claude-accounts.md) §12–§13); `fugaro models use` writes
+`agent.models.<role>` and nothing else.

@@ -11,6 +11,15 @@ matter**: T1.1's remainder and T1.3 both merged afterwards, in `3bcbd1dd` (#1880
 task against the secrets-brokering proxy chain, and [status.md](../status.md) carries the current
 table.
 
+**Amended 2026-11-13 (the token-types plan, T15): D461 is extended to any mix of the three types, several held at once.**
+[docs/bitbucket-token-types](../bitbucket-token-types/README.md) rules — its D2350 answered 2026-11-13 as recommended —
+that the credentials bundle holds a family of Bitbucket tokens, one key per token spelled `bitbucket-token--<name>`
+beside the legacy `bitbucket-token`, and that the proxy serves each request with the narrowest token covering it
+(D2355). D461's "whichever is narrowest" is therefore not reversed but generalised: an operator may hold a repository, a
+project and a workspace access token together, and the pick is enforced per request rather than once for the
+installation. What does not move: one Bitbucket workspace per project (D2314, that plan's A5), the allow-list as the
+operator's authorization (D2354), and D462's accepted reach.
+
 **Amended 2026-11-10: the plan is read against the secrets-brokering proxy chain, task by task.**
 [reconciliation-secrets-brokering.md](reconciliation-secrets-brokering.md) takes that reading on
 `origin/main` and answers the question [status.md](../status.md) leaves open — "the proxy chain
@@ -24,7 +33,7 @@ it does not make the service admit a *shared* job —
 `projectpolicy.SharedBitbucketProfile` has no production caller. T2.2, T2.4, T2.6's phase-3 half
 and T2.7 wait on B5.1 (S5), which is not started. **Done since the census:** T1.1's remainder and
 T1.3. **The reading's decisions are D1980–D1984, and the owner answered all five on 2026-11-10, as
-recommended**: T2.2 stays owed and waits on B5.1 (D1980); T2.9 closes as replaced (D1981); T2.4 is
+recommended**: T2.2 stays owed and waits on B5.1 (D1980); **2026-11-16: T2.4 and T2.6's phase-3 half are rewritten for the proxy (a shared Bitbucket job holds no token and the proxy serves it, docs/shared-jobs-default S1, D2302) and approved to launch**; T2.9 closes as replaced (D1981); T2.4 is
 kept for S5 (D1982); and D1983 and D1984 are **done** — the three corrections in
 `docs/git-providers.md`, and T2.11's step 5 as a dated amendment to the shipped 0.14.0 operator
 draft. Its block is D1980–D1999.

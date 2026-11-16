@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/runs-show.schema.json",
+  "title": "Fugaro runs show",
+  "description": "The document `fugaro runs show --json` prints: one run, the chain it belongs to and what is left of the chain's limits (docs/run-limit-carry-over spec §7, D1055, D1056). A chain is the unit of work whose runs share one limit (D1045): `chain` is the run that began it — not the run being shown — `run_count` is how many runs the link reached, and each `limits[]` row is one dimension the chain's own limit bounds, with what the chain has used of it and what is left. The limit is the figure the root launch was given (D1041) and is read out of that run's stored task; what has been used is read off the chain's runs — the dollars and tokens from the budget database's per-run ledgers, the wall time and review rounds from the run records (D1046, D1047). With the installation's budget off there is no ledger, the records are the figures, `enforced` is false — the spec's UNENFORCED — and the token dimension is reported unmeasured rather than approximated: `used` and `remaining` are null there, because no run record carries a whole-run token total (D1046, D1051). Members are only ever added within a version, so a renamed or re-meant member is a new member under a new name and the old one is kept, and removing or retyping one bumps version. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's document. The launch reply's `chain` and `limits[]` (D1056) are this same block, so the two cannot drift.",
+  "type": "object",
+  "required": [
+    "version",
+    "repo",
+    "run",
+    "chain",
+    "run_count",
+    "enforced",
+    "limits_read",
+    "limits"
+  ],
+  "properties": {
+    "version": {
+      "const": 1,
+      "$comment": "runsShowDocVersion in internal/cli/runs_show.go."
+    },
+    "repo": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The repository's own name (`acme/app`) of the run shown, the same value a row of runs ls carries and the launch reply reports."
+    },
+    "run": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The run shown, as `<storage-slug>/<run-id>` — the same form a row of runs ls carries and the launch reply reports, so a consumer reads the repository's storage key (the bucket prefix its objects live under) and the run id in one member. The `chain` member beside it is a bare run id: a chain is one repository's runs, and this is that repository."
+    },
+    "chain": {
+      "type": "string",
+      "description": "The run that began the chain (D1045): the run a pull request's branch is named for, the run a retry's stored task carries, or the run the chain was continued from. Empty is the one read that stopped at a gap — the chain's records name a link the bucket no longer holds anything under, so the run that began it was never read and rooting the chain at the oldest run that was read would name a run no link said was the root (runstore.Chain.Root). `run_count` then holds the runs the link still reached.",
+      "$comment": "Empty, never absent: the member is required, so a consumer branches on the value."
+    },
+    "run_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many runs of the chain the link reached, the run shown among them. 1 is the ordinary shape of a first run, and 0 is a chain whose records could not be read at all."
+    },
+    "enforced": {
+      "type": "boolean",
+      "description": "Whether the money and token figures are the budget database's. False is the spec's UNENFORCED: the installation's budget is off, so the records are the figures and the chain is a report and not a stop (D1046, T10). A consumer that needs a stop must read this beside the figures."
+    },
+    "limits_read": {
+      "type": "boolean",
+      "description": "Whether the chain's limit was read at all. The figure lives in the stored task of the run that began the chain, and the bucket ages a run's objects out, so a chain whose root is older than that window has no limit left to read. True with an empty `limits` is a chain that bounds none of the four dimensions; false is a chain whose limit is unknown, and it is the only member that tells the two apart: a consumer that read an empty array alone would read a spent chain as a free one, which is what the null of an unmeasured dimension prevents one level down (D1051)."
+    },
+    "limits": {
+      "type": "array",
+      "description": "One row per dimension the chain's own limit bounds, in the order every message about them reads: usd, tokens, time, review_rounds. A dimension the chain sets no figure for is absent rather than present at zero — nothing bounds it — and an empty array under a true `limits_read` is a chain that bounds none of the four. Empty under a false `limits_read` is a chain whose limit could not be read: its root run's stored task is gone, or the read stopped at a gap in the chain (an empty `chain`).",
+      "items": {
+        "$ref": "#/$defs/limit"
+      }
+    },
+    "halt": {
+      "$ref": "#/$defs/halt"
+    }
+  },
+  "$defs": {
+    "limit": {
+      "type": "object",
+      "required": [
+        "dimension",
+        "limit",
+        "used",
+        "remaining",
+        "source"
+      ],
+      "properties": {
+        "dimension": {
+          "enum": [
+            "usd",
+            "tokens",
+            "time",
+            "review_rounds"
+          ],
+          "description": "The dimension the row is about (runstore.Dimension), and the unit its three amounts are in: usd is micro-dollars (the unit the budget database's ledger, a limit and every other document count money in — runs summary's spent_micros), tokens is whole tokens, time is seconds, and review_rounds is a count. The amounts are the engine's own figures, unconverted, because the launch reply carries this same block and a conversion in one document and not the other is the drift the shared shape prevents."
+        },
+        "limit": {
+          "type": "number",
+          "minimum": 0,
+          "description": "The chain's own limit in this dimension: the figure the run that began the chain was launched with (D1041), in the dimension's own unit. Never null: a row exists only for a dimension the chain bounds."
+        },
+        "used": {
+          "$comment": "oneOf rather than a nullable number so that the two branches are named: null is the unmeasured dimension of D1051, not a zero.",
+          "oneOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the chain's runs have already spent in this dimension (D1047), in the dimension's own unit: the dollars and tokens summed over the runs' budget ledgers (reserved less released, and the ledger's token leaf), the wall time off the records as max(elapsed, the sum of the stages' durations), and the review rounds as the count of the chain's reviews[] entries. Null is a dimension the chain does not measure — the token dimension of a chain whose budget is off, where no run record carries a whole-run token total (D1046, D1051) — and never a zero that was read."
+        },
+        "remaining": {
+          "oneOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What is left of the limit over what the chain has used: limit − used, in the dimension's own unit. It is not clamped at zero — a chain that spent past its limit reads as a negative, which is a chain that has spent and not an unspent one — and it is null exactly when `used` is, for the dimension the chain does not measure."
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The policy layer the figure came from: `chain`, the chain layer's own name (policy.SourceChain, F4, D1055). A chain's limit is the root launch's own figure — the `--max-*` flags the launch that began the chain was given, merged as the chain layer (D1041, D1043) — and the limit is not read from any run record, so this member is not read from one either: a record's own sources name the layer that set each merge key, and the dollar key is also the repository's per-run cap, which the repository's own file may set (`branch`). A chain limit labelled with that layer names a place the number did not come from, which is the failure F4 exists to prevent. Before the chain layer had a name of its own, every layer past the first two was called `branch`. Not an enum here: a layer name is a string, and a consumer that refused one this schema has never heard of would refuse a newer CLI's document."
+        }
+      }
+    },
+    "halt": {
+      "type": "object",
+      "required": [
+        "reason",
+        "scope",
+        "at"
+      ],
+      "properties": {
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The closed vocabulary's name for why the run stopped (runstore.HaltReason), such as run_cap or token_cap."
+        },
+        "scope": {
+          "enum": [
+            "run",
+            "repo",
+            "global"
+          ],
+          "description": "The scope the limit it met was set at (runstore.Halt.Scope)."
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the run was halted, RFC 3339 in UTC."
+        },
+        "detail": {
+          "type": "string",
+          "description": "The runner's own sentence for the halt, redacted the way every string diagnose prints is. Absent when the record carries none."
+        }
+      },
+      "description": "The halt of a halted run, absent for a run that was not halted. A halted run's first question is how much is left, which is what this document's own figures answer (D1055)."
+    }
+  }
+}

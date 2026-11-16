@@ -221,7 +221,7 @@ func runPlanStatus(cmd *cobra.Command, o *planStatusOptions) error {
 	plans := make([]plan.PlanRef, 0, len(artifacts))
 	paths := make(map[string]string, len(artifacts)) // plan id -> the artifact that took it
 	for _, path := range artifacts {
-		id := planIDFromPath(path)
+		id := plan.IDFromPath(path)
 		d, err := plan.ReadFile(path)
 		if err != nil {
 			fmt.Fprintf(errw, "warning: %s\n", oneLine(err.Error()))
@@ -338,30 +338,6 @@ func planArtifacts(dir string) ([]string, error) {
 	}
 	sort.Strings(out)
 	return out, nil
-}
-
-// planIDFromPath is the join's plan id for an artifact under docs/ (GV1.6's
-// rule i): the id a launch writes before the slash in --plan-task.
-//
-// For an artifact directly under docs/ it is the file's stem, for
-// docs/plans/<stem>.graph.json it is "plans/<stem>" — the plan documents in
-// docs/plans/ are named by their date and title rather than by a directory — and
-// for anything deeper it is the directory's path under docs/. The id is where
-// the artifact sits, so moving a plan renames it, which is the trade rule (i)
-// makes: a path is something every reader can compute the same way, and nothing
-// has to be registered anywhere for a plan to have a name.
-func planIDFromPath(path string) string {
-	rel := strings.TrimPrefix(filepath.ToSlash(path), planDocsDir+"/")
-	stem := strings.TrimSuffix(rel, plan.ArtifactSuffix)
-	dir, file := filepath.Split(stem)
-	dir = strings.TrimSuffix(filepath.ToSlash(dir), "/")
-	switch dir {
-	case "", ".":
-		return file
-	case "plans":
-		return "plans/" + file
-	}
-	return dir
 }
 
 // planRunFacts turns the rows the runs read produced into the facts the join

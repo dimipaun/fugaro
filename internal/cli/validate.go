@@ -721,7 +721,10 @@ const reviewArtifactTokens = 32000
 // state CSR2's launch refusal mirrors.
 //
 // All three speak for an installation that has named a Claude account, and are
-// silent without one: the review job is the first thing in this design that a
+// silent without one — the account an installation names is what puts a review
+// job on the account axis at all, whose value is that account or, since AK4,
+// the project's own Anthropic key (config.AnthropicKeyAccount), which is not an
+// account: the review job is the first thing in this design that a
 // named account is needed for (D888: the first slice is `fugaro accounts add`
 // plus the review job), and a validate run against an installation that has
 // named none is one whose output this release does not change — the same
@@ -737,7 +740,7 @@ func reviewJobNotes(cfg *config.Config, lc *localcfg.Config) []config.Problem {
 			n, reviewArtifactTokens)})
 	}
 	if cfg.Budget != nil && cfg.Budget.PerRunUSD > 0 {
-		notes = append(notes, config.Problem{Path: "budget.per_run_usd", Message: "is the cap on a run whose model calls reach the gateway, and a review job's do not: it runs on a Claude account, so the only ceiling over it is agent.max_budget_usd — Claude Code's own estimate, accurate for a Claude model and about twenty-five times too high for a provider model (F10). No fugaro.yaml key lowers that estimate: a review job that costs more than this cap is not what refuses it"})
+		notes = append(notes, config.Problem{Path: "budget.per_run_usd", Message: "is the cap on a run whose model calls reach the gateway, and a review job's do not: a review job is served by the value the account axis names rather than by a gateway route, so the only ceiling over it is agent.max_budget_usd — Claude Code's own estimate, accurate for a Claude model and about twenty-five times too high for a provider model (F10). No fugaro.yaml key lowers that estimate: a review job that costs more than this cap is not what refuses it"})
 	}
 	if msg := reviewPreconditionNote(lc); msg != "" {
 		notes = append(notes, config.Problem{Path: "credentials_service", Message: msg})
@@ -796,11 +799,20 @@ func reviewPreconditionNote(lc *localcfg.Config) string {
 // reverse. What the check does not do is hold the stage accounts to the
 // repository's allow-list: that needs the repository, which a file in hand
 // does not name, and the launch is where it is enforced.
-func stageAccountProblems(lc *localcfg.Config, ecfg *config.Config) []config.Problem {
+//
+// The accounts a cascade file would have refused are skipped, with the one
+// note that says so (config.CascadeSkippedStageAccounts): they are the
+// operator's project-wide keys, and a repository that runs on the cascade's own
+// tiers is not the file they are wrong for.
+func stageAccountProblems(lc *localcfg.Config, ecfg *config.Config) (problems, notes []config.Problem) {
 	if lc == nil || ecfg == nil {
-		return nil
+		return nil, nil
 	}
-	return config.CheckStageAccountMix(ecfg.Agent.Auth, stageAccountsOf(lc), "stages")
+	stages, note := config.CascadeSkippedStageAccounts(ecfg.Agent.Auth, stageAccountsOf(lc))
+	if note != "" {
+		notes = append(notes, config.Problem{Message: note})
+	}
+	return config.CheckStageAccountMix(ecfg.Agent.Auth, stages, "stages"), notes
 }
 
 // catalogSourceProblems are the project's own catalog entries whose
@@ -1946,9 +1958,10 @@ func newValidateCmd() *cobra.Command {
 				// Task 8 step 4, design §4.4; computeCheckoutProblems is where
 				// the three are put together, and the comment there is why
 				// they are not two calls). The Batch ones return nothing for
-				// every other project: the backend name they are about is
-				// refused by internal/localcfg until the enable task, so no
-				// installation reaches them today. The recipe they read is the
+				// every other project: the backend name they are about is one
+				// config validation accepts since the enable (Task 10), so an
+				// installation that names it really reaches them. The recipe
+				// they read is the
 				// one this checkout resolves the way a launch would
 				// (agent.recipe, else the default): its mode is what decides
 				// whether a run of this repository produces artifacts, which
@@ -2022,6 +2035,7 @@ func newValidateCmd() *cobra.Command {
 				warnings = append(warnings, securityImageWarnings(cfg)...)
 				warnings = append(warnings, jobsImageWarnings(cfg)...)
 				warnings = append(warnings, planningImageWarnings(cfg)...)
+				warnings = append(warnings, modelGradesImageWarnings(cfg)...)
 				warnings = append(warnings, stopFractionImageWarnings(cfg)...)
 				warnings = append(warnings, triageImageWarnings(cfg)...)
 				editionOf, note := governanceEditions(cmd.Context(), lc, cfg, offline)
@@ -2041,7 +2055,8 @@ func newValidateCmd() *cobra.Command {
 				problems, warnings = append(problems, rlp...), append(warnings, rlw...)
 				warnings = append(warnings, reviewFloorUnpublishable(lc)...)
 				notes = append(notes, reviewJobNotes(cfg, lc)...)
-				problems = append(problems, stageAccountProblems(lc, ecfg)...)
+				sp, sn := stageAccountProblems(lc, ecfg)
+				problems, notes = append(problems, sp...), append(notes, sn...)
 				problems = append(problems, catalogSourceProblems(lc)...)
 				annotateProjectRecipe(filepath.Dir(path), cfg, problems)
 				if lc != nil && lc.Name == cfg.Project && setsPolicy(cfg) {

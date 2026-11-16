@@ -1257,7 +1257,7 @@ func TestClaudeMalformedMessageStartChargesReservation(t *testing.T) {
 func TestLongContextTierPricedFromUsage(t *testing.T) {
 	tier := pricing.Rates{InputPerM: 2, OutputPerM: 10, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.1,
 		LongContext: &pricing.Tier{AboveInputTokens: 200_000, InputPerM: 4, OutputPerM: 15}}
-	table, err := pricing.Embedded().With(pricing.Overrides{sonnet: tier})
+	table, err := pricing.Embedded().With(pricing.Overrides{sonnet: {Rates: tier}})
 	if err != nil {
 		t.Fatal(err)
 	}

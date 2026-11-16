@@ -26,6 +26,7 @@ Flags:
 
 Subcommands:
 
+- `fugaro ab` -- Report model A/B results: pairs, wins, cost and the recommendation per group
 - `fugaro accounts` -- List the named Claude accounts a repository may use
 - `fugaro allow-delete` -- Record the objects a run may delete or replace, by address (the project's owner)
 - `fugaro artifacts` -- List and download what an artifact run delivered
@@ -40,10 +41,13 @@ Subcommands:
 - `fugaro creds` -- Set and list the credentials service's one bundle secret (the owner)
 - `fugaro diagnose` -- Explain how a run went: status, tests, review findings, the agent's last word, logs
 - `fugaro doctor` -- Check that Fugaro is set up and ready, without changing anything
+- `fugaro estimate` -- Reprice one run's recorded tokens on another model
+- `fugaro followups` -- File the findings a merged run deferred as follow-up tasks
 - `fugaro graph` -- Print the project's dependency graph
 - `fugaro help` -- Help about any command
 - `fugaro image` -- Build and inspect a workflow's derived container image
-- `fugaro issue` -- Read the issues saved on this machine, and the ones you reported
+- `fugaro issue` -- Read the issues saved on this machine, the ones you reported, and file one on GitHub
+- `fugaro licence` -- Install, read and renew the installation's licence key (Subscription Edition)
 - `fugaro logs` -- Print a run's logs from Cloud Logging
 - `fugaro managed` -- Act on a managed project (a project created by fugaro with the coding agent's refusal removed)
 - `fugaro models` -- Show the models this project can run, and where each is served
@@ -56,6 +60,7 @@ Subcommands:
 - `fugaro report` -- Report what the project spent, by day, week, month, year, repository, model, person or mode
 - `fugaro restore` -- Rebuild a managed project from zero, into a new GCP project ID, and print what is not restored
 - `fugaro review` -- Review a pull request in a job of its own, on a named account
+- `fugaro rigor` -- Set the rigor mode a project's runs are held to
 - `fugaro run` -- Launch a task in the cloud; it always ends with a PR
 - `fugaro runs` -- List and inspect runs
 - `fugaro seats` -- Estimate how many people a subscription's seat rule would count
@@ -64,16 +69,82 @@ Subcommands:
 - `fugaro settings` -- Show every setting, what decides it, and its default
 - `fugaro setup` -- Create a fresh GCP project and stand up its installation, or a repository's cloud resources, through Terraform
 - `fugaro stats` -- Aggregate one installation's run records into figures a page can publish
+- `fugaro troubleshoot` -- Explain a Fugaro command that failed on this machine, locally
 - `fugaro update` -- Re-converge the installation, or a checkout's repository, after a CLI upgrade
-- `fugaro update-skills` -- Pin the Fugaro plugin in the repository's .claude/settings.json to this release
-- `fugaro upgrade` -- Bring checkouts up to this fugaro: pin the plugin, install or update it in Claude Code, refresh the repository's images
-- `fugaro user` -- List, add and remove the installation's launchers and operators
+- `fugaro update-skills` -- Install or update the Fugaro plugin in your own Claude Code
+- `fugaro user` -- Grant, revoke and list the installation's roles, and its two IAM lists
 - `fugaro validate` -- Check a fugaro.yaml against the schema and the repository
 - `fugaro verify` -- Run and record this repository's build, test or lint command (inside a Fugaro run)
 - `fugaro version` -- Print the fugaro version
 - `fugaro watch` -- Watch the project's spend, repositories and running agents live
 - `fugaro workflow` -- Create and remove a repository's workflow blocks
 - `fugaro workspace` -- Join this project to a workspace, or declare one
+
+## `fugaro ab`
+
+Report model A/B results: pairs, wins, cost and the recommendation per group
+
+Report model A/B results from the runs the launcher sampled.
+
+A sampled task launches a champion (the run the developer sees) and a
+challenger (the same task, at the same commit, on another coder model, run as a
+shadow that pushes nothing and opens nothing). Both records carry the pair, and
+this command scores the pairs from those records and from what the repository's
+judge runs wrote under their own prefixes: no model call is made here, and the
+same records and verdicts always give the same table. A pair at Critical counts
+only once a judge has decided it (D561), and every other mode shows the judge's
+verdict beside the hard signals it is ranked on.
+
+Rows are one per rigor mode x tier x model pair. A pair the arms do not make --
+a different start commit, mode, tier or recipe, or an arm that never started --
+is in no figure at all. WINS and LOSSES are the challenger's; a TIE decided
+nothing and no figure is drawn from one. HALTS is each arm's halt count: a halt
+is already a loss, and the count says how often a limit rather than the work
+decided a pair. COST is the median pair cost ratio, the challenger's model
+dollars over the champion's. JUDGE FAMILY is the family of the model that judged
+the group's pairs -- a Claude ID is anthropic, a provider model's family is its
+ID's vendor prefix -- and SAME FAMILY says one of them is an arm's own, which
+blindness does not remove (D553). UNJUDGED counts the pairs no judge has decided
+and TRUNCATED those whose patch was cut short and can never be judged.
+
+ADVICE is D565's rule at the mode's exchange rate: the challenger is recommended
+when it is clearly better (the lower bound of its win share above a half) and its
+median cost ratio is within the mode's rate, or when it is not worse (the upper
+bound of its loss share below 0.6) and cheaper; otherwise the champion stays. A
+row with fewer than 20 decisive pairs says no conclusion rather than
+approximating one. Nothing here changes a default: this is a report, not a
+switch.
+
+No person, repository or task text reaches the output: a row is a mode, a tier and
+two coder models, with the family of the model that judged them.
+
+--since is how far back the read goes (default 30d: a day count, a Go duration,
+or 0 for no bound). --json prints {project, source, since, until, rows[{mode,
+tier, champion, challenger, pairs, wins, losses, ties, champion_halts,
+challenger_halts, champion_follow_ups, judge_families, judge_same_family,
+unjudged, truncated, recommendation{decision, rule, decisive, p, win_share_lo,
+win_share_hi, median_cost_ratio, exchange_rate}}], warnings};
+median_cost_ratio is null when no pair of the group carried both arms' costs,
+and judge_families is empty when no judge has decided a pair of the group.
+
+Usage: `fugaro ab`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ab |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | only this repository (owner/name) |
+| `--since` | string | `30d` | no | how far back to read: Nd, a Go duration, or 0 for no bound |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro accounts`
 
@@ -90,7 +161,10 @@ Flags:
 Subcommands:
 
 - `fugaro accounts add` -- Declare a named Claude account and the repositories its token may be used by
+- `fugaro accounts alias` -- Point a name at one named Claude account, so the keys naming it choose that account
+- `fugaro accounts allow` -- Add repositories to a named Claude account's allow-list (claude_accounts.NAME.allow_data_to)
 - `fugaro accounts clear` -- Clear one account's broken or exhausted credential mark, after replacing its token
+- `fugaro accounts deny` -- Remove repositories from a named Claude account's allow-list
 - `fugaro accounts ls` -- List the named Claude accounts (claude_accounts in the local config) a repository may use with fugaro run --token
 - `fugaro accounts pool` -- List, declare and remove the named pools a craft's access may name
 - `fugaro accounts rm` -- Remove a named Claude account, its secret and the job that served it
@@ -141,7 +215,7 @@ and this command then stores the token itself, so in a project whose marks say
 it is managed the token is written for YOU and nobody else: before the token
 prompt it prints the repositories the token may be used by and says that a job
 on those repositories can read it. Nothing is asked — the terminal is what makes
-a run yours, and --yes does not stand in for one — so a pipe and a run with no
+a run yours, and no flag stands in for one — so a pipe and a run with no
 terminal are refused before a byte is written.
 
 A coding agent's session may still declare a bounded account: the repositories
@@ -155,13 +229,152 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this declaration would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed; refused beside --yes |
+| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this declaration would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed |
 | `--claude` | bool | `false` | no | run Anthropic's own claude setup-token login on this terminal first, then paste the token at the hidden prompt |
 | `-h`, `--help` | bool | `false` | no | help for add |
 | `--profile` | string | "" | no | the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one) |
 | `--repos` | string | "" | no | the repositories the token may be used by, as owner/name,owner/name (default: this checkout's origin) |
 | `--type` | string | "" | no | declare the name as a typed credential too, so a craft or a pool may spend it: claude-oauth, the one type this command's token step serves (without it, the name is declared in claude_accounts alone, as it always was) |
-| `--yes` | bool | `false` | no | confirm the run without a prompt: it answers the converge's own questions and never makes a run the owner at their own terminal on a managed project |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro accounts alias`
+
+Point a name at one named Claude account, so the keys naming it choose that account
+
+Manage this machine's claude_account_aliases block: the names the account-choice
+keys may hold instead of an account.
+
+A key that names an alias — default_claude_account, and each
+stages.<stage>.claude_account — keeps the alias as written, and whoever reads it
+resolves the alias before it asks anything else, the account's own
+allow_data_to included. So moving every stage that names one is one edit here,
+and an alias never reaches the policy node, a task, a run record or a job
+image under its own name.
+
+The block is the owner's own and is never published (D2090): it is stated in
+this machine's config, and the read of it is local.
+
+Run these at your own terminal: a repoint decides which credential this
+project's stages spend, so a coding agent's session is refused, --yes
+included.
+
+Usage: `fugaro accounts alias`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for alias |
+
+Subcommands:
+
+- `fugaro accounts alias rm` -- Drop an alias no account-choice key names any more
+- `fugaro accounts alias set` -- Point ALIAS at ACCOUNT, so every key naming the alias chooses it
+
+## `fugaro accounts alias rm`
+
+Drop an alias no account-choice key names any more
+
+Drop one alias from this machine's claude_account_aliases block.
+
+An alias a choice key still names is refused, naming every key: the key would
+resolve to a name this config no longer defines, which is the file the loader
+refuses. Point those keys at the account they should choose instead
+(fugaro accounts alias set ALIAS ACCOUNT), or change them, and remove the alias
+once nothing names it.
+
+Then it converges, as fugaro accounts alias set does: the block is local and
+never published, so the node, the job set and this checkout's repository root
+are converged on the config this wrote and nothing is deleted.
+
+Usage: `fugaro accounts alias rm ALIAS`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--yes` | bool | `false` | no | confirm the removal without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro accounts alias set`
+
+Point ALIAS at ACCOUNT, so every key naming the alias chooses it
+
+Point an alias at one named Claude account, and converge this installation on
+the repoint.
+
+The alias stands for exactly one account of this config's claude_accounts
+block, or for "default" (the unsuffixed claude-oauth-token secret). It never
+stands for another alias, a pool or a credential: a chain would need a cycle
+check and a reader that prints the path a name came through, and a pool is
+walked inside a run — its members are chosen there, at the stage boundary —
+which is the re-resolution a repoint must not cause.
+
+Then it converges, in the same command and after the write: the policy node
+with the account the keys now resolve to, the job set and this checkout's
+repository root, through the stages fugaro update runs. The new target's job is
+added; the old target's job is never deleted (D2095), because the account may
+still be served by another profile or named by another alias.
+
+A run already in flight keeps the account its launch resolved: nothing here
+rewrites a record, a ledger or a counter (docs/design/update-in-flight.md), and
+a stage already going spends the credential it started with.
+
+Usage: `fugaro accounts alias set ALIAS ACCOUNT`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--yes` | bool | `false` | no | confirm the repoint without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro accounts allow`
+
+Add repositories to a named Claude account's allow-list (claude_accounts.NAME.allow_data_to)
+
+Add each REPO to claude_accounts.NAME.allow_data_to, the list of
+repositories the account's token may be used by, and nothing else.
+
+A NAME the config does not declare yet is declared here with the repositories
+this run names: allow is the first form of the pair, so an account whose
+token may be spent from one repository needs no second command. A NAME it does
+declare keeps the repositories its list already holds — the edit appends the
+ones named, so a run that repeats an entry writes nothing.
+
+The list is the per-repository decision the published policy's accounts block
+is derived from: a profile serves the account to its jobs, and this list is
+what bounds the token of each of them. Adding a repository is therefore a
+widening of where the token may be spent, and it is read back by the owner's
+own publish rather than by this command — nothing here reaches the cloud.
+
+The repositories are written as owner/name, the shape the loader holds this
+list to. A repository the file already names is left where it is, and the
+sentence above the diff prints the list the file ends up with, not the one the
+command line named.
+
+This is a local file edit. It ends on one line: next: fugaro update — the
+published policy's accounts block is derived from this list, so the change
+reaches the project's runs in that run and not before it.
+
+Usage: `fugaro accounts allow NAME REPO...`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for allow |
 
 Subcommands:
 
@@ -225,7 +438,40 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for clear |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--yes` | bool | `false` | no | skip the typed confirmation (read what it does first) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro accounts deny`
+
+Remove repositories from a named Claude account's allow-list
+
+Remove each REPO from claude_accounts.NAME.allow_data_to, so the
+account's token may no longer be used by it.
+
+A repository the list does not name is not an error and not a write: the
+command says there is no change, because the state it was asked for is the
+state the file is in.
+
+An account a profile lists must cover every repository that profile admits —
+the profile's repositories are the intersection of the two lists — so a
+removal that would leave the profile admitting a repository the account no
+longer covers is refused, naming the repository and the profile, with nothing
+written. The remedy is to narrow the profile's own allow_repos, or to leave
+the entry where it is.
+
+This is a local file edit. It ends on one line: next: fugaro update — the
+published policy's accounts block is derived from this list, so the change
+reaches the project's runs in that run and not before it.
+
+Usage: `fugaro accounts deny NAME REPO...`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for deny |
 
 Subcommands:
 
@@ -324,8 +570,7 @@ its members with the list on the command line: it is the whole list every time,
 so a member you leave out is dropped.
 
 Run it at your own terminal: a pool decides where a project's calls may be
-spent and whose key they may carry, so a coding agent's session is refused,
---yes included.
+spent and whose key they may carry, so a coding agent's session is refused.
 
 Usage: `fugaro accounts pool add NAME MEMBER...`
 
@@ -335,7 +580,6 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for add |
 | `--strategy` | string | "" | no | how the pool walks its members: failover (the default: try them in order) or round-robin (share the load). Left out, a pool that exists keeps the strategy it has |
-| `--yes` | bool | `false` | no | confirm the write without a prompt |
 
 Subcommands:
 
@@ -378,7 +622,7 @@ This command has no subcommands.
 Remove a pool from this project's config
 
 Remove pools.<NAME> from this project's config: the pool goes, and a craft whose
-access names it is refused rather than left pointing at nothing.
+access names it is cleared with it rather than left pointing at nothing.
 
 It removes the pool from the installation's config only. A repository that
 selected the pool keeps its own file untouched, and this release's fugaro update
@@ -387,7 +631,7 @@ this config's pools, which is MC4's job, so the removal withdraws nothing from
 the node.
 
 Run it at your own terminal: a pool decides where a project's calls may be
-spent, so a coding agent's session is refused, --yes included.
+spent, so a coding agent's session is refused.
 
 Usage: `fugaro accounts pool rm NAME`
 
@@ -396,7 +640,6 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for rm |
-| `--yes` | bool | `false` | no | confirm the removal without a prompt |
 
 Subcommands:
 
@@ -440,7 +683,7 @@ way it was and the command stops: an account whose declaration is gone while
 its secret is still there is the one state this command may not leave behind.
 
 Run it at your own terminal: this command deletes a credential, so a coding
-agent's session is refused, --yes included — a managed project's gate refuses
+agent's session is refused — a managed project's gate refuses
 the removal too, because the refs and the checkouts record its referrer check
 reads are documents the session writes, so no read here answers for what origin
 carries.
@@ -453,7 +696,6 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for rm |
 | `--profile` | string | "" | no | the profile whose claude_accounts loses the name (a profile that lists accounts is taken out of it one at a time) |
-| `--yes` | bool | `false` | no | confirm the removal without a prompt |
 
 Subcommands:
 
@@ -723,9 +965,16 @@ which one the selected project uses:
   cloud-batch  Cloud Batch jobs, one VM per run (the VM backend)
 
 A config that names no backend runs on cloud-run. A config that names
-cloud-batch is refused by this build ("not enabled yet"): the backend and its
-opener are built and tested, and nothing selects them until Fugaro has passed
-the live checklist for it.
+cloud-batch is ACCEPTED: fugaro doctor reports the Batch checks for an
+installation that selects it -- the Compute and Batch APIs, the preloaded boot
+image and the socket gid it records beside it, the network and subnetwork a
+run's VMs are placed in, the log isolation, the run accounts and their grants,
+the price table and the reaper -- and FAILS until every one of them passes.
+What doctor does is report: fugaro run reads none of those checks, so it does
+not hold a launch back, and an installation that selects the name before it is
+provisioned runs anyway (its output stays in _Default and its VMs are left to
+the job's own duration). Run fugaro doctor first, rather than reading a green
+one as a fence around the launcher.
 
 This is a local, read-only lookup: it reads the project config and the backend
 names internal/backend defines, and it calls no cloud API. With --json it
@@ -918,12 +1167,93 @@ Flags:
 
 Subcommands:
 
+- `fugaro budget chain` -- Raise the limit of a chain that has spent it
 - `fugaro budget kill` -- Halt every run of the project, of one repository or of one workspace (budget admins)
 - `fugaro budget preview` -- Estimate a batch's worst-case model spend against today's caps
 - `fugaro budget prices` -- Show the effective model price table, offline
 - `fugaro budget resume` -- Clear a kill switch (budget admins)
 - `fugaro budget set` -- Set a cap, the lease limit or the mode (budget admins)
 - `fugaro budget show` -- Show caps, today's counters, kill switches, headroom and the runs in flight
+
+## `fugaro budget chain`
+
+Raise the limit of a chain that has spent it
+
+Work on one chain's own limit: the figure the launch that began the chain
+set, which bounds that run and every run that continues it (D1041, D1045).
+
+A chain's limit lives in the stored task of the run that began it and in no
+database node, so what this family does is rewrite that stored task with the
+reason recorded; nothing of the project's budget moves for it.
+
+Usage: `fugaro budget chain`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for chain |
+
+Subcommands:
+
+- `fugaro budget chain raise` -- Raise a chain that has spent its limit, recording who, when, why and the figures
+
+## `fugaro budget chain raise`
+
+Raise a chain that has spent its limit, recording who, when, why and the figures
+
+Raise the limit of the chain RUN (a run ID, <repo-slug>/<run-id>, or the last
+four or more characters of a run ID) belongs to, by rewriting the stored task
+of the run that began the chain, which is the one place a chain's limit lives
+(D1041, D1046).
+
+A chain has no database node and no cap of its own, so a chain that has spent
+its figure is not stopped by anything: the launch that would continue it is
+refused for having nothing left to spend, and this is the command that answers
+that refusal. Each --max-* flag names a dimension the chain already limits and
+a figure above the one in force — a raise moves a limit up, and nothing here
+lowers one, since asking for less is what a launch's own --max-* is for. The
+reason is required and is recorded beside the figures, in the record of the
+run that began the chain: a chain limit is a convention this installation
+states rather than a bound the platform enforces, so who raised it, when and
+why is the whole of what tells a raise from a rewritten limit.
+
+The project's own budget is untouched: the per-run cap and the daily and
+project caps are the database's rules, and a raise moves none of them.
+
+A raise is the owner's own step, as every raise form is (D1542): a coding
+agent's session is refused and handed the command to run itself at its own
+terminal, so a session cannot raise a chain's limit.
+
+The run that began the chain has to have finished. A run writes its own
+result.json while it is going, so an entry recorded in one still in flight
+would be lost under the run's next write; a raise is refused while that run
+has not ended, and nothing is written for it.
+
+Only the runs bucket is written, through the access a launcher already has:
+no budget database, no cap and no kill switch is read or written.
+
+Usage: `fugaro budget chain raise RUN (--max-usd N | --max-tokens N | --max-time D | --max-review-rounds N) --reason TEXT`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for raise |
+| `--max-review-rounds` | string | "" | no | the chain's review-round limit, above the one in force, such as 6 |
+| `--max-time` | string | "" | no | the chain's wall-time limit, above the one in force, as a duration such as 90m or 3h |
+| `--max-tokens` | string | "" | no | the chain's token limit, above the one in force, such as 1200000 |
+| `--max-usd` | string | "" | no | the chain's dollar limit, above the one in force, such as 6 or 12.5 |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--reason` | string | "" | no | why the chain is being raised (required; recorded with who, when and the figures) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | the repository RUN belongs to (owner/name, or a path inside its checkout; needed only for a bare run ID) |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro budget kill`
 
@@ -957,7 +1287,6 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | one repository, given as owner/name or a path inside its checkout (no value: this checkout's origin) |
 | `--workspace` | string | "" | no | one workspace, named as its own project is; its own service's stop flag, in the workspace's own database, so the project it names has to declare one (workspace_members) |
-| `--yes` | bool | `false` | no | accepted and ignored: this command asks nothing |
 
 Subcommands:
 
@@ -971,6 +1300,18 @@ Estimate what N runs of a recipe may cost at most, and how that compares
 with today's remaining daily caps. It is a ceiling, not a forecast: a run
 is bounded by the smaller of budget.per_run_usd and the recipe's most
 stages times the repository's agent.max_budget_usd.
+
+--mode asks for a rigor mode for the figures, as fugaro run --mode asks
+for one for a run, and takes the same vocabulary. It may raise the mode
+the repository resolves (its rigor: block, the project layer) and never
+lower it, so a request below the resolved mode changes nothing and the
+preview says so rather than quoting a cheaper ceiling than the run would
+be held to. The mode is an input to the two terms the tool can compute
+and to nothing else: the recipe's stage bound, through the rounds the
+mode's own row gives the knobs the checkout leaves unset, and the per-run
+cap, through the fraction of the deployed ceiling the mode carries.
+That is not the mode budget set --mode takes, which is the accounting
+mode (observe or enforce). The output is a ceiling all the same.
 
 That figure is the model ceiling and nothing else: a run also bills for
 the machine it asked for, and no budget key bounds compute at all --
@@ -1018,7 +1359,7 @@ and the ceiling with it. The typical line's own read of the bucket is
 the one that costs the line and nothing else: a bucket it cannot read
 leaves the ceiling standing. It writes nothing.
 
-Usage: `fugaro budget preview --recipe NAME --runs N [--repo R]`
+Usage: `fugaro budget preview --recipe NAME --runs N [--repo R] [--mode MODE]`
 
 Flags:
 
@@ -1028,8 +1369,9 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for preview |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--mode` | string | "" | no | the rigor mode to preview: poc, startup, pro, critical, hotfix; it may raise the mode the repository resolves (its rigor: block, the project layer) and never lower it, so a mode below the resolved one changes nothing. This is the rigor mode, not the accounting mode budget set --mode takes (observe or enforce) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
-| `--recipe` | string | "" | yes | the recipe to preview (default, lint-fix, pick, premium, review-only, run-digest, solo, standard, test-and-fix) |
+| `--recipe` | string | "" | yes | the recipe to preview (ab-judge, default, escalate, lint-fix, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | the repository (owner/name, or a path inside its checkout); default: the checkout's origin |
 | `--runs` | int | `0` | yes | how many runs to estimate |
@@ -1093,7 +1435,6 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | one repository, given as owner/name or a path inside its checkout (no value: this checkout's origin) |
 | `--workspace` | string | "" | no | one workspace, named as its own project is; its own service's stop flag, in the workspace's own database, so the project it names has to declare one (workspace_members) |
-| `--yes` | bool | `false` | no | accepted and ignored: this command asks nothing |
 
 Subcommands:
 
@@ -1150,7 +1491,6 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | one repository's caps, given as owner/name or a path inside its checkout (no value: this checkout's origin) |
-| `--yes` | bool | `false` | no | accepted and ignored: this command asks nothing |
 
 Subcommands:
 
@@ -1436,10 +1776,11 @@ This command has no subcommands.
 Write the minimal fugaro.yaml of a repository whose project publishes a project layer
 
 Write the minimal fugaro.yaml (version, project, gcp_project) into this checkout, for a project that
-publishes a project layer. Non-interactive: without --yes it prints the file and exits 1 (a dry run),
-writing nothing. It never overwrites a fugaro.yaml, and writes nothing that does not resolve against
-the project layer. Unlike fugaro config publish, it never refuses in a coding-agent session: it writes
-a repository file, which still goes through a reviewed pull request, not a published, trusted object.
+publishes a project layer. It asks nothing and takes no flag for the write: the file it writes is a
+repository file, reviewed and committed like any other. It never overwrites a fugaro.yaml, and writes
+nothing that does not resolve against the project layer. Unlike fugaro config publish, it never refuses
+in a coding-agent session: it writes a repository file, which still goes through a reviewed pull
+request, not a published, trusted object.
 
 Usage: `fugaro config init`
 
@@ -1454,7 +1795,6 @@ Flags:
 | `--profile` | string | "" | no | the project layer's profile to use (default: its default_profile) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--yes` | bool | `false` | no | write the file (without it, print it and exit 1 without writing) |
 
 Subcommands:
 
@@ -1581,7 +1921,10 @@ Flags:
 Subcommands:
 
 - `fugaro coordinator intents` -- Show what the fleet has declared
+- `fugaro coordinator login` -- Sign in to the installation's front door and keep the token in your keychain
+- `fugaro coordinator logout` -- Delete the front door credential this project's keychain holds
 - `fugaro coordinator report` -- Declare the work you are about to start
+- `fugaro coordinator roadmap` -- Change the project's roadmap record, through the installation's front door
 - `fugaro coordinator show` -- Show one pull request as the host has it
 - `fugaro coordinator status` -- Show the work in flight, and where it collides
 
@@ -1650,6 +1993,82 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro coordinator login`
+
+Sign in to the installation's front door and keep the token in your keychain
+
+Run the authorization-code flow this installation's front door serves
+(docs/coordinator/implementation-plan.md, P9f; the flow is the MCP server
+plan's M5): a loopback redirect with PKCE, so nothing the browser carries
+back can be replayed from a history, a log or a shoulder.
+
+The front door's URL is read from the installation's own outputs, which is
+the only place it is published: Cloud Run's URL carries the project number
+and nothing derives it. An installation whose front door is off publishes
+none, and that is this command's refusal.
+
+The refresh token it receives is stored in the operating system's keychain,
+under an item named after the project, and never in a file. `fugaro
+coordinator logout` deletes it. What the command prints is the issuer and
+the scopes: never the token, the code or the verifier.
+
+The scope defaults to roadmap:write, which is what the roadmap group's
+commands hold. It is an operator's scope on this installation's own list:
+a person who is not an operator is refused by the door, at the approval
+step, where the list is read.
+Exit codes: 1 for a refusal (no front door, no scope this build mints,
+the person's own refusal, or an installation that would not store the
+token), 2 for a failure of the front door or of the keychain.
+
+Usage: `fugaro coordinator login`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for login |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--scope` | stringArray | `[roadmap:write]` | no | the scope to ask for (repeatable; the front door mints tasks:read, tasks:write, state:read, state:write, roadmap:write) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro coordinator logout`
+
+Delete the front door credential this project's keychain holds
+
+Remove the keychain item `fugaro coordinator login` wrote, which is the
+whole of what this machine holds for the front door: the token is in no
+file and in no cache, so deleting the item is the end of it.
+
+An item that is not there is not an error: the state a person asks for is
+the state they get. The token family itself is not revoked by this command
+— the door revokes a family where it is revoked, and a device that lost
+its credential is not a theft signal (M5b).
+Exit codes: 1 for a refusal, 2 for a keychain that could not be reached.
+
+Usage: `fugaro coordinator logout`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for logout |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro coordinator report`
 
 Declare the work you are about to start
@@ -1697,6 +2116,329 @@ Flags:
 | `--release` | string | "" | no | the target release (default: the one the branch names, e.g. release/v0.11.0) |
 | `--repo` | string | "" | no | the repository this report is about (owner/name; default: the local config's, when it lists one) |
 | `--service` | stringArray | `[]` | no | a service you are about to touch (repeatable) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro coordinator roadmap`
+
+Change the project's roadmap record, through the installation's front door
+
+The commands that change the project's roadmap record
+(docs/coordinator/implementation-plan.md, P9f).
+
+Every one of them is one call to a tool the installation's front door
+serves, over the credential `fugaro coordinator login` left in your
+keychain. The front door queues the change and a job applies it as the
+coordinator's own account: these commands hold no database credential and
+write no node, so nothing here can reach the record directly.
+
+Each write prints the request's id and then waits up to a minute for the
+record's answer. A change that has not been applied by then is still
+queued: read it later with `fugaro coordinator roadmap request <id>`.
+
+The scope the tools need (roadmap:write) is an operator's on this
+installation's own list, so a person who is not an operator is refused by
+the door.
+Exit codes: 1 for a refusal (no credential, no front door, a write the
+record refused, a tool the token may not call), 2 for a failure of the
+front door or of the record.
+
+Usage: `fugaro coordinator roadmap`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for roadmap |
+
+Subcommands:
+
+- `fugaro coordinator roadmap move` -- Put a task in a release, or take it out of one
+- `fugaro coordinator roadmap need` -- Record that one task needs another
+- `fugaro coordinator roadmap publish` -- Put a checkout's plan graphs into the roadmap record
+- `fugaro coordinator roadmap releases` -- Write a stream's releases
+- `fugaro coordinator roadmap request` -- Read back what happened to a roadmap request
+- `fugaro coordinator roadmap unneed` -- Remove a recorded dependency between two tasks
+- `fugaro coordinator roadmap unpublish` -- Remove a published plan from the record
+
+## `fugaro coordinator roadmap move`
+
+Put a task in a release, or take it out of one
+
+Move one task between the record's releases (roadmap_move, D2113).
+
+The task is named as <plan>/<task>, and `--to` is a release key the
+record holds — not a version from a checkout's release catalogue — or the
+word none to take the task out of every release.
+
+**`--expect` is not a formality: it is the release the record held when you
+read it.** The move is a compare-and-set, so a task somebody else has moved
+since your read is refused — with the release the record holds now, which is
+what you send next — rather than written over theirs. A task the record
+holds no assignment for is expected as `none` (D2114), and a release the
+record calls finished is refused by the record's own state.
+
+It queues the move at the installation's front door, as every write here
+does, and prints the request's id and then the record's answer to it. The
+command holds no database credential and writes no node. The inverse move
+— the same task back to the release you read, expected as the one you moved
+it into — is how a mistake is undone: the record keeps the release it
+replaced for exactly that.
+
+Usage: `fugaro coordinator roadmap move <plan>/<task>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--expect` | string | "" | no | the release the record holds for this task now, or none for a task with no assignment; a move without it is refused |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for move |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--to` | string | "" | yes | the release key to put the task in, or none to take it out of one (required) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro coordinator roadmap need`
+
+Record that one task needs another
+
+Record a dependency between two tasks, across plans or streams
+(roadmap_need, D2112).
+
+A reason is required and not decoration: an edge nobody can check is not
+one, and the reason is what a reviewer reads when the record is read.
+The dependency is one the coordinator reports and never one it enforces:
+nothing here blocks a merge, a run or a release (spec §3).
+
+Usage: `fugaro coordinator roadmap need`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for need |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--needs` | string | "" | yes | the qualified task id: <plan>/<task> it needs (required) |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--reason` | string | "" | yes | why the dependency exists, which a reviewer reads (required) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--task` | string | "" | yes | the qualified task id: <plan>/<task> that needs another (required) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro coordinator roadmap publish`
+
+Put a checkout's plan graphs into the roadmap record
+
+Publish the graph artifact beside a plan document, from any checkout
+(roadmap_publish_plan, D2111).
+
+Read the plan's graph where it sits — `docs/plans/x.md` is described by
+`docs/plans/x.graph.json` — and send it, trimmed to what the record holds
+and carrying where it came from: this repository, the artifact's path and
+the commit HEAD names. A symlink anywhere on the way to the file, a file
+that is not a regular file, and a graph this build refuses all end the run
+before anything is sent; an artifact with uncommitted changes is refused
+too, because what is published is what is committed.
+
+`--expect` is the version of the plan document you last read, and the
+record compares it with the version it holds: an empty `--expect` is the
+claim that the record holds no such plan, so leave it out for a plan the
+record does not hold and send what the record holds for one it does. A
+publish that carries the version it read and sends the same artifact
+writes nothing the second time — the record compares the document it holds
+with the one it is sent — and one that carries a version the record has
+moved past is refused, which is what keeps two people publishing one plan
+from two checkouts from overwriting each other. This command holds no read
+that would fetch the version for you: the refusal names it, and sending it
+back is the next run.
+
+`--all` publishes every graph artifact under the checkout's docs/, each its
+own request. `--releases <file>` imports a release catalogue — this
+repository's `docs/release-streams.yaml` is the one that exists — one
+release per stream, named by the catalogue. It is a flag a person passes
+and never a default: a repository with no such file publishes its plans
+the same way.
+
+Nothing is read from the checkout but the artifact, and nothing leaves it
+but the trimmed document and its provenance.
+
+Usage: `fugaro coordinator roadmap publish [<plan>]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--all` | bool | `false` | no | publish every graph artifact under the checkout's docs/ |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--expect` | string | "" | no | the version of the plan document you last read; leave it out for a plan the record does not hold |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for publish |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--releases` | string | "" | no | a release catalogue to import, such as docs/release-streams.yaml (never a default) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro coordinator roadmap releases`
+
+Write a stream's releases
+
+The release half of the roadmap record. `set` is the only subcommand today.
+
+Usage: `fugaro coordinator roadmap releases`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for releases |
+
+Subcommands:
+
+- `fugaro coordinator roadmap releases set` -- Write one release of a stream
+
+## `fugaro coordinator roadmap releases set`
+
+Write one release of a stream
+
+Write one release document: its name, its state, its position and the
+version you last read (roadmap_release_set).
+
+**`--expect` is not a formality.** It is the version of the release
+document you read before you decided what to write, and the record compares
+it with the version it holds now: a release somebody else has changed since
+is refused, with the version it holds, rather than written over. For a
+release the record does not hold yet, leave it out — the empty string says
+"I read nothing, and I expect nothing", which is the one claim that cannot
+be stale.
+
+Usage: `fugaro coordinator roadmap releases set`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--expect` | string | "" | no | the version of the release document you last read; empty for one the record does not hold |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--id` | string | "" | yes | the release id within its stream (required) |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--name` | string | "" | yes | the release's name, which is the label its box is drawn with (required) |
+| `--order` | int | `0` | yes | the release's position in its stream, from 0 (required) |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--state` | string | "" | yes | the release's state: open or finished (required) |
+| `--stream` | string | "" | yes | the stream the release belongs to (required) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro coordinator roadmap request`
+
+Read back what happened to a roadmap request
+
+Read one roadmap request's outcome: applied, refused with the reason and the
+value the record holds now, failed, or still pending (roadmap_request).
+
+The id is the one a write printed. A request belongs to the person who
+queued it, and an id that is not yours is answered exactly as one that does
+not exist, so this cannot be used to ask what other people have asked for.
+This reads once and does not wait: a pending request is a state, not a
+failure, and running the command again is how you look later.
+
+Usage: `fugaro coordinator roadmap request <id>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for request |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro coordinator roadmap unneed`
+
+Remove a recorded dependency between two tasks
+
+Remove the dependency `roadmap need` recorded (roadmap_unneed).
+
+A dependency the record does not hold is not a refusal: the state asked
+for is the state the record is in.
+
+Usage: `fugaro coordinator roadmap unneed`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for unneed |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--needs` | string | "" | yes | the qualified task id: <plan>/<task> it pointed at (required) |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--task` | string | "" | yes | the qualified task id: <plan>/<task> the dependency starts at (required) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro coordinator roadmap unpublish`
+
+Remove a published plan from the record
+
+Remove one plan document from the roadmap record (roadmap_unpublish_plan).
+
+The plan is named by its id — the `plan` field of what `roadmap publish
+--json` printed, which is the part of a task's qualified name before the
+slash. The tasks it carried are left dangling in the assignments and edges
+that still name them, and a reader shows them as dangling until a later
+publish or an unneed removes them (D2115).
+
+`--expect` is the version of the plan document you read before asking to
+remove it. A plan the record does not hold is the state this asks for
+already, so an unpublish of one that is gone is answered rather than
+refused.
+
+Usage: `fugaro coordinator roadmap unpublish <plan>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--expect` | string | "" | no | the version of the plan document you last read; leave it out for a plan the record does not hold |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for unpublish |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
@@ -1865,7 +2607,8 @@ resolves to the project's default credential.
 Every half names where it came from: the layer that wrote it (repo, local or
 project), the craft it was inherited from, or default when nothing set it. A
 pool holding two or more Claude OAuth credentials serves nothing until the
-project's subscription-spread switch is on, and the row says so.
+project's subscription-spread switch is on — the switch this machine's own
+config writes — and the row says so.
 
 The read is offline: it reads this checkout's fugaro.yaml, the installation's
 own config and the project layer file the last cloud read cached, and reaches
@@ -1981,6 +2724,7 @@ NAME is a credential the service can issue, in the document's own spelling:
   github-app-key                  the GitHub App's private key (no tier: the mint signs with it)
   bitbucket-token                   the upstream Bitbucket token (no tier: the git proxy issues this entry for the repositories the published node admits with proxy: true, whose jobs mount no copy of their own, and every other Bitbucket repository's job keeps its own mounted copy)
   bitbucket-read-consumer             the Bitbucket read consumer (no tier: the service's read mint exchanges it for a read-scoped token): a YAML mapping of key, secret and workspace, one field per line, so redirect it from a file — the hidden prompt takes one line
+  provider-key                 the project's provider credential (tier C: the service's provider route authenticates upstream with it): a YAML mapping of key, base_url and auth, one field per line, so redirect it from a file — the hidden prompt takes one line. It is read by a credentials service from 0.22.0 on: where the service that serves the bundle is older, this write is refused and `fugaro update` is the one command that moves it
   claude-oauth-token--review-signing  the default account's review-signing key (no tier: the service's sign
                                      route computes a MAC with it; written by --generate below)
   claude-oauth-token-<account>--review-signing     a named account's review-signing key (no tier, and --generate's NAME too)
@@ -2049,7 +2793,7 @@ container: a secretVersionAdder on it is the ability to read every credential
 in the bundle at once.
 
 It is refused from a coding agent's session and from a run's process, before
-anything is read, and it is never covered by --yes: there is no non-interactive
+anything is read, and no flag covers it: there is no non-interactive
 form.
 
 Usage: `fugaro creds set NAME`
@@ -2132,10 +2876,28 @@ so, and a bucket read that does not answer leaves its image line out instead
 of failing the command.
 
 --plugin checks only the plugin's wiring: offline, no credentials, safe for
-CI. --strict makes a stale, unpinned, foreign or unwired plugin fail the
-command; the informational states ("not installed", "cannot compare") never
-do, with or without --strict. A repository's CI runs
-fugaro doctor --plugin --strict.
+CI. --strict makes a stale, unpinned or foreign plugin fail the command. A
+checkout that never opted in to the pin is informational rather than a
+failure, because nothing in the tree writes a pin any more and that checkout is
+the normal one; "cannot compare" — a development build, an unreadable install
+record — is informational too. "not installed" is a warning, because the
+plugin on this machine is what carries the skills. A repository's CI runs
+fugaro doctor --plugin --strict; with --strict the install on the machine is
+not evaluated at all, because a runner has no Claude Code.
+
+--offline checks the update class and nothing else, and it makes no cloud call,
+no network call and no secret read: the plugin's wiring and the install on this
+machine, the login unit that runs the orchestrator daemon, and the base image
+this checkout resolves to where a local installation is configured to answer
+it. Every check whose answer lives in the project's Realtime Database or the
+runs bucket — the published policy, the deployed rules, and whether a
+workflow's job was built from the image settings it resolves to now — and the
+one that asks whether a newer release is available, is skipped rather than
+guessed: it comes back with skipped true and ok false, and
+a problem saying what could not be read, and it fails nothing, with or without
+--strict. A reader of --json should take ok true as "checked and fine" and
+skipped true as "not checked"; that pair is the whole contract. It is the
+check the Fugaro skills run at the start of a session.
 
 With no local Fugaro installation configured, doctor says so and names
 fugaro setup as the fix, rather than guessing at a project.
@@ -2151,7 +2913,7 @@ the flags.
 
 Exit 1 when a check fails, with the one-line fix to run.
 
-Usage: `fugaro doctor [--json] [--all] [--security] [--plugin] [--strict]`
+Usage: `fugaro doctor [--json] [--all] [--security] [--plugin] [--strict] [--offline]`
 
 Flags:
 
@@ -2165,11 +2927,111 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for doctor |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--offline` | bool | `false` | no | check the update class's local checks and record a skip for each check that needs a credential or the network: no cloud call, no network call, no secret read (the session-start check the skills run) |
 | `--plugin` | bool | `false` | no | check only the plugin's wiring (offline, no credentials) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--security` | bool | `false` | no | also print the IAM and security sweep (who may read a credential, who may sign a budget token, what a launcher may start) |
-| `--strict` | bool | `false` | no | fail on a stale, unpinned, foreign or unwired plugin (CI mode) |
+| `--strict` | bool | `false` | no | fail on a stale, unpinned or foreign plugin (CI mode); an un-wired checkout is information, not a failure |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro estimate`
+
+Reprice one run's recorded tokens on another model
+
+Reprice one run on another model: the token counts the run recorded, priced
+at the named model's list rates. Nothing is run and nothing is written.
+
+The figure is an ESTIMATE and not the run's bill: it reprices the recorded
+tokens and nothing else, so what a repricing cannot reproduce is left out.
+A call that passed a long-context tier was priced per call, web searches are
+priced apart from the tokens, and a charge settled from a reservation, one
+recorded as unreconciled and a call whose usage could not be read are not in
+the counts at all. The estimate assumes the run would have taken the same
+cache ratio.
+
+The run is named with --run, or found the way `runs ls --pr` finds one: --pr N
+over one repository (--repo, or the local config's only one) and the last
+90d unless --since says otherwise. A pull request with several runs is not
+one figure: they are listed, and one is named with --run.
+
+The model is a row of the price table this project prices runs from -- the
+built-in catalog, with the owner's model_prices over it -- named by its exact
+ID or one of that row's aliases: no prefixes, and no guess at what a nickname
+meant. A model the table has no row for is refused with the IDs it has. The
+date of the table the figure was priced from is printed beside it, and a
+table past its own check window warns.
+
+A run whose record carries no per-model token counts -- one that never
+finalized, or one that finalized before this binary recorded them -- is
+refused: there is nothing to reprice, and no total is estimated in its place.
+
+Usage: `fugaro estimate`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for estimate |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--model` | string | "" | no | the model to price the run's tokens at (a price table model ID) |
+| `--pr` | int | `0` | no | the pull request whose run to reprice (needs one repository) |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | the repository a --pr lookup reads (owner/name, or a path inside its checkout) |
+| `--run` | string | "" | no | the run to reprice (<run-id>, <slug>/<run-id>, or an ending) |
+| `--since` | string | `90d` | no | with --pr, only runs started within this long (90d, 36h, 90m; 0 for all) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro followups`
+
+File the findings a merged run deferred as follow-up tasks
+
+File the review findings RUN deferred as tasks of their own, one per group the
+triage tied together and one per finding when it tied none.
+
+The parent pull request has to be merged: a deferral is work the review left
+behind on purpose, and the merge is what says so. The pull request is found on
+the code host by the branch the run's launcher wrote -- fugaro/<run id> for a
+first run, the branch its task carries for a follow-up -- and never by a number
+the run's record names, because the record is written by the job: a job that
+could name somebody else's merged pull request would have this command file
+tasks from its own text (F30).
+
+By default the plan is printed and nothing is written. --launch files them,
+at most --max of them (10 by default), as debt tasks: each carries the parent
+run and the finding keys it settles (follow_up_of), the debt mark
+(fugaro runs ls --debt), and the mode the parent's own record resolved, which
+the run re-resolves through its floors -- never a recorded hotfix, which is an
+operator's own run and not a task's (D1844). The finding text and the triage's
+reason are fenced and indented as data in the brief.
+
+A group a run already covers is skipped, found through the run list, so a
+second call files only what is left and an interrupted one can simply be run
+again.
+
+Usage: `fugaro followups RUN`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for followups |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--launch` | bool | `false` | no | launch the tasks this call plans; without it the plan is printed and nothing is written |
+| `--max` | int | `10` | no | file at most N tasks in this call |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
@@ -2189,13 +3051,23 @@ repository's slug is keyed by: a repository whose entry leaves provider
 out is refused with the sentence that says where to set it, rather than
 graphed from a guess.
 
---source selects the scope, and the set is closed: all (the default) is
-every scope that exists, which today is the coordinator's stored view;
-coordinator is that view alone; orchestrator:<id> and local:<id> name scopes
-this build has no reader for yet and are refused rather than answered with an
-empty graph. An id is one lower-case letter or digit, then up to 39 more of
-those or a hyphen, and nothing else: anything that does not match is refused
-before anything is read.
+--source selects the scope, and the set is closed. all (the default) is
+every scope that exists: the coordinator's stored view and one scope per
+orchestrator this installation has. coordinator is that view alone;
+orchestrator:<id> is one orchestrator's node under /orchestrator, its work
+items as nodes and their depends_on as edges; local:<id> is the same node
+read as one this machine's daemon drives, falling back to the daemon's
+cached brief when the node cannot be read. An id is one lower-case letter or
+digit, then up to 39 more of those or a hyphen, and nothing else: anything
+that does not match is refused before anything is read, and so is an id the
+project's database does not hold, with a sentence naming it and pointing at
+fugaro orchestrator ls. Which ids exist is what that listing asks — a key
+under /orchestrator — and not whether a state node was written, so an id it
+lists is a scope even with no state yet: a daemon that has beaten its lease
+and saved none is down rather than refused. A local:<id> is refused when this
+machine holds no cached brief for it and there is no node to read, because
+the cache stands in for the local scope alone: an orchestrator:<id> the
+database does not hold is refused even on a machine holding a brief for it.
 
 The coordinator's scope is every repository the local config lists, and a
 repository the sweep has never reconciled is read as its runs alone — the
@@ -2207,8 +3079,9 @@ records that may still be the runs half.
 
 With --json the document is printed as the console reads it: its version,
 when it was assembled, one entry per scope in sources, the nodes, the edges
-(the coordinator's view has none) and the warnings. Without it, a short
-table: each scope's state, then its nodes grouped by release.
+(the coordinator's view has none; an orchestrator's are its work items'
+depends_on) and the warnings. Without it, a short table: each scope's state,
+then its nodes grouped by release, then the edges.
 
 --watch --json prints a whole document per change instead of one and
 exits, one compact object per line: the first snapshot at once, then one
@@ -2216,8 +3089,11 @@ document for every change of the scopes it covers, at most one a second,
 and a document every 30 seconds while nothing changes. Every document
 carries the stream's own id and a sequence that rises within it, so a
 reader reads a new id as a whole new snapshot rather than comparing its
-sequence with the one before. It subscribes to each scope once, and a
-scope it cannot reach is a state in the document rather than an exit.
+sequence with the one before. It subscribes once per scope subtree — the
+coordinator's and the orchestrator's for all, or the one node a named
+orchestrator scope reads — and a scope it cannot reach is a state in the
+document rather than an exit. A local scope falls back to the daemon's
+cached brief, which the stream re-reads on every document it writes.
 --watch needs --json, which is the only shape a reader of the stream can
 consume.
 
@@ -2577,8 +3453,9 @@ This command has no subcommands.
 
 Move a repository onto this release's base image: pin it, point the daily image check job at it, rebuild what is stale
 
-Run it in the checkout of an onboarded repository, in your own terminal window
-(or with --yes, unattended: see below).
+Run it in the checkout of an onboarded repository, in your own terminal window:
+every step that asks is confirmed there, and a session with no terminal leaves
+those steps for you.
 
 It prints the whole plan first, then, each step with its own confirmation:
 (2) resolves this release's base image of each selected workflow's kind at
@@ -2598,24 +3475,23 @@ take, and its builds are submitted uncounted);
 
 A base_images entry that is neither this release's pin nor a release image
 an earlier fugaro copied (a development or hand-pushed image) stops it
-before anything changes, with or
-without --yes: remove the entry from the local config, then rerun. It never
+before anything changes, whoever is there: remove the entry from the local
+config, then rerun. It never
 writes fugaro.yaml, never onboards a repository and never runs Terraform. A
-coding agent's session is refused, --yes included (there is still no --json
+coding agent's session is refused (there is still no --json
 or --plan-only to get around that). A run that stops says which steps
-finished and what to rerun, --yes included when it was given; a rerun skips
+finished and what to rerun; a rerun skips
 what is done. Exit codes: 0 done, 1 a refusal or a confirmation not given,
 2 a cloud failure.
 
-Unattended use: pass --yes to run it from CI or a script, with no terminal.
-It confirms every step that asks — the base pin and the check-job update;
+No flag confirms the steps that ask — the base pin and the check-job
+update — so a run with no terminal leaves them for you and says so;
 the billable builds ask nothing in any session, and it is the budget lease
 each of them takes that bounds them, where the installation has a budget
 backend at all (with none, no build leases anything and none is counted).
-Read the printed plan's build count first. --yes does not cover a coding
-agent's session (refused,
-same as without it) or a custom, dev or hand-pushed base image (still
-refused with the one-line fix); there is still no --json or --plan-only.
+Read the printed plan's build count first. A custom, dev or hand-pushed
+base image is refused with the one-line fix; there is still no --json or
+--plan-only.
 
 Usage: `fugaro image refresh`
 
@@ -2623,7 +3499,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmations this run would otherwise skip (the project's name typed at each step that asks) instead of applying on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the questions back. It cannot restore a confirmation the billable builds no longer have: those ask nothing in any session, and each leases its cost from the project's budget where the installation has one. Refused where nobody can answer them (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed; refused beside --yes |
+| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmations this run would otherwise skip (the project's name typed at each step that asks) instead of applying on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the questions back. It cannot restore a confirmation the billable builds no longer have: those ask nothing in any session, and each leases its cost from the project's budget where the installation has one. Refused where nobody can answer them (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--expect-digest` | stringArray | `[]` | no | cross-check the digest of a base image's release signature, KIND=sha256:<hex>, as for the converge (repeatable) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
@@ -2633,7 +3509,6 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | owner/name (or a path inside its checkout) of the repository; it must be this checkout's origin (refresh reads fugaro.yaml from the checkout) |
 | `--workflow` | stringArray | `[]` | no | a workflow to refresh (repeatable; default: every workflow in fugaro.yaml) |
-| `--yes` | bool | `false` | no | confirm every step that asks without asking (the base copy and the check-job update), and without a terminal: for CI or a script. The billable builds need no flag: they ask nothing in any session and each leases its cost from the project's budget where the installation has one. The plan is still printed first. Never confirmed in a coding agent's session (CLAUDECODE and the like): nothing is applied there, --yes included. Without --yes the steps that ask still need a real terminal, as always |
 
 Subcommands:
 
@@ -2667,10 +3542,12 @@ Remove an image catalog entry from this machine's project config
 
 Remove a named image from the project's image catalog, in this machine's
 project config. The removal is refused while a repository's job still runs
-the entry — because a workflow names it (image_name:), or because the
-tag-cover rule picks it for the tags the workflow needs — since that job
-would then be on an image no catalog describes. Point the repository at
-another entry first, run fugaro update, and remove the entry after.
+the entry — because a workflow names it (image_name:), because the
+project's image_map gives it to the repository, or because the tag-cover
+rule picks it for the tags the workflow needs — since that job would then
+be on an image no catalog describes. Point the repository at another entry
+first (image_name: in its fugaro.yaml, or fugaro image map set), run
+fugaro update, and remove the entry after.
 
 Nothing is deleted from the registry: the entry's built image stays where
 it is, and the next fugaro update publishes the catalog without the entry.
@@ -2755,23 +3632,34 @@ This command has no subcommands.
 
 ## `fugaro issue`
 
-Read the issues saved on this machine, and the ones you reported
+Read the issues saved on this machine, the ones you reported, and file one on GitHub
 
 Read the issues saved on this machine.
 
 An issue is one Markdown file under the user's state directory, holding
 the whole issue: a strict header and the diagnosis' own words. `list`
 shows what is saved, `show` prints one, `dismiss` sets one aside so
-nothing is filed for it, and `mine` reads the project's own store for
-the issues this user reported. An issue is named by its local ID
-(`local-<run stem>`) until it has been uploaded, and by its number
-(`#0007`) from then on; `show` and `dismiss` take either.
+nothing is filed for it, `sync` uploads the ones this machine has not
+uploaded yet, and `mine` reads the project's own store for the issues
+this user reported. An issue is named by its local ID (`local-<run
+stem>`) until it has been uploaded, and by its number (`#0007`) from
+then on; `show`, `dismiss` and `submit` take either.
 
-Nothing `list`, `show` or `dismiss` does leaves this machine. `mine` —
-and `list --mine`, which is the same read — is the one that does: it
-uploads this machine's own pending records to the project's store on the
-way to listing them. Either way the text of a record is printed as data:
-it comes from log text this machine did not write.
+`submit` shows exactly what would be filed on GitHub — the post and the
+sha256 of its bytes — and files nothing until `--ask` is answered with a
+yes at your own terminal; without `gh`, it prints how to install it and
+a new-issue link holding the same post instead.
+
+An issue belongs to the project, not to one machine: once it has been
+uploaded it is the project's store that says where it stands, so `list`
+shows the whole team's issues and `show` prints the project's copy. To
+get there, `sync` uploads this machine's own pending records to the
+project's store, and `list`, `show` and `mine` — and `list --mine`,
+which is the same read — do the same on the way to answering; a run
+that cannot reach the store answers from the files here and says why.
+Nothing is uploaded in a coding agent's session, and `sync` and
+`dismiss` are refused there. Either way the text of a record is printed
+as data: it comes from log text this machine did not write.
 
 Usage: `fugaro issue`
 
@@ -2784,9 +3672,11 @@ Flags:
 Subcommands:
 
 - `fugaro issue dismiss` -- Mark an issue as not worth filing
-- `fugaro issue list` -- List the issues saved on this machine
+- `fugaro issue list` -- List the project's issues, and the ones this machine has not uploaded yet
 - `fugaro issue mine` -- List the issues this user reported, from the project's store
 - `fugaro issue show` -- Print one issue: its number (#0007) or its local ID
+- `fugaro issue submit` -- Show what would be filed on GitHub, and file it with --ask
+- `fugaro issue sync` -- Upload the issues this machine saved and has not uploaded yet
 
 ## `fugaro issue dismiss`
 
@@ -2800,8 +3690,24 @@ status is written in the issue's own file and nothing else changes: the
 record stays where it is, so a listing still shows what was set aside
 and who did it, and nothing is filed.
 
+An issue is the project's, so one that has already been uploaded is set
+aside in the project's store as well (F13): a teammate's listing shows
+it as dismissed, and the decision does not have to be made again on
+every machine. A store that cannot be reached is a line on stderr and
+the dismissal here stands; a store that answers and refuses — the issue
+is filed, or a teammate has decided it — refuses the command.
+
+A number also names a teammate's issue, which this machine has no file
+of: the rows `list` prints are the whole team's, so a reference that is
+a number and no file here is read from the project's store and set
+aside there (F23). A store that cannot be reached is then the refusal
+rather than a line, there being nothing here to set aside instead.
+
 An issue that has already been filed is refused: it is open on GitHub,
-and setting it aside here would not close it.
+and setting it aside here would not close it. So is one a release has
+fixed: the fix is in that release and the record says which, and a bug
+that came back is a new upload rather than a dismissal of the fix that
+did not hold.
 
 A coding agent's session may not dismiss an issue: a steered diagnosis
 could otherwise bury a real bug, so a person sets one aside (D1730).
@@ -2820,16 +3726,33 @@ This command has no subcommands.
 
 ## `fugaro issue list`
 
-List the issues saved on this machine
+List the project's issues, and the ones this machine has not uploaded yet
 
-List the issues saved on this machine, one row each.
+List the issues the project holds, one row each.
 
-A row names the issue the way `show` and `dismiss` take it —
-its number once it has been uploaded, its local ID before — with the
-class the diagnosis gave it, where it stands, and its one-line summary.
-A plain listing uploads nothing and files nothing: it is this
-machine's own folder, read. --mine writes, exactly as `mine` does:
-it uploads this machine's own pending issues before it lists them.
+An issue is the project's, not one machine's (spec 4b), so the rows are
+the whole team's: the ones this machine saved and has not uploaded yet,
+named by their local ID, and every issue of the project's store, named
+by its number. A row names the issue the way `show`, `dismiss` and
+`submit` take it, with the class the diagnosis gave it, where it stands,
+and its one-line summary. An issue a release fixed, and one that closed
+without a fix, carry one more column: the release that fixed it with the
+GitHub issue it was filed as, or the reason it closed (F27, D1752).
+Where the project's copy and this machine's file disagree, the project's
+is printed: the store is the truth once an issue is uploaded (F13), and a
+number is what `show` and `dismiss` read from the store when this machine
+has no file of the issue.
+
+A record this machine's folder holds for another project is not a row:
+the folder is one for the whole machine, and another project's issue is
+not this project's, nor is its number this listing's to print (F8b).
+
+Listing uploads this machine's own pending issues first, exactly as
+`mine` does: the same failure reported twice is one issue, and the one
+still waiting here has to reach the store before it can be shown beside
+the team's. A run that cannot reach the store lists this machine's own
+records alone and says why on stderr, which leaves the table itself
+clean for a reader and a script.
 
 --mine lists the issues this user reported to the project instead: the
 same rows `fugaro issue mine` prints, from the same read, so the two
@@ -2837,6 +3760,9 @@ commands answer with one listing (F12). --all goes with --mine and only
 with it: this machine's own folder keeps every record until it is
 deleted, and the 30-day rule is about the project's issues, not about
 the files here.
+
+Nothing is uploaded in a coding agent's session: the rows are this
+machine's own records and the project is not read (F10, D1734).
 
 --json prints the records themselves, in the shape
 schemas/issue-record.schema.json describes — or, with --mine, the
@@ -2911,6 +3837,20 @@ uploaded. The header a listing shows and the body a person reads are
 printed as data: the text came from a diagnosis that read log text this
 machine did not write, so no escape sequence in it reaches the terminal.
 
+An issue that has been uploaded is printed as the project's store has
+it: the store is the truth once an issue has a number (F13), so a
+teammate's dismissal, or a fix the update pass recorded, shows here
+rather than the copy this machine wrote when the failure happened. A
+number also names a teammate's issue, which this machine has no file
+of: the rows `list` prints are the whole team's, and a reference that
+is a number is read from the project's store (F23). This machine's own
+pending issues are uploaded first, as `list` does. A run that cannot
+reach the store prints this machine's own copy and says why on stderr
+— or, for a number it has no file of, refuses.
+
+Nothing is uploaded in a coding agent's session, and the project is not
+read (F10, D1734).
+
 --json prints the record itself, in the shape
 schemas/issue-record.schema.json describes.
 
@@ -2922,6 +3862,356 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for show |
 | `--json` | bool | `false` | no | print machine-readable output |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro issue submit`
+
+Show what would be filed on GitHub, and file it with --ask
+
+Show exactly what would be filed on GitHub for one issue, or for every
+issue that is still waiting.
+
+REF is the issue's number — `7`, or the `#0007` a listing prints — or
+its local ID `local-<run stem>`, the same argument `show` takes. With
+no reference every `pending` issue is visited, and the ones already
+filed, set aside or fixed by a release are skipped.
+
+The post is built once and printed as it is: the title, the body, and
+the sha256 of the exact bytes. A run without --ask files nothing and
+uploads nothing. --ask asks at your own terminal after showing the
+preview and files exactly those bytes; a coding agent's session and a
+pipe never file, because a confirmation nobody can answer is a refusal
+and never a silent proceed.
+
+--ask uploads this machine's own pending issues first, exactly as
+`issue sync` does, and files the project's own record of a numbered
+issue: the store is the truth once an issue is uploaded. The filing is
+made under a claim on that record, so two people filing one issue at
+the same moment file it once; a claim another submitter holds is
+refused with who holds it and until when, and a record that changed
+after the preview was shown is refused rather than filed unseen.
+
+Filing needs GitHub's own `gh` with an account on github.com. Where it
+is missing, or has no account there, the install command or `gh auth
+login` is printed with the new-issue link holding the same title and
+body; nothing is filed and the command exits non-zero.
+
+Usage: `fugaro issue submit [REF]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--ask` | bool | `false` | no | show the preview and file it after a yes at your own terminal |
+| `-h`, `--help` | bool | `false` | no | help for submit |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro issue sync`
+
+Upload the issues this machine saved and has not uploaded yet
+
+Upload this machine's own pending issues to the project's store.
+
+An issue is saved on the machine that hit the failure and uploaded
+afterwards, so a run that was offline or that died before the upload
+leaves it here. This is the command that retries those: each one takes
+the project's next number, is renamed to it, and — when a teammate
+already reported the same failure — is attached to their issue as one
+more occurrence instead of becoming a second one.
+
+An issue that cannot be uploaded stays where it is and is named in one
+line, and the next run retries it: nothing here deletes an issue or
+files one on GitHub.
+
+A coding agent's session may not run this: uploading is a write to the
+project's store, and a person runs `fugaro issue sync` (F10).
+
+Usage: `fugaro issue sync`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for sync |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro licence`
+
+Install, read and renew the installation's licence key (Subscription Edition)
+
+Install, read and renew the installation's licence key.
+
+The key belongs to the installation and not to one machine: it is written to the
+project's own store (the runs bucket), every member reads it there, and the
+per-machine key file is what a console hands a child it spawns. The commands
+without a coordinator renew by hand.
+
+  fugaro licence set       install a key you were given
+  fugaro licence status    show the tier, the seats, the expiry and the last check
+  fugaro licence refresh   ask the licence server for the next key now
+
+`fugaro update` is the whole upgrade: the installation's secret container and the
+job that renews a self-renewing key are Terraform's, and this command writes no
+part of them.
+
+Usage: `fugaro licence`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for licence |
+
+Subcommands:
+
+- `fugaro licence login` -- Sign in to the licence site and install the key it issues (Subscription Edition)
+- `fugaro licence refresh` -- Ask the licence server for the next key now (Subscription Edition)
+- `fugaro licence renew` -- Run the installation's licence check and renewal, as its job does (Subscription Edition)
+- `fugaro licence set` -- Install the installation's licence key (Subscription Edition)
+- `fugaro licence status` -- Show the installation's licence: tier, seats, expiry, state and last check
+
+## `fugaro licence login`
+
+Sign in to the licence site and install the key it issues (Subscription Edition)
+
+Sign this installation in to the licence site and install the key the sign-in
+issues.
+
+Without a flag the command opens the licence site in this machine's browser: a
+listener on 127.0.0.1 takes the one callback the sign-in comes back on, the
+address carries the state the callback is checked against, and the one-time
+code is exchanged for a key with a PKCE verifier that never leaves the process.
+The listener holds five minutes and takes one request; a machine with no browser
+falls back to the code below, and so does `--device`.
+
+With `--device` the command prints an address and a short code: open the address
+on any machine with a browser, sign in, and type the code there. The code is
+worth ten minutes, and the command polls until it is approved or the code
+expires.
+
+The sign-in carries this installation's Firebase project id, and the site binds
+the licence picked on its own page to that id: the id is untrusted text there,
+and nothing proves it. The key that comes back is verified before anything is
+written — against this Fugaro's signing keys and against that same Firebase
+project id, which the key's `workspace_id` must be — so a key bound to another
+workspace, or one this build does not accept, is refused instead of installed.
+
+The key is then written to the project's own store (the runs bucket), so every
+member is upgraded at once, and the renewal secret to the installation's Secret
+Manager container `fugaro update` creates. Nothing here creates it, and after
+it lands, the next `fugaro update` applies the installation's renewal job.
+
+It is refused inside a coding agent's session, before anything is sent, as every
+cloud write is. No line of its output carries the key or the renewal secret.
+
+Usage: `fugaro licence login`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--device` | bool | `false` | no | print a code to type at the licence site on another machine instead of opening a browser here |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for login |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro licence refresh`
+
+Ask the licence server for the next key now (Subscription Edition)
+
+Ask the licence server for the next key for this installation's key, and
+install it.
+
+This is what an installation renews by hand with: a `renewal_mode: auto` key is
+renewed by the installation's own scheduled job, and this command does the same
+one thing that job does. It sends the key's id, the workspace the key is bound
+to and the renewal secret to the licence server once, and a key that has no
+secret — an offline key — never contacts the server at all.
+
+The answer is one of three: the next key, which is verified before it is
+written (the new secret first, then the key); "nothing to renew yet", where the
+key is still further from its end than its own `renew_before_days`; and a
+revocation, in which case this key is Free from then on and the refusal names
+it. Nothing here deletes anything, and a server that cannot be reached changes
+nothing at all.
+
+The project's own key is the one renewed: a per-machine `licence.key` is never
+renewed here.
+
+It is refused inside a coding agent's session, before anything is read, as every
+cloud write is. No line of its output carries the key or the renewal secret.
+
+Usage: `fugaro licence refresh`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for refresh |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro licence renew`
+
+Run the installation's licence check and renewal, as its job does (Subscription Edition)
+
+Run the installation's licence check and renewal.
+
+This is the command K4.2's Scheduler job runs on the installation's timer, and
+`--job` is what says so: it is the job's own verb, and running it by hand is
+not what a person means — `fugaro licence refresh` renews the key they are
+watching, now.
+
+What the job does, in the order it does it: it reads the project's key and the
+renewal secret that renews it, asks the licence server's status route once the
+key's own `check_interval` has passed, asks its renewal route from
+`renew_before_days`, and writes the next key beside the old one (the new secret
+version first, then the key). It records the check — the answer, whether it
+reached the server, and how many checks in a row have not — and warns after
+thirty days without an answer, because that is how long an installation may be
+unable to verify a revocation at all (D2140).
+
+It renews an auto key and only an auto key (spec section 7): a key whose
+`renewal_mode` is `manual` is checked and never renewed — the check is what
+tells the installation whether the key is still good — and its next term is
+fetched by a person running `fugaro licence refresh`. A key whose mode is
+`none` contacts nothing at all.
+
+It never revokes: only an explicit answer from the licence server does, so a
+server that cannot be reached leaves the key exactly as it was. An offline key
+contacts nothing at all, an installation with no key does nothing, and a key the
+server answers revoked is recorded and left in place — nothing is deleted.
+
+It is refused inside a coding agent's session, before anything is read, as every
+cloud write is. No line of its output carries the key or the renewal secret.
+
+Usage: `fugaro licence renew`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for renew |
+| `--job` | bool | `false` | no | run as the installation's renewal job, which is the only way this verb runs |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro licence set`
+
+Install the installation's licence key (Subscription Edition)
+
+Install the licence key for this installation, and the renewal secret that
+came with it.
+
+The key is read from standard input or --file: the key is read from standard input or --file, never from an argument: a key in argv is a key every local process reads.
+Line 1 is the key, and line 2 is the renewal secret — an offline key has none,
+and the key itself says which it is (`renewal_mode`). One trailing newline, a
+blank line and a CRLF line ending are all handled; more than two non-empty
+lines are refused, and no refusal repeats a line.
+
+The key is verified before anything is written, so a key this Fugaro does not
+accept — an unknown signing key, a term longer than the tier allows, a key
+bound to another workspace — is refused instead of installed, and the
+installation keeps whatever it had. The key's workspace_id must be the
+installation's Firebase project id.
+
+The key is then written to the project's own store, so every member is
+upgraded at once, and the renewal secret (when there is one) to the
+installation's Secret Manager container. Both need the container `fugaro update`
+creates: before it is there this command refuses and names that command, and it
+never creates one.
+
+The installation's renewal job is Terraform's (F10): this command writes the
+key and its secret and nothing else, and the next `fugaro update` applies the job
+that renews a `renewal_mode: auto` key. With no coordinator opted in, nothing
+renews a key but `fugaro licence refresh`.
+
+It is refused inside a coding agent's session, before anything is read, as every
+cloud write is. No line of its output carries the key.
+
+Usage: `fugaro licence set`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--file` | string | "" | no | read the key (line 1) and its renewal secret (line 2) from this file instead of standard input |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro licence status`
+
+Show the installation's licence: tier, seats, expiry, state and last check
+
+Show what this installation's licence is: the tier, the seats, the end of the
+paid period, the state the clock and the last revocation check put the key in,
+and that check.
+
+The key the answer comes from is the project's own, so every member of the
+installation sees the same figures. Where the project holds no key and this
+machine's own `licence.key` does, that key answers and the source says so.
+An installation with neither has no key at all, which is the Free state and not
+a failure: `fugaro licence set` installs one.
+
+The state is one of `active` (inside the paid period), `grace` (inside the key's own
+grace days after it), `expired` and `free` (no key at all). A key the licence
+server has revoked reads `expired` with `revoked: true` and is Free in
+behaviour: nothing is deleted and a new key restores everything.
+
+--json prints {project, state, tier, seats, paid_through, kind, renewal_mode,
+source, revoked, last_check, warning}, with paid_through null where no key is
+installed, last_check the last revocation check's own record and warning the
+windows the key's own policy has open now, each with the roles it reaches and
+the instant it opened (null while none is open).
+
+This is a read: it is not refused inside a coding agent's session.
+
+Usage: `fugaro licence status`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for status |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
@@ -3054,25 +4344,24 @@ Run it as an operator, with your own credentials. A coding agent's session is
 refused, and so is a Fugaro run's process. The permission you give is the
 PROJECT_ID argument itself: naming the exact GCP project ID on the command line
 is the declaration that this project is managed (design D1541), and nothing is
-typed at a prompt — this command registers no --yes and no --non-interactive,
+typed at a prompt — this command takes no flag at all,
 so no flag stands in for naming the project either.
 
 PROJECT_ID must be the exact GCP project ID of the installation selected by
 --project, --config or the checkout: one invocation names one project, and
 there is no bulk form, no wildcard and no prefix.
 
-It records three things in gs://<runs bucket>/fugaro/managed.json: that this
-project is managed, the monthly budget amount and currency the owner states
-with --budget and --budget-currency, and the bound on the billable image
-builds one invocation of fugaro image refresh may start (design D1013). The
-amount is required, with no default (D64), because the marker's amount is what
-the apply-time budget read opens the gate on: a marked project that records no
-amount is refused by every managed apply rather than applied without a budget
-control. The amount is the budget ALERT amount the installation's Terraform
-creates and nothing else — this command does not create or change a budget,
-and it makes no billing call. The bound is not a question: it is the marker's
-own default of one build per invocation, and this command asks the owner for
-no count, exactly as fugaro setup asks for none.
+It records two things in gs://<runs bucket>/fugaro/managed.json: that this
+project is managed, and the monthly budget amount and currency the owner states
+with --budget and --budget-currency. The amount is required, with no default
+(D64), because the marker's amount is what the apply-time budget read opens the
+gate on: a marked project that records no amount is refused by every managed
+apply rather than applied without a budget control. The amount is the budget
+ALERT amount the installation's Terraform creates and nothing else — this
+command does not create or change a budget, and it makes no billing call.
+Nothing else is a question: the bound on billable image builds this object used
+to record (D1013) is gone (D1543), so there is no count to ask the owner for
+and none to write, exactly as fugaro setup asks for none.
 
 It writes BOTH marks a managed project carries, in one step: that object and
 the label fugaro_managed=true on the GCP project itself (Task 3.0). The read
@@ -3214,9 +4503,9 @@ IAM call at all; undoing the fence is not revocation and is not offered here
 
 Run it in your own terminal, as an operator, with your own credentials. The
 permission you give is the PROJECT_ID argument itself: it names the one project
-whose marks come off, and nothing stands in for naming it — not --yes, not
---non-interactive, not a pipe. A coding agent's session is refused, and a
-Fugaro run's own process is refused.
+whose marks come off, and nothing stands in for naming it — not a flag, not a
+pipe. A coding agent's session is refused, and a Fugaro run's own process is
+refused.
 
 PROJECT_ID must be the exact GCP project ID of the installation selected by
 --project, --config or the checkout: one invocation names one project, and
@@ -3300,7 +4589,6 @@ Flags:
 | `--price-in` | float64 | `0` | no | input price, dollars per million tokens (required for a model the catalog does not price) |
 | `--price-out` | float64 | `0` | no | output price, dollars per million tokens (required for a model the catalog does not price) |
 | `--route` | string | "" | no | the route that claims the model (default: the route that claims it already, or the only one) |
-| `--yes` | bool | `false` | no | confirm the write without a prompt |
 
 Subcommands:
 
@@ -3372,7 +4660,6 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for rm |
-| `--yes` | bool | `false` | no | confirm the write without a prompt |
 
 Subcommands:
 
@@ -3427,14 +4714,13 @@ file is kept. The command never commits, pushes or opens a pull request — the
 change reaches runs when the owner's own branch is merged to the base branch,
 which is what every run reads.
 
-Usage: `fugaro models use <repo> <coder|reviewer|background> <id>`
+Usage: `fugaro models use <repo> <coder|reviewer|background|vision> <id>`
 
 Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for use |
-| `--yes` | bool | `false` | no | confirm the write without a prompt |
 
 Subcommands:
 
@@ -3457,7 +4743,15 @@ session start instead, reaching no network at all. events reads the audit
 log. patch applies one document from -f, and the ops only a person may
 land (approving a work item, setting the goal, closing a decision that
 waits on a person) are confirmed at a real terminal with the project's
-name typed, never by --yes: a session that has none writes nothing.
+name typed: a session that has none writes nothing.
+import loads the one-time session dump, validated as a patch and refused
+the person's own ops: no dump approves work.
+
+run is the daemon itself, in the foreground. install, uninstall and
+status are the login unit that keeps it running: the three read no
+project and reach no network, and they write no system path and need no
+root — the unit is one file under your own home and the service manager
+is asked at your own login level.
 
 Usage: `fugaro orchestrator`
 
@@ -3470,9 +4764,14 @@ Flags:
 Subcommands:
 
 - `fugaro orchestrator events` -- Read the orchestrator's audit log
+- `fugaro orchestrator import` -- Load the one-time session dump into the orchestrator's state
+- `fugaro orchestrator install` -- Install or re-render the login unit that runs the daemon
+- `fugaro orchestrator ls` -- List the installation's orchestrators
 - `fugaro orchestrator patch` -- Apply one typed patch document to the orchestrator's state
 - `fugaro orchestrator run` -- Run the project's orchestrator daemon in the foreground
 - `fugaro orchestrator state` -- Print the orchestrator's state: the generated summary of its live node
+- `fugaro orchestrator status` -- Report the login unit that runs the daemon
+- `fugaro orchestrator uninstall` -- Remove the login unit that runs the daemon
 
 ## `fugaro orchestrator events`
 
@@ -3501,6 +4800,114 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro orchestrator import`
+
+Load the one-time session dump into the orchestrator's state
+
+Load the one-time session dump (the spec's Migration) into the project's
+orchestrator state, from -f's file or from stdin with -f -. The dump is one
+patch document (schemas/orchestrator-patch.schema.json) a session wrote out,
+and it is read by the same validator and bounded by the same caps as
+fugaro orchestrator patch: it is the one document in this loop written by a
+model, and everything it carries is data, never an instruction.
+
+The dump lands as the person who runs this, because the migration is theirs
+to make, and it lands nothing a session may not land: approving a work
+item, setting the goal and closing a decision that waits on anyone but a
+session are the person's own word, given at a real terminal over the spec
+they read (fugaro orchestrator patch). So no dump approves work and no dump
+closes a decision of the person's — not even one the dump raises and closes
+itself — and every work item the dump declares arrives unapproved.
+
+Usage: `fugaro orchestrator import`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `-f`, `--file` | string | "" | no | the session dump to import, or - to read it from stdin |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for import |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro orchestrator install`
+
+Install or re-render the login unit that runs the daemon
+
+Write the per-user login unit that runs `fugaro orchestrator run` and load
+it, so the daemon starts at every login and is restarted when it stops.
+Nothing else is written: no system path is touched, no root is needed, and
+the service manager is asked at your own login level (launchd on macOS,
+systemd --user on Linux; Windows has neither, and answers so).
+
+The unit names the stable path of this fugaro — Homebrew's opt link and
+never a versioned Cellar path that an upgrade removes — twice: as the
+program to run, and as the `--binary` argument whose version the daemon
+compares with its own before it hands over to a new release.
+
+It is idempotent: a unit that is already there is re-rendered from this
+release's template and the service restarted, which is also what `fugaro
+update` does to an installed unit (and `fugaro update` never installs
+one). It writes no state and migrates none: the daemon's own start-up
+does that.
+
+A unit is code that runs at every login, so this command asks you to type
+the word install at a real terminal, has no flag that stands in for it,
+and refuses in a coding agent's session. Running it yourself, without the
+marker, is the way to do it: whoever can do that can write the file by
+hand anyway.
+
+Usage: `fugaro orchestrator install`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for install |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro orchestrator ls`
+
+List the installation's orchestrators
+
+List the orchestrators this installation has: every id whose node exists in
+the project's database, with the holder of its lease and when that holder last
+beat, and every cached brief this machine holds, with the time the daemon wrote
+it. An orchestrator this machine runs — one with a cached brief — is `local`;
+one only the database holds is `central`. A cached brief of an id nothing is
+beating any more is marked stale: the daemon that wrote it has stopped driving
+the id, so no cycle is rewriting it. --json prints a versioned document
+(schemas/orchestrator-output.schema.json).
+
+There is no registry of processes and no port: the node and the cache file are
+the two things the daemon writes, and a run or a token may not read either.
+
+Usage: `fugaro orchestrator ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro orchestrator patch`
 
 Apply one typed patch document to the orchestrator's state
@@ -3517,7 +4924,7 @@ confirmed at a real terminal, where the project's name is typed over the write
 that lands: the spec an approval binds, and every op the document carries,
 because the whole of it lands as the person who confirms it. Every other
 session, --json, a pipe and a coding agent's environment are refused and write
-nothing, and --yes never covers them.
+nothing, and no flag covers them.
 No flag, environment variable or field of the document makes this command the
 daemon or the decision agent: the daemon's bookkeeping is the daemon's.
 
@@ -3565,6 +4972,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--binary` | string | "" | no | the stable path of the fugaro binary the login unit names: the daemon exits cleanly when the version there differs from this process |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--decide` | bool | `false` | no | wake the decision agent on the judgement cases code cannot decide (a run out of retries, an attempt that never started, a result no phase reads): each judgement is a model call on your own Claude login |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for run |
 | `--interval` | duration | `30s` | no | how long to wait between cycles when the node says nothing moved |
@@ -3602,6 +5010,55 @@ Flags:
 | `--offline` | bool | `false` | no | print the brief the daemon cached at session start, reaching no network (goes with --brief) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro orchestrator status`
+
+Report the login unit that runs the daemon
+
+Report whether this machine has the login unit that runs the orchestrator
+daemon, where its file is, and whether it is what this release's template
+would write. It changes nothing and reads no project: the file is the
+whole of what it looks at, and `fugaro doctor` reports the same drift as
+an update being due.
+
+Usage: `fugaro orchestrator status`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for status |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro orchestrator uninstall`
+
+Remove the login unit that runs the daemon
+
+Unload the login unit and delete its file, so the daemon stops being
+started at login and stops being restarted. It asks nothing: removing the
+unit takes away code that runs at every login rather than adding it, and
+`fugaro orchestrator install` writes it back after its own typed
+confirmation.
+
+Nothing else is touched: the project's orchestrator state, its lease and
+its audit log are in the database and not in the unit, `fugaro orchestrator
+run` still runs in the foreground without a unit, and a machine with no
+unit installed is not an error — it says so and returns.
+
+Usage: `fugaro orchestrator uninstall`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for uninstall |
 
 Subcommands:
 
@@ -3657,7 +5114,7 @@ Flags:
 | `--name` | string | "" | no | the device's name, for pair ls and the device node's own field |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--role` | string | "" | no | the device's role: viewer, operator or admin (default: your own role, inherited; --role may only lower it) |
+| `--role` | string | "" | no | the device's role: viewer, operator or admin (default: the role the allowlist resolves for your address, or your own when it names none; --role may only lower it, and never below the entry an address that already has one resolves to) |
 | `--timeout` | duration | `2m0s` | no | how long to wait for the phone's key and the typed code (refused above 4m30s) |
 
 Subcommands:
@@ -3712,8 +5169,11 @@ its next request on.
 The order is the command (M4): the device node under config/admin/devices
 goes first, because the node's existence is what the rules read and its
 deletion revokes at once, without waiting for an ID token to expire; then
-this laptop's OS keychain item for that pairing's MAC key. Two deletions,
-and both are here.
+the account's push node under config/admin/push, the sibling that holds
+the one registration this installation made for it, so the phone's token
+goes with the pairing rather than outliving it (push design §3.4); then
+this laptop's OS keychain item for that pairing's MAC key. Three
+deletions, and all three are here.
 
 The pairing session's own node is not one of them. Its key is the p~ uid
 the session drew, and nothing on this laptop records that uid, so a revoke
@@ -3880,10 +5340,120 @@ Flags:
 
 Subcommands:
 
+- `fugaro project clone-url` -- The clone URL each of the project's repositories clones from
 - `fugaro project policy` -- The project's published policy (config/policy/shared)
+- `fugaro project profile` -- The project's job profiles: the shapes its jobs are deployed as
 - `fugaro project repos` -- The project's allow-list: which repositories may run
+- `fugaro project routing` -- The project's Claude routing switch: where a run's Claude calls go
 - `fugaro project show` -- Show the effective project: caps, policy, allow-list, repositories running now
-- `fugaro project sync` -- Offer the GitHub App's installed repositories that the allow-list does not admit
+- `fugaro project sync` -- Offer the provider's repositories that the allow-list does not admit
+
+## `fugaro project clone-url`
+
+The clone URL each of the project's repositories clones from
+
+Usage: `fugaro project clone-url`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for clone-url |
+
+Subcommands:
+
+- `fugaro project clone-url ls` -- List the clone URL of every repository the project gives one
+- `fugaro project clone-url rm` -- Take a repository's clone URL away
+- `fugaro project clone-url set` -- Give a repository the URL its runs clone from
+
+## `fugaro project clone-url ls`
+
+List the clone URL of every repository the project gives one
+
+List the project's clone_urls block: one line per repository, under the
+canonical name (<provider>/<owner>/<name>) the runner looks it up by, with
+the URL that repository's runs clone from.
+
+The block is this machine's project config file. `fugaro update` publishes
+it into the project's policy node, which is what a run reads, so a line here
+that no publish has carried yet is a change the next update makes.
+
+A project that gives no repository a URL lists nothing rather than printing
+an empty table: the node may still carry a block this file says nothing
+about, and `fugaro project policy show` prints that one.
+
+Usage: `fugaro project clone-url ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro project clone-url rm`
+
+Take a repository's clone URL away
+
+Remove one entry of the project's clone_urls block, in this machine's
+project config file. The other entries stand, and the change reaches a run
+through `fugaro update`.
+
+The last entry is not this command's to take away. An empty block is how a
+project states that it gives no repository a URL, and the one spelling of
+one — an empty mapping, `clone_urls: {}` — is not one this release's editor
+writes; a key left with no entry under it is read as a file that says
+nothing about the block, which keeps the published node's, so removing the
+last entry would change nothing at all. That removal is therefore refused,
+and the refusal names the one line that states it — put `clone_urls: {}` in
+the file by hand, and run `fugaro update`.
+
+Usage: `fugaro project clone-url rm <provider>/<owner>/<name>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro project clone-url set`
+
+Give a repository the URL its runs clone from
+
+Write one entry of the project's clone_urls block, in this machine's
+project config file.
+
+The repository is named canonically — <provider>/<owner>/<name>, the spelling
+the allow-list and the CLI use everywhere — and the URL must be an https URL
+without credentials that names exactly that repository on that provider's own
+host. A URL naming another repository, or another host, is refused before
+anything is written: the URL is where a run clones from, while its slug, its
+locks, its cache and its budget session all name the repository its own
+task.json does, and a run that cloned from elsewhere while doing this
+repository's work is the thing the node's own rule exists to refuse.
+
+The change reaches a run through `fugaro update`, which publishes the policy
+node the runner reads.
+
+Usage: `fugaro project clone-url set <provider>/<owner>/<name> <url>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for set |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro project policy`
 
@@ -3929,17 +5499,24 @@ can write.
 --delete removes the policy (the children first, the shared node last, so a
 launch mid-delete still sees the policy and keeps its tighter ceiling) and
 puts the project back on the ceiling its jobs' environments carry. It goes
-through the same rules-marker gate as a publish, refuses without --yes while
+through the same rules-marker gate as a publish, refuses while
 runs are in flight, and asks you to type the project's name otherwise. The
 config/policy/repos children are removed too, shared node or not: a delete
 that failed on the shared node leaves them behind, and this is what clears
 them.
 
-Each repository an account a profile names admits also gets a child under
+Each repository an account admits also gets a child under
 config/policy/repos/$slug, holding the NAMES of its admitted accounts and
-nothing else: the accounts published are the ones some profile names,
-qualified by that profile's provider, so an account this config defines but
-no profile names admits nothing a run could read. The children are narrowed before the shared node and widened
+nothing else. An account is admitted by the profiles that name it, each
+qualified by its profile's provider, and by a repository's own
+repos.<owner/name>.claude_accounts, qualified by that entry's provider:
+an account this config defines but neither names admits nothing a run
+could read — a repository whose runs are not on a profile job (a
+per-repository job, which is every Bitbucket repository) names its
+accounts there, because a profile is not the only kind of job its runs
+land on. The two are a union, so nothing a profile admits is narrowed by
+a repository's entry.
+The children are narrowed before the shared node and widened
 after it, so a publish that stops between the two writes leaves the installation tighter than the config asked, never looser.
 When the node this publish writes carries a member an older Fugaro refuses
 whole — a credentials
@@ -3956,7 +5533,7 @@ what hands a run the project's other credentials. A config that writes a
 routing block naming no Claude switch in the same state is refused too.
 --remove-routing is how the operator says the block goes away on purpose.
 
-Usage: `fugaro project policy publish [--seed-repos] [--delete] [--yes] [--remove-routing]`
+Usage: `fugaro project policy publish [--seed-repos] [--delete] [--remove-routing]`
 
 Flags:
 
@@ -3970,7 +5547,6 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--remove-routing` | bool | `false` | no | drop the published policy's routing block on purpose (an active route stops being taken) |
 | `--seed-repos` | bool | `false` | no | seed allow_repos from the operator's repositories again |
-| `--yes` | bool | `false` | no | confirm the deletion without typing the project's name |
 
 Subcommands:
 
@@ -3997,6 +5573,185 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro project profile`
+
+The project's job profiles: the shapes its jobs are deployed as
+
+Usage: `fugaro project profile`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for profile |
+
+Subcommands:
+
+- `fugaro project profile add` -- Define a job profile: the shape a workflow's job is deployed as
+- `fugaro project profile ls` -- List this project's job profiles, and the jobs each one maps to
+- `fugaro project profile rm` -- Remove a job profile no workflow selects
+- `fugaro project profile set` -- Change one key of one job profile
+- `fugaro project profile show` -- Show one job profile of this project
+
+## `fugaro project profile add`
+
+Define a job profile: the shape a workflow's job is deployed as
+
+Define a job profile in this project's own config.
+
+The four values are the job's whole shape and all four are required: one
+Cloud Run job per (profile, provider, account) is deployed with them, and a
+profile missing one of them describes no job at all. The provider is one of
+the git providers Fugaro has a path for, because it is part of the job's
+identity, of the slug its runs are stored under and of the credential the job
+holds.
+
+The profile is checked against the same rules the publisher applies to the
+published policy, so what it writes is what `fugaro update` will deploy: the
+name, the provider, the Cloud Run shape of cpu and memory, and the timeout
+within Cloud Run's ceiling. A config that carries a profiles: block must
+define standard, which is the profile every workflow that names none runs on.
+
+The block reaches a run through the published policy, so the change is
+deployed by `fugaro update`, which publishes it and deploys the jobs.
+
+Only the keys it writes are rewritten: every comment and every other key of
+the file is kept.
+
+Usage: `fugaro project profile add NAME --provider P --cpu N --memory M --timeout-class C`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--cpu` | int | `0` | no | the vCPUs the job's Cloud Run task gets |
+| `-h`, `--help` | bool | `false` | no | help for add |
+| `--memory` | string | "" | no | the memory the job's task gets, for example 4Gi |
+| `--provider` | string | "" | no | the git provider the profile's job serves (github, gitlab, bitbucket or fake) |
+| `--timeout-class` | string | "" | no | the job's task timeout, for example 6h |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro project profile ls`
+
+List this project's job profiles, and the jobs each one maps to
+
+List the job profiles this project's own config defines.
+
+Each line is one profile: the provider and the Cloud Run shape its job is
+deployed as, the secrets the job mounts (by NAME — a config carries no value),
+the repositories it admits, and the Claude accounts it serves. The line after
+it says which jobs it maps to: one per (profile, provider, account).
+
+A config with no profiles: block defines none, and a policy built from it
+sets no profile at all — every workflow then runs on the job its own
+environment names.
+
+The read is offline: it opens this machine's project config and nothing else.
+
+Usage: `fugaro project profile ls [--json]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro project profile rm`
+
+Remove a job profile no workflow selects
+
+Remove a job profile from this project's own config.
+
+The removal is refused while a workflow this machine can read selects the
+profile: a workflow whose job_profile the published policy does not define
+has every run refused at start, one run at a time, at the launcher rather
+than here. Change the workflow's job_profile first, then remove the profile.
+
+A repository this machine holds no checkout for cannot be read, so it is
+named as unread rather than assumed: a workflow of one may still select the
+profile, and its next run says so.
+
+Removing the last profile takes the profiles: block with it, which is how a
+config says it sets no profile at all. Only the keys it removes are
+rewritten: every comment and every other key of the file is kept.
+
+Usage: `fugaro project profile rm NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro project profile set`
+
+Change one key of one job profile
+
+Change one key of one job profile in this project's own config.
+
+KEY is one of the profile's own keys — provider, cpu, memory, timeout_class,
+secrets, allow_repos, claude_accounts — and VALUE is what it becomes. The
+three list keys take a comma-separated list, and an empty VALUE removes the
+key rather than writing a list with nothing in it: absent secrets mount
+nothing, and an absent allow_repos falls back to the project's own list,
+where a written empty one is ambiguous and refused.
+
+Every other key and every comment of the file is kept. The edited block is
+held to the rules the publisher applies to the published policy, so a profile
+this writes is one `fugaro update` publishes. The deployer then holds the
+jobs it builds to rules of its own beyond those — a secret a job mounts has
+to be one stored project-wide, which project_secrets decides — so a profile
+that publishes is not always one whose job deploys.
+
+Usage: `fugaro project profile set NAME KEY VALUE`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for set |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro project profile show`
+
+Show one job profile of this project
+
+Show one job profile of this project's own config, with the jobs it maps to.
+
+Without NAME it shows standard, the profile every workflow that names none
+runs on (a policy that carries profiles must define it, which is why a
+config that sets no profile at all is refused here rather than shown empty).
+
+The read is offline: it opens this machine's project config and nothing else.
+
+Usage: `fugaro project profile show [NAME] [--json]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for show |
+| `--json` | bool | `false` | no | print machine-readable output |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro project repos`
 
 The project's allow-list: which repositories may run
@@ -4014,6 +5769,7 @@ Subcommands:
 - `fugaro project repos add` -- Enroll a repository: add it to the policy's allow-list
 - `fugaro project repos ls` -- List the allow-list and the repositories that have run here
 - `fugaro project repos rm` -- Un-enroll a repository: remove it from the allow-list
+- `fugaro project repos set` -- Write a repository's workflow selection or a job profile, in this machine's project config
 
 ## `fugaro project repos add`
 
@@ -4071,8 +5827,8 @@ refused before it mints a git token — unless another entry on the list still
 admits it, which is the case a pattern makes (github/acme/app stays admitted
 while github/acme/* is there); the confirmation says which of the two it is.
 Removing * refuses every repository the rest of the list does not admit.
-So it asks you to type the project's name, and while a run is in flight --yes
-alone is not enough.
+So it asks you to type the project's name, and while a run is in flight only
+that typing confirms it.
 
 Usage: `fugaro project repos rm <provider/owner/name | owner/name | *>`
 
@@ -4085,7 +5841,190 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for rm |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--yes` | bool | `false` | no | confirm the removal without typing the project's name (not while a run is in flight) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro project repos set`
+
+Write a repository's workflow selection or a job profile, in this machine's project config
+
+Write one of the two shapes the generic writer cannot express, in this
+machine's project config:
+
+    fugaro project repos set acme/app --workflows web,docs
+    fugaro project repos set --job-profile gpu --provider github --cpu 4 \
+        --memory 8Gi --timeout-class 12h --secrets acme-db --allow-repos acme/app
+
+A repository's workflows selection says which of the repository's own workflows
+this project runs, and it is written WHOLE: the names given are the selection,
+so a second run replaces it rather than adding to it. The repository is one the
+project's config lists (fugaro update --repo onboards one); a name it does not
+list is refused, because a selection stored under a name nothing looks up is a
+line nobody sees fail.
+
+A job profile is what a Cloud Run job is deployed as, addressed by name
+(D1163): the seven keys are provider, cpu, memory, timeout_class, secrets,
+allow_repos and claude_accounts, and the flags below write them. The block is
+created when the config does not hold one under that name, and a NEW profile
+must name its own --provider: a profile with no provider is one no job of it can
+be deployed, and fugaro project policy publish refuses such a policy.
+
+What a profile's values owe — a known provider, a cpu/memory shape Cloud Run
+serves, a duration timeout_class — is the policy's own rule
+(projectpolicy.validProfiles), applied by fugaro project policy publish and read
+back by every run; this command writes the file and refuses only what the file
+itself would not read.
+
+The repos.* scalars and lists are the generic writer's (D1173):
+
+    fugaro settings set repos.acme/app.base_branch main
+    fugaro settings set repos.acme/app.workflows --add docs
+
+This write is a person's own: fugaro update publishes it, and a coding agent's
+session is refused it, in a managed project by that project's gate.
+
+Every write ends with one line: next: fugaro update.
+
+Usage: `fugaro project repos set (REPO --workflows NAME[,NAME...]) | (--job-profile NAME [members])`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--allow-repos` | stringSlice | `[]` | no | profiles.NAME.allow_repos: the repositories the profile serves, comma-separated; the list is written whole |
+| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this write would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed |
+| `--claude-accounts` | stringSlice | `[]` | no | profiles.NAME.claude_accounts: the Claude accounts the profile serves, comma-separated; the list is written whole |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--cpu` | int | `0` | no | profiles.NAME.cpu: the Cloud Run cpu count the job is deployed with |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--job-profile` | string | "" | no | the job profile to write, by name; with it, the members below write the block's keys |
+| `--memory` | string | "" | no | profiles.NAME.memory: the Cloud Run memory the job is deployed with, e.g. 4Gi |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
+| `--provider` | string | "" | no | profiles.NAME.provider: the git provider the profile's job holds a credential for (required for a new profile) |
+| `--secrets` | stringSlice | `[]` | no | profiles.NAME.secrets: the Secret Manager names the profile's job mounts, comma-separated; the list is written whole |
+| `--timeout-class` | string | "" | no | profiles.NAME.timeout_class: the job's task timeout as a duration, e.g. 6h or 90m |
+| `--workflows` | stringSlice | `[]` | no | repos.REPO.workflows: which of the repository's own workflows this project runs, comma-separated; the selection is written whole |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro project routing`
+
+The project's Claude routing switch: where a run's Claude calls go
+
+Usage: `fugaro project routing`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for routing |
+
+Subcommands:
+
+- `fugaro project routing set` -- Set the route this project's Claude calls take
+- `fugaro project routing show` -- Show the route this project's Claude calls take
+- `fugaro project routing unset` -- Remove the routing switch, when it carries nothing
+
+## `fugaro project routing set`
+
+Set the route this project's Claude calls take
+
+Set the Claude routing switch in this project's own config.
+
+--models names the Claude IDs the switch carries, comma-separated; a route
+(openrouter, auto) needs an explicit list, because the list is the opt-in and
+an empty one would opt every Claude model in (D1a/D1b). cascade takes no list
+at all — it decides which credential carries a call, never where the call goes
+(O3) — and direct reads one as inert, so both drop it: a route that goes away
+with it is what setting the switch is.
+
+via: cascade keeps every call going to Anthropic and hands the credential
+choice to the credentials service: an exhausted shared subscription token is
+replaced by the next usable credential, and with credentials.fallback: auto
+that reaches the paid tiers.
+
+Sending the switch to a route is a data-egress change and is the widening of
+this block: a coding agent's session writes it to no document, whatever the flags
+says, and a narrowing (direct, cascade, an unset) is the owner's ordinary
+write.
+
+The change reaches a run through `fugaro update`, which publishes the policy
+node every run reads its route from. Only the keys it writes are rewritten:
+every comment and every other key of the file is kept.
+
+Usage: `fugaro project routing set claude --via direct|cascade|openrouter|auto [--models ...]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--models` | string | "" | no | the Claude IDs a route carries, comma-separated (required for openrouter and auto) |
+| `--via` | string | "" | no | the route: direct, cascade, openrouter or auto |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro project routing show`
+
+Show the route this project's Claude calls take
+
+Show the Claude routing switch this project's own config carries.
+
+via: cascade keeps every call going to Anthropic under the ID a pin names and
+lets the credentials service decide which credential carries it; via:
+openrouter and via: auto send the Claude IDs the switch lists to the provider
+entry that claims them, and only that entry's allow_data_to decides which
+repositories' code may be sent there; via: direct, and no switch at all, route
+nothing and every call goes to Anthropic.
+
+The read is offline: it opens this machine's project config and nothing else.
+
+Usage: `fugaro project routing show [--json]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for show |
+| `--json` | bool | `false` | no | print machine-readable output |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro project routing unset`
+
+Remove the routing switch, when it carries nothing
+
+Remove the Claude routing switch from this project's own config.
+
+A switch that is already inert is what goes: via: direct routes nothing, so
+removing it says what the file already said, and every call goes to Anthropic.
+The removal is refused while the switch carries the cascade or a route, and
+that refusal is the publisher's own rule about a silent node, made here: a
+block that disappears from the file would turn the cascade, or a route, off by
+omission on the next publish — the cascade is what hands a run the project's
+other credentials, and a route that goes away is a Claude call that stops being
+sent where it was put. Write the switch off on purpose instead
+(`fugaro project routing set claude --via direct`), which keeps the block and
+says what it means.
+
+The change reaches a run through `fugaro update`. Only the key it removes is
+rewritten: every comment and every other key of the file is kept.
+
+Usage: `fugaro project routing unset`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for unset |
 
 Subcommands:
 
@@ -4123,31 +6062,45 @@ This command has no subcommands.
 
 ## `fugaro project sync`
 
-Offer the GitHub App's installed repositories that the allow-list does not admit
+Offer the provider's repositories that the allow-list does not admit
 
-Ask GitHub which repositories the project's GitHub App is installed on (the
-App API, with the App's own credentials) and offer the ones the published
+Ask the provider which repositories it holds and offer the ones the published
 allow_repos does not admit, as one list written in one batch: nothing is
 asked, and what was written is printed after the write. The accepted list is
 written through the same ETag-guarded write `project repos add` uses; entries
 are only ever added, so a sync never un-enrolls a repository — including one
-the App is not installed on at all (another provider's, or one whose
-installation was removed). A repository the list already admits, a pattern
-included, is not offered: its runs are admitted already.
+the provider does not hold at all (another provider's, or one whose access was
+removed). A repository the list already admits, a pattern included, is not
+offered: its runs are admitted already.
 
-Reading the App's private key is --github-app-key: without it, nothing is
-read. Under it the key is read from the project's github-app-key secret with
-your own credentials and held in memory only to sign the App's 9-minute JWT
-(never printed, never passed as an argument, never in an error), and the
-flag is refused in a coding agent's session. The App ID is a number, not a
-secret: --github-app-id, or the one this machine's config already holds.
+The provider is GitHub's App by default: the repositories the App is installed
+on, read with the App's own credentials. Reading the App's private key is
+--github-app-key: without it, nothing is read. Under it the key is read from
+the project's github-app-key secret with your own credentials and held in
+memory only to sign the App's 9-minute JWT (never printed, never passed as an
+argument, never in an error), and the flag is refused in a coding agent's
+session. The App ID is a number, not a secret: --github-app-id, or the one
+this machine's config already holds.
 
-Usage: `fugaro project sync [--github-app-id <id>] [--github-app-key] [--yes]`
+--bitbucket <workspace> lists that workspace's repositories instead, through
+Bitbucket's own API, and --bitbucket-project narrows the listing to one
+project of it. The token is a workspace or project access token, read from
+stdin or from a hidden prompt and never from an argument — an argument is in
+the process's command line, where every process on the machine reads it, and
+in the shell's history — and it is held in memory only for the listing.
+
+--check prints the difference and writes nothing, whichever provider lists:
+the published allow-list is read and left exactly as it was.
+
+Usage: `fugaro project sync [--bitbucket <workspace>] [--bitbucket-project <key>] [--check] [--github-app-id <id>] [--github-app-key]`
 
 Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--bitbucket` | string | "" | no | list this Bitbucket workspace's repositories instead of the GitHub App's, with a Bitbucket access token read from stdin or a hidden prompt (never from an argument) |
+| `--bitbucket-project` | string | "" | no | narrow --bitbucket to one project of that workspace (its project key) |
+| `--check` | bool | `false` | no | print what would be added and write nothing |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `--github-app-id` | string | "" | no | the GitHub App's ID (a number, not a secret); default: the one this machine's config holds |
@@ -4155,7 +6108,6 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for sync |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--yes` | bool | `false` | no | accepted and does nothing: the batch is written with no confirmation |
 
 Subcommands:
 
@@ -4210,7 +6162,7 @@ List, show, validate and publish recipes, the task loop a run follows after impl
 
 A recipe is found by name in .fugaro/recipes/NAME.yaml in the repository, then in the
 project's fugaro/recipes/NAME.yaml in the runs bucket, then in the catalog
-(default, lint-fix, pick, premium, review-only, run-digest, solo, standard, test-and-fix). See docs/recipes.md.
+(ab-judge, default, escalate, lint-fix, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix). See docs/recipes.md.
 
 Usage: `fugaro recipes`
 
@@ -4410,7 +6362,7 @@ Every step is money or permanent, so this command prints what it is about to
 make permanent — the new project, the budget amount, the root and the two files
 — before its first write, and the creating path it delegates to keeps its own
 typed questions (the new project's ID and the billing account) at a real
-terminal. There is no --yes, no --non-interactive and no address argument. The
+terminal. No flag stands in for a person at the terminal, and there is no address argument. The
 command is refused in a coding agent's session.
 
 It ends by printing what was NOT restored, as a list: the runs that were in
@@ -4453,13 +6405,15 @@ Review a pull request in a job of its own, on a named account
 Launch an independent review of pull request N, in a container the coding
 run never ran in and with the account you name.
 
-The review runs on the review-only variant of the repository's job: no App
-key, no Claude token and no signing key are mounted in it, and its git
-credential is a read-only one it fetches from the installation's credentials
-service. It reads a fresh clone of the pull request's head, writes its verdict
-as an artifact (fugaro review show RUN prints it) and posts no comment and no
-review on the pull request: what reaches the pull request is the owner's and
-the coordinator's to decide.
+The review runs in a job of its own and never in the repository's coding job:
+the review-only variant of the repository's shared project job, or, where the
+repository's workflow resolves no shared project job, the installation's
+implicit default review-only job. No App key, no Claude token and no signing
+key are mounted in it, and its git credential is a read-only one it fetches
+from the installation's credentials service. It reads a fresh clone of the
+pull request's head, writes its verdict as an artifact (fugaro review show
+RUN prints it) and posts no comment and no review on the pull request: what
+reaches the pull request is the owner's and the coordinator's to decide.
 
 The account is picked as everywhere else: --token, else agent.oauth_token in
 fugaro.yaml at the run's ref, else the project's default_claude_account.
@@ -4529,6 +6483,230 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro rigor`
+
+Set the rigor mode a project's runs are held to
+
+The rigor mode decides how much review a run gets and what it costs.
+
+`fugaro rigor set <mode>` writes `defaults.rigor.default` of this machine's own
+project layer file, and `--area <glob>` writes one rule of
+`defaults.rigor.areas` — the mode a run touching that glob is held to, which is
+the strictest of the rules that match it. The file is the one `fugaro update`
+publishes, and every write ends with `next: fugaro update`.
+
+A mode is `poc`, `startup`, `pro`, `critical` or `hotfix`, and `hotfix` is the one
+no layer sets: it is an operator's per-run mode, reached with
+`fugaro run --mode hotfix`. A mode below what the project resolves to today is
+the sensitive direction, so a coding agent's session is refused it with the
+command to run at your own terminal, and your own terminal writes it and asks
+nothing.
+
+Usage: `fugaro rigor`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for rigor |
+
+Subcommands:
+
+- `fugaro rigor floor` -- Set or remove the review floor a project's runs are held to
+- `fugaro rigor set` -- Write the project layer's rigor default, or one area rule
+
+## `fugaro rigor floor`
+
+Set or remove the review floor a project's runs are held to
+
+The review floor is the owner's own: per rigor mode, the review levels a run
+of that mode must run whatever a lower layer asks for. It lives in this
+machine's project config (`review_floor`) and `fugaro project policy publish`
+copies it into the policy node the runner fails closed on, so a change here
+reaches runs at the next `fugaro update`.
+
+`fugaro rigor floor show` prints the floor this machine's config sets,
+`fugaro rigor floor set MODE LEVELS` writes one mode's floor and
+`fugaro rigor floor unset MODE` removes it. A removal and a lowering are the
+owner's own step — a floor is a minimum, so taking a level away is a whole
+project reviewing less — and they ask nothing: the write prints what it widens
+and what it writes, and no flag stands in for the owner's own hand. Adding a
+mode the file does not carry, or a level a mode's floor does not carry, asks
+nothing either: it can only require more review.
+
+A coding agent's session is refused both directions outright, whatever the
+flags say, and is shown neither the diff nor the sentence: the command it
+should run at the owner's own terminal is what the refusal prints.
+
+Usage: `fugaro rigor floor`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for floor |
+
+Subcommands:
+
+- `fugaro rigor floor set` -- Write one rigor mode's review floor
+- `fugaro rigor floor show` -- Show the review floor this machine's project config sets
+- `fugaro rigor floor unset` -- Remove one rigor mode's review floor
+
+## `fugaro rigor floor set`
+
+Write one rigor mode's review floor
+
+Write the review levels a run of MODE must run, into this machine's project
+config.
+
+LEVELS is a comma-separated list of `l1`, `l2` and `l3` — the levels
+docs/review-levels names — and the floor is the whole list: a level it drops
+stops being required of every run of that mode.
+
+Adding a mode the file does not carry, or a level the mode's floor does not
+carry, is the ordinary write and asks nothing. Dropping a level is a lowering —
+a whole project reviewing less — and it asks nothing either: nothing stands in for the owner's own hand. The
+command refuses an empty LEVELS: a floor with no level in it says nothing, and
+removing the mode's entry is what `fugaro rigor floor unset` is for.
+
+A coding agent's session is refused the write outright, whatever the flags say,
+and is shown neither the diff nor the sentence.
+
+It writes one file: this machine's own project config. The change reaches the
+policy node the runner reads at the next `fugaro update`, whose policy stage
+publishes it.
+
+Usage: `fugaro rigor floor set MODE LEVELS`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro rigor floor show`
+
+Show the review floor this machine's project config sets
+
+Show the review floor, one line per rigor mode and the levels that mode's runs
+must run.
+
+The read tells apart the two ways a file can name no floor, because they mean
+different things at publish: a file that says nothing about `review_floor` leaves
+the published floor standing — a publish keeps the node's floor when the config
+is silent about one — while a written `review_floor: {}` is a floor of nothing,
+which is what takes the published floor away.
+
+`--json` prints the same answer as a document.
+
+Usage: `fugaro rigor floor show`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `-h`, `--help` | bool | `false` | no | help for show |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro rigor floor unset`
+
+Remove one rigor mode's review floor
+
+Remove the review floor MODE carries: from the next `fugaro update` the
+mode's runs are held to what their rigor mode and the repository ask for, and
+to nothing the owner requires.
+
+That is what the removal of one of several modes does. Removing the file's LAST
+entry leaves the file carrying no mode, and the key stays where it was written
+as the empty mapping — `review_floor: {}` — rather than going with it, because
+the two spellings mean different things at publish: a file that says nothing
+about the key keeps the node's floor (the floor is the member a publish must not
+lower by accident), while the empty mapping is a floor of nothing, and that is
+what takes the published floor away.
+
+A removal is the owner's own step — what it deletes is a floor, and taking it
+away is a whole project reviewing less — and it asks nothing: nothing stands in for the owner's own hand. A
+coding agent's session is refused the removal outright, whatever the flags say,
+and is shown neither the diff nor the sentence.
+
+It writes one file: this machine's own project config, and the change reaches
+the policy node at the next `fugaro update`.
+
+Usage: `fugaro rigor floor unset MODE`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `-h`, `--help` | bool | `false` | no | help for unset |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro rigor set`
+
+Write the project layer's rigor default, or one area rule
+
+Write a rigor mode into this machine's own project layer file.
+
+With no --area the command writes `defaults.rigor.default`: the mode every run of
+this project starts from unless an area rule or a repository's own file moves
+it. With --area GLOB it writes one rule of `defaults.rigor.areas`: a glob a rule
+already carries has its mode replaced, and a glob the layer does not carry yet
+is added and then needs --name — the rule's name is what the run record and the
+pull request say decided the mode. --name on a rule the layer already carries
+renames it. A second rule with the same glob is refused: one glob addresses one
+rule, and two rules matching one path leave only the strictest of them deciding.
+
+A mode below what this project resolves to today is the sensitive direction: a
+coding agent's session is refused it with the diff and the command to run at
+your own terminal, and your own terminal writes it and asks
+nothing. `hotfix` is refused in either form, naming `fugaro run --mode hotfix`.
+
+The command prints the review floor beside the write, and it cannot lower it:
+the floor is outside every layer, and `fugaro rigor floor` is the command that
+changes one.
+
+It writes one file: this machine's own project layer file, whose path is
+derived from the selected project's name. A project that has published no layer
+and has no local file of its own gets one — a project layer document carrying
+this installation's anchors and the change that was asked for — so a fresh
+installation can set a mode. A project that HAS published a layer is not written
+over: with no local file there the command refuses and names `fugaro update`,
+whose Layer stage seeds the file from that layer.
+
+Usage: `fugaro rigor set MODE [--area GLOB [--name NAME]]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--area` | string | "" | no | write this glob's rule in defaults.rigor.areas instead of the layer's default (e.g. docs/**) |
+| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this write would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--name` | string | "" | no | the rule's name; required for a glob the layer does not carry yet, and a rename for one it does |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro run`
 
 Launch a task in the cloud; it always ends with a PR
@@ -4568,6 +6746,16 @@ as the plan's own graph spells them, at most 128 bytes; what the run does is
 unchanged by it. A follow-up (--pr) records one only when it is given, and
 --retry takes none (the stored task keeps its own).
 
+A plan task already being worked on is a refusal: while a run of it is in
+flight, or a run of it left a pull request behind, the launch stops before
+anything is pushed or started and names what holds the task and the ways out
+(--pr, --retry, --continues). --allow-duplicate launches anyway, for a second
+attempt that is deliberate, such as the redundant attempts of one hard task.
+The check reads the run records and never the code host, so a pull request a
+run left is still refused once it has been merged; a read that cannot be made
+is skipped with one warning, and the launch goes ahead: it never blocks on its
+own failure.
+
 --no-compression turns the repository's agent.compression off for this run only,
 overriding its fugaro.yaml. There is no --compression flag: turning compression
 on is a reviewed fugaro.yaml change. A follow-up (--pr) keeps its run's choice,
@@ -4591,10 +6779,12 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--allow-duplicate` | bool | `false` | no | launch even though the plan task named by --plan-task is already being worked on: a run of it in flight, or a pull request a run of it left behind. It turns that one refusal off, for a second attempt that is deliberate (the redundant attempts of a hard task); it records nothing, and with no --plan-task there is nothing to duplicate and it changes nothing |
 | `--attach` | stringArray | `[]` | no | attach a file to the run: repeatable, uploaded to the run's own inputs/ and downloaded by a mode: artifact run into the checkout's inputs/ (needs a mode: artifact recipe; refused on a run ID that already has a task) |
 | `--attempts` | int | `0` | no | launch N (2 to 4) independent runs of the same task, workflow, ref and recipe as a best-of-N batch (bestof-<first run id> unless --batch is given); refused with --pr, --run-id, --retry or a review-mode recipe |
 | `--batch` | string | "" | no | batch label, to group runs in fugaro runs ls |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--continues` | string | "" | no | continue the chain of RUN (a run ID, or <repo-slug>/<run-id>): this launch inherits the chain's remaining limits, for a chain with no pull request — the run you name opened nothing to follow up. The chain's limit is read from the run that began it, and what it has spent from the chain's runs' budget ledgers; this launch's own --max-* may only tighten the remaining. Refused with --pr, --retry and --attempts, which name a chain's previous run themselves |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for run |
 | `--json` | bool | `false` | no | print machine-readable output |
@@ -4607,21 +6797,26 @@ Flags:
 | `--no-compression` | bool | `false` | no | turn agent.compression off for this run only, overriding fugaro.yaml; there is no flag to turn it on, which is a reviewed fugaro.yaml change |
 | `--owner-ruled` | string | "" | no | the repository owner's ruling on the findings a run on this PR left for them (OD1): either the text itself, a file, or - for stdin. A follow-up on a pull request whose last run stopped waiting on owner decisions is refused without it, and one whose last run left no such decisions is refused with it: the ruling answers what that run left, and nothing else; it is appended to this run's brief verbatim and recorded in the run |
 | `--path` | stringArray | `[]` | no | declare a path this run will touch, matched against the rigor.areas rules in effect (the repository's, and the project layer's beside them): repeatable; a run that declares none matches no area rule |
-| `--plan-task` | string | "" | no | record the plan task this run works on, as <plan>/<task> (for example setup-wizard/W1.3): the id the console's graph joins this run to a node by; it changes nothing about what the run does, and a follow-up (--pr) records one only when given |
+| `--plan-task` | string | "" | no | record the plan task this run works on, as <plan>/<task> (for example setup-wizard/W1.3): the id the console's graph joins this run to a node by; it changes nothing about what the run does, and a follow-up (--pr) records one only when given. A plan task that a run in flight, or a pull request a run of it left behind, already holds is refused (--allow-duplicate launches it anyway) |
 | `--pr` | intSlice | `[]` | no | continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions); with a mode: review --recipe, review PR N instead (repeatable, 1 to 4, any open PR) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
-| `--recipe` | string | "" | no | the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's (default, lint-fix, pick, premium, review-only, run-digest, solo, standard, test-and-fix); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's |
+| `--recipe` | string | "" | no | the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's (ab-judge, default, escalate, lint-fix, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's |
 | `--ref` | string | "" | no | base branch or ref the run is cut from (default: the branch this checkout is on, when origin has it and it is not the base branch; else the base branch (fugaro.yaml git.base_branch, then the local config's, then the project's base_branch, then main)) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | repository as owner/name, or a path inside its checkout (default: this checkout's origin) |
 | `--retry` | string | "" | no | launch the stored task of RUN (a full run ID, or <repo-slug>/<run-id>) that never started: a run an ending names is never launched, since the bucket cannot vouch for which run an ending means |
 | `--review-levels` | string | "" | no | read the run's own review levels from this YAML file, or - for stdin: the block the task stores as review_levels (l1, l2, l3, each of model, effort, none and focus), decoded strictly, with no key on no level meaning the configuration decides it. Asking for levels needs a job image whose runner acts on them, so a launch on an older one is refused and names fugaro image refresh; without the flag the run resolves its levels from its configuration and its mode alone |
 | `--run-id` | string | "" | no | run ID to use; repeating one reports its launch instead of starting another |
+| `--security` | bool | `false` | no | ask for the strongest review this run can get: it turns review level 3 on for the run whatever paths it changed, over the repository's own security: rows and the project layer's always_level_3. It only ever turns the level on — there is no way to ask for less — as --mode raises a mode and never lowers one, and a run that says nothing resolves its levels from its configuration alone |
 | `--task-file` | string | "" | no | read the task from this file, or - for stdin |
 | `--tier` | string | "" | no | the expectation tier to dispatch this run at: trivial, small, medium, large. It is what the run is expected to cost and take (governance.tiers in fugaro.yaml and the project layer), and never a cap: the run's own budget cap stays the ceiling. A --pr follow-up keeps the tier its PR's runs recorded; without this flag a run carries no expectation at all |
 | `--title` | string | "" | no | the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given |
 | `--token` | string | "" | no | named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's) |
 | `--total-timeout` | string | "" | no | override the workflow's timeouts.total for this run, such as 45m |
+| `--used-review-rounds` | string | "" | no | state that the chain has already spent N review rounds, such as 2: tighten-only like --used-usd |
+| `--used-time` | string | "" | no | state that the chain has already used this much wall time, as a duration such as 45m: tighten-only like --used-usd |
+| `--used-tokens` | string | "" | no | state that the chain has already used N tokens, such as 400000: tighten-only like --used-usd, and the one figure a chain whose budget is off reads for the token dimension, which no run record carries |
+| `--used-usd` | string | "" | no | state that the chain has already used X dollars, such as 3 or 2.5: it may only raise what the engine read from the chain's runs (fugaro refuses a figure below it, naming both), which is how a caller accounts for spend the chain's own runs do not hold |
 | `--workflow` | string | "" | no | workflow to run (default: the repo's only workflow) |
 
 Subcommands:
@@ -4644,8 +6839,10 @@ Subcommands:
 
 - `fugaro runs digest` -- Write a closed period's report of this repository into its own docs tree
 - `fugaro runs ls` -- List runs with their status, stage, cost and PR
+- `fugaro runs show` -- Show a run's chain and what is left of its limits
 - `fugaro runs stats` -- Aggregate run records by the person who started each run
 - `fugaro runs summary` -- Count the window's runs and their spend, without reading a run object
+- `fugaro runs watch` -- Print the triage the daemon would decide about the window's long runs
 
 ## `fugaro runs digest`
 
@@ -4765,10 +6962,33 @@ next page. The id is the run_id --json carries; one the listing does not
 hold is refused rather than answered with an empty page, which reads as no
 more runs. Neither flag goes with --watch, which redraws the whole listing.
 
---state STATE lists only runs in that state, matched against the status --json
-carries: the `halted (run_cap)` cell is --state halted, and --help lists the
-states the flag takes. A run's state is in its result.json, so this filter
-reads every run it filters -- it narrows the listing, never the reads.
+--state STATE lists only the runs in that state, one of two vocabularies.
+The first is the run's own state, matched against the status --json carries:
+the `halted (run_cap)` cell is --state halted. The second is the state of
+the pull request the run went to: live (a run is going on it), ready (no
+run is going and it waits only on a merge) or stalled (it had a run, no run
+is going, and it is not ready). That state is the pull request's and not a
+row's: the listing groups the runs it read by the pull request they carry,
+takes the newest one of each that says what the pull request is -- the run
+whose outcome is ready or draft, so a rebase or a review that left it as
+it found it does not decide -- and keeps the rows of the pull requests in
+the state asked for; --json carries it as `pr_state` on every row that has
+a pull request, and leaves it out of the rows that have none. It is the
+last state a run recorded of the pull request and not the pull request's
+state now: nothing here calls the forge, so a pull request merged or
+closed after the run that left it ready still reads ready, and one
+closed after a draft still reads stalled. A review run's pull request is
+the one its task reviews, which its record names only when the review
+ends: while it is going, its row reads that pull request's state though
+its pr is still empty. A run's own state is in its result.json, so this
+filter reads every run it filters -- it narrows the listing, never the
+reads.
+
+The fourth state of a pull request, orphan (no run ever produced or follows
+it), is one no listing of runs can name: such a pull request has no run and
+so no row here, and telling one from every other would take a call to the
+forge, which a listing of runs does not make -- --state orphan is refused
+for that reason rather than answered with an empty listing.
 
 --debt lists only the runs filed from a triage deferral: a task whose own spec
 is marked debt, which is work a run's review left behind rather than work
@@ -4810,8 +7030,57 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | only this repository (owner/name, or a path inside its checkout) |
 | `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
-| `--state` | string | "" | no | only runs in this state (cancelled, error, failed, halted, infra_error, launching, pending, running, succeeded, unlaunched, unreviewed) |
+| `--state` | string | "" | no | only runs in this state, a run's or its pull request's (cancelled, error, failed, halted, infra_error, launching, pending, running, succeeded, unlaunched, unreviewed, live, ready, stalled) |
 | `--watch` | bool | `false` | no | redraw until every run has settled |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro runs show`
+
+Show a run's chain and what is left of its limits
+
+Show the chain RUN (a run ID, <repo-slug>/<run-id>, or the last four or
+more characters of a run ID) belongs to: the run that began it, each
+dimension's limit, what the chain has used of it and what is left, the layer
+each limit's source names, and whether the chain is ENFORCED or UNENFORCED.
+When the run is halted, the halt is printed too.
+
+A chain is the unit of work whose runs share one limit (D1045): the limit is the
+figure the run that began the chain was launched with, and what has been used is
+read off the chain's runs — the dollars and tokens from the budget database's
+per-run ledgers, the wall time and review rounds from the run records. With the
+budget off there is no ledger, the records are the figures, the chain is marked
+UNENFORCED, and the token dimension is reported unmeasured rather than
+approximated.
+
+The wall-time and review-round limits are advisory: no rule enforces them.
+
+The bucket ages a run's objects out, so a chain older than that window has a
+root whose stored task is gone: the chain itself is still shown and its limit is
+reported as one that could not be read (limits_read false) rather than as a chain
+that bounds nothing (limits_read true, an empty limits).
+
+--json prints {version, repo, run, chain, run_count, enforced, limits_read, limits[], halt},
+each limit a {dimension, limit, used, remaining, source} whose amounts are in
+the dimension's own unit: micro-dollars for the money — the unit the budget
+database and the rest of the CLI's documents count it in — whole tokens,
+seconds and a count.
+
+Usage: `fugaro runs show RUN`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for show |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | the repository RUN belongs to (owner/name, or a path inside its checkout; needed only for a bare run ID) |
 
 Subcommands:
 
@@ -4858,11 +7127,11 @@ $/RUN is COUNTED $ over COUNTED RUNS, the runs that settled a real-dollar cost;
 a notional run, a run with no readable record and a record from before the cost
 breakdown existed are none of them averaged in as a run that cost nothing.
 
-Who sees whom. An operator of the installation -- the identity the local config's
-user: (or git config user.email) names, listed in its terraform.operators, the
-list fugaro doctor's runs-bucket-iam check reads -- sees every user. Anyone else
-sees their own row alone, and --all-users asks for the whole table. An
-installation that names no operators (one from before the 0.7.0 hardening, say)
+Who sees whom. An admin of the installation -- the identity the local config's
+user: (or git config user.email) names, listed in its terraform.admins, one of
+the two lists fugaro doctor's runs-bucket-iam check reads -- sees every user.
+Anyone else sees their own row alone, and --all-users asks for the whole table.
+An installation that names no admins (one from before the 0.7.0 hardening, say)
 places nobody, and the view then stays private: the default is never the wider
 one. Whose numbers a table shows is printed above it.
 
@@ -4896,7 +7165,7 @@ record -- never launched, cancelled before launch, or a stale claim -- never
 started and is counted in no figure. The count of those is the window's, over
 everyone's runs, and is no more the caller's own than the truncation is.
 
---json prints {project, by, view, you, operator, since, until, max_runs,
+--json prints {version, project, by, view, you, admin, since, until, max_runs,
 truncated, rows[], totals[], unlaunched, notes}; rows and totals carry {user,
 currency, runs, succeeded, failed, halted, infra_error, other, no_record,
 counted_usd, notional_usd, counted_runs, avg_counted_usd}, and the counts add up:
@@ -4984,13 +7253,70 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro runs watch`
+
+Print the triage the daemon would decide about the window's long runs
+
+Print, for every run in the window, what the daemon's long-run triage would
+decide about it: the outcome, the closed codes behind it, the input nobody
+could read, and the threshold the decision is taken against.
+
+The window is runs ls's: the same --repo, --all, --mine, --since and --batch,
+and the same listing behind them. Each run of it is read the way the daemon
+reads one — its record from its own storage, its pull request and its checks
+from the host the run's repository is on, and the findings artifact it
+finalized with — and the outcome is the rule's own, so the print is what the
+daemon would decide and not a second opinion about it.
+
+This command changes nothing at all. It writes no record, no audit line, no
+cancel marker and no work item, it merges nothing, it cancels nothing, and it
+has no flag that acts on a run: everything the triage does is the daemon's,
+on its own evidence, and this is the reading a person takes before that.
+
+An input that cannot be read is never an error: the rule answers
+recommend-only, which merges, cancels and restarts nothing, and the print
+names the input — record, findings, changed paths or ci — beside the outcome.
+A run under the threshold is printed as not-due: the rule read nothing about
+it, and that is not one of the four outcomes.
+
+The age is the run's own mint time against now. The daemon ages a run from
+the attempt it recorded in its own database, which this command does not
+read: the two agree to the minute for a run the daemon started, and a run
+somebody else started has no attempt for the daemon to age at all.
+
+--json prints {version, project, threshold_seconds, runs[], warnings}; runs
+carries {run, repo, age_seconds, outcome, reasons[], unreadable,
+without_a_person}.
+
+Usage: `fugaro runs watch`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--all` | bool | `false` | no | every repository in the runs bucket |
+| `--batch` | string | "" | no | only runs of this batch |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for watch |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--mine` | bool | `false` | no | only runs you requested |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | only this repository (owner/name, or a path inside its checkout) |
+| `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro seats`
 
 Estimate how many people a subscription's seat rule would count
 
 Estimate how many people a subscription's seat rule would count on this
 installation, from the installation's own data alone: the people on this
-machine's launcher and operator lists, plus everyone who requested a run in the
+machine's operator and admin lists, plus everyone who requested a run in the
 last 90 days, each counted once.
 
 The estimate is ADVISORY. A seat is a contract pricing rule of the Subscription
@@ -5003,14 +7329,14 @@ and reads only core data.
 
 The three sources, and what each one is worth:
 
-  - terraform.launchers and terraform.operators in this machine's own project
+  - terraform.operators and terraform.admins in this machine's own project
     config: the two lists fugaro setup writes and fugaro update applies. They are
-    the operator's record of who may launch, and members the console or an agent
+    the admins' record of who holds a role, and members the console or an agent
     launch records elsewhere are not in them.
   - The requesters of the runs the last 90 days minted, read from each run's
-    task.json in every repository of the installation's bucket. Every launcher
-    counts, an agent launch is recorded under the configured person, and an agent
-    with no configured identity is invisible here.
+    task.json in every repository of the installation's bucket. Everyone who
+    launches counts, an agent launch is recorded under the configured person, and
+    an agent with no configured identity is invisible here.
 
 What the estimate cannot tell, it lists and does not guess:
 
@@ -5033,10 +7359,16 @@ what the launching CLI typed -- so the comparison folds case, and the row's key
 is the text printed: two texts that print alike are one person, and the
 estimate is the number of rows.
 
---json prints {project, days, since, until, people[], not_counted[],
+--json prints {version, project, days, since, until, people[], not_counted[],
 unreadable, notes}; people carry {person, sources[]} and not_counted {member,
-why, sources[]}, sources from launcher, operator and requester, and why is
+why, sources[]}, sources from run_operator, admin and requester, and why is
 unknown_size or account.
+
+Version 2 is this document. Version 1 named a row's sources with the words the
+roles carried before they were renamed -- "launcher" for the run-starters and
+"operator" for the admins -- and neither word is a value here any more: a
+consumer reading "operator" as the list version 1 named it would draw the
+admins.
 
 Usage: `fugaro seats`
 
@@ -5069,9 +7401,93 @@ Flags:
 
 Subcommands:
 
+- `fugaro secrets allow` -- Add repositories to a project secret's allow-list (project_secrets.NAME.allow_data_to)
+- `fugaro secrets deny` -- Remove repositories from a project secret's allow-list
 - `fugaro secrets ls` -- List the project's (or, with --repo, a repository's) secrets: names, scope and versions, never values
 - `fugaro secrets rm` -- Withdraw a project secret: delete its Secret Manager container and its config entry
 - `fugaro secrets set` -- Store a secret's value, read from stdin or a hidden prompt, as a new version
+- `fugaro secrets shared` -- Store, list and remove the secrets the project shares (an admin's)
+- `fugaro secrets user` -- Store, list and remove the secrets you own
+
+## `fugaro secrets allow`
+
+Add repositories to a project secret's allow-list (project_secrets.NAME.allow_data_to)
+
+Add each PATTERN to project_secrets.NAME.allow_data_to — or to
+workflow_secrets.NAME.allow_data_to for a name your local config holds there —
+the list of repositories the value is stored for and mounted in.
+
+A PATTERN is a repository as owner/name, and may use * inside a segment, never
+across /: myworkspace/* is a whole workspace and myworkspace/api-* a family,
+while the owner segment is literal (one project secret is one owner's
+credential). A pattern means every repository it matches, now and later, so
+adding one is a widening: it is one more repository the value is mounted in.
+
+With --proxy, and no PATTERN, this writes project_secrets.NAME.proxy on its
+own: the Bitbucket token's switch for the credentials service, which is also a
+widening, because it hands the token to the service rather than to the job.
+--proxy=false takes the switch away again and is the one form here that is not
+a widening. --proxy is refused for a workflow secret, whose entry holds no such
+member (D493, D1275).
+
+Adding a repository or turning the switch on is the owner's own step: it asks
+nothing at your own terminal, and a coding agent's session is refused it, with
+the command to run yourself (D1552). This whole family is refused in a session,
+and no flag lifts it. Nothing here reads or prints a value.
+
+This is a local file edit. It ends on one line: next: fugaro update — the
+published policy's entry is derived from this list, so the change reaches the
+project's runs in that run and not before it.
+
+Usage: `fugaro secrets allow NAME PATTERN...`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for allow |
+| `--proxy` | bool | `false` | no | set project_secrets.NAME.proxy, the Bitbucket token's switch for the credentials service (--proxy=false turns it off) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro secrets deny`
+
+Remove repositories from a project secret's allow-list
+
+Remove each PATTERN from project_secrets.NAME.allow_data_to — or from
+workflow_secrets.NAME.allow_data_to for a name your local config holds there —
+so the value is no longer stored for it and no longer mounted in it.
+
+This is the one edit of this family that narrows: the repositories that remain
+are the ones the value still reaches. A pattern the entry does not name is not
+an error and not a write — the command says there is no change, because the
+state it was asked for is the state the file is in.
+
+A removal that leaves the list empty is allowed and is not a removal of the
+entry: the value is then stored for no repository, and the entry stays for the
+day a pattern is added back.
+
+This whole family is refused in a coding agent's session (spec §5): what a
+secret reaches is a decision no plan shows. Nothing here reads or
+prints a value.
+
+This is a local file edit. It ends on one line: next: fugaro update — the
+published policy's entry is derived from this list, so the change reaches the
+project's runs in that run and not before it.
+
+Usage: `fugaro secrets deny NAME PATTERN...`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for deny |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro secrets ls`
 
@@ -5169,7 +7585,7 @@ This command never prints a value: the entry it removes holds an allow-list
 and a switch, and a value is not a setting and is never in a diff.
 
 Run it at your own terminal: a removal of a secret is a value no plan shows,
-so a coding agent's session is refused, --yes included.
+so a coding agent's session is refused.
 
 Usage: `fugaro secrets rm NAME`
 
@@ -5184,7 +7600,6 @@ Flags:
 | `--json` | bool | `false` | no | print the dry run's document as JSON (with --dry-run) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--yes` | bool | `false` | no | confirm the removal without a prompt |
 
 Subcommands:
 
@@ -5284,7 +7699,7 @@ A value is not a setting: it has no row, it is never in a diff, and no dry
 run of this command prints one. secrets set with neither policy flag is the
 value write and reads the value from stdin; to store a value and change its
 policy, run the command twice. A coding agent's session is refused the
-policy flags outright, --yes included (spec §5), because a secret's policy is
+policy flags outright (spec §5), because a secret's policy is
 a value no plan shows.
 
 Usage: `fugaro secrets set NAME`
@@ -5304,7 +7719,260 @@ Flags:
 | `--proxy` | bool | `false` | no | set project_secrets.NAME.proxy, the Bitbucket token's switch for the credentials service (--proxy=false turns it off) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | work on one repository's own copy, given as owner/name or a path inside its checkout (no value: this checkout's origin); without it, a name that has a project-wide meaning is stored and listed project-wide |
-| `--yes` | bool | `false` | no | confirm the policy write without a prompt (outside a coding agent's session) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro secrets shared`
+
+Store, list and remove the secrets the project shares (an admin's)
+
+Usage: `fugaro secrets shared`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for shared |
+
+Subcommands:
+
+- `fugaro secrets shared ls` -- List the secrets under this prefix: names and dates, never values
+- `fugaro secrets shared rm` -- Remove a secret this prefix holds
+- `fugaro secrets shared set` -- Store a secret's value, read from stdin or a hidden prompt, through the intake
+
+## `fugaro secrets shared ls`
+
+List the secrets under this prefix: names and dates, never values
+
+List the installation's intake's containers under this prefix: the names and
+the dates they were made, and no version's value. The intake has no route that
+answers a value at all, so this command cannot print one whatever it is asked.
+
+Scope: the project's own prefix, fugaro_p_<name>, which the intake serves
+to an admin on the installation's derived admin list and to nobody else
+(D1935, D1940). A caller who is not on it is refused by the intake, by name,
+and nothing is written.
+
+Usage: `fugaro secrets shared ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro secrets shared rm`
+
+Remove a secret this prefix holds
+
+Remove the container NAME through the installation's intake: the container and
+every version in it, which is the only way back from a value stored under a
+name that was meant for something else.
+
+Scope: the project's own prefix, fugaro_p_<name>, which the intake serves
+to an admin on the installation's derived admin list and to nobody else
+(D1935, D1940). A caller who is not on it is refused by the intake, by name,
+and nothing is written.
+
+Usage: `fugaro secrets shared rm NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro secrets shared set`
+
+Store a secret's value, read from stdin or a hidden prompt, through the intake
+
+Store the value of NAME through the installation's secrets intake, as a new
+version: the container is created if it doesn't exist, and a second call with
+the same name rotates it.
+
+The value is read only from stdin: pipe or redirect it in (fugaro secrets shared set
+github-token < token-file), or, when stdin is a terminal, paste it at a hidden
+prompt. It is never taken from an argument, a flag or the environment, and
+never printed. One trailing newline (\n or \r\n) is dropped, and the command
+says so. A value is one line of 4 bytes to 64 KiB with no whitespace at either
+end. The one value that spans lines is the GitHub App key's PEM, and it has no
+business here: `fugaro secrets set github-app-key` is the command that stores
+one, and the intake's two prefixes refuse that name (R7). Ctrl-C at the prompt
+stores nothing and restores the terminal.
+
+The value travels to the intake and is written there by the intake's own
+account: this command sends it over the installation's own endpoint, with the
+person's own Google ID token as the caller, and holds no write of its own in
+Secret Manager.
+
+Scope: the project's own prefix, fugaro_p_<name>, which the intake serves
+to an admin on the installation's derived admin list and to nobody else
+(D1935, D1940). A caller who is not on it is refused by the intake, by name,
+and nothing is written.
+
+The installation's intake is deployed by `fugaro update`: an installation whose
+release predates it, or one whose deployment does not answer the intake's
+routes, is refused with that command as the whole upgrade.
+
+Usage: `fugaro secrets shared set NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro secrets user`
+
+Store, list and remove the secrets you own
+
+Usage: `fugaro secrets user`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for user |
+
+Subcommands:
+
+- `fugaro secrets user ls` -- List the secrets under this prefix: names and dates, never values
+- `fugaro secrets user rm` -- Remove a secret this prefix holds
+- `fugaro secrets user set` -- Store a secret's value, read from stdin or a hidden prompt, through the intake
+
+## `fugaro secrets user ls`
+
+List the secrets under this prefix: names and dates, never values
+
+List the installation's intake's containers under this prefix: the names and
+the dates they were made, and no version's value. The intake has no route that
+answers a value at all, so this command cannot print one whatever it is asked.
+
+Scope: your own prefix, fugaro_u_<your account id>_<name>. The owner is
+taken from the identity token this command presents and never from anything
+this command says about itself, so no caller can write under another person's
+prefix (R3, R12).
+
+Usage: `fugaro secrets user ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro secrets user rm`
+
+Remove a secret this prefix holds
+
+Remove the container NAME through the installation's intake: the container and
+every version in it, which is the only way back from a value stored under a
+name that was meant for something else.
+
+Scope: your own prefix, fugaro_u_<your account id>_<name>. The owner is
+taken from the identity token this command presents and never from anything
+this command says about itself, so no caller can write under another person's
+prefix (R3, R12).
+
+Usage: `fugaro secrets user rm NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro secrets user set`
+
+Store a secret's value, read from stdin or a hidden prompt, through the intake
+
+Store the value of NAME through the installation's secrets intake, as a new
+version: the container is created if it doesn't exist, and a second call with
+the same name rotates it.
+
+The value is read only from stdin: pipe or redirect it in (fugaro secrets user set
+github-token < token-file), or, when stdin is a terminal, paste it at a hidden
+prompt. It is never taken from an argument, a flag or the environment, and
+never printed. One trailing newline (\n or \r\n) is dropped, and the command
+says so. A value is one line of 4 bytes to 64 KiB with no whitespace at either
+end. The one value that spans lines is the GitHub App key's PEM, and it has no
+business here: `fugaro secrets set github-app-key` is the command that stores
+one, and the intake's two prefixes refuse that name (R7). Ctrl-C at the prompt
+stores nothing and restores the terminal.
+
+The value travels to the intake and is written there by the intake's own
+account: this command sends it over the installation's own endpoint, with the
+person's own Google ID token as the caller, and holds no write of its own in
+Secret Manager.
+
+Scope: your own prefix, fugaro_u_<your account id>_<name>. The owner is
+taken from the identity token this command presents and never from anything
+this command says about itself, so no caller can write under another person's
+prefix (R3, R12).
+
+The installation's intake is deployed by `fugaro update`: an installation whose
+release predates it, or one whose deployment does not answer the intake's
+routes, is refused with that command as the whole upgrade.
+
+Usage: `fugaro secrets user set NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
@@ -5497,15 +8165,15 @@ adding a name to a followup.* list or turning one of those keys on, is a
 widening, and a widening is the owner's own step: nothing is asked for it at
 your own terminal, and a coding agent's session is refused it with the command
 to run yourself (D1552). Writing outside a repository is refused in a coding
-agent's session, --yes included: --yes never lifts that fence.
+agent's session, and no flag lifts that fence.
 
 --dry-run says what the edit would do — the key, the layer, the file, the old
 and the new value, and whether it raises a limit — and writes nothing: no
 confirmation, no backup, no change to any file. It is answered with no
 terminal, and with --json it prints the versioned document
 schemas/settings-write.schema.json describes, which is what a caller that draws
-an edit reads. --dry-run takes neither --yes (the two answer different
-questions) nor a bare --json.
+an edit reads. --dry-run takes no bare --json (the two answer different
+questions).
 
 Every write ends with one line: next: fugaro update.
 
@@ -5517,7 +8185,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--add` | string | "" | no | add an item to a string-list key |
 | `--add-entry` | stringArray | `[]` | no | add one entry to a map or an object list (field=value, once per member the entry has) |
-| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this write would otherwise get (the y/N) instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back — a widening is the owner's own step and is asked nothing with or without it (D1552). Refused where nobody can answer them (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes |
+| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this write would otherwise get (the y/N) instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back — a widening is the owner's own step and is asked nothing with or without it (D1552). Refused where nobody can answer them (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--dry-run` | bool | `false` | no | print what the edit would do and write nothing |
 | `--executable-changes` | bool | `false` | no | allow a --layer repo write that changes a workflow's commands or image steps, or a --layer project write that changes a profile's commands or image steps (both run as shell in every run of the repositories that take them) |
@@ -5528,7 +8196,6 @@ Flags:
 | `--remove` | string | "" | no | remove an item from a string-list key |
 | `--remove-entry` | stringArray | `[]` | no | remove one entry from a map or an object list (the member's name, or the key field's value) |
 | `--repo` | string | "" | no | the repository whose fugaro.yaml to edit (owner/name, or a path inside its checkout) |
-| `--yes` | bool | `false` | no | confirm the write without a prompt |
 
 Subcommands:
 
@@ -5557,8 +8224,8 @@ writing one does (spec §3.7).
 value it takes away, and whether it raises a limit — and writes nothing: no
 confirmation, no backup, no change to any file. It is answered with no
 terminal, and with --json it prints the versioned document
-schemas/settings-write.schema.json describes. --dry-run takes neither --yes
-(the two answer different questions) nor a bare --json.
+schemas/settings-write.schema.json describes. --dry-run takes no bare --json
+(the two answer different questions).
 
 Every write ends with one line: next: fugaro update.
 
@@ -5568,7 +8235,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this removal would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes, --dry-run and --json |
+| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this removal would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed; refused beside --dry-run and --json |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--dry-run` | bool | `false` | no | print what the edit would do and write nothing |
 | `--executable-changes` | bool | `false` | no | allow a --layer repo write that takes away a workflow's commands or image steps, or a --layer project write that changes a profile's commands or image steps (both run as shell in every run of the repositories that take them) |
@@ -5577,7 +8244,6 @@ Flags:
 | `--layer` | string | "" | no | the layer to write (local, project, repo) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--repo` | string | "" | no | the repository whose fugaro.yaml to edit (owner/name, or a path inside its checkout) |
-| `--yes` | bool | `false` | no | confirm the write without a prompt |
 
 Subcommands:
 
@@ -5590,7 +8256,7 @@ Create a fresh GCP project and stand up its installation, or a repository's clou
 setup plans the installation's shared resources (the runs bucket, registries,
 custom roles, the scheduler account, log isolation, an optional budget) with
 Terraform, importing what the bootstrap already made, and applies the plan it
-showed once a person at the terminal confirms it (or pass --yes). It
+showed once a person at the terminal confirms it. It
 then writes the project config from the installation's outputs. With no
 project config yet, --name, --gcp-project and --region say what to create:
 projects/<name>.yaml.
@@ -5599,14 +8265,14 @@ It enables the Cloud Resource Manager API when it is disabled (setup reads
 the project's number through it before Terraform can enable it), creates
 the Terraform state bucket first when it doesn't exist, and offers to remove
 project Viewers' read access to the runs bucket, each after its own
-confirmation. --plan-only never takes --yes: what the plan needs made first
+confirmation. --plan-only applies nothing and confirms nothing: what the plan needs made first
 (the state bucket, the API) takes a person at the terminal, or the run stops
 and says so. A plan that would delete or replace anything is
 refused unless --allow-delete names the address.
 
-A new project config grants the launcher and operator roles to you, the
+A new project config grants the operator and admin roles to you, the
 authenticated user (user:<your email> from the Application Default
-Credentials), so that fugaro run works; --launcher or --operator replaces that,
+Credentials), so that fugaro run works; --operator or --admin replaces that,
 an existing config is never changed by it, and with a service
 account's credentials it stops and names the two flags.
 
@@ -5622,7 +8288,7 @@ baked into the image its job runs (--bake-repos; yes, which makes jobs start
 faster; asked only where it can be answered, so a run with a project config
 keeps that project's answer). Every question has its flag, so only the
 confirmations below need a terminal at all: without one, or with
---non-interactive, --yes or --json, the run names every missing flag in one
+--json, the run names every missing flag in one
 error — the bake switch needs no flag there, because an absent key means the
 same as a written yes. An ID that already exists is refused before anything is
 asked or changed ("Fugaro only starts fresh: <id> already exists; pick
@@ -5686,12 +8352,12 @@ it names is: that removal when needed, fugaro image refresh --repo
 base image and pins it by digest, points the daily image check job at it and
 rebuilds the image), then fugaro setup --anchor. The image checks trust the build records (written by
 the builds, unsigned: the same trust as the shared config), and a hand-pushed
-image under a release-looking tag passes them. Then the diff; --yes writes, a person at the
-terminal confirms it there (nothing is typed), and a run that is neither
+image under a release-looking tag passes them. Then the diff; a person at the
+terminal confirms it there (nothing is typed), and a run with no terminal
 prints the line and writes nothing. Exit codes: 0 written or already present
 and safe, 1 a check failed or nothing was written, 2 a build record could not
 be read from the cloud (missing credentials included). A coding agent's
-session may run it, --yes included: it edits only a local file.
+session may run it: it edits only a local file.
 
 setup --firebase-project <gcp-project-id> turns the shared budget on: it
 builds the budget backend in the installation's own GCP project. The value is
@@ -5711,8 +8377,7 @@ largest lease, after a confirmation of their own, then writes the local
 config. The same step creates the Firestore database for the spend history
 (fugaro report) if the project has none: its location, us-east5, is permanent
 (chosen once, never changed or deleted by Fugaro), so the location's
-confirmation is the person at a real terminal (nothing is typed; --yes,
---non-interactive, --json and a pipe never confirm it, and the step is then
+confirmation is the person at a real terminal (nothing is typed; --json and a pipe never confirm it, and the step is then
 left for you), and it
 refuses a database that holds data or is in another location; it also deploys
 deny-everything Firestore rules and the Fugaro mark. --plan-only stops after the installation's plan. Each repository then
@@ -5723,8 +8388,8 @@ the current directory), whose fugaro.yaml says what it needs, into the
 installation fugaro setup applied. It imports what the bootstrap made for it
 (checking each resource's marks and live grants first), creates the rest,
 and deploys each workflow's job once its secrets are stored and its image is
-built. It offers each workflow's first image build (billable: --yes covers it, and a
-person at a terminal without --yes confirms it there), then deploys the built image and unpauses the daily check. It
+built. It offers each workflow's first image build (billable: the person at the
+terminal confirms it there), then deploys the built image and unpauses the daily check. It
 prints the fugaro secrets set commands still needed, and adds the
 repository to the local config. A repository the local config does not list
 takes the same opt-in as the converge's stages (below): the confirmation of a
@@ -5746,7 +8411,9 @@ still prints its own exact plan. It never covers creating a project, linking
 billing, the Firestore database's permanent location, a Cloud Build, replacing
 a registry tag (--replace-image), an unlisted repository or a secret. Those are
 their own steps: the build, the tag and onboarding an unlisted repository are
-covered by --yes in either door (D12's answer of 2026-10-20), and a project's
+covered by the run's own confirmation in a project whose gate stands in for it,
+and taken by the person at the terminal otherwise (D12's answer of 2026-10-20
+keeps them one class in either door), and a project's
 creation, the billing link, the location and a secret value keep a
 confirmation of their own, taken with the person at the terminal. The state bucket and the API enable are fixed, announced, free steps; every
 Terraform plan is shown as it runs and is covered only if it is creates and
@@ -5761,12 +8428,11 @@ widened role) is not covered by the run's confirmation: it is shown and then
 applied, and left for you where nobody is at the terminal. The confirmation is
 per run and never stored. Any other project
 (one an earlier run created and this one resumed, unmarked, or a mark that
-fails to read) keeps its own confirmation at each step;
---yes covers the ordinary steps as ever and takes no review; --non-interactive,
---json, a pipe and a coding agent never take it; --plan-only shows the review
-and applies nothing.
+fails to read) keeps its own confirmation at each step, taken at your own
+terminal; --json, a pipe and a coding agent never give one; --plan-only shows
+the review and applies nothing.
 
-What --yes covers: the ordinary steps, which are the installation's and the
+What that confirmation covers: the ordinary steps, which are the installation's and the
 Firebase root's Terraform applies, the images' copy, the local config's
 writes, the plugin wiring, a repository's steps — onboarding one the project
 does not list included — a billable first image build and replacing a tag in
@@ -5775,35 +8441,34 @@ your registry (--replace-image KIND names the intent). D12's answer of
 door, while a repository whose origin git config rewrites, or whose host is not
 a provider's own, takes the confirmation of a person at the terminal whatever
 the run was given. What
---yes still never covers: creating a project or linking billing, a secret, and
+it still never covers: creating a project or linking billing, a secret, and
 the Firestore database's permanent location, this door's first-time question.
-With --yes, --non-interactive or --json each of those is left for you, with the
-one line to run. A first run that does ask the billing question — a pipe for
-standard input, none of those flags given — stops there instead: with no
-terminal the question is refused at once, in the sentence naming --link-billing,
-before any account of yours is read. In a coding agent's environment (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT,
+With no terminal, or with --json, each of those is left for you, with the
+one line to run: a first run that reaches the billing question is refused at
+once, in the sentence naming --link-billing, before any account of yours is
+read. In a coding agent's environment (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT,
 CLAUDE_CODE_REMOTE, CURSOR_AGENT or AI_AGENT is set) setup
-applies nothing, --yes included, and says to run it in your own terminal
+applies nothing and says to run it in your own terminal
 window; --plan-only and the read-only checks still work, and so does setup
---anchor (with --yes), which edits only the checkout's fugaro.yaml. That is a mitigation,
+--anchor, which edits only the checkout's fugaro.yaml. That is a mitigation,
 not a barrier: an agent can unset its own environment. CLAUDE_CODE_SSE_PORT is
 read the same way and is the one case that is not an agent's: the Claude Code
 IDE extension sets it in a person's own terminal too, so on its own it counts
 as a coding agent's session only where standard input is not a real terminal,
 and with a real terminal it types the same confirmations as any other — one
 line says the confirmation was accepted from an IDE terminal. Set beside any
-of the markers above it is an agent's session like theirs, and a pipe, --json,
---non-interactive and --yes behave exactly as they did. A run that writes this
+of the markers above it is an agent's session like theirs, and a pipe and
+--json behave exactly as they did. A run that writes this
 machine's local config from an installation that already exists (fugaro
 update on a new machine) changes nothing in the cloud in the same run (the
-local config and, in a checkout, the plugin wiring in .claude/settings.json
-are the only files it writes).
+local config and, in a checkout, the plugin installed in your own Claude Code
+at user scope are all it writes).
 
 In a checkout of a repository of this project, the converge's secrets stage
 asks, at hidden prompts, for the secrets its jobs mount (the git credential,
 the Claude credential agent.auth names, none for vertex, the allowed model
 providers' keys, the workflows' own), and skips what is already stored. It
-prompts only in your own terminal: never with --yes, --non-interactive or
+prompts only in your own terminal: never with
 --json (--json never prompts; the stage then exits 1 with the one-line
 fugaro secrets set commands), never when stdin, stdout or stderr is not a
 terminal (a pipe is never read), and never when a coding agent's variable is set (CLAUDECODE
@@ -5820,7 +8485,7 @@ changes nothing else. --gcp-project <id> is the new project's ID: the run
 creates it and adds Firebase to it, as you, at your own terminal, where being
 at it is what confirms the step; --link-billing <account> then links that
 billing account (it may incur charges), at your own terminal too. Each is its
-own confirmation, never given by --yes, --non-interactive or --json, and the ID
+own confirmation, taken by the person at the terminal and never by --json, and the ID
 is never the gcloud default project. Without a billing link, setup pauses at
 billing (above) and the rerun resumes the project it created. The project is labelled fugaro_created=true at its creation, and the
 run that created it marks it Fugaro-managed (its runs bucket's
@@ -5829,17 +8494,18 @@ installation; --managed with --budget, --budget-currency and --billing-account
 also records the monthly budget the managed apply needs. A creation that a
 later run finished is marked by that run only where the person at your own
 terminal confirms it: the fugaro_created=true label anyone may set says which
-project to ask about, and never marks one by itself (--yes, --json,
---non-interactive and a coding agent's session leave it for fugaro managed
+project to ask about, and never marks one by itself (--json
+and a coding agent's session leave it for fugaro managed
 flag). Marking any other project the owner runs an installation in is fugaro
 managed flag's. An ID that already exists and was not created by fugaro
 setup, or that is pending deletion, is refused.
 
-The plugin-wiring stage merges the Fugaro marketplace and plugin into the
-checkout's .claude/settings.json, pinned to this release's tag, after showing
-the diff and asking (--yes confirms it); see update-skills. The repository
-stage runs setup --repo for the checkout, after the secrets, when its
-origin's default branch (origin/HEAD, main or master, as last fetched) has a
+The plugin stage installs or updates the Fugaro plugin in your own Claude Code,
+at user scope, through the claude CLI, and writes nothing in the checkout: the
+merge of the marketplace and the plugin into .claude/settings.json is deleted
+(D949); see update-skills. The repository stage runs setup --repo for the
+checkout, after the secrets, when its origin's default branch (origin/HEAD,
+main or master, as last fetched) has a
 fugaro.yaml naming this project (else it is skipped and says why); it asks
 once for the GitHub App's ID of a GitHub repository (or take --github-app-id)
 and keeps its own confirmations, the first image build's included.
@@ -5847,9 +8513,8 @@ and keeps its own confirmations, the first image build's included.
 In a checkout whose repository the local config does not list yet, the converge
 onboards it at the gate, before any stage plans, and asks nothing: the note the
 gate prints names the repository, its host and the checkout's path, a person at
-the terminal reads it and the repository is onboarded with nothing typed — and
-where the origin's identity is the one it claims, --yes covers the step
-outright. A run that can confirm neither (--non-interactive, --json, a pipe, a
+the terminal reads it and the repository is onboarded with nothing typed. A run
+that cannot confirm it (--json, a pipe, a
 coding agent's environment) leaves the repository as it is for the rest of the
 run — no later stage asks for it again — and says how to enrol it later. Run
 outside a checkout there is nothing to ask about, so setup prints the one line
@@ -5860,9 +8525,9 @@ or one you opt in: a repository not listed yet is onboarded when you opt it in
 — the confirmation of a person at your own terminal (naming the checkout's
 path), or
 --onboard-repo owner/name, which must equal the origin (setup --repo takes both
-too) — or by the run's own --yes, which covers onboarding one whose origin git
+too) — or by the run's own confirmation, which covers onboarding one whose origin git
 config does not rewrite and whose host is a provider's own (D12's answer of
-2026-10-20). --non-interactive without --yes, --json, a pipe and a coding
+2026-10-20). --json, a pipe and a coding
 agent's environment confirm none of it (the flag is refused there), so a cloned
 third-party repository cannot onboard itself. The secrets stage is behind the
 same gate.
@@ -5873,11 +8538,11 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--admin` | stringArray | `[]` | no | an IAM member who may onboard repositories, apply Terraform and submit builds (the admin role; repeatable; default: the local config's, and for a new config you, the authenticated user) |
 | `--alert-email` | string | "" | no | where failed image checks and rebuilds are reported (default: the local config's) |
 | `--allow-delete` | stringArray | `[]` | no | a resource address the plan may delete or replace (repeatable) |
-| `--allow-fork` | bool | `false` | no | let the plugin-wiring stage move the ref of a fugaro marketplace in .claude/settings.json that names a repository other than dimipaun/fugaro (a fork you host); never done otherwise |
 | `--allow-job-delete` | bool | `false` | no | with --repo: lower the jobs' deletion protection, for offboarding |
-| `--anchor` | bool | `false` | no | in a checkout of an onboarded repository, only write the gcp_project line into its fugaro.yaml, after checking that every workflow's job image was submitted by fugaro 0.4.0 or later and built FROM a release base image of 0.4.0 or later, and that no base image the local config sets is a development or older one (no Terraform, no publish, no image copy; the diff, then --yes writes or a person at the terminal confirms it) |
+| `--anchor` | bool | `false` | no | in a checkout of an onboarded repository, only write the gcp_project line into its fugaro.yaml, after checking that every workflow's job image was submitted by fugaro 0.4.0 or later and built FROM a release base image of 0.4.0 or later, and that no base image the local config sets is a development or older one (no Terraform, no publish, no image copy; the diff, then the person at the terminal confirms it, and a run with no terminal prints the line and writes nothing) |
 | `--bake-repos` | bool | `false` | no | answer the bake question without a terminal: whether a repository the build can read is baked into the image its job runs (the default is yes, and an absent key means the same). --bake-repos says yes, --bake-repos=false says no, and either one writes the value into the local config this run writes, which the same run publishes. Passing neither asks the question where it can be asked — on a run that creates the installation, and nowhere else: a run with a project config keeps the answer the project's own (the published policy's) and is never asked, which is the rule for a managed project. Either way the answer takes effect in the images built from then on: the build is what bakes a repository in, so the images already built keep what they have until they are rebuilt |
 | `--base` | stringSlice | `[]` | no | copy the release's base image (the only kind: base) into the project's registry now, besides what the checkout's fugaro.yaml needs (comma-separated or repeated) |
 | `--base-image` | stringArray | `[]` | no | a base image the image checks run and builds start from, recorded in the local config under its base kind (repeatable; KIND=IMAGE, or just IMAGE when its repository is named fugaro-<kind>; the kinds you don't name keep theirs) |
@@ -5889,40 +8554,37 @@ Flags:
 | `--check-github-app` | bool | `false` | no | let the GitHub App pre-check read the App's private key from Secret Manager with your own credentials (held in memory only, for one signed token; refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it); without it setup checks only with the key you typed in this run |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--config-only` | bool | `false` | no | only write the local config, from the installation's outputs (else the flags) |
-| `--coordinator` | bool | `false` | no | with --firebase-project, opt the installation in to the coordinator's aggregation job (docs/coordinator, P5): the fugaro-coordinator service account, its roles/firebasedatabase.admin on the Firebase project (IAM cannot scope it to the coordinator's subtree; the job's own code does), roles/storage.objectViewer on the runs bucket, and — once the history image exists and the local config records a GitHub App ID — the Cloud Run job that holds the App key, its accessor on that one secret and a Scheduler job that runs it every 15 minutes. Nothing creates any of it by default. The opt-in is recorded in the local config (terraform.coordinator) once the apply has created the account, so later runs keep it. --yes never covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor) |
-| `--create-project` | bool | `false` | no | create the GCP project --gcp-project names and add Firebase to it, as you, at your own real terminal (never with --yes, --non-interactive or --json; nothing is typed there, being at it is what confirms the step). A first run of setup always creates its project, so the flag only says so explicitly. Fugaro only starts fresh: an ID that already exists is refused, unless an earlier run of setup created it (the resume). Billing is not linked unless --link-billing is also given; without it setup prints the one gcloud command that links it, unless the run asks the billing question (no --yes, --non-interactive or --json, and no coding agent's session) and has no terminal, where it is refused there at once instead, in the sentence naming --link-billing |
+| `--coordinator` | bool | `false` | no | with --firebase-project, opt the installation in to the coordinator's aggregation job (docs/coordinator, P5): the fugaro-coordinator service account, its roles/firebasedatabase.admin on the Firebase project (IAM cannot scope it to the coordinator's subtree; the job's own code does), roles/storage.objectViewer on the runs bucket, and — once the history image exists and the local config records a GitHub App ID — the Cloud Run job that holds the App key, its accessor on that one secret and a Scheduler job that runs it every 15 minutes. Nothing creates any of it by default. The opt-in is recorded in the local config (terraform.coordinator) once the apply has created the account, so later runs keep it. No flag covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor) |
+| `--create-project` | bool | `false` | no | create the GCP project --gcp-project names and add Firebase to it, as you, at your own real terminal (never with --json; nothing is typed there, being at it is what confirms the step). A first run of setup always creates its project, so the flag only says so explicitly. Fugaro only starts fresh: an ID that already exists is refused, unless an earlier run of setup created it (the resume). Billing is not linked unless --link-billing is also given; without it setup prints the one gcloud command that links it, unless the run asks the billing question (no --json and no coding agent's session) and has no terminal, where it is refused there at once instead, in the sentence naming --link-billing |
 | `--display-name` | string | "" | no | on a first run, which creates the project: its display name (default: its ID) |
 | `--expect-digest` | stringArray | `[]` | no | pin the digest of a release image, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. A base kind is cross-checked against it: its digest is verified against the release's cosign signature either way, and the two must agree. For history it is the trust anchor: without it setup trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag |
-| `--firebase-project` | string | "" | no | turn the shared budget on: the value is the installation's own GCP project id (the default; the flag is only needed to turn the shared budget on), and any other id is refused. It is the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: confirmed by the person at the terminal where it is a first-time question, covered by --yes where the run re-converges an installation that is already there) and the config |
+| `--firebase-project` | string | "" | no | turn the shared budget on: the value is the installation's own GCP project id (the default; the flag is only needed to turn the shared budget on), and any other id is refused. It is the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: confirmed by the person at the terminal where it is a first-time question, already there on a run that re-converges an installation that has it) and the config |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
-| `--github-app-id` | string | "" | no | the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config; setup asks once at a terminal, and --non-interactive needs it) |
+| `--github-app-id` | string | "" | no | the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config; setup asks once at a terminal) |
 | `-h`, `--help` | bool | `false` | no | help for setup |
 | `--image-source` | string | "" | no | the registry and owner the release images come from: a base kind is resolved and signature-verified there and pinned through the installation's remote repository, a history image is copied from it (default ghcr.io/dimipaun; a fork names its own, such as ghcr.io/acme) |
 | `--json` | bool | `false` | no | print the result as JSON on stdout (progress goes to stderr) |
-| `--launcher` | stringArray | `[]` | no | an IAM member who launches and watches runs (repeatable; default: the local config's, and for a new config you, the authenticated user) |
-| `--link-billing` | string | "" | no | on a first run, which creates the project: link this billing account (an ID such as 0123AB-4567CD-89EF01) to the project, at your own real terminal, where being at it is what confirms the step. This may incur charges on that account; never with --yes. It never changes a project's existing billing link |
+| `--link-billing` | string | "" | no | on a first run, which creates the project: link this billing account (an ID such as 0123AB-4567CD-89EF01) to the project, at your own real terminal, where being at it is what confirms the step. This may incur charges on that account, and no flag confirms it. It never changes a project's existing billing link |
 | `--managed` | bool | `false` | no | on a first run, which creates the project: record its monthly budget in the creation fact. Every project setup creates is Fugaro-managed (its runs bucket's creation fact and the fugaro_managed label); --managed is what records the budget amount the managed apply needs. The monthly budget amount is required — --budget, --budget-currency and --billing-account together, with no default and no suggestion taken for you — and the amount and the currency are recorded in the project's creation fact (gs://fugaro-runs-<gcp-project>/fugaro/managed.json), where a later run and a restore read what was chosen. It removes no confirmation: creating the project still takes a person at a real terminal, and the installation's ordinary steps share the run's one review. Flagging a project that already exists as managed is fugaro managed flag's, run by the owner at a terminal, and --managed never flags one: it records the budget of a project the run creates |
 | `--name` | string | "" | no | the project's name: for a project config setup creates, and what names an installation that has no name yet (with a config, it must be its name; an installation's name never changes; with several project configs it names the one to create or use; on a machine with no config for an installation that exists, it defaults to the installation's) |
 | `--no-build` | bool | `false` | no | with --repo: don't offer the first image builds |
 | `--no-log-isolation` | bool | `false` | no | leave Fugaro job logs in _Default instead of their own log bucket |
-| `--non-interactive` | bool | `false` | no | never prompt, and never read stdin: a step that needs you is listed under left_for_you (exit 1), and applying needs --yes, else the run only plans (a fresh state bucket needs a person at the terminal even then, so that plan exits 1); --yes never covers the steps that are the terminal's alone (see --yes). With --config-only it only stops them prompting: their confirmations then need --yes |
-| `--onboard-repo` | string | "" | no | owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes also covers onboarding such a repository, and neither it nor this flag is honoured in a coding agent's session; any other origin takes the confirmation of a person at the terminal) |
-| `--operator` | stringArray | `[]` | no | an IAM member who onboards repositories (repeatable; default: the local config's, and for a new config you, the authenticated user) |
+| `--onboard-repo` | string | "" | no | owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (neither it nor this flag is honoured in a coding agent's session; any other origin takes the confirmation of a person at the terminal) |
+| `--operator` | stringArray | `[]` | no | an IAM member who may start and watch runs (the operator role; repeatable; default: the local config's, and for a new config you, the authenticated user) |
 | `--parent` | string | "" | no | on a first run, which creates the project: organizations/<number> or folders/<number> to create it under (default: no parent; an organization is never guessed) |
-| `--plan-only` | bool | `false` | no | stop after showing the plan (never takes --yes: it creates nothing on a flag's word) |
+| `--plan-only` | bool | `false` | no | stop after showing the plan (it creates nothing) |
 | `--print-vars` | bool | `false` | no | print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
-| `--provision-batch` | bool | `false` | no | after the installation's ordinary steps, provision the Batch compute backend into a state of its own (design docs/design/compute-backend.md §8.1 task 6): the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router, and a preloaded boot image rebuilt on a schedule. It is money (a billable build, a NAT's hours) and permanent, so --yes never covers it and it takes a person at a real terminal; nothing runs it by default, and no run can use the backend until the enable task. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor) |
+| `--provision-batch` | bool | `false` | no | after the installation's ordinary steps, provision the Batch compute backend into a state of its own (design docs/design/compute-backend.md §8.1 task 6): the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router, and a preloaded boot image rebuilt on a schedule. It is money (a billable build, a NAT's hours) and permanent, so it takes a person at a real terminal; nothing runs it by default, and an installation reaches the backend only after this has run and `doctor` passes its gate. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor) |
 | `--publish-config` | bool | `false` | no | publish the shared config to the runs bucket and stop (setup does it after it writes the local config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--registry-cleanup` | string | "" | no | Artifact Registry cleanup: dry-run (the default), on or off |
-| `--replace-image` | stringArray | `[]` | no | KIND (history; repeatable): let the converge replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so --yes covers it in either door and a person at a real terminal without --yes confirms it by being there (a pipe, --json, --non-interactive and a coding agent's session confirm nothing) |
+| `--replace-image` | stringArray | `[]` | no | KIND (history; repeatable): let the converge replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so a person at a real terminal confirms it by being there (a pipe, --json and a coding agent's session confirm nothing) |
 | `--repo` | bool | `false` | no | onboard the repository of the checkout at PATH (default: the current directory) instead of the installation |
-| `--retire` | bool | `false` | no | with --repo: run the retirement this config change needs (a workflow or a named account removed, a secret no longer mounted): remove the protected addresses from Terraform's state (destroying nothing), apply, then delete the orphaned Cloud Run jobs through the API. Both confirmations are a real terminal's, and nothing is typed at them; --yes, --non-interactive, --json, a pipe and a coding agent cover neither. Excludes --plan-only, --print-vars and --forget, which read or forget rather than apply |
+| `--retire` | bool | `false` | no | with --repo: run the retirement this config change needs (a workflow or a named account removed, a secret no longer mounted): remove the protected addresses from Terraform's state (destroying nothing), apply, then delete the orphaned Cloud Run jobs through the API. Both confirmations are a real terminal's, and nothing is typed at them; no flag, --json, a pipe and a coding agent cover neither. Excludes --plan-only, --print-vars and --forget, which read or forget rather than apply |
 | `--runs-bucket` | string | "" | no | the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>) |
 | `--scheduler-region` | string | "" | no | Cloud Scheduler region of the daily image checks (default: the region, or the nearest one Scheduler offers) |
 | `--state-bucket` | string | "" | no | the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>) |
-| `--yes` | bool | `false` | no | confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it) — and it never covers creating a project, linking a billing account, the Firestore database's location, a secret value, or a policy publish that would loosen the published node: those take a person at a real terminal, and no flag stands in for one. The single step a managed project does not confirm at all is a policy publish that would loosen its published node: at a real terminal the write prints one line saying what it does and the widening is read in the diff above it, a project's first node included — that diff names every member the node is created with. Under a coding agent's environment variable (CLAUDECODE and the like; CLAUDE_CODE_SSE_PORT alone is not one of them where standard input is a real terminal, because the Claude Code IDE extension sets it in a person's own terminal too, so it is a person's terminal and types the same confirmations, told in one line that they were accepted from an IDE terminal — another of those markers beside it, or no terminal, is what keeps a run a coding agent's session) setup changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are setup --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the checkout's own local steps (the .claude/settings.json wiring and pin), whose every write is on this machine's own files — and those are reached only where nothing before the checkout stops over them, because a stage that needs you stops the run and blocks the rest: the plugin stage runs before the checkout on the same pin and is not local-under-agent, so a session whose plugin is stale stops there (`left for you`, exit 1) and the checkout is untouched. The one need that does not stop them is the repository stage's — the checkout's own pin and plugin steps read no repository state, and the plugin install is the one the reader of a stale line is stuck on — and the checkout's local steps run past it, while its cloud step, which builds that repository's job images, is skipped rather than run over it. It fails closed rather than promising a write it may never reach, and none of it is a barrier: it is a mitigation — an agent that unsets its own variables is not stopped, and the real controls are the confirmations at a real terminal and the skills' lint |
 
 Subcommands:
 
@@ -5998,6 +8660,59 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro troubleshoot`
+
+Explain a Fugaro command that failed on this machine, locally
+
+Explain a Fugaro command that failed on this machine: its log, fugaro
+doctor's output, the effective configuration and the Fugaro source at the
+version that failed, read by a local agent that can only read (no shell, no
+writes, no network) and answers with the cause and the fix.
+
+With no RUN ID it takes the newest logged command that failed. RUN ID is the
+one the failed command printed (update-20261107183012-48213), which is also
+the name of its log. A cloud run's <repo-slug>/<run-id> is a different thing
+and is refused here: fugaro diagnose explains those.
+
+A failure this CLI recognises in the log is answered from the log alone, with
+no model call and nothing sent anywhere: the cause and the one command that
+fixes it are printed, and the exit is zero because it explained something. The
+diagnosis runs when the log holds no cause the CLI knows.
+
+Log text is data: it holds Terraform and gcloud error bodies, API responses
+and file names, so a command the answer prints is checked against this CLI's
+own command tree before it is shown as runnable, and anything else is marked
+as unchecked.
+
+It runs on your own Claude credential and reads no secret: CLAUDE_CODE_OAUTH_TOKEN
+or ANTHROPIC_API_KEY if either is set in this environment, and otherwise the
+logged-in claude on this machine, which is run as it is and needs no gcloud. It
+never reads the project's account out of Secret Manager.
+
+The command reads no stdin. Typing it is the consent: one line says which
+provider and what class of data the redacted evidence goes to, and then the
+diagnosis runs. With no credential at all, or with the source at this version
+out of reach, it prints the evidence where it is and exits non-zero instead: a
+machine with no credential is told to log in with the claude CLI, or to set one
+of the two variables, and to run the command again, and a claude that is there
+but not logged in is refused in one sentence naming the login, with no evidence
+printed and the same non-zero exit.
+
+Usage: `fugaro troubleshoot [RUN ID]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for troubleshoot |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--max-budget-usd` | float64 | `1` | no | bound the diagnosis to this many US dollars |
+| `--max-turns` | int | `30` | no | bound the diagnosis to this many agent turns |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro update`
 
 Re-converge the installation, or a checkout's repository, after a CLI upgrade
@@ -6044,9 +8759,9 @@ still printed exactly as it applies and every verdict is still recorded, and
 only a step that is money, permanence or a secret still asks for your own word
 (D1026). The steps that keep their own typed confirmation — a project's creation
 and the billing link are setup's, and here they cannot arise at all, and a
-secret is a value, typed in a hidden prompt, which --yes cannot supply — against
-the steps --yes covers, which by D12's answer of 2026-10-20 is every ordinary
-step this door owns: the Firestore database's permanent location, a billable
+secret is a value, typed in a hidden prompt, which no flag can supply — against
+the ordinary steps this door owns, which by D12's answer of 2026-10-20 are every
+one of them: the Firestore database's permanent location, a billable
 first image build, replacing a registry tag and onboarding an unlisted
 repository on a provider's own host with an origin git config that does not
 rewrite it (the build, the tag and the repository are covered in setup too); the
@@ -6063,12 +8778,12 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--admin` | stringArray | `[]` | no | an IAM member who may onboard repositories, apply Terraform and submit builds (the admin role; repeatable; default: the local config's, and for a new config you, the authenticated user) |
 | `--alert-email` | string | "" | no | where failed image checks and rebuilds are reported (default: the local config's) |
 | `--allow-delete` | stringArray | `[]` | no | a resource address the plan may delete or replace (repeatable) |
-| `--allow-fork` | bool | `false` | no | let the plugin-wiring stage move the ref of a fugaro marketplace in .claude/settings.json that names a repository other than dimipaun/fugaro (a fork you host); never done otherwise |
 | `--allow-job-delete` | bool | `false` | no | with --repo: lower the jobs' deletion protection, for offboarding |
-| `--anchor` | bool | `false` | no | in a checkout of an onboarded repository, only write the gcp_project line into its fugaro.yaml, after checking that every workflow's job image was submitted by fugaro 0.4.0 or later and built FROM a release base image of 0.4.0 or later, and that no base image the local config sets is a development or older one (no Terraform, no publish, no image copy; the diff, then --yes writes or a person at the terminal confirms it) |
-| `--ask` | bool | `false` | no | ask for the confirmations a managed project's gate would have stood in for, one step at a time: without it a managed project takes no confirmation at all (the ruling of 2026-11-01), and this is the flag that puts them back for one run — the review's own question, and each step's own, the billable builds included. It is the symmetric half of --yes, which is the same flag for a project that is NOT managed, and the two contradict each other: pass one, or neither. It never weakens the gate, which judges every document and refuses in its own sentence before any prompt, and it never stands in for a confirmation: the step's own question is asked, and a no is a no. In a project whose marks do not answer "managed" it changes nothing and says so, and where no prompt can be answered — a coding agent's session, --json, --non-interactive, no terminal — it refuses the run rather than letting the gate's verdict stand in: a confirmation nobody can answer is never a silent proceed |
+| `--anchor` | bool | `false` | no | in a checkout of an onboarded repository, only write the gcp_project line into its fugaro.yaml, after checking that every workflow's job image was submitted by fugaro 0.4.0 or later and built FROM a release base image of 0.4.0 or later, and that no base image the local config sets is a development or older one (no Terraform, no publish, no image copy; the diff, then the person at the terminal confirms it, and a run with no terminal prints the line and writes nothing) |
+| `--ask` | bool | `false` | no | ask for the confirmations a managed project's gate would have stood in for, one step at a time: without it a managed project takes no confirmation at all (the ruling of 2026-11-01), and this is the flag that puts them back for one run — the review's own question, and each step's own, the billable builds included. It never weakens the gate, which judges every document and refuses in its own sentence before any prompt, and it never stands in for a confirmation: the step's own question is asked, and a no is a no. In a project whose marks do not answer "managed" it changes nothing and says so, and where no prompt can be answered — a coding agent's session, --json, no terminal — it refuses the run rather than letting the gate's verdict stand in: a confirmation nobody can answer is never a silent proceed |
 | `--bake-repos` | bool | `false` | no | answer the bake question without a terminal: whether a repository the build can read is baked into the image its job runs (the default is yes, and an absent key means the same). --bake-repos says yes, --bake-repos=false says no, and either one writes the value into the local config this run writes, which the same run publishes. Passing neither asks the question where it can be asked — on a run that creates the installation, and nowhere else: a run with a project config keeps the answer the project's own (the published policy's) and is never asked, which is the rule for a managed project. Either way the answer takes effect in the images built from then on: the build is what bakes a repository in, so the images already built keep what they have until they are rebuilt |
 | `--base` | stringSlice | `[]` | no | copy the release's base image (the only kind: base) into the project's registry now, besides what the checkout's fugaro.yaml needs (comma-separated or repeated) |
 | `--base-image` | stringArray | `[]` | no | a base image the image checks run and builds start from, recorded in the local config under its base kind (repeatable; KIND=IMAGE, or just IMAGE when its repository is named fugaro-<kind>; the kinds you don't name keep theirs) |
@@ -6077,38 +8792,36 @@ Flags:
 | `--budget-admin` | stringArray | `[]` | no | with --firebase-project: an IAM member who may change caps and kill switches besides the GCP project's owners and editors (repeatable; default: the local config's terraform.budget_admins) |
 | `--budget-currency` | string | "" | no | the budget's currency, such as USD |
 | `--budget-mode` | string | "" | no | with --firebase-project: off, observe or enforce: the jobs' budget mode in the project config, and for observe and enforce the project-wide mode in the database (an absent one is seeded observe) |
+| `--check` | bool | `false` | no | read-only: write nothing, run no claude command and make no cloud call, print what each step of update would do from this checkout's own files, and exit 1 when anything is stale. The checkout is PATH (update --check [PATH]); the converge's own flags are refused rather than ignored, because this mode runs none of them. The rules and the policy steps are skipped with a note naming the command that answers them: the deployed rules generation and the published policy node live in the cloud, and reading either is the call this flag promises not to make |
 | `--check-github-app` | bool | `false` | no | let the GitHub App pre-check read the App's private key from Secret Manager with your own credentials (held in memory only, for one signed token; refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it); without it update checks only with the key you typed in this run |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--config-only` | bool | `false` | no | only write the local config, from the installation's outputs (else the flags) |
-| `--coordinator` | bool | `false` | no | with --firebase-project, opt the installation in to the coordinator's aggregation job (docs/coordinator, P5): the fugaro-coordinator service account, its roles/firebasedatabase.admin on the Firebase project (IAM cannot scope it to the coordinator's subtree; the job's own code does), roles/storage.objectViewer on the runs bucket, and — once the history image exists and the local config records a GitHub App ID — the Cloud Run job that holds the App key, its accessor on that one secret and a Scheduler job that runs it every 15 minutes. Nothing creates any of it by default. The opt-in is recorded in the local config (terraform.coordinator) once the apply has created the account, so later runs keep it. --yes never covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor) |
+| `--coordinator` | bool | `false` | no | with --firebase-project, opt the installation in to the coordinator's aggregation job (docs/coordinator, P5): the fugaro-coordinator service account, its roles/firebasedatabase.admin on the Firebase project (IAM cannot scope it to the coordinator's subtree; the job's own code does), roles/storage.objectViewer on the runs bucket, and — once the history image exists and the local config records a GitHub App ID — the Cloud Run job that holds the App key, its accessor on that one secret and a Scheduler job that runs it every 15 minutes. Nothing creates any of it by default. The opt-in is recorded in the local config (terraform.coordinator) once the apply has created the account, so later runs keep it. No flag covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor) |
 | `--expect-digest` | stringArray | `[]` | no | pin the digest of a release image, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. A base kind is cross-checked against it: its digest is verified against the release's cosign signature either way, and the two must agree. For history it is the trust anchor: without it update trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag |
-| `--firebase-project` | string | "" | no | turn the shared budget on: the value is the installation's own GCP project id (the default; the flag is only needed to turn the shared budget on), and any other id is refused. It is the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: confirmed by the person at the terminal where it is a first-time question, covered by --yes where the run re-converges an installation that is already there) and the config |
+| `--firebase-project` | string | "" | no | turn the shared budget on: the value is the installation's own GCP project id (the default; the flag is only needed to turn the shared budget on), and any other id is refused. It is the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: confirmed by the person at the terminal where it is a first-time question, already there on a run that re-converges an installation that has it) and the config |
 | `--forget` | bool | `false` | no | roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state. An installation that holds the managed deployer's fence has no rollback and this is refused there: the state removal would leave the seven scoped roles and their seven conditioned bindings live in the project, accounted for by nothing, and taking the project out of managed mode does not remove them (docs/design/managed-projects.md §10.2, "Rolling back") |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
-| `--github-app-id` | string | "" | no | the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config; update asks once at a terminal, and --non-interactive needs it) |
+| `--github-app-id` | string | "" | no | the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config; update asks once at a terminal) |
 | `-h`, `--help` | bool | `false` | no | help for update |
 | `--image-source` | string | "" | no | the registry and owner the release images come from: a base kind is resolved and signature-verified there and pinned through the installation's remote repository, a history image is copied from it (default ghcr.io/dimipaun; a fork names its own, such as ghcr.io/acme) |
 | `--json` | bool | `false` | no | print the result as JSON on stdout (progress goes to stderr) |
-| `--launcher` | stringArray | `[]` | no | an IAM member who launches and watches runs (repeatable; default: the local config's, and for a new config you, the authenticated user) |
 | `--name` | string | "" | no | the project's name: for a project config update creates, and what names an installation that has no name yet (with a config, it must be its name; an installation's name never changes; with several project configs it names the one to create or use; on a machine with no config for an installation that exists, it defaults to the installation's) |
 | `--no-build` | bool | `false` | no | with --repo: don't offer the first image builds |
 | `--no-log-isolation` | bool | `false` | no | leave Fugaro job logs in _Default instead of their own log bucket |
-| `--non-interactive` | bool | `false` | no | never prompt, and never read stdin: a step that needs you is listed under left_for_you (exit 1), and applying needs --yes, else the run only plans (a fresh state bucket needs a person at the terminal even then, so that plan exits 1); --yes never covers the steps that are the terminal's alone (see --yes). With --forget and --config-only it only stops them prompting: their confirmations then need --yes |
-| `--onboard-repo` | string | "" | no | owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes also covers onboarding such a repository, and neither it nor this flag is honoured in a coding agent's session; any other origin takes the confirmation of a person at the terminal) |
-| `--operator` | stringArray | `[]` | no | an IAM member who onboards repositories (repeatable; default: the local config's, and for a new config you, the authenticated user) |
-| `--plan-only` | bool | `false` | no | stop after showing the plan (never takes --yes: it creates nothing on a flag's word) |
+| `--onboard-repo` | string | "" | no | owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (neither it nor this flag is honoured in a coding agent's session; any other origin takes the confirmation of a person at the terminal) |
+| `--operator` | stringArray | `[]` | no | an IAM member who may start and watch runs (the operator role; repeatable; default: the local config's, and for a new config you, the authenticated user) |
+| `--plan-only` | bool | `false` | no | stop after showing the plan (it creates nothing) |
 | `--print-vars` | bool | `false` | no | print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--publish-config` | bool | `false` | no | publish the shared config to the runs bucket and stop (update does it after it writes the local config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--registry-cleanup` | string | "" | no | Artifact Registry cleanup: dry-run (the default), on or off |
-| `--replace-image` | stringArray | `[]` | no | KIND (history; repeatable): let the converge replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so --yes covers it in either door and a person at a real terminal without --yes confirms it by being there (a pipe, --json, --non-interactive and a coding agent's session confirm nothing) |
+| `--replace-image` | stringArray | `[]` | no | KIND (history; repeatable): let the converge replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so a person at a real terminal confirms it by being there (a pipe, --json and a coding agent's session confirm nothing) |
 | `--repo` | bool | `false` | no | onboard the repository of the checkout at PATH (default: the current directory) instead of the installation |
-| `--retire` | bool | `false` | no | with --repo: run the retirement this config change needs (a workflow or a named account removed, a secret no longer mounted): remove the protected addresses from Terraform's state (destroying nothing), apply, then delete the orphaned Cloud Run jobs through the API. Both confirmations are a real terminal's, and nothing is typed at them; --yes, --non-interactive, --json, a pipe and a coding agent cover neither. Excludes --plan-only, --print-vars and --forget, which read or forget rather than apply |
+| `--retire` | bool | `false` | no | with --repo: run the retirement this config change needs (a workflow or a named account removed, a secret no longer mounted): remove the protected addresses from Terraform's state (destroying nothing), apply, then delete the orphaned Cloud Run jobs through the API. Both confirmations are a real terminal's, and nothing is typed at them; no flag, --json, a pipe and a coding agent cover neither. Excludes --plan-only, --print-vars and --forget, which read or forget rather than apply |
 | `--runs-bucket` | string | "" | no | the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>) |
 | `--scheduler-region` | string | "" | no | Cloud Scheduler region of the daily image checks (default: the region, or the nearest one Scheduler offers) |
 | `--state-bucket` | string | "" | no | the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>) |
-| `--yes` | bool | `false` | no | confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — the Firestore database's location, a rebuild of the checkout's workflow images, a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it) — and it never covers creating a project, linking a billing account, a secret value, or a policy publish that would loosen the published node: those take a person at a real terminal, and no flag stands in for one. The single step a managed project does not confirm at all is a policy publish that would loosen its published node: at a real terminal the write prints one line saying what it does and the widening is read in the diff above it, a project's first node included — that diff names every member the node is created with. Under a coding agent's environment variable (CLAUDECODE and the like; CLAUDE_CODE_SSE_PORT alone is not one of them where standard input is a real terminal, because the Claude Code IDE extension sets it in a person's own terminal too, so it is a person's terminal and types the same confirmations, told in one line that they were accepted from an IDE terminal — another of those markers beside it, or no terminal, is what keeps a run a coding agent's session) update changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are update --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the checkout's own local steps (the .claude/settings.json wiring and pin), whose every write is on this machine's own files — and those are reached only where nothing before the checkout stops over them, because a stage that needs you stops the run and blocks the rest: the plugin stage runs before the checkout on the same pin and is not local-under-agent, so a session whose plugin is stale stops there (`left for you`, exit 1) and the checkout is untouched. The one need that does not stop them is the repository stage's — the checkout's own pin and plugin steps read no repository state, and the plugin install is the one the reader of a stale line is stuck on — and the checkout's local steps run past it, while its cloud step, which builds that repository's job images, is skipped rather than run over it. It fails closed rather than promising a write it may never reach, and none of it is a barrier: it is a mitigation — an agent that unsets its own variables is not stopped, and the real controls are the confirmations at a real terminal and the skills' lint |
 
 Subcommands:
 
@@ -6116,23 +8829,24 @@ This command has no subcommands.
 
 ## `fugaro update-skills`
 
-Pin the Fugaro plugin in the repository's .claude/settings.json to this release
+Install or update the Fugaro plugin in your own Claude Code
 
-update-skills merges the Fugaro plugin's marketplace and its enablement into the
-checkout's .claude/settings.json, pinned to this binary's release tag (a dev
-build writes no pin). Every other key is kept; a fork's marketplace
-repository is kept and only its ref moves; a file that is not valid JSON is
-never rewritten; a changed file is re-indented to two spaces. A marketplace
-that names another repository than dimipaun/fugaro is reported with a
-warning and left alone unless --allow-fork says it is yours (then only its ref
-moves); a plugin the repository sets to false stays disabled. It shows the diff and writes the file; it never commits:
-review it with git diff. It needs no credentials, no network and no
-Terraform. Outside a checkout it prints the settings to add.
+update-skills installs the Fugaro plugin in Claude Code at user scope, or updates
+the install it finds there, through the claude CLI on PATH: a fixed set of
+claude plugin commands, never with -y, with the marketplace declared at this
+binary's release tag. It writes nothing in the checkout — the plugin is this
+machine's, and no repository's settings are merged into any more (D949) — and
+it needs no credentials and no Terraform. Without claude on PATH it prints the
+slash commands to type in Claude Code instead. Running Claude Code sessions
+apply the new version after a restart.
 
---check writes nothing: it prints how the pin compares with this binary (and
-with the plugin installed on this machine when Claude Code's record is
-readable) and exits 1 on any warning state (outdated, newer, unpinned,
-foreign, not wired, installed differs); "not installed" and "cannot
+--check writes nothing and runs no claude command: it prints how the plugin
+installed on this machine compares with this binary, and the pin a checkout
+that still carries one holds — the merge that wrote those pins is gone, so a
+pin an older fugaro left is read here (and by fugaro doctor's plugin-pin
+check). It exits 1 on any warning state (outdated, newer, unpinned, foreign,
+installed differs); "not wired" — the normal state of a checkout nothing pins,
+since the merge that wrote those pins is gone — "not installed" and "cannot
 compare" are informational.
 
 Usage: `fugaro update-skills [--check] [--dir D] [--json]`
@@ -6141,8 +8855,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--allow-fork` | bool | `false` | no | move the ref of a marketplace repository other than dimipaun/fugaro (a fork you host) to this release's tag |
-| `--check` | bool | `false` | no | print the state and exit 1 unless it is ok (informational states pass); write nothing |
+| `--check` | bool | `false` | no | print the state and exit 1 unless it is ok (informational states pass); write nothing and run no claude command |
 | `--dir` | string | `.` | no | a directory in the checkout |
 | `-h`, `--help` | bool | `false` | no | help for update-skills |
 | `--json` | bool | `false` | no | print machine-readable output |
@@ -6151,136 +8864,47 @@ Subcommands:
 
 This command has no subcommands.
 
-## `fugaro upgrade`
-
-Bring checkouts up to this fugaro: pin the plugin, install or update it in Claude Code, refresh the repository's images
-
-upgrade brings each checkout (PATH, default the current directory; several are
-processed one after the other, each on its own) up to this fugaro, in five
-steps, stopping that checkout at the first step that fails:
-
-  pin     what fugaro update-skills does: the Fugaro plugin in the checkout's
-          .claude/settings.json pinned to this release's tag, shown as a diff
-          and never committed; a fork's marketplace moves only with
-          --allow-fork; a file that is not valid JSON is never rewritten; a
-          pin newer than this fugaro is never moved down.
-  plugin  the plugin installed (user scope) or updated (each install that
-          applies to the checkout, at its own scope) in Claude Code through
-          the claude CLI on PATH: a fixed set of claude plugin commands, never
-          with -y. Without claude it prints the slash commands to type in
-          Claude Code. Running Claude Code sessions apply it after a restart.
-  cloud   what fugaro image refresh does for the checkout's repository: this
-          release's base image, the daily image check job, the builds. It
-          asks at each step, or with --yes confirms every step itself, each
-          billable build included, with no cap. Skipped where there is
-          nothing to refresh from here: no fugaro.yaml, no local project
-          config (a teammate), a repository not onboarded. After a real
-          refresh it also compares the deployed job's whole copy of the
-          local project config (providers, model_prices, budget settings,
-          the region's compute price override and the GitHub App ID;
-          multi-model.md) with what the local config would write now: a
-          version upgrade never refreshes that copy, so a mismatch prints a
-          note naming the fields and the one command that does, fugaro update
-          --repo . (never run here: its Terraform confirmations stay
-          yours). --check makes no cloud call, so it cannot tell and says
-          so instead. It checks each workflow's default-account job;
-          named-account jobs are updated by the same fugaro update --repo .
-  rules   the security rules generation a project policy is read under,
-          deployed into the project's Firebase database, the same deploy
-          fugaro update's rules stage makes: the plan is printed and the
-          project's name typed (--yes confirms it, and is the way past the
-          typed confirmation without a terminal). Deployed when the deployed
-          rules are absent, older, pre-policy or a different document.
-          Skipped where there is no shared budget backend, where the database
-          is one this installation may not write (the ownership check every
-          writer into it asks), where the deployed marker is newer or hand
-          edited, and where the rules or their marker could not be read.
-          --check makes no cloud call here either and says it cannot tell.
-          It is what fugaro update's rules stage does; both doors run it, and
-          this one runs it before the policy step because the policy writer
-          refuses a migration the deployed rules would not admit.
-  policy  the project's published policy node, if an earlier Fugaro wrote it
-          in an older version: migrated in place (never deleted and
-          published again), after a diff of what changes, what is kept and
-          what is derived from the local config, and the project's name typed
-          at a terminal. --yes confirms it, and is the way past the refusal a
-          run in flight makes without it. Skipped where there is no local
-          project config or the repository is not onboarded, and in a coding
-          agent's session, with the command to run in your own terminal. It
-          reads the published node, so --check makes no call here either and
-          says it cannot tell. This is what fugaro update does for the same
-          node; both doors run it.
-
-It never upgrades fugaro itself: brew upgrade dimipaun/tap/fugaro && fugaro
-upgrade is the whole sequence.
-
---local runs pin and plugin only. Under --local and in a coding agent's
-session (CLAUDECODE and the like) the cloud, rules and policy steps are
-skipped before they read anything, never attempted, with the command to run in
-your own terminal, so the exit code is 0 when the local steps succeeded.
---check writes nothing, runs no claude command and makes no cloud call: it
-reads the settings file, Claude Code's record of installed plugins and the
-local project config, prints what each step would do and exits 1 when anything
-is stale (build records are not read, and neither the deployed security rules
-nor the published policy node is: the rules and policy steps say they cannot
-tell). Without --yes, --local or --check it needs a real terminal. There is no
---json.
-
-Exit codes: 0 every checkout finished or had nothing to do; 1 a refusal, a
-failed local step, a cloud step that cannot start from the checkout's files
-(a bad fugaro.yaml or origin, an unreadable config; with --check too) or
-(with --check) something stale; otherwise a failed cloud step exits with the
-refresh's own code, 2 for a cloud call that failed. The summary names each
-checkout's steps and, for one that stopped, the line to rerun.
-
-Usage: `fugaro upgrade [PATH...]`
-
-Flags:
-
-| Flag | Type | Default | Required | Description |
-| --- | --- | --- | --- | --- |
-| `--allow-fork` | bool | `false` | no | move the ref of a marketplace repository other than dimipaun/fugaro (a fork you host) to this release's tag, and add it to Claude Code |
-| `--check` | bool | `false` | no | write nothing, run no claude command, make no cloud call: print what each step would do and exit 1 when anything is stale |
-| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
-| `--expect-digest` | stringArray | `[]` | no | cross-check the digest of a base image's release signature, KIND=sha256:<hex> (repeatable; one PATH only) |
-| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
-| `-h`, `--help` | bool | `false` | no | help for upgrade |
-| `--image-source` | string | "" | no | the registry and owner the release base images come from: a base kind is resolved and signature-verified there and pinned through the installation's remote repository (default ghcr.io/dimipaun) |
-| `--local` | bool | `false` | no | run the pin and plugin steps only, and skip the cloud, rules and policy steps (the only mode that does everything it can inside a coding agent's session) |
-| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
-| `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--repo` | string | "" | no | owner/name (or a path inside its checkout) of the repository; it must be the checkout's origin (one PATH only) |
-| `--workflow` | stringArray | `[]` | no | a workflow to refresh (repeatable; default: every workflow in fugaro.yaml; one PATH only) |
-| `--yes` | bool | `false` | no | confirm every step that asks without a terminal, and without asking: the cloud step's base copy, check-job update and each billable build (with no cap), the security rules deployment, and a policy migration or publish that does not loosen the published node (a publish that would loosen it is typed at your own terminal and this flag does not stand in); never in a coding agent's session |
-
-Subcommands:
-
-This command has no subcommands.
-
 ## `fugaro user`
 
-List, add and remove the installation's launchers and operators
+Grant, revoke and list the installation's roles, and its two IAM lists
 
-List the installation's launchers and operators, and add a person to one of
-the two lists or remove them from it.
+Grant a person a role at a scope, take one away, and list who holds what.
 
-The two lists are terraform.launchers and terraform.operators in this machine's own project config. They are what the operator's next
-fugaro update applies to the installation, so a change made here takes effect
-then, and nothing is applied by this command: no IAM grant is written, no
-repository is touched and no invitation is sent.
+grant and revoke are the roles model's own door: one person, one role and the
+scope the role is held at, written into the installation's grants node at
+config/admin/access. That node is the installation's record of who may do
+what, and its next fugaro update derives the installation's IAM lists from it.
+The command reads the node with its ETag, judges the change (a grant is a
+subset of the grantor's own scope, a revoke needs admin at a scope covering
+the pair, and the installation keeps at least one project admin), and writes
+conditionally on that ETag, so a change another admin made in the meantime is
+re-read rather than overwritten. Writing the node needs
+roles/firebasedatabase.admin, which the project's owners, editors and
+terraform.budget_admins hold.
 
-A member is one person, written as user:<email>. Only user: members are
-written here: domain:, group:, serviceAccount:, allUsers,
-allAuthenticatedUsers and wildcards are refused (reconciliation F42 — the
-launcher and operator roles carry the token signer's own role, so a domain:
-member would grant a whole domain the right to mint a launcher's identity).
-fugaro setup --launcher/--operator remains the door for a whole list, group
-members included.
+ls lists the stored pairs, the repositories a pattern matches among those this
+machine knows, and — with --repo — the role each person holds in one
+repository.
+
+add and rm are the older door, and they change THIS MACHINE's own copy of the
+two IAM lists — terraform.operators and terraform.admins in this machine's own project config. They are what an installation
+with no Firebase budget backend has: there is no grants node there, so the two
+lists are the roles. On an installation that has a node, a member written here
+alone is dropped by that machine's next fugaro update, which says so; use grant
+and revoke.
+
+Every member every subcommand writes is one person, written as user:<email>:
+domain:, group:, serviceAccount:, allUsers, allAuthenticatedUsers and
+wildcards are refused (reconciliation F42 — the operator and admin roles carry
+the token signer's own role, so a domain: member would grant a whole domain the
+right to mint an operator's identity, and a grant cannot be matched against a
+caller the CLI cannot read). fugaro setup --operator/--admin remains the door
+for a whole list, group members included.
 
 add and rm read the installation's own outputs first and refuse when they
 disagree with this machine's config: a list written here replaces the
 installation's on the next fugaro update, so a config that has not seen the
-members another operator added would drop them.
+members another admin added would drop them.
 
 Usage: `fugaro user`
 
@@ -6292,15 +8916,18 @@ Flags:
 
 Subcommands:
 
-- `fugaro user add` -- Add a person to the installation's launchers or operators
-- `fugaro user ls` -- List the installation's launchers and operators
-- `fugaro user rm` -- Remove a person from the installation's launchers or operators
+- `fugaro user add` -- Add a person to the installation's operators or admins
+- `fugaro user grant` -- Give a person a role at a scope
+- `fugaro user ls` -- List the installation's grants, and the role held in a repository
+- `fugaro user offboard` -- Take a member off the installation: their roster grants, and the secrets they stored
+- `fugaro user revoke` -- Take a role and scope pair away from a person
+- `fugaro user rm` -- Remove a person from the installation's operators or admins
 
 ## `fugaro user add`
 
-Add a person to the installation's launchers or operators
+Add a person to the installation's operators or admins
 
-Change one member of one of the installation's two IAM lists: terraform.launchers and terraform.operators in this machine's own project config.
+Change one member of one of the installation's two IAM lists: terraform.operators and terraform.admins in this machine's own project config.
 
 The member is added to, or removed from, the list --role names, and the other
 list is left exactly as it is. --role is required and has no default: adding
@@ -6310,7 +8937,7 @@ person typing.
 Both subcommands read the installation's own outputs before they write and
 refuse when they disagree with this machine's config, because this machine's
 lists are what the next fugaro update applies: a config that predates a member
-another operator added would revoke that member. The refusal names the list
+another admin added would revoke that member. The refusal names the list
 that differs and the command that settles it (fugaro update).
 
 It prints an invite naming the project, the install line and the fact that the
@@ -6331,7 +8958,61 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for add |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--role` | string | "" | no | which list to change: launcher or operator (required) |
+| `--role` | string | "" | no | which list to change: operator or admin (required) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro user grant`
+
+Give a person a role at a scope
+
+Give one role and scope pair to one person, in the
+installation's own record of who may do what: the grants node at
+config/admin/access, which is what its next fugaro update derives the
+installation's IAM lists from.
+
+A pair is a person, a role and the scope the role is held at. The roles are
+viewer, operator and admin; a scope is project (the whole installation),
+all-repos (every repository the published policy admits), or a comma-separated
+list of repository patterns ("github/acme/api", "github/acme/*"). A person may
+hold several pairs, and the highest role whose scope covers a repository is the
+role they hold there.
+
+--role and --scope are both required and neither has a default: a default would decide a grant.
+
+The command reads the grants node with its ETag, judges, and writes
+conditionally on that ETag, so a change another admin made in the meantime is
+re-read and re-judged rather than overwritten. It refuses:
+
+  - a grant wider than your own scope, or at a role above your own: a grant is
+    a subset of the grantor's scope (a repository admin holding github/acme/api
+    cannot grant github/acme/*);
+  - a grant that would take the installation's last project admin away, your own
+    demotion included.
+
+Writing the node needs roles/firebasedatabase.admin, held by the GCP project's
+owners and editors and by terraform.budget_admins — an admin stored in the node
+holds no database write of its own (D1592), so the command refuses for them
+with that sentence rather than pretending the change landed.
+
+An agent session is refused: granting here is a change to who may do
+what, and a person runs it at their own terminal.
+
+Usage: `fugaro user grant MEMBER`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for grant |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--role` | string | "" | no | the role: viewer, operator or admin (required) |
+| `--scope` | string | "" | no | what it covers: project, all-repos, or a comma-separated list of repository patterns (required) |
 
 Subcommands:
 
@@ -6339,20 +9020,34 @@ This command has no subcommands.
 
 ## `fugaro user ls`
 
-List the installation's launchers and operators
+List the installation's grants, and the role held in a repository
 
-List the members of terraform.launchers and terraform.operators in this machine's own project config, as they are written there now.
+List the installation's grants: every stored role and scope pair, from the
+grants node at config/admin/access.
 
-It is this machine's own copy of the two lists: no member is fetched from the
-cloud and none is granted, and no Terraform runs. What the installation itself
-holds can differ — a change another operator applied, or one made here and not
-yet applied by a fugaro update — and only the outputs would tell, which is the
-read add and rm make.
+Each pair is a person, a role and the scope the role is held at, and a pattern's
+line names the repositories it matches among those this machine knows — its own
+config's list — labelled "known": the answer is deliberately about this machine,
+because a pattern may admit repositories nothing here can enumerate and Fugaro
+has no directory to ask. Nothing here claims to be every repository a pattern
+admits.
 
-A machine with no project config of its own is refused rather than answered
-with two empty lists: the lists are not in the shared config, and selection's
-fallback to it is a fetch of the runs bucket that only this machine's own file
-would have made unnecessary.
+--repo names one repository and prints the role each person holds in it: the
+highest role whose scope covers the repository, with the published policy's
+allow_repos taken into account (a repository the policy does not admit cannot
+run at all, so nobody holds a role in it). A repository outside allow_repos is
+reported as such rather than as a role of nobody.
+
+Legacy members are listed as legacy: a group:, domain: or serviceAccount:
+member in this machine's own config keeps the IAM grant the installation
+derives, and the resolver ranks none of them, because the CLI cannot read a
+caller's groups.
+
+The command reads the grants node and the published policy with your own
+credentials and writes nothing. An installation with no Firebase budget backend
+has no grants node at all: its roles are still this machine's own
+terraform.operators and terraform.admins, and this command prints those and
+says so.
 
 Usage: `fugaro user ls`
 
@@ -6366,6 +9061,109 @@ Flags:
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | the repository to print the effective role in (provider/owner/name, or owner/name for a repository this machine's config lists) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro user offboard`
+
+Take a member off the installation: their roster grants, and the secrets they stored
+
+Take one member off the installation, named by their email address.
+
+Two things happen, and nothing else does:
+
+  - The roster (the installation's grants node) drops every grant that names
+    the address. The IAM grants are not touched here: an operator's next
+    `fugaro update` removes the invoker grants the roster no longer carries, and
+    writes this machine's own operator and admin lists from it.
+  - The installation's intake deletes the secrets stored under the member's own
+    prefix, found by the owner annotation it wrote (R10). No value is read or
+    printed anywhere: the intake has no route that answers one.
+
+The member's open slips are not ended — the service has no route for that, by
+design: a slip ends by the max-runtime cap the grant recorded, so a run in
+flight is not stopped by this command. A pool that lists them among its allowed
+users keeps the text, and no policy has to be published: a pool is resolved for
+a launcher the roster admits, and this command is what stops admitting them.
+
+Offboarding is an admin's act: the caller has to be a project-scope admin grant
+of the roster itself. An implicit project admin — a GCP owner or editor, a
+budget admin — holds no stored grant and is refused (D1940), exactly as the
+intake refuses them; an admin of that kind takes the stored grant first.
+
+Two members cannot be offboarded this way, and nothing is written when one is
+asked for: the caller themselves (another admin has to offboard you, or a
+project Owner from outside the roster), and the roster's last project admin
+(an installation with no stored admin grant has nobody its own door admits, so
+a project Owner runs `fugaro update --admin` to put one on it first).
+
+Usage: `fugaro user offboard EMAIL`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for offboard |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro user revoke`
+
+Take a role and scope pair away from a person
+
+Take one role and scope pair from one person, in the
+installation's own record of who may do what: the grants node at
+config/admin/access, which is what its next fugaro update derives the
+installation's IAM lists from.
+
+A pair is a person, a role and the scope the role is held at. The roles are
+viewer, operator and admin; a scope is project (the whole installation),
+all-repos (every repository the published policy admits), or a comma-separated
+list of repository patterns ("github/acme/api", "github/acme/*"). A person may
+hold several pairs, and the highest role whose scope covers a repository is the
+role they hold there.
+
+--role and --scope are both required and neither has a default: naming the pair is what a revoke is.
+
+The command reads the grants node with its ETag, judges, and writes
+conditionally on that ETag, so a change another admin made in the meantime is
+re-read and re-judged rather than overwritten. It refuses:
+
+  - a pair outside the scope your own admin covers (a repository admin cannot
+    revoke a project-scope pair);
+  - a revoke that would take the installation's last project admin away, your own
+    removal included.
+
+Writing the node needs roles/firebasedatabase.admin, held by the GCP project's
+owners and editors and by terraform.budget_admins — an admin stored in the node
+holds no database write of its own (D1592), so the command refuses for them
+with that sentence rather than pretending the change landed.
+
+An agent session is refused: revoking here is a change to who may do
+what, and a person runs it at their own terminal.
+
+Usage: `fugaro user revoke MEMBER`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for revoke |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--role` | string | "" | no | the role: viewer, operator or admin (required) |
+| `--scope` | string | "" | no | what it covers: project, all-repos, or a comma-separated list of repository patterns (required) |
 
 Subcommands:
 
@@ -6373,9 +9171,9 @@ This command has no subcommands.
 
 ## `fugaro user rm`
 
-Remove a person from the installation's launchers or operators
+Remove a person from the installation's operators or admins
 
-Change one member of one of the installation's two IAM lists: terraform.launchers and terraform.operators in this machine's own project config.
+Change one member of one of the installation's two IAM lists: terraform.operators and terraform.admins in this machine's own project config.
 
 The member is added to, or removed from, the list --role names, and the other
 list is left exactly as it is. --role is required and has no default: adding
@@ -6385,7 +9183,7 @@ person typing.
 Both subcommands read the installation's own outputs before they write and
 refuse when they disagree with this machine's config, because this machine's
 lists are what the next fugaro update applies: a config that predates a member
-another operator added would revoke that member. The refusal names the list
+another admin added would revoke that member. The refusal names the list
 that differs and the command that settles it (fugaro update).
 
 Run it in your own terminal, with your own credentials. A coding agent's
@@ -6402,7 +9200,7 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for rm |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--role` | string | "" | no | which list to change: launcher or operator (required) |
+| `--role` | string | "" | no | which list to change: operator or admin (required) |
 
 Subcommands:
 
@@ -6586,14 +9384,13 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this write would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes |
+| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this write would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--executable-changes` | bool | `false` | no | allow a change to the block's commands or image steps (they run as shell in this repository's runs) |
 | `-h`, `--help` | bool | `false` | no | help for add |
 | `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--repo` | string | "" | no | the repository whose fugaro.yaml to edit (owner/name, or a path inside its checkout); default: the current directory's checkout |
 | `--set` | stringArray | `[]` | no | a key of the new block as FIELD=VALUE (e.g. --set commands.test='go test ./...'); repeat it for each key |
-| `--yes` | bool | `false` | no | confirm the write without a prompt |
 
 Subcommands:
 
@@ -6618,13 +9415,12 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this write would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes |
+| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this write would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--executable-changes` | bool | `false` | no | allow a change to the block's commands or image steps (they run as shell in this repository's runs) |
 | `-h`, `--help` | bool | `false` | no | help for rm |
 | `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--repo` | string | "" | no | the repository whose fugaro.yaml to edit (owner/name, or a path inside its checkout); default: the current directory's checkout |
-| `--yes` | bool | `false` | no | confirm the write without a prompt |
 
 Subcommands:
 
@@ -6704,7 +9500,6 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for add |
 | `--issuer` | string | "" | no | the issuer the exchange requires; must be https://securetoken.google.com/<firebase-project> |
 | `--service-account` | string | "" | no | the workspace service account this project's grant binds to |
-| `--yes` | bool | `false` | no | confirm the write without a prompt |
 
 Subcommands:
 
@@ -6758,7 +9553,6 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for set |
 | `--monthly` | float64 | `0` | no | the cap in US dollars per month, more than zero |
 | `--workspace` | string | "" | no | the workspace whose cap this is (required: a cap is never spelled globally) |
-| `--yes` | bool | `false` | no | confirm the write without a prompt |
 
 Subcommands:
 
@@ -6894,7 +9688,6 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for add |
 | `--job-service-account` | stringArray | `[]` | no | a job service account of the member, which the workspace's service resolves a caller by (repeatable) |
 | `--repo` | stringArray | `[]` | no | a repository the member contributes to the workspace, as owner/name (repeatable) |
-| `--yes` | bool | `false` | no | confirm the write without a prompt |
 
 Subcommands:
 
@@ -6922,7 +9715,6 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for rm |
-| `--yes` | bool | `false` | no | confirm the write without a prompt |
 
 Subcommands:
 
@@ -6949,7 +9741,6 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for rm |
-| `--yes` | bool | `false` | no | confirm the write without a prompt |
 
 Subcommands:
 

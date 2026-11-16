@@ -196,6 +196,16 @@ type SharedAnchor struct {
 // may send the project's Bitbucket token to (D474), so a writer of the runs
 // bucket publishing one would be choosing where a credential goes.
 //
+// bitbucket_tokens is the same case one step nearer the token, and
+// localcfg.Config.Shared nils it: each record's coverage is what a request is
+// matched against (R1, D2351), so a writer of the runs bucket publishing one
+// would be stating which of this project's calls its own token carries. It is
+// refused here by key and again by value like the keys above it — on a machine
+// with no local config for the project, the fetched shared config is the one
+// the commands read — and the drop is what keeps an older CLI, whose
+// localcfg.Config has no such field, from refusing the whole shared file over
+// the key and locking a teammate who has not upgraded yet out of every run.
+//
 // secret_rotation_days and secret_expires are operator-only for update_check's
 // reason (plan B1.9): they are one person's record of when the credentials only
 // they can rotate are meant to be rotated and when they expire, and a writer of
@@ -231,6 +241,11 @@ type SharedAnchor struct {
 // the runs bucket's shared file would be choosing the code every teammate's
 // runs run, and the Dockerfile a build fetches with the project's credentials.
 //
+// clone_urls is the API-root case (SD5, D842): Shared nils it, and it is
+// published through the policy node the runner reads and fails closed on,
+// because the block is where each repository's runs clone from and the shared
+// file is writable by any launcher.
+//
 // orchestrator is the floor's case once more (D1239, D1234): Shared nils it,
 // and it is published through the policy node the runner fails closed on,
 // because the block is the daemon's own guardrails — the running cap and the
@@ -253,6 +268,14 @@ type SharedAnchor struct {
 // through the policy node instead, which the owner writes and the runner fails
 // closed on, and localcfg.Config.Shared nils them.
 //
+// claude_account_aliases joins them (docs/account-aliases, D2090): an alias is
+// a name the choice keys above may hold in place of an account's own name, so a
+// launcher who could publish one could name an account the shared file never
+// admitted — the same way around the allow-list, written one indirection in. It
+// is the owner's own, and the publish resolves a key that holds one before it
+// writes the node, so what a launcher reads there is the account and never the
+// alias; localcfg.Config.Shared nils it besides.
+//
 // credentials, pools and crafts are that same rule one step further out
 // (docs/model-crafts/reconciliation.md F12, D1628): a credential is the name of
 // a secret, a pool is an ordered list of them, and a craft's access is what
@@ -261,7 +284,32 @@ type SharedAnchor struct {
 // (D1621, F10). A launcher who could write the three into the shared file could
 // aim every teammate's runs at a credential the owner never admitted, so they
 // are the owner's own, they are published through the policy node, and
-// localcfg.Config.Shared nils them.
+// localcfg.Config.Shared nils them. subscription_spread is the switch those
+// three wait on (D1622, D1636): it is the owner's own act about the terms his
+// subscriptions are held under, so it is operator-only for their reason and
+// travels the same way.
+//
+// backend is the compute backend every reading machine's runs execute on, and
+// it is refused here for base_branch's reason with the enable task's behind it
+// (plan 2026-10-19-compute-backend.md Task 10 step 4): a launcher who could
+// write `backend: cloud-batch` into the runs bucket would move every teammate
+// with no local config onto VMs, built from the `batch:` block that same write
+// carries — an image, an account and secrets no reader here can hold to the
+// installation's own provisioning (the repository's mode and the secret's
+// ownership are `fugaro doctor`'s reads, and a launch does not consult it) —
+// while the machine that ran `--provision-batch` and the doctor reading never
+// reads the file at all. localcfg.Config.Shared blanks it, so the selection is
+// the one the machine running the launch wrote, and ParseShared refuses the key
+// besides: design compute-backend.md §4.4 and docs/design/shared-config.md §4.
+//
+// binaries is a grant of the same kind one step further out (binary-allow-rule,
+// plan task AR1; D986, F11): the block names the paths a run may add a binary
+// at and the cap it is held to, so a launcher who could write it into the runs
+// bucket's shared file would be admitting its own payload to every teammate's
+// runs — the rule reading itself out of the way, from the one file a launcher
+// can write. It is published through the policy node instead, which the owner
+// writes and the runner fails closed on, and localcfg.Config.Shared nils it for
+// that reason.
 //
 // workspace, workspace_pin, workspace_members and workspace_cap are the
 // workspace keys, and workspace_pin is the sharpest of them: the pin is the
@@ -274,7 +322,7 @@ type SharedAnchor struct {
 // member table are dropped with it, because a shared file that could name a
 // workspace would be one that could join this project to a group nobody here
 // chose. localcfg.Config.Shared nils all four.
-var sharedForbidden = []string{"terraform", "user", "commit_name", "commit_email", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "workflow_secrets", "bitbucket_api_roots", "update_check", "issues", "secret_rotation_days", "secret_expires", "review_floor", "verifier_accounts", "image_catalog", "image_map", "bake_repos", "triage", "orchestrator", "default_claude_account", "stages", "claude_account_auto", "credentials", "pools", "crafts", "workspace", "workspace_pin", "workspace_members", "workspace_cap"}
+var sharedForbidden = []string{"terraform", "backend", "user", "commit_name", "commit_email", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "workflow_secrets", "bitbucket_api_roots", "bitbucket_tokens", "clone_urls", "update_check", "issues", "escalation", "mobile_allow", "secret_rotation_days", "secret_expires", "review_floor", "verifier_accounts", "image_catalog", "image_map", "bake_repos", "triage", "orchestrator", "default_claude_account", "stages", "claude_account_auto", "claude_account_aliases", "credentials", "pools", "subscription_spread", "crafts", "workspace", "workspace_pin", "workspace_members", "workspace_cap", "binaries"}
 
 // ParseShared validates a published shared config against its anchor and
 // returns it (docs/design/shared-config.md §5). Anyone holding objectAdmin
@@ -391,6 +439,16 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 	for _, name := range slices.Sorted(maps.Keys(c.Repos)) {
 		if c.Repos[name].BaseBranch != "" {
 			return bad("repos."+name+".base_branch", "%q is set; it is never published: the base branch comes from the checkout's reviewed fugaro.yaml", c.Repos[name].BaseBranch)
+		}
+		// claude_accounts is refused here for claude_accounts' own reason, one
+		// level down (localcfg.Config.Shared clears it, and the top-level key
+		// is in sharedForbidden): it is what admits the repository to an
+		// account, so a launcher who could publish one would be adding a
+		// repository to an account's admission by editing the runs bucket's
+		// file — and the machine whose next publish derives the block would be
+		// deriving the admission they wrote.
+		if len(c.Repos[name].ClaudeAccounts) > 0 {
+			return bad("repos."+name+".claude_accounts", "%v is set; it is never published: the accounts a repository's own runs may be served by are the operator's statement in the local config, and the policy node is where they are published", c.Repos[name].ClaudeAccounts)
 		}
 	}
 	// Every value of the published batch block that names a cloud resource is
@@ -527,7 +585,7 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 // arrived some other way (a merge, a decoder that mapped a key onto a field of
 // its own), and the check a test can hold each field of without a file.
 func sharedNeverPublished(c *localcfg.Config) bool {
-	return c.User != "" || c.CommitName != "" || c.CommitEmail != "" || c.Bucket != "" || c.Registry != "" || c.Endpoints != (localcfg.Endpoints{}) || !reflect.ValueOf(c.Terraform).IsZero() || c.Providers != nil || c.Routing != nil || c.ClaudeAccounts != nil || c.ProjectSecrets != nil || c.WorkflowSecrets != nil || c.BitbucketAPIRoots != nil || c.UpdateCheck != nil || c.Issues != nil || c.SecretRotationDays != 0 || c.SecretExpires != nil || c.ReviewFloor != nil || c.ImageCatalog != nil || c.ImageMap != nil || c.BakeRepos != nil || c.Triage != nil || c.DefaultClaudeAccount != "" || c.ClaudeAccountStages != nil || c.ClaudeAccountAuto || c.Credentials != nil || c.Pools != nil || !reflect.ValueOf(c.Crafts).IsZero() || c.Workspace != "" || !reflect.ValueOf(c.WorkspacePin).IsZero() || c.WorkspaceMembers != nil || c.WorkspaceCap != nil
+	return c.BackendName != "" || c.User != "" || c.CommitName != "" || c.CommitEmail != "" || c.Bucket != "" || c.Registry != "" || c.Endpoints != (localcfg.Endpoints{}) || !reflect.ValueOf(c.Terraform).IsZero() || c.Providers != nil || c.Routing != nil || c.ClaudeAccounts != nil || c.ProjectSecrets != nil || c.WorkflowSecrets != nil || c.BitbucketAPIRoots != nil || c.BitbucketTokens != nil || c.CloneURLs != nil || c.UpdateCheck != nil || c.Issues != nil || c.SecretRotationDays != 0 || c.SecretExpires != nil || c.ReviewFloor != nil || c.ImageCatalog != nil || c.ImageMap != nil || c.BakeRepos != nil || c.Triage != nil || c.DefaultClaudeAccount != "" || c.ClaudeAccountStages != nil || c.ClaudeAccountAuto || c.ClaudeAccountAliases != nil || c.Credentials != nil || c.Pools != nil || c.SubscriptionSpread != nil || !reflect.ValueOf(c.Crafts).IsZero() || c.Workspace != "" || !reflect.ValueOf(c.WorkspacePin).IsZero() || c.WorkspaceMembers != nil || c.WorkspaceCap != nil || c.Binaries != nil
 }
 
 // dropLegacyBaseImages removes a base_images entry of exactly a kind

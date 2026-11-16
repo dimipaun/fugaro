@@ -5,11 +5,13 @@ package cli
 import (
 	"context"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // ttyEngine is a stage engine whose stdin is a real terminal (no faking of
@@ -61,12 +63,19 @@ func TestPtyFirstRunPrompts(t *testing.T) {
 	}
 }
 
-// The plugin's write at a real terminal: the person's being there is the whole
-// of the confirmation — no name typed, no [y/N] — and the repository is wired.
+// The plugin stage at a real terminal: the person's being there is the whole of
+// the answer — the unknown repository is onboarded with no name typed and no
+// [y/N] — and the stage's write is the install in Claude Code, which no gate
+// stands in for. The checkout's settings file — a pin an older fugaro left —
+// comes out of it byte for byte: the merge that wrote it is gone (U2, D949).
 func TestPtyPluginConfirmationAtATerminal(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	settings := wiringCheckout(t, settingsWithOthers)
 	e, out, _ := ttyEngine(t, &initOptions{})
+	// After the engine: the rig takes claude off PATH itself.
+	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
+	useFakeClaude(t, f)
 	unknownRepo(e)
 	type result struct {
 		res *initflow.Result
@@ -85,8 +94,11 @@ func TestPtyPluginConfirmationAtATerminal(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the loop did not return")
 	}
-	if data, _ := os.ReadFile(settings); !strings.Contains(string(data), `"fugaro@fugaro": true`) {
-		t.Errorf("not wired:\n%s", data)
+	if data, _ := os.ReadFile(settings); string(data) != settingsWithOthers {
+		t.Errorf("the stage wrote the checkout's settings, and the install is the whole of its write (U2):\n%s", data)
+	}
+	if !slices.ContainsFunc(callArgs(f.Calls(t)), func(a []string) bool { return slices.Equal(a, argsInstall) }) {
+		t.Errorf("the plugin was not installed in Claude Code: %q", callArgs(f.Calls(t)))
 	}
 	if strings.Contains(out.String(), "Type acme/app to onboard it") || strings.Contains(out.String(), "[y/N]") {
 		t.Errorf("a confirmation was asked at the terminal:\n%s", out.String())

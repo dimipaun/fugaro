@@ -51,7 +51,7 @@
 // scratch suffix and every credential come from `test/support/fakeSecrets.ts`
 // or are assembled from fragments here, for the reason that module gives.
 
-import { join } from 'node:path'
+import { posix } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
@@ -75,6 +75,9 @@ import * as fake from '../support/fakeSecrets'
 function scratch(): string {
   return ['aB3', 'xY9'].join('')
 }
+
+// The path rule reads POSIX spellings, so these are joined with `/` on every host.
+const join = posix.join
 
 /**
  * PATHS are the paths the header, the picker and the CLI's refusals carry: the

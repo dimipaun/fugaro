@@ -78,6 +78,45 @@ func doctorChecksByID(t *testing.T) map[string]doctorCheck {
 	return m
 }
 
+// TestDoctorOfflineSkipsThePolicyChecks: `--offline` records a skip for each of
+// the three checks whose answer is in the project's Realtime Database, and not
+// one request reaches the database the rig's local config points at (D951,
+// D952; U3 of docs/plugin-user-scope/implementation-plan.md). The published
+// node and the deployed rules generation are exactly the facts the flag
+// promises not to read, and the skip is what tells a reader "not read" from
+// "read and found fine" — a distinction the three checks would otherwise lose
+// by simply being absent from a run that reports ok, which is the silent pass
+// the classes exist to prevent.
+func TestDoctorOfflineSkipsThePolicyChecks(t *testing.T) {
+	_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+	before := len(db.Requests())
+	out, _, _ := execute(t, "doctor", "--offline", "--json", "--dir", t.TempDir())
+	var o doctorOutput
+	if err := json.Unmarshal([]byte(out), &o); err != nil {
+		t.Fatalf("doctor --offline --json is not JSON: %v\n%s", err, out)
+	}
+	m := map[string]doctorCheck{}
+	for _, c := range o.Checks {
+		m[c.ID] = c
+	}
+	for _, id := range []string{"policy-rules-skew", "policy-vs-jobs", "policy-older-than-binary"} {
+		c, ok := m[id]
+		if !ok {
+			t.Errorf("%s is absent from --offline, so a reader cannot tell it was not asked:\n%s", id, out)
+			continue
+		}
+		if !c.Skipped || c.OK {
+			t.Errorf("%s = %+v, want skipped and not ok", id, c)
+		}
+		if !strings.Contains(c.Problem, "--offline") {
+			t.Errorf("%s's problem does not say why it was not run: %q", id, c.Problem)
+		}
+	}
+	if after := len(db.Requests()); after != before {
+		t.Fatalf("--offline made %d database requests", after-before)
+	}
+}
+
 // TestDoctorPolicyChecks is the checks of plan task 1.6 step 4, each on the
 // state it exists for, with the severity it must carry: policy-published
 // (info), policy-newer-than-binary and policy-older-than-binary (warnings,
@@ -212,7 +251,13 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		// publisher's delete-then-publish (what the line named before the policy
 		// stage existed) costs the node what a publish rebuilds from the
 		// operator's own config.
-		doctorPolicyRig(t, doctorPolicy(func(p *projectpolicy.Policy) { p.Version = projectpolicy.Version - 1 }), "")
+		//
+		// The version is the newest this reader refuses while the chain still
+		// carries it (refusedOlderVersion), not a fixed count back from this
+		// binary's: every version above it is a shape-free step, so this reader
+		// answers those with its own node (ReadsVersion) and there is no skew
+		// for doctor to report at all.
+		doctorPolicyRig(t, doctorPolicy(func(p *projectpolicy.Policy) { p.Version = refusedOlderVersion(t) }), "")
 		c, ok := doctorChecksByID(t)["policy-older-than-binary"]
 		if !ok || c.Severity != "warning" {
 			t.Fatalf("policy-older-than-binary = %+v (present %v), want a warning", c, ok)
@@ -306,8 +351,8 @@ func TestDoctorPolicyChecks(t *testing.T) {
 			t.Errorf("the check does not name the key and the node: %+v", c)
 		}
 		// The move is a newer binary the operator installs, the same one the
-		// readers' refusal names: doctor cannot offer `fugaro upgrade`, which
-		// never upgrades the binary it runs.
+		// readers' refusal names: doctor cannot offer `fugaro update`, which
+		// never installs a newer binary than the one it runs.
 		assertNamesTheBinaryUpgrade(t, c.Fix)
 		// The other side: a node whose keys this Fugaro all knows is not
 		// warned about, so the check is about the keys and not about doctor
@@ -365,7 +410,7 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if !ok || c.Severity != "warning" {
 			t.Fatalf("policy-vs-jobs = %+v (present %v), want a warning", c, ok)
 		}
-		if !strings.Contains(c.Problem, "0.1.0") || !strings.Contains(c.Fix, "fugaro image refresh") {
+		if !strings.Contains(c.Problem, "0.1.0") || !strings.Contains(c.Fix, "fugaro update") {
 			t.Errorf("the check does not name the recorded image and the command that moves it: %+v", c)
 		}
 		// The other side: a recorded base this release pins is not a warning.
@@ -670,6 +715,44 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		}
 		if !strings.Contains(c.Fix, "coordinator") || strings.Contains(c.Fix, "mailbox") {
 			t.Errorf("the fix for a generation-%d marker does not name what the redeploy adds (the coordinator's read grant): %q", rulesDeviceGeneration, c.Fix)
+		}
+	})
+
+	t.Run("a marker of the coordinator generation, below the voice node's", func(t *testing.T) {
+		// Generation 4 already carries the coordinator's read grant, so the
+		// sentence for it must not send the operator after a grant the deployed
+		// rules already hold: what 5 adds is the voice policy node, and that is
+		// what it names. Generation 4 is the marker every installation on the
+		// release behind this one reports, so this is the state the sentence is
+		// read in.
+		if rulesCoordinatorGeneration >= projectpolicy.RulesVersion {
+			t.Fatalf("rulesCoordinatorGeneration = %d and RulesVersion = %d: this case is about a marker between them", rulesCoordinatorGeneration, projectpolicy.RulesVersion)
+		}
+		_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+		db.Set(projectpolicy.PathRulesMarker(), rulesCoordinatorGeneration)
+		db.SetRules([]byte(`{"rules":{".read":false,".write":false}}`))
+		c, ok := doctorChecksByID(t)["policy-rules-skew"]
+		if !ok || c.Severity != "warning" {
+			t.Fatalf("policy-rules-skew = %+v (present %v), want a warning", c, ok)
+		}
+		if c.Problem != rulesMarkerOlderText(rulesCoordinatorGeneration) {
+			t.Errorf("the body is not rulesMarkerOlderText:\n got %q\nwant %q", c.Problem, rulesMarkerOlderText(rulesCoordinatorGeneration))
+		}
+		for _, want := range []string{fmt.Sprintf("generation %d", rulesCoordinatorGeneration), rules.PathVoice, fmt.Sprintf("generation %d or newer", projectpolicy.RulesVersion)} {
+			if !strings.Contains(c.Problem, want) {
+				t.Errorf("the body does not carry %q: %q", want, c.Problem)
+			}
+		}
+		for _, bad := range []string{"fugaro pair", "by hand", "no run reads a published policy", coordpath.PathRoot + "/"} {
+			if strings.Contains(c.Problem, bad) {
+				t.Errorf("the body for a generation-%d marker carries %q, which is about rules it already has: %q", rulesCoordinatorGeneration, bad, c.Problem)
+			}
+		}
+		if !strings.Contains(c.Fix, "fugaro update") || strings.Contains(c.Fix, "--firebase-project") {
+			t.Errorf("the check does not name the owner's fix: %+v", c)
+		}
+		if !strings.Contains(c.Fix, "voice") || strings.Contains(c.Fix, "coordinator") {
+			t.Errorf("the fix for a generation-%d marker does not name what the redeploy adds (the voice policy node): %q", rulesCoordinatorGeneration, c.Fix)
 		}
 	})
 
@@ -1656,7 +1739,7 @@ func TestDoctorBrokenMarkFixRuns(t *testing.T) {
 	// The prescribed command, on the same installation: the name is not in
 	// this machine's claude_accounts (the rig's config has none), and the mark
 	// is what makes it one this installation has.
-	if _, _, err := execute(t, "accounts", "clear", "team-shared", "--yes"); err != nil {
+	if _, _, err := execute(t, "accounts", "clear", "team-shared"); err != nil {
 		t.Fatalf("the fix doctor printed does not run: %v", err)
 	}
 	if m, _ := db.Value(credsMarkPath("team-shared")).(map[string]any); m["state"] != "available" {

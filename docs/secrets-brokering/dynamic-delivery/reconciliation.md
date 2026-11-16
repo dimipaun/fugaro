@@ -91,7 +91,7 @@ is only partly true (F4).
 | F5 | Gap | The service's person class admits read mints only, keyed on a verified email. The grant request and the intake need a caller identity keyed on the Google **`sub`**, so the person class is extended, not reused as is. UNVERIFIED: that a user's Google ID token `sub` is the stable numeric account ID in every sign-in path the CLI uses (U2) |
 | F6 | Wrong | The collision is with the **existing** secret names, not between ids (a digits-only id already splits at `-`): `gcp.SecretID` builds `fugaro-<readableSlug>-<logical>-<hash>` from a slug of `[a-z0-9-]`, so a repository owned by `p`, `u` or `p-labs` produces `fugaro-p-labs-app-…`, inside the intake's `fugaro-p-` IAM prefix. An admin could overwrite or delete a repository's mounted token through the intake. **Resolution R1** (prefixes the existing scheme never emits) |
 | F7 | Wrong | Step 4 binds the "Cloud Run execution ID" to the slip, but a job's ID token carries the account and no execution claim, so the service cannot verify an execution ID a caller states. The job SA email is the verified fact (`Authenticator`, one SA per job); **D1937** |
-| F8 | Gap | The intake cannot read, but write is an integrity power: adding a version to a shared or platform secret replaces a key with one an attacker holds (model prompts then go to the attacker's account), and delete is a denial. IAM can condition version-add and delete on the name prefix and cannot condition create. **R3** |
+| F8 | Gap | The intake cannot read, but write is an integrity power: adding a version to a shared or platform secret replaces a key with one an attacker holds (model prompts then go to the attacker's account), and delete is a denial. IAM can condition create, version-add and delete on the name prefix; it cannot condition list, which is granted on its own unconditioned role. **Amended 2026-11-12: this row first read "cannot condition create" — Check 510's re-run measured a conditioned `secrets.create` ADMITTED for a `fugaro_u_` name and REFUSED (403) outside both prefixes, so create is conditioned with them (F30's amendment, the owner's ruling).** **R3** |
 | F9 | Gap | The agent on a person's machine holds that person's credentials, so the server cannot tell a person from a coding agent at the intake. The refusal in an agent's session is client-side only (as `fugaro creds set` today). For an ordinary member the own-prefix and no-read limits bound the damage; **for an admin they do not**: an admin's agent could write `fugaro_p_` and delete another member's prefix. That is a power the admin's machine already holds as a role, recorded as an accepted limit (SECURITY.md in DS4.3) and narrowed by R7's reserved names |
 | F10 | Rule | D501 and the addendum disagree (C4). A cold start sits on the path of the first call; the heartbeat is the owner's answer (D1934) |
 | F11 | Rule | CLAUDE.md's HARD RULE: the migration of every existing secret (bundle entries, per-repository and project-wide secrets with mounts) to the new names happens inside `fugaro update`, safely while runs are in flight, with a convergence test. **R2** |
@@ -112,7 +112,7 @@ is only partly true (F4).
 | F27 | Gap | The roster is read over IAM with a database-wide grant and keyed by email; the prefix is keyed by `sub`. **D1940** |
 | F28 | Wrong | Binding a slip to slug, run and account does not fence launchers from each other: any launcher can mint any run's budget identity, read a job's environment (`run.executions.get` is in the launcher role) and share an account with it. **R8 amended, D1941** |
 | F29 | Wrong | R7 as first written reserved every bundle name, including the model token names (`anthropic-api-key`, `claude-oauth-token[-<name>]`), so R6's rotation through the intake could never happen. Only the platform kinds are reserved (R7 amended) |
-| F30 | Wrong | Secret Manager label values cannot hold an email; the owner's identity is an **annotation** (R10 amended). `secrets.list` is checked on the project, so a name-prefix condition admits nothing: list is granted unconditioned to the intake and, for matching the annotation, to the service (metadata only); Check 510 measures it |
+| F30 | Wrong | Secret Manager label values cannot hold an email; the owner's identity is an **annotation** (R10 amended). `secrets.list` is checked on the project, so a name-prefix condition admits nothing: list is granted unconditioned to the intake and, for matching the annotation, to the service (metadata only); Check 510 measures it. **Amended 2026-11-11: the create half is contradicted by the owner's Check 510 run** — `secretmanager.secrets.create` was **ADMITTED** for a `fugaro_u_` name under the conditioned grant, so create is not simply "checked on the project" and a conditioned create does not admit nothing. The 2026-11-12 re-run answered the rest: `create-conditioned-outside` was **REFUSED** (403) for a name outside both prefixes under the same grant, so create is fenced by name in both directions. **Owner ruling, 2026-11-12: DS2.2 conditions the intake's create by name** (the conditioned create grant), not unconditioned; list stays unconditioned |
 | F31 | Wrong | "Invoker follows the roster" is false today: the service's invoker is `var.operators` (`credentials.tf`) and nothing derives grants from the roster. Launchers need an invoker grant for the slip route and an allow-list for the launcher class (fail closed); DS2.2 and DS1.2 carry them |
 | F32 | Gap | The derived admin list must hold project-scoped admins only (roster grants carry scopes), live outside any path a launcher can write (`runs/`, `tokens/`, `issues/`), and be readable by the intake |
 | F33 | Gap | Database admins bypass the rules on `creds/slips` and can forge a slip. **D1943** |
@@ -155,8 +155,11 @@ No answer deviates from a recommendation, and no two answers conflict. D1938–D
   builds last (listed exceptions until their exit slices). Each flip is one release, converges inside
   `fugaro update`, is safe while runs are in flight (docs/design/update-in-flight.md) and has an entry
   in the release's `### For operators`.
-- **R3: the intake's integrity bounds.** The intake account holds create at project level (IAM cannot
-  condition create), and version-add, list and delete only under a name-prefix condition. It derives the
+- **R3: the intake's integrity bounds.** The intake account holds create, version-add and delete under ONE
+  name-prefix condition on the resource name, and list unconditioned — the owner's ruling of 2026-11-12,
+  after Check 510's re-run saw a conditioned `secrets.create` admitted for a `fugaro_u_` name and refused
+  (403) for a name outside both prefixes, and saw `secrets.list` refused under that same condition (F30).
+  It derives the
   prefix from the verified `sub` and never from the request, refuses a name outside R1's grammar, refuses
   `fugaro_p_` for a non-admin, and writes one audit line per call. The platform bundle and every name
   outside the two prefixes are out of its reach by IAM, not by code.
@@ -181,7 +184,8 @@ No answer deviates from a recommendation, and no two answers conflict. D1938–D
 
 None. O1 (replay at the grant route) is D1944, the stale-bundle note is D1945 and the docs pin is D1946, all answered 2026-11-09 as recommended. One note for the owner's confirmation: D1931 reverses Q6's "not a name-prefix IAM fence" for
 user-supplied credentials only, which the owner's recommended answer already accepts; the intake's
-`create` permission cannot be fenced by IAM, which R3 states plainly.
+`create` permission IS fenced by IAM, by name, which R3 states (the owner's ruling of 2026-11-12, Check
+510's re-run) — the tension this section opened is closed by it.
 
 ## 8. UNVERIFIED
 
@@ -189,6 +193,6 @@ user-supplied credentials only, which the owner's recommended answer already acc
 | --- | --- |
 | U1 | Whether the service's forward serves an OpenRouter upstream (config has model providers; credsvc's routes are Anthropic's) |
 | U2 | That a user ID token's `sub` is the numeric account ID in every CLI sign-in path |
-| U3 | Secret Manager's maximum secret-ID length and whether IAM conditions on `resource.name` apply to `secretmanager.versions.add` and `secrets.delete` as the plan assumes |
-| U4 | That a runner heartbeat reliably keeps one Cloud Run instance up (request-based billing, instance idle timeout) |
+| U3 | Secret Manager's maximum secret-ID length and whether IAM conditions on `resource.name` apply to `secretmanager.versions.add` and `secrets.delete` as the plan assumes. The owner ran Check 510 on 2026-11-11 and 2026-11-12: version-add and delete are fenced by the condition, and the maximum secret ID length is 255 (256 refused) |
+| U4 | That a runner heartbeat reliably keeps one Cloud Run instance up (request-based billing, instance idle timeout). The owner ran Check 511 on 2026-11-12: a request every 15 s kept the service warm for the whole 300 s window — 20 of 20 requests answered by the container and none paying a cold start (min 109 ms, mean 165 ms, max 293 ms) — with `min_instance_count` 0, so the beat, not the configuration, kept it answering. The check's `instance-ids` row came back empty (the log entries carried no instance id it could use), so the run exited 2 and the timing is settled while the one-instance reading is not; the owner ruled that row not part of the decision |
 | U5 | (answered by F22: the agent can reach it; kept for the record) |

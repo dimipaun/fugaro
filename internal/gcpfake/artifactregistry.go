@@ -21,6 +21,7 @@ type ArtifactRegistry struct {
 
 	mu    sync.Mutex
 	repos map[string]map[string]string // projects/<p>/locations/<l>/repositories/<r> → labels
+	modes map[string]string            // repository → its mode (STANDARD_REPOSITORY, REMOTE_REPOSITORY, VIRTUAL_REPOSITORY)
 	tags  map[string]string            // <repository>/packages/<pkg>/tags/<tag> → version name
 }
 
@@ -50,6 +51,22 @@ func (f *ArtifactRegistry) AddRepository(project, location, id string, labels ma
 	f.repos[arRepository(project, location, id)] = maps.Clone(labels)
 }
 
+// SetRepositoryMode makes the repository's mode be mode, as its get reports
+// it: STANDARD_REPOSITORY (a repository the project's own pushes fill, which
+// is what the field answers for a repository that never set one),
+// REMOTE_REPOSITORY (a pull-through cache, which serves whatever its
+// upstream's owner published) or VIRTUAL_REPOSITORY (a priority list of
+// upstreams, which may include a remote one). `fugaro doctor` reads it back
+// for the job image (plan 2026-10-19-compute-backend.md Task 10 step 5).
+func (f *ArtifactRegistry) SetRepositoryMode(project, location, id, mode string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.modes == nil {
+		f.modes = map[string]string{}
+	}
+	f.modes[arRepository(project, location, id)] = mode
+}
+
 // SetTag makes pkg:tag exist in the repository, pointing at a version
 // named after the tag.
 func (f *ArtifactRegistry) SetTag(project, location, id, pkg, tag string) {
@@ -75,6 +92,9 @@ func (f *ArtifactRegistry) handle(w http.ResponseWriter, r *http.Request, _ []by
 		out := map[string]any{"name": name, "format": "DOCKER"}
 		if len(labels) > 0 {
 			out["labels"] = maps.Clone(labels)
+		}
+		if mode := f.modes[name]; mode != "" {
+			out["mode"] = mode
 		}
 		writeJSON(w, http.StatusOK, out)
 	case r.Method == http.MethodGet && arTagRE.MatchString(p):

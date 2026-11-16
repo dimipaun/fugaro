@@ -2,23 +2,29 @@ package cli
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"gocloud.dev/blob"
 
+	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -58,7 +64,7 @@ type projectJobFixture struct {
 // serving github, and every repository of the fixture's owner admitted to it.
 // The profile lists no Claude account, so its job runs as no account and the
 // job's account segment is empty (config.ProjectJobAccounts).
-const projectJobPolicy = `{"version":4,"allow_repos":["github/acme/*"],` +
+const projectJobPolicy = `{"version":5,"allow_repos":["github/acme/*"],` +
 	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"}}}`
 
 // projectJobTimeout is the profile's task timeout: what a project job's
@@ -89,11 +95,13 @@ func newProjectJobFixtureMode(t *testing.T, mode string) *projectJobFixture {
 		"profiles: { standard: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h } }\n"+
 			// A checkout: clone workflow runs the installation's base image,
 			// which the launch gate holds to a release whose runner knows
-			// FUGARO_CHECKOUT and, for the launches in this fixture, reads the
-			// sealed budget token (internal/cli/recipes_skew.go: cloneSince and
-			// sealSince — the fixture publishes a policy, so a launch here
-			// mints whatever the local mode says).
-			"base_images: { base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:"+sealSince+" }\n")
+			// FUGARO_CHECKOUT, reads the sealed budget token and reads the
+			// policy node this release writes (internal/cli/recipes_skew.go:
+			// cloneSince and sealSince; policyImageGate: projectpolicy's
+			// VersionSince — the fixture publishes a policy, so a launch here
+			// mints whatever the local mode says, and the base has to be the
+			// release that introduced the node's version).
+			"base_images: { base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:"+nodeRelease+" }\n")
 	publishPolicy(t, f, projectJobPolicy)
 	// The name is the caller's to compute (the fake cannot import
 	// internal/backend/gcp: that package's own tests import the fake), and
@@ -438,9 +446,9 @@ workflows:
 
 // projectJobCheckout puts a checkout of acme/app in the working directory, so
 // a launch of it reads the repository's own fugaro.yaml — which is what says
-// whether its workflow is a checkout: clone one, and so whether it runs on a
-// shared job at all (design §4.4: a baked workflow stays on the
-// per-repository path).
+// which profile the workflow the launch names selects, and so which job the
+// launch lands on (D2304: the checkout mode decides the image, and no longer
+// the job).
 func projectJobCheckout(t *testing.T) string {
 	t.Helper()
 	return projectJobCheckoutYAML(t, projectJobRepoYAML)
@@ -707,7 +715,7 @@ const projectJobAccountConfig = "claude_accounts:\n" +
 // and the accounts block carries one exact list per account — the document that
 // says which repositories each token may be used by, derived at publish from
 // the local config above (projectpolicy.DeriveAccounts).
-const projectJobAccountsPolicy = `{"version":4,"allow_repos":["github/acme/*"],` +
+const projectJobAccountsPolicy = `{"version":5,"allow_repos":["github/acme/*"],` +
 	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",` +
 	`"claude_accounts":["acme-personal","default"],"allow_repos":["github/acme/app"]}},` +
 	`"accounts":{"acme-personal":{"allow_repos":["github/acme/app"]},` +
@@ -1150,10 +1158,20 @@ const projectJobSentinelProfile = "profiles: { standard: { provider: github, cpu
 // be reachable — the credentials service intersects a repository's admission
 // with accounts.<name>.allow_repos (credsvc's admittedAccounts), so a sentinel
 // with no entry there is one no review call could ever be served by.
-const projectJobSentinelPolicy = `{"version":4,"allow_repos":["github/acme/*"],` +
+const projectJobSentinelPolicy = `{"version":5,"allow_repos":["github/acme/*"],` +
 	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",` +
 	`"allow_repos":["github/acme/app"],"claude_accounts":["` + config.AnthropicKeyAccount + `"]}},` +
 	`"accounts":{"` + config.AnthropicKeyAccount + `":{"allow_repos":["github/acme/app"]}}}`
+
+// projectJobLegacyPolicy is the node a project publishes while it is still on
+// jobs of its own: the allow-list and nothing else, with no profiles block at
+// all. A launch resolves no job profile over it — runner.ProjectJobDefaultProfile
+// answers "" for a provider the policy serves no profile for — so every
+// workflow of such a project keeps the per-repository job it has always had,
+// whatever its checkout says (D2304). It is the state a project is in before
+// `fugaro update` writes its default profile (S5), and the one a launch has to
+// keep invisible.
+const projectJobLegacyPolicy = `{"version":5,"allow_repos":["github/acme/*"]}`
 
 // newProjectJobSentinelFixture is the project that serves the key: the fixture's
 // standard profile rewritten to list the sentinel, that policy published, and
@@ -1645,6 +1663,12 @@ func TestProjectJobSentinelRefusedWhenTheRunIsNotAnAPIKeyRun(t *testing.T) {
 // would be Cloud Run's 404 for a job this installation was never asked for, so
 // the launch stops before the claim, as the account gate's refusals do.
 //
+// What keeps this repository on a job of its own is that the project has
+// published no profile for its provider (projectJobLegacyPolicy): the profile
+// decides the job and not the workflow's checkout (D2304), so a repository no
+// profile of the published policy serves is on the per-repository path however
+// its workflow reads.
+//
 // Mutation (run, restore): delete the `job == nil && spec.OAuthToken == ...`
 // refusal in launchRun — the launch takes the claim, mints the budget token and
 // reaches Cloud Run on a name nothing deployed, and the assertions below fail on
@@ -1652,8 +1676,9 @@ func TestProjectJobSentinelRefusedWhenTheRunIsNotAnAPIKeyRun(t *testing.T) {
 func TestProjectJobSentinelRefusedOnAPerRepositoryJob(t *testing.T) {
 	f := newProjectJobSentinelFixture(t)
 	isolateCache(t)
-	// A baked workflow: it stays on the repository's own job however the project
-	// is configured (internal/cli's launchProjectJobFor).
+	// No profile for github is published over the sentinel fixture's node, so
+	// the launch resolves none and keeps the repository's own job.
+	publishPolicy(t, f.launchBudgetFixture, projectJobLegacyPolicy)
 	projectJobCheckoutYAML(t, strings.Replace(projectJobRepoYAML, "    checkout: clone\n", "", 1))
 
 	claimed := false
@@ -1697,7 +1722,7 @@ const projectJobProviderKeyProfile = "profiles: { standard: { provider: github, 
 // sentinel: the two values are two credentials, and a node that keyed one of
 // them by the other's name would admit a repository to a key its job is not
 // the one for.
-const projectJobProviderKeyPolicy = `{"version":4,"allow_repos":["github/acme/*"],` +
+const projectJobProviderKeyPolicy = `{"version":5,"allow_repos":["github/acme/*"],` +
 	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",` +
 	`"allow_repos":["github/acme/app"],"claude_accounts":["` + config.ProviderKeyAccount + `"]}},` +
 	`"accounts":{"` + config.ProviderKeyAccount + `":{"allow_repos":["github/acme/app"]}}}`
@@ -1747,7 +1772,7 @@ func TestProviderKeyGetsItsOwnValueOnTheAccountAxis(t *testing.T) {
 	for name, pr := range lc.Profiles {
 		profiles[name] = projectpolicy.Profile{JobProfile: pr}
 	}
-	accounts, err := projectpolicy.DeriveAccounts(profiles, lc.ClaudeAccounts, lc.ProjectSecrets)
+	accounts, err := projectpolicy.DeriveAccounts(profiles, lc.ClaudeAccounts, lc.ProjectSecrets, nil)
 	if err != nil {
 		t.Fatalf("a profile naming the provider key derived no block: %v", err)
 	}
@@ -1912,7 +1937,7 @@ func TestProviderKeyIsNotAClaudeAccount(t *testing.T) {
 // the claim, minted the budget token and reached Cloud Run on a job that does
 // not exist, and every run of the profile halted with cannotPlaceJob, which
 // blames a stale module version instead of the profile.
-const projectJobReservedTokenPolicy = `{"version":4,"allow_repos":["github/acme/*"],` +
+const projectJobReservedTokenPolicy = `{"version":5,"allow_repos":["github/acme/*"],` +
 	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",` +
 	`"secrets":["claude-oauth-token"]}}}`
 
@@ -2059,7 +2084,7 @@ func TestLaunchRefusesARepositoryTheProfileDoesNotAdmit(t *testing.T) {
 	f := newProjectJobFixture(t)
 	// The project admits both of the fixture's repositories; the profile
 	// admits one of them.
-	publishPolicy(t, f.launchBudgetFixture, `{"version":4,"allow_repos":["github/acme/*"],`+
+	publishPolicy(t, f.launchBudgetFixture, `{"version":5,"allow_repos":["github/acme/*"],`+
 		`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",`+
 		`"allow_repos":["github/acme/other"]}}}`)
 	projectJobCheckout(t)
@@ -2143,7 +2168,7 @@ func TestLaunchKeepsABitbucketProfileOnThePerRepositoryJob(t *testing.T) {
 	// github standard profile, and the Bitbucket one a Bitbucket workflow
 	// selects. The project admits the Bitbucket repository, and the Bitbucket
 	// profile admits it too — nothing below is about an admission.
-	publishPolicy(t, f.launchBudgetFixture, `{"version":4,"allow_repos":["github/acme/*","bitbucket/acme/*"],`+
+	publishPolicy(t, f.launchBudgetFixture, `{"version":5,"allow_repos":["github/acme/*","bitbucket/acme/*"],`+
 		`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"},`+
 		`"standard-bitbucket":{"provider":"bitbucket","cpu":2,"memory":"4Gi","timeout_class":"6h"}}}`)
 	// The job a buggy launcher would compute, added to the fake so the failure
@@ -2176,10 +2201,16 @@ func TestLaunchKeepsABitbucketProfileOnThePerRepositoryJob(t *testing.T) {
 
 // Item 2: a launch of a repository from outside its checkout cannot tell
 // which workflow it is about — the working tree's fugaro.yaml is where a
-// workflow's checkout: kind and its profile are read — so, for a project
-// that has published profiles, it refuses rather than silently guessing the
-// per-repository job, which is the wrong job for a clone workflow. The
-// remedy is named: run it from the repository's own checkout.
+// workflow's checkout: kind and its profile are read — so, for a project that
+// has published profiles, it refuses rather than silently guessing the
+// per-repository job, which is the wrong job for a clone workflow. The remedy
+// is named: run it from the repository's own checkout.
+//
+// A3 narrows the refusal rather than deleting it: where the installation has a
+// credentials service the document is read at the ref instead (D901, D902) and
+// this fixture — which configures none — is the installation that has not opted
+// in, whose one line names the missing service and keeps the checkout as the way
+// out (spec.md §7).
 //
 // Mutation (run, restore): return nil, nil where this refuses (the
 // per-repository path) — the launch goes through, on a job the run may not
@@ -2193,7 +2224,7 @@ func TestRunRepoWithoutItsCheckoutErrorsClearly(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want a user error", err)
 	}
-	for _, want := range []string{"acme/app", "checkout", "fugaro run"} {
+	for _, want := range []string{"acme/app", "checkout", "credentials service"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
@@ -2246,6 +2277,343 @@ func TestRunRepoInItsCheckoutWithNoFugaroYAMLKeepsThePerRepositoryJob(t *testing
 	}
 }
 
+// TestLaunchProjectJobServesBakedWorkflows is D2304: a `checkout: baked`
+// workflow runs on a shared project job like every other workflow of its
+// profile, so the checkout mode no longer chooses the job model. What the mode
+// still chooses is the job's *image* — a baked workflow runs the repository's
+// own derived image and the launch's gates judge it by that image's build
+// record (checkImageSince, which the fixture writes) while a clone workflow
+// runs the installation's base image — and the two questions are separate
+// ones: before this, `checkout: clone` was a precondition of the shared job
+// (launchProjectJobFor), so every baked workflow of a migrated project stayed
+// on a per-repository job the retirement then deletes (M2, D2303), and the
+// repository's work ran on a job whose profile its owner had already left.
+//
+// The move is admitted for the length of this test and not in the tree: the
+// image that makes it safe to take is S10's (sharedJobBaked, which S10 flips
+// when ProjectJobs deploys the project's catalog default image), so this test
+// is what proves the launcher's half of that decision while
+// TestLaunchProjectJobKeepsBakedWorkflowsOnTheirOwnJob proves the other — that
+// until the flip, a baked workflow keeps the job it has always had.
+//
+// Mutation (run, restore): judge the checkout mode without the switch (return
+// nil, nil for a workflow that is not `checkout: clone`) — the launch goes to
+// the per-repository job and this test fails.
+func TestLaunchProjectJobServesBakedWorkflows(t *testing.T) {
+	f := newProjectJobFixture(t)
+	admitSharedJobBaked(t)
+	baked := strings.Replace(projectJobRepoYAML, "checkout: clone", "checkout: baked", 1)
+	if !strings.Contains(baked, "checkout: baked") {
+		t.Fatal("the fixture has no checkout: clone to put a baked workflow in its place")
+	}
+	projectJobCheckoutYAML(t, baked)
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261114-130000-aaaa", "Add a feature"); err != nil {
+		t.Fatalf("a launch of a baked workflow: %v", err)
+	}
+	calls := f.run.RunRequests()
+	if len(calls) != 1 || calls[0].Job != f.job {
+		t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the shared job %s: a baked workflow runs on a shared job like any other (D2304)", len(calls), calls, f.job)
+	}
+}
+
+// TestLaunchProjectJobKeepsBakedWorkflowsOnTheirOwnJob is the half of D2304
+// that waits for the image: a shared project job runs the image its profile was
+// deployed with, and the tools a workflow declares (image.apt, image.setup, a
+// dockerfile, the catalog entry its deploy stamps) are in the repository's own
+// derived image and nowhere else, so a `checkout: baked` workflow keeps the
+// per-repository job it has always had until S10 gives the shared job the
+// project's catalog default image. The rest of the launch is the same one
+// TestLaunchProjectJobServesBakedWorkflows makes: the same repository, under a
+// published profile that serves it, with the same derived image built — what
+// holds it on its own job is its checkout and nothing else about it.
+//
+// Mutation (run, restore): drop the switch from launchProjectJobFor's
+// precondition (return nil, nil only for a workflow that is not
+// `checkout: clone`, whatever sharedJobBaked says) — the baked workflow is moved
+// onto the shared job, whose image does not carry the tools it declares, and
+// this test fails.
+func TestLaunchProjectJobKeepsBakedWorkflowsOnTheirOwnJob(t *testing.T) {
+	f := newProjectJobFixture(t)
+	perRepo := gcp.JobName(appSlug, "web")
+	baked := strings.Replace(projectJobRepoYAML, "checkout: clone", "checkout: baked", 1)
+	if !strings.Contains(baked, "checkout: baked") {
+		t.Fatal("the fixture has no checkout: clone to put a baked workflow in its place")
+	}
+	projectJobCheckoutYAML(t, baked)
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261114-130000-bbbb", "Add a feature"); err != nil {
+		t.Fatalf("a launch of a baked workflow: %v", err)
+	}
+	calls := f.run.RunRequests()
+	if len(calls) != 1 || calls[0].Job != perRepo {
+		t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the per-repository job %s: a shared project job does not carry the tools a baked workflow declares until S10 gives it the project's catalog default image (sharedJobBaked)", len(calls), calls, perRepo)
+	}
+}
+
+// admitSharedJobProvider admits provider to the launcher's own question about
+// which providers a shared project job serves, for the length of the test.
+//
+// The plan's S1 leaves internal/infra's list as it is — so that the deployer
+// and the launcher merge with no effect on a Bitbucket project, and a release
+// cut midway breaks nothing — and I1 admits Bitbucket in one line. A
+// launcher-side test of the Bitbucket half therefore admits it here, exactly
+// as S1's own test admits it for the deployer: what the test admits is what
+// production deploys, because both ask the one predicate (sharedJobProvider).
+//
+// No test in this package runs in parallel, so replacing the variable is a
+// test-local act.
+func admitSharedJobProvider(t *testing.T, provider string) {
+	t.Helper()
+	prev := sharedJobProvider
+	sharedJobProvider = func(kind string) bool { return kind == provider || prev(kind) }
+	t.Cleanup(func() { sharedJobProvider = prev })
+}
+
+// admitSharedJobBaked admits a `checkout: baked` workflow to a shared project
+// job for the length of the test.
+//
+// The tree does not admit it (sharedJobBaked, project_job.go): the move is
+// D2304's, and the image that makes it safe is S10's, which flips the switch in
+// the change that deploys the project's catalog default image for a profile.
+// Until then a test of the shared half turns it on here rather than waiting for
+// that release, and the two tests that turn it on are the ones that assert the
+// launcher's half of the decision — TestLaunchProjectJobServesBakedWorkflows and
+// the baked case of TestRunnerCandidatesMatchTheLauncher — beside
+// TestLaunchProjectJobKeepsBakedWorkflowsOnTheirOwnJob, which asserts what the
+// tree does today.
+//
+// No test in this package runs in parallel, so replacing the variable is a
+// test-local act.
+func admitSharedJobBaked(t *testing.T) {
+	t.Helper()
+	sharedJobBaked = true
+	t.Cleanup(func() { sharedJobBaked = false })
+}
+
+// The two profiles a project whose repositories are on both providers
+// publishes (D2310, R8): the project's own default, serving the first
+// provider, and the second provider's own default, named by the provider.
+const (
+	bitbucketProfile  = "standard-bitbucket"
+	githubFirstPolicy = `{"version":5,"allow_repos":["github/acme/*","bitbucket/acme/*"],` +
+		`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"},` +
+		`"standard-bitbucket":{"provider":"bitbucket","cpu":2,"memory":"4Gi","timeout_class":"6h"}}}`
+	bitbucketFirstPolicy = `{"version":5,"allow_repos":["github/acme/*","bitbucket/acme/*"],` +
+		`"profiles":{"standard":{"provider":"bitbucket","cpu":2,"memory":"4Gi","timeout_class":"6h"},` +
+		`"standard-github":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"}}}`
+)
+
+// bitbucketCheckout puts a checkout of a Bitbucket repository of the fixture's
+// owner in the working directory: projectJobRepoYAML with the provider moved,
+// committed on main and published as origin/main — the ref the launch reads
+// agent.auth from (projectJobAgentAuth), which projectJobCheckoutYAMLAt does
+// for the fixture's GitHub repository — with workflowKeys added under the web:
+// workflow when the caller names any.
+func bitbucketCheckout(t *testing.T, repo, workflowKeys string) {
+	t.Helper()
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@bitbucket.org:"+repo+".git")
+	yaml := strings.Replace(projectJobRepoYAML, "provider: github", "provider: bitbucket", 1)
+	if workflowKeys != "" {
+		yaml = strings.Replace(yaml, "  web:\n", "  web:\n"+workflowKeys, 1)
+		if !strings.Contains(yaml, workflowKeys) {
+			t.Fatal("the fixture has no web: workflow to put a key under")
+		}
+	}
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": yaml})
+	testutil.Git(t, dir, "add", "fugaro.yaml")
+	testutil.Git(t, dir, "commit", "-q", "-m", "the repository's fugaro.yaml")
+	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/main", "HEAD")
+	t.Chdir(dir)
+}
+
+// TestLaunchProjectJobServesBitbucket is the launcher's half of T2.2 (the
+// deployer's is S1's, and the two numbers this names are the plan's S4 and
+// docs/bitbucket-workspace-token's T2.2): a Bitbucket repository whose
+// workflow selects a Bitbucket profile runs on the shared job of that profile,
+// once the installation deploys one.
+//
+// What the launch does not do is decide this by the provider alone. Three
+// questions are asked in order and the launch answers each one from its own
+// document: the profile the workflow selects (or the default of the
+// repository's provider when it names none, D2310, R8), the profile's own
+// provider against the repository's, and whether the installation deploys a
+// shared job for that provider at all (sharedJobProvider — internal/infra's
+// list, which admits Bitbucket in the test because S1 leaves it as it is until
+// I1). The Bitbucket job holds no token at all (D2302), so a launch that got
+// here on a profile whose provider was not the repository's would run the
+// repository's work on a job that reaches no repository of its own.
+//
+// Mutation (run, restore): keep launchProjectJobFor's provider question at the
+// repository's provider alone (drop the sharedJobProvider(pr.Provider) half,
+// as TestLaunchKeepsABitbucketProfileOnThePerRepositoryJob's own mutation
+// does) — the launch is made on a job no installation has, and this test's
+// fixture has to deploy one for the assertion to be about the launcher at all.
+func TestLaunchProjectJobServesBitbucket(t *testing.T) {
+	f := newProjectJobFixture(t)
+	admitSharedJobProvider(t, "bitbucket")
+	const bbRepo = "acme/bb"
+	addRepoToConfig(t, f.cloudFixture, bbRepo, "bitbucket")
+	publishPolicy(t, f.launchBudgetFixture, githubFirstPolicy)
+	job := gcp.ProjectJobName(bitbucketProfile, "bitbucket", "")
+	f.run.AddProjectJob(job, bitbucketProfile, "bitbucket", "", "2", "4Gi")
+	f.run.SetJobTimeout(job, projectJobTimeout+backend.TaskTimeoutSlack)
+	bitbucketCheckout(t, bbRepo, "    job_profile: "+bitbucketProfile+"\n")
+
+	if _, _, err := execute(t, "run", "--repo", bbRepo, "--run-id", "20261114-130002-cccc", "Add a feature"); err != nil {
+		t.Fatalf("a launch of a Bitbucket repository on a project that deploys one job for it: %v", err)
+	}
+	calls := f.run.RunRequests()
+	if len(calls) != 1 || calls[0].Job != job {
+		t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the Bitbucket shared job %s: a deployed profile that admits the repository serves it (D2302)", len(calls), calls, job)
+	}
+}
+
+// TestUnnamedWorkflowResolvesTheProfileOfItsProvider is D2310 and R8's rule in
+// the launcher: a workflow that names no job profile runs on the default
+// profile of its repository's provider — `standard` for the project's first
+// provider, and `standard-<provider>` for another — and never on a profile of
+// a provider the repository is not on. Four rows pin the rule where it can
+// differ from main's single default: a project whose first provider is the
+// repository's, a project whose first provider is the other one (both
+// directions of `standard`), and the silence of a workflow that writes no
+// job_profile key at all.
+//
+// The rule is the runner's too (internal/runner's ProjectJobDefaultProfile,
+// which this launcher calls and TestRunnerCandidatesMatchTheLauncher holds to
+// the candidate set), so a launcher and a runner cannot resolve one
+// repository's workflow onto two profiles: the job's name is built from the
+// profile this resolves, and the runner places CLOUD_RUN_JOB against the
+// profiles the policy defines.
+//
+// Mutation (run, restore): resolve an unnamed workflow with
+// wf.JobProfileOrDefault() — main's rule, one default for every repository —
+// and the Bitbucket and `standard-github` rows resolve to `standard`, a
+// profile of the other provider, which the provider comparison then keeps on
+// the per-repository job: no jobs.run call is made on the shared job.
+func TestUnnamedWorkflowResolvesTheProfileOfItsProvider(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		policy string
+		repo   string
+		want   string
+	}{
+		{"the project's default serves the repository's provider", projectJobPolicy, "acme/app", "standard"},
+		{"another provider resolves to standard-<provider>", githubFirstPolicy, "acme/bb", bitbucketProfile},
+		{"the first provider's repository keeps the project's default", bitbucketFirstPolicy, "acme/bb", "standard"},
+		{"the second provider's repository does not", bitbucketFirstPolicy, "acme/app", "standard-github"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newProjectJobFixture(t)
+			provider := "github"
+			if tc.repo != "acme/app" {
+				provider = "bitbucket"
+				admitSharedJobProvider(t, "bitbucket")
+				addRepoToConfig(t, f.cloudFixture, tc.repo, "bitbucket")
+				bitbucketCheckout(t, tc.repo, "")
+			} else {
+				projectJobCheckout(t)
+			}
+			publishPolicy(t, f.launchBudgetFixture, tc.policy)
+			job := gcp.ProjectJobName(tc.want, provider, "")
+			f.run.AddProjectJob(job, tc.want, provider, "", "2", "4Gi")
+			f.run.SetJobTimeout(job, projectJobTimeout+backend.TaskTimeoutSlack)
+
+			if _, _, err := execute(t, "run", "--repo", tc.repo, "--run-id", "20261114-130003-dddd", "Add a feature"); err != nil {
+				t.Fatalf("a launch of a repository whose workflow names no profile: %v", err)
+			}
+			calls := f.run.RunRequests()
+			if len(calls) != 1 || calls[0].Job != job {
+				t.Fatalf("the launch made %d jobs.run calls (%+v), want one on %s: a workflow that names no profile runs on the default of its repository's provider (D2310, R8)", len(calls), calls, job)
+			}
+		})
+	}
+}
+
+// TestRunnerCandidatesMatchTheLauncher is C1's agreement on the launcher's own
+// side of it (contract.md: the launcher and the runner's candidate logic
+// "answer JobChoice over the same two facts and must agree name for name"):
+// the name this launcher computes is a name the runner's own computation
+// places, on the same (profile, provider, account) triple.
+//
+// The two are computed from different documents in different packages — the
+// launcher from the repository's own fugaro.yaml over the published policy,
+// the runner from the policy over the job's own environment — and the failure
+// this pins is the expensive one: a launch onto a job the runner then refuses
+// to place halts the run at its first decision, after an execution exists and
+// an attempt has been spent, with a message about a job whose name nobody
+// wrote down. Both of the rules this task changes are asked here, because they
+// are the two that decide a name: the provider-default rule (a Bitbucket
+// repository whose workflow names no profile) and the checkout mode that no
+// longer decides the job model (a baked workflow of the GitHub repository,
+// admitted here to the shared job as S10's flip of sharedJobBaked admits it).
+//
+// Mutation (run, restore): make ProjectJobDefaultProfile answer the project's
+// default profile whatever the provider is — the Bitbucket launch is made on
+// gcp.ProjectJobName("standard", "bitbucket", ""), which no profile of the
+// published policy computes, and the runner's own answer is false for it.
+func TestRunnerCandidatesMatchTheLauncher(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		policy      string
+		repo        string
+		runID       string
+		wantProfile string
+	}{
+		{"bitbucket, no profile named", githubFirstPolicy, "acme/bb", "20261114-130004-eeee", bitbucketProfile},
+		{"github, a baked workflow", projectJobPolicy, "acme/app", "20261114-130005-ffff", "standard"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newProjectJobFixture(t)
+			provider := "bitbucket"
+			if tc.repo == "acme/app" {
+				provider = "github"
+			}
+			if provider == "bitbucket" {
+				admitSharedJobProvider(t, provider)
+				addRepoToConfig(t, f.cloudFixture, tc.repo, provider)
+				bitbucketCheckout(t, tc.repo, "")
+			} else {
+				// The baked case is the shared job's once the image that makes
+				// the move safe is deployed (sharedJobBaked, S10's flip), which
+				// is the name this case has to agree on with the runner.
+				admitSharedJobBaked(t)
+				baked := strings.Replace(projectJobRepoYAML, "checkout: clone", "checkout: baked", 1)
+				projectJobCheckoutYAML(t, baked)
+			}
+			publishPolicy(t, f.launchBudgetFixture, tc.policy)
+			job := gcp.ProjectJobName(tc.wantProfile, provider, "")
+			f.run.AddProjectJob(job, tc.wantProfile, provider, "", "2", "4Gi")
+			f.run.SetJobTimeout(job, projectJobTimeout+backend.TaskTimeoutSlack)
+
+			if _, _, err := execute(t, "run", "--repo", tc.repo, "--run-id", tc.runID, "Add a feature"); err != nil {
+				t.Fatalf("launch: %v", err)
+			}
+			calls := f.run.RunRequests()
+			if len(calls) != 1 {
+				t.Fatalf("the launch made %d jobs.run calls (%+v), want one", len(calls), calls)
+			}
+			p, found, err := projectpolicy.Decode([]byte(tc.policy))
+			if err != nil || !found {
+				t.Fatalf("the fixture's published policy does not decode: %v", err)
+			}
+			profile, from, account, ok := runner.ProjectJobOfPolicy(p, calls[0].Job)
+			if !ok {
+				t.Fatalf("the runner's candidate logic does not place the job the launch made (%s): a run in it would halt at its first decision, after an execution exists", calls[0].Job)
+			}
+			if profile != tc.wantProfile || from != provider {
+				t.Fatalf("the runner places %s as the job of %s/%s, and the launch meant %s/%s", calls[0].Job, profile, from, tc.wantProfile, provider)
+			}
+			if account != "" {
+				t.Fatalf("the runner places %s on the account %q, and the fixture's profile lists none", calls[0].Job, account)
+			}
+		})
+	}
+}
+
 // With no profiles published the per-repository job is not a guess — it is
 // the only job there is — so a launch from outside the checkout still takes
 // it. Both shapes of "no profiles" are pinned: an installation that has
@@ -2261,7 +2629,7 @@ func TestRunRepoWithoutItsCheckoutKeepsThePerRepositoryJob(t *testing.T) {
 		}},
 		{"a policy that defines no profiles", func(t *testing.T) *launchBudgetFixture {
 			f := newProjectJobFixture(t)
-			publishPolicy(t, f.launchBudgetFixture, `{"version":4,"allow_repos":["github/acme/*"]}`)
+			publishPolicy(t, f.launchBudgetFixture, `{"version":5,"allow_repos":["github/acme/*"]}`)
 			return f.launchBudgetFixture
 		}},
 	} {
@@ -2310,8 +2678,10 @@ func TestNoCheckoutBitbucketKeepsItsPerRepositoryJob(t *testing.T) {
 	// The build record the fixture's own repository has: a launch on a
 	// per-repository job mints the sealed budget token, which the job's image
 	// has to know how to read (launch_seal_test.go's fixture writes the same
-	// record for acme/app's web workflow).
-	writeBuildRecord(t, f.cloudFixture, bbSlug, "web", releaseSeal)
+	// record for acme/app's web workflow) — and the launch reads the policy the
+	// fixture publishes, so the record's base is the release that introduced
+	// the node's version (releasePolicy, not releaseSeal).
+	writeBuildRecord(t, f.cloudFixture, bbSlug, "web", releasePolicy)
 	// The project publishes a profile (the fixture's own github one, which is
 	// what makes the refusal fire) and admits the Bitbucket repository, so
 	// nothing below is about an admission.
@@ -2371,7 +2741,7 @@ func TestCheckoutWithoutTheFileReadsTheRefsObjects(t *testing.T) {
 // jobs.run call where the third assertion wants none.
 func TestCheckoutWithoutTheFileStillJudgesTheCloneGate(t *testing.T) {
 	f := newProjectJobFixture(t)
-	rewriteConfig(t, "fugaro-base:"+sealSince, "fugaro-base:0.7.0")
+	rewriteConfig(t, "fugaro-base:"+nodeRelease, "fugaro-base:0.7.0")
 	dir := projectJobCheckout(t)
 	if err := os.Remove(filepath.Join(dir, "fugaro.yaml")); err != nil {
 		t.Fatal(err)
@@ -2513,10 +2883,11 @@ func TestCheckoutWithoutTheFileStillResolvesTheRefsWorkflow(t *testing.T) {
 }
 
 // TestNoCheckoutGitHubRefusalNamesTheCheckoutAndTheRef is D912's first
-// message: a launch with no checkout of the repository anywhere, on a project
-// that has published a profile, is refused — the provider is one a shared job
-// serves, so there is nothing to narrow — and the refusal names the
-// repository, the ref, what was tried and the way out (spec.md §7). The ref
+// message as A3 leaves it: a launch with no checkout of the repository
+// anywhere, on a project that has published a profile and an installation that
+// has no credentials service, is refused — the provider is one a shared job
+// serves, and the read that would narrow it cannot be made (D902) — and the
+// refusal names the repository, the ref and the way out (spec.md §7). The ref
 // is named because it is half of what the launch had to read: the document is
 // the one at the ref the run checks out, and only from the repository's
 // checkout can this operator see it.
@@ -2533,7 +2904,7 @@ func TestNoCheckoutGitHubRefusalNamesTheCheckoutAndTheRef(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want a user error", err)
 	}
-	for _, want := range []string{"acme/app", "release-2", "checkout", "fugaro run", "clone workflow"} {
+	for _, want := range []string{"acme/app", "release-2", "checkout", "credentials service"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
@@ -2546,10 +2917,12 @@ func TestNoCheckoutGitHubRefusalNamesTheCheckoutAndTheRef(t *testing.T) {
 // TestRefusalMessagesAreNotInterchanged is D912's rule read from the other
 // side: the two causes have two remedies, so neither message may carry the
 // other's. The operator with no checkout of the repository is the one the
-// checkout is the way out for; the operator standing *in* the checkout whose
-// ref could not be read out of its objects is not — and telling them to run
-// it from the checkout they are in is the sentence this design exists to
-// delete (F2, D909).
+// checkout is the way out for — the document is read at the forge where the
+// installation has a credentials service, and where it has none that read does
+// not exist and the checkout is the remedy; the operator standing *in* the
+// checkout whose ref could not be read out of its objects is not — telling them
+// to run it from the checkout they are in is the sentence this design exists to
+// delete (F2, D909), and their read never touches the service at all.
 //
 // Mutation (run, restore): make one message serve both causes — one of the
 // two assertions below fails, whichever text is kept.
@@ -2575,7 +2948,7 @@ func TestRefusalMessagesAreNotInterchanged(t *testing.T) {
 	if ExitCode(noCheckout) != ExitUserError || ExitCode(unreadable) != ExitUserError {
 		t.Fatalf("no-checkout: %v; unreadable ref: %v; want two user errors", noCheckout, unreadable)
 	}
-	if !strings.Contains(noCheckout.Error(), "is not acme/app's checkout") {
+	if !strings.Contains(noCheckout.Error(), "Run it from acme/app's checkout") {
 		t.Errorf("the no-checkout refusal does not name the checkout: %v", noCheckout)
 	}
 	if strings.Contains(noCheckout.Error(), "out of this checkout") {
@@ -2584,8 +2957,11 @@ func TestRefusalMessagesAreNotInterchanged(t *testing.T) {
 	if !strings.Contains(unreadable.Error(), "out of this checkout") {
 		t.Errorf("the unreadable-ref refusal does not name the checkout the read was made from: %v", unreadable)
 	}
-	if strings.Contains(unreadable.Error(), "is not acme/app's checkout") {
+	if strings.Contains(unreadable.Error(), "Run it from acme/app's checkout") {
 		t.Errorf("the unreadable-ref refusal sends the operator to the checkout they are standing in: %v", unreadable)
+	}
+	if strings.Contains(unreadable.Error(), "credentials service") {
+		t.Errorf("the unreadable-ref refusal talks about a service this read never reached: %v", unreadable)
 	}
 	for _, want := range []string{"acme/app", "fugaro.yaml"} {
 		if !strings.Contains(unreadable.Error(), want) {
@@ -2792,5 +3168,1005 @@ func TestReviewJobVariantIsHandedNoToken(t *testing.T) {
 		if len(v.SecretEnv) != 0 {
 			t.Errorf("the review job %s mounts %v: the variant mounts no secret at all", job.Name, v.SecretEnv)
 		}
+	}
+}
+
+// identityTokenFixture and readTokenFixture are the two credentials a source-3
+// read presents and receives in these tests: the operator's own Google ID
+// token (personIDToken, which no test mints for real) and the installation
+// token the service answers with. Neither is a secret and neither is shaped
+// like one: the fixture values exist to be compared, never to be used.
+const (
+	identityTokenFixture = "identity-token-of-the-operator-fixture"
+	readTokenFixture     = "read-token-the-service-minted-fixture"
+)
+
+// serviceReadFixture is the installation source 3 needs (spec.md §5, D902): a
+// published credentials service and the repository's own App ID, and one TLS
+// server that answers as both the service's read mint and the GitHub API root
+// the read asks. It is one server because a launch reaches both, and TLS
+// because localcfg's validCredentialsServiceURL admits nothing but the https
+// URL Cloud Run serves the service on — so the client that trusts this
+// server's certificate is the one the read is given.
+//
+// Every answer is spelled here rather than replayed from a fixture file: the
+// read is two calls of two protocols (the service's own JSON and the contents
+// API), and what these tests ask about is which of them the launch made.
+type serviceReadFixture struct {
+	srv *httptest.Server
+
+	mu         sync.Mutex
+	mints      int    // read-mint calls the service answered
+	reads      int    // contents calls the forge answered
+	confirm    int    // the repository and the ref an absent file was confirmed against
+	identity   string // the Authorization header the mint was presented with
+	serviceURL string // the URL personIDToken was asked for
+	appID      string // the app_id the mint's body named
+	document   string // the fugaro.yaml the ref carries; "" is the absent-file 404
+	notFound   string // the message of the contents route's 404 ("" is GitHub's own "Not Found")
+	status     int    // the contents answer's status (0: 200)
+	message    string // the body of that non-200 answer
+}
+
+func newServiceReadFixture(t *testing.T) *serviceReadFixture {
+	t.Helper()
+	s := &serviceReadFixture{document: projectJobRepoYAML}
+	s.srv = httptest.NewTLSServer(http.HandlerFunc(s.serve))
+	t.Cleanup(s.srv.Close)
+	return s
+}
+
+// use points the launcher's read at s: the local config records the service's
+// address and the repository's App ID, the operator's own identity is the
+// fixture's, and the API root the read asks is the fixture's own server.
+func (s *serviceReadFixture) use(t *testing.T, f *cloudFixture) {
+	t.Helper()
+	f.appendConfig(t, "credentials_service: { url: "+s.srv.URL+" }\n")
+	addRepoAppIDToFixture(t, f)
+	oldIdentity, oldURL, oldClient := personIDToken, githubAPIURL, githubAPIClient
+	personIDToken = func(ctx context.Context, url string) (string, error) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.serviceURL = url
+		return identityTokenFixture, nil
+	}
+	githubAPIURL, githubAPIClient = s.srv.URL, s.srv.Client()
+	t.Cleanup(func() { personIDToken, githubAPIURL, githubAPIClient = oldIdentity, oldURL, oldClient })
+}
+
+// counts is what the launch asked the two servers, read under the lock the
+// handlers write them with.
+func (s *serviceReadFixture) counts() (mints, reads int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mints, s.reads
+}
+
+// confirmations is how many of confirmAbsent's two questions the forge was
+// asked, read under the same lock.
+func (s *serviceReadFixture) confirmations() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.confirm
+}
+
+func (s *serviceReadFixture) presented() (identity, serviceURL, appID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.identity, s.serviceURL, s.appID
+}
+
+func (s *serviceReadFixture) serve(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	switch {
+	case r.URL.Path == github.ServiceReadPath:
+		s.mints++
+		s.identity = r.Header.Get("Authorization")
+		var body struct {
+			Repository string `json:"repository"`
+			AppID      string `json:"app_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, `{"message":"the read mint's body is not JSON"}`, http.StatusBadRequest)
+			return
+		}
+		s.appID = body.AppID
+		if body.Repository != "acme/app" {
+			// spec.md §7's second row: a repository the installation does not
+			// hold is the service's own refusal, and it is not this fixture's
+			// subject beyond being relayed.
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, `{"message":"this installation does not hold that repository"}`)
+			return
+		}
+		fmt.Fprintf(w, `{"token":%q,"expires_at":%q,"repository":%q}`,
+			readTokenFixture, time.Now().Add(time.Hour).UTC().Format(time.RFC3339), body.Repository)
+	case strings.HasSuffix(r.URL.Path, "/contents/fugaro.yaml"):
+		s.reads++
+		if s.status != 0 {
+			w.WriteHeader(s.status)
+			fmt.Fprintf(w, `{"message":%q}`, s.message)
+			return
+		}
+		if s.notFound != "" {
+			// The 404 the forge words about the REF rather than the path ("No
+			// commit found for the ref …"): the absent-ref row, which refuses
+			// and names the ref, and which no confirmation is asked about
+			// (fileread.go). The body is GitHub's own prose, so the fixture
+			// spells it rather than deriving it.
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprintf(w, `{"message":%q}`, s.notFound)
+			return
+		}
+		if s.document == "" {
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"message":"Not Found"}`)
+			return
+		}
+		fmt.Fprintf(w, `{"type":"file","encoding":"base64","size":%d,"content":%q}`,
+			len(s.document), base64.StdEncoding.EncodeToString([]byte(s.document)))
+	case r.URL.Path == "/repos/acme/app":
+		// confirmAbsent's first question, asked of the repository the read was
+		// for: the contents API answers the same {"message":"Not Found"} for a
+		// path the ref does not carry and for a repository this token cannot
+		// reach, and only the first of those is the absent-file row that
+		// selects nothing (fileread.go). A fixture that answers no such route
+		// leaves every absent file a refusal instead, which is the row a
+		// document-less ref never reaches.
+		s.confirm++
+		fmt.Fprint(w, `{"full_name":"acme/app","default_branch":"main"}`)
+	case r.URL.Path == "/repos/acme/app/contents":
+		// And its second, asked of the ref: a 404 body that still says "Not
+		// Found" when the ref is gone is what a rewording of GitHub's own "No
+		// commit found for the ref …" would produce, so the ref is confirmed
+		// rather than believed.
+		s.confirm++
+		fmt.Fprint(w, `[]`)
+	default:
+		http.Error(w, `{"message":"the fixture answers no such route"}`, http.StatusNotFound)
+	}
+}
+
+// TestLaunchWithoutCheckoutReadsTheRefThroughTheService is source 3 (spec.md
+// §2, D901, D902): a launch of a GitHub repository from a directory that holds
+// no checkout of it, on a project whose policy publishes a profile and an
+// installation whose credentials service is published, is decided by the
+// document the service reads for the operator — and lands on the shared job of
+// the profile that document names.
+//
+// Red against main, where the launch is refused before any read.
+func TestLaunchWithoutCheckoutReadsTheRefThroughTheService(t *testing.T) {
+	f := newProjectJobFixture(t)
+	s := newServiceReadFixture(t)
+	s.use(t, f.cloudFixture)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-130000-aaaa", "Add a feature"); err != nil {
+		t.Fatalf("a launch from outside the checkout, on an installation with a credentials service: %v", err)
+	}
+	if profile, provider, _ := launchedProjectJob(t, f.cloudFixture); profile != "standard" || provider != "github" {
+		t.Fatalf("the launch ran on %s/%s, want the standard/github project job the ref's fugaro.yaml selects", profile, provider)
+	}
+	if mints, reads := s.counts(); mints != 1 || reads != 1 {
+		t.Errorf("the launch made %d mint(s) and %d read(s), want exactly one of each: one read, held for the command and written nowhere", mints, reads)
+	}
+}
+
+// TestLaunchWithoutCheckoutJudgesACloneWorkflowByTheCloneGates is the gates'
+// half of source 3 (spec.md §2, D902), and the reason the read cannot be the
+// job decision's alone: the image gates a launch passes are judged by the
+// workflow's own kind and checkout mode, and a checkout: clone workflow runs
+// the installation's base image — it is never built per repository, so it has
+// no build record for a derived image's gates to find (image_refresh.go). The
+// job decision reads that same document for a question of its own (which
+// profile the workflow's selection names, and so which job the launch runs
+// on), so a launch from outside the checkout whose ref selects a clone
+// workflow is judged by the clone gates, which it reaches only through the one
+// read the two readers share.
+//
+// The fixture's build record is removed for exactly this: with it there, the
+// derived-image gates pass a clone workflow on a record the fixture wrote and
+// no real repository has, so the launch looks fine while it is judged as the
+// wrong kind of workflow.
+//
+// Mutation (run, restore): read the document in launchProjectJobFor alone, as
+// the job decision's own — the launch is refused, "has no build record".
+func TestLaunchWithoutCheckoutJudgesACloneWorkflowByTheCloneGates(t *testing.T) {
+	f := newProjectJobFixture(t)
+	s := newServiceReadFixture(t)
+	s.use(t, f.cloudFixture)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+	if err := removeBuildRecord(f.cloudFixture); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-130005-ffff", "Add a feature"); err != nil {
+		t.Fatalf("a launch of a checkout: clone workflow from outside its checkout: %v", err)
+	}
+	if profile, provider, _ := launchedProjectJob(t, f.cloudFixture); profile != "standard" || provider != "github" {
+		t.Fatalf("the launch ran on %s/%s, want the standard/github project job the ref's clone workflow selects", profile, provider)
+	}
+	if mints, reads := s.counts(); mints != 1 || reads != 1 {
+		t.Errorf("the launch made %d mint(s) and %d read(s), want one of each: the gates and the job decision share the one read", mints, reads)
+	}
+}
+
+// TestLaunchWithoutCheckoutOnARefWithNoDocumentKeepsThePerRepositoryJob is
+// spec.md §7's other source-3 row: the read answered, and the ref's tree
+// carries no fugaro.yaml at all. A repository with no document selects no
+// clone workflow and no profile — the project layer is never resolved on its
+// own — so the per-repository job is not a fallback here but the answer, the
+// same one the checkout path gives for a repository whose file defines no
+// workflow.
+//
+// It is reachable only where the absent file is CONFIRMED: FileAt answers
+// ErrFileNotFound for a 404 whose body says "Not Found" and only after the
+// repository and the ref have been asked about (github's confirmAbsent), so
+// the fixture answers both — a fixture that answers neither leaves every
+// absent file a refusal, which is the direction that halts a launch rather
+// than the one that places a run.
+//
+// Mutation (run, restore): drop the ErrFileNotFound case from
+// repoConfigAtTheRef — the launch is refused instead of running on its own job.
+func TestLaunchWithoutCheckoutOnARefWithNoDocumentKeepsThePerRepositoryJob(t *testing.T) {
+	f := newProjectJobFixture(t)
+	s := newServiceReadFixture(t)
+	s.document = ""
+	s.use(t, f.cloudFixture)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-130006-beef", "Add a feature"); err != nil {
+		t.Fatalf("a launch whose ref carries no fugaro.yaml: %v", err)
+	}
+	perRepo := gcp.JobName(appSlug, "web")
+	calls := f.run.RunRequests()
+	if len(calls) != 1 || calls[0].Job != perRepo {
+		t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the per-repository job %s: a repository with no document selects no profile", len(calls), calls, perRepo)
+	}
+	if mints, reads := s.counts(); mints != 1 || reads != 1 {
+		t.Errorf("the launch made %d mint(s) and %d read(s), want one of each: one read, held for the command and written nowhere", mints, reads)
+	}
+	if got := s.confirmations(); got != 2 {
+		t.Errorf("the absent file was confirmed against %d of the two things it takes (the repository and the ref), want both: an unconfirmed 404 is a refusal", got)
+	}
+}
+
+// TestLaunchWithoutCheckoutNamesAForgeStatusAndNotItsBody: a forge that
+// answers the read with a status Fugaro does not read as one of its own rows
+// is reported by that status and nothing else. httpjson keeps up to 512 bytes
+// of the answer's body (httpjson.maxErrorBody), and GitHub's own words about a
+// failure are not Fugaro's to print — the promise the 403 row already keeps
+// (spec.md §7), kept here for every other status a forge can answer with.
+func TestLaunchWithoutCheckoutNamesAForgeStatusAndNotItsBody(t *testing.T) {
+	f := newProjectJobFixture(t)
+	s := newServiceReadFixture(t)
+	s.status = http.StatusInternalServerError
+	s.message = "the forge's own words about this failure"
+	s.use(t, f.cloudFixture)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-130007-cafe", "Add a feature")
+	if ExitCode(err) != ExitRemoteError {
+		t.Fatalf("err = %v, want a remote error: the service answered and the read is what failed", err)
+	}
+	want := "cannot read acme/app's fugaro.yaml at main as yourself: the read that decides the run's job could not be made (HTTP 500). Run it from acme/app's checkout"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("the refusal is not spec.md §7's:\n got: %v\nwant: %s", err, want)
+	}
+	if strings.Contains(err.Error(), s.message) {
+		t.Errorf("the refusal relays the forge's own body (%q): another writer's words about a failure do not belong in it: %v", s.message, err)
+	}
+	if calls := f.run.RunRequests(); len(calls) != 0 {
+		t.Errorf("the refused launch asked Cloud Run for %d job(s): %+v", len(calls), calls)
+	}
+}
+
+// TestLaunchWithoutCheckoutWhereTheRefDoesNotExistNamesTheRef is spec.md §7's
+// "the ref does not exist at the forge" row. The forge answers the read with
+// the 404 it words about the ref rather than the path ("No commit found for the
+// ref …"), which is a deleted, force-pushed or mistyped branch: it is refused,
+// and refused in the ref's own row — not read as the absent-file row that keeps
+// the per-repository job, because no other ref's document places this run
+// (spec.md §3) — with the ref named and the checkout as the way out.
+//
+// Mutation (run, restore): drop the ErrRefNotFound case from serviceReadRefusal
+// — the launch is refused by the default arm instead, which reports HTTP 404
+// and never names the ref.
+func TestLaunchWithoutCheckoutWhereTheRefDoesNotExistNamesTheRef(t *testing.T) {
+	f := newProjectJobFixture(t)
+	s := newServiceReadFixture(t)
+	s.notFound = "No commit found for the ref main"
+	s.use(t, f.cloudFixture)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-130008-abcd", "Add a feature")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	want := "cannot read acme/app's fugaro.yaml at main: the repository has no such ref, and a deleted or never-pushed branch is not a reason to read another one"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("the refusal is not spec.md §7's row for a ref that does not exist:\n got: %v\nwant: %s", err, want)
+	}
+	if mints, reads := s.counts(); mints != 1 || reads != 1 {
+		t.Errorf("the launch made %d mint(s) and %d read(s), want one of each: the mint answered and the ref is what does not exist", mints, reads)
+	}
+	if calls := f.run.RunRequests(); len(calls) != 0 {
+		t.Errorf("the refused launch asked Cloud Run for %d job(s): %+v", len(calls), calls)
+	}
+}
+
+// TestLaunchWithoutCheckoutWithoutARecordedAppIDNamesTheRead is spec.md §7's row
+// for the other thing a read needs from the installation's own records: the App
+// ID the read mint is signed as (localcfg.Repo.GitHubAppID). A project whose
+// local config published a credentials service but records no App for this
+// repository cannot ask for a read at all, and the refusal says so — naming the
+// recorded value and the checkout — rather than reporting a read that failed.
+//
+// Mutation (run, restore): drop the errNoGitHubAppID case from
+// serviceReadRefusal — the default arm reports "this repository's github_app_id
+// is not recorded" as a remote failure instead, and names no fix.
+func TestLaunchWithoutCheckoutWithoutARecordedAppIDNamesTheRead(t *testing.T) {
+	f := newProjectJobFixture(t)
+	s := newServiceReadFixture(t)
+	// The service is published; the App ID the mint is signed as is not
+	// recorded, so there is nothing to ask the service with.
+	f.appendConfig(t, "credentials_service: { url: "+s.srv.URL+" }\n")
+	old := personIDToken
+	personIDToken = func(ctx context.Context, url string) (string, error) {
+		t.Errorf("the identity was minted for %s although this launch records no App ID to read with", url)
+		return identityTokenFixture, nil
+	}
+	t.Cleanup(func() { personIDToken = old })
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-130009-abcd", "Add a feature")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	want := "cannot read acme/app's fugaro.yaml at main as yourself: this installation's local config records no github_app_id for acme/app, and the read the credentials service mints is signed as that App, so the read that decides the run's job cannot be made. Run it from acme/app's checkout"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("the refusal is not spec.md §7's row for a missing App ID:\n got: %v\nwant: %s", err, want)
+	}
+	if mints, reads := s.counts(); mints != 0 || reads != 0 {
+		t.Errorf("a launch with no App ID recorded made %d mint(s) and %d read(s), want none: there is nothing to ask with", mints, reads)
+	}
+	if calls := f.run.RunRequests(); len(calls) != 0 {
+		t.Errorf("the refused launch asked Cloud Run for %d job(s): %+v", len(calls), calls)
+	}
+}
+
+// TestLaunchWithoutCheckoutFoldsTheRepositoryKeyTheConfigRecords pins that the
+// read's own records are looked up the way every other reader of this launch's
+// local config looks them up. A repos: entry is matched in canonical form
+// (localcfg.RepoFor: ASCII-folded, without a trailing ".git"), because an
+// installation whose entry was written under another spelling of the same
+// remote holds it under that spelling (repoConfigKey's rule) — so an entry
+// spelled "acme/app.git" is acme/app's, and a raw map index here would answer
+// the launch with a refusal that is untrue: "this installation's local config
+// records no github_app_id for acme/app" while it does.
+//
+// Mutation (run, restore): look the App ID up with the raw map index
+// (e.lc.Repos[repo]) — the launch is refused, nothing is minted and nothing is
+// read, although the entry and the service are both there.
+func TestLaunchWithoutCheckoutFoldsTheRepositoryKeyTheConfigRecords(t *testing.T) {
+	f := newProjectJobFixture(t)
+	s := newServiceReadFixture(t)
+	s.use(t, f.cloudFixture)
+	// The fixture's own entry, respelled the way an installation that recorded
+	// the remote rather than the slug holds it.
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const entry = `  acme/app: { provider: github, base_branch: main, workflows: [web], github_app_id: "123456789" }`
+	if !strings.Contains(string(data), entry) {
+		t.Fatalf("the fixture's local config no longer holds the repository's entry:\n%s", data)
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(string(data), entry, strings.Replace(entry, "acme/app:", "acme/app.git:", 1), 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-130010-abcd", "Add a feature"); err != nil {
+		t.Fatalf("a launch of acme/app whose entry is spelled acme/app.git: %v", err)
+	}
+	profile, provider, _ := launchedProjectJob(t, f.cloudFixture)
+	if profile != "standard" || provider != "github" {
+		t.Fatalf("the launch ran on %s/%s, want the standard/github project job", profile, provider)
+	}
+	if mints, reads := s.counts(); mints != 1 || reads != 1 {
+		t.Errorf("the launch made %d mint(s) and %d read(s), want one of each: the entry names the App, so the read can be asked for", mints, reads)
+	}
+}
+
+// TestProjectJobAgentAuthRefusesAnAgentSessionBeforeTheForgeRead is the
+// credential gate's own half of D902's invariant (spec.md §5): the read this
+// gate makes of the ref's document is made with the OPERATOR's own credential,
+// so a coding agent's session must never make it — no identity minted, no
+// service called, no forge asked.
+//
+// The gate reaches the forge through the same choke point the job decision does
+// (serviceReadAtTheForge), and that is what this pins. The state it covers is
+// the one where the decision answered from the working tree's checkout and this
+// gate cannot find that checkout a moment later (checkoutRoot asks git again,
+// and a directory whose git answers once and not twice is the state the old
+// refusal named): with the guard on the decision's path alone, this call minted
+// the operator's identity token and made the forge read.
+//
+// Mutation (run, restore): move the guard out of serviceReadAtTheForge and back
+// into repoConfigAtTheRef — this call mints the operator's identity token and
+// makes the forge read (1 mint, 1 read, no error).
+func TestProjectJobAgentAuthRefusesAnAgentSessionBeforeTheForgeRead(t *testing.T) {
+	s := newServiceReadFixture(t)
+	oldIdentity, oldURL, oldClient := personIDToken, githubAPIURL, githubAPIClient
+	personIDToken = func(ctx context.Context, url string) (string, error) {
+		t.Errorf("an identity token was minted for %s in a coding agent's session", url)
+		return identityTokenFixture, nil
+	}
+	githubAPIURL, githubAPIClient = s.srv.URL, s.srv.Client()
+	t.Cleanup(func() { personIDToken, githubAPIURL, githubAPIClient = oldIdentity, oldURL, oldClient })
+
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir()) // no checkout: the gate reads at the forge
+	t.Setenv(agentenv.AgentMarkers[0], "1")
+
+	e := &cloudEnv{lc: &localcfg.Config{
+		CredentialsService: &localcfg.CredentialsService{URL: s.srv.URL},
+		Repos:              map[string]localcfg.Repo{"acme/app": {GitHubAppID: "123456789"}},
+	}}
+	_, err := e.projectJobAgentAuth(context.Background(), &task.Spec{Repo: "acme/app", Ref: "main"})
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	for _, want := range []string{"fugaro run", "coding agent's session"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if mints, reads := s.counts(); mints != 0 || reads != 0 {
+		t.Errorf("the credential gate made %d mint(s) and %d read(s) in a coding agent's session, want none: the refusal comes before anything is read", mints, reads)
+	}
+}
+
+// TestProjectJobAgentAuthWordsAReadFailureLikeTheDecision is the other half of
+// that same choke point: what this gate reports when the read fails is the
+// read's own refusal, in spec.md §7's words — not a sentence about the
+// credential. The decision refuses this launch with exactly this line, and the
+// two readers of one read that disagreed about it would tell the operator about
+// agent.auth when what failed is the read (and would report an unreachable
+// service as a local condition).
+//
+// Mutation (run, restore): word the failure here as checkProjectJobAuthUnknown
+// again — the refusal is the long credential sentence instead, and the row
+// spec.md §7 gives an installation with no credentials service is lost.
+func TestProjectJobAgentAuthWordsAReadFailureLikeTheDecision(t *testing.T) {
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir()) // no checkout: the gate reads at the forge
+
+	// No credentials service: the row is the installation's own, and it is the
+	// decision's line for the same state.
+	e := &cloudEnv{lc: &localcfg.Config{
+		Name:  "aurora",
+		Repos: map[string]localcfg.Repo{"acme/app": {GitHubAppID: "123456789"}},
+	}}
+	_, err := e.projectJobAgentAuth(context.Background(), &task.Spec{Repo: "acme/app", Ref: "main"})
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	want := "cannot read acme/app's fugaro.yaml at main as yourself: this installation has no credentials service, so the read that decides the run's job cannot be made. Run it from acme/app's checkout"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("the credential gate does not refuse in the decision's own words:\n got: %v\nwant: %s", err, want)
+	}
+}
+
+// TestLaunchWithACheckoutNeverReadsTheService is the trigger's own boundary
+// (spec.md §2: none of this runs unless the code is about to refuse). The
+// checkout answers, so no credential is minted, no service is called and no
+// App ID is needed: the launch is decided by the objects, exactly as it was
+// before this task.
+func TestLaunchWithACheckoutNeverReadsTheService(t *testing.T) {
+	f := newProjectJobFixture(t)
+	s := newServiceReadFixture(t)
+	s.use(t, f.cloudFixture)
+	isolateCache(t)
+	projectJobCheckout(t)
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-130001-bbbb", "Add a feature"); err != nil {
+		t.Fatalf("a launch from the repository's own checkout: %v", err)
+	}
+	if profile, provider, _ := launchedProjectJob(t, f.cloudFixture); profile != "standard" || provider != "github" {
+		t.Fatalf("the launch ran on %s/%s, want the standard/github project job", profile, provider)
+	}
+	if mints, reads := s.counts(); mints != 0 || reads != 0 {
+		t.Errorf("a launch its own checkout answered made %d mint(s) and %d read(s), want none: the read is the refusal's, not the launch's", mints, reads)
+	}
+}
+
+// TestLaunchWithoutCheckoutWithoutACredentialsServiceNamesTheCheckout is
+// spec.md §7's first row, and the cost of D902's answer: the credentials
+// service ships dormant, and where an installation has not opted in the
+// launcher holds nothing to read a repository's configuration with — so the
+// refusal stands, in the shape it has today, with the checkout as the way out.
+func TestLaunchWithoutCheckoutWithoutACredentialsServiceNamesTheCheckout(t *testing.T) {
+	f := newProjectJobFixture(t)
+	s := newServiceReadFixture(t)
+	// The service's server is there and the App ID is recorded; what is
+	// missing is the installation's own opt-in, which is the block the
+	// credentials stage writes.
+	old := personIDToken
+	personIDToken = func(ctx context.Context, url string) (string, error) {
+		t.Errorf("the identity was minted for %s although this installation has no credentials service", url)
+		return identityTokenFixture, nil
+	}
+	t.Cleanup(func() { personIDToken = old })
+	addRepoAppIDToFixture(t, f.cloudFixture)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-130002-cccc", "Add a feature")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	want := "cannot read acme/app's fugaro.yaml at main as yourself: this installation has no credentials service, so the read that decides the run's job cannot be made. Run it from acme/app's checkout"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("the refusal is not spec.md §7's:\n got: %v\nwant: %s", err, want)
+	}
+	if mints, reads := s.counts(); mints != 0 || reads != 0 {
+		t.Errorf("a launch with no credentials service made %d mint(s) and %d read(s), want none", mints, reads)
+	}
+	if calls := f.run.RunRequests(); len(calls) != 0 {
+		t.Errorf("the refused launch asked Cloud Run for %d job(s): %+v", len(calls), calls)
+	}
+}
+
+// TestLaunchWithoutCheckoutWhereTheMintCannotReadAFileNamesTheRedeploy is
+// spec.md §7's row for a service that answers and a mint that still cannot read
+// a file: A0's read mint asks with the set a file needs
+// (github.PersonReadTokenPermissions), and an installation whose service still
+// mints the set from before it — or whose App is not granted contents — is
+// refused by the forge. The message names the service and the redeploy, and it
+// carries neither the token nor GitHub's own text: the first is a credential
+// and the second is another writer's words.
+func TestLaunchWithoutCheckoutWhereTheMintCannotReadAFileNamesTheRedeploy(t *testing.T) {
+	f := newProjectJobFixture(t)
+	s := newServiceReadFixture(t)
+	s.status = http.StatusForbidden
+	s.message = "Resource not accessible by integration"
+	s.use(t, f.cloudFixture)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-130003-dddd", "Add a feature")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	want := "cannot read acme/app's fugaro.yaml at main: the installation's credentials service minted a token that cannot read a file; redeploy it with fugaro update"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("the refusal is not spec.md §7's:\n got: %v\nwant: %s", err, want)
+	}
+	for _, notWant := range []string{readTokenFixture, identityTokenFixture, s.message} {
+		if strings.Contains(err.Error(), notWant) {
+			t.Errorf("the refusal relays %q: neither a credential nor another writer's words belong in it: %v", notWant, err)
+		}
+	}
+	if mints, reads := s.counts(); mints != 1 || reads != 1 {
+		t.Errorf("the launch made %d mint(s) and %d read(s), want one of each: the mint answered and the read was what failed", mints, reads)
+	}
+	if calls := f.run.RunRequests(); len(calls) != 0 {
+		t.Errorf("the refused launch asked Cloud Run for %d job(s): %+v", len(calls), calls)
+	}
+}
+
+// TestLaunchWithoutCheckoutPresentsTheOperatorsOwnIdentity is the other half
+// of D902: what the read presents is the OPERATOR's own Google ID token, minted
+// for the service's own URL (the audience its person class admits), and the
+// mint's body carries the App ID the project's local config records for this
+// repository — not one read out of an environment variable, and not a key.
+func TestLaunchWithoutCheckoutPresentsTheOperatorsOwnIdentity(t *testing.T) {
+	f := newProjectJobFixture(t)
+	s := newServiceReadFixture(t)
+	s.use(t, f.cloudFixture)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-130004-eeee", "Add a feature"); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	identity, serviceURL, appID := s.presented()
+	if identity != "Bearer "+identityTokenFixture {
+		t.Errorf("the mint was presented with %q, want the operator's own identity token as a bearer credential", identity)
+	}
+	if serviceURL != s.srv.URL {
+		t.Errorf("the identity was minted for %q, want the credentials service's own URL %q, which is the audience it verifies", serviceURL, s.srv.URL)
+	}
+	if appID != "123456789" {
+		t.Errorf("the read mint's body named app_id %q, want the value the project's local config records (123456789)", appID)
+	}
+}
+
+// TestReadRepoConfigAtRefIsMemoizedPerRepoAndRef is D904 and spec.md §6: a mint
+// is an act the credentials service AUDITS, so one command makes one read per
+// (repository, ref) — the job decision and the credential gate share it — while
+// a read of another ref is another read, because the document is the one at the
+// ref the run checks out and nothing else's answer may stand in for it.
+func TestReadRepoConfigAtRefIsMemoizedPerRepoAndRef(t *testing.T) {
+	s := newServiceReadFixture(t)
+	oldIdentity, oldURL, oldClient := personIDToken, githubAPIURL, githubAPIClient
+	personIDToken = func(context.Context, string) (string, error) { return identityTokenFixture, nil }
+	githubAPIURL, githubAPIClient = s.srv.URL, s.srv.Client()
+	t.Cleanup(func() { personIDToken, githubAPIURL, githubAPIClient = oldIdentity, oldURL, oldClient })
+
+	e := &cloudEnv{lc: &localcfg.Config{
+		CredentialsService: &localcfg.CredentialsService{URL: s.srv.URL},
+		Repos:              map[string]localcfg.Repo{"acme/app": {GitHubAppID: "123456789"}},
+	}}
+	ctx := withServiceReadCache(context.Background())
+
+	for range 2 {
+		data, err := readRepoConfigAtRef(ctx, e, "acme/app", "main")
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		if string(data) != projectJobRepoYAML {
+			t.Fatalf("the read answered %q, want the ref's own document", data)
+		}
+	}
+	if mints, reads := s.counts(); mints != 1 || reads != 1 {
+		t.Errorf("two reads of one (repo, ref) made %d mint(s) and %d read(s), want one of each", mints, reads)
+	}
+	if _, err := readRepoConfigAtRef(ctx, e, "acme/app", "release-2"); err != nil {
+		t.Fatalf("read of another ref: %v", err)
+	}
+	if mints, reads := s.counts(); mints != 2 || reads != 2 {
+		t.Errorf("a read of another ref made %d mint(s) and %d read(s) in total, want two of each: another ref is another document", mints, reads)
+	}
+}
+
+// TestServiceReadDoesNotTouchTheWorkingTree is the seam's own contract: the
+// read is one HTTP call to the service and one to the forge, and it writes
+// nothing, fetches nothing and reads no checkout — the working directory it runs
+// in is left exactly as it was found. It is why a launch from a machine that
+// holds no checkout of the repository at all can make it.
+func TestServiceReadDoesNotTouchTheWorkingTree(t *testing.T) {
+	s := newServiceReadFixture(t)
+	oldIdentity, oldURL, oldClient := personIDToken, githubAPIURL, githubAPIClient
+	personIDToken = func(context.Context, string) (string, error) { return identityTokenFixture, nil }
+	githubAPIURL, githubAPIClient = s.srv.URL, s.srv.Client()
+	t.Cleanup(func() { personIDToken, githubAPIURL, githubAPIClient = oldIdentity, oldURL, oldClient })
+
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	e := &cloudEnv{lc: &localcfg.Config{
+		CredentialsService: &localcfg.CredentialsService{URL: s.srv.URL},
+		Repos:              map[string]localcfg.Repo{"acme/app": {GitHubAppID: "123456789"}},
+	}}
+	if _, err := readRepoConfigAtRef(context.Background(), e, "acme/app", "main"); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("the read left %d entr(ies) in the working directory: %v — it writes nothing and fetches nothing", len(entries), entries)
+	}
+	if mints, reads := s.counts(); mints != 1 || reads != 1 {
+		t.Errorf("the read made %d mint(s) and %d read(s), want one of each: the document comes from the service, not from a disk", mints, reads)
+	}
+}
+
+// TestServiceReadSelectsTheProfileTheRefNames is the parsed document walking
+// the existing gates unchanged (A3's own interface note): a ref whose
+// fugaro.yaml names a profile other than the default lands on that profile's
+// job, because the read is the whole document and not a lookup of the
+// per-repository job.
+func TestServiceReadSelectsTheProfileTheRefNames(t *testing.T) {
+	f := newProjectJobFixture(t)
+	policy := strings.Replace(projectJobPolicy,
+		`"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"}`,
+		`"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"},`+
+			`"fast":{"provider":"github","cpu":4,"memory":"8Gi","timeout_class":"6h"}`, 1)
+	publishPolicy(t, f.launchBudgetFixture, policy)
+	fast := gcp.ProjectJobName("fast", "github", "")
+	f.run.AddProjectJob(fast, "fast", "github", "", "4", "8Gi")
+	f.run.SetJobTimeout(fast, projectJobTimeout+backend.TaskTimeoutSlack)
+
+	s := newServiceReadFixture(t)
+	s.document = strings.Replace(projectJobRepoYAML, "  web:\n    checkout: clone\n", "  web:\n    checkout: clone\n    job_profile: fast\n", 1)
+	if !strings.Contains(s.document, "job_profile: fast") {
+		t.Fatal("the fixture has no web: workflow to put a job_profile under")
+	}
+	s.use(t, f.cloudFixture)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-130005-ffff", "Add a feature"); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	if profile, provider, _ := launchedProjectJob(t, f.cloudFixture); profile != "fast" || provider != "github" {
+		t.Fatalf("the launch ran on %s/%s, want the fast/github job the ref's job_profile names", profile, provider)
+	}
+}
+
+// A4: the job the run being continued recorded (D907, spec.md §2 source 2).
+//
+// A launch that continues a run — a --retry of a stored follow-up, a --pr
+// follow-up of a run that launched — reuses the job that run recorded, and it
+// is asked first: ahead of the checkout's document, ahead of the read at the
+// forge, and ahead of the refusals both would otherwise make. What it reuses
+// is a name out of the runs bucket, so nothing here is judged by it: the
+// runner's own placement checks are what judge the job a run starts in
+// (spec.md §8, §12, O2), and these four tests are the decision, its two
+// sources of truth and its own boundary.
+
+// seedLaunchedOn stores run id of repo as a run that launched on job: its
+// task.json, an execution of that job, and the launch.json a launch there
+// writes — the record source 2 reads. The execution is closed, so the run is
+// not one a launch counts as active.
+func seedLaunchedOn(t *testing.T, f *cloudFixture, slug, id, job string) string {
+	t.Helper()
+	ctx := context.Background()
+	b, err := blob.OpenBucket(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	exec := startRunExecution(f, job, slug, id)
+	f.run.SetState(exec, backend.StateSucceeded)
+	s := runstore.Open(b, slug, id)
+	if err := s.CreateTask(ctx, firstRunSpec(id)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: id, Backend: "cloud-run",
+		Execution: exec, Job: job, LaunchedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	return exec
+}
+
+// projectJobRefSelectsFast publishes the fixture's standard profile beside a
+// second one, fast, and points the ref's document at fast: the document a
+// launch reads and the job a run recorded then disagree, which is the state
+// D907's decision is about (spec.md §8: a continuation stays on the job it
+// continues, and the runner's own checks are what judge the document that
+// moved under it).
+func projectJobRefSelectsFast(t *testing.T, f *projectJobFixture) *serviceReadFixture {
+	t.Helper()
+	policy := strings.Replace(projectJobPolicy,
+		`"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"}`,
+		`"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"},`+
+			`"fast":{"provider":"github","cpu":4,"memory":"8Gi","timeout_class":"6h"}`, 1)
+	publishPolicy(t, f.launchBudgetFixture, policy)
+	fast := gcp.ProjectJobName("fast", "github", "")
+	f.run.AddProjectJob(fast, "fast", "github", "", "4", "8Gi")
+	f.run.SetJobTimeout(fast, projectJobTimeout+backend.TaskTimeoutSlack)
+	s := newServiceReadFixture(t)
+	s.document = strings.Replace(projectJobRepoYAML, "  web:\n    checkout: clone\n",
+		"  web:\n    checkout: clone\n    job_profile: fast\n", 1)
+	if !strings.Contains(s.document, "job_profile: fast") {
+		t.Fatal("the fixture has no web: workflow to put a job_profile under")
+	}
+	s.use(t, f.cloudFixture)
+	return s
+}
+
+// TestRetryFromOutsideTheCheckoutReusesTheRecordedJob is A4's red step: a
+// --retry of a run whose task continues a run that launched on the shared
+// project job, from a directory that holds no checkout of the repository,
+// lands on the job that run's launch.json records. The retried run's own store
+// holds no launch, and the document at the ref names another profile by now —
+// so on main the launch follows that document to a job the run it continues
+// never ran on, which is the job change D907 refuses to make.
+//
+// The one read the launch still makes is the launch's own gates', which judge
+// the workflow's kind and image by the document at the ref (A3): the record is
+// the job decision's source, not a document that replaces the read.
+//
+// Mutation (run, restore): drop the continuedJob call in launchProjectJobFor —
+// the launch lands on the fast/github job this ref names.
+func TestRetryFromOutsideTheCheckoutReusesTheRecordedJob(t *testing.T) {
+	f := newProjectJobFixture(t)
+	projectJobRefSelectsFast(t, f)
+	root, fu := wallRunIDAt(3, "090000", "aaaa"), wallRunIDAt(0, "120000", "f00d")
+	seedLaunchedOn(t, f.cloudFixture, appSlug, root, f.job)
+	writeRecord(t, f.cloudFixture, root, prRecord(root, "", 7, 1))
+	// The stored follow-up: it never launched, which is why a --retry reaches
+	// it at all (a run that launched is answered "already launched").
+	seedSpec(t, f.cloudFixture, followUpSpec(fu, root, root, 7), false)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+
+	if _, _, err := execute(t, "run", "--retry", fu); err != nil {
+		t.Fatalf("a --retry of a run that continues one which launched on the shared job, from a directory with no checkout: %v", err)
+	}
+	if profile, provider, _ := launchedProjectJob(t, f.cloudFixture); profile != "standard" || provider != "github" {
+		t.Fatalf("the launch ran on %s/%s, want the standard/github job run %s records", profile, provider, root)
+	}
+	if calls := f.run.RunRequests(); len(calls) != 1 || calls[0].Env["FUGARO_RUN"] != appSlug+"/"+fu {
+		t.Errorf("the launch is not of the retried run: %+v", calls)
+	}
+}
+
+// TestFollowUpFromOutsideTheCheckoutReusesThePreviousRunsJob is the same
+// decision on a --pr follow-up, which continues the run the chain's newest
+// record names (spec.PreviousRun, newFollowUpSpec) rather than the task it is
+// stored under. The ref's document is read once — the gates' read, memoized —
+// and the job is not that document's answer.
+//
+// Mutation (run, restore): drop the continuedJob call in launchProjectJobFor —
+// the launch lands on the fast/github job this ref names.
+func TestFollowUpFromOutsideTheCheckoutReusesThePreviousRunsJob(t *testing.T) {
+	f := newProjectJobFixture(t)
+	s := projectJobRefSelectsFast(t, f)
+	root, fu := wallRunIDAt(3, "090000", "aaaa"), wallRunIDAt(0, "120000", "f00d")
+	seedLaunchedOn(t, f.cloudFixture, appSlug, root, f.job)
+	writeRecord(t, f.cloudFixture, root, prRecord(root, "", 7, 1))
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fu, "also rename x"); err != nil {
+		t.Fatalf("a --pr follow-up of a run that launched on the shared job, from a directory with no checkout: %v", err)
+	}
+	if profile, provider, _ := launchedProjectJob(t, f.cloudFixture); profile != "standard" || provider != "github" {
+		t.Fatalf("the launch ran on %s/%s, want the standard/github job run %s records", profile, provider, root)
+	}
+	if spec := readSpec(t, f.cloudFixture, fu); spec.PreviousRun != root || spec.PR != 7 {
+		t.Fatalf("the follow-up's task = %+v, want it continuing %s on PR 7", spec, root)
+	}
+	if mints, reads := s.counts(); mints != 1 || reads != 1 {
+		t.Errorf("the launch made %d mint(s) and %d read(s), want one of each: the gates' read of the ref's document, and no second one for the job", mints, reads)
+	}
+}
+
+// TestRetryOfARunThatNeverLaunchedFallsThroughToTheOtherSources is the
+// decision's boundary: a run that never launched recorded no job, so a --retry
+// of it is decided by the document like any first launch. Both consequences
+// are pinned, because "no record" must not become "the per-repository job":
+// with no credentials service the launch keeps A2/A3's refusal, and with one
+// the document at the ref decides, at the cost of the read.
+func TestRetryOfARunThatNeverLaunchedFallsThroughToTheOtherSources(t *testing.T) {
+	t.Run("no credentials service", func(t *testing.T) {
+		f := newProjectJobFixture(t)
+		const run = "20261110-120000-aaaa"
+		seedSpec(t, f.cloudFixture, firstRunSpec(run), false)
+		isolateCache(t)
+		testutil.IsolateGit(t)
+		t.Chdir(t.TempDir())
+
+		_, _, err := execute(t, "run", "--retry", run)
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("err = %v, want a user error", err)
+		}
+		for _, want := range []string{"acme/app", "checkout", "credentials service"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not say %q: %v", want, err)
+			}
+		}
+		if calls := f.run.RunRequests(); len(calls) != 0 {
+			t.Errorf("the refused launch asked Cloud Run for %d job(s): %+v", len(calls), calls)
+		}
+	})
+	t.Run("a credentials service", func(t *testing.T) {
+		f := newProjectJobFixture(t)
+		s := newServiceReadFixture(t)
+		s.use(t, f.cloudFixture)
+		const run = "20261110-120001-bbbb"
+		seedSpec(t, f.cloudFixture, firstRunSpec(run), false)
+		isolateCache(t)
+		testutil.IsolateGit(t)
+		t.Chdir(t.TempDir())
+
+		if _, _, err := execute(t, "run", "--retry", run); err != nil {
+			t.Fatalf("a --retry of a run that never launched, on an installation with a credentials service: %v", err)
+		}
+		if profile, provider, _ := launchedProjectJob(t, f.cloudFixture); profile != "standard" || provider != "github" {
+			t.Fatalf("the launch ran on %s/%s, want the standard/github job the ref's fugaro.yaml selects", profile, provider)
+		}
+		if mints, reads := s.counts(); mints != 1 || reads != 1 {
+			t.Errorf("the launch made %d mint(s) and %d read(s), want exactly one of each: the launch read the document, because nothing recorded a job", mints, reads)
+		}
+	})
+}
+
+// TestRecordedJobIsNotTrustedForItsProfile is what the recorded job is and is
+// not: a name out of the runs bucket, placed as it stands. The profile it
+// belongs to is never re-judged here — the same launch reading the document
+// would be refused, because the profile the ref selects does not admit this
+// repository (profileAdmissionRefusal) — and what judges the run is the
+// runner's own placement check, which reads the ref's fugaro.yaml after
+// cloning and halts rather than widening (spec.md §8, §12). Red against main,
+// where the follow-up is refused before any execution exists.
+//
+// Mutation (run, restore): move the continuedJob call below the admission
+// check — this follow-up is refused again, and no execution is created.
+func TestRecordedJobIsNotTrustedForItsProfile(t *testing.T) {
+	f := newProjectJobFixture(t)
+	publishPolicy(t, f.launchBudgetFixture, fmt.Sprintf(`{"version":%d,"allow_repos":["github/acme/*"],`, projectpolicy.Version)+
+		`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",`+
+		`"allow_repos":["github/acme/other"]}}}`)
+	s := newServiceReadFixture(t)
+	s.use(t, f.cloudFixture)
+	root, fu := wallRunIDAt(3, "090000", "aaaa"), wallRunIDAt(0, "120000", "f00d")
+	seedLaunchedOn(t, f.cloudFixture, appSlug, root, f.job)
+	writeRecord(t, f.cloudFixture, root, prRecord(root, "", 7, 1))
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fu, "also rename x"); err != nil {
+		t.Fatalf("a follow-up of a run recorded on a job whose profile no longer admits this repository: %v", err)
+	}
+	if profile, provider, _ := launchedProjectJob(t, f.cloudFixture); profile != "standard" || provider != "github" {
+		t.Fatalf("the launch ran on %s/%s, want the standard/github job run %s records", profile, provider, root)
+	}
+}
+
+// TestARunRecordedOnItsRepositoriesOwnJobIsNotReusedAsAProjectJob is the
+// boundary of what a record may decide, and the ordinary case of a record that
+// decides nothing: the job name a launch writes down is the platform's own, the
+// job its execution started on, so a run of a repository on its own job records
+// the per-repository name — not a project job of any profile, and not this
+// launch's to reuse. The tuple (slug, workflow, account) of that job is the
+// backend's to derive from THIS launch's own spec.
+//
+// The witness is the credentials service's address, which a launch on a named
+// job withholds (credentialsServiceLaunchEnv) and a repository's own job is
+// handed: it is the fetch path a cascade repository clones by, so a
+// continuation sent down the shared path stops before it clones. The ref's tree
+// carries no document, so the per-repository job is the document decision's own
+// answer too — what this test tells apart is the path, not the job's name, which
+// the two share.
+//
+// Mutation (run, restore): drop projectJobOfRecord's ok from continuedJob, and
+// reuse the recorded name through the shared path — the execution carries no
+// credentials service address.
+func TestARunRecordedOnItsRepositoriesOwnJobIsNotReusedAsAProjectJob(t *testing.T) {
+	f := newProjectJobFixture(t)
+	s := newServiceReadFixture(t)
+	s.document = ""
+	s.use(t, f.cloudFixture)
+	markRepoCredentialsServiceReady(t, f.cloudFixture)
+	root, fu := wallRunIDAt(3, "090000", "aaaa"), wallRunIDAt(0, "120000", "f00d")
+	perRepo := gcp.JobName(appSlug, "web")
+	seedLaunchedOn(t, f.cloudFixture, appSlug, root, perRepo)
+	writeRecord(t, f.cloudFixture, root, prRecord(root, "", 7, 1))
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fu, "also rename x"); err != nil {
+		t.Fatalf("a follow-up of a run recorded on its repository's own job: %v", err)
+	}
+	calls := f.run.RunRequests()
+	if len(calls) != 1 || calls[0].Job != perRepo {
+		t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the per-repository job %s that run %s records", len(calls), calls, perRepo, root)
+	}
+	if got := calls[0].Env[providers.EnvCredentialsServiceURL]; got != s.srv.URL {
+		t.Errorf("the execution carries %s = %q, want %q: a repository on its own job is handed the address it fetches the repository by, and a launch placed on a named job is handed none", providers.EnvCredentialsServiceURL, got, s.srv.URL)
 	}
 }

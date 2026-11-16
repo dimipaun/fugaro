@@ -122,7 +122,7 @@ reader, so it is per *command group* and it is stated in
 | Repository tooling | `verify` | **Supported, with the shell rule of D7** | Runs the repository's own configured commands; the shell is chosen by platform. |
 | Local images | `image build --local`, `image selftest` | **Best effort** | Needs Docker Desktop; unverified until **U10**. |
 | In-job | `exec` (hidden) | **Not supported, not shipped as a user command** | Hidden, Linux-only, and untouched (F41). |
-| Plugin | `update-skills`, `upgrade --plugin` | **Supported** | Skills only, no hooks (F34), with the shell note of D14. |
+| Plugin | `update-skills` | **Supported** | Skills only, no hooks (F34), with the shell note of D14. |
 | Managed infrastructure | `managed`, `restore` (Terraform half) | **Best effort** | `terraform` on Windows is fine (F19), the Terraform *state* is not platform-specific, but nothing here is verified on Windows in this plan. |
 | Console | — | **Out of scope** | `docs/design/desktop-console.md` D10 owns it (F40). |
 
@@ -540,7 +540,7 @@ already carries `//go:build !windows`, **C2** — it must be *kept*, not
 replaced, and its reason re-read). Red step: **U9**'s failure list, after
 Slice 3 removes the four known classes. Verification: `go test ./internal/cli -run Init -count=1`,
 `[pins]`, `[cross]`, and the non-interactive paths
-(`--yes`, `--non-interactive`, `--json`) on Windows. Tier B. Depends on: T1.3,
+(`--json`) on Windows. Tier B. Depends on: T1.3,
 T1.4, T3.2, T3.3. Commit: `init: the wizard on Windows, non-interactively first`.
 
 **T4.4 — `run` and the attach path (F41's neighbourhood).** Files: whatever

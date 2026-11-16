@@ -562,6 +562,66 @@ workflows:
 	}
 }
 
+// TestMixedStageAccountResolvesAnAlias: the choice keys may hold an alias
+// instead of an account's own name (docs/account-aliases, D2091), and the job
+// set reads the account it stands for — the same name the publish resolved into
+// the node the runner reads it off, so the two agree on which variants exist.
+// Red before the resolution, and in the direction that costs a run: the set
+// held the default alone, so `fugaro update` retired the account's variant with
+// the executions on it while the node kept sending the review to that account,
+// and its token was mounted on no job left standing.
+func TestMixedStageAccountResolvesAnAlias(t *testing.T) {
+	apiKey := parseCfg(t, []byte(`version: 1
+project: aurora
+git: { provider: github, base_branch: main }
+agent: { auth: api-key }
+workflows:
+  app:
+    commands: { build: npm run build, test: npm test }
+`))
+	for _, c := range []struct {
+		name, keys string
+		cfg        *config.Config
+		variants   []string
+	}{
+		{"a stage key", "claude_account_aliases:\n  reviewer: bmb\nstages:\n  review: { claude_account: reviewer }\n", nil,
+			[]string{config.DefaultClaudeAccount, "bmb"}},
+		{"the project default", "claude_account_aliases:\n  reviewer: bmb\ndefault_claude_account: reviewer\n",
+			mixedRungFourCfg(t, "claude-sonnet-5"), []string{config.DefaultClaudeAccount, "bmb"}},
+		// The alias's own target decides and not its spelling: an alias of an
+		// account this repository may not use is no more an entry than the
+		// account itself is.
+		{"an alias of an account no allow_data_to admits here", "claude_account_aliases:\n  reviewer: other\nstages:\n  review: { claude_account: reviewer }\n", nil,
+			[]string{config.DefaultClaudeAccount}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			cfg := c.cfg
+			if cfg == nil {
+				cfg = apiKey
+			}
+			if got := WorkflowAccounts(cfg, parseLC(t, mixedLC+c.keys), "acme/app"); !slices.Equal(got, c.variants) {
+				t.Errorf("WorkflowAccounts = %v, want %v", got, c.variants)
+			}
+		})
+	}
+
+	// The mount follows the variant: the account's own job carries the token,
+	// and the job of the alias it was written as is not a job at all.
+	lc := parseLC(t, mixedLC+"claude_account_aliases:\n  reviewer: bmb\nstages:\n  review: { claude_account: reviewer }\n")
+	ms, err := SecretMounts("github-app-key", apiKey, "app", "bmb", apiKey.Workflows["app"], lc, "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(ms, func(m SecretMount) bool { return m.Logical == config.ClaudeAccountSecret("bmb") }) {
+		t.Errorf("the account's job mounts %+v, want the token of the account the alias stands for", ms)
+	}
+	if mounts, err := SecretMounts("github-app-key", apiKey, "app", "reviewer", apiKey.Workflows["app"], lc, "acme/app"); err != nil {
+		t.Fatal(err)
+	} else if slices.ContainsFunc(mounts, func(m SecretMount) bool { return m.Logical == config.ClaudeAccountSecret("reviewer") }) {
+		t.Errorf("a job for the alias by its own name mounts a token: %+v", mounts)
+	}
+}
+
 // The ruling's refusals, at the variant and at the mount
 // (docs/design/mixed-credentials.md §11, "An allow-list, not a denylist"): an
 // api-key run's account serves review and adversarial and no other stage, its

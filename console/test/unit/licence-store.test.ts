@@ -64,6 +64,7 @@ import {
 } from '../../src/main/licence-store'
 import { verifyLicenceKey, type LicenceClaims, type LicenceKeyring } from '../../src/main/licence'
 import { LICENCE_KEY_VAR, planFor, spawnedArgv } from '../../src/main/spawn'
+import { reportedMode } from '../support/fsMode'
 
 const DAY = 86_400
 
@@ -180,8 +181,8 @@ describe('the console’s licence-key store', () => {
 
     // The file is the console's own store and is kept like a credential: mode
     // 0600 in a directory of the console's own, mode 0700.
-    expect(statSync(path).mode & 0o777).toBe(LICENCE_FILE_MODE)
-    expect(statSync(dirname(path)).mode & 0o777).toBe(LICENCE_DIR_MODE)
+    expect(statSync(path).mode & 0o777).toBe(reportedMode(LICENCE_FILE_MODE))
+    expect(statSync(dirname(path)).mode & 0o777).toBe(reportedMode(LICENCE_DIR_MODE))
     // The whole of it: the file holds the key, because the file *is* the store
     // F41's table gives the console. What the design keeps the key out of is a
     // log, an error message and an argv -- held below and in the hand-off's own

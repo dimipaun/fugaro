@@ -64,10 +64,10 @@ func TestModelsRmAsksNothing(t *testing.T) {
 // write still happens.
 func TestModelsRmWarnsNamingEachPinningRepository(t *testing.T) {
 	home, path := modelsWriteHome(t)
-	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("vendor/model-x", "claude-sonnet-5-5", ""))
-	modelsWriteCheckout(t, home, "owner/repo-b", modelsWriteRepoPins("deepseek/deepseek-v4-flash", "vendor/model-x", "claude-sonnet-5-5"))
+	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("vendor/model-x", "claude-sonnet-5-5", "", ""))
+	modelsWriteCheckout(t, home, "owner/repo-b", modelsWriteRepoPins("deepseek/deepseek-v4-flash", "vendor/model-x", "claude-sonnet-5-5", ""))
 
-	out, _, err := execute(t, "models", "rm", "vendor/model-x", "--yes")
+	out, _, err := execute(t, "models", "rm", "vendor/model-x")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -95,15 +95,36 @@ func TestModelsRmWarnsNamingEachPinningRepository(t *testing.T) {
 	}
 }
 
+// TestModelsRmNamesTheVisionPin: the warning names the role each repository
+// pins the model in, and the vision slot is one of them (D791's list, V6). A
+// repository that runs the model only where a stage reads an image is exactly
+// the pin this removal breaks, so a warning that stopped at the three stage
+// roles would leave the owner to find the break at the next run.
+func TestModelsRmNamesTheVisionPin(t *testing.T) {
+	home, _ := modelsWriteHome(t)
+	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("deepseek/deepseek-v4-flash", "claude-sonnet-5-5", "", "vendor/model-x"))
+
+	out, _, err := execute(t, "models", "rm", "vendor/model-x")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "owner/repo-a (vision)") {
+		t.Errorf("the warning does not name the vision pin:\n%s", out)
+	}
+	if !strings.Contains(out, "coder|reviewer|background|vision") {
+		t.Errorf("the fix the warning names does not offer the vision role:\n%s", out)
+	}
+}
+
 // TestModelsRmWarnsForRepositoriesWithoutACheckout: a repository this machine
 // has no checkout for is named as one it cannot see, rather than left out. The
 // pin it may carry is exactly the one the warning exists for, and a reader who
 // is not told which repositories were not read would take silence for safety.
 func TestModelsRmWarnsForRepositoriesWithoutACheckout(t *testing.T) {
 	home, _ := modelsWriteHome(t)
-	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("vendor/model-x", "claude-sonnet-5-5", ""))
+	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("vendor/model-x", "claude-sonnet-5-5", "", ""))
 
-	out, _, err := execute(t, "models", "rm", "vendor/model-x", "--yes")
+	out, _, err := execute(t, "models", "rm", "vendor/model-x")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -122,10 +143,10 @@ func TestModelsRmWarnsForRepositoriesWithoutACheckout(t *testing.T) {
 // break nothing caused (D783's warning is about a removal).
 func TestModelsRmWarnsNothingWhenThereIsNothingToRemove(t *testing.T) {
 	home, path := modelsWriteHome(t)
-	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("vendor/model-q", "claude-sonnet-5-5", ""))
+	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("vendor/model-q", "claude-sonnet-5-5", "", ""))
 	before := readFileString(t, path)
 
-	out, _, err := execute(t, "models", "rm", "vendor/model-q", "--yes")
+	out, _, err := execute(t, "models", "rm", "vendor/model-q")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -150,9 +171,9 @@ model_prices:
 repos:
   owner/repo-a: {}
 `)
-	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("deepseek/deepseek-v4-flash", "claude-sonnet-5-5", ""))
+	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("deepseek/deepseek-v4-flash", "claude-sonnet-5-5", "", ""))
 
-	out, _, err := execute(t, "models", "rm", "vendor/model-z", "--yes")
+	out, _, err := execute(t, "models", "rm", "vendor/model-z")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -171,9 +192,9 @@ repos:
 // false, and the sentence that says the pattern still claims it is the true one.
 func TestModelsRmWarnsWithoutTheNoProviderLineWhileAPatternStillClaimsIt(t *testing.T) {
 	home, _ := modelsWriteHome(t)
-	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("deepseek/deepseek-v4-flash", "", ""))
+	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("deepseek/deepseek-v4-flash", "", "", ""))
 
-	out, _, err := execute(t, "models", "rm", "deepseek/deepseek-v4-flash", "--yes")
+	out, _, err := execute(t, "models", "rm", "deepseek/deepseek-v4-flash")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -191,7 +212,7 @@ func TestModelsRmWarnsWithoutTheNoProviderLineWhileAPatternStillClaimsIt(t *test
 func TestModelsRmLeavesAClaimingPatternAndSaysSo(t *testing.T) {
 	_, path := modelsWriteHome(t)
 
-	out, _, err := execute(t, "models", "rm", "deepseek/deepseek-v4-flash", "--yes")
+	out, _, err := execute(t, "models", "rm", "deepseek/deepseek-v4-flash")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -221,7 +242,7 @@ func TestModelsRmRefusesAnAliasOrAnIDTheConfigCannotCarry(t *testing.T) {
 		{"vendor/model-latest", "not an explicit model ID"},
 		{strings.Repeat("v", 95) + "/" + strings.Repeat("m", 10), "at most 100 characters"},
 	} {
-		out, _, err := execute(t, "models", "rm", c.id, "--yes")
+		out, _, err := execute(t, "models", "rm", c.id)
 		if err == nil {
 			t.Errorf("%s: an ID the config cannot carry was accepted:\n%s", c.id, out)
 			continue
@@ -249,7 +270,7 @@ func TestModelsRmReportsNothingForAWellFormedIDTheConfigDoesNotCarry(t *testing.
 	_, path := modelsWriteHome(t)
 	before := readFileString(t, path)
 
-	out, _, err := execute(t, "models", "rm", "bad/id", "--yes")
+	out, _, err := execute(t, "models", "rm", "bad/id")
 	if err != nil {
 		t.Fatalf("a well-formed model ID the config does not carry was refused: %v", err)
 	}
@@ -268,7 +289,7 @@ func TestModelsRmRefusesEmptyingTheAllowList(t *testing.T) {
 	_, path := modelsWriteHomeWith(t, modelsRmOnlyAllowExtra)
 	before := readFileString(t, path)
 
-	_, _, err := execute(t, "models", "rm", "vendor/model-x", "--yes")
+	_, _, err := execute(t, "models", "rm", "vendor/model-x")
 	if err == nil {
 		t.Fatal("removing the last allowed model was accepted")
 	}
@@ -289,7 +310,7 @@ func TestModelsRmRefusesInAnAgentSession(t *testing.T) {
 	before := readFileString(t, path)
 	t.Setenv("CLAUDECODE", "1")
 
-	out, _, err := execute(t, "models", "rm", "vendor/model-x", "--yes")
+	out, _, err := execute(t, "models", "rm", "vendor/model-x")
 	if err == nil {
 		t.Fatal("a models write ran in a coding agent's session")
 	}
@@ -314,10 +335,10 @@ func TestModelsRmRefusesInAnAgentSession(t *testing.T) {
 // about it would tell the owner to repair a break nothing caused.
 func TestModelsRmWarnsOnlyOfARemovalThatLanded(t *testing.T) {
 	home, path := modelsWriteHome(t)
-	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("vendor/model-x", "claude-sonnet-5-5", ""))
+	modelsWriteCheckout(t, home, "owner/repo-a", modelsWriteRepoPins("vendor/model-x", "claude-sonnet-5-5", "", ""))
 
 	t.Setenv("CLAUDECODE", "1")
-	refused, _, err := execute(t, "models", "rm", "vendor/model-x", "--yes")
+	refused, _, err := execute(t, "models", "rm", "vendor/model-x")
 	if err == nil {
 		t.Fatal("a models write ran in a coding agent's session")
 	}
@@ -332,7 +353,7 @@ func TestModelsRmWarnsOnlyOfARemovalThatLanded(t *testing.T) {
 	// exactly what the warning is for, so its absence in the refusal is the
 	// order and not a fixture with nothing to say.
 	t.Setenv("CLAUDECODE", "")
-	out, _, err := execute(t, "models", "rm", "vendor/model-x", "--yes")
+	out, _, err := execute(t, "models", "rm", "vendor/model-x")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -347,7 +368,7 @@ func TestModelsRmWarnsOnlyOfARemovalThatLanded(t *testing.T) {
 func TestModelsRmKeepsTheRestOfTheFile(t *testing.T) {
 	_, path := modelsWriteHome(t)
 
-	out, _, err := execute(t, "models", "rm", "vendor/model-x", "--yes")
+	out, _, err := execute(t, "models", "rm", "vendor/model-x")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}

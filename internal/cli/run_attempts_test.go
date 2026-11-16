@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 	"github.com/spf13/cobra"
 )
 
@@ -254,6 +255,40 @@ func TestRunAttemptsResolveRecipeOnce(t *testing.T) {
 	}
 }
 
+// TestRunAttemptsPaysOneMintForTheWholeBatch is spec.md §6's "at most one read
+// per command" for the shape that would otherwise pay per attempt: every
+// attempt of a best-of-N batch asks the forge the same question — this
+// repository's fugaro.yaml at the ref the runs check out — so the batch makes
+// one mint and one read, not one per attempt. A mint is an act the credentials
+// service audits, and each one is a `gcloud auth print-identity-token`
+// subprocess beside it.
+//
+// The cache is installed over the whole batch (runAttempts) because the one
+// finishLaunch installs is a single launch's own, and the attempts share the
+// command's context.
+//
+// Mutation (run, restore): drop the install from runAttempts and keep
+// finishLaunch's alone — the batch makes one mint and one read per attempt.
+func TestRunAttemptsPaysOneMintForTheWholeBatch(t *testing.T) {
+	f := newProjectJobFixture(t)
+	setMaxParallel(t, 5)
+	s := newServiceReadFixture(t)
+	s.use(t, f.cloudFixture)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "Add a feature"); err != nil {
+		t.Fatalf("a batch of 2 from outside the checkout: %v", err)
+	}
+	if n := len(f.run.RunRequests()); n != 2 {
+		t.Fatalf("the batch made %d jobs.run call(s), want one per attempt (2)", n)
+	}
+	if mints, reads := s.counts(); mints != 1 || reads != 1 {
+		t.Errorf("a batch of 2 made %d mint(s) and %d read(s), want one of each: the batch asks the forge one question (spec.md §6)", mints, reads)
+	}
+}
+
 // TestRunAttemptsPartialFailureReportsWhatLaunched is runAttempts's own
 // end-to-end version of TestReportBatchFailurePrintsWhatLaunched: it forces
 // the 2nd of 3 attempts to fail (through the launchAttempt seam, with no
@@ -268,12 +303,12 @@ func TestRunAttemptsPartialFailureReportsWhatLaunched(t *testing.T) {
 
 	orig := launchAttempt
 	calls := 0
-	launchAttempt = func(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec, reused bool, warn io.Writer, skipBudget bool) (launchResult, error) {
+	launchAttempt = func(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec, reused, plan bool, warn io.Writer, skipBudget bool) (launchResult, error) {
 		calls++
 		if calls == 2 {
 			return launchResult{}, boom
 		}
-		return orig(ctx, env, o, slug, spec, reused, warn, skipBudget)
+		return orig(ctx, env, o, slug, spec, reused, plan, warn, skipBudget)
 	}
 	defer func() { launchAttempt = orig }()
 
@@ -346,9 +381,9 @@ func TestRunAttemptsRefusesAlreadyLaunchedInsideBatch(t *testing.T) {
 
 	orig := launchAttempt
 	calls := 0
-	launchAttempt = func(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec, reused bool, warn io.Writer, skipBudget bool) (launchResult, error) {
+	launchAttempt = func(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec, reused, plan bool, warn io.Writer, skipBudget bool) (launchResult, error) {
 		calls++
-		res, err := orig(ctx, env, o, slug, spec, reused, warn, skipBudget)
+		res, err := orig(ctx, env, o, slug, spec, reused, plan, warn, skipBudget)
 		if calls == 2 && err == nil {
 			res.Status = "already-launched"
 		}

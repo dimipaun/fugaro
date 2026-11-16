@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/ee/portal/schemas/keys.schema.json",
+  "title": "Portal keys, the reveal bundle and the air-gapped licence file",
+  "description": "Three shapes, and the split between them is the portal's whole answer to recovering a key (portal plan P3.2; D2182, D2206, F3, F42). Metadata is what every list shows, including the reseller's and the operations team's, and it never carries a credential (F5). The reveal bundle is the one shape in this folder that does: it is the key and its renewal secret, handed over once, stored sealed for the window it can be asked for again in, and never mailed. The licence file is what an air-gapped installation downloads, and it holds no secret at all, so the same download returns the same bytes. Every object here is closed, because ee/keyservice/wire_keys.go decodes it with DisallowUnknownFields.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/metadata"
+    },
+    {
+      "$ref": "#/$defs/reveal"
+    },
+    {
+      "$ref": "#/$defs/licence"
+    }
+  ],
+  "$defs": {
+    "metadata": {
+      "type": "object",
+      "description": "One key, described and never handed over. This is the only key shape a reseller or an operations member is ever served (F5: they see metadata only), so a secret field added here would be the way that rule is broken by a later edit.",
+      "additionalProperties": false,
+      "required": [
+        "key_id",
+        "entitlement_id",
+        "workspace_id",
+        "tier",
+        "kind",
+        "seats",
+        "issued_at",
+        "paid_through",
+        "last_seen"
+      ],
+      "properties": {
+        "key_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The key's own id, which is a claim inside the key and not a secret: it is what a revocation list names and what a support conversation quotes."
+        },
+        "entitlement_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The entitlement this key was minted for. Every key of one entitlement is revoked together (F29), and every reissue keeps the entitlement's renewal secret (D2200)."
+        },
+        "workspace_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{4,28}[a-z0-9]$",
+          "description": "The Firebase project id the key is bound to: the key's own workspace_id claim (TN2). A key is never moved between projects, which is why a rebind revokes it and mints another (D2198)."
+        },
+        "tier": {
+          "type": "string",
+          "enum": [
+            "community",
+            "team",
+            "enterprise"
+          ],
+          "description": "The tier the key carries, as ee/licence spells it."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "paid",
+            "trial",
+            "comped"
+          ],
+          "description": "Whether the key counts as revenue: the free seat is comped (D2199)."
+        },
+        "seats": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many people may act under this key, which is the entitlement's number at the instant this key was minted: a key minted before a seat change carries the old count, and the change is what mints the successor (D2200)."
+        },
+        "issued_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the key was signed, in UTC."
+        },
+        "paid_through": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The end of the term this key covers, in UTC. It is the same instant across the keys of one entitlement — a reissue keeps it, only a purchase moves it — and a connected key's runs at most 30 days beyond issue (D2202)."
+        },
+        "last_seen": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "When the installation last asked whether this key is still good, or null for a key that never has — every air-gapped key, and any whose installation has stopped. A licensor reads it to tell a lapse from a leak."
+        }
+      }
+    },
+    "reveal": {
+      "type": "object",
+      "description": "The reveal: a workspace's newest key and its renewal secret, handed over once (D2182 as amended, P3.2). A reveal rotates — the predecessor's secret stops fetching the successor — it happens at most once per workspace per day, it needs a fresh sign-in and an owner or admin, and the other owners are told. The bundle is stored sealed under a key only the API's own account can decrypt for the window it can be asked for again in; nothing about that is on the wire, which is why this shape is exactly the two lines and their ids.",
+      "additionalProperties": false,
+      "required": [
+        "key_id",
+        "key",
+        "renewal_secret",
+        "paid_through"
+      ],
+      "properties": {
+        "key_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The new key's id, so the holder can tell a reveal from the key it replaced."
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The licence key itself, the `fgk_…` text an installation is set up with (ee/licence). It is the one credential this folder carries, and it is why this shape is the only one a reflection over the registry is allowed to find a secret on (TestRevealBundleIsTheOnlySecretShape)."
+        },
+        "renewal_secret": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The key's half of the renewal exchange (D2135): the installation proves it with this when it asks for its next key, and the predecessor's no longer serves. It is the one value in this folder that is handed over and stored nowhere in the clear."
+        },
+        "paid_through": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The end of the term the new key covers, which is the predecessor's: a reveal never extends a term (F4, F30)."
+        }
+      }
+    },
+    "licence": {
+      "type": "object",
+      "description": "What an air-gapped entitlement is downloaded as (D2206, F42). It is issued once at binding, it is never revealed or rebound except by operations, and it carries no secret: an installation with no egress never asks the service for anything, so the same download returns the same signed text for as long as the term runs.",
+      "additionalProperties": false,
+      "required": [
+        "key_id",
+        "licence",
+        "paid_through"
+      ],
+      "properties": {
+        "key_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The air-gapped key's id, which names the file a person saved."
+        },
+        "licence": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The signed licence text itself, which is the file: an installation is set up with it by hand, so what this field holds is what the person saves and not a description of it."
+        },
+        "paid_through": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The end of the term the licence covers, in UTC. An air-gapped key keeps its whole term, unlike a connected one capped at 30 days (D2202)."
+        }
+      }
+    }
+  }
+}

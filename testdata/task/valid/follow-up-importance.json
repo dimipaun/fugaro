@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "run_id": "20261112-101500-a1b2",
+  "repo": "acme/server",
+  "ref": "main",
+  "task": "Settle the finding the run 20261111-090000-3c4d deferred: the retry loop has no backoff.",
+  "follow_up_of": { "run": "20261111-090000-3c4d", "keys": ["9f2a1c"], "importance": "important" },
+  "debt": true
+}

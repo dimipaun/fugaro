@@ -204,6 +204,9 @@ func Validate(c *Config) []Problem {
 		add("agent.compression", "cannot be combined with agent.auth: %s: the proxy is refused for that auth (docs/design/headroom-compression.md §4)", c.Agent.Auth)
 	}
 	ps = append(ps, validateAgentModels(c.Agent)...)
+	if c.ModelGrades != nil {
+		ps = append(ps, ValidateModelGrades(*c.ModelGrades, "model_grades")...)
+	}
 	ps = append(ps, validateCascadeFollowup(c.Agent, c.Followup)...)
 	ps = append(ps, validateBudget(c.Budget)...)
 	ps = append(ps, validateFollowup(c.Git.Provider, c.Followup)...)
@@ -835,7 +838,8 @@ func checkBaseWorkflow(p, root string, w Workflow) []Problem {
 
 // CheckWarnings are what Check finds that doesn't make the config wrong, for
 // fugaro validate to print as warnings: a generated image on the Fugaro base
-// with no mise config and no image.tools installs no language runtime.
+// with no mise config and no image.tools installs no language runtime, and a
+// repository-level secret is accepted and ignored (RepoSecretsWarnings, D2313).
 //
 // A workflow that names a catalog entry (image_name) is not such an image:
 // its job runs the catalog's, whose runtimes the repository does not install
@@ -853,7 +857,7 @@ func CheckWarnings(c *Config, root string) []Problem {
 			ps = append(ps, Problem{Path: "workflows." + showKey(name), Message: "no mise.toml, .tool-versions or image.tools: the image installs no language runtime (docs/base-image.md)"})
 		}
 	}
-	return ps
+	return append(ps, RepoSecretsWarnings(c)...)
 }
 
 // badUSD reports a dollar amount no limit may be: negative, NaN or infinite.
@@ -913,6 +917,7 @@ func validateAgentModels(a Agent) []Problem {
 	models := []struct{ path, val string }{
 		{"agent.model", a.Model}, {"agent.models.coder", a.Models.Coder},
 		{"agent.models.reviewer", a.Models.Reviewer}, {"agent.models.background", a.Models.Background},
+		{"agent.models.vision", a.VisionModel()}, {"agent.models.diagnose", a.Models.Diagnose},
 	}
 	for _, name := range CraftNames {
 		models = append(models, struct{ path, val string }{"agent.crafts." + name + ".model", a.Crafts.Of(name).Model})

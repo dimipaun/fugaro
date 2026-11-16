@@ -428,6 +428,24 @@ function fold(text) {
   return wordsOf(text).join(' ');
 }
 
+/**
+ * The key a spoken name is matched by, for a caller that owns the names.
+ *
+ * It is `fold` -- this module's own rule, not a second copy of it -- because
+ * `checkEntries` refuses the **whole list** for one entry whose key is empty
+ * (there is nothing to say) or equal to another's (an ambiguity this module will
+ * not resolve): a caller that stores such a name takes voice routing away from
+ * every entry it does have. So a caller that builds a `projects` list out of its
+ * own names checks them with this before it hands the list over, and a caller
+ * that owns the list can refuse the name at the moment it is typed.
+ *
+ * A non-string answers `''` rather than throwing: a name that is not text is a
+ * name with no words in it, which is the answer every caller wants.
+ */
+export function foldSpokenName(text) {
+  return typeof text === 'string' ? fold(text) : '';
+}
+
 /** The words an alias set must never contain, folded: the two other vocabularies. */
 const FORBIDDEN_ALIASES = new Set(
   [...CONFIRMATION_PHRASES, ...NOT_CONFIRMATIONS].map((phrase) => fold(phrase)),

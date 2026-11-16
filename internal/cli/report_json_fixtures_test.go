@@ -32,6 +32,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/diagnoseagent"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
@@ -188,6 +189,28 @@ var jsonCases = map[string]jsonCase{
 			return []string{"doctor"}
 		},
 	},
+	"estimate": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			f := jsonCloud(t)
+			id := "20260927-100000-abcd"
+			seedEstimateRun(t, f, id, estimateSeed{
+				tokens:   map[string]runstore.ModelTokenCounts{"claude-sonnet-5": {Input: 1_000_000, Output: 10_000}},
+				modelBy:  map[string]float64{"claude-sonnet-5": 4},
+				modelUSD: 4,
+			})
+			return []string{"estimate", "--run", appSlug + "/" + id, "--model", "claude-opus-5-5"}
+		},
+	},
+	"followups": {
+		// The plan and not a launch: the fixture's parent is merged, so
+		// --launch here would file the tasks rather than print them.
+		run: func(t *testing.T) []string {
+			f := jsonCloud(t)
+			launchable(t, f)
+			return []string{"followups", mergedParent(t, f, allDeferred(t))}
+		},
+	},
 	"image build": {
 		why: "the run's confirmation is typed at a terminal, and --json never gives one, so the command refuses before it prints any document",
 	},
@@ -286,6 +309,16 @@ var jsonCases = map[string]jsonCase{
 			return []string{"orchestrator", "events"}
 		},
 	},
+	"orchestrator ls": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			f := lsFixture(t)
+			seedOrchestratorNode(t, f, "aurora")
+			seedOrchestratorLease(t, f, "aurora", "macbook", orchestratorTestNow)
+			seedBriefCache(t, "aurora", orchestratorTestNow)
+			return []string{"orchestrator", "ls"}
+		},
+	},
 	"orchestrator patch": {
 		run: func(t *testing.T) []string {
 			f := newOrchestratorFixture(t)
@@ -329,11 +362,43 @@ var jsonCases = map[string]jsonCase{
 			return []string{"plan", "status"}
 		},
 	},
+	"project clone-url ls": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			f := newBudgetFixture(t, "")
+			f.appendConfig(t, "clone_urls:\n  github/acme/app: https://github.com/acme/app\n")
+			return []string{"project", "clone-url", "ls"}
+		},
+	},
 	"project policy show": {
 		reads: true,
 		run: func(t *testing.T) []string {
 			newBudgetFixture(t, "")
 			return []string{"project", "policy", "show"}
+		},
+	},
+	"project profile ls": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			newBudgetFixture(t, "")
+			return []string{"project", "profile", "ls"}
+		},
+	},
+	"project profile show": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			// The world's own config defines no profiles, and the read refuses a
+			// name it has none of rather than printing an empty document, so
+			// this run needs the block a project with a profile carries.
+			modelsWriteHomeWith(t, projectProfileExtra)
+			return []string{"project", "profile", "show"}
+		},
+	},
+	"project routing show": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			newBudgetFixture(t, "")
+			return []string{"project", "routing", "show"}
 		},
 	},
 	"project show": {
@@ -370,6 +435,13 @@ var jsonCases = map[string]jsonCase{
 	"review show": {
 		why: "the read needs a review run's artifact, which the fixture would have to fake a coordinator job to produce",
 	},
+	"rigor floor show": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			jsonCloud(t)
+			return []string{"rigor", "floor", "show"}
+		},
+	},
 	"run": {
 		run: func(t *testing.T) []string {
 			jsonCloud(t)
@@ -392,6 +464,15 @@ var jsonCases = map[string]jsonCase{
 			return []string{"runs", "ls"}
 		},
 	},
+	"runs show": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			// The chain rig: three runs of one chain with the budget on, which
+			// is what gives the document its limit, its spend and its layers.
+			showRig(t)
+			return []string{"runs", "show", showTip}
+		},
+	},
 	"runs stats": {
 		reads: true,
 		run: func(t *testing.T) []string {
@@ -405,6 +486,16 @@ var jsonCases = map[string]jsonCase{
 		run: func(t *testing.T) []string {
 			newSummaryFixture(t)
 			return []string{"runs", "summary"}
+		},
+	},
+	"runs watch": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			// The daemon's own rig with this command's host seam pointed at the
+			// same fake host, so the document is the triage's real answer rather
+			// than the fail-closed one a window with no host would give.
+			newWatchFixture(t, green())
+			return []string{"runs", "watch"}
 		},
 	},
 	"seats": {
@@ -434,6 +525,16 @@ var jsonCases = map[string]jsonCase{
 			return []string{"secrets", "set", "claude-oauth-token", "--repo", "acme/app"}
 		},
 	},
+	// The intake's two families print the intake's own answer as the document
+	// (printIntakeAnswer), so what --json carries is the service's own wire
+	// shape and no line of the human answer. The rig and the seam are
+	// secrets_intake_test.go's: intakeUserJSONCase and intakeSharedJSONCase.
+	"secrets shared ls":  intakeSharedJSONCase("ls", "", true),
+	"secrets shared rm":  intakeSharedJSONCase("rm", "", false),
+	"secrets shared set": intakeSharedJSONCase("set", intakeTestValue+"\n", false),
+	"secrets user ls":    intakeUserJSONCase("ls", "", true),
+	"secrets user rm":    intakeUserJSONCase("rm", "", false),
+	"secrets user set":   intakeUserJSONCase("set", intakeTestValue+"\n", false),
 	"security paths": {
 		reads: true,
 		run: func(t *testing.T) []string {
@@ -472,7 +573,7 @@ var jsonCases = map[string]jsonCase{
 	"setup": {
 		run: func(t *testing.T) []string {
 			newInitRig(t)
-			return []string{"setup", "--yes"}
+			return []string{"setup"}
 		},
 	},
 	"stats runs": {
@@ -482,10 +583,27 @@ var jsonCases = map[string]jsonCase{
 			return []string{"stats", "runs", "--project", "aurora"}
 		},
 	},
+	"troubleshoot": {
+		run: func(t *testing.T) []string {
+			// The command's own rig (troubleshoot_test.go): a failed
+			// command's log, a source tree, a credential and the agent's
+			// answer, none of them this machine's -- the run reaches its own
+			// document without an agent, a network or a change to anything of
+			// the person's.
+			x := tsSetup(t)
+			x.id = tsFailedLog(t, time.Now().UTC(), "error: the account is not allowed here", "Failed in 1.2s")
+			x.diag = diagnoseagent.Diagnosis{
+				Outcome:   diagnoseagent.OutcomeConfiguration,
+				Signature: "update configuration",
+				Text:      "The account is not allowed for this repository.",
+			}
+			return []string{"troubleshoot", x.id.String()}
+		},
+	},
 	"update": {
 		run: func(t *testing.T) []string {
 			updateRig(t)
-			return []string{"update", "--yes"}
+			return []string{"update"}
 		},
 	},
 	"update-skills": {

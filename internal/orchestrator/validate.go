@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/dimipaun/fugaro/internal/escalation"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -34,6 +35,42 @@ var (
 	agentRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 	roleRE  = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 )
+
+// headRE is a head as the ladder records one in its ledger: a git object name
+// as a provider gives it, which is lower-hex and may be abbreviated — Bitbucket
+// reports twelve characters. Seven is git's own abbreviation floor, which is
+// what gitprov.SameCommit compares two heads down to, and sixty-four is a
+// SHA-256 object name's length.
+var headRE = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
+
+// specRE is a work item's spec name as a document stores it: the plan's folder
+// under docs/, lower-cased. The bound is forty-four characters, so `spec:`
+// plus the name is at most forty-nine of GitHub's fifty, and the shape is what
+// keeps a name free text can be pasted into — a path, a colon, a space — from
+// becoming a label name (R3, F7, F20).
+//
+// A patch may write the same name in either case (specInRE) and it is folded
+// on the way in, so this pattern is the whole check on the way out of a
+// document and the fold is what makes the two agree.
+var specRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,43}$`)
+
+// specInRE is the same shape as a patch may write it, either case. Its class
+// is ASCII and nothing else, so a name carrying a character outside it is
+// refused rather than folded into one that passes — which is the whole of the
+// Kelvin-sign rule: that sign lower-cases to an ASCII "k", so a name folded
+// before it was checked would be read as another name than the one written
+// (task.ASCIILower, and the two-step check task.CanonicalRepo makes).
+var specInRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,43}$`)
+
+// specName is R3 for a spec name as it is written: it reports the name this
+// release stores — the ASCII fold of the one written, because that is how a
+// host matches a label — and whether the name is one at all.
+func specName(name string) (string, bool) {
+	if !specInRE.MatchString(name) {
+		return "", false
+	}
+	return task.ASCIILower(name), true
+}
 
 // DecodeState reads a state node. The decode is strict — a field this release
 // does not model is an error, not something to carry along — and a node
@@ -238,6 +275,9 @@ func validateItem(s State, w WorkItem) error {
 	if !tier.Known(tier.Tier(w.RigorTier)) {
 		return fmt.Errorf("%w: the rigor tier of %q is %q, not one of %s", ErrInvalid, w.ID, safetext.OneLine(w.RigorTier), tierList())
 	}
+	if w.Spec != "" && !specRE.MatchString(w.Spec) {
+		return fmt.Errorf("%w: the spec of %q is %q, not a plan folder name", ErrInvalid, w.ID, safetext.OneLine(w.Spec))
+	}
 	if w.Brief == "" {
 		return fmt.Errorf("%w: the work item %q carries no brief", ErrInvalid, w.ID)
 	}
@@ -287,6 +327,11 @@ func validateItem(s State, w WorkItem) error {
 		// reports the item as launchable.
 		return fmt.Errorf("%w: %q carries a standing approval and a spent one at once", ErrInvalid, w.ID)
 	}
+	if w.Escalation != nil {
+		if err := validateEscalation(w.ID, *w.Escalation); err != nil {
+			return err
+		}
+	}
 	if len(w.DependsOn) > MaxDependsOn {
 		return fmt.Errorf("%w: %q depends on %d items, at most %d", ErrTooLarge, w.ID, len(w.DependsOn), MaxDependsOn)
 	}
@@ -300,6 +345,64 @@ func validateItem(s State, w WorkItem) error {
 		if _, ok := s.Item(dep); !ok {
 			return fmt.Errorf("%w: %q depends on %q, which is not a work item", ErrInvalid, w.ID, safetext.OneLine(dep))
 		}
+	}
+	return nil
+}
+
+// validateEscalation is the ladder's ledger, as a document this release reads
+// back. The rung, the reason and the head are values of closed vocabularies,
+// so a ledger written by a later release — a rung this one has never heard of
+// — is refused rather than read as the nearest thing to it, and the chain is
+// what makes the ledger one thing rather than two: each transition leaves the
+// rung the one before it entered, the last one is the rung the item is at, and
+// its time is the time the item entered it. A block whose halves could
+// disagree would let a reader draw a rung the transitions never reached.
+//
+// The bounds are the ledger's own (MaxEscalationTransitions, MaxOuterAttempts)
+// on top of the node's size target: the transitions are append-only, so
+// nothing else stops an item the ladder keeps acting on from growing a node
+// past the target every tick.
+func validateEscalation(itemID string, e Escalation) error {
+	if !escalation.KnownRung(e.Rung) {
+		return fmt.Errorf("%w: the escalation of %q is at rung %q, which is not a rung", ErrInvalid, safetext.OneLine(itemID), safetext.OneLine(string(e.Rung)))
+	}
+	if e.EnteredAt.IsZero() {
+		return fmt.Errorf("%w: the escalation of %q carries no time it entered its rung", ErrInvalid, safetext.OneLine(itemID))
+	}
+	if e.OuterAttempts < 0 || e.OuterAttempts > MaxOuterAttempts {
+		return fmt.Errorf("%w: the escalation of %q counts %d ladder runs, and at most %d may be spent", ErrTooLarge, safetext.OneLine(itemID), e.OuterAttempts, MaxOuterAttempts)
+	}
+	if len(e.Transitions) == 0 {
+		return fmt.Errorf("%w: the escalation of %q carries no transition, and the rung it is at is what one records", ErrInvalid, safetext.OneLine(itemID))
+	}
+	if len(e.Transitions) > MaxEscalationTransitions {
+		return fmt.Errorf("%w: the escalation of %q carries %d transitions, at most %d", ErrTooLarge, safetext.OneLine(itemID), len(e.Transitions), MaxEscalationTransitions)
+	}
+	previous := escalation.Rung("")
+	for i, tr := range e.Transitions {
+		if tr.From != previous {
+			return fmt.Errorf("%w: the transition %d of %q leaves %q and the one before it entered %q", ErrInvalid, i+1, safetext.OneLine(itemID), safetext.OneLine(string(tr.From)), safetext.OneLine(string(previous)))
+		}
+		if !escalation.KnownRung(tr.To) {
+			return fmt.Errorf("%w: the transition %d of %q enters rung %q, which is not a rung", ErrInvalid, i+1, safetext.OneLine(itemID), safetext.OneLine(string(tr.To)))
+		}
+		if !escalation.KnownReason(tr.Reason) {
+			return fmt.Errorf("%w: the transition %d of %q is %q, which is not a reason this release has", ErrInvalid, i+1, safetext.OneLine(itemID), safetext.OneLine(string(tr.Reason)))
+		}
+		if tr.At.IsZero() {
+			return fmt.Errorf("%w: the transition %d of %q carries no time", ErrInvalid, i+1, safetext.OneLine(itemID))
+		}
+		if tr.HeadSHA != "" && !headRE.MatchString(tr.HeadSHA) {
+			return fmt.Errorf("%w: the transition %d of %q names the head %q, which is not a git object name", ErrInvalid, i+1, safetext.OneLine(itemID), safetext.OneLine(tr.HeadSHA))
+		}
+		previous = tr.To
+	}
+	last := e.Transitions[len(e.Transitions)-1]
+	if last.To != e.Rung {
+		return fmt.Errorf("%w: the escalation of %q is at %s and its last transition entered %s", ErrInvalid, safetext.OneLine(itemID), e.Rung, last.To)
+	}
+	if !last.At.Equal(e.EnteredAt) {
+		return fmt.Errorf("%w: the escalation of %q entered %s at %s and its last transition is from %s", ErrInvalid, safetext.OneLine(itemID), e.Rung, e.EnteredAt.UTC().Format(time.RFC3339), last.At.UTC().Format(time.RFC3339))
 	}
 	return nil
 }
@@ -488,6 +591,11 @@ func validateUpsert(op WorkItemOp) error {
 	if op.RigorTier != nil && !tier.Known(tier.Tier(*op.RigorTier)) {
 		return fmt.Errorf("%w: the rigor tier %q is not one of %s", ErrInvalid, safetext.OneLine(*op.RigorTier), tierList())
 	}
+	if op.Spec != nil {
+		if _, ok := specName(*op.Spec); !ok {
+			return fmt.Errorf("%w: the spec %q is not a plan folder name", ErrInvalid, safetext.OneLine(*op.Spec))
+		}
+	}
 	if op.Phase != nil && !op.Phase.Known() {
 		return fmt.Errorf("%w: %q is not a phase", ErrInvalid, safetext.OneLine(string(*op.Phase)))
 	}
@@ -512,6 +620,15 @@ func validateUpsert(op WorkItemOp) error {
 	}
 	if op.SpentApprovalAt != nil && op.SpentApprovalAt.IsZero() {
 		return fmt.Errorf("%w: the spent approval time is empty", ErrInvalid)
+	}
+	if op.Escalation != nil {
+		// The same check the state gets, asked of the patch: a ledger the
+		// validator would refuse is refused at the decode, before a daemon has
+		// read a node it would land on. Which class may send it, and whether it
+		// is an append to the item's own ledger, are Apply's and not a shape.
+		if err := validateEscalation(op.ID, *op.Escalation); err != nil {
+			return err
+		}
 	}
 	return nil
 }

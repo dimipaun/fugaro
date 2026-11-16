@@ -38,6 +38,7 @@ import type { InstallationsListReply, InstallationsListRow } from '../../src/mai
 import { CLI_VERSION_BUILT_AGAINST } from '../../src/shared/version'
 import { installStub } from './stub'
 import type { Stub } from './stub'
+import { itHostRoute } from '../support/hostRoute'
 
 function freshDirectory(): string {
   return mkdtempSync(join(tmpdir(), 'fugaro-rail-'))
@@ -180,7 +181,7 @@ function rowOf(reply: InstallationsListReply, project: string): InstallationsLis
 }
 
 describe('the rows the rail draws', () => {
-  it('draws every installation, and marks the one whose config the CLI refused', async () => {
+  itHostRoute('draws every installation, and marks the one whose config the CLI refused', async () => {
     // The owner's four reasons an installation "cannot be read", first shape: the
     // CLI listed `aurora` with its fields empty because it could not read its
     // config. The row is **drawn** -- the rail hides nothing -- and it carries the
@@ -203,7 +204,7 @@ describe('the rows the rail draws', () => {
     expect(rowOf(reply, 'orbit').state.readable).toBe(true)
   })
 
-  it('opens the first readable installation when the previously chosen one is not', async () => {
+  itHostRoute('opens the first readable installation when the previously chosen one is not', async () => {
     // The owner's own case: the chosen installation is unreadable and another is
     // readable. The console opens the readable one -- and the chosen one keeps
     // its place in the rail, its `active` flag and its mark.
@@ -220,7 +221,7 @@ describe('the rows the rail draws', () => {
     expect(reply.rows.filter((row) => row.open).map((row) => row.project)).toEqual(['orbit'])
   })
 
-  it('opens the remembered choice when it can be read, wherever it sits in the CLI’s order', async () => {
+  itHostRoute('opens the remembered choice when it can be read, wherever it sits in the CLI’s order', async () => {
     const document = {
       installations: [
         { name: 'aurora', gcp_project: 'aurora-482301', region: 'europe-west4' },
@@ -243,7 +244,7 @@ describe('the rows the rail draws', () => {
     expect(rowOf(reply, 'aurora').open).toBe(false)
   })
 
-  it('opens the first readable installation when the console has chosen none', async () => {
+  itHostRoute('opens the first readable installation when the console has chosen none', async () => {
     // A console that has never been used: nothing is stored, the CLI lists two
     // readable installations, and one of them is open -- the rail is drawn with a
     // row for each and no picker screen in front of it.
@@ -261,7 +262,7 @@ describe('the rows the rail draws', () => {
     expect(reply.rows.filter((row) => row.open).map((row) => row.project)).toEqual(['aurora'])
   })
 
-  it('opens the first row when nothing is readable, which is the row the issue view is for', async () => {
+  itHostRoute('opens the first row when nothing is readable, which is the row the issue view is for', async () => {
     const userData = freshDirectory()
     writeFileSync(join(userData, INSTALLATIONS_FILE_NAME), 'not json at all', { mode: 0o600 })
     const { ipcMain } = over({ userData, stub: stubWith(DOCUMENT, [CONFIG_LINE]) })
@@ -271,7 +272,7 @@ describe('the rows the rail draws', () => {
     expect(reply.rows.filter((row) => row.open).map((row) => row.project)).toEqual(['aurora'])
   })
 
-  it('classifies a stale shared config as a warning, and still opens that installation', async () => {
+  itHostRoute('classifies a stale shared config as a warning, and still opens that installation', async () => {
     // The owner's ruling: "classify it as stale ... and still open that
     // installation if the reader returned its fields". The CLI read `orbit` and
     // answered with its fields; only the shared copy it merged is older than the
@@ -291,7 +292,7 @@ describe('the rows the rail draws', () => {
     expect(firstReadableIndex(reply.rows.map((row) => row.state))).toBe(0)
   })
 
-  it('marks every row when the console’s own store file is refused', async () => {
+  itHostRoute('marks every row when the console’s own store file is refused', async () => {
     // A refused store is not one row's problem: a choose writes that file, so the
     // console can open nothing at all while it is unreadable. Every row is marked,
     // and the sentence names the path and the refusal.
@@ -325,7 +326,7 @@ describe('the rows the rail draws', () => {
     expect(firstReadableIndex(reply.rows.map((row) => row.state))).toBe(-1)
   })
 
-  it('carries what each installation records as repositories, and no path', async () => {
+  itHostRoute('carries what each installation records as repositories, and no path', async () => {
     // The Live view's launch control (V2.5.1b) offers these and passes the chosen
     // one back to the main process, which matches it against the installation's
     // own records -- so the field is the identities themselves, in the CLI's
@@ -355,7 +356,7 @@ describe('the rows the rail draws', () => {
     }
   })
 
-  it('keeps the CLI’s order, drops the repeat, and keeps a repository whose path has moved', async () => {
+  itHostRoute('keeps the CLI’s order, drops the repeat, and keeps a repository whose path has moved', async () => {
     // A launch names a repository, not a directory, so none of the three flags a
     // checkout row carries (`enrolled`, `valid`, `path`) decides whether a
     // repository is offered: a repository this machine once checked out and no
@@ -386,7 +387,7 @@ describe('the rows the rail draws', () => {
 })
 
 describe('the console’s own open rule at startup', () => {
-  it('decides from one read, and the rail’s first list answers that read rather than spawning again', async () => {
+  itHostRoute('decides from one read, and the rail’s first list answers that read rather than spawning again', async () => {
     // The startup and the rail ask the same question in the same instant, and
     // `config list --json` is a child process: one read answers both, and every
     // read after that is the screen's own (a removal, a checkout, the picker
@@ -406,7 +407,7 @@ describe('the console’s own open rule at startup', () => {
     expect(lists(), 'a later read was served from the boot read').toBe(2)
   })
 
-  it('decides once per process: a second handshake neither reads again nor re-decides', async () => {
+  itHostRoute('decides once per process: a second handshake neither reads again nor re-decides', async () => {
     // `readCliVersion` runs `openInstallation` and the handshake can run again (a
     // retry); a re-read there would spawn `config list` behind the operator's
     // back and could move the console to another installation.
@@ -421,7 +422,7 @@ describe('the console’s own open rule at startup', () => {
     expect(picker.installation()).toEqual(decided)
   })
 
-  it('opens the first readable installation for the run, and writes nothing to the store', async () => {
+  itHostRoute('opens the first readable installation for the run, and writes nothing to the store', async () => {
     // The owner's case, end to end: `aurora` is the operator's remembered choice
     // and its config cannot be read, `orbit` can. The console is open on `orbit`
     // -- so the source, the header and the screens read from it -- and the store
@@ -467,7 +468,7 @@ describe('the console’s own open rule at startup', () => {
 })
 
 describe('the checkouts a row may offer', () => {
-  it('never offers a temporary or tool-owned path, and keeps the CLI’s own order otherwise', async () => {
+  itHostRoute('never offers a temporary or tool-owned path, and keeps the CLI’s own order otherwise', async () => {
     const userData = store([{ id: '0123456789abcdef', project: 'orbit' }])
     const { ipcMain } = over({ userData, stub: stubWith(DOCUMENT, [CONFIG_LINE]) })
     const reply = await list(ipcMain)
@@ -477,7 +478,7 @@ describe('the checkouts a row may offer', () => {
     expect(rowOf(reply, 'orbit').checkouts).toEqual(['/home/operator/src/orbit'])
   })
 
-  it('offers the project’s own recorded checkout first, even when the CLI did not list it', async () => {
+  itHostRoute('offers the project’s own recorded checkout first, even when the CLI did not list it', async () => {
     const userData = store([{ id: '0123456789abcdef', project: 'orbit', checkout: '/home/operator/src/orbit' }])
     const { ipcMain } = over({ userData, stub: stubWith(DOCUMENT, [CONFIG_LINE]) })
     const reply = await list(ipcMain)
@@ -488,7 +489,7 @@ describe('the checkouts a row may offer', () => {
     expect(rowOf(reply, 'orbit').checkout).toBe('/home/operator/src/orbit')
   })
 
-  it('offers a recorded checkout that is itself tool-owned nowhere', async () => {
+  itHostRoute('offers a recorded checkout that is itself tool-owned nowhere', async () => {
     // The rule is about where an installation may be used from and not about who
     // wrote the path down: a record that points into a scratch area is exactly the
     // state the owner's report described, and it is not offered back.
@@ -499,7 +500,7 @@ describe('the checkouts a row may offer', () => {
     expect(rowOf(reply, 'aurora').checkouts).toEqual([])
   })
 
-  it('collapses the menu to one entry per repository, drops what the CLI did not re-validate, and counts the rest', async () => {
+  itHostRoute('collapses the menu to one entry per repository, drops what the CLI did not re-validate, and counts the rest', async () => {
     // **What the dropdown is drawn from** (design §3.4 rule 7): one entry per
     // repository, over the rows carrying `valid: true` and `enrolled: true`, with
     // the tool-owned and temporary directories dropped. `orbit` records three
@@ -542,7 +543,7 @@ describe('the checkouts a row may offer', () => {
     ])
   })
 
-  it('offers a row the CLI did not list nothing at all', async () => {
+  itHostRoute('offers a row the CLI did not list nothing at all', async () => {
     // A record this console holds and the CLI did not list has no document
     // behind it: the menu is empty rather than drawn from the store, and the
     // chooser says so in the console's own words.
@@ -567,7 +568,7 @@ describe('removing the installation the console is open on', () => {
     ],
   }
 
-  it('rebinds the console to the next readable installation at once, through the handshake', async () => {
+  itHostRoute('rebinds the console to the next readable installation at once, through the handshake', async () => {
     const chosen: string[] = []
     const userData = store([
       { id: '0123456789abcdef', project: 'aurora' },
@@ -607,7 +608,7 @@ describe('removing the installation the console is open on', () => {
     }
   })
 
-  it('does not rebind when the row removed was not the open one', async () => {
+  itHostRoute('does not rebind when the row removed was not the open one', async () => {
     const chosen: string[] = []
     const userData = store([
       { id: '0123456789abcdef', project: 'aurora' },
@@ -625,7 +626,7 @@ describe('removing the installation the console is open on', () => {
     expect(chosen).toEqual([])
   })
 
-  it('does not rebind to an installation it cannot read, and answers the onboarding when none remain', async () => {
+  itHostRoute('does not rebind to an installation it cannot read, and answers the onboarding when none remain', async () => {
     const chosen: string[] = []
     const userData = store([{ id: '0123456789abcdef', project: 'aurora' }])
     const { ipcMain } = over({
@@ -648,7 +649,7 @@ describe('removing the installation the console is open on', () => {
 })
 
 describe('a choose reopens the window on the chosen installation', () => {
-  it('answers the chosen installation inside onChosen, after a first run opened another one', async () => {
+  itHostRoute('answers the chosen installation inside onChosen, after a first run opened another one', async () => {
     // Review M1: a first run with no remembered choice opens the first readable
     // row as the session; a choose must not leave that session answering while
     // the window it reopens runs its handshake and binds its source.

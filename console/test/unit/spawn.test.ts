@@ -80,6 +80,7 @@ import {
   isSafeArgumentValue,
   keyedArguments,
   locationsFor,
+  MAX_ARGUMENT_LENGTH,
   nodeSpawner,
   parseVersionLine,
   planFor,
@@ -137,6 +138,8 @@ import { installStub } from './stub'
 import type { Stub } from './stub'
 import { DISTRO_PATH, installWslStub } from './wslstub'
 import type { WslFixture, WslReport, WslStub } from './wslstub'
+import { reportedMode } from '../support/fsMode'
+import { itHostRoute } from '../support/hostRoute'
 
 const SOURCE_ROOT = fileURLToPath(new URL('../../src', import.meta.url))
 const PROJECT = 'fugaro'
@@ -167,7 +170,15 @@ const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
  * the two commands the plan's CM3 put on `consoleReadPaths`), and the graph
  * plan's feed, CG9b's `graph.watch`, the twenty-fourth -- the same `graph`
  * command as CG9a's read above, exactly as `logs`'s and `settings`'s two rows
- * are one command each. The
+ * are one command each, and the subscriptions plan's S4.2's seat estimate,
+ * `seats.read`, the twenty-fifth -- a read of the active installation's own
+ * config and its bucket, so it takes the project flag like every other read of
+ * a project -- and the dependency-graph plan's GV3.2, `roadmap.move`, the
+ * twenty-sixth: the record's move writes one project's roadmap, so it resolves
+ * the same installation every other write here does -- and the roles-and-scopes
+ * plan's RS7's members read, `members.list`, the twenty-seventh: `fugaro user
+ * ls` resolves the checkout on its way to the installation whose grants it
+ * lists, so it takes the flag the way every cloud read here does. The
  * complement -- the commands
  * that take no
  * flag at all -- is the *module's* `COMMANDS_WITHOUT_PROJECT`, keyed by the
@@ -197,9 +208,12 @@ const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
   'coordinator.status',
   'coordinator.show',
   'coordinator.intents',
+  'roadmap.move',
   'managed.status',
   'policy.show',
   'run.launch',
+  'seats.read',
+  'members.list',
 ]
 /** freshDirectory is a temporary directory this test owns, one per call. */
 function freshDirectory(prefix = 'fugaro-console-test-'): string {
@@ -280,9 +294,20 @@ const LAUNCH_RUN_ID = '20261028-152618-a2fc'
  * loop that builds it. */
 const SETTINGS_EDIT_CONTEXT = Object.freeze({ phase: 'narrowing', layer: 'project' } as const)
 
+/** ROADMAP_MOVE_CONTEXT is the three words the move cannot be built without
+ * (the dependency-graph plan's GV3.2). Every one of them is the **main
+ * process's** -- the task's qualified id, the box the drop named or the CLI's
+ * `none`, and the release the record holds for the task -- and the source spells
+ * all three out of the graph document it read, so no schema key declares any of
+ * them. The loops over the whole table supply them here, so the row that needs
+ * them is built like every other one, and a row that starts requiring a fourth
+ * fact fails in the loop that builds it. */
+const ROADMAP_MOVE_CONTEXT = Object.freeze({ task: 'GV/GV3.2', to: 'a'.repeat(64), expect: '' } as const)
+
 /** contextFor is the plan context one row is built with: `safeContext` for
  * every read, and the same plus the run id for the launch, which cannot be
- * built without one, or the phase and the layer for the settings write. A loop
+ * built without one, the phase and the layer for the settings write, or the
+ * move's three words for the roadmap write. A loop
  * over the whole table goes through here rather than asking each row what it
  * needs, so a row that starts requiring a new piece of main-process state fails
  * in the loop that builds it. */
@@ -293,6 +318,7 @@ function contextFor(
   const context = safeContext(overrides)
   if (operation === 'run.launch') return { ...context, runId: LAUNCH_RUN_ID }
   if (operation === 'settings.edit') return { ...context, settingsEdit: SETTINGS_EDIT_CONTEXT }
+  if (operation === 'roadmap.move') return { ...context, roadmapMove: ROADMAP_MOVE_CONTEXT }
   return context
 }
 
@@ -511,7 +537,7 @@ describe('the spawn table and the argv it builds', () => {
     }).toThrow(/does not start with config list/)
   })
 
-  it('fixes the design allow-list exactly: twenty-six argvs, twenty-four commands, twenty-four of them with --project', () => {
+  it('fixes the design allow-list exactly: twenty-eight argvs, twenty-six commands, twenty-six of them with --project', () => {
     // The design's §5.1 rule 6 table is the whole allow-list, argv for argv:
     // the rail's read (`config list --json`, the case above) used to be the
     // picker's own row in a second table until the owner's ruling of 2026-10-25,
@@ -539,7 +565,20 @@ describe('the spawn table and the argv it builds', () => {
     // and its published policy node -- and both are rows whose whole argv is
     // their own words: neither command has a positional word and both declare no
     // argument at all, which is what keeps a caller from naming a project, a
-    // generation or a day (`src/main/ipc.ts`). The Go
+    // generation or a day (`src/main/ipc.ts`). The subscriptions plan's S4.2
+    // added the seat estimate, `seats --json` -- the Project tab's advisory
+    // count of who launches jobs, whose whole argv is its own two words and the
+    // installation's: the 90 days it is measured over are the command's own and
+    // no flag moves them, so a caller can name nothing. The dependency-graph
+    // plan's GV3.2 added the twenty-eighth: the record's move,
+    // `coordinator roadmap move --json`, the console's third write. Its
+    // positional word and its `--to` are the two arguments a renderer names as
+    // ids and the main process spells, and its `--expect` is no argument at all
+    // -- it is the release the document recorded for the node, which the row's
+    // own `expectFlag` emits -- and the roles-and-scopes plan's RS7 added the
+    // members read, `user ls --json`, the Members view's own argv: the `user`
+    // group's one reachable word, whose one argument is the repository a role is
+    // asked about and which the caller may leave out. The Go
     // side pins
     // the document's list (`internal/cli/docs_desktop_console_test.go`,
     // TestDocsDesktopConsoleDesignAllowListIsExactArgv) and this case pins the
@@ -553,10 +592,18 @@ describe('the spawn table and the argv it builds', () => {
       'runs summary --json',
       'plan status --json',
       'graph --json',
-      // The same command with one word more (the graph plan's CG9b): the feed a
+      // The same command as a live feed (the graph plan's CG9b): the feed a
       // screen subscribes to while the Graph tab is on screen, whose `--watch`
       // is a word of the command path rather than a flag a caller controls.
       'graph --watch --json',
+      // The record's move (the dependency-graph plan's GV3.2): the Graph
+      // screen's drag, and this surface's third write. It sits beside the two
+      // graph rows because the record it writes is the one the Graph draws, and
+      // its words are the command, its own `--json` and the installation's two
+      // -- the task, the box and the release the record holds for the task are
+      // the row's arguments, built by the main process out of the document it
+      // read.
+      'coordinator roadmap move --json',
       'diagnose --json',
       'logs --json',
       'logs --url',
@@ -578,12 +625,23 @@ describe('the spawn table and the argv it builds', () => {
       // own words, filled from the chosen installation like every other row's.
       'managed status --json',
       'project policy show --json',
+      // The seat estimate (subscriptions plan S4.2): the Project tab's advisory
+      // read, whose argv is the command, its one fixed flag and the
+      // installation's two words -- there is no argument for a caller to fill.
+      'seats --json',
+      // The Members view's read (the roles-and-scopes plan's RS7): the `user`
+      // group's one reachable word, so the row's whole argv is the group, the
+      // subcommand and the one fixed flag. Its `--repo R` is the operation's one
+      // argument (optional, and taken out of this list like every other
+      // argument), and its two project flags are the installation's.
+      'user ls --json',
       'run --task-file - --json',
     ])
     // The commands that take the flag (addCloudFlags, internal/cli/cloud.go:51)
-    // are twenty rows plus one: `logs` has two rows, `--json` and `--url`, and
-    // neither of them may be the one that forgets --project -- and `settings`
-    // has two as well, the read and the edit.
+    // are twenty-seven rows over twenty-four commands: `logs` has two rows,
+    // `--json` and `--url`, and neither of them may be the one that forgets
+    // --project, and `settings` (a read and a write) and `graph` (a read and its
+    // feed) have two each as well.
     // A word is a flag or a separator if it begins with `-`, which is what
     // keeps the launch's literal `-` -- the argv word that means "read the task
     // from stdin" -- out of the command path it is compared as.
@@ -612,10 +670,13 @@ describe('the spawn table and the argv it builds', () => {
         'coordinator intents',
         'managed status',
         'project policy show',
+        'seats',
+        'user ls',
+        'coordinator roadmap move',
         'run',
       ]),
     )
-    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(24)
+    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(27)
     // ...and the table's own flags agree with the list the tests above use.
     for (const row of SPAWN_COMMANDS) {
       expect(row.takesProject, row.operation).toBe(COMMANDS_TAKING_PROJECT.includes(row.operation))
@@ -679,6 +740,99 @@ describe('the spawn table and the argv it builds', () => {
     // An undeclared key cannot smuggle a word in either: the row's arguments are
     // the whole of what reaches this argv.
     expect(() => argvFor('graph.read', { watch: true } as never, safeContext())).toThrow(/does not declare/)
+  })
+
+  it('roadmap.move argv is exactly the declared row, and its three words are the main process’s', () => {
+    // `fugaro coordinator roadmap move <plan>/<task> --to <release|none>
+    // --expect <release|none> --json` (the dependency-graph plan's GV3.2;
+    // `console/docs/json-contract.md` §6.25). Written out here rather than read
+    // back off the table, for `graph.read`'s reason: the row is the whole of
+    // what this console may say to the command, and "which word does the drag
+    // put where" is the question.
+    const row = SPAWN_COMMANDS.find((candidate) => candidate.operation === 'roadmap.move')
+    expect(row?.words.join(' ')).toBe('coordinator roadmap move --json')
+    expect(row?.takesProject).toBe(true)
+    expect(row?.dirFlag).toBe(false)
+    expect(row?.expectFlag).toBe('--expect')
+    expect(row?.args).toEqual([
+      { key: 'node', flag: null, kind: 'roadmapTask' },
+      { key: 'toRelease', flag: '--to', kind: 'roadmapRelease' },
+      { key: 'confirmed', flag: null, kind: 'boolean' },
+    ])
+    // Both flags are on the module's own list, which is what `assertArgvFlags`
+    // holds every emitted word to, and the two roadmap kinds are words of this
+    // row alone (`assertSpawnSurface`).
+    expect(SPAWN_FLAGS).toContain('--to')
+    expect(SPAWN_FLAGS).toContain('--expect')
+
+    // `node` and `toRelease` are the payload's -- the node's **document key**
+    // and the box's key -- and neither is emitted: the positional word is the
+    // document's own `id` for that node (`<plan>/<task>`, D2111), the `--to`
+    // word is the box's key or the CLI's `none`, and `--expect` is the release
+    // the document recorded for the task, which is GV3.1's compare-and-set. The
+    // context below is deliberately **not** what the payload says, so a row that
+    // read the payload for either word would fail here.
+    const node = 'coordinator:plans/gv/plan.md#GV3.2'
+    const box = 'b'.repeat(64)
+    const rest = 'c'.repeat(64)
+    const move = { ...safeContext(), roadmapMove: { task: 'gv/plan.md/GV3.2', to: box, expect: rest } }
+    expect([...argvFor('roadmap.move', { node, toRelease: 'd'.repeat(64) }, move)]).toEqual([
+      'coordinator',
+      'roadmap',
+      'move',
+      '--json',
+      'gv/plan.md/GV3.2',
+      '--to',
+      box,
+      '--expect',
+      rest,
+      '--project',
+      PROJECT,
+    ])
+    // A node the payload names is never a word: the key it sent chose which
+    // node's `id` the main process spells, and it is that id -- not the key --
+    // that reaches the argv.
+    expect([...argvFor('roadmap.move', { node, toRelease: box }, contextFor('roadmap.move'))]).not.toContain(node)
+    // The unassign is the CLI's own word for the empty key, spelled here rather
+    // than by whoever dropped the task -- and it is spelled for both of the
+    // words a move takes, so an unassigned task moved out of a box reads `none`
+    // twice.
+    const unassign = { ...safeContext(), roadmapMove: { task: 'gv/plan.md/GV3.2', to: '', expect: '' } }
+    expect([...argvFor('roadmap.move', { node, toRelease: '' }, unassign)].filter((word) => word === 'none')).toHaveLength(2)
+    // An undeclared key cannot smuggle a word in either.
+    expect(() => argvFor('roadmap.move', { node, toRelease: box, expect: 'x' } as never, contextFor('roadmap.move'))).toThrow(
+      /does not declare/,
+    )
+    // **The words a renderer names never reach the argv**: the two the row
+    // declares are ids, and the third -- `--expect`, which is no argument of the
+    // row at all -- is the release the main process read. A move built with no
+    // main-process context is not a shorter argv: it is refused.
+    expect(() => argvFor('roadmap.move', { node, toRelease: box }, safeContext())).toThrow(/has no move to spell/)
+  })
+
+  it('refuses a move word that is merely long by its length, and not by its alphabet', () => {
+    // **A task id longer than any argv element may be is not a bad spelling.**
+    // The word is the document's own `<plan>/<task>` and every character of it is
+    // one `isSafeArgumentValue` admits, so the only true sentence about it names
+    // the bound it passed (`MAX_ARGUMENT_LENGTH`) -- and that bound is also the
+    // node key's own in `ipc.ts`, which is what keeps a key from being admitted
+    // by the schema and refused here, one step later, for the wrong reason.
+    const long = 'gv/plan.md/'.concat('x'.repeat(MAX_ARGUMENT_LENGTH))
+    const move = { ...safeContext(), roadmapMove: { task: long, to: 'a'.repeat(64), expect: '' } }
+    expect(() => argvFor('roadmap.move', { node: 'coordinator:gv/T1', toRelease: 'a'.repeat(64) }, move)).toThrow(
+      `roadmap.move's node is longer than ${String(MAX_ARGUMENT_LENGTH)} characters`,
+    )
+    // One character inside the bound is a command line like any other: the guard
+    // is the whole of the check, so nothing about the task's own text is read.
+    const fits = 'x'.repeat(MAX_ARGUMENT_LENGTH)
+    const ok = { ...safeContext(), roadmapMove: { task: fits, to: 'a'.repeat(64), expect: '' } }
+    expect([...argvFor('roadmap.move', { node: 'coordinator:gv/T1', toRelease: 'a'.repeat(64) }, ok)]).toContain(fits)
+    // And a word the bound does not explain is still refused by the alphabet's
+    // own sentence: the length is asked first, and only it.
+    const newline = { ...safeContext(), roadmapMove: { task: 'gv/plan.md\nT1', to: 'a'.repeat(64), expect: '' } }
+    expect(() => argvFor('roadmap.move', { node: 'coordinator:gv/T1', toRelease: 'a'.repeat(64) }, newline)).toThrow(
+      "roadmap.move's node is not a value this console will pass to the CLI",
+    )
   })
 
   it('keys a subscription on the arguments that reach a word, and no others', () => {
@@ -1092,6 +1246,45 @@ describe('the spawn table and the argv it builds', () => {
     expect(SPAWN_COMMANDS.map((row) => row.words.slice(0, 3).join(' '))).toContain('project policy show')
   })
 
+  it('spawns the seats estimate as its command, `--json` and nothing else', () => {
+    // **S4.2's row, word for word** (the subscriptions plan; the design
+    // allow-list's `seats --json`). It is the managed reads' shape again -- the
+    // argv is the row's own words and the caller fills none of them -- and the
+    // emptiness is what keeps the estimate an estimate *of this installation*:
+    // the ninety days, the launcher list and the requesters are the command's
+    // own reading, so a payload that could name a day, a window or a person
+    // would be pointing the child at records that are not the window's. Spelled
+    // out here rather than read off the row, so a change to the row is a
+    // failing test.
+    expect(argvFor('seats.read', {}, safeContext({ project: 'chosen' }))).toEqual([
+      'seats',
+      '--json',
+      '--project',
+      'chosen',
+    ])
+    const row = SPAWN_COMMANDS.find((candidate) => candidate.operation === 'seats.read')
+    expect(row?.args).toEqual([])
+    expect(row?.dirFlag).toBe(false)
+    // A key the row does not declare never reaches an element, which is the rule
+    // that keeps a payload from smuggling a flag in -- and the words the CLI
+    // owns but this console fills from the chosen installation rather than from
+    // a payload (`--project`, `--config`) are keys on no row either, so a
+    // payload that names one is refused like any other.
+    for (const key of ['days', 'window', 'since', 'project', 'config', 'run', 'person', 'json']) {
+      expect(
+        () => argvFor('seats.read', { [key]: 'x' }, safeContext()),
+        `seats.read accepted ${key}`,
+      ).toThrow(/does not declare/)
+    }
+    // The argv's whole flag list is the row's one word plus the console's own
+    // `--project`: no credential, no host, no path and no other command's flag.
+    expect(
+      argvFor('seats.read', {}, safeContext({ project: 'chosen' })).filter((word) =>
+        word.startsWith('--'),
+      ),
+    ).toEqual(['--json', '--project'])
+  })
+
   it('emits one array element per value, in the operation’s own order', () => {
     const argv = argvFor(
       'runs.list',
@@ -1324,7 +1517,7 @@ describe('the spawn table and the argv it builds', () => {
     }
   })
 
-  it('spawns `settings set` for a narrowing with exactly these words, and the CLI’s own `--yes`', () => {
+  it('spawns `settings set` for a narrowing with exactly these words, and no phase flag', () => {
     // The settings write (the settings-edit plan's C3, D1103, D1104, D1107).
     // One argv, written out word by word: the group, the subcommand, the key,
     // the layer the read's own row named (**D1105** -- it is the main process's
@@ -1340,21 +1533,15 @@ describe('the spawn table and the argv it builds', () => {
     // terminator is emitted by `argvFor` after every flag this row knows, which
     // is why the order below is the order a child gets.
     //
-    // **`--yes` is the one word the phase table puts on a narrowing too**, and
-    // the vector below is where that is written down: this write has no
-    // terminal (the console spawns every child with stdin `'ignore'`), so
-    // `confirmSettingsWrite`'s ordinary y/N has nobody to ask and refuses
-    // without the flag. What the dry run's classification decides is the
-    // console's own question -- the tick, which gates Confirm for a widening --
-    // and not a word of this argv.
+    // **A narrowing carries no phase flag at all** (D1107): the CLI asks
+    // nothing, so there is no word to answer with. The dry run's classification
+    // decides the console's own question -- the tick, which gates Confirm for a
+    // widening -- and not a word of this argv.
     //
-    // **This is the test the `--yes` guard fails without.** The phase is the
-    // main process's (`settingsedit.ts`'s `phaseOf`, from the dry run's own
-    // `widening` field) and `SETTINGS_EDIT_PHASE_WORDS` is the only place a
-    // phase becomes words: with the narrowing row's words dropped -- the
-    // mutation is `narrowing: Object.freeze([])` -- this vector loses its
-    // `--yes` and fails, which is what makes it a guard rather than a
-    // description.
+    // **The phase table is the only place a phase becomes words.**
+    // `SETTINGS_EDIT_PHASE_WORDS` is keyed by the main process's own phase
+    // (`settingsedit.ts`'s `phaseOf`, from the dry run's `widening` field), and
+    // the vector below is where the narrowing's empty spelling is written down.
     const args = { op: 'set', key: 'budget.cap_usd', value: '25' }
     const narrowing = [...argvFor('settings.edit', args, {
       ...safeContext({ project: 'chosen' }),
@@ -1366,7 +1553,6 @@ describe('the spawn table and the argv it builds', () => {
       'budget.cap_usd',
       '--layer',
       'project',
-      '--yes',
       '--project',
       'chosen',
       '--',
@@ -1378,9 +1564,7 @@ describe('the spawn table and the argv it builds', () => {
     // The classification is not a word: a widening and a narrowing are one
     // command line, and the same one the vector above writes out. What a
     // widening adds is the console's own gate -- `confirmNeedsTick` and the
-    // main process's refusal of an unticked yes -- rather than a flag, so a
-    // narrowing that lost `--yes` would be a write the CLI refuses for having no
-    // terminal at all.
+    // main process's refusal of an unticked yes -- rather than a flag.
     const args = { op: 'set', key: 'budget.cap_usd', value: '25' }
     const context = (phase: 'widening' | 'narrowing'): Parameters<typeof argvFor>[2] => ({
       ...safeContext({ project: 'chosen' }),
@@ -1394,7 +1578,6 @@ describe('the spawn table and the argv it builds', () => {
       'budget.cap_usd',
       '--layer',
       'project',
-      '--yes',
       '--project',
       'chosen',
       '--',
@@ -1403,11 +1586,11 @@ describe('the spawn table and the argv it builds', () => {
     expect(narrowing).toEqual(widening)
   })
 
-  it('never puts `--yes` on a dry run, and never puts a value anywhere but after `--`', () => {
+  it('puts only the dry run’s own words on a dry run, and never a value anywhere but after `--`', () => {
     // The dry run is the first of the two spawns and it writes nothing (D1106):
-    // `--dry-run` and `--json` are its two words, and `--yes` is not one of them
-    // whatever the edit turns out to be -- the phase is decided **after** this
-    // document comes back, so a dry run cannot carry a write's flag.
+    // `--dry-run` and `--json` are its two words, and a write's phase words are
+    // none of them -- the phase is decided **after** this document comes back,
+    // so a dry run cannot carry a write's words.
     const args = { op: 'set', key: 'budget.cap_usd', value: '25' }
     const dry = [...argvFor('settings.edit', args, {
       ...safeContext({ project: 'chosen' }),
@@ -1426,7 +1609,7 @@ describe('the spawn table and the argv it builds', () => {
       '--',
       '25',
     ])
-    expect(dry).not.toContain('--yes')
+    expect(dry).toContain('--dry-run')
     // A value that is spelled like this row's own flags is still a value: it is
     // one element of an array argv spawned with `shell: false`, and the
     // terminator is what keeps the child's parser from reading it as a flag. The
@@ -1442,7 +1625,6 @@ describe('the spawn table and the argv it builds', () => {
       'budget.cap_usd',
       '--layer',
       'local',
-      '--yes',
       '--project',
       'chosen',
       '--',
@@ -1452,7 +1634,7 @@ describe('the spawn table and the argv it builds', () => {
     expect(tricky[tricky.length - 1]).toBe('--layer')
   })
 
-  it('spawns `settings unset` with no value and no terminator, and `--yes` at either phase', () => {
+  it('spawns `settings unset` with no value and no terminator, and no phase flag at either phase', () => {
     // **The unset form has nothing behind a terminator at all** (D1103): there
     // is no value to protect, and a row that emitted a bare `--` would be a
     // command line with an empty positional the CLI does not take. The key is
@@ -1463,9 +1645,9 @@ describe('the spawn table and the argv it builds', () => {
         { op: 'unset', key: 'budget.cap_usd' },
         { ...safeContext({ project: 'chosen' }), settingsEdit: { phase: 'narrowing', layer: 'local' } },
       ),
-    ]).toEqual(['settings', 'unset', 'budget.cap_usd', '--layer', 'local', '--yes', '--project', 'chosen'])
+    ]).toEqual(['settings', 'unset', 'budget.cap_usd', '--layer', 'local', '--project', 'chosen'])
     // An `unset` that **widens** -- the CLI classifies it, and the console asks
-    // the same question of either subcommand -- carries the same `--yes` and
+    // the same question of either subcommand -- carries no flag either and
     // still no terminator. The two spellings differ by the subcommand word and
     // the layer, and by nothing else.
     expect([
@@ -1474,7 +1656,7 @@ describe('the spawn table and the argv it builds', () => {
         { op: 'unset', key: 'rigor.areas' },
         { ...safeContext({ project: 'chosen' }), settingsEdit: { phase: 'widening', layer: 'repo' } },
       ),
-    ]).toEqual(['settings', 'unset', 'rigor.areas', '--layer', 'repo', '--yes', '--project', 'chosen'])
+    ]).toEqual(['settings', 'unset', 'rigor.areas', '--layer', 'repo', '--project', 'chosen'])
   })
 
   it('carries the installation’s config path on a settings write, and refuses every word a renderer could not be trusted with', () => {
@@ -1495,7 +1677,6 @@ describe('the spawn table and the argv it builds', () => {
       'budget.cap_usd',
       '--layer',
       'project',
-      '--yes',
       '--project',
       'chosen',
       '--config',
@@ -1524,7 +1705,7 @@ describe('the spawn table and the argv it builds', () => {
       settingsEdit: { phase: 'narrowing', layer: 'global' },
     })).toThrow(/which is not one of the three documents/)
     // And **no other row may carry a phase**: the table column that emits
-    // `--layer`/`--yes` is this row's alone.
+    // `--layer` is this row's alone.
     expect(() => argvFor('settings.read', {}, {
       ...safeContext(),
       settingsEdit: { phase: 'narrowing', layer: 'project' },
@@ -1541,15 +1722,13 @@ describe('the spawn table and the argv it builds', () => {
       'settings.read',
       'settings.edit',
     ])
-    // `--yes` is the settings write's own word, and the phase table is the only
-    // thing that can produce it: **both** write phases carry it -- the child has
-    // no terminal to answer the CLI's ordinary y/N with -- and the dry run is
-    // the one phase that carries no flag of the write at all. A fourth phase, or
-    // a `--yes` on another row, fails here.
+    // The phase table is the only thing that produces a phase's words: the dry
+    // run's two, and **no word at all** for either write phase -- the CLI asks
+    // nothing of a write. A fourth phase, or a word on a write, fails here.
     expect(Object.keys(SETTINGS_EDIT_PHASE_WORDS).sort()).toEqual(['dry-run', 'narrowing', 'widening'])
-    for (const [phase, words] of Object.entries(SETTINGS_EDIT_PHASE_WORDS)) {
-      expect(words.includes('--yes'), phase).toBe(phase !== 'dry-run')
-    }
+    expect(SETTINGS_EDIT_PHASE_WORDS['dry-run']).toEqual(['--dry-run', '--json'])
+    expect(SETTINGS_EDIT_PHASE_WORDS['widening']).toEqual([])
+    expect(SETTINGS_EDIT_PHASE_WORDS['narrowing']).toEqual([])
   })
 
   it('takes the `=` form on the summary row, and never an empty one', () => {
@@ -1786,6 +1965,91 @@ describe('the spawn table and the argv it builds', () => {
     )
   })
 
+  // **The move (GV3.2) is the one row whose argv carries words no `row.words`
+  // holds**: its positional and its `--to` are the document's own -- the source
+  // checks the two keys the payload sent and spells the words itself -- and its
+  // `--expect` is emitted from the main process's copy of the record, so
+  // `assertArgvFlags`, which reads `row.words`, can see none of the three. The
+  // four cases below are the whole of what keeps those words one row's and keeps
+  // the flag on `SPAWN_FLAGS`, and each is a mutation of the real table (or of a
+  // real call) that only its own guard refuses -- so a guard dropped in a later
+  // edit fails here instead of at a spawn. The flag one is the `--cd` hazard the
+  // wrapper's case pins, one column over: an emitted `--expect` word that is not
+  // on `SPAWN_FLAGS` would reach a child with nothing left to refuse it.
+  const rowFor = (operation: string): SpawnCommand => {
+    const row = SPAWN_COMMANDS.find((candidate) => candidate.operation === operation)
+    if (row === undefined) throw new Error(`${operation} has no row in the spawn table`)
+    return row
+  }
+  const replacingRow = (operation: string, change: Partial<SpawnCommand>): SpawnCommand[] =>
+    SPAWN_COMMANDS.map((row) => (row.operation === operation ? { ...row, ...change } : row))
+
+  it('fails a table that lends the move’s two kinds to another row, or takes them from the record’s (GV3.2)', () => {
+    // The record's own row may not lose them: it would still carry its
+    // compare-and-set, so nothing after this guard notices the kinds went.
+    expect(() =>
+      assertSpawnSurface(
+        replacingRow('roadmap.move', {
+          args: rowFor('roadmap.move').args.filter(
+            (spec) => spec.kind !== 'roadmapTask' && spec.kind !== 'roadmapRelease',
+          ),
+        }),
+      ),
+    ).toThrow(/declares no move argument/)
+    // ...and a row that is not the record's may not spell one. The payload check
+    // behind this one refuses the same table with a sentence of its own
+    // (`graph.read declares toRelease, which the operation does not accept`), so
+    // which of the two a reader meets is what this case pins.
+    expect(() =>
+      assertSpawnSurface(
+        replacingRow('graph.read', {
+          args: [...rowFor('graph.read').args, { key: 'toRelease', flag: '--to', kind: 'roadmapRelease' }],
+        }),
+      ),
+    ).toThrow(/spells a word of a move/)
+    expect(() => assertSpawnSurface(SPAWN_COMMANDS)).not.toThrow()
+  })
+
+  it('fails a table that lends the move’s compare-and-set to another row, or drops it from the record’s (GV3.2)', () => {
+    expect(() => assertSpawnSurface(replacingRow('graph.read', { expectFlag: '--expect' }))).toThrow(
+      /carries a compare-and-set/,
+    )
+    // The column is the only thing that makes `argvFor` emit the word at all, so
+    // dropping it is a move with no compare-and-set rather than a shorter argv --
+    // and no other guard reads the column.
+    expect(() => assertSpawnSurface(replacingRow('roadmap.move', { expectFlag: undefined }))).toThrow(
+      /has no compare-and-set/,
+    )
+    expect(() => assertSpawnSurface(SPAWN_COMMANDS)).not.toThrow()
+  })
+
+  it('fails a table whose move emits a flag this module may not spawn (GV3.2)', () => {
+    // `--cd` is `wsl.exe`'s own flag and is on no `SPAWN_FLAGS` row: a move that
+    // emitted it would put a flag of the wrapper's into the CLI's command line,
+    // and -- because the word never appears in `row.words` -- `assertArgvFlags`
+    // would have nothing to refuse.
+    expect(() => assertSpawnSurface(replacingRow('roadmap.move', { expectFlag: '--cd' }))).toThrow(
+      /--cd, which is not a flag this console may spawn/,
+    )
+    expect(SPAWN_FLAGS).not.toContain('--cd')
+    expect(() => assertSpawnSurface(SPAWN_COMMANDS)).not.toThrow()
+  })
+
+  it('refuses the move’s context on a row that is not the record’s (GV3.2)', () => {
+    // The runtime half of the same rule, and the one a table mutation cannot
+    // reach: the three words travel in the plan context rather than in the
+    // payload, so a row that carries no compare-and-set has to refuse a context
+    // that has one -- otherwise a read's argv would be built with the record's
+    // own release on it. (`argvFor` refuses the reverse case -- the record's row
+    // with a context that has no move -- one argument earlier, at "has no move to
+    // spell", which its own case pins.)
+    expect(() => argvFor('graph.read', {}, contextFor('roadmap.move'))).toThrow(/takes no move/)
+    expect(() => argvFor('graph.read', {}, safeContext())).not.toThrow()
+    expect(() =>
+      argvFor('roadmap.move', { node: 'coordinator:gv/T1', toRelease: '' }, contextFor('roadmap.move')),
+    ).not.toThrow()
+  })
+
   it('builds argv as an array and hands the spawner `shell: false`', async () => {
     const spawner = recordingSpawner()
     const plan = planFor('budget.show', { repo: 'acme/widgets' }, safeContext({ binaryPath: '/opt/homebrew/bin/fugaro' }))
@@ -1963,7 +2227,7 @@ describe('the real spawner', () => {
       child.on('close', () => resolve())
     })
 
-  it('gives the child the descriptors its caller asked for', async () => {
+  itHostRoute('gives the child the descriptors its caller asked for', async () => {
     // T-F4: the one child whose output is nobody's is the stop sent **inside**
     // a distribution, and it asks for `'ignore'` on all three, because a pipe
     // nobody drains is a child that blocks on write. `nodeSpawner` used to
@@ -2371,7 +2635,7 @@ describe('the child environment', () => {
     expect(host.env[LICENCE_KEY_VAR]).toBe(KEY)
   })
 
-  it('hands a key to no source child while no release takes it back out', async () => {
+  itHostRoute('hands a key to no source child while no release takes it back out', async () => {
     // The gate at the call site that spawns every operation but the launch:
     // `CliSource`'s `#plan` asks `licenceKeySupported` of the resolved binary's
     // own version line **before** it reads the store, and the floor is unset
@@ -2411,7 +2675,7 @@ describe('the child environment', () => {
     }
   })
 
-  it('reaches the child as its real environment, not just as a plan', async () => {
+  itHostRoute('reaches the child as its real environment, not just as a plan', async () => {
     // The end-to-end half: the stub reports the keys of its own process.env, so
     // a merge with process.env anywhere in the console would show up here.
     const directory = freshDirectory()
@@ -2439,7 +2703,7 @@ describe('the child environment', () => {
 })
 
 describe('the child’s working directory', () => {
-  it('spawns from the installation’s checkout when it has one', async () => {
+  itHostRoute('spawns from the installation’s checkout when it has one', async () => {
     const directory = freshDirectory()
     const checkout = freshDirectory('fugaro-checkout-')
     const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, doctor: { stdout: '{}\n' } } })
@@ -2453,7 +2717,7 @@ describe('the child’s working directory', () => {
     expect(stub.reports().at(-1)?.cwd).toBe(checkout)
   })
 
-  it('spawns from a private directory the app owns when there is no checkout, and never /', async () => {
+  itHostRoute('spawns from a private directory the app owns when there is no checkout, and never /', async () => {
     ownTemporaryDirectory()
     const directory = freshDirectory()
     const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, doctor: { stdout: '{}\n' } } })
@@ -2467,10 +2731,10 @@ describe('the child’s working directory', () => {
     expect(cwd).not.toBe('/')
     expect(cwd.startsWith(realpathSync(tmpdir()))).toBe(true)
     expect(statSync(cwd).isDirectory()).toBe(true)
-    expect(statSync(cwd).mode & 0o777).toBe(0o700)
+    expect(statSync(cwd).mode & 0o777).toBe(reportedMode(0o700))
   })
 
-  it('passes `doctor --dir <that directory>` and never `--strict`', async () => {
+  itHostRoute('passes `doctor --dir <that directory>` and never `--strict`', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, doctor: { stdout: '{}\n' } } })
     const source = await CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} })
@@ -2493,14 +2757,14 @@ describe('the child’s working directory', () => {
   it('creates the private directory with owner-only mode and reuses it', () => {
     ownTemporaryDirectory()
     expect(privateWorkingDirectory()).toBe(privateWorkingDirectory())
-    expect(statSync(privateWorkingDirectory()).mode & 0o777).toBe(0o700)
+    expect(statSync(privateWorkingDirectory()).mode & 0o777).toBe(reportedMode(0o700))
   })
 })
 
 describe('the private working directory', () => {
   const uid = typeof process.getuid === 'function' ? process.getuid() : null
   const name = PRIVATE_DIR_LEAF
-  it('puts the uid in the base directory, so a second user never shares it', () => {
+  itHostRoute('puts the uid in the base directory, so a second user never shares it', () => {
     // The defect this test exists for: the base was `join(tmpdir(),
     // 'fugaro-console')` for every user on the machine, created 0700 by whoever
     // ran first. Every other user then found a directory owned by someone else
@@ -2553,7 +2817,7 @@ describe('the private working directory', () => {
     mkdirSync(join(base, name), { mode: 0o755 })
     chmodSync(join(base, name), 0o755)
     const path = privateWorkingDirectory({ base })
-    expect(lstatSync(path).mode & 0o777).toBe(0o700)
+    expect(lstatSync(path).mode & 0o777).toBe(reportedMode(0o700))
     const linked = join(freshDirectory(), 'linked-base')
     symlinkSync(base, linked)
     expect(() => privateWorkingDirectory({ base: linked })).toThrow(/symbolic link/)
@@ -2565,7 +2829,7 @@ describe('the private working directory', () => {
     expect(realpathSync(path)).toBe(path)
   })
 
-  it('creates a directory on Windows that makes no mode claim at all (F12, T-D4)', () => {
+  itHostRoute('creates a directory on Windows that makes no mode claim at all (F12, T-D4)', () => {
     // F12: the POSIX guarantees are POSIX-only, and the defect is stating them
     // anyway. NTFS reports two modes and neither is a POSIX one; `chmodSync` is
     // a no-op there and `process.getuid` does not exist, so a `0700` description
@@ -2738,7 +3002,7 @@ describe('binary resolution', () => {
     expect(LINUX_LOCATIONS.route).toBe('host')
   })
 
-  it('resolves against the platform’s list, and the list is an argument rather than a global', () => {
+  itHostRoute('resolves against the platform’s list, and the list is an argument rather than a global', () => {
     // `binDirectories` walks the same table `locationsFor` returns, so the two
     // cannot drift; `platform` is how a test drives it, because the runner this
     // suite executes on is not the machine the app ships to.
@@ -2769,7 +3033,7 @@ describe('binary resolution', () => {
     expect([...binDirectories({ home: 'C:\\Users\\owner', platform: 'win32' })]).toEqual([])
   })
 
-  it('asks the mode question of the platform whose filesystem it is asking (F4, T-C7)', () => {
+  itHostRoute('asks the mode question of the platform whose filesystem it is asking (F4, T-C7)', () => {
     // The runner this suite executes on is POSIX, so the Windows answer is
     // driven rather than observed -- and the POSIX answer is asserted next to
     // it, because a platform argument that changed both branches would be a
@@ -2948,7 +3212,7 @@ describe('binary resolution', () => {
     expect(stub.calls()).toBe(0)
   })
 
-  it('resolves a configured path first, and reports where it came from', async () => {
+  itHostRoute('resolves a configured path first, and reports where it came from', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' } } })
     const resolution = await resolveBinary({
@@ -2962,7 +3226,7 @@ describe('binary resolution', () => {
     expect(resolution.ok && resolution.source).toBe('configured')
   })
 
-  it('walks the well-known prefixes in order, and stops there', async () => {
+  itHostRoute('walks the well-known prefixes in order, and stops there', async () => {
     const base = freshDirectory()
     const first = join(base, 'prefix-a', 'bin')
     const second = join(base, 'prefix-b', 'bin')
@@ -3006,7 +3270,7 @@ describe('binary resolution', () => {
     expect(stub.calls()).toBe(0)
   })
 
-  it('resolves ~/.local/bin for the home directory it was given', async () => {
+  itHostRoute('resolves ~/.local/bin for the home directory it was given', async () => {
     const home = freshDirectory('fugaro-home-')
     const stub = installStub(join(home, '.local', 'bin'), { commands: { version: { stdout: '1.0.0\n' } } })
     const resolution = await resolveBinary({
@@ -3022,7 +3286,7 @@ describe('binary resolution', () => {
     expect(resolution.ok && resolution.path).toBe(stub.binary)
   })
 
-  it('takes the home directory from the process environment when the caller passes none', async () => {
+  itHostRoute('takes the home directory from the process environment when the caller passes none', async () => {
     // **The e2e suite's hermetic override, in the fast suite.** `test/support/
     // cliStub.ts` chooses the CLI a launch reads the only way rule 4 allows: it
     // writes the stub into a scratch home's `~/.local/bin` and points the
@@ -3053,7 +3317,7 @@ describe('binary resolution', () => {
     expect(decoy.calls(), 'the resolution searched the app’s PATH').toBe(0)
   })
 
-  it('refuses a candidate whose version cannot be read, rather than skipping it', async () => {
+  itHostRoute('refuses a candidate whose version cannot be read, rather than skipping it', async () => {
     const base = freshDirectory()
     const first = join(base, 'prefix-a', 'bin')
     const second = join(base, 'prefix-b', 'bin')
@@ -3073,7 +3337,7 @@ describe('binary resolution', () => {
     expect(resolution.ok === false && resolution.reason).toMatch(/not a version/)
   })
 
-  it('refuses a binary that exits non-zero for `version`, with the CLI’s sentence', async () => {
+  itHostRoute('refuses a binary that exits non-zero for `version`, with the CLI’s sentence', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, {
       commands: { version: { stderr: 'fugaro: this build cannot report a version\n', code: 1 } },
@@ -3130,7 +3394,7 @@ describe('binary resolution', () => {
     expect(cliSentence('panic: nil map\n')).toBe('panic: nil map')
   })
 
-  it('refuses to build a source around a binary whose version cannot be read', async () => {
+  itHostRoute('refuses to build a source around a binary whose version cannot be read', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, { commands: { version: { stdout: 'nope\n' } } })
     await expect(
@@ -3411,7 +3675,7 @@ describe('the WSL resolution path', () => {
     expect(script).not.toContain('rm -rf')
   })
 
-  it('hands the CLI a hostile title as exactly one word, for all five shell shapes', async () => {
+  itHostRoute('hands the CLI a hostile title as exactly one word, for all five shell shapes', async () => {
     // The single quote above is one of five shapes a shell reads as syntax. The
     // title is the launch's one hostile-shaped value -- it is the row's one
     // `=`-form word, and `assertDistroWordsAreSafe` screens only the words a
@@ -3471,7 +3735,7 @@ describe('the WSL resolution path', () => {
     }
   })
 
-  it('resolves a stored installation inside its distribution, and starts the CLI there', async () => {
+  itHostRoute('resolves a stored installation inside its distribution, and starts the CLI there', async () => {
     const arrangement = wslRoot()
     const resolution = await resolveInside(arrangement)
     expect(resolution).toEqual({
@@ -3506,7 +3770,7 @@ describe('the WSL resolution path', () => {
     expect(child.cwd).toBe(arrangement.distroDirectory)
   })
 
-  it('states the path the installation stored, and runs the name the distribution resolves', async () => {
+  itHostRoute('states the path the installation stored, and runs the name the distribution resolves', async () => {
     // `binaryPath` under a `distro` is a Linux spelling **inside** the
     // distribution (F15): it is what the console states -- the resolution's
     // `path`, which is the header's line (D3(a)) -- and it is *not* the program
@@ -3535,7 +3799,7 @@ describe('the WSL resolution path', () => {
     expect(plan.env['PATH']?.startsWith('/home/dimi/.local/bin:')).toBe(true)
   })
 
-  it('refuses with `no-wsl` when wsl.exe cannot answer at all', async () => {
+  itHostRoute('refuses with `no-wsl` when wsl.exe cannot answer at all', async () => {
     const arrangement = wslRoot(NO_WSL)
     const resolution = await resolveInside(arrangement)
     expect(resolution.ok).toBe(false)
@@ -3549,7 +3813,7 @@ describe('the WSL resolution path', () => {
     expect(arrangement.wsl.childCalls()).toBe(0)
   })
 
-  it('refuses with `no-distro` when the stored distribution has gone, and never falls back to the default', async () => {
+  itHostRoute('refuses with `no-distro` when the stored distribution has gone, and never falls back to the default', async () => {
     // The mutation this case exists for: a fallback that picks the **default**
     // distribution (here `Debian`) when the stored one is missing. The stored
     // name is a distribution this machine does not have -- a rename or a removal
@@ -3571,7 +3835,7 @@ describe('the WSL resolution path', () => {
     expect(arrangement.wsl.reports().filter((report) => report.kind === 'spawn')).toHaveLength(0)
   })
 
-  it('hands `wsl.exe` a directory with spaces as one word', async () => {
+  itHostRoute('hands `wsl.exe` a directory with spaces as one word', async () => {
     // **The case a review asked for**: whitespace in the directory is admitted
     // (`isSafeInstallationValue`; it is a `wsl.exe` argument, not a shell word),
     // so the claim that it is *safe* has to be made where it can be observed --
@@ -3600,7 +3864,7 @@ describe('the WSL resolution path', () => {
     expect(realpathSync(child.cwd)).toBe(realpathSync(spaced))
   })
 
-  it('refuses, with a sentence, a listed distribution whose name has a space, a quote or a `;`', async () => {
+  itHostRoute('refuses, with a sentence, a listed distribution whose name has a space, a quote or a `;`', async () => {
     // Part D's rule (T-D3, `isDistroName`): the WSL route runs the CLI through
     // the distribution's own shell, so a name outside `DISTRO_NAME_PATTERN` is
     // refused (fail closed) even though `wsl.exe --list --quiet` prints it and
@@ -3625,7 +3889,7 @@ describe('the WSL resolution path', () => {
     }
   })
 
-  it('refuses, with a sentence, a listed distribution whose name it will not hand to `wsl.exe`', async () => {
+  itHostRoute('refuses, with a sentence, a listed distribution whose name it will not hand to `wsl.exe`', async () => {
     // T-E3's edge, and the reason the guard is a name check and not a crash: a
     // registered name can begin with `-` -- which is the one shape that is
     // argument confusion, because `wsl.exe` may read it as its own flag -- and
@@ -3655,7 +3919,7 @@ describe('the WSL resolution path', () => {
     expect(arrangement.wsl.reports().filter((report) => report.kind === 'spawn')).toHaveLength(0)
   })
 
-  it('refuses with `no-fugaro-in-distro` when the distribution has no CLI in it', async () => {
+  itHostRoute('refuses with `no-fugaro-in-distro` when the distribution has no CLI in it', async () => {
     // What a shell says when the command is not there: status 127 and a
     // sentence. The classification is by the probe (T-C5), so this is the
     // vector the resolver has to read -- and the instruction it produces is
@@ -3673,7 +3937,7 @@ describe('the WSL resolution path', () => {
     expect(resolution.reason).toContain('"Ubuntu"')
   })
 
-  it('reports a CLI that is there and broken as the probe’s refusal, not as a missing one', async () => {
+  itHostRoute('reports a CLI that is there and broken as the probe’s refusal, not as a missing one', async () => {
     // The distinction the four kinds exist for: a `fugaro` that is installed and
     // fails is **not** a `fugaro` that is missing, and a screen that said
     // "install it" would send the operator to install what they already have.
@@ -3696,7 +3960,7 @@ describe('the WSL resolution path', () => {
     expect(other.kind).toBe('no-binary')
   })
 
-  it('reads the handshake inside the distribution an installation names', async () => {
+  itHostRoute('reads the handshake inside the distribution an installation names', async () => {
     // The startup read is the same route: on Windows there is no host `fugaro`
     // to find, so an installation that names a distribution is read inside it.
     const arrangement = wslRoot()
@@ -3728,7 +3992,7 @@ describe('the WSL resolution path', () => {
     expect(only(arrangement.wsl.children()).argv).toEqual(['version'])
   })
 
-  it('does not walk the host for an installation whose distribution has gone', async () => {
+  itHostRoute('does not walk the host for an installation whose distribution has gone', async () => {
     // The handshake's ordinary rule is "an installation's binary is an override,
     // not a pin" -- it falls through to rule 4's walk when a stored path has
     // gone. On the WSL route there is nothing to fall through *to*: the walk is
@@ -3790,7 +4054,7 @@ describe('the WSL resolution path', () => {
   //   5. the double forwarding its own environment to the child -- the child
   //      hop's key set is pinned exactly, and `test/unit/wslstub.test.ts` holds
   //      that half of the double's contract on its own.
-  it('hands the distribution exactly CHILD_ENV_KEYS, with this process’s credentials planted', async () => {
+  itHostRoute('hands the distribution exactly CHILD_ENV_KEYS, with this process’s credentials planted', async () => {
     // The planted credentials are *names*, and the values are inert strings that
     // match no credential shape (the rule `test/unit/secret-hygiene.test.ts`
     // enforces over this tree). They stand in for everything the console's
@@ -4298,7 +4562,7 @@ describe('the supervisor', () => {
     expect(ended).toEqual(['refused'])
   })
 
-  it('stops a binary that never answers `version` instead of abandoning it', async () => {
+  itHostRoute('stops a binary that never answers `version` instead of abandoning it', async () => {
     // The one stop path in this module that used to walk away: `withTimeout`
     // resolved its race and left the child running, reparented to init when the
     // app quits, with its stdout still draining into a promise nobody awaits.
@@ -4396,7 +4660,7 @@ describe('the supervisor', () => {
     expect(calls[1]).toEqual(['/usr/bin/wsl.exe', '-d', 'Ubuntu', '-e', 'sh', '-c', 'kill -TERM 4321'])
   })
 
-  it('stops a long-lived child with SIGTERM and reports the stop', async () => {
+  itHostRoute('stops a long-lived child with SIGTERM and reports the stop', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, {
       commands: { version: { stdout: '1.4.2\n' }, watch: { lines: ['{"day":"2026-01-01"}'], hold: true } },
@@ -4415,7 +4679,7 @@ describe('the supervisor', () => {
     await source.close()
   })
 
-  it('tells a screen why the feed ended when the CLI refuses', async () => {
+  itHostRoute('tells a screen why the feed ended when the CLI refuses', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, {
       commands: {
@@ -4429,7 +4693,7 @@ describe('the supervisor', () => {
     await source.close()
   })
 
-  it('answers current() with the frame it already has, without spawning again', async () => {
+  itHostRoute('answers current() with the frame it already has, without spawning again', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, {
       commands: { version: { stdout: '1.4.2\n' }, watch: { lines: ['{"day":"2026-01-01"}'], hold: true } },
@@ -4443,7 +4707,7 @@ describe('the supervisor', () => {
     await source.close()
   })
 
-  it('surfaces a degraded-mode sentence next to the document it accompanies', async () => {
+  itHostRoute('surfaces a degraded-mode sentence next to the document it accompanies', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, {
       commands: {
@@ -4691,7 +4955,7 @@ describe('the live subscription', () => {
   const liveSource = (stub: Stub): Promise<CliSource> =>
     CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} })
 
-  it('answers a second live.watch from the feed it already has, and spawns no second child', async () => {
+  itHostRoute('answers a second live.watch from the feed it already has, and spawns no second child', async () => {
     const stub = installStub(freshDirectory(), {
       commands: { version: { stdout: '1.4.2\n' }, watch: WATCH_ONE },
     })
@@ -4708,7 +4972,7 @@ describe('the live subscription', () => {
     await source.close()
   })
 
-  it('keeps two subscriptions apart, and stops both when the source closes', async () => {
+  itHostRoute('keeps two subscriptions apart, and stops both when the source closes', async () => {
     const stub = installStub(freshDirectory(), {
       commands: { version: { stdout: '1.4.2\n' }, watch: WATCH_ONE },
     })
@@ -4729,7 +4993,7 @@ describe('the live subscription', () => {
     expect(stub.kills().map((kill) => kill.signal)).toEqual(['SIGTERM', 'SIGTERM'])
   })
 
-  it('keeps at most MAX_LIVE_FEEDS children, stopping the least recently used', async () => {
+  itHostRoute('keeps at most MAX_LIVE_FEEDS children, stopping the least recently used', async () => {
     // Every distinct valid repository is a distinct argv, so a renderer that
     // walked through repositories used to start one `fugaro watch` per name and
     // keep every one of them until quit.
@@ -4761,7 +5025,7 @@ describe('the live subscription', () => {
     await waitFor(() => stub.kills().length === 6)
   })
 
-  it('answers every overlapping current() with the same first frame', async () => {
+  itHostRoute('answers every overlapping current() with the same first frame', async () => {
     // `handlersFor`'s `live.watch` calls `current()` on every invocation and a
     // screen reaches that once per poll, so two polls can overlap. One waiter
     // slot would drop the first call, whose own budget timer would then refuse
@@ -4783,7 +5047,7 @@ describe('the live subscription', () => {
     await source.close()
   })
 
-  it('drops a feed that ended, so the retry after a refusal starts a fresh child', async () => {
+  itHostRoute('drops a feed that ended, so the retry after a refusal starts a fresh child', async () => {
     const stub = installStub(freshDirectory(), {
       commands: { version: { stdout: '1.4.2\n' }, watch: { stderr: 'fugaro: no project selected\n', code: 1 } },
     })
@@ -4805,7 +5069,7 @@ describe('the live subscription', () => {
     expect(stub.kills()).toHaveLength(1)
   })
 
-  it('drops a feed the console stopped, so the next watch starts a child again', async () => {
+  itHostRoute('drops a feed the console stopped, so the next watch starts a child again', async () => {
     const stub = installStub(freshDirectory(), {
       commands: { version: { stdout: '1.4.2\n' }, watch: WATCH_ONE },
     })
@@ -4826,7 +5090,7 @@ describe('the live subscription', () => {
 })
 
 describe('the installation store', () => {
-  it('stores an installation whose checkout matches, after one doctor read', async () => {
+  itHostRoute('stores an installation whose checkout matches, after one doctor read', async () => {
     const directory = freshDirectory()
     const checkout = freshDirectory('fugaro-checkout-')
     const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, doctor: { stdout: '{"checks":[]}\n' } } })
@@ -4838,7 +5102,7 @@ describe('the installation store', () => {
     expect(doctor?.argv).toEqual(['doctor', '--json', '--project', PROJECT, '--dir', checkout])
   })
 
-  it('refuses to store a checkout that belongs to another project, showing the CLI’s sentence', async () => {
+  itHostRoute('refuses to store a checkout that belongs to another project, showing the CLI’s sentence', async () => {
     const directory = freshDirectory()
     const checkout = freshDirectory('fugaro-checkout-')
     const stub = installStub(directory, {
@@ -4865,7 +5129,7 @@ describe('the installation store', () => {
     expect(stub.calls()).toBe(0)
   })
 
-  it('never reads the checkout itself: the CLI is the reader', async () => {
+  itHostRoute('never reads the checkout itself: the CLI is the reader', async () => {
     // Rule 7, as an observable: **a `fugaro.yaml` that is a directory**. The
     // console hands the checkout to the child as its `cwd` and reads nothing in
     // it, so `add` succeeds on the CLI's own answer; a console that opened
@@ -4893,7 +5157,7 @@ describe('the installation store', () => {
   // hands in, so the store's **ordering** -- load first, check, push, then save
   // -- is the part worth pinning: each of the three tests below fails for a
   // store that got one of those four moves in the wrong place.
-  it('starts from what it loaded, and saves the whole list after a verified add', async () => {
+  itHostRoute('starts from what it loaded, and saves the whole list after a verified add', async () => {
     const directory = freshDirectory()
     const checkout = freshDirectory('fugaro-checkout-')
     const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, doctor: { stdout: '{}\n' } } })
@@ -4911,7 +5175,7 @@ describe('the installation store', () => {
     expect(saved).toEqual([[held, { project: PROJECT, binaryPath: stub.binary, checkout }]])
   })
 
-  it('writes nothing when the check refuses, and nothing before the check', async () => {
+  itHostRoute('writes nothing when the check refuses, and nothing before the check', async () => {
     const directory = freshDirectory()
     const checkout = freshDirectory('fugaro-checkout-')
     const stub = installStub(directory, {
@@ -4934,7 +5198,7 @@ describe('the installation store', () => {
     expect(store.list()).toEqual([])
   })
 
-  it('has the installation in memory when the save itself fails', async () => {
+  itHostRoute('has the installation in memory when the save itself fails', async () => {
     // The order in the store is: check, push, save. A `save` that throws
     // therefore leaves the two halves disagreeing in the one direction that is
     // safe -- the list has the installation, the file does not, and the next
@@ -4958,7 +5222,7 @@ describe('the installation store', () => {
 })
 
 describe('the source as a whole', () => {
-  it('answers a refused read with the CLI’s own sentence', async () => {
+  itHostRoute('answers a refused read with the CLI’s own sentence', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, {
       commands: {
@@ -4970,7 +5234,7 @@ describe('the source as a whole', () => {
     await expect(source.listRuns({ since: '3d' })).rejects.toThrow('no runs matched --since 3d')
   })
 
-  it('refuses a read that printed no document rather than drawing an empty screen', async () => {
+  itHostRoute('refuses a read that printed no document rather than drawing an empty screen', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, {
       commands: { version: { stdout: '1.4.2\n' }, 'runs ls': { stdout: 'no runs\n' } },
@@ -4979,7 +5243,7 @@ describe('the source as a whole', () => {
     await expect(source.listRuns({})).rejects.toBeInstanceOf(SourceRefusal)
   })
 
-  it('drops the `fugaro: ` prefix from the sentence a screen shows', async () => {
+  itHostRoute('drops the `fugaro: ` prefix from the sentence a screen shows', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, {
       commands: {
@@ -4993,7 +5257,7 @@ describe('the source as a whole', () => {
     expect((error as SourceRefusal).sentence).toBe('no runs matched --since 3d')
   })
 
-  it('returns the version line and the one link as text, with no document in them', async () => {
+  itHostRoute('returns the version line and the one link as text, with no document in them', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, {
       commands: {
@@ -5007,7 +5271,7 @@ describe('the source as a whole', () => {
     expect(link.text).toBe('https://console.cloud.google.com/logs/query;query=run')
   })
 
-  it('never passes --url together with --json, which the CLI refuses', async () => {
+  itHostRoute('never passes --url together with --json, which the CLI refuses', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, {
       commands: { version: { stdout: '1.4.2\n' }, 'logs --url': { stdout: 'https://example.invalid\n' }, logs: { stdout: '{}\n' } },
@@ -5020,7 +5284,7 @@ describe('the source as a whole', () => {
     }
   })
 
-  it('reads every line `logs RUN --json` prints into the window the Run screen draws', async () => {
+  itHostRoute('reads every line `logs RUN --json` prints into the window the Run screen draws', async () => {
     // `logs RUN --json` prints one compact object per entry (contract section
     // 6.2), not one document: a reader that kept the last object would hand
     // the screen a single line, and `parseLogWindow` none at all. 250 entries,
@@ -5050,7 +5314,7 @@ describe('the source as a whole', () => {
     expect(model.logs.refused.value).toBe(1)
   })
 
-  it('answers a run with no log entries with an empty window, not a refusal', async () => {
+  itHostRoute('answers a run with no log entries with an empty window, not a refusal', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, logs: { stdout: '' } } })
     const source = await CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} })
@@ -5063,7 +5327,7 @@ describe('the source as a whole', () => {
     expect(model.logs.refused.value).toBe(0)
   })
 
-  it('records every spawn it makes, including the version handshake', async () => {
+  itHostRoute('records every spawn it makes, including the version handshake', async () => {
     const directory = freshDirectory()
     const logPath = join(directory, 'spawn.jsonl')
     const stub = installStub(directory, {
@@ -5084,7 +5348,7 @@ describe('the source as a whole', () => {
     expect(second.argv).toEqual([stub.binary, 'budget', 'show', '--json', '--project', 'chosen'])
   })
 
-  it('hands the same spawn log to every spawn, and no log at all when the operator did not opt in', async () => {
+  itHostRoute('hands the same spawn log to every spawn, and no log at all when the operator did not opt in', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, doctor: { stdout: '{}\n' } } })
     const source = await CliSource.create({
@@ -5520,7 +5784,7 @@ describe('the wrapper into a distribution', () => {
   const spawnReports = (wsl: WslStub): readonly WslReport[] =>
     wsl.reports().filter((report) => report.kind === 'spawn')
 
-  it('carries the CLI’s exit status through the wrapper, and never shows the wrapper', async () => {
+  itHostRoute('carries the CLI’s exit status through the wrapper, and never shows the wrapper', async () => {
     // T-F1, F26. The wrapper is transparent to a status: what the operator
     // reads is `fugaro`'s, and the marker the shell prints before it `exec`s
     // never reaches a screen (`cliSentence` is what a screen shows).
@@ -5560,7 +5824,7 @@ describe('the wrapper into a distribution', () => {
     expect(answering.stub.kills()).toEqual([])
   })
 
-  it('never reads a wsl.exe failure as a CLI exit code', async () => {
+  itHostRoute('never reads a wsl.exe failure as a CLI exit code', async () => {
     // T-F1's other half (F26, U7/U8). A `--cd` that does not exist inside the
     // distribution is a `wsl.exe` that fails **before** it starts anything
     // there: the status and the sentence are `wsl.exe`'s, and a console that
@@ -5594,7 +5858,7 @@ describe('the wrapper into a distribution', () => {
     expect(probe.reason).not.toContain('the binary exited')
   })
 
-  it('cancels inside the distribution, naming the pid the wrapper recorded', async () => {
+  itHostRoute('cancels inside the distribution, naming the pid the wrapper recorded', async () => {
     // T-F4, F24 and decision D6(a). Killing the Windows-side `wsl.exe` is not
     // documented to kill the Linux process it started, so the console sends one
     // more `wsl.exe` that kills the pid the wrapper reported -- and the fake
@@ -5697,7 +5961,7 @@ describe('the wrapper into a distribution', () => {
     expect(calls[1]).toEqual(['/usr/bin/wsl.exe', '-d', 'Ubuntu', '-e', 'sh', '-c', 'kill -TERM 4321'])
   })
 
-  it('stops the Linux process when the fake `wsl.exe` dies at once on `SIGTERM`', async () => {
+  itHostRoute('stops the Linux process when the fake `wsl.exe` dies at once on `SIGTERM`', async () => {
     // The same case end to end, with the real double: this `wsl.exe` does not
     // hold on `SIGTERM` (the case above does), so it dies the moment the
     // console kills it and the CLI it started is left as an orphan inside the
@@ -5831,7 +6095,7 @@ describe('the wrapper into a distribution', () => {
     expect((await refusal).message).not.toContain('may still be running')
   })
 
-  it('feeds a watch stream through the wrapper exactly as on the host route', async () => {
+  itHostRoute('feeds a watch stream through the wrapper exactly as on the host route', async () => {
     // T-F3 (F28, F29): the wrapper is not allowed to change the feed. The same
     // scenario runs on both routes and the two must produce the same frames, the
     // same notices and the same end.
@@ -5902,7 +6166,7 @@ describe('the wrapper into a distribution', () => {
     expect(frame?.document?.['note']).toBe('héllo ✓')
   })
 
-  it('stops a read whose pipe outlives the child at the deadline, through the wrapper', async () => {
+  itHostRoute('stops a read whose pipe outlives the child at the deadline, through the wrapper', async () => {
     // T-F5 (F25): the read deadline is the backstop, and on this route it is
     // load-bearing -- the wrapper adds a relay and the distribution a session,
     // and either can hold the pipe open after the process that wrote to it has
@@ -5953,7 +6217,7 @@ describe('the wrapper into a distribution', () => {
     expect(timers.pending()).toBe(1)
   })
 
-  it('refuses a hostile word before the shell, and quotes every word that reaches it', async () => {
+  itHostRoute('refuses a hostile word before the shell, and quotes every word that reaches it', async () => {
     // The binding carry-over from Part C's review, in the two layers Parts D and
     // F give it. The CLI's argv is built from a project name, a checkout and a
     // config path, and `isSafeInstallationValue` deliberately admits `$`, a
@@ -5998,7 +6262,7 @@ describe('the wrapper into a distribution', () => {
     expect(child.argv.filter((word) => word === '/home/dimi/.config/fugaro/config.toml')).toHaveLength(1)
   })
 
-  it('sends the stop as an argv array with shell false, and refuses a pid line it cannot trust', async () => {
+  itHostRoute('sends the stop as an argv array with shell false, and refuses a pid line it cannot trust', async () => {
     // The stop is spawned like every other child (rule 1): the distribution is
     // its own argv word, `-e` separates it from the distribution's, and
     // `shell: false` is what keeps a word from being re-parsed. The pid comes

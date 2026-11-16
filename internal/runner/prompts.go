@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/followup"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -34,6 +35,35 @@ type PromptData struct {
 	// refuses outright when it isn't set, so the rule only names the
 	// command when the run's own fugaro.yaml configures one.
 	LintConfigured bool
+	// NoImageReads adds the rule that the coder must not read an image and
+	// says why: the stage's own model is priced without an image rate, so the
+	// gateway refuses a request carrying an image, and the stage's managed
+	// settings deny the read as well (agent.imageReadExtensions, D2014). The
+	// rule names the image kinds — the ones that refusal is about — and not
+	// the document kind the deny list also covers, which the gateway prices
+	// and serves (agent.documentReadExtensions). The remedy it names is the
+	// one an installation has today, the coder slot pinned to a model with an
+	// image rate: a key this release's config does not have is a key its owner
+	// cannot write, and the decoder is strict, so a brief naming one would
+	// send them to a fugaro.yaml every later run is refused for. A coder whose
+	// model has an image rate sends the image itself and gets the brief every
+	// run had before this rule existed.
+	NoImageReads bool
+}
+
+// imageReadKinds is the kinds agent.ImageBlockExtensions names, spelled as the
+// brief names them: the extension with its star, so the coder reads a file
+// kind rather than a word. Those are the kinds the gateway refuses for a model
+// priced without an image rate, which is the reason the brief gives — the deny
+// list covers a document kind as well, and naming it here would be a rule with
+// a "why" that is false for it.
+func imageReadKinds() string {
+	exts := agent.ImageBlockExtensions()
+	kinds := make([]string, len(exts))
+	for i, ext := range exts {
+		kinds[i] = "*." + ext
+	}
+	return strings.Join(kinds, ", ")
 }
 
 // SystemPrompt is appended to Claude Code's system prompt for implement and fix stages.
@@ -57,6 +87,9 @@ func SystemPrompt(d PromptData, instructions string) string {
 		"- Never end your turn to wait for anything: this run is headless and ends the moment you stop, so pending background commands, notifications and test runs are lost and nothing wakes you later. Run builds and tests in the foreground (`fugaro verify test` blocks until done) and keep working until the result is in before you finish.",
 		"- In anything you write for a person, refer to a run by its short ID — the last 4 characters of the run ID, and one character more for as long as another run you name shares them — and to a plan task by its plan name; never print the full run ID there. A command is given whatever ID its own help asks for, the full run ID included.",
 		"- Never launch, cancel or retry a run from inside this job: you are the run it would act on, and nobody here can give the go-ahead such an action needs.",
+	}
+	if d.NoImageReads {
+		lines = append(lines, "- Never read an image ("+imageReadKinds()+"): the model serving this stage is priced without an image rate, so the gateway refuses a request that carries an image, and these reads are denied. If the work needs an image read, say so in "+explain+" instead: the owner can pin `agent.models.coder` to a Claude model Fugaro ships a price for, which has an image rate.")
 	}
 	if d.NoWorkflows {
 		lines = append(lines, "- Never create, edit or delete files under .github/workflows/: GitHub refuses Fugaro's push of workflow changes, so the whole run could not be delivered. If the task needs one, describe the change in "+explain+" instead.")
@@ -453,6 +486,27 @@ This report goes to the person who decides whether to continue the run, so say w
 // added as untrusted output: one block per failure, each wrapped against
 // prompt injection (gateBlock). task is the prompt the gate ran ahead of
 // (r.spec.Task for a first run, the follow-up's implement prompt otherwise).
+// RebasePrompt is the rebase step's conflict-resolution stage: what stopped
+// the rebase, the paths git could not merge on its own, and what the stage
+// has to leave behind. It asks for no commit and names no verification
+// command: the runner stages the paths git stopped on and carries the rebase
+// on itself (gitops.RebaseContinue), so what lands is the commit being
+// replayed with the resolution in it, and the workflow's tests run after the
+// whole branch is on its base, not between two conflicts.
+func RebasePrompt(base string, paths []string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "This run is putting the branch back on its base, origin/%s, and git stopped on a conflict.", safetext.OneLine(base))
+	if len(paths) > 0 {
+		names := make([]string, 0, len(paths))
+		for _, p := range paths {
+			names = append(names, safetext.OneLine(p))
+		}
+		fmt.Fprintf(&b, " The paths it could not merge on its own:\n\n%s", strings.Join(names, "\n"))
+	}
+	b.WriteString("\n\nResolve them and leave the resolution in the working tree. Both sides' intent has to survive: neither this branch's own work nor the base's change may be dropped to make the conflict go away, and a resolution that deletes one of them is wrong even when it makes the file compile. Edit the files only — do not commit, and do not run `git rebase --continue`, `git rebase --abort`, `git checkout --theirs` or `git commit`: Fugaro stages the paths git stopped on and carries the rebase on itself, so a commit of your own would land inside the commit being replayed. Leave everything the conflict did not touch as it is.")
+	return b.String()
+}
+
 func GatePrompt(task string, g gateResult) string {
 	var b strings.Builder
 	b.WriteString(task)
@@ -617,17 +671,25 @@ func fixFindingField(s string, neutralize func(string) string) string {
 	return safetext.Clip(s, fixFindingRunes-1) + "…"
 }
 
-// FixPrompt asks the implementing session to address review findings.
+// FixPrompt asks the implementing session to address the findings a review
+// round still blocks on.
 //
-// The findings a reviewer marked needs_owner are left out (OD1): they are the
-// ones no code change can settle, and handing one to the coder would spend the
-// round on work that cannot answer it. A round whose every finding is one of
-// those never reaches this function at all — the loop stops and the run ends
-// waiting for the owner — so what is dropped here is the mixed round's.
-func FixPrompt(v Verdict) string {
+// The caller hands it the blocking subset and not the round (T-TR7b): the
+// findings a judge deferred are filed as follow-ups and are not this round's
+// work, and a round whose every finding was deferred never reaches this
+// function at all — the loop ends on it, ready. What arrives here is what the
+// table blocks after the judge was read inside the floor.
+//
+// The findings a reviewer marked needs_owner are left out beside them (OD1):
+// they are the ones no code change can settle, and handing one to the coder
+// would spend the round on work that cannot answer it. A round whose every
+// remaining finding is one of those never reaches this function either — the
+// loop stops and the run ends waiting for the owner — so what is dropped here
+// is the mixed round's.
+func FixPrompt(findings []Finding) string {
 	var b strings.Builder
 	b.WriteString("A code review of your changes asked for these fixes:\n\n")
-	for _, f := range fixableFindings(v.Findings) {
+	for _, f := range fixableFindings(findings) {
 		b.WriteString("- ")
 		if f.Severity != "" {
 			fmt.Fprintf(&b, "[%s] ", f.Severity)
@@ -638,6 +700,10 @@ func FixPrompt(v Verdict) string {
 		b.WriteString(f.Summary)
 		b.WriteString("\n")
 	}
-	b.WriteString("\nAddress each one, commit, and run `fugaro verify test` again.")
+	// The last sentence is F16's, and it is the brief's own statement of
+	// CLAUDE.md's "a fix round adds no functionality": listing the fixes alone
+	// reads as leave to keep working, and every finding the round left open is
+	// either listed above or a follow-up no code change here may pre-empt.
+	b.WriteString("\nAddress each one, commit, and run `fugaro verify test` again. Touch nothing else: make only the changes these findings ask for.")
 	return b.String()
 }

@@ -20,6 +20,14 @@ const (
 	pathShared      = "config/policy/shared"
 	pathRepos       = "config/policy/repos/"
 	pathAdmin       = "config/admin"
+	// The voice policy's subtree (docs/mobile/design/voice-evaluation-switch.md
+	// §4.3, mobile plan Task P5.3.1): `providers`, `direction` and `force_local`
+	// per project, read by a run token and by nothing else. The parent is
+	// internal/budget/rules' PathVoice, which is the path the rules template
+	// spells; the three functions below are its children, in PathShared/
+	// PathRepo/PathRepos's shape.
+	pathVoice      = "config/policy/voice"
+	pathVoiceRepos = "config/policy/voice/repos/"
 )
 
 // PathShared is the node whose existence *is* project-centric mode (§5): the
@@ -40,6 +48,26 @@ func PathRepo(slug string) string { return pathRepos + seg("slug", slug) }
 // `policy publish --delete`, which removes the children it wrote) and not for
 // a run token.
 func PathRepos() string { return strings.TrimSuffix(pathRepos, "/") }
+
+// PathVoiceShared is the shared voice policy (docs/mobile/design/
+// voice-evaluation-switch.md §4.3, mobile plan Task P5.3.1): the provider
+// allow-list every project of the installation falls back to, read by any
+// token of the project — PathShared's own reader and no other.
+func PathVoiceShared() string { return pathVoice + "/shared" }
+
+// PathVoiceRepo is one project's voice policy child. Only the token whose slug
+// is $slug may read it, exactly as PathRepo's node works. It is the node the
+// hop reads over IAM (it cannot consult the rules) and the one an operator
+// publishes; no client writes it.
+func PathVoiceRepo(slug string) string { return pathVoiceRepos + seg("slug", slug) }
+
+// PathVoiceRepos is the parent of the per-project voice children, without a
+// trailing slash, in PathRepos's shape. For PathRepos's reason it is not a
+// path a run token reads: the grants are per child, and a read grant cascades,
+// so a read of the parent would expose every project's allow-list. The node
+// above it, config/policy/voice itself, is internal/budget/rules' PathVoice
+// and carries no grant either.
+func PathVoiceRepos() string { return strings.TrimSuffix(pathVoiceRepos, "/") }
 
 // PathRulesMarker is the node recording which generation of the security
 // rules is deployed (RulesVersion). It sits beside the largest lease under

@@ -390,7 +390,7 @@ func TestInitRepoRetireRefusesWithoutTheFlag(t *testing.T) {
 // applies, and the job is left to them rather than refused.
 func TestInitRepoRetireGateReadsTheStateNotTheAddressList(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: false})
-	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
+	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build", "--allow-delete", retireSvcAddr)
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -426,7 +426,7 @@ func TestInitRepoRetireGateReadsTheStateNotTheAddressList(t *testing.T) {
 // anything is removed.
 func TestInitRepoUnreadableStateWarnsAndCarriesOn(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true, stateUnreadable: true})
-	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
+	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build", "--allow-delete", retireSvcAddr)
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -534,17 +534,17 @@ func TestInitRepoRetireConfirmationNamesEveryKeptSecret(t *testing.T) {
 	}
 }
 
-// --yes, --non-interactive, --json, a coding agent's session and a stdin
-// that is a pipe rather than a terminal cover neither confirmation: each
-// refuses, and nothing leaves the state and nothing is deleted.
+// --json, a coding agent's session and a stdin that is a pipe rather than a
+// terminal cover neither confirmation: each refuses, and nothing leaves the
+// state and nothing is deleted.
 //
 // The refusal's words are pinned per case (review round 4). The retirement's
 // confirmation is not the ordinary one and cannot be answered the ordinary
 // way: nothing is typed at a confirmation any more (T7), so what answers for
-// one is the person at the terminal, and --yes is the flag design §4.2
-// forbids for a retirement. The generic notConfirmed would send such a run to
-// --yes anyway, the one flag that confirms none of this, so the message has
-// to name the real terminal that is missing, and never offer --yes.
+// one is the person at the terminal, and no flag covers a retirement (design
+// §4.2). The generic notConfirmed would send such a run to a flag anyway, one
+// that confirms none of this, so the message has to name the real terminal
+// that is missing, and never offer one.
 func TestInitRepoRetireConfirmationsAreNotCoveredByAnythingElse(t *testing.T) {
 	for name, tc := range map[string]struct {
 		args    []string
@@ -553,27 +553,13 @@ func TestInitRepoRetireConfirmationsAreNotCoveredByAnythingElse(t *testing.T) {
 		want    []string
 		notWant []string
 	}{
-		"--yes": {
-			args: []string{"--yes"},
-			want: []string{
-				"the confirmation of a retirement needs a real terminal",
-				"(--yes never confirms a retirement)",
-				"nothing was removed from Terraform's state and nothing was deleted",
-			},
-			notWant: []string{"was not typed", "pass --yes once you have read what it does"},
-		},
-		"--non-interactive": {
-			args:    []string{"--yes", "--non-interactive"},
-			want:    []string{"needs a real terminal", "(--yes and --non-interactive never confirm a retirement)"},
-			notWant: []string{"was not typed", "pass --yes once you have read what it does"},
-		},
 		"--json": {
-			args:    []string{"--yes", "--json"},
-			want:    []string{"needs a real terminal", "(--yes and --json never confirm a retirement)"},
+			args:    []string{"--json"},
+			want:    []string{"needs a real terminal", "(--json never confirms a retirement)"},
 			notWant: []string{"was not typed", "pass --yes once you have read what it does"},
 		},
 		"a coding agent": {
-			args:  []string{"--yes"},
+			args:  []string{},
 			agent: "CLAUDECODE",
 			// The agent's own refusal, not a terminal one: there is a
 			// terminal here, and a person at it.
@@ -590,7 +576,7 @@ func TestInitRepoRetireConfirmationsAreNotCoveredByAnythingElse(t *testing.T) {
 				"the confirmation of a retirement needs a real terminal",
 				"nothing was removed from Terraform's state and nothing was deleted",
 			},
-			notWant: []string{"was not typed", "--yes"},
+			notWant: []string{"was not typed"},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -1534,7 +1520,7 @@ func TestPreventDestroySignatureIsWhitespaceNormalized(t *testing.T) {
 // message, and the stdout the summary owns.
 func TestInitRepoPreventDestroyReframed(t *testing.T) {
 	r := newRetireRig(t, retireOpts{planAbort: fixture(t, "prevent_destroy_wrapped.txt")})
-	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build", "--yes")
+	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -1567,7 +1553,7 @@ func TestInitRepoPreventDestroyReframed(t *testing.T) {
 func TestInitRepoPreventDestroyOnAResourceFugaroNeverDestroys(t *testing.T) {
 	aborted := strings.Replace(fixture(t, "prevent_destroy_wrapped.txt"), retireKeptAddr, retireRegistryAddr, 1)
 	r := newRetireRig(t, retireOpts{planAbort: aborted})
-	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build", "--yes")
+	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -1622,7 +1608,7 @@ func TestInitRepoPreventDestroyThenRetireFinishesIt(t *testing.T) {
 	}
 	r.save(t)
 
-	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build", "--yes")
+	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build")
 	if ExitCode(err) != ExitUserError || err == nil ||
 		!strings.Contains(err.Error(), "the plan was refused: "+retireKeptAddr) {
 		t.Fatalf("the first run was not refused on the container: exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
@@ -1940,10 +1926,10 @@ func TestInitRepoRetireResumeAdoptsTheLiveLabelledContainer(t *testing.T) {
 // with the state's and the labels' fields filled in (design §3.2).
 func TestInitRepoJSONCarriesRetirements(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true})
-	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build", "--yes", "--json")
+	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build", "--json")
 	if ExitCode(err) != ExitUserError || err == nil {
-		// --yes cannot run a retirement, so the documented outcome is the
-		// refusal -- and the result document is printed either way.
+		// A --json run cannot confirm a retirement, so the documented outcome
+		// is the refusal -- and the result document is printed either way.
 		t.Logf("exit %d, err %v\n%s", ExitCode(err), err, errOut)
 	}
 	var res struct {
@@ -2109,7 +2095,7 @@ func TestInitRepoRetireConvergesOnAnAdoptedContainer(t *testing.T) {
 		// --allow-delete names the one address this fixture's plan deletes (the
 		// retired service account); the container is nobody's to delete, which
 		// is what the assertions below are about.
-		out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
+		out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build", "--allow-delete", retireSvcAddr)
 		if err != nil {
 			t.Fatalf("run %d: exit %d, err %v\n%s%s", i, ExitCode(err), err, out, errOut)
 		}
@@ -2145,7 +2131,7 @@ func TestInitRepoRetireSaysWhenThereIsNothingToRetire(t *testing.T) {
 	// live and labelled in Secret Manager, so Readiness adopts it back into
 	// the spec and nothing at all is left to retire.
 	r := newRetireRig(t, retireOpts{protection: false, stateEmpty: true, noOrphanJob: true, keptAsNote: true})
-	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--retire", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
+	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--retire", "--no-build", "--allow-delete", retireSvcAddr)
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -2187,7 +2173,7 @@ func TestInitRepoRetireRefusesAFailedLabelCall(t *testing.T) {
 			tc.fail(r)
 			// No typed confirmation is fed in: a refusal that reached the
 			// first prompt would fail on EOF instead of on the message.
-			out, errOut, err := executeStdin(t, "", "setup", "--repo", "--retire", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
+			out, errOut, err := executeStdin(t, "", "setup", "--repo", "--retire", "--no-build", "--allow-delete", retireSvcAddr)
 			if ExitCode(err) != ExitRemoteError {
 				t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 			}
@@ -2226,7 +2212,7 @@ func TestInitRepoRetireRefusesAFailedLabelCall(t *testing.T) {
 func TestInitRepoRefusedSecretsListDegradesInsteadOfAborting(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: false})
 	r.sm.FailListWith = 403
-	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
+	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build", "--allow-delete", retireSvcAddr)
 	if err != nil {
 		t.Fatalf("a refused secrets.list stopped the run: exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -2288,7 +2274,7 @@ func TestInitRepoRetireSecondConfirmationIsPastTense(t *testing.T) {
 // deletion_protection = true" about an attribute the state does not carry.
 func TestInitRepoRetireRefusalNeedsAValueTheStateCarried(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: false, jobNoProtection: true})
-	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
+	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build", "--allow-delete", retireSvcAddr)
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
@@ -2647,6 +2633,9 @@ func TestAnUpdateThatStoppedAfterTheReadKeepsTheRecordsRows(t *testing.T) {
 		// confirmed, one that is confirmed, one whose plan never gets that far.
 		args  []string
 		stdin string
+		// noTTY is the run nobody can answer: the rig's own terminal would
+		// otherwise be the confirmation itself (T7).
+		noTTY bool
 		stop  func(r *retireRig)
 	}{
 		{
@@ -2661,11 +2650,12 @@ func TestAnUpdateThatStoppedAfterTheReadKeepsTheRecordsRows(t *testing.T) {
 			// A run with no terminal cannot confirm the apply at all (T7: a
 			// person at one is the whole answer, with nothing typed), so it
 			// stops there.
-			args: []string{"update", "--repo", "--no-build", "--allow-delete", retireSvcAddr, "--non-interactive"},
+			args:  []string{"update", "--repo", "--no-build", "--allow-delete", retireSvcAddr},
+			noTTY: true,
 		},
 		{
 			name: "the apply failed",
-			args: []string{"update", "--repo", "--no-build", "--yes", "--allow-delete", retireSvcAddr},
+			args: []string{"update", "--repo", "--no-build", "--allow-delete", retireSvcAddr},
 			stop: func(r *retireRig) {
 				r.script["apply"] = map[string]any{"exit": 1, "stderr": "Error: quota exceeded"}
 			},
@@ -2677,6 +2667,9 @@ func TestAnUpdateThatStoppedAfterTheReadKeepsTheRecordsRows(t *testing.T) {
 			// reads an empty retirement set the labels answered for: this is
 			// about where that set may be written, not about reading it.
 			r := newRetireRig(t, retireOpts{protection: true, stateEmpty: true, keptAsNote: true, noOrphanJob: true})
+			if tc.noTTY {
+				noTerminal(t)
+			}
 			previous := recordPreviousUpdate(t)
 			if tc.stop != nil {
 				tc.stop(r)
@@ -2763,7 +2756,7 @@ func TestUpdateRecordNamesWhatTheRetireDoorTookAway(t *testing.T) {
 // what a reader has to be able to tell apart is the rows' Protected member.
 func TestUpdateRecordNamesWhatTheOrdinaryPlanRetired(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: false})
-	out, errOut, err := executeStdin(t, "", "update", "--repo", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
+	out, errOut, err := executeStdin(t, "", "update", "--repo", "--no-build", "--allow-delete", retireSvcAddr)
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}

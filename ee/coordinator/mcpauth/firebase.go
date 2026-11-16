@@ -78,6 +78,16 @@ const (
 	// provider mints is a header-sized value, and the address here is text a
 	// stranger's token chose.
 	maxEmailBytes = 512
+	// maxProviderBytes bounds `firebase.sign_in_provider`. The values are a
+	// provider id — `google.com`, `microsoft.com`, `password` — and a claim this
+	// code cannot read as one is answered as absent rather than carried.
+	maxProviderBytes = 64
+	// maxTenantBytes bounds `firebase.tenant`, the Identity Platform tenant id.
+	maxTenantBytes = 128
+	// maxDirectoryBytes bounds a Microsoft (Entra ID) directory id. It is a GUID
+	// and the bound is orders of magnitude above one; the value is a claim out
+	// of a token and the reader's own bound is what keeps it a token.
+	maxDirectoryBytes = 128
 )
 
 // ErrUnverifiedIDToken is a Firebase ID token this front door does not admit.
@@ -102,6 +112,48 @@ type Identity struct {
 	// against one spelling of an address rather than against the several a
 	// Unicode fold would let a claim choose.
 	Email string
+	// ClaimedEmail is the address exactly as the token carried it, before the
+	// fold above, and it is what a caller builds a member from: access.Member
+	// keeps the local part byte for byte, so a member built from the folded
+	// spelling is not the member a stored record carries whenever the local
+	// part is not already lower case (F31 of docs/portal/reconciliation.md).
+	// Nothing here is compared against it — Email is.
+	ClaimedEmail string
+	// Provider is the `firebase.sign_in_provider` the sign-in used — the claim
+	// SECURITY.md's sixth finding pins a set of, and the one a caller refuses
+	// `custom`, `anonymous`, `password` and `emailLink` on. It is empty when the
+	// token carries none or carries one this code cannot read, which every
+	// caller that cares reads as a provider it does not admit.
+	Provider string
+	// AuthTime is the `auth_time` claim: when the person's own sign-in happened,
+	// which is what a step-up asks about (`fresh sign-in` is an age, D2187) and
+	// is NOT the token's iat — an hour-old token can attest a sign-in from this
+	// minute, and a token minted now can attest one from this morning. It is the
+	// zero time when the token carries no readable one.
+	AuthTime time.Time
+	// TenantID is `firebase.tenant`: the Identity Platform tenant the sign-in
+	// came from, and empty for a project that runs none. It is the tenant the
+	// CLIENT names at sign-in and NOT the directory an account lives in, which is
+	// DirectoryID: a rule over this value admits whoever names a pinned one, and
+	// ee/keyservice's SSO rule reads the directory and never this (D2207 as
+	// amended on 2026-11-13).
+	TenantID string
+	// DirectoryID is the Microsoft (Entra ID) directory the person's account
+	// lives in: the `tid` of the provider's own report of the sign-in, which
+	// directoryID below reads out of `firebase.sign_in_attributes` and out of
+	// nowhere else. It is empty for every sign-in that carries none — a Google
+	// sign-in, a Microsoft one whose provider forwards no directory — and a
+	// caller whose rule needs a directory refuses it rather than reading the
+	// empty value as one.
+	//
+	// It is inside the SIGNED token, which is the whole point of it (D2207's
+	// amendment, ee/keyservice's TestMicrosoftDirectoryIsPinned): the provider's
+	// own report of where an account lives cannot be chosen by the person signing
+	// in, unlike the Identity Platform tenant above. Where it is read matters as
+	// much as that it is signed: the token's own top level is the custom-claims
+	// namespace, so a `tid` there is a value the project's own writers can mint
+	// and is deliberately not read.
+	DirectoryID string
 }
 
 // Verifier verifies the Firebase ID tokens this installation's project signs.
@@ -143,13 +195,18 @@ func NewVerifier(projectID string, keys KeySource, opts ...VerifierOption) (*Ver
 // or ErrUnverifiedIDToken, or ErrUnavailable when the key set could not be read
 // at all (the key source's own sentinel).
 //
-// It is called from the approve step's POST /oauth/authorize and from nowhere
-// else (D923, amended by M-a on 2026-11-04: the token travels in that POST's
-// body and never in a URL, so the GET renders the page and verifies nothing).
-// The ID token is the proof of the sign-in step, and the single consumer is
-// what makes it safe to run in a service that answers strangers: a token that
-// is never a grant cannot be replayed at the token endpoint, and a token that
-// is never a bearer cannot reach a tool. Any later path that accepts one — a second
+// It is called from the approve step's POST /oauth/authorize and from
+// ee/keyservice's portal verifier (P1.3 of docs/portal/implementation-plan.md),
+// and from nowhere else (D923, amended by M-a on 2026-11-04: the token travels
+// in that POST's body and never in a URL, so the GET renders the page and
+// verifies nothing). The second caller is the portal API, and it reaches this
+// function rather than a copy of its rules: it needs the same verification —
+// the project as the audience and the issuer, `email_verified`, the window —
+// and the three fields below are what the portal adds rules over. The ID token
+// is the proof of the sign-in step, and a consumer set this small is what makes
+// it safe to run in a service that answers strangers: a token that is never a
+// grant cannot be replayed at the token endpoint, and a token that is never a
+// bearer cannot reach a tool. Any later path that accepts one — a second
 // argument, a "just this once" branch — is a finding rather than a convenience,
 // and the token endpoint's own grant vocabulary (ParseGrantType) has no member
 // for it.
@@ -223,11 +280,76 @@ func (v *Verifier) VerifyIDToken(ctx context.Context, raw string) (Identity, err
 	if sub != uid {
 		return Identity{}, fmt.Errorf("%w: the identity names two different uids", ErrUnverifiedIDToken)
 	}
-	email, ok := foldEmail(claimString(claims, "email"))
+	claimedEmail := claimString(claims, "email")
+	email, ok := foldEmail(claimedEmail)
 	if !ok {
 		return Identity{}, fmt.Errorf("%w: the identity's email claim is not an address this front door can read", ErrUnverifiedIDToken)
 	}
-	return Identity{UID: sub, Email: email}, nil
+	// The four fields a caller adds its own rules over are READ and never
+	// required, which is the line between them and everything above: an absent
+	// or unreadable provider, sign-in time, tenant or directory is not a token
+	// this front door refuses — the launcher and operator lists (D933) never look
+	// at one — and it is answered as absent so that a caller whose rule needs it
+	// refuses it rather than reading an empty value as a match.
+	var authTime time.Time
+	if at, ok := claimInt(claims, "auth_time"); ok {
+		authTime = time.Unix(at, 0)
+	}
+	return Identity{
+		UID:          sub,
+		Email:        email,
+		ClaimedEmail: claimedEmail,
+		Provider:     firebaseClaim(claims, "sign_in_provider", maxProviderBytes),
+		AuthTime:     authTime,
+		TenantID:     firebaseClaim(claims, "tenant", maxTenantBytes),
+		DirectoryID:  directoryID(claims),
+	}, nil
+}
+
+// directoryID reads the Microsoft (Entra ID) directory id a verified token
+// carries, or answers empty.
+//
+// It reads ONE place: `firebase.sign_in_attributes.tid`, where Identity Platform
+// puts a federated provider's own claims. That object is the provider's report
+// of the sign-in, and reading only it is the control rather than a preference: a
+// Firebase ID token's own top level is the CUSTOM-CLAIMS namespace — the `mu`,
+// `fs` and `fr` claims this repository's own project writes live there — so a
+// top-level `tid` is a value any project-side writer of custom claims can mint,
+// and a pin a caller reads it against is one that writer can satisfy. That is
+// the same shape of hole D2207's amendment removed `firebase.tenant` for: an
+// admitted sign-in has to rest on something only the identity provider could
+// have said. A top-level `tid` is therefore ignored and not compared, so one
+// beside the attribute neither admits nor refuses on its own.
+//
+// Which claims a project's Microsoft provider actually forwards is deployment
+// configuration this code can neither see nor check (P0.1 of
+// docs/portal/implementation-plan.md): a provider that forwards no `tid` leaves
+// this empty, and a caller whose rule needs a directory refuses that rather than
+// reading the empty value as one.
+func directoryID(claims map[string]any) string {
+	fb, _ := claims["firebase"].(map[string]any)
+	attrs, _ := fb["sign_in_attributes"].(map[string]any)
+	value, _ := attrs["tid"].(string)
+	if !printableASCII(value, maxDirectoryBytes) {
+		return ""
+	}
+	return value
+}
+
+// firebaseClaim reads one string out of the token's `firebase` claim object.
+//
+// A value this code cannot read as a short token of printable ASCII is answered
+// as empty rather than carried: the claim is text the issuer's configuration
+// chose, it ends up in a caller's comparison and, on a refusal path, in a log
+// line, and the empty answer is the one every caller treats as "not something I
+// admit".
+func firebaseClaim(claims map[string]any, key string, max int) string {
+	fb, _ := claims["firebase"].(map[string]any)
+	value, _ := fb[key].(string)
+	if !printableASCII(value, max) {
+		return ""
+	}
+	return value
 }
 
 // ErrUnsupportedGrant is a POST /oauth/token request whose grant_type is not
@@ -386,6 +508,15 @@ func verifyRS256(tok string, key *rsa.PublicKey) error {
 // would be matched against a list entry it is not — U+212A KELVIN SIGN
 // lowercases to 'k' and U+0130 to 'i'. Every address the identity provider
 // mints is ASCII, so nothing a real person holds is lost by the rule.
+//
+// It is NOT access.Member's fold, and the two are not interchangeable: this one
+// lower-cases the whole address, access.Member keeps the local part byte for
+// byte and folds only the domain. A caller that builds a member to compare
+// against access.Member's spelling therefore reads Identity.ClaimedEmail, which
+// is the address as claimed — ee/keyservice's portal verifier is the one that
+// does. The `user:<email>` entry this package's own verifySignIn writes is not
+// that comparison and is deliberately built from Email: authorize.go says there
+// that the fold is the endpoint's own.
 func foldEmail(email string) (string, bool) {
 	if !printableASCII(email, maxEmailBytes) {
 		return "", false

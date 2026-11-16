@@ -316,13 +316,15 @@ func bitbucketCitedPaths(doc string) []string {
 // — the two Check 146 scripts and the sweep's own test, which is bitbucketMoved's
 // ninth entry below — so every path one of those commits landed is checked the
 // moment it is cited, as a path in the tree or as the old spelling of a move.
+// T2.6's and T2.11's own guards left it in the commits that wrote the read
+// consumer's runbook section and SECURITY.md's section for it. T3.3's own file
+// left it in the commit that wrote the parked task's identity-set half
+// (bitbucket-token-types T13), which put the four tests T3.3 names in the tree;
+// what else T3.3 was owed stays parked with S3.
 var bitbucketWillCreate = map[string]string{
-	"internal/cli/docs_bitbucket_runbook_test.go":  "T2.6",
-	"internal/cli/docs_bitbucket_security_test.go": "T2.11",
 	// Parked with S3, and still absent for as long as S3 is.
-	"internal/gitprov/bitbucket/comments_test.go": "T3.3 (parked)",
-	"scripts/live-checks/check147.sh":             "T3.5 (parked)",
-	"scripts/live-checks/check147_test.sh":        "T3.5 (parked)",
+	"scripts/live-checks/check147.sh":      "T3.5 (parked)",
+	"scripts/live-checks/check147_test.sh": "T3.5 (parked)",
 }
 
 // bitbucketMoved are the paths this dated plan cites that the tree has since

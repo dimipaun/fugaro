@@ -51,6 +51,7 @@ variable "bucket_lifecycle" {
     runs_days              = optional(number, 90)
     cache_custom_time_days = optional(number, 30)
     cache_age_days         = optional(number, 180)
+    reports_days           = optional(number, 548)
   })
   default  = {}
   nullable = false
@@ -75,6 +76,18 @@ variable "launchers" {
 }
 
 variable "operators" {
+  type     = list(string)
+  default  = []
+  nullable = false
+}
+
+variable "launcher_accounts" {
+  type     = list(string)
+  default  = []
+  nullable = false
+}
+
+variable "viewers" {
   type     = list(string)
   default  = []
   nullable = false
@@ -171,6 +184,7 @@ variable "catalog_check" {
     scheduler_region = string
     schedule         = optional(string, "17 4 * * *")
     paused           = optional(bool, true)
+    firebase_project = optional(string)
     env              = map(string)
     definitions_condition = object({
       title      = string
@@ -183,6 +197,29 @@ variable "catalog_check" {
         expression = string
       })
     }))
+  })
+  default = null
+}
+
+variable "reports" {
+  description = "The project's reports job (E4), or null when fugaro update deploys none: modules/installation/reports.tf and its variable of the same name. fugaro update writes it; it is passed through unchanged, and the module validates it."
+  type = object({
+    account_id       = string
+    job              = string
+    image            = string
+    scheduler_job    = string
+    scheduler_region = string
+    schedule         = optional(string, "37 5 * * *")
+    paused           = optional(bool, true)
+    env              = map(string)
+    read_condition = object({
+      title      = string
+      expression = string
+    })
+    write_condition = object({
+      title      = string
+      expression = string
+    })
   })
   default = null
 }
@@ -224,6 +261,16 @@ variable "mcp_server" {
   # door; all three are computed by internal/infra.MCPServer (the module's type
   # is the same object, and its validations are the ones that hold them to
   # their shape).
+  default = null
+}
+
+variable "intake" {
+  type = object({
+    account_id = string
+    service    = string
+    image      = string
+    url        = optional(string)
+  })
   default = null
 }
 

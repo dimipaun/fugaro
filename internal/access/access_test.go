@@ -2,6 +2,7 @@ package access
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -534,6 +535,54 @@ func TestCallerIsTheCredentialNotGitConfig(t *testing.T) {
 		if member, err := Caller(ctx); err == nil {
 			t.Errorf("Caller = %q for the credential address %q, want an error: a service account and any value that is not one person's address hold nothing", member, address)
 		}
+	}
+}
+
+// TestCallerRefusesAServiceAccountDistinctly: a service account's credential is
+// the one refusal of Caller's a caller ACTS on rather than prints. Such an
+// address is not a person, so the settings and policy writes admit it instead
+// of refusing it — which is what keeps the two explicit publish doors working
+// under a script or a runbook's credential — while every other way Caller
+// fails is a question left unanswered, and a gate that read that as "nobody in
+// particular" would stop checking whenever the credential is broken. That
+// difference is ErrServiceAccount alone, so it is pinned here and not inferred
+// from a message.
+func TestCallerRefusesAServiceAccountDistinctly(t *testing.T) {
+	ctx := context.Background()
+
+	stubCredential(t, "fugaro-run@example.iam.gserviceaccount.com", nil)
+	member, err := Caller(ctx)
+	if err == nil {
+		t.Fatalf("Caller = %q for a service account's credential, want a refusal", member)
+	}
+	if !errors.Is(err, ErrServiceAccount) {
+		t.Errorf("Caller's refusal of a service account is not ErrServiceAccount: %v", err)
+	}
+	if member != "" {
+		t.Errorf("Caller = %q beside its error, want the empty member", member)
+	}
+
+	// The three ways Caller can fail that are NOT this fact: the credential
+	// itself unreadable, an address that is nobody's, and one a grant member
+	// could not carry. Each one has to stay distinguishable, because "the
+	// credential is a machine's" is admitted and none of these is.
+	for _, tc := range []struct {
+		name    string
+		address string
+		readErr error
+	}{
+		{"the credential cannot be read", "", errors.New("context deadline exceeded")},
+		{"the address is nobody's", "nosuchaddress", nil},
+		{"the address is several people's", "git@example.com,admin@example.com", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stubCredential(t, tc.address, tc.readErr)
+			if _, err := Caller(ctx); err == nil {
+				t.Fatal("Caller answered with a member, want a refusal")
+			} else if errors.Is(err, ErrServiceAccount) {
+				t.Errorf("Caller's refusal is ErrServiceAccount, which is the service account's fact and not this one: %v", err)
+			}
+		})
 	}
 }
 

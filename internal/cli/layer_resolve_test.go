@@ -39,6 +39,46 @@ func TestFindLayerReadsTheBucketEveryTime(t *testing.T) {
 	}
 }
 
+// TestProjectLayerOfAnchorsOnTheConfig: the seam a moved command reads the
+// project layer through is findLayer under the selected config's own anchor (the
+// anchor `fugaro config layer` builds when it runs outside a checkout), so a
+// caller gets the bucket's own object with no note, the line that says what
+// stood in when the read fell back, and an error rather than "no layer" for an
+// object this build cannot use.
+func TestProjectLayerOfAnchorsOnTheConfig(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	lc := fileEnv(t, f).lc
+	layer, note, err := ProjectLayerOf(context.Background(), lc)
+	if err != nil || layer == nil || note != "" || layer.SHA256 != config.LayerSum([]byte(testProjectLayer)) {
+		t.Fatalf("ProjectLayerOf = %+v, %q, %v", layer, note, err)
+	}
+	// A config naming no project has no anchor to read a layer under, and the
+	// caller is told that rather than being handed another project's layer.
+	none, noneNote, err := ProjectLayerOf(context.Background(), &localcfg.Config{})
+	if err != nil || none != nil || !strings.Contains(noneNote, "names no project") {
+		t.Fatalf("unanchored = %+v, %q, %v", none, noneNote, err)
+	}
+	// A bucket that cannot be reached hands back the copy the read above left on
+	// this machine, with the line that says so and how old that copy is: the
+	// line is what a caller prints beside the figures it decides.
+	read := layerRead
+	t.Cleanup(func() { layerRead = read })
+	layerRead = func(context.Context, *blobx.Bucket) ([]byte, int64, error) {
+		return nil, 0, &net.OpError{Op: "dial", Err: errors.New("no route to host")}
+	}
+	layer, note, err = ProjectLayerOf(context.Background(), lc)
+	if err != nil || layer == nil || !strings.Contains(note, "using the cached project layer") || !strings.Contains(note, "old") {
+		t.Fatalf("unreachable = %+v, %q, %v", layer, note, err)
+	}
+	layerRead = read
+	writeBucketFile(t, f, config.LayerKey, "version: 1\nproject: aurora\ngcp_project: proj-1234\nprofiles: [1]\n")
+	if _, _, err := ProjectLayerOf(context.Background(), lc); err == nil || !strings.Contains(err.Error(), "is invalid") {
+		t.Fatalf("an invalid published layer = %v, want the read's own refusal", err)
+	}
+}
+
 func TestFindLayerCacheOnlyWhenUnreachable(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)

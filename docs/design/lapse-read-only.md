@@ -11,6 +11,17 @@ release carrying S6.2 and the app release carrying S6.3 each state the behaviour
 and the plan lists counsel's sign-off step (S8.4) as a dependency of both — though the Terms' §9.1
 already carries T12's cancel and counsel approved it on 2026-10-29 (the reconciliation's T12).
 
+**Amended 2026-11-11: the key's names are v1's.** The licence-key note is now the v1 text
+([licence-key.md](../licensing/licence-key.md)), and the names this note reads off a key move with it:
+the three key states are `active`, `grace` and `expired`, the term ends at the key's `paid_through`, and
+the grace after it is the key's own `grace_days` — 30 by default (D2133) — rather than a fixed 30 days
+after an `expires` claim. The product's five states, the lapse, what it allows and everything below are
+unchanged.
+
+**Amended 2026-11-11 by licence-key-v2 ([spec.md](../licence-key-v2/spec.md),
+[reconciliation.md](../licence-key-v2/reconciliation.md)): the grace this note fixes at thirty days
+after `expires` is the key's own `grace_days` (D2133), and "Free" is the no-key state (D2142).**
+
 This is subscriptions **S6.1**. It continues the licence-key note's state table and answers the four
 things that note hands it: what a lapsed installation shows and still allows, what an installation
 with no key shows, what the console 0.112.0 upgrade leaves a user in, and what a key the build cannot
@@ -18,7 +29,7 @@ verify is. It is not the verifier (S2.3–S2.5), not key entry (S2.7, S2.8), not
 not seats (S4), and not the Terms (S0.4, S8.4).
 
 **The ruling it works from.** D436 ends production use at a lapse with no perpetual fallback, and B17
-puts a 30-day grace between the key's `expires` and the walk-back; **T12** rules what survives: the
+puts a 30-day grace between the key's `paid_through` and the walk-back; **T12** rules what survives: the
 console and the app **read and cancel**, and the kill switch stays, while they cannot launch or
 change configuration. The Terms carry it expressly, because read-only use against a production
 installation is still production use: §9.1's *Read-only use* grants it, and §9.2 leaves the
@@ -32,15 +43,15 @@ subscriptions reconciliation is why the grant had to be written
 
 ## 1. The states a product can be in
 
-The verifier names three states of a **key** — `valid`, `grace`, `expired` — and refuses everything
+The verifier names three states of a **key** — `active`, `grace`, `expired` — and refuses everything
 else ([licence-key.md](../licensing/licence-key.md), "The check"). A **product** is in one of five
 states, and only the fourth is a lapse:
 
 | The product's state | What it is | What it allows |
 | --- | --- | --- |
 | no key | the store is empty | everything, with a banner (§5.3) |
-| `valid` | an installed key with `now <= expires` | everything |
-| `grace` | `expires < now <= expires + 30 days` | everything, with the renewal banner |
+| `active` | an installed key with `now <= paid_through` | everything |
+| `grace` | `paid_through < now <= paid_through + grace_days` | everything, with the renewal banner |
 | lapsed | past the grace | reads, cancel and the kill switch; not launch, not configuration |
 | a key this build cannot verify | an id the keyring dropped, a rollback | the no-key state's, with its own banner (§5.4) |
 
@@ -68,18 +79,18 @@ clock, never about the network: the check is offline, so no outage on Fugaro's s
 
 ### 3.1 What the console has today
 
-The console's whole surface is `CONSOLE_OPERATIONS` (`console/src/main/ipc.ts:600`): thirty-six
-operations, twenty-five of which spawn the CLI under an exact-argv allow-list
-(`SPAWN_COMMANDS`, `console/src/main/spawn.ts:761`). Twenty-three of the twenty-five are reads; two
+The console's whole surface is `CONSOLE_OPERATIONS` (`console/src/main/ipc.ts:600`): forty
+operations, twenty-nine of which spawn the CLI under an exact-argv allow-list
+(`SPAWN_COMMANDS`, `console/src/main/spawn.ts:761`). Twenty-six of the twenty-nine are reads; three
 are writes. The eleven that spawn nothing at all are the nine the console answers from its own state,
-`licence.read`, and `licence.save` — which is a third write, the console's own store's, and the only
+`licence.read`, and `licence.save` — which is a fourth write, the console's own store's, and the only
 one with no child.
 
 | Class | Operations | Child |
 | --- | --- | --- |
-| reads | `live.watch`, `budget.show`, `spend.report`, `runs.list`, `runs.stats`, `runs.summary`, `plan.status`, `graph.read`, `run.diagnose`, `run.logs`, `run.logLink`, `secrets.inventory`, `accounts.inventory`, `models.list`, `settings.read`, `cli.version`, `environment.report`, `installation.list`, `coordinator.status`, `coordinator.show`, `coordinator.intents`, `managed.status`, `policy.show` | the CLI |
+| reads | `live.watch`, `budget.show`, `spend.report`, `runs.list`, `runs.stats`, `runs.summary`, `plan.status`, `graph.read`, `graph.watch`, `run.diagnose`, `run.logs`, `run.logLink`, `secrets.inventory`, `accounts.inventory`, `models.list`, `settings.read`, `cli.version`, `environment.report`, `installation.list`, `coordinator.status`, `coordinator.show`, `coordinator.intents`, `managed.status`, `policy.show`, `seats.read`, `members.list` | the CLI |
 | the console's own | `startup.compatibility`, `installation.current`, `installation.choose`, `installation.checkout`, `installation.remove`, `installation.reveal`, `installation.open`, `link.openExternal`, `link.openPullRequest`, `licence.read` | none |
-| writes | **`run.launch`** (`run --task-file - --json`), **`settings.edit`** (`settings`) | the CLI |
+| writes | **`run.launch`** (`run --task-file - --json`), **`settings.edit`** (`settings`), **`roadmap.move`** (`coordinator roadmap move --json TASK --to <release> --expect <release>`) | the CLI |
 | the store's write | **`licence.save`** — the key the operator pasted, verified before it is kept, into the console's own file beside `installations.json` (`licence-store.ts`, S2.7) | none |
 
 `settings.edit` writes one setting of the installation's configuration document at the layer the read
@@ -92,7 +103,7 @@ of the eleven rows of that table that **spawn nothing at all** (`command: null`,
 `SPAWN_COMMANDS`) — the first two of the eleven that keep a **credential**: the key is not a child's
 argument, so the console keeps it in a file of its own (`licence.json`, 0600 in a 0700 directory, one
 entry per installation) and hands it to every child afterwards **in the environment and never in an
-argv**. That write is the console's third, and **neither operation is gated by the licence state in
+argv**. That write is the console's fourth, and **neither operation is gated by the licence state in
 any mode** — on no reduced view, refused at no state — which is what the sentence above about the key
 screen means now that the screen exists: an expired installation is exactly the one whose operator
 has to be able to reach the box that takes a renewal.
@@ -102,15 +113,17 @@ The plan's F20 counted **fifteen read operations, and no launch or cancel**
 launch landed since — D22 answered "one write, launch", and the row is annotated "the launch, and the
 console's only write" (`console/src/main/spawn.ts:1216`,
 [desktop-console-v2.md](desktop-console-v2.md)) — and the settings write landed after it, saying of
-itself in the same table that it is "the second write" (`console/src/main/ipc.ts:1162`). **Cancel and the
-kill switch are still absent, and deliberately so**: D2 keeps v1 strictly read-only, D14 makes the
-allow-list the whole fence, and D34 leaves cancel and retry unscheduled
+itself in the same table that it is "the second write" (`console/src/main/ipc.ts:1162`). The record's
+move landed last, on 2026-11-12 (the dependency-graph plan's GV3.2,
+[desktop-console.md](desktop-console.md) rule 14), and it is the console's **third** write. **Cancel
+and the kill switch are still absent, and deliberately so**: D2 keeps v1 strictly read-only, D14 makes
+the allow-list the whole fence, and D34 leaves cancel and retry unscheduled
 ([desktop-console.md](desktop-console.md), [desktop-console-v2.md](desktop-console-v2.md)); the CLI's
 `budget kill` and `budget resume` are on `NEVER_REACHABLE` as "a write: it turns a kill switch on,
 which halts running work" (`console/src/main/ipc.ts:1705`).
 
 So the console is where T12's "cannot launch" has teeth today and "cancel" has none yet: the lapse
-has exactly two operations to refuse, and reads that are easy to mistake for paid features to keep.
+has exactly three operations to refuse, and reads that are easy to mistake for paid features to keep.
 
 ### 3.2 What the lapse keeps, and what it refuses
 
@@ -135,9 +148,9 @@ renewal reminder in the console" ([spec.md](../subscriptions/spec.md)) — so §
 
 This document reads the closing clause in the grammar of the sentence it ends: what a User "may not
 initiate or modify", and which features are not available to *do* that with. On that reading "no paid
-feature is available" forbids doing paid things — the launch and the settings write refused below —
-and leaves a view of the customer's own records readable, which is what the grant's first sentence
-names. The strictest reading, where a view is part of the feature so Spend and the project view come
+feature is available" forbids doing paid things — the launch, the settings write and the record's move
+refused below — and leaves a view of the customer's own records readable, which is what the grant's
+first sentence names. The strictest reading, where a view is part of the feature so Spend and the project view come
 down, is T12's choice (b): §8 item 6 names it as the alternative, and taking it changes this section
 and §5's copy rather than §3.3's gate.
 
@@ -156,9 +169,10 @@ Three more reasons for the kept reading:
 Seats, when S4.2 builds them, go with the same call: the panel is a read, it stays, and the estimate
 is warned and never enforced (D439).
 
-**Refused: the two writes.** After a lapse `run.launch` and `settings.edit` are refused in the
-console's main process. Those are the console's launches and its configuration changes — T12's words
-for them.
+**Refused: the three writes.** After a lapse `run.launch`, `settings.edit` and `roadmap.move` are
+refused in the console's main process. Those are the console's launches, its configuration changes and
+its record's moves — T12's words for the first two, and the third joining them on 2026-11-12 (the
+dependency-graph plan's GV3.2, [desktop-console.md](desktop-console.md) rules 13 and 14).
 
 **Kept: the console's own surface.** Which installation the rail points at, the rail's own list, the
 reveal and open, and the two link operations are the console's bookkeeping and the desktop's shell.
@@ -205,7 +219,7 @@ Three consequences the build inherits:
 
 The app's entire write set is **two Realtime Database paths** — its mailbox's inbox node and the
 `acked` flag (`mobile/src/mailbox/paths.js:119`) — and every utterance that reaches them passes
-through one function, the mailbox client's `send` (`mobile/src/mailbox/client.js:559`). The mailbox
+through one function, the mailbox client's `send` (`mobile/src/mailbox/client.js:629`). The mailbox
 client is the app's only write path (`.claude/rules/mobile.md`, and `write-path.test.js` is the scan
 that holds it).
 
@@ -240,7 +254,7 @@ Two calls in that table are this document's own and are flagged in §8: `merge` 
 T12's kept set nor by the plan's test for S6.3, and it is refused here because the kept set is
 exactly what T12 kept — reads, cancel, the kill switch — and a repository write is none of them; and
 the confirmation of a kept action is kept because the client already knows which action is pending
-("one confirmation authorises exactly one action", `mobile/src/voice/dialogue.js:487`).
+("one confirmation authorises exactly one action", `mobile/src/voice/dialogue.js:500`).
 
 The app keeps reading everything it reads today: the feed, the jobs, the kill state, the heartbeat. A
 lapse removes no view — the app has no paid view to remove.
@@ -250,7 +264,7 @@ lapse removes no view — the app has no paid view to remove.
 **In the mailbox client's `send`, beside the connection gate, before anything is minted, signed or
 written.** `send` is the one function every utterance passes through, and it already refuses in a
 shape the app speaks: `{ok: false, code, field}` with a code from `CLIENT_CODES`
-(`mobile/src/mailbox/client.js:145`, refused through `gateRefusal` at `:520`). A licence refusal is
+(`mobile/src/mailbox/client.js:183`, refused through `spokenRefusal` at `:580`). A licence refusal is
 one more code, so a screen and the voice path render it the way they render the offline refusal, and
 neither needs a licence concept of its own. Nothing is written, no id is minted and the key is not
 touched by a refused utterance, exactly as the existing ordering guarantees ("the gate is here,
@@ -258,7 +272,7 @@ before anything is minted or signed").
 
 The refusal's text follows the existing rule: a gated utterance is kept only as unsent text the user
 can resend (`unsent()`), never in the outbox, and the app never sends it on its own
-(`mobile/src/mailbox/client.js:456`).
+(`mobile/src/mailbox/client.js:510`).
 
 A **launch** is the one hard case here, because it is an ordinary message: the client cannot tell a
 launch from chatter at the write path, so the verb an utterance was **classified** as must reach the
@@ -319,7 +333,7 @@ stopped, and the MIT CLI is unaffected.
 - **nothing refuses without a key.** The licence-key note's status line is the whole tree's, on
   purpose: no build reads a key and D523 defers every notice with it. A design that made the absence
   of a key a refusal would be adding a check no ruling has, in the window the owner ruled has none;
-- **a lapse is expiry, not a missing file.** B17 puts the grace after `expires`; a state table whose
+- **a lapse is expiry, not a missing file.** B17 puts the grace after `paid_through`; a state table whose
   other row is "no key" would put the lapse's refusal on an absence rather than on the licence's own
   clock, and would make a file's presence — not the subscription — the thing that matters;
 - **the states it covers are the ordinary ones.** A console 0.112.0 upgraded to the release carrying
@@ -364,8 +378,8 @@ renew is read-only, and the MIT CLI is unaffected, "stated, not a tension"
 ([reconciliation.md](../subscriptions/reconciliation.md)) — and the licence-key note puts it the same
 way: "An expiring free key is not a special case"
 ([licence-key.md](../licensing/licence-key.md)). Nothing in the state table reads the tier: the
-states are the key's own clock, `expires` and then `expires + 30 days`, and §10.3's evaluation key is
-a License Key of the free seat under §10.2(a), renewable by design
+states are the key's own clock, `paid_through` and then `paid_through + grace_days`, and §10.3's
+evaluation key is a License Key of the free seat under §10.2(a), renewable by design
 ([subscription-terms.md](../licensing/subscription-terms.md), D440).
 
 **So the two free paths end differently, and that is the design.** An evaluator whose key expires
@@ -401,7 +415,7 @@ capabilities away and never the customer's ability to fix their licence.
 ### 5.7 The banner, and a refusal's copy
 
 - The **banner** is the console's. It is persistent, it never blocks a read, and it names three
-  things: the state, the day it refers to (the key's own `expires`, from the key), and the key
+  things: the state, the day it refers to (the key's own `paid_through`, from the key), and the key
   screen. Its states are the table's: no key (§5.3), a key this build cannot verify (§5.4), within
   grace (§5.1), lapsed (§5.2).
 - A **refusal** names the same state and the same way out, and never a claim read out of a key: a
@@ -432,8 +446,9 @@ the plan says. Nothing else gains a check:
 Checks **176** and **177** (owner-run, S6.4, written into
 [docs/gcp-live-checklist.md](../gcp-live-checklist.md)) are the plan's
 measure of this document, one product each: within grace everything works; after grace the reads and
-cancel remain while the launch and the configuration write are refused in the console's main process;
-with no key the console behaves as §5.3 says and with an expired evaluation key as §5.5 says; the app
+cancel remain while the launch, the configuration write and the record's move are refused in the
+console's main process; with no key the console behaves as §5.3 says and with an expired evaluation
+key as §5.5 says; the app
 still cancels through the mailbox and still shows the kill switch, and refuses launch and
 configuration; and the MIT CLI launches and cancels throughout. Both are OWNER-RUN: an agent builds,
 and a person with a packed console and an app build runs them.
@@ -443,7 +458,8 @@ and a person with a packed console and an app build runs them.
 ### Settled by ruling
 
 - The lapse keeps cancel and the kill switch and refuses launch and configuration changes (T12).
-- The grace is 30 days after `expires`, and there is no perpetual fallback (D436, B17).
+- The grace is 30 days after `paid_through` (the key's `grace_days`, 30 by default), and there is no
+  perpetual fallback (D436, B17).
 - Seats are warned and never enforced (D439), and the app's key does not enter its two-item secret
   store (D111, D232; S2.8).
 - Nothing refuses and nothing warns until enforcement ships (D523, T17).

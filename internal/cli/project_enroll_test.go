@@ -482,11 +482,14 @@ func TestProjectSyncNeedsAnAppID(t *testing.T) {
 // the launch creating an execution for a repository that is still admitted.
 func TestProjectRemoveRepoStopsAdmittingTheRepo(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
-	publishPolicy(t, f, `{"version":4,"allow_repos":["github/acme/app"]}`)
+	publishPolicy(t, f, `{"version":5,"allow_repos":["github/acme/app"]}`)
 	if allow := allowReposOf(t, f.db); !projectpolicy.AdmitRepo(allow, "github/acme/app") {
 		t.Fatalf("allow_repos = %v: the fixture does not start with the repository admitted", allow)
 	}
-	out, _, err := execute(t, "project", "repos", "rm", "github/acme/app", "--yes")
+	// The removal is confirmed by a person at a real terminal, typing the
+	// project's name (nothing else stands in for it: T11 removed --yes).
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, initProjectName+"\n", "project", "repos", "rm", "github/acme/app")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -1468,7 +1471,7 @@ func TestProjectAllowListDoorsAreRefusedInAnAgentSession(t *testing.T) {
 		sync bool
 	}{
 		{"repos add", []string{"project", "repos", "add", "github/acme/new"}, false},
-		{"repos rm", []string{"project", "repos", "rm", "github/acme/app", "--yes"}, false},
+		{"repos rm", []string{"project", "repos", "rm", "github/acme/app"}, false},
 		{"sync", []string{"project", "sync", "--github-app-id", "12345"}, true},
 		{"sync --github-app-key", []string{"project", "sync", "--github-app-id", "12345", "--github-app-key"}, true},
 	} {

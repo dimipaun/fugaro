@@ -115,6 +115,8 @@ printf 'fugaro %s\n' "$*" >>"$FAKE146_DIR/calls"
 case "${1:-}" in
 doctor)
   cat "$FAKE146_DIR/doctor.json"
+  # exits 1 with its document, as the real doctor does when a check is a warning
+  [ ! -f "$FAKE146_DIR/doctor.exit" ] || exit "$(cat "$FAKE146_DIR/doctor.exit")"
   ;;
 coordinator)
   shift
@@ -329,6 +331,14 @@ expect_scratch_gone() { # dir what
 }
 
 # ------------------------------------------------------------------- the tests
+test_doctor_exit_1_is_an_answer() {
+  setup_case doctor-exit-1
+  printf '1\n' >"$dir/state/doctor.exit"
+  run146 --installation "$PROJECT"
+  expect_status "$status" 0 "doctor exit 1: the document it printed is the answer"
+  expect_contains "$out" "FACT installation: PASS — " "doctor exit 1: the installation is read"
+}
+
 test_happy_path() {
   setup_case happy
   run146 --installation "$PROJECT"
@@ -616,6 +626,7 @@ t() {
 }
 
 t test_happy_path
+t test_doctor_exit_1_is_an_answer
 t test_a_sweep_that_still_marks_it_unsupported_is_a_fail
 t test_a_view_that_was_not_stored_is_a_fail
 t test_a_github_view_that_changed_is_a_fail

@@ -324,6 +324,43 @@ export function modelsListSupported(version: string): boolean {
 }
 
 /**
+ * SEATS_CLI_FLOOR is the oldest CLI that has the seat estimate at all,
+ * `fugaro seats --json` (the subscriptions plan's S4.1 read and S4.2 panel,
+ * D439).
+ *
+ * **It is the command's floor and not a flag's**, exactly as
+ * `MODELS_LIST_CLI_FLOOR` above is: `fugaro seats` landed in v0.21.0
+ * (`docs/releases/v0.21.0.md`), so a CLI older than that has no such word at all
+ * and answers `unknown command "seats"` for it -- a failure the operator can do
+ * nothing about and one the Project tab would draw as a broken estimate. The
+ * floor is therefore asked before the read is offered, and a console below it
+ * draws the panel as unavailable with the version it needs rather than spawning
+ * a child that cannot answer.
+ *
+ * It is a patch-level floor rather than a range membership for the reason the
+ * five floors above it are: every line above `SUPPORTED_CLI_MINORS`' newest
+ * member is `ok` -- `0.20.9` is read as a CLI this console may ask, and it is
+ * below this floor -- so `classifyCliVersion` cannot answer it.
+ */
+export const SEATS_CLI_FLOOR = '0.21.0'
+
+/**
+ * seatsSupported answers whether one version line may be asked for the Project
+ * tab's seat estimate, by comparing it against `SEATS_CLI_FLOOR` at the patch
+ * level.
+ *
+ * **Its caller is the Project tab's seats panel.** `showProjects` in
+ * `src/renderer/entry.ts` asks it before the panel's read goes out, below the
+ * floor the panel draws the console's own sentence naming the version it needs
+ * and spawns nothing -- the shape `modelsListSupported`'s panel has beside it. It
+ * is asked once per visit, with the tab's other gates, so no `seats` this console
+ * makes is made against a CLI that cannot answer it.
+ */
+export function seatsSupported(version: string): boolean {
+  return meetsCliFloor(version, SEATS_CLI_FLOOR)
+}
+
+/**
  * LICENCE_KEY_CLI_FLOOR is the oldest CLI that **takes the licence key back out
  * of its own environment** -- the step that keeps the key from the programs the
  * CLI itself starts (`ee/licence/store.go`'s `TakeEnvironmentKey`, which
@@ -343,7 +380,7 @@ export function modelsListSupported(version: string): boolean {
  *
  * It is a floor and not a switch, so the release that lands the removal names
  * itself here and every older CLI keeps getting nothing -- the same patch-level
- * comparison the five floors above use.
+ * comparison the six floors above use.
  *
  * **`spawn.test.ts` holds this constant and `PRODUCTION_KEYRING` together**: a
  * console that can keep a key while no CLI can take it back is the leak, so a
@@ -375,7 +412,7 @@ export function licenceKeySupported(
 }
 
 /**
- * meetsCliFloor is the one patch-level comparison all six floors above are
+ * meetsCliFloor is the one patch-level comparison all seven floors above are
  * asked by, so a rule learned on one of them cannot be missing from the others.
  *
  * The order of the tests is the rule, and each refusal is on the safe side of a

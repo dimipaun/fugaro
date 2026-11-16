@@ -55,6 +55,46 @@ func TestReportCarriesWhatTheRunTolerated(t *testing.T) {
 	}
 }
 
+// TestReportListsDeferrals: report.md lists what the run did not fix and left
+// to a follow-up — one line per deferral, the key it is known by, the
+// reviewer's own summary and the one-line why — and the command that files
+// them, naming the run exactly. It is the same list the pull request's status
+// section carries (T-TR9, D1843), and it is read from the report a real run
+// stored, not from a hand-built record.
+func TestReportListsDeferrals(t *testing.T) {
+	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "agent:\n", "rigor:\n  default: startup\nagent:\n", 1)
+	h := newHarness(t, cfg, nil)
+	deferredAtRunStart(t,
+		runstore.DeferredFinding{
+			Key: "unbounded-retry", Summary: "unbounded retry loop in the fetch",
+			Reason: "doc drift, and a follow-up can bound it", Source: runstore.TriageSourceAgent,
+		},
+		runstore.DeferredFinding{
+			Key: "cache-cap", Summary: "no bound on the cache",
+			Reason: "the cap left it unjudged", Group: "cache", Source: runstore.TriageSourceCap,
+		},
+	)
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady || rec.Deferred == nil {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	raw, err := h.bucket.ReadAll(context.Background(), h.store.Prefix()+"report.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(raw)
+	for _, want := range []string{
+		"#### Deferred (follow-ups)",
+		"- `unbounded-retry`: unbounded retry loop in the fetch — doc drift, and a follow-up can bound it",
+		"- `cache-cap`: no bound on the cache — the cap left it unjudged",
+		"Run `fugaro followups " + runID + "` after merging",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the run's report lacks %q:\n%s", want, got)
+		}
+	}
+}
+
 // TestReportCarriesNoToleratedForARoundTheModeBlocked: the round a run ends on
 // can hold a finding the mode tolerated beside one it blocked on, and the
 // record keeps the first either way (D9). The report must not, because the
@@ -67,6 +107,10 @@ func TestReportCarriesWhatTheRunTolerated(t *testing.T) {
 // of 2026-11-08): a catastrophic finding is the one no mode accepts at its stop,
 // and a round carrying one is still the round the report must not render as let
 // through.
+//
+// The finding the round tolerated is the cap's, on the other hand, and the
+// report names it in the deferred list it belongs to (T-TR8): the run's second
+// round is its last, and what it did not fix it files rather than drops.
 func TestReportCarriesNoToleratedForARoundTheModeBlocked(t *testing.T) {
 	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "agent:\n", "rigor:\n  default: startup\nagent:\n", 1)
 	h := newHarness(t, cfg, nil)
@@ -96,10 +140,19 @@ func TestReportCarriesNoToleratedForARoundTheModeBlocked(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := string(raw)
-	for _, claim := range []string{"#### Tolerated", "| Label |", "unbounded retry loop"} {
+	for _, claim := range []string{"#### Tolerated", "| Label |"} {
 		if strings.Contains(got, claim) {
 			t.Errorf("the run's report claims %q for a round the mode blocked:\n%s", claim, got)
 		}
+	}
+	if strings.Contains(got, "no bound on the cache") {
+		t.Errorf("the run's report renders the finding the floor blocked:\n%s", got)
+	}
+	if want := "#### Deferred (follow-ups)"; !strings.Contains(got, want) {
+		t.Errorf("the run's report lacks %q:\n%s", want, got)
+	}
+	if want := "unbounded retry loop — " + capReason; !strings.Contains(got, want) {
+		t.Errorf("the run's report lacks %q:\n%s", want, got)
 	}
 	if !strings.Contains(got, "round 2: changes (2 findings)") {
 		t.Errorf("the run's report lost the round's own count:\n%s", got)

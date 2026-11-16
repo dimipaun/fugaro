@@ -196,7 +196,7 @@ func accountsAddGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Confi
 	// The rules this command's document is judged by, in the words the record
 	// and the gate's refusal carry. They are this command's own and they live
 	// here rather than in internal/managed, where the SHAPE of a verdict and the
-	// one class rule are (D1021): a rule about account names and repositories is
+	// one narrowing rule are (D1021): a rule about account names and repositories is
 	// this command's to state, and the gate's job is to hold the verdict they
 	// reach. The two lists are the verdict and the record's rules as well, so
 	// the document judged and the record of it are one reading of one document.
@@ -259,7 +259,7 @@ func accountsAddGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Confi
 		// line for a project that is not managed — while Admitted stays false,
 		// because this step was not taken on any verdict of the gate's. It is
 		// the truthful pair, and it is also the one that changes nothing else:
-		// GateConfirms needs the admission, so the write below prints its own
+		// GateStandsIn needs the admission, so the write below prints its own
 		// sentence and asks nothing — the owner's own terminal is the whole of
 		// what it proceeds on.
 		return initflow.Managed{Managed: true}, managedGate{}, nil
@@ -278,11 +278,11 @@ func accountsAddGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Confi
 	// verdict is what decides it. A refused document is returned in this
 	// command's own two lines rather than in the gate's, and the record of the
 	// refusal was written by admit before it returned (D1014).
-	conv := managedmode.ConvergeAdmitted(doc, initflow.YesOrTyped, applied)
+	conv := managedmode.ConvergeAdmitted(doc, applied)
 	if len(refused) > 0 {
-		conv = managedmode.ConvergeRefused(doc, initflow.YesOrTyped, refused)
+		conv = managedmode.ConvergeRefused(doc, refused)
 	}
-	m, err := gate.admit(ctx, initflow.YesOrTyped, conv)
+	m, err := gate.admit(ctx, conv)
 	if err == nil {
 		return m, gate, nil
 	}
@@ -351,7 +351,7 @@ func accountsAddRules(name, profile string, beyond []string, claude bool, typ st
 }
 
 // accountsAddTokenStep is the one step of this command no gate admits: the
-// secret. Storing the account's token project-wide is a Typed step by design (a
+// secret. Storing the account's token project-wide is the owner's own step by design (a
 // secret is money or permanent, D1026), and a plan gate judges a plan — so the
 // value is read by nobody in a coding agent's session, which is the half of
 // spec §4.2's "no token value is ever written by either" that the declaration
@@ -369,7 +369,7 @@ func accountsAddRules(name, profile string, beyond []string, claude bool, typ st
 // every session, and it is unreachable without one. The two fences above — the
 // one in applySettingsEdit and the one on the no-change path — are what put an
 // agent's session here, and both of them are lifted only by an admission from a
-// project the gate read as managed (initflow.CanConfirmManaged).
+// project the gate read as managed (initflow.GateStandsIn).
 func accountsAddTokenStep(name string) error {
 	return userErr("No token was stored for Claude account %s: a session may write the declaration, and never the token.\nRun this in your own terminal, not in an agent session.",
 		pluginwire.Printable(name))

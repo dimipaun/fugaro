@@ -21,9 +21,10 @@ import (
 // under. The service itself is deployed by `fugaro update` on every
 // installation (docs/credentials-service/default-on.md, the owner's ruling of
 // 2026-11-05): what is left in this file is the resolve the deploy pins
-// through -- init_stages.go's pinCredentialsImage, which writes the
-// installation root's block and moves an existing one onto this release's
-// image -- and the two constants the gates that name the service read.
+// through -- init_stages.go's ensureCredentialsService, which writes the
+// installation root's block, and its moveCredentialsImage, which moves an
+// existing one onto this release's image after the policy stage has migrated
+// the node -- and the two constants the gates that name the service read.
 
 // resolveCredentialsImage is the service's image, resolved and verified
 // exactly as a base kind's pin is: the release's "-pinned" tag, its cosign
@@ -33,8 +34,8 @@ import (
 //
 // It takes the run's engine rather than a stage because two paths pin through
 // it and both must pin the same way: the deploy that gives an installation its
-// first block, and the carry that moves an installation's recorded image
-// forward to this release's (init_stages.go's pinCredentialsImage). Neither
+// first block, and the move that takes an installation's recorded image forward
+// to this release's (init_stages.go's moveCredentialsImage). Neither
 // writes a digest this did not return: the release's own signed "-pinned"
 // image, read back through the remote repository the job pulls by.
 func resolveCredentialsImage(ctx context.Context, e *initEngine) (string, error) {

@@ -405,7 +405,12 @@ func TestDocsProjectImageCatalogDesign(t *testing.T) {
 		// D-block and its findings stay exactly what they are.
 		"**The amendment in [context-design.md](context-design.md) is reconciled against",
 		"It takes **no `D` number** and adds **no finding**",
-		"**G1–G4** (the gaps read against the code), **A1–A8** (its decisions),\n**C1–C5** (the tasks)",
+		// The amendment's own series, which the fold-in extends: its design of
+		// record carries a G5–G6 row of its own (context-design.md's §11 and its
+		// numbers table), so a front page still stating G1–G4 would contradict it.
+		"**G1–G6**: the four gaps the amendment was written with (**G1–G4**),\nplus **G5–G6**, added by its **fold-in** of",
+		"[docs/catalog-build-context/](../catalog-build-context/README.md) at its §11 — **A1–A8** (its decisions),\n**C1–C5** (the tasks)",
+		"| **G1–G6, A1–A8, O1–O6, C1–C5** |",
 		"**The amendment does not edit the three files above.**",
 		"**The amendment takes no `D` number and adds no finding**",
 		"**Nothing in it is approved to build**",

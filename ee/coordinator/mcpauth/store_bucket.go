@@ -7,11 +7,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"gocloud.dev/blob"
 	"gocloud.dev/gcerrors"
 	"google.golang.org/api/googleapi"
 )
@@ -183,6 +185,44 @@ func (o bucketObjects) replace(ctx context.Context, key string, data []byte, gen
 		return 0, err
 	}
 	return newGen, nil
+}
+
+// list is every key under one prefix, which is how the sweep finds the records
+// nobody asks for by id. It is the one operation here that is not conditional:
+// a janitor lists by definition, and the two refusals that matter on this
+// route — a bucket whose IAM was narrowed and a store that is not there — are
+// the driver's own errors rather than a fold into an empty list, which would
+// report a sweep that reached nothing as a sweep that found nothing.
+func (o bucketObjects) list(ctx context.Context, prefix string) ([]string, error) {
+	return o.listUpTo(ctx, prefix, 0)
+}
+
+// listUpTo is list stopped after limit keys, and a limit of zero is no limit.
+// It is the same listing the driver serves in pages of its own either way —
+// what one sweep run asks for is a page of *its* pages rather than a prefix
+// walked to the end (sweepPage) — and stopping the iterator early is what keeps
+// that run's cost its page's rather than the prefix's. The page the iterator
+// had already read is dropped rather than held, and the driver reads each page
+// whole, so leaving early leaves nothing open behind it.
+func (o bucketObjects) listUpTo(ctx context.Context, prefix string, limit int) ([]string, error) {
+	it := o.b.Bucket.List(&blob.ListOptions{Prefix: prefix})
+	var keys []string
+	for {
+		if limit > 0 && len(keys) >= limit {
+			return keys, nil
+		}
+		obj, err := it.Next(ctx)
+		if errors.Is(err, io.EOF) {
+			return keys, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if obj.IsDir {
+			continue
+		}
+		keys = append(keys, obj.Key)
+	}
 }
 
 func (o bucketObjects) delete(ctx context.Context, key string) error {

@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/ee/portal/schemas/billing.schema.json",
+  "title": "Portal billing mirror",
+  "description": "What Paddle says about a workspace's subscription, and the one change a customer makes to it (portal plan P4.3; spec §Customer experience, D2192). The portal mirrors and never decides: invoices, payment methods and cancellation live in Paddle's own customer portal, and what is here is the state the screens read. Seats are Paddle's quantity on purpose — a seat change updates that one subscription rather than making another, because one workspace has one (D2192). Every object here is closed, because ee/keyservice/wire_billing.go decodes it with DisallowUnknownFields.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/subscription"
+    },
+    {
+      "$ref": "#/$defs/seats"
+    }
+  ],
+  "$defs": {
+    "subscription": {
+      "type": "object",
+      "description": "One workspace's subscription as the portal last heard it from Paddle.",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "organisation_id",
+        "workspace_id",
+        "state",
+        "seats",
+        "price_id",
+        "starts_at",
+        "renews_at",
+        "ends_at",
+        "cancelled_at"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Paddle's subscription id, kept as Paddle spells it: it is what a support conversation, a refund and a proration are looked up by, and the mirror exists so that a lookup does not have to reach Paddle."
+        },
+        "organisation_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The organisation that pays. Deleting it cancels this subscription and revokes the entitlements' keys (D2195, P2.4)."
+        },
+        "workspace_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The portal workspace the subscription is for."
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "active",
+            "trialing",
+            "past_due",
+            "paused",
+            "canceled"
+          ],
+          "description": "Paddle's own state, spelled as Paddle spells it: the portal's screens and Paddle's customer portal must not describe one subscription two ways."
+        },
+        "seats": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The subscription's quantity, which is what a seat purchase updates (P4.3). The keys follow: the event that carries the new quantity reissues them with the same renewal secret (D2200, P3.6)."
+        },
+        "price_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Paddle's price this subscription was bought at. It is kept because a price is what a row's tier and term were sold as (P0.2), and a report reads the sale rather than the current catalogue."
+        },
+        "starts_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the subscription began, in UTC, which is the payment's instant the entitlement's term runs from too (D2197)."
+        },
+        "renews_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "When Paddle will next charge, in UTC, or null for a subscription that will not renew. It is Paddle's answer and not the portal's arithmetic: a date this service worked out would be wrong on the first edge case."
+        },
+        "ends_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "When the paid term ends, in UTC, or null while nothing has ended it. A subscription cancelled part-way through a term carries this and not a state of its own: the customer keeps what they paid for."
+        },
+        "cancelled_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "When cancellation was recorded, in UTC, or null while none was. It is kept beside ends_at because a cancellation and the end of a term are different instants."
+        }
+      }
+    },
+    "seats": {
+      "type": "object",
+      "description": "An owner's or admin's request to buy more seats (P4.3).",
+      "additionalProperties": false,
+      "required": [
+        "seats"
+      ],
+      "properties": {
+        "seats": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The whole quantity and not an increment: a customer asking for the number they believe they are buying is what makes a request whose reply was lost safe to send again."
+        }
+      }
+    }
+  }
+}

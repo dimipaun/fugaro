@@ -2113,7 +2113,7 @@ func TestValidateAgreesWithTheRunAboutTheRoutedPins(t *testing.T) {
 				if price == "unpriced" {
 					project = strings.Replace(project, "model_prices:\n  anthropic/claude-sonnet-5.5: { input_per_m: 3, output_per_m: 15 }\n", "", 1)
 				} else {
-					overrides[routed] = pricing.Rates{InputPerM: 3, OutputPerM: 15}
+					overrides[routed] = pricing.Override{Rates: pricing.Rates{InputPerM: 3, OutputPerM: 15}}
 				}
 				project += "routing:\n  claude:\n    via: " + via + "\n    models: [" + canonical + "]\n"
 				// The run's own steps, in the run's own order: the switch's list
@@ -3289,6 +3289,50 @@ func TestValidateNotesTheSubscriptionStageBound(t *testing.T) {
 			if !strings.Contains(got[0], want) {
 				t.Errorf("%s: the note does not say %q: %q", tc.name, want, got[0])
 			}
+		}
+	}
+}
+
+// TestValidateNoteNamesTheAxisAndNotAClaudeAccount is AK9's (SEC) other half:
+// the note about a per-run cap names the ACCOUNT AXIS and never "a Claude
+// account", and it is still the note that is written where the cap is set and a
+// profile lists an account.
+//
+// The note is the one of AK9's sentences an operator reads rather than a
+// comment, and the distinction it has to keep is the same one the service's own
+// refusals keep: a review job's calls are served by the value the axis names —
+// an account, or the project's own Anthropic key (config.AnthropicKeyAccount),
+// which is not an account — and a note that said "a Claude account" would tell
+// an owner whose review runs on the key that the ceiling it describes does not
+// apply to them.
+func TestValidateNoteNamesTheAxisAndNotAClaudeAccount(t *testing.T) {
+	path := reviewInstallation(t, true, "", "", "budget: { per_run_usd: 5 }\n")
+	out, errOut, err := execute(t, "validate", path)
+	if err != nil || !strings.Contains(out, "is valid") {
+		t.Fatalf("validate refused an installation whose cap it only notes: %v\nout: %s\nerr: %s", err, out, errOut)
+	}
+	var note string
+	for _, line := range strings.Split(errOut, "\n") {
+		if rest, ok := strings.CutPrefix(line, "note: budget.per_run_usd: "); ok {
+			note = rest
+		}
+	}
+	if note == "" {
+		t.Fatalf("the cap was not noted at all: %s", errOut)
+	}
+	if !strings.Contains(note, "account axis") {
+		t.Errorf("the note does not name the axis: %q", note)
+	}
+	if strings.Contains(note, "Claude account") {
+		t.Errorf("the note says a review job runs on a Claude account: %q", note)
+	}
+	// The facts the note is worth reading for are still in it (the prefix
+	// above is the key whose promise it qualifies): the half of the run it is
+	// about, the one ceiling there is, and the figure an owner would otherwise
+	// be trusting by mistake.
+	for _, want := range []string{"gateway", "agent.max_budget_usd", "twenty-five times too high"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("the note no longer says %q: %q", want, note)
 		}
 	}
 }

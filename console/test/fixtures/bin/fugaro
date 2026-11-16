@@ -94,12 +94,13 @@
 #     and it is the one this console draws a pencil from: the rows' own
 #     `writable`, `owner` and `target_layer` are the whole of what decides
 #     whether a row may be edited (D1102).
-#   * `settings set|unset KEY --layer <L> --dry-run --json|--yes --project P
+#   * `settings set|unset KEY --layer <L> [--dry-run --json] --project P
 #     [--config C] [-- VALUE]` -- the console's **second write** (the
 #     settings-edit plan's C3, design section 5.1 rule 12). It answers two
-#     phases and writes nothing either way: the dry run prints the document
-#     seeded for the key it names (`settings-dryrun-<KEY>.json` beside this
-#     script), and the write prints the sentence a write ends with --
+#     phases and writes nothing either way: the dry run (`--dry-run --json`)
+#     prints the document seeded for the key it names
+#     (`settings-dryrun-<KEY>.json` beside this script), and the write (no flag)
+#     prints the sentence a write ends with --
 #     `wrote <path> (backup at <backup>)` and `next: fugaro update`. There is no
 #     file to edit here and none is written: what a spec reads is the child's
 #     answer and the argv below.
@@ -197,7 +198,7 @@ refuse() {
 # failing spec's message is the only place a reader learns what it would have
 # answered.
 refuse_allowlist() {
-  echo "the stub fugaro answers 'version', 'config list --json', 'plan status --json', 'coordinator status --from-store --all --json', 'doctor --json', 'watch --json', 'report --json', 'budget show --json', 'models ls --json', 'settings --json', 'settings set|unset --dry-run --json|--yes', 'managed status --json', 'project policy show --json', 'runs summary --json' and 'run --task-file - --json', and was asked for '$1'" >&2
+  echo "the stub fugaro answers 'version', 'config list --json', 'plan status --json', 'coordinator status --from-store --all --json', 'doctor --json', 'watch --json', 'report --json', 'budget show --json', 'models ls --json', 'settings --json', 'settings set|unset', 'managed status --json', 'project policy show --json', 'runs summary --json' and 'run --task-file - --json', and was asked for '$1'" >&2
   exit 2
 }
 
@@ -597,7 +598,7 @@ case "$command" in
     key=$2
     shift 2
     layer=''
-    phase=''
+    phase='write'
     value=''
     while [ $# -gt 0 ]; do
       case "$1" in
@@ -618,10 +619,6 @@ case "$command" in
           if [ "$phase" != 'dry-run' ]; then
             refuse "'settings $op' was asked for '--json' with no --dry-run"
           fi
-          shift
-          ;;
-        --yes)
-          phase='write'
           shift
           ;;
         --project | --config)
@@ -652,9 +649,6 @@ case "$command" in
     if [ -z "$layer" ]; then
       refuse "'settings $op' was asked for no --layer, and the layer is the read's own row"
     fi
-    if [ -z "$phase" ]; then
-      refuse "'settings $op' was asked for neither '--dry-run --json' nor '--yes'"
-    fi
     if [ "$op" = 'unset' ] && [ -n "$value" ]; then
       refuse "an unset carries no value, and 'settings unset $key' was asked for '$value' behind --"
     fi
@@ -662,7 +656,7 @@ case "$command" in
       refuse "a set carries one behind --, and 'settings set $key' was asked for none"
     fi
     if [ "$phase" = 'write' ]; then
-      # The write's answer, as `applySettingsEdit` prints it on a `--yes`: the
+      # The write's answer, as `applySettingsEdit` prints it on a write: the
       # line naming the file it wrote and the one every settings write ends
       # with. The diff and the two confirmation lines above them are the CLI's
       # own and are not restated here -- a spec reads this answer for the fact

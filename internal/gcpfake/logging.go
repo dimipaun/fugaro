@@ -45,6 +45,11 @@ type Logging struct {
 	nextID    int
 	buckets   map[string]logBucket // projects/<p>/locations/<l>/buckets/<id>
 	sinks     map[string]logSink   // projects/<p>/sinks/<id>
+	// exclusions are the project's log exclusions (google_logging_project_
+	// exclusion): the installation's `fugaro-jobs-from-default` is what keeps
+	// a routed line out of _Default, and `fugaro doctor` reads its filter back
+	// (plan 2026-10-19-compute-backend.md Task 10 step 2).
+	exclusions map[string]logExclusion // projects/<p>/exclusions/<id>
 }
 
 type logBucket struct{ state, description string }
@@ -66,7 +71,40 @@ func (l *Logging) AddSink(project, id, destination, filter string) {
 	l.sinks["projects/"+project+"/sinks/"+id] = logSink{destination, filter}
 }
 
-var logSinkRE = regexp.MustCompile(`^/v2/(projects/[^/]+/sinks/[^/:]+)$`)
+// logExclusion is one project log exclusion as the fake stores it: a filter,
+// which is the whole of what Fugaro reads back from it.
+type logExclusion struct{ filter string }
+
+// AddExclusion makes the project exclusion id exist in project with filter,
+// which is what `fugaro doctor` reads to check that the Batch arm is in the
+// installation's `fugaro-jobs-from-default` exclusion too.
+func (l *Logging) AddExclusion(project, id, filter string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.exclusions == nil {
+		l.exclusions = map[string]logExclusion{}
+	}
+	l.exclusions["projects/"+project+"/exclusions/"+id] = logExclusion{filter}
+}
+
+var (
+	logSinkRE      = regexp.MustCompile(`^/v2/(projects/[^/]+/sinks/[^/:]+)$`)
+	logExclusionRE = regexp.MustCompile(`^/v2/(projects/[^/]+/exclusions/[^/:]+)$`)
+)
+
+// getExclusion answers a project log exclusion's get.
+func (l *Logging) getExclusion(w http.ResponseWriter, name string) {
+	l.mu.Lock()
+	e, ok := l.exclusions[name]
+	l.mu.Unlock()
+	if !ok {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Exclusion "+name+" does not exist")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"name": name, "filter": e.filter, "disabled": false,
+	})
+}
 
 // getSink answers a project log sink's get.
 func (l *Logging) getSink(w http.ResponseWriter, name string) {
@@ -277,6 +315,10 @@ func (l *Logging) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	}
 	if m := logSinkRE.FindStringSubmatch(r.URL.Path); r.Method == http.MethodGet && m != nil {
 		l.getSink(w, m[1])
+		return
+	}
+	if m := logExclusionRE.FindStringSubmatch(r.URL.Path); r.Method == http.MethodGet && m != nil {
+		l.getExclusion(w, m[1])
 		return
 	}
 	if r.Method != http.MethodPost || r.URL.Path != "/v2/entries:list" {

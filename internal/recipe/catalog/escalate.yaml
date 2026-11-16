@@ -1,0 +1,8 @@
+version: 1
+name: escalate
+description: "One coder pass, one review, and the verdict is the run's own: findings are recorded, not fixed."
+use_when: "A stalled pull request that needs one stronger single pass rather than another fix loop, with the review's findings left for whoever reads the verdict. Findings are reported, never acted on."
+steps:
+  - review:
+      max_rounds: 1
+      hand_over: true

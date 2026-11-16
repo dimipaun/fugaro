@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/watch"
 )
 
@@ -25,7 +24,11 @@ type jsonFieldClaim struct {
 }
 
 // skillJSONFields lists every JSON field the skills read. A skill that reads
-// a new one adds it here; a renamed field fails this test.
+// a new one adds it here; a renamed field fails this test. `image build
+// --local --json` is not one any more: a skill never builds locally (the
+// images skill's own rule, F11), and the setup skill's fallback build is Cloud
+// Build's, whose report is text and whose record is read with `image status
+// --json`.
 var skillJSONFields = []jsonFieldClaim{
 	{"validate", validateOutput{}, "valid"},
 	{"validate", validateOutput{}, "problems"},
@@ -34,16 +37,35 @@ var skillJSONFields = []jsonFieldClaim{
 	{"validate", validateOutput{}, "warnings"},
 	{"validate", validateOutput{}, "warnings[].path"},
 	{"validate", validateOutput{}, "warnings[].message"},
-	{"image build --local", image.LocalResult{}, "image"},
-	{"image build --local", image.LocalResult{}, "dockerfile"},
-	{"image build --local", image.LocalResult{}, "commit"},
-	{"image build --local", image.LocalResult{}, "origin"},
-	{"image build --local", image.LocalResult{}, "error"},
-	{"image build --local", image.LocalResult{}, "smoke.passed"},
-	{"image build --local", image.LocalResult{}, "smoke.checks"},
-	{"image build --local", image.LocalResult{}, "smoke.checks[].name"},
-	{"image build --local", image.LocalResult{}, "smoke.checks[].ok"},
-	{"image build --local", image.LocalResult{}, "smoke.checks[].detail"},
+	// The images skill reads the survey: per repository the signals it found
+	// and whether it could be read at all, and its `setup` member — the
+	// catalog, the map and the bake switch — which is what a rerun proposes
+	// its differences against (F16).
+	{"image survey", imageSurveyOut{}, "project"},
+	{"image survey", imageSurveyOut{}, "repos"},
+	{"image survey", imageSurveyOut{}, "repos[].repo"},
+	{"image survey", imageSurveyOut{}, "repos[].provider"},
+	{"image survey", imageSurveyOut{}, "repos[].unread"},
+	{"image survey", imageSurveyOut{}, "repos[].signals"},
+	{"image survey", imageSurveyOut{}, "setup"},
+	{"image survey", imageSurveyOut{}, "setup.catalog"},
+	{"image survey", imageSurveyOut{}, "setup.image_map"},
+	{"image survey", imageSurveyOut{}, "setup.bake_repos"},
+	{"image survey", imageSurveyOut{}, "setup.unread"},
+	// The catalog both image skills read: the entry a job runs, its tags and
+	// the digest the last build of it recorded.
+	{"image ls", catalogLsOut{}, "entries"},
+	{"image ls", catalogLsOut{}, "entries[].name"},
+	{"image ls", catalogLsOut{}, "entries[].tags"},
+	{"image ls", catalogLsOut{}, "entries[].default"},
+	{"image ls", catalogLsOut{}, "entries[].source"},
+	{"image ls", catalogLsOut{}, "entries[].description"},
+	{"image ls", catalogLsOut{}, "entries[].digest"},
+	// The setup skill reads a derived image's record back after the user's
+	// Cloud Build, whose own report is text.
+	{"image status", imageStatusOut{}, "workflows"},
+	{"image status", imageStatusOut{}, "workflows[].repo"},
+	{"image status", imageStatusOut{}, "workflows[].workflow"},
 	{"secrets ls", []secretEntry{}, "[].name"},
 	{"secrets ls", []secretEntry{}, "[].id"},
 	{"secrets ls", []secretEntry{}, "[].versions"},
@@ -67,7 +89,16 @@ func init() {
 		"runs[].run", "runs[].repo", "runs[].status", "runs[].stage", "runs[].reason", "runs[].halt", "runs[].pr_url",
 		"runs[].branch", "runs[].outcome", "runs[].created", "runs[].cost", "runs[].cost.route_by", "runs[].cost.reported_usd",
 		"runs[].terminal", "runs[].settled", "runs[].base_branch", "runs[].stale_draft", "runs[].draft_fallback", "runs[].pr_status_at",
-		"runs[].launched_by", "runs[].failure_class")
+		"runs[].launched_by", "runs[].failure_class",
+		// The state of the pull request a row carries, which the working
+		// skill's status reference reads to say which runs wait on a merge,
+		// and the number itself, which the landing skill reads to tell one
+		// pull request's runs from another's. The landing skill's security
+		// question is asked of the branch's own diff and not of a row's
+		// `changed_files`, so that field is claimed by no skill here: a row
+		// records one run's commits, is capped, and is written by the run.
+		"runs[].pr",
+		"runs[].pr_state")
 	// The working skill's status reference sends a reader to --group-by and
 	// names the block it adds, so the block's own key is held to lsDoc's --
 	// beside the rows, never instead of them, and only when a grouping was
@@ -78,6 +109,13 @@ func init() {
 		"row.project_layer", "row.project_layer.sha256", "row.project_layer.generation", "row.project_layer.applied", "row.config_sha256",
 		"row.oauth_account", "halt", "verify", "failed", "flaky", "findings", "agent_message",
 		"log_tail", "draft_note", "report_path", "follow_up", "comments_path", "route_by", "reported_usd",
+		// The landing skill weighs a land against a follow-up from the
+		// record: the review rounds with their verdicts, and the findings
+		// the resolved mode let through rather than fixing. It reads the
+		// head each of the two covered too, which is the same condition
+		// under two spellings — the verify record's head_sha and the
+		// review's head — so a skill naming the wrong one fails here.
+		"reviews", "tolerated", "verify[].head_sha", "reviews[].verdict", "reviews[].head",
 		// The checkpoint a governance halt leaves (T6.2, D329): the working
 		// skill's diagnose reference reads all six of its fields, the runner's
 		// three and the three the stopping agent answers.
@@ -161,8 +199,8 @@ func TestLintJSONFieldsExist(t *testing.T) {
 			t.Errorf("%q reported present in validateOutput", bad)
 		}
 	}
-	if !hasJSONField(reflect.TypeOf(image.LocalResult{}), "smoke.checks[].ok") {
-		t.Error("smoke.checks[].ok reported absent from LocalResult")
+	if !hasJSONField(reflect.TypeOf(lsDoc{}), "runs[].status") {
+		t.Error("runs[].status reported absent from lsDoc")
 	}
 }
 
@@ -174,7 +212,11 @@ var notFields = []string{
 	"tool_error",        // a value of a log entry's event
 	"claude_accounts",   // a local-config key (never in --json output: it is operator-only and never published)
 	"agent.oauth_token", // a fugaro.yaml key, not a JSON output field
-	"base_rev",          // a key of the patch document a session sends, not a field of any --json output
+	// The two IAM lists a machine's own project config holds: `fugaro user
+	// ls --json` names its own copies run_operators and admins, and the
+	// working skill names the config keys to say what `user add` writes.
+	"terraform.operators", "terraform.admins",
+	"base_rev", // a key of the patch document a session sends, not a field of any --json output
 }
 
 var fieldTokenRE = regexp.MustCompile("`([a-z][a-z0-9]*(?:(?:_[a-z0-9]+)+|(?:\\.[a-z][a-z0-9_]*(?:\\[\\])?)+)(?:\\.[a-z][a-z0-9_]*)*)`")

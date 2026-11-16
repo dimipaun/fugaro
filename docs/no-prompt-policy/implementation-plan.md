@@ -237,6 +237,24 @@ and T8 waits on the spike only.
   **ruled** (audit-only, choice (a), 2026-11-07), so T9 is unblocked on it; the rules rewrite is T13.
   **Reviewer:** opus + mandatory independent review at level 3; its PR body carries the ruling.
 - **Commit:** `managed: the gate records and warns on content; the integrity refusals stay (T9)`.
+- **Amended 2026-11-11: the one command this task had to leave out is in.** T9's reach is the record's —
+  a finding is recorded and warned **where the command writes one** — and `fugaro managed apply` wrote none
+  (D1011's "stays exactly as it is", `docs/managed-agent-converge/spec.md` §3.1), so that path kept the
+  behaviour this task replaced: it folded the gate's content findings into the refusals it reached, and a
+  content rule read there exactly like an integrity one. #2232's own body named it ("Reported, not decided",
+  item 4, and the review's second finding). The owner's ruling of 2026-11-11 puts the command in the converge
+  set: it reads the shared gate and writes §6's record like every other gated command, so a content finding is
+  applied with the finding recorded — printed above the confirmation and filed in the record — and a
+  **refusal's record holds the integrity rules that refused AND the content findings raised beside them**,
+  which is additive (the record's shape is unchanged: `warnings` was already a field, and the version is not
+  bumped). The `fugaro restore` that ends in this command's apply writes the same record, under the command
+  name the person typed. `docs/managed-agent-converge/reconciliation.md` §3 records the ruling beside D1011.
+  **Tests:** `TestManagedApplyAppliesAContentFindingAndRecordsIt` (the renamed
+  `TestManagedApplyRefusesAContentFindingAndKeepsNoRecordOfIt`), `TestManagedApplyWarnsWhenTheMarkerRecordsNoBudget`
+  (both now assert the record), `TestConvergeRefusedWithWarningsStillRefuses`,
+  `TestManagedAuditRefusalCarriesTheFindingsRaisedBesideIt`,
+  `TestParseAuditRecordReadsARecordOlderThanTheWarningsField` and
+  `TestDoctorDoesNotReportARefusedRecordAsAWarnedOne`.
 
 ### T10 — remove the build-count bound (D1543, D1554)
 - **Files:** `internal/managed/builds.go`, `internal/infra/managed/marker.go`, `read.go`,

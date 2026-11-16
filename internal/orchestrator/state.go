@@ -31,6 +31,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/escalation"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/tier"
 )
@@ -38,7 +39,14 @@ import (
 // SchemaVersion is the state schema this release writes. A node carrying an
 // older one is raised by Migrate before it is used; one carrying a newer one
 // is refused, because this release cannot know what a later one meant by it.
-const SchemaVersion = 1
+//
+// It goes up whenever a field is added, and not only whenever one changes
+// meaning: this document is closed — the schema says so, and the decoder
+// refuses a field it does not model — so an older reader meets a field it
+// cannot see as an unknown one rather than as an addition it may ignore, and
+// the version is what tells it to stop instead (F20 of docs/outer-loop-
+// escalation, where the ladder's ledger bought the same bump).
+const SchemaVersion = 3
 
 // ApprovalAttempts is what one approval covers: the attempt the person
 // approved and at most one automatic retry of that same spec (the owner's
@@ -76,6 +84,16 @@ const (
 	MaxIntents   = 64
 	MaxArchived  = 64
 	MaxDependsOn = 32
+
+	// MaxEscalationTransitions bounds the ladder's ledger on one item. The
+	// transitions are append-only, so the bound is what keeps the ledger from
+	// growing without end on an item the ladder keeps acting on: the rungs it
+	// may enter are a handful (D2042's list is six runs at most), and this is
+	// the ceiling a bug cannot walk past.
+	MaxEscalationTransitions = 16
+	// MaxOuterAttempts bounds the ladder runs one item may spend, counted
+	// apart from ApprovalAttempts (D2042, G15).
+	MaxOuterAttempts = 16
 
 	MaxGoalRunes      = 600
 	MaxTitleRunes     = 200
@@ -260,15 +278,75 @@ type Approval struct {
 	Attempts   int       `json:"attempts"`
 }
 
+// Escalation is the ladder's ledger on one work item: the rung the item is at,
+// when it entered it, how many ladder runs it has spent, and every transition
+// that got it there (docs/outer-loop-escalation, E7).
+//
+// It is bookkeeping (bookkeepingFields), and that is what makes the ladder
+// usable: the ledger changes on every rung, and an approval that fell off at
+// each change would have the daemon asking a person for a go on work they
+// already approved (D2042). Only the daemon writes it, and the patch appends
+// to it rather than replacing it.
+//
+// Nothing here is free text (G8). A rung, a reason code, a count, times and a
+// head: every string is a value of a closed vocabulary or a git object name,
+// so a prompt, a finding or a diff has nowhere to sit.
+type Escalation struct {
+	// Rung is the rung the item is at, and it is the highest it has entered:
+	// the ladder does not walk back down, and Apply refuses a patch that tries.
+	Rung escalation.Rung `json:"rung"`
+	// EnteredAt is when the item entered that rung, on the server clock. It is
+	// the last transition's own time, so the two cannot disagree.
+	EnteredAt time.Time `json:"entered_at"`
+	// OuterAttempts is how many of the ladder's own runs the item has spent —
+	// rung 0, the one rung 2, the judge and the review of a rebased head — and
+	// never a normal run of the item's recipe, which ApprovalAttempts counts
+	// (D2042, G15).
+	OuterAttempts int `json:"outer_attempts"`
+	// Transitions is the ladder's history, oldest first and append-only. The
+	// first one leaves the zero Rung, which is how this document spells an item
+	// that had entered none.
+	Transitions []Transition `json:"transitions"`
+}
+
+// Transition is one move on the ladder: the rung the item left, the one it
+// entered, why, when, and the head it was looking at.
+type Transition struct {
+	// From is the rung the item was at. Absent on the first transition, which
+	// is an item entering the ladder: the zero Rung means "none" here as it
+	// does in escalation.Facts.Reached.
+	From escalation.Rung `json:"from,omitempty"`
+	// To is the rung it entered. It is never empty: a transition to nowhere
+	// records nothing.
+	To escalation.Rung `json:"to"`
+	// Reason is why, as one of escalation.Reasons: a code, never a sentence, so
+	// the ledger holds no finding text and no model (G8).
+	Reason escalation.Reason `json:"reason"`
+	// At is when it happened, on the server clock.
+	At time.Time `json:"at"`
+	// HeadSHA is the head the ladder was looking at, and it is what rung 0 is
+	// spent by: a head already in the ledger has had its rebase, so the ladder
+	// does not rebase it again (escalation.Facts.RebasedHeads). Absent when the
+	// rung has no head of its own.
+	HeadSHA string `json:"head_sha,omitempty"`
+}
+
 // WorkItem is one piece of work the orchestrator is carrying: what it is,
 // where it goes, and the bookkeeping the daemon keeps about the attempts at
 // it.
 type WorkItem struct {
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	Repo      string    `json:"repo"`
-	Recipe    string    `json:"recipe"`
-	RigorTier string    `json:"rigor_tier"`
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Repo      string `json:"repo"`
+	Recipe    string `json:"recipe"`
+	RigorTier string `json:"rigor_tier"`
+	// Spec is the plan's folder under docs/ this work belongs to, which is what
+	// the daemon's `spec:<name>` label is built from. Optional and declarative:
+	// a session or a person writes it in the patch that declares the item,
+	// because there is no plan import to derive it from (D2438). That makes it
+	// part of the spec a person approves, and an item carrying none is an item
+	// no tick labels with a spec.
+	Spec      string    `json:"spec,omitempty"`
 	Brief     string    `json:"brief"`
 	DependsOn []string  `json:"depends_on"`
 	Phase     Phase     `json:"phase"`
@@ -285,6 +363,10 @@ type WorkItem struct {
 	// (AttemptsUnder), which the caps count from too.
 	Attempts int    `json:"attempts"`
 	Note     string `json:"note,omitempty"`
+	// Escalation is the ladder's ledger, absent until the ladder first acts on
+	// the item. It is the daemon's alone to write (applyUpsert) and it is
+	// bookkeeping, so a rung change leaves a standing approval where it is.
+	Escalation *Escalation `json:"escalation,omitempty"`
 }
 
 // Intent is a committed attempt: the launch is recorded before it is started,
@@ -405,6 +487,11 @@ func (w WorkItem) clone() WorkItem {
 		at := *w.SpentApprovalAt
 		w.SpentApprovalAt = &at
 	}
+	if w.Escalation != nil {
+		e := *w.Escalation
+		e.Transitions = copyOf(w.Escalation.Transitions)
+		w.Escalation = &e
+	}
 	w.DependsOn = copyOf(w.DependsOn)
 	return w
 }
@@ -512,7 +599,7 @@ func AttemptsUnder(s State, itemID string, approvalAt time.Time) int {
 // both is the safe direction — it stops calls, never starts one.
 func DecisionCalls(s State, now time.Time) Counters {
 	now = now.UTC()
-	hour, day := now.Truncate(time.Hour), now.Truncate(24*time.Hour)
+	hour, day := now.Truncate(time.Hour), dayStart(now)
 	var c Counters
 	for _, d := range s.Decisions {
 		at := d.At.UTC()
@@ -531,8 +618,13 @@ func DecisionCalls(s State, now time.Time) Counters {
 // daemon records about the attempts at an item rather than what the person
 // approves. It is a skip list and not an include list on purpose, so a field
 // added to WorkItem later is digested without anyone remembering to add it
-// here (TestSpecDigestCoversEveryFieldButTheBookkeepingList pins the six).
-var bookkeepingFields = []string{"phase", "run_id", "spent_approval_at", "attempts", "note", "approved"}
+// here (TestSpecDigestCoversEveryFieldButTheBookkeepingList pins the seven).
+//
+// The ledger is one of them, and it is the one whose absence would stop the
+// ladder: the daemon writes a transition every time it moves an item, and a
+// digested ledger would revoke the approval at each move, so an item would
+// have to be approved again for every rung it climbed (D2042, G12).
+var bookkeepingFields = []string{"phase", "run_id", "spent_approval_at", "attempts", "note", "approved", "escalation"}
 
 // SpecDigest is the digest of everything a person approves when they approve
 // a work item: every field but the bookkeeping list, hashed in declaration
@@ -542,6 +634,17 @@ var bookkeepingFields = []string{"phase", "run_id", "spent_approval_at", "attemp
 // function, so what the person was shown and what is about to start cannot
 // drift apart.
 func SpecDigest(w WorkItem) Digest {
+	return specDigestSkipping(w, "")
+}
+
+// specDigestSkipping is SpecDigest's walk with one field left out beside the
+// bookkeeping list: the digest a release that did not model that field
+// computed. Migrate's 2 -> 3 step is its only caller, and it computes the
+// digest release 2 stored for an item — its WorkItem carried no `spec`, so
+// its walk skipped one field fewer than this one's. It has to keep answering
+// what that release answered for as long as a node from it may still be read,
+// which is the whole of what a migration is.
+func specDigestSkipping(w WorkItem, skip string) Digest {
 	// Over the item as it is written, so that the empty case has one spelling:
 	// an item built in Go carries a nil slice where the document carries [].
 	// A digest that read those as two specs would revoke an approval by
@@ -556,7 +659,7 @@ func SpecDigest(w WorkItem) Digest {
 		if tag := f.Tag.Get("json"); tag != "" {
 			name = strings.Split(tag, ",")[0]
 		}
-		if name == "" || name == "-" || isBookkeeping(name) {
+		if name == "" || name == "-" || name == skip || isBookkeeping(name) {
 			continue
 		}
 		raw, err := json.Marshal(v.Field(i).Interface())
@@ -595,19 +698,83 @@ var digestRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 // already carries a later field is stamped, not rewritten, and nothing here
 // clears a field.
 //
+// The steps are one version at a time, each with its own reason:
+//
+//   - 0 is the node from before the schema carried a version, so the stamp is
+//     the whole step.
+//   - 1 is the node from before the ladder kept its ledger. The ledger is
+//     optional — an item the ladder has not acted on carries none, and a rung
+//     is what a ledger is for — so the stamp is the whole step here too, and
+//     the daemon's next tick writes the first transition of an item it acts on.
+//   - 2 is the node from before a work item carried a spec, which SpecDigest
+//     covers. This is the one step that rewrites something a person wrote:
+//     the walk sees one field more, so every digest stored under the old walk
+//     is a digest the item no longer digests to, and a standing approval left
+//     that way is an approval that never launches again (nextAttempt refuses
+//     it, recovery abandons the intent as an edited spec, and the ladder has
+//     nothing to stand on). redigestV2 rewrites exactly those and nothing else.
+//
 // A state newer than this release is left exactly as it is and reported as
 // unchanged: the caller's validator refuses it, which is the fail-closed
 // answer for a document a later release wrote.
 func Migrate(s State) (State, bool) {
-	if s.SchemaVersion != 0 {
-		// This release's version, a later one, or a number that is not a
-		// version at all: either there is nothing to raise or the number is
-		// one this release must refuse rather than guess at, and the validator
-		// is what refuses it.
-		return s, false
+	changed := false
+	for s.SchemaVersion >= 0 && s.SchemaVersion < SchemaVersion {
+		switch s.SchemaVersion {
+		case 0:
+			s.SchemaVersion = 1
+		case 1:
+			s.SchemaVersion = 2
+		case 2:
+			s.SchemaVersion = 3
+			redigestV2(&s)
+		default:
+			// A version with no step of its own is one this release cannot
+			// place — the chain has a hole in it, which is a bug here rather
+			// than in the document. Stop, and let the validator refuse the
+			// number rather than stamp it forward as something it is not.
+			return s, changed
+		}
+		changed = true
 	}
-	s.SchemaVersion = SchemaVersion
-	return s, true
+	return s, changed
+}
+
+// redigestV2 rewrites the digests a schema version 2 document stored, so that
+// an approval a person gave before `spec` joined the walk is still the item's
+// own after it.
+//
+// Only a digest that equals what the old walk answers for its own item is
+// touched. That is what makes the step exact: a stored digest that was the
+// item's is rewritten to the digest the item has now, and one that was not —
+// an approval an edit has since moved past, an intent left behind by that edit
+// — is left as it is, because there is no spec it ever matched and rewriting
+// it would be this release approving something nobody read. Rewriting only the
+// values equal to the old walk's answer also keeps every agreement between
+// them: two digests that were equal to it were equal to each other, and two
+// that were not stay as unequal as they were (approvalCovers, normalRunsUnder).
+//
+// An intent whose item the node no longer carries is left alone: the item was
+// archived out, there is nothing to compute a digest from, and no plan reaches
+// an archived item.
+func redigestV2(s *State) {
+	items := make(map[string]WorkItem, len(s.WorkItems))
+	for _, w := range s.WorkItems {
+		items[w.ID] = w
+	}
+	for i := range s.WorkItems {
+		w := &s.WorkItems[i]
+		if w.Approved != nil && w.Approved.SpecDigest == specDigestSkipping(*w, "spec") {
+			w.Approved.SpecDigest = SpecDigest(*w)
+		}
+	}
+	for i := range s.Intents {
+		w, ok := items[IntentItem(s.Intents[i].ID)]
+		if !ok || s.Intents[i].SpecDigest != specDigestSkipping(w, "spec") {
+			continue
+		}
+		s.Intents[i].SpecDigest = SpecDigest(w)
+	}
 }
 
 // OverCap reports whether the node is over its size target. The daemon fails
@@ -653,11 +820,12 @@ const (
 // exactly the one none of the three rules above reaches, and it is not one
 // retention may leave without its run.
 //
-// A resolved decision younger than the same window is never evicted either,
-// and for the same reason: the decision-agent call counts are derived from
-// the decisions the document carries, so dropping one inside the window a cap
-// counts over would lower the count — the cap moving the other way, which is
-// the one direction it must never move.
+// A resolved decision the call count reads is never evicted either, and for
+// the same reason: the decision-agent call counts are derived from the
+// decisions the document carries, so dropping one inside the window
+// DecisionCalls reads — the day now falls in, and not the rolling one the
+// spawn caps use — would lower the count, the cap moving the other way, which
+// is the one direction it must never move (countedDecision).
 //
 // An item that has left the work list protects nothing: nothing relaunches
 // under its approval, so its intents age out with the window like any other.
@@ -752,11 +920,22 @@ func retainDecisions(decisions []Decision, now time.Time) []Decision {
 // countedDecision reports whether DecisionCalls counts a decision at now,
 // which is what makes it un-evictable: the count is derived from the
 // decisions the document carries, so losing one inside the window would lower
-// it. The window is RetentionWindow, the longest one a cap counts over, which
-// covers the hour and the day both with room to spare.
+// it.
+//
+// The window is the one DecisionCalls reads and nothing wider: the day now
+// falls in, whose start is the boundary that function truncates to (the hour
+// is inside it, both being truncations of the same now). RetentionWindow is
+// the safe direction and the wasteful one — it is the spawn caps' rolling day,
+// so a decision made yesterday evening would still be un-evictable hours after
+// no cap counts it, and retention, unable to drop a day of the call ledger,
+// would drop a person's facts to make room for the loop's bookkeeping instead.
+// What this protects is exactly what an eviction could move a count by.
 func countedDecision(d Decision, now time.Time) bool {
-	return d.Resolved() && now.Sub(d.At) < RetentionWindow
+	return d.Resolved() && !d.At.UTC().Before(dayStart(now))
 }
+
+// dayStart is the boundary DecisionCalls reads the day's count from.
+func dayStart(now time.Time) time.Time { return now.UTC().Truncate(24 * time.Hour) }
 
 // retainFacts keeps the facts whose keys sort first past keptFacts. A fact has
 // no age to sort by — the document keeps none, a fact being durable by

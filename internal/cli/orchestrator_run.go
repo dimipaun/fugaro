@@ -19,6 +19,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
+	"github.com/dimipaun/fugaro/internal/orchestrator/decide"
+	"github.com/dimipaun/fugaro/internal/orchestrator/endpoint"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -63,6 +65,11 @@ type orchestratorRunOptions struct {
 	// taken for that cycle and released with it, so a single pass never keeps
 	// the id from the daemon that drives it.
 	once bool
+	// decide is --decide: whether this daemon wakes the decision agent on the
+	// judgement cases the spec's table names (O13). It is off by default,
+	// because a judgement is a fresh child on the person's own Claude login
+	// (D1228) and a daemon nobody asked to judge anything makes no model call.
+	decide bool
 }
 
 func newOrchestratorRunCmd() *cobra.Command {
@@ -89,6 +96,7 @@ func newOrchestratorRunCmd() *cobra.Command {
 	f.StringVar(&o.binary, "binary", "", "the stable path of the fugaro binary the login unit names: the daemon exits cleanly when the version there differs from this process")
 	f.DurationVar(&o.interval, "interval", 30*time.Second, "how long to wait between cycles when the node says nothing moved")
 	f.BoolVar(&o.once, "once", false, "run one cycle and exit, releasing the lease, instead of driving the id until it is stopped")
+	f.BoolVar(&o.decide, "decide", false, "wake the decision agent on the judgement cases code cannot decide (a run out of retries, an attempt that never started, a result no phase reads): each judgement is a model call on your own Claude login")
 	addCloudFlags(cmd, &o.cloudOptions)
 	return cmd
 }
@@ -134,9 +142,12 @@ func runOrchestratorRun(cmd *cobra.Command, o *orchestratorRunOptions) error {
 	d := &orchestratorDaemon{
 		lc: lc, id: id, db: db, env: env, node: node, lease: lease, holder: holder,
 		interval: o.interval, beat: orchestrator.LeaseBeat,
-		binary: o.binary, running: Version, once: o.once,
+		binary: o.binary, running: Version, once: o.once, decide: o.decide,
 		out: cmd.OutOrStdout(), warn: cmd.ErrOrStderr(),
 		launched: &launchInFlight{},
+		// The endpoint's registry goes under the user's state directory, read
+		// from the process's own environment the way the cached brief is.
+		registryGetenv: os.Getenv, registryGOOS: runtime.GOOS,
 	}
 	d.cache = &orchestrator.BriefCacheWriter{Getenv: os.Getenv, GOOS: runtime.GOOS, ID: id, Log: func(err error) {
 		fmt.Fprintf(d.warn, "orchestrator %s: the session-start cache was not written: %s\n", d.id, safetext.OneLine(err.Error()))
@@ -165,22 +176,78 @@ type orchestratorDaemon struct {
 	// below it is a claim that lapses between beats, and the person's own knob
 	// is the interval.
 	beat time.Duration
-	// once is --once: one cycle, then the clean exit.
+	// once is --once: one cycle, then the clean exit, and decide is --decide:
+	// whether the tick this daemon builds reaches the decision agent at all.
 	once     bool
+	decide   bool
 	tick     *orchestrator.Tick
 	cache    *orchestrator.BriefCacheWriter
 	launched *launchInFlight
 	out      io.Writer
 	warn     io.Writer
+	// outputLock is what keeps the two a single stream once the local endpoint
+	// is up: see sealOutput.
+	outputLock *sync.Mutex
+	// endpoint is the local endpoint this daemon serves and the registry file
+	// that tells a reader on this machine where it is, nil while none is
+	// running: the daemon is the process that starts and stops it (CG13b).
+	endpoint *servedEndpoint
+	// feed is the last tick the daemon left, which is what the endpoint serves
+	// (see endpointFeed).
+	feed endpointFeed
+	// registryGetenv and registryGOOS are where the endpoint's registry file is
+	// placed: the user's state directory through localcfg.UserDir, and the
+	// platform its fallback is chosen for. They are fields rather than a read
+	// of the environment inside the endpoint for the reason the cache writer's
+	// are: a test passes its own, so no write here can reach a developer's own
+	// state directory. A nil getenv is a daemon that serves no endpoint at all
+	// -- runOrchestratorRun always sets one, and a test that is not about the
+	// endpoint does not.
+	registryGetenv func(string) string
+	registryGOOS   string
 	// wake is where a cycle waits for the next one. Production waits on the
 	// node's own stream and the interval; a test replaces it with one that
 	// ends the loop, which is the only way to run this loop deterministically.
 	wake func(context.Context) error
 }
 
+// sealOutput gives the daemon's two streams one lock, once, for the daemon's
+// life.
+//
+// From the moment the local endpoint is served the warning stream has a second
+// writer: the endpoint reports a request it refused from that connection's own
+// goroutine, while this daemon writes its lines from its loop (CG13b). An
+// io.Writer promises nothing about two goroutines at once, and a test's own
+// buffer promises even less. The streams are wrapped here rather than where the
+// endpoint is started because the run view and the launcher capture these two
+// writers when the first tick is built, before any endpoint exists, and a line
+// they write must be serialised against the endpoint's as well.
+func (d *orchestratorDaemon) sealOutput() {
+	if d.outputLock != nil {
+		return
+	}
+	d.outputLock = new(sync.Mutex)
+	d.out = syncWriter{mu: d.outputLock, w: d.out}
+	d.warn = syncWriter{mu: d.outputLock, w: d.warn}
+}
+
+// syncWriter serialises writes to w, so the daemon's loop and the endpoint's
+// connection goroutines can share one stream.
+type syncWriter struct {
+	mu *sync.Mutex
+	w  io.Writer
+}
+
+func (s syncWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
+}
+
 // start is the whole life of the daemon: converge nothing, learn whether an
 // update is due, take the lease, and then tick until something stops it.
 func (d *orchestratorDaemon) start(ctx context.Context) error {
+	d.sealOutput()
 	if due, err := d.updateDue(ctx); err != nil {
 		return err
 	} else if due {
@@ -203,7 +270,128 @@ func (d *orchestratorDaemon) start(ctx context.Context) error {
 	}
 	d.tick = tick
 	fmt.Fprintf(d.out, "orchestrator %s: driving it as %s, one cycle every %s\n", safetext.Field(d.id), safetext.Field(d.holder), d.interval)
+	d.serve(ctx)
+	defer d.unserve(ctx)
 	return d.loop(ctx)
+}
+
+// endpointStopGrace bounds the endpoint's shutdown, which is a listener and the
+// streams on it rather than the daemon's own exit: a reader that has to notice
+// a closed connection must not hold the daemon open past this.
+const endpointStopGrace = 5 * time.Second
+
+// servedEndpoint is one running endpoint with the registry file that names it.
+type servedEndpoint struct {
+	srv    *endpoint.Server
+	holder *endpoint.Holder
+}
+
+// serve starts the local endpoint this daemon answers on and writes its
+// registry file, once, at start-up (CG13b).
+//
+// Nothing here fails the daemon. The endpoint is what a reader on this machine
+// prefers, and the node and the session-start cache are what it reads without
+// one (T5): a listener that cannot bind, or a state directory that cannot be
+// written, is a line in the daemon's output and never a start-up that stops.
+// That is also the whole of what `fugaro update` owes this file (F28): the
+// daemon creates its own local file, so there is nothing to migrate and no
+// operator step, and a machine whose home is read-only drives its id as before.
+func (d *orchestratorDaemon) serve(ctx context.Context) {
+	if d.registryGetenv == nil {
+		return
+	}
+	srv, err := endpoint.Start(ctx, endpoint.Options{ID: d.id, Snapshot: d.feed.snapshot, Log: func(err error) {
+		fmt.Fprintf(d.warn, "orchestrator %s: %s\n", safetext.Field(d.id), safetext.OneLine(err.Error()))
+	}})
+	if err != nil {
+		fmt.Fprintf(d.warn, "orchestrator %s: the local endpoint was not started: %s\n", safetext.Field(d.id), safetext.OneLine(err.Error()))
+		return
+	}
+	holder, err := endpoint.Hold(d.registryGetenv, d.registryGOOS, endpoint.Registry{
+		ID: d.id, PID: os.Getpid(), Addr: srv.Addr(),
+		Token: srv.Token(), Nonce: srv.Nonce(), Started: time.Now().UTC(),
+	})
+	if err != nil {
+		fmt.Fprintf(d.warn, "orchestrator %s: the local endpoint was not started: %s\n", safetext.Field(d.id), safetext.OneLine(err.Error()))
+		closeEndpoint(srv, d.warn)
+		return
+	}
+	d.endpoint = &servedEndpoint{srv: srv, holder: holder}
+	fmt.Fprintf(d.out, "orchestrator %s: the local endpoint answers on %s for a reader on this machine\n", safetext.Field(d.id), srv.Addr())
+}
+
+// unserve is the clean shutdown the daemon already performs, with the
+// endpoint's half of it: the registry file goes first, so no reader is told
+// about an endpoint that is stopping, and the listener closes after it. A
+// failure here is a warning and never an exit code: the process is leaving
+// either way, and a file left behind is one the next reader finds dead.
+func (d *orchestratorDaemon) unserve(ctx context.Context) {
+	e := d.endpoint
+	if e == nil {
+		return
+	}
+	d.endpoint = nil
+	if err := e.holder.Remove(); err != nil {
+		fmt.Fprintf(d.warn, "orchestrator %s: the local endpoint's registry file was not removed: %s\n", safetext.Field(d.id), safetext.OneLine(err.Error()))
+	}
+	closeEndpoint(e.srv, d.warn)
+}
+
+// closeEndpoint stops a listener that is already serving, with a grace of its
+// own rather than the caller's context: one of the exits that reach here is
+// that context ending -- Ctrl-C at a terminal, the unit's SIGTERM -- and a
+// shutdown the cancellation aborted would leave the port bound by a process
+// that is going.
+func closeEndpoint(srv *endpoint.Server, warn io.Writer) {
+	ctx, cancel := context.WithTimeout(context.Background(), endpointStopGrace)
+	defer cancel()
+	if err := srv.Close(ctx); err != nil {
+		fmt.Fprintf(warn, "the local endpoint did not stop cleanly: %s\n", safetext.OneLine(err.Error()))
+	}
+}
+
+// endpointFeed is the last tick the daemon left: the state, the server time it
+// was read at, and whether a cycle has finished at all. It is what the local
+// endpoint serves.
+//
+// It is held in memory rather than read from the node per request because the
+// endpoint exists to save the reader a cloud read: a request that read the
+// database would be the cache file with a listener in front of it.
+type endpointFeed struct {
+	mu     sync.Mutex
+	state  orchestrator.State
+	at     time.Time
+	ticked bool
+}
+
+// snapshot is what the endpoint's Options.Snapshot is: the state of the last
+// cycle and the server time it was read at, or false until a cycle has finished
+// (H3, the endpoint's own 503).
+func (f *endpointFeed) snapshot() (orchestrator.State, time.Time, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.state, f.at, f.ticked
+}
+
+// publish hands the endpoint the state the cycle just left, so a reader on this
+// machine sees the tick the node sees without reading the database itself. It
+// is skipped while no endpoint is running, and a read that fails leaves the
+// endpoint on the tick before: the next cycle tries again.
+func (d *orchestratorDaemon) publish(ctx context.Context) {
+	if d.endpoint == nil {
+		return
+	}
+	s, _, err := d.node.Load(ctx)
+	if err != nil {
+		return
+	}
+	now, ok := d.db.ServerNow()
+	if !ok {
+		return
+	}
+	d.feed.mu.Lock()
+	defer d.feed.mu.Unlock()
+	d.feed.state, d.feed.at, d.feed.ticked = s, now, true
 }
 
 // stateVersion is the schema_version the state node carries, and whether the
@@ -326,6 +514,10 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 	if err != nil {
 		return nil, err
 	}
+	judge, err := d.decideSeams(ctx)
+	if err != nil {
+		return nil, err
+	}
 	return &orchestrator.Tick{
 		Store:    d.node,
 		Runs:     &orchestratorRunView{bucket: d.env.bucket.Bucket, env: d.env, warn: d.warn},
@@ -341,17 +533,193 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 		// returns at its nil check: the daemon would stop a run nobody hears
 		// about and pause on a spend question nobody sees.
 		Notifier: orchestrator.LogSink{W: d.out},
-		Now:      d.db.ServerNow,
+		Triage:   orchestratorTriageSeams(d),
+		// The decision agent is the one step a daemon makes that a person has
+		// to ask for: the seam is empty unless --decide was given, and a tick
+		// with none judges nothing however many cases its node carries (O13).
+		Decide: judge,
+		Now:    d.db.ServerNow,
 	}, nil
 }
 
-// caps are the daemon's guardrails: the project's orchestrator block with the
-// values Fugaro ships filled in, and the kill switch. A switch that cannot be
-// read is ON: a daemon that cannot tell is a daemon that starts nothing.
-func (d *orchestratorDaemon) caps(ctx context.Context) (orchestrator.Caps, error) {
+// decideSeams is the decision agent this daemon reaches when it was started
+// with --decide (O13), and no seam at all when it was not.
+//
+// The runner is O12's, whole: the bounds (six calls an hour, forty a day, a
+// three-turn call), the brief, the output schema, the deny rules a coding
+// agent's session has, and the class-to-model rule are all its own, and nothing
+// about them is spelled again here. What this function hands it is the three
+// things only the daemon has — the merged policy's models, the audit log the
+// reasoning goes to and the fence is read from, and the bucket the evidence
+// beside a case is read out of — and the server clock every stamp in a decision
+// comes from (D1230).
+func (d *orchestratorDaemon) decideSeams(ctx context.Context) (orchestrator.DecideSeams, error) {
+	if !d.decide {
+		return orchestrator.DecideSeams{}, nil
+	}
+	blk, err := d.orchestratorBlock(ctx)
+	if err != nil {
+		return orchestrator.DecideSeams{}, err
+	}
+	log, err := orchestrator.NewAudit(d.db, d.id, d.db.ServerNow)
+	if err != nil {
+		return orchestrator.DecideSeams{}, err
+	}
+	return orchestrator.DecideSeams{
+		Agent: &orchestratorDecider{
+			runner: &decide.Runner{
+				Agent:  decide.Claude{},
+				Models: blk.DecisionModelPerClass,
+				Audit:  log,
+				Now:    d.db.ServerNow,
+			},
+			bucket: d.env.bucket.Bucket,
+			warn:   d.warn,
+		},
+		Log: &orchestratorDecideLog{db: d.db, id: d.id},
+	}, nil
+}
+
+// orchestratorDecideLog is the fence O13 reads and O12 writes to: O3's audit
+// log, read by the derived id of one case and appended to under the same id.
+//
+// It is the same node the triage appends to, and the same log: what makes a
+// judgement once-per-attempt is the id its subject and transition derive, so a
+// repeated cycle reads a line rather than making a second call, and a retry of
+// the append writes the same key rather than a second line.
+type orchestratorDecideLog struct {
+	db *rtdb.Client
+	id string
+}
+
+// Judged reports whether a case's line is already in the log (DecideLog).
+func (l *orchestratorDecideLog) Judged(ctx context.Context, id string) (bool, error) {
+	path, err := orchestrator.PathAudit(l.id)
+	if err != nil {
+		return false, err
+	}
+	var e orchestrator.Entry
+	found, err := l.db.Get(ctx, path+"/"+id, &e)
+	if err != nil {
+		return false, err
+	}
+	return found, nil
+}
+
+// Append writes one judgement (DecideLog) under the id its subject and its
+// transition derive.
+func (l *orchestratorDecideLog) Append(ctx context.Context, e orchestrator.Entry) error {
+	log, err := orchestrator.NewAudit(l.db, l.id, l.db.ServerNow)
+	if err != nil {
+		return err
+	}
+	_, err = log.Append(ctx, e)
+	return err
+}
+
+// orchestratorDecider is one judgement (Decider, O13): O12's runner, handed the
+// case's item, the evidence the run behind it left and the state the cycle
+// read.
+//
+// The evidence is the run's own record — the changed paths O1's classifier
+// reads and the reason the run ended with — read here rather than carried on
+// the case, because the tick's run view is asked about the attempts that have
+// not reported and a judgement is about one that has. Neither half is a
+// decision: the paths pick the model by code (D1234) and the reason is text the
+// brief fences as untrusted (O12).
+type orchestratorDecider struct {
+	runner *decide.Runner
+	bucket *blob.Bucket
+	warn   io.Writer
+}
+
+// Decide makes one judgement about one case (Decider).
+//
+// A refusal is not a failure and is not handed back as one: O12 refuses a call
+// the caps do not allow before anything is spent (ErrCallCap), and a daemon
+// held back by its own bound is not a daemon that is going wrong (its own
+// reading, D1228). Everything else — a class with no model, a child that
+// failed, an answer this release cannot read — is the call's own error, which
+// the tick reports on the cycle and never raises out of it.
+func (a *orchestratorDecider) Decide(ctx context.Context, s orchestrator.State, c orchestrator.DecideCase) (orchestrator.DecideResult, error) {
+	paths, failure := a.evidence(ctx, c.Attempt.RunID)
+	dec, err := a.runner.Decide(ctx, decide.Request{State: s, ItemID: c.ItemID, Paths: paths, Failure: failure})
+	res := orchestrator.DecideResult{Next: dec.Next, Outcome: dec.Outcome, Text: decisionLine(dec)}
+	// An answer was read — whatever it asked for, an answer that asks for no
+	// change included — and a call that was refused before it was made, or one
+	// whose answer this release could not read, is left unfenced so the caps
+	// and the breaker count the retries (G10).
+	res.Answered = res.Called() && (dec.Outcome == orchestrator.CycleProgress || dec.Outcome == orchestrator.CycleEmpty)
+	if errors.Is(err, decide.ErrCallCap) {
+		return res, nil
+	}
+	return res, err
+}
+
+// decisionLine is what the audit log carries for one judgement: the class and
+// the model it ran as, and what the model reasoned. The log clips it to its own
+// bound, and the reasoning is a model's own words about one item — the state,
+// not this line, is where the effect of a judgement lives.
+func decisionLine(dec decide.Decision) string {
+	line := string(dec.Class) + " (" + dec.Model + ")"
+	if dec.Reasoning == "" {
+		return line
+	}
+	return line + ": " + dec.Reasoning
+}
+
+// evidence is what the run behind one attempt left for a judgement: the changed
+// paths O1's classifier reads and the reason its record carries for how the run
+// ended.
+//
+// A path set the record marks truncated is not handed to the classifier at all.
+// The class picks the model, and a set cut short is one the classifier can only
+// under-read; its own rule is that a change whose paths it could not read is
+// Sensitive, which is the direction a judgement fails in (D1234, O1's
+// allowlist). A run the bucket does not know, or one whose record cannot be
+// read, is the same answer and never a failure: the case is about the item, and
+// the agent judges it with what there is.
+func (a *orchestratorDecider) evidence(ctx context.Context, runID string) ([]string, string) {
+	if runID == "" {
+		return nil, ""
+	}
+	short := task.ShortRun(oneLine(runID))
+	slug, run, err := runstore.Locate(ctx, a.bucket, runID)
+	if err != nil {
+		if !errors.Is(err, runstore.ErrNotFound) {
+			fmt.Fprintf(a.warn, "run %s: what a judgement would read of it could not be found: %s\n", short, safetext.OneLine(err.Error()))
+		}
+		return nil, ""
+	}
+	rec, err := runstore.Open(a.bucket, slug, run).ReadRecord(ctx)
+	if err != nil {
+		if !errors.Is(err, runstore.ErrNotFound) {
+			fmt.Fprintf(a.warn, "run %s: what a judgement would read of it could not be read: %s\n", short, safetext.OneLine(err.Error()))
+		}
+		return nil, ""
+	}
+	if rec == nil {
+		return nil, ""
+	}
+	if files := rec.ChangedFiles.Bounded(); files != nil && !files.Truncated {
+		return files.Paths, rec.Reason
+	}
+	return nil, rec.Reason
+}
+
+// orchestratorBlock is O4's orchestrator block as this machine reads it: the
+// project's published block, with Fugaro's ceiling over it and this machine's
+// own config under that, and every key it still leaves unset filled to its own
+// floor (localcfg.OrchestratorEffective, policy.WithDefaults).
+//
+// The caps and the decision models are two halves of this one block, so one
+// function reads it: the daemon's guardrails and the model each class of
+// judgement runs on are the same policy, and a second reader spelling the same
+// merge is a second place a layer could be left out of.
+func (d *orchestratorDaemon) orchestratorBlock(ctx context.Context) (policy.Orchestrator, error) {
 	published, _, err := projectPolicyRead(ctx, d.lc)
 	if err != nil {
-		return orchestrator.Caps{}, err
+		return policy.Orchestrator{}, err
 	}
 	var pub *policy.Orchestrator
 	if published != nil {
@@ -361,7 +729,17 @@ func (d *orchestratorDaemon) caps(ctx context.Context) (orchestrator.Caps, error
 	if eff := d.lc.OrchestratorEffective(pub); eff != nil {
 		blk = *eff
 	}
-	blk = blk.WithDefaults(int64(d.lc.MaxParallel))
+	return blk.WithDefaults(int64(d.lc.MaxParallel)), nil
+}
+
+// caps are the daemon's guardrails: the project's orchestrator block with the
+// values Fugaro ships filled in, and the kill switch. A switch that cannot be
+// read is ON: a daemon that cannot tell is a daemon that starts nothing.
+func (d *orchestratorDaemon) caps(ctx context.Context) (orchestrator.Caps, error) {
+	blk, err := d.orchestratorBlock(ctx)
+	if err != nil {
+		return orchestrator.Caps{}, err
+	}
 	on := true
 	var kg budget.Kill
 	found, err := d.db.Get(ctx, budget.PathKillGlobal, &kg)
@@ -443,6 +821,7 @@ func (d *orchestratorDaemon) loop(ctx context.Context) error {
 		d.refreshCaps(ctx)
 		rep, err := orchestrator.StepWithCache(ctx, d.tick, d.cache)
 		d.report(rep, err)
+		d.publish(ctx)
 		d.rearmBreaker(ctx)
 		if d.once {
 			return d.oneCycle(ctx, err)
@@ -590,7 +969,14 @@ func (d *orchestratorDaemon) report(rep orchestrator.Report, err error) {
 	if err != nil {
 		return
 	}
-	fmt.Fprintf(d.out, "orchestrator %s: %s (%d folded, %d carried)\n", safetext.Field(d.id), safetext.OneLine(string(rep.Outcome)), rep.Folded, rep.Carried)
+	fmt.Fprintf(d.out, "orchestrator %s: %s (%d folded, %d carried, %d judged)\n", safetext.Field(d.id), safetext.OneLine(string(rep.Outcome)), rep.Folded, rep.Carried, rep.Decided)
+	// A judgement that failed is said and not raised: the cycle it was part of
+	// still folded its runs and still carries its items, and what a person
+	// reads here is that one case went unanswered — the fence was not written,
+	// so the next cycle offers the same case to the agent again.
+	if rep.DecideErr != nil {
+		fmt.Fprintf(d.warn, "orchestrator %s: a judgement could not be made: %s\n", safetext.Field(d.id), safetext.OneLine(rep.DecideErr.Error()))
+	}
 }
 
 // wait is the daemon's wait between cycles: the node's own stream — the
@@ -837,7 +1223,7 @@ func (v *orchestratorRunView) executionOver(ctx context.Context, slug, runID str
 		// daemon's output, and every surface names a run the way a lookup takes
 		// it (spec.md §1, D1705).
 		fmt.Fprintf(v.warn, "run %s/%s: the state of its execution could not be read: %s\n",
-			slug, task.ShortRun(runID), safetext.OneLine(err.Error()))
+			slug, task.ShortRun(oneLine(runID)), safetext.OneLine(err.Error()))
 		return "", false
 	}
 	if x == nil {

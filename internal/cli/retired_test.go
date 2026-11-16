@@ -27,7 +27,7 @@ func TestInitIsRetiredAndSaysBothNames(t *testing.T) {
 	firstRunEnv(t)
 	for _, args := range [][]string{
 		{"init"},
-		{"init", "--yes"},
+		{"init"},
 		{"init", "--repo", "."},
 		{"init", "--create-project", "--gcp-project", "acme-prod"},
 		{"init", "--json"},
@@ -120,7 +120,7 @@ func TestRetiredInitAppliesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--yes", "--repo", ".")
+	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", ".")
 	if err == nil {
 		t.Fatal("the tombstone exited 0")
 	}
@@ -145,7 +145,7 @@ func TestRetiredInitAppliesNothing(t *testing.T) {
 	// And with no config to read at all: a run that loaded it would refuse
 	// with the load error instead of the tombstone's sentence.
 	t.Setenv("FUGARO_CONFIG", filepath.Join(t.TempDir(), "absent.yaml"))
-	_, _, err = executeStdin(t, "", "init", "--yes")
+	_, _, err = executeStdin(t, "", "init")
 	if err == nil || !strings.Contains(ErrorText(err), retiredInitMessage) {
 		t.Errorf("with no config: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestRetiredInitConvergesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--yes")
+	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init")
 	if err == nil {
 		t.Fatal("the tombstone exited 0")
 	}
@@ -218,7 +218,7 @@ func TestConfigInitIsUntouched(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "fugaro.yaml")); err != nil {
 		t.Fatal(err)
 	}
-	out, _, err := execute(t, "config", "init", "--project", "aurora", "--yes")
+	out, _, err := execute(t, "config", "init", "--project", "aurora")
 	if err != nil || !strings.Contains(out, "wrote") {
 		t.Fatalf("fugaro config init: out %q, err %v", out, err)
 	}
