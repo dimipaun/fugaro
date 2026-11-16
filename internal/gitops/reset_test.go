@@ -55,6 +55,72 @@ func TestBakedCheckoutResetRefusesAGitdirFileAlternatesOrSubmoduleHooks(t *testi
 	}
 }
 
+// A submodule's working directory is refused when its .git file names a git
+// directory the checkout's own .git/modules does not hold (F27). clean -ffdx
+// never reaches that directory — the path is tracked, so the whole submodule
+// directory is left alone — and the configuration git reads from it for the
+// submodule goes on being read in the checkout this run works in: the run's own
+// git runs the submodule's own status from the top level, so a core.fsmonitor
+// the image wrote into that directory is a command of the image's that runs
+// there.
+//
+// The second case is the shape git itself writes: a .git file naming the
+// checkout's own .git/modules is accepted, so what is refused is the directory
+// the file names and not the file.
+//
+// Mutation (run, restored): drop the refuseSubmoduleWorktrees call from
+// refuseUnresettableBakedGit. Both entry points return nil for the first case —
+// "BakedGitOrigin err = <nil>, want a refusal naming ...", and the same for
+// ResetBakedGit — so the external git directory outlives the reset.
+func TestBakedCheckoutResetRefusesASubmoduleWorktreeNamingAnotherGitdir(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		want  string
+		plant func(t *testing.T, repo *Repo)
+	}{
+		{"a git directory outside the checkout", "this checkout's own .git/modules does not hold", func(t *testing.T, repo *Repo) {
+			plantGitlink(t, repo, "vendor/dep")
+			writeAt(t, filepath.Join(repo.Dir, "vendor", "dep", ".git"), "gitdir: "+t.TempDir()+"\n")
+		}},
+		{"the checkout's own .git/modules", "", func(t *testing.T, repo *Repo) {
+			plantGitlink(t, repo, "vendor/dep")
+			if err := os.MkdirAll(filepath.Join(repo.Dir, ".git", "modules", "dep"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeAt(t, filepath.Join(repo.Dir, "vendor", "dep", ".git"), "gitdir: ../../.git/modules/dep\n")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, remote := setup(t)
+			tc.plant(t, repo)
+			_, err := repo.BakedGitOrigin(ctx)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("BakedGitOrigin err = %v, want the checkout accepted", err)
+				}
+				if err := repo.ResetBakedGit(ctx, remote, filepath.Join(t.TempDir(), "hooks")); err != nil {
+					t.Fatalf("ResetBakedGit err = %v, want the checkout accepted", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("BakedGitOrigin err = %v, want a refusal naming %q", err, tc.want)
+			}
+			if err := repo.ResetBakedGit(ctx, remote, filepath.Join(t.TempDir(), "hooks")); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("ResetBakedGit err = %v, want a refusal naming %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// plantGitlink records path in the index as a submodule, the way a checkout of
+// one does: what makes git leave the directory alone through a clean -ffdx is
+// the entry, not the .git file in it.
+func plantGitlink(t *testing.T, repo *Repo, path string) {
+	t.Helper()
+	testutil.Git(t, repo.Dir, "update-index", "--add", "--cacheinfo", "160000,"+strings.Repeat("a", 40)+","+path)
+}
+
 // ResetBakedGit leaves the checkout in the state the run works from: a
 // configuration holding the origin the run computed and the hook directory it
 // owns, and nothing the image's build wrote into it — no push URL, no URL

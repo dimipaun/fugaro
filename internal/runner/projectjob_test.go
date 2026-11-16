@@ -634,9 +634,11 @@ func TestBakedCheckoutWithAnotherOriginHalts(t *testing.T) {
 // A baked .git this run cannot put into a fixed state halts the run, and the
 // halt names which shape it met (D2308): a .git that is a file naming a git
 // directory elsewhere, objects complemented by a store outside the checkout, a
-// commondir, and a submodule's own configuration or hooks — each of them a way
-// for what this run reads and runs to be decided by something other than the
-// checkout it works on, and none of them reachable by a reset of this .git.
+// commondir, a submodule's own configuration or hooks, and a submodule's
+// working directory whose .git file names a git directory outside this
+// checkout's own .git/modules — each of them a way for what this run reads and
+// runs to be decided by something other than the checkout it works on, and none
+// of them reachable by a reset of this .git.
 //
 // Mutation (run, restored): drop the shape refusals (refuseUnresettableBakedGit
 // returns nil). Every row then resets the checkout and runs.
@@ -665,6 +667,14 @@ func TestBakedCheckoutWithAGitdirFileAlternatesOrSubmoduleHooksHalts(t *testing.
 		}},
 		{"a submodule's hooks", "a submodule's hook directory", func(t *testing.T, b *bk, dir string) {
 			bakedHook(t, filepath.Join(dir, ".git", "modules", "sub", "hooks"), "pre-commit", filepath.Join(t.TempDir(), "ran"))
+		}},
+		// The shape clean -ffdx leaves alone: a submodule's path is tracked, so
+		// the whole directory stays, and the .git file in it decides which git
+		// directory — and so which configuration — git reads for that submodule
+		// in the checkout this run works in.
+		{"a submodule's working directory", "this checkout's own .git/modules does not hold", func(t *testing.T, b *bk, dir string) {
+			testutil.Git(t, dir, "update-index", "--add", "--cacheinfo", "160000,"+strings.Repeat("a", 40)+",vendor/dep")
+			writeFileAt(t, filepath.Join(dir, "vendor", "dep", ".git"), "gitdir: "+t.TempDir()+"\n")
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

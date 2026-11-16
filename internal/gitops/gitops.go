@@ -1355,13 +1355,13 @@ func (r *Repo) tipBelongsToRun(ctx context.Context, tip string) (bool, error) {
 // repository an image's checkout is a checkout OF wants is what the image
 // wrote, so the key is read from the checkout's own configuration.
 func (r *Repo) BakedGitOrigin(ctx context.Context) (string, error) {
-	if err := r.refuseUnresettableBakedGit(); err != nil {
+	if err := r.refuseUnresettableBakedGit(ctx); err != nil {
 		return "", err
 	}
 	return r.git(ctx, "config", "--get", "remote.origin.url")
 }
 
-// refuseUnresettableBakedGit refuses the four shapes of a baked .git that
+// refuseUnresettableBakedGit refuses the five shapes of a baked .git that
 // ResetBakedGit cannot put into the fixed state it writes, each for its own
 // reason and each named in the refusal so the run's halt says which one it met.
 //
@@ -1375,8 +1375,15 @@ func (r *Repo) BakedGitOrigin(ctx context.Context) (string, error) {
 // A configuration or a hook directory under .git/modules is a submodule's own,
 // read by git for that submodule: what such a configuration says (a URL to
 // fetch from, a hook to run) is the image's and no reset of the top-level .git
-// reaches it.
-func (r *Repo) refuseUnresettableBakedGit() error {
+// reaches it. A submodule's WORKING DIRECTORY is the fifth shape, and it is the
+// same statement one step out: git keeps a submodule's git directory elsewhere
+// and the .git file in that directory names where — normally under this
+// checkout's own .git/modules — so a .git file naming any other directory keeps
+// that directory, and the configuration git reads from it for the submodule,
+// past the reset: clean -ffdx never reaches the path (it is tracked), and the
+// run's own git reads that configuration in the checkout, where a
+// core.fsmonitor the image wrote there is a command of the image's that runs.
+func (r *Repo) refuseUnresettableBakedGit(ctx context.Context) error {
 	git := filepath.Join(r.Dir, ".git")
 	info, err := os.Lstat(git)
 	if err != nil {
@@ -1391,7 +1398,88 @@ func (r *Repo) refuseUnresettableBakedGit() error {
 	if _, err := os.Lstat(filepath.Join(git, "objects", "info", "alternates")); err == nil {
 		return fmt.Errorf("%s makes objects from a store outside the checkout available as this checkout's", filepath.Join(git, "objects", "info", "alternates"))
 	}
-	return refuseSubmoduleState(filepath.Join(git, "modules"))
+	if err := refuseSubmoduleState(filepath.Join(git, "modules")); err != nil {
+		return err
+	}
+	return r.refuseSubmoduleWorktrees(ctx)
+}
+
+// refuseSubmoduleWorktrees refuses a submodule whose working directory holds a
+// .git naming a git directory this checkout's own .git/modules does not hold:
+// git reads that directory's configuration for the submodule, so the image's
+// core.fsmonitor there is a command of the image's that the run's own git makes
+// — its status runs the submodule's own status — and no reset of the top-level
+// .git reaches it.
+//
+// The paths are the index's gitlinks, which is exactly what clean -ffdx leaves
+// alone: a nested repository git does not track is removed with the rest of the
+// untracked tree, and one it does track is a submodule. A submodule inside a
+// submodule needs no walk of its own here: its git directory is a submodule's
+// own, which refuseSubmoduleState refuses for its configuration at any depth.
+//
+// core.fsmonitor is turned off for the read of the index alone, because reading
+// the index is enough to make git run a configured one and the image's
+// configuration is still in place here: the fixed one is written below, after
+// this refusal.
+func (r *Repo) refuseSubmoduleWorktrees(ctx context.Context) error {
+	out, err := r.gitRaw(ctx, "-c", "core.fsmonitor=false", "ls-files", "--stage", "-z")
+	if err != nil {
+		return err
+	}
+	modules := filepath.Join(r.Dir, ".git", "modules")
+	for _, entry := range strings.Split(string(out), "\x00") {
+		meta, path, ok := strings.Cut(entry, "\t")
+		if !ok || !strings.HasPrefix(meta, "160000 ") {
+			continue
+		}
+		dotGit := filepath.Join(r.Dir, filepath.FromSlash(path), ".git")
+		info, err := os.Lstat(dotGit)
+		if errors.Is(err, os.ErrNotExist) {
+			continue // the submodule is not checked out: nothing of the image's is here
+		}
+		if err != nil {
+			return err
+		}
+		target := dotGit
+		if !info.IsDir() {
+			if target, err = submoduleGitdir(dotGit); err != nil {
+				return err
+			}
+		}
+		if !inDir(modules, target) {
+			return fmt.Errorf("%s names the git directory %s, which this checkout's own .git/modules does not hold, so the configuration git reads for the submodule there is not one this run resets", dotGit, target)
+		}
+	}
+	return nil
+}
+
+// submoduleGitdir is the git directory a submodule's .git file names: the path
+// after "gitdir:", resolved against the directory the file is in, which is how
+// git resolves it.
+func submoduleGitdir(dotGit string) (string, error) {
+	data, err := os.ReadFile(dotGit)
+	if err != nil {
+		return "", err
+	}
+	target, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "gitdir:")
+	if !ok {
+		return "", fmt.Errorf("%s does not name a git directory", dotGit)
+	}
+	if target = strings.TrimSpace(target); target == "" {
+		return "", fmt.Errorf("%s names no git directory", dotGit)
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(dotGit), target)
+	}
+	return filepath.Clean(target), nil
+}
+
+// inDir reports whether path is dir or lies under it. The comparison is
+// textual, on cleaned paths: what decides whether the checkout's own
+// .git/modules holds a directory is the path the .git file names.
+func inDir(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
 // refuseSubmoduleState reports the first submodule configuration file or
@@ -1478,7 +1566,7 @@ func refuseSubmoduleState(modules string) error {
 // left. Nothing here reads or needs a credential: no fetch is made and no
 // remote is contacted.
 func (r *Repo) ResetBakedGit(ctx context.Context, remote, hooksDir string) error {
-	if err := r.refuseUnresettableBakedGit(); err != nil {
+	if err := r.refuseUnresettableBakedGit(ctx); err != nil {
 		return err
 	}
 	if remote == "" || hooksDir == "" {
