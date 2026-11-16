@@ -72,6 +72,74 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 	return projectJobs(lc, bucket, vertex, nil)
 }
 
+// ProjectJobAccount is one point of the shared jobs' account axis: the
+// (profile, provider, account) triple a job of ProjectJobs or ProjectReviewJobs
+// is deployed for, which that job states in its own entry (ProjectJob's first
+// three fields).
+//
+// It is a value of its own because one rule is about a triple rather than about
+// a job: the accounts this installation declares a KEY credential are composed
+// into no job at all (ProjectKeyAccountJobs), and the run that composes the
+// installation's spec names them so that the carry can keep the job an earlier
+// release deployed for one (CarriedProjectJobAccounts).
+type ProjectJobAccount struct {
+	Profile  string
+	Provider string
+	Account  string
+}
+
+// ProjectKeyAccountJobs is the shared jobs' account axis with the names this
+// installation declares a KEY credential left IN: the (profile, provider,
+// account) triples ProjectJobs composes no job for.
+//
+// It is the very filter that drops them, read to NAME what it drops
+// (config.ClaudeAccountTokenNames over config.ProjectJobAccounts, the two
+// functions the composer applies), because a run that composes a spec has to
+// carry the job an earlier release deployed for such a name from the
+// installation's own tfvars (CarriedProjectJobAccounts). That job is one the
+// installation holds, and a document rewritten without it is the plan of its
+// destruction: RefuseProjectJobDeletes stops the whole `fugaro update` on that
+// plan, with "restore the profile as it was" as the only remedy it can print —
+// and here that remedy does not exist, because putting the name back into the
+// profile's claude_accounts is exactly what the filter drops again. The
+// installation would stop converging for good (CLAUDE.md's HARD RULE).
+//
+// The profiles a carry holds whole (projectJobs' carried, which is
+// InstallOptions.CarriedJobProfiles) are not named here: every job of such a
+// profile, a key credential's included, is the deployed one CarriedProjectJobs
+// keeps, so naming its accounts again would be a second answer to one question.
+// A profile no shared job serves is not named either, and for the filter's own
+// reason: no job of its axis is composed, so none was deployed for a carry to
+// keep.
+func ProjectKeyAccountJobs(lc *localcfg.Config, carried []string) []ProjectJobAccount {
+	var out []ProjectJobAccount
+	for name, pr := range lc.Profiles {
+		if !SharedJobProvider(pr.Provider) || slices.Contains(carried, name) {
+			continue
+		}
+		axis := config.ProjectJobAccounts(pr)
+		kept := config.ClaudeAccountTokenNames(lc.Credentials, axis)
+		for _, account := range axis {
+			if slices.Contains(kept, account) {
+				continue
+			}
+			out = append(out, ProjectJobAccount{Profile: name, Provider: pr.Provider, Account: account})
+		}
+	}
+	// Sorted, so that the note a run computes is the same list on every run:
+	// the order the profiles and the axis arrive in is a map's.
+	slices.SortFunc(out, func(a, b ProjectJobAccount) int {
+		if c := strings.Compare(a.Profile, b.Profile); c != 0 {
+			return c
+		}
+		if c := strings.Compare(a.Provider, b.Provider); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Account, b.Account)
+	})
+	return out
+}
+
 // projectJobs is ProjectJobs with the named profiles carried: no job is
 // composed for them, and the installation's own document carries the job it
 // deployed for each instead (CarriedProjectJobs, and internal/cli's
