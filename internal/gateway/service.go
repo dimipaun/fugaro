@@ -496,11 +496,13 @@ func (s Service) Post(ctx context.Context, baseURL, path string, body []byte) (s
 const maxServiceAnswerBytes = 128 << 10
 
 // serviceCallClient is the client a Service.Post call is made with: the
-// gateway's own upstream client, which follows no redirect and keeps no cookie
-// jar. The call's own deadline is the caller's context — a bootstrap fetch
-// bounds the whole thing before the agent starts — so this adds none of its
-// own, and it is a var so a test can point it at a stand-in.
-var serviceCallClient = upstreamClient(nil)
+// gateway's own upstream client — no redirect followed, no cookie jar kept —
+// with the response-header bound serviceUpstreamClient states, so a service
+// that accepts the connection and never answers is cut the same way on this
+// route as on the model one. The caller's context bounds the call itself (a
+// bootstrap fetch holds the whole thing under its own budget), and it is a var
+// so a test can answer that question directly.
+var serviceCallClient = serviceUpstreamClient(upstreamClient(nil))
 
 // errServiceOnRoute is the refusal a service call gives a route offered to it,
 // from validateRoutes and from serviceUpstream. There is no cycle to break
