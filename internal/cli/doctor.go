@@ -2450,6 +2450,10 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 	}
 	checks := doctorRulesSkew(ctx, db, lc)
 	checks = append(checks, doctorCredsBroken(ctx, db)...)
+	// The Bitbucket tokens' own marks (T10): the same database, a subtree of
+	// its own (creds/tokens), and a fact of the same kind — a credential of this
+	// installation the selection skips until an operator replaces it.
+	checks = append(checks, doctorBitbucketTokenBroken(ctx, db, lc)...)
 	checks = append(checks, doctorBudgetMode(ctx, db)...)
 	checks = append(checks, doctorBuildBudget(ctx, db)...)
 	// The node is read through projectpolicy.Read, the reader a run uses

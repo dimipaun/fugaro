@@ -28,6 +28,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/secretname"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -728,7 +729,6 @@ func doctorBundleChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck 
 	// a value is what every message here carries.
 	out := []doctorCheck{{ID: idBundle, OK: true, Severity: "info",
 		Problem: bundleHoldsProblem(store.id, tokens)}}
-	out = append(out, doctorBitbucketTokenBroken(ctx, lc)...)
 	asks, err := bitbucketTokenAsks(lc, proxied, tokens)
 	if err != nil {
 		// The records this machine holds are the coverage half of every question
@@ -1095,27 +1095,27 @@ func bitbucketTokenSetCommand(key string, rec config.BitbucketToken) string {
 //
 // The state is read from the project's own credential state store — the
 // subtree the service writes (creds/tokens, T6), and not the model marks beside
-// it — and it is read only where a service could have written one: an
-// installation with no credentials service and no typed record has no token for
-// a mark to be about.
+// it, which are doctor's own creds-broken — through the database the policy
+// checks already opened. Like creds-broken it needs no flag: a token that is
+// dead is a fact the operator has to act on, and the one command that reads the
+// bundle's value is not where a fact about the state store belongs.
 //
-// A store that could not be read is information rather than silence: which
-// tokens are broken is a fact doctor owes an answer about, and a read that
-// failed is not a token that works. It is not a warning either, because the
-// installation whose backend could not be reached has not been shown to hold a
-// broken token.
-func doctorBitbucketTokenBroken(ctx context.Context, lc *localcfg.Config) []doctorCheck {
+// It is read only where a service could have written one: an installation with
+// no credentials service and no typed record has no Bitbucket token for a mark
+// to be about. A store that could not be read is information rather than
+// silence — which tokens are broken is a fact doctor owes an answer about, and
+// a read that failed is not a token that works — and it is not a warning
+// either, because the installation whose backend could not be reached has not
+// been shown to hold a broken token.
+func doctorBitbucketTokenBroken(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) []doctorCheck {
 	if lc.CredentialsService == nil && len(lc.BitbucketTokens) == 0 {
 		return nil
 	}
-	statuses, answered, err := bitbucketTokenStatuses(ctx, lc)
-	switch {
-	case !answered:
-		return nil
-	case err != nil:
+	statuses, err := (&creds.RTDBStore{DB: db}).TokenStatuses(ctx)
+	if err != nil {
 		return []doctorCheck{{ID: idTokenBroken, Severity: "info", unread: true,
-			Problem: "the project's credential state could not be read (" + oneLineCLI(err.Error()) + "), so whether any stored Bitbucket token is broken could not be checked",
-			Fix:     "rerun doctor with your credentials available, or read the tokens' state yourself: " + selfCommand() + " creds ls"}}
+			Problem: "the Bitbucket tokens' state could not be read (" + oneLineCLI(err.Error()) + "), so whether any stored token is broken is unknown",
+			Fix:     "check that the credentials doctor uses can read the budget database, then run doctor again"}}
 	}
 	var broken []string
 	for _, key := range slices.Sorted(maps.Keys(statuses)) {
