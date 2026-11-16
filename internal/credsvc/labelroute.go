@@ -84,8 +84,7 @@ const LabelPath = "/v1/github/labels"
 // corroboration below.
 const labelRunBranchPrefix = "fugaro/"
 
-// The three label names of D2437, the two namespaces T1's OwnedLabel knows, and
-// the shape R3 gives the part of a spec name after its namespace.
+// The two label names of D2437 and the namespace a spec label is spelled with.
 //
 // They are constants of THIS service and not fields of the call (F26): the
 // request carries a name and nothing else, so the text a label is created with,
@@ -101,17 +100,16 @@ const (
 // namespace and after the caller's name has been checked for ASCII and
 // lower-cased: lowercase letters, digits and dashes, at most 44 of them, so
 // that `spec:` plus the name fits GitHub's 50-character limit (F20). The first
-// character may not be a dash, which is what keeps a name from being spelled as
-// another option of anything that later reads it.
+// character is alphanumeric, as R3's own regex has it.
 var labelSpecRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,43}$`)
 
 // labelText is the colour and the description D2437 gives one label. It is not
 // a wire shape: the caller never sends one and never receives one.
 type labelText struct{ colour, description string }
 
-// The five texts of D2437, and the sentence a spec label's description is built
-// from. The spec description names the spec the pull request belongs to, which
-// is the name after the namespace and not the label.
+// D2437's grey and the sentence a spec label's description is built from. The
+// spec description names the spec the pull request belongs to, which is the name
+// after the namespace and not the label.
 const (
 	labelSpecDescriptionPrefix = "Pull request for spec "
 	labelSpecColour            = "6E7781"
@@ -171,8 +169,10 @@ var (
 //
 // The bound is this process's memory and nothing else (labelState): the service
 // is deployed without a minimum instance count and may run several, so it is per
-// instance, is best effort, and begins again at every cold start. SECURITY.md
-// states it as the bound it is.
+// instance, is best effort, and begins again at every cold start — the same
+// bound, in the same words, the merge mint's SECURITY.md paragraph states for
+// its own rate. The paragraph for THIS route is T6's, and it states these two
+// numbers as what they are.
 const (
 	labelRateWindow    = time.Hour
 	labelWritesPerRepo = 60
@@ -730,6 +730,11 @@ func (s *Server) labelPerform(ctx context.Context, l gitprov.Labeler, call label
 		if err := l.RemoveLabels(ctx, call.req.Number, call.req.RunID, []string{call.name}); err != nil {
 			return creds.LabelAnswer{}, fmt.Errorf("%w: the label could not be removed: %w", ErrLabelGitHub, err)
 		}
+	default:
+		// readLabelCall refuses an act this route does not perform, so this is
+		// unreachable — and it is here because the alternative to an error is an
+		// empty answer, which a caller reads as an act that was performed.
+		return creds.LabelAnswer{}, fmt.Errorf("%w: the call names no act this route performs", ErrLabelGitHub)
 	}
 	return creds.LabelAnswer{}, nil
 }
