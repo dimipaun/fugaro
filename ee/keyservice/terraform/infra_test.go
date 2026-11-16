@@ -1341,10 +1341,10 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 
 	// The accounts are named in exactly the blocks the plan allows, so a new one
 	// has to be argued for rather than added: the minter's in its own service and
-	// the one grant, the API's in its own service and the three reaches above.
-	// A resource outside that list naming any of them is an identity taken where
-	// it was not meant to go; the outputs name them, and a value handed out is
-	// not a reach.
+	// the one grant, the API's in its own service, the seed job that runs that
+	// program once, and the reaches above. A resource outside that list naming any
+	// of them is an identity taken where it was not meant to go; the outputs name
+	// them, and a value handed out is not a reach.
 	referrers := map[string]map[string]string{
 		"google_service_account.minter.": {
 			tfNames(servicesRoot, `resource "google_cloud_run_v2_service" "minter"`):          "the service that runs as it",
@@ -1352,6 +1352,7 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 		},
 		"google_service_account.api.": {
 			tfNames(servicesRoot, `resource "google_cloud_run_v2_service" "api"`):                           "the service that runs as it",
+			tfNames(servicesRoot, `resource "google_cloud_run_v2_job" "seed"`):                              "the job that runs the same program once, to write the operations organisation (P0.5): the seed builds the API's service and so reads the store, the secrets and the handover key the API's account holds — running it as the minter's account, or as one of its own, would be a second identity inside the boundary §3.3 draws around those four",
 			tfNames(servicesRoot, `resource "google_cloud_run_v2_service_iam_member" "api_invokes_minter"`): "the one identity allowed to call the minter",
 			tfNames(servicesRoot, `resource "google_kms_key_ring_iam_member" "api_seals"`):                  "the one identity allowed to decrypt a handover",
 			tfNames(servicesRoot, `resource "google_project_iam_member" "api_datastore"`):                   "the one identity allowed to read the portal's documents",
