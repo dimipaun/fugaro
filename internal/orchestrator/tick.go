@@ -418,9 +418,11 @@ func (c *cycle) refuse(ctx context.Context) error {
 // that sees the same refusal again writes the same key rather than a second
 // line.
 //
-// A log this package cannot write is reported and does not fail the cycle: the
-// pause is the node's question and the trip already landed, so a line the
-// daemon could not append costs a reader evidence and not the stop.
+// A log this package cannot write fails the cycle with its error, which the
+// tick returns and the report calls failed. What it does not do is lift the
+// pause: the pause is the node's question and the trip has already landed, so a
+// line the daemon could not append costs a reader evidence and a failed cycle,
+// and not the stop.
 func (c *cycle) auditRefusal(ctx context.Context) error {
 	if c.tick.Audit == nil {
 		return nil
