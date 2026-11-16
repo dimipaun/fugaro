@@ -224,19 +224,95 @@ func MintInstallationToken(ctx context.Context, o Options, perms map[string]stri
 	if len(perms) == 0 {
 		return "", time.Time{}, errors.New("github: an installation token needs its permissions")
 	}
+	app, o := appClient(o)
+	src := &tokenSource{app: app, owner: o.Owner, repo: o.Repo, now: o.Now, permissions: maps.Clone(perms)}
+	return src.Token(ctx, buildTokenMinValid)
+}
+
+// MintRepositoriesToken mints ONE installation token covering several of o's
+// repositories at once, scoped to exactly them and to perms, and valid for at
+// least half an hour — the shape a catalog build asks for, because one build
+// bakes several repositories and clones them with one credential (D2301,
+// docs/shared-jobs-default/contract-build-token.md).
+//
+// It is MintInstallationToken's sibling and not a widening of it: a run's
+// token is scoped to the one repository its job is bound to, and this one
+// exists because a build's reach is its ENTRY's repositories. Both narrow the
+// same way — GitHub scopes the token to the names in the request and to
+// nothing else — and both are read-only only because of the permission set the
+// caller passes.
+//
+// The repositories are names within o's owner and not owner/name pairs: a
+// GitHub App installation belongs to the owner, the endpoint below is that
+// installation's, and GitHub answers a token covering the repositories it is
+// installed on. A name carrying a slash is therefore not a repository of this
+// owner, and it is refused here rather than sent to GitHub, because the answer
+// would be a token covering less than the caller asked for — and a build that
+// cloned with it would fail somewhere further away from the cause.
+func MintRepositoriesToken(ctx context.Context, o Options, repos []string, perms map[string]string) (string, time.Time, error) {
+	if o.Owner == "" {
+		return "", time.Time{}, errors.New("github: an owner is required")
+	}
+	if o.AppID == "" || o.PrivateKey == nil {
+		return "", time.Time{}, errors.New("github: an App ID and private key are required")
+	}
+	if len(perms) == 0 {
+		return "", time.Time{}, errors.New("github: an installation token needs its permissions")
+	}
+	names, err := repositoryNames(repos)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	app, o := appClient(o)
+	src := &tokenSource{app: app, owner: o.Owner, repo: names[0], repos: names, now: o.Now, permissions: maps.Clone(perms)}
+	return src.Token(ctx, buildTokenMinValid)
+}
+
+// repositoryNames holds the repositories of a multi-repository mint to what
+// the endpoint takes: one name each, non-empty, carrying no slash, and no name
+// twice. The last rule is the one an answer depends on — GitHub scopes a token
+// to a set of repositories, and a name repeated in the request is a request
+// that asks for the same thing twice, which is a caller's mistake this code
+// refuses rather than a token this code mints.
+func repositoryNames(repos []string) ([]string, error) {
+	if len(repos) == 0 {
+		return nil, errors.New("github: a multi-repository installation token needs at least one repository")
+	}
+	out := make([]string, 0, len(repos))
+	seen := make(map[string]bool, len(repos))
+	for _, name := range repos {
+		if name == "" || strings.Contains(name, "/") {
+			return nil, errors.New("github: a repository is a name within the owner and not an owner/name pair")
+		}
+		if seen[name] {
+			return nil, errors.New("github: the same repository is named twice")
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out, nil
+}
+
+// appClient is the App-authenticated API client both mints above sign with:
+// the API's own headers, and an Authorization that is a JWT the App's key
+// signs. It holds nothing about WHAT is minted, which is what lets a run's
+// mint and a build's share one spelling of the endpoint's shape.
+//
+// It returns the options it was given with BaseURL and Now filled in, because
+// the caller needs the clock the client signs with: a test that states the
+// time means it for the token's window as well as for the JWT's.
+func appClient(o Options) (*httpjson.Client, Options) {
 	if o.BaseURL == "" {
 		o.BaseURL = DefaultBaseURL
 	}
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	app := &httpjson.Client{BaseURL: strings.TrimSuffix(o.BaseURL, "/"), HTTP: o.HTTP, Auth: appAuth(o.AppID, o.PrivateKey, o.Now), Header: http.Header{
+	return &httpjson.Client{BaseURL: strings.TrimSuffix(o.BaseURL, "/"), HTTP: o.HTTP, Auth: appAuth(o.AppID, o.PrivateKey, o.Now), Header: http.Header{
 		"Accept":               {"application/vnd.github+json"},
 		"X-Github-Api-Version": {"2022-11-28"},
 		"User-Agent":           {"fugaro"},
-	}}
-	src := &tokenSource{app: app, owner: o.Owner, repo: o.Repo, now: o.Now, permissions: maps.Clone(perms)}
-	return src.Token(ctx, buildTokenMinValid)
+	}}, o
 }
 
 // RevokeInstallationToken revokes one installation token at GitHub
@@ -281,18 +357,41 @@ func RevokeInstallationToken(ctx context.Context, baseURL, token string, hc *htt
 	return nil
 }
 
-// tokenSource mints installation tokens scoped to one repository and to
-// permissions (nil means a run's, tokenPermissions), and caches the
+// tokenSource mints installation tokens scoped to a repository or to several
+// and to permissions (nil means a run's, tokenPermissions), and caches the
 // current one until it gets close to expiring.
 type tokenSource struct {
-	app          *httpjson.Client // authenticated as the App (JWT)
-	owner, repo  string
+	app         *httpjson.Client // authenticated as the App (JWT)
+	owner, repo string
+	// repos is every repository the token is scoped to, and nil means the one
+	// above: a run's token covers one repository and a build's covers its
+	// entry's several (MintRepositoriesToken). repos[0] names the installation
+	// either way, because the lookup below is per repository and one token
+	// covers one owner's.
+	repos        []string
 	permissions  map[string]string
 	now          func() time.Time
 	mu           sync.Mutex
 	installation int64
 	token        string
 	expires      time.Time
+}
+
+// where names what a token is being minted for, in the messages Token writes:
+// one repository ("acme/web"), or every repository a build's token covers
+// ("acme/web acme/api"). A failure that named only the first repository of a
+// multi-repository mint would send an operator to a request that covers more
+// than the one they read.
+func (s *tokenSource) where() string {
+	names := s.repos
+	if len(names) == 0 {
+		names = []string{s.repo}
+	}
+	out := make([]string, len(names))
+	for i, name := range names {
+		out[i] = s.owner + "/" + name
+	}
+	return strings.Join(out, " ")
 }
 
 // Token returns an installation token valid for at least minValid, minting
@@ -310,10 +409,10 @@ func (s *tokenSource) Token(ctx context.Context, minValid time.Duration) (string
 		}
 		path := "/repos/" + url.PathEscape(s.owner) + "/" + url.PathEscape(s.repo) + "/installation"
 		if err := s.app.Do(ctx, "GET", path, nil, &inst); err != nil {
-			return "", time.Time{}, fmt.Errorf("finding the github app installation for %s/%s: %w", s.owner, s.repo, err)
+			return "", time.Time{}, fmt.Errorf("finding the github app installation for %s: %w", s.where(), err)
 		}
 		if inst.ID == 0 {
-			return "", time.Time{}, fmt.Errorf("github returned no installation id for %s/%s", s.owner, s.repo)
+			return "", time.Time{}, fmt.Errorf("github returned no installation id for %s", s.where())
 		}
 		s.installation = inst.ID
 	}
@@ -325,12 +424,16 @@ func (s *tokenSource) Token(ctx context.Context, minValid time.Duration) (string
 	if perms == nil {
 		perms = tokenPermissions
 	}
-	body := map[string]any{"repositories": []string{s.repo}, "permissions": perms}
+	scope := s.repos
+	if len(scope) == 0 {
+		scope = []string{s.repo}
+	}
+	body := map[string]any{"repositories": scope, "permissions": perms}
 	if err := s.app.Do(ctx, "POST", fmt.Sprintf("/app/installations/%d/access_tokens", s.installation), body, &tok); err != nil {
-		return "", time.Time{}, fmt.Errorf("minting an installation token for %s/%s: %w", s.owner, s.repo, err)
+		return "", time.Time{}, fmt.Errorf("minting an installation token for %s: %w", s.where(), err)
 	}
 	if tok.Token == "" {
-		return "", time.Time{}, fmt.Errorf("github returned an empty installation token for %s/%s", s.owner, s.repo)
+		return "", time.Time{}, fmt.Errorf("github returned an empty installation token for %s", s.where())
 	}
 	// The GitAuth contract (gitprov.go) promises a token valid for at least
 	// minValid; a token that GitHub minted with too little life left (or a
@@ -338,8 +441,8 @@ func (s *tokenSource) Token(ctx context.Context, minValid time.Duration) (string
 	// a token the caller would treat as good.
 	if tok.ExpiresAt.Sub(s.now()) < minValid {
 		return "", time.Time{}, fmt.Errorf(
-			"github minted an installation token for %s/%s that expires too soon to satisfy the requested %s validity",
-			s.owner, s.repo, minValid)
+			"github minted an installation token for %s that expires too soon to satisfy the requested %s validity",
+			s.where(), minValid)
 	}
 	s.token, s.expires = tok.Token, tok.ExpiresAt
 	return s.token, s.expires, nil

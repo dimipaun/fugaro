@@ -121,3 +121,54 @@ func ValidBitbucketTokenCoverage(pattern string) error {
 // The set can be partial and can be empty: a repository token has no identity
 // (R14), and a node without the key leaves the adapter as it is today.
 type BitbucketTokenIdentities []string
+
+// BitbucketOwnIdentities is the set of account UUIDs Fugaro's own Bitbucket
+// tokens have on this project, and whether that set is known to be missing an
+// account this run may write as (T16, F20, R12, R14).
+//
+// entries is the node's bitbucket_tokens key read back, and legacy the
+// bitbucket_token block beside it. The rule lives here, beside both shapes and
+// in neither reader, because two readers ask it of one node and must not answer
+// it differently: the runner reads the key raw at bootstrap and carries the set
+// to the Bitbucket adapter (T16), and the adapter's own tests read the same node
+// through the credentials service's reader. A restatement of the rule in one of
+// them would pin whatever that copy says rather than what the run does.
+//
+// partial is true when the run cannot name every account it may write as. A set
+// the node names incompletely has two shapes. One is an entry whose identity the
+// node could not carry: a repository access token's, which GET /user answers 403
+// (R14). The other is the legacy untyped record serving beside typed ones (R3):
+// the selector ranks it after every typed record and may serve a call with it,
+// and its identity is on no entry at all -- the legacy record is never an entry
+// of this key (R5/R14), and R12 keeps an identity per token name in the creds
+// state store, which this key carries for the typed records alone. With no typed
+// record the legacy one is the selector's only candidate and GET /user names it,
+// which is what R3's "the proxy behaves exactly as today" leaves the
+// installation, so it makes the set partial only beside typed entries.
+//
+// In both shapes GET /user naming an account of Fugaro's no longer says the run
+// can tell its own comments apart: an account outside the set may still be one of
+// this run's, and claiming otherwise is what shuts the markers-from-anyone
+// fallback the follow-up trust rules rest on.
+//
+// The legacy block serves a run's calls when it is proxied and names a
+// repository, which is proxiedBitbucket's own rule (D493, G3): the block says
+// the service forwards this token rather than mounting it on the installation's
+// jobs, and a block that lists no repository reaches none of them.
+func BitbucketOwnIdentities(entries []BitbucketTokenNode, legacy *BitbucketToken) (BitbucketTokenIdentities, bool) {
+	var own BitbucketTokenIdentities
+	seen := make(map[string]bool, len(entries))
+	partial := len(entries) > 0 && legacy != nil && legacy.Proxy && len(legacy.AllowRepos) > 0
+	for _, e := range entries {
+		if e.Identity == "" {
+			partial = true
+			continue
+		}
+		if seen[e.Identity] {
+			continue
+		}
+		seen[e.Identity] = true
+		own = append(own, e.Identity)
+	}
+	return own, partial
+}

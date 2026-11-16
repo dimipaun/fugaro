@@ -590,6 +590,11 @@ type svc struct {
 	nodes  *fakePatcher
 	probes *fakeProbes
 	logs   *logBuf
+	// pairs is the build-pair store this installation is wired with (B1, rule
+	// 9): the record a Bitbucket build's grant writes as it answers and the
+	// record the proxy's build half reads back. A test that asks what a grant
+	// recorded reads it here, which is the same store the service holds.
+	pairs *creds.RTDBStore
 	// audit is where C1.13's audit lines go. They are written to their own
 	// handler and not to the service's logger (NewAuditor takes the handler),
 	// so a test reads the contract's line apart from the service's own lines —
@@ -632,6 +637,7 @@ func newSvcWith(t *testing.T, mutate func(*svc, *Config)) *svc {
 		probes: newFakeProbes(),
 		logs:   &logBuf{},
 		audit:  &logBuf{},
+		pairs:  testBuildPairs(t),
 	}
 	cfg := Config{
 		Auth:    f.auth,
@@ -649,6 +655,12 @@ func newSvcWith(t *testing.T, mutate func(*svc, *Config)) *svc {
 		DB:     s.nodes,
 		Probes: s.probes,
 		Slips:  testSlips(t),
+		// The build pairings (B1, rule 9): what a Bitbucket build's grant
+		// records and what the proxy's build half reads. It is wired here
+		// rather than left nil because a service with no store answers no
+		// Bitbucket build at all, and the tests of that refusal say so on
+		// their own (a mutate sets it back to nil).
+		BuildPairs: s.pairs,
 		// The audit lines are written as the JSON objects they are (C1.13), so
 		// a test that reads one reads it the way an operator's tooling does.
 		// They go to the fixture's own audit buffer and NOT to the service's

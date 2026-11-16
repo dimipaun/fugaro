@@ -273,6 +273,13 @@ var (
 		"providers.*.secret":              "a Secret Manager name",
 		"project_secrets.*.allow_data_to": "a list of destinations, not a credential",
 		"project_secrets.*.proxy":         "a Secret Manager name",
+		// The cascade's cap is a count of runs, not key material: "token" here
+		// is the shared OAuth token the runs queue behind, and the value is how
+		// many of them may hold it at once (D142). Printing it is the point of
+		// the row — a person reading why their launches queue wants the figure,
+		// and hiding it would leave the one key of the cascade that is a number
+		// reading as a secret.
+		"credential_cascade.concurrency_per_token": "how many runs may hold one shared credential, not a credential",
 	}
 )
 

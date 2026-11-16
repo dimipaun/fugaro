@@ -352,7 +352,7 @@ func TestUpdateConvergesOnAPolicyPublishedBeforeRepositoryEntries(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if drift := policyConfigDrift(lc, before); len(drift) != 0 {
+	if drift := policyConfigDrift(lc, before, nil); len(drift) != 0 {
 		t.Errorf("a config that names no accounts per repository drifts on %v, want nothing: the update would rewrite a node it already agrees with", membersOf(drift))
 	}
 	after := publishedPolicy(t, f)

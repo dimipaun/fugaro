@@ -824,22 +824,32 @@ const (
 // that has not decided may not spend one of them more than once in a window and
 // may not run more than one run at a time against one. Both are written to be
 // turned off — false, and 0 — and neither is written to be turned on quietly.
+//
+// The yaml tags spell the block the same way the json ones do, because the same
+// block is written in two documents from this release on (D2607, F23): the node
+// the owner publishes and its own local config, whose key `credential_cascade`
+// is the cascade's carrier — the local `credentials` key is already the list of
+// typed credentials, so the node's `credentials` member and the local list are
+// never read as one. A member named `waitthreshold` in the file and
+// `wait_threshold` in the node would be two keys a person has to keep in step
+// by hand, and the file's own strict decode would refuse the node's spelling
+// (the arrangement Binaries has).
 type Credentials struct {
 	// Fallback is FallbackOAuthOnly or FallbackAuto; absent is
 	// FallbackOAuthOnly (D152). A written FallbackAuto needs the budget block
 	// to be enforcing with a positive per_run_usd, which Decode refuses
 	// otherwise: `auto` is the one value that starts spending the project's
 	// money, and it may not be reached by writing one word.
-	Fallback string `json:"fallback,omitempty"`
+	Fallback string `json:"fallback,omitempty" yaml:"fallback,omitempty"`
 	// WaitThreshold is how long a run waits for an exhausted credential's reset
 	// before failing over to the next tier (the spec's wait-or-switch rule),
 	// as a duration string read by config.ParseDuration. Under
 	// FallbackOAuthOnly it is ignored: there is nothing to fail over to, so the
 	// run waits for the earliest reset whatever the threshold says (D152).
-	WaitThreshold string `json:"wait_threshold,omitempty"`
+	WaitThreshold string `json:"wait_threshold,omitempty" yaml:"wait_threshold,omitempty"`
 	// Backoff is the wait a credential is held for when its exhaustion reported
 	// no reset time. nil is DefaultBackoffInitial / DefaultBackoffCap.
-	Backoff *Backoff `json:"backoff,omitempty"`
+	Backoff *Backoff `json:"backoff,omitempty" yaml:"backoff,omitempty"`
 	// StopAfterExhaustionPerWindow is D142's first control: a pointer so that
 	// "the operator wrote false" and "the operator wrote nothing" are different
 	// states, since the absent one means true (StopsAfterExhaustion). It is a
@@ -847,20 +857,20 @@ type Credentials struct {
 	// encoding/json fills an absent key with the zero value, and false is the
 	// zero value, so a plain bool could not tell the protective default from
 	// the opt-out.
-	StopAfterExhaustionPerWindow *bool `json:"stop_after_exhaustion_per_window,omitempty"`
+	StopAfterExhaustionPerWindow *bool `json:"stop_after_exhaustion_per_window,omitempty" yaml:"stop_after_exhaustion_per_window,omitempty"`
 	// ConcurrencyPerToken is D142's second control: at most this many runs may
 	// hold one shared credential at a time. A pointer, so an absent key (one
 	// run at a time, DefaultConcurrencyPerToken) is not the written 0, which
 	// means no cap at all.
-	ConcurrencyPerToken *int `json:"concurrency_per_token,omitempty"`
+	ConcurrencyPerToken *int `json:"concurrency_per_token,omitempty" yaml:"concurrency_per_token,omitempty"`
 }
 
 // Backoff is the wait a backed-off credential is held for: `initial` the first
 // time, doubling on each failed probe up to `cap` (the spec's resolved default,
 // D153). Either member may be left out, and one left out is its default.
 type Backoff struct {
-	Initial string `json:"initial,omitempty"`
-	Cap     string `json:"cap,omitempty"`
+	Initial string `json:"initial,omitempty" yaml:"initial,omitempty"`
+	Cap     string `json:"cap,omitempty" yaml:"cap,omitempty"`
 }
 
 // credentialsMembers, backoffMembers are the member names the two structs are
@@ -1031,9 +1041,71 @@ func checkOrchestratorMembers(raw json.RawMessage) error {
 	return checkNoDuplicateNames("orchestrator.decision_model_per_class", classes)
 }
 
-// validCredentials holds the block's values to their rules: D152's fallback
-// rule, which is a property of this block and the budget block together, and
-// the shapes of the durations and the controls.
+// ValidCredentials holds the block's own values to their rules: the value the
+// fallback may take and the shapes of the durations and the two controls (D152,
+// D153), with the block's path (`at`) named as the document that writes it
+// spells it.
+//
+// It is exported because the block is written in two documents and one of them
+// is not this package's: `credentials` is the published node's member, and
+// `credential_cascade` is the owner's own local config's key (F23, D2607 —
+// `credentials` there is already the list of typed credentials, and the two
+// must never be read as one). internal/localcfg calls it at load, so a file the
+// owner writes is held to the same rules as the node it is published into, the
+// arrangement ValidBinariesAllow has with AR1's carrier. at is a parameter and
+// not a constant for that reason: the refusal names the key the operator
+// actually wrote.
+//
+// What is deliberately NOT here is D152's fallback rule, which is a property of
+// this block and the budget block *together*: `auto` may only be written where
+// the budget enforces a positive per-run ceiling, and only a document holding
+// both blocks can answer that (validCredentials below, which the node's decode
+// calls). A carrier that holds the cascade alone refuses a fallback it does not
+// know and leaves the pair to the node.
+func ValidCredentials(c *Credentials, at string) error {
+	switch c.Fallback {
+	case "", FallbackOAuthOnly, FallbackAuto:
+	default:
+		return fmt.Errorf("projectpolicy: %s.fallback: %q is not a value this Fugaro knows: write %q (never spend the project's money — wait for the shared token's reset) or %q (fall over to the paid tiers), or remove the key, which means %q (D152)",
+			at, c.Fallback, FallbackOAuthOnly, FallbackAuto, FallbackOAuthOnly)
+	}
+	if _, err := validCredentialsDuration("projectpolicy: "+at+".wait_threshold", c.WaitThreshold); err != nil {
+		return err
+	}
+	if c.Backoff != nil {
+		// Both members are held to their spelling and their shape first, so the
+		// comparison below reads values this function has already accepted.
+		if _, err := validCredentialsDuration("projectpolicy: "+at+".backoff.initial", c.Backoff.Initial); err != nil {
+			return err
+		}
+		if _, err := validCredentialsDuration("projectpolicy: "+at+".backoff.cap", c.Backoff.Cap); err != nil {
+			return err
+		}
+	}
+	// A cap below the wait it caps is a wait that never doubles to it, and the
+	// pair the rule is about is the *effective* pair: an absent member is its
+	// default (D153 — 15m, capped at 5h), which is what the cascade would use.
+	// Comparing only what was written left the state the rule exists to refuse
+	// reachable by writing one member — {"backoff": {"cap": "1m"}} is a 15m
+	// initial with a 1m cap, and {"backoff": {"initial": "10h"}} a 10h initial
+	// with a 5h cap — so a document that writes one of the two is held to the
+	// other's default. The members are compared through the same accessors a
+	// consumer reads, so this refusal and a reader cannot disagree about which
+	// pair is meant.
+	if initial, cap := c.BackoffInitialDuration(), c.BackoffCapDuration(); cap < initial {
+		return fmt.Errorf("projectpolicy: %s.backoff.cap: %s is below %s.backoff.initial (%s): a cap below the first wait is a probe schedule that never doubles, so a credential with no reset time would be retried at the same rate for ever. The two are compared as they would be used, and an absent member is its default (%s and %s), so a document that writes only one of them is held to the other's default: write a cap at or above the initial wait, or remove the member you wrote",
+			at, cap, at, initial, DefaultBackoffInitial, DefaultBackoffCap)
+	}
+	if c.ConcurrencyPerToken != nil && *c.ConcurrencyPerToken < 0 {
+		return fmt.Errorf("projectpolicy: %s.concurrency_per_token: %d is not a number of runs: write the number of runs that may hold one shared credential at a time, at least 1, or 0 for no cap at all (D142)",
+			at, *c.ConcurrencyPerToken)
+	}
+	return nil
+}
+
+// validCredentials holds the block's values to their rules on the node: the
+// block's own rules (ValidCredentials) and D152's fallback rule, which is a
+// property of this block and the budget block together.
 //
 // The fallback rule is the one that matters. `auto` is the cascade's paid
 // fallback — tier A, then B, then C where C is on — and D152's ruling is that
@@ -1047,47 +1119,12 @@ func checkOrchestratorMembers(raw json.RawMessage) error {
 // that named only `fallback` would send them to the one key that is already
 // right.
 func validCredentials(c *Credentials, b Budget) error {
-	switch c.Fallback {
-	case "", FallbackOAuthOnly:
-	case FallbackAuto:
-		if b.Mode != policy.ModeEnforce || b.PerRunUSD <= 0 {
-			return fmt.Errorf("projectpolicy: credentials.fallback: %q is the cascade's paid fallback, and this policy's budget does not bound it: write budget: {mode: %q, per_run_usd: <a ceiling above zero>} in the project policy (currently mode %q, per_run_usd %v). A run under auto may spend the project's Anthropic key (tier B) and, where tier C is on, a third party's; with the ceiling unset or unenforced that spend is one nobody can see or stop — which is why the value must be written and the ceiling must be there (D152)",
-				FallbackAuto, policy.ModeEnforce, b.Mode, b.PerRunUSD)
-		}
-	default:
-		return fmt.Errorf("projectpolicy: credentials.fallback: %q is not a value this Fugaro knows: write %q (never spend the project's money — wait for the shared token's reset) or %q (fall over to the paid tiers), or remove the key, which means %q (D152)",
-			c.Fallback, FallbackOAuthOnly, FallbackAuto, FallbackOAuthOnly)
-	}
-	if _, err := validCredentialsDuration("projectpolicy: credentials.wait_threshold", c.WaitThreshold); err != nil {
+	if err := ValidCredentials(c, "credentials"); err != nil {
 		return err
 	}
-	if c.Backoff != nil {
-		// Both members are held to their spelling and their shape first, so the
-		// comparison below reads values this function has already accepted.
-		if _, err := validCredentialsDuration("projectpolicy: credentials.backoff.initial", c.Backoff.Initial); err != nil {
-			return err
-		}
-		if _, err := validCredentialsDuration("projectpolicy: credentials.backoff.cap", c.Backoff.Cap); err != nil {
-			return err
-		}
-	}
-	// A cap below the wait it caps is a wait that never doubles to it, and the
-	// pair the rule is about is the *effective* pair: an absent member is its
-	// default (D153 — 15m, capped at 5h), which is what the cascade would use.
-	// Comparing only what was written left the state the rule exists to refuse
-	// reachable by writing one member — {"backoff": {"cap": "1m"}} is a 15m
-	// initial with a 1m cap, and {"backoff": {"initial": "10h"}} a 10h initial
-	// with a 5h cap — so a node that writes one of the two is held to the
-	// other's default. The members are compared through the same accessors a
-	// consumer reads, so this refusal and a reader cannot disagree about which
-	// pair is meant.
-	if initial, cap := c.BackoffInitialDuration(), c.BackoffCapDuration(); cap < initial {
-		return fmt.Errorf("projectpolicy: credentials.backoff.cap: %s is below credentials.backoff.initial (%s): a cap below the first wait is a probe schedule that never doubles, so a credential with no reset time would be retried at the same rate for ever. The two are compared as they would be used, and an absent member is its default (%s and %s), so a node that writes only one of them is held to the other's default: write a cap at or above the initial wait, or remove the member you wrote",
-			cap, initial, DefaultBackoffInitial, DefaultBackoffCap)
-	}
-	if c.ConcurrencyPerToken != nil && *c.ConcurrencyPerToken < 0 {
-		return fmt.Errorf("projectpolicy: credentials.concurrency_per_token: %d is not a number of runs: write the number of runs that may hold one shared credential at a time, at least 1, or 0 for no cap at all (D142)",
-			*c.ConcurrencyPerToken)
+	if c.Fallback == FallbackAuto && (b.Mode != policy.ModeEnforce || b.PerRunUSD <= 0) {
+		return fmt.Errorf("projectpolicy: credentials.fallback: %q is the cascade's paid fallback, and this policy's budget does not bound it: write budget: {mode: %q, per_run_usd: <a ceiling above zero>} in the project policy (currently mode %q, per_run_usd %v). A run under auto may spend the project's Anthropic key (tier B) and, where tier C is on, a third party's; with the ceiling unset or unenforced that spend is one nobody can see or stop — which is why the value must be written and the ceiling must be there (D152)",
+			FallbackAuto, policy.ModeEnforce, b.Mode, b.PerRunUSD)
 	}
 	return nil
 }

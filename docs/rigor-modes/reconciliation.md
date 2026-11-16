@@ -692,7 +692,7 @@ read to answer it).
 
 **F42 — A project-wide item has no repository to live in: no project-level key names one.** Class: **Gap**. The one place a project-wide value lives is the project layer's closed `defaults:` (F36), and that closure is the reason there is nothing to point at: `internal/config/layer.go`'s `LayerDefaults` admits `git` and `agent` and nothing else, `schemas/project-layer.schema.json` pins the same set, and the local project config's `Repos` reads repositories from a file on **one machine**, not from anything in the repository. The structures that do name repositories are plural or per-account: `projectpolicy.Policy.AllowRepos`, its `CloneURLs` keyed by canonical name, and `Account.AllowRepos`. Consequence: D29's designated repository needs one new member of a closed struct, its schema entry, its scope row and one sentence in `docs/project-layer.md` — the same price F36 names for the mode's own key, and one more reason to spend it once.
 
-**F43 — A run cannot write into a repository other than its own.** Class: **Gap**. The installation token is narrowed to exactly one repository: `internal/gitprov/github/apptoken.go`'s `tokenSource.Token` mints with `{"repositories": []string{s.repo}, "permissions": perms}`, and `MintInstallationToken` refuses without an owner and a repository. The provider contract names no repository either: `internal/gitprov/gitprov.go`'s `PRSpec` carries `Number`, `Branch`, `Base`, `Title`, `Body`, `Draft`, `Labels` and `Reviewers`, so a pull request is always opened in the client's own repository. A run works in one checkout (`internal/runner/runner.go`'s `openCheckout`, `r.d.WorkDir`), pushes one branch and opens one pull request. The narrowing is a mint parameter rather than a permission — `internal/gitprov/github/apprepos.go` mints an installation token with a permissions map and **no** `repositories` list, which is how the App lists an installation's repositories — so it is liftable, at the price of a second token, a second checkout, a second push and a second pull request. Consequence: D29 cannot recommend that a run anywhere files into the designated repository; the designated repository holds the items filed **in** it, and a cross-repo filing is a task of its own rather than a line in the filing command.
+**F43 — A run cannot write into a repository other than its own.** Class: **Gap**. The installation token is narrowed to exactly one repository: `internal/gitprov/github/apptoken.go`'s `tokenSource.Token` mints with `{"repositories": scope, "permissions": perms}`, where `scope` is `scope = []string{s.repo}` for a run's mint — the `s.repos` a catalog build's multi-repository mint fills in is what the run's source leaves nil — and `MintInstallationToken` refuses without an owner and a repository. The provider contract names no repository either: `internal/gitprov/gitprov.go`'s `PRSpec` carries `Number`, `Branch`, `Base`, `Title`, `Body`, `Draft`, `Labels` and `Reviewers`, so a pull request is always opened in the client's own repository. A run works in one checkout (`internal/runner/runner.go`'s `openCheckout`, `r.d.WorkDir`), pushes one branch and opens one pull request. The narrowing is a mint parameter rather than a permission — `internal/gitprov/github/apprepos.go` mints an installation token with a permissions map and **no** `repositories` list, which is how the App lists an installation's repositories — so it is liftable, at the price of a second token, a second checkout, a second push and a second pull request. Consequence: D29 cannot recommend that a run anywhere files into the designated repository; the designated repository holds the items filed **in** it, and a cross-repo filing is a task of its own rather than a line in the filing command.
 
 **F44 — Filing during a run writes into the branch under review.** Class: **Exists**. A run's writes are its branch's: `internal/runner/runner.go`'s `openCheckout` opens or clones the repository, `CheckoutNewBranch` then puts the task's ref's tree in that work directory, the commits the agent's stages and `finalize` make, and `internal/runner/checkpoint.go` pushes them as the run goes — a checkpoint never commits and never touches the working tree or the index, by its own doc comment — so the push at the end carries all of it into the pull request. One path is refused outright, whatever the mode: `internal/runner/refused.go`'s `workflowGuard` (F12). Consequence: the item a run files arrives as a commit in the pull request it is about, which is the honest reading of the ruling rather than a problem. The pull request is where a reader meets the deferred leftover, `filed-in:` is a number the record already holds (`runstore.Record.PR`), and the write passes the same refusal every other write does — which is free, because the backlog lives under `docs/` and `.github/workflows/` is the only refused path.
 
@@ -909,31 +909,36 @@ section, none of them run — moved the table's row from 139 to 140.)
 `internal/cli/docs_check311_test.go`, the CLI-output plan's pin over its
 owner-run Check 311 in the register — the PowerShell script the Windows half of
 the output work ships, its row and its section, and the sibling test
-`scripts/live_checks_test.go` drives — moved the table's row from 140 to 141.) They
+`scripts/live_checks_test.go` drives — moved the table's row from 140 to 141.)
+(Amended 2026-11-16: `internal/cli/docs_registry_readers_test.go`, the
+forge-authorship-images plan's C6, re-pointed by its owner's answer of
+2026-11-16 — the pin over
+`SECURITY.md`'s paragraph on the source an image carries and who can read it —
+moved the table's row from 141 to 142; `internal/cli/docs_mobile_orchestrator_test.go`, the pin over the mobile orchestrator design, landed in the same sweep and its row was moved from 141 to 142 too; `internal/cli/docs_check601_test.go`, the pin over c39-review-identity's owner Check 601 in the register, landed on this branch beside them, so the merged tree holds 144.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
 
 | Construct | Count | Command |
 | --- | --- | --- |
-| Catalog recipes | 12 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
+| Catalog recipes | 11 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
 | Top-level `fugaro.yaml` keys | 15 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*": '` |
 | Top-level `fugaro.yaml` keys whose name contains `review` | 0 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*review[a-z_]*": '` |
-| Config scope rows | 113 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
+| Config scope rows | 111 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
 | Layers a configuration key may be set in | 4 | `sed -n '/The layers a key may be set in/,/^)/p' internal/config/scope.go \| grep -c 'In[A-Z]'` |
 | Blocks the project layer's `defaults:` may set | 5 | `sed -n '/type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -c 'yaml:'` |
 | Fields of `task.Spec.Overrides` | 8 | `sed -n '/type Overrides struct {/,/^}/p' internal/task/task.go \| grep -cE 'yaml:\|json:'` |
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 0 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 4 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 46 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Image-skew `Since` constants | 48 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 141 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 144 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 8 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Repo\|Repos\|Repository)'` |
 | Fields of `gitprov.PRSpec` whose name is a repository | 0 | `sed -n '/^type PRSpec struct {/,/^}/p' internal/gitprov/gitprov.go \| grep -ci repo` |
-| Sites that narrow an installation token to one repository | 1 | `git grep -hc '"repositories": \[\]string{s.repo}' internal/gitprov/github/apptoken.go` |
+| Sites that narrow an installation token to one repository | 1 | `git grep -hc 'scope = \[\]string{s.repo}' internal/gitprov/github/apptoken.go` |
 | `docs/plans` sections whose heading the deferral pattern matches | 3 | `git grep -hE '^## .*(Deferred\|[Ff]ollow-ups)' -- docs/plans \| wc -l` |
 | Item files under `docs/backlog/` | 2 | `ls docs/backlog/[0-9]*.md 2>/dev/null \| wc -l` |
 
@@ -996,6 +1001,15 @@ did: the crude `grep -ci repo` counted prose, and the new field's own comment sa
 the project's for every repository of it, so the command counts declared field names at the start
 of a line instead, as the `task.Spec` row above does. Neither the field's name nor its value names
 a repository, which is what the **0** claims.
+
+Amended 2026-11-15: `reportsSince` — the release whose CLI answers the project's
+reports job command, which is 0.26.0 and not the 0.25.0 it was first written as
+(`internal/cli/runs_reports.go`, R11): v0.25.0 is tagged and its tree carries no
+`runs_reports.go`, with its own notes saying the command lands in a later
+release. Declared beside `digestSince` because a release can ship the stored
+writer without the terminal digest step and the other way round, it added one
+more image-skew `Since` constant and left the image-skew row at 45, so it moves
+to 46.
 
 The **67** is the convention this folder follows: there is no registry test over
 `docs/`, so a folder that wants its documents pinned writes its own file, and
@@ -2316,7 +2330,8 @@ not be reconstructed by a reader from the decisions:
    branch, and nowhere else.** An item a run files is a Markdown file under
    `docs/backlog/` on the run's branch (F44), because that is the one repository
    its installation token reaches (`apptoken.go`'s
-   `{"repositories": []string{s.repo}}`, F43) and the one place it can push; it
+   `{"repositories": scope, ...}`, whose `scope` is `[]string{s.repo}` for a
+   run's mint, F43) and the one place it can push; it
    passes `workflowGuard` like every other write; it carries no finding text the
    stored transcript does not already hold (F18); and a run never writes into the
    designated project repository (D29) unless it is a run **in** that repository.
