@@ -97,12 +97,14 @@ type MergeSeams struct {
 	// Host is the provider slice a landing needs (E8).
 	Host MergeHost
 	// Node is the state the hook reads and the one write path it lands its
-	// moves through. It is not a store of the hook's own: the hook fires in the
-	// middle of a cycle, and a write that did not go through the cycle's own
-	// commit would leave the state and the ETag that cycle holds stale, so the
-	// next write it makes is refused (patch.go's Apply is bound to BaseRev and
-	// store.go's Save to the ETag it read). The wiring therefore has to close
-	// over the cycle's own state and commit, and O14 owns that wiring.
+	// moves through: the node the store holds, read and written around the
+	// revision it is at (patch.go's Apply is bound to BaseRev and store.go's
+	// Save to the ETag it read). It is not a store of the hook's own, but the
+	// cycle is not handed the hook either, so what keeps the two in step is on
+	// the caller's side: the executor re-reads the node once the hook returns
+	// (escalate_launch.go's ladderBeyond, tick.go's reread), and the rest of
+	// that Step's writes derive from the document the hook left rather than
+	// from the one the cycle read before it.
 	Node MergeNode
 	// Launch starts one run of another recipe, as the rungs below do.
 	Launch LadderLauncher

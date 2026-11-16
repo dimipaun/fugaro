@@ -400,15 +400,24 @@ func (c *cycle) ladderOuter(w WorkItem, step escalation.Step, read LadderReading
 // 3 or rung 4 is left where it is, which is the stop
 // D2030 and D2037 state — the ladder never walks back off either, whatever a
 // fact recomputed each cycle says.
+//
+// The hook writes through its own seams and not through this cycle, so what the
+// cycle holds once it returns is the node as it was before those writes: it
+// re-reads the node here (reread), which is what keeps the rest of the Step's
+// writes — another item's question, the triage, the decision — from being
+// refused under an ETag the hook's write has already moved past.
 func (c *cycle) ladderBeyond(ctx context.Context, w WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) error {
-	if c.tick.Ladder.Beyond != nil {
-		return c.tick.Ladder.Beyond(ctx, w, step, reason, read)
+	if c.tick.Ladder.Beyond == nil {
+		runID := w.RunID
+		if err := c.ladderRecord(ctx, w, step, reason, "", false); err != nil {
+			return err
+		}
+		return c.ladderSay(ctx, w, step, reason, runID)
 	}
-	runID := w.RunID
-	if err := c.ladderRecord(ctx, w, step, reason, "", false); err != nil {
+	if err := c.tick.Ladder.Beyond(ctx, w, step, reason, read); err != nil {
 		return err
 	}
-	return c.ladderSay(ctx, w, step, reason, runID)
+	return c.reread(ctx)
 }
 
 // ladderStart asks the daemon for one run, under the id this cycle mints. The

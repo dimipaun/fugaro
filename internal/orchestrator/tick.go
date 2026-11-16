@@ -401,6 +401,30 @@ func (c *cycle) commit(ctx context.Context, next State) error {
 	return nil
 }
 
+// reread takes the node as it now stands after a write this cycle did not make.
+//
+// The rung 3 hook lands its moves through its own seam (MergeSeams.Node), with
+// the store's own conditional write, and the ETag that leaves is not the one
+// this cycle holds: the state it derived and the ETag it read are both older
+// than the document the hook left, so the next write it makes in the same Step
+// — another item's question, the triage, the decision — would be refused under
+// a revision that is already gone. Reading the node back is what gives the
+// cycle the document its next write derives from, and it is the same read the
+// seam could not make for it: the hook is handed the store and not the cycle.
+//
+// A read that fails leaves the cycle with nothing it may write rather than with
+// a state it can no longer place (fresh), which is the direction the breaker's
+// own question and the triage already decline in.
+func (c *cycle) reread(ctx context.Context) error {
+	back, etag, err := c.tick.Store.Load(ctx)
+	if err != nil {
+		c.fresh = false
+		return err
+	}
+	c.state, c.etag = back, etag
+	return nil
+}
+
 // ask commits the question a tripped breaker raises, and says so. The breaker
 // asks at most one question per trip (Decision and WorkspaceDecision each
 // refuse one the node already carries), so a daemon that restarted into an

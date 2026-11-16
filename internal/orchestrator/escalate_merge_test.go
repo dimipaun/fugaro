@@ -1652,3 +1652,85 @@ func TestR3TickReentersTheRung(t *testing.T) {
 		t.Errorf("the item stands at %+v; want rung %s", w.Escalation, escalation.R3)
 	}
 }
+
+// TestR3CycleWritesAfterTheHooksWrite is the half of the hook that belongs to
+// the cycle rather than to the rung: the hook lands its rung 3 moves through its
+// own seam (MergeSeams.Node), so the moment it returns, the state and the ETag
+// the cycle read at the top of the Step are older than the node — and the Step
+// has more to write, here the question owed to a second item whose runs nobody
+// could read. The cycle re-reads the node once the hook is done (reread), so
+// what it writes next derives from the document the hook left. A cycle that kept
+// the document it read before the hook would be refused by the store's own
+// conditional save, the Step would end as ErrStateMoved, and the person wi-2's
+// question is owed would never read it.
+//
+// What the second item is here is anything that makes the cycle write after the
+// hook: its reading was not made, which is the one case that asks a person
+// without deciding anything (G5).
+//
+// Mutation: drop the re-read from ladderBeyond and the first cycle below ends as
+// "state moved" with no question about wi-2 on the node.
+func TestR3CycleWritesAfterTheHooksWrite(t *testing.T) {
+	now := o6Now()
+	m := newMergeHarness(t, now, []string{mergeReviewRun, mergeJudgeRun},
+		mergeItem("wi-1", r3Ledger(now, headA, 2)),
+		mergeItem("wi-2", r2Ledger(now, headB, 0)))
+	m.host.head, m.host.checks = headA, mergeGreen()
+
+	l := &ladderStub{t: t, reads: map[string]orchestrator.LadderReading{
+		"wi-1": reading(rigor.POC, 4*time.Hour, headA),
+		// The second item's runs are the ones the daemon could not read.
+		"wi-2": {},
+	}}
+	seams := l.seams(escalation.DefaultThresholds())
+	seams.Beyond = m.seams.Beyond()
+	tick := &orchestrator.Tick{
+		Store:    m.node,
+		Runs:     ladderNoRuns{},
+		Launcher: &o6Launcher{},
+		Mint:     func(time.Time) (string, error) { return mergeRun, nil },
+		Caps:     o6Caps(),
+		Now:      clockAt(now),
+		Ladder:   seams,
+		Notifier: m.sink,
+	}
+
+	// wi-1 comes first in the node and the hook is what the cycle reaches for
+	// it: the review-only run D2043 requires, written through the hook's seam.
+	uncovered := mergePass(headA)
+	uncovered.Scored, uncovered.ReviewRun = false, ""
+	m.reader.reads["wi-1"] = uncovered
+	if _, err := tick.Step(context.Background()); err != nil {
+		t.Fatalf("the cycle ended as %v, and the hook's own write is not one the cycle has to hold", err)
+	}
+	if len(m.stub.launched) != 1 || m.stub.launched[0].Recipe != orchestrator.RecipeReviewOnly {
+		t.Fatalf("the cycle started %+v, and the hook is what rung 3's head gets", m.stub.launched)
+	}
+	question, ok := m.state().Decision("wi-2-escalation")
+	if !ok {
+		t.Fatalf("the cycle wrote no question about wi-2, and the write it makes after the hook is what this test is about")
+	}
+	if question.WaitingOn != orchestrator.OnPerson || !strings.Contains(question.Question, "cannot read the runs behind wi-2") {
+		t.Fatalf("the question about wi-2 reads %+v, and a reading nobody could make is a person's question (G5)", question)
+	}
+
+	// And the write the hook made is still on the node: the transition the
+	// review launched under is the ledger's, the line is the log's, and both
+	// survived the cycle's own write after them.
+	if e := m.item("wi-1").Escalation; e == nil || e.OuterAttempts != 3 {
+		t.Fatalf("the ledger reads %+v, and the review the hook launched is one ladder run", e)
+	}
+	m.stub.line("ladder-r3-review-" + headA[:8])
+
+	// The sequence goes on from there: the next cycle judges the head the
+	// review scored, which it can only read off what the hook wrote.
+	judged := mergePass(headA)
+	judged.JudgeRun = ""
+	m.reader.reads["wi-1"] = judged
+	if _, err := tick.Step(context.Background()); err != nil {
+		t.Fatalf("the second cycle ended as %v", err)
+	}
+	if len(m.stub.launched) != 2 || m.stub.launched[1].Recipe != orchestrator.RecipeMergeJudge {
+		t.Fatalf("the second cycle started %+v, and the judge follows the review the hook recorded", m.stub.launched)
+	}
+}
