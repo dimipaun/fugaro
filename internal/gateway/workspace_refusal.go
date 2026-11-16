@@ -99,3 +99,38 @@ func WorkspaceRefusal(h http.Header) (string, bool) {
 	}
 	return v, true
 }
+
+// ValidWorkspaceRefusalHalt reports whether reason, scope and detail are the
+// halt a run refused by the workspace is written with, for the marker its
+// record carries: the shape serviceAnswer's haltServiceMarked builds, which is
+// the halt every credentials-service refusal forces — budget_unavailable, scope
+// run — with the sentence that path writes for the refusal the workspace's own
+// service answered.
+//
+// All three of the workspace's refusals reach a member's gateway as the same
+// typed refusal, the service unable to read or write the state it must
+// (state_unavailable): its stop is the kill switch it reads, its cap is the
+// room its meter takes in the workspace's own database, and a settle it could
+// not write back is that write failing. So the three markers share one halt
+// shape here, and a release that answers one of them with another wire type
+// extends this table rather than the reader that asks it.
+//
+// It is here, and not beside the reader, because this package is what writes
+// the halt: the reader is the daemon's, which corroborates a marker a run wrote
+// into its own record against the halt beside it before it pauses its queue on
+// it (ee/orchestrator.WorkspaceRefused, O19). The corroboration is a bound and
+// not an authentication — the marker and the halt are both the run's own write,
+// and a run can produce this shape — which is why the pause the daemon raises
+// lifts itself after orchestrator.WorkspacePauseWindow.
+//
+// A marker outside the three is not a refusal this contract could have written
+// (ValidWorkspaceRefusal) and is answered false rather than compared: a value
+// this release does not know must not be able to make a run's record pause a
+// queue.
+func ValidWorkspaceRefusalHalt(marker, reason, scope, detail string) bool {
+	switch marker {
+	case WorkspaceRefusalStop, WorkspaceRefusalCap, WorkspaceRefusalSettle:
+		return reason == ReasonBudgetUnavailable && scope == "run" && detail == refusalDetail(ErrorStateUnavailable)
+	}
+	return false
+}

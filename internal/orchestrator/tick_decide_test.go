@@ -277,13 +277,13 @@ func TestBreakerPausesTheDaemon(t *testing.T) {
 		if rep.Outcome != orchestrator.CycleEmpty {
 			t.Fatalf("cycle %d ended %q, want the empties a trip is counted from", i, rep.Outcome)
 		}
-		if asked := orchestrator.BreakerOpen(h.state()); asked != (i == orchestrator.BreakerThreshold) {
+		if asked := orchestrator.BreakerOpen(h.state(), now); asked != (i == orchestrator.BreakerThreshold) {
 			t.Fatalf("after cycle %d of %d the question is %v, and the threshold is where it is asked",
 				i, orchestrator.BreakerThreshold, asked)
 		}
 	}
 	raised := h.state().Decisions
-	if len(raised) != 1 || !orchestrator.BreakerOpen(h.state()) {
+	if len(raised) != 1 || !orchestrator.BreakerOpen(h.state(), now) {
 		t.Fatalf("the node carries %+v after the threshold, want the breaker's one unanswered question", raised)
 	}
 	if !strings.HasPrefix(raised[0].ID, orchestrator.BreakerDecisionID) {

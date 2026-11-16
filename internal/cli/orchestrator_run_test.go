@@ -628,7 +628,7 @@ func TestDaemonRearmsTheBreakerWhenTheAnswerLands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !orchestrator.BreakerOpen(s) {
+	if !orchestrator.BreakerOpen(s, f.serverNow(t)) {
 		t.Fatal("the trip left no unanswered question on the node, so there is nothing for a person to answer")
 	}
 
@@ -672,7 +672,7 @@ func answerBreakerQuestion(t *testing.T, f *daemonFixture, s orchestrator.State,
 	f.setState(t, string(raw))
 	if after, _, err := d.node.Load(context.Background()); err != nil {
 		t.Fatal(err)
-	} else if orchestrator.BreakerOpen(after) {
+	} else if orchestrator.BreakerOpen(after, f.serverNow(t)) {
 		t.Fatal("the answer did not close the question, so the re-arm below would prove nothing")
 	}
 }

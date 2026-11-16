@@ -32,6 +32,31 @@ type RunReport struct {
 	Started  bool
 	Finished bool
 	Outcome  Outcome
+	// WorkspaceRefusal is the marker the run's record carries when the
+	// workspace's own credentials service refused it, and which of the
+	// workspace's refusals it was (runstore.Halt.WorkspaceRefusal, O19). It is
+	// empty for every run no workspace refused.
+	//
+	// It is here and not read off Halt because the two are separate facts a
+	// reader fills from separate places in the record, and because the seam
+	// that answers whether this is a workspace's refusal is handed both: the
+	// marker is the run's own write, so a rule over it has to hold it against
+	// the halt beside it rather than believe it (ee/orchestrator).
+	WorkspaceRefusal string
+	// Halt is the halt the run's record carries, as the record states it. A
+	// run that ended without one carries the zero Halt.
+	Halt Halt
+}
+
+// Halt is the halt a run's record carries, as the record states it: what
+// stopped the run, at what scope, and the sentence the run's operator reads.
+// It is the three fields a refusal is corroborated against and no more — the
+// fold decides nothing else with them, and nothing here reads a database or a
+// clock.
+type Halt struct {
+	Reason string
+	Scope  string
+	Detail string
 }
 
 // RunViewReader reads the runs the state recorded. It is handed the run ids of

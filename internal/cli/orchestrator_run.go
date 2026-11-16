@@ -876,8 +876,20 @@ func (d *orchestratorDaemon) handOver(ctx context.Context) (bool, error) {
 // one state the answer can change: any other cycle has already settled the
 // count by its own outcome. A read that fails is logged and leaves the streak
 // where it is; the next cycle tries again.
+//
+// The read is the pause's own (orchestrator.BreakerOpen) and so it is made
+// against the server's clock: a question a workspace's refusal raised lifts
+// itself after its window (O19), and a streak that stands at the threshold
+// while such a question has lapsed has to be re-armed like any other — without
+// that, the one pause a cycle cannot lift would leave this process silent for
+// the rest of its life. A clock that cannot be read leaves the streak where it
+// is, which is the direction that keeps the guard.
 func (d *orchestratorDaemon) rearmBreaker(ctx context.Context) {
 	if d.tick == nil || d.tick.Breaker == nil || !d.tick.Breaker.Tripped() {
+		return
+	}
+	now, ok := d.tick.Now()
+	if !ok {
 		return
 	}
 	s, _, err := d.node.Load(ctx)
@@ -885,7 +897,7 @@ func (d *orchestratorDaemon) rearmBreaker(ctx context.Context) {
 		fmt.Fprintf(d.warn, "orchestrator %s: the breaker could not be re-armed: %s\n", safetext.Field(d.id), safetext.OneLine(err.Error()))
 		return
 	}
-	if !orchestrator.BreakerOpen(s) {
+	if !orchestrator.BreakerOpen(s, now) {
 		d.tick.Breaker.Reset()
 	}
 }
@@ -1136,6 +1148,19 @@ func (v *orchestratorRunView) Runs(ctx context.Context, runIDs []string) ([]orch
 			rec = nil
 		case err != nil:
 			return nil, err
+		}
+		if rec != nil && rec.Halt != nil {
+			// The halt travels whole, and the marker with it: the fold asks the
+			// build's seam whether this is a refusal a workspace's credentials
+			// service answered, and that rule holds the marker against the halt
+			// beside it (O19). Nothing is decided here — a reader that judged
+			// the record would be the second place the rule lives.
+			rep.Halt = orchestrator.Halt{
+				Reason: string(rec.Halt.Reason),
+				Scope:  rec.Halt.Scope,
+				Detail: rec.Halt.Detail,
+			}
+			rep.WorkspaceRefusal = rec.Halt.WorkspaceRefusal
 		}
 		if done, outcome := orchestratorOutcome(rec); done {
 			rep.Finished, rep.Outcome = true, outcome

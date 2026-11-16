@@ -147,9 +147,17 @@ func (t *Tick) Step(ctx context.Context) (Report, error) {
 	if err != nil {
 		c.rep.Outcome = CycleFailed
 	}
-	if t.Breaker != nil && t.Breaker.Observe(c.rep.Outcome) {
-		if rerr := c.ask(ctx); rerr != nil {
-			err = errors.Join(err, rerr)
+	if t.Breaker != nil {
+		// A cycle that folded a run the workspace refused asks a person at
+		// once, without waiting for the streak (O19, D2022 (a)); every other
+		// cycle asks on the one that reaches the threshold, which is what
+		// Observe reports. The two are one question to the node, so a cycle
+		// that has both asks once (ask, question).
+		tripped := t.Breaker.Observe(c.rep.Outcome)
+		if tripped || c.refused != "" {
+			if rerr := c.ask(ctx); rerr != nil {
+				err = errors.Join(err, rerr)
+			}
 		}
 	}
 	return c.rep, err
@@ -179,6 +187,11 @@ type cycle struct {
 	etag  ETag
 	now   time.Time
 	fresh bool
+	// refused is which of the workspace's refusals a run this cycle folded came
+	// back with, and "" when none did: the cycle asks a person about it at once
+	// rather than after BreakerThreshold more attempts into the same refusal
+	// (O19, D2022 (a)).
+	refused string
 }
 
 func (c *cycle) run(ctx context.Context) error {
@@ -221,11 +234,28 @@ func (c *cycle) run(ctx context.Context) error {
 }
 
 // fold writes what the finished runs mean into the items, and says so once the
-// write has landed.
+// write has landed. It is also where a run the workspace's credentials service
+// refused is noticed: the marker is the run's own record's, and the seam that
+// tells a refusal the workspace answered from an ordinary outage — a rule over
+// the marker and the halt beside it — is ee/'s (WorkspaceRefused, O19). A
+// refusal this build's seam claims is remembered on the cycle, which asks a
+// person at once rather than spending the attempts the streak would take.
+//
+// What it asks about is the reports the reader answered for the intents that
+// have not reported, which is every report the fold looks at: an attempt that
+// has already reported is history, and a refusal folded in an earlier cycle is
+// one this cycle cannot see again, so a question already asked is never asked
+// twice by a fold.
 func (c *cycle) fold(ctx context.Context, reports []RunReport) error {
 	ops, notes, err := foldOps(c.state, reports)
 	if err != nil {
 		return err
+	}
+	for _, r := range reports {
+		if r.Finished && WorkspaceRefused(r) {
+			c.refused = r.WorkspaceRefusal
+			break
+		}
 	}
 	if len(ops) == 0 {
 		return nil
@@ -315,15 +345,15 @@ func (c *cycle) commit(ctx context.Context, next State) error {
 }
 
 // ask commits the question a tripped breaker raises, and says so. The breaker
-// asks at most one question per trip (Decision refuses one the node already
-// carries), so a daemon that restarted into an unanswered question does not
-// leave a second one behind — and a cycle whose node is not its own to write
-// asks nothing at all.
+// asks at most one question per trip (Decision and WorkspaceDecision each
+// refuse one the node already carries), so a daemon that restarted into an
+// unanswered question does not leave a second one behind — and a cycle whose
+// node is not its own to write asks nothing at all.
 func (c *cycle) ask(ctx context.Context) error {
 	if c.tick.Breaker == nil || !c.fresh {
 		return nil
 	}
-	op, ok := c.tick.Breaker.Decision(c.state, c.now)
+	op, ok := c.question()
 	if !ok {
 		return nil
 	}
@@ -336,6 +366,18 @@ func (c *cycle) ask(ctx context.Context) error {
 	}
 	c.say(ctx, Notification{Kind: NotifyDecisionNeeded, Subject: op.Decision.ID, Text: op.Decision.Question})
 	return nil
+}
+
+// question is what this cycle asks a person: the question a workspace's refusal
+// raises when one landed in this cycle's fold, and the streak's own otherwise.
+// The refusal's comes first because it is the more specific answer — a person
+// looking at the queue has to be told what stopped it — and because the node
+// carries at most one of the two either way.
+func (c *cycle) question() (Op, bool) {
+	if c.refused != "" {
+		return c.tick.Breaker.WorkspaceDecision(c.state, c.now, c.refused)
+	}
+	return c.tick.Breaker.Decision(c.state, c.now)
 }
 
 // say hands one notification to the sink, once the write that made it true has
@@ -992,7 +1034,7 @@ func newestAttempt(s State, itemID string) (Intent, bool) {
 // money — and neither does one whose node is no longer this cycle's to write,
 // because the ops an answer asks for are committed against that node.
 func (c *cycle) decide(ctx context.Context, view RunView) error {
-	if !c.tick.Decide.Set() || !c.fresh || c.tick.Caps.KillSwitch || BreakerOpen(c.state) {
+	if !c.tick.Decide.Set() || !c.fresh || c.tick.Caps.KillSwitch || BreakerOpen(c.state, c.now) {
 		return nil
 	}
 	for _, k := range judgementCases(c.state, view, c.now) {

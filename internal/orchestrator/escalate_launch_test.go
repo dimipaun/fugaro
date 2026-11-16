@@ -907,7 +907,7 @@ func TestTickSpendsNothingWhileTheNodesGuardsHold(t *testing.T) {
 		t.Fatal("the tripped breaker had no question to raise")
 	}
 	paused := o6Apply(t, ready, question, orchestrator.Actor{Class: orchestrator.Daemon, Now: now})
-	if !orchestrator.BreakerOpen(paused) {
+	if !orchestrator.BreakerOpen(paused, now) {
 		t.Fatal("the node carries the trip's question and does not read as open")
 	}
 

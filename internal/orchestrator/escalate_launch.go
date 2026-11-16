@@ -186,7 +186,7 @@ func (c *cycle) escalate(ctx context.Context) error {
 	if !c.tick.Ladder.Set() || !c.fresh {
 		return nil
 	}
-	if c.tick.Caps.KillSwitch || OverCap(c.state) || BreakerOpen(c.state) {
+	if c.tick.Caps.KillSwitch || OverCap(c.state) || BreakerOpen(c.state, c.now) {
 		return nil
 	}
 	blocked := blocksOthers(c.state)

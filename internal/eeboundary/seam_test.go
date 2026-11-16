@@ -5,8 +5,9 @@ package eeboundary
 // setters -- cli.SetLaunchDeclarer and cli.RegisterCommand (E1.1),
 // policy.SetGovernance, runner.SetStage, digest.SetSections (E1.2),
 // runner.SetGatewayStageLimit (T7.2's gateway half),
-// cli.SetEditionEE (E1.3), orchestrator.SetHandoff and orchestrator.SetBatch
-// (O17 and O18 of the stateless orchestrator plan) and
+// cli.SetEditionEE (E1.3), orchestrator.SetHandoff, orchestrator.SetBatch and
+// orchestrator.SetWorkspace
+// (O17, O18 and O19 of the stateless orchestrator plan) and
 // access.SetSubscriptionLimit (the lapse limit, RS9 of docs/roles-scopes) --
 // and a core caller that called one could set a seam
 // to something the tagged build did not intend, or switch enforcement off in a
@@ -57,6 +58,7 @@ var seamSetterNames = []string{
 	"SetEditionEE",
 	"SetHandoff",
 	"SetBatch",
+	"SetWorkspace",
 	"SetSubscriptionLimit",
 	"RegisterLaunchPlanner",
 }

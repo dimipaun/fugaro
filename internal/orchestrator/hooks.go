@@ -9,8 +9,9 @@ import (
 )
 
 // The shared half of the orchestrator — handing an agent from one developer to
-// another, an agent the project owns rather than a person, and how many work
-// items one approval covers — needs the project's identity and governance, so it
+// another, an agent the project owns rather than a person, how many work items
+// one approval covers, and whether a run came back refused by the workspace its
+// credentials came from — needs the project's identity and governance, so it
 // lives in ee/ (D1222, F14). This file is the seam that half fills, and the seam
 // a build the owner moved a feature into reaches the core through: the core
 // carries the vocabulary and a default, `ee/register` installs the
@@ -25,7 +26,10 @@ import (
 // The batch is the same argument one step weaker — a build without the shared
 // half may cover the work items Fugaro ships and no more — and it refuses the
 // raise rather than cutting it down, because a caller answered ten for a request
-// of twenty-five would approve ten believing it had approved twenty-five.
+// of twenty-five would approve ten believing it had approved twenty-five. The
+// workspace refusal is the third: its default claims no refusal at all, because
+// the alternative — a default that believed a marker nothing corroborated —
+// would stop a queue on a claim any run can write into its own record.
 
 // Owner is who an orchestrator agent belongs to: one member of the project, or
 // the project itself. The zero Owner is the project's, so an agent built
@@ -131,6 +135,65 @@ func coreHandoffFuncs() HandoffFuncs {
 			return Agent{}, fmt.Errorf("%w: handing an agent to another developer needs the shared half this build does not carry", ErrActorNotAllowed)
 		},
 	}
+}
+
+// WorkspaceFuncs is the shared half's third operation: whether a run the
+// daemon launched came back refused by the workspace its credentials came
+// from, which is the one refusal a cycle pauses the queue on at once (O19,
+// D2022 (a)).
+//
+// It is a question about one run's own report and nothing else, so it is a
+// seam and not a read: what tells a workspace's refusal from an ordinary
+// outage is the workspace's credentials service's own marker in the run's
+// record, and the rule over the marker — and the shape it has to agree with —
+// is ee/'s, the same half the handoff and the batch are (D1222, F14).
+type WorkspaceFuncs struct {
+	// Refused answers whether this run's report is a refusal the workspace's
+	// own credentials service answered, and false for every other report —
+	// including a report whose record claims one and does not carry the halt
+	// such a claim is written with.
+	Refused func(RunReport) bool
+}
+
+// workspaceHooks is the installed third operation. Only ee/register may call
+// SetWorkspace: the core never sets it, so an untagged build claims no refusal.
+var workspaceHooks = coreWorkspaceFuncs()
+
+// workspaceHooksSet records that a caller installed one, which only SetWorkspace
+// does.
+var workspaceHooksSet bool
+
+// SetWorkspace installs the shared half's workspace-refusal rule, refusing a
+// second call for the reason SetHandoff does — what a build carries is decided
+// once, by ee/register, and a rule that could be replaced afterwards would be a
+// way to install a pause rule the build did not intend (§5.5) — and refusing a
+// nil Refused, which is a panic on the first fold rather than an answer.
+func SetWorkspace(f WorkspaceFuncs) error {
+	if workspaceHooksSet {
+		return errors.New("orchestrator: the workspace hook is already set")
+	}
+	if f.Refused == nil {
+		return errors.New("orchestrator: the workspace hook needs Refused")
+	}
+	workspaceHooks, workspaceHooksSet = f, true
+	return nil
+}
+
+// WorkspaceRefused asks the build's seam whether one run's report is a refusal
+// the workspace's credentials service answered. It is the one way the question
+// is asked, so a build that carries the shared half cannot be bypassed by a
+// caller reaching for the rule itself.
+func WorkspaceRefused(r RunReport) bool { return workspaceHooks.Refused(r) }
+
+// coreWorkspaceFuncs is the untagged build's third operation: no run is ever
+// refused by a workspace, because an installation that deploys one carries the
+// shared half and the rule that tells its refusals from an ordinary outage. An
+// untagged build therefore behaves exactly as it did before the seam existed —
+// the refusal counts as one of the item's attempts and the breaker pauses after
+// BreakerThreshold of them (O6) — which is the safe direction for a default: a
+// queue paused on a claim nothing checked is worse than a queue that retries.
+func coreWorkspaceFuncs() WorkspaceFuncs {
+	return WorkspaceFuncs{Refused: func(RunReport) bool { return false }}
 }
 
 // Batch is what one approval would cover: how many work items the approval

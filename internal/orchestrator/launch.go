@@ -228,7 +228,7 @@ type Action struct {
 // ladder launches on top (LadderLaunch): a rung's runs are the executor's to
 // ask for, and its own bound is not this plan's caps.
 func Plan(s State, view RunView, caps Caps, now time.Time) []Action {
-	if caps.KillSwitch || OverCap(s) || BreakerOpen(s) {
+	if caps.KillSwitch || OverCap(s) || BreakerOpen(s, now) {
 		return nil
 	}
 	counts := CountsOf(s, now)
@@ -394,15 +394,18 @@ func LadderRuns(s State, w WorkItem) int {
 // another recipe — a rebase, the one stronger pass, the judge, a merge, a split
 // — and a rung the item is past is a rung whose answer is not another normal
 // run of its recipe.
-func LadderLaunch(s State, w WorkItem, view RunView, caps Caps) (Action, bool) {
-	if caps.KillSwitch || OverCap(s) || BreakerOpen(s) {
+func LadderLaunch(s State, w WorkItem, view RunView, caps Caps, now time.Time) (Action, bool) {
+	if caps.KillSwitch || OverCap(s) || BreakerOpen(s, now) {
 		// The three questions Plan asks before it launches anything. They are not
 		// the ladder's bound — that is LadderRuns and, where a person set one, the
 		// cost ceiling (D2042) — they are whether this node launches at all: a
 		// start while the budget switch holds spends what a person stopped, one on
 		// a node over its size cap acts on a record that may no longer be the whole
 		// one, and one while the breaker's question stands is the pause a restart
-		// may not lift.
+		// may not lift. now is the server's clock, which is what the pause a
+		// workspace's refusal raised is read against (O19): a rung is a run into
+		// the same refusal the queue was stopped by, so it waits on the same
+		// question and lifts with it.
 		return Action{}, false
 	}
 	if w.Escalation == nil || w.Escalation.Rung != escalation.R1 {

@@ -116,7 +116,7 @@ func TestBreakerPausesAcrossARestart(t *testing.T) {
 	s = o6Apply(t, s, orchestrator.Op{Op: orchestrator.OpDecisionAdd, Decision: &orchestrator.DecisionOp{
 		ID: "ask-the-owner", Question: "Which brief?", WaitingOn: orchestrator.OnPerson,
 	}}, orchestrator.Actor{Class: orchestrator.Daemon, Now: now})
-	if orchestrator.BreakerOpen(s) {
+	if orchestrator.BreakerOpen(s, now) {
 		t.Fatal("an unanswered decision that is not the breaker's stopped the daemon")
 	}
 	if got := orchestrator.Plan(s, orchestrator.RunView{}, o6Caps(), now); len(got) != 1 {
@@ -143,7 +143,7 @@ func TestBreakerPausesAcrossARestart(t *testing.T) {
 	if restarted.Tripped() {
 		t.Error("a breaker that has seen no cycle reports that it has tripped")
 	}
-	if !orchestrator.BreakerOpen(s) {
+	if !orchestrator.BreakerOpen(s, now) {
 		t.Fatal("the node carries the trip's unanswered question and does not read as open")
 	}
 	if got := orchestrator.Plan(s, orchestrator.RunView{}, o6Caps(), now); len(got) != 0 {
@@ -179,7 +179,7 @@ func TestBreakerPausesAcrossARestart(t *testing.T) {
 	answered := o6Apply(t, s, orchestrator.Op{Op: orchestrator.OpDecisionResolve, Resolve: &orchestrator.ResolveOp{
 		ID: s.Decisions[1].ID, Answer: "carry on",
 	}}, orchestrator.Actor{Class: orchestrator.Person, Name: "owner", Now: now.Add(time.Minute)})
-	if orchestrator.BreakerOpen(answered) {
+	if orchestrator.BreakerOpen(answered, now.Add(time.Minute)) {
 		t.Error("the answered question still reads as the breaker being open")
 	}
 	a := onlyAction(t, orchestrator.Plan(answered, orchestrator.RunView{}, o6Caps(), now.Add(time.Minute)))
@@ -206,7 +206,7 @@ func TestBreakerAsksAgainAfterAnAnswer(t *testing.T) {
 	cycles := func(at time.Time, n int, rearm bool) int {
 		raised := 0
 		for range n {
-			if rearm && !orchestrator.BreakerOpen(s) && b.Tripped() {
+			if rearm && !orchestrator.BreakerOpen(s, at) && b.Tripped() {
 				b.Reset()
 			}
 			if b.Observe(orchestrator.CycleEmpty) {
@@ -224,7 +224,7 @@ func TestBreakerAsksAgainAfterAnAnswer(t *testing.T) {
 	if n := cycles(now, orchestrator.BreakerThreshold, true); n != 1 {
 		t.Fatalf("the first streak raised %d question(s)", n)
 	}
-	if !orchestrator.BreakerOpen(s) {
+	if !orchestrator.BreakerOpen(s, now) {
 		t.Fatal("the node carries the trip's question and does not read as open")
 	}
 
@@ -232,7 +232,7 @@ func TestBreakerAsksAgainAfterAnAnswer(t *testing.T) {
 	s = o6Apply(t, s, orchestrator.Op{Op: orchestrator.OpDecisionResolve, Resolve: &orchestrator.ResolveOp{
 		ID: s.Decisions[0].ID, Answer: "carry on",
 	}}, orchestrator.Actor{Class: orchestrator.Person, Name: "owner", Now: now.Add(time.Minute)})
-	if orchestrator.BreakerOpen(s) {
+	if orchestrator.BreakerOpen(s, now) {
 		t.Fatal("the answered question still reads as the breaker being open")
 	}
 
@@ -251,7 +251,7 @@ func TestBreakerAsksAgainAfterAnAnswer(t *testing.T) {
 	if n := cycles(now.Add(time.Hour), orchestrator.BreakerThreshold, true); n != 1 {
 		t.Fatalf("the streak after the answer raised %d question(s), and the guard has to be usable more than once per process", n)
 	}
-	if len(s.Decisions) != 2 || s.Decisions[1].ID == s.Decisions[0].ID || !orchestrator.BreakerOpen(s) {
+	if len(s.Decisions) != 2 || s.Decisions[1].ID == s.Decisions[0].ID || !orchestrator.BreakerOpen(s, now.Add(time.Hour)) {
 		t.Fatalf("the second trip left %+v, and an answered decision keeps its id in the list", s.Decisions)
 	}
 	if got := orchestrator.Plan(s, orchestrator.RunView{}, o6Caps(), now.Add(time.Hour)); len(got) != 0 {
@@ -279,7 +279,7 @@ func TestSessionCannotForgeTheBreakerPause(t *testing.T) {
 			t.Fatalf("a %s actor halted the spawns: err = %v, want %v", class, err, orchestrator.ErrActorNotAllowed)
 		}
 	}
-	if orchestrator.BreakerOpen(s) {
+	if orchestrator.BreakerOpen(s, now) {
 		t.Fatal("a refused write still stopped the daemon")
 	}
 
@@ -288,7 +288,7 @@ func TestSessionCannotForgeTheBreakerPause(t *testing.T) {
 	// use.
 	s = o6Apply(t, s, ask(orchestrator.BreakerDecisionID+"-20261107T120000Z"), orchestrator.Actor{Class: orchestrator.Daemon, Now: now})
 	s = o6Apply(t, s, ask("ask-the-owner"), orchestrator.Actor{Class: orchestrator.DecisionAgent, Now: now})
-	if !orchestrator.BreakerOpen(s) {
+	if !orchestrator.BreakerOpen(s, now) {
 		t.Fatal("the daemon's own question did not stop the spawns")
 	}
 	if got := orchestrator.Plan(s, orchestrator.RunView{}, o6Caps(), now); len(got) != 0 {

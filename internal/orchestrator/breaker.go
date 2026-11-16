@@ -13,6 +13,35 @@ import (
 // (D1228).
 const BreakerThreshold = 3
 
+// WorkspacePauseWindow is how long a pause a workspace's refusal raised holds
+// the daemon before it lifts itself (O19, D2022 (a)).
+//
+// It is the bound the pause owes the marker it is raised from. The marker is
+// written into the run's own record, which the run's own job account writes,
+// and a run is the untrusted party here: a hostile run reaches that account's
+// token from the metadata server and can write a workspace's refusal into its
+// own record with no workspace's service involved at all (SECURITY.md, "Runs
+// of one repository can see each other"). Corroborating the marker against the
+// halt beside it (ee/orchestrator.WorkspaceRefused) costs a forger the shape of
+// a refusal and not the pause, because the forger writes the halt too — so the
+// pause is bounded in time instead: an hour of queue at most, once, and a
+// person who answers sooner ends it. A person who wants the queue stopped
+// longer stops it the way the other stops work, with the kill switch.
+//
+// It is read and not written: nothing retires the question, so a person may
+// still answer it after the window has passed (the answer then changes
+// nothing), and the record keeps what the daemon asked and when.
+const WorkspacePauseWindow = time.Hour
+
+// WorkspaceDecisionID is what the question a workspace's refusal raises is
+// recognised by, between the breaker's prefix and the trip's own stamp. It
+// stays under BreakerDecisionID's prefix, which is what keeps the pause the one
+// Plan already refuses over and the write the daemon's own (patch.go's
+// applyDecisionAdd refuses the prefix from every other class) — and what tells
+// this question from the one a streak raises, which waits for a person however
+// long that takes while this one lifts itself (WorkspacePauseWindow).
+const WorkspaceDecisionID = BreakerDecisionID + "-workspace"
+
 // BreakerDecisionID is the prefix of the id of the question a tripped breaker
 // raises, and what a caller recognises the question by. The id carries the
 // trip's own stamp as well: an answered decision keeps its id in the list and a
@@ -111,23 +140,35 @@ func (b *Breaker) Tripped() bool { return b.consecutive >= BreakerThreshold }
 func (b *Breaker) Reset() { b.consecutive = 0 }
 
 // BreakerOpen reports whether the node carries the question a tripped breaker
-// raised and nobody has answered, which is the pause itself. It is a read of
-// the state and not of a Breaker, so a tick that has just started — after a
-// crash, a supervisor restart, or the exit the version check takes — keeps the
-// pause its predecessor's trip earned until a person answers. What ends it is
-// that answer, the same write that resolves the decision: a cycle that did work
-// is not one, and neither is anything else the daemon can do on its own.
+// raised and nobody has answered, which is the pause itself, at now. It is a
+// read of the state and not of a Breaker, so a tick that has just started —
+// after a crash, a supervisor restart, or the exit the version check takes —
+// keeps the pause its predecessor's trip earned until a person answers. What
+// ends it is that answer, the same write that resolves the decision: a cycle
+// that did work is not one, and neither is anything else the daemon can do on
+// its own.
 //
 // The id is what tells this question from every other one the loop asks a
 // person, and it is the trip's own (see BreakerDecisionID). What it is read for
 // is both halves of a trip: it is the pause a plan refuses over, and it is how
 // Decision knows that the question a streak just reached is one the node
 // already carries.
-func BreakerOpen(s State) bool {
+//
+// now is the server's clock and not this process's (D1230), and it is here
+// because one of the questions does not wait for a person: the pause a
+// workspace's refusal raised lifts itself once WorkspacePauseWindow has passed
+// (O19). A question that has lapsed is not this node's pause, so a cycle plans
+// over it — and a person who answers it afterwards writes over a question
+// nothing was waiting on, which is why the answer changes nothing.
+func BreakerOpen(s State, now time.Time) bool {
 	for _, d := range s.Decisions {
-		if !d.Resolved() && strings.HasPrefix(d.ID, BreakerDecisionID+"-") {
-			return true
+		if d.Resolved() || !strings.HasPrefix(d.ID, BreakerDecisionID+"-") {
+			continue
 		}
+		if strings.HasPrefix(d.ID, WorkspaceDecisionID+"-") && !now.Before(d.At.Add(WorkspacePauseWindow)) {
+			continue
+		}
+		return true
 	}
 	return false
 }
@@ -149,13 +190,43 @@ func BreakerOpen(s State) bool {
 // why the guard sits here and not in Observe: a report is a fact about the
 // cycle, and the tick commits a question only when this says there is one.
 func (b *Breaker) Decision(s State, now time.Time) (Op, bool) {
-	if BreakerOpen(s) {
+	if BreakerOpen(s, now) {
 		return Op{}, false
 	}
 	return Op{Op: OpDecisionAdd, Decision: &DecisionOp{
 		ID: BreakerDecisionID + "-" + now.UTC().Format("20060102T150405Z"),
 		Question: fmt.Sprintf("The orchestrator has ended %d cycles in a row without starting or finishing anything. What should it do?",
 			BreakerThreshold),
+		WaitingOn: OnPerson,
+	}}, true
+}
+
+// WorkspaceDecision is the question a workspace's refusal raises, for the tick
+// to commit with the rest of its patch, and false when there is none to raise:
+// the node already carries an unanswered question of the breaker's (see
+// BreakerOpen), and a cycle that has one to ask has nothing to add to it.
+//
+// It is the breaker's own question — the same prefix, the same class's to
+// write, the same waiting_on: person — raised on the cycle the refusal landed
+// rather than on the one that reached the threshold (D2022 (a)): a run the
+// workspace's credentials service refused is a run no other item will fare
+// better on, so the daemon stops starting work into the same refusal at once
+// instead of spending BreakerThreshold attempts, and each of those an item's
+// approval, to learn what one refusal already said.
+//
+// reason is which of the workspace's refusals the run's record named
+// (gateway's WorkspaceRefusals), and it is in the question because the person
+// reading it is the one who decides what to do about it. The question also says
+// when the pause lifts: unlike the streak's, this one is not a person's alone
+// to end (WorkspacePauseWindow, and the why).
+func (b *Breaker) WorkspaceDecision(s State, now time.Time, reason string) (Op, bool) {
+	if BreakerOpen(s, now) {
+		return Op{}, false
+	}
+	return Op{Op: OpDecisionAdd, Decision: &DecisionOp{
+		ID: WorkspaceDecisionID + "-" + now.UTC().Format("20060102T150405Z"),
+		Question: fmt.Sprintf("The workspace refused a run this orchestrator started (%s), so it has stopped starting work rather than spend more attempts into the same refusal. What should it do? The pause lifts itself at %s, and answering this ends it sooner.",
+			reason, now.Add(WorkspacePauseWindow).UTC().Format(time.RFC3339)),
 		WaitingOn: OnPerson,
 	}}, true
 }
