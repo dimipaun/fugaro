@@ -580,6 +580,143 @@ func TestAnotherOrgsTrialDoesNotBarYourBinding(t *testing.T) {
 	}
 }
 
+// TestTrialIsRefusedForAProjectTheOrganisationHasBound is the first of the two
+// readings of D2204's rule the trial route makes: the one it takes before
+// anything is minted (trialProjectFree). An organisation that already holds a
+// workspace of its own on the project the ask names holds a licence on that
+// installation already — the binding behind that workspace probed the project
+// before it made the claim (D2205) — so a trial for the same project would be a
+// second licence on one installation: two cards drawn for one workspace and a
+// key that fights the one already there.
+//
+// The refusal is the binding's own for that state — 409 `project_id_bound`, the
+// code `refuseBinding` answers `errProjectIDBound` with — and it is read before
+// the mint and before the account's domain spends its allowance, so a refused ask
+// costs neither a key nor a domain's trial.
+//
+// What the guard is **not** is every organisation's project: a project id another
+// organisation bound is a string this asker cannot be refused for naming (D2201,
+// F37, `TestAnotherOrgsTrialDoesNotBarYourBinding`), so it reads the asking
+// organisation's own records — and this case is the refuser, which is what makes
+// it one: without the guard the ask below is served and writes a licence beside
+// the one the binding already made.
+func TestTrialIsRefusedForAProjectTheOrganisationHasBound(t *testing.T) {
+	f := newBindingFixture(t)
+	organisation, workspace, paid := f.licensingWorkspace(t)
+	// The licence the organisation already holds on this installation, bound the
+	// way every licence is: through the binding, which probes the project. The
+	// key that binding mints and the mail it may send are the counts the refusal
+	// below is read against.
+	if rec := f.bind(t, paid.ID, exampleProject); rec.Code != http.StatusOK {
+		t.Fatalf("binding the project answered %d (%s), want 200: this case reads the trial that comes after it", rec.Code, rec.Body.String())
+	}
+	bound, _ := f.workspace(workspace.ID)
+	if bound.ProjectID == nil || *bound.ProjectID != exampleProject {
+		t.Fatalf("the organisation's workspace is %+v after the binding, want it bound to %s", bound, exampleProject)
+	}
+	minted, mailed := len(f.mintedKeys()), len(f.mail.sent)
+
+	rec := f.ask(trialBody(exampleProject))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("the ask answered %d (%s), want 409: the organisation holds a licence on that installation already (D2204)", rec.Code, rec.Body.String())
+	}
+	if code := trialFaultCode(t, rec); code != "project_id_bound" {
+		t.Errorf("the refusal carries the code %q, want %q: it is the state the binding refuses under that code (api_workspaces.go)", code, "project_id_bound")
+	}
+	if now := len(f.mintedKeys()); now != minted {
+		t.Errorf("the refused ask minted %d key(s) where the binding had minted %d, want no key of its own: the rule is read before the mint", now, minted)
+	}
+	if now := len(f.mail.sent); now != mailed {
+		t.Errorf("the refused ask mailed %d message(s) where the binding had mailed %d, want nothing", now, mailed)
+	}
+	trials, err := f.store.Trials(t.Context())
+	if err != nil {
+		t.Fatalf("reading the trials: %v", err)
+	}
+	if len(trials) != 0 {
+		t.Errorf("the refused ask claimed %+v, want no trial: a refusal writes nothing, so the account can still ask for a project of its own", trials)
+	}
+	if licences := f.trialEntitlements(); len(licences) != 0 {
+		t.Errorf("the refused ask wrote %+v, want no licence", licences)
+	}
+	held := f.organisationWorkspaces(organisation.ID)
+	if len(held) != 1 || held[0].ID != workspace.ID {
+		t.Errorf("the organisation holds %+v after the refusal, want the one workspace it already had (%s)", held, workspace.ID)
+	}
+}
+
+// TestTrialIsRefusedForAProjectBoundBetweenTheReadAndTheWrite is the trial
+// route's second reading of D2204's rule: the one inside the transaction that
+// writes the licence (trialLicence). The route reads the rule above, but a
+// binding another request makes between that read and this write is state the
+// licence would be written on and the route never saw — so the rule is asked
+// again inside the write that would break it, which is what a store's
+// transaction is for (api.go's Tx, docstore's ErrReadAfterWrite). This case puts
+// a binding of the project for the asking organisation in exactly that window,
+// which is the state a competing `POST /workspaces/bind` leaves, and reads what
+// the transaction does with it.
+//
+// The answer is this route's failure shape and not a refusal: the key is minted
+// and the trial claimed before this transaction runs, so a refusal a caller could
+// act on would be a lie — no second project gets this account a trial — and what
+// the route leaves behind is the state its own order documents: a claimed trial,
+// a key nobody was mailed and no licence, which an operator reads off the store's
+// list (§8, K2.2). Without the guard inside the write the ask below is served and
+// a second licence is written for the project the organisation has just bound.
+func TestTrialIsRefusedForAProjectBoundBetweenTheReadAndTheWrite(t *testing.T) {
+	// The asking organisation is the trial fixture's own pair: the portal
+	// organisation the membership half of §14's rule counts and the account the
+	// trial is held for (D2201).
+	f := newBindingFixtureWith(t, func(f *fixture) {
+		f.seededOrganisation(trialOrganisation, "Acme Ltd", orgTypeCustomer, "uid-trial", trialAccount, roleOwner)
+		f.deps.Docs = &racingDocs{Docs: f.deps.Docs, spy: f.docs}
+	})
+	f.actsAs("uid-trial", trialAccount, signInGoogle)
+	racer := f.racer(t)
+	racer.before = func(*docsSpy) {
+		// The binding that got there first, written straight into the store the
+		// way a committed request's own write lands, in the instant before the
+		// trial's transaction runs.
+		project, at := exampleProject, f.now
+		f.seed(workspacesCollection, "ws-raced", WireWorkspace{
+			ID:             "ws-raced",
+			OrganisationID: trialOrganisation,
+			Name:           exampleProject,
+			ProjectID:      &project,
+			CreatedAt:      at,
+			BoundAt:        &at,
+		})
+	}
+
+	rec := f.ask(trialBody(exampleProject))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("the ask answered %d (%s), want the route's failure shape: the trial is claimed and its key minted by the time the rule is read inside the write, so there is no refusal left to answer (trialLicence, trialFailed)", rec.Code, rec.Body.String())
+	}
+	if code := trialFaultCode(t, rec); code != apiFailedCode {
+		t.Errorf("the failure carries the code %q, want %q", code, apiFailedCode)
+	}
+	if licences := f.trialEntitlements(); len(licences) != 0 {
+		t.Errorf("the store holds %+v, want no licence: the transaction read the rule and refused the write (D2204)", licences)
+	}
+	if sent := f.mail.sent; len(sent) != 0 {
+		t.Errorf("the ask mailed %+v, want nothing: no licence was written for a key to be sent about", sent)
+	}
+	held := f.organisationWorkspaces(trialOrganisation)
+	if len(held) != 1 || held[0].ID != "ws-raced" {
+		t.Errorf("the organisation holds %+v, want the one workspace the binding wrote and none of the trial's", held)
+	}
+	if minted := f.mintedKeys(); len(minted) != 1 {
+		t.Errorf("the ask minted %d key(s), want the one the mint above the claim answered (K2.2)", len(minted))
+	}
+	trials, err := f.store.Trials(t.Context())
+	if err != nil {
+		t.Fatalf("reading the trials: %v", err)
+	}
+	if len(trials) != 1 || trials[0].Installation != trialInstallation(trialOrganisation, exampleProject) {
+		t.Errorf("the store holds %+v, want the one trial this ask claimed for %s (D2201)", trials, trialInstallation(trialOrganisation, exampleProject))
+	}
+}
+
 // TestTrialIsRefusedForAnAccountWithNoOrganisation: the half of D2201's pair
 // that is not the project id is a portal organisation (P3.3, D2185), and an
 // account that is a member of none has none for the trial to be counted against
