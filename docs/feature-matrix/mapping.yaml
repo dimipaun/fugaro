@@ -55,6 +55,12 @@ features:
     specs:
       - setup-wizard
       - issues-resolved-on-update
+  - id: manage-repositories
+    name: "Manage the repositories a project holds"
+    explanation: "The repositories enrolled in a project are added, removed, listed and checked with one command each, and the check says what is left of an enrolment a step done out of order left half-finished. A removal undoes the enrolment and leaves a run that is going alone."
+    plan: community
+    specs:
+      - repos-management
   - id: drive-from-claude-code
     name: "Drive Fugaro from Claude Code"
     explanation: "Fugaro's commands are driven from Claude Code through a plugin installed for you, and the plugin says when an update is due. In a managed project the agent runs the cloud-changing commands itself, behind a deterministic gate instead of a prompt."
@@ -90,6 +96,12 @@ features:
       - settings-commands
       - config-management
       - composite-commands
+  - id: one-write-path
+    name: "One write path behind every setting"
+    explanation: "A setting is changed through one write path, whichever command owns the field, so a field with invariants or a publish step is written only by the command that understands it. A generic write to a field another command owns is refused, naming the command to use."
+    plan: community
+    specs:
+      - config-ownership
   - id: run-thoroughness
     name: "Choose how thorough a run is"
     explanation: "A project picks a rigor mode, from a quick proof of concept to a change that must not break anything, and every stage of a run follows it."
@@ -166,6 +178,12 @@ features:
       - diagnose-agent
       - issue-mine
       - troubleshoot-issue
+  - id: cloud-diagnosis-job
+    name: "Explain a failure with your project's own credential"
+    explanation: "When the machine in front of you holds no model login of its own, the evidence a failed command collected is handed to one bounded job in your own project, and a person standing at that machine still gets the cause and the fix. The job reads the redacted evidence and nothing else."
+    plan: community
+    specs:
+      - troubleshoot-cloud
   - id: run-reports
     name: "Reports on how your runs are going"
     explanation: "Every run ends with a classified failure, and a periodic digest reports what a project's runs did — the failures, the spend and the patterns worth acting on."
