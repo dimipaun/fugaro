@@ -665,6 +665,12 @@ func TestRunTokenWritesSurviveThePolicyEdit(t *testing.T) {
 		"spend/$day/repos/" + slugForPath + "/byModel/$model/out",
 		"spend/$day/repos/" + slugForPath + "/byModel/$model/cr",
 		"spend/$day/repos/" + slugForPath + "/byModel/$model/cw",
+		// the four spend leaves a stage report writes per model (D2648,
+		// D2650): granted exactly as micros is
+		"spend/$day/repos/" + slugForPath + "/byModel/$model/notional",
+		"spend/$day/repos/" + slugForPath + "/byModel/$model/rep",
+		"spend/$day/repos/" + slugForPath + "/byModel/$model/tlo",
+		"spend/$day/repos/" + slugForPath + "/byModel/$model/thi",
 		// the by-tier split of real spend (C1.3 rule 3, D140): tier B and
 		// tier C under each of the four $spent locations above
 		"runs/" + slugForPath + "/$run/byTier/$tier/spent",
@@ -2341,7 +2347,29 @@ func withoutValidate(m map[string]any) map[string]any {
 func isNamedAddition(p string) bool {
 	return isNewCredsPath(p) || p == coordpath.PathRoot || p == PathMCPAuth ||
 		p == PathBuildLeases || p == PathOrchestrator || isNewWorkspacePath(p) || isNewVoicePath(p) ||
-		isNewRegistrationPath(p)
+		isNewRegistrationPath(p) || isNewSpendAccuracyPath(p)
+}
+
+// isNewSpendAccuracyPath reports whether p is one of the four day-counter leaves
+// a run's stage report writes per model (spend-accuracy D2648 as amended by
+// D2650, docs/spend-accuracy/day-leaves.md): the subscription part of the
+// model's dollars, the cost the provider reported for the calls that carried
+// one, and the table's charge over those same calls at the two ends of the tier
+// that served them. They are equalities and not prefixes, for isNewCredsPath's
+// reason: a path *under* one of them is a change to what the leaf holds, which
+// is the shape a rule hidden one level down takes.
+//
+// The four are granted exactly as `micros` is, and the emulator case
+// (new_leaves_emulator_test.go, build tag firebase) is what proves the bounds
+// rather than this list: what this function does is make the diff that adds
+// them a diff a reviewer reads.
+func isNewSpendAccuracyPath(p string) bool {
+	for _, leaf := range []string{"notional", "rep", "tlo", "thi"} {
+		if p == "spend/$day/repos/"+slugForPath+"/byModel/$model/"+leaf {
+			return true
+		}
+	}
+	return false
 }
 
 // isNewRegistrationPath reports whether p is one of the field nodes a
@@ -2483,7 +2511,12 @@ func isNewCredsPath(p string) bool {
 //     holds, which is what the marker records — and the widening folds into the
 //     same stage: `fugaro update`'s rules deploy is the migration, and it is
 //     the same stage every generation is met through, safe while runs are in
-//     flight.
+//     flight. SA5.0 moves it to 7 for the registration kind's reason again: the
+//     four spend leaves a stage report writes per model (`notional`, `rep`,
+//     `tlo` and `thi` under `spend/$day/repos/$slug/byModel/$model`, D2648 as
+//     amended by D2650) are a reach a *client* holds, and RTDB applies a
+//     multi-path update atomically, so under the document behind the whole
+//     stage report is refused rather than one leaf of it.
 //   - projectpolicy.PolicyRulesVersion gates the policy nodes, which neither
 //     change touches. It stays 1.
 //   - rules.CredsRulesVersion is the credentials family's own generation, at 1,
@@ -2498,8 +2531,8 @@ func isNewCredsPath(p string) bool {
 // Hand mutation this fails on: bumping any of the four (or lowering one of the
 // family versions), which is what a reviewer must see argued for.
 func TestRulesVersionUnchanged(t *testing.T) {
-	if projectpolicy.RulesVersion != 6 {
-		t.Errorf("projectpolicy.RulesVersion = %d, want 6: the generation that carries the registration kind's fields in the mailbox (mobile plan task P5.2.2)", projectpolicy.RulesVersion)
+	if projectpolicy.RulesVersion != 7 {
+		t.Errorf("projectpolicy.RulesVersion = %d, want 7: the generation that carries the four day-counter leaves a stage report writes per model (spend-accuracy D2648, D2650)", projectpolicy.RulesVersion)
 	}
 	if projectpolicy.PolicyRulesVersion != 1 {
 		t.Errorf("projectpolicy.PolicyRulesVersion = %d, want 1: this change does not touch the policy nodes", projectpolicy.PolicyRulesVersion)
