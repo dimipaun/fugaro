@@ -55,9 +55,12 @@ type ProjectJob struct {
 
 // ProjectJobs is the installation's project jobs, by job name: one job and
 // one job service account per (profile, provider, account) of the local
-// config's profiles (design §4.1). An installation whose local config names
-// no profile gets none — the map is nil, the tfvars key is left out and the
-// root creates nothing, so an existing installation's plan is unchanged.
+// config's profiles (design §4.1), less the names the local config declares a
+// key credential — those get no job at all (config.ClaudeAccountTokenNames,
+// the rule the per-repository set is built with too). An installation whose
+// local config names no profile gets none — the map is nil, the tfvars key is
+// left out and the root creates nothing, so an existing installation's plan is
+// unchanged.
 //
 // bucket and vertex are the installation's, computed by Installation, so the
 // jobs' bucket condition, FUGARO_* env and Vertex grant are the ones the
@@ -270,7 +273,24 @@ func projectJobs(lc *localcfg.Config, bucket string, vertex bool, carried []stri
 		// of the profile's environment (the redaction list below is per job),
 		// and its own service account, which is the only thing that may read
 		// that account's token (D2).
-		for _, account := range config.ProjectJobAccounts(pr) {
+		//
+		// The axis is the profile's own, less the names this installation
+		// declares a KEY credential (config.ClaudeAccountTokenNames, the one
+		// function WorkflowAccounts applies to the per-repository set): every
+		// job this loop builds exists to carry its account's Claude token —
+		// projectAccountMount mounts config.ClaudeAccountSecret(account) as
+		// CLAUDE_CODE_OAUTH_TOKEN — and a key credential's value is stored under
+		// the credential's own derived secret instead (config.CredentialSecret,
+		// D1670), so nothing ever writes a version to that container and a job
+		// built for the name would mount an empty token: its runs would fail in
+		// the credential, and `fugaro secrets ls` would flag a MISSING name no
+		// `claude setup-token` step could fill. What such a name keeps is its
+		// claude_accounts entry — the reach its allow_data_to bounds, which
+		// DeriveAccounts and CheckProfiles judged above and this does not move —
+		// and what it does not get is a job. `fugaro accounts add` refuses to
+		// put one in a profile's list (accounts_add.go, MC22), so the config
+		// that reaches this is one written by hand.
+		for _, account := range config.ClaudeAccountTokenNames(lc.Credentials, config.ProjectJobAccounts(pr)) {
 			jobSecrets := maps.Clone(secretEnv)
 			if err := projectAccountMount(lc, name, pr, account, jobSecrets, env); err != nil {
 				return nil, err
