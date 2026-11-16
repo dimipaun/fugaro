@@ -256,6 +256,66 @@ func TestReminderIsNotSentForWhatRenewsItself(t *testing.T) {
 	}
 }
 
+// TestATermThatEndedLongAgoMailsNothing: nothing marks an entitlement expired —
+// entitlements.go leaves the status where the grant or the revocation left it, so
+// the run is the only thing that tells a term that is running from one that is
+// over. Past reminderDue's window a term is the store's history and not the run's
+// business: without the bound, the first run of a job that has just been turned on
+// mails about every licence the portal has ever held, and an organisation that
+// adds an owner next year mails them the date their licence ran out.
+func TestATermThatEndedLongAgoMailsNothing(t *testing.T) {
+	f := newFixture(t)
+	org := f.seededOrganisation("org-dana", "Dana Ltd", orgTypeCustomer, danaUID, danaEmail, roleOwner)
+	f.reminderEntitlement("ent-grant", org.ID, entitlementSourceOperations, licence.KindPaid, f.now.Add(-2*yearTerm), true)
+	f.reminderEntitlement("ent-unbound", org.ID, entitlementSourcePurchase, licence.KindPaid, f.now.Add(-2*yearTerm), false)
+
+	if got := f.runReminders(); got.Code != http.StatusNoContent {
+		t.Fatalf("the reminder run answered %d, want %d: %s", got.Code, http.StatusNoContent, got.Body)
+	}
+	if len(f.mail.sent) != 0 {
+		t.Errorf("the run mailed %d message(s) about terms that ended two years ago, want none: %v", len(f.mail.sent), f.mail.sent)
+	}
+	if len(f.reminderRecords()) != 0 {
+		t.Errorf("the run recorded %d reminder(s) it did not send", len(f.reminderRecords()))
+	}
+}
+
+// TestAnEndedTermIsMailedInThePastTense: the window does not close the instant a
+// term ends — reminderDue keeps a term due for the same week it opens early by —
+// so what goes out inside that week has to read as what it is. A licence told its
+// term "ends on" a date that has been and gone says to its reader that the service
+// does not know what day it is, and the mail they can act on is the one that says
+// the term is over.
+func TestAnEndedTermIsMailedInThePastTense(t *testing.T) {
+	f := newFixture(t)
+	org := f.seededOrganisation("org-dana", "Dana Ltd", orgTypeCustomer, danaUID, danaEmail, roleOwner)
+	bound := f.reminderEntitlement("ent-grant", org.ID, entitlementSourceOperations, licence.KindPaid, f.now.Add(-3*day), true)
+	f.reminderEntitlement("ent-unbound", org.ID, entitlementSourcePurchase, licence.KindPaid, f.now.Add(-3*day), false)
+
+	if got := f.runReminders(); got.Code != http.StatusNoContent {
+		t.Fatalf("the reminder run answered %d, want %d: %s", got.Code, http.StatusNoContent, got.Body)
+	}
+	if len(f.mail.sent) != 2 {
+		t.Fatalf("the run mailed %d message(s), want the two the two ended terms are due: %v", len(f.mail.sent), f.mail.sent)
+	}
+	until := bound.EndsAt.UTC().Format("2 January 2006")
+	subjects := map[string]bool{}
+	for _, msg := range f.mail.sent {
+		subjects[msg.Subject] = true
+		if !strings.Contains(msg.Body, "ended on "+until) {
+			t.Errorf("the mail about a term that ended on %s does not say so:\n%s", until, msg.Body)
+		}
+		if strings.Contains(msg.Body, "ends on") || strings.Contains(msg.Body, "not bound") {
+			t.Errorf("the mail about a term that ended reads as though it were still running:\n%s", msg.Body)
+		}
+	}
+	for _, want := range []string{renewalEndedSubject, bindingEndedSubject} {
+		if !subjects[want] {
+			t.Errorf("the run mailed the subjects %v, want %q among them", subjects, want)
+		}
+	}
+}
+
 // refusingMailer is the mail path with one address the provider will not take,
 // which is what a suppressed or dead address is from the run's side: the error
 // is the shape resend.go builds out of a provider's refusal, and every other

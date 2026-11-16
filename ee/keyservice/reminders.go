@@ -76,6 +76,13 @@ const (
 // window from the other side, and the owner has the same week to buy the next
 // one. It is also what keeps a fourteen-day trial from being reminded the day it
 // is granted.
+//
+// It closes the window at the end as well (reminderDue): a term that ended
+// longer ago than this is not mailed about at all. Nothing here marks an
+// entitlement expired (entitlements.go leaves the status where the term left it),
+// so without the bound the first run of a newly turned-on job — or the first run
+// after an owner joins — would tell somebody their licence "ends soon" and give
+// them a date years in the past, for every term the portal has ever held.
 const reminderLead = 7 * 24 * time.Hour
 
 // routeWorkspaces is the portal page a reminder leads to: the screen that holds
@@ -165,11 +172,24 @@ func runsOut(entitlement WireEntitlement) bool {
 // A renewal reminder is for a key that exists, which is a BOUND entitlement and
 // nothing else: "a key runs out" is about the key an installation is running on,
 // and an entitlement with no key has no installation to warn. What is left is
-// the term's own end, and it is due from the moment it is inside the lead and
-// stays due afterwards — a term that ended while the run was failing is one its
-// owners still have to hear about.
+// the term's own end, and it is due from the moment it is inside the lead.
+//
+// **One lead past the end, the reminder stops being due, and that bound covers
+// both kinds.** A term that ended while a run was failing is one its owners
+// still have to hear about, which is what the lead's other side is for; but a
+// term that ended a year ago is one nobody is waiting to be told about, and
+// nothing marks those entitlements expired (entitlements.go: a status moves when
+// a grant or a revocation moves it, not when a clock does). Without the bound,
+// every term the portal has ever granted is reminded about again when the job is
+// first turned on, and again for each owner an organisation adds — each of them
+// reading that a licence which ran out years ago "ends soon", next to a date in
+// the past. The bound is the same week the reminder is early by: a term is the
+// run's business from a week before it ends until a week after.
 func reminderDue(entitlement WireEntitlement, now time.Time) (string, bool) {
 	if entitlement.Status != entitlementActive {
+		return "", false
+	}
+	if !now.Before(entitlement.EndsAt.Add(reminderLead)) {
 		return "", false
 	}
 	if entitlement.Kind == licence.KindPaid && entitlement.BoundAt == nil {
@@ -274,7 +294,7 @@ func (s *Service) remind(ctx context.Context, origin string, entitlement WireEnt
 		if recorded {
 			continue
 		}
-		if err := s.mail.Send(ctx, reminderMail(kind, owner.Email, organisation.Name, entitlement, origin)); err != nil {
+		if err := s.mail.Send(ctx, reminderMail(kind, owner.Email, organisation.Name, entitlement, origin, s.now())); err != nil {
 			failures = append(failures, err)
 			continue
 		}
@@ -320,12 +340,17 @@ func reminderOwners(ctx context.Context, from recordReader, organisationID strin
 	return owners, nil
 }
 
-// The two subjects are constants, so an organisation's name — text a person
-// typed — cannot reach a header through either (§7.2's rule, read at this mail
-// path as the invitations read it).
+// The subjects are constants, so an organisation's name — text a person typed —
+// cannot reach a header through any of them (§7.2's rule, read at this mail path
+// as the invitations read it). There are two pairs and not one, because a term
+// the run is inside the week past is mailed about after it has ended
+// (reminderDue), and "ends soon" over a date that has been and gone is a mail
+// that tells its reader the service does not know what day it is.
 const (
 	renewalReminderSubject = "Your Fugaro licence ends soon"
+	renewalEndedSubject    = "Your Fugaro licence has ended"
 	bindingReminderSubject = "Your Fugaro licence is not set up yet"
+	bindingEndedSubject    = "Your Fugaro licence was not set up"
 )
 
 // reminderMail is one reminder as the person receives it: what the organisation
@@ -335,17 +360,39 @@ const (
 // is minted at binding and never stored (§7.3). The organisation's name is folded
 // onto one line before it is written, because a name is text an owner typed and
 // a mail line is one line.
-func reminderMail(kind, to, organisation string, entitlement WireEntitlement, origin string) Message {
+//
+// What a term that has already ended reads is the same mail in the past tense,
+// which is the other half of the bound reminderDue puts on the window: the mail
+// that goes out in the week after a term ends is the one that says so.
+func reminderMail(kind, to, organisation string, entitlement WireEntitlement, origin string, now time.Time) Message {
 	name := strings.Join(strings.Fields(organisation), " ")
 	until := entitlement.EndsAt.UTC().Format("2 January 2006")
 	link := strings.TrimSuffix(origin, "/") + routeWorkspaces
-	if kind == reminderBinding {
+	ended := entitlement.EndsAt.Before(now)
+	switch {
+	case kind == reminderBinding && ended:
+		return Message{
+			To:      to,
+			Subject: bindingEndedSubject,
+			Body: "The Fugaro licence held by " + name + " was paid for and never bound to a project.\n\n" +
+				"Its term ran from the day it was paid for and ended on " + until + ", so the whole of it went unused.\n" +
+				"Buy the next term in the portal:\n\n" + link + "\n",
+		}
+	case kind == reminderBinding:
 		return Message{
 			To:      to,
 			Subject: bindingReminderSubject,
 			Body: "The Fugaro licence held by " + name + " is paid for and not bound to a project yet.\n\n" +
 				"Its term runs from the day it was paid for and ends on " + until + ", so every day it is unbound is a day of it nobody uses.\n" +
 				"Bind it to your Firebase project in the portal:\n\n" + link + "\n",
+		}
+	case ended:
+		return Message{
+			To:      to,
+			Subject: renewalEndedSubject,
+			Body: "The Fugaro licence held by " + name + " ended on " + until + ".\n\n" +
+				"Nothing renewed this one, so the key it issued was the last that licence issued.\n" +
+				"Buy the next term in the portal:\n\n" + link + "\n",
 		}
 	}
 	return Message{
