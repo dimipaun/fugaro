@@ -479,6 +479,36 @@ func TestInvitationsAreAnOwnersAndAdminsRead(t *testing.T) {
 	if rec := f.apiAsCaller(http.MethodGet, apiOrgInvitesPathOf(org.ID), ""); rec.Code != http.StatusOK {
 		t.Errorf("the invitation list as an admin answered %d (%s), want it: the role lives in the membership and not in the token", rec.Code, rec.Body)
 	}
+
+	// An admin invites people, and makes no owners. An invitation's role is the
+	// membership it becomes when it is accepted (F40), so `owner` asked for by an
+	// admin is an admin conferring what D2186 and D2195 give an owner alone — and
+	// the invitation is the route by which a role arrives before the person does,
+	// which is why the rule holds here and not only where an existing membership
+	// is moved. The second address is the one an admin could hold as a second
+	// one of their own, which is the same act with nobody but them in the way of
+	// accepting it.
+	for _, address := range []string{"new@example.com", "erin.other@example.com"} {
+		rec := f.inviteAs(org.ID, address, roleOwner)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("an admin inviting %s as an owner answered %d (%s), want 403: a role is moved by an owner and by nothing else", address, rec.Code, rec.Body)
+		}
+		if code := refusal(f, rec); code != "not_permitted" {
+			t.Errorf("the refusal carries the code %q, want not_permitted, which is what the members screen branches on", code)
+		}
+	}
+	if held := f.invitationsOf(org.ID); len(held) != 1 || held[0].ID != invitation.ID {
+		t.Errorf("the refused owner invitations were written: %+v", held)
+	}
+	// An admin still invites what an admin may, and the owner still makes owners:
+	// what refuses is the role held, not the role's name in the body.
+	if created := f.invited(org.ID, "colleague@example.com", roleAdmin); created.Role != roleAdmin {
+		t.Errorf("an admin inviting an admin wrote the role %q, want %q", created.Role, roleAdmin)
+	}
+	f.actsAs(danaUID, danaEmail, signInGoogle)
+	if created := f.invited(org.ID, "second@example.com", roleOwner); created.Role != roleOwner {
+		t.Errorf("the owner inviting an owner wrote the role %q, want %q", created.Role, roleOwner)
+	}
 }
 
 // TestOperationsInviteOutsideTheDomainListIsRefused: invitations to the

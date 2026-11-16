@@ -356,11 +356,12 @@ func allowedInviteDomain(address string, domains []string) bool {
 }
 
 // createInvitation writes one invitation of one organisation and mails it. What
-// is checked, in this order: the caller's standing in the organisation (an
-// owner or an admin, of their own membership or of the operations one they reach
-// it through), the role, the address as a member this tree can compare,
-// and — for the operations organisation alone — the domain list the owner set
-// (F9). The invitation is written before the mail is sent, so a mail path that
+// is checked, in this order: the caller's standing in the organisation (an owner
+// or an admin of their own membership of it, and of nothing else: inviteAccess),
+// the role — `owner` is asked for by an owner alone, because the role asked for
+// is the membership the invitation becomes — the address as a member this tree
+// can compare, and — for the operations organisation alone — the domain list the
+// owner set (F9). The invitation is written before the mail is sent, so a mail path that
 // fails leaves an invitation that stands and can be withdrawn rather than a link
 // to a record nothing holds; the failure is the caller's answer and never a
 // silent success.
@@ -372,6 +373,16 @@ func (s *Service) createInvitation(ctx context.Context, actor Caller, organisati
 	role := strings.TrimSpace(asked.Role)
 	if !validInviteRole(role) {
 		return WireInvite{}, errInviteRoleRefused
+	}
+	// Only an owner makes another owner. An invitation's role is the membership
+	// it becomes when it is accepted (F40), so an admin inviting `owner` would be
+	// an admin conferring what D2186 and D2195 give an owner alone — and the
+	// invitation is exactly the route by which a role arrives before the person
+	// does, so "a role is moved by an owner and by nothing else" (acceptInvitation)
+	// would hold for everybody already in the organisation and for nobody the
+	// organisation is about to have. An admin invites admins and members.
+	if role == roleOwner && held.Membership.Role != roleOwner {
+		return WireInvite{}, errInviteNotPermitted
 	}
 	address := strings.TrimSpace(asked.Email)
 	if _, err := access.Member(address); err != nil {
