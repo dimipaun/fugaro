@@ -14,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/craft"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -1849,7 +1850,14 @@ func levelsBlockAsk(name string, l *config.ReviewLevels) string {
 func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config, rcp *recipe.Recipe, recipeUnknown bool, warn io.Writer) (string, error) {
 	mode := rigor.Resolve(cfg.RigorConfig(), rigor.Request{Mode: rigor.Mode(spec.Rigor), Paths: spec.Paths}).Mode
 	var floor []policy.Level
+	// The node is read once for both halves of the model's own gates: its
+	// floor, and the crafts it carries, which are the project layer's answer to
+	// the model half (internal/runner's craftLayers reads the same node for the
+	// run, so the two cannot disagree about which model a craft runs).
+	var node *projectpolicy.Policy
+	var foundNode bool
 	if p, found, err := env.policy.read(ctx, env.lc); err == nil && found && p != nil {
+		node, foundNode = p, true
 		floor = p.ReviewFloor[mode]
 	}
 	fromTask, fromSwitch := securityRequestSources(spec, cfg)
@@ -1858,8 +1866,19 @@ func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, 
 		fmt.Fprintf(warn, "warning: the run asks for the strongest review (%s) and its recipe %s is mode: review, which allows exactly one review step and nothing else: review level 3 has no step to run in, so the launch resolves the levels the run would have resolved without it\n", subject, rcp.Name)
 		fromTask, fromSwitch = false, false
 	}
+	// The crafts the run will resolve (MC12's write, MC13's rung): the same two
+	// layers internal/runner's craftLayers hands the run — the agent block this
+	// launch resolved, where the file at the ref and the project layer file's
+	// defaults both arrive, and the published node — so a craft model the run
+	// would be refused for is refused here, before a task is written.
+	cr := craftsOf(launchCraftLayers(cfg, node, foundNode))
+	claimed := env.lc.Providers
+	if _, c, _ := layerRoutes(env.lc, cfg.Layer, spec.Repo); c != nil {
+		claimed = c
+	}
 	in := config.LevelInputs{
 		Config: cfg, Mode: mode, Floor: floor, Task: spec.ReviewLevels, Recipe: rcp, Providers: env.lc.Providers,
+		CraftModels: cr.models,
 	}
 	if fromTask || fromSwitch {
 		// Cloned: ReviewFloor hands out the policy's own slice, and appending
@@ -1885,7 +1904,63 @@ func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, 
 		}
 		return "", userErr("%v", err)
 	}
+	// The model half's own checks (MC14, D1665): the allow-list, the route, the
+	// price and the access, each at the key of the document that wrote the
+	// craft's model. It is the verdict `fugaro validate` prints, from the same
+	// function, and the one the run's bootstrap reaches through the slots MC12
+	// writes — so a configuration that cannot be served stops the launch here,
+	// where the task is not yet written and no job is paid for.
+	//
+	// The documents the access half is judged against are the installation's own
+	// (env.lc's credentials, pools and accounts) and not the node's, which is
+	// where the crafts were resolved from: they are the owner's writes (F12,
+	// D1628) and the node is that config published, so a name the node carries
+	// is a name this config holds — and this is the read slipCredentialNames
+	// makes for the same half, for the same reason.
+	if ps := craftModelProblems(cfg, env.lc, spec.Repo, claimed, launchFileSubject, cr.crafts); len(ps) > 0 {
+		lines := make([]string, 0, len(ps))
+		for _, p := range ps {
+			lines = append(lines, p.String())
+		}
+		return "", userErr("the crafts this run would resolve cannot be served: %s; the run this launch would start refuses the same configuration at bootstrap, so the launch is refused before any execution exists",
+			strings.Join(lines, "; "))
+	}
 	return reviewLevelsAsk(levels, spec.ReviewLevels, cfg, floor, recipeUnknown), nil
+}
+
+// launchFileSubject is what a launch's own model messages call the file the
+// policy merge reads (policy.SourceDefaultBranch): the fugaro.yaml at the ref
+// the run checks out, which is the document a run of it resolves and not the
+// launcher's working tree — the distinction cascadeRefConfig exists for. A
+// message saying "this file" would name the checkout the person typed the
+// command in, which is a document the run never reads.
+const launchFileSubject = "the fugaro.yaml at the ref"
+
+// launchCraftLayers are the layers a launch resolves the crafts' models over:
+// internal/runner's craftLayers, which is the answer the run itself resolves —
+// the agent block this launch read, where the file at the ref and the project
+// layer file's defaults both arrive, and the published node, which carries the
+// project's own crafts, credentials and pools (craftNodeKeyPrefix). The
+// launcher cannot call that function (internal/runner imports this package), so
+// the two are kept in step by hand, as craft ls's own three layers are.
+//
+// A node the launcher could not read is no project layer: the launch then
+// resolves what the file and the installation's config alone say, and a craft
+// model the node would have named is left to the run's own bootstrap — which
+// reads the node and refuses there — rather than invented here. The
+// installation's own config is not among these layers because a run has none:
+// the job carries what the owner published.
+func launchCraftLayers(cfg *config.Config, node *projectpolicy.Policy, found bool) []craft.Layer {
+	layers := []craft.Layer{{Name: craft.SourceRepo, Crafts: cfg.Agent.Crafts}}
+	if !found || node == nil {
+		return layers
+	}
+	l := craft.Layer{Name: craft.SourceProject, KeyPrefix: craftNodeKeyPrefix,
+		Credentials: node.CraftCredentials, Pools: node.CraftPools}
+	if node.Crafts != nil {
+		l.Crafts = *node.Crafts
+	}
+	return append(layers, l)
 }
 
 // launchLevelsConfig is the configuration the launch's review-level gates read:

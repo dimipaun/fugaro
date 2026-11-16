@@ -245,6 +245,12 @@ func craftLsLayers(cmd *cobra.Command, lc *localcfg.Config, project string) []cr
 const (
 	craftLocalKeyPrefix   = "crafts"
 	craftProjectKeyPrefix = "defaults.agent.crafts"
+	// craftNodeKeyPrefix is where the published policy node writes the crafts.
+	// It is the installation config's own path because the node is that config
+	// published (a launch resolves the node, a `fugaro craft ls` the config),
+	// so a problem about a model the node wrote names the key the operator
+	// edits in the document they have.
+	craftNodeKeyPrefix = craftLocalKeyPrefix
 )
 
 // checkoutCrafts is the working directory's checkout's agent block, and
