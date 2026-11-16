@@ -31,6 +31,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/ee/keyservice/docstore"
 	"github.com/dimipaun/fugaro/ee/licence"
 )
 
@@ -49,17 +50,20 @@ type bindingFixture struct {
 }
 
 // newBindingFixture builds the package's fixture with the probe replaced by a
-// server of this case's own and the minter wrapped so that the whole answer —
-// the secret as well as the key — is kept. Every case here gets both, so no case
-// can reach Firebase or the key ring by forgetting one.
+// server of this case's own, the minter wrapped so that the whole answer — the
+// secret as well as the key — is kept, and the document store held to the one
+// rule the deploy's own keeps: a transaction reads before it writes
+// (docstore's ErrReadAfterWrite). Every case here gets all three, so no case can
+// reach Firebase or the key ring by forgetting one, and no case can pass on a
+// transaction the backend the deploy runs would refuse.
 func newBindingFixture(t *testing.T) *bindingFixture {
 	t.Helper()
 	return newBindingFixtureWith(t, nil)
 }
 
 // newBindingFixtureWith is the same fixture with one change of a case's own made
-// before the intake is built from it, which is where a case that has to fail a
-// write puts the store that fails it.
+// before the intake is built from it, which is where a case that has to fail or
+// race a write puts the store that does it.
 func newBindingFixtureWith(t *testing.T, edit func(*fixture)) *bindingFixture {
 	t.Helper()
 	mints := &bundleMints{}
@@ -68,6 +72,7 @@ func newBindingFixtureWith(t *testing.T, edit func(*fixture)) *bindingFixture {
 		mints.inner = f.recording
 		f.deps.Mints = mints
 		probe.install(t)
+		f.deps.Docs = readBeforeWrite{Docs: f.docs}
 		if edit != nil {
 			edit(f)
 		}
@@ -970,11 +975,55 @@ func TestAirGappedIsIssuedOnce(t *testing.T) {
 	}
 }
 
-// refusingDocs is the fixture's store with the one failure these cases have to be
-// able to make: a transaction that cannot commit. Its reads and its writes are
-// the fixture's own, so a request runs exactly as far as the commit.
+// readBeforeWrite is the fixture's store with the deploy's own rule on
+// transactions: a read of a document the same transaction has already written is
+// refused (docstore.ErrReadAfterWrite; docstore's own memory store and
+// Firestore both hold it). The fixture's spy runs a transaction's function
+// against itself and holds no such rule, so a grant or a binding that read what
+// it had just written passed here and would be refused by the store the deploy
+// runs — which is the one thing a test of this area may not be blind to.
+//
+// It is the base every case of this file is built on, so the rule is what these
+// cases run under rather than something one of them remembers to ask for.
+type readBeforeWrite struct {
+	Docs
+}
+
+func (d readBeforeWrite) Update(ctx context.Context, fn func(context.Context, Tx) error) error {
+	return d.Docs.Update(ctx, func(ctx context.Context, tx Tx) error {
+		return fn(ctx, &readBeforeWriteTx{Tx: tx})
+	})
+}
+
+// readBeforeWriteTx is one transaction under that rule. Query is not on api.go's
+// Tx at all: a transaction here reads documents by id and cannot look one up.
+type readBeforeWriteTx struct {
+	Tx
+	written bool
+}
+
+func (t *readBeforeWriteTx) Get(ctx context.Context, collection, id string) (Doc, error) {
+	if t.written {
+		return nil, docstore.ErrReadAfterWrite
+	}
+	return t.Tx.Get(ctx, collection, id)
+}
+
+func (t *readBeforeWriteTx) Put(ctx context.Context, collection, id string, doc Doc) error {
+	t.written = true
+	return t.Tx.Put(ctx, collection, id, doc)
+}
+
+func (t *readBeforeWriteTx) Delete(ctx context.Context, collection, id string) error {
+	t.written = true
+	return t.Tx.Delete(ctx, collection, id)
+}
+
+// refusingDocs is the fixture's store with the other failure these cases have to
+// be able to make: a transaction that cannot commit. Everything else is the
+// store it wraps, so a request runs exactly as far as the commit.
 type refusingDocs struct {
-	*docsSpy
+	Docs
 	refuses bool
 }
 
@@ -982,7 +1031,7 @@ func (d *refusingDocs) Update(ctx context.Context, fn func(context.Context, Tx) 
 	if d.refuses {
 		return errors.New("keyservice: the store refused the write")
 	}
-	return d.docsSpy.Update(ctx, fn)
+	return d.Docs.Update(ctx, fn)
 }
 
 // refusingStore is the wrapper the intake of such a case reaches, whose flag is
@@ -990,6 +1039,41 @@ func (d *refusingDocs) Update(ctx context.Context, fn func(context.Context, Tx) 
 func (f *bindingFixture) refusingStore(t *testing.T) *refusingDocs {
 	t.Helper()
 	store, ok := f.deps.Docs.(*refusingDocs)
+	if !ok {
+		t.Fatalf("the fixture's store is %T, want the wrapper this case built it with", f.deps.Docs)
+	}
+	return store
+}
+
+// racingDocs is the fixture's store with one write made by somebody else in the
+// instant before a transaction runs: what a second request that got there first
+// leaves behind, and the only way a case can put this service's own re-reads —
+// the guards inside a transaction that decide on state another writer has
+// already moved — against state that really moved.
+//
+// The write is made straight into the spy, which is a committed write of its
+// own and not one of the transaction's: what the rule above is about is the
+// transaction reading what it wrote itself.
+type racingDocs struct {
+	Docs
+	spy    *docsSpy
+	before func(*docsSpy)
+}
+
+func (d *racingDocs) Update(ctx context.Context, fn func(context.Context, Tx) error) error {
+	before := d.before
+	d.before = nil
+	if before != nil {
+		before(d.spy)
+	}
+	return d.Docs.Update(ctx, fn)
+}
+
+// racer wraps the fixture's store in one of those, and answers it so the case
+// can set the write that lands before the next transaction.
+func (f *bindingFixture) racer(t *testing.T) *racingDocs {
+	t.Helper()
+	store, ok := f.deps.Docs.(*racingDocs)
 	if !ok {
 		t.Fatalf("the fixture's store is %T, want the wrapper this case built it with", f.deps.Docs)
 	}
@@ -1004,7 +1088,7 @@ func (f *bindingFixture) refusingStore(t *testing.T) *refusingDocs {
 // days and the key it left behind still live.
 func TestARebindThatCannotCommitHasRevokedTheKeyItReplaces(t *testing.T) {
 	f := newBindingFixtureWith(t, func(f *fixture) {
-		f.deps.Docs = &refusingDocs{docsSpy: f.docs}
+		f.deps.Docs = &refusingDocs{Docs: f.deps.Docs}
 	})
 	store := f.refusingStore(t)
 	org := f.seededOrganisation("org-dana", "Dana Ltd", orgTypeCustomer, danaUID, danaEmail, roleOwner)
@@ -1077,7 +1161,7 @@ func TestARebindThatCannotCommitHasRevokedTheKeyItReplaces(t *testing.T) {
 // that answers nothing.
 func TestAnAirGappedLicenceIsBoundWithItsFileOrNotAtAll(t *testing.T) {
 	f := newBindingFixtureWith(t, func(f *fixture) {
-		f.deps.Docs = &refusingDocs{docsSpy: f.docs}
+		f.deps.Docs = &refusingDocs{Docs: f.deps.Docs}
 	})
 	store := f.refusingStore(t)
 	org := f.seededOrganisation("org-dana", "Dana Ltd", orgTypeCustomer, danaUID, danaEmail, roleOwner)
@@ -1115,6 +1199,198 @@ func TestAnAirGappedLicenceIsBoundWithItsFileOrNotAtAll(t *testing.T) {
 	}
 	if _, found := heldRecord[WireLicenceFile](f.fixture, licenceFilesCollection, held.ID); !found {
 		t.Errorf("the committed air-gapped binding holds no licence file (D2206)")
+	}
+}
+
+// TestASupersededLicenceCannotBeBound: a licence that is not active mints
+// nothing (F25). The guard is the first thing this door reads after the
+// caller's membership — before the project is checked and before the minter is
+// reached — so a licence a purchase replaced is a refusal and not a key for a
+// term the organisation is no longer on.
+func TestASupersededLicenceCannotBeBound(t *testing.T) {
+	f := newBindingFixture(t)
+	org := f.seededOrganisation("org-dana", "Dana Ltd", orgTypeCustomer, danaUID, danaEmail, roleOwner)
+	workspace := f.seedWorkspace("ws-1", org.ID, "Dana's portal")
+	trial := f.grant(t, entitlementGrant{
+		At:             f.now,
+		OrganisationID: org.ID,
+		WorkspaceID:    &workspace.ID,
+		Source:         entitlementSourceTrial,
+		Row:            PolicyTrial,
+		Seats:          1,
+		StartsAt:       f.now,
+	})
+	f.advance(time.Hour)
+	f.grant(t, entitlementGrant{
+		At:             f.now,
+		OrganisationID: org.ID,
+		WorkspaceID:    &workspace.ID,
+		Source:         entitlementSourcePurchase,
+		Row:            PolicyTeamAnnual,
+		Seats:          3,
+		StartsAt:       f.now,
+	})
+
+	rec := f.bind(t, trial.ID, exampleProject)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("binding the superseded trial answered %d, want 409: %s", rec.Code, rec.Body)
+	}
+	if code := f.refused(rec); code != "licence_not_active" {
+		t.Errorf("the refusal's code is %q, want licence_not_active", code)
+	}
+	if len(f.mints.answers) != 0 {
+		t.Errorf("a refused binding minted %d keys", len(f.mints.answers))
+	}
+	if saw := f.probe.saw(); len(saw) != 0 {
+		t.Errorf("the probe was asked about %v, and a licence that is not active is refused before the project is read", saw)
+	}
+	if bound, _ := f.entitlement(trial.ID); bound.BoundAt != nil {
+		t.Errorf("the superseded licence records a binding at %s", bound.BoundAt)
+	}
+	if licensed, _ := f.workspace(workspace.ID); licensed.ProjectID != nil {
+		t.Errorf("the workspace names the project %v, and nothing was bound", licensed.ProjectID)
+	}
+}
+
+// TestALicenceSupersededBetweenTheReadAndTheWriteIsRefused: the guard above is
+// re-read inside the transaction, because the state it decides on is the state
+// another writer can move between this request's read and its write (D2204). The
+// transaction refuses and the key the minter had signed for it is withdrawn:
+// nothing of the binding that did not happen stays live.
+func TestALicenceSupersededBetweenTheReadAndTheWriteIsRefused(t *testing.T) {
+	f := newBindingFixtureWith(t, func(f *fixture) {
+		f.deps.Docs = &racingDocs{Docs: f.deps.Docs, spy: f.docs}
+	})
+	racer := f.racer(t)
+	_, workspace, held := f.licensingWorkspace(t)
+	racer.before = func(*docsSpy) {
+		superseded, found := f.entitlement(held.ID)
+		if !found {
+			t.Fatalf("the licence %s is gone from the store", held.ID)
+		}
+		superseded.Status = entitlementSuperseded
+		f.seed(entitlementsCollection, superseded.ID, superseded)
+	}
+
+	rec := f.bind(t, held.ID, exampleProject)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("binding a licence superseded while the request was in flight answered %d, want 409: %s", rec.Code, rec.Body)
+	}
+	if code := f.refused(rec); code != "licence_not_active" {
+		t.Errorf("the refusal's code is %q, want licence_not_active", code)
+	}
+	if len(f.mints.answers) != 1 {
+		t.Fatalf("the refused binding minted %d keys, want the one its transaction refused", len(f.mints.answers))
+	}
+	unrecorded := f.mints.answers[0].Record.KeyID
+	if withdrawn, found, err := f.store.Revocation(context.Background(), unrecorded); err != nil || !found || withdrawn.Reason != ReasonUnrecorded {
+		t.Errorf("the key of the refused binding is %+v (found=%v err=%v), want it withdrawn as unrecorded", withdrawn, found, err)
+	}
+	if bound, _ := f.entitlement(held.ID); bound.BoundAt != nil {
+		t.Errorf("the licence records a binding at %s although the transaction refused", bound.BoundAt)
+	}
+	if licensed, _ := f.workspace(workspace.ID); licensed.ProjectID != nil {
+		t.Errorf("the workspace names the project %v although the transaction refused", licensed.ProjectID)
+	}
+}
+
+// TestABindingThatRacedAnotherIsRefused: the binding that got there first wins.
+// The second of two requests for one licence meets the re-read inside the
+// transaction and is answered as a reload rather than as a binding that half
+// happened: a second key for one licence is a key nothing would revoke.
+func TestABindingThatRacedAnotherIsRefused(t *testing.T) {
+	f := newBindingFixtureWith(t, func(f *fixture) {
+		f.deps.Docs = &racingDocs{Docs: f.deps.Docs, spy: f.docs}
+	})
+	racer := f.racer(t)
+	_, workspace, held := f.licensingWorkspace(t)
+	racer.before = func(*docsSpy) {
+		bound, found := f.entitlement(held.ID)
+		if !found {
+			t.Fatalf("the licence %s is gone from the store", held.ID)
+		}
+		at := f.now
+		bound.BoundAt = &at
+		f.seed(entitlementsCollection, bound.ID, bound)
+	}
+
+	rec := f.bind(t, held.ID, exampleProject)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("binding a licence bound while the request was in flight answered %d, want 409: %s", rec.Code, rec.Body)
+	}
+	if code := f.refused(rec); code != "already_bound" {
+		t.Errorf("the refusal's code is %q, want already_bound", code)
+	}
+	if len(f.mints.answers) != 1 {
+		t.Fatalf("the refused binding minted %d keys, want the one its transaction refused", len(f.mints.answers))
+	}
+	if withdrawn, found, err := f.store.Revocation(context.Background(), f.mints.answers[0].Record.KeyID); err != nil || !found || withdrawn.Reason != ReasonUnrecorded {
+		t.Errorf("the key of the refused binding is %+v (found=%v err=%v), want it withdrawn as unrecorded", withdrawn, found, err)
+	}
+	// The binding that won is the one the store holds, and this request wrote none
+	// of it: the workspace is still unbound and the licence still names it.
+	licensed, _ := f.workspace(workspace.ID)
+	if licensed.ProjectID != nil {
+		t.Errorf("the workspace names the project %v, and this request bound nothing", licensed.ProjectID)
+	}
+	if after, _ := f.entitlement(held.ID); after.WorkspaceID == nil || *after.WorkspaceID != workspace.ID {
+		t.Errorf("the licence names the workspace %v, want the one it was granted for", after.WorkspaceID)
+	}
+}
+
+// TestABindingIntoAWorkspaceLicensedByAnotherGrant: a workspace holds one active
+// licence (D2204), and binding is not the act that decides which one it is — the
+// grant that supersedes the old one is. Two grants landing at once leave two
+// active licences for one workspace with the pointer on the last of them, which
+// is the state this guard answers: the licence the workspace is not pointing at
+// is refused rather than bound over the one it holds.
+func TestABindingIntoAWorkspaceLicensedByAnotherGrant(t *testing.T) {
+	f := newBindingFixture(t)
+	org := f.seededOrganisation("org-dana", "Dana Ltd", orgTypeCustomer, danaUID, danaEmail, roleOwner)
+	workspace := f.seedWorkspace("ws-1", org.ID, "Dana's portal")
+	winner := f.grant(t, entitlementGrant{
+		At:             f.now,
+		OrganisationID: org.ID,
+		WorkspaceID:    &workspace.ID,
+		Source:         entitlementSourcePurchase,
+		Row:            PolicyTeamAnnual,
+		Seats:          3,
+		StartsAt:       f.now,
+	})
+	runnerUp := WireEntitlement{
+		ID:             "ent-runner-up",
+		OrganisationID: org.ID,
+		WorkspaceID:    &workspace.ID,
+		Source:         entitlementSourcePurchase,
+		Row:            winner.Row,
+		Tier:           winner.Tier,
+		Kind:           winner.Kind,
+		Seats:          winner.Seats,
+		StartsAt:       f.now,
+		EndsAt:         winner.EndsAt,
+		Status:         entitlementActive,
+		CreatedAt:      f.now,
+	}
+	f.seed(entitlementsCollection, runnerUp.ID, runnerUp)
+
+	rec := f.bind(t, runnerUp.ID, exampleProject)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("binding a licence another one licenses the workspace with answered %d, want 409: %s", rec.Code, rec.Body)
+	}
+	if code := f.refused(rec); code != "workspace_licensed" {
+		t.Errorf("the refusal's code is %q, want workspace_licensed", code)
+	}
+	if len(f.mints.answers) != 0 {
+		t.Errorf("a refused binding minted %d keys", len(f.mints.answers))
+	}
+	if saw := f.probe.saw(); len(saw) != 0 {
+		t.Errorf("the probe was asked about %v, and the workspace is refused before the project is read", saw)
+	}
+	if licensed, _ := f.workspace(workspace.ID); licensed.ProjectID != nil {
+		t.Errorf("the workspace names the project %v, and nothing was bound", licensed.ProjectID)
+	}
+	if licensed, _ := f.workspace(workspace.ID); licensed.EntitlementID == nil || *licensed.EntitlementID != winner.ID {
+		t.Errorf("the workspace is licensed by %v, want the grant it points at, %s", licensed.EntitlementID, winner.ID)
 	}
 }
 

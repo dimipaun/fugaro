@@ -94,6 +94,11 @@ type entitlementGrant struct {
 // query, so a candidate read inside one would be a candidate it could not look
 // for. The re-read inside is the guard against the other writer: a grant that
 // finds its candidate already superseded writes nothing over the newer state.
+//
+// Every read this transaction makes is taken before its first write: the store
+// is read-before-write and refuses a document read after one the same transaction
+// has written (docstore's ErrReadAfterWrite), so the candidates and the workspace
+// are read together and the writes follow them.
 func (s *Service) grantEntitlement(ctx context.Context, grant entitlementGrant) (WireEntitlement, error) {
 	row, known := DefaultPolicy(grant.Row)
 	if !known {
@@ -105,6 +110,7 @@ func (s *Service) grantEntitlement(ctx context.Context, grant entitlementGrant) 
 	}
 	var granted WireEntitlement
 	err = s.docs.Update(ctx, func(ctx context.Context, tx Tx) error {
+		superseding := make([]WireEntitlement, 0, len(replaced))
 		for _, held := range replaced {
 			current, present, err := getRecord[WireEntitlement](ctx, tx, entitlementsCollection, held.ID)
 			if err != nil {
@@ -113,16 +119,22 @@ func (s *Service) grantEntitlement(ctx context.Context, grant entitlementGrant) 
 			if !present || current.Status != entitlementActive {
 				continue
 			}
-			current.Status = entitlementSuperseded
-			if err := putRecord(ctx, tx, entitlementsCollection, current.ID, current); err != nil {
-				return err
-			}
+			superseding = append(superseding, current)
 		}
-		written, err := createEntitlement(ctx, tx, grant)
+		written, err := prepareEntitlement(ctx, tx, grant)
 		if err != nil {
 			return err
 		}
-		granted = written
+		for _, held := range superseding {
+			held.Status = entitlementSuperseded
+			if err := putRecord(ctx, tx, entitlementsCollection, held.ID, held); err != nil {
+				return err
+			}
+		}
+		if err := writeEntitlement(ctx, tx, written); err != nil {
+			return err
+		}
+		granted = written.entitlement
 		return nil
 	})
 	if err != nil {
@@ -178,16 +190,75 @@ func (s *Service) supersededBy(ctx context.Context, grant entitlementGrant, row 
 	return replaced, nil
 }
 
-// createEntitlement writes one grant inside the transaction it is handed and
-// answers the record it wrote. It is the whole of what a grant is: the row is
-// looked up for everything the key will carry, the term is the caller's or the
-// row's, and the workspace — when the grant names one — is pointed at it.
+// entitlementWrite is one grant's write, worked out before the transaction
+// writes anything: the record, and the workspace whose pointer moves onto it
+// when the grant names one.
+//
+// It is two steps and not one for the store's own reason: a transaction reads
+// before it writes (docstore's ErrReadAfterWrite), and the workspace a grant
+// names is read by the transaction writing the grant —
+// grantEntitlement's supersedes have already been written by then, so a read
+// taken there would be refused by the backend the deploy runs and nowhere in a
+// test.
+type entitlementWrite struct {
+	entitlement WireEntitlement
+	workspace   *WireWorkspace
+}
+
+// prepareEntitlement is a grant's read half: the record it would write and the
+// workspace that record names. It reads and it writes nothing.
+func prepareEntitlement(ctx context.Context, tx Tx, grant entitlementGrant) (entitlementWrite, error) {
+	entitlement, err := entitlementRecord(grant)
+	if err != nil {
+		return entitlementWrite{}, err
+	}
+	written := entitlementWrite{entitlement: entitlement}
+	if entitlement.WorkspaceID != nil {
+		workspace, err := licensedWorkspace(ctx, tx, entitlement)
+		if err != nil {
+			return entitlementWrite{}, err
+		}
+		written.workspace = &workspace
+	}
+	return written, nil
+}
+
+// writeEntitlement is the write half: the record, and the pointer of the
+// workspace it names.
+func writeEntitlement(ctx context.Context, tx Tx, written entitlementWrite) error {
+	if err := putRecord(ctx, tx, entitlementsCollection, written.entitlement.ID, written.entitlement); err != nil {
+		return err
+	}
+	if written.workspace == nil {
+		return nil
+	}
+	return pointWorkspaceAt(ctx, tx, *written.workspace, written.entitlement)
+}
+
+// createEntitlement is both halves in order, for the one caller whose transaction
+// writes nothing before the grant: the sign-up's own (freeSeatOnOrgCreated). A
+// caller that has already written in the transaction it hands over calls the two
+// halves itself, in this order, and reads before it writes.
+func createEntitlement(ctx context.Context, tx Tx, grant entitlementGrant) (WireEntitlement, error) {
+	written, err := prepareEntitlement(ctx, tx, grant)
+	if err != nil {
+		return WireEntitlement{}, err
+	}
+	if err := writeEntitlement(ctx, tx, written); err != nil {
+		return WireEntitlement{}, err
+	}
+	return written.entitlement, nil
+}
+
+// entitlementRecord is one grant as the record it is written as. It is the whole
+// of what a grant is: the row is looked up for everything the key will carry, the
+// term is the caller's or the row's, and the workspace is the one the grant named.
 //
 // The row's own seat count is a bound and not a suggestion (D2184): a row that
 // carries one seat is the free seat, and a grant asking it for another count is
 // refused rather than written, because the key it would mint would hand out
 // seats nobody granted.
-func createEntitlement(ctx context.Context, tx Tx, grant entitlementGrant) (WireEntitlement, error) {
+func entitlementRecord(grant entitlementGrant) (WireEntitlement, error) {
 	row, known := DefaultPolicy(grant.Row)
 	if !known {
 		return WireEntitlement{}, fmt.Errorf("keyservice: the row %q is not one an entitlement is granted on", grant.Row)
@@ -237,15 +308,29 @@ func createEntitlement(ctx context.Context, tx Tx, grant entitlementGrant) (Wire
 		AirGapped: row.CheckInterval == nil,
 		CreatedAt: at.UTC(),
 	}
-	if err := putRecord(ctx, tx, entitlementsCollection, entitlement.ID, entitlement); err != nil {
-		return WireEntitlement{}, err
-	}
-	if grant.WorkspaceID != nil {
-		if err := pointWorkspaceAt(ctx, tx, entitlement); err != nil {
-			return WireEntitlement{}, err
-		}
-	}
 	return entitlement, nil
+}
+
+// licensedWorkspace reads the workspace one grant names, inside the transaction
+// that writes the grant and before anything is written to it.
+//
+// A grant naming a workspace the store does not hold, or one of another
+// organisation, is refused: the pointer is the only way a workspace finds its
+// licence, and one naming a workspace that is not there is a record nothing can
+// answer for.
+func licensedWorkspace(ctx context.Context, tx Tx, entitlement WireEntitlement) (WireWorkspace, error) {
+	workspace, present, err := getRecord[WireWorkspace](ctx, tx, workspacesCollection, *entitlement.WorkspaceID)
+	if err != nil {
+		return WireWorkspace{}, err
+	}
+	if !present {
+		return WireWorkspace{}, fmt.Errorf("keyservice: the entitlement %s names the workspace %s, which the store does not hold", entitlement.ID, *entitlement.WorkspaceID)
+	}
+	if workspace.OrganisationID != entitlement.OrganisationID {
+		return WireWorkspace{}, fmt.Errorf("keyservice: the workspace %s belongs to %s and the entitlement %s to %s",
+			workspace.ID, workspace.OrganisationID, entitlement.ID, entitlement.OrganisationID)
+	}
+	return workspace, nil
 }
 
 // pointWorkspaceAt moves one workspace's own pointer onto the grant that is now
@@ -253,23 +338,7 @@ func createEntitlement(ctx context.Context, tx Tx, grant entitlementGrant) (Wire
 // licence through (`workspace.entitlement_id`) and what the key routes read it
 // through, so a workspace is never left pointing at a grant another one
 // replaced.
-//
-// A grant naming a workspace the store does not hold, or one of another
-// organisation, is refused: the pointer is the only way a workspace finds its
-// licence, and one naming a workspace that is not there is a record nothing can
-// answer for.
-func pointWorkspaceAt(ctx context.Context, tx Tx, entitlement WireEntitlement) error {
-	workspace, present, err := getRecord[WireWorkspace](ctx, tx, workspacesCollection, *entitlement.WorkspaceID)
-	if err != nil {
-		return err
-	}
-	if !present {
-		return fmt.Errorf("keyservice: the entitlement %s names the workspace %s, which the store does not hold", entitlement.ID, *entitlement.WorkspaceID)
-	}
-	if workspace.OrganisationID != entitlement.OrganisationID {
-		return fmt.Errorf("keyservice: the workspace %s belongs to %s and the entitlement %s to %s",
-			workspace.ID, workspace.OrganisationID, entitlement.ID, entitlement.OrganisationID)
-	}
+func pointWorkspaceAt(ctx context.Context, tx Tx, workspace WireWorkspace, entitlement WireEntitlement) error {
 	workspace.EntitlementID = &entitlement.ID
 	return putRecord(ctx, tx, workspacesCollection, workspace.ID, workspace)
 }
