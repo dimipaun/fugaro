@@ -234,6 +234,22 @@ func (p *Pending) Clear(names ...string) {
 	})
 }
 
+// ClearUnchanged drops the entries of the named steps that are still the ones
+// the caller read, and leaves every entry that is not: a step that was owed,
+// run, and queued again while the run was going — the same step, for a change
+// made after its stage ran — is a new thing to do, and dropping it would leave
+// that change unrun while the record reads as settled (D1563, D1567).
+//
+// The comparison is the entry whole: the step, the project pair it is bound to
+// and the change that asked for it. An entry a writer replaced while the run
+// was going (Add) is a different entry and stays, and a step the caller read
+// nothing about is never dropped.
+func (p *Pending) ClearUnchanged(read *Pending, names ...string) {
+	p.Steps = slices.DeleteFunc(p.Steps, func(s PendingStep) bool {
+		return slices.Contains(names, s.Step) && slices.Contains(read.Steps, s)
+	})
+}
+
 // Names is the steps the document owes, deduped and in the order they run
 // (Order): what `fugaro apply` runs and what `fugaro apply --status` prints.
 func (p *Pending) Names() []string {

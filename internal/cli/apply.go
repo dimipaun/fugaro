@@ -153,16 +153,24 @@ func runApply(cmd *cobra.Command, o applyOptions) error {
 	if err != nil {
 		return err
 	}
-	pending, recorded, err := loadPendingSteps(lc)
-	if err != nil {
-		return err
-	}
-	current := applyCurrent(pending, recorded, sel.Path)
 	if o.status {
-		return printApplyStatus(cmd, lc, pending, recorded, current, o.asJSON)
+		pending, recorded, err := loadPendingSteps(lc)
+		if err != nil {
+			return err
+		}
+		return printApplyStatus(cmd, lc, pending, recorded, applyCurrent(pending, recorded, sel.Path), o.asJSON)
 	}
-	return applyRunSteps(cmd, lc, sel.Path, pending, recorded, o)
+	// The run reads the record itself, and only once it holds the workdirs
+	// lock: reading it here would be reading a copy a run that may take minutes
+	// would then write back whole (applyRunSteps).
+	return applyRunSteps(cmd, lc, sel.Path, o)
 }
+
+// applyRecordRead is where a run reads the record, and it is a variable for one
+// reason: a run reads the record twice on purpose (applyRunSteps), and the fact
+// the second read exists for — a change that landed while the run was going —
+// is one no test can otherwise make happen between the two.
+var applyRecordRead = loadPendingSteps
 
 // loadPendingSteps reads what this machine owes for lc's project, and answers
 // whether a record is on disk at all.
@@ -213,23 +221,18 @@ func applyConfigStamp(path string) string {
 
 // applyRunSteps is the command's run: the owed steps, each once, in the order
 // the record gives them.
-func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, pending *apply.Pending, recorded bool, o applyOptions) error {
-	if len(pending.Names()) == 0 {
-		return applyNothing(cmd, lc, path, pending, recorded, o)
-	}
-	// The run's account is the reporter's, filed under this command's name
-	// (D1351, D1354): the steps it runs are the loop's, and a command that ran
-	// a converge without a reporter of its own would print a second account of
-	// the same run beside the one the census expects.
-	run := stepRunFor(cmd, "apply", cmd.ErrOrStderr())
-	defer run.close()
+//
+// The record is read once the workdirs lock is held and settled against the one
+// on disk when the run ends, never against a copy read before either. A run is
+// minutes of Terraform, and a record read early and written back whole would
+// drop a step another command queued while it was going — the change would read
+// as applied, and never be published (D1563). Two reads are what keep that
+// apart: the first says what to run, and the second, after the run, holds
+// whatever was queued meanwhile, of which only the entries still identical to
+// the ones read are cleared (apply.ClearUnchanged).
+func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, o applyOptions) error {
 	io := &initOptions{door: applyName, yes: true, nonInteractive: true, asJSON: o.asJSON}
 	r := newInitRun(cmd, io)
-	// The reporter is this command's: the steps print one line each through it,
-	// and the closing line is printed where this command's own run ends
-	// (ReportBorrowed below). A converge invoked here with a reporter of its
-	// own would file a log this command never names.
-	r.rep, r.repLog = run.rep, run.log
 	r.setProject(lc)
 	// The workdirs are the converge's, whichever door converged them, and the
 	// redeploy is one of the stages that takes them: this door takes the lock
@@ -239,6 +242,28 @@ func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, pending
 		return err
 	}
 	defer unlock()
+	// Read here and not before the lock: what this run settles is the record as
+	// it stands while this command is the machine's writer of it. It is read
+	// before the reporter below as well: a run that owes nothing runs no step,
+	// and it is a read, not a run — one that files no log (ReportBorrowed).
+	pending, recorded, err := applyRecordRead(lc)
+	if err != nil {
+		return err
+	}
+	if len(pending.Names()) == 0 {
+		return applyNothing(cmd, lc, path, pending, recorded, o)
+	}
+	// The run's account is the reporter's, filed under this command's name
+	// (D1351, D1354): the steps it runs are the loop's, and a command that ran
+	// a converge without a reporter of its own would print a second account of
+	// the same run beside the one the census expects.
+	run := stepRunFor(cmd, "apply", cmd.ErrOrStderr())
+	defer run.close()
+	// The reporter is this command's: the steps print one line each through it,
+	// and the closing line is printed where this command's own run ends
+	// (ReportBorrowed below). A converge invoked here with a reporter of its
+	// own would file a log this command never names.
+	r.rep, r.repLog = run.rep, run.log
 	spec, err := installOptions(io, lc)
 	if err != nil {
 		return err
@@ -326,28 +351,35 @@ func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, pending
 		kept = append(kept, n)
 	}
 
-	// The record is written before the answer, and it is written whole: the
-	// steps this run answered are cleared, the rest stay owed (D1563), and a
-	// run that answered everything stamps the config as it stands now — a stage
-	// may have written it — so the next read can tell a config that changed
-	// since from one that did not (D1575). A machine that had no record and
-	// answered nothing is not given one: nothing was ever owed here, and a
-	// write would be this command inventing state.
-	pending.Clear(ran...)
-	if len(kept) == 0 && runErr == nil {
-		pending.LastApply = applyConfigStamp(path)
+	// The record is written before the answer, and it is written from the one on
+	// disk now rather than the copy read above: the steps this run answered are
+	// cleared where they are still the entries that were read, so a step queued
+	// while the run was going stays owed (D1563) — and the stamp is written only
+	// when nothing at all is left, so a change queued meanwhile never reads as
+	// applied to it (D1575). A run that answered everything stamps the config as
+	// it stands now — a stage may have written it — so the next read can tell a
+	// config that changed since from one that did not. A machine that had no
+	// record and answered nothing is not given one: nothing was ever owed here,
+	// and a write would be this command inventing state.
+	after, afterRecorded, err := applyRecordRead(lc)
+	if err != nil {
+		return userErr("%v", err)
 	}
-	wrote := recorded || len(ran) > 0
+	after.ClearUnchanged(pending, ran...)
+	if len(kept) == 0 && runErr == nil && len(after.Steps) == 0 {
+		after.LastApply = applyConfigStamp(path)
+	}
+	wrote := afterRecorded || len(ran) > 0
 	if wrote {
-		if err := apply.SavePending(os.Getenv, lc.Name, pending); err != nil {
+		if err := apply.SavePending(os.Getenv, lc.Name, after); err != nil {
 			return userErr("%v", err)
 		}
 	}
-	current := applyCurrent(pending, wrote, path)
+	current := applyCurrent(after, wrote, path)
 
 	switch {
 	case o.asJSON:
-		fmt.Fprintln(cmd.OutOrStdout(), string(applyDocJSON(lc, pending, recorded, current, ran)))
+		fmt.Fprintln(cmd.OutOrStdout(), string(applyDocJSON(lc, after, wrote, current, ran)))
 	case len(kept) > 0:
 		applyKeptLine(cmd.OutOrStdout(), kept)
 	default:

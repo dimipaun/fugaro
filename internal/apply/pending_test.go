@@ -469,6 +469,52 @@ func TestPendingClearDropsOnlyTheNamedSteps(t *testing.T) {
 	}
 }
 
+// TestPendingClearUnchangedKeepsWhatWasQueuedMeanwhile: a run clears the entries
+// it read and no others (D1563). The step it answered may have been queued again
+// while it was going — the same step, a change made after its stage ran — and
+// that entry is a new thing to do: dropping it leaves the later change unrun
+// while the record reads as settled. An entry for a step the caller read nothing
+// about is not its to drop either, whatever the step.
+func TestPendingClearUnchangedKeepsWhatWasQueuedMeanwhile(t *testing.T) {
+	read := EmptyPending()
+	for _, step := range []string{initflow.Policy, initflow.Repository} {
+		read.Add(PendingStep{
+			Step: step, Project: "workspace-a", GCPProject: "proj-1234",
+			Change: Change{Kind: Setting, Key: "layer.defaults.agent.model"},
+		})
+	}
+	// What the run finds when it ends: the entry it read for the policy step was
+	// replaced by a later change, the repository step is as it was read, and a
+	// step the run never had was queued while it ran.
+	now := EmptyPending()
+	now.Add(PendingStep{
+		Step: initflow.Policy, Project: "workspace-a", GCPProject: "proj-1234",
+		Change: Change{Kind: Setting, Key: "budget.per_run_usd"},
+	})
+	now.Add(read.Steps[1])
+	now.Add(PendingStep{
+		Step: initflow.Layer, Project: "workspace-a", GCPProject: "proj-1234",
+		Change: Change{Kind: Setting, Key: "layer.defaults.agent.model"},
+	})
+	now.ClearUnchanged(read, initflow.Policy, initflow.Repository)
+	want := []string{initflow.Policy, initflow.Layer}
+	if got := now.Names(); !slices.Equal(got, want) {
+		t.Errorf("after the run the document owes %v, want %v: the entry queued meanwhile, and never one the run did not read", got, want)
+	}
+	// The policy entry that survived is the later change and not the one read.
+	for _, s := range now.Steps {
+		if s.Step == initflow.Policy && s.Change.Key != "budget.per_run_usd" {
+			t.Errorf("the policy entry after the run names %q, want the change queued while the run was going", s.Change.Key)
+		}
+	}
+	// A step the caller read nothing about is kept even when it is named: there
+	// is no entry of its to have answered.
+	now.ClearUnchanged(read, initflow.Layer)
+	if got := now.Names(); !slices.Equal(got, want) {
+		t.Errorf("clearing a step the caller never read left %v, want %v", got, want)
+	}
+}
+
 // TestPendingNamesAreDedupedAndOrdered: Names is what `fugaro apply` runs and
 // what its `--status` prints, so it is the document read through initflow — the
 // steps deduped, in initflow's order, with the one non-stage step first, and a

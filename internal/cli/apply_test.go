@@ -560,6 +560,74 @@ func TestApplyKeepsAWorkspaceStepOwedWhenItsStageSkipsWithoutDoingTheWork(t *tes
 	}
 }
 
+// queuedDuringRun makes a change land while an `apply` run is going. The run
+// reads the record twice — once to know what to run, once to settle it when the
+// run ends — and the second read is the one such a change has to survive
+// (applyRecordRead, the seam that exists for exactly this), so add runs just
+// before it. What add writes is what a management command told `--no-apply`
+// writes: an entry in this machine's record, for the project the command acts
+// on.
+func queuedDuringRun(t *testing.T, add func()) {
+	t.Helper()
+	read := applyRecordRead
+	reads := 0
+	t.Cleanup(func() { applyRecordRead = read })
+	applyRecordRead = func(lc *localcfg.Config) (*apply.Pending, bool, error) {
+		reads++
+		if reads == 2 {
+			add()
+		}
+		return read(lc)
+	}
+}
+
+// TestApplySettlesTheRecordItFindsWhenItsRunEnds: the record is a running
+// machine's file, and a run is minutes of Terraform, so what is cleared is the
+// entry that was read and nothing else (D1563). A step the same run answered and
+// that a later change queued again — the same step, a change made after its
+// stage ran — is a step still owed, and the config is not stamped as applied:
+// the stamp says everything owed for the config as it stands has been published,
+// and this run never published the new change (D1575).
+//
+// The other half is the entry for a step this run never had: a record written
+// back whole from the copy the run read would drop it, and the change behind it
+// would never be published and never be owed.
+func TestApplySettlesTheRecordItFindsWhenItsRunEnds(t *testing.T) {
+	_, _ = applyWorld(t)
+	owed(t, initflow.Policy, apply.Change{Kind: apply.Setting, Key: "budget.per_run_usd"})
+	queuedDuringRun(t, func() {
+		owed(t, initflow.Policy, apply.Change{Kind: apply.Setting, Key: "budget.max_run_tokens"})
+		owed(t, initflow.Layer, apply.Change{Kind: apply.Setting, Key: "layer.defaults.agent.model"})
+	})
+
+	out, errOut, err := executeStdin(t, "", "apply", "--json")
+	if err != nil {
+		t.Fatalf("apply: %v\n%s", err, out+errOut)
+	}
+	doc := applyDocOf(t, out)
+	if !slices.Equal(doc.Applied, []string{initflow.Policy}) {
+		t.Errorf("the run applied %v, want the policy step it read", doc.Applied)
+	}
+	if got := applySteps(doc.Pending); !slices.Equal(got, []string{initflow.Policy, initflow.Layer}) {
+		t.Errorf("the document owes %v, want the step queued again while the run was going and the step it never had", got)
+	}
+	if doc.Current {
+		t.Error("the document reads the config as applied although a change queued during the run was never published")
+	}
+	applySchemaCheck(t, []string{"apply", "--json"}, out)
+
+	p := record(t)
+	if got := pendingSteps(p); !slices.Equal(got, []string{initflow.Policy, initflow.Layer}) {
+		t.Errorf("the record after the run is %v, want both entries the run did not answer", got)
+	}
+	if p.Steps[0].Step != initflow.Policy || p.Steps[0].Change.Key != "budget.max_run_tokens" {
+		t.Errorf("the record holds the policy entry the run read (%+v) instead of the one queued while it was going", p.Steps[0])
+	}
+	if p.LastApply != "" {
+		t.Error("a run that never published the change queued during it stamped the config as applied")
+	}
+}
+
 // TestUpdateLeavesAStepOwedWhenItsStageSkipsWithoutDoingTheWork: the rule is
 // one rule for both doors (D1567). `update` clears the entries of the stages it
 // ran successfully, and a stage that skipped because the bucket it publishes
