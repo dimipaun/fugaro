@@ -58,10 +58,9 @@ import (
 // duplicate, and a run in flight may carry a pull request of its own (a
 // follow-up the task's own chain is on).
 type duplicateOf struct {
-	// live is the run in flight, as the <repo-slug>/<run-id> ref the refusal's
-	// commands take; "" when none is. The prose shortens it to its ending
-	// (task.ShortRun) and the commands may not: a bare ending is a ref neither
-	// --retry nor --continues accepts.
+	// live is the run in flight, as the records name it (the full
+	// <repo-slug>/<run-id>); "" when none is. The prose shortens it to its
+	// ending (task.ShortRun), which is how every listing shows a run.
 	live string
 	// status is that run's own word: launching, pending or running.
 	status string
@@ -75,17 +74,6 @@ type duplicateOf struct {
 	// runview's live, ready or stalled, the words `fugaro runs ls --state`
 	// matches. "" when no pull request was found.
 	prState string
-}
-
-// run is the run to name as the task's: the one in flight when there is one,
-// else the one whose row carries the pull request. The refusal names the chain
-// --continues takes with it exactly when the guard found no pull request: where
-// it found one, that pull request is what the chain is continued by.
-func (d duplicateOf) run() string {
-	if d.live != "" {
-		return d.live
-	}
-	return d.prRun
 }
 
 // prWord is the pull request's state as a reader of the refusal meets it: the
@@ -120,35 +108,47 @@ func (d duplicateOf) what(planTask, repo string) string {
 
 // refusal is the message a launch of the same task is refused with: what holds
 // the task, that nothing was launched, and the ways out -- each of them a
-// command the CLI takes and that starts a run, because a way out that is itself
-// refused, or that launches nothing, sends the caller into a second error
-// instead of out of the first.
+// command the CLI takes that starts nothing on the task already being worked on,
+// because a way out that is itself refused, that launches nothing, or that
+// starts the second run by another door, sends the caller into a second error or
+// into the duplicate instead of out of it.
 //
-// So two flags are deliberately missing from it. --retry starts only a run that
-// never launched (its own help), and every run this guard can name has: the one
-// in flight holds a launch claim or a launch.json, and the one behind a pull
-// request ended. existingLaunch answers a --retry of either with
-// already-launched, so the launch does nothing. --continues is named only where
-// the guard found no pull request at all: a run that is part of a pull request's
-// chain is continued by naming the pull request, and chainFrom refuses a
-// --continues of one (it would inherit what is left of that chain without being
-// in it), so beside --pr it would be the same dead end. Where it is named it is
-// the full <slug>/<run-id> ref --continues takes, since an ending two runs share
-// is refused there rather than guessed at.
+// So the ways out are shaped by what holds the task. A run in flight is waited
+// for, and the deliberate second attempt is the other thing a caller may do: a
+// run that is going is continued by nothing the CLI takes, so a wait is the
+// whole of it. --retry is missing from every shape: it starts only a run that
+// never launched (its own help), and every run this guard can name has -- the
+// one in flight holds a launch claim or a launch.json, and the one behind a pull
+// request ended -- so existingLaunch answers a --retry of either with
+// already-launched and the launch does nothing. --continues is missing from
+// every shape too: it is for a halted run that opened nothing, and the launch it
+// asks for is a way out of this guard rather than one that could meet it (the
+// call site skips the check for it), so naming the run in flight would aim the
+// caller at a second run of the very task this refusal just stopped, one that
+// also inherits the chain's remainder from the ledgers the live run is still
+// spending against -- the two between them spending up to twice what one chain
+// holds. --pr is named only where a run of the task ended and left its pull
+// request behind: that is the one way a pull request's chain is continued
+// (chainFrom refuses a --continues of a run that is part of one), and resolvePR
+// refuses a follow-up while any run of that pull request is still live, so
+// naming it for a run in flight would be one more dead end.
 func (d duplicateOf) refusal(planTask, repo string) string {
 	second := "launch a deliberate second attempt of the same task with --allow-duplicate"
-	if d.pr != 0 {
+	var ways string
+	if d.live != "" {
+		// A run in flight is waited for, and the deliberate second attempt is
+		// the other thing the caller may do. Nothing else is named: --pr does
+		// not apply to a run that is going, as resolvePR refuses a follow-up
+		// while one of the pull request's runs is still live, and --retry and
+		// --continues are the dead ends the note above sets out.
+		ways = fmt.Sprintf("wait for that run (fugaro runs ls --repo %s), or %s", repo, second)
+	} else {
 		// The caveat belongs where the pull request is named and nowhere else:
 		// the records cannot see a merge, so one that is done with still
 		// refuses, and the caller has to hear that before it reaches for the
 		// flag.
 		second += " (the run records, and not the code host, are where that pull request is read from, so one since merged or closed refuses too)"
-	}
-	var ways string
-	if d.pr != 0 {
 		ways = fmt.Sprintf("continue that pull request with fugaro run --pr %d, or %s", d.pr, second)
-	} else {
-		ways = fmt.Sprintf("continue the chain with fugaro run --continues %s, or wait for that run (fugaro runs ls --repo %s), or %s", d.run(), repo, second)
 	}
 	return fmt.Sprintf("%s, so this launch would be its second run: nothing was launched. %s.", d.what(planTask, repo), ways)
 }
