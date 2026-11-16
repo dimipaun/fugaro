@@ -225,6 +225,52 @@ func TestKeyValueAtTheHiddenPromptIsNotEchoed(t *testing.T) {
 	}
 }
 
+// accountsAddKeyCredentialLocal is the state a run of this command WITH --type
+// leaves behind, so the re-run below meets it: the name is declared a key
+// credential, and the account it also is bounds where the key may be sent.
+const accountsAddKeyCredentialLocal = addRigLocal + `credentials:
+  - { name: team-a, type: openrouter }
+claude_accounts:
+  team-a:
+    allow_data_to:
+      - owner/repo-a
+`
+
+// TestARerunWithoutTypeWritesOnlyTheCredentialsOwnSecret is the derive's other
+// half, and the one the flag alone cannot answer. A re-run carries no --type
+// for the ordinary reasons — a rotation, and the fix line `fugaro doctor`
+// prints, which names no type — and what it meets is a name a previous run
+// already declared a key credential. Reading the empty flag as "no type" would
+// store the key under the ACCOUNT's own claude-oauth-token-<name>, the
+// container a shared project job mounts as CLAUDE_CODE_OAUTH_TOKEN
+// (infra/projectjobs.go): the account would be handed a key where its token
+// belongs. So the container is the credential's, whatever this run's flag said,
+// and the file it does not retype is the owner's.
+func TestARerunWithoutTypeWritesOnlyTheCredentialsOwnSecret(t *testing.T) {
+	r := newAddRigWith(t, accountsAddKeyCredentialLocal)
+	writes := r.secretWrites(t)
+
+	out, errOut := r.add(t, "team-a", "--repos", "owner/repo-a")
+
+	id := credentialSecretID("team-a")
+	if got := string(r.sm.Latest(id)); got != addToken() {
+		t.Errorf("%s holds %q, want the value the command read: the re-run stores the key where the credential's type says its key lives", id, got)
+	}
+	if got := string(r.sm.Latest(accountSecretID("team-a"))); got != "" {
+		t.Errorf("the account's Claude token container holds %q: a re-run without --type stored a KEY under the name the job mounts as CLAUDE_CODE_OAUTH_TOKEN", got)
+	}
+	if want := []string{id}; !slices.Equal(writes.created, want) || !slices.Equal(writes.added, want) {
+		t.Errorf("the re-run wrote %v (created) and %v (versions), want only %v", writes.created, writes.added, want)
+	}
+	if shown := out + errOut; strings.Contains(shown, config.ClaudeAccountSecret("team-a")) {
+		t.Errorf("the report names %s, the container the value did not land in:\n%s", config.ClaudeAccountSecret("team-a"), shown)
+	}
+	lc := r.addLocal(t)
+	if want := []config.Credential{{Name: "team-a", Type: config.CredentialTypeOpenRouter}}; !slices.Equal(lc.Credentials, want) {
+		t.Errorf("the credentials block is %v, want %v: a re-run without --type declares no entry and retypes none", lc.Credentials, want)
+	}
+}
+
 // TestNotYetTypesRefuse is D1623's half of the type rule, unchanged by this
 // task: the two types the spec lists as future work refuse in words that name
 // them, and a type that is no type of this release is refused by the config's

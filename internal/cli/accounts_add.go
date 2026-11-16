@@ -388,16 +388,33 @@ func accountsAddCredentialType(lc *localcfg.Config, name string) string {
 	return ""
 }
 
-// accountsAddSecretName is the secret this command stores the value under: the
-// account's own derived Claude OAuth token name for claude-oauth, which is what
-// a job mounts as CLAUDE_CODE_OAUTH_TOKEN, and the credential's own derived key
-// name for the two key types (MC22). The two are different credentials under
-// one name — a key credential is not the account's token, and a value stored
-// under the account's name would be handed to every job that already mounts it
-// — and the type is what decides which. No --type at all is the account's, as
-// it has always been. Which derivation each type's own reader uses is the one
-// config keeps (config.CredentialSecret beside config.ClaudeAccountSecret), so
-// the store here and a later read of the same value cannot name two secrets.
+// accountsAddSecretType is the type whose value this run stores: the --type the
+// command was given, or, when it was given none, the type the config already
+// declares the name with (accountsAddCredentialType). The second half is not a
+// convenience. A re-run carries no --type for the ordinary reasons — a
+// rotation, and the fix line `fugaro doctor` prints (doctorAccountsAdd), which
+// names no type — and what such a run meets is a name a previous run already
+// declared a key credential: deciding from the empty flag alone would store
+// that credential's key under the account's own claude-oauth-token-<name>,
+// which is the container the account's job mounts as CLAUDE_CODE_OAUTH_TOKEN.
+// The container belongs to the credential, whatever this run's flag said.
+func accountsAddSecretType(lc *localcfg.Config, name, typ string) string {
+	if typ != "" {
+		return typ
+	}
+	return accountsAddCredentialType(lc, name)
+}
+
+// accountsAddSecretName is the secret that type's value is stored under: the
+// account's own derived Claude OAuth token name for claude-oauth — and for a
+// name no credential claims, which is the default account this command has
+// always written — or the credential's own derived key name for the two key
+// types (MC22). The two are different credentials under one name: a key
+// credential is not the account's token, and a value stored under the account's
+// name would be handed to every job that already mounts it. Which derivation
+// each type's own reader uses is the one config keeps (config.CredentialSecret
+// beside config.ClaudeAccountSecret), so the store here and a later read of the
+// same value cannot name two secrets.
 func accountsAddSecretName(name, typ string) string {
 	if config.KeyCredentialType(typ) {
 		return config.CredentialSecret(name)
@@ -578,7 +595,7 @@ func accountsAddWhat(lc *localcfg.Config, name, profile string, beyond []string,
 	if profile != "" {
 		what += fmt.Sprintf("; profile profiles.%s.claude_accounts += %s", pluginwire.Printable(profile), pluginwire.Printable(name))
 	}
-	what += fmt.Sprintf("; secret a new version of %s (project-wide)", accountsAddSecretName(name, typ))
+	what += fmt.Sprintf("; secret a new version of %s (project-wide)", accountsAddSecretName(name, accountsAddSecretType(lc, name, typ)))
 	if repos, ok := accountsAddPublishedRepos(lc, name); ok {
 		what += fmt.Sprintf("; publish accounts.%s.allow_repos = [%s] into the policy node", pluginwire.Printable(name), strings.Join(repos, ", "))
 	} else {

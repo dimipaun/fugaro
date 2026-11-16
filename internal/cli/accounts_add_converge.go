@@ -73,11 +73,15 @@ func accountsAddConverge(ctx context.Context, cmd *cobra.Command, after *localcf
 	}
 	defer env.Close()
 
-	// Step 5: the secret, project-wide, as a new version of the credential's own
-	// ID. It runs after the local config and not before it because
-	// projectWideAccepted refuses a name whose allow_data_to lists no
-	// repository: the field has to exist first (spec §2.2 step 5).
-	version, err := accountsAddStoreSecret(run, cmd, env, name, typ)
+	// Step 5: the secret, project-wide, as a new version of the secret this
+	// run's type owns — resolved from the flag AND from the type the config
+	// declares the name with, so a re-run without --type still writes the
+	// credential's own container (accountsAddSecretType). It runs after the local
+	// config and not before it because projectWideAccepted refuses a name whose
+	// allow_data_to lists no repository: the field has to exist first (spec §2.2
+	// step 5).
+	secret := accountsAddSecretName(name, accountsAddSecretType(after, name, typ))
+	version, err := accountsAddStoreSecret(run, cmd, env, secret)
 	if err != nil {
 		return err
 	}
@@ -149,15 +153,18 @@ func accountsAddNodeAccount(ctx context.Context, lc *localcfg.Config, name strin
 }
 
 // accountsAddStoreSecret runs the project-wide store (secretsSetProjectWide,
-// spec §2.2 step 5) and answers the version it wrote. It opens the step through
-// the one opener both stores share (secretsStoreStep), so this step of the
-// account is `fugaro secrets set`'s own: one line naming the container, a cross
-// carrying the server's error when the store fails, and the run's log beside
-// it. The version then reaches this command's block as the store's answer and
-// not as a line read back out of its output (CL7a): the step and the block are
-// two accounts of one store, and neither is parsed out of the other.
-func accountsAddStoreSecret(run *stepRun, cmd *cobra.Command, env *cloudEnv, name, typ string) (string, error) {
-	secret := accountsAddSecretName(name, typ)
+// spec §2.2 step 5) and answers the version it wrote. secret is the name the
+// credential's value lives under, resolved by the caller from this run's type
+// and from the type the config declares the name with (accountsAddSecretType):
+// it is passed in rather than derived here so the step, the sentence and the
+// block all name the one container. It opens the step through the one opener
+// both stores share (secretsStoreStep), so this step of the account is `fugaro
+// secrets set`'s own: one line naming the container, a cross carrying the
+// server's error when the store fails, and the run's log beside it. The version
+// then reaches this command's block as the store's answer and not as a line read
+// back out of its output (CL7a): the step and the block are two accounts of one
+// store, and neither is parsed out of the other.
+func accountsAddStoreSecret(run *stepRun, cmd *cobra.Command, env *cloudEnv, secret string) (string, error) {
 	return secretsStoreStep(run, secret, func() (string, string, error) {
 		return secretsSetProjectWide(run, cmd, env, secretsOptions{}, secret)
 	})
@@ -393,6 +400,11 @@ func accountsAddCheck(cmd *cobra.Command, repo string) (accountsListDoc, error) 
 // than a silent "published".
 func accountsAddReport(cmd *cobra.Command, lc *localcfg.Config, stages map[string]initflow.StageResult, name, typ, profile string, repos []string, version, mark string, check accountsListDoc, allow []string, unpublished string) {
 	w := cmd.OutOrStdout()
+	// The type this run's value was stored under, resolved exactly as the store
+	// step resolved it: a re-run carries no --type, and both the container this
+	// block names and the last line below are about the credential the config
+	// declares and not about an account's token (accountsAddSecretType).
+	typ = accountsAddSecretType(lc, name, typ)
 	secret := accountsAddSecretName(name, typ)
 	row := func(label, value, rest string) {
 		fmt.Fprintf(w, "%-10s%-18s%s\n", label, pluginwire.Printable(value), rest)
