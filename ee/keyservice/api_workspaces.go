@@ -132,6 +132,8 @@ func refuseBinding(w http.ResponseWriter, err error) {
 		refuseAPI(w, http.StatusConflict, "workspace_licensed", "This workspace is already licensed by another entitlement.")
 	case errors.Is(err, errProjectIDBound):
 		refuseAPI(w, http.StatusConflict, "project_id_bound", "That Firebase project is already bound to another workspace.")
+	case errors.Is(err, errTrialForAnotherProject):
+		refuseAPI(w, http.StatusConflict, "trial_for_another_project", "A trial is issued for one project, and this licence's is the project its trial was asked for. Bind it to that project, or ask for a trial of this one.")
 	case errors.Is(err, errRebindTooSoon):
 		refuseAPI(w, http.StatusTooManyRequests, "rebind_too_soon", "A workspace may be rebound once every 30 days. You can bind this licence again when the window opens.")
 	case errors.Is(err, errProbeUnreachable):

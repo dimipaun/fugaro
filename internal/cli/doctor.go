@@ -549,6 +549,10 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		o.Checks = append(o.Checks, *c)
 	}
 	o.Checks = append(o.Checks, doctorLauncherReach(ctx, lc)...)
+	// The repositories still on their per-repository jobs, each named once with
+	// the shared job that replaces it (M3, R3). It reads the local config and
+	// reaches nothing, so it is not one of the checks --offline skips.
+	o.Checks = append(o.Checks, doctorRepoBoundJobs(sel, lc)...)
 	// What a run drops of a job's own environment, per job (docs/image-env,
 	// reconciliation D1377): a measurement, so the default screen is untouched
 	// and --all and --json carry it.

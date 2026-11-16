@@ -14,11 +14,12 @@ import (
 // project token serving many repositories, is task T1.3's to write and the
 // owner's to run in T1.4, once a **Premium** sandbox workspace exists (U6).
 // 181, the shared project job end to end and the allow-list refusal at publish,
-// at deploy and in the runner, is task T2.6's, and it lands in this list then:
-// T2.6 and T1.3 write the same register and the same test file, and the plan's
-// shared-files table says which of them writes it first. Until T2.6's section
-// exists there is nothing of 181 to hold, and a pin that asked for it would be a
-// pin on unwritten text.
+// at deploy and at the proxy, is task T2.6's, and it landed on 2026-11-16: the
+// register now carries its row and its `## Check 181:` section, and this file
+// holds both. The two are registered differently and the table below says how —
+// 180 is a script with a dry driver, 181 ships as the steps the owner types —
+// so what each number's own registration must name is that number's, not the
+// block's.
 //
 // What these tests hold, and why the register needs each one: a check is
 // registered by two things — a row in the summary table and a `## Check N`
@@ -34,10 +35,45 @@ import (
 // The red step is this file run against a register that has neither half: the
 // first failure names the row that is missing, and the second the section.
 
+// bitbucketWorkspaceCheck is one check of the block, with the strings its OWN
+// registration has to name in the row and in the section below it. The two
+// checks of the block are registered differently — 180 ships as a script with a
+// dry driver and one command with required arguments, 181 as the steps the
+// owner types with no script at all (task T2.7: "the owner types the commands
+// T2.6's section gives") — so a shared list of names would pin one check's
+// entry points onto the other.
+type bitbucketWorkspaceCheck struct {
+	number string
+	// named is what this check's registration names, in the row and in the
+	// section alike: the thing a reader runs the check with.
+	named []string
+}
+
 // bitbucketWorkspaceRegisterChecks are the checks of this block the register
-// writes today. 181 joins them with T2.6's section, and no other number of the
-// block is owed.
-var bitbucketWorkspaceRegisterChecks = []string{"180"}
+// writes today. No other number of the block is owed: 182–189 stay unwritten
+// until a work claims them.
+var bitbucketWorkspaceRegisterChecks = []bitbucketWorkspaceCheck{
+	{
+		number: "180",
+		named: []string{
+			bitbucketWorkspaceCheck180Command,
+			"scripts/live-checks/check180_test.sh",
+		},
+	},
+	{
+		number: "181",
+		named: []string{
+			// The three commands the check is run with, in the order T2.7's
+			// steps give them: the publish that refuses a profile admitting a
+			// repository the allow-list does not name, the deploy that creates
+			// the one shared job, and the two runs on it. A section that gave
+			// the steps without them would be a check a reader cannot start.
+			"`fugaro project policy publish`",
+			"`fugaro update`",
+			"`fugaro run --repo <owner/name>`",
+		},
+	},
+}
 
 // bitbucketWorkspaceCheck180Command is the invocation the register documents,
 // argument for argument, in the row and in the section below it. The four
@@ -59,22 +95,25 @@ func bitbucketWorkspaceCheckRowRE(number string) *regexp.Regexp {
 	return regexp.MustCompile(`(?m)^\|\s*` + number + `\s*\|.*$`)
 }
 
-// TestDocsChecks180181AreRegistered: Check 180 has both halves of its
-// registration — a row in the summary table and a `## Check 180:` section below
-// it — and both say the check has not been run, that the owner runs it and that
-// no agent runs any step of it. The section also names the one command the owner
-// types and the test that drives it dry, because a check that ships as a script
-// is registered by naming it: a section whose steps are a second, hand-kept
-// list is how the register and the script come to disagree.
+// TestDocsChecks180181AreRegistered: each check of the block written today has
+// both halves of its registration — a row in the summary table and a `## Check
+// N:` section below it — and each half says its own check has not been run, that
+// the owner runs it and that no agent runs any step of it. Each half also names
+// what its own check is run with, because that is what a registration is for:
+// for 180 the script the owner types and the test that drives it dry, for 181
+// the three commands its steps are typed from. A section whose steps are a
+// second, hand-kept list, or a row that names another check's script, is how the
+// register and the steps come to disagree.
 func TestDocsChecks180181AreRegistered(t *testing.T) {
 	register := readDoc(t, liveChecksDoc)
-	for _, number := range bitbucketWorkspaceRegisterChecks {
+	for _, check := range bitbucketWorkspaceRegisterChecks {
+		number := check.number
 		row := bitbucketWorkspaceCheckRowRE(number).FindString(register)
 		if row == "" {
 			t.Errorf("%s's register has no `| %s |` row: Check %s is written below it, and the table is where a reader finds it", liveChecksDoc, number, number)
 		} else {
 			flatRow := strings.ToLower(flattenDoc(row))
-			for _, want := range []string{
+			for _, want := range append([]string{
 				// The register's own marker for an owner-run check that has
 				// not been run. A row that lost either half reads as something
 				// an agent did, on a sandbox.
@@ -82,15 +121,9 @@ func TestDocsChecks180181AreRegistered(t *testing.T) {
 				"no agent runs any step of it",
 				// The workspace and installation this check must never touch.
 				"never `belong`",
-				// Where the owner's one command and its dry driver live: the
-				// row is the half a reader scans, so the script has to be
-				// named there and not only in the section below — and named
-				// with the arguments it refuses to run without.
-				bitbucketWorkspaceCheck180Command,
-				"scripts/live-checks/check180_test.sh",
-			} {
+			}, check.named...) {
 				if !strings.Contains(flatRow, want) {
-					t.Errorf("Check %s's row does not say %q: an owner-run check is registered with the label it was run under and the script you type", number, want)
+					t.Errorf("Check %s's row does not say %q: an owner-run check is registered with the label it was run under and what you run it with", number, want)
 				}
 			}
 		}
@@ -111,21 +144,15 @@ func TestDocsChecks180181AreRegistered(t *testing.T) {
 		// that fits it on a line, and a pin that missed it would be a pin on the
 		// line breaks rather than on the claim.
 		flat := strings.ToLower(flattenDoc(section))
-		for _, want := range []string{
+		for _, want := range append([]string{
 			"**not run.**",
 			// The register's own rule for an owner-run check: no agent runs any
 			// step of it, and the text has to say so.
 			"no agent runs any step of it",
-			// The command and its dry driver, the command with every argument
-			// the script requires: the section is where the owner copies it
-			// from, so it is the half where a missing argument is a run that
-			// exits 2 instead of measuring.
-			bitbucketWorkspaceCheck180Command,
-			"scripts/live-checks/check180_test.sh",
 			"never `belong`",
-		} {
+		}, check.named...) {
 			if !strings.Contains(flat, want) {
-				t.Errorf("Check %s's section does not say %q: the check is owner-run and has not been run, and a section that leaves either half out reads as something an agent did", number, want)
+				t.Errorf("Check %s's section does not say %q: the check is owner-run and has not been run, and a section that leaves out either half or what to run it with is one a reader cannot use", number, want)
 			}
 		}
 	}
@@ -133,7 +160,8 @@ func TestDocsChecks180181AreRegistered(t *testing.T) {
 	// The rows and the sections run in number order, so a reader who follows the
 	// table top to bottom meets the sections in the same order.
 	at := 0
-	for _, number := range bitbucketWorkspaceRegisterChecks {
+	for _, check := range bitbucketWorkspaceRegisterChecks {
+		number := check.number
 		i := strings.Index(register[at:], "\n## Check "+number+":")
 		if i < 0 {
 			t.Errorf("%s writes Check %s's section out of order: the block reads in the order the numbers give", liveChecksDoc, number)
