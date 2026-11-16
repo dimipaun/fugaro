@@ -465,7 +465,10 @@ run      argv: the listing's file, a run id. Prints that run's row field by
          or nothing of this run's.
 attempts argv: a log file. Prints one `attempt=` line per CHK191 attempt the
          throwaway run reported. Only those lines are printed and every field is
-         cut to a short plain-word shape: a log is a run's own words.
+         cut to a short plain-word shape: a log is a run's own words. An attempt
+         whose call was SERVED carries no status at all — git prints nothing
+         when it succeeds — so its `answer=` is empty in the log and prints as
+         `-` here: it is the refusal that carries a status.
 audit    argv: the service's lines' file, a run id. Prints two kinds of line for
          that run: `status=<the line's status>` for each `credsvc: audit` line —
          `ok` for a call the service served, `request_refused` for one it
@@ -774,7 +777,12 @@ elif cmd == "run":
         print("found=no")
 elif cmd == "attempts":
     text = open(sys.argv[2], errors="replace").read()
-    for m in re.finditer(r"CHK191\s+attempt=(\S+)\s+refused=(\S+)\s+answer=(\S+)", text):
+    # The answer field is EMPTY for a git call the proxy served: git prints
+    # nothing when it succeeds, so the probe's own words_of leaves the field
+    # with no token in it (check191-probe.sh). Requiring one dropped that line
+    # altogether, and the row that reads it then reported a probe that differs
+    # rather than the served call it exists for.
+    for m in re.finditer(r"CHK191\s+attempt=(\S+)\s+refused=(\S+)\s+answer=(\S*)", text):
         print("attempt=%s refused=%s answer=%s"
               % (word(m.group(1), 32), word(m.group(2), 8), word(m.group(3), 24)))
 elif cmd == "audit":
