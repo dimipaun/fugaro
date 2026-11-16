@@ -33,14 +33,22 @@ package keyservice
 // who never sets it up holds nothing at all. That is the second reminder, and it
 // is the only one an entitlement with no key can be sent.
 //
-// **A reminder is sent once per term, and the store is what makes it so.** The
-// run writes a record named by the entitlement, the reminder and the end of the
-// term it was about, and a run that finds that record mails nothing: the
-// schedule is Cloud Scheduler's, but nothing here depends on it firing once, on
-// it firing at all, or on it firing in the order the terms end.
+// **A reminder is sent once per term to each owner, and the store is what makes
+// it so.** The run writes a record for each owner it told, named by the
+// entitlement, the reminder, the end of the term it was about and that owner,
+// and a run that finds that record mails nothing to them: the schedule is Cloud
+// Scheduler's, but nothing here depends on it firing once, on it firing at all,
+// or on it firing in the order the terms end.
+//
+// **A reminder that could not be delivered stops nothing else.** One owner's
+// address is that owner's failure, and the run carries on with the owners beside
+// them and with the next organisation, joining what failed into its answer so
+// that the job's retry is asked again about exactly what is missing.
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -85,14 +93,16 @@ type reminderRun struct {
 	Bindings int
 }
 
-// reminderRecord is one reminder that was sent: what it was about, and when it
-// went out. It holds no address and no key (§7.3's rule at this collection): the
-// recipients are the organisation's owners as the run reads them, and a record
-// that kept them would be a list of addresses the store has no use for.
+// reminderRecord is one reminder that was sent to one owner: what it was about,
+// who was told, and when it went out. The recipient is the membership's own uid
+// and never the address it was mailed to (§7.3's rule at this collection): the
+// address is read from the membership each run, and a record that kept it would
+// be a list of addresses the store has no use for.
 type reminderRecord struct {
 	ID             string `json:"id"`
 	EntitlementID  string `json:"entitlement_id"`
 	OrganisationID string `json:"organisation_id"`
+	Recipient      string `json:"recipient"`
 	Kind           string `json:"kind"`
 	// TermEndsAt is the end of the term the reminder was about, and it is part of
 	// the record's own name (`reminderID`): a term that was extended or replaced
@@ -102,15 +112,20 @@ type reminderRecord struct {
 	SentAt     time.Time `json:"sent_at"`
 }
 
-// reminderID is the name one reminder is filed under. Both halves of the term
-// and the reminder are in it because they are what "once per term" is about, and
-// the id is derived rather than minted so that the run reads one document
-// instead of scanning the collection for a reminder it may already have sent.
+// reminderID is the name one reminder is filed under. The term and the reminder
+// are in it because they are what "once per term" is about, and so is the
+// recipient because one owner's address is refused where another's is not
+// (remind): a record per owner is what lets a run that mailed them hold off
+// while it keeps asking the provider about the owner it could not reach. The id
+// is derived rather than minted so that the run reads one document instead of
+// scanning the collection for a reminder it may already have sent.
 //
-// Neither an entitlement's id nor the two words can hold the separator
-// (`newID`'s alphabet), so the three parts cannot be confused with each other.
-func reminderID(entitlementID, kind string, termEndsAt time.Time) string {
-	return entitlementID + ":" + kind + ":" + strconv.FormatInt(termEndsAt.Unix(), 10)
+// An entitlement's id is `newID`'s alphabet, the kind is one of two words, the
+// term ends at a whole number of seconds, and the recipient is the uid
+// membershipID already joins to an organisation's id: none of the four can hold
+// the separator.
+func reminderID(entitlementID, kind string, termEndsAt time.Time, recipient string) string {
+	return entitlementID + ":" + kind + ":" + strconv.FormatInt(termEndsAt.Unix(), 10) + ":" + recipient
 }
 
 // runsOut answers whether this grant's term is the end of it: whether anything
@@ -171,10 +186,17 @@ func reminderDue(entitlement WireEntitlement, now time.Time) (string, bool) {
 
 // runReminders mails every reminder that is due and answers what it sent. The
 // order is the entitlements' own (oldest grant first), so two runs over one
-// store mail in one order, and it stops at the first failure rather than
-// carrying on: a transport that could not deliver is the run's failure (F33's
-// retry is what asks it again), and a run that swallowed one would leave a
-// customer who was never told with a service that believes they were.
+// store mail in one order.
+//
+// **A failure is carried, not thrown.** The loop goes on to the next entitlement
+// and what failed is joined into the run's answer, because one organisation's
+// undeliverable mail is that organisation's: a run that returned at the first
+// failure would never remind any organisation the store files after it, and the
+// order the store files them in is stable, so "after it" would be every run
+// until somebody fixed that address by hand. The answer is still a failure
+// (F33's retry is what asks it again), and only what is missing is missing: each
+// owner is recorded as they are mailed (remind), so the retry asks again about
+// the reminder that did not go out and about nothing else.
 func (s *Service) runReminders(ctx context.Context) (reminderRun, error) {
 	origin, err := portalOrigin(s.cfg.URL)
 	if err != nil {
@@ -186,6 +208,7 @@ func (s *Service) runReminders(ctx context.Context) (reminderRun, error) {
 	}
 	oldestFirst(held, func(one WireEntitlement) time.Time { return one.CreatedAt }, func(one WireEntitlement) string { return one.ID })
 	var run reminderRun
+	var failures []error
 	for _, entitlement := range held {
 		kind, due := reminderDue(entitlement, s.now())
 		if !due {
@@ -193,9 +216,10 @@ func (s *Service) runReminders(ctx context.Context) (reminderRun, error) {
 		}
 		sent, err := s.remind(ctx, origin, entitlement, kind)
 		if err != nil {
-			return run, err
+			failures = append(failures, fmt.Errorf("keyservice: the %s reminder for entitlement %s in organisation %s: %w",
+				kind, entitlement.ID, entitlement.OrganisationID, err))
 		}
-		if !sent {
+		if sent == 0 {
 			continue
 		}
 		if kind == reminderRenewal {
@@ -204,66 +228,77 @@ func (s *Service) runReminders(ctx context.Context) (reminderRun, error) {
 			run.Bindings++
 		}
 	}
-	return run, nil
+	return run, errors.Join(failures...)
 }
 
-// remind sends one entitlement's reminder to its organisation's owners and
-// answers whether it mailed anybody.
+// remind sends one entitlement's reminder to the owners it has not already told
+// and answers how many of them it mailed.
 //
-// **The record is written after the mails, and that is a decision.** A run that
-// failed halfway through an organisation's owners leaves no record, so the retry
-// mails the ones who were already told — which is the failure worth having: the
+// **Each owner is tried, and each owner is recorded on their own.** One address
+// the provider will not take is that address's failure: the owner beside them is
+// mailed in the same run, and the record of each mail goes in as it goes, so a
+// retry asks the provider again about what is missing and about nothing else. A
+// single record for the reminder, written after every owner was mailed, cannot
+// say "these were told, that one was not": the retry mails everybody again, and
+// an address the provider keeps refusing costs the owners beside it a copy of
+// the same reminder on every run the job's retries make.
+//
+// **The record is written after the mail it records and never before.** The
 // other order records a reminder nobody received, and nothing would ever ask the
-// service about it again. The window is one account's owner list and one
-// transport call long, and Cloud Scheduler retries a run that answered a failure
-// rather than running one beside it.
+// service about it again; this one asks again, and the cost of the window
+// between the send and the write is one repeated mail rather than one lost one.
 //
 // An organisation with no owner is nobody to tell and nothing is recorded, so an
 // organisation that gains one is reminded at the next run rather than never.
-func (s *Service) remind(ctx context.Context, origin string, entitlement WireEntitlement, kind string) (bool, error) {
-	id := reminderID(entitlement.ID, kind, entitlement.EndsAt)
-	_, recorded, err := getRecord[reminderRecord](ctx, s.docs, remindersCollection, id)
-	if err != nil {
-		return false, err
-	}
-	if recorded {
-		return false, nil
-	}
+func (s *Service) remind(ctx context.Context, origin string, entitlement WireEntitlement, kind string) (int, error) {
 	organisation, present, err := getRecord[WireOrganisation](ctx, s.docs, organisationsCollection, entitlement.OrganisationID)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	if !present {
-		return false, nil
+		return 0, nil
 	}
 	owners, err := reminderOwners(ctx, s.docs, organisation.ID)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
-	if len(owners) == 0 {
-		return false, nil
-	}
+	sent := 0
+	var failures []error
 	for _, owner := range owners {
-		if err := s.mail.Send(ctx, reminderMail(kind, owner.Email, organisation.Name, entitlement, origin)); err != nil {
-			return false, err
+		id := reminderID(entitlement.ID, kind, entitlement.EndsAt, owner.UID)
+		_, recorded, err := getRecord[reminderRecord](ctx, s.docs, remindersCollection, id)
+		if err != nil {
+			failures = append(failures, err)
+			continue
 		}
+		if recorded {
+			continue
+		}
+		if err := s.mail.Send(ctx, reminderMail(kind, owner.Email, organisation.Name, entitlement, origin)); err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		record := reminderRecord{
+			ID:             id,
+			EntitlementID:  entitlement.ID,
+			OrganisationID: organisation.ID,
+			Recipient:      owner.UID,
+			Kind:           kind,
+			TermEndsAt:     entitlement.EndsAt.UTC(),
+			SentAt:         s.now().UTC(),
+		}
+		doc, err := storedDoc(record)
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		if err := s.docs.Put(ctx, remindersCollection, id, doc); err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		sent++
 	}
-	record := reminderRecord{
-		ID:             id,
-		EntitlementID:  entitlement.ID,
-		OrganisationID: organisation.ID,
-		Kind:           kind,
-		TermEndsAt:     entitlement.EndsAt.UTC(),
-		SentAt:         s.now().UTC(),
-	}
-	doc, err := storedDoc(record)
-	if err != nil {
-		return false, err
-	}
-	if err := s.docs.Put(ctx, remindersCollection, id, doc); err != nil {
-		return false, err
-	}
-	return true, nil
+	return sent, errors.Join(failures...)
 }
 
 // reminderOwners is the organisation's owners, in the order its memberships are

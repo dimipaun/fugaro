@@ -20,6 +20,7 @@ package keyservice
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -252,6 +253,67 @@ func TestReminderIsNotSentForWhatRenewsItself(t *testing.T) {
 	}
 	if len(f.mail.sent) != 0 {
 		t.Errorf("the run mailed %d message(s) about the free seat, want none: %v", len(f.mail.sent), f.mail.sent)
+	}
+}
+
+// refusingMailer is the mail path with one address the provider will not take,
+// which is what a suppressed or dead address is from the run's side: the error
+// is the shape resend.go builds out of a provider's refusal, and every other
+// address goes to the fixture's own spy.
+type refusingMailer struct {
+	spy     *mailSpy
+	refused string
+}
+
+func (m refusingMailer) Send(ctx context.Context, msg Message) error {
+	if msg.To == m.refused {
+		return errors.New("keyservice: the mail provider refused the message with 422 Unprocessable Entity: the recipient's address is not accepted")
+	}
+	return m.spy.Send(ctx, msg)
+}
+
+// TestARefusedAddressRemindsEveryoneElseOnce: one owner the provider will not
+// accept is that owner's failure and nobody else's. The owner beside them is
+// mailed in the same run, the next organisation's reminder is not stuck behind
+// the refused address — the store's order is stable, so "behind it" would be
+// every run until somebody fixed that address by hand — and nobody is mailed
+// twice however often the job asks again, because each owner is recorded as they
+// are mailed and the second day's runs find nothing to send them.
+//
+// The run still answers a failure, and that is the point of it: a reminder the
+// service was asked to send has not gone out, and the retry F33 gives the job is
+// what asks for it again. Answering 204 would say that everyone was told.
+func TestARefusedAddressRemindsEveryoneElseOnce(t *testing.T) {
+	f := newFixtureWith(t, Production, func(f *fixture) {
+		f.deps.Mailer = refusingMailer{spy: f.mail, refused: danaEmail}
+	})
+	first := f.seededOrganisation("org-dana", "Dana Ltd", orgTypeCustomer, danaUID, danaEmail, roleOwner)
+	f.seed(membershipsCollection, membershipID(first.ID, erinUID), WireMembership{
+		OrganisationID: first.ID, UID: erinUID, Email: erinEmail, Role: roleOwner, CreatedAt: f.now,
+	})
+	second := f.seededOrganisation("org-seller", "Seller Ltd", orgTypeCustomer, sellerUID, sellerMail, roleOwner)
+	f.reminderEntitlement("ent-dana", first.ID, entitlementSourceOperations, licence.KindPaid, f.now.Add(day), true)
+	f.reminderEntitlement("ent-seller", second.ID, entitlementSourceOperations, licence.KindPaid, f.now.Add(day), true)
+
+	for run := 1; run <= 3; run++ {
+		if got := f.runReminders(); got.Code != http.StatusInternalServerError {
+			t.Fatalf("run %d answered %d, want %d: a reminder that did not go out is a run that failed", run, got.Code, http.StatusInternalServerError)
+		}
+		f.advance(day)
+	}
+
+	told := map[string]int{}
+	for _, msg := range f.mail.sent {
+		told[msg.To]++
+	}
+	if told[danaEmail] != 0 {
+		t.Errorf("the refused address was mailed %d time(s), want none: the provider does not accept it", told[danaEmail])
+	}
+	if told[erinEmail] != 1 {
+		t.Errorf("the owner beside the refused one was mailed %d time(s), want once: her reminder does not depend on the other address", told[erinEmail])
+	}
+	if told[sellerMail] != 1 {
+		t.Errorf("the next organisation's owner was mailed %d time(s), want once: a refused address does not hold up the reminders filed after it", told[sellerMail])
 	}
 }
 
