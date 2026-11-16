@@ -107,6 +107,14 @@ export const LIVE_HOUR_WINDOW_SECONDS = 60 * 60
  * times the burn history's, for a window twelve times as long. */
 export const LIVE_HOUR_MAX_SAMPLES = 4096
 
+/** The two words that tell the two sparklines apart: their windows, as a person
+ * says them. They are module constants rather than a ternary inside the drawing
+ * because a screen's text is written by `literal`, and this file's every
+ * `literal` argument is a constant, a literal or a ternary of two literals with
+ * no comparison in its condition (`screen-literals.test.ts`). */
+export const LIVE_BURN_WINDOW_WORD = '5 min'
+export const LIVE_HOUR_WINDOW_WORD = '1 h'
+
 /** LIVE_STALE_AFTER_SECONDS is `internal/watch/state.go`'s `StaleAfter`: the
  * 45 s after which the design's header calls the connection stale. */
 export const LIVE_STALE_AFTER_SECONDS = 45
@@ -1623,26 +1631,40 @@ function killBanner(factory: ScreenFactory, kill: KillView): ScreenElement {
  * console's own `HourHistory`. Two copies of this function would be two places
  * the empty-line branch, the `data-height` reading and the gap's `title` could
  * drift apart, and the two lines are meant to be read as one instrument at two
- * scales. `window` picks the class hooks alone -- the axis, the sample count and
- * the gap's sentence are the history's, not the window's.
+ * scales. `window` picks the class hooks and the caption alone -- the axis, the
+ * sample count and the gap's sentence are the history's, not the window's.
+ *
+ * **Each line carries its window as a word**, because two shapes side by side
+ * that are told apart by nothing but their colour are the one thing the design
+ * forbids (section 6.1 rule 3): `5 min` and `1 h` are what say which scale a
+ * person is looking at, and they are the console's own words rather than a
+ * window the document reported.
  */
 function spark(factory: ScreenFactory, line: Sparkline, window: 'burn' | 'hour'): ScreenElement {
-  const element = make(factory, 'ol', window === 'burn' ? 'live-burn' : 'live-hour')
-  element.setAttribute('data-segments', String(line.segments))
+  const element = make(factory, 'div', 'live-meter')
+  const word = cell(element, factory, 'span', 'live-meter-word')
+  if (window === 'burn') {
+    literal(word, LIVE_BURN_WINDOW_WORD)
+  } else {
+    literal(word, LIVE_HOUR_WINDOW_WORD)
+  }
+  const bars = make(factory, 'ol', window === 'burn' ? 'live-burn' : 'live-hour')
+  element.append(bars)
+  bars.setAttribute('data-segments', String(line.segments))
   if (line.bars.length === 0) {
     // No sample at all is not an empty chart: it is the console saying it has
     // not seen a document for this repository yet.
     // availability.ts maps that to a gap (an em dash), so the mark, the state
     // and the title all come from one gap reading rather than from three
     // separate choices.
-    const empty = cell(element, factory, 'li', window === 'burn' ? 'live-burn-bar' : 'live-hour-bar', 'live-num')
+    const empty = cell(bars, factory, 'li', window === 'burn' ? 'live-burn-bar' : 'live-hour-bar', 'live-num')
     const none = gap('no document has been seen for this repository yet')
     putReading(empty, none, 'percent')
     empty.setAttribute('data-state', none.state)
     return element
   }
   for (const point of line.bars) {
-    const drawn = cell(element, factory, 'li', window === 'burn' ? 'live-burn-bar' : 'live-hour-bar', 'live-num')
+    const drawn = cell(bars, factory, 'li', window === 'burn' ? 'live-burn-bar' : 'live-hour-bar', 'live-num')
     putReading(drawn, point.height, 'percent')
     drawn.setAttribute('data-height', formatReading(point.height, 'percent'))
     drawn.setAttribute('data-state', point.height.state)

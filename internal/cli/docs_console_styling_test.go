@@ -238,18 +238,23 @@ func TestDocsConsoleStylingDesignIsWritten(t *testing.T) {
 	}
 	// §2.10's count row, which is scoped as tightly as the screen is: Live drew
 	// no `count` reading at all until the review inbox landed (v2 plan Task
-	// V2.7.1), and the row now names Live **for that inbox alone** — the ready
-	// rows it holds, how many it drew and how many the document carried. The
-	// claim the test holds is the pair: the row names Live, and the prose beside
-	// it says which readings those are, so a later screen cannot join the row by
+	// V2.7.1), and the row now names Live for the inbox's three, the fleet
+	// panel's `ACTIVE`/`QUEUED` and the runs cap bar's `max_parallel` limit (v2
+	// plan Task V1.2) — no more of the screen than that, which is why the row
+	// used to say "the review inbox only". The claim the test holds is the pair:
+	// the row names Live, and the prose beside it says which readings those are
+	// and which of them can be `n/a`, so a later screen cannot join the row by
 	// being mentioned somewhere else on Live.
 	numbers := mdFlat(mdBetween(t, path, doc, "### 2.10 Numbers", "## 3. "))
 	countRow := mdRow(t, path, mdBetween(t, path, doc, "### 2.10 Numbers", "## 3. "), "| **Count** |")
 	if !strings.Contains(countRow, "Live") {
-		t.Errorf("%s: §2.10's count row does not name Live, which is where the review inbox's three `count` readings are drawn (v2 plan Task V2.7.1)", path)
+		t.Errorf("%s: §2.10's count row does not name Live, which is where the review inbox's three, the fleet panel's two and the runs cap bar's limit are drawn (v2 plan Tasks V2.7.1, V1.2)", path)
 	}
-	if !strings.Contains(numbers, "the only `count` readings on the screen are the review inbox's three") {
-		t.Errorf("%s: §2.10 does not say the review inbox's three readings are the only counts on Live, which is why the row above names Live and no other part of the screen", path)
+	if !strings.Contains(numbers, "Its `count` readings are the review inbox's three") {
+		t.Errorf("%s: §2.10 does not say which of Live's readings are `count`s, which is why the row above names Live and no other part of the screen", path)
+	}
+	if !strings.Contains(numbers, "the one `count` on the screen that can be `n/a`") {
+		t.Errorf("%s: §2.10 does not say that the runs cap bar's limit is the one `count` reading on Live that can be `unavailable`, which is what a document from a CLI older than the field draws", path)
 	}
 	if !strings.Contains(mdBetween(t, path, doc, "### 1.1 ", "### 1.2 "), "61 lines") {
 		t.Errorf("%s: §1.1 does not give the served document's real length (61 lines)", path)
