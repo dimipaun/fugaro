@@ -252,15 +252,6 @@ func implementAddingThenDeletingBinary(path string) step {
 	})
 }
 
-// binaryBytes is the content of a binary file of size bytes, for a fixture that
-// carries one in its base commit: an image header's NULs inside the window git
-// reads, whatever the file's size.
-func binaryBytes(size int) string {
-	b := make([]byte, size)
-	copy(b, "\x89PNG\r\n\x1a\n\x00\x00")
-	return string(b)
-}
-
 // TestFinalizeCommitsAnUntrackedScript: what the rule deliberately leaves
 // alone. A file the run left executable and forgot to commit is a script
 // someone wrote — text, which a reviewer can read — and the leftover commit is

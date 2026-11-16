@@ -42,13 +42,19 @@ func writeImage(t *testing.T, req agent.Request, name string, size int) {
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	b := make([]byte, size)
-	// An image encoder's output is not text: its header carries NULs well
-	// inside the window the rule reads.
-	copy(b, "\x89PNG\r\n\x1a\n\x00\x00")
-	if err := os.WriteFile(full, b, 0o644); err != nil {
+	if err := os.WriteFile(full, imageBytes(size), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// imageBytes is the content of an image file of size bytes: an encoder's own
+// header, whose NULs sit well inside the window the rule reads, and padding.
+// The same bytes serve the two fixtures an image needs — one written into the
+// run's tree, one a base commit already carries.
+func imageBytes(size int) []byte {
+	b := make([]byte, size)
+	copy(b, "\x89PNG\r\n\x1a\n\x00\x00")
+	return b
 }
 
 // TestAnAdmittedImageIsCommitted: the run whose task is to add an asset. The
@@ -264,7 +270,7 @@ func TestAGitAddIntentToAddBinaryFailsTheRun(t *testing.T) {
 // passes.
 func TestAModifiedTrackedBinaryIsNotRefused(t *testing.T) {
 	const path = "assets/logo.webp"
-	h := newHarnessFiles(t, gwConfig(t, ""), nil, map[string]string{path: binaryBytes(1024)})
+	h := newHarnessFiles(t, gwConfig(t, ""), nil, map[string]string{path: string(imageBytes(1024))})
 	rec, err := h.run(t, implementReplacingBinary(path, 4096), review("ship", 0))
 	if err != nil {
 		t.Fatal(err)
@@ -313,7 +319,7 @@ func TestTheRefusalNamesThePathAndTheSize(t *testing.T) {
 // are the only reason the run is not refused.
 func TestAMovedBinaryIsNotRefused(t *testing.T) {
 	const from, to = "assets/logo.webp", "assets/images/logo.webp"
-	h := newHarnessFiles(t, gwConfig(t, ""), nil, map[string]string{from: binaryBytes(1024)})
+	h := newHarnessFiles(t, gwConfig(t, ""), nil, map[string]string{from: string(imageBytes(1024))})
 	rec, err := h.run(t, implementMovingBinary(from, to), review("ship", 0))
 	if err != nil {
 		t.Fatal(err)
