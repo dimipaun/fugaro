@@ -758,12 +758,24 @@ func reposRemovalHeld(ctx context.Context, c *infra.Clients, spec infra.RepoSpec
 	}
 	variant := live.Labels[gcp.LabelWorkflow]
 	if variant == "" {
+		// No workflow label: the check job, which no run executes, so nothing
+		// holds it.
 		return "", nil
 	}
 	for _, run := range runs {
 		if variant == run.Workflow || strings.HasPrefix(variant, run.Workflow+"_") {
 			return fmt.Sprintf("kept: the %s %s is the %s job run(s) %s are executing, and it stays until they end (fugaro runs ls)",
 				ret.Kind, ret.Job, variant, strings.Join(reposRemovalRunIDs(runs), ", ")), nil
+		}
+		// A run whose workflow the registry does not record cannot be attributed
+		// to a job, and this is a workflow job, so it may be that run's. The
+		// registry's own sweep reads an entry with no workflow the same way
+		// (budget.Sweeper.isLive: "errs towards keeping"), and the promise the
+		// confirmation made is about the run's job, not about the runs this
+		// command could name.
+		if run.Workflow == "" {
+			return fmt.Sprintf("kept: the %s %s is a workflow job run(s) %s may be executing — this machine's registry records no workflow for one of them — and it stays until they end (fugaro runs ls)",
+				ret.Kind, ret.Job, strings.Join(reposRemovalRunIDs(runs), ", ")), nil
 		}
 	}
 	return "", nil

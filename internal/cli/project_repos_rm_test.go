@@ -571,6 +571,34 @@ func TestReposRmRefusesAnUnversionedStateBucket(t *testing.T) {
 	}
 }
 
+// TestReposRmKeepsAJobItCannotAttribute is the edge of D2407's promise. The
+// registry's Workflow is optional (budget.AgentEntry.Workflow is omitempty) and
+// a run whose workflow is not recorded cannot be attributed to a job, so a
+// workflow job may be the one that run is executing — the registry's own sweep
+// reads the same entry the same way and errs towards keeping (budget.Sweeper).
+// The removal keeps it, and the check job, which no run executes, still goes.
+func TestReposRmKeepsAJobItCannotAttribute(t *testing.T) {
+	r := rmRigFor(t, "", rmGone{})
+	r.db.Set("agents", map[string]any{
+		r.slugA: map[string]any{rmRunID: budget.AgentEntry{Repo: rmRepoA, Stage: "implement"}},
+	})
+	out, _ := r.rmOut(t, rmEntryA)
+	if !r.run.HasJob(gcp.JobName(r.slugA, "web")) {
+		t.Errorf("the removal deleted a workflow job of %s while a run of it with no recorded workflow is in flight", rmRepoA)
+	}
+	if r.run.HasJob(gcp.CheckJobName(r.slugA)) {
+		t.Errorf("the removal kept the check job of %s, which no run holds", rmRepoA)
+	}
+	if !strings.Contains(out, "records no workflow") {
+		t.Errorf("the removal does not say why it kept the job:\n%s", out)
+	}
+	// The rest of the removal still happened: a kept job is not a skipped
+	// command.
+	if allow := allowReposOf(t, r.db); len(allow) != 1 || allow[0] != rmEntryB {
+		t.Errorf("allow_repos = %v, want [%s]", allow, rmEntryB)
+	}
+}
+
 // rmPutRunInFlight records one run of rmRepoA in the registry, which is what
 // `fugaro budget show` lists as running and what decides which confirmation
 // `rm` asks.
