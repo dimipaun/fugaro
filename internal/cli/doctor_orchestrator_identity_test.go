@@ -11,9 +11,8 @@ import (
 )
 
 // The orchestrator-identity check (mobile plan task P5.1b): the resident
-// orchestrator's actual IAM read back against the table
-// docs/mobile/design/always-on-orchestrator.md section 4.3 fixes as the whole
-// of what the account may hold.
+// orchestrator's actual IAM read back against the table the mobile orchestrator
+// design's section 4.3 fixes as the whole of what the account may hold.
 //
 // The rig is an installation whose Firebase backend is its own project: the
 // launcher list's rules-bypassing database read is bound there rather than in

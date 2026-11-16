@@ -2200,8 +2200,8 @@ func TestViewerRoleHasNoCancelPermission(t *testing.T) {
 }
 
 // TestOrchestratorAccountIsItsOwnPrincipalKind: the resident orchestrator's own
-// account (mobile plan task P5.1b; docs/mobile/design/always-on-orchestrator.md
-// §4.3) is a principal of its own kind, like the credentials service's, the
+// account (mobile plan task P5.1b; the mobile orchestrator design's §4.3) is a
+// principal of its own kind, like the credentials service's, the
 // coordinator's, the front door's and the intake's, and for their reason plus
 // one of its own: as one of FugaroAccounts every toAccounts row would have
 // accepted it, and this is the account that holds iam.serviceAccounts.signJwt

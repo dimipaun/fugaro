@@ -10,8 +10,10 @@
 // between them a grant that is added, removed or retargeted fails somewhere
 // with the row it broke.
 //
-// The table below is docs/mobile/design/always-on-orchestrator.md section 4.3,
-// and it is the whole of what the account may hold: the launcher's project role
+// The table below is the mobile orchestrator design's section 4.3 — the document
+// internal/cli/docs_mobile_orchestrator_test.go pins, whose path this file does
+// not spell (the rule over that folder lets only its docs_* pins name it) — and
+// it is the whole of what the account may hold: the launcher's project role
 // (its metadata permissions, rows 1 and 3 of the table in one custom role), the
 // runs bucket's conditional write and its unconditioned read, the token-minter
 // role on the budget signer, and the launch of the installation's jobs, which

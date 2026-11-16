@@ -136,10 +136,10 @@ var secretReaderExceptions = []struct {
 			"deploy/terraform/gcp/modules/installation/intake.tf google_project_iam_member.intake_lister",
 		},
 	},
-	// The installation's resident orchestrator (mobile plan task P5.1b,
-	// docs/mobile/design/always-on-orchestrator.md section 4.3): the same
-	// fugaroLauncher role E10's launchers hold, granted to the installation's
-	// own account instead of to the people on the list — names, labels and
+	// The installation's resident orchestrator (mobile plan task P5.1b, the
+	// mobile orchestrator design's section 4.3): the same fugaroLauncher role
+	// E10's launchers hold, granted to the installation's own account instead of
+	// to the people on the list — names, labels and
 	// version counts, and no way to a value, because the role carries the two
 	// list permissions and not secretmanager.versions.access.
 	{
