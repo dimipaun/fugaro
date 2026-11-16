@@ -102,6 +102,24 @@ func escalationRun(t *testing.T, f *budgetFixture, id string, started time.Time,
 	}
 }
 
+// escalationRig is the installation the escalation reads answer about: the
+// budget fixture's database with a state node carrying one item's ledger, which
+// the daemon's own encoder wrote, and the run record that item's cost and start
+// come from. It is the world report_json_fixtures_test.go runs both documents
+// in, so the pin there checks a document rather than a refusal.
+func escalationRig(t *testing.T) *budgetFixture {
+	t.Helper()
+	f := newOrchestratorFixture(t)
+	escalationRun(t, f, escalationRunID, orchestratorTestNow.Add(-2*time.Hour), 1.25)
+	seedEscalationState(t, f,
+		escalationItemOp(escalationItemID, escalationRunID, escalationLedger(escalation.R2, 2,
+			orchestrator.Transition{To: escalation.R0, Reason: escalation.ReasonRebase, At: orchestratorTestNow.Add(-3 * time.Hour), HeadSHA: "0f1e2d3"},
+			orchestrator.Transition{From: escalation.R0, To: escalation.R2, Reason: escalation.ReasonAttempts, At: orchestratorTestNow.Add(-1 * time.Hour)},
+		)),
+	)
+	return f
+}
+
 // escalationDocMatchesSchema holds one `--json` document against
 // schemas/escalation.schema.json, the contract a consumer reads it by.
 func escalationDocMatchesSchema(t *testing.T, out string) {
