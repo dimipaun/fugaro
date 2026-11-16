@@ -24,15 +24,40 @@ A workflow takes a profile only when it names one (`workflows.<name>.profile`), 
 
 A workflow's **job profile** is a different selection on a different key: `workflows.<name>.job_profile` names a profile of the *published policy* (§5, phase 3 of [plans/2026-10-14-project-centric.md](plans/2026-10-14-project-centric.md)), which is the Cloud Run job's shape — its provider, cpu, memory, task timeout, secret mounts and admission list — and not the project layer's workflow template. It is `job_profile` and not `profile` because `profile` already names the layer's template above; a file may carry both. A workflow that names none runs on the default profile of its repository's provider — `standard` when that profile serves the provider the repository is on, and `standard-<provider>` when the policy defines one for it (D2310, R8; `internal/runner`'s `ProjectJobDefaultProfile`, the one function the launcher and the runner's own checks both ask, so one repository's workflow cannot resolve onto two profiles) — while a policy that serves the repository's provider no profile at all leaves the repository on its per-repository job, which is what a project that published nothing gives it. Writing `job_profile: standard` names that profile instead of leaving the choice to the provider: on a repository whose provider `standard` serves it says exactly what omitting the key says — which is what makes it run with no policy or a policy without profiles too — and on another provider it names a profile of a different provider, which keeps the repository on its per-repository job. The selection is refused, never resolved to another profile: `policy publish` refuses a `profiles:` block that does not define the default of every provider it serves (`standard` for the project's first provider and `standard-<provider>` for another: D2310, R8; the defaults a project has none of are written by `fugaro update`), and a run refuses a workflow whose `job_profile` the published policy does not define (`internal/runner`'s checkJobProfile; a project that has published no policy at all refuses an explicit selection other than `standard` too, because nothing defines it). What a profile *holds* — its cpu, memory, task timeout, secrets and admission list — is applied where the job is built: `fugaro setup` deploys one Cloud Run job and one job service account per (profile, provider, Claude account) for every profile a local config names (§10), a launch that resolves such a profile for a repository on the profile's own provider runs on that job rather than on a per-repository one (the profile decides that, not the workflow's checkout: D2304, and the one half of it that waits is the image below — a repository on another provider, a repository the published policy serves no profile for, a repository whose profile is one no shared job serves — in this release every Bitbucket repository, since no shared job serves Bitbucket — and, until a shared job carries the image a baked workflow declares, a `checkout: baked` workflow, keep their per-repository jobs, decided before the launch takes a claim), and a run in it holds the repository to the profile's own `allow_repos` as well as the project's (`internal/runner`'s `admissionCheck`). The Claude account is an axis of that job's name: a profile serves a Claude account by listing it in `profiles.<p>.claude_accounts` (the `default` account, or a name of the local config's `claude_accounts`), which deploys one job per (profile, provider, account) and mounts that account's token on it — the `default` account on the profile's no-account job. A profile that mounts a Claude OAuth token in its `secrets:` is still refused (`fugaro setup` refuses it: the field is how a profile states accounts, design [project-named-oauth-tokens.md](design/project-named-oauth-tokens.md) D4), and a launch that selects an account the profile serves no job for is refused (§5). Which runs actually work on a shared job today is [below](#which-runs-work-on-a-shared-job-today) — in short, every gate the tree carries is open, and the design's live end-to-end check has not been run. A launch that cannot read the repository's own workflows — `fugaro run --repo …` from a machine with no checkout of it — keeps the per-repository job, as it does today. A `checkout: baked` workflow keeps its per-repository job while a shared project job carries no image with the tools its workflow declares — the job model is the profile's decision and the image is what the move waits for — and a policy that carries no `profiles:` block changes nothing: the jobs stay per repository, and a workflow that names a `job_profile` other than `standard` there is refused at run start, because nothing defines it.
 
-**The policy is version 8 from fugaro 0.26.0, the release whose own config states the binaries block**
+**The policy is version 9 from fugaro 0.26.0, the release that refuses a pool naming members of both halves of a run**
 (`projectpolicy.Version`, and the `projectpolicy.VersionSince` table beside it names the release
 each version came in — 1 is the model, 0.8.0; 2 is the profile gate, 0.8.5; 3 is the account axis,
 0.9.0; 4 is the Bitbucket token block, 0.14.0; 5 is the pools' owner and roster, 0.23.0; 6 is the
 binaries block, 0.24.0; 7 is the model grades, 0.24.0; 8 is the binaries block's carrier in the
-owner's local project config, 0.26.0 — which is the release a refusal for a node *ahead* of the
-binary quotes, never 0.8.0, the release the model ships in). Version 8 adds no member to the node:
-`binaries` arrived on it at version 6, and until this release only a hand-written node could carry
-one. What arrives is its carrier — the `binaries:` block of the owner's local project config, the
+owner's local project config, 0.26.0; 9 is the one-path pool, 0.26.0 — which is the release a
+refusal for a node *ahead* of the binary quotes, never 0.8.0, the release the model ships in).
+Version 9 adds no member to the node either: what it changes is what the members of a `craft_pools`
+entry may be. A pool stays on one path — the credentials service selects among a pool's members by
+tier and the listed order only breaks a tie (F7), while a run's own gateway holds one upstream per
+stage and never retries a call across a secret (F20, D1635) — so a pool naming a member of each half
+is a pool whose order can mean nothing, and this release refuses one in one sentence that names the
+two members and the fix: two pools, one per half. The rule is held at the two doors a person
+reaches: `fugaro accounts pool add` refuses to write such a pool, and the read of a published node
+refuses one (`config.ValidatePublishedPools`, which `projectpolicy.Decode` runs, so the runner, the
+credentials service, `fugaro doctor` and `fugaro update` itself all meet it). A pool that already
+crosses is repaired rather than refused, because a refusal at the load of an installation's own
+config would leave `fugaro update` unable to read the file its own repair is written into: the
+update splits every crossing pool of that config in the craft migration it already runs, and the
+policy chain's step from 8 splits the node's, repointing each craft that named the pool to the half
+its own model routes to. **The step from 8 is not shape-free, and that is what the update's own
+window costs.** Version 8's step moved the number and nothing else, so a version-8 reader read a
+version-7 node as it stands; this one rewrites the pools it finds crossed, so a version-8 node —
+and a version-7 one, because the chain's last step is what decides — is refused by this release's
+readers until the policy stage has migrated it. An installation is in that state for the length of
+the update's earlier stages, the images stage above all, where this release's base image becomes the
+one a launch resolves while the node is still the release behind's; the refusal names the move that
+is already running (`fugaro update`, whose policy stage rewrites the node in place at this release's
+version). Nothing a run holds is touched: a run in flight keeps its record, its ledger and its
+counters, and every write it makes still lands (docs/design/update-in-flight.md). A node whose pools
+each name one half's members changes only its number.
+
+Version 8 (0.26.0) is the node that came before it, and it adds no member either: `binaries`
+arrived on it at version 6, and until that release only a hand-written node could carry one. What arrives is its carrier — the `binaries:` block of the owner's local project config, the
 `local` layer of `fugaro settings`, which is the one place an owner states it: `fugaro.yaml` has no
 such key (D986 — that file is in the checkout the run's own agent writes, and a key there would let
 the coder admit the very payload the rule refuses), and neither has this layer file, whose keys are
@@ -42,17 +67,18 @@ block is kept while the config says nothing, and a written empty block takes the
 (D987). The bump is the lockstep every policy member takes (P8): a job image of the release behind
 is refused a version-8 node rather than serving runs under a grant its own image does not enforce,
 and `fugaro update` is what moves both — the node in its policy stage, the image behind its own
-confirmation. The window `fugaro update` is itself in is not a refusal, and this release is built
-so that it is not: the update migrates the node in its policy stage and moves the credentials
-service onto this release's image in the stage immediately after it, with nothing running between
-the two, and a node one shape-free step behind is read as it stands (`projectpolicy`'s
-`ReadsVersion`: the 7 → 8 step moves the version member and nothing else), so no reader of the
-project's — the service, the launcher, the runner — refuses a v7 node while an installation is
-between them. The order is the one the owned binary can be held to: the service that this update
-installs is never handed a node it has not migrated yet. Every installation republishes its policy
-for version 8, and the migration carries a version-7 node forward in place: the shape did not
-change, so a node with no `binaries` block admits nothing — which is what a project that never set
-one means — and nothing the owner had edited into the node is lost.
+confirmation. The window `fugaro update` is itself in is not a refusal for a version-8 reader, and
+that release is built so that it is not: the update migrates the node in its policy stage and moves
+the credentials service onto this release's image in the stage immediately after it, with nothing
+running between the two, and a node one shape-free step behind is read as it stands
+(`projectpolicy`'s `ReadsVersion`: the 7 → 8 step moves the version member and nothing else), so no
+version-8 reader of the project's — the service, the launcher, the runner — refuses a v7 node while
+an installation is between them. The order is the one the owned binary can be held to: the service
+that this update installs is never handed a node it has not migrated yet. Every installation
+republishes its policy for version 8, and the migration carries a version-7 node forward in place:
+the shape did not change, so a node with no `binaries` block admits nothing — which is what a
+project that never set one means — and nothing the owner had edited into the node is lost. Version
+9's step is not shape-free, and what that costs the same window is stated with version 9 above.
 
 Version 7 (0.24.0) is the node that came before it. Version 7 adds `model_grades.strong` and
 `model_grades.strongest` — the model each rung of the escalation ladder runs and the credential or

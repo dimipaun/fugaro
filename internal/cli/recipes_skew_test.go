@@ -1236,7 +1236,7 @@ func TestRecipesSkewRefusesTheOwnerFloorOnOldImage(t *testing.T) {
 	// is what the 0.15.0 image meets below, and it is the refusal that matters
 	// to the owner (the run never starts on an image that cannot read the node,
 	// floor or no floor).
-	publishPolicy(t, f, `{"version":6,"allow_repos":["github/acme/*"],"review_floor":{"pro":["l3"]}}`)
+	publishPolicy(t, f, `{"version":`+strconv.Itoa(projectpolicy.Version)+`,"allow_repos":["github/acme/*"],"review_floor":{"pro":["l3"]}}`)
 	isolateCache(t)
 	testutil.IsolateGit(t)
 	t.Chdir(t.TempDir())

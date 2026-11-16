@@ -520,27 +520,28 @@ func TestNoShippedTextNamesTheRetiredOAuthGate(t *testing.T) {
 
 // TestDocsProjectLayerStatesThePolicyVersionItShips: docs/project-layer.md's
 // reference paragraph said, in the present tense, that "the policy is version 2
-// from fugaro 0.8.5" — and the bump to version 8 raises `projectpolicy.Version`
-// (VersionSince[8] = "0.26.0", the release whose own config states the binaries
-// block, AR1), so the sentence must name the version and release this tree
-// writes. The paragraph now leads with version 8 and keeps version 7 as the node
-// that came before it, which is what the table says.
+// from fugaro 0.8.5" — and the bumps raise `projectpolicy.Version` (VersionSince
+// [8] = "0.26.0", the release whose own config states the binaries block, AR1,
+// and VersionSince[9] = "0.26.0", the one-path pool MC20 and MC21 ship), so the
+// sentence must name the version and release this tree writes. The paragraph now
+// leads with version 9 and keeps version 8 as the node that came before it,
+// which is what the table says.
 //
 // The version the page names is read from the constants rather than typed
 // twice, so the next bump fails here instead of shipping a page describing
 // another release's node.
 //
 // Mutation (verified, run and restored): put back the clause the bump
-// replaced — "the release that states the escalation ladder's model grades in
-// it" for "the release whose own config states the binaries block" — and this
-// test fails naming the sentence it wants.
+// replaced — "the release whose own config states the binaries block" for
+// "the release that refuses a pool naming members of both halves of a run" —
+// and this test fails naming the sentence it wants.
 func TestDocsProjectLayerStatesThePolicyVersionItShips(t *testing.T) {
 	doc := readDoc(t, "docs/project-layer.md")
 	rel, ok := projectpolicy.VersionRelease(projectpolicy.Version)
 	if !ok {
 		t.Fatalf("projectpolicy.VersionSince has no row for Version %d, and this page names the release each version came in", projectpolicy.Version)
 	}
-	want := fmt.Sprintf("**The policy is version %d from fugaro %s, the release whose own config states the binaries block**", projectpolicy.Version, rel)
+	want := fmt.Sprintf("**The policy is version %d from fugaro %s, the release that refuses a pool naming members of both halves of a run**", projectpolicy.Version, rel)
 	if !strings.Contains(doc, want) {
 		t.Errorf("docs/project-layer.md does not say %q: the page describes the node this release writes, and projectpolicy.Version/%d is that node", want, projectpolicy.Version)
 	}

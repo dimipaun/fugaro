@@ -55,7 +55,7 @@ func installationProjectJobs(t *testing.T, r *convergeRig) map[string]any {
 // `fugaro update` deploy the shared job its policy stage publishes: the job, the
 // node and the config all name the same profile.
 func TestUpdateDeploysTheDefaultProfilesJobInTheSameUpdate(t *testing.T) {
-	r := newConvergeRig(t, v7Node())
+	r := newConvergeRig(t, currentNode()) // doctor appends policy-vs-jobs only for a node it reads, and that check is this fixture's staleness
 	out := convergeOn(t, r, []string{"policy-vs-jobs"})
 
 	want := gcp.ProjectJobName(projectpolicy.DefaultProfileName, "github", "")
@@ -93,7 +93,7 @@ func TestUpdateDeploysTheDefaultProfilesJobInTheSameUpdate(t *testing.T) {
 // image is the installation's) and the canonical list of the repositories that
 // provider's runs are held to, and the run says what it created.
 func TestUpdateCreatesTheDefaultProfilePerProvider(t *testing.T) {
-	r := newConvergeRig(t, v7Node())
+	r := newConvergeRig(t, currentNode()) // doctor appends policy-vs-jobs only for a node it reads, and that check is this fixture's staleness
 	out := convergeOn(t, r, []string{"policy-vs-jobs"})
 	lc := updatedConfig(t)
 
@@ -136,7 +136,7 @@ func TestUpdateCreatesTheDefaultProfilePerProvider(t *testing.T) {
 // the default and admits one repository; the run leaves it exactly as it was and
 // writes the provider that has no default yet beside it.
 func TestUpdateNeverRewritesAnEditedProfile(t *testing.T) {
-	r := newConvergeRig(t, v7Node())
+	r := newConvergeRig(t, currentNode()) // doctor appends policy-vs-jobs only for a node it reads, and that check is this fixture's staleness
 	r.appendConfig(t, "profiles:\n"+
 		"  standard:\n"+
 		"    provider: github\n"+
@@ -168,7 +168,7 @@ func TestUpdateNeverRewritesAnEditedProfile(t *testing.T) {
 // first wrote and writes nothing at all — not even the same bytes again, which
 // is what the file's own text says.
 func TestUpdateDefaultProfileIsIdempotent(t *testing.T) {
-	r := newConvergeRig(t, v7Node())
+	r := newConvergeRig(t, currentNode()) // doctor appends policy-vs-jobs only for a node it reads, and that check is this fixture's staleness
 	first := convergeOn(t, r, []string{"policy-vs-jobs"})
 	before := updatedConfig(t).Profiles
 
@@ -317,7 +317,7 @@ func TestUpdateKeepsTheDefaultProfilesJobWhenTheConfigCannotComposeIt(t *testing
 // rather than installSpec and the second update stops there with
 // recordedGitHubAppID's sentence about a project that uses several Apps.
 func TestUpdateKeepsTheDefaultProfilesJobThroughTheRepositoryStage(t *testing.T) {
-	r := newConvergeRig(t, v7Node())
+	r := newConvergeRig(t, currentNode()) // doctor appends policy-vs-jobs only for a node it reads, and that check is this fixture's staleness
 	convergeOn(t, r, []string{"policy-vs-jobs"})
 	name := gcp.ProjectJobName(projectpolicy.DefaultProfileName, "github", "")
 	deployed := installationProjectJobs(t, r)
@@ -396,7 +396,7 @@ func secondAppRepo(t *testing.T) {
 // (the gate this closes) and this is the only test that fails — the preview
 // stops before it plans anything.
 func TestUpdatePlanOnlyConvergesWhereTheUpdateDoes(t *testing.T) {
-	r := newConvergeRig(t, v7Node())
+	r := newConvergeRig(t, currentNode()) // doctor appends policy-vs-jobs only for a node it reads, and that check is this fixture's staleness
 	convergeOn(t, r, []string{"policy-vs-jobs"})
 	testutil.Git(t, r.root, "commit", "-qam", "the run's own change to the checkout")
 	fetched(t, r.root)
