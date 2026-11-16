@@ -331,12 +331,20 @@ func (s modelsUseScope) reach() string {
 }
 
 // modelsUseLaunch is what the launch's own rules read a write against: the
-// agent block the document gives a run, and the budget mode that run starts
-// with. The two travel together because they are one reading of one document,
-// and because the project layer answers both from a block of its own.
+// agent block the document gives a run, the budget mode that run starts with,
+// and the document itself. They travel together because they are one reading of
+// one document, and because the project layer answers the first two from a
+// block of its own.
 type modelsUseLaunch struct {
 	agent config.Agent
 	mode  string
+	// doc is that document as a configuration, for the rules that read more of
+	// it than the agent block: the repository's own parsed file, or the project
+	// layer's own, whose defaults.rigor is the mode its review levels resolve
+	// with and whose project is the one whose floor applies. A layer file is no
+	// fugaro.yaml, so the one the level rules read is built here, and the block
+	// they judge is the write's own (modelsUseAgent) rather than this copy's.
+	doc *config.Config
 }
 
 // modelsUseParse reads the document a write is about, in the reader that
@@ -355,7 +363,9 @@ type modelsUseLaunch struct {
 //
 // The *config.Config is the repository's own file, nil for the layer: the
 // rules modelsUseJudge holds a file against read a whole fugaro.yaml, and the
-// layer file is not one.
+// layer file is not one. The launch's own doc is that same file for a
+// repository, and the layer built above for a layer: a rule that judges a key
+// of either document reads it there.
 func modelsUseParse(lc *localcfg.Config, target settingsTarget, data []byte) (*config.Config, modelsUseLaunch, error) {
 	if target.kind == settingsDocLayer {
 		l, ps := config.ParseProjectLayer(data, target.anchor)
@@ -366,13 +376,17 @@ func modelsUseParse(lc *localcfg.Config, target settingsTarget, data []byte) (*c
 		if err != nil {
 			return nil, modelsUseLaunch{}, err
 		}
-		return nil, modelsUseLaunch{agent: agent, mode: policy.Merge(ceilingLayer(lc)).Mode}, nil
+		return nil, modelsUseLaunch{
+			agent: agent,
+			mode:  policy.Merge(ceilingLayer(lc)).Mode,
+			doc:   &config.Config{Layer: l, Project: lc.Name, Agent: agent},
+		}, nil
 	}
 	cfg, ps := config.Parse(data)
 	if len(ps) > 0 {
 		return nil, modelsUseLaunch{}, userErr("%s: %s", target.path, ps[0].String())
 	}
-	return cfg, modelsUseLaunch{agent: cfg.Agent, mode: policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg)).Mode}, nil
+	return cfg, modelsUseLaunch{agent: cfg.Agent, mode: policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg)).Mode, doc: cfg}, nil
 }
 
 // modelsUseLayerAgent is the agent block the project layer gives a repository
@@ -458,16 +472,61 @@ func modelsUseCheck(lc *localcfg.Config, launch modelsUseLaunch, target settings
 		if !config.ValidEffort(id) {
 			return userErr("%s: %s is not a reasoning effort; one of %s", base, config.CodeSpan(id), strings.Join(config.Efforts, ", "))
 		}
-		return nil
 	case modelsUseRecipe:
 		if !recipe.NameRE.MatchString(id) {
 			return userErr("%s: %s is not a recipe name, which is 1 to 40 of a-z, 0-9 and '-': name a recipe of .fugaro/recipes/, of the project's, or one of the catalog's", base, config.CodeSpan(id))
 		}
-		return nil
 	case modelsUseClaim:
-		return modelsUseClaimCheck(lc, id)
+		if err := modelsUseClaimCheck(lc, id); err != nil {
+			return err
+		}
+	default:
+		if err := modelsUseModelCheck(lc, launch, target, scope, base, id, table); err != nil {
+			return err
+		}
 	}
-	return modelsUseModelCheck(lc, launch, target, scope, base, id, table)
+	return modelsUseLevelCheck(lc, launch, target, base, id)
+}
+
+// modelsUseLevelCheck is the review levels the document gives a run, judged over
+// the agent block as this write leaves it (D725): a level whose model a route
+// serves and whose effort is set is refused at every launch — a provider stage
+// runs with thinking off, so the effort would look applied and do nothing — and
+// the effort is a key this command writes. The levels are resolved by
+// config.ResolveLevels through validate's own reviewLevelProblems, so the two
+// surfaces cannot disagree about a level (L3.1), and it runs at both layers: a
+// repository's own file, and the project layer's defaults.agent, which is the
+// block every repository naming none of its own runs with.
+//
+// Only a level this write changes is a refusal, exactly as in modelsUseJudge: a
+// document that already refuses is its owner's to fix, and a switch that has
+// nothing to do with that problem refusing on its behalf would be this command's
+// second, wrong verdict on the same document.
+func modelsUseLevelCheck(lc *localcfg.Config, launch modelsUseLaunch, target settingsTarget, base, id string) error {
+	was := map[string]bool{}
+	for _, p := range modelsUseLevelProblems(lc, launch, target, launch.agent) {
+		was[p.String()] = true
+	}
+	for _, p := range modelsUseLevelProblems(lc, launch, target, modelsUseAgent(launch.agent, base, id)) {
+		if was[p.String()] {
+			continue
+		}
+		return userErr("%s would not launch with %s pinned for %s: %s", target.path, config.CodeSpan(id), base, p.String())
+	}
+	return nil
+}
+
+// modelsUseLevelProblems is one agent block as the level rules find it, over the
+// document the launch reads: a repository's own parsed file, or the project
+// layer's own, whose defaults.rigor is the mode its levels resolve with and
+// whose project is the one whose floor applies. The document is copied rather
+// than written into, because the caller's own reading of it — the pre-edit one
+// included — is what the diff above and modelsUseJudge read.
+func modelsUseLevelProblems(lc *localcfg.Config, launch modelsUseLaunch, target settingsTarget, agent config.Agent) []config.Problem {
+	cfg := *launch.doc
+	cfg.Agent = agent
+	problems, _ := reviewLevelProblems(filepath.Dir(target.path), &cfg, lc, nil, lc.Providers)
+	return problems
 }
 
 // modelsUseClaimCheck judges one claude_models entry: the route it names is one
