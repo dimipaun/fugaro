@@ -223,7 +223,11 @@ func TestTheTwoReadingsPairByPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	added, binary := addedBinaries(raw, numstat)
+	rows, binary := addedBinaries(raw, numstat)
+	added := make([]string, 0, len(rows))
+	for _, c := range rows {
+		added = append(added, c.path)
+	}
 	if want := []string{"a.bin", "b.txt", "c.bin"}; !slices.Equal(added, want) {
 		t.Fatalf("added = %v; want %v (the raw reading's own order)", added, want)
 	}

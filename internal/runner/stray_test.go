@@ -313,6 +313,102 @@ func TestAReplaceRefCannotHideThePayload(t *testing.T) {
 	}
 }
 
+// TestARepointedBaseCannotHideThePayload: the base the committed reading
+// measures its range against is a ref the agent's own git can move. One
+// `git update-ref refs/remotes/origin/main HEAD` after the payload's commit
+// makes `origin/main...HEAD` empty — a run that added nothing, by the reading's
+// own range — while the branch carries the payload and ends ready. So the
+// range starts at the commit the run was cut from, which bootstrap read before
+// the agent ever ran (workBase's rule, refused.go).
+func TestARepointedBaseCannotHideThePayload(t *testing.T) {
+	const path = "test_dup_case2"
+	b := policyRun(t, gwConfig(t, ""), "off", "", binariesNode(`"website/public/**"`, "1048576"))
+	rec, err := b.run(t, implementCommitting(path, selfCommitBinaryRepointed), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("record = status %s, outcome %s, reason %q; want a draft: repointing the base ref must not empty the run's own range", rec.Status, rec.Outcome, rec.Reason)
+	}
+	for _, want := range []string{path, "it is not text"} {
+		if !strings.Contains(rec.Reason, want) {
+			t.Errorf("reason = %q; want it to name %q", rec.Reason, want)
+		}
+	}
+	if !slices.Contains(branchFiles(t, b.harness, rec.Branch), path) {
+		t.Errorf("the branch does not carry the commit the agent made: %v", branchFiles(t, b.harness, rec.Branch))
+	}
+}
+
+// TestABinaryCommittedOverATrackedSymlinkIsRefused: a path whose *type* the
+// range changes is an addition of bytes, not a modification of them. The base
+// tracks a symlink, the agent replaces it with a payload, and git reports that
+// as `T` — the same new bytes at the same path as an `A` row, behind a letter
+// a reader that takes only adds carries past the rule entirely.
+func TestABinaryCommittedOverATrackedSymlinkIsRefused(t *testing.T) {
+	const path = "assets/logo.webp"
+	h := newHarnessFiles(t, gwConfig(t, ""), nil, nil)
+	symlinkInBase(t, h, path, "logo-target.bin")
+	rec, err := h.run(t, implementCommitting(path, selfCommitOverSymlink), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("record = status %s, outcome %s, reason %q; want a draft: a payload committed over a tracked symlink is still a payload", rec.Status, rec.Outcome, rec.Reason)
+	}
+	for _, want := range []string{path, "it is not text"} {
+		if !strings.Contains(rec.Reason, want) {
+			t.Errorf("reason = %q; want it to name %q", rec.Reason, want)
+		}
+	}
+	if !slices.Contains(branchFiles(t, h, rec.Branch), path) {
+		t.Errorf("the branch does not carry the commit the agent made: %v", branchFiles(t, h, rec.Branch))
+	}
+}
+
+// TestABinaryReplacedByASymlinkIsNotRefused: the other side of the typechange,
+// and the reason it is read on the new bytes rather than refused for its
+// letter. The base's own binary is what leaves; what the path holds afterwards
+// is a path name, which a reviewer reads like any other line, so a run that
+// replaces an icon with a link is the repository's own file being changed — and
+// refusing it would refuse a run for a typechange that added nothing.
+func TestABinaryReplacedByASymlinkIsNotRefused(t *testing.T) {
+	const path = "assets/logo.webp"
+	h := newHarnessFiles(t, gwConfig(t, ""), nil, map[string]string{path: string(imageBytes(1024))})
+	rec, err := h.run(t, implementCommitting(path, selfCommitSymlinkOverBinary), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("record = status %s, outcome %s, reason %q; want the ordinary ending: the typechange added a path name, not bytes", rec.Status, rec.Outcome, rec.Reason)
+	}
+	if !slices.Contains(branchFiles(t, h, rec.Branch), path) {
+		t.Errorf("the branch does not carry the commit the agent made: %v", branchFiles(t, h, rec.Branch))
+	}
+}
+
+// TestAGitlinkCommittedOverABinaryIsNotRefused: the typechange whose new side
+// carries no bytes at all. The base's binary leaves and a submodule pointer
+// arrives, and a pointer is a commit id rather than a payload: there is nothing
+// at that path for a reviewer to be given and nothing for the rule to refuse.
+// Refusing it would fail a run for a pointer — and the reading has to say so, not
+// read a blob that is not there, or size an entry `git ls-tree -l` gives no
+// number for.
+func TestAGitlinkCommittedOverABinaryIsNotRefused(t *testing.T) {
+	const path = "assets/logo.webp"
+	h := newHarnessFiles(t, gwConfig(t, ""), nil, map[string]string{path: string(imageBytes(1024))})
+	rec, err := h.run(t, implementCommitting(path, selfCommitGitlinkOverBinary), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("record = status %s, outcome %s, reason %q; want the ordinary ending: a gitlink holds a commit id, not bytes", rec.Status, rec.Outcome, rec.Reason)
+	}
+	if !slices.Contains(branchFiles(t, h, rec.Branch), path) {
+		t.Errorf("the branch does not carry the commit the agent made: %v", branchFiles(t, h, rec.Branch))
+	}
+}
+
 // TestAModifiedTrackedBinaryIsNotRefused: §2.1's deliberate tolerance, read
 // from the committed side. `M` on a tracked binary is the repository's own file
 // being replaced, and what reaches the branch is bytes the pull request's

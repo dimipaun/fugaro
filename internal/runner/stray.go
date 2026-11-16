@@ -111,7 +111,7 @@ func (r *run) strayArtifact(path string) *strayArtifact {
 // It is not a second rule. strayArtifacts reads what a commit finalize would
 // make — the untracked files and the ones the agent staged — and a path the
 // agent committed itself is in neither listing, because it is in a commit;
-// this reads the run's own diff (`<reviewRev>...HEAD`, the range the review
+// this reads the run's own diff (`committedRange`...HEAD, the range the review
 // stage is handed) and asks the same question of the paths it adds. A binary
 // the run merely *edited* is not an addition and is left alone, the same
 // tolerance §2.1 gives a file the base commit already holds.
@@ -119,7 +119,7 @@ func (r *run) committedBinaries(ctx context.Context) ([]strayArtifact, error) {
 	if r.repo == nil {
 		return nil, nil
 	}
-	rng := r.reviewRev(ctx) + "...HEAD"
+	rng := r.committedRange(ctx) + "...HEAD"
 	raw, err := rawChanges(ctx, r.repo, rng)
 	if err != nil {
 		return nil, err
@@ -138,19 +138,38 @@ func (r *run) committedBinaries(ctx context.Context) ([]strayArtifact, error) {
 	// reviewTextDiff). A path git called binary is left as it is: that answer
 	// refuses more rather than less, and a repository that marks its own text
 	// file binary has refused its own file.
-	for _, path := range added {
-		if b, named := binary[path]; named && !b {
-			carries, err := diffCarriesBytes(ctx, r.repo, rng, path)
+	//
+	// A typechange is read on its own new bytes instead, whatever git answered:
+	// numstat's counts for a `T` row cover the side the range *removes* as well
+	// as the side it adds, so a base holding binary bytes answers "binary" for a
+	// path the range replaced with a symlink, and the path is refused for bytes
+	// that are on their way out rather than for the path name that arrived. What
+	// is refused is what the branch carries, so the new blob is read — and a
+	// gitlink carries no bytes at all, whatever numstat says of the pair.
+	for _, c := range added {
+		switch {
+		case c.status != statusTypeChanged:
+			if b, named := binary[c.path]; named && !b {
+				carries, err := diffCarriesBytes(ctx, r.repo, rng, c.path)
+				if err != nil {
+					return nil, err
+				}
+				binary[c.path] = carries
+			}
+		case c.newMode == modeGitlink:
+			binary[c.path] = false
+		default:
+			carries, err := blobCarriesBytes(ctx, r.repo, c.newBlob)
 			if err != nil {
 				return nil, err
 			}
-			binary[path] = carries
+			binary[c.path] = carries
 		}
 	}
 	sized := make([]string, 0, len(added))
-	for _, path := range added {
-		if b, named := binary[path]; named && b {
-			sized = append(sized, path)
+	for _, c := range added {
+		if b, named := binary[c.path]; named && b {
+			sized = append(sized, c.path)
 		}
 	}
 	var sizes map[string]int64
@@ -162,32 +181,63 @@ func (r *run) committedBinaries(ctx context.Context) ([]strayArtifact, error) {
 		}
 	}
 	var strays []strayArtifact
-	for _, path := range added {
-		isBinary, named := binary[path]
+	for _, c := range added {
+		isBinary, named := binary[c.path]
 		if named && !isBinary {
 			continue
 		}
-		size, sized := sizes[path]
+		size, sized := sizes[c.path]
 		if !named || !sized {
 			// Nothing read this path's bytes: the numstat reading does not name
 			// it, or HEAD's tree does not hold it although the raw reading says
 			// it added it there. An unreadable file is refused rather than
 			// passed, the same as a file in the working tree that cannot be read.
-			strays = append(strays, strayArtifact{path: path, why: "it could not be read"})
+			strays = append(strays, strayArtifact{path: c.path, why: "it could not be read"})
 			continue
 		}
-		if why := r.binaryRefusal(path, size); why != "" {
-			strays = append(strays, strayArtifact{path: path, why: why})
+		if why := r.binaryRefusal(c.path, size); why != "" {
+			strays = append(strays, strayArtifact{path: c.path, why: why})
 		}
 	}
 	return strays, nil
 }
 
-// addedBinaries is §4.2's pairing of the two readings of one range: the paths
+// committedRange is the revision the committed reading's range starts from.
+//
+// It is a commit, never the ref reviewRev names. origin/<base> is a
+// remote-tracking ref in the agent's own checkout, and one `git update-ref`
+// repointing it at the run's own tip makes `<it>...HEAD` empty: a reading that
+// measures from the ref answers about a run which added nothing, while the
+// branch carries the payload. So the range starts where every other question of
+// "did this run change X" starts — the commit the run was cut from (workBase,
+// read at bootstrap before the agent ever ran; refused.go states the rule for
+// the workflow guard, and checkpoint.go's C6a for the tips it pushes).
+//
+// A run whose review range was narrowed to its own commits
+// (diffbase.go, narrowReviewRange) keeps that commit instead: the reading stays
+// over the range the review stage was handed rather than widening to another
+// branch's commits the run's work was built on. It is kept only while origin
+// really holds it — onOrigin reads origin, never the checkout, which is the
+// same check guardBounds makes before it subtracts that commit — so a commit
+// only the agent's checkout calls "on origin" cannot take the run's own commits
+// out of the range. A start bootstrap could not resolve (startErr) leaves the
+// base branch as the range's start: workBase's own fallback, and the one case
+// with no recorded commit to measure from.
+func (r *run) committedRange(ctx context.Context) string {
+	if nb := r.narrowed(); nb != "" && r.onOrigin(ctx, nb) {
+		return nb
+	}
+	return r.workBase()
+}
+
+// addedBinaries is §4.2's pairing of the two readings of one range: the rows
 // the raw reading adds, and which of them the numstat reading calls binary. The
 // pairing is by path and never by index (F14): the two readings are separate
 // git invocations whose orders nothing promises to agree, and a pairing by
-// index would answer about the wrong file with nothing to show for it.
+// index would answer about the wrong file with nothing to show for it. The rows
+// themselves are returned rather than their paths because a typechange is read
+// on its new side, and which bytes that side is — a blob, a path name, or a
+// commit id — is the row that carries it (the caller's second reading).
 //
 // A path whose new blob is a blob a delete row in the same range carries is a
 // move of a tracked file, not an addition: --no-renames reports a rename as a
@@ -197,9 +247,16 @@ func (r *run) committedBinaries(ctx context.Context) ([]strayArtifact, error) {
 // different ids and is an addition of bytes nothing admits, which is the honest
 // reading of it.
 //
+// A typechange is an addition: a path the base tracks as a symlink or a gitlink
+// and the range replaces with a regular file holds bytes the base never had, at
+// the one path a reviewer would look for them, and git calls that `T` rather
+// than `A` — so reading adds alone carries a payload past the rule behind a
+// status letter. It is not the modification §2.1 tolerates, which is a tracked
+// file's own bytes replaced.
+//
 // A path the returned map does not name is one the numstat reading never
 // paired: the caller refuses it rather than trusting a file nothing read.
-func addedBinaries(raw []rawChange, numstat []reviewChange) ([]string, map[string]bool) {
+func addedBinaries(raw []rawChange, numstat []reviewChange) ([]rawChange, map[string]bool) {
 	moved := make(map[string]bool, len(raw))
 	for _, c := range raw {
 		if c.status == statusDeleted {
@@ -210,18 +267,27 @@ func addedBinaries(raw []rawChange, numstat []reviewChange) ([]string, map[strin
 	for _, c := range numstat {
 		how[c.path] = c.binary
 	}
-	var added []string
+	var added []rawChange
 	binary := make(map[string]bool)
 	for _, c := range raw {
-		if c.status != statusAdded || moved[c.newBlob] {
+		if !addsBytes(c.status) || moved[c.newBlob] {
 			continue
 		}
-		added = append(added, c.path)
+		added = append(added, c)
 		if b, named := how[c.path]; named {
 			binary[c.path] = b
 		}
 	}
 	return added, binary
+}
+
+// addsBytes reports whether a range's own status letter is the range putting
+// bytes at a path that the base did not hold there: an add, or the typechange
+// the reading would otherwise carry a payload past (see addedBinaries). Every
+// other letter — `M` above all, and `D` — is the base's own file being edited
+// or removed, which §2.1 leaves alone.
+func addsBytes(status byte) bool {
+	return status == statusAdded || status == statusTypeChanged
 }
 
 // diffCarriesBytes reports whether the range's own diff of path carries a byte
@@ -240,6 +306,25 @@ func diffCarriesBytes(ctx context.Context, repo *gitops.Repo, rng, path string) 
 		"--end-of-options", rng, "--", path)
 	if err != nil {
 		return false, err
+	}
+	return strings.ContainsRune(out, 0), nil
+}
+
+// blobCarriesBytes reports whether a blob's own bytes are ones a reviewer
+// cannot read: a NUL in the first binaryScanBytes, which is git's own test and
+// the window both other readings use (readHead of the file in the tree, and
+// reviewinput.go's reviewTextDiff of the diff it carries).
+//
+// The blob is read rather than its path's diff, because the reading is about one
+// side of a row: a typechange's diff carries the bytes the range removes beside
+// the ones it adds, and the answer wanted here is about what arrives.
+func blobCarriesBytes(ctx context.Context, repo *gitops.Repo, blob string) (bool, error) {
+	out, err := sessionGit(ctx, repo, "cat-file", "blob", "--end-of-options", blob)
+	if err != nil {
+		return false, err
+	}
+	if len(out) > binaryScanBytes {
+		out = out[:binaryScanBytes]
 	}
 	return strings.ContainsRune(out, 0), nil
 }

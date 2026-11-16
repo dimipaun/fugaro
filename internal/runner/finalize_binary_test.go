@@ -222,6 +222,85 @@ func selfCommitBinaryReplaced(t *testing.T, req agent.Request, name string) {
 	shell(t, req, "git replace "+head+" "+doctored)
 }
 
+// symlinkInBase commits a symlink at path onto the fixture's remote, so a run
+// that replaces it with a regular file changes that path's *type*: git reports
+// a typechange as `T`, and the base never held the bytes the new row carries.
+func symlinkInBase(t *testing.T, h *harness, path, target string) {
+	t.Helper()
+	dir := t.TempDir()
+	testutil.Git(t, dir, "clone", "--quiet", h.remote, dir)
+	full := filepath.Join(dir, filepath.FromSlash(path))
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, full); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, dir, "add", path)
+	testutil.Git(t, dir, "commit", "--quiet", "-m", "Track a link")
+	testutil.Git(t, dir, "push", "--quiet", "origin", "HEAD:refs/heads/main")
+}
+
+// selfCommitBinaryRepointed is the payload with the remote-tracking base the
+// reading's range is measured against moved: the agent's own git holds
+// refs/remotes/origin/main, and pointing it at the run's own tip makes
+// `<base>...HEAD` diff as a run that added nothing while the branch carries
+// the payload.
+func selfCommitBinaryRepointed(t *testing.T, req agent.Request, name string) {
+	t.Helper()
+	compiledBinary(t, req, name)
+	shell(t, req, "git add -A && git commit -qm 'Add a vendored tool' && git update-ref refs/remotes/origin/main HEAD")
+}
+
+// selfCommitOverSymlink is the payload committed where the base tracks a
+// symlink: the link is removed first (writing through it would edit the file
+// it points at), so the commit changes the path's type — a `T` row, whose new
+// bytes the base never held.
+func selfCommitOverSymlink(t *testing.T, req agent.Request, name string) {
+	t.Helper()
+	if err := os.Remove(filepath.Join(req.Dir, name)); err != nil {
+		t.Fatal(err)
+	}
+	compiledBinary(t, req, name)
+	shell(t, req, "git add -A && git commit -qm 'Add a vendored tool'")
+}
+
+// selfCommitSymlinkOverBinary is that typechange the other way round: the base
+// tracks a binary at the path and the run replaces it with a symlink, so the
+// path's new bytes are a path name — text — and nothing was added to the
+// branch to read.
+func selfCommitSymlinkOverBinary(t *testing.T, req agent.Request, name string) {
+	t.Helper()
+	if err := os.Remove(filepath.Join(req.Dir, name)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("logo-target.bin", filepath.Join(req.Dir, name)); err != nil {
+		t.Fatal(err)
+	}
+	shell(t, req, "git add -A && git commit -qm 'Replace the image with a link'")
+}
+
+// selfCommitGitlinkOverBinary is the third side of a typechange: the base tracks
+// a binary and the run commits a submodule pointer in its place. A gitlink's
+// entry holds a commit id where a blob would be, so no bytes at all are added to
+// the tree — `git diff` prints the pointer, and `git ls-tree -l` has no size for
+// it. The empty directory is what an uninitialised submodule looks like in the
+// working tree, and it is what keeps the tree clean, so finalize's leftover
+// commit has nothing of its own to add and the case reads the commit the agent
+// made.
+func selfCommitGitlinkOverBinary(t *testing.T, req agent.Request, name string) {
+	t.Helper()
+	full := filepath.Join(req.Dir, name)
+	if err := os.Remove(full); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(full, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sha := strings.TrimSpace(testutil.Git(t, req.Dir, "rev-parse", "HEAD"))
+	shell(t, req, "git add -A && git update-index --add --cacheinfo 160000,"+sha+","+name+" && git commit -qm 'Add a submodule'")
+}
+
 // selfCommitImage is the same commit at a path the project's policy admits and
 // over its cap: the payload is the run's own asset, and the size is the one the
 // rule refuses it for.

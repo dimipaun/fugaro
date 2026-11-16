@@ -525,21 +525,35 @@ func (r *run) reviewDiffSize(ctx context.Context) DiffSize {
 	return size
 }
 
-// The two status letters §4.2's readings need: a path the range adds, and one
-// it deletes, which is what a move of a tracked file looks like under
-// --no-renames.
+// The status letters §4.2's readings need: a path the range adds, one it
+// deletes — which is what a move of a tracked file looks like under
+// --no-renames — and one whose type it changes, which is what a tracked
+// symlink or gitlink replaced by a regular file arrives as.
 const (
-	statusAdded   = 'A'
-	statusDeleted = 'D'
+	statusAdded       = 'A'
+	statusDeleted     = 'D'
+	statusTypeChanged = 'T'
 )
 
+// modeGitlink is the mode of a submodule's entry: the tree holds a commit id
+// where a blob would be, so there are no bytes at that path to read — what a
+// `--raw` row or a diff prints for one is a pointer, and no reading of it has a
+// payload to refuse.
+const modeGitlink = "160000"
+
 // rawChange is one path in a range, as `git diff --raw` reports it: how the
-// range changed it and both blob ids the row carries — the old side's, all
-// zeroes for a path the base does not hold, and the new side's, all zeroes for
-// one HEAD does not.
+// range changed it, the mode its new side has, and both blob ids the row
+// carries — the old side's, all zeroes for a path the base does not hold, and
+// the new side's, all zeroes for one HEAD does not.
+//
+// The new mode is read because a row's letter alone does not say whether there
+// are bytes at that path to be read at all: a typechange's new side may be a
+// symlink or a gitlink, where a blob id sits in a place whose content is a path
+// name or a commit id (addedBinaries).
 type rawChange struct {
 	path    string
 	status  byte
+	newMode string
 	oldBlob string
 	newBlob string
 }
@@ -606,7 +620,7 @@ func parseRawMeta(meta, path string) (rawChange, error) {
 	if len(fields) != 5 || !strings.HasPrefix(fields[0], ":") || len(fields[4]) != 1 {
 		return rawChange{}, fmt.Errorf("reading the changed paths: %q is not a --raw header", meta)
 	}
-	return rawChange{path: path, status: fields[4][0], oldBlob: fields[2], newBlob: fields[3]}, nil
+	return rawChange{path: path, status: fields[4][0], newMode: fields[1], oldBlob: fields[2], newBlob: fields[3]}, nil
 }
 
 // parseNumstat reads `git diff --numstat -z`'s output: one record per
