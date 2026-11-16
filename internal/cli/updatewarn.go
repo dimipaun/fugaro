@@ -350,6 +350,14 @@ type repoBoundJob struct {
 // profiles come from (R1, S5), so the two agree wherever the file is what was
 // published.
 //
+// Only this machine's own config is asked: a shared config carries no profiles
+// at all (localcfg.Shared drops the block, since they travel in the node), so
+// this would answer "still on its per-repository job" for every repository of a
+// project that runs them all on shared jobs — and the fix it prints, `fugaro
+// update`, cannot be carried out on a machine whose config is that file. The
+// nag cannot meet one (selectedProjectConfigReadOnly resolves with no shared
+// fetch), so the guard is doctor's, whose selection can (doctor_jobs.go).
+//
 // The replacement is the job the repository's workflows run on once the project
 // serves its provider: the default profile `fugaro update` writes for a provider
 // in use (S5), which R8 names standard for the project's first provider and

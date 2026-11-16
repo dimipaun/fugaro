@@ -18,7 +18,19 @@ import (
 // command moves the repository, and hiding the line would hide it, which is
 // why its ID is in the actionable list beside gcp-project-line and
 // issues-pending rather than left to the audit class's pointer line.
-func doctorRepoBoundJobs(lc *localcfg.Config) []doctorCheck {
+func doctorRepoBoundJobs(sel localcfg.Selection, lc *localcfg.Config) []doctorCheck {
+	if sel.From == "shared config" {
+		// A shared config is not this machine's own, and the question is not
+		// doctor's to ask of it: localcfg.Shared drops the profiles block from
+		// the published file (they travel in the policy node, which is what the
+		// launcher reads), so repoBoundJobs would find no profile serving any
+		// repository and name a per-repository job for every one of a project
+		// whose workflows all run on shared jobs. The line would be false, and
+		// its fix cannot be carried out here at all: `fugaro update` refuses to
+		// write a shared config (refuseSharedWrite), and the command for this
+		// machine is the one doctor's shared-config line already prints.
+		return nil
+	}
 	jobs := repoBoundJobs(lc)
 	out := make([]doctorCheck, 0, len(jobs))
 	for _, j := range jobs {

@@ -914,3 +914,31 @@ func TestDoctorNamesTheSharedReplacement(t *testing.T) {
 		})
 	}
 }
+
+// TestDoctorSaysNothingAboutRepositoriesOnASharedConfig: a machine whose
+// project config is the shared file has no profiles to read — localcfg.Shared
+// drops the block, since they travel in the policy node the launcher reads — so
+// the repositories of a project that runs them all on shared jobs would each be
+// named as still on a per-repository job, and sent to a command that cannot be
+// carried out here (fugaro update refuses to write a shared config). The shared
+// config itself is not the thing to warn about: doctor's own shared-config line
+// says what this machine's command is.
+func TestDoctorSaysNothingAboutRepositoriesOnASharedConfig(t *testing.T) {
+	r := newDoctorRig(t)
+	noProjectLayerBucket(t)
+	if err := os.Remove(r.cfgPath); err != nil {
+		t.Fatal(err)
+	}
+	// The published file carries the repository a shared job serves, and no
+	// profile — ParseShared refuses the key, so the converge never writes one.
+	publishFor(t, r, strings.Replace(auroraShared(), "provider: bitbucket", "provider: github", 1))
+	t.Chdir(gitCheckout(t, filepath.Join(r.dir, "app"), "version: 1\nproject: aurora\ngcp_project: proj-1234\n"))
+
+	o := doctorJSON(t)
+	if _, ok := doctorCheckByID(o.Checks, "shared-config"); !ok {
+		t.Fatalf("the selection is not the shared config, so this test proves nothing: %+v", o.Checks)
+	}
+	if c, ok := doctorCheckByID(o.Checks, "repo-bound-jobs"); ok {
+		t.Fatalf("doctor named a per-repository job from a config that is not this machine's own: %+v", c)
+	}
+}
