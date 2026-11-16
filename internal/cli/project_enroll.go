@@ -50,17 +50,34 @@ import (
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
-// newProjectReposCmd is `fugaro project repos`: the project's allow-list as
-// data. `ls` prints it against what this installation has seen run, and
-// `add`/`rm` edit one entry each (task 1.6's write path, unchanged).
-// `project sync` — what the App is installed on — is its sibling.
+// newProjectReposCmd is `fugaro project repos`: the project's repositories as
+// data — which are enrolled, and what each one is still missing before a run of
+// it can start. `ls` prints the enrolment, `status` is the doctor for one
+// repository's, and `add`/`rm` edit one entry each (task 1.6's write path,
+// unchanged). `project sync` — what the App is installed on — is its sibling.
+//
+// The group's own sentence names the whole of that and no longer the allow-list
+// alone: `add`/`rm` still edit the published list, while `ls` and `status` read
+// all three halves of the enrolment — this machine's config, the list and the
+// App — and an operator who read "the allow-list" would not look here for the
+// empty credential container that is why `status` exists (F11).
 func newProjectReposCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "repos",
-		Short: "The project's allow-list: which repositories may run",
-		Args:  cobra.NoArgs,
+		Short: "The project's repositories: what is enrolled, and what each one is missing",
+		Long: "The project's repositories as data. `ls` lists what is enrolled and what has run\n" +
+			"here, `status` is a doctor for one repository's enrolment (or for every repository\n" +
+			"when it names none), and `add` and `rm` edit the published allow-list — the one\n" +
+			"entry each that admits a repository or stops admitting it. A repository is enrolled\n" +
+			"by its own project line and the App's installation as much as by that list, which is\n" +
+			"why `status` reads all three and names the one command each of its failing rows\n" +
+			"needs.\n" +
+			"\n" +
+			"Nothing here admits a repository on its own: a name a run wrote is printed as seen\n" +
+			"and never taken as an enrolment.",
+		Args: cobra.NoArgs,
 	}
-	cmd.AddCommand(newProjectReposLsCmd(), newProjectReposAddCmd(), newProjectReposRmCmd(), newProjectReposSetCmd())
+	cmd.AddCommand(newProjectReposLsCmd(), newProjectReposStatusCmd(), newProjectReposAddCmd(), newProjectReposRmCmd(), newProjectReposSetCmd())
 	return cmd
 }
 

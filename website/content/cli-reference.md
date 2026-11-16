@@ -5942,7 +5942,7 @@ Subcommands:
 - `fugaro project clone-url` -- The clone URL each of the project's repositories clones from
 - `fugaro project policy` -- The project's published policy (config/policy/shared)
 - `fugaro project profile` -- The project's job profiles: the shapes its jobs are deployed as
-- `fugaro project repos` -- The project's allow-list: which repositories may run
+- `fugaro project repos` -- The project's repositories: what is enrolled, and what each one is missing
 - `fugaro project routing` -- The project's Claude routing switch: where a run's Claude calls go
 - `fugaro project show` -- Show the effective project: caps, policy, allow-list, repositories running now
 - `fugaro project sync` -- Offer the provider's repositories that the allow-list does not admit
@@ -6353,7 +6353,18 @@ This command has no subcommands.
 
 ## `fugaro project repos`
 
-The project's allow-list: which repositories may run
+The project's repositories: what is enrolled, and what each one is missing
+
+The project's repositories as data. `ls` lists what is enrolled and what has run
+here, `status` is a doctor for one repository's enrolment (or for every repository
+when it names none), and `add` and `rm` edit the published allow-list — the one
+entry each that admits a repository or stops admitting it. A repository is enrolled
+by its own project line and the App's installation as much as by that list, which is
+why `status` reads all three and names the one command each of its failing rows
+needs.
+
+Nothing here admits a repository on its own: a name a run wrote is printed as seen
+and never taken as an enrolment.
 
 Usage: `fugaro project repos`
 
@@ -6369,6 +6380,7 @@ Subcommands:
 - `fugaro project repos ls` -- List the allow-list and the repositories that have run here
 - `fugaro project repos rm` -- Un-enroll a repository: remove it from the allow-list
 - `fugaro project repos set` -- Write a repository's workflow selection or a job profile, in this machine's project config
+- `fugaro project repos status` -- Whether a repository can run: the enrolment's rows, each failing one naming its fix
 
 ## `fugaro project repos add`
 
@@ -6536,6 +6548,44 @@ Flags:
 | `--secrets` | stringSlice | `[]` | no | profiles.NAME.secrets: the Secret Manager names the profile's job mounts, comma-separated; the list is written whole |
 | `--timeout-class` | string | "" | no | profiles.NAME.timeout_class: the job's task timeout as a duration, e.g. 6h or 90m |
 | `--workflows` | stringSlice | `[]` | no | repos.REPO.workflows: which of the repository's own workflows this project runs, comma-separated; the selection is written whole |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro project repos status`
+
+Whether a repository can run: the enrolment's rows, each failing one naming its fix
+
+Print a doctor for a repository's enrolment in this project: one row per fact that
+decides whether a run of it can start, in the order the design fixes, with the one
+command that puts each failing row right. With no argument it prints one line per
+repository and the failing rows under it; with a canonical name it prints that
+repository's rows in full.
+
+A repository named that nothing enrolls is a line of its own and a nonzero exit,
+rather than an empty screen or a row saying a repository it does not have is
+misconfigured.
+
+It writes nothing, on every path including --json, and it reads credentials'
+presence and never a value: a container's name, whether it holds an enabled
+version, and that version's age.
+
+The exit status is nonzero when a row that blocks a launch fails, and zero
+otherwise; a warning row never changes it.
+
+Usage: `fugaro project repos status [REPO]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for status |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 

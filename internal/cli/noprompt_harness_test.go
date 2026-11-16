@@ -391,24 +391,21 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	// The world's config defines no profiles, so this fixture stops at the
 	// command's own refusal — which is still its body, and the whole of what a
 	// bare run cannot reach.
-	"fugaro project profile set": {args: []string{"standard", "cpu", "4"}},
-	"fugaro project repos add":   {args: []string{"acme/app"}},
-	"fugaro project repos rm":    {args: []string{"acme/app"}},
-	"fugaro project routing set": {args: []string{"claude", "--via", "direct"}},
-	"fugaro recipes publish":     {args: []string{"slug"}},
-	"fugaro recipes show":        {args: []string{"slug"}},
-	"fugaro recipes validate":    {args: []string{"slug"}},
-	"fugaro restore":             {args: []string{"proj-2", "root"}},
-	"fugaro review show":         {args: []string{"run-1"}},
-	"fugaro run":                 {args: []string{"do something"}},
-	// The item is the argument this leaf takes, and it is the whole of what
-	// stands between a bare run and the body: this world's node holds no such
-	// item, so what the body answers is its own refusal, reached with the stdin
-	// closed and asking nothing.
-	"fugaro escalation show": {args: []string{"wi-1"}},
-	"fugaro runs show":       {args: []string{"run-1"}},
-	"fugaro secrets rm":      {args: []string{"NAME"}},
-	"fugaro secrets set":     {args: []string{"NAME"}},
+	"fugaro project profile set":  {args: []string{"standard", "cpu", "4"}},
+	"fugaro project repos add":    {args: []string{"acme/app"}},
+	"fugaro project repos rm":     {args: []string{"acme/app"}},
+	"fugaro project repos status": {args: []string{"github/acme/app"}},
+	"fugaro project routing set":  {args: []string{"claude", "--via", "direct"}},
+	"fugaro recipes publish":      {args: []string{"slug"}},
+	"fugaro recipes show":         {args: []string{"slug"}},
+	"fugaro recipes validate":     {args: []string{"slug"}},
+	"fugaro restore":              {args: []string{"proj-2", "root"}},
+	"fugaro review show":          {args: []string{"run-1"}},
+	"fugaro run":                  {args: []string{"do something"}},
+	"fugaro escalation show":      {args: []string{"wi-1"}},
+	"fugaro runs show":            {args: []string{"run-1"}},
+	"fugaro secrets rm":           {args: []string{"NAME"}},
+	"fugaro secrets set":          {args: []string{"NAME"}},
 	// The intake's two families take the same NAME as the pair above, and their
 	// bodies are reached the same way: the name is the whole of what stands
 	// between a bare run and the command's own body, which is where the
