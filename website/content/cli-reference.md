@@ -7714,8 +7714,11 @@ NAME goes with --expires alone — a date is recorded for one secret, while the
 others are records of the installation. --layer names the document such a
 record is written in (local, project or repo), and these are local config keys,
 so --layer project is refused with the layers the key has (local, shared). Each
-flag is a settings write of its own: one diff, one backup and one --dry-run
-answer each, so two flags in one command are two writes. The add flag writes
+flag is a settings write of its own: one diff and one backup each, so two flags
+in one command are two writes. A dry run answers for the run and not per record:
+one record flag prints that record's document, and two or more print one
+document that holds every record, which is the one value a consumer of --json
+parses. The add flag writes
 into bitbucket_api_roots rather than writing the key whole, so no run of it can
 drop a root you put there:
 `fugaro secrets set --remove-bitbucket-api-root URL`
