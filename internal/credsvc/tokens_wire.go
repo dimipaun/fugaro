@@ -224,17 +224,27 @@ func (s tokenStatuses) Read(ctx context.Context, name bbtokens.Name) (bbtokens.S
 	return statusOf(all[string(name)]), nil
 }
 
-// Write records one token's status over the status the store holds for it.
+// Write records one token's MARK — the state and the hold — over the status the
+// store holds for it, and never the rest of the status beside it.
 //
-// The write starts from what it read, so the facts the contract's Status does
-// not carry — when the hold began and the wait it doubles from — are kept: the
+// The rest is not this writer's to state: the identity and the verification time
+// are the add-time check's (R12 — creds.TokenVerified writes them through this
+// same store) and the count is CountRequest's (D2356). An empty Identity or a
+// zero VerifiedAt in a Status handed here is therefore "this writer says nothing
+// about them" and never "the token has none", and copying them in erases what
+// the store holds with nothing said about it — silently, and for exactly the
+// facts a failing read cannot supply: the whole subtree fails to decode for
+// every token while any one node under it does not (creds.RTDBStore
+// .TokenStatuses), so one unreadable node anywhere costs every token its
+// identity and its verification time at the next mark.
+//
+// Starting from what the store holds is also what keeps the facts the contract's
+// Status does not carry — when the hold began and the wait it doubles from: the
 // mark a 429 leaves is the creds store's own algebra, and a write that replaced
 // the node whole would drop the half of it this route cannot state.
 func (s tokenStatuses) Write(ctx context.Context, name bbtokens.Name, st bbtokens.Status) error {
 	_, err := s.store.UpdateTokenStatus(ctx, string(name), func(prev creds.TokenStatus, _ bool) (creds.TokenStatus, error) {
 		prev.State, prev.Until = creds.State(st.State), st.Until
-		prev.VerifiedAt, prev.Identity = st.VerifiedAt, st.Identity
-		prev.Count = st.Count
 		return prev, nil
 	})
 	return err

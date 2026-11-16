@@ -71,12 +71,22 @@ func (s *tokenStub) Read(_ context.Context, name bbtokens.Name) (bbtokens.Status
 	return s.Marks[name], nil
 }
 
-// Write records the status the stub holds for the token.
+// Write records the mark the writer decided over the status the stub holds for
+// the token.
+//
+// The state and the hold are the writer's; the identity, the verification time
+// and the count beside them are the store's own and stay as they are, which is
+// what the wired store does (tokens_wire.go's tokenStatuses.Write starts from
+// what the store holds and never from the fields of the status it is handed).
+// A stub that replaced the whole status would answer a question the real store
+// answers differently, and the route's facts would read as lost here alone.
 func (s *tokenStub) Write(_ context.Context, name bbtokens.Name, st bbtokens.Status) error {
 	if s.Marks == nil {
 		s.Marks = make(map[bbtokens.Name]bbtokens.Status)
 	}
-	s.Marks[name] = st
+	prev := s.Marks[name]
+	prev.State, prev.Until = st.State, st.Until
+	s.Marks[name] = prev
 	return nil
 }
 

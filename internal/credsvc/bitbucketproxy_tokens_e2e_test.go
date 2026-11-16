@@ -626,6 +626,62 @@ func TestProxyThrottleDoesNotStopOtherTokens(t *testing.T) {
 	})
 }
 
+// TestProxyMarkKeepsTheFactsBesideIt: a mark is the route's half of a token's
+// status — the state and the hold — and the facts beside it are the store's own
+// and the writers that own them (R12, D2356).
+//
+// The subtree fails to decode for EVERY token while any one node under it does
+// not (creds.RTDBStore.TokenStatuses), so the status a mark is written over is
+// one the route may not have been able to read at all — a read that fails is a
+// read that answers nothing, and a mark built to carry the identity and the
+// verification time from it would write zeroes over both, silently, for a token
+// whose own node is perfectly readable. What is asserted here is what the store
+// says after a 429: the hold, and the identity, the verification time and the
+// count it held before the mark.
+func TestProxyMarkKeepsTheFactsBesideIt(t *testing.T) {
+	repoToken := config.BitbucketTokenKey("repo")
+	node := proxyTokenNode(t, proxyTokenEntry(repoToken, "repo",
+		[]string{testCanonical(t, testBitbucketRepo)}, "", ""))
+	doc, values := proxyTokenBundle(t, false, "repo")
+	w := proxyTokensWorldOf(t, node, doc, values, nil)
+
+	verified := w.s.now.Add(-time.Hour)
+	w.plant(repoToken, creds.TokenStatus{
+		VerifiedAt: verified,
+		Identity:   proxyTokenIdentityA,
+		Count:      7,
+		Window:     w.s.now,
+	})
+	w.hold(testBitbucketRepo, 60)
+
+	resp, ans := w.s.proxySharedCall(t, http.MethodGet, proxyTokenFetchPath(testBitbucketRepo), nil, bitbucketSlug(t, testBitbucketRepo))
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("the held fetch answered %d, want bitbucket.org's own 429 (%s)", resp.StatusCode, ans)
+	}
+	st, ok := w.mark(repoToken)
+	if !ok {
+		t.Fatalf("the store holds no status for the token the 429 was about")
+	}
+	if bbtokens.State(st.State) != bbtokens.StateExhausted {
+		t.Errorf("the token's state is %q, want the mark the 429 left", st.State)
+	}
+	if want := w.s.now.Add(60 * time.Second); !st.Until.Equal(want) {
+		t.Errorf("the hold ends at %v, want %v: the wait the answer named", st.Until, want)
+	}
+	if st.Identity != proxyTokenIdentityA {
+		t.Errorf("the mark left the token's identity %q, want the store's own %q", st.Identity, proxyTokenIdentityA)
+	}
+	if !st.VerifiedAt.Equal(verified) {
+		t.Errorf("the mark left the token verified at %v, want the store's own %v", st.VerifiedAt, verified)
+	}
+	// The count is written after the answer is the caller's (D2356), so this
+	// reads the store's own 7 where the count has not landed yet and the 7 plus
+	// the request just served where it has.
+	if st.Count < 7 {
+		t.Errorf("the mark reset the token's count to %d, want the store's own 7 and never the zero a fresh status carries", st.Count)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // The node's identity set and the adapter
 // ---------------------------------------------------------------------------

@@ -764,7 +764,7 @@ func (s *Server) forwardBitbucket(ctx context.Context, w http.ResponseWriter, r 
 	// The reaction this answer earns is taken BEFORE the line and applied after
 	// it: the line is what records it (R14), and a mark a line could not record
 	// is not written (D143, the model probe's own order — probe.go).
-	react := s.reactToBitbucket(ctx, resp, req, snap, name, canonical, token)
+	react := s.reactToBitbucket(ctx, resp, req, snap, canonical, token)
 	if err := s.auditCall(ctx, id, purpose, credential, "", react.status); err != nil {
 		// The act this line records is the forwarding of the call, and an act
 		// this service cannot record is not made (D143): the answer is dropped
@@ -885,9 +885,8 @@ type bitbucketReaction struct {
 // second one or a changed status (R14): the caller of this function is the
 // route's forward, which writes one line and takes what is answered here as its
 // status.
-func (s *Server) reactToBitbucket(ctx context.Context, resp *http.Response, req gitproxy.Request, snap bbtokens.Snapshot, name bbtokens.Name, canonical, token string) bitbucketReaction {
-	st, ok := s.reactionStore()
-	if !ok {
+func (s *Server) reactToBitbucket(ctx context.Context, resp *http.Response, req gitproxy.Request, snap bbtokens.Snapshot, canonical, token string) bitbucketReaction {
+	if _, ok := s.reactionStore(); !ok {
 		return bitbucketReaction{status: StatusOK}
 	}
 	switch resp.StatusCode {
@@ -895,7 +894,7 @@ func (s *Server) reactToBitbucket(ctx context.Context, resp *http.Response, req 
 		if !s.confirmBitbucket401(ctx, canonical, token) {
 			return bitbucketReaction{status: StatusOK}
 		}
-		return bitbucketReaction{status: ReasonBroken, mark: s.heldStatus(ctx, st, name, bbtokens.StateBroken, time.Time{})}
+		return bitbucketReaction{status: ReasonBroken, mark: heldStatus(bbtokens.StateBroken, time.Time{})}
 	case http.StatusTooManyRequests:
 		// A reset the answer named is a time, and one it did not is this side's
 		// own wait (the contract's StateBackedOff). BOTH are dated here, and a
@@ -923,7 +922,7 @@ func (s *Server) reactToBitbucket(ctx context.Context, resp *http.Response, req 
 		if reset.IsZero() {
 			reset, state = now.Add(settingsOf(snap.Policy).BackoffInitial), bbtokens.StateBackedOff
 		}
-		return bitbucketReaction{status: ReasonExhausted, mark: s.heldStatus(ctx, st, name, state, reset)}
+		return bitbucketReaction{status: ReasonExhausted, mark: heldStatus(state, reset)}
 	case http.StatusForbidden, http.StatusNotFound:
 		react := bitbucketReaction{status: StatusOK, evict: true}
 		if resp.StatusCode == http.StatusForbidden && proxyWrite(req) {
@@ -988,31 +987,18 @@ func (s *Server) confirmBitbucket401(ctx context.Context, canonical, token strin
 	return outcome == probeRefused
 }
 
-// heldStatus is the status to write for one token: what the store holds for it,
-// with the state and the hold replaced.
+// heldStatus is the status one reaction writes: the state and the hold it
+// decided, and nothing else.
 //
-// The read is here so that a mark cannot drop the facts beside it — the identity
-// the add-time check proved (R12) and the count of the window (D2356), which a
-// listing shows and a fresh Status would erase. A status the store cannot answer
-// is written as the zero one plus the mark: an unreadable store is not a reason
-// to refuse a call bitbucket.org has already served, and a token whose other
-// facts are unknown is still a token that is broken or held.
-//
-// It runs on probeRecordContext — the bounded, detached context the contract
-// reserves for a mark (probe.go) — and not on the caller's: the facts being
-// read are about a credential, and the caller has just been told its answer, so
-// a run that hangs up between the answer and the write must not be the reason
-// the identity and the count are lost. That is the read's half of the pair; the
-// write's half is applyBitbucketReaction's.
-func (s *Server) heldStatus(ctx context.Context, st reactions, name bbtokens.Name, state bbtokens.State, until time.Time) *bbtokens.Status {
-	readCtx, readDone := probeRecordContext(ctx)
-	defer readDone()
-	prev, err := st.Read(readCtx, name)
-	if err != nil {
-		prev = bbtokens.Status{}
-	}
-	prev.State, prev.Until = state, until
-	return &prev
+// This route writes a MARK, and the fields beside it — the identity and the
+// verification time the add-time check proved (R12) and the count of the window
+// (D2356) — belong to the writers that own them, which is what the write keeps
+// them for (tokenStatuses.Write). So a mark built here states nothing about
+// them, and its empty Identity is "not this route's to say" rather than "this
+// token has none": a token whose identity the store holds keeps it, and one
+// whose node another writer left unreadable does not lose it here.
+func heldStatus(state bbtokens.State, until time.Time) *bbtokens.Status {
+	return &bbtokens.Status{State: state, Until: until}
 }
 
 // applyBitbucketReaction does what one reaction decided: the mark, the dropped
@@ -1027,13 +1013,13 @@ func (s *Server) heldStatus(ctx context.Context, st reactions, name bbtokens.Nam
 // the run, and a bookkeeping write is not a reason to refuse a call the upstream
 // served.
 //
-// The write runs on probeRecordContext, the bounded and detached context
-// heldStatus's read runs on, and the order above is what makes it matter: the
-// line has already recorded the mark as taken (R14), so a caller hanging up
-// between the two must not leave the token in service — it is dead, it keeps
-// answering 401, and the audit trail would say broken while the store, and
-// every listing read off it, said available. The eviction beside it takes no
-// context at all.
+// The write runs on probeRecordContext, the bounded and detached context the
+// contract reserves for a mark (probe.go) rather than the caller's, and the
+// order above is what makes it matter: the line has already recorded the mark as
+// taken (R14), so a caller hanging up between the two must not leave the token
+// in service — it is dead, it keeps answering 401, and the audit trail would say
+// broken while the store, and every listing read off it, said available. The
+// eviction beside it takes no context at all.
 func (s *Server) applyBitbucketReaction(ctx context.Context, react bitbucketReaction, id Identity, purpose string, name bbtokens.Name, canonical string) {
 	st, ok := s.reactionStore()
 	if !ok {
