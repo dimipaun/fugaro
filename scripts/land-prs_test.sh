@@ -13,6 +13,15 @@
 # base branch. One more is the session the script refuses: a coding agent's
 # markers make it exit 2 without calling gh, since a merge is a person's to make.
 #
+# The census the script runs after a batch is driven too, by a fake `go` that
+# records the suites it is given and can fail the one a case names, and a fake
+# `git` that records the fetch, worktree and diff the census makes. Neither is a
+# real repository or a real Go build: the census is scripts/docs-census.sh, and
+# what this file pins is that land-prs.sh runs it once, after the summary, over
+# the base the pull requests named, that a census which failed is the batch's
+# exit status, and that --no-census, --check-only and a batch where nothing
+# merged run it not at all. scripts/docs-census_test.sh is the census itself.
+#
 # Usage: bash scripts/land-prs_test.sh
 set -Eeuo pipefail
 
@@ -131,11 +140,76 @@ esac
 FAKE
 chmod +x "$bin/gh"
 
+cat >"$bin/git" <<'FAKE'
+#!/usr/bin/env bash
+# A fake `git` for the census. land-prs.sh reads the base's tracking ref out of
+# it before the merges, and scripts/docs-census.sh then fetches, adds a worktree
+# and -- with a --since -- diffs through it. Nothing here is a repository: no
+# real tree is fetched, added or removed, and the worktree the census tests in
+# is an empty directory that exists only for the length of the run.
+set -Eeuo pipefail
+dir=${FAKE_GIT_DIR:?}
+printf '%s\n' "$*" >>"$dir/gitcalls"
+case "$1 ${2:-}" in
+"fetch origin")
+  printf '%s\n' "${3:-}" >"$dir/fetched-base"
+  ;;
+"worktree add")
+  mkdir -p "${4:-}"
+  ;;
+"rev-parse "*)
+  [ -f "$dir/no-base-sha" ] && exit 1
+  printf 'base-sha\n'
+  ;;
+esac
+exit 0
+FAKE
+chmod +x "$bin/git"
+
+cat >"$bin/go" <<'FAKE'
+#!/usr/bin/env bash
+# A fake `go` for the census: it records the command it was given, and fails the
+# ones whose arguments hold the string the case wrote to go.fail, printing a log
+# shaped like go's.
+set -Eeuo pipefail
+dir=${FAKE_GO_DIR:?}
+printf '%s\n' "$*" >>"$dir/gocalls"
+if [ -f "$dir/go.fail" ]; then
+  case "$*" in
+  *"$(cat "$dir/go.fail")"*)
+    printf '%s\n' "--- FAIL: TestDocsPinCensus (0.01s)"
+    printf '%s\n' "FAIL"
+    printf 'FAIL\tgithub.com/dimipaun/fugaro/x\t0.02s\n'
+    exit 1
+    ;;
+  esac
+fi
+printf 'ok  \tgithub.com/dimipaun/fugaro/x\t0.01s\n'
+FAKE
+chmod +x "$bin/go"
+
 case_dir=""
+base_ref=main
 new_case() { # new_case NAME
   case_dir=$work/case-$1
   mkdir -p "$case_dir"
   : >"$case_dir/calls"
+  : >"$case_dir/gitcalls"
+  : >"$case_dir/gocalls"
+  # Every read names the base it merges into, as gh does; a case that wants
+  # another one says so with into_base.
+  base_ref=main
+}
+into_base() { base_ref=$1; }
+go_fails() { # go_fails PATTERN -- the census commands whose arguments hold it
+  printf '%s\n' "$1" >"$case_dir/go.fail"
+}
+gitcalls() { cat "$case_dir/gitcalls"; }
+gocalls() { cat "$case_dir/gocalls"; }
+count_gocalls() { # count_gocalls PATTERN
+  local n
+  n=$(grep -c "$1" "$case_dir/gocalls" 2>/dev/null || true)
+  printf '%s' "${n:-0}"
 }
 view() { # view N STATE DRAFT MERGEABLE TITLE [READ]
   local n=$1 state=$2 draft=$3 merge=$4 title=$5 read=${6:-}
@@ -147,15 +221,15 @@ view() { # view N STATE DRAFT MERGEABLE TITLE [READ]
     file=$case_dir/view.$n.json
     oid="oid-$n"
   fi
-  printf '{"state":"%s","isDraft":%s,"mergeable":"%s","title":"%s","headRefOid":"%s"}\n' \
-    "$state" "$draft" "$merge" "$title" "$oid" >"$file"
+  printf '{"state":"%s","isDraft":%s,"mergeable":"%s","title":"%s","headRefOid":"%s","baseRefName":"%s"}\n' \
+    "$state" "$draft" "$merge" "$title" "$oid" "$base_ref" >"$file"
   # The read names the head, and the branch is on it: a case that wants the two
   # to disagree -- a push between the sweep and the merge -- says so with push.
   printf '%s\n' "$oid" >"$case_dir/head.$n"
 }
 view_no_head() { # view_no_head N STATE DRAFT MERGEABLE TITLE -- a read that named no head
-  printf '{"state":"%s","isDraft":%s,"mergeable":"%s","title":"%s"}\n' \
-    "$2" "$3" "$4" "$5" >"$case_dir/view.$1.json"
+  printf '{"state":"%s","isDraft":%s,"mergeable":"%s","title":"%s","baseRefName":"%s"}\n' \
+    "$2" "$3" "$4" "$5" "$base_ref" >"$case_dir/view.$1.json"
 }
 push() { # push N OID -- the branch moved, with no read to say so
   printf '%s\n' "$2" >"$case_dir/head.$1"
@@ -203,6 +277,7 @@ done
 
 land() { # land ARGS...
   OUT=$(env $unset_markers PATH="$bin:$PATH" FAKE_GH_DIR="$case_dir" \
+    FAKE_GIT_DIR="$case_dir" FAKE_GO_DIR="$case_dir" \
     LAND_PRS_POLL_SLEEP_SECONDS="${LAND_PRS_TEST_POLL_SLEEP:-0}" \
     "$script" "$@" 2>&1 </dev/null) && RC=0 || RC=$?
 }
@@ -210,6 +285,7 @@ agent_land() { # agent_land MARKER ARGS...
   local marker=$1
   shift
   OUT=$(env $unset_markers "$marker=1" PATH="$bin:$PATH" FAKE_GH_DIR="$case_dir" \
+    FAKE_GIT_DIR="$case_dir" FAKE_GO_DIR="$case_dir" \
     LAND_PRS_POLL_SLEEP_SECONDS="${LAND_PRS_TEST_POLL_SLEEP:-0}" \
     "$script" "$@" 2>&1 </dev/null) && RC=0 || RC=$?
 }
@@ -233,7 +309,7 @@ report_line=$(printf '%s\n' "$OUT" | grep -n '^13: OPEN' | head -n 1 | cut -d: -
 summary_line=$(printf '%s\n' "$OUT" | grep -n '^11: MERGED' | head -n 1 | cut -d: -f1)
 [ -n "$report_line" ] && [ -n "$summary_line" ] && [ "$report_line" -lt "$summary_line" ] ||
   fail "the report is not printed before the merges ($report_line, $summary_line)"
-expect_contains "$(calls)" "pr view 11 --json mergeable,isDraft,state,title,headRefOid" "the read is the one the script documents"
+expect_contains "$(calls)" "pr view 11 --json mergeable,isDraft,state,title,headRefOid,baseRefName" "the read is the one the script documents"
 expect_contains "$(calls)" "pr merge 11 --squash --delete-branch --match-head-commit oid-11" \
   "the merge names the head the read named"
 expect_absent "$(calls)" "pr ready" "a pull request that is not a draft is not marked ready"
@@ -460,7 +536,7 @@ new_case repo
 view 96 OPEN false MERGEABLE "the one in another repository"
 land --repo acme/widgets 96
 expect_status "$RC" 0 "a batch in a named repository exits 0"
-expect_contains "$(calls)" "pr view 96 --repo acme/widgets --json mergeable,isDraft,state,title,headRefOid" "the read names the repository"
+expect_contains "$(calls)" "pr view 96 --repo acme/widgets --json mergeable,isDraft,state,title,headRefOid,baseRefName" "the read names the repository"
 expect_contains "$(calls)" "pr merge 96 --repo acme/widgets --squash --delete-branch" "the merge names the repository"
 
 # --------------------------------------------------------------- second pass
@@ -530,6 +606,119 @@ expect_contains "$(calls)" "pr merge 161 --squash --delete-branch --match-head-c
 expect_contains "$OUT" "161: OPEN, ready, MERGEABLE, the one with a tab and a newline in its title" \
   "the report shows the title flattened onto one line"
 expect_contains "$OUT" "161: MERGED" "the pull request merged"
+
+# ----------------------------------------------------------------- the census
+# A merged batch is followed by the census on the merged tree: two pull requests
+# that each moved the same pinned count in a doc merge with no conflict at all
+# and leave the base red, and the census is what says so in seconds rather than
+# in a 25-minute CI run. It is the last thing printed, after the summary.
+new_case census
+view 171 OPEN false MERGEABLE "the one that moves a pinned count"
+land 171
+expect_status "$RC" 0 "a batch whose census passed exits 0"
+expect_contains "$OUT" "171: MERGED" "the pull request merged"
+expect_contains "$OUT" "merged 1 of 1" "the batch is summarised"
+expect_contains "$OUT" "census: ok" "the census result is printed"
+expect_equal "$(count_gocalls '^test ./internal/cli/ -run Docs -count=1 -timeout 9m$')" 1 "the docs suite runs once"
+expect_equal "$(count_gocalls '^test ./plugin/ -count=1 -timeout 5m$')" 1 "the plugin suite runs once"
+# `|| true` on both: a line that is not there is this case's finding, and a
+# pipeline that finds nothing must not be what ends the suite.
+census_line=$(printf '%s\n' "$OUT" | grep -n '^census: ' | head -n 1 | cut -d: -f1 || true)
+summary_line=$(printf '%s\n' "$OUT" | grep -n '^merged ' | head -n 1 | cut -d: -f1 || true)
+if [ -z "$census_line" ] || [ -z "$summary_line" ] || [ "$census_line" -le "$summary_line" ]; then
+  fail "the census is not printed after the summary ($census_line, $summary_line)"
+fi
+expect_contains "$(gitcalls)" "fetch origin main" "the census fetches the base the pull request named"
+# The website reminder is read from the base before the batch, which is the
+# tracking ref as this checkout had it when the batch started.
+expect_contains "$(gitcalls)" "diff --name-only base-sha origin/main" "the diff starts at the base before the batch"
+
+# A census that failed is the batch's exit status even though every merge
+# succeeded: the merges are what a person asked for, and the census is the news
+# that they left the base red.
+new_case census-fails
+view 172 OPEN false MERGEABLE "the one the census fails on"
+go_fails internal/cli
+land 172
+expect_status "$RC" 1 "a batch whose census failed exits 1 though the merge succeeded"
+expect_contains "$OUT" "172: MERGED" "the merge itself succeeded"
+expect_contains "$OUT" "merged 1 of 1" "the summary still counts it"
+expect_contains "$OUT" "census: FAILED (go test ./internal/cli/ -run Docs -count=1 -timeout 9m)" "the failing command is named"
+expect_contains "$OUT" "--- FAIL: TestDocsPinCensus" "the failing test names come from go"
+expect_equal "$(count_gocalls '^test ./plugin/ -count=1 -timeout 5m$')" 1 "the plugin suite runs after the docs one failed"
+
+new_case no-census
+view 173 OPEN false MERGEABLE "the one --no-census lands"
+land --no-census 173
+expect_status "$RC" 0 "--no-census still lands the batch"
+expect_contains "$OUT" "173: MERGED" "the pull request merged"
+expect_absent "$OUT" "census:" "--no-census prints no census line"
+expect_equal "$(gocalls)" "" "--no-census runs no go"
+expect_equal "$(gitcalls)" "" "--no-census reads nothing of the base"
+
+new_case check-only-census
+view 174 OPEN false MERGEABLE "the one --check-only reports"
+land --check-only 174
+expect_status "$RC" 0 "--check-only with everything mergeable exits 0"
+expect_absent "$OUT" "census:" "--check-only merges nothing, so there is no census"
+expect_equal "$(gocalls)" "" "--check-only runs no go"
+
+# Nothing merged is no merged tree to census, and the batch's own exit status
+# already says so.
+new_case census-nothing-merged
+view 175 OPEN false CONFLICTING "the conflicting one"
+land 175
+expect_status "$RC" 1 "a batch that merged nothing exits 1"
+expect_absent "$OUT" "census:" "a batch that merged nothing runs no census"
+expect_equal "$(gocalls)" "" "a batch that merged nothing runs no go"
+
+# The census is the pull requests' base, not always main: a batch into another
+# branch is tested there.
+new_case census-base-named
+into_base release
+view 176 OPEN false MERGEABLE "the one that merges into a release branch"
+land 176
+expect_status "$RC" 0 "a batch into a named base lands"
+expect_contains "$(gitcalls)" "fetch origin release" "the census fetches the base the pull request named"
+expect_absent "$OUT" "census: skipped" "one base is a tree to census"
+
+# Two bases in one batch is not one tree, so the census says so rather than
+# testing the wrong one: the merges still stand and the exit status is theirs.
+new_case census-multi-base
+view 177 OPEN false MERGEABLE "the one into main"
+into_base release
+view 178 OPEN false MERGEABLE "the one into release"
+land 177 178
+expect_status "$RC" 0 "a batch into two bases still lands"
+expect_contains "$OUT" "census: skipped (the pull requests name more than one base: main release)" \
+  "the census says which bases it was given"
+expect_equal "$(gocalls)" "" "a batch into two bases runs no go"
+
+# A checkout that never fetched the base has no commit to diff from: the census
+# still runs, and the website reminder is the only thing that is left out.
+new_case census-no-since
+: >"$case_dir/no-base-sha"
+view 179 OPEN false MERGEABLE "the one whose base this checkout never fetched"
+land 179
+expect_status "$RC" 0 "a census without the base before the batch exits 0"
+expect_contains "$OUT" "census: ok" "the census still runs"
+expect_absent "$(gitcalls)" "diff" "no diff is read without a commit to start at"
+
+# The census cannot run without go, and that is not a failed census: the batch
+# keeps the exit status its merges gave it.
+new_case census-no-go
+view 180 OPEN false MERGEABLE "the one whose census cannot run"
+nogo=$work/bin-no-go
+mkdir -p "$nogo"
+cp "$bin/gh" "$bin/git" "$nogo/"
+for tool in bash python3 mktemp dirname rm awk cat grep; do
+  ln -sf "$(command -v "$tool")" "$nogo/$tool"
+done
+OUT=$(env $unset_markers PATH="$nogo" FAKE_GH_DIR="$case_dir" FAKE_GIT_DIR="$case_dir" \
+  FAKE_GO_DIR="$case_dir" LAND_PRS_POLL_SLEEP_SECONDS=0 "$script" 180 2>&1 </dev/null) && RC=0 || RC=$?
+expect_status "$RC" 0 "a census with no go on PATH does not change the batch's exit status"
+expect_contains "$OUT" "180: MERGED" "the merge happened"
+expect_contains "$OUT" "census: skipped (go is not on PATH)" "the census says why it did not run"
 
 if [ "$failures" -ne 0 ]; then
   echo "$failures case(s) failed" >&2

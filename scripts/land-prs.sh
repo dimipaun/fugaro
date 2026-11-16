@@ -10,22 +10,26 @@
 #
 # The merge call is the person's, at their own hands, in the provider's own
 # interface: this is the person's own command for making it for a batch -- their
-# own gh, the provider's own CLI, under their own credential -- and it does
-# nothing else. It never force-pushes, never rewrites a branch, never runs tests
-# and never decides what is safe to merge: the caller has already decided, and
-# the script only merges and reports.
+# own gh, the provider's own CLI, under their own credential. It never
+# force-pushes, never rewrites a branch and never decides what is safe to merge:
+# the caller has already decided, and the merges are theirs. The one thing it
+# runs afterwards is the census, which tests the merged tree rather than the
+# change it landed, and reports what it found.
 #
 # A coding agent's session is refused before any call is made, because a merge is
 # never an agent's. The markers are internal/agentenv's, the same ones every
 # owner-run check refuses on.
 #
 # Usage: bash scripts/land-prs.sh [--repo OWNER/NAME] [--check-only]
-#                                 [--no-delete-branch] N [N...]
+#                                 [--no-census] [--no-delete-branch] N [N...]
 #
 #   --repo OWNER/NAME   the repository the numbers belong to; without it gh
 #                       answers for the repository of the current checkout
 #   --check-only        print the report and merge nothing; exit 0 when every
 #                       pull request is open and MERGEABLE, 1 otherwise
+#   --no-census         merge and report, and skip the census afterwards: for a
+#                       batch that cannot move a pinned count, or a census
+#                       someone has already run
 #   --no-delete-branch  merge without --delete-branch, leaving each branch
 #   N                   a pull request number; the merges happen in the order
 #                       the numbers are given
@@ -33,8 +37,10 @@
 # What it does, in order:
 #
 #   1. every pull request is read at once -- `gh pr view N --json
-#      mergeable,isDraft,state,title,headRefOid`, eight at a time -- and one that
-#      answers UNKNOWN is polled again after a pause, a bounded number of times;
+#      mergeable,isDraft,state,title,headRefOid,baseRefName`, eight at a time,
+#      the base being the one the census at the end is read against -- and one
+#      that answers UNKNOWN is polled again after a pause, a bounded number of
+#      times;
 #   2. one line per pull request is printed before anything is touched;
 #   3. every open, MERGEABLE pull request is merged: `gh pr ready N` first when
 #      it is a draft, then `gh pr merge N --squash --delete-branch
@@ -52,11 +58,20 @@
 #   4. the summary is one line per pull request -- `N: MERGED`,
 #      `N: CONFLICTING, not merged`, `N: UNKNOWN, not merged`,
 #      `N: not open (STATE)` or `N: merge failed: <gh's last line>` -- and then
-#      `merged X of Y`.
+#      `merged X of Y`;
+#   5. when at least one pull request merged, the census runs on the merged tree
+#      and its result is printed after that summary: scripts/docs-census.sh
+#      tests the docs and plugin suites in a worktree of `origin/<base>`, where
+#      the base is the one the pull requests named (`main` when none did). It is
+#      what catches a batch that moved a pinned count in a doc -- two pull
+#      requests each moving the same figure merge with no conflict at all and
+#      leave the base red for a 25-minute CI run. `--no-census` skips it, and so
+#      does `--check-only`, which merges nothing.
 #
-# Exit: 0 when every pull request ended merged, 1 when any did not (the summary
-# lines say which), 2 for a usage error, for a coding agent's session or for a
-# tool that is not on PATH.
+# Exit: 0 when every pull request ended merged and the census passed, 1 when any
+# pull request did not end merged or the census failed (the summary lines say
+# which), 2 for a usage error, for a coding agent's session or for a tool that
+# is not on PATH.
 #
 # Environment: LAND_PRS_POLL_SLEEP_SECONDS (default 3) is the pause before a
 # poll and LAND_PRS_POLLS (default 3) is how many polls an UNKNOWN gets.
@@ -69,12 +84,17 @@ POLLS=${LAND_PRS_POLLS:-3}
 # round trip rather than twenty, and few enough that gh's own rate limit is not
 # the thing that answers.
 BATCH=8
+# The census is scripts/docs-census.sh, beside this script: a batch that moved a
+# pinned count in a doc leaves the base red with no conflict at all, and the
+# census is the seconds-long half of what the next CI run would say.
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 usage() {
   cat >&2 <<'USAGE'
-usage: land-prs.sh [--repo OWNER/NAME] [--check-only] [--no-delete-branch] N [N...]
+usage: land-prs.sh [--repo OWNER/NAME] [--check-only] [--no-census] [--no-delete-branch] N [N...]
   --repo OWNER/NAME    the repository the numbers belong to
   --check-only         report each pull request's state and merge nothing
+  --no-census          merge and report without the census afterwards
   --no-delete-branch   merge without --delete-branch
   N                    pull request numbers, merged in the order given
 USAGE
@@ -110,6 +130,7 @@ guard_agent() {
 
 REPO=""
 CHECK_ONLY=no
+CENSUS=yes
 DELETE_BRANCH=yes
 PRS=""
 while [ $# -gt 0 ]; do
@@ -126,6 +147,10 @@ while [ $# -gt 0 ]; do
     ;;
   --check-only)
     CHECK_ONLY=yes
+    shift
+    ;;
+  --no-census)
+    CENSUS=no
     shift
     ;;
   --no-delete-branch)
@@ -175,6 +200,7 @@ DRAFTW=()
 MERGE=()
 TITLE=()
 HEAD=()
+BASEREF=()
 VERDICT=()
 RESULT=()
 MSG=()
@@ -182,9 +208,9 @@ WAS_MERGEABLE=()
 
 gh_view() { # gh_view N
   if [ -n "$REPO" ]; then
-    gh pr view "$1" --repo "$REPO" --json mergeable,isDraft,state,title,headRefOid
+    gh pr view "$1" --repo "$REPO" --json mergeable,isDraft,state,title,headRefOid,baseRefName
   else
-    gh pr view "$1" --json mergeable,isDraft,state,title,headRefOid
+    gh pr view "$1" --json mergeable,isDraft,state,title,headRefOid,baseRefName
   fi
 }
 gh_ready() { # gh_ready N
@@ -218,7 +244,7 @@ last_line() {
 }
 
 parse_one() { # parse_one N
-  local n=$1 fields state draft merge head title
+  local n=$1 fields state draft merge head title base
   fields=$(python3 - "$TMP/view-$n.json" <<'PY' || true
 import json, sys
 try:
@@ -229,7 +255,7 @@ except Exception:
 if not isinstance(d, dict):
     # A read that did not answer is not a pull request that is closed: the
     # state is left unknown so nothing is concluded about it.
-    print("?|ready|UNKNOWN||")
+    print("?|ready|UNKNOWN|||")
 else:
     state = d.get("state") or "?"
     draft = "draft" if d.get("isDraft") else "ready"
@@ -242,22 +268,26 @@ else:
     title = d.get("title") or ""
     for ch in ("\t", "\n", "\r"):
         title = title.replace(ch, " ")
-    print("%s|%s|%s|%s|%s" % (state, draft, merge, head, title))
+    # The base comes last, after the flattened title, and a branch name holds
+    # neither a tab nor a newline: nothing a read answers with can shift it.
+    base = d.get("baseRefName") or ""
+    print("%s|%s|%s|%s|%s|%s" % (state, draft, merge, head, title, base))
 PY
   )
   if [ -z "$fields" ]; then
-    fields=$(printf '?|ready|UNKNOWN||')
+    fields=$(printf '?|ready|UNKNOWN|||')
   fi
   # The separator is not whitespace on purpose: read collapses runs of a
   # whitespace IFS into one, so a tab-separated line with an empty field in it
   # -- a pull request with no title, or a read that named no head -- would shift
   # every field after it.
-  IFS='|' read -r state draft merge head title <<<"$fields" || true
+  IFS='|' read -r state draft merge head title base <<<"$fields" || true
   STATE[$n]=$state
   DRAFTW[$n]=$draft
   MERGE[$n]=$merge
   TITLE[$n]=$title
   HEAD[$n]=$head
+  BASEREF[$n]=$base
 }
 
 read_all() { # read_all "N N N"
@@ -373,6 +403,42 @@ if [ "$CHECK_ONLY" = yes ]; then
   exit 0
 fi
 
+# The base the batch merged into, and the commit it was on before the batch:
+# both are read here, before the merges move it, because the census at the end
+# is a census of that tree. `main` is the base when no pull request named one --
+# an older gh names none, and a read that did not answer named nothing, neither
+# of which is a reason to skip the census -- and a batch whose pull requests
+# name more than one base is not one tree to census, which the line at the end
+# says rather than testing the wrong one.
+BASE=main
+BASES=""
+for pr in $PRS; do
+  b=${BASEREF[$pr]:-}
+  [ -n "$b" ] || continue
+  case " $BASES " in
+  *" $b "*) ;;
+  *) BASES="$BASES $b" ;;
+  esac
+done
+BASES=${BASES# }
+MULTI_BASE=""
+case "$BASES" in
+"") ;;
+*" "*)
+  MULTI_BASE=$BASES
+  BASE=""
+  ;;
+*) BASE=$BASES ;;
+esac
+
+# A checkout with no tracking ref for the base -- or no git at all -- leaves the
+# diff the website reminder is read from unnamed, and the census then simply
+# prints no reminder: nothing here is worth failing a merge over.
+SINCE=""
+if [ "$CENSUS" = yes ] && [ -n "$BASE" ] && command -v git >/dev/null 2>&1; then
+  SINCE=$(git rev-parse --verify --quiet "refs/remotes/origin/$BASE" 2>/dev/null || true)
+fi
+
 for pr in $PRS; do
   classify "$pr"
   case "${VERDICT[$pr]}" in
@@ -435,4 +501,25 @@ for pr in $PRS; do
   esac
 done
 printf 'merged %s of %s\n' "$merged" "$total"
-[ "$merged" -eq "$total" ]
+
+status=0
+[ "$merged" -eq "$total" ] || status=1
+
+# The census is the last thing the batch prints, after the summary a person
+# reads first, and it is what tells them the merges left the base red: two pull
+# requests each moving the same pinned count in a doc conflict with nothing and
+# still fail seven tests. Its own exit status is the batch's, even when every
+# merge succeeded, and the census script prints why.
+if [ "$CENSUS" = yes ] && [ "$merged" -gt 0 ]; then
+  if [ -n "$MULTI_BASE" ]; then
+    printf 'census: skipped (the pull requests name more than one base: %s)\n' "$MULTI_BASE"
+  else
+    census_args=(--base "$BASE")
+    if [ -n "$SINCE" ]; then census_args+=(--since "$SINCE"); fi
+    if ! bash "$here/docs-census.sh" "${census_args[@]}"; then
+      status=1
+    fi
+  fi
+fi
+
+exit "$status"
