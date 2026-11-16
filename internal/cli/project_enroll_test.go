@@ -485,8 +485,8 @@ func TestProjectSyncNeedsAnAppID(t *testing.T) {
 //
 // Mutation (verified, run and restored): make reposRemovalApply hand
 // putAllowRepos the list as it read it (keep `allow` instead of the list
-// without the entry) — this test fails, the launch creating an execution for a
-// repository that is still admitted.
+// without the entry) — this test fails at the read below, the node still
+// listing a repository the removal was asked to take away.
 func TestProjectRemoveRepoStopsAdmittingTheRepo(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
 	publishPolicy(t, f, `{"version":5,"allow_repos":["github/acme/app"]}`)
