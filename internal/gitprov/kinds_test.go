@@ -81,6 +81,7 @@ var forgeKindGoSites = map[string]string{
 	"internal/pluginwire/remove.go":            "the plugin wire's removal, and the source kind it refuses to take a pin out of",
 	"internal/pluginwire/status.go":            "the plugin wire's GitHub-only status form",
 	"internal/projectpolicy/bitbucket.go":      "the published policy's Bitbucket block and its canonical slug",
+	"internal/projectpolicy/issuesync.go":      "the issue adapter's provider member (issue_sync.github), which a second forge's issue route would spell beside it",
 	"internal/projectpolicy/profiles.go":       "the profiles' Bitbucket-only validation",
 	"internal/projectpolicy/tokens_shape.go":   "the reach one Bitbucket token's coverage may name: the provider segment itself (ValidBitbucketTokenCoverage), which a second forge's tokens would spell the same way",
 	"internal/repourl/cloneurl.go":             "the host a clone URL is built on per kind",
