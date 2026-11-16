@@ -294,6 +294,60 @@ func TestContextReposNamedInPrompt(t *testing.T) {
 	}
 }
 
+// TestContextClonePlanRefusesARepositoryTheServiceDidNotName: the service's
+// answer has to name every repository the task names, and a plan built from an
+// answer that names fewer stops the run. The alternative is the one thing the
+// read-only mint exists to prevent: the missing repository would be cloned with
+// no token at all, which on a private repository is an authentication failure
+// and on a public one is an anonymous read the service never granted — and the
+// service, not the runner, is what holds the run's admission, so the runner
+// cannot tell the two apart by trying.
+func TestContextClonePlanRefusesARepositoryTheServiceDidNotName(t *testing.T) {
+	r, _, _ := contextTestRun(t)
+	served := contextRepoFixture
+	declined := "acme/private"
+	r.spec.ContextRepos = []string{served, declined}
+	plan, err := r.contextClonePlan([]github.ContextToken{{Token: contextToken, Repositories: []string{served}}})
+	if err == nil {
+		t.Fatalf("the credentials service named a token for %s alone, and the plan for %v cloned %s anyway", served, r.spec.ContextRepos, declined)
+	}
+	if len(plan) != 0 {
+		t.Errorf("the refusal carries the plan %v: a run that cannot read every repository it names reads none of them", plan)
+	}
+	if !strings.Contains(err.Error(), declined) {
+		t.Errorf("the refusal %q names no repository: the reader has to learn which one the service declined", err)
+	}
+}
+
+// TestContextReposRefusedOnAnotherProvider: a read-only context repository is a
+// GitHub repository — that is the credential path the plan's claim and mint
+// belong to — so a run on another provider that names one is refused by the
+// kind, before the credentials service is consulted at all. The environment
+// here names a service and the run is local, which serviceTokens refuses with a
+// message naming that variable: an error that named the service instead, with
+// no mention of the kind, would be this run having reached for a mint it has no
+// context repository path to make.
+func TestContextReposRefusedOnAnotherProvider(t *testing.T) {
+	r, work, _ := contextTestRun(t)
+	r.providerKind = gitprov.KindBitbucket
+	r.spec.ContextRepos = []string{contextRepoFixture}
+	r.d.Local = true
+	r.d.Env = []string{providers.EnvCredentialsServiceURL + "=http://127.0.0.1:1"}
+	err := r.cloneContextRepos(context.Background())
+	if err == nil {
+		t.Fatal("a run on the Bitbucket provider named a read-only context repository and was not refused")
+	}
+	if !strings.Contains(err.Error(), gitprov.KindBitbucket) {
+		t.Errorf("the refusal %q names no provider kind: the launch that recorded this task admitted a context repository github alone serves", err)
+	}
+	if strings.Contains(err.Error(), providers.EnvCredentialsServiceURL) {
+		t.Errorf("the refusal %q is the credentials service's own: the kind is judged first, so a run with no context repository path reaches for no mint", err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(work), ContextRepoRoot)); !os.IsNotExist(err) {
+		t.Errorf("stat of the context root under %s: %v, want not-exist: a refused run clones nothing", filepath.Dir(work), err)
+	}
+}
+
 // TestContextReposRefusedWithoutTheCredentialsService: a task that names a
 // context repository and a job whose environment names no credentials service
 // is refused, not served by the job's own App key — that credential is the
