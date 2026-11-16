@@ -422,6 +422,12 @@ func craftAccessDefined(c *localcfg.Config, name string) bool {
 
 // setCraftAccess writes one craft's access, leaving its model half alone: the
 // two halves are set separately (spec §3).
+//
+// Every name of config.CraftNames has a case, and that is a requirement rather
+// than a convenience: the callers walk that list, so a craft with no case is one
+// whose derived access is dropped without a word — the coder's pool would be
+// split and the merge judge's left naming it. TestEveryCraftCanBeWrittenAnAccess
+// holds the switch to the list.
 func setCraftAccess(crafts *config.Crafts, craft, access string) {
 	switch craft {
 	case config.CraftCoder:
@@ -432,5 +438,7 @@ func setCraftAccess(crafts *config.Crafts, craft, access string) {
 		crafts.SeniorReview.Access = access
 	case config.CraftSecurityReview:
 		crafts.SecurityReview.Access = access
+	case config.CraftMergeJudge:
+		crafts.MergeJudge.Access = access
 	}
 }

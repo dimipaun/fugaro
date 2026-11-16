@@ -34,7 +34,7 @@ import (
 const crossPathNode = `{"version":8,` +
 	`"craft_credentials":[{"name":"openrouter-x","type":"openrouter"},{"name":"anthropic-y","type":"anthropic"}],` +
 	`"craft_pools":[{"name":"mixed","strategy":"round-robin","owner":"owner@example.com","allowed_users":["other@example.com"],"members":["openrouter-x","anthropic-y"]}],` +
-	`"crafts":{"coder":{"model":"claude-opus-5-5","access":"mixed"},"review":{"model":"deepseek/deepseek-v4-flash","access":"mixed"}},` +
+	`"crafts":{"coder":{"model":"claude-opus-5-5","access":"mixed"},"review":{"model":"deepseek/deepseek-v4-flash","access":"mixed"},"merge-judge":{"access":"mixed"}},` +
 	`"providers":{"openrouter":{"kind":"anthropic-compat","base_url":"https://openrouter.ai/api/v1","auth":"bearer","secret":"openrouter-key","models":["deepseek/*"]}},` +
 	`"budget":{"mode":"observe"},"allow_repos":["github/acme/*"]}`
 
@@ -183,6 +183,13 @@ func TestTheNodeSplitKeepsEveryMemberAndItsOrder(t *testing.T) {
 	}
 	if got := p.Crafts.Review.Access; got != "mixed-provider" {
 		t.Errorf("crafts.review.access = %q, want mixed-provider: the openrouter entry claims that model, and a provider route is the run's own gateway", got)
+	}
+	// The step repoints every craft of the document that named the pool and not a
+	// fixed four: the merge judge sets no model and follows the coder's
+	// (config.CraftParent), so it lands on the half that model routes to rather
+	// than staying on a pool the step has just replaced.
+	if got := p.Crafts.MergeJudge.Access; got != "mixed-claude" {
+		t.Errorf("crafts.merge-judge.access = %q, want mixed-claude: it sets no model and follows the coder's", got)
 	}
 	if p.Crafts.Coder.Model != "claude-opus-5-5" || p.Crafts.Review.Model != "deepseek/deepseek-v4-flash" {
 		t.Errorf("the crafts' models = %+v, want them untouched: the step writes the access half alone", p.Crafts)
