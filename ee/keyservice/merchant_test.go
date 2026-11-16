@@ -10,7 +10,6 @@ package keyservice
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -740,38 +739,26 @@ func newFailingIssuances(t *testing.T) (*fixture, *failingIssuances) {
 	return f, f.deps.Store.(*failingIssuances)
 }
 
-// TestAKeyMintedButNotRecordedIsWithdrawn: the paid path mails before it
-// records, which the older format could afford and v1 cannot — a v1 mint makes
-// a fresh key_id and a fresh renewal secret every call, so a key that is mailed
+// TestAKeyMintedButNotRecordedIsWithdrawn: the binding mints and then records,
+// and v1 cannot afford the order the older format could — a v1 mint makes a
+// fresh key_id and a fresh renewal secret every call, so a key that is issued
 // and then not recorded is a second live key and not the same key twice. Left
 // live it is one nothing can renew, no refund can name and no operator can see
-// (K2.2, §8), so the failed write withdraws it before it answers.
+// (K2.2, §8), so the failed write withdraws it before the binding answers.
 func TestAKeyMintedButNotRecordedIsWithdrawn(t *testing.T) {
 	f, store := newFailingIssuances(t)
-	purchase := Event{
-		ID:           "evt-1",
-		Type:         EventPurchase,
-		Mode:         ModeFor(f.env),
-		OccurredAt:   f.now,
-		Subscription: "sub-acme.example",
-		Organisation: "acme.example",
-		WorkspaceID:  workspaceID,
-		Email:        buyerAddress("acme.example"),
-		Seats:        5,
-		TermDays:     365,
-	}
+	f.boughtEvent(t, purchaseEvent("evt-1", "acme.example", 5, 365))
 	store.refuse = 1
-	if rec := f.deliver(purchase); rec.Code != http.StatusInternalServerError {
-		t.Fatalf("a purchase whose issuance write failed was answered %d, want 500", rec.Code)
+	if err := f.bindingAttempt("acme.example", "sub-acme.example"); err == nil {
+		t.Fatalf("a binding whose issuance write failed answered, want the failure this test is about")
 	}
-	if got := len(f.mail.sent); got != 1 {
-		t.Fatalf("the failed purchase mailed %d message(s), want the one it minted: the mail is what makes the key live", got)
+	if got := f.records(); len(got) != 0 {
+		t.Fatalf("the failed binding recorded %d key(s), want none", len(got))
 	}
-	if got := len(f.records()); got != 0 {
-		t.Fatalf("the failed purchase recorded %d key(s), want none", got)
+	if got := f.mintedKeys(); len(got) != 1 {
+		t.Fatalf("the failed binding minted %d key(s), want the one it issued and then could not record", len(got))
 	}
-	orphanKey, _ := mailedBundle(t, f.mail.sent[0].Body)
-	orphan := v1Verified(t, f, orphanKey)
+	orphan := v1Verified(t, f, f.mintedKeys()[0])
 	entry, held, err := f.store.Revocation(context.Background(), orphan.KeyID)
 	if err != nil || !held {
 		t.Fatalf("the unrecorded key %s is not in §8's list (held=%v, err=%v), want it withdrawn: nothing else names it", orphan.KeyID, held, err)
@@ -782,117 +769,87 @@ func TestAKeyMintedButNotRecordedIsWithdrawn(t *testing.T) {
 	if _, held, _ := f.store.KeyState(context.Background(), orphan.KeyID); held {
 		t.Error("the unrecorded key was given a key state, want none: a key with no issuance is not one to renew")
 	}
-	if _, held, _ := f.store.Subscription(context.Background(), "sub-acme.example"); held {
-		t.Error("the failed purchase saved a subscription, want nothing: the state is written after the key")
+	if bound := f.onlyEntitlement(t).BoundAt; bound != nil {
+		t.Errorf("the failed binding wrote the licence's own bound instant (%s), want the licence still unbound: the customer has to be able to bind it again", bound)
 	}
 
-	// The source is unspent, so the merchant's redelivery mints and records the
-	// key the customer actually keeps — a different key from the withdrawn one.
-	f.deliver(purchase)
-	records := f.records()
-	if len(records) != 1 || len(f.mail.sent) != 2 {
-		t.Fatalf("the redelivery left %d record(s) and %d mail(s), want one of each more than the failure left", len(records), len(f.mail.sent))
+	// The customer binds again, and the licence issues the key they actually
+	// keep — a different key from the withdrawn one.
+	if err := f.bindingAttempt("acme.example", "sub-acme.example"); err != nil {
+		t.Fatalf("the second binding of the same licence answered %v, want the key: the first left nothing recorded", err)
 	}
-	keptKey, keptSecret := mailedBundle(t, f.mail.sent[1].Body)
+	records := f.records()
+	if len(records) != 1 || len(f.mintedKeys()) != 2 {
+		t.Fatalf("the second binding left %d record(s) and %d mint(s), want one of each more than the failure left", len(records), len(f.mintedKeys()))
+	}
+	keptKey := f.mintedKeys()[1]
 	kept := v1Verified(t, f, keptKey)
 	if kept.KeyID != records[0].KeyID || kept.KeyID == orphan.KeyID {
-		t.Errorf("the redelivery recorded the key %q and mailed %q, want the one it minted now (%q) and not the withdrawn one (%q)", records[0].KeyID, kept.KeyID, kept.KeyID, orphan.KeyID)
+		t.Errorf("the second binding recorded the key %q and minted %q, want the one it minted now (%q) and not the withdrawn one (%q)", records[0].KeyID, kept.KeyID, kept.KeyID, orphan.KeyID)
 	}
 	state, held, err := f.store.KeyState(context.Background(), kept.KeyID)
-	if err != nil || !held || state.RenewalSecretHash != secretHash(keptSecret) {
-		t.Errorf("the redelivery left the key state %+v (held=%v, err=%v), want the digest of the secret it mailed", state, held, err)
+	if err != nil || !held || state.RenewalSecretHash != secretHash(f.secretOf(t, keptKey)) {
+		t.Errorf("the second binding left the key state %+v (held=%v, err=%v), want the digest of the secret its own mint answered", state, held, err)
 	}
 	if entry, held, _ := f.store.Revocation(context.Background(), orphan.KeyID); !held || entry.Reason != ReasonUnrecorded {
 		t.Errorf("the withdrawn key's entry is %+v (held=%v), want it still in the list: the list only ever grows", entry, held)
 	}
 }
 
-// TestTheDeliveryThatLosesTheRecordWithdrawsItsOwnKey: two deliveries of one
-// event in flight at once both mint and both mail, and only one records — the
-// other's write is refused (§5.2, S3.5). Its key is in a mailbox and in no
-// record, so it is withdrawn rather than left as a second live licence for one
-// purchase.
+// TestTheDeliveryThatLosesTheRecordWithdrawsItsOwnKey: two bindings of one
+// licence in flight at once both mint and only one records — the other's write
+// is refused (§5.2, S3.5). Its key is in no record, so it is withdrawn rather
+// than left as a second live licence for one binding.
 func TestTheDeliveryThatLosesTheRecordWithdrawsItsOwnKey(t *testing.T) {
 	f, store := newFailingIssuances(t)
-	purchase := Event{
-		ID:           "evt-1",
-		Type:         EventPurchase,
-		Mode:         ModeFor(f.env),
-		OccurredAt:   f.now,
-		Subscription: "sub-acme.example",
-		Organisation: "acme.example",
-		WorkspaceID:  workspaceID,
-		Email:        buyerAddress("acme.example"),
-		Seats:        5,
-		TermDays:     365,
-	}
+	f.boughtEvent(t, purchaseEvent("evt-1", "acme.example", 5, 365))
 	store.duplicated = 1
-	if rec := f.deliver(purchase); rec.Code != http.StatusInternalServerError {
-		t.Fatalf("the delivery whose record was already taken was answered %d, want 500: it minted and mailed nothing the store knows about", rec.Code)
+	if err := f.bindingAttempt("acme.example", "sub-acme.example"); err == nil {
+		t.Fatalf("the binding whose record was already taken answered, want 500: it issued a key the store knows nothing about")
 	}
-	if got := len(f.records()); got != 0 {
-		t.Fatalf("the losing delivery recorded %d key(s), want none: the store's answer is the state", got)
+	if got := f.records(); len(got) != 0 {
+		t.Fatalf("the losing binding recorded %d key(s), want none: the store's answer is the state", len(got))
 	}
-	if got := len(f.mail.sent); got != 1 {
-		t.Fatalf("the losing delivery mailed %d message(s), want the one its own mint produced", got)
-	}
-	lostKey, _ := mailedBundle(t, f.mail.sent[0].Body)
-	lost := v1Verified(t, f, lostKey)
+	lost := v1Verified(t, f, f.mintedKeys()[0])
 	if entry, held, _ := f.store.Revocation(context.Background(), lost.KeyID); !held || entry.Reason != ReasonUnrecorded {
-		t.Errorf("the losing delivery's key %s is %+v (held=%v), want it withdrawn: the winner's key is the one live licence", lost.KeyID, entry, held)
+		t.Errorf("the losing binding's key %s is %+v (held=%v), want it withdrawn: the winner's key is the one live licence", lost.KeyID, entry, held)
 	}
 	if _, held, _ := f.store.KeyState(context.Background(), lost.KeyID); held {
-		t.Error("the losing delivery wrote a key state for a key it never recorded, want none")
+		t.Error("the losing binding wrote a key state for a key it never recorded, want none")
 	}
 }
 
-// TestAStoreThatRecordsAndThenFailsKeepsTheMailedKey: the withdrawal above is
+// TestAStoreThatRecordsAndThenFailsKeepsTheIssuedKey: the withdrawal above is
 // for a key the store really has nothing about, and a store's answer is not the
 // state — one that commits and then reports the failure has this key in hand. It
-// is the case that turns the withdrawal into a loss: the key is in the
-// customer's mailbox, the source is spent, so the redelivery repairs the
-// subscription and mints nothing, and what the customer is left with is a
-// withdrawn key with no renewal state — a licence they paid for and cannot use,
-// with nothing the merchant can retry into existence.
-func TestAStoreThatRecordsAndThenFailsKeepsTheMailedKey(t *testing.T) {
+// is the case that turns the withdrawal into a loss: the key is the customer's,
+// nothing can retry it into existence, and a withdrawal here would take away a
+// licence the store holds.
+func TestAStoreThatRecordsAndThenFailsKeepsTheIssuedKey(t *testing.T) {
 	f, store := newFailingIssuances(t)
-	purchase := Event{
-		ID:           "evt-1",
-		Type:         EventPurchase,
-		Mode:         ModeFor(f.env),
-		OccurredAt:   f.now,
-		Subscription: "sub-acme.example",
-		Organisation: "acme.example",
-		WorkspaceID:  workspaceID,
-		Email:        buyerAddress("acme.example"),
-		Seats:        5,
-		TermDays:     365,
-	}
+	f.boughtEvent(t, purchaseEvent("evt-1", "acme.example", 5, 365))
 	store.committed = 1
-	if rec := f.deliver(purchase); rec.Code != http.StatusOK {
-		t.Fatalf("a purchase whose store recorded the issuance and then reported the failure was answered %d, want 200: the record is there and the key is the customer's", rec.Code)
+	if err := f.bindingAttempt("acme.example", "sub-acme.example"); err != nil {
+		t.Fatalf("a binding whose store recorded the issuance and then reported the failure answered %v, want the key: the record is there and the key is the customer's", err)
 	}
 	records := f.records()
 	if len(records) != 1 {
-		t.Fatalf("the purchase recorded %d key(s), want the one the store's write landed", len(records))
+		t.Fatalf("the binding recorded %d key(s), want the one the store's write landed", len(records))
 	}
-	if got := len(f.mail.sent); got != 1 {
-		t.Fatalf("the purchase mailed %d message(s), want the one bundle it minted", got)
-	}
-	key, secret := mailedBundle(t, f.mail.sent[0].Body)
+	key := f.mintedKeys()[0]
 	claimed := v1Verified(t, f, key)
 	if claimed.KeyID != records[0].KeyID {
-		t.Errorf("the mailed key is %q and the record is %q, want the key the store holds", claimed.KeyID, records[0].KeyID)
+		t.Errorf("the issued key is %q and the record is %q, want the key the store holds", claimed.KeyID, records[0].KeyID)
 	}
 	if entry, held, _ := f.store.Revocation(context.Background(), claimed.KeyID); held {
 		t.Errorf("the key the store recorded was withdrawn (%+v), want it live: the store's answer is not the state", entry)
 	}
 	state, held, err := f.store.KeyState(context.Background(), claimed.KeyID)
-	if err != nil || !held || state.RenewalSecretHash != secretHash(secret) {
-		t.Errorf("the store holds the key state %+v (held=%v, err=%v), want the digest of the secret the mail carried (D2135): without it the term after this one can never be renewed", state, held, err)
+	if err != nil || !held || state.RenewalSecretHash != secretHash(f.secretOf(t, key)) {
+		t.Errorf("the store holds the key state %+v (held=%v, err=%v), want the digest of the secret the mint answered (D2135): without it the term after this one can never be renewed", state, held, err)
 	}
 	if _, held, _ := f.store.Subscription(context.Background(), "sub-acme.example"); !held {
-		t.Error("the answered purchase saved no subscription, want the state written: the merchant has nothing to send again")
+		t.Error("the purchase saved no subscription, want the state written: the merchant has nothing to send again")
 	}
 }
 
@@ -1512,46 +1469,43 @@ func TestTestModeEventsMintStagingKeysOnly(t *testing.T) {
 	}
 }
 
-// TestAPurchaseMailsTheKeyAndItsRenewalSecret: D2135 and §7.3 — the mail the
-// buyer receives is the only place the renewal secret is ever written down (the
-// store keeps its digest and never the secret), and that digest is the only
-// thing a renewal can be checked against (K2.3). A purchase that mailed the key
-// alone, or that left the store no digest, hands a paying customer a licence
-// that lapses at the end of its term with nothing either side can do about it —
-// and both failures are silent: the mint succeeds and the mail still carries a
-// key that works until it expires.
-func TestAPurchaseMailsTheKeyAndItsRenewalSecret(t *testing.T) {
+// TestThePurchaseNoticeCarriesTheLinkAndNoKey: F3 and D2182 — no key is ever
+// mailed, and the purchase notice is where that shows. There is no key at the
+// purchase to mail (D2196 mints it at the binding), and a key mailed to a buyer
+// who has bound nothing would be bound to no project, which every verifier
+// refuses (TN2). What the customer is told is where the licence is and where
+// the key is issued from.
+//
+// What is D2135's and the binding's is the pair the licence is renewed with:
+// the mint answers a secret, the key carries its digest, and the store keeps
+// that digest and never the secret (§7.3, K2.2). The notice carries neither
+// half — the only mail that carries them is `paidKeyMail`, which a binding
+// sends to `applicant=""` and so sends nobody (D2182).
+func TestThePurchaseNoticeCarriesTheLinkAndNoKey(t *testing.T) {
 	f := newFixture(t)
 	bought := f.purchase("evt-1", "acme.example", 5, 365)
 	minted := f.mintedKeys()[0]
 	claims := v1Verified(t, f, minted)
 
 	if got := len(f.mail.sent); got != 1 {
-		t.Fatalf("the purchase mailed %d message(s), want the one that carries the key", got)
+		t.Fatalf("the purchase mailed %d message(s), want the one notice that carries the portal's address", got)
 	}
 	sent := f.mail.sent[0]
-	if sent.To != buyerAddress("acme.example") || sent.Subject != keySubject {
-		t.Fatalf("the purchase mailed %+v, want the key to the buyer's own address", sent)
+	if sent.To != buyerAddress("acme.example") || sent.Subject != licenceSubject {
+		t.Fatalf("the purchase mailed %+v, want the licence notice to the buyer's own address", sent)
 	}
-	lines := strings.Split(strings.TrimRight(sent.Body, "\n"), "\n")
-	keyLine := -1
-	for i, line := range lines {
-		if strings.TrimSpace(line) == minted {
-			keyLine = i
-		}
+	if link := f.svc.portalLink(); !strings.Contains(sent.Body, link) {
+		t.Errorf("the notice is %q, want it to carry the portal's own address %q: the portal is where the key is bound and issued", sent.Body, link)
 	}
-	if keyLine < 0 {
-		t.Fatalf("the mail carries no line with the key %q, want the key text itself: %q", minted, sent.Body)
+	if strings.Contains(sent.Body, minted) {
+		t.Errorf("the notice carries the key %q, want no key at all: there is none at the purchase, and the binding's key is issued in the portal (D2196, F3)", minted)
 	}
-	if keyLine+1 >= len(lines) {
-		t.Fatalf("the mail ends on the key line, want the renewal secret below it (D2135): %q", sent.Body)
-	}
-	secret := strings.TrimSpace(lines[keyLine+1])
+	secret := f.secretOf(t, minted)
 	if secret == "" {
-		t.Fatalf("the line below the key is empty, want the renewal secret (D2135): %q", sent.Body)
+		t.Fatalf("the mint that issued %s answered no renewal secret, want the pair every v1 mint answers (D2135)", minted)
 	}
-	if got, want := claims.RenewalSecretHash, secretHash(secret); got != want {
-		t.Errorf("the key carries the renewal secret's hash %q, want the hash of the secret the mail carried, %q", got, want)
+	if strings.Contains(sent.Body, secret) {
+		t.Errorf("the notice carries the renewal secret, want neither half of the pair: a notice is not the mail a key arrives in")
 	}
 
 	// The store keeps that digest and never the secret: what a renewal is checked
@@ -1562,7 +1516,7 @@ func TestAPurchaseMailsTheKeyAndItsRenewalSecret(t *testing.T) {
 		t.Fatalf("the store holds no key state for %s (held=%v, err=%v), and without it nothing can serve a renewal", bought.KeyID, held, err)
 	}
 	if state.KeyID != bought.KeyID {
-		t.Errorf("the key state is kept for %q, want the key %q the purchase recorded", state.KeyID, bought.KeyID)
+		t.Errorf("the key state is kept for %q, want the key %q the binding recorded", state.KeyID, bought.KeyID)
 	}
 	if state.RenewalSecretHash != claims.RenewalSecretHash {
 		t.Errorf("the store holds the digest %q, want the one the key carries, %q: the two are the pair a renewal is checked against", state.RenewalSecretHash, claims.RenewalSecretHash)
@@ -1583,21 +1537,18 @@ func TestAPurchaseMailsTheKeyAndItsRenewalSecret(t *testing.T) {
 // what this test holds.
 //
 // The body is verified before it is read, and a refund is the event where that
-// matters most: an unsigned one accepted would let anyone who knows a key_id
-// revoke a customer's licence, from anywhere, with one POST.
+// matters most: an unsigned one accepted would let anyone who knows a
+// subscription id revoke a customer's licence, from anywhere, with one POST.
 func TestRefundRevokesTheKey(t *testing.T) {
 	f := newFixture(t)
 	refunded := f.purchase("evt-1", "acme.example", 5, 365)
 	other := f.purchase("evt-2", "widget.example", 3, 30)
 	signed, recorded := f.signer.calls, len(f.records())
 
-	body, err := json.Marshal(Event{
+	body := paddleBody(t, Event{
 		ID: "evt-3", Type: EventRefund, Mode: Live, OccurredAt: f.now,
 		Subscription: "sub-acme.example",
 	})
-	if err != nil {
-		t.Fatalf("encoding the event: %v", err)
-	}
 	for _, tc := range []struct {
 		name   string
 		header string
@@ -1671,13 +1622,18 @@ func TestRefundRevokesTheKey(t *testing.T) {
 		t.Errorf("the chargeback's entry is %+v, want %q at %s", charged, ReasonChargeback, chargedAt)
 	}
 
-	// And a refund that names no key is refused rather than written: an entry
+	// And there is no key id to name: Paddle's adjustment carries a transaction
+	// and a subscription and no key at all (F16), so the resolution is the
+	// subscription's — which is what the delivery above was. A refund for a
+	// subscription this portal never began is the case with no licence to resolve
+	// to: it is parked for operations (F15) and writes no entry. What the rule
+	// replaced was an entry keyed by the event's own word for a key, and an entry
 	// with no key_id answers for every key nobody named (K2.2).
-	if rec := f.event(Event{ID: "evt-5", Type: EventRefund, OccurredAt: f.now, Subscription: "sub-acme.example"}); rec.Code == http.StatusOK {
-		t.Error("a refund that names no key was answered 200, want a refusal: the merchant has to see the bug in the event it sends")
+	if rec := f.event(Event{ID: "evt-5", Type: EventRefund, OccurredAt: f.now, Subscription: "sub-nobody.example"}); rec.Code != http.StatusOK {
+		t.Errorf("a refund for a subscription nothing here sold was answered %d, want 200: it is parked for operations (F15) rather than refused", rec.Code)
 	}
 	if got := f.revocations(); len(got) != 2 {
-		t.Errorf("§8's list holds %d entry(ies) after the unnamed refund, want the two the merchant named", len(got))
+		t.Errorf("§8's list holds %d entry(ies) after a refund of a subscription this portal never began, want the two the merchant named", len(got))
 	}
 
 	// A refund older than the subscription's own instant lands anyway: §5.2's
@@ -1842,15 +1798,13 @@ func TestARefundRevokesEveryKeyOfTheLicence(t *testing.T) {
 }
 
 // TestARefundOfAKeyNobodySoldTouchesNoOther: the other side of matching a
-// licence by its subscription, and both halves of the subscription the walk
-// reads. Every key the licensor mints by hand — the admin page's, the mint
-// tool's, a trial's, an invoiced Enterprise key — writes no subscription, so an
-// empty one is not a licence: a walk that matched on it would withdraw every
-// unsold key in the store at the first refund of any one of them. And a refund
-// whose key the store does hold is read from that record rather than from the
-// event's own word for the subscription, or a refund of an unsold key would walk
-// into the licence the merchant named instead — the sold key here — and withdraw
-// the keys of a customer whose money was never returned.
+// licence by its subscription — the refund resolves to one through the
+// subscription it names (F16, D2147) and never through a key, because Paddle's
+// events carry no `key_id` at all (F16). Every key the licensor mints by hand — the
+// admin page's, the mint tool's, a trial's, an invoiced Enterprise key — writes
+// no subscription, so an empty one is not a licence: a walk that matched on it
+// would withdraw every unsold key in the store at the first refund of any one
+// subscription, and §8's list is what the customer's own job reads (D2147).
 func TestARefundOfAKeyNobodySoldTouchesNoOther(t *testing.T) {
 	f, _ := renewing(t)
 	sold := f.purchase("evt-0", "acme.example", 3, 30)
@@ -1860,16 +1814,16 @@ func TestARefundOfAKeyNobodySoldTouchesNoOther(t *testing.T) {
 	withoutASubscription(t, f, second)
 
 	f.event(Event{ID: "evt-1", Type: EventRefund, OccurredAt: f.now, Subscription: sold.Subscription})
-	if _, held, _ := f.store.Revocation(context.Background(), first); !held {
-		t.Errorf("the refund of %s wrote no entry, want the key it named withdrawn", first)
+	if _, held, _ := f.store.Revocation(context.Background(), sold.KeyID); !held {
+		t.Errorf("the refund of %s wrote no entry for %s, want the licence the subscription resolves to withdrawn", sold.Subscription, sold.KeyID)
 	}
-	for _, keyID := range []string{second, sold.KeyID} {
+	for _, keyID := range []string{first, second} {
 		if entry, held, _ := f.store.Revocation(context.Background(), keyID); held {
-			t.Errorf("the refund of the hand-minted key %s withdrew %s as well (%+v), want the key it named alone: its record names no subscription, and an empty one is not the licence the event named", first, keyID, entry)
+			t.Errorf("the refund of %s withdrew the hand-minted key %s as well (%+v), want the subscription's own licence alone: a key whose record names no subscription is not the licence the event names", sold.Subscription, keyID, entry)
 		}
 	}
 	if got := len(f.revocations()); got != 1 {
-		t.Errorf("§8's list holds %d entry(ies), want the one key the event named", got)
+		t.Errorf("§8's list holds %d entry(ies), want the one key of the refunded licence", got)
 	}
 }
 

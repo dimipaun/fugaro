@@ -977,6 +977,19 @@ func (f *fixture) purchase(id, domain string, seats, termDays int) Record {
 // that are about it).
 func (f *fixture) bind(organisation, subscription string) Record {
 	f.t.Helper()
+	if err := f.bindingAttempt(organisation, subscription); err != nil {
+		f.t.Fatalf("binding the licence of %s: %v", organisation, err)
+	}
+	records := f.records()
+	return records[len(records)-1]
+}
+
+// bindingAttempt binds a licence the way `bind` does and answers the binding's
+// own failure rather than failing the case with it: a case whose subject is a
+// binding that fails — a store that would not record the key it issued — has to
+// read that failure.
+func (f *fixture) bindingAttempt(organisation, subscription string) error {
+	f.t.Helper()
 	f.actsAsOwnerOf(organisation)
 	previous := probeInstallation
 	probeInstallation = projectInstallation{database: "https://%s.example", client: &http.Client{Transport: presentProject{}}}
@@ -985,11 +998,8 @@ func (f *fixture) bind(organisation, subscription string) Record {
 	if err != nil || !held {
 		f.t.Fatalf("the purchase of %s left no record of the subscription %s (held=%v, err=%v)", organisation, subscription, held, err)
 	}
-	if _, err := f.svc.bindEntitlement(context.Background(), f.signIn.caller, origin.EntitlementID, workspaceID); err != nil {
-		f.t.Fatalf("binding the licence %s to %s: %v", origin.EntitlementID, workspaceID, err)
-	}
-	records := f.records()
-	return records[len(records)-1]
+	_, err = f.svc.bindEntitlement(context.Background(), f.signIn.caller, origin.EntitlementID, workspaceID)
+	return err
 }
 
 // actsAsOwnerOf makes the fixture's caller the owner of the organisation named,
