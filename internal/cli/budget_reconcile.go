@@ -614,7 +614,7 @@ func reconcileLine(m budgetReconcileModel) string {
 		cellOneLine(clipRunes(m.Model, maxNameCellRunes)), money(microsOfUSD(m.ChargeUSD)),
 		reconcileMoney(microsOfUSD(m.ReportUSD)), reconcileBand(microsOfUSD(m.BandLoUSD), microsOfUSD(m.BandHiUSD)),
 		m.InputTokens, m.OutputTokens, m.CacheReadTokens, m.CacheWriteTokens,
-		m.Runs, m.RunsWithReport, strings.Join(m.ServiceTiers, ", "))
+		m.Runs, m.RunsWithReport, cellOneLine(strings.Join(m.ServiceTiers, ", ")))
 }
 
 // reconcileTotalLine is the table's own sum, so a reader can see the rows add

@@ -206,6 +206,36 @@ func TestBudgetReconcileByModel(t *testing.T) {
 	}
 }
 
+// TestBudgetReconcileTierCellIsOneLine: a service tier is a value the
+// provider's own response carried, which the run's record keeps as it came, so
+// the table's last cell holds text nothing here wrote. A newline in one would
+// forge a line of the reading's own output -- the row would end mid-cell and
+// what followed would read as a line of the table -- and an escape sequence
+// would reach the terminal and rewrite what is on it.
+func TestBudgetReconcileTierCellIsOneLine(t *testing.T) {
+	f := newCloudFixture(t)
+	reconcileRecord(t, f, "20261014-090000-aaaa", &runstore.Cost{
+		ModelUSD: 1.00, ModelBasis: runstore.BasisAPIList,
+		ModelBy:      map[string]float64{"vendor/model-x": 1.00},
+		ServiceTiers: []string{"prio\nrity", "flex\x1b[31m", "tier\ttab"},
+	})
+
+	out, errOut, err := execute(t, append([]string{"budget", "reconcile"}, append(reconcileWindowArgs(), "--repo", "acme/app")...)...)
+	if err != nil {
+		t.Fatalf("budget reconcile: %v (%s)", err, errOut)
+	}
+	if strings.Contains(out, "\x1b") {
+		t.Errorf("the table carries the escape sequence a tier name held:\n%q", out)
+	}
+	// The whole row is one line and the cell is one cell: the newline and the
+	// tab are marked, and the escape sequence goes the way every other value
+	// of that origin goes.
+	if got, want := strings.Join(reconcileTableRow(t, out, "vendor/model-x"), " "),
+		"vendor/model-x $1 - - 0 0 0 0 1 0 flex, prio?rity, tier?tab"; got != want {
+		t.Errorf("row = %q, want %q", got, want)
+	}
+}
+
 // TestBudgetReconcileOldRecordsMixed is the rule for a record written before
 // reported_by existed: its reported_usd is one figure for the whole run, so it
 // lands on the model's row when the run charged on exactly one, and under
