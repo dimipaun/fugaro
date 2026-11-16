@@ -41,10 +41,12 @@ package register
 // A renewal's two writes are made in the order `refresh` makes them — the new
 // secret version first, then the key — because that is the order that leaves a
 // pair an installation can recover from rather than one it cannot (see
-// licenceHalfWritten in licence.go). What the job adds is the other half of
-// that: a stored key whose hash matches no stored secret is a crash between the
-// two writes, so it proves itself with the version before the newest one and
-// the pair is completed rather than abandoned (licenceSecretVersions).
+// licenceHalfWritten in licence.go, and licenceJobHalfWritten for what this
+// file's own failure says about the state rather than what `refresh`'s says).
+// What the job adds is the other half of that: a stored key whose hash matches
+// no stored secret is a crash between the two writes, so it proves itself with
+// the version before the newest one and the pair is completed rather than
+// abandoned (licenceSecretVersions).
 
 import (
 	"bytes"
@@ -69,6 +71,7 @@ import (
 	"github.com/dimipaun/fugaro/ee/licence"
 	"github.com/dimipaun/fugaro/ee/licence/project"
 	fcli "github.com/dimipaun/fugaro/internal/cli"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -420,7 +423,7 @@ func licenceRenew(cmd *cobra.Command, o *licenceRenewOptions) error {
 	if err := store.Install(ctx, []byte(answer.Key)); err != nil {
 		if added {
 			return fcli.UserErr("%s. The project write failed with: %s",
-				licenceHalfWritten(lc, "run `fugaro licence set` with the key and the renewal secret this installation was issued, which is the bundle that last worked: the job proves itself with the version beside the newest one, so the pair it completes is the one the server already minted"),
+				licenceJobHalfWritten(lc, "run `fugaro licence set` with the key and the renewal secret this installation was issued, which is the bundle that last worked, before that window closes, so that the pair is completed by the run that follows, because past it the secret is spent and the successor needs a reissue from the licence server"),
 				licenceRedact(err.Error(), answer.Key, answer.RenewalSecret, string(proof)))
 		}
 		return licenceObjectErr(err, answer.Key)
@@ -432,6 +435,21 @@ func licenceRenew(cmd *cobra.Command, o *licenceRenewOptions) error {
 		fmt.Fprintln(errOut, "note: the licence server answered the key without a new renewal secret, so this installation keeps the one it holds, and the key names that secret's digest (D2200)")
 	}
 	return nil
+}
+
+// licenceJobHalfWritten is licenceHalfWritten's state reached by the job, and
+// what completes the pair is the run that follows: it proves itself with the
+// version beside the newest one (renewalProof) and so lands the pair the server
+// already minted. That is a promise with a deadline rather than a standing one.
+// The server honours the secret that earned the rotation for 24 hours only
+// (K2.3's handover, D2135), and the job runs once a day, so the run after this
+// one reaches /renew at or past the window's end and is refused
+// (licenceRenewRequest) — which is why the manual command is the remedy here
+// and not merely the quicker way, and why it is the person's to run inside that
+// window.
+func licenceJobHalfWritten(lc *localcfg.Config, remedy string) string {
+	return fmt.Sprintf("%s yet, and the next run of the job completes the pair by itself — it proves itself with the version beside the newest one and so lands the pair the server already minted — but only inside the licence server's 24-hour handover, which is how long the secret that earned the rotation still fetches it, and this job runs once a day, so the run that follows reaches /renew at or past the window's end: %s",
+		licencePairApart(lc), remedy)
 }
 
 // licenceManualRenewal is what the job says where it would have renewed: a

@@ -61,6 +61,7 @@ var forgeKindGoSites = map[string]string{
 	"internal/config/validate.go":              "config.Providers, the config-side list, and the per-provider identity checks — held to runner.jobProviderKinds by internal/cli's TestProviderKindsAgreeWithTheConfigsList",
 	"internal/credsvc/bitbucket.go":            "the credentials service's admission of a Bitbucket provider",
 	"internal/credsvc/bitbucketproxy.go":       "the proxied Bitbucket request's provider",
+	"internal/credsvc/buildtoken.go":           "the provider a build's credential is minted at, and which of the build route's two answers the call is served",
 	"internal/credsvc/github.go":               "the credentials service's admission of a GitHub provider",
 	"internal/credsvc/githubread.go":           "the credentials service's GitHub read mint",
 	"internal/gitprov/gitprov.go":              "KindForHost and KindForURL's host table",

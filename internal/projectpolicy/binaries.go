@@ -14,10 +14,13 @@ import (
 )
 
 // Binaries is the binaries block of a policy (D981–D983): the paths a run may
-// add a binary at, and how large one may be. It is the owner's grant on this
-// node and nowhere else — `fugaro.yaml` has no such key (D986), because that
-// file is in the checkout the run's own agent writes, and a key there would
-// let the coder admit the very payload the rule refuses.
+// add a binary at, and how large one may be. It is the owner's grant, read by
+// a run off this node and nowhere else — no job's environment carries it — and
+// stated in the owner's own local config from AR1 on (the node is where a run
+// reads it, and the publish is what carries it there). `fugaro.yaml` has no
+// such key (D986), because that file is in the checkout the run's own agent
+// writes, and a key there would let the coder admit the very payload the rule
+// refuses.
 //
 // The block is read as *data* and not as a decision: what a run does with it
 // (an added binary under an admitted pattern, within the cap, is committed
@@ -31,9 +34,16 @@ import (
 // reading the node would have to interpret. A written *empty* block is still a
 // written block: `{"binaries": {}}` is how an operator takes an admission away
 // on purpose (D987), and the pointer on Policy is what tells it from silence.
+//
+// The yaml tags spell the block the same way the json ones do, because the same
+// block is written in two documents from this release on (AR1): the node the
+// owner publishes and its own local config, which is its carrier. A member
+// named `maxbytes` in the file and `max_bytes` in the node would be two keys a
+// person has to keep in step by hand, and the file's own strict decode would
+// refuse the node's spelling.
 type Binaries struct {
-	Allow    []string `json:"allow,omitempty"`
-	MaxBytes int64    `json:"max_bytes,omitempty"`
+	Allow    []string `json:"allow,omitempty" yaml:"allow,omitempty"`
+	MaxBytes int64    `json:"max_bytes,omitempty" yaml:"max_bytes,omitempty"`
 }
 
 // DefaultBinariesMaxBytes is the cap an admitted binary is held to when the

@@ -838,7 +838,8 @@ func checkBaseWorkflow(p, root string, w Workflow) []Problem {
 
 // CheckWarnings are what Check finds that doesn't make the config wrong, for
 // fugaro validate to print as warnings: a generated image on the Fugaro base
-// with no mise config and no image.tools installs no language runtime.
+// with no mise config and no image.tools installs no language runtime, and a
+// repository-level secret is accepted and ignored (RepoSecretsWarnings, D2313).
 //
 // A workflow that names a catalog entry (image_name) is not such an image:
 // its job runs the catalog's, whose runtimes the repository does not install
@@ -856,7 +857,7 @@ func CheckWarnings(c *Config, root string) []Problem {
 			ps = append(ps, Problem{Path: "workflows." + showKey(name), Message: "no mise.toml, .tool-versions or image.tools: the image installs no language runtime (docs/base-image.md)"})
 		}
 	}
-	return ps
+	return append(ps, RepoSecretsWarnings(c)...)
 }
 
 // badUSD reports a dollar amount no limit may be: negative, NaN or infinite.

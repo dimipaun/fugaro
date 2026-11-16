@@ -49,8 +49,14 @@ func TestModelGradesSinceIsTheReleaseTheKeyShipsIn(t *testing.T) {
 	if modelGradesSince != "0.24.0" {
 		t.Errorf("modelGradesSince = %q: the model_grades key ships in CLI 0.24.0", modelGradesSince)
 	}
-	if rel, ok := projectpolicy.VersionRelease(projectpolicy.Version); !ok || rel != modelGradesSince {
-		t.Errorf("policy version %d arrived in %q, want %q: the node walk that carries it and the reader that knows the key are the same release", projectpolicy.Version, rel, modelGradesSince)
+	// The version E2 bumped for the key, named rather than read from
+	// projectpolicy.Version: AR1 has since moved that to 8 for a block of its
+	// own (the binaries carrier, 0.26.0), and what this test holds is the
+	// release the key's own node walk shipped in — which is not the release
+	// every later bump lands in.
+	const keyPolicyVersion = 7
+	if rel, ok := projectpolicy.VersionRelease(keyPolicyVersion); !ok || rel != modelGradesSince {
+		t.Errorf("policy version %d arrived in %q, want %q: the node walk that carries it and the reader that knows the key are the same release", keyPolicyVersion, rel, modelGradesSince)
 	}
 }
 
@@ -356,8 +362,8 @@ func TestValidateWarnsWhenTheProjectLayerSetsModelGrades(t *testing.T) {
 // CLAUDE.md's HARD RULE asks of every format task: an installation at the
 // previous policy version, in a checkout whose fugaro.yaml writes model_grades,
 // reaches this release with `fugaro update` alone — nothing else, and no second
-// command for the key or for the node. The node the fixture carries is version 6
-// (v6Node), the version the release before this one leaves behind, so the policy
+// command for the key or for the node. The node the fixture carries is version 7
+// (v7Node), the version the release before this one leaves behind, so the policy
 // stage has to carry it forward as well as move the rules generation, the base
 // image and the plugin.
 //
@@ -367,10 +373,10 @@ func TestValidateWarnsWhenTheProjectLayerSetsModelGrades(t *testing.T) {
 // point — a gate that refused here would make writing the key an operator step,
 // and `fugaro update` is the one command the user is told to run.
 func TestPolicyPreviousVersionConverges(t *testing.T) {
-	r := newConvergeRigYAML(t, v6Node(), refreshYAML+
+	r := newConvergeRigYAML(t, v7Node(), refreshYAML+
 		"model_grades:\n  strong: { model: anthropic/claude-sonnet-5.5, access: ai-gateway-main }\n")
-	if got := convergeNode(t, r).Version; got != 6 {
-		t.Fatalf("the fixture's node is version %d, want the release before this one's 6: this is not the installation the test is about", got)
+	if got := convergeNode(t, r).Version; got != 7 {
+		t.Fatalf("the fixture's node is version %d, want the release before this one's 7: this is not the installation the test is about", got)
 	}
 
 	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
@@ -394,7 +400,7 @@ func TestPolicyPreviousVersionConverges(t *testing.T) {
 // A gate that judged the config as the run found it would refuse here and turn
 // writing the key into an operator step.
 func TestPolicyConvergesFromABaseImageThatPredatesGrades(t *testing.T) {
-	r := newConvergeRigYAML(t, v6Node(), refreshYAML+
+	r := newConvergeRigYAML(t, v7Node(), refreshYAML+
 		"model_grades:\n  strong: { model: anthropic/claude-sonnet-5.5 }\n")
 	predateBaseImageTo(t, r, shiftRelease(t, modelGradesSince, -1))
 	if got, want := projectConfigOf(t, r).BaseImages["base"], pinnedRef("base", shiftRelease(t, modelGradesSince, -1)); got != want {

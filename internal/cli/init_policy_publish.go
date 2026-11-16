@@ -159,6 +159,21 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy) []policyDri
 	if lc.CloneURLs != nil {
 		add("clone_urls", projectpolicy.CloneURLs(lc.CloneURLsEffective(nil)), p.CloneURLs, false)
 	}
+	// The binaries block reaches a run off this node and nowhere else (D981,
+	// D983) — no job's environment carries it — and the local config is its
+	// carrier from this release on (AR1, D987), so a config that states one
+	// where the node carries another is exactly the gap this stage exists to
+	// close: without the comparison, the operator's own `binaries:` edit would
+	// reach no run until they ran the explicit publish, which is the second
+	// command the HARD RULE forbids. It is compared by the publisher's own keep
+	// rule (BinariesEffective), the clone_urls line's reason: a config that
+	// writes no block is not reported — nil would read as a difference against
+	// every node that carries a block, and the block is then deliberately the
+	// node's own (D987) — while a written block, the empty one that clears the
+	// list included, is the operator's edit and is reported like any other.
+	if lc.Binaries != nil {
+		add("binaries", lc.BinariesEffective(p.Binaries), p.Binaries, false)
+	}
 	// The triage switch reaches a run off this node too (D1854), so a config
 	// that states it where the node states the other answer is a difference a
 	// publish closes, and it is compared the bake switch's way: the node's value
@@ -470,7 +485,7 @@ func policyNodeForPublish(ctx context.Context, lc *localcfg.Config, old *project
 	if err := policyImageTokensRefusal(pol, lc.BaseImage(config.BaseKind)); err != nil {
 		return nil, nil, nil, err
 	}
-	body, err := policyNodeBytes(pol, base, exists, keepRouting, lc.CloneURLs == nil)
+	body, err := policyNodeBytes(pol, base, exists, keepRouting, lc.CloneURLs == nil, lc.Binaries == nil)
 	if err != nil {
 		return nil, nil, nil, err
 	}

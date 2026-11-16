@@ -79,6 +79,11 @@ const (
 	schedulerAudience = "https://api.fugaro.example"
 	sealerKeyName     = "projects/fugaro-example/locations/europe-west1/keyRings/portal/cryptoKeys/handover"
 	tenantsCollection = "orgs"
+	// termsVersion is the version of the terms the fixture's deployment serves
+	// and records at a sign-up (D2199). The owner has not published the wording
+	// itself, so a test names a version of its own, in the shape the terms will
+	// spell one.
+	termsVersion = "2026-10-27"
 )
 
 // buyerAddress is the address a merchant's payload carries for the buyer of a
@@ -375,19 +380,32 @@ func (d *docsSpy) Update(ctx context.Context, fn func(context.Context, Tx) error
 }
 
 // signInSpy is the portal's sign-in verifier in a test: the caller it answers
-// and every token it was handed, so a test reads what an area did with one.
+// and every token it was handed, so a test reads what an area did with one. The
+// tokens are taken under a lock because a case may put a burst of requests
+// through the handler at once (orgs_test.go's concurrent sign-ups).
 type signInSpy struct {
+	mu     sync.Mutex
 	caller Caller
 	err    error
 	tokens []string
 }
 
 func (s *signInSpy) Verify(_ context.Context, idToken string) (Caller, error) {
+	s.mu.Lock()
 	s.tokens = append(s.tokens, idToken)
+	s.mu.Unlock()
 	if s.err != nil {
 		return Caller{}, s.err
 	}
 	return s.caller, nil
+}
+
+// RequireSSO is the rule and not the spy: the fixture's seam applies P1.3's own
+// implementation (ssoRefuses), so a test that reads a refusal reads the rule a
+// deployment would apply. What the spy answers is the caller, and that is what a
+// test sets to be somebody else.
+func (s *signInSpy) RequireSSO(caller Caller, rule SSORule) error {
+	return ssoRefuses(signInOf(caller), rule)
 }
 
 // paddleSpy is the merchant of record in a test: what it answers and what it was
@@ -616,6 +634,7 @@ func newFixtureWith(t *testing.T, env Environment, edit func(*fixture)) *fixture
 		SchedulerAudience: schedulerAudience,
 		SealerKeyName:     sealerKeyName,
 		TenantsCollection: tenantsCollection,
+		TermsVersion:      termsVersion,
 	}
 	f.deps = &Deps{
 		Store:     f.store,

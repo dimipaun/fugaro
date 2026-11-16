@@ -408,10 +408,20 @@ var slipMethods = []string{"Create", "Slip", "Claim", "End"}
 // reaches the value (the marks shapes below excepted).
 var slipStoreTypes = []string{"RTDBStore", "SlipStore"}
 
-// markMethods are the two methods a file outside the service may call on a creds
+// markMethods are the methods a file outside the service may call on a creds
 // store: the marks read and the marks write, which is what `fugaro accounts`
-// does (C1.21). Every other method the store carries is the slip half's.
-var markMethods = []string{"Marks", "UpdateMark"}
+// does (C1.21), and the Bitbucket token status's own write, which is what
+// `fugaro creds set bitbucket-token--<name>` does (T11, R12: the add-time
+// check's answer — when it last passed and the identity it read — is recorded
+// where the proxy reads it, and this command is the only writer of it). Both
+// halves are the operator's own state and neither is a slip, which is what this
+// list is drawn along: the token status hangs off the same store and
+// UpdateTokenStatus writes its own node, never a slip's. Its READ is not here
+// yet, because nothing outside the service reads it: the listing that will
+// (`creds ls` and `doctor`, T10) adds TokenStatuses with itself, the way this
+// write added what it needs. Every other method the store carries is the slip
+// half's.
+var markMethods = []string{"Marks", "UpdateMark", "UpdateTokenStatus"}
 
 // servicePackage is the one package a file outside may hand a creds store to: the
 // service, which is the operator's CLI building the state the service serves
@@ -560,6 +570,16 @@ func TestBoundaryAllowsSlipsOnlyViaService(t *testing.T) {
 			name: "a store's mark updated through a local, which is not a slip",
 			src:  "package x\n\nimport \"github.com/dimipaun/fugaro/internal/creds\"\n\nfunc f() { st := &creds.RTDBStore{}; st.UpdateMark(ctx, \"n\", nil) }\n",
 			want: false,
+		},
+		{
+			name: "a store's token status written through a local, which is not a slip",
+			src:  "package x\n\nimport \"github.com/dimipaun/fugaro/internal/creds\"\n\nfunc f() { st := &creds.RTDBStore{}; st.UpdateTokenStatus(ctx, \"n\", nil) }\n",
+			want: false,
+		},
+		{
+			name: "a store's token status read through a local, which the list does not hold yet",
+			src:  "package x\n\nimport \"github.com/dimipaun/fugaro/internal/creds\"\n\nfunc f() { st := &creds.RTDBStore{}; st.TokenStatuses(ctx) }\n",
+			want: true,
 		},
 		{
 			name: "a store inferred by var and its marks read, which is not a slip",

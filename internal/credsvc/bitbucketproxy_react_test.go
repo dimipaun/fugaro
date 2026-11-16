@@ -13,8 +13,8 @@ package credsvc
 //
 // Every test here holds the service to the CONTRACT and not to the real store:
 // the one value answering the selection, the resolver and the status store is
-// the contract's own stub (bbtokens.Stub), which is the seam this task builds
-// against and what I1 replaces with the real store. The fake upstream is
+// tokenStub, which answers whatever a test sets and so leaves the route's own
+// behaviour the thing measured. The fake upstream is
 // bitbucketproxy_test.go's, so the two hosts, the rebuilt URL and the token a
 // call carries are the ones this route's own tests already pin.
 
@@ -48,15 +48,15 @@ func reactFetchPath() string {
 	return proxyPath(proxyGitPath("info/refs") + "?service=git-upload-pack")
 }
 
-// proxyReactSvc is the installation these tests are written against: the
-// contract's stub as the WHOLE store — its one value answers the selection (T8)
+// proxyReactSvc is the installation these tests are written against: tokenStub
+// as the WHOLE store — its one value answers the selection (T8)
 // and the two side handles T9's reactions are taken through — the bundle's
 // legacy entry with one named token beside it, and the fake upstream. The stub
 // selects the named token, so a test knows which token a reaction is about
 // without either value being written down.
-func proxyReactSvc(t *testing.T, mutate ...func(*svc, *Config)) (*svc, *proxyUpstream, *bbtokens.Stub, string) {
+func proxyReactSvc(t *testing.T, mutate ...func(*svc, *Config)) (*svc, *proxyUpstream, *tokenStub, string) {
 	t.Helper()
-	stub := &bbtokens.Stub{Selected: proxyNamedToken}
+	stub := &tokenStub{Selected: proxyNamedToken}
 	s, up, _, named := proxyTokensSvc(t, stub, mutate...)
 	return s, up, stub, named
 }
@@ -575,8 +575,9 @@ func TestProxyReactionWaitsForTheAuditLine(t *testing.T) {
 // working after the caller hangs up — that is the whole point of the test, and
 // it is the only test here where the caller goes away mid-call — so the mark it
 // writes and the count it appends land on the stub WHILE the test goroutine is
-// reading them. bbtokens.Stub guards neither its map nor its slice (stub.go):
-// it is a stub for calls a test makes one at a time, and it says so. A test that
+// reading them. tokenStub guards neither its map nor its slice
+// (tokenstub_test.go): it is a stub for calls a test makes one at a time, and
+// it says so. A test that
 // read them directly, as the others here do across a call that has already
 // returned, would be racing exactly the two writes it is waiting for — which CI
 // catches, because CI runs the package under -race.
@@ -588,7 +589,7 @@ func TestProxyReactionWaitsForTheAuditLine(t *testing.T) {
 // the one value the service holds (T8's seam): the service is wired with this
 // wrapper, and the test reads the mark off the stub inside it.
 type reactCtxStore struct {
-	*bbtokens.Stub
+	*tokenStub
 	mu sync.Mutex
 }
 
@@ -598,7 +599,7 @@ func (c *reactCtxStore) Read(ctx context.Context, name bbtokens.Name) (bbtokens.
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.Stub.Read(ctx, name)
+	return c.tokenStub.Read(ctx, name)
 }
 
 func (c *reactCtxStore) Write(ctx context.Context, name bbtokens.Name, st bbtokens.Status) error {
@@ -607,7 +608,7 @@ func (c *reactCtxStore) Write(ctx context.Context, name bbtokens.Name, st bbtoke
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.Stub.Write(ctx, name, st)
+	return c.tokenStub.Write(ctx, name, st)
 }
 
 func (c *reactCtxStore) CountRequest(ctx context.Context, name bbtokens.Name) error {
@@ -616,13 +617,13 @@ func (c *reactCtxStore) CountRequest(ctx context.Context, name bbtokens.Name) er
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.Stub.CountRequest(ctx, name)
+	return c.tokenStub.CountRequest(ctx, name)
 }
 
 func (c *reactCtxStore) Evict(canonical string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.Stub.Evict(canonical)
+	c.tokenStub.Evict(canonical)
 }
 
 // seed puts the status the store holds for a token beside the mark the
@@ -701,7 +702,7 @@ func TestProxyReactionSurvivesACallerThatHangsUp(t *testing.T) {
 		{"the caller stays", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			store := &reactCtxStore{Stub: &bbtokens.Stub{Selected: proxyNamedToken}}
+			store := &reactCtxStore{tokenStub: &tokenStub{Selected: proxyNamedToken}}
 			s, up, _, named := proxyTokensSvc(t, store)
 			store.seed(proxyNamedToken, bbtokens.Status{VerifiedAt: s.now, Identity: "uuid-ci", Count: 7})
 			ctx, cancel := context.WithCancel(context.Background())

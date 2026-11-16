@@ -1,6 +1,6 @@
 # Repository management: implementation plan
 
-**Status: a design. Nothing here is implemented, no task is approved, and each needs the owner's explicit go.** The plan is [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md), and every task is written to a **recommendation** (D2400–D2417) rather than to an answer: the owner has answered none of them yet, and a task whose recommendation the owner declines is rewritten before it is launched. **Where this plan and the reconciliation disagree, the reconciliation wins; where a task and the reconciliation disagree, the reconciliation wins.**
+**Status: a design. Nothing here is implemented yet; the owner approved all tasks on 2026-11-15, and RE6 (Check 620) stays the owner's own run, never launched by an agent.** The plan is [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md), and every task is written to the recommendation of each of D2400–D2417, and the owner answered all eighteen on 2026-11-15, each as recommended, so no task needs rewriting for an answer. The owner then approved every task, RE0–RE6. **Where this plan and the reconciliation disagree, the reconciliation wins; where a task and the reconciliation disagree, the reconciliation wins.**
 
 Slot: the release after the one in flight (§7). Number block: **D2400–D2429** (D2400–D2417 written, D2418–D2429 reserved) and **Checks 620–629** (620 written, 621–629 reserved) — [reconciliation.md](reconciliation.md) §5.
 
