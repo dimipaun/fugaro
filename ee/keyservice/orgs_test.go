@@ -216,15 +216,18 @@ func (f *fixture) signedUp(uid, email, name string) WireOrganisation {
 	return readAnswer[WireOrganisation](f, rec)
 }
 
-// seed writes one record into the fixture's store, which is how a case stands up
-// an organisation no route of this area creates.
+// seed writes one record into the store the service is reached over, which is
+// how a case stands up an organisation no route of this area creates. It is
+// Deps.Docs and not the spy behind it: a case that wires its own store behind
+// that seam (workspaces_test.go's one-store case) seeds into the store its
+// service will read.
 func (f *fixture) seed(collection, id string, record any) {
 	f.t.Helper()
 	doc, err := storedDoc(record)
 	if err != nil {
 		f.t.Fatalf("building the record %s/%s: %v", collection, id, err)
 	}
-	if err := f.docs.Put(context.Background(), collection, id, doc); err != nil {
+	if err := f.deps.Docs.Put(context.Background(), collection, id, doc); err != nil {
 		f.t.Fatalf("writing the record %s/%s: %v", collection, id, err)
 	}
 }
@@ -966,13 +969,15 @@ func TestOrgCreationIsRateLimited(t *testing.T) {
 
 // TestConcurrentSignUpsRespectTheDailyLimit: F35's limit under the one thing that
 // can break it — one account signing up from many places at once. The day's count
-// is a read of the account's memberships and a write of one more, and api.go's Tx
-// reads by id alone, so the count is taken outside the transaction and signUpMu is
-// what makes the two atomic; without it every sign-up of a burst counts the
-// records written before the burst and each writes one more, which is an account
-// holding as many organisations as it sent requests. The burst is widened at the
-// count itself (burstCountDocs), so the window this closes is the one the case
-// reads rather than the one the scheduler happened to leave open.
+// is a read of the account's memberships and a write of one more, and a query
+// inside the sign-up's transaction would make every other sign-up of the day a
+// conflict with it (orgs.go's recordReader), so the count is taken outside the
+// transaction and signUpMu is what makes the two atomic; without it every sign-up
+// of a burst counts the records written before the burst and each writes one
+// more, which is an account holding as many organisations as it sent requests.
+// The burst is widened at the count itself (burstCountDocs), so the window this
+// closes is the one the case reads rather than the one the scheduler happened to
+// leave open.
 func TestConcurrentSignUpsRespectTheDailyLimit(t *testing.T) {
 	const burst = 8
 	f := newFixture(t)

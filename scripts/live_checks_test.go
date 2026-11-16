@@ -156,6 +156,20 @@ import (
 // and the fake `git` and `gh` really delete a branch and really move a pull
 // request from OPEN to CLOSED, so the teardown's own read-backs are readings of
 // state that changed.
+// Check 601's fakes are a fake `gcloud` that serves a job's own describe in the
+// v1 shape a job really has -- spec.template.spec.template.spec, a secret as
+// valueSource.secretKeyRef, a volume's as secret.secretName -- with and without
+// a mounted secret and, for the case that pins it, in an execution's own shape
+// instead; a project's IAM policy; the review run's signature and record as
+// files the test writes; and the credentials service's own audit lines. A fake
+// `fugaro` whose `doctor --json` carries the census entry the review job and its
+// Claude account are read from, and a fake `curl` that mints a token sentinel
+// per account, records the account, the route and the body it was handed and the
+// authorization header of the `--config` file, and answers each route as a mode
+// says -- with the type that route's own refusal carries, so a case can say
+// which class a refusal was about (and that a body refusal, or a state the
+// service could not read, is not one), and that the token travelled through a
+// 0600 file and never into the check's output.
 // Check 211's fakes are a fake `fugaro`, a fake `gcloud` and a fake `belong`:
 // the fake `gcloud` serves the run's own objects at its own prefix in the runs
 // bucket out of the case's own directory and refuses every other bucket and
@@ -339,6 +353,7 @@ var liveCheckScripts = []struct {
 	{"check119.sh", "check119_test.sh"},
 	{"check57b.sh", "check57b_test.sh"},
 	{"check124.sh", "check124_test.sh"},
+	{"check-c39.sh", "check-c39_test.sh"},
 	{"check-380-no-prompt-update.sh", "check-380-no-prompt-update_test.sh"},
 	{"check-381-over-cap-build.sh", "check-381-over-cap-build_test.sh"},
 	{"check-382-agent-cannot-raise-a-cap.sh", "check-382-agent-cannot-raise-a-cap_test.sh"},

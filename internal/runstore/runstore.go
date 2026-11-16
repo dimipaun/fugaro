@@ -767,6 +767,57 @@ const (
 	TriageCauseNoAnswer = "the call answered nothing"
 )
 
+// TriageFailureClause is one failed triage round as one clause of the sentence
+// its readers write: which review round's judge bought no verdict, and what
+// became of the call that should have been one.
+//
+// It is here, beside the two causes that are the record's own vocabulary and
+// not internal/runner's or internal/cli's, because two readers say it — the
+// pull request's status section (internal/runner's triageFailureLine) and
+// `fugaro diagnose` (internal/cli's triageFlag) — and one cause read two ways is
+// the drift this exists to prevent. What it says is what the record knows and
+// no more: TriageCauseUnreadable is a judge that ran and whose answer the
+// reader refused, so the clause says the answer could not be read;
+// TriageCauseNoAnswer is no words at all, which "did not answer" says on its
+// own; anything else is the call's own words — an auth failure, an upstream
+// error, a stream cut before the answer — quoted after the colon. A failed
+// round carrying no cause at all — a record written before the field existed,
+// and the shape a hand-edited one has — is read with those two: the record says
+// the round bought no verdict and does not say which way, and "did not answer"
+// is the one claim the pair has in common.
+//
+// The round is named by its number and the level it belongs to, because the
+// number alone does not say which level's round it is: each level numbers its
+// own from 1 (D1847), so a run that reviewed at two levels and failed a round
+// at each would otherwise say "round 1" twice with nothing — in one line, and
+// in the stage table under it, which carries no level either — to say that one
+// is level 1's and the other level 2's. That pair is a description of the round
+// and not a key: a bounce runs the cheap loop again from its round 1 (D727), so
+// one run can fail "round 1 of level 1" twice, and the line then carries two
+// clauses that read alike. What tells those two apart is the round's own
+// ordinal, which the record keeps on the round and on the row that says the
+// same call failed (TriageRound.Ordinal, StageTiming.Ordinal) — a reader with
+// the record reads the rounds one by one, which `fugaro diagnose` prints. A
+// level outside the vocabulary (a hand-edited record) falls back to
+// the bare number, which is the most the record says.
+//
+// The cause reaches a markdown table cell in the runner and a terminal line in
+// the CLI, so a caller that has to escape or clip it does so before calling:
+// the clause is the record's own words and nothing else.
+func TriageFailureClause(level policy.Level, round int, cause string) string {
+	where := fmt.Sprintf("round %d", round)
+	if policy.KnownLevel(level) {
+		where = fmt.Sprintf("round %d of level %s", round, strings.TrimPrefix(string(level), "l"))
+	}
+	switch cause {
+	case TriageCauseUnreadable:
+		return fmt.Sprintf("the judge's answer for %s could not be read", where)
+	case TriageCauseNoAnswer, "":
+		return fmt.Sprintf("the judge did not answer for %s", where)
+	}
+	return fmt.Sprintf("the judge did not answer for %s: %s", where, cause)
+}
+
 // TriageRecord is what a run's triage decided (docs/post-review-triage, D1850):
 // one entry per round the stage ran, in the order it ran them, so a reader can
 // see how each finding was placed, by which model, and what a failed call left
@@ -788,7 +839,16 @@ type TriageRecord struct {
 // one verdict per finding the round read, with Total saying how many it read
 // where the list was cut.
 type TriageRound struct {
-	// Round is the review round this triage followed, at least 1.
+	// Ordinal is which of the run's triage rounds this is, from 1, counted by
+	// the run over every level and bounce: it is the round's own name for a
+	// reader pairing it with a stage row (StageTiming.Ordinal), and the only
+	// one that is unique, because Round and Level repeat — two levels both
+	// number a round 1 (D1847), and a bounce numbers a level's rounds from 1
+	// again (D727). Absent in records written before the field existed, so a
+	// reader must not read it as the run's first round.
+	Ordinal int `json:"ordinal,omitempty"`
+	// Round is the review round this triage followed, at least 1. It says which
+	// review round it judged and not which triage round it is: Ordinal is that.
 	Round int `json:"round"`
 	// Mode is the mode reached at this round (F14): the mode's persona is what
 	// the judge was asked from, and it is not necessarily the run's starting
@@ -1211,6 +1271,41 @@ type StageTiming struct {
 	// mixed one's two -- so a reader must not read the empty value as "no
 	// credential".
 	Credential string `json:"credential,omitempty"`
+	// Ordinal is which of the run's triage rounds this attempt served, from 1,
+	// counted by the run over every level and bounce: the triage judge's row
+	// carries it, the same value the round's own record keeps
+	// (TriageRound.Ordinal), and it is the only key that names one round -- one
+	// run records several rounds that agree on both the level and the review
+	// round, because a bounce runs the cheap loop again from its round 1 (D727).
+	// The report pairs a row with its round's failure on this and not by
+	// counting the rows back from the end: a stage's retried attempt records a
+	// row of its own, and position then marks one round's row with another's
+	// (D1846). A reader must pair on the value and not on a round's place in
+	// TriageRecord.Rounds, which NewTriage can shift by dropping a round it
+	// cannot read and by cutting the block at its bound.
+	//
+	// Absent for every stage that is not tied to a round and in records written
+	// before the field existed, so a reader must not read it as the run's first
+	// triage round.
+	Ordinal int `json:"ordinal,omitempty"`
+	// Round is the review round this attempt served, for a stage the run runs
+	// once per round: the triage judge's row carries the round it judged, the
+	// same number the round's own record keeps (TriageRound.Round). It says
+	// which review round a row belongs to and not which triage round it is --
+	// the number is the level's own, so two levels of one run both have a round
+	// 1 (D1847), and a bounce numbers a level's rounds from 1 again (D727).
+	// Ordinal is what the pairing is keyed on. Absent for every stage that is
+	// not tied to a round and in records written before the field existed, so a
+	// reader must not read it as round 0.
+	Round int `json:"round,omitempty"`
+	// Level is the review level the round above belongs to, for the stage above
+	// and only for it: the row carries the level whose round it judged, the same
+	// value the round's own record keeps (TriageRound.Level). Like Round it says
+	// which review round the row is and not which triage round, which is
+	// Ordinal's. Empty for every stage that is not tied to a round, which is the
+	// same set Round is absent for, and in records written before the field
+	// existed: an empty value is not level 1.
+	Level policy.Level `json:"level,omitempty"`
 	// ServedBy names the credential this stage's model calls ran on, the run's
 	// own included -- which is the case Credential's stated meaning excludes,
 	// and the reason this is a field of its own rather than a second value
