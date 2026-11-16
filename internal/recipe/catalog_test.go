@@ -158,9 +158,10 @@ func TestCatalogTroubleshootCarriesItsOutputsBlock(t *testing.T) {
 		t.Fatalf("max_files = %d, want the default %d", out.FileCount(), DefaultOutputFiles)
 	}
 	// The bounds a diagnosis runs under are the recipe's (D2407) and they are
-	// this package's: 8 turns and the $0.25 the tier's cap holds at the
-	// reviewer model's $20/M output rate.
-	if TroubleshootMaxTurns != 8 || TroubleshootReviewerMaxOutput != 12500 {
+	// this package's: 8 turns, and an output reservation that leaves the
+	// call's input side its own room inside the tier's $0.25 cap (10000 tokens
+	// is $0.20 of it at the reviewer model's $20/M output rate).
+	if TroubleshootMaxTurns != 8 || TroubleshootReviewerMaxOutput != 10000 {
 		t.Fatalf("bounds = %d turns, %d output tokens", TroubleshootMaxTurns, TroubleshootReviewerMaxOutput)
 	}
 	// The step is the whole run: no implement loop, no review, no render

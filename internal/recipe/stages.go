@@ -174,10 +174,16 @@ const (
 	// turns is enough for the reading and the answer.
 	TroubleshootMaxTurns = 8
 	// TroubleshootReviewerMaxOutput is the per-call output the stage's model
-	// may reserve: the $0.25 the tier's cap holds, at the reviewer model's
-	// $20/M output rate — the same arithmetic internal/runner's
-	// runDigestReviewerMaxOutput does for a report run's review at 32000.
-	TroubleshootReviewerMaxOutput int64 = 12500
+	// may reserve: 10000 tokens is $0.20 at the reviewer model's $20/M output
+	// rate, and the $0.05 that leaves inside D2407's $0.25 cap is the room the
+	// same call's input side needs, because the gateway bounds a call at its
+	// input plus its output (pricing.WorstCase, which adds the request
+	// overhead and the prompt's own tokens). A reservation holding the whole
+	// cap would halt every call of this stage at the ledger with nothing
+	// spent, which is the shape internal/runner's runDigestReviewerMaxOutput
+	// avoids by sitting below a report run's per-run cap rather than equal to
+	// it.
+	TroubleshootReviewerMaxOutput int64 = 10000
 )
 
 // UsesV07 reports whether r uses a key added in 0.7.0 (the image gate). It
