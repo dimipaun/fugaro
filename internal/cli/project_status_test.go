@@ -114,6 +114,47 @@ func TestReposStatusNamesTheEmptyCredentialAndItsFix(t *testing.T) {
 	}
 }
 
+// TestReposStatusListingReportsEveryRowEnrolled: with no repository named, the
+// document is a listing, and every row of it is enrolled — a row exists only
+// for a repository this machine's config holds or the published allow-list
+// admits — with a decided state.
+//
+// The pair is not decoration: D2411 reads enrolled=false with an empty state
+// sentence as "nothing enrolls it", so a listing that wrote the zero pair
+// would draw an enrolled repository as one nobody may run, and no error
+// anywhere would tell a screen it had been lied to. The second repository here
+// is admitted by the allow-list and held by no config on this machine, which
+// is the row the console reads as unconfigured rather than as unenrolled.
+//
+// Mutation (verified, run and restored): drop the Enrolled default of
+// reposStatusRepoOf — this test fails on every row of the listing, the
+// allow-listed one included.
+func TestReposStatusListingReportsEveryRowEnrolled(t *testing.T) {
+	f, _ := statusFixture(t)
+	viewCatalogNodeBase(t, f.db, []string{"github/acme/app", "github/acme/other"}, "")
+
+	out, _, _ := execute(t, "project", "repos", "status", "--json")
+	doc := statusDocOf(t, out)
+	admitted := false
+	for _, r := range doc.Repos {
+		if r.Canonical == "github/acme/other" {
+			admitted = true
+		}
+		if !r.Enrolled {
+			t.Errorf("%s is listed with rows and drawn as not enrolled, which is D2411's sentence for a repository nothing enrolls", r.Canonical)
+		}
+		if r.State != "" {
+			t.Errorf("%s's enrolment is %q, want a decided one: a row is drawn only for a repository a half of the enrolment knows", r.Canonical, r.State)
+		}
+		if len(r.Rows) != 9 {
+			t.Errorf("%s carries %d rows, want the nine", r.Canonical, len(r.Rows))
+		}
+	}
+	if !admitted {
+		t.Fatalf("the listing is %+v, want a row for github/acme/other, which the allow-list admits and no config here holds", doc.Repos)
+	}
+}
+
 // TestReposStatusEmptyContainerExitIsNonzero: the exit status of the empty
 // container is checksFail's own rule, not a flag — a row that blocks a launch
 // fails the command (D2412), and the warning rows around it never do.

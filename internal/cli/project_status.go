@@ -270,8 +270,17 @@ type reposStatusReads struct {
 }
 
 // reposStatusRepoOf builds one repository's answer.
+//
+// The default is the listing's answer, and it is Enrolled: a row exists only
+// for a repository a half of the enrolment knows (reposViewRowNames' two
+// sources), so every row of a listing is enrolled by construction and its state
+// is decided. D2411's reading of the pair — false with an empty state sentence
+// means "nothing enrolls it" — would otherwise be printed about repositories
+// this project does have, with no error anywhere, which is the one figure the
+// console must never draw about an enrolled repository. Only the answer for a
+// repository the caller NAMED can say anything else, and only about that one.
 func reposStatusRepoOf(ctx context.Context, lc *localcfg.Config, row reposViewRepo, reads *reposStatusReads) reposStatusRepo {
-	out := reposStatusRepo{Canonical: row.Canonical}
+	out := reposStatusRepo{Canonical: row.Canonical, Enrolled: true}
 	if n := reads.view.Named; n != nil && n.Canonical == row.Canonical {
 		out.Enrolled, out.State = n.Enrolled, n.State
 		// A repository the caller named that no half of the enrolment knows is
