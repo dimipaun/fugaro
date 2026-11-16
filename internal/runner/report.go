@@ -90,7 +90,7 @@ func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 	for _, n := range notes {
 		fmt.Fprintf(&b, "**Note:** %s\n\n", n)
 	}
-	b.WriteString(triageFailureLine(rec))
+	b.WriteString(triageStatusLines(rec))
 	b.WriteString(stageTable(rec))
 	if rec.Outcome == runstore.OutcomeArtifacts {
 		b.WriteString(artifactsSection(rec))
@@ -160,6 +160,16 @@ func stageTable(rec *runstore.Record) string {
 	return b.String()
 }
 
+// triageStatusLines are the lines the report carries above its stage table
+// about the triage rounds no judge weighed: one for a round whose call failed
+// (triageFailureLine) and one for a round the run did not ask at all
+// (triageSkipLine). They are one function because they are one reading of one
+// record's triage block, and the two writers of the report — a coding run's and
+// a review class run's — take both or neither.
+func triageStatusLines(rec *runstore.Record) string {
+	return triageFailureLine(rec) + triageSkipLine(rec)
+}
+
 // triageFailureLine is the one line the report carries above its stage table
 // when a triage round failed (D1846): which review rounds' calls failed and the
 // one-line cause the record kept for each, and what the fail-safe did — the
@@ -192,11 +202,49 @@ func triageFailureLine(rec *runstore.Record) string {
 	return fmt.Sprintf("**Triage:** the judge did not run for %s, so the fail-safe blocked every finding the mode's table blocks.\n\n", strings.Join(parts, "; "))
 }
 
+// triageSkipLine is triageFailureLine's other half: the one line the report
+// carries above its stage table when a triage round was not asked at all
+// (runstore.TriageRound.Skipped). The wording is the failure line's and not
+// its copy — "triage did not run for round N" is the fact a skip states, where
+// a failure's round really did run and answered nothing usable — and the cause
+// it carries is the record's own, so the reader is told what to do about it
+// (TriageCauseNoAccount names the two steps) beside what the fail-safe did.
+//
+// "" for a record carrying no skipped round, which is every record written
+// before the flag existed.
+func triageSkipLine(rec *runstore.Record) string {
+	if rec.Triage == nil {
+		return ""
+	}
+	var parts []string
+	for _, rnd := range rec.Triage.Rounds {
+		if !rnd.Skipped {
+			continue
+		}
+		part := fmt.Sprintf("triage did not run for round %d", rnd.Round)
+		if rnd.Cause != "" {
+			part += ": " + inlineText(rnd.Cause)
+		}
+		parts = append(parts, part)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("**Triage:** %s, so the fail-safe blocked every finding the mode's table blocks.\n\n", strings.Join(parts, "; "))
+}
+
+// triageSkippedMark is how a stage row says its triage round was not run: the
+// short form of the one skip cause the runner writes
+// (runstore.TriageCauseNoAccount), with the cause in full on the line above the
+// table. A row is a table cell and the cause is a sentence naming two steps.
+const triageSkippedMark = " (skipped: no account)"
+
 // triageRowMarks answers, for each row of rec.Stages, the mark that row carries
-// where its triage round failed: " (failed: <cause>)", or " (failed)" for a
-// round whose record kept no cause — one written before the field existed, and
-// the shape a hand-edited record has. "" for every other row, and for the rows
-// of a record that triaged nothing.
+// where its triage round failed or was skipped: " (failed: <cause>)", or
+// " (failed)" for a round whose record kept no cause — one written before the
+// field existed, and the shape a hand-edited record has — or triageSkippedMark
+// for a round the run did not ask. "" for every other row, and for the rows of
+// a record that triaged nothing.
 //
 // The rows and the rounds are paired from the end of both lists, which is the
 // direction the record's own order makes right: both are in the order the calls
@@ -221,14 +269,14 @@ func triageRowMarks(rec *runstore.Record) []string {
 	}
 	for k := 0; k < len(rows) && k < len(rec.Triage.Rounds); k++ {
 		row, rnd := rows[len(rows)-1-k], rec.Triage.Rounds[len(rec.Triage.Rounds)-1-k]
-		if !rnd.Failed {
-			continue
-		}
-		if rnd.Cause == "" {
+		switch {
+		case rnd.Skipped:
+			marks[row] = triageSkippedMark
+		case rnd.Failed && rnd.Cause == "":
 			marks[row] = " (failed)"
-			continue
+		case rnd.Failed:
+			marks[row] = " (failed: " + inlineText(rnd.Cause) + ")"
 		}
-		marks[row] = " (failed: " + inlineText(rnd.Cause) + ")"
 	}
 	return marks
 }

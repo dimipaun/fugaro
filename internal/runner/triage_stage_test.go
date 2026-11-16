@@ -864,3 +864,184 @@ func TestTriageCauseIsOneRedactedBoundedLine(t *testing.T) {
 		t.Errorf("the cause is %d runes, want it clipped to %d", got, runstore.MaxTriageLine)
 	}
 }
+
+// budgetedTriageCfg is the startup triage configuration of a run that has a
+// gateway: gwRolesConfig's priced models and the fixture's own switches, with
+// the triage stage on. The reviewer is on opus — a Claude model only Anthropic
+// serves — which is the shape the skip exists for: a run whose gateway holds no
+// Anthropic key can reach such a model through a stage account and through
+// nothing else (config.IsClaudeModel).
+func budgetedTriageCfg(t *testing.T, rounds int, extra string) string {
+	t.Helper()
+	cfg := gwRolesConfig(t)
+	if !strings.Contains(cfg, "  review_rounds: 2\n") {
+		t.Fatal("the configuration has no review_rounds line")
+	}
+	out := strings.Replace(cfg, "  review_rounds: 2\n", "  review_rounds: "+strconv.Itoa(rounds)+"\n"+extra, 1)
+	return triageOn(t, "rigor:\n  default: startup\n"+out)
+}
+
+// triageAccountNode is a published policy that names an account for the triage
+// stage's own key: rung 2 of the walk the stage's account comes from
+// (resolveMixedStages). The key is the operator's (the published node is the
+// runner's own copy of his project file), so a run reads it as the account the
+// stage is to be served by.
+func triageAccountNode(account string) string {
+	return fmt.Sprintf(`{"version":%d,"claude_account_stages":{"triage":%q}}`, projectpolicy.Version, account)
+}
+
+// TestTriageWithNoAccountAndNoKeyIsSkippedNotAsked: the call this round would
+// make is one the run already knows it cannot serve — the stage resolved to no
+// Claude account, its model is a Claude one no route claims, and the run is
+// the api-key one whose gateway holds no Anthropic key — so the stage is not
+// started at all (triageUnserved).
+//
+// Three things follow, and each is a place a reader looks:
+//
+//   - No judge call is made. The script's own step for it is not there because
+//     the scripted agent fails a call no step answers, which is what the run
+//     did before this change: on the installation this exists for, that call
+//     came back `Invalid API key` and no verdict, 119 rounds out of 120.
+//   - The record says so: the round is Skipped, is not Failed, and carries the
+//     one cause that names the fix (runstore.TriageCauseNoAccount). The
+//     fail-safe settles the round — every finding the mode's table blocks
+//     blocks — which is what makes the fix round that follows it the one it
+//     always was (D1846).
+//   - The pull request's status section and the run's log say it: the line
+//     above the table in the skip's own words, the stage row marked rather than
+//     showing a duration that reads as a judge that ran, and an ERROR naming
+//     the cause.
+func TestTriageWithNoAccountAndNoKeyIsSkippedNotAsked(t *testing.T) {
+	var logs bytes.Buffer
+	g := newGW(t, budgetedTriageCfg(t, 2, ""), "enforce", "50", out4k())
+	// The run's gateway holds the provider key and no Anthropic one: the
+	// upstream an unclaimed model reaches is the one with nothing behind it
+	// (gatewayUpstream reads this variable and internal/gateway refuses the
+	// call on it).
+	g.deps.Env = filterEnv(g.deps.Env, "ANTHROPIC_API_KEY")
+	g.deps.Log = runner.NewLogger(&logs)
+	b := attachBackend(t, g, "enforce")
+	// No step for the judge: a call the run does make has nothing to answer it,
+	// and the scripted agent fails on it.
+	rec, err := b.run(t,
+		implement("feature"),
+		reviewScored("changes", blockingFinding()),
+		fixStep,
+		review("ship", 0),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, want the run the skipped judge did not end", rec)
+	}
+	if calls := triageCalls(b.agent.calls); len(calls) != 0 {
+		t.Fatalf("the fake claude was asked %d triage questions, want none: the call is the one the run cannot serve", len(calls))
+	}
+	tr := rec.Triage
+	if tr == nil || len(tr.Rounds) != 2 {
+		t.Fatalf("the record's triage block = %+v, want one round per review round", tr)
+	}
+	for _, rnd := range tr.Rounds {
+		if !rnd.Skipped || rnd.Failed {
+			t.Errorf("the round = %+v, want it skipped and not failed", rnd)
+		}
+		if rnd.Cause != runstore.TriageCauseNoAccount {
+			t.Errorf("the round's cause = %q, want %q", rnd.Cause, runstore.TriageCauseNoAccount)
+		}
+	}
+	first := tr.Rounds[0]
+	if len(first.Entries) != 1 {
+		t.Fatalf("the skipped round's entries = %+v, want the fail-safe's placement of the round's finding", first.Entries)
+	}
+	if e := first.Entries[0]; e.Verdict != runstore.VerdictBlock || e.Source != runstore.TriageSourceFailSafe {
+		t.Errorf("the skipped round's entry = %+v, want the fail-safe's block and not a judge's placement", e)
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review", "triage", "fix", "review", "triage") {
+		t.Fatalf("stages = %v, want the skipped rounds recorded as the rows they stand in for", got)
+	}
+	var entry map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+		var e map[string]any
+		if json.Unmarshal([]byte(line), &e) != nil {
+			continue
+		}
+		if msg, _ := e["message"].(string); strings.Contains(msg, "triage round was skipped") {
+			entry = e
+			break
+		}
+	}
+	if entry == nil {
+		t.Fatalf("the run's log carries no line about the skipped round:\n%s", logs.String())
+	}
+	if entry["severity"] != "ERROR" || entry["cause"] != runstore.TriageCauseNoAccount {
+		t.Errorf("the run's log line about the round = %v, want an ERROR naming the cause", entry)
+	}
+	got := runner.Report(rec, "runs/acme-app/"+rec.RunID+"/", nil)
+	// The report is markdown, so the cause's own underscores are escaped in it
+	// (inlineText): the two steps the cause names are the part a reader must
+	// see intact, and the escape is what keeps the sentence from reading as
+	// emphasis.
+	escaped := strings.ReplaceAll(runstore.TriageCauseNoAccount, "_", `\_`)
+	for _, want := range []string{
+		"**Triage:** triage did not run for round 1: " + escaped + "; triage did not run for round 2: " + escaped + ", so the fail-safe blocked every finding the mode's table blocks.",
+		"| triage (skipped: no account) |",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the report lacks %q:\n%s", want, got)
+		}
+	}
+	if n := strings.Count(got, "| triage (skipped: no account)"); n != 2 {
+		t.Errorf("the report has %d skipped triage rows, want the run's two rounds", n)
+	}
+}
+
+// TestTriageWithAnAccountStillCalls: the skip is the account's absence and
+// nothing else. A published node that names the account for the triage stage's
+// own key gives the stage one, the run holds the token for it, and the judge is
+// asked exactly as it was before the skip existed — the same two calls, the
+// same answer read, and a round with neither flag. The mutation it fails on is
+// a skip keyed on the stage's model or on the gateway's key alone: the account
+// is what serves the call, and the gateway never sees it.
+func TestTriageWithAnAccountStillCalls(t *testing.T) {
+	g := newGW(t, budgetedTriageCfg(t, 2, ""), "enforce", "50", out4k())
+	g.deps.Env = append(filterEnv(g.deps.Env, "CLAUDE_CODE_OAUTH_TOKEN"), "CLAUDE_CODE_OAUTH_TOKEN="+accountToken)
+	b := publishPolicy(t, g, triageAccountNode("acme-overflow"))
+	rec, err := b.run(t,
+		implement("feature"),
+		reviewScored("changes", blockingFinding()),
+		// `block`, so the round's finding is the fix round's work and the loop
+		// buys the second review: a deferral of every finding the round names
+		// ends the loop there (T-TR7b), and this case is about the account and
+		// not about that rule.
+		triageStep("block"),
+		fixStep,
+		review("ship", 0),
+		triageStep("defer"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls := triageCalls(b.agent.calls); len(calls) != 2 {
+		t.Fatalf("the fake claude was asked %d triage questions, want both rounds: the account serves the stage", len(calls))
+	}
+	tr := rec.Triage
+	if tr == nil || len(tr.Rounds) != 2 {
+		t.Fatalf("the record's triage block = %+v, want one round per review round", tr)
+	}
+	for _, rnd := range tr.Rounds {
+		if rnd.Skipped || rnd.Failed {
+			t.Errorf("the round = %+v, want an answered round", rnd)
+		}
+		if rnd.Account != "acme-overflow" {
+			t.Errorf("the round's account = %q, want the account the node named", rnd.Account)
+		}
+	}
+	if e := tr.Rounds[0].Entries[0]; e.Source != runstore.TriageSourceAgent {
+		t.Errorf("the answered round's entry = %+v, want the judge's own placement", e)
+	}
+	got := runner.Report(rec, "runs/acme-app/"+rec.RunID+"/", nil)
+	if strings.Contains(got, "skipped") {
+		t.Errorf("the report calls a served round skipped:\n%s", got)
+	}
+}

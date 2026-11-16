@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/redact"
 	"github.com/dimipaun/fugaro/internal/rigor"
@@ -94,6 +95,58 @@ func (r *run) triageOn() bool {
 		return false
 	}
 	return r.baseCfg.Agent.TriageOn(r.reachedRigor())
+}
+
+// triageUnserved reports whether the call this round would make is one the run
+// already knows it cannot serve, so the round is skipped rather than asked
+// (runstore.TriageRound.Skipped). Every fact it reads is the one the call path
+// itself reads, and none of them is a guess:
+//
+//   - The stage resolved to no Claude account (stageAccount), which for this
+//     run's shape means the published policy names none for it — its own
+//     claude_account_stages key, spelled and held back
+//     (config.AccountStageHeldBack), or the project's default_claude_account
+//     (resolveMixedStages).
+//   - The run's model path is the gateway's own api-key credential
+//     (servedAuth, gatewayOn): a switched repository's upstream is the
+//     credentials service and a review class run's is cascade, and both hold a
+//     credential this run does not.
+//   - The stage's model is a Claude one (config.IsClaudeModel) that no
+//     provider route claims (config.ProviderFor, the same map the gateway's
+//     own routes are built from, providers.go's gatewayRoutes). Such a call is
+//     the one the gateway sends to the Anthropic upstream.
+//   - This run's environment holds no Anthropic key: envLookup of the very
+//     variable gatewayUpstream reads the upstream's APIKey out of, which is
+//     the condition internal/gateway refuses such a call on (forward.go's
+//     missingAnthropicKey).
+//
+// All four together are the shape of an installation whose coder is on a
+// provider route: one of its runs buys a Claude model the gateway has no key
+// behind, and the endpoint answers `Invalid API key` — a *successful* result
+// that carries no verdict, so the round failed every time it ran. The skip
+// stops the doomed call; what the round decides is unchanged, because the
+// fail-safe settles it exactly as it settles a failure (D1846).
+//
+// The two cases this deliberately does not cover are outside the clause: with
+// the gateway off every call goes straight to Anthropic on the run's own key,
+// which agent.BuildEnv refuses the run over when it is missing rather than
+// handing the agent a doomed one; and a stage the run's own account serves
+// goes to Anthropic on that account's token, where the run's key is nothing.
+func (r *run) triageUnserved() bool {
+	if r.stageAccount(stageTriage) != "" {
+		return false
+	}
+	if !r.gatewayOn() || r.servedAuth() != "api-key" {
+		return false
+	}
+	model := r.stageModel(stageTriage)
+	if !config.IsClaudeModel(model) {
+		return false
+	}
+	if _, _, onRoute := config.ProviderFor(r.modelProviders(), model); onRoute {
+		return false
+	}
+	return envLookup(r.d.Env, "ANTHROPIC_API_KEY") == ""
 }
 
 // triageOutcome is what one triage round settled, as the loops read it: the
@@ -201,13 +254,28 @@ func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v 
 	// the empty setting sources take away (F25). A failure to make it is not
 	// worth a model call with the checkout as its cwd, so the round is recorded
 	// as failed.
+	// A round whose call the run knows it cannot serve is skipped instead of
+	// asked (triageUnserved): the call is not made, the round says so with the
+	// one cause that names the fix, and the fail-safe settles it exactly as it
+	// settles a failure — every finding the mode's table blocks blocks, so the
+	// loop and the fixer are handed what they were handed before (D1846).
+	// Nothing is bought by asking: on the installation this exists for, every
+	// round that made the call came back `Invalid API key` and no verdict.
+	if r.triageUnserved() {
+		r.d.Log.Error("the triage round was skipped: no account serves the stage and the run's gateway holds no Anthropic key for its model, so every finding the mode's table blocks blocks",
+			"round", round, "cause", runstore.TriageCauseNoAccount)
+		out := triage.Apply(mode, in, triage.Verdict{}, false)
+		r.recordTriage(ctx, round, level, v, out, triageSkipped, runstore.TriageCauseNoAccount)
+		return triageOutcomeOf(v, out), true
+	}
+
 	dir, err := os.MkdirTemp("", "fugaro-triage-")
 	if err != nil {
 		cause := r.triageCause(agent.Result{}, err)
 		r.d.Log.Error("the triage stage's own working directory could not be made; the round is recorded as failed and every finding the mode's table blocks blocks",
 			"round", round, "cause", cause)
 		out := triage.Apply(mode, in, triage.Verdict{}, false)
-		r.recordTriage(ctx, round, level, v, out, false, cause)
+		r.recordTriage(ctx, round, level, v, out, triageFailed, cause)
 		return triageOutcomeOf(v, out), true
 	}
 	defer os.RemoveAll(dir)
@@ -254,9 +322,32 @@ func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v 
 			"round", round, "cause", cause)
 	}
 	out := triage.Apply(mode, in, verdict, parsed)
-	r.recordTriage(ctx, round, level, v, out, parsed, cause)
+	if parsed {
+		r.recordTriage(ctx, round, level, v, out, triageAnswered, "")
+	} else {
+		r.recordTriage(ctx, round, level, v, out, triageFailed, cause)
+	}
 	return triageOutcomeOf(v, out), true
 }
+
+// triageCall is how one round's call went, and it is what the record's round
+// is written from: a round that was answered carries neither flag, one whose
+// call failed or was unreadable carries Failed, and one the run did not make
+// carries Skipped. The two are told apart because they are different facts a
+// reader acts on differently — a credential an installation must fix, against
+// a stage the policy does not serve — and only the record's own members can
+// carry that difference (runstore.TriageRound).
+type triageCall int
+
+const (
+	// triageAnswered is a round the reader took a verdict from.
+	triageAnswered triageCall = iota
+	// triageFailed is a round whose call failed or whose answer the reader
+	// refused.
+	triageFailed
+	// triageSkipped is a round no call was made for (triageUnserved).
+	triageSkipped
+)
 
 // recordTriage writes one round to the record's triage block and folds its
 // deferrals into the run's own. The two are the record's two halves of the same
@@ -271,13 +362,23 @@ func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v 
 // the same index the brief numbered and Apply placed on (D1850).
 //
 // A round is recorded whether or not the call answered, which is what makes a
-// failed one visible rather than absent (runstore.TriageRound.Failed): the
+// failed or skipped one visible rather than absent (runstore.TriageRound): the
 // outcome it carries is Apply's fail-safe one, every finding the table blocks
 // blocking, and cause is the one line saying why it has no verdict — the call's
-// own words, or the reader's own `unreadable verdict` (TriageRound.Cause). read
-// and cause are one fact and are passed together: a round that was read carries
-// no cause, and NewTriage drops a cause from a round that is not failed.
-func (r *run) recordTriage(ctx context.Context, round int, level policy.Level, v Verdict, out triage.Outcome, read bool, cause string) {
+// own words, or the reader's own `unreadable verdict` (TriageRound.Cause). call
+// and cause are one fact and are passed together: a round that was answered
+// carries no cause, and NewTriage drops a cause from a round that neither
+// failed nor was skipped.
+//
+// A skipped round is given the stage row it would have had (no duration and no
+// call count — the run spent nothing on it), because the record's rows and its
+// rounds are read as a pair: the pull request's table marks a row from the
+// round behind it (report.go's triageRowMarks), and a round with no row would
+// move every mark behind it onto its neighbour's.
+func (r *run) recordTriage(ctx context.Context, round int, level policy.Level, v Verdict, out triage.Outcome, call triageCall, cause string) {
+	if call == triageSkipped {
+		r.rec.Stages = append(r.rec.Stages, runstore.StageTiming{Name: stageTriage, StartedAt: r.d.Now().UTC()})
+	}
 	placed := make(map[int]triage.Placed, len(out.Blocking)+len(out.Deferred))
 	for _, p := range out.Blocking {
 		placed[p.Index] = p
@@ -309,11 +410,12 @@ func (r *run) recordTriage(ctx context.Context, round int, level policy.Level, v
 		Level:   level,
 		Account: r.rec.StageAccounts[stageTriage],
 		Model:   r.stageModel(stageTriage),
-		Failed:  !read,
-		// The cause belongs to the failure and to nothing else, and a round
-		// that was read carries the empty string the reader answered with:
-		// NewTriage drops a cause from a round whose flag is off, so the two
-		// cannot disagree in the record either.
+		Failed:  call == triageFailed,
+		Skipped: call == triageSkipped,
+		// The cause belongs to a failed or a skipped round and to nothing
+		// else, and a round that was answered carries the empty string the
+		// reader answered with: NewTriage drops a cause from a round whose
+		// flags are both off, so the two cannot disagree in the record either.
 		Cause:   cause,
 		Entries: entries,
 	})

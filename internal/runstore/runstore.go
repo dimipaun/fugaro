@@ -746,13 +746,13 @@ const (
 	TriageSourceCap TriageSource = "cap"
 )
 
-// The two causes a failed triage round records that are not a service's own
-// words (TriageRound.Cause). They are the record's vocabulary and not
+// The causes a triage round records that are not a service's own words
+// (TriageRound.Cause). They are the record's vocabulary and not
 // internal/triage's or internal/runner's, because every reader of the record
 // has to be able to tell a call that never got through from a judge whose
 // answer was unusable without guessing at a service's phrasing: the first is
 // what an auth or upstream failure looks like once the service's text is
-// clipped to its first line, and this pair is what the run itself knows.
+// clipped to its first line, and this triple is what the run itself knows.
 const (
 	// TriageCauseUnreadable is a round whose call answered something shaped
 	// like a verdict that internal/triage's reader refused: a word outside the
@@ -765,6 +765,22 @@ const (
 	// its first token. It is the cause of last resort, so a failed round says
 	// something rather than carrying an empty line beside Failed.
 	TriageCauseNoAnswer = "the call answered nothing"
+	// TriageCauseNoAccount is the one cause a *skipped* round carries rather
+	// than a failed one (TriageRound.Skipped): the stage resolved to no Claude
+	// account and the model it would run is one only Anthropic serves, so the
+	// run's gateway would refuse the call for the key it does not hold. The
+	// call is not made — a round that made it failed every time it ran, which
+	// is the whole reason the skip exists — and the fail-safe stands in for it
+	// exactly as it does for a failure: every finding the mode's table blocks
+	// blocks (D1846), so no decision changes.
+	//
+	// It names the fix the reader can act on and not the diagnosis alone: the
+	// account reaches the stage only through the policy's stage key or its
+	// default, and the published node holds the triage key back until the
+	// release after the one that added the stage
+	// (config.AccountStageHeldBack), so the operator's two steps are the ones
+	// written here.
+	TriageCauseNoAccount = "no account for triage: the published policy names none (set default_claude_account, then run fugaro update)"
 )
 
 // TriageRecord is what a run's triage decided (docs/post-review-triage, D1850):
@@ -807,13 +823,28 @@ type TriageRound struct {
 	// the flag is what makes that visible rather than a round that looks like
 	// any other.
 	Failed bool `json:"failed,omitempty"`
-	// Cause is why a failed round failed, one line, and empty for a round that
-	// did not. It is the call's own first line where the call answered nothing
-	// a verdict could be read from — an auth or upstream failure, a stream cut
-	// before the answer — and TriageCauseUnreadable where it answered
-	// something shaped like a verdict that the reader refused. Clipped to
-	// MaxTriageLine and dropped for a round that is not failed (NewTriage),
-	// and redacted with both passes where it is written (internal/runner): a
+	// Skipped marks a round no call was made for at all: the stage resolved to
+	// no Claude account and the model it would run is one only Anthropic
+	// serves, so the run's gateway would refuse the call for the key it does
+	// not hold. It is not Failed — nothing failed, the run chose not to ask —
+	// and it is not an answered round either, which is why it is a flag of its
+	// own: a reader telling "the judge ran and its answer was unusable" from
+	// "the judge was never asked" has to read the two off different members,
+	// and the fail-safe stands in for both (TriageCauseNoAccount).
+	//
+	// It is the field a record written before it existed carries false on, and
+	// that reading is the one such a record always had: those rounds made the
+	// doomed call and answered with a failure, which is Failed's own fact.
+	Skipped bool `json:"skipped,omitempty"`
+	// Cause is why a round failed or was skipped, one line, and empty for a
+	// round that neither. It is the call's own first line where the call
+	// answered nothing a verdict could be read from — an auth or upstream
+	// failure, a stream cut before the answer — and TriageCauseUnreadable
+	// where it answered something shaped like a verdict that the reader
+	// refused, and TriageCauseNoAccount for a skipped round, which is the one
+	// cause no call of the run ever wrote. Clipped to MaxTriageLine and
+	// dropped for a round that neither failed nor was skipped (NewTriage), and
+	// redacted with both passes where it is written (internal/runner): a
 	// service's auth error quotes the credential it refused, and this line
 	// reaches the pull request's body.
 	Cause string `json:"cause,omitempty"`
@@ -893,10 +924,11 @@ func NewTriage(rounds []TriageRound) *TriageRecord {
 			entries = append(entries, e)
 		}
 		r.Entries = entries
-		// The cause belongs to a failed round and to no other: a round that
-		// answered a verdict did not fail, and a record whose cause outlived
-		// its flag would read as a failure beside a flag that says otherwise.
-		if !r.Failed {
+		// The cause belongs to a round that failed or was skipped and to no
+		// other: a round that answered a verdict did neither, and a record
+		// whose cause outlived its flag would read as a failure beside a flag
+		// that says otherwise.
+		if !r.Failed && !r.Skipped {
 			r.Cause = ""
 		}
 		r.Cause = clipRunes(r.Cause, MaxTriageLine)
