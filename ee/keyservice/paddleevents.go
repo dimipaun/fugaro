@@ -81,6 +81,14 @@ const (
 	paddleActionChargeback = "chargeback"
 )
 
+// paddleStatusApproved is Paddle's own word for an adjustment whose money has
+// gone back. An adjustment is reported before it is approved — `pending`, and a
+// `rejected` one never moves anything — and a withdrawal is not undone (the
+// revocation list refuses to change an entry it holds, D2131), so only this
+// status withdraws a licence: a licence revoked for money that never moved is a
+// customer whose key is dead for a refund that did not happen.
+const paddleStatusApproved = "approved"
+
 // paddleNotification is one Paddle Billing notification, decoded leniently:
 // every field is optional, an unknown one is ignored, and the fields this
 // service reads are read by their Paddle names.
@@ -323,6 +331,13 @@ func canonicalEvent(n paddleNotification, mode Mode) (Event, bool) {
 	case paddleSubscriptionCanceled:
 		e.Type = EventCancellation
 	case paddleAdjustmentCreated, paddleAdjustmentUpdated:
+		if n.Data.Status != paddleStatusApproved {
+			// Paddle reports an adjustment before it decides it, so a `pending`
+			// or a `rejected` one is a notification this service stores and does
+			// not act on: nothing has gone back, and a withdrawal made now is one
+			// nothing can undo.
+			return Event{}, false
+		}
 		switch n.Data.Action {
 		case paddleActionRefund:
 			e.Type = EventRefund
@@ -351,6 +366,9 @@ func ledgerKind(n paddleNotification) (string, bool) {
 		}
 		return "purchase", true
 	case paddleAdjustmentCreated, paddleAdjustmentUpdated:
+		if n.Data.Status != paddleStatusApproved {
+			return "", false
+		}
 		switch n.Data.Action {
 		case paddleActionRefund:
 			return "refund", true

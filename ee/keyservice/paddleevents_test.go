@@ -137,6 +137,11 @@ func notificationBody(t *testing.T, e Event, origin string) []byte {
 	}
 	if e.Type == EventRefund || e.Type == EventChargeback {
 		data["action"] = e.Type
+		// Paddle states an adjustment's status beside its action, and only the
+		// one whose money has gone back is acted on, so the body this fixture
+		// posts for a withdrawal carries it: a case about another status writes
+		// its own (`unapprovedAdjustmentBody`).
+		data["status"] = paddleStatusApproved
 	}
 	if e.TermDays > 0 {
 		data["billing_period"] = map[string]any{
@@ -150,6 +155,26 @@ func notificationBody(t *testing.T, e Event, origin string) []byte {
 		"occurred_at": e.OccurredAt.UTC().Format(time.RFC3339),
 		"data":        data,
 	}
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("encoding the notification %s: %v", e.ID, err)
+	}
+	return encoded
+}
+
+// unapprovedAdjustmentBody is one adjustment with a status of its own: the same
+// body Paddle posts for a refund, as it posts it before the money has moved.
+func unapprovedAdjustmentBody(t *testing.T, e Event, status string) []byte {
+	t.Helper()
+	var body map[string]any
+	if err := json.Unmarshal(notificationBody(t, e, ""), &body); err != nil {
+		t.Fatalf("decoding the notification %s: %v", e.ID, err)
+	}
+	data, ok := body["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("the notification %s carries no payload", e.ID)
+	}
+	data["status"] = status
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		t.Fatalf("encoding the notification %s: %v", e.ID, err)
@@ -567,6 +592,48 @@ func TestRefundFindsItsEntitlement(t *testing.T) {
 	after, held, _ := f.store.Revocation(context.Background(), bought.KeyID)
 	if !held || after != entry {
 		t.Errorf("the licence's entry is %+v (held=%v), want the first delivery's %+v", after, held, entry)
+	}
+}
+
+// TestAnUnapprovedAdjustmentWithdrawsNothing: Paddle reports an adjustment
+// before it decides it — one arrives `pending`, and a `rejected` one never moves
+// anything — and only the status that says the money went back is a withdrawal.
+// Withdrawing on any other status kills a customer's key for a refund that did
+// not happen, and nothing undoes it, because the revocation list refuses to
+// change an entry it holds (D2131). The body is stored as F16 requires either
+// way, so operations can see it.
+func TestAnUnapprovedAdjustmentWithdrawsNothing(t *testing.T) {
+	f := newFixture(t)
+	bought := f.purchase("evt-1", "acme.example", 3, 30)
+
+	for _, status := range []string{"pending", "rejected"} {
+		e := Event{
+			ID: "evt-" + status, Type: EventRefund, OccurredAt: f.now,
+			Subscription: "sub-acme.example",
+		}
+		body := unapprovedAdjustmentBody(t, e, status)
+		if rec := f.deliverRaw(body, signEvent(f.secret, f.now, body)); rec.Code != http.StatusOK {
+			t.Fatalf("the %s adjustment was answered %d, want 200: it is stored and left, not refused", status, rec.Code)
+		}
+		held := f.stored(t, e.ID)
+		if held.State != ledgerStored {
+			t.Errorf("the %s adjustment is stored as %q, want %q: no money has gone back, so nothing is applied", status, held.State, ledgerStored)
+		}
+		if held.Body != string(body) {
+			t.Errorf("the %s adjustment is stored as %q, want the body as it arrived", status, held.Body)
+		}
+		if held.EntitlementID != nil {
+			t.Errorf("the %s adjustment resolved to the licence %q, want none", status, *held.EntitlementID)
+		}
+		if _, held, _ := f.store.Revocation(context.Background(), bought.KeyID); held {
+			t.Errorf("the %s adjustment withdrew the key %s, want the licence left alone: no money went back", status, bought.KeyID)
+		}
+	}
+	if got := f.revocations(); len(got) != 0 {
+		t.Errorf("the unapproved adjustments wrote %d revocation(s), want none", len(got))
+	}
+	if got := f.ledger(t); len(got) != 1 {
+		t.Errorf("the ledger holds %d line(s), want the purchase's one: an adjustment whose money never moved is not a line", len(got))
 	}
 }
 
