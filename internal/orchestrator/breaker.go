@@ -42,6 +42,13 @@ const WorkspacePauseWindow = time.Hour
 // long that takes while this one lifts itself (WorkspacePauseWindow).
 const WorkspaceDecisionID = BreakerDecisionID + "-workspace"
 
+// refusalTransition is the audit line a run a workspace refused leaves, under
+// the run's own id: the daemon's record of which run the workspace stopped,
+// beside the question it raised about it. It is derived from the run and this
+// name (EntryID), so a cycle that sees the same refusal again writes the key it
+// wrote before rather than a second line.
+const refusalTransition = "workspace-refused"
+
 // BreakerDecisionID is the prefix of the id of the question a tripped breaker
 // raises, and what a caller recognises the question by. The id carries the
 // trip's own stamp as well: an answered decision keeps its id in the list and a

@@ -37,3 +37,10 @@ func ResetBatch(t *testing.T) {
 	batchHooks, batchHooksSet = coreBatchFuncs(), false
 	t.Cleanup(func() { batchHooks, batchHooksSet = coreBatchFuncs(), false })
 }
+
+// ResetWorkspace does the same for the workspace seam, for the same reason.
+func ResetWorkspace(t *testing.T) {
+	t.Helper()
+	workspaceHooks, workspaceHooksSet = coreWorkspaceFuncs(), false
+	t.Cleanup(func() { workspaceHooks, workspaceHooksSet = coreWorkspaceFuncs(), false })
+}

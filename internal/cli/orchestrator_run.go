@@ -518,6 +518,10 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 	if err != nil {
 		return nil, err
 	}
+	log, err := orchestrator.NewAudit(d.db, d.id, d.db.ServerNow)
+	if err != nil {
+		return nil, err
+	}
 	return &orchestrator.Tick{
 		Store:    d.node,
 		Runs:     &orchestratorRunView{bucket: d.env.bucket.Bucket, env: d.env, warn: d.warn},
@@ -534,6 +538,12 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 		// about and pause on a spend question nobody sees.
 		Notifier: orchestrator.LogSink{W: d.out},
 		Triage:   orchestratorTriageSeams(d),
+		// The audit log the trip writes its refusal line to (O19): the daemon's
+		// own node, under the id the entry derives from the run, which is the
+		// same log the triage and the decision agent append to. It is wired
+		// here rather than through a feature's seams because the trip is the
+		// breaker's and a daemon triages nothing at all when it has no host.
+		Audit: log,
 		// The decision agent is the one step a daemon makes that a person has
 		// to ask for: the seam is empty unless --decide was given, and a tick
 		// with none judges nothing however many cases its node carries (O13).

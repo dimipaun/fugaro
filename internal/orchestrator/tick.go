@@ -28,6 +28,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/escalation"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // Tick is one daemon's cycle and everything it acts through. It is a value
@@ -83,6 +84,16 @@ type Tick struct {
 	// `--decide` stands: the flag is off by default, and a daemon without it
 	// makes no model call however many judgement cases its node carries.
 	Decide DecideSeams
+	// Audit is O3's audit log as the trip writes it (O19): one line per run a
+	// workspace's refusal stopped, under the id its subject and transition
+	// derive, so the person the question waits on can read which run was
+	// refused and when. It is the log itself and not an interface of its own —
+	// the trip only appends, and every daemon that has a node to write has a
+	// log to append to. A nil one writes no line, which is the direction a log
+	// that was never wired fails in: the pause and the question are the node's
+	// and neither depends on the line (audit.go, "the log is evidence, not the
+	// fence").
+	Audit *Audit
 	// Now is the database server's clock (rtdb.ServerNow). Every stamp a cycle
 	// writes comes from it, and a cycle that cannot read it refuses rather
 	// than stamping anything with this machine's clock (D1230).
@@ -147,17 +158,9 @@ func (t *Tick) Step(ctx context.Context) (Report, error) {
 	if err != nil {
 		c.rep.Outcome = CycleFailed
 	}
-	if t.Breaker != nil {
-		// A cycle that folded a run the workspace refused asks a person at
-		// once, without waiting for the streak (O19, D2022 (a)); every other
-		// cycle asks on the one that reaches the threshold, which is what
-		// Observe reports. The two are one question to the node, so a cycle
-		// that has both asks once (ask, question).
-		tripped := t.Breaker.Observe(c.rep.Outcome)
-		if tripped || c.refused != "" {
-			if rerr := c.ask(ctx); rerr != nil {
-				err = errors.Join(err, rerr)
-			}
+	if t.Breaker != nil && t.Breaker.Observe(c.rep.Outcome) {
+		if rerr := c.ask(ctx); rerr != nil {
+			err = errors.Join(err, rerr)
 		}
 	}
 	return c.rep, err
@@ -192,6 +195,10 @@ type cycle struct {
 	// rather than after BreakerThreshold more attempts into the same refusal
 	// (O19, D2022 (a)).
 	refused string
+	// refusedRun is the run that refusal came from, which is the audit line's
+	// subject: what the log records is which run the workspace stopped, and the
+	// reason alone does not name it.
+	refusedRun string
 }
 
 func (c *cycle) run(ctx context.Context) error {
@@ -215,6 +222,16 @@ func (c *cycle) run(ctx context.Context) error {
 	}
 	if err := c.fold(ctx, reports); err != nil {
 		return err
+	}
+	// A run the workspace refused stops this cycle before it plans anything:
+	// the question has to be on the node before the plan is derived from it, or
+	// the cycle that learned of the refusal starts the very next item into the
+	// same one (O19, D2022 (a)). Every other question is the streak's and comes
+	// after the cycle has ended, where Step asks it (Observe).
+	if c.refused != "" {
+		if err := c.refuse(ctx); err != nil {
+			return err
+		}
 	}
 	view := viewOf(reports)
 	if err := c.carry(ctx, view); err != nil {
@@ -253,7 +270,7 @@ func (c *cycle) fold(ctx context.Context, reports []RunReport) error {
 	}
 	for _, r := range reports {
 		if r.Finished && WorkspaceRefused(r) {
-			c.refused = r.WorkspaceRefusal
+			c.refused, c.refusedRun = r.WorkspaceRefusal, r.RunID
 			break
 		}
 	}
@@ -370,14 +387,51 @@ func (c *cycle) ask(ctx context.Context) error {
 
 // question is what this cycle asks a person: the question a workspace's refusal
 // raises when one landed in this cycle's fold, and the streak's own otherwise.
-// The refusal's comes first because it is the more specific answer — a person
-// looking at the queue has to be told what stopped it — and because the node
-// carries at most one of the two either way.
+// The two never meet — a cycle that folded a refusal did work, which clears the
+// streak (Observe) — and the node carries at most one of them either way.
 func (c *cycle) question() (Op, bool) {
 	if c.refused != "" {
 		return c.tick.Breaker.WorkspaceDecision(c.state, c.now, c.refused)
 	}
 	return c.tick.Breaker.Decision(c.state, c.now)
+}
+
+// refuse is the whole of what a cycle owes a workspace's refusal: the question
+// a person answers, and the line the log keeps of which run was stopped. Both
+// land before the cycle plans, which is what makes "at once" mean this cycle
+// rather than the next one.
+//
+// The line is written whether or not the question was raised — a node that
+// already carried one is a node whose refusal is still worth reading about —
+// and neither depends on the other: the pause is the question, and the log is
+// evidence of it.
+func (c *cycle) refuse(ctx context.Context) error {
+	if err := c.ask(ctx); err != nil {
+		return err
+	}
+	return c.auditRefusal(ctx)
+}
+
+// auditRefusal writes the line a run a workspace refused leaves: which run it
+// was, which of the workspace's refusals the record named, and what the daemon
+// did about it. The id is derived from the run and the transition, so a cycle
+// that sees the same refusal again writes the same key rather than a second
+// line.
+//
+// A log this package cannot write is reported and does not fail the cycle: the
+// pause is the node's question and the trip already landed, so a line the
+// daemon could not append costs a reader evidence and not the stop.
+func (c *cycle) auditRefusal(ctx context.Context) error {
+	if c.tick.Audit == nil {
+		return nil
+	}
+	_, err := c.tick.Audit.Append(ctx, Entry{
+		Subject:    c.refusedRun,
+		Transition: refusalTransition,
+		Text: fmt.Sprintf("the workspace refused this run (%s); the orchestrator stopped starting work and asked a person",
+			safetext.OneLine(c.refused)),
+	})
+	return err
 }
 
 // say hands one notification to the sink, once the write that made it true has
