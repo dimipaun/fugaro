@@ -615,11 +615,11 @@ type Policy struct {
 	// its node is byte for byte what it was before this key existed — while a
 	// project that turned the daemon off is the only one with anything to say
 	// here. False is the only value that can undo the daemon's work, which is
-	// why the key merges by the ceiling rule (the registry's Tighten, and
-	// internal/policy's Merge for the layers a run's config has): a layer that
-	// writes false decides, whatever another layer writes, and no layer may
-	// turn it back on over one. OrchestratorOn is that rule, stated once for
-	// every reader.
+	// why the key is registered as a ceiling (the registry's Tighten, D2701's
+	// tighten-only rule): a layer that writes false decides, whatever another
+	// layer writes, and no layer may turn it back on over one. OrchestratorOn
+	// is that reading, stated once for every caller — and R3 of the same plan
+	// is where the daemon comes to ask it.
 	OrchestratorEnabled *bool `json:"orchestrator_enabled,omitempty"`
 
 	// IssueSync is the project's issue adapter (D2733): the repositories whose
