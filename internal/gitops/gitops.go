@@ -922,10 +922,18 @@ func (r *Repo) OwnCommits(ctx context.Context, runBranch string) ([]string, erro
 }
 
 // CommitSubjects lists, newest first, the subjects of the commits in
-// since...HEAD: the run's own work, and not the commits a person put on the
+// since..HEAD: the run's own work, and not the commits a person put on the
 // branch before the run started (since is origin/<base> for a first run and
 // the commit a follow-up started from — the runner's workBase). ChangedFiles
 // is its sibling over the same range: the paths, where this is the words.
+//
+// Two dots, not three: log reads the three-dot form as the symmetric
+// difference, so a since that is no longer an ancestor of HEAD — a follow-up
+// rebased onto a newer base, a branch moved off the commit the run's range was
+// narrowed to — would also list what is reachable from since alone: work the
+// rebase dropped, on no branch any more, told to the stopping agent as the
+// commits this run made. The two-dot form is what HEAD has and since does not,
+// which is the same answer for an ancestor and the right one for anything else.
 //
 // Subjects only, one line each: a commit's body is where a message runs long,
 // and `%s` is git's own folding of the first line into one. since is validated
@@ -942,7 +950,7 @@ func (r *Repo) CommitSubjects(ctx context.Context, since string) ([]string, erro
 	if !IsFullSHA(since) && !plainRef(since) {
 		return nil, fmt.Errorf("refusing to read the commit subjects since %q: not a full commit SHA or a plain ref name", since)
 	}
-	out, err := r.gitRaw(ctx, "--no-replace-objects", "log", "--format=%s", "-z", "--end-of-options", since+"...HEAD")
+	out, err := r.gitRaw(ctx, "--no-replace-objects", "log", "--format=%s", "-z", "--end-of-options", since+"..HEAD")
 	if err != nil {
 		return nil, err
 	}
