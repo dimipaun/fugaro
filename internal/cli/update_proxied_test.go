@@ -322,6 +322,83 @@ func TestUpdateAppliesTheProxiedDropWithTheToken(t *testing.T) {
 	}
 }
 
+// TestUpdateConvergesTheFlipOnAProjectThatIsNotManaged is the HARD RULE's
+// other half, and the one internal/infra's
+// TestTheFlipConvergesThroughTheUpdatesOwnRetirement cannot reach: that test
+// is the MANAGED path, where the update retires the accessor by itself
+// (retireManaged, whose guard is RetireAllowDelete). This rig's project is not
+// managed — nothing here labels the run's creation fact, and the same
+// repository, checkout, node and bundle say so in every test of this file —
+// so the run takes the ordinary plan. The retirement set is read and printed
+// there and nothing removes or deletes it for the user, so before the fix the
+// plan's own delete of the accessor the state holds and this tree no longer
+// produces was refused by the guard, and the operator was owed
+// `fugaro update --repo . --retire` (two typed confirmations) or
+// `--allow-delete` for a change fugaro itself decided: the operator step the
+// review found in docs/releases/v0.26.0.md.
+//
+// The world is the flip's, read from the state a release before it wrote: the
+// repository is proxied by the published node, its agent.auth is cascade, the
+// base image is past cascadeSince, and the bundle holds the token the refusal
+// needs (refuseTheProxiedDrop, TestUpdateRefusesTheProxiedDropWithoutTheToken
+// for the other side). One plain `fugaro update --repo`, with no flag that
+// admits a delete and no --retire, has to apply it.
+func TestUpdateConvergesTheFlipOnAProjectThatIsNotManaged(t *testing.T) {
+	r, db := proxiedDropRig(t)
+	publishProxiedNode(t, db, true, proxiedRepoCanonical(t))
+	putSwitchBundle(t, r, []byte(brokeringBundleDoc(t, credsValue(t, "token"))))
+	// The repository root's two reads, scripted apart (the fake answers
+	// "show -json" with no plan file for the state and "show" for the plan):
+	// the state the release before the flip wrote holds the accessor, and this
+	// tree's plan deletes it.
+	r.script["show -json@repo"] = map[string]any{"stdout": flipStateDoc(t)}
+	r.script["show@repo"] = map[string]any{"stdout": planJSON(t, retireChange(flipAccessorAddr, "google_secret_manager_secret_iam_member", "delete"))}
+	r.save(t)
+	dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", checkoutYAML("bitbucket", "cascade", "aurora", ""))
+	t.Chdir(dir)
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update", "--repo", "--no-build")
+	if err != nil {
+		t.Fatalf("one plain fugaro update --repo did not converge the flip on a project that is not managed, so the one command is not the whole upgrade for it: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
+	}
+	text := out + errOut
+	if !strings.Contains(text, flipAccessorAddr) {
+		t.Fatalf("the run does not name %s anywhere, so the state this test scripted was not the state it read and nothing below is about the flip\n%s", flipAccessorAddr, text)
+	}
+	if n := len(r.ran(t, "apply")); n == 0 {
+		t.Errorf("the run did not apply the repository's root, so the delete the guard had to admit was never made: %q", r.calls(t))
+	}
+	if strings.Contains(text, "--allow-delete") {
+		t.Errorf("the run owes the operator a flag for the flip's own delete, which is the operator step the HARD RULE forbids:\n%s", text)
+	}
+}
+
+// flipAccessorAddr is the job account's own accessor on the repository's
+// Bitbucket token, in the workflow this file's checkouts declare ("app":
+// checkoutYAML's only workflow, where internal/infra's fixtures say "web").
+// It is the address Readiness stops producing once the flip names the token,
+// and the one a run applied by the release before it converges.
+const flipAccessorAddr = `module.repo.module.workflow["app"].google_secret_manager_secret_iam_member.job["` + config.BitbucketSecret + `"]`
+
+// flipStateDoc is the repository root's state as the release before the flip
+// wrote it: the accessor above, beside the placeholder repoReady leaves for
+// every root. The accessor is a binding, so it carries no attributes the run
+// reads -- its values are the address's own -- and a state doc with the
+// address alone is the whole of what the retirement's read needs.
+func flipStateDoc(t *testing.T) string {
+	t.Helper()
+	b, err := json.Marshal(map[string]any{"format_version": "1.0", "values": map[string]any{"root_module": map[string]any{
+		"resources": []any{
+			map[string]any{"address": "x"},
+			map[string]any{"address": flipAccessorAddr, "mode": "managed", "type": "google_secret_manager_secret_iam_member", "name": "job"},
+		},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
 // TestUpdateAppliesWhereNothingIsDropped: the gate is the plan's own
 // condition, so the applies that would take no token away are not judged and
 // the missing credential does not stop them. The node that does not proxy this

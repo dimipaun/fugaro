@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -3806,6 +3807,79 @@ func TestTheFlipConvergesThroughTheUpdatesOwnRetirement(t *testing.T) {
 	}
 	if got := RetireAllowDelete(planDeleting(bitbucketTokenAccessor), rets); !slices.Contains(got, bitbucketTokenAccessor) {
 		t.Errorf("the guard's allow-list for the flip's plan = %v, want %s among them: the retirement's own addresses are what the update may delete in the run that retires them (D502, the HARD RULE)", got, bitbucketTokenAccessor)
+	}
+}
+
+// TestProxiedTokenAccessorAllowDeleteIsTheFlipsOwn is the unmanaged half of
+// the test above: the guard's allow-list for a project that is NOT managed,
+// which takes the ordinary plan. That path reads the retirement set and NAMES
+// it -- nothing removes or deletes it for the user there -- so the plan that
+// carries the flip's delete reached the guard with nothing to allow it and the
+// run stopped, `--allow-delete` and a second command the only ways past: the
+// HARD RULE broken for exactly the installations that never opted into a
+// managed project (issue #2166's review).
+//
+// The rows are the filter's whole surface. The address this spec stopped
+// producing is admitted; a name the service does not hold, a variant the
+// configuration has left (that retirement IS what --retire is for), a create
+// rather than a delete, and an address outside the repository root's module
+// are not. The two clauses after the table are the guard's own inputs: a spec
+// that drops nothing admits nothing, and neither does a plan the run could not
+// read.
+func TestProxiedTokenAccessorAllowDeleteIsTheFlipsOwn(t *testing.T) {
+	spec, err := Repo(proxiedSandboxInputs(t, proxiedLocalEntry, publishedNode(t, true, "acme/sandbox")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !spec.DropsBitbucketToken() {
+		t.Fatalf("the fixture's spec does not drop the token (BitbucketProxied = %v), so every row below is about a run the flip is not", spec.BitbucketProxied)
+	}
+	if produced := spec.Addresses(); slices.Contains(produced, bitbucketTokenAccessor) {
+		t.Fatalf("this tree's spec still produces %s, so the positive row below would admit an address the plan has no reason to delete", bitbucketTokenAccessor)
+	}
+	// The mount the workflow keeps whatever the flip does: its own secret, which
+	// the credentials service has no business holding and the address mirror
+	// still writes.
+	kept := `module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["sandbox-probe"]`
+	if !slices.Contains(spec.Addresses(), kept) {
+		t.Fatal("the fixture's web workflow does not mount sandbox-probe, so the row about a name the service does not hold would pass for the wrong reason")
+	}
+	gone := strings.Replace(bitbucketTokenAccessor, `module.workflow["web"]`, `module.workflow["gone"]`, 1)
+	installation := strings.Replace(bitbucketTokenAccessor, "module.repo.", "module.installation.", 1)
+	for _, tc := range []struct {
+		what string
+		plan *tf.Plan
+		addr string
+		want bool
+	}{
+		{"the accessor this spec stopped producing", planDeleting(bitbucketTokenAccessor), bitbucketTokenAccessor, true},
+		{"a name the credentials service does not hold", planDeleting(kept), kept, false},
+		{"a variant the configuration no longer deploys", planDeleting(gone), gone, false},
+		{"the same address created, not deleted", &tf.Plan{ResourceChanges: []tf.ResourceChange{change(bitbucketTokenAccessor, "create")}}, bitbucketTokenAccessor, false},
+		{"an address outside the repository root's module", planDeleting(installation), installation, false},
+	} {
+		got := ProxiedTokenAccessorAllowDelete(tc.plan, spec)
+		if slices.Contains(got, tc.addr) != tc.want {
+			t.Errorf("%s: admitted = %v, want %v (allow-list %v)", tc.what, !tc.want, tc.want, got)
+		}
+	}
+
+	// A spec that drops nothing, the other direction of the same predicate: the
+	// node admits another workspace's repository, so this one keeps its mount
+	// and its accessor, and the operator's entry is absent so that the two
+	// sources of the fact cannot disagree about it.
+	notProxied, err := Repo(proxiedSandboxInputs(t, "", publishedNode(t, true, "workspace-b/other")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if notProxied.DropsBitbucketToken() {
+		t.Fatalf("a node that proxies nothing still drops the token, so the first clause below is never read")
+	}
+	if got := ProxiedTokenAccessorAllowDelete(planDeleting(bitbucketTokenAccessor), notProxied); len(got) != 0 {
+		t.Errorf("the allow-list for a repository that loses no accessor = %v, want none: admitting an address the plan's own spec still produces is how a real delete of somebody else's grant would slip through", got)
+	}
+	if got := ProxiedTokenAccessorAllowDelete(nil, spec); len(got) != 0 {
+		t.Errorf("the allow-list for a run that read no plan = %v, want none", got)
 	}
 }
 

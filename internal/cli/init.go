@@ -5246,7 +5246,15 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 		if gated {
 			r.res.Changes = &counts
 		} else {
-			if err := r.guard(ctx, c, plan, r.o.allowDelete); err != nil {
+			// The flag's list and the flip's own accessor deletes: the drop
+			// is fugaro's decision, and the ordinary path — the one a project
+			// that is not managed takes — may not owe the user a flag or a
+			// second command for it (infra.ProxiedTokenAccessorAllowDelete,
+			// CLAUDE.md's HARD RULE, and the switch in init_retire.go's
+			// retireManaged is the managed path's own). Every other change in
+			// this plan is judged exactly as it was.
+			allowed := append(slices.Clone(r.o.allowDelete), infra.ProxiedTokenAccessorAllowDelete(plan, spec)...)
+			if err := r.guard(ctx, c, plan, allowed); err != nil {
 				return plan, err
 			}
 			r.res.Changes = &counts
