@@ -567,6 +567,16 @@ func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
 // the page cited a row that is not there, and the fallback is the publisher's
 // (T12) to write with the key.
 //
+// Fourth mutation (verified, run and restored), from the review that blocked
+// the pull request once T12 had landed: the pins that describe the publisher
+// put back as the not-yet-written wording this section carried before it --
+// "**no non-test code on this release writes it into the published node**",
+// "a typed token stored today serves nothing" and "**that line is owed with
+// T12**" -- fail this on those three pins and on the three banned spellings of
+// the same claim, and on nothing else. The landed wording is the stage that
+// writes the key, the token that serves nothing until the update after the
+// store, and the citation by line of the row and of the release notes' line.
+//
 // Second mutation (verified, run and restored), from the review of B1.10: the
 // D504 paragraph put back as it was written first -- cancel "cancels the
 // execution" once the run has launched, and "a cancelled run still finishes
@@ -634,17 +644,23 @@ func TestSecurityMdStatesTheBitbucketGitProxy(t *testing.T) {
 		// What the published node says, who may read it, and whom it is
 		// trusted to (F21, R5, R12), including the skew the new top-level key
 		// brings to a CLI of the release behind.
-		"**Each token's facts are readable by every run token of the job when they are published, and that is deliberate (F21, R5) — and the publisher is not on this tree.**",
-		// The publisher is T12 and no non-test code carries it: the key is
-		// derived (`projectpolicy.DeriveBitbucketTokens`) and never written
-		// into the published node, so a typed token stored today serves
-		// nothing. The three pins below are the review's own finding: the
-		// section described a node that does not exist on this tree, and the
-		// citation it gave for the skew named a page that does not carry the
-		// row -- both are now stated as owed rather than as done.
-		"**no non-test code on this release writes it into the published node**",
-		"a typed token stored today serves nothing",
-		"**the row naming that fallback in `docs/design/update-in-flight.md` is the publisher's, T12, and is not written on this tree either**",
+		"**Each token's facts are readable by every run token of the job when they are published, and that is deliberate (F21, R5).**",
+		// The publisher is T12, and T12 is in this release: the policy stage
+		// of `fugaro update` writes the key (`buildProjectPolicy`,
+		// `internal/cli/init_policy_publish.go`), from the local config's
+		// records and the identities the state store holds (R5, R12), and
+		// `fugaro project policy publish` is the same write. The three pins
+		// below were the review's own finding, read the other way once T12
+		// landed: the section used to say the publisher was not on the tree,
+		// so the pins say which stage writes the key, that the node carries no
+		// member until it runs, and where the row naming the older runner's
+		// fallback is.
+		"the policy stage of `fugaro update`",
+		"`projectpolicy.DeriveBitbucketTokens` derives the key from the local config's typed records and from the identities the credential state store holds for them",
+		"(`buildProjectPolicy`, `internal/cli/init_policy_publish.go`; `fugaro project policy publish` makes the same write)",
+		"a typed token stored before the next `fugaro update` serves nothing",
+		"`docs/design/update-in-flight.md:62`",
+		"**upgrade the CLI before the `fugaro update` that publishes a typed Bitbucket token's coverage** (`docs/releases/v0.25.0.md`)",
 		"never a value and never a secret version",
 		"**The identity set is trusted at the level of the node's writer (F21, R12):**",
 		// The set can be partial, and R14 is why: a repository token answers no
@@ -733,10 +749,20 @@ func TestSecurityMdStatesTheBitbucketGitProxy(t *testing.T) {
 		"the one Bitbucket token the bundle carries",
 		"the Bitbucket token the bundle carries",
 		// The citation the first cut of this round gave for the R5 skew, which
-		// the review found false: docs/design/update-in-flight.md carries no
-		// row naming the older-runner fallback, and that row is T12's to write
-		// with the publisher (the pin above states it as owed).
+		// the review found false: the page's row names the fallback, and it is
+		// cited by its line now (`docs/design/update-in-flight.md:62`), so a
+		// pointer that says the page does not carry it can never come back.
 		"(`docs/design/update-in-flight.md` names it)",
+		// What the second review found false once T12 landed: the publisher is
+		// on this tree and `fugaro update` runs it, so every spelling of "it is
+		// not here" is a claim about the tree that is no longer true -- and the
+		// one that said the release-notes line was owed, which v0.25.0's
+		// `### For operators` already carries.
+		"and the publisher is not on this tree",
+		"no non-test code on this release writes it into the published node",
+		"a typed token stored today serves nothing",
+		"is the publisher's, T12, and is not written on this tree either",
+		"that line is owed with T12",
 	} {
 		if strings.Contains(flattenDoc(s), banned) {
 			t.Errorf("SECURITY.md says %q: the proxy narrows the run, and the flip that takes the mount has not landed on this tree", banned)

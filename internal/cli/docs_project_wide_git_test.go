@@ -423,6 +423,19 @@ const bitbucketTokenTypesSection = "#### Any mix of the three token types, serve
 // publisher" -> FAIL on that pin alone, which is the one saying the documented
 // flow is an order to use once T12 lands and not a description of what a store
 // does on this tree.
+//
+// Mutation (verified, run and restored), from the second review, which blocked
+// the pull request once T12 had landed: the two paragraphs put back as the
+// not-landed reading -- "**the publisher, which is not on this tree**", "a
+// typed token stored today is in the bundle and in your config and **serves no
+// request**" and "**that line is owed with T12**" -- fails this on the pins
+// that replace them (the stage that writes the key, the token that serves
+// nothing until the update after the store, and the release notes' line). The
+// ordering pin -- "a repository token before a project token before a workspace
+// token", its own entry rather than a tail of the reach sentence -- fails
+// together with the reach pin when that phrase is reordered: the ranking is one
+// phrase in two sentences, and the entry is what holds it when the reach
+// sentence around it is rewritten.
 func TestDocsStateTheBitbucketTokenTypesAndReach(t *testing.T) {
 	page := flattenDoc(readDoc(t, "docs/git-providers.md"))
 	if !strings.Contains(page, bitbucketTokenTypesSection) {
@@ -448,6 +461,10 @@ func TestDocsStateTheBitbucketTokenTypesAndReach(t *testing.T) {
 		"A **project** token reaches every repository of its Bitbucket project",
 		"A **workspace** token reaches every repository of its workspace, present and future.",
 		"the **narrowest covering token** is also the smallest reach: a repository token before a project token before a workspace token",
+		// The ordering on its own, pinned apart from the sentence above: which
+		// token serves a request that several of them cover is the rule an
+		// operator picks a type by, and the ranking is the whole of it.
+		"a repository token before a project token before a workspace token",
 		"a request for a repository none of them covers is refused **naming the repository**, never answered by a wider token that does not admit it.",
 		// One run, several identities, and the one-token path left as it was.
 		"Because the token is chosen per request, one run can fetch and push one repository through a repository token and another through a project token.",
@@ -466,10 +483,15 @@ func TestDocsStateTheBitbucketTokenTypesAndReach(t *testing.T) {
 		"**Storing a working token under a name a failure already marked broken does not put that name back in service**",
 		// What the node publishes, and the skew the new top-level key brings to
 		// a CLI of the release behind (R5).
-		"the node carries each token's **name, type and coverage patterns**",
+		"`fugaro update` publishes the node's `bitbucket_tokens` key: each token's **name, type and coverage patterns**",
 		"never a value and never a secret version, so every run of the repository can read which repositories each token reaches",
 		"a **CLI of the previous release refuses an unknown top-level key**",
-		"One line in the release notes says so, and",
+		// What an operator runs about the skew, cited where the page states it
+		// (v0.25.0's `### For operators` line), and the row that says what the
+		// publish does to a run already in flight (T12).
+		"**upgrade the CLI before the `fugaro update` that publishes a typed Bitbucket token's coverage**",
+		"([v0.25.0's line](releases/v0.25.0.md) is the one that announces it)",
+		"[`docs/design/update-in-flight.md:62`](design/update-in-flight.md), that page's `bitbucket_tokens` half",
 		// U8's line: the verified facts, and the unverified one named as
 		// unverified rather than answered either way.
 		"a **project** or **workspace** access token is a Bitbucket **Premium** feature",
@@ -477,26 +499,21 @@ func TestDocsStateTheBitbucketTokenTypesAndReach(t *testing.T) {
 		"**What a lower plan may create is UNVERIFIED**",
 		"**nothing here has been run against Bitbucket with a project or workspace token**",
 		// The order an operator has to take, because the coverage reaches a
-		// run only through the published policy.
-		// The review's finding: the paragraph above told an operator to run
-		// `fugaro update` to publish a typed token's coverage, and the
-		// publisher is T12, which no non-test code on this tree carries --
-		// `projectpolicy.DeriveBitbucketTokens` derives the key and nothing
-		// writes it into the published node. So the page says what a store
-		// writes, what is missing, and that the token serves no request until
-		// the publisher lands.
-		"**And one thing makes a typed token serve any request: the publisher, which is not on this tree.**",
-		"**no non-test code on this release writes it into the published node**",
-		"a typed token stored today is in the bundle and in your config and **serves no request**",
-		"**The order the feature is used in is `fugaro update`, then the store, then `fugaro update` again**, once T12 is in the release that runs it",
-		"until then **the section above is the path that works**, with the token it already mounts and the behaviour it already has, unchanged",
-		// The same finding read the other way round: the published-node
-		// paragraph described the shape of a change and not of a node on this
-		// tree, so it says which task builds it and that today's node has no
-		// such member, and the release-notes line R5 asks for is owed with it.
-		"**Publishing the coverage, and the skew it brings — with the publisher (T12), which this tree does not carry.**",
-		"**today's node carries no `bitbucket_tokens` member**",
-		"**that line is owed with T12**",
+		// run only through the published policy: the first update moves the
+		// service, the store writes the record, the second update publishes the
+		// coverage (T12, which is in this release -- the review that blocked
+		// the pull request found the page still saying the publisher was not on
+		// the tree, and the second-review pins below are the landed reading).
+		"**And one thing makes a typed token serve any request: the publisher, and the publisher is `fugaro update`.**",
+		"`projectpolicy.DeriveBitbucketTokens` derives the node's `bitbucket_tokens` key from those records and from the identities the state store holds for them",
+		"(`buildProjectPolicy`, `internal/cli/init_policy_publish.go`; `fugaro project policy publish` is the same write from `internal/cli/project_cmd.go`)",
+		"**The order the feature is used in is `fugaro update`, then the store, then `fugaro update` again**",
+		"the first update is what puts a service able to read the token family in place, and the second is what publishes the coverage",
+		"A typed token stored between the two is in the bundle and in your config and **serves no request** until that second update",
+		"a project that records no typed token derives no key at all, so an installation holding the legacy `bitbucket-token` alone converges with no step and no read of the store (R3)",
+		// The published-node paragraph, now the present tense of what the
+		// update writes.
+		"**Publishing the coverage, and the skew it brings.**",
 	} {
 		if !strings.Contains(section, strings.Join(strings.Fields(want), " ")) {
 			t.Errorf("the `%s` section of docs/git-providers.md does not say %q: an operator stores a Bitbucket token from this page, and every fact here is one they act on before they do", bitbucketTokenTypesSection, want)

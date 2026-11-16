@@ -330,6 +330,19 @@ func TestDocsBitbucketRunbookReadConsumerSectionIsLast(t *testing.T) {
 // so the section states the step, what it does not do yet and what still serves
 // -- the legacy entry, unchanged. Its pins fail alone when any one of those
 // three halves is dropped.
+//
+// Mutation (verified, run and restored), from the second review, which blocked
+// the pull request once T12 had landed: the bullet put back as "**nothing of
+// the token reaches a run until the policy is published — and on this tree
+// there is nothing to publish yet** ... **That third step publishes nothing on
+// this release** ... which **no non-test code here carries**", with the
+// token-stored-today sentence and the "do not read a stored typed token as live
+// until T12 is in the release you run" tail in place of the update's own name
+// and of the CLI upgrade, fails this on five pins -- the two headings, the
+// stage that writes the key, the token that serves nothing between the two
+// updates, the CLI upgrade and the release notes' line. That is the reading
+// that is false now, and it is the reading an operator acts on: the section
+// sends them to store a token the update they just ran does not publish.
 func TestDocsBitbucketRunbookTokenTypes(t *testing.T) {
 	doc := flattenDoc(readDoc(t, bitbucketRunbook))
 	const heading = "## 11. The Bitbucket proxy"
@@ -350,16 +363,20 @@ func TestDocsBitbucketRunbookTokenTypes(t *testing.T) {
 		"the loader refuses a document carrying a key it does not know **whole** — every credential in it, the model credentials included",
 		"fugaro creds set bitbucket-token--<name>` refuses that write itself where the deployed service is too old to read it",
 		"**run `fugaro update` before the write**",
-		// The third step of the order is real and publishes nothing on this
-		// tree: the node's member is the publisher's (T12), which no non-test
-		// code here carries, so the section says the step, says what it does
-		// not do yet, and says what still serves (the legacy entry).
-		"**nothing of the token reaches a run until the policy is published — and on this tree there is nothing to publish yet.**",
-		"**That third step publishes nothing on this release**",
-		"which **no non-test code here carries**",
+		// The third step of the order is the publish itself: the node's member
+		// is the publisher's (T12), and T12 is in this release, so the section
+		// says which stage writes the key, that a token stored between the two
+		// updates serves nothing until the second one, what the publish does to
+		// a run already going, and what an operator runs about the skew.
+		"**nothing of the token reaches a run until the policy is published.**",
+		"That update's policy stage is the publisher",
+		"`projectpolicy.DeriveBitbucketTokens` derives the node's `bitbucket_tokens` key from each record of your local project config's typed tokens and from the identity and verification time the creds state store holds for it (R5, R12)",
+		"A typed token stored **between** the two updates is in the bundle and in your local config and **serves no request** until the second one",
 		"the legacy `bitbucket-token` above goes on serving exactly as it does now",
-		"do not read a stored typed token as live until T12 is in the release you run",
-		"**on this release a typed token serves no request yet**",
+		"A project that records no typed token derives no key at all, so an installation holding the legacy entry alone converges with no step and no read of the store (R3)",
+		"`docs/design/update-in-flight.md:62`",
+		"**upgrade the CLI**",
+		"the release notes' `### For operators` line, `docs/releases/v0.25.0.md`",
 		// The mark: where it lives, what shows it, and the two ways out of one
 		// no command clears.
 		"A 401 that a read of a repository the token covers confirms marks **that one token** `broken`; a 429 marks it `exhausted` until `Retry-After`; a 403 or a 404 marks nothing.",
@@ -368,6 +385,12 @@ func TestDocsBitbucketRunbookTokenTypes(t *testing.T) {
 		"**a token a 401 marked broken stays out of service, and no Fugaro command clears a Bitbucket token's mark in this release**",
 		"**store the replacement under a name of its own**",
 		"**clear the node by hand** — remove `creds/tokens/<name>` from the database",
+		// What that node holds besides the hold, and what puts it back: the
+		// identity and the verification time are the publisher's input (R12),
+		// so an operator who clears the node by hand takes them with it and
+		// gets them back by storing the token again.
+		"That node is also where the token's **Identity** (the account UUID the add-time check proved) and **VerifiedAt** live, so removing it drops those two as well",
+		"running `fugaro creds set bitbucket-token--<name>` again on that token records them again",
 		"a token that is merely throttled comes back by itself and one that is broken does not",
 		// F21/R5 read the other way round: the node is readable by every run,
 		// and this page is where the operator sees that saying so is not a
