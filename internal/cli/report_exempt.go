@@ -132,6 +132,7 @@ var exemptListings = map[string]exemptListing{
 	"backlog list":         {"a listing: the backlog's items as the index lists them, table or document", true},
 	"budget preview":       {"a listing: a batch's worst-case spend, as a table or a document", true},
 	"budget prices":        {"a listing: the effective model price table, which is the answer itself", true},
+	"budget reconcile":     {"a listing: a window's charged, reported and table spend per model, table or document", true},
 	"budget show":          {"a listing: the caps, counters, kill switches and headroom, table or document", true},
 	"config example":       {"a listing: the annotated fugaro.yaml template, printed whole", false},
 	"config layer":         {"a listing: the project layer published for this checkout, table or document", true},

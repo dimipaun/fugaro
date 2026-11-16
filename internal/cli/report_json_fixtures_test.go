@@ -111,6 +111,13 @@ var jsonCases = map[string]jsonCase{
 			return []string{"budget", "prices"}
 		},
 	},
+	"budget reconcile": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			jsonCloud(t)
+			return []string{"budget", "reconcile", "--from", "2026-10-12", "--to", "2026-11-16", "--repo", "acme/app"}
+		},
+	},
 	"budget show": {
 		reads: true,
 		run: func(t *testing.T) []string {
