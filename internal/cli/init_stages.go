@@ -860,18 +860,14 @@ func (e *initEngine) writeCarriedCredentials(ctx context.Context, doc []byte) ([
 	} else {
 		next = withIntake
 	}
-	// And the voice hop, which this release's own apply deploys beside them and
-	// which no earlier release wrote: an installation whose tfvars carry the
-	// service's block and no hop's is every installation this release upgrades,
-	// and all three are one pin of one image (VoiceServiceSpec). It is added
-	// here for carriedIntake's reason and in its shape, and never in an agent's
-	// session or a development build, which this function's callers have
-	// already refused.
-	if withVoice, err := e.carriedVoiceService(ctx, next); err != nil {
-		fmt.Fprintf(e.r.w, "the voice hop is not deployed: %v\n", err)
-	} else {
-		next = withVoice
-	}
+	// And the voice hop is deliberately NOT added here, which is the whole of
+	// its opt-in: the hop is a PUBLIC endpoint (voice.tf's allUsers binding), so
+	// an installation that never wrote var.voice_service gets none of it — no
+	// service, no account and no invoker binding — and nothing about the hop is
+	// planned or deployed. The block is the opt-in itself, and prepare's carry
+	// (init.go's CarriedVoiceService) is what keeps an installation that wrote
+	// one, which is where the third service of this one image differs from the
+	// intake above.
 	if err := e.wd.WriteVars(next); err != nil {
 		return nil, userErr("writing the installation's %s: %v", infra.VarsFile, err)
 	}
@@ -925,48 +921,6 @@ func (e *initEngine) carriedIntake(ctx context.Context, doc []byte) ([]byte, err
 		image = pinned
 	}
 	return infra.SetIntake(doc, infra.Intake(image))
-}
-
-// carriedVoiceService is doc with the voice hop's block added when it holds
-// none, and it is carriedIntake's own rule over the third subcommand of the
-// same image: the image it carries is what the revision the apply is about to
-// CREATE runs, so an installation that skipped the release the hop shipped in
-// would be given a revision whose binary has no `voice serve` subcommand
-// (voice.tf's args) and exits on start — with the block already on disk, which
-// every rerun then repeats. The same staleness question is asked of the same
-// recorded image, and the answer is the same run's memoized resolve, so the
-// third service of one pin costs no second registry read.
-//
-// What differs from carriedIntake is only what the block holds: the hop has no
-// address to carry, because the token it verifies is minted for the Firebase
-// project and not for it (voice_serve.go), so there is no audience fill and no
-// second apply. A document that carries no image for the service gets no hop,
-// for carriedIntake's reason exactly: without one there is nothing for the
-// module's container to run.
-//
-// The hop is added wherever the credentials service is, which is what "deployed
-// the way the credentials service is" means: the two are one image and one
-// block turns the module's half on (voice.tf's count reads the service's, the
-// way intake.tf's does), so a run that wrote the hop's block where the service
-// has none would be a var naming a service the module never creates. It is the
-// same convergence the intake gets, and for the same reason: the tfvars ARE the
-// desired state, and an operator who removes the block gets it back.
-func (e *initEngine) carriedVoiceService(ctx context.Context, doc []byte) ([]byte, error) {
-	if _, have, err := infra.VoiceServiceOf(doc); err != nil || have {
-		return doc, err
-	}
-	image, ok, err := infra.CredentialsServiceImageOf(doc)
-	if err != nil || !ok {
-		return doc, err
-	}
-	if ver := releaseVersion(); ver != "" && credentialsImageStale(ver, image) {
-		pinned, err := e.credentialsResolve(ctx)
-		if err != nil {
-			return doc, err
-		}
-		image = pinned
-	}
-	return infra.SetVoiceService(doc, infra.Voice(image))
 }
 
 // The two reasons a run deploys no credentials service at all: a coding agent's
@@ -1268,16 +1222,17 @@ func (e *initEngine) deployCredentialsService(ctx context.Context) error {
 	if err != nil {
 		return userErr("setting the secrets intake in the installation's %s: %v", infra.VarsFile, err)
 	}
-	// And the voice hop, off the same pin and for the intake's reason: it is
-	// the third subcommand of that one image (voice_serve.go), and the run that
-	// deploys the service on an installation that has none is the run that
-	// deploys the hop beside it. Nothing about the installation has to be read
-	// for it either: the hop holds no bundle and no database of its own, and
-	// the read its own account is granted is the module's (voice.tf).
-	doc, err = infra.SetVoiceService(doc, infra.Voice(pinned))
-	if err != nil {
-		return userErr("setting the voice hop in the installation's %s: %v", infra.VarsFile, err)
-	}
+	// The voice hop is deliberately NOT written here, and that is its opt-in:
+	// the run that deploys the credentials service on an installation that has
+	// none is the run that deploys the intake beside it, and the hop — the
+	// third subcommand of the same image — only for an installation that asked
+	// for it. The block is the ask (var.voice_service, off unless the
+	// installation turns it on), nothing composes it from the local config the
+	// way the service's own block is composed, and an installation that never
+	// wrote one plans no hop at all: no service, no account and no public
+	// invoker binding. An installation that HAS one keeps it through prepare's
+	// carry (init.go's CarriedVoiceService) and has its image moved with the two
+	// services beside it (moveCredentialsImage).
 	if err := e.wd.WriteVars(doc); err != nil {
 		return userErr("writing the installation's %s: %v", infra.VarsFile, err)
 	}

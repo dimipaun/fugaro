@@ -415,14 +415,17 @@ type IntakeSpec struct {
 // (voice.tf), because the same run writes both blocks from one config and a
 // second copy of one fact could be pulled apart by a hand edit.
 //
-// The block is written by `fugaro update`'s own installation stage
-// (internal/cli's deployCredentialsService, carriedVoiceService and
-// moveCredentialsImage), never composed from the local config the way
-// CredentialsServiceSpec is: the hop holds no bundle and no database
-// of its own — its account holds one role with one permission — so the
-// installation facts the credentials service refuses over are not its, and
-// every run of init rewrites the root's tfvars from a spec that carries this
-// key none, which is why prepare carries it forward (CarriedVoiceService).
+// The block is the hop's OWN opt-in, and it is the only one there is: nothing
+// composes it from the local config the way CredentialsServiceSpec is, no
+// command writes it and no flag asks for it — an owner who wants the hop writes
+// the three members above into the installation root's tfvars, and the module's
+// variable is null until they do, which is no service, no account and no
+// invoker binding at all. Every run of init rewrites the root's tfvars from a
+// spec that carries this key none, so what keeps an opted-in installation's
+// block is prepare's carry (CarriedVoiceService); what moves the image inside
+// it is the credentials-service stage's own move (internal/cli's
+// moveCredentialsImage), which re-pins a block that is already there and never
+// writes one.
 type VoiceServiceSpec struct {
 	AccountID string `json:"account_id"`
 	Service   string `json:"service"`
@@ -1404,24 +1407,25 @@ func VoiceServiceOf(vars []byte) (VoiceServiceSpec, bool, error) {
 
 // CarriedVoiceService returns vars with the voice_service entry the document
 // prev carried, when vars carry none of their own — CarriedIntake's carry, on
-// the third variable this side writes and the spec never holds.
+// the third variable this side reads and the spec never holds.
 //
 // The block is taken exactly as it is found, and here that is the whole of
 // it: unlike the intake's it carries no URL, so there is nothing in it a
-// rebuild from this side would know better. Carrying it is still what keeps
-// the hop alive across an ordinary run, and the consequence of not doing it is
-// sharper than the other two keys' — the block plans the hop's service, its
-// account, its one role binding and its invoker grants away, and with them the
-// only process that enforces the project's published voice policy, so a run
-// that dropped it would leave every paired phone refused until the next
-// release happened to put it back.
+// rebuild from this side would know better. It is also the one key of the three
+// that nothing else writes: the block IS the hop's opt-in (VoiceServiceSpec),
+// so this carry is not convergence but the opposite of it — an installation
+// that never wrote one must come out of every run without one, and an
+// installation that did must keep it. The consequence of dropping it is the
+// sharper of the two: the block plans the hop's service, its account, its one
+// role binding and its invoker grants away, and with them the only process that
+// enforces the project's published voice policy, so a run that lost it would
+// leave every paired phone refused until the owner wrote it back by hand.
 //
 // prev is that document — infra.Workdir.PrevVars, or the tfvars the workdir
 // holds now, which is where the installation stage's own writes a few steps
 // before prepare rewrites the file. An entry is carried forward present or
 // absent: an installation that has the hop keeps it across an ordinary run's
-// rewrite, and one that never had it is unchanged rather than given one by a
-// run that resolved no image for it.
+// rewrite, and one that never had it is unchanged rather than given one.
 func CarriedVoiceService(vars, prev []byte) ([]byte, error) {
 	if prev == nil {
 		return vars, nil // no workdir held one: nothing to carry

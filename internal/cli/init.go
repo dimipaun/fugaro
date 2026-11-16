@@ -2744,12 +2744,15 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 			return nil, userErr("reading the installation's tfvars: %v", err)
 		}
 	}
-	// And the voice hop's, the third key this spec never carries: written by the
-	// same run that wrote the two above (init_stages.go's carriedVoiceService and
-	// deployCredentialsService), and lost here exactly as badly — the key plans
-	// the hop's service, its account, its one role binding and its invoker
-	// grants away, and with them the only process that enforces the project's
-	// voice policy. Carried forward present or absent, like the intake's.
+	// And the voice hop's, the third key this spec never carries, and the one
+	// key of the three the run itself never writes: the block IS the hop's
+	// opt-in (var.voice_service, off unless the installation turns it on), so
+	// nothing here adds it and a document that has none stays without one. What
+	// the carry does is keep an installation that WROTE one, and it is lost here
+	// exactly as badly as the two above: the key plans the hop's service, its
+	// account, its one role binding and its invoker grants away, and with them
+	// the only process that enforces the project's voice policy. Carried forward
+	// present or absent, like the intake's.
 	for _, prev := range documents {
 		if vars, err = infra.CarriedVoiceService(vars, prev); err != nil {
 			return nil, userErr("reading the installation's tfvars: %v", err)
