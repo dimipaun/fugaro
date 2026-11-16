@@ -508,6 +508,15 @@ less every name the credentials block declares a key credential
 under the credential's own derived secret and not a Claude account's token at
 all.
 
+The credentials block itself is printed after the names, one line per entry, as
+the name it is declared under, its type and the half of a run that serves it
+("the credentials service" or "a run's own gateway", config.CredentialServingPath):
+those entries are what a pool's members may list and a craft's access may name,
+so which half carries a credential — and therefore which half has to hold the
+value — is readable here, out of the config and offline, without opening the
+file. A machine with no credentials block prints the names alone. --json carries
+the same three fields per entry under "credentials".
+
 The names are a local, read-only lookup, offline whenever a project config is
 already selected on this machine: it reads the local config file the CLI would
 otherwise select for a cloud command, and never calls Secret Manager, never

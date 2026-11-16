@@ -465,7 +465,16 @@ fugaro accounts ls
 ```
 
 It prints `default` first, then every `claude_accounts` name whose `allow_data_to` lists this
-repository, sorted — that is the list `--token` accepts. `fugaro runs ls` grows an `ACCOUNT` column
+repository, sorted — that is the list `--token` accepts. A name the `credentials` block declares a
+key credential is not in that list: it is no Claude account's token, so `--token` may not name it.
+
+After the names it prints the `credentials` block, one line per entry, as
+`NAME (TYPE, served by HALF)` — the half that carries a credential of that type to a call, which is
+`the credentials service` for `claude-oauth` and `anthropic` and `a run's own gateway` for
+`openrouter`. Those entries are what a pool's members may list and a craft's access may name, so
+which of a project's two halves serves a credential is readable offline, without opening the file.
+
+`fugaro runs ls` grows an `ACCOUNT` column
 once one of the runs it lists has an account, and `fugaro diagnose` prints an `Account:` line when
 that account is not `default`.
 

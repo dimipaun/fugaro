@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"maps"
 	"os"
 	"reflect"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -703,5 +705,219 @@ func TestACredentialTheConfigAlreadyDeclaresIsRefusedNotDuplicated(t *testing.T)
 	}
 	if len(lc.Credentials) != 1 || lc.Credentials[0].Name != "key-one" || lc.Credentials[0].Type != config.CredentialTypeClaudeOAuth {
 		t.Errorf("the credentials block is %v, want key-one alone, still claude-oauth", lc.Credentials)
+	}
+}
+
+// TestAccountsLsNamesTheServingPath is D1671's reading half for the key
+// credentials: the credentials block is what a pool's members may list and a
+// craft's access may name, and which of a project's two halves serves an entry
+// is decided by its type alone (config.CredentialServingPath), so the listing
+// answers it offline, out of the config. The name is where the need is
+// sharpest: a key credential's name is deliberately NOT in the accounts above
+// it (config.ClaudeAccountTokenNames, TestAccountsLsLeavesAKeyCredentialOut),
+// so a read that listed the accounts alone left the block invisible and the
+// owner opening the file to find out which half has to hold a credential's
+// value.
+func TestAccountsLsNamesTheServingPath(t *testing.T) {
+	f := newCloudFixture(t)
+	// One entry whose name is also a claude_accounts name — the state a key
+	// credential is declared in — and one of the other type, so both halves are
+	// read off one run.
+	f.appendConfig(t, claudeAccountsConfig+`credentials:
+  - { name: acme-overflow, type: openrouter }
+  - { name: acme-key, type: anthropic }
+`)
+	out, _, err := execute(t, "accounts", "ls", "--repo", "acme/other", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc accountsListDoc
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("unmarshal %q: %v", out, err)
+	}
+	want := []accountsCredential{
+		{Name: "acme-key", Type: config.CredentialTypeAnthropic, ServingPath: config.CredentialPathCredsvc},
+		{Name: "acme-overflow", Type: config.CredentialTypeOpenRouter, ServingPath: config.CredentialPathRunner},
+	}
+	if !slices.Equal(doc.Credentials, want) {
+		t.Errorf("credentials = %+v, want %+v: each entry with its type and the half that serves it", doc.Credentials, want)
+	}
+	// The two readings are separate answers about the same file: naming a
+	// credential here does not put its name back among the accounts a --token
+	// run may be given.
+	if got := []string{"default", "acme-personal"}; !slices.Equal(doc.Accounts, got) {
+		t.Errorf("accounts = %v, want %v: the credentials block is listed as what it is, not as accounts", doc.Accounts, got)
+	}
+	text, _, err := execute(t, "accounts", "ls", "--repo", "acme/other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"acme-overflow (openrouter, served by a run's own gateway)",
+		"acme-key (anthropic, served by the credentials service)",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the text output does not read %q:\n%s", want, text)
+		}
+	}
+}
+
+// accountsAddKeyCredentialDeclaredLocal is the name already declared a key
+// credential with nothing else written for it: the state a session re-running
+// the declaration starts from, where the command's own type resolution
+// (accountsAddSecretType) makes the run a key credential's without --type, and
+// the account's entry is the one thing this run would add.
+const accountsAddKeyCredentialDeclaredLocal = addRigLocal + `credentials:
+  - { name: team-a, type: openrouter }
+`
+
+// TestKeyCredentialWritesRefuseInAgentSession is D1671's fence for a key
+// credential. Making one is three writes and not one — the account's
+// declaration, the entry in the credentials block, and the pool membership or
+// craft access that spends through it — so what a session may do is decided per
+// write rather than for the command: the declaration is the session's, and
+// every write that would make the name a spending or data-egress grant is
+// refused there whatever is passed (F12/D1628, F22/D1636), the value included.
+//
+// The four cases below are the four writes. Two of them are a world each: the
+// credential entry is refused by the managed project's own rule where the gate
+// is consulted and by the file's marker fence in an installation that is not
+// managed, and a build that fenced only one of the two would pass a test that
+// pinned the other. The pool's own write is TestPoolWritesRefuseInAgentSession's
+// subject in full; it is here because a key credential is what its members are.
+func TestKeyCredentialWritesRefuseInAgentSession(t *testing.T) {
+	t.Run("the credential entry is refused where the gate is consulted", func(t *testing.T) {
+		r := newManagedAddRig(t, addRigLocal, addMarksManaged)
+		writes := r.secretWrites(t)
+		before := readFileString(t, r.cfg)
+		t.Setenv(accountsAddAgent, "1")
+
+		// A value piped at the hidden prompt is passed on purpose: "whatever is
+		// passed" is the claim, and the value is the one thing a session might
+		// hope the command reads anyway.
+		out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a", "--type", "openrouter")
+		if err == nil {
+			t.Fatalf("a session declared credentials.team-a:\n%s", out)
+		}
+		if err.Error() != accountsAddRefusalCredential {
+			t.Errorf("the refusal is:\n%q\nwant:\n%q", err.Error(), accountsAddRefusalCredential)
+		}
+		if len(writes.created) != 0 || len(writes.added) != 0 {
+			t.Errorf("the refusal stored %v (created) and %v (versions), want nothing", writes.created, writes.added)
+		}
+		if after := readFileString(t, r.cfg); after != before {
+			t.Errorf("the refused write changed %s:\n%s", r.cfg, after)
+		}
+	})
+
+	t.Run("the credential entry is refused by the file's own fence", func(t *testing.T) {
+		path := accountsPoolHome(t, "")
+		before := readFileString(t, path)
+		t.Setenv(accountsAddAgent, "1")
+
+		out, errOut, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "acme/app", "--type", "openrouter")
+		if err == nil {
+			t.Fatalf("a session declared credentials.team-a in a project that is not managed:\n%s\n%s", out, errOut)
+		}
+		if !strings.Contains(err.Error(), accountsAddAgent) || !strings.Contains(err.Error(), "nothing was written") {
+			t.Errorf("the refusal does not name the marker and say nothing was written: %v\n%s\n%s", err, out, errOut)
+		}
+		if got := readFileString(t, path); got != before {
+			t.Errorf("the refused write changed the file:\n%s", got)
+		}
+	})
+
+	t.Run("the declaration is admitted and the value is not", func(t *testing.T) {
+		r := newManagedAddRig(t, accountsAddKeyCredentialDeclaredLocal, addMarksManaged)
+		writes := r.secretWrites(t)
+		t.Setenv(accountsAddAgent, "1")
+
+		_, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a")
+		if err == nil || err.Error() != accountsAddRefusalKey {
+			t.Fatalf("a session's re-run of a declared key credential ended %v, want the key step's refusal:\n%q", err, accountsAddRefusalKey)
+		}
+		// The declaration is the session's to write: what it may not do is make
+		// the name spendable, and the two halves are one run apart.
+		if lc := r.addLocal(t); !slices.Equal(lc.ClaudeAccounts["team-a"].AllowDataTo, []string{"owner/repo-a"}) {
+			t.Errorf("claude_accounts.team-a.allow_data_to = %v, want the declared list: the session writes the declaration", lc.ClaudeAccounts["team-a"].AllowDataTo)
+		}
+		if len(writes.created) != 0 || len(writes.added) != 0 {
+			t.Errorf("the session stored the key: created %v, added %v", writes.created, writes.added)
+		}
+	})
+
+	// The pool's fence names the marker it refused under, so this leg is held
+	// over agentenv.Markers itself — a marker the tree adds is one this write is
+	// held to — and it is the cheap half of the test: a config and no cloud.
+	t.Run("a pool that would list the credential is refused", func(t *testing.T) {
+		for _, marker := range agentenv.Markers {
+			t.Run(marker, func(t *testing.T) {
+				path := accountsPoolHome(t, "")
+				before := readFileString(t, path)
+				t.Setenv(marker, "1")
+
+				out, errOut, err := execute(t, "accounts", "pool", "add", "paid", "router-one")
+				if err == nil {
+					t.Fatalf("a session wrote a pool:\n%s\n%s", out, errOut)
+				}
+				for _, want := range []string{marker, "nothing was written"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not say %q: %v\n%s\n%s", want, err, out, errOut)
+					}
+				}
+				if got := readFileString(t, path); got != before {
+					t.Errorf("the refused pool changed the file:\n%s", got)
+				}
+			})
+		}
+	})
+
+	t.Run("a craft's access that would name the credential is refused", func(t *testing.T) {
+		path := accountsPoolHome(t, "")
+		before := readFileString(t, path)
+		t.Setenv(accountsAddAgent, "1")
+
+		// The row is the accounts family's, so the generic path refuses it
+		// wherever it runs — a session and the owner's own terminal alike — which
+		// is the strongest form of this leg: no write of a craft's access exists
+		// in this release at all (accountsRmPoolMember's own note).
+		out, errOut, err := execute(t, "settings", "set", "agent.crafts.coder.access", "router-one")
+		if err == nil {
+			t.Fatalf("a session wrote a craft's access:\n%s\n%s", out, errOut)
+		}
+		if !strings.Contains(err.Error(), "fugaro accounts") {
+			t.Errorf("the refusal does not name the family that writes the row: %v\n%s\n%s", err, out, errOut)
+		}
+		if got := readFileString(t, path); got != before {
+			t.Errorf("the refused write changed the file:\n%s", got)
+		}
+	})
+}
+
+// TestAccountsLsNamesTheServingPathBesideTheStates is the same reading on the
+// other text path: with a state column the accounts are a table, and the
+// credentials block is written after it, one line each — so a line of the block
+// is never read as an account's state, which is what a listing somebody diffs
+// line by line turns on. The lines above it stay the accounts and their states.
+func TestAccountsLsNamesTheServingPathBesideTheStates(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.appendConfig(t, claudeAccountsConfig+"credentials:\n  - { name: acme-key, type: openrouter }\n")
+
+	out, _, err := execute(t, "accounts", "ls", "--repo", "acme/other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if got, want := lines[len(lines)-1], "acme-key (openrouter, served by a run's own gateway)"; got != want {
+		t.Fatalf("the last line reads %q, want %q:\n%s", got, want, out)
+	}
+	for _, line := range lines[:len(lines)-1] {
+		name, state, ok := strings.Cut(line, " ")
+		if !ok || strings.TrimSpace(state) == "" {
+			t.Fatalf("line %q carries no state: the account lines are the names and their states, and the credentials come after them:\n%s", line, out)
+		}
+		if name == "acme-key" {
+			t.Fatalf("the credential is listed as an account with a state:\n%s", out)
+		}
 	}
 }
