@@ -257,13 +257,11 @@ func reviewerArmSlot(run fcli.PlannedRun) (task.ABSlot, error) {
 // launch's own review-levels gate makes): the run's request for the strongest
 // review is part of that resolution — it raises review level 3 and clears that
 // level's own off-switch rather than letting a layer's `l3: none` defeat it
-// (the owner's ruling of 2026-11-16, docs/review-levels-ab-jobmax O12, and
-// internal/runner's securityForcedLevels, SC10/D1517) — and the floor it
-// resolves under is the project's published one, which the launch's own merged
-// policy (PlannedRun.Policy) does not carry. A resolution made from this
-// package's side of the boundary would therefore refuse an arm at a level the
-// run does run, or judge the challenger against a model the level does not
-// run.
+// (SC10/D1517, the runner's securityForcedLevels) — and the floor it resolves
+// under is the project's published one, which the launch's own merged policy
+// (PlannedRun.Policy) does not carry. A resolution made from this package's
+// side of the boundary would therefore refuse an arm at a level the run does
+// run, or judge the challenger against a model the level does not run.
 //
 // A recipe that travels as a name alone (a repository recipe, which the task
 // carries no text of) resolves here as no recipe at all, exactly as
