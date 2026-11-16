@@ -646,28 +646,33 @@ func TestProviderModelNeedsEnforce(t *testing.T) {
 	}
 }
 
-// A provider that reports more than 10% above the charge is logged once at
-// the end of the run (warn level, no key); a report below the charge is not.
-// The charge is compared without the route fee, which the provider doesn't
-// report. The reported figures are relative to the charge the run's own table
-// makes for the usage, read from that table (Task 4: the catalog prices the
-// route's model, at a fraction of the placeholder row this test was written
-// against), so the case under test is the 10% threshold and not a number.
-func TestReportedAboveChargeWarnsOnce(t *testing.T) {
+// A provider that reports a cost more than 10% outside the price table's band
+// is logged once at the end of the run (warn level, no key), in either
+// direction; a report inside the band is not. The band -- not the charge -- is
+// the comparison, because D2640 settles a complete call on the report, so a
+// report read against the charge would agree with it by construction (F16).
+// The band carries no route fee and neither does the report, so a fee never
+// moves this comparison. The reported figures are relative to the band the
+// run's own table makes for the usage, read from that table (Task 4: the
+// catalog prices the route's model, at a fraction of the placeholder row this
+// test was written against), so the case under test is the 10% threshold and
+// not a number.
+func TestReportedOutsideBandWarnsOnce(t *testing.T) {
 	use := pricing.Usage{Input: 1000, Output: 500}
 	g0 := providerRun(t, providerPinned(t), "enforce", "50", nil, "acme/app")
 	m, ok := g0.deps.Spend.Prices.Lookup(deepseek)
 	if !ok {
 		t.Fatal("the run's table has no row for the model it routed")
 	}
-	bare := m.Rates.Cost(use).USD()
+	lo, hi := m.Lo.Cost(use).USD(), m.Hi.Cost(use).USD()
 	for _, c := range []struct {
 		cost float64
 		fee  float64
 		warn int
 	}{
-		{bare * 3, 0, 1}, {bare * 1.05, 0, 0}, {bare * 0.5, 0, 0},
-		{bare * 1.2, 10, 1}, {bare * 1.05, 10, 0},
+		{hi * 1.2, 0, 1}, {hi * 1.05, 0, 0}, {(lo + hi) / 2, 0, 0},
+		{lo * 0.5, 0, 1}, {lo * 0.95, 0, 0},
+		{hi * 1.2, 10, 1}, {lo * 0.5, 10, 1},
 	} {
 		g := providerRun(t, providerPinned(t), "enforce", "50", []anthropicfake.Reply{anthropicfake.Compat{Cost: c.cost}.MessageOK(deepseek, use)}, "acme/app")
 		prov := g.deps.Providers["openrouter"]
