@@ -1025,7 +1025,9 @@ function quietHoursField(value) {
 // a minute past the day are each something else, and each is refused rather
 // than floored.
 function minuteField(value, field) {
-  if (typeof value !== 'number') return { bad: refuse(REFUSALS.WRONG_TYPE, field) };
+  if (typeof value !== 'number') {
+    return { bad: refuse(REFUSALS.WRONG_TYPE, field) };
+  }
   if (!Number.isSafeInteger(value) || value < 0 || value > MINUTE_MAX) {
     return { bad: refuse(REFUSALS.BAD_WINDOW, field) };
   }

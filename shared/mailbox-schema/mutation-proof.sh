@@ -367,6 +367,65 @@ run "mac: 64 hex characters, or it is not a tag" \
 run "mac: lowercase only (one tag, one spelling)" \
   "const HEX_PATTERN = /^[0-9a-f]+\$/;" "const HEX_PATTERN = /^[0-9a-fA-F]+\$/;"
 
+# P5.2.1's guards: the registration kind, its token, its platform and §3.8's
+# switches. The tag's own requirement is not repeated here: `mac: required on
+# every message` above drops `mac` from REQUIRED_FIELDS, which is the one guard
+# for every kind, and the file's `unsigned registration` refusal is what catches
+# it for this one.
+run "registration: the token is required" \
+  "  registration: Object.freeze(['token', 'platform'])," \
+  "  registration: Object.freeze(['platform']),"
+run "registration: the platform is required" \
+  "  registration: Object.freeze(['token', 'platform'])," \
+  "  registration: Object.freeze(['token']),"
+run "registration: the (kind, field) table is two-sided for its own three fields" \
+  "  for (const field of ['options', 'reply_to', 'action', 'token', 'platform', 'prefs']) {" \
+  "  for (const field of ['options', 'reply_to', 'action']) {"
+run "registration: the token's length bound, widened by one" \
+  "  return stringField(value, 'token', TOKEN_MAX, false);" \
+  "  return stringField(value, 'token', TOKEN_MAX + 1, false);"
+run "registration: the token's length bound, narrowed by one" \
+  "  return stringField(value, 'token', TOKEN_MAX, false);" \
+  "  return stringField(value, 'token', TOKEN_MAX - 1, false);"
+run "registration: the platform is one of the two" \
+  "  if (!PLATFORMS.includes(value)) return { bad: refuse(REFUSALS.UNKNOWN_PLATFORM, 'platform') };" \
+  ""
+run "registration: the prefs carry every switch" \
+  "  for (const key of PREFS_REQUIRED) {
+    if (!Object.hasOwn(value, key)) return { bad: refuse(REFUSALS.MISSING_FIELD, \`prefs.\${key}\`) };
+  }" \
+  ""
+run "registration: a switch is a boolean" \
+  "    if (typeof value[key] !== 'boolean') return { bad: refuse(REFUSALS.WRONG_TYPE, \`prefs.\${key}\`) };" \
+  ""
+run "registration: an unknown field inside prefs is refused" \
+  "    if (!PREFS_FIELDS.includes(key)) return { bad: refuse(REFUSALS.UNKNOWN_FIELD, \`prefs.\${key}\`) };" \
+  ""
+run "registration: a quiet-hours window's fields are closed" \
+  "    if (!QUIET_HOURS_FIELDS.includes(key)) {
+      return { bad: refuse(REFUSALS.UNKNOWN_FIELD, \`prefs.quiet_hours.\${key}\`) };
+    }" \
+  ""
+run "registration: a quiet-hours window is complete" \
+  "  for (const key of QUIET_HOURS_FIELDS) {
+    if (!Object.hasOwn(value, key)) {
+      return { bad: refuse(REFUSALS.MISSING_FIELD, \`prefs.quiet_hours.\${key}\`) };
+    }
+  }" \
+  ""
+run "registration: a zone is an IANA-shaped name" \
+  "  if (!ZONE_PATTERN.test(zone.value)) {" \
+  "  if (false) {"
+run "registration: the zone's length bound, widened by one" \
+  "  const zone = stringField(value.zone, 'prefs.quiet_hours.zone', ZONE_MAX, false);" \
+  "  const zone = stringField(value.zone, 'prefs.quiet_hours.zone', ZONE_MAX + 1, false);"
+run "registration: a minute is inside the local day" \
+  "  if (!Number.isSafeInteger(value) || value < 0 || value > MINUTE_MAX) {" \
+  "  if (false) {"
+run "registration: a window's two ends differ" \
+  "  if (start.value === end.value) {" \
+  "  if (false) {"
+
 # ---------------------------------------------------------------------------
 # 5. P6.3's canonical serialisation: the bytes the tag covers.
 #

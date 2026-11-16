@@ -2,8 +2,9 @@
 
 The mobile plan's **Task P0.2**, in the shared pure-logic package [P0.1](../README.md)
 built, extended by **Task P6.3** with the fields D161, D167, D168 (as amended), D169
-and D171 need and with the tag §3.5 puts on every message. It answers one question —
-**is this value a mailbox message?** — and nothing else.
+and D171 need and with the tag §3.5 puts on every message, and by **Task P5.2.1** with
+the `registration` kind §3.5(b) carries a phone's push registration in. It answers one
+question — **is this value a mailbox message?** — and nothing else.
 
 **The schema is the protocol.** P1.1's state machine validates against it, P3.6's app
 writes it and P4.1's consumer reads it, so the three cannot disagree about what a
@@ -42,10 +43,13 @@ verifyMac({ …message, text: 'merge it' }, key, 'inbox');   // => false: the by
 | `mac` | string | **yes** (P6.3) | exactly 64 lowercase hex characters | §3.5, D169, D171, O7 — see below |
 | `acked` | boolean | no | — | D113's second phone write; **absent means not acked**, and it is **outside the tagged bytes** |
 | `agent` | string | no | 1–64 code units, an **identity string** | D161: one mailbox per account, the agent travels in the message. The same shape the heartbeat advertises (D163) |
-| `kind` | string | no | `message` · `prompt` · `answer` · `action`; absent means `message` | D167, D169, §3.2. P6.5/P6.7 map it to an acceptance window (D173) |
+| `kind` | string | no | `message` · `prompt` · `answer` · `action` · `registration`; absent means `message` | D167, D169, §3.2, §3.5(b). P6.5/P6.7 map it to an acceptance window (D173) |
 | `options` | string[] | on a `prompt`, optional | 1–8 entries, each 1–200 code units, distinct, single-line | §3.2: the app reads them aloud and the answer names one by position |
 | `reply_to` | string | on an `answer`, optional on an `action` | a message id | D168 (as amended) for the answer; §3.5 for the action that settles a prompt |
 | `action` | object | on an `action` | the record below | D169's typed destructive command |
+| `token` | string | on a `registration` | 1–256 code units, single-line | P5.2.1, §3.5(b): the push token the phone's service minted, **opaque** — the bound and the character rule are the whole of what the schema asks of it |
+| `platform` | string | on a `registration` | `ios` · `android` | P5.2.1, §3.4: the node shape names the pair |
+| `prefs` | object | on a `registration`, optional | the five switches, each a boolean, and an optional window | P5.2.1, §3.8: the user's controls, **the whole state** rather than a delta |
 
 A validated message comes back as a **deep-frozen copy**: a fresh, plain object — and
 fresh objects all the way down — carrying exactly these fields, with the caller's
@@ -62,6 +66,7 @@ proves nothing.
 | `prompt` | `options` | — | a question the agent wants answered (§3.2), with or without choices |
 | `answer` | — | `reply_to` | the answer to a prompt; the chosen words are `text`, because the answer is *spoken*, not selected |
 | `action` | `reply_to` | `action` | D169's destructive command |
+| `registration` | `prefs` | `token`, `platform` | P5.2.1, §3.5(b): the phone's push registration, the **only** path that writes §3.4's node |
 
 A field on the wrong kind is **`field-not-allowed`**, not an unknown field: two agents
 disagreeing about whether a message *is* an action is exactly the ambiguity this module
@@ -97,6 +102,50 @@ A launch is deliberately **not** a verb: D162 answered that "kick off …" goes 
 without a read-back, so it travels as an ordinary `message`. Every other destructive
 verb — the kill switch, budget writes, deletes — stays refused by voice and so has no
 verb here at all (§3.1).
+
+### The registration
+
+```js
+{ kind: 'registration',
+  token: '…the push token…',          // required, opaque, bounded, single-line
+  platform: 'ios' | 'android',        // required
+  prefs: { kill_switch: true,         // all five are required, and each is a boolean
+           cap_reached: true,
+           consumer_offline: true,
+           cap_near: false,           // off by default (§3.8), and an explicit false is how it travels
+           prompt: true,
+           quiet_hours: { zone: 'Europe/Berlin', start: 1320, end: 420 } } }   // optional
+```
+
+P5.2.1, §3.4, §3.5(b) and §3.8. The design fixes the requirement and not the
+spelling, so the names are this task's, chosen once here and stated with the reason:
+
+- **`token`, `platform`, `prefs`** are §3.4's node's own names — the node the principal
+  writes is `{token, platform, updated_at, prefs/…}` — and §3.5(b)'s sentence names the
+  token and the platform together. A message that spells them differently is a second
+  name for a node the design already named.
+- **The five switches are §1/D160's categories in the design's own words** —
+  `kill_switch`, `cap_reached`, `consumer_offline`, `cap_near`, `prompt` — so the
+  message, the node and the design's table read the same way. `cap_near` is off by
+  default and travels as an explicit `false`: the message is the **whole** state, so a
+  missing switch would be one the consumer had to invent, and "the app did not say" and
+  "the app said off" would be the same record.
+- **`quiet_hours` is `{zone, start, end}`**, in **minutes since local midnight**, with
+  the zone an **IANA name and not an offset** (§3.8): a stored offset drifts onto the
+  wrong hour at the next DST transition, silently. One spelling for a time of day is
+  minutes, so there is no second format to disagree about. `start === end` is refused as
+  `bad-window`: with a window that wraps midnight it is either the whole day or none of
+  it, and a reader that guessed would suppress the wrong hours in one of the two
+  readings. The zone is checked for **shape** — `zonePattern`, like `hexPattern` — and
+  whether the name is one the tz database has is the consumer's zone loader's question.
+- **`updated_at` is deliberately not a field.** §3.4's node carries it and the
+  **principal** writes it, from its own clock; a time the phone sent would be the phone's
+  clock deciding, which is the same objection that keeps `expires_at` out (D117).
+
+A registration with no `token`, no `platform` or a missing switch is
+**`missing-field`**; a field the (kind, field) table does not name on this kind is
+**`field-not-allowed`**, exactly as on every other kind — including a `token` on a plain
+message, which is the ambiguity §3.5(b) exists to close.
 
 ### Why there is no `expires_at`
 
@@ -296,18 +345,21 @@ from a malformed write instead of seeing "no message" for both:
 | `unknown-field` | a field the schema does not name (`__proto__` from JSON included: it is an unknown field, not pollution), at any depth |
 | `missing-field` | a required field that is absent, at any depth |
 | `wrong-type` | a field of the wrong type — **including an explicit `undefined`**, which is present-but-ambiguous |
-| `empty-string` | an empty `id`, `sender`, `text`, `reply_to`, `agent`, `boot`, an option or an agent's name |
+| `empty-string` | an empty `id`, `sender`, `text`, `reply_to`, `agent`, `boot`, a registration `token`, a zone, an option or an agent's name |
 | `bad-key` | an `id`, an action id, a confirmation id or a `reply_to` containing a character a database key may not contain |
 | `too-long` | a string longer than its bound |
 | `too-many` | more options (`OPTIONS_MAX`) or advertised agents (`AGENTS_MAX`) than the bound allows |
 | `too-few` | a list that is **present and empty**: a claim that says nothing |
 | `bad-character` | a control character (line breaks are allowed in `text`, not in a single-line field), DEL, an unpaired surrogate, U+2028/U+2029, or a character outside a run id's, a repository's or an identity string's alphabet |
 | `bad-timestamp` | `at` is **a number but not a time**: a float, `NaN`, `Infinity`, `-1` |
-| `unknown-kind` | a `kind` outside `message` · `prompt` · `answer` · `action` |
+| `unknown-kind` | a `kind` outside `message` · `prompt` · `answer` · `action` · `registration` |
 | `unknown-verb` | an action's verb outside `cancel` · `merge` · `confirm` |
+| `unknown-platform` | a registration's `platform` outside `ios` · `android` |
 | `field-not-allowed` | a field on a kind of message that does not carry it (a `reply_to` on a prompt, an `action` on an answer, a head SHA on a cancel) |
 | `bad-target` | a target that is not one of the two shapes, or that its verb cannot resolve to |
 | `bad-sha` | a head SHA that is not 40 or 64 **lowercase** hex characters |
+| `bad-zone` | a quiet-hours zone that is not an IANA-shaped name (`Europe/Berlin` and `America/Argentina/Buenos_Aires` are, `Europe//Berlin` and `/Berlin` are not; whether the name is one the tz database has is the consumer's zone loader's question) |
+| `bad-window` | a quiet-hours minute outside `0`–`1439`, or a window whose two ends are the same minute |
 | `bad-mac` | a tag that is not exactly 64 lowercase hex characters |
 | `duplicate-entry` | two options with the same words, or two advertised agents under one id — a choice by position, or by name, with two right answers |
 
@@ -376,7 +428,7 @@ installed, nothing is fetched, and the entry point the phone loads imports nothi
 all. The tests are the plan's verification list (a missing
 id, a wrong type, an oversize body and an unknown field refused; a well-formed message
 accepted) plus the fail-closed families above and P6.3's kind, action, tag and
-canonical-byte cases: 55 tests across the module's two test files — the 51 in
+canonical-byte cases: 62 tests across the module's two test files — the 58 in
 `index.test.js`, and the four in `bounds.test.js`, which replays
 [`vectors.bounds.json`](vectors.bounds.json), the bound vectors **both** ends
 consume (`internal/mailbox`'s `TestTheSharedBoundVectorsHold` is the Go half).
