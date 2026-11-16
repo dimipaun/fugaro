@@ -555,30 +555,45 @@ Subcommands:
 Declare a pool with these members, in this order
 
 Declare pools.<NAME> in this project: the credentials it walks, in the order it
-walks them.
+walks them, and the people it is served to.
 
 The members are credential names the same config defines (fugaro accounts ls
 names the accounts; the Claude OAuth ones a credential entry each), and they are
 written in the order given — failover tries them in that order and round-robin
 starts from the first. A credential the config does not define, a repeated
 member, a name this command may not use and a strategy that is not failover or
-round-robin are all refused before the file is touched.
+round-robin are all refused before the file is touched. A member list given on
+the command line is the whole list every time, so a member you leave out is
+dropped; leave the list off entirely and a pool that exists keeps the members it
+has.
 
 --strategy failover (the default) or round-robin. A pool that already exists
-keeps the strategy it has when the flag is left out, and this command replaces
-its members with the list on the command line: it is the whole list every time,
-so a member you leave out is dropped.
+keeps the strategy it has when the flag is left out.
+
+--owner EMAIL names the person the pool is served to, and --allow-user EMAIL,
+which may be repeated, names the others. The owner is required of a pool that is
+published to the policy node, and it is what a craft's access is checked
+against: without one, only the pool's own installation may use it. An address
+that is not an email, an address listed twice and an owner given to a pool the
+migration marked legacy-open are all refused before the file is touched.
+
+--layer picks the layer the write lands in. A pool is declared in this
+installation's own config, so the only layer it has is local, and --layer with
+any other layer is refused naming the one it does have.
 
 Run it at your own terminal: a pool decides where a project's calls may be
 spent and whose key they may carry, so a coding agent's session is refused.
 
-Usage: `fugaro accounts pool add NAME MEMBER...`
+Usage: `fugaro accounts pool add NAME [MEMBER...]`
 
 Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--allow-user` | stringArray | `[]` | no | another person the pool is served to, by email; repeat the flag for each. Left out, a pool that exists keeps the users it has |
 | `-h`, `--help` | bool | `false` | no | help for add |
+| `--layer` | string | "" | no | the layer to write (local, project, repo) |
+| `--owner` | string | "" | no | the person the pool is served to, by email: the owner a craft's access is checked against. Left out, a pool that exists keeps the owner it has |
 | `--strategy` | string | "" | no | how the pool walks its members: failover (the default: try them in order) or round-robin (share the load). Left out, a pool that exists keeps the strategy it has |
 
 Subcommands:
@@ -624,11 +639,13 @@ Remove a pool from this project's config
 Remove pools.<NAME> from this project's config: the pool goes, and a craft whose
 access names it is cleared with it rather than left pointing at nothing.
 
-It removes the pool from the installation's config only. A repository that
-selected the pool keeps its own file untouched, and this release's fugaro update
-leaves the pools the policy node already carries as they are: it never publishes
-this config's pools, which is MC4's job, so the removal withdraws nothing from
-the node.
+A pool is declared in this installation's own config, and this command removes
+the declaration from that file. A repository that selected the pool keeps its
+own file untouched.
+
+--layer picks the layer the removal lands in. A pool is declared in this
+installation's own config, so the only layer it has is local, and --layer with
+any other layer is refused naming the one it does have.
 
 Run it at your own terminal: a pool decides where a project's calls may be
 spent, so a coding agent's session is refused.
@@ -640,6 +657,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for rm |
+| `--layer` | string | "" | no | the layer to write (local, project, repo) |
 
 Subcommands:
 
