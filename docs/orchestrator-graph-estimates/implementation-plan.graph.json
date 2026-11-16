@@ -4,47 +4,24 @@
   "stream": "cli",
   "nodes": [
     {
-      "id": "C3",
-      "title": "the estimate shape and the history seam",
-      "kind": "contract",
+      "id": "X0",
+      "title": "the orchestrator store's plan and backlog nodes",
       "run": null,
       "version": null,
-      "size": 1,
-      "stubs": [
-        "internal/plan/estimate_stub.go"
-      ],
+      "size": 2.5,
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/plan/estimate_types.go",
-          "internal/plan/estimate_stub.go",
-          "docs/orchestrator-graph-estimates/contract-estimate.md"
-        ]
-      }
-    },
-    {
-      "id": "C4",
-      "title": "the issue adapter interface and its fake",
-      "kind": "contract",
-      "run": null,
-      "version": null,
-      "size": 1,
-      "stubs": [
-        "internal/issuesync/github_stub.go"
-      ],
-      "footprint": {
-        "prediction": true,
-        "paths": [
-          "internal/issuesync/adapter.go",
-          "internal/issuesync/fake.go",
-          "internal/issuesync/github_stub.go",
-          "docs/orchestrator-graph-estimates/contract-adapter.md"
+          "internal/orchestrator/store.go",
+          "internal/orchestrator/shard.go",
+          "internal/orchestrator/shard_test.go",
+          "internal/orchestrator/tick.go"
         ]
       }
     },
     {
       "id": "X1",
-      "title": "the orchestrator state shape: external ids, the plan_approve op, the graph_suspect fact, the migration",
+      "title": "the orchestrator state shape: external ids, plan_task, the plan_approve op, the migration",
       "run": null,
       "version": null,
       "size": 1.5,
@@ -52,7 +29,8 @@
         "prediction": true,
         "paths": [
           "internal/orchestrator/state.go",
-          "internal/orchestrator/patch_ops.go",
+          "internal/orchestrator/patch.go",
+          "internal/orchestrator/validate.go",
           "internal/orchestrator/state_test.go",
           "schemas/orchestrator-state.schema.json",
           "schemas/orchestrator-patch.schema.json"
@@ -68,6 +46,7 @@
       "footprint": {
         "prediction": true,
         "paths": [
+          "internal/runstore/runstore.go",
           "internal/runstore/discovered.go",
           "internal/runstore/discovered_test.go",
           "schemas/result.schema.json"
@@ -91,17 +70,17 @@
     },
     {
       "id": "R1",
-      "title": "the orchestrator.enabled policy key",
+      "title": "the orchestrator_enabled policy key",
       "run": null,
       "version": null,
       "size": 1,
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/policy/policy.go",
-          "internal/policy/merge.go",
-          "internal/policy/orchestrator_merge_test.go",
-          "internal/settings/registry.go"
+          "internal/projectpolicy/policy.go",
+          "internal/projectpolicy/policy_test.go",
+          "internal/settings/registry.go",
+          "schemas/settings.schema.json"
         ]
       }
     },
@@ -116,14 +95,31 @@
         "paths": [
           "internal/cli/update_unit_stage.go",
           "internal/cli/update_unit_stage_test.go",
+          "internal/cli/managed_test.go",
+          "internal/cli/docs_stateless_orchestrator_test.go",
+          "docs/stateless-orchestrator/implementation-plan.md"
+        ]
+      }
+    },
+    {
+      "id": "R7",
+      "title": "the update skill and Checks 301-302 say update installs the unit",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
           "plugin/skills/update/SKILL.md",
-          "plugin/update_skill_test.go"
+          "plugin/update_skill_test.go",
+          "internal/cli/docs_check301_302_test.go",
+          "docs/gcp-live-checklist.md"
         ]
       }
     },
     {
       "id": "R3",
-      "title": "the daemon honours orchestrator.enabled",
+      "title": "the daemon honours orchestrator_enabled",
       "run": null,
       "version": null,
       "size": 1,
@@ -209,13 +205,15 @@
         "prediction": true,
         "paths": [
           "internal/orchestrator/patch_plan.go",
-          "internal/orchestrator/patch_plan_test.go"
+          "internal/orchestrator/patch_plan_test.go",
+          "internal/cli/orchestrator_patch.go",
+          "internal/cli/orchestrator_patch_test.go"
         ]
       }
     },
     {
       "id": "G3",
-      "title": "unlock on merge: the review phase and the per-tick merge read",
+      "title": "unlock on merge: the review phase and the merge read",
       "run": null,
       "version": null,
       "size": 2.5,
@@ -272,7 +270,8 @@
         "paths": [
           "internal/orchestrator/fold_discovered.go",
           "internal/orchestrator/fold_discovered_test.go",
-          "internal/orchestrator/tick.go"
+          "internal/orchestrator/tick.go",
+          "internal/orchestrator/runview.go"
         ]
       }
     },
@@ -406,7 +405,21 @@
         "paths": [
           "internal/cli/update_backlog.go",
           "internal/cli/update_backlog_test.go",
-          "internal/cli/update.go",
+          "internal/cli/update.go"
+        ]
+      }
+    },
+    {
+      "id": "B8",
+      "title": "docs/backlog becomes history",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/backlog/render.go",
+          "internal/cli/docs_backlog_test.go",
           "docs/backlog/README.md",
           "docs/backlog/FORMAT.md"
         ]
@@ -414,7 +427,7 @@
     },
     {
       "id": "B3",
-      "title": "the GitHub issues adapter behind the credentials service",
+      "title": "the GitHub issues route behind the credentials service",
       "run": null,
       "version": null,
       "size": 3,
@@ -431,15 +444,18 @@
     },
     {
       "id": "B4",
-      "title": "the issue sync: ingest, mirror, dedupe",
+      "title": "the issue sync: the adapter seam, ingest, mirror, dedupe, on the tick",
       "run": null,
       "version": null,
       "size": 2.5,
       "footprint": {
         "prediction": true,
         "paths": [
+          "internal/issuesync/adapter.go",
+          "internal/issuesync/fake.go",
           "internal/issuesync/sync.go",
-          "internal/issuesync/sync_test.go"
+          "internal/issuesync/sync_test.go",
+          "internal/orchestrator/tick.go"
         ]
       }
     },
@@ -453,10 +469,7 @@
         "prediction": true,
         "paths": [
           "internal/runner/prflow.go",
-          "internal/runner/prflow_test.go",
-          "internal/task/task.go",
-          "schemas/task.schema.json",
-          "internal/cli/orchestrator_launcher.go"
+          "internal/runner/prflow_test.go"
         ]
       }
     },
@@ -471,7 +484,24 @@
         "paths": [
           "internal/localcfg/issues.go",
           "internal/localcfg/issues_test.go",
-          "schemas/local-config.schema.json"
+          "schemas/project-layer.schema.json"
+        ]
+      }
+    },
+    {
+      "id": "B7",
+      "title": "the launcher passes plan_task and the external id",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/task/task.go",
+          "schemas/task.schema.json",
+          "internal/cli/orchestrator_launcher.go",
+          "internal/cli/orchestrator_launcher_test.go",
+          "internal/cli/recipes_skew.go"
         ]
       }
     },
@@ -486,38 +516,9 @@
         "paths": [
           "internal/orchestrator/patch.go",
           "internal/cli/orchestrator_run.go",
+          "internal/cli/orchestrator_mergeread.go",
+          "internal/cli/orchestrator_runlister.go",
           "internal/orchestrator/plan_e2e_test.go"
-        ]
-      }
-    },
-    {
-      "id": "I2",
-      "title": "wire the estimate's real history and computation",
-      "kind": "integration",
-      "run": null,
-      "version": null,
-      "size": 1,
-      "footprint": {
-        "prediction": true,
-        "paths": [
-          "internal/plan/estimate_stub.go",
-          "internal/cli/plan_estimate_e2e_test.go"
-        ]
-      }
-    },
-    {
-      "id": "I3",
-      "title": "wire the GitHub adapter into the daemon's tick",
-      "kind": "integration",
-      "run": null,
-      "version": null,
-      "size": 1.5,
-      "footprint": {
-        "prediction": true,
-        "paths": [
-          "internal/issuesync/github_stub.go",
-          "internal/orchestrator/tick.go",
-          "internal/issuesync/github_e2e_test.go"
         ]
       }
     }
@@ -594,39 +595,9 @@
       "reason": "the estimate reads each node's tier"
     },
     {
-      "task": "S2",
-      "needs": "C3",
-      "reason": "the history seam it reads through"
-    },
-    {
-      "task": "S3",
-      "needs": "C3",
-      "reason": "the estimate block it prints"
-    },
-    {
-      "task": "S4",
-      "needs": "C3",
-      "reason": "the JSON shape it draws"
-    },
-    {
-      "task": "S5",
-      "needs": "C3",
-      "reason": "the estimate it summarises"
-    },
-    {
-      "task": "S6",
-      "needs": "I2",
-      "reason": "the skill quotes the real figure plan graph prints"
-    },
-    {
       "task": "B2",
       "needs": "B1",
       "reason": "the fold reuses backlog add's item writer, its behaviour and not only its shape"
-    },
-    {
-      "task": "B4",
-      "needs": "C4",
-      "reason": "the adapter interface and the fake it tests against"
     },
     {
       "task": "B4",
@@ -679,91 +650,99 @@
       "reason": "the end-to-end test folds it"
     },
     {
-      "task": "I2",
+      "task": "G1",
+      "needs": "X0",
+      "reason": "the import writes the plan's own node"
+    },
+    {
+      "task": "G2",
+      "needs": "X0",
+      "reason": "the op lands on the plan's own node"
+    },
+    {
+      "task": "B1",
+      "needs": "X0",
+      "reason": "backlog add writes the backlog node"
+    },
+    {
+      "task": "B4",
+      "needs": "X0",
+      "reason": "the ingest writes the backlog node"
+    },
+    {
+      "task": "E3",
+      "needs": "X0",
+      "reason": "one file: both edit internal/orchestrator/tick.go"
+    },
+    {
+      "task": "E3",
+      "needs": "G3",
+      "reason": "one file: both edit internal/orchestrator/runview.go"
+    },
+    {
+      "task": "E4",
+      "needs": "E1",
+      "reason": "it pins the wake path E1 builds"
+    },
+    {
+      "task": "E4",
+      "needs": "G3",
+      "reason": "it pins the unlock G3 builds"
+    },
+    {
+      "task": "R7",
+      "needs": "R2",
+      "reason": "the docs say what R2's code does"
+    },
+    {
+      "task": "B5",
+      "needs": "B7",
+      "reason": "the body reads the external id the launcher passes"
+    },
+    {
+      "task": "B7",
+      "needs": "X1",
+      "reason": "the item's external id and plan_task"
+    },
+    {
+      "task": "W1",
+      "needs": "B7",
+      "reason": "the end-to-end test meets an adopted run's plan_task"
+    },
+    {
+      "task": "S2",
       "needs": "S1",
-      "reason": "the integration runs both sides"
+      "reason": "the estimate reads the history table"
     },
     {
-      "task": "I2",
+      "task": "S3",
       "needs": "S2",
-      "reason": "the integration runs both sides"
+      "reason": "the CLI prints the estimate S2 computes"
     },
     {
-      "task": "I2",
+      "task": "S4",
       "needs": "S3",
-      "reason": "the integration runs both sides"
+      "reason": "the console draws the block plan status prints"
     },
     {
-      "task": "I2",
-      "needs": "S4",
-      "reason": "the integration runs both sides"
+      "task": "S5",
+      "needs": "S2",
+      "reason": "the brief summarises the estimate"
     },
     {
-      "task": "I2",
-      "needs": "S5",
-      "reason": "the integration runs both sides"
+      "task": "S6",
+      "needs": "S3",
+      "reason": "the skill quotes the line plan graph prints"
     },
     {
-      "task": "I3",
+      "task": "B4",
       "needs": "B3",
-      "reason": "the integration runs both sides"
+      "reason": "the sync calls the issue route's client"
     },
     {
-      "task": "I3",
-      "needs": "B4",
-      "reason": "the integration runs both sides"
-    },
-    {
-      "task": "I3",
+      "task": "B4",
       "needs": "E3",
       "reason": "one file: both edit internal/orchestrator/tick.go"
-    }
-  ],
-  "decoupling": [
-    {
-      "contract": "C3",
-      "was": {
-        "task": "S2",
-        "needs": "S1"
-      },
-      "integration": "I2",
-      "reason": "the arithmetic needs the history's shape, not the runs bucket read"
-    },
-    {
-      "contract": "C3",
-      "was": {
-        "task": "S3",
-        "needs": "S2"
-      },
-      "integration": "I2",
-      "reason": "the CLI prints the estimate's shape; the arithmetic can land beside it"
-    },
-    {
-      "contract": "C3",
-      "was": {
-        "task": "S4",
-        "needs": "S3"
-      },
-      "integration": "I2",
-      "reason": "the console draws the JSON block's shape, not the CLI's output"
-    },
-    {
-      "contract": "C3",
-      "was": {
-        "task": "S5",
-        "needs": "S2"
-      },
-      "integration": "I2",
-      "reason": "the brief summarises the estimate's shape"
-    },
-    {
-      "contract": "C4",
-      "was": {
-        "task": "B4",
-        "needs": "B3"
-      },
-      "integration": "I3",
-      "reason": "the sync runs against the adapter interface and its fake, not the GitHub client"
     }
   ]
 }
