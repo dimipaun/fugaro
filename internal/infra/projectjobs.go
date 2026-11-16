@@ -57,9 +57,11 @@ type ProjectJob struct {
 	// of the switch on this side — the module turns it into the job account's
 	// one roles/run.invoker grant on that service (modules/project/sa.tf) and
 	// otherwise changes nothing about the job, which keeps every mount it has
-	// (G17: the drop is B5.7's flip, behind the owner's check). See
-	// projectJobServesTheCredentialsService for what "served" means here.
-	CredentialsService *CredentialsService `json:"credentials_service"`
+	// (G17: the drop is B5.7's flip, behind the owner's check). Absent when
+	// null, so the document of a job the service does not serve is byte for
+	// byte what it was. See projectJobServesTheCredentialsService for what
+	// "served" means here.
+	CredentialsService *CredentialsService `json:"credentials_service,omitempty"`
 }
 
 // ProjectJobs is the installation's project jobs, by job name: one job and
