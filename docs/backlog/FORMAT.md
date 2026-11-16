@@ -1,9 +1,7 @@
 # The backlog's format
 
 **This folder is history.** It holds the items filed while the backlog was one
-Markdown file per item, and nothing new is filed here: `fugaro backlog add`
-files an item now, as a work item in the project's backlog rather than as a
-file beside this document (D2716 of
+Markdown file per item, and new items go to `fugaro backlog add` (D2716 of
 [the orchestrator graph estimates reconciliation](../orchestrator-graph-estimates/reconciliation.md)).
 The ruling that made this folder is
 [the rigor modes reconciliation](../rigor-modes/reconciliation.md) (D26–D32),
@@ -104,8 +102,7 @@ it flips the status and writes the section in its own commit, and a run that
 left findings open closes nothing — the round it did not answer is still what
 the item names. A run no longer files items itself (the runner stopped filing
 when the owner ruled backlog items are filed by hand): `fugaro backlog add` is
-what files one, as a work item in the project's backlog and not as a file in
-this folder (D2716). The folder cannot check that a run fixed what it closes: it sees
+what files one. The folder cannot check that a run fixed what it closes: it sees
 a status and a pull request number and never the diff between them, so what is
 held here is what the folder can see: a close names the pull request it was made
 on.

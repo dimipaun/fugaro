@@ -3,8 +3,8 @@ package cli
 // docs/backlog/ is this repository's backlog history (rigor-modes, the owner's
 // ruling of 2026-10-20: D26–D32, plan T4.3 and T4.4) — the ruling the
 // orchestrator graph estimates work retires: the standing backlog is the
-// project's work items, `fugaro backlog add` files one, and this folder stays
-// as history (D2716).
+// project's work items, `fugaro backlog add` is where a new one goes, and this
+// folder stays as history (D2716).
 //
 // One Markdown file per item, named `<id>-<slug>.md`, so that two pull
 // requests filing an item at once write two differently named files and the
@@ -686,12 +686,16 @@ func itemDoc(id, title string) string {
 }
 
 // TestBacklogHeaderSaysHistory: D2716 folds docs/backlog/ into the standing
-// backlog and retires it, so this folder is history and `fugaro backlog add`
-// files an item now. Render's header is where a reader meets that, and it is
+// backlog and retires it, so this folder is history and new items go to
+// `fugaro backlog add`. Render's header is where a reader meets that, and it is
 // the document's head rather than a footnote under the rows; the hand-written
 // FORMAT.md beside it says the same, because a folder that is history in one
 // document and live in the other is a folder whose reader cannot tell which to
 // believe.
+//
+// What is pinned is that the folder is history and where a new item goes, not
+// what `fugaro backlog add` writes: the CLI still files into this folder today,
+// and the sentence that moves it belongs to the task that changes the command.
 //
 // The committed index is not read here: TestDocsBacklogIndexIsCurrent is the
 // regenerate-and-compare pin that holds docs/backlog/README.md to the bytes
@@ -718,7 +722,7 @@ func TestBacklogHeaderSaysHistory(t *testing.T) {
 
 	history := []string{
 		"This folder is history",
-		"`fugaro backlog add` files an item now",
+		"new items go to `fugaro backlog add`",
 	}
 	for _, want := range history {
 		if !strings.Contains(header, want) {

@@ -473,7 +473,7 @@ be held to it) or **Open** (the design leaves it to the owner).
   the design quotes the count as one it does not move), so **this folder adds no test file** and the
   plan's tasks write their pins into the existing `docs_pr_state_test.go`. The design's own promise —
   it kept `docs/backlog/README.md` at "2 items: 2 open, 0 closed, 0 dropped"
-  (`docs/backlog/README.md:13`) — is quoted by the vocabulary pin, which reads `docs/backlog/README.md`
+  (`docs/backlog/README.md:16`) — is quoted by the vocabulary pin, which reads `docs/backlog/README.md`
   at `internal/cli/docs_pr_state_test.go:252` and fails when the line is gone (`:255`) or the design
   stopped quoting it (`:259`).
 - **F29 — the HARD RULE, and the one word in it that needs reading.** A field addition owes no operator
