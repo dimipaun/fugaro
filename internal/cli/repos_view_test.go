@@ -11,6 +11,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -72,6 +73,14 @@ func canonicalsOf(v *reposView) []string {
 // (D1140: the node is `fugaro update`'s copy of the config file).
 func viewCatalogNode(t *testing.T, db *gcpfake.RTDB, allow []string) {
 	t.Helper()
+	viewCatalogNodeBase(t, db, allow, "")
+}
+
+// viewCatalogNodeBase is viewCatalogNode with the node's own base_branch: the
+// project's answer for a repository whose entry names none, and the layer behind
+// the installation's own top-level one (config.EffectiveBaseBranch).
+func viewCatalogNodeBase(t *testing.T, db *gcpfake.RTDB, allow []string, baseBranch string) {
+	t.Helper()
 	node := map[string]any{
 		"version":     projectpolicy.Version,
 		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
@@ -87,6 +96,9 @@ func viewCatalogNode(t *testing.T, db *gcpfake.RTDB, allow []string) {
 			},
 		}},
 		"image_map": map[string]any{"acme/other": "base"},
+	}
+	if baseBranch != "" {
+		node["base_branch"] = baseBranch
 	}
 	db.Set(projectpolicy.PathShared(), node)
 }
@@ -154,6 +166,124 @@ func TestReposViewImageSourceIsNamedOnce(t *testing.T) {
 	if len(seen) != 3 {
 		t.Errorf("three repositories resolved through three different answers, and the view names %d of them", len(seen))
 	}
+}
+
+// A row's base branch is the branch a run of that repository starts from, which
+// is what config.EffectiveBaseBranch resolves — the one function every layer
+// resolves through, handed the same four arguments as launchBaseBranch — and not
+// the node's value: the checkout's own git.base_branch where this working
+// directory holds a checkout of the repository, else this machine's entry for
+// it, else the project's (the installation's own top-level base_branch first,
+// the published node's behind it), else main.
+//
+// The last of those is why the resolution is not the row's own: an installation
+// that names nothing anywhere makes every row "" unless the default is applied,
+// and "" is not a branch. RE1 and RE2 read this member as the branch a launch
+// will be cut from.
+//
+// Mutation (verified, run and restored): the derivation this replaced — the
+// repository's entry, else the project layer, else "", with no checkout read —
+// fails "nothing names one" and "a checkout whose file writes none" ("" where a
+// launch resolves main) and "the checkout's file" (release where the file names
+// trunk). A second mutation, the project layer read from the node's value alone
+// and "" on a node that did not answer, fails four of them: "the installation's
+// own, over the node's" and "the repository's entry" read release where the
+// installation names develop, and "the installation's own, with no node to read"
+// and "the checkout's file" read main.
+func TestReposViewBaseBranchIsTheLaunchesBranch(t *testing.T) {
+	check := func(t *testing.T, v *reposView, want map[string]string) {
+		t.Helper()
+		if len(v.Repos) != len(want) {
+			t.Fatalf("rows are %v, want the repositories named here (%d of them)", canonicalsOf(v), len(want))
+		}
+		for c, branch := range want {
+			if got := viewRow(t, v, c).BaseBranch; got != branch {
+				t.Errorf("%s reads base_branch %q, want %q", c, got, branch)
+			}
+		}
+	}
+	t.Run("nothing names one", func(t *testing.T) {
+		f := newProjectFixture(t, "")
+		check(t, viewOf(t, f.path, f.db, ""), map[string]string{
+			"github/acme/app":      config.DefaultBaseBranch,
+			"bitbucket/acme/other": config.DefaultBaseBranch,
+		})
+	})
+	t.Run("the installation's own, over the node's", func(t *testing.T) {
+		f := newProjectFixture(t, "")
+		setConfig(t, f, func(s string) string {
+			return strings.Replace(s, "repos:\n", "base_branch: develop\nrepos:\n", 1)
+		})
+		viewCatalogNodeBase(t, f.db, []string{"github/acme/app"}, "release")
+		check(t, viewOf(t, f.path, f.db, ""), map[string]string{
+			"github/acme/app":      "develop",
+			"bitbucket/acme/other": "develop",
+		})
+	})
+	t.Run("the published node's", func(t *testing.T) {
+		f := newProjectFixture(t, "")
+		viewCatalogNodeBase(t, f.db, []string{"github/acme/app"}, "release")
+		check(t, viewOf(t, f.path, f.db, ""), map[string]string{
+			"github/acme/app":      "release",
+			"bitbucket/acme/other": "release",
+		})
+	})
+	t.Run("the installation's own, with no node to read", func(t *testing.T) {
+		// No node is published: the layer is this machine's own answer, and a
+		// node that did not answer is no reason to lose it for the default.
+		f := newProjectFixture(t, "")
+		setConfig(t, f, func(s string) string {
+			return strings.Replace(s, "repos:\n", "base_branch: develop\nrepos:\n", 1)
+		})
+		v := viewOf(t, f.path, f.db, "")
+		if v.Allow.State == "" {
+			t.Fatal("the unpublished node did not leave a state sentence, so this case is not the one it means to be")
+		}
+		check(t, v, map[string]string{
+			"github/acme/app":      "develop",
+			"bitbucket/acme/other": "develop",
+		})
+	})
+	t.Run("the repository's entry", func(t *testing.T) {
+		f := newProjectFixture(t, "  acme/release: { provider: github, workflows: [web], base_branch: pin }\n")
+		setConfig(t, f, func(s string) string {
+			return strings.Replace(s, "repos:\n", "base_branch: develop\nrepos:\n", 1)
+		})
+		viewCatalogNodeBase(t, f.db, []string{"github/acme/app"}, "release")
+		check(t, viewOf(t, f.path, f.db, ""), map[string]string{
+			"github/acme/app":      "develop",
+			"bitbucket/acme/other": "develop",
+			"github/acme/release":  "pin",
+		})
+	})
+	t.Run("the checkout's file", func(t *testing.T) {
+		f := newProjectFixture(t, "")
+		setConfig(t, f, func(s string) string {
+			return strings.Replace(strings.Replace(s, "repos:\n", "base_branch: develop\nrepos:\n", 1),
+				"acme/app: { provider: github, workflows: [web] }",
+				"acme/app: { provider: github, workflows: [web], base_branch: release }", 1)
+		})
+		catalogCheckout(t, "version: 1\nproject: aurora\ngit: { provider: github, base_branch: trunk }\nworkflows:\n"+
+			"  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
+		check(t, viewOf(t, f.path, f.db, ""), map[string]string{
+			"github/acme/app":      "trunk",
+			"bitbucket/acme/other": "develop",
+		})
+	})
+	t.Run("a checkout whose file writes none", func(t *testing.T) {
+		f := newProjectFixture(t, "")
+		setConfig(t, f, func(s string) string {
+			return strings.Replace(s,
+				"acme/app: { provider: github, workflows: [web] }",
+				"acme/app: { provider: github, workflows: [web], base_branch: release }", 1)
+		})
+		catalogCheckout(t, "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n"+
+			"  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
+		check(t, viewOf(t, f.path, f.db, ""), map[string]string{
+			"github/acme/app":      "release",
+			"bitbucket/acme/other": config.DefaultBaseBranch,
+		})
+	})
 }
 
 // The seen list is a member of its own and never creates a row (D2409). What
@@ -564,6 +694,21 @@ func TestReposViewEmptyListMembersAreLists(t *testing.T) {
 // …"), before any assertion here has to notice. A view that needs a value to
 // answer a row is what D2415 refuses, and the test is written so that the
 // reading is the failure and not only the printing.
+//
+// The read is scoped to the one repository the caller named (E27, D2415) — that
+// repository's containers are the ones that come back — and the scoping is what
+// this test now pins too: the fixture holds two containers the read must not
+// return — another repository's, and a project-wide logical secret, which
+// carries no repository label at all (infra/discover.go's own shape for one) —
+// so a listing widened from gcp.LabelRepo to the project's managed containers
+// returns three entries here and reddens the count below, where one seeded
+// container left the widened answer identical to the scoped one.
+//
+// Mutation (verified, run and restored): replacing the read's filter
+// map[string]string{gcp.LabelRepo: slug} with map[string]string{gcp.LabelManaged:
+// gcp.ManagedValue} fails this test on the count — three containers, want the
+// named repository's one — and would have put another repository's names, IDs
+// and rotation ages into the row with the suite green.
 func TestReposViewCredentialsCarryNoValue(t *testing.T) {
 	const stored = "not-a-secret-shaped-literal"
 	f := newProjectFixture(t, "")
@@ -577,6 +722,17 @@ func TestReposViewCredentialsCarryNoValue(t *testing.T) {
 		gcp.LabelRepo:    slug,
 		gcp.LabelSecret:  "github-app-key",
 	}, []byte(stored))
+	other := slugOf(t, "bitbucket", "acme/other")
+	sm.Seed(gcp.SecretID(other, "bitbucket-app-key"), map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue,
+		gcp.LabelRepo:    other,
+		gcp.LabelSecret:  "bitbucket-app-key",
+	}, []byte(stored))
+	sm.Seed(gcp.ProjectSecretID("aurora", "claude-key"), map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue,
+		gcp.LabelProject: "aurora",
+		gcp.LabelSecret:  "claude-key",
+	}, []byte(stored))
 
 	v := viewOf(t, f.path, f.db, "github/acme/app")
 	row := viewRow(t, v, "github/acme/app")
@@ -587,7 +743,7 @@ func TestReposViewCredentialsCarryNoValue(t *testing.T) {
 		t.Fatalf("the credential containers did not read: %s", row.Credentials.State)
 	}
 	if len(row.Credentials.Entries) != 1 {
-		t.Fatalf("the credential member holds %+v, want the one container", row.Credentials.Entries)
+		t.Fatalf("the credential member holds %+v, want the named repository's one container: another repository's and the project-wide one are not this read's", row.Credentials.Entries)
 	}
 	e := row.Credentials.Entries[0]
 	if e.Name != "github-app-key" || e.ID != gcp.SecretID(slug, "github-app-key") || !e.Enabled || e.AgeDays == nil {

@@ -161,10 +161,14 @@ type reposView struct {
 type reposViewRepo struct {
 	Canonical string `json:"canonical"`
 	Provider  string `json:"provider"`
-	// BaseBranch is the branch this repository's runs start from: its own
-	// entry's where this machine records one, the project's default
-	// otherwise (the two durable copies of internal/config's
-	// EffectiveBaseBranch).
+	// BaseBranch is the branch this repository's runs start from, resolved
+	// through config.EffectiveBaseBranch — the one function every layer
+	// resolves through — in the order a launch takes: the working directory's
+	// checkout of the repository where its fugaro.yaml writes git.base_branch,
+	// else this machine's own entry for it, else the project's (this
+	// installation's top-level base_branch, else the published node's), else
+	// main. It is never empty: a repository no layer names is one whose runs
+	// start from main, which is what a launch of it resolves.
 	BaseBranch string `json:"base_branch"`
 	// Workflows are the repository's workflows, each with the catalog entry
 	// its job runs. They are the checkout's own where this machine has one
@@ -369,12 +373,12 @@ func newReposView(ctx context.Context, lc *localcfg.Config, db *rtdb.Client, can
 	if lc == nil {
 		return nil, userErr("the enrolment view needs this machine's project config: select one, or run this from a checkout of the repository")
 	}
-	allow, cat, imap, projectBranch := reposViewAllowOf(ctx, lc, db)
+	allow, cat, imap, projectBase := reposViewAllowOf(ctx, lc, db)
 	local, keys := reposViewLocalOf(lc)
 
 	v := &reposView{Project: lc.Name, Allow: allow, Local: local}
 	for _, name := range reposViewRowNames(allow, keys) {
-		v.Repos = append(v.Repos, reposViewRowOf(ctx, lc, cat, imap, projectBranch, name, keys[name], allow))
+		v.Repos = append(v.Repos, reposViewRowOf(ctx, lc, cat, imap, projectBase, name, keys[name], allow))
 	}
 	v.Repos = nonNil(v.Repos)
 
@@ -419,7 +423,7 @@ func newReposView(ctx context.Context, lc *localcfg.Config, db *rtdb.Client, can
 		// published entry does enroll and whose credential containers were
 		// never read.
 		if !found && reposViewPublishedOf(allow, want).Admitted {
-			v.Repos = slices.Insert(v.Repos, row, reposViewRowOf(ctx, lc, cat, imap, projectBranch, want, keys[want], allow))
+			v.Repos = slices.Insert(v.Repos, row, reposViewRowOf(ctx, lc, cat, imap, projectBase, want, keys[want], allow))
 			found = true
 		}
 		v.Named.Enrolled = found
@@ -472,17 +476,23 @@ func reposViewCanonicalOf(canonical string) (string, error) {
 // generation it was read at, and the catalog and image map the node publishes,
 // which are the pair every row's image is resolved against (D1140, D1906).
 //
-// The policy's own base branch comes back with them: it is the project's
-// default for a repository whose entry here names none.
+// The project's base branch comes back with them: this installation's own
+// top-level base_branch where it names one, else the node's, which is the order
+// projectBaseBranchErr resolves layer 3 in — an installation that names one does
+// not read the node for it at all. It is what a repository whose entry here
+// names none starts its runs from, with "main" behind it (config's default).
 //
 // A node that did not answer leaves a state sentence and this machine's own
-// pair. That is deliberately not a refusal: `ls` and `status` still have rows
-// to draw and a bucket to read, and a policy read that failed is one member of
-// the answer rather than the whole of it — with the sentence saying so, which
-// is the half an empty list loses.
+// pair, and the project's base branch with it: that layer is this machine's own
+// answer, which a node that did not answer is no reason to lose.
+//
+// A policy read that failed is deliberately not a refusal: `ls` and `status`
+// still have rows to draw and a bucket to read, and a policy read that failed is
+// one member of the answer rather than the whole of it — with the sentence
+// saying so, which is the half an empty list loses.
 func reposViewAllowOf(ctx context.Context, lc *localcfg.Config, db *rtdb.Client) (reposViewAllow, *config.Catalog, map[string]string, string) {
 	fileOnly := func(state string) (reposViewAllow, *config.Catalog, map[string]string, string) {
-		return reposViewAllow{Entries: []string{}, State: state}, lc.ImageCatalogEffective(nil), lc.ImageMapEffective(nil), ""
+		return reposViewAllow{Entries: []string{}, State: state}, lc.ImageCatalogEffective(nil), lc.ImageMapEffective(nil), lc.BaseBranch
 	}
 	etag, found, raw, err := readPolicyNode(ctx, db, lc)
 	switch {
@@ -495,8 +505,12 @@ func reposViewAllowOf(ctx context.Context, lc *localcfg.Config, db *rtdb.Client)
 	if err != nil {
 		return fileOnly("the published policy could not be read, so the allow-list and the image selection it publishes are not in this answer: " + oneLineCLI(err.Error()))
 	}
+	projectBase := lc.BaseBranch
+	if projectBase == "" {
+		projectBase = p.BaseBranch
+	}
 	return reposViewAllow{Entries: nonNil(p.AllowRepos), Generation: etag},
-		lc.ImageCatalogEffective(p.ImageCatalog), lc.ImageMapEffective(p.ImageMap), p.BaseBranch
+		lc.ImageCatalogEffective(p.ImageCatalog), lc.ImageMapEffective(p.ImageMap), projectBase
 }
 
 // reposViewLocalOf is this machine's own half: the canonical names its config
@@ -554,23 +568,37 @@ func reposViewRowNames(allow reposViewAllow, keys map[string]string) []string {
 }
 
 // reposViewRowOf builds one row.
-func reposViewRowOf(ctx context.Context, lc *localcfg.Config, cat *config.Catalog, imap map[string]string, projectBranch, canonical, localKey string, allow reposViewAllow) reposViewRepo {
+//
+// Its base branch is resolved through config.EffectiveBaseBranch, the one
+// function every layer resolves through (launchBaseBranch hands it the same four
+// arguments), so a row prints the branch a run of that repository really starts
+// from and never "" — the default is main. Reading the entry and the project's
+// value alone would print "" for an installation that names neither, in a
+// versioned document the console reads, with no state sentence to say what the
+// empty string meant.
+func reposViewRowOf(ctx context.Context, lc *localcfg.Config, cat *config.Catalog, imap map[string]string, projectBase, canonical, localKey string, allow reposViewAllow) reposViewRepo {
 	row := reposViewRepo{
 		Canonical: canonical,
 		Provider:  providerOf(canonical),
 		Published: reposViewPublishedOf(allow, canonical),
 		Local:     reposViewRepoLocal{Present: localKey != "", Key: localKey},
 	}
-	if localKey == "" {
-		row.BaseBranch = projectBranch
-	} else {
+	repoBranch := ""
+	if localKey != "" {
 		r := lc.Repos[localKey]
-		row.BaseBranch = r.BaseBranch
+		repoBranch = r.BaseBranch
 		row.ClaudeAccounts = slices.Clone(r.ClaudeAccounts)
-		if row.BaseBranch == "" {
-			row.BaseBranch = projectBranch
-		}
 	}
+	// Layer 1 is the checkout this working directory is in, and only an entry
+	// here gives the repository the name that checkout is found under:
+	// checkoutRoot canonicalises the name a launch writes against origin's, and
+	// a repository this machine holds no entry for is one no launch of its names
+	// here.
+	file, fileSets := "", false
+	if localKey != "" {
+		file, fileSets = checkoutBaseBranch(ctx, localKey)
+	}
+	row.BaseBranch, _ = config.EffectiveBaseBranch(file, fileSets, repoBranch, projectBase)
 
 	// The workflows are the checkout's where this machine has one: image_name:
 	// and needs: live in the repository's own fugaro.yaml, which is the file
