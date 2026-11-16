@@ -51,6 +51,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 )
 
@@ -118,8 +119,6 @@ type labelFake struct {
 	// pullStatus and mintStatus, when not 2xx, are what those calls answer with
 	// instead: the pull request read failing, and the mint failing.
 	pullStatus, mintStatus int
-	// listNext, when set, is the Link header the open listing answers with.
-	listNext string
 	// labels are the label definitions the fake holds, by name: what an ensure
 	// of a name already there answers with. It is a set of names and not the
 	// text, because the text a second creation carries is what the route must
@@ -157,7 +156,7 @@ func (f *labelFake) serve(w http.ResponseWriter, r *http.Request) {
 	f.seen = append(f.seen, ghSeen{method: r.Method, path: r.URL.Path, body: string(body), auth: r.Header.Get("Authorization")})
 	slug, token, expires := f.slug, f.token, f.expires
 	open, pull := f.open, f.pull
-	pullStatus, mintStatus, listNext := f.pullStatus, f.mintStatus, f.listNext
+	pullStatus, mintStatus := f.pullStatus, f.mintStatus
 	known := map[string]bool{}
 	for name, there := range f.known {
 		known[name] = there
@@ -179,9 +178,6 @@ func (f *labelFake) serve(w http.ResponseWriter, r *http.Request) {
 			"expires_at": expires.UTC().Format(time.RFC3339),
 		})
 	case r.Method == http.MethodGet && r.URL.Path == f.repoPath("/pulls"):
-		if listNext != "" {
-			w.Header().Set("Link", listNext)
-		}
 		out := make([]map[string]any, 0, len(open))
 		for _, pr := range open {
 			out = append(out, map[string]any{"number": pr.number, "labels": labelNames(pr.labels)})
@@ -863,6 +859,32 @@ func TestLabelRoutePermissionSet(t *testing.T) {
 	}
 }
 
+// TestLabelRouteWithoutItsOwnToken: the route performs its acts with a token it
+// mints itself and has no second way to reach GitHub, so a mint GitHub refuses
+// is a refusal of the act — a state_unavailable the daemon reports — and not a
+// call made with some other credential or an act reported as done.
+//
+// The ensure is the call that reaches the mint first, because it corroborates
+// nothing: a write would have to read the pull request before it wrote, and the
+// read is what a missing token would fail on.
+func TestLabelRouteWithoutItsOwnToken(t *testing.T) {
+	s, gh := labelRouteSvc(t)
+	gh.mintStatus = http.StatusUnauthorized
+	resp, body := s.labelEnsure(t, wantRunningName)
+	if resp.StatusCode != StatusUnavailable {
+		t.Fatalf("a call whose mint was refused was answered %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
+	}
+	if e := refusal(t, resp.StatusCode, body); e.Error != ErrorStateUnavailable {
+		t.Errorf("the refusal is %q, want %q: %s", e.Error, ErrorStateUnavailable, e.Message)
+	}
+	if got := len(gh.writes()); got != 0 {
+		t.Errorf("a call whose mint was refused wrote %d labels, want none", got)
+	}
+	if got := len(s.auditLines(t)); got != 1 {
+		t.Errorf("the refused call wrote %d audit lines, want exactly one", got)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // The bound
 // ---------------------------------------------------------------------------
@@ -1004,6 +1026,27 @@ func TestLabelRoutePathMatchesClient(t *testing.T) {
 	}
 	if !strings.Contains(string(body), LabelPath) {
 		t.Errorf("the not-found answer does not name %s among the routes this service serves: %s", LabelPath, body)
+	}
+}
+
+// TestLabelRouteRunBranchPrefixMatchesRunner holds the one string the label
+// route spells for itself to the runner's own constant (gitops.RunBranchPrefix).
+//
+// The corroboration compares a pull request's head branch against the branch the
+// run that opened it pushes to, so the prefix is a fact about the RUNNER and not
+// about this service — and this service holds no git and must not grow one for a
+// string, so the two spellings live in two packages that do not import each
+// other and this test is what keeps them one value. The fixture the writes are
+// driven through spells the branch with the literal, so a rename on the runner's
+// side fails here and in every corroboration test rather than quietly admitting
+// a branch no run pushes to.
+func TestLabelRouteRunBranchPrefixMatchesRunner(t *testing.T) {
+	if labelRunBranchPrefix != gitops.RunBranchPrefix {
+		t.Errorf("the label route's run branch prefix = %q and the runner's = %q, want one prefix", labelRunBranchPrefix, gitops.RunBranchPrefix)
+	}
+	runID := "20260101-000000-ab12"
+	if got := labelRunBranch(runID); got != gitops.RunBranchPrefix+runID {
+		t.Errorf("the fixture's branch = %q, want %q", got, gitops.RunBranchPrefix+runID)
 	}
 }
 
