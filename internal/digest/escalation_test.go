@@ -1,6 +1,8 @@
 package digest
 
 import (
+	"bytes"
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -8,6 +10,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/escalation"
+	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -180,6 +183,113 @@ func TestDigestEscalationSection(t *testing.T) {
 	}
 }
 
+// TestEscalationItemFromTheReportsJobRead is the join F27's grant has to
+// support (E12): the reports job may read one escalation block and nothing
+// above it, so the section's item is built from that block and the run record
+// the block names — never from the work item the block sits on, which the same
+// token is refused. The block's repo is what places the item in a
+// per-repository report, and its run id is what finds the chain: the record
+// carries the pull request, the start and the cost, which is everything the
+// figures need besides the host's answer about the merge.
+//
+// Mutation: drop repo from the block and the section for that repository holds
+// nothing; drop run_id and the chain is unknown, so the hours past R1 and the
+// median time to merge are the figures nobody could measure (G5).
+func TestEscalationItemFromTheReportsJobRead(t *testing.T) {
+	p := escWeek(t)
+	block := orchestrator.Escalation{
+		Repo: "owner/repo-a", RunID: "20261023-090000-abcd",
+		Rung: escalation.R3, EnteredAt: parseAt("2026-10-23T00:30:00Z"), OuterAttempts: 3,
+		Transitions: []orchestrator.Transition{
+			{To: escalation.R3, Reason: escalation.ReasonR2Findings, At: parseAt("2026-10-23T00:30:00Z")},
+		},
+	}
+	read := readEscalationBlock(t, block)
+
+	// The run the block names, as the job reads it from the repository's own
+	// bucket (R12): the ladder's ledger is the orchestrator's, and the records
+	// of what a chain spent are the runs'.
+	found := escChain(t, read.RunID, "2026-10-23T00:00:00Z", 103, 4.00)
+	recs := []runstore.Record{found}
+	merged := escTime("2026-10-23T12:00:00Z")
+
+	item := escalationItemFromTheBlock(read, found, merged)
+	e := EscalationSection("owner/repo-a", []EscalationItem{item}, recs, p)
+	if e == nil {
+		t.Fatal("the block the reports job may read built no section, so nothing about this item reaches the report")
+	}
+	if e.Items != 1 {
+		t.Errorf("Items = %d, want 1: the block's repo is what puts it in this report", e.Items)
+	}
+	if week := rungFigures(e.Week, escalation.R3); week.PRs != 1 || !week.MedianKnown || week.MedianToMerge != 12*time.Hour {
+		t.Errorf("the week's R3 row = %+v, want one pull request and a median of 12h from the chain's start to the merge", week)
+	}
+	if e.Week.Rung3Merges != 1 || e.Week.PastR1Items != 1 {
+		t.Errorf("the week holds %d rung 3 merges and %d items past R1, want 1 and 1", e.Week.Rung3Merges, e.Week.PastR1Items)
+	}
+	if want := budget.Micros(4_000_000); e.Week.PastR1Cost != want {
+		t.Errorf("the hours past R1 cost %s, want the chain's %s: the cost is the record's and the record is found by the block's run id", USD(e.Week.PastR1Cost), USD(want))
+	}
+	// The same block with no run id: the ledger still places the item, and the
+	// chain it cannot find is an unknown figure rather than a free one (G5).
+	noRun := read
+	noRun.RunID = ""
+	lonely := escalationItemFromTheBlock(noRun, runstore.Record{}, merged)
+	week := EscalationSection("owner/repo-a", []EscalationItem{lonely}, recs, p)
+	if week == nil || week.Week.PastR1Cost != 0 || week.Week.Rung3Merges != 1 {
+		t.Fatalf("a block naming no run read as %+v, want the merge counted and the cost unknown", week)
+	}
+	if r3 := rungFigures(week.Week, escalation.R3); r3.MedianKnown {
+		t.Errorf("the median time to merge is known (%s) with no chain to measure, want unknown", r3.MedianToMerge)
+	}
+	// And a block of another repository is in no figure of this report: both
+	// the report and the read are per repository (E12).
+	other := read
+	other.Repo = "owner/repo-b"
+	if e := EscalationSection("owner/repo-a", []EscalationItem{escalationItemFromTheBlock(other, found, merged)}, recs, p); e != nil {
+		t.Errorf("another repository's block produced the section %+v, want nothing printed", e)
+	}
+}
+
+// readEscalationBlock is the block as the reports job receives it: the JSON the
+// orchestrator's node holds, decoded strictly, so a field the block does not
+// carry — or one this build cannot see — is refused here rather than read
+// around.
+func readEscalationBlock(t *testing.T, block orchestrator.Escalation) orchestrator.Escalation {
+	t.Helper()
+	raw, err := json.Marshal(block)
+	if err != nil {
+		t.Fatalf("the ledger block does not encode: %v", err)
+	}
+	var read orchestrator.Escalation
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&read); err != nil {
+		t.Fatalf("the ledger block the node holds is not one this build reads: %v\n%s", err, raw)
+	}
+	return read
+}
+
+// escalationItemFromTheBlock is the whole of what a reader of the ledger does
+// with one block: the block's own fields are the item's, the run record the
+// block names is the chain's, and whether the pull request merged is the host's
+// answer. The item's own id is not here: the block carries none — the node's
+// key is the position of the item beside it — and the section prints no id
+// (G1).
+func escalationItemFromTheBlock(b orchestrator.Escalation, rec runstore.Record, mergedAt *time.Time) EscalationItem {
+	item := EscalationItem{
+		Repo: b.Repo, Rung: b.Rung, EnteredAt: b.EnteredAt, OuterAttempts: b.OuterAttempts,
+		MergedAt: mergedAt,
+	}
+	for _, tr := range b.Transitions {
+		item.Transitions = append(item.Transitions, EscalationStep{To: tr.To, Reason: tr.Reason, At: tr.At})
+	}
+	if rec.PR != nil {
+		item.PR = rec.PR.Number
+	}
+	return item
+}
+
 // TestDigestEscalationRegressionProxyIsRevert: the regression figure is a
 // revert of a rung 3 merge within 7 days and nothing else (O1, F14). A revert
 // after the window, a revert of something that never merged, a revert before
@@ -321,6 +431,14 @@ func TestDigestEscalationHoldsNoSecret(t *testing.T) {
 			t.Errorf("the report prints %q, planted in the item's %s", planted, leaf.path)
 		}
 		if !strings.Contains(out, "## Escalation") {
+			// The one leaf a per-repository report drops the item for: the
+			// report is about owner/repo-a, and a Repo planted with any other
+			// value is an item this report is not about (E12), so the absent
+			// thing is the section. Nothing of the item is printed either way,
+			// which is what the check above is for.
+			if leaf.path == ".Repo" {
+				continue
+			}
 			t.Errorf("the report carries no section with the item's %s planted: the check proves nothing", leaf.path)
 		}
 	}

@@ -235,6 +235,9 @@ func EscalationSection(repo string, items []EscalationItem, recs []runstore.Reco
 			weekItems = append(weekItems, it)
 		}
 	}
+	if e.Items == 0 {
+		return nil
+	}
 	e.Day = figures(dayItems, chains, day, end)
 	e.Week = figures(weekItems, chains, week, end)
 	e.Longest = longestOpen(items, repo, end)

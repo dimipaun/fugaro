@@ -772,6 +772,19 @@ func wordMacro(m string, depth int) (string, error) {
 // which is as strong as every other mint here: whoever mints a custom token
 // chooses the claims in it, and a launcher that can mint a run's token can
 // already mint anything TOKEN and RUN are built on.
+//
+// Finding the block is the reader's own job, and the two halves of the path are
+// found differently. `$id` is the project's name — `orchestrator/<project>/…` is
+// what the tree is (`internal/cli`'s orchestratorID: "the orchestrator id is the
+// project's name") and it is the same value this claim compares against, so a
+// reader that holds the claim already knows it. `$item` is a position in the
+// work items array (`orchestrator.State.WorkItems` is a slice), which shifts as
+// items are archived out of it, and the reader may not list it: the node holding
+// the array carries no rule of its own and is refused. So it walks the positions
+// — the array is bounded by `orchestrator.MaxWorkItems`, and each read is one
+// block — and takes what it finds there, which is why the block itself carries
+// the item's `repo` and the run its last move was about (E12): the reader
+// filters and joins on those and never on the position it found the block at.
 const reportsJobClaim = "(auth != null && auth.token.rj != null && auth.token.rj == root.child('fugaro/project').val())"
 
 // PathMCPAuth is the hosted MCP server's own subtree (docs/mcp-server/spec.md

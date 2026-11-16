@@ -152,6 +152,8 @@
       "required": ["rung", "entered_at", "outer_attempts", "transitions"],
       "additionalProperties": false,
       "properties": {
+        "repo": { "type": "string", "description": "The item's repository, which the daemon copies from the item (E12, F27)." },
+        "run_id": { "type": "string", "description": "The run the block's last move was about, which the daemon copies from the launch or the item." },
         "rung": { "enum": ["R0", "R1", "R2", "R3", "R4"], "description": "The rung the item is at, and the highest it has entered." },
         "entered_at": { "type": "string", "format": "date-time", "description": "When it entered that rung: the last transition's own time." },
         "outer_attempts": { "type": "integer", "minimum": 0, "maximum": 16, "description": "How many of the ladder's own runs the item has spent (orchestrator.MaxOuterAttempts)." },

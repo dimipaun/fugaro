@@ -51,12 +51,16 @@ package rules
 // name check reads out of the generated paths).
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/escalation"
+	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -208,22 +212,57 @@ func TestOrchestratorSubtreeIsReadableOnlyBySignedInPeople(t *testing.T) {
 // where /fugaro/project is absent, the equality alone compares null to null and
 // admits any signed-in client, which is why the last case deletes the node and
 // demands the refusal of a token that carries no rj claim.
+//
+// The block the job reads is the document the daemon writes, and the admit case
+// decodes it as this build's ledger with the two names the loss of the item
+// above it made necessary (repo, run_id). What the job does with them — the
+// digest's item and the chain behind it — is TestEscalationItemFromTheReportsJobRead,
+// which needs no emulator.
 func TestOrchestratorReportsJobReadsEscalationOnly(t *testing.T) {
 	const (
 		orchItem       = orchState + "/work_items/w1"
 		orchEscalation = orchItem + "/escalation"
+		ledgerRepo     = "owner/repo"
+		ledgerRun      = "20261116-090000-abcd"
 	)
 	h := newHarness(t)
 	h.seed(leased(2 * usd))
 	h.set(orchState, map[string]any{"schemaVersion": 1, "phase": "idle"})
 	h.set(orchItem, map[string]any{"state": "escalated"})
-	h.set(orchEscalation, map[string]any{"rung": 3})
+	h.set(orchEscalation, map[string]any{
+		"repo": ledgerRepo, "run_id": ledgerRun,
+		"rung": "R3", "entered_at": "2026-11-16T09:00:00Z", "outer_attempts": 2,
+		"transitions": []map[string]any{
+			{"to": "R0", "reason": "rebase", "at": "2026-11-16T08:00:00Z"},
+			{"from": "R0", "to": "R3", "reason": "age", "at": "2026-11-16T09:00:00Z"},
+		},
+	})
 
 	// The read the design grants, and the node it is granted on: the ledger's
 	// escalation block of a work item, which is where the ladder's record of the
 	// rungs it climbed lives.
 	job := h.reportsJob(projectID)
 	h.mustRead(job, orchEscalation)
+
+	// And the block the read returns is a ledger this build reads, with the two
+	// names a reader that cannot reach the item beside it needs: the repository
+	// its per-repository report is about, and the run its chain is found by.
+	var raw json.RawMessage
+	if _, err := job.Get(context.Background(), orchEscalation, &raw); err != nil {
+		t.Fatalf("read /%s: %v", orchEscalation, err)
+	}
+	var block orchestrator.Escalation
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&block); err != nil {
+		t.Fatalf("the block the reports job read is not a ledger this build reads: %v\n%s", err, raw)
+	}
+	if block.Repo != ledgerRepo || block.RunID != ledgerRun {
+		t.Fatalf("the block the reports job read is on %q and names the run %q, want %q and %q", block.Repo, block.RunID, ledgerRepo, ledgerRun)
+	}
+	if block.Rung != escalation.Rung("R3") || len(block.Transitions) != 2 {
+		t.Fatalf("the block came back as rung %q with %d transitions", block.Rung, len(block.Transitions))
+	}
 
 	// And nothing else of the database. The work items and the state node above
 	// the block are the widening this test exists for — a read there reaches
