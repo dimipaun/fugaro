@@ -15,7 +15,8 @@ import (
 
 // TestVoiceTheFourAnswersAreOneAnswer: absent, empty, malformed and unreadable
 // are one answer — local only — because a caller that must not guess cannot
-// tell them apart (docs/mobile/design/voice-evaluation-switch.md §4.3).
+// tell them apart (the voice evaluation switch design, §4.3 — cited in full in
+// voice.go, which is where the reader's own comment belongs).
 //
 // The mutation this test is written against is DecodeVoice returning the
 // half-decoded value beside its error instead of LocalVoice. encoding/json has
