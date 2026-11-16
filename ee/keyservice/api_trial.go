@@ -3,8 +3,9 @@
 
 package keyservice
 
-// §14's Team trial (K2.7, D2136, D2201): the door a signed-in account asks at,
-// and the rule that one organisation's installation and one account get one.
+// §14's Team trial, in the portal (K2.7, portal plan P3.3, D2136, D2185,
+// D2201): the door a signed-in account asks at, and the rule that one
+// organisation's installation and one account get one.
 //
 // The trial is a normal Team key issued without payment, and nothing else about
 // it is special: it is minted from the `trial` row of the policy table, so its
@@ -21,12 +22,20 @@ package keyservice
 // any signed-in account at any domain name another organisation's project id,
 // take the trial that organisation was about to ask for and bar it for good.
 // Keyed on the pair, that ask spends the asking organisation's trial and nothing
-// else — and only a domain the account's own address names is counted for it:
-// from an address at a free mail provider no organisation is counted at all, and
-// the ask is refused (D453, below). The count is the store's atomic
-// check-and-write rather than a read this route makes before minting: two asks
-// arriving together are one trial, because only one of them can claim it (K2.2,
-// store.go's `ClaimTrial`).
+// else. The organisation is the portal's own (P2.1) and it is the one the caller
+// is a member of — an id nothing a caller types can reach, which is what makes
+// the pair's first half as unguessable as its second (D2185). The count is the
+// store's atomic check-and-write rather than a read this route makes before
+// minting: two asks arriving together are one trial, because only one of them
+// can claim it (K2.2, store.go's `ClaimTrial`).
+//
+// A trial is a licence, and the portal holds it as one (P3.1): the key that
+// leaves here is the key of a workspace the trial writes for the project the ask
+// named, and the organisation's own list of entitlements names it. That is why
+// this route writes two records after the store has claimed the trial and before
+// it mails anything: a key in an account's inbox is a key the portal has to be
+// able to answer about (F27's renewal, P3.4's cards), and a trial that appeared
+// nowhere would be a licence the person who took it cannot see.
 //
 // The key leaves by mail, the way every issue path's does: the bundle is the key
 // line and the renewal secret line, shown once and never stored (D2135, §7.3),
@@ -36,11 +45,13 @@ package keyservice
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // RouteTrial is the trial's door on the portal's API (P1.0): the SPA's own
@@ -55,11 +66,14 @@ const RouteTrial = "/api/trial"
 const maxTrialBytes = 4 << 10
 
 func init() {
-	// The route reaches the sign-in verifier and says so, so that a deployment
-	// serving the trial without one is refused when it starts rather than
-	// answering every ask with a failure of its own (api.go's `reaching`).
+	// The route reaches the sign-in verifier and the document store, and it says
+	// so, so that a deployment serving the trial without one is refused when it
+	// starts rather than answering every ask with a failure of its own (api.go's
+	// `reaching`). The store is what holds the caller's organisation (P2.1) and
+	// what the trial's own two records are written to (below), so a deployment
+	// without one can serve no trial at all.
 	registerAPI(http.MethodPost, RouteTrial, (*Service).trial,
-		withBody(maxTrialBytes), reaching(needSignIn))
+		withBody(maxTrialBytes), reaching(needDocs, needSignIn))
 }
 
 // TrialCall is what a trial ask carries: the installation's Firebase project id,
@@ -92,8 +106,8 @@ type TrialCall struct {
 const trialPrefix = "trial:"
 
 // trialInstallation is the installation half of §14's rule as the store holds
-// it: the organisation the sign-in proved **with** the project id the ask named,
-// escaped whole (D2201).
+// it: the organisation the caller is a member of **with** the project id the ask
+// named, escaped whole (D2201).
 //
 // The store's Trial carries the one installation field §14's rule was written
 // against (K2.2, store.go), and D2201's amendment adds a second half to what
@@ -101,12 +115,16 @@ const trialPrefix = "trial:"
 // second document, which is the store's to add and not this route's. What the
 // join has to survive is the store's own naming rule: the id a document is filed
 // under is one the deploy's backend can hold, so a slash in either half — a
-// project id is a caller's own string and nothing checks its shape here, and a
-// local part may carry one (§4.1's `address`) — would file the trial as a path
+// project id is a caller's own string and nothing bounds it here, and a local
+// part may carry one (§4.1's `address`) — would file the trial as a path
 // into another collection rather than as a document of this one (docstore's
 // `ErrUnstorableName`). Escaping each half is what keeps one half from reaching
 // into the other either: the separator is escaped inside either, so the join is
 // the only place it appears.
+//
+// The organisation half is the portal's own id (P3.3): it is minted by the store
+// (`newID`) and not derived from anything a caller sends, so the pair's first
+// half is one no request can spell for another organisation.
 func trialInstallation(organisation, installation string) string {
 	return trialPrefix + url.PathEscape(organisation) + "|" + url.PathEscape(installation)
 }
@@ -115,14 +133,16 @@ func trialInstallation(organisation, installation string) string {
 // a sentence a person reads, and no sentence says anything about the service's
 // inside (§7.2's rule, api.go's refusal shape).
 const (
-	trialRateRefusal      = "Too many requests from this address just now. Try again shortly."
-	trialSignInRefusal    = "This request's sign-in could not be verified, so no trial was issued for it. Sign in to the licence project and ask again."
-	trialBodyRefusal      = "This request is not the ask this route reads: it carries the workspace's Firebase project id and nothing else. A trial of more than one seat is asked for through the request form."
-	trialClaimedRefusal   = "This account or this workspace has already had its trial, and §14's trial is one per installation and account."
-	trialWorkspaceEmpty   = "A trial names the workspace it is for, and this request names none."
-	trialFreeMailRefusal  = "A trial is granted to an organisation, and this account's address is at a free mail provider, where anyone can hold an address and the domain is not one organisation's. Ask again with an address at your organisation's own domain."
-	trialAccountRefusal   = "A trial is counted against the account the sign-in proved, and this address is not one a trial can be filed under. Ask again from another account."
-	trialWorkspaceRefusal = "A trial is filed under the workspace id this request names, and this one is not one a trial can be filed under: name the workspace's own Firebase project id, and nothing longer."
+	trialRateRefusal         = "Too many requests from this address just now. Try again shortly."
+	trialSignInRefusal       = "This request's sign-in could not be verified, so no trial was issued for it. Sign in to the licence project and ask again."
+	trialBodyRefusal         = "This request is not the ask this route reads: it carries the workspace's Firebase project id and nothing else. A trial of more than one seat is asked for through the request form."
+	trialClaimedRefusal      = "This account or this workspace has already had its trial, and §14's trial is one per installation and account."
+	trialWorkspaceEmpty      = "A trial names the workspace it is for, and this request names none."
+	trialOrganisationRefusal = "A trial is granted to an organisation, and this account is not a member of one in the portal yet. Create an organisation and ask again."
+	trialBoundRefusal        = "This organisation is already licensed for that Firebase project. A trial is for a project it holds nothing for."
+	trialFreeMailRefusal     = "A trial is granted to an organisation, and this account's address is at a free mail provider, where anyone can hold an address and it is not one an organisation's member asks with. Ask again with an address at your organisation's own domain."
+	trialAccountRefusal      = "A trial is counted against the account the sign-in proved, and this address is not one a trial can be filed under. Ask again from another account."
+	trialWorkspaceRefusal    = "A trial is filed under the workspace id this request names, and this one is not one a trial can be filed under: name the workspace's own Firebase project id, and nothing longer."
 )
 
 // trialNameBytes is the length the deploy's document store admits for the id of
@@ -157,22 +177,28 @@ func trialFileable(name string) bool {
 // installation and is mailed its key.
 //
 // The order is the address's allowance, then the body, then the sign-in, then
-// the free mail refusal, then the two names the ask is filed under, then the
-// cheap half of §14's rule, then the account's domain's allowance, then the
-// mint, then the claim, and then the mail and the two records. The address's
+// the caller's organisation, then the free mail refusal, then the two names the
+// ask is filed under and the shape of the project id, then the two halves of
+// §14's rule, then the account's domain's allowance, then the mint, then the
+// claim, and then the licence, the mail and the two records. The address's
 // allowance is spent first for the reason renew.go's is (a body this service
 // never parses is as cheap to serve as a good one); the sign-in is read before
 // the rule and before the mint because the account is half of what both count;
-// the free mail refusal follows the sign-in because it is the organisation the
-// sign-in proved that it reads (D453); the names are checked where both their
+// the organisation is read from the memberships the sign-in names (P2.1) and is
+// the other half; the free mail refusal follows both because it is the account's
+// own address that it reads (D453); the names are checked where both their
 // halves are known and before anything they would be written into, because the
 // store refuses a name it cannot file only when it writes one and every such
-// write comes after the mint (`trialFileable`); the rule is read before the mint
-// because minting for an ask that is going to be refused spends the key ring's
-// authority on a key nobody is given; and the domain's allowance comes after
-// everything that can refuse the ask without a key, because a domain is shared —
-// an ask that is refused mints nothing and must not spend an allowance other
-// accounts on that domain still need (the throttle is documented per domain:
+// write comes after the mint (`trialFileable`); the project id's shape is
+// checked with them, because the trial now writes a workspace for that project
+// (below) and a workspace's project id is Firebase's own grammar — the same rule
+// binding applies to it (D2205, workspaces.go) — while a well-shaped id is a
+// string nothing proves (D2201); the rule is read before the mint because
+// minting for an ask that is going to be refused spends the key ring's authority
+// on a key nobody is given; and the domain's allowance comes after everything
+// that can refuse the ask without a key, because a domain is shared — an ask that
+// is refused mints nothing and must not spend an allowance other accounts on that
+// domain still need (the throttle is documented per domain:
 // docs/licensing/licence-key.md, "Limits, accepted").
 //
 // The mint stands before the claim and not after it, and that order costs
@@ -184,7 +210,13 @@ func trialFileable(name string) bool {
 // failure is rarer than a person's second click. What is left of the price is
 // that a mail failure after the claim leaves the trial claimed and its key
 // unmailed: the store holds a trial naming a key, an operator sees it, and the
-// account is answered a failure rather than a key it never received.
+// account is answered a failure rather than a key it never received. The
+// licence below is written in the same window and for the same reason: it comes
+// after the claim, so nothing is recorded for a trial the store refused, and
+// before the mail, so a key an account can hold is a licence the portal can
+// answer about. A failure there leaves the same state a mail failure does — a
+// claimed trial, a minted key and two records — which is why it is answered the
+// same way (trialFailed).
 func (s *Service) trial(w http.ResponseWriter, r *http.Request) {
 	if !s.limiter.allow("ip:" + clientIP(r)) {
 		refuseAPI(w, http.StatusTooManyRequests, "rate_limited", trialRateRefusal)
@@ -198,27 +230,30 @@ func (s *Service) trial(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// The organisation is read off the sign-in once and is the one value §14's
-	// rule, the throttle and the key all use: what the store counts a trial
-	// against, what the allowance is spent on and what the key says the trial
-	// belongs to are one thing, and a second reading of it would be a second
-	// rule (D2201).
-	organisation := domainOf(caller.Email)
-	// A free mail domain is refused here, which is D453's list read the way the
-	// free seat reads it (service.go's `freeSeatForm`: such a domain goes to the
-	// owner's queue rather than being minted for). What it protects is D2201's
-	// rule itself: an organisation that anybody can hold an address at is not an
-	// organisation, so a trial counted against one counts nothing — every account
-	// at gmail.example shares it, and the first of them to name a project id
-	// would spend every other one's trial for that id and bar the organisation
-	// that owns the project (409, and no method of the Store interface repairs a
-	// trial). The free seat's queue is not what this route does with it: a queued
-	// application is minted a free seat by the owner's key and has no path to a
-	// trial, and this is a door a signed-in stranger posts to, not a place a
-	// person reads a request. A trial is asked for with an address at the
-	// organisation's own domain.
-	if s.freeMail(organisation) {
-		refuseAPI(w, http.StatusForbidden, "free_mail_organisation", trialFreeMailRefusal)
+	// The organisation is the portal's own and not the address's domain (P3.3,
+	// D2185): the free seat's organisation is the one a person signed an
+	// organisation up as (P2.1), and a trial is the same kind of grant, so the
+	// half of D2201's pair that this route counts is the id the caller's
+	// membership names. The domain a key's `organisation` claim used to carry is
+	// what the free mail refusal below still reads, and it is the one thing left
+	// of the old reading: a domain is a name anybody can hold an address at, and
+	// an organisation is not.
+	organisation, member, err := s.currentOrganisation(r.Context(), caller)
+	if err != nil {
+		refuseOrgAccess(w, err)
+		return
+	}
+	if !member {
+		refuseAPI(w, http.StatusForbidden, "no_organisation", trialOrganisationRefusal)
+		return
+	}
+	// The address the sign-in proved is the account half of §14's rule and the
+	// one the key is mailed to; its **domain** is what D453's list is read
+	// against, which is why the refusal below is about the address and no longer
+	// claims to be about the organisation the trial is counted with.
+	domain := domainOf(caller.Email)
+	if s.freeMail(domain) {
+		refuseAPI(w, http.StatusForbidden, "free_mail_address", trialFreeMailRefusal)
 		return
 	}
 	// Two names this ask is filed under are made from strings the ask brought,
@@ -228,34 +263,60 @@ func (s *Service) trial(w http.ResponseWriter, r *http.Request) {
 	// The account is the address the sign-in proved, read through §4.1's own
 	// rule, which admits a slash in a local part and so admits an address the
 	// account collection cannot file; the installation is the pair D2201 counts,
-	// whose workspace half the ask names and nothing bounds.
+	// whose organisation half is the portal's own id and whose project half the
+	// ask names and nothing bounds.
 	if !trialFileable(caller.Email) {
 		refuseAPI(w, http.StatusBadRequest, "unfileable_account", trialAccountRefusal)
 		return
 	}
-	installation := trialInstallation(organisation, call.WorkspaceID)
+	installation := trialInstallation(organisation.ID, call.WorkspaceID)
 	if !trialFileable(installation) {
 		refuseAPI(w, http.StatusBadRequest, "unfileable_workspace", trialWorkspaceRefusal)
+		return
+	}
+	// The project id is a caller's own string and nothing proves the caller
+	// controls it (D2201), so this is not a check about who owns the project: it
+	// is the one check that a string is a Firebase project id at all, and it is
+	// here because the trial writes a workspace for it (trialLicence) — a
+	// workspace's project id is what a screen draws and what a later binding of
+	// the same project is compared against, and a string Firebase could not name
+	// a project is one no installation will ever match. The rule is binding's own
+	// and not a second one (workspaces.go's `validProjectID`).
+	if !validProjectID(call.WorkspaceID) {
+		refuseAPI(w, http.StatusUnprocessableEntity, "invalid_project_id",
+			"A Firebase project id is 6 to 30 characters of lower-case letters, digits and dashes, and begins with a letter.")
 		return
 	}
 	if !s.trialFree(w, r, installation, caller.Email) {
 		return
 	}
+	// D2204 read where the trial can honour it. One project id is one workspace
+	// and one installation runs one key, and this route is about to write a
+	// workspace of its own for the project the ask named — so an organisation
+	// that already holds that project would end up holding it twice, which is a
+	// licence the screen draws twice and a key that fights the one already there.
+	// What it is **not** asked is the rule binding asks: a trial would otherwise
+	// let any organisation bar another's binding of a project id that is a
+	// caller's own string (D2201, F37), and TN-P1's ruling keeps that harm on the
+	// binding side — where the probe and the operations transfer are — rather
+	// than letting a trial reach it.
+	if !s.trialProjectFree(w, r, organisation.ID, call.WorkspaceID) {
+		return
+	}
 	// The account's own **domain's** allowance is spent here, and it is the
 	// throttle §14's trial is documented with: "the trial path is throttled per
 	// domain" (docs/licensing/licence-key.md, "Limits, accepted"), because the
-	// account a caller asks from is one they may open another of and the
-	// organisation behind it is not. It is spent after the sign-in and not with
-	// the address, for the reason a renewal's key allowance is (renew.go's
-	// `charged`): only a request that proved who asks is counted against that
-	// domain, so no caller can spend another domain's allowance. And it is spent
-	// after §14's rule rather than before it, because an ask the rule is going to
-	// refuse mints nothing and must not spend the domain's allowance either: a
-	// domain is shared — a free mail domain is the case D453's list exists for —
-	// so an account that already had its trial and keeps asking would otherwise
-	// hold that domain's allowance at nothing and lock every other account on it
-	// out of a trial it never took.
-	if !s.limiter.allow("domain:" + organisation) {
+	// account a caller asks from is one they may open another of and a domain is
+	// not. It is spent after the sign-in and not with the address, for the reason
+	// a renewal's key allowance is (renew.go's `charged`): only a request that
+	// proved who asks is counted against that domain, so no caller can spend
+	// another domain's allowance. And it is spent after §14's rule rather than
+	// before it, because an ask the rule is going to refuse mints nothing and
+	// must not spend the domain's allowance either: a domain is shared — a free
+	// mail domain is the case D453's list exists for — so an account that already
+	// had its trial and keeps asking would otherwise hold that domain's allowance
+	// at nothing and lock every other account on it out of a trial it never took.
+	if !s.limiter.allow("domain:" + domain) {
 		refuseAPI(w, http.StatusTooManyRequests, "rate_limited", trialRateRefusal)
 		return
 	}
@@ -273,16 +334,11 @@ func (s *Service) trial(w http.ResponseWriter, r *http.Request) {
 		Environment: s.cfg.Environment,
 		Policy:      PolicyTrial,
 		WorkspaceID: call.WorkspaceID,
-		// The account's own domain is the organisation the key names, which is
-		// the same reading of "one per organisation" the free seat's check uses
-		// (service.go's `domainOf`, §4.2). A trial's organisation is otherwise
-		// the portal's model of one (P3.3), which does not exist yet: until it
-		// does, the address the sign-in proved is the only organisation this
-		// route can name, and the key has to name one to verify at all. It is
-		// the same value the claim below is keyed on, and not a second reading
-		// of it: what the key says its organisation is and what the rule counted
-		// are one thing (D2201).
-		Organisation: organisation,
+		// The portal organisation the caller is a member of is what the key names,
+		// and it is the same value §14's rule counted above and the entitlement
+		// below is written for: what the key says the licence belongs to and what
+		// the rule counted are one thing (D2201, D2185).
+		Organisation: organisation.ID,
 		// One seat, which is what §10.3's self-serve trial is and what the ask
 		// cannot name: the minter refuses a key for nobody, and a trial of more
 		// than one seat is §17's request form.
@@ -343,7 +399,34 @@ func (s *Service) trial(w http.ResponseWriter, r *http.Request) {
 		// ask's, the account never received its key, and serving it below is the
 		// whole of what is left to do.
 	}
-	answer.Record.Source = installation
+	licence, err := s.trialLicence(r.Context(), organisation, call.WorkspaceID, s.now().UTC())
+	if err != nil {
+		// The trial is claimed and its key is minted, and now nothing can be written
+		// for either: the account is answered a failure and asks again, which the
+		// claim refuses, and an operator reads the trial's key off the store's list
+		// and its licence off this transaction's failure (K2.2, §8). Leaving the
+		// licence out rather than failing would be worse: a key in an account's inbox
+		// is a key the portal has to answer about, and what F27's renewal and P3.4's
+		// cards read is this record.
+		s.trialFailed(w, err)
+		return
+	}
+	// The issuance is named the way a binding's is and not by the trial's own
+	// installation name (workspaces.go's `bindingSource`): what this key is, to
+	// everything that reads the store afterwards, is the key of the licence
+	// above, and the name is what a later binding or rebind of that licence reads
+	// the key it replaces back with (`bindingKeys`, D2198) — a trial whose key
+	// could not be found that way would be a key left live at an installation the
+	// licence had moved away from. The name carries the licence's id and a nonce
+	// for the reason every binding's does: the store's source is an idempotency
+	// key, and two issues of one licence under one source would be the second read
+	// as a redelivery of the first.
+	source, err := bindingSource(licence.ID)
+	if err != nil {
+		s.trialFailed(w, err)
+		return
+	}
+	answer.Record.Source = source
 	answer.Record.Email = caller.Email
 	if err := s.mail.Send(r.Context(), paidKeyMail(caller.Email, answer.Key, answer.RenewalSecret)); err != nil {
 		s.trialFailed(w, err)
@@ -363,7 +446,7 @@ func (s *Service) trial(w http.ResponseWriter, r *http.Request) {
 		// the trial is spent, and no method of the Store interface repairs one. So
 		// the record is re-read under the source this ask wrote it to, and only a
 		// source holding no record, or one holding another key's, is a failure.
-		held, recorded, readErr := s.recorded(r.Context(), installation)
+		held, recorded, readErr := s.recorded(r.Context(), answer.Record.Source)
 		if readErr != nil {
 			s.trialFailed(w, errors.Join(err, readErr))
 			return
@@ -425,12 +508,13 @@ func (s *Service) trialLanded(ctx context.Context, keyID string) (bool, error) {
 // field it names present and non-empty. A body that carries anything else — a
 // seat count above all — is refused here rather than ignored, because
 // `decodeWire` is strict and a trial of more than one seat is not this door's to
-// give (§10.3, B6, §17). What the id says is not this route's to judge beyond
-// that: a project id that is not one mints a key that verifies and binds to
-// nothing anybody owns, which is the asker's own loss (wire.go's split,
-// `decodeWire`). The one thing judged is the name the id makes, and that check
-// is `trial`'s own: it needs the organisation the id is counted with (D2201) and
-// it has to come before the mint (`trialFileable`).
+// give (§10.3, B6, §17). What the id is judged for is its shape and the name it
+// makes, and both of those are `trial`'s own: the shape check needs nothing this
+// reader has (workspaces.go's `validProjectID`, which the trial writes a
+// workspace under), and the name check needs the organisation the id is counted
+// with (D2201) and has to come before the mint (`trialFileable`). What is not
+// judged is whose project the id names: nothing proves that and no door can
+// (D2201, wire.go's split, `decodeWire`).
 func (s *Service) trialCall(w http.ResponseWriter, r *http.Request) (TrialCall, bool) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -501,10 +585,10 @@ func (s *Service) trialCaller(w http.ResponseWriter, r *http.Request) (Caller, b
 //
 // The installation it is handed is the pair and not the project id, which is the
 // whole of D2201: the id is a caller's own string and proves nothing (F37, TN3),
-// so a rule that counted it alone would hand any signed-in account at any domain
-// the power to take another organisation's trial by naming a project id it read
-// somewhere, and to bar that organisation for good. Counted as a pair, the same
-// ask spends only the naming organisation's trial.
+// so a rule that counted it alone would hand any signed-in account the power to
+// take another organisation's trial by naming a project id it read somewhere, and
+// to bar that organisation for good. Counted as a pair, the same ask spends only
+// the asking organisation's trial.
 func (s *Service) trialFree(w http.ResponseWriter, r *http.Request, installation, account string) bool {
 	trials, err := s.store.Trials(r.Context())
 	if err != nil {
@@ -518,6 +602,118 @@ func (s *Service) trialFree(w http.ResponseWriter, r *http.Request, installation
 		}
 	}
 	return true
+}
+
+// trialProjectFree answers whether the caller's organisation holds no workspace
+// for this Firebase project, which is D2204 read where a trial can honour it:
+// the licence below is written onto a workspace of its own for that project, and
+// an organisation that already holds it would hold one project twice.
+//
+// What is asked is the organisation's own workspaces and never every
+// organisation's, and that is D2201's half of the rule (F37, TN-P1): a project
+// id is a caller's own string that proves nothing, so a trial that refused a
+// project id another organisation had bound would let any signed-in account bar
+// a stranger's binding by naming its project — while the harm D2204 refuses
+// among strangers is refused where it can be proved, at the binding, where the
+// installation is probed (D2205) and operations can transfer a project a
+// squatter took (TN-P1).
+func (s *Service) trialProjectFree(w http.ResponseWriter, r *http.Request, organisationID, projectID string) bool {
+	held, err := recordsWhere[WireWorkspace](r.Context(), s.docs, workspacesCollection, Where{Field: "project_id", Value: projectID})
+	if err != nil {
+		s.trialFailed(w, err)
+		return false
+	}
+	for _, other := range held {
+		if other.OrganisationID == organisationID {
+			refuseAPI(w, http.StatusConflict, "project_id_bound", trialBoundRefusal)
+			return false
+		}
+	}
+	return true
+}
+
+// trialLicence writes the trial's two records — the workspace the trial licenses
+// and the entitlement itself — and answers the entitlement.
+//
+// A trial is a workspace's licence and not the organisation's alone (D2204): the
+// screen draws a licence on a workspace's card (P3.4), and the trial a person
+// took has to be the licence that card names, which is why this route writes a
+// workspace of its own, named for the project, and points it at the trial's
+// grant. It is the same pair P3.1's binding writes for a workspace nobody made
+// yet (workspaces.go's `bindingWorkspace`, `pointWorkspaceAt`), and it is its own
+// transaction because `grantEntitlement` reads the workspace a grant names and
+// this one is written here: one transaction, reads before writes, so the project
+// D2204 asks about is asked inside the write that would break it (api.go's Tx).
+//
+// The key is already minted and the trial already claimed when this runs, so a
+// failure is the route's own and not a refusal (trialFailed): what it leaves is a
+// claimed trial, a key nobody has been mailed and no licence, which is the state
+// this route's order documented above accepts.
+func (s *Service) trialLicence(ctx context.Context, organisation WireOrganisation, projectID string, at time.Time) (WireEntitlement, error) {
+	var granted WireEntitlement
+	err := s.docs.Update(ctx, func(ctx context.Context, tx Tx) error {
+		// Every read comes before every write: the store is read-before-write and
+		// refuses a document read after one the same transaction has written
+		// (docstore's ErrReadAfterWrite). The rule is asked here and not only above
+		// for the reason every other one is (grantEntitlement): a workspace another
+		// request wrote between the route's own read and this one is part of what
+		// this transaction read, so the store runs it again on the state that
+		// holds it rather than committing a second workspace for one project.
+		held, err := recordsWhere[WireWorkspace](ctx, tx, workspacesCollection, Where{Field: "project_id", Value: projectID})
+		if err != nil {
+			return err
+		}
+		for _, other := range held {
+			if other.OrganisationID == organisation.ID {
+				return errProjectIDBound
+			}
+		}
+		id, err := newID()
+		if err != nil {
+			return fmt.Errorf("keyservice: the trial's workspace id: %w", err)
+		}
+		workspace := id
+		entitlement, err := entitlementRecord(entitlementGrant{
+			At:             at,
+			OrganisationID: organisation.ID,
+			WorkspaceID:    &workspace,
+			Source:         entitlementSourceTrial,
+			Row:            PolicyTrial,
+			Seats:          1,
+			StartsAt:       at,
+		})
+		if err != nil {
+			return err
+		}
+		// The trial is bound as it is written, because its key is minted in the
+		// same request: BoundAt is what tells a workspace with a key behind it from
+		// one nobody has bound (P7.1's reminder, `bindEntitlement`'s rebind rule),
+		// and a trial whose key exists but whose licence reads unbound would be a
+		// card offering to bind a workspace that already has one.
+		bound := at
+		entitlement.BoundAt = &bound
+		project := projectID
+		if err := putRecord(ctx, tx, workspacesCollection, id, WireWorkspace{
+			ID:             id,
+			OrganisationID: organisation.ID,
+			Name:           projectID,
+			ProjectID:      &project,
+			EntitlementID:  &entitlement.ID,
+			CreatedAt:      at,
+			BoundAt:        &bound,
+		}); err != nil {
+			return err
+		}
+		if err := putRecord(ctx, tx, entitlementsCollection, entitlement.ID, entitlement); err != nil {
+			return err
+		}
+		granted = entitlement
+		return nil
+	})
+	if err != nil {
+		return WireEntitlement{}, err
+	}
+	return granted, nil
 }
 
 // trialFailed answers a failure of this route's own making: the API's one

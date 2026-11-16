@@ -35,18 +35,27 @@ import (
 // fixture's own domain and obviously not a real one.
 const trialAccount = "founder@acme.example"
 
+// trialOrganisation is the portal organisation that account is a member of: the
+// other half of D2201's pair, which is an id the store minted (P2.1) and not the
+// address's domain (P3.3, D2185). Every case that reads a claim, a store record
+// or an installation name reads this value.
+const trialOrganisation = "org-acme"
+
 // trialTicket is the ID token a test's sign-in carries: the verifier behind the
 // fixture's seam answers the caller it was built with whatever it is handed, so
 // what this string says never matters — that it arrives as the request's bearer
 // token is the whole of what the route is asked about it.
 const trialTicket = "fake-id-token-0123456789"
 
-// trialAs is the fixture with an account signed in: the seam the route reads to
-// learn who asks is swapped for one that proves trialAccount.
+// trialAs is the fixture with an account signed in and an organisation it is the
+// owner of: the seam the route reads to learn who asks proves trialAccount, and
+// the store holds the organisation the membership half of §14's rule is read
+// from (P2.1, P3.3).
 func trialAs(t *testing.T) *fixture {
 	t.Helper()
 	return newFixtureWith(t, Production, func(f *fixture) {
 		f.signIn.caller = Caller{UID: "uid-trial", Email: trialAccount, Provider: "google.com", AuthTime: f.now}
+		f.seededOrganisation(trialOrganisation, "Acme Ltd", orgTypeCustomer, "uid-trial", trialAccount, roleOwner)
 	})
 }
 
@@ -74,10 +83,85 @@ func (f *fixture) askFrom(ip, body string) *httptest.ResponseRecorder {
 // spy the running service already holds: a test that asks twice as two accounts
 // is asking the same intake — the same limiter, the same store, the same key ring
 // — rather than a service rebuilt for the second ask, which is what a per-domain
-// bucket has to be read on.
+// bucket has to be read on. The account it turns to is a member of no
+// organisation, which is what a case that means to read the organisation refusal
+// wants; the two below are what a case that means to ask as somebody else wants.
 func (f *fixture) signsInAs(uid, email string) {
 	f.t.Helper()
 	f.signIn.caller = Caller{UID: uid, Email: email, Provider: "google.com", AuthTime: f.now}
+}
+
+// foundsAs turns the fixture's sign-in to another account and gives it an
+// organisation of its own, which is what a second organisation asking for a trial
+// is (P3.3): the organisation half of §14's rule is a portal organisation (P2.1),
+// so an account that is a member of none is refused before the rule these cases
+// are about is reached at all.
+func (f *fixture) foundsAs(uid, email, name string) WireOrganisation {
+	f.t.Helper()
+	f.signsInAs(uid, email)
+	return f.seededOrganisation("org-"+uid, name, orgTypeCustomer, uid, email, roleOwner)
+}
+
+// joinsAs turns the fixture's sign-in to another account and makes it a member of
+// an organisation that already exists — a colleague of the account that asked
+// first, which is what tells the organisation half of §14's rule from the account
+// half: the same organisation asking twice meets the installation's claim and the
+// same account asking twice meets the account's.
+func (f *fixture) joinsAs(org WireOrganisation, uid, email, role string) {
+	f.t.Helper()
+	f.signsInAs(uid, email)
+	f.seed(membershipsCollection, membershipID(org.ID, uid), WireMembership{
+		OrganisationID: org.ID, UID: uid, Email: email, Role: role, CreatedAt: f.now,
+	})
+}
+
+// trialLicence reads the licence a served trial is held as: the grant the route
+// wrote and the workspace it wrote for it, read out of the store rather than out
+// of a value the case remembered, so what is checked is what the route really
+// wrote. The grant is found by its source, because a trial is the only grant of
+// this fixture that carries one (entitlements.go's vocabulary).
+func (f *fixture) trialLicence() (WireWorkspace, WireEntitlement) {
+	f.t.Helper()
+	held, err := recordsWhere[WireEntitlement](context.Background(), f.docs, entitlementsCollection,
+		Where{Field: "source", Value: entitlementSourceTrial})
+	if err != nil {
+		f.t.Fatalf("reading the trial's entitlement: %v", err)
+	}
+	if len(held) != 1 {
+		f.t.Fatalf("the store holds %d trial entitlement(s), want one: %+v", len(held), held)
+	}
+	if held[0].WorkspaceID == nil {
+		f.t.Fatalf("the trial's entitlement %+v names no workspace, so no card holds the licence (P3.1)", held[0])
+	}
+	workspace, present := heldRecord[WireWorkspace](f, workspacesCollection, *held[0].WorkspaceID)
+	if !present {
+		f.t.Fatalf("the trial's entitlement names the workspace %s, which the store does not hold", *held[0].WorkspaceID)
+	}
+	return workspace, held[0]
+}
+
+// trialEntitlements is every trial this fixture's store holds, for the cases that
+// serve more than one.
+func (f *fixture) trialEntitlements() []WireEntitlement {
+	f.t.Helper()
+	held, err := recordsWhere[WireEntitlement](context.Background(), f.docs, entitlementsCollection,
+		Where{Field: "source", Value: entitlementSourceTrial})
+	if err != nil {
+		f.t.Fatalf("reading the trials' entitlements: %v", err)
+	}
+	return held
+}
+
+// organisationWorkspaces is every workspace the store holds for one
+// organisation, which is what the trials a case served wrote.
+func (f *fixture) organisationWorkspaces(organisationID string) []WireWorkspace {
+	f.t.Helper()
+	held, err := recordsWhere[WireWorkspace](context.Background(), f.docs, workspacesCollection,
+		Where{Field: "organisation_id", Value: organisationID})
+	if err != nil {
+		f.t.Fatalf("reading the workspaces: %v", err)
+	}
+	return held
 }
 
 // claimRefuser is the store with a claim that cannot be written: every other
@@ -142,6 +226,26 @@ func (u unansweredIssuance) SaveIssuance(ctx context.Context, r Record) error {
 	return ErrAlreadyRecorded
 }
 
+// anotherKeysIssuance is the store whose issuance write landed under a key this
+// ask did not mint: the source the route wrote is held, and what it names is
+// somebody else's key. The case is driven by a store and not by a seeded record
+// because the source is no longer a name a test can write in advance — a trial's
+// issuance is named by its licence (bindingSource), and the licence's id is
+// minted inside the ask — so a record a test seeded itself could never be the one
+// this route re-reads.
+type anotherKeysIssuance struct {
+	Store
+}
+
+func (a anotherKeysIssuance) SaveIssuance(ctx context.Context, r Record) error {
+	other := r
+	other.KeyID = "lk_someone_elses_key"
+	if err := a.Store.SaveIssuance(ctx, other); err != nil {
+		return err
+	}
+	return ErrAlreadyRecorded
+}
+
 // trialBody is the request one test sends: the workspace's project id, and
 // nothing else (§10.3's self-serve trial is single-seat, so this door reads no
 // seat count — where a test wants to send one it writes the body out itself,
@@ -193,16 +297,16 @@ func TestTrialIsTeamTierFourteenDays(t *testing.T) {
 	if claims.WorkspaceID != workspaceID {
 		t.Errorf("the trial's key binds to workspace %q, want the installation's own project id %q (TN2)", claims.WorkspaceID, workspaceID)
 	}
-	if claims.Organisation != "acme.example" {
-		t.Errorf("the trial's key is issued to %q, want the organisation the sign-in proved (%q)", claims.Organisation, "acme.example")
+	if claims.Organisation != trialOrganisation {
+		t.Errorf("the trial's key is issued to %q, want the portal organisation the caller is a member of (%q): the organisation half of D2201's pair is the portal's own (P3.3)", claims.Organisation, trialOrganisation)
 	}
 	if claims.Seats != 1 {
 		t.Errorf("the trial's key is minted for %d seat(s), want the row's one: the self-serve trial is single-seat (§10.3, B6) and the ask cannot name another", claims.Seats)
 	}
 
 	// The store's trial names the two halves §14 counts — the organisation the
-	// sign-in proved with the project id the ask named — and the record names the
-	// installation the key was minted into.
+	// caller is a member of with the project id the ask named — and the record
+	// names the installation the key was minted into.
 	trials, err := f.store.Trials(t.Context())
 	if err != nil {
 		t.Fatalf("reading the trials: %v", err)
@@ -210,7 +314,7 @@ func TestTrialIsTeamTierFourteenDays(t *testing.T) {
 	if len(trials) != 1 {
 		t.Fatalf("the store holds %d trial(s), want one: %+v", len(trials), trials)
 	}
-	if want := trialInstallation("acme.example", workspaceID); trials[0].Installation != want {
+	if want := trialInstallation(trialOrganisation, workspaceID); trials[0].Installation != want {
 		t.Errorf("the trial counts the installation %q, want %q: §14's installation half is the organisation and the project id together (D2201)",
 			trials[0].Installation, want)
 	}
@@ -221,8 +325,37 @@ func TestTrialIsTeamTierFourteenDays(t *testing.T) {
 		t.Error("the trial names no key, so an operator reading the list cannot find what it minted")
 	}
 	records := f.records()
-	if len(records) != 1 || records[0].Organisation != "acme.example" {
+	if len(records) != 1 || records[0].Organisation != trialOrganisation {
 		t.Errorf("the minted key's record is %+v, want one record for the account's own organisation", records)
+	}
+
+	// The trial is a licence the portal holds (P3.3): a workspace of the
+	// organisation's own, bound to the project the ask named, and the grant that
+	// licenses it — which is what P3.1's screen reads a card off and what a
+	// purchase of the same workspace would supersede (D2204).
+	workspace, entitlement := f.trialLicence()
+	if entitlement.Source != "trial" || entitlement.Row != PolicyTrial || entitlement.Status != "active" {
+		t.Errorf("the trial's entitlement is %+v, want an active grant of the %s row sourced as a trial", entitlement, PolicyTrial)
+	}
+	if entitlement.OrganisationID != trialOrganisation || entitlement.WorkspaceID == nil || *entitlement.WorkspaceID != workspace.ID {
+		t.Errorf("the trial's entitlement is %+v, want one of %s for the workspace %s", entitlement, trialOrganisation, workspace.ID)
+	}
+	if entitlement.EndsAt.Sub(entitlement.StartsAt) != 14*24*time.Hour {
+		t.Errorf("the trial's entitlement runs %s, want the row's fourteen days (§14, D2136)", entitlement.EndsAt.Sub(entitlement.StartsAt))
+	}
+	if entitlement.BoundAt == nil {
+		t.Error("the trial's entitlement reads unbound, and its key has just been minted: a card would offer to bind a workspace that already has one (P3.1)")
+	}
+	if workspace.ProjectID == nil || *workspace.ProjectID != workspaceID || workspace.BoundAt == nil {
+		t.Errorf("the trial's workspace is %+v, want one bound to the project the ask named (%s)", workspace, workspaceID)
+	}
+	if workspace.EntitlementID == nil || *workspace.EntitlementID != entitlement.ID {
+		t.Errorf("the trial's workspace is %+v, want the one pointing at its licence %s (D2204)", workspace, entitlement.ID)
+	}
+	// The key's issuance is named by its licence, which is what a rebind of that
+	// licence reads the key it replaces back with (D2198, `bindingKeys`).
+	if want := bindingPrefix + entitlement.ID + ":"; !strings.HasPrefix(records[0].Source, want) {
+		t.Errorf("the key's issuance is named %q, want one under %q: a trial's key is its licence's, and a rebind has to be able to find it", records[0].Source, want)
 	}
 
 	// The bundle leaves with the key: the second line is the renewal secret, and
@@ -242,28 +375,38 @@ func TestTrialIsTeamTierFourteenDays(t *testing.T) {
 	}
 }
 
-// TestSecondTrialIsRefused: §14's rule is one trial per installation or account
-// (D2136, D2201). The second ask is refused, and the refusal mints nothing at
-// the key ring — a refused ask that had already signed a key would spend the
+// TestTrialIsOnePerWorkspaceAndAccount: §14's rule is one trial per installation
+// or account (D2136, D2201), which in the portal is one per organisation **and**
+// project id, and one per account. Every refused ask here mints nothing at the
+// key ring — a refused ask that had already signed a key would spend the
 // licensor's authority on a trial nobody gets — and writes nothing: the store
-// still holds the one trial the first ask claimed.
-func TestSecondTrialIsRefused(t *testing.T) {
+// still holds the one trial, the one workspace and the one licence the first ask
+// wrote. The last ask is the one that shows what the rule is not: an account at
+// the same organisation with a project of its own has had no trial, and it is
+// served on its own pair.
+func TestTrialIsOnePerWorkspaceAndAccount(t *testing.T) {
 	f := trialAs(t)
 	if rec := f.ask(trialBody(workspaceID)); rec.Code != http.StatusOK {
 		t.Fatalf("the first ask answered %d (%s), want 200", rec.Code, rec.Body.String())
 	}
 
-	// The same account, another installation: the account has had its trial.
+	// The same account, another project: the account has had its trial.
 	sameAccount := f.ask(trialBody("acme-other"))
 	if sameAccount.Code != http.StatusConflict {
 		t.Errorf("a second ask from the same account answered %d (%s), want 409", sameAccount.Code, sameAccount.Body.String())
 	}
-	// Another account, the installation the first trial was minted for: the
-	// installation has had its trial.
-	f.signsInAs("uid-other", "other@acme.example")
+	if code := trialFaultCode(t, sameAccount); code != "trial_already_claimed" {
+		t.Errorf("the refusal carries the code %q, want %q: what refuses it is the account half of §14's rule (D2201)", code, "trial_already_claimed")
+	}
+	// A colleague in the same organisation, the project the first trial was
+	// minted for: the installation has had its trial.
+	f.joinsAs(WireOrganisation{ID: trialOrganisation}, "uid-other", "other@acme.example", roleMember)
 	sameInstallation := f.ask(trialBody(workspaceID))
 	if sameInstallation.Code != http.StatusConflict {
 		t.Errorf("a second ask for the same installation answered %d (%s), want 409", sameInstallation.Code, sameInstallation.Body.String())
+	}
+	if code := trialFaultCode(t, sameInstallation); code != "trial_already_claimed" {
+		t.Errorf("the refusal carries the code %q, want %q: what refuses it is the installation half of §14's rule (D2201)", code, "trial_already_claimed")
 	}
 
 	if minted := f.mintedKeys(); len(minted) != 1 {
@@ -276,30 +419,58 @@ func TestSecondTrialIsRefused(t *testing.T) {
 	if len(trials) != 1 {
 		t.Errorf("the store holds %d trial(s) after two refusals, want the first ask's one: %+v", len(trials), trials)
 	}
+	if licences := f.trialEntitlements(); len(licences) != 1 {
+		t.Errorf("the store holds %d trial entitlement(s) after two refusals, want the first ask's one: %+v", len(licences), licences)
+	}
+	if workspaces := f.organisationWorkspaces(trialOrganisation); len(workspaces) != 1 {
+		t.Errorf("the organisation holds %d workspace(s) after two refusals, want the one the served ask wrote: %+v", len(workspaces), workspaces)
+	}
 	if revocations := f.revocations(); len(revocations) != 0 {
 		t.Errorf("the refusals withdrew %d key(s), want none: a refused ask never reached the key ring (%+v)", len(revocations), revocations)
 	}
+
+	// The account half belongs to the account and not to the organisation: a
+	// colleague asking for a project of their own is served, and what they are
+	// served is a licence of their own — the organisation's second.
+	f.joinsAs(WireOrganisation{ID: trialOrganisation}, "uid-other", "other@acme.example", roleMember)
+	if rec := f.ask(trialBody("acme-colleague")); rec.Code != http.StatusOK {
+		t.Fatalf("a colleague's ask for a project of their own answered %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	if licences := f.trialEntitlements(); len(licences) != 2 {
+		t.Errorf("the store holds %d trial entitlement(s), want the two served asks': %+v", len(licences), licences)
+	}
 }
 
-// TestTrialIsHeldPerOrganisationAndInstallation: §14's installation half is the
-// organisation **and** the project id (D2201). Counting the id alone would let
-// any signed-in account at any domain name a project id it read somewhere, take
-// the trial the organisation that owns the project was about to ask for, and bar
-// it for good — a project id is a caller's own string and nothing proves the
-// caller controls it (F37, TN3). So an account at another domain asking for the
-// same project id is served, and the pair is still one trial for those who ask
-// twice within it.
-func TestTrialIsHeldPerOrganisationAndInstallation(t *testing.T) {
+// TestAnotherOrgCannotBurnYourTrial: §14's installation half is the portal
+// organisation **and** the project id (D2201), and what that keeps is the harm
+// this case drives. A project id is a caller's own string and nothing proves the
+// caller controls it (F37, TN3), so a rule counting the id alone would let any
+// signed-in account found an organisation, name a stranger's project id, spend
+// "its" trial on it and bar the organisation that really runs the project for
+// good. Here the stranger asks **first** and is served, and the organisation the
+// project belongs to asks afterwards and is served too: nothing the stranger did
+// reached the pair that organisation's trial is counted as. What is still
+// counted is the pair — each organisation that asks again for the same project
+// is refused — and the two served trials are two workspaces, one per
+// organisation, both naming the same project id: the state D2201 accepts,
+// because a project id alone is worth nothing until the binding proves who runs
+// the project (D2205, TN-P1).
+func TestAnotherOrgCannotBurnYourTrial(t *testing.T) {
 	f := trialAs(t)
-	if rec := f.ask(trialBody(workspaceID)); rec.Code != http.StatusOK {
-		t.Fatalf("the owning organisation's ask answered %d (%s), want 200", rec.Code, rec.Body.String())
+	stranger := f.foundsAs("uid-squatter", "founder@widgets.example", "Widgets Ltd")
+	if rec := f.askFrom("198.51.100.30:4040", trialBody(workspaceID)); rec.Code != http.StatusOK {
+		t.Fatalf("a stranger naming a project id of its own answered %d (%s), want 200: the id is a caller's own string and the trial it names is the asking organisation's (D2201)",
+			rec.Code, rec.Body.String())
 	}
 
-	f.signsInAs("uid-other", "founder@widgets.example")
-	naming := f.askFrom("198.51.100.30:4040", trialBody(workspaceID))
-	if naming.Code != http.StatusOK {
-		t.Errorf("another organisation asking for the same project id answered %d (%s), want 200: the id is a caller's own string, so the trial it names is that organisation's and not the one it named (D2201)",
-			naming.Code, naming.Body.String())
+	// The organisation the project belongs to asks for that same project id, and
+	// what the stranger did might not have barred it: its own pair has never been
+	// asked for.
+	f.signsInAs("uid-trial", trialAccount)
+	owning := f.askFrom("198.51.100.31:4040", trialBody(workspaceID))
+	if owning.Code != http.StatusOK {
+		t.Fatalf("the organisation the project belongs to answered %d (%s), want 200: another organisation's trial naming the same project id is not this one's and cannot bar it (D2201, TN-P1, F37)",
+			owning.Code, owning.Body.String())
 	}
 	if minted := f.mintedKeys(); len(minted) != 2 {
 		t.Errorf("the asks minted %d key(s), want the two that were served", len(minted))
@@ -312,19 +483,64 @@ func TestTrialIsHeldPerOrganisationAndInstallation(t *testing.T) {
 		t.Fatalf("the store holds %d trial(s), want one per organisation: %+v", len(trials), trials)
 	}
 	want := map[string]bool{
-		trialInstallation("acme.example", workspaceID):    true,
-		trialInstallation("widgets.example", workspaceID): true,
+		trialInstallation(stranger.ID, workspaceID):       true,
+		trialInstallation(trialOrganisation, workspaceID): true,
 	}
 	for _, held := range trials {
 		if !want[held.Installation] {
 			t.Errorf("the trial %+v counts an installation neither organisation asked for, and both asks named the project id %s (D2201)", held, workspaceID)
 		}
 	}
-	// Within the pair the rule is what it was: the same organisation asking
-	// again for the same installation has had its trial.
-	again := f.askFrom("198.51.100.31:4040", trialBody(workspaceID))
+	// Each organisation holds its own licence for the project, and neither names
+	// the other's: the two workspaces are two, and both name the project because
+	// that is all a project id is worth before a binding proves it.
+	if held := f.organisationWorkspaces(stranger.ID); len(held) != 1 || held[0].ProjectID == nil || *held[0].ProjectID != workspaceID {
+		t.Errorf("the stranger's organisation holds %+v, want the one workspace its trial wrote for %s", held, workspaceID)
+	}
+	if held := f.organisationWorkspaces(trialOrganisation); len(held) != 1 || held[0].ProjectID == nil || *held[0].ProjectID != workspaceID {
+		t.Errorf("the owning organisation holds %+v, want the one workspace its trial wrote for %s", held, workspaceID)
+	}
+	if licences := f.trialEntitlements(); len(licences) != 2 {
+		t.Errorf("the store holds %d trial entitlement(s), want one per organisation: %+v", len(licences), licences)
+	}
+
+	// Within the pair the rule is what it was: the organisation that already
+	// asked for this project is refused when it asks again.
+	again := f.askFrom("198.51.100.32:4040", trialBody(workspaceID))
 	if again.Code != http.StatusConflict {
-		t.Errorf("the same organisation asking again for the same installation answered %d (%s), want 409", again.Code, again.Body.String())
+		t.Errorf("the organisation asking again for its own installation answered %d (%s), want 409", again.Code, again.Body.String())
+	}
+}
+
+// TestTrialIsRefusedForAnAccountWithNoOrganisation: the half of D2201's pair
+// that is not the project id is a portal organisation (P3.3, D2185), and an
+// account that is a member of none has none for the trial to be counted against
+// or written for. The refusal is one a person can act on — founding an
+// organisation is a thing a signed-in person does (P2.1) — rather than a failure
+// of the service's own making, and it comes before the mint: a key minted for an
+// ask with no organisation is a key the minter refuses (minter.go), which would
+// answer the caller a failure it can do nothing about. What the last ask shows is
+// that the refusal is the asking account's and not the store's: the member's own
+// ask is served.
+func TestTrialIsRefusedForAnAccountWithNoOrganisation(t *testing.T) {
+	f := trialAs(t)
+	f.signsInAs("uid-orphan", "orphan@acme.example")
+	rec := f.ask(trialBody(workspaceID))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("an ask from an account in no organisation answered %d (%s), want 403", rec.Code, rec.Body.String())
+	}
+	if code := trialFaultCode(t, rec); code != "no_organisation" {
+		t.Errorf("the refusal carries the code %q, want %q", code, "no_organisation")
+	}
+	if minted := f.mintedKeys(); len(minted) != 0 {
+		t.Errorf("the ask minted %d key(s), want none: there is no organisation for the key to name", len(minted))
+	}
+	if workspaces := f.organisationWorkspaces(trialOrganisation); len(workspaces) != 0 {
+		t.Errorf("the refused ask wrote %+v, want no workspace", workspaces)
+	}
+	f.signsInAs("uid-trial", trialAccount)
+	if rec := f.ask(trialBody(workspaceID)); rec.Code != http.StatusOK {
+		t.Errorf("the member's ask answered %d (%s), want 200", rec.Code, rec.Body.String())
 	}
 }
 
@@ -378,34 +594,39 @@ func TestTrialIsRefusedWithoutAVerifiedSignIn(t *testing.T) {
 	}
 }
 
-// TestTrialIsRefusedForAFreeMailOrganisation: the organisation a trial is
-// counted against is the account's own domain, and a domain on D453's list is
-// not an organisation — anybody can hold an address at one, so a trial counted
-// against it is counted against every one of its holders, and D2201's rule
-// ("that ask spends the asking organisation's trial and nothing else") would say
-// the opposite of what it exists for: the first gmail.example account to name a
-// project id would spend every other account's trial for that id and bar the
-// organisation that owns the project for good. The free seat reads such a domain
-// the same way (service.go's `freeSeatForm` sends it to the owner's queue), and
-// the comparison is D453's own — exact, on a domain lowercased as every other
-// address this service reads (§4.1's `address`), so a sign-in that spells its
-// domain in another case is refused too rather than counted as an organisation
-// of its own. The account's domain half is what is refused and not the route:
-// the same intake serves an address at a domain of its own.
-func TestTrialIsRefusedForAFreeMailOrganisation(t *testing.T) {
+// TestTrialIsRefusedForAFreeMailAddress: D453's list is read against the
+// **address** the sign-in proved, and a domain on it is not an organisation:
+// anybody can hold an address at one, so an address there is not one an
+// organisation's member asks with — which is why the free seat sends such a
+// domain to the owner's queue (service.go's `freeSeatForm`) and this door refuses
+// it outright. The comparison is D453's own — exact, on a domain lowercased as
+// every other address this service reads (§4.1's `address`), so a sign-in that
+// spells its domain in another case is refused too rather than counted as a
+// domain of its own — and what it reads is the address and not the organisation
+// the trial is counted with (P3.3): an account at a free mail address is refused
+// even where it is a member of an organisation of its own, and an account at a
+// domain of its own is served, which is what the last ask shows.
+func TestTrialIsRefusedForAFreeMailAddress(t *testing.T) {
 	f := trialAs(t)
-	for _, account := range []string{"founder@gmail.example", "founder@Outlook.Example"} {
-		f.signsInAs("uid-"+account, account)
+	for _, tc := range []struct{ uid, account string }{
+		{"uid-free-one", "founder@gmail.example"},
+		{"uid-free-two", "founder@Outlook.Example"},
+	} {
+		f.foundsAs(tc.uid, tc.account, "Free Mail Ltd")
 		rec := f.askFrom("198.51.100.40:4040", trialBody(workspaceID))
 		if rec.Code != http.StatusForbidden {
-			t.Errorf("an ask from %s answered %d (%s), want 403: a free mail domain is not an organisation (D453)", account, rec.Code, rec.Body.String())
+			t.Errorf("an ask from %s answered %d (%s), want 403: a free mail domain is not an organisation and D453's list is read against the account's own address",
+				tc.account, rec.Code, rec.Body.String())
 		}
-		if code := trialFaultCode(t, rec); code != "free_mail_organisation" {
-			t.Errorf("the refusal of %s carries the code %q, want %q", account, code, "free_mail_organisation")
+		if code := trialFaultCode(t, rec); code != "free_mail_address" {
+			t.Errorf("the refusal of %s carries the code %q, want %q", tc.account, code, "free_mail_address")
 		}
 	}
 	if minted := f.mintedKeys(); len(minted) != 0 {
 		t.Errorf("an ask from a free mail domain minted %d key(s), want none", len(minted))
+	}
+	if workspaces := f.organisationWorkspaces(trialOrganisation); len(workspaces) != 0 {
+		t.Errorf("the refused asks wrote %+v, want no workspace: a refusal writes nothing", workspaces)
 	}
 	f.signsInAs("uid-trial", trialAccount)
 	if rec := f.ask(trialBody(workspaceID)); rec.Code != http.StatusOK {
@@ -492,24 +713,33 @@ func TestTrialIsSingleSeatWhateverTheAskNames(t *testing.T) {
 }
 
 // TestTrialIsMountedOnlyWithASignInVerifier: the route reads the sign-in
-// verifier to learn the account half of §14's rule, and it declares that seam
-// where it is registered. It is the declaration and not the handler that keeps
-// the service honest: a deployment that mounts this door without a verifier is
-// refused when it starts (api.go's `reaching`, `missing`), rather than answering
-// every ask with a failure of its own or, with the declaration gone, serving the
-// ask with a nil verifier.
+// verifier to learn the account half of §14's rule and the document store to
+// learn the organisation half and to write the licence (P3.3), and it declares
+// both seams where it is registered. It is the declaration and not the handler
+// that keeps the service honest: a deployment that mounts this door without
+// either is refused when it starts (api.go's `reaching`, `missing`), rather than
+// answering every ask with a failure of its own or, with the declaration gone,
+// serving the ask with a nil seam.
 func TestTrialIsMountedOnlyWithASignInVerifier(t *testing.T) {
 	route, known := apiRoutes.lookup(http.MethodPost, RouteTrial)
 	if !known {
 		t.Fatalf("no route is mounted at %s %s, so nothing serves a trial ask", http.MethodPost, RouteTrial)
 	}
-	if !slices.Contains(route.needs, needSignIn) {
-		t.Errorf("the route %s %s does not declare the sign-in verifier it reads, so a deployment holding none mounts it and answers every ask with a failure of its own",
-			route.method, route.path)
+	for _, seam := range []struct {
+		need apiNeed
+		why  string
+	}{
+		{needSignIn, "the account half of §14's rule is the one the sign-in proved (K2.4, P1.3)"},
+		{needDocs, "the organisation the trial is counted with and the licence it writes are both the store's (P2.1, P3.3)"},
+	} {
+		if !slices.Contains(route.needs, seam.need) {
+			t.Errorf("the route %s %s does not declare %s it reads, and %s: a deployment holding none mounts it and answers every ask with a failure of its own",
+				route.method, route.path, seam.need, seam.why)
+		}
 	}
 	only := &apiRegistry{routes: []apiRoute{route}, byPath: map[string][]int{}}
 	if err := only.missing(Deps{}); err == nil {
-		t.Error("a deployment holding no sign-in verifier is not refused the route, want the start refused (P1.0)")
+		t.Error("a deployment holding neither seam the trial reads is not refused the route, want the start refused (P1.0)")
 	}
 }
 
@@ -525,20 +755,21 @@ func TestTrialIsThrottledPerDomain(t *testing.T) {
 	f := newFixtureWith(t, Production, func(f *fixture) {
 		f.cfg.Throttle = Limits{Requests: 1, Window: time.Hour}
 		f.signIn.caller = Caller{UID: "uid-trial", Email: trialAccount, Provider: "google.com", AuthTime: f.now}
+		f.seededOrganisation(trialOrganisation, "Acme Ltd", orgTypeCustomer, "uid-trial", trialAccount, roleOwner)
 	})
 	if rec := f.askFrom(applicantIP, trialBody(workspaceID)); rec.Code != http.StatusOK {
 		t.Fatalf("the first ask answered %d (%s), want 200", rec.Code, rec.Body.String())
 	}
-	// The same organisation, another account, another address: this is the ask a
+	// The same domain, another account, another address: this is the ask a
 	// per-address bucket would have served.
-	f.signsInAs("uid-two", "colleague@acme.example")
+	f.joinsAs(WireOrganisation{ID: trialOrganisation}, "uid-two", "colleague@acme.example", roleMember)
 	second := f.askFrom("198.51.100.44:4040", trialBody("acme-other"))
 	if second.Code != http.StatusTooManyRequests {
 		t.Errorf("a second account at the same domain answered %d (%s), want 429: §14's trial is throttled per domain and not per address", second.Code, second.Body.String())
 	}
 	// Another organisation asks and is served: what the bucket counts is the
 	// domain and not the trial route as a whole.
-	f.signsInAs("uid-three", "founder@widgets.example")
+	f.foundsAs("uid-three", "founder@widgets.example", "Widgets Ltd")
 	third := f.askFrom("198.51.100.45:4040", trialBody("widgets-workspace"))
 	if third.Code != http.StatusOK {
 		t.Errorf("an ask from another domain answered %d (%s), want 200: the bucket is the domain's and not the route's", third.Code, third.Body.String())
@@ -560,6 +791,7 @@ func trialOnTheDocstore(t *testing.T) *fixture {
 	return newFixtureWith(t, Production, func(f *fixture) {
 		f.deps.Store = NewDocStore(docstore.NewMemory())
 		f.signIn.caller = Caller{UID: "uid-trial", Email: trialAccount, Provider: "google.com", AuthTime: f.now}
+		f.seededOrganisation(trialOrganisation, "Acme Ltd", orgTypeCustomer, "uid-trial", trialAccount, roleOwner)
 	})
 }
 
@@ -597,7 +829,7 @@ func TestTrialIsRefusedForANameTheStoreCannotFile(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f.signsInAs("uid-refused", tc.account)
+			f.joinsAs(WireOrganisation{ID: trialOrganisation}, "uid-refused", tc.account, roleMember)
 			rec := f.ask(tc.body)
 			if rec.Code != http.StatusBadRequest {
 				t.Fatalf("the ask answered %d (%s), want 400: the store cannot file the name it makes", rec.Code, rec.Body.String())
@@ -641,15 +873,18 @@ func TestTrialIsRefusedForANameTheStoreCannotFile(t *testing.T) {
 
 // TestTrialInstallationIsANameTheStoreCanFile: the pair D2201 counts goes into
 // the one installation field the store's Trial carries (K2.2, store.go), and the
-// id a document is filed under is one the deploy's backend can hold. Both halves
-// are strings this route does not choose: a project id is the ask's own and
-// nothing here checks its shape, and a local part may carry a slash, a percent
-// or a pipe (§4.1's `isAtext`). A join that let either half through unchanged
-// would file a trial as a path into another collection — a write the store's own
-// query of that collection never returns, and a read that answers about another
-// document (docstore's `ErrUnstorableName`) — and a join that let the separator
-// through would let one pair's name be another pair's, so one organisation's ask
-// would spend the trial of the organisation whose name it spelled.
+// id a document is filed under is one the deploy's backend can hold. The project
+// half is the ask's own string and nothing here bounds it, and since P3.3 the
+// organisation half is the portal's own id — which the store mints and no
+// request can spell (newID) — so the pairs below that carry a slash or a pipe in
+// that half are shapes no caller can send and the join still has to survive: a
+// name written by a later task, or a record seeded by an operator, must not reach
+// into the other half. A join that let either half through unchanged would file a
+// trial as a path into another collection — a write the store's own query of that
+// collection never returns, and a read that answers about another document
+// (docstore's `ErrUnstorableName`) — and a join that let the separator through
+// would let one pair's name be another pair's, so one organisation's ask would
+// spend the trial of the organisation whose name it spelled.
 func TestTrialInstallationIsANameTheStoreCanFile(t *testing.T) {
 	pairs := [][2]string{
 		{"acme.example", workspaceID},
@@ -729,10 +964,8 @@ func TestTrialIsServedWhenItsIssuanceWentUnanswered(t *testing.T) {
 // it was minted for), and nothing is written for the key the mint answered.
 func TestTrialIsNotServedWhenTheIssuanceIsAnotherKeys(t *testing.T) {
 	f := trialAs(t)
-	installation := trialInstallation("acme.example", workspaceID)
-	if err := f.store.SaveIssuance(t.Context(), Record{Source: installation, KeyID: "lk_someone_elses_key"}); err != nil {
-		t.Fatalf("seeding the store with another key's issuance: %v", err)
-	}
+	f.deps.Store = anotherKeysIssuance{Store: f.store}
+	f.start()
 	rec := f.ask(trialBody(workspaceID))
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("the ask answered %d (%s), want 500: the source is held under a key this ask did not mint", rec.Code, rec.Body.String())
@@ -744,6 +977,9 @@ func TestTrialIsNotServedWhenTheIssuanceIsAnotherKeys(t *testing.T) {
 	claims, _, err := licence.Verify([]byte(minted[0]), f.now, f.ring, workspaceID)
 	if err != nil {
 		t.Fatalf("the minted key does not verify: %v", err)
+	}
+	if records := f.records(); len(records) != 1 || records[0].KeyID == claims.KeyID {
+		t.Errorf("the store recorded %+v, want the one record written under another key: the re-read has to answer about this ask's key and not about the source alone", records)
 	}
 	if _, known, err := f.store.KeyState(t.Context(), claims.KeyID); err != nil || known {
 		t.Errorf("the store holds a state for the key this ask did not record (known=%v err=%v), want none: the record it re-read is another key's", known, err)
@@ -837,6 +1073,7 @@ func TestTrialIsNotSpentByAnAccountThatAlreadyHadOne(t *testing.T) {
 	f := newFixtureWith(t, Production, func(f *fixture) {
 		f.cfg.Throttle = Limits{Requests: 2, Window: time.Hour}
 		f.signIn.caller = Caller{UID: "uid-trial", Email: trialAccount, Provider: "google.com", AuthTime: f.now}
+		f.seededOrganisation(trialOrganisation, "Acme Ltd", orgTypeCustomer, "uid-trial", trialAccount, roleOwner)
 	})
 	if rec := f.askFrom(applicantIP, trialBody(workspaceID)); rec.Code != http.StatusOK {
 		t.Fatalf("the account's own ask answered %d (%s), want 200", rec.Code, rec.Body.String())
@@ -854,7 +1091,7 @@ func TestTrialIsNotSpentByAnAccountThatAlreadyHadOne(t *testing.T) {
 				repeat.installation, rec.Code, rec.Body.String())
 		}
 	}
-	f.signsInAs("uid-two", "colleague@acme.example")
+	f.joinsAs(WireOrganisation{ID: trialOrganisation}, "uid-two", "colleague@acme.example", roleMember)
 	colleague := f.askFrom("198.51.100.23:4040", trialBody("acme-colleague"))
 	if colleague.Code != http.StatusOK {
 		t.Errorf("a colleague at the same domain answered %d (%s), want 200: the allowance the repeats would have spent is still there",
