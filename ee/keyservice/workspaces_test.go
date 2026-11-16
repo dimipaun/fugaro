@@ -1088,13 +1088,44 @@ func (f *bindingFixture) racer(t *testing.T) *racingDocs {
 	return store
 }
 
-// TestARebindThatCannotCommitHasRevokedTheKeyItReplaces: D2198's revocation is
-// the step before the mint and not a step after the commit. A rebind whose write
-// fails therefore leaves the licence exactly where it was — the predecessor
-// already revoked, the successor withdrawn, and the retry that follows finishing
-// the same list — rather than a licence moved with its window shut for thirty
-// days and the key it left behind still live.
-func TestARebindThatCannotCommitHasRevokedTheKeyItReplaces(t *testing.T) {
+// racedStore is the key store with one read of its issuance list handed back
+// after somebody else has bound: the list a rebind reads the keys it replaces
+// from is the store's and not a document any transaction holds, so a competing
+// bind that commits while that read is in flight is a key this request never
+// decided on — which is the only thing that can put a winner's key in a loser's
+// hand.
+type racedStore struct {
+	Store
+	before func()
+}
+
+func (s *racedStore) Issuances(ctx context.Context) ([]Record, error) {
+	if before := s.before; before != nil {
+		s.before = nil
+		before()
+	}
+	return s.Store.Issuances(ctx)
+}
+
+// racedIssuances is the wrapper the intake of such a case reaches, whose hook is
+// what runs the competing bind.
+func (f *bindingFixture) racedIssuances(t *testing.T) *racedStore {
+	t.Helper()
+	store, ok := f.deps.Store.(*racedStore)
+	if !ok {
+		t.Fatalf("the fixture's key store is %T, want the wrapper this case built it with", f.deps.Store)
+	}
+	return store
+}
+
+// TestARebindThatCannotCommitHasRevokedNothing: D2198's revocation is made with
+// the binding it belongs to and not on the way into it. A rebind whose write
+// fails therefore leaves the licence exactly where it was — the predecessor live
+// at the installation it still serves, the successor withdrawn, and the retry
+// that follows revoking the one and minting the other — rather than a licence
+// moved with its window shut for thirty days, or an installation whose key was
+// withdrawn for a rebind that never happened.
+func TestARebindThatCannotCommitHasRevokedNothing(t *testing.T) {
 	f := newBindingFixtureWith(t, func(f *fixture) {
 		f.deps.Docs = &refusingDocs{Docs: f.deps.Docs}
 	})
@@ -1125,11 +1156,9 @@ func TestARebindThatCannotCommitHasRevokedTheKeyItReplaces(t *testing.T) {
 	store.refuses = false
 
 	revoked, found, err := f.store.Revocation(context.Background(), replaced)
-	if err != nil || !found {
-		t.Fatalf("the replaced key %s is not revoked after a rebind that could not commit (found=%v err=%v)", replaced, found, err)
-	}
-	if revoked.Reason != ReasonRebind {
-		t.Errorf("the replaced key's reason is %q, want %q", revoked.Reason, ReasonRebind)
+	if err != nil || found {
+		t.Errorf("the key the uncommitted rebind replaces is %+v (found=%v err=%v), want it live: the licence still runs it",
+			revoked, found, err)
 	}
 	// The key the failed rebind minted is gone: nothing of an act that did not
 	// happen is left live.
@@ -1159,6 +1188,9 @@ func TestARebindThatCannotCommitHasRevokedTheKeyItReplaces(t *testing.T) {
 	}
 	if licensed, _ := f.workspace(workspace.ID); licensed.ProjectID == nil || *licensed.ProjectID != secondProject {
 		t.Errorf("the retry bound the workspace to %v, want %s", licensed.ProjectID, secondProject)
+	}
+	if withdrawn, found, err := f.store.Revocation(context.Background(), replaced); err != nil || !found || withdrawn.Reason != ReasonRebind {
+		t.Errorf("the key the retry replaces is %+v (found=%v err=%v), want it withdrawn as a rebind", withdrawn, found, err)
 	}
 }
 
@@ -1450,6 +1482,129 @@ func TestARebindThatRacesAnotherDoesNotRevokeTheWinnersKey(t *testing.T) {
 	// And the licence is where the winner put it, with the key it minted there.
 	if licensed, _ := f.workspace(workspace.ID); licensed.ProjectID == nil || *licensed.ProjectID != secondProject {
 		t.Errorf("the workspace is bound to %v, want the winning rebind's project %s", licensed.ProjectID, secondProject)
+	}
+}
+
+// TestARebindThatReadsTheKeysItReplacesAfterACompetingBind: what a rebind
+// withdraws is the key it read (D2198), and the list it reads is the store's
+// issuance list and not a document any transaction holds. A competing rebind
+// that commits while that read is in flight is a winner's key in the loser's
+// hand, and the loser may not withdraw it: the guards the transaction re-reads
+// decide whether anything is revoked at all, so a rebind that has lost the race
+// withdraws its own key and leaves the winner's live — and the licence on the
+// winner's project with a key that works there.
+func TestARebindThatReadsTheKeysItReplacesAfterACompetingBind(t *testing.T) {
+	f := newBindingFixtureWith(t, func(f *fixture) {
+		f.deps.Store = &racedStore{Store: f.deps.Store}
+	})
+	store := f.racedIssuances(t)
+	_, workspace, held := f.licensingWorkspace(t)
+	if rec := f.bind(t, held.ID, exampleProject); rec.Code != http.StatusOK {
+		t.Fatalf("binding answered %d: %s", rec.Code, rec.Body)
+	}
+	replaced := f.mints.answers[0].Record.KeyID
+
+	// The competing rebind commits in the instant this request reads the keys it
+	// replaces: the key the winner mints is on the list this request holds, and
+	// the list was read before anything decided on it.
+	store.before = func() {
+		if _, err := f.svc.bindEntitlement(context.Background(), f.signIn.caller, held.ID, secondProject); err != nil {
+			t.Errorf("the rebind this case runs while the keys are being read failed: %v", err)
+		}
+	}
+
+	rec := f.bind(t, held.ID, exampleProject)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("the rebind that lost the race answered %d, want 429: %s", rec.Code, rec.Body)
+	}
+	if code := f.refused(rec); code != "rebind_too_soon" {
+		t.Errorf("the refusal's code is %q, want rebind_too_soon", code)
+	}
+	if len(f.mints.answers) != 3 {
+		t.Fatalf("the binding and the two rebinds minted %d keys, want one each", len(f.mints.answers))
+	}
+	winner := f.mints.answers[1].Record.KeyID
+	if withdrawn, found, err := f.store.Revocation(context.Background(), winner); err != nil || found {
+		t.Errorf("the key the rebind that won minted is %+v (found=%v err=%v), want it live: the loser revoked it although its own transaction refused",
+			withdrawn, found, err)
+	}
+	loser := f.mints.answers[2].Record.KeyID
+	if withdrawn, found, err := f.store.Revocation(context.Background(), loser); err != nil || !found || withdrawn.Reason != ReasonUnrecorded {
+		t.Errorf("the key the losing rebind minted is %+v (found=%v err=%v), want it withdrawn as unrecorded", withdrawn, found, err)
+	}
+	if withdrawn, found, err := f.store.Revocation(context.Background(), replaced); err != nil || !found || withdrawn.Reason != ReasonRebind {
+		t.Errorf("the key both rebinds replace is %+v (found=%v err=%v), want it withdrawn as a rebind", withdrawn, found, err)
+	}
+	// And the licence is where the winner put it, with the key it minted there.
+	if licensed, _ := f.workspace(workspace.ID); licensed.ProjectID == nil || *licensed.ProjectID != secondProject {
+		t.Errorf("the workspace is bound to %v, want the winning rebind's project %s", licensed.ProjectID, secondProject)
+	}
+}
+
+// TestTwoBindsOfOneProjectDoNotBothWin: one Firebase project is one installation
+// and runs one key (D2204), and the check that refuses the second workspace to
+// name it is a question about the collection the binding is written into, which
+// the deploy's store makes part of a transaction's own state only when it is
+// asked inside one. A bind that asked before it wrote is a check two requests
+// pass together, and what is left of that pair is two workspaces on one
+// installation with one of the two keys verifying nowhere.
+func TestTwoBindsOfOneProjectDoNotBothWin(t *testing.T) {
+	f := newBindingFixture(t)
+	_, firstWorkspace, first := f.licensingWorkspace(t)
+	other := f.seededOrganisation("org-eve", "Eve Ltd", orgTypeCustomer, danaUID, danaEmail, roleOwner)
+	otherWorkspace := f.seedWorkspace("ws-2", other.ID, "Eve's portal")
+	second := f.grant(t, entitlementGrant{
+		At:             f.now,
+		OrganisationID: other.ID,
+		WorkspaceID:    &otherWorkspace.ID,
+		Source:         entitlementSourcePurchase,
+		Row:            PolicyTeamAnnual,
+		Seats:          3,
+		StartsAt:       f.now,
+	})
+
+	// The competing bind commits while this request is between that check and the
+	// transaction that writes the binding: the probe is the slow step the two
+	// share.
+	f.probe.during = func() {
+		if rec := f.bind(t, second.ID, exampleProject); rec.Code != http.StatusOK {
+			t.Errorf("the bind this case runs during the probe answered %d: %s", rec.Code, rec.Body)
+		}
+	}
+
+	rec := f.bind(t, first.ID, exampleProject)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("the bind that lost the race answered %d, want 409: %s", rec.Code, rec.Body)
+	}
+	if code := f.refused(rec); code != "project_id_bound" {
+		t.Errorf("the refusal's code is %q, want project_id_bound", code)
+	}
+	if len(f.mints.answers) != 2 {
+		t.Fatalf("the two binds minted %d keys, want one each", len(f.mints.answers))
+	}
+	winner := f.mints.answers[0].Record.KeyID
+	if withdrawn, found, err := f.store.Revocation(context.Background(), winner); err != nil || found {
+		t.Errorf("the key the bind that won minted is %+v (found=%v err=%v), want it live", withdrawn, found, err)
+	}
+	loser := f.mints.answers[1].Record.KeyID
+	if withdrawn, found, err := f.store.Revocation(context.Background(), loser); err != nil || !found || withdrawn.Reason != ReasonUnrecorded {
+		t.Errorf("the key the losing bind minted is %+v (found=%v err=%v), want it withdrawn as unrecorded", withdrawn, found, err)
+	}
+	// One workspace names the project, and it is the winner's: the losing bind
+	// wrote nothing, and the licence it holds is still unbound.
+	bound, err := recordsWhere[WireWorkspace](context.Background(), f.docs, workspacesCollection,
+		Where{Field: "project_id", Value: exampleProject})
+	if err != nil {
+		t.Fatalf("reading the workspaces bound to %s: %v", exampleProject, err)
+	}
+	if len(bound) != 1 || bound[0].ID != otherWorkspace.ID {
+		t.Errorf("the project %s is named by %d workspace(s), %v, want the one the winning bind wrote", exampleProject, len(bound), bound)
+	}
+	if licensed, _ := f.workspace(firstWorkspace.ID); licensed.ProjectID != nil {
+		t.Errorf("the workspace of the losing bind names the project %v, and its bind wrote nothing", *licensed.ProjectID)
+	}
+	if after, _ := f.entitlement(first.ID); after.BoundAt != nil {
+		t.Errorf("the licence of the losing bind records a binding at %s", *after.BoundAt)
 	}
 }
 
