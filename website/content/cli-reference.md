@@ -7341,8 +7341,12 @@ days.
 
 Nothing in a report is a person or a task's own words (G1, D323). The command
 writes with the job's own credentials and nothing else: no git credential, no model
-credential, no secret, and reports/ is the only prefix it may write. The project's
-own aggregate is a later step of the job's and is not written here.
+credential, no secret, and reports/ is the only prefix it may write.
+
+Then it writes the project's own aggregate of each period, beside them at
+reports/<YYYY>/<key>.md: the one document that names every repository, which adds
+the repositories' stored reports up -- a year's is the stored monthly aggregates of
+that year -- and names no rule and no pattern (E2, E7).
 
 Without --job there is nothing to report: a person reads or writes one repository's
 report of one period in a checkout with fugaro runs digest.
