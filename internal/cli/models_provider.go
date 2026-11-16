@@ -172,7 +172,7 @@ func runModelsProviderSet(cmd *cobra.Command, name string, o *modelsProviderSetO
 		}
 		next = out
 		wrote = append(wrote, leaf.leaf)
-		line = append(line, leaf.flagArg(), quoteWord(values[leaf.leaf]))
+		line = append(line, leaf.valueWords(quoteWord(values[leaf.leaf]))...)
 		if _, ok := modelsProviderWidening[leaf.leaf]; ok {
 			widened = append(widened, leaf.leaf)
 		}

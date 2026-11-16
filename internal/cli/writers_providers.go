@@ -44,10 +44,30 @@ const modelsValuePlaceholder = "<value>"
 type modelsWriterLeaf struct {
 	leaf string
 	flag string
+	// boolean marks the leaf whose flag takes no value beside it. pflag reads
+	// the word after `--require-zdr` as a positional argument, so the two-word
+	// spelling is a line that fails with "accepts 1 arg(s), received 2" while
+	// `--require-zdr=false` is the one that runs (D2617's hand-off: the refusal
+	// prints the line the person runs themselves, so it has to be a line that
+	// works, and the row's Argv has to be one too).
+	boolean bool
 }
 
 // flagArg is the flag as a command line spells it.
 func (l modelsWriterLeaf) flagArg() string { return "--" + l.flag }
+
+// valueWords is this leaf's flag and the value it takes, as the words of a
+// command line: two for a leaf whose flag takes its value beside it, one for a
+// boolean, whose flag takes none (see `boolean` above). The value placeholder is
+// a whole word in the two-word spelling and rides inside the flag's own word in
+// the one-word spelling, which is the shape CR1's contract names for
+// `--pool=<1>`: a placeholder inside a longer word is the registrant's own text.
+func (l modelsWriterLeaf) valueWords(value string) []string {
+	if l.boolean {
+		return []string{l.flagArg() + "=" + value}
+	}
+	return []string{l.flagArg(), value}
+}
 
 // modelsProviderWriterLeaves are the provider leaves `models provider set`
 // writes, in the order that command declares its flags: the order it writes
@@ -58,7 +78,7 @@ var modelsProviderWriterLeaves = []modelsWriterLeaf{
 	{leaf: "auth", flag: "auth"},
 	{leaf: "secret", flag: "secret"},
 	{leaf: "price_policy", flag: "price-policy"},
-	{leaf: "require_zdr", flag: "require-zdr"},
+	{leaf: "require_zdr", flag: "require-zdr", boolean: true},
 	{leaf: "route_fee_pct", flag: "route-fee-pct"},
 	{leaf: "allow_data_to", flag: "allow-data-to"},
 }
@@ -110,8 +130,10 @@ var modelsWriterRows = func() []modelsWriterRow {
 				pattern: block.prefix + leaf.leaf,
 				writer: settings.Writer{
 					Command: block.command,
-					Argv:    []string{"models", block.group, "set", modelsProviderSegment, leaf.flagArg(), modelsValuePlaceholder},
-					Store:   settings.StoreLocal,
+					Argv: append(
+						[]string{"models", block.group, "set", modelsProviderSegment},
+						leaf.valueWords(modelsValuePlaceholder)...),
+					Store: settings.StoreLocal,
 				},
 			})
 		}

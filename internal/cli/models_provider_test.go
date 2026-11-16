@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/agentenv"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/settings"
 )
 
@@ -367,24 +368,19 @@ func TestProviderWideningRefusedInAnAgentSession(t *testing.T) {
 // contract's value placeholder, in that order. A leaf left unwritten here is a
 // row whose refusal would keep a family sentence and a conformance gap.
 func TestProviderWriterRegistersEveryLeaf(t *testing.T) {
-	rows := []struct {
+	type writerRow struct {
 		key     string
 		command string
-		flag    string
-	}{}
+		group   string
+		name    string
+		leaf    modelsWriterLeaf
+	}
+	var rows []writerRow
 	for _, leaf := range modelsProviderWriterLeaves {
-		rows = append(rows, struct {
-			key     string
-			command string
-			flag    string
-		}{"providers.openrouter." + leaf.leaf, "fugaro models provider set", leaf.flagArg()})
+		rows = append(rows, writerRow{"providers.openrouter." + leaf.leaf, "fugaro models provider set", "provider", "openrouter", leaf})
 	}
 	for _, leaf := range modelsPriceWriterLeaves {
-		rows = append(rows, struct {
-			key     string
-			command string
-			flag    string
-		}{"model_prices.vendor/model-x." + leaf.leaf, "fugaro models price set", leaf.flagArg()})
+		rows = append(rows, writerRow{"model_prices.vendor/model-x." + leaf.leaf, "fugaro models price set", "price", "vendor/model-x", leaf})
 	}
 	for _, row := range rows {
 		w, ok := settings.WriterOf(row.key)
@@ -398,11 +394,85 @@ func TestProviderWriterRegistersEveryLeaf(t *testing.T) {
 		if w.Command != row.command {
 			t.Errorf("the writer of %s names %q, want %q", row.key, w.Command, row.command)
 		}
+		// The words from the leaf's flag on: the command and the placeholder the
+		// key's own segment stands in are the two tests below, which read whether
+		// this tree fills a `<1>` at all.
 		argv := w.ArgvFor(row.key)
-		if len(argv) != 6 || argv[4] != row.flag || argv[5] != modelsValuePlaceholder {
-			t.Errorf("the writer of %s answers %v, want the command, the leaf's own %s and the value placeholder", row.key, argv, row.flag)
+		if len(argv) < 4 || !slices.Equal(argv[:3], []string{"models", row.group, "set"}) {
+			t.Errorf("the writer of %s answers %v, want the command that writes it", row.key, argv)
+			continue
+		}
+		if want := row.leaf.valueWords(modelsValuePlaceholder); !slices.Equal(argv[4:], want) {
+			t.Errorf("the writer of %s answers %v, want the leaf's own flag and the value placeholder: %v", row.key, argv, want)
+		}
+		if argv[3] != modelsProviderSegment && argv[3] != row.name {
+			t.Errorf("the writer of %s answers %q for the key's name, want the %s placeholder or %q", row.key, argv[3], modelsProviderSegment, row.name)
 		}
 	}
+}
+
+// TestProviderRefusalPrintsTheLineThatRuns is the one hand-off D2617 exists for:
+// what the refusal hands the person is the line they run themselves, so the line
+// is taken back out of the refusal text and run here with the marker gone — for
+// both directions of the boolean leaf, whose value pflag reads as a positional
+// when the flag and its value are two words, and for a widening leaf beside it.
+func TestProviderRefusalPrintsTheLineThatRuns(t *testing.T) {
+	for _, tc := range []struct {
+		arg   string
+		leaf  string
+		check func(t *testing.T, p config.ModelProvider)
+	}{
+		{"--require-zdr=false", "require_zdr", func(t *testing.T, p config.ModelProvider) {
+			if p.RequireZDR == nil || *p.RequireZDR {
+				t.Errorf("require_zdr = %v, want the explicit false the printed line carries", p.RequireZDR)
+			}
+		}},
+		{"--require-zdr", "require_zdr", func(t *testing.T, p config.ModelProvider) {
+			if p.RequireZDR == nil || !*p.RequireZDR {
+				t.Errorf("require_zdr = %v, want the true the bare flag means", p.RequireZDR)
+			}
+		}},
+		{"--route-fee-pct=9", "route_fee_pct", func(t *testing.T, p config.ModelProvider) {
+			if p.RouteFeePct != 9 {
+				t.Errorf("route_fee_pct = %v, want 9", p.RouteFeePct)
+			}
+		}},
+	} {
+		t.Run(tc.leaf+"/"+tc.arg, func(t *testing.T) {
+			_, path := modelsWriteHome(t)
+			marker := agentenv.Markers[0]
+			t.Setenv(marker, "1")
+
+			_, _, err := execute(t, "models", "provider", "set", "openrouter", tc.arg)
+			if err == nil {
+				t.Fatalf("the write landed in a coding agent's session")
+			}
+			line := modelsProviderRefusalLine(t, ErrorText(err))
+			args := strings.Fields(line)
+			if len(args) == 0 || args[0] != "fugaro" {
+				t.Fatalf("the refusal prints %q, which is not a command line", line)
+			}
+			os.Unsetenv(marker)
+			out, errOut, err := execute(t, args[1:]...)
+			if err != nil {
+				t.Fatalf("the printed line does not run: %v\n%s%s\nline: %s", err, out, errOut, line)
+			}
+			tc.check(t, modelsWriteLocalConfig(t, path).Providers["openrouter"])
+		})
+	}
+}
+
+// modelsProviderRefusalLine is the command a refusal prints, as the sentence
+// around it spells it: `run this yourself at your own terminal: <line>; nothing
+// was written`.
+func modelsProviderRefusalLine(t *testing.T, text string) string {
+	t.Helper()
+	const from, to = "at your own terminal: ", "; nothing was written"
+	i, j := strings.Index(text, from), strings.Index(text, to)
+	if i < 0 || j < i {
+		t.Fatalf("the refusal prints no line to run:\n%s", text)
+	}
+	return text[i+len(from) : j]
 }
 
 // TestProviderArgvFillsTheSegmentPlaceholder is the shape of the registered
