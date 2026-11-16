@@ -27,6 +27,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/bbtokens"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
@@ -133,6 +134,9 @@ func newCredsSetCmd() *cobra.Command {
 	// value, so this command's rule — no value from an argument, a flag or the
 	// environment — is kept rather than narrowed.
 	var generate bool
+	// bt carries a typed Bitbucket token's own facts (T11): the only flags of
+	// this command that hold something other than the value's whereabouts.
+	var bt bitbucketTokenFlags
 	cmd := &cobra.Command{
 		Use:   "set NAME",
 		Short: "Set or replace one credential in the credentials service's bundle secret (the owner)",
@@ -151,6 +155,7 @@ NAME is a credential the service can issue, in the document's own spelling:
   ` + config.BitbucketSecret + `                   the upstream Bitbucket token (no tier: the git proxy issues this entry for the repositories the published node admits with proxy: true, and every other Bitbucket run's job still uses its own mounted copy until the flip)
   ` + credsvc.BitbucketReadConsumerSecret + `             the Bitbucket read consumer (no tier: the service's read mint exchanges it for a read-scoped token): a YAML mapping of key, secret and workspace, one field per line, so redirect it from a file — the hidden prompt takes one line
   ` + config.ProviderKeySecret + `                 the project's provider credential (tier C: the service's provider route authenticates upstream with it): a YAML mapping of key, base_url and auth, one field per line, so redirect it from a file — the hidden prompt takes one line. It is read by a credentials service from ` + providerEntrySince + ` on: where the service that serves the bundle is older, this write is refused and ` + "`fugaro update`" + ` is the one command that moves it
+  ` + config.BitbucketTokenPrefix + `<name>   a typed Bitbucket access token (no tier: the service's git proxy issues this entry for the requests the published node's coverage admits, R13): the ONE NAME this command CHECKS before it writes, and the one whose write carries a record beside the entry. See "A typed Bitbucket token" below
   ` + config.ReviewSigningKeySecret(config.DefaultClaudeAccount) + `  the default account's review-signing key (no tier: the service's sign
                                      route computes a MAC with it; written by --generate below)
   ` + config.ClaudeOAuthTokenPrefix + `<account>` + config.ReviewSigningKeySuffix + `     a named account's review-signing key (no tier, and --generate's NAME too)
@@ -172,6 +177,49 @@ crypto/rand and writes them into the bundle. Every other NAME is refused: an
 account's review-signing names are the only ones it takes, and the rotation
 window's own entry is not one of them — asked to write it, the command refuses,
 because it writes the current entry and derives the window's from it.
+
+A typed Bitbucket token (` + config.BitbucketTokenPrefix + `<name>) is the ONE NAME whose
+write is more than a value: the token's TYPE, what it COVERS and its optional
+expiry are facts the operator states (D2350, R1), so they are read here — as
+flags, or as the same questions at the terminal — and stored beside the entry.
+The value is read exactly as every other one is.
+
+  --type          repo, project or workspace
+  --coverage      what the token reaches: ws/repo for a repository token, ws/*
+                  for a workspace token, or the workspace slug alone for a
+                  project token. Repeat it for a token that names more than one
+  --project-uuid  a project token's project, as Bitbucket's API spells it
+  --project-key   the same project's key, for an operator who has only that:
+                  the check resolves it to the UUID, which is what is stored,
+                  and the key is kept for display
+  --expires       the day the token stops working, YYYY-MM-DD
+
+The check runs BEFORE anything is written, and it is the whole reason this
+NAME is not like the others: this command reads Bitbucket with the token, in
+the coverage the record itself states and nowhere outside it, and a token that
+does not work, or that does not reach what the record states, is refused with
+one precise message and NOTHING is written (D2352). The one thing it cannot
+prove is the write scope: Bitbucket has no dry run for a push or a pull
+request, so the two write scopes D470 tells the operator to tick are reported
+as NOT verified and the first real use is what tries them (D2353).
+
+A write that passes is three records of one token, and all three are written:
+the bundle entry, the project config's bitbucket_tokens record, and the check's
+own answer — when it last passed and the account UUID it returned — into the
+project's credential state. The identity is written ONLY here and is never read
+from the config, so a hand-edited record cannot state an identity a run would
+trust (R12). Nothing of the record reaches a run until the policy is published:
+run ` + "`fugaro update`" + ` to publish this token's coverage to runs.
+
+This is the one NAME whose facts are read as flags, and --json asks for them
+and nothing else: a machine has no terminal to answer at, so a --json write
+carries --type and --coverage (and --project-uuid or --project-key for a
+project token) or it is refused, naming the flag it needs. A terminal is asked
+for each fact that no flag gave.
+
+It is read by a credentials service from ` + bitbucketTokenSince + ` on: where the
+service that serves the bundle is older, this write is refused before anything
+is read from you and before anything is written.
 
 Two runs ROTATE the key. The first writes a fresh value where the entry was;
 the second writes a fresh one again and carries the value it replaced, byte for
@@ -231,11 +279,12 @@ form.`,
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return credsSet(cmd, o, args[0], generate)
+			return credsSet(cmd, o, args[0], generate, &bt)
 		},
 	}
 	o.addFlags(cmd)
 	cmd.Flags().BoolVar(&generate, "generate", false, "generate a fresh review-signing key instead of reading a value (the review-signing names only)")
+	bt.addFlags(cmd)
 	return cmd
 }
 
@@ -582,7 +631,7 @@ func writeForms(doc, value []byte) []string {
 // the project, that the container is there, that the document it holds is one
 // the service accepts — and only then the value, the write and its
 // verification.
-func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) error {
+func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool, bt *bitbucketTokenFlags) error {
 	ctx := cmd.Context()
 	if err := credsOwnerOnly(os.Getenv, "written"); err != nil {
 		return err
@@ -598,21 +647,14 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 	if !ok {
 		return credsNameRefusal()
 	}
-	// A member of the Bitbucket token family (D2350) is a key the LOADER knows
-	// and this command does not write yet, so it is refused by the same name
-	// refusal above. What holds it is the release the document would land on:
-	// the family's reader is a credentials service newer than the one an
-	// installation may have deployed, the loader refuses the WHOLE document for
-	// a key it does not know — a service-wide refusal rather than a refused
-	// credential — and the guard that judges the release which SERVES the
-	// bundle (refuseAProviderEntryTheServiceCannotRead, pinned for the provider
-	// entry by creds_skew_test.go) lands with the command that writes the
-	// family as a whole: the token's type and coverage, its local record and
-	// its verified scopes are the same task's, and a bundle entry written here
-	// alone would be a token no other half of the feature can see.
-	if _, family := config.BitbucketTokenAccount(name); family {
-		return credsNameRefusal()
-	}
+	// A member of the Bitbucket token family (D2350) is a credential of this
+	// command's like any other, and the one NAME whose write is more than a
+	// value: the record it carries (T2), the check that must pass before
+	// anything is written (T7, D2352) and the identity that goes to the state
+	// store (T6, R12) all belong to the same write. It is the loader's own
+	// KindGit, so what is read from stdin is one line, exactly as the legacy
+	// token's value is.
+	bitbucketName, family := config.BitbucketTokenAccount(name)
 	// The generated mode writes one family and only one: an HMAC key has no
 	// upstream to paste from, every other credential does. It writes the
 	// CURRENT entry and derives the window's entry from it, so the window's own
@@ -621,9 +663,24 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 	if generate && (!reviewSigning || previous) {
 		return credsGenerateNameRefusal()
 	}
-	_, lc, err := selectProject(ctx, o.cloud)
+	if !family && bt.given(cmd) {
+		return bt.onlyFamilyRefusal()
+	}
+	sel, lc, err := selectProject(ctx, o.cloud)
 	if err != nil {
 		return err
+	}
+	// The record and the identity are this command's to write and nobody
+	// else's, and both of them are local: the shared config carries no
+	// bitbucket_tokens block (it is operator-only, localcfg's Shared), and the
+	// state store is the project's own. Both are checked before the bundle is
+	// touched, so a family write that could not complete all three writes is
+	// refused with nothing written at all.
+	var btState *bitbucketStateWriters
+	if family {
+		if btState, err = bitbucketWriters(ctx, sel, lc); err != nil {
+			return err
+		}
 	}
 	store, err := openBundleStore(ctx, lc)
 	if err != nil {
@@ -649,18 +706,30 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 			return credsDocRefusal(store.id, err)
 		}
 	}
-	// The one entry of the bundle whose reader is newer than its writer's
-	// release, and so the one skew this command can create and is refused for
-	// (AK10, F26): a document holding the provider key is a document only a
-	// credentials service from providerEntrySince on can read, and the
-	// service's answer to an unknown key is a refusal of the WHOLE document,
-	// so the entry written into an older one halts every caller of it. It is
-	// judged before the value is read — reading that value is the one step of
-	// this command that cannot be taken back — and the trigger is the
-	// document's own answer: the entry is the one this run is writing, or it is
-	// already in the document this run is editing.
-	if kind == credsvc.KindProvider || bundleHoldsProviderEntry(before.raw) {
-		if err := refuseAProviderEntryTheServiceCannotRead(ctx, lc); err != nil {
+	// The entries of the bundle whose reader is newer than its writer's
+	// release, and so the skews this command can create and is refused for
+	// (AK10, F26; T11 for the family): a document holding the provider key or a
+	// typed Bitbucket token is a document only a credentials service from that
+	// entry's own release on can read, and the service's answer to an unknown
+	// key is a refusal of the WHOLE document, so the entry written into an
+	// older one halts every caller of it. What the document will HOLD decides —
+	// the provider key when it is already there or is this write's, the family
+	// when the same — and the newest of those releases is the one required,
+	// because a service has to read every entry the document carries and not
+	// just the one being written. A document holding neither makes no Cloud Run
+	// read at all, which is every write of every other credential. It is judged
+	// before the value is read — reading that value is the one step of this
+	// command that cannot be taken back — and before any of a token's own facts
+	// are asked for.
+	familyEntry := config.BitbucketTokenPrefix + "<name>"
+	if family {
+		familyEntry = name
+	}
+	if req := bundleReaderRequirement(
+		bundleEntryReader{entry: config.ProviderKeySecret, since: providerEntrySince, held: kind == credsvc.KindProvider || bundleHoldsProviderEntry(before.raw)},
+		bundleEntryReader{entry: familyEntry, since: bitbucketTokenSince, held: family || bundleHoldsFamilyEntry(before.raw)},
+	); req != nil {
+		if err := refuseAnEntryTheServiceCannotRead(ctx, lc, req.entry, req.since); err != nil {
 			return err
 		}
 	}
@@ -680,6 +749,17 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 	defer run.close()
 	st := run.rep.Step("Writing " + safetext.Field(store.id))
 	defer st.Abandon()
+	// A typed Bitbucket token's own facts (T2) are asked for BEFORE its value:
+	// a record the config's own rule refuses — a type and a coverage that state
+	// different things (R1) — is refused without a secret ever being typed at a
+	// terminal, and the value stays the last question before the check that
+	// must pass for anything to be written (T7, D2352).
+	var btRec config.BitbucketToken
+	if family {
+		if btRec, err = bitbucketTokenRecord(cmd, o.asJSON, bt, bitbucketName); err != nil {
+			return err
+		}
+	}
 	var value []byte
 	if generate {
 		value, err = generateReviewSigningValue()
@@ -700,6 +780,25 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 	// The value this run read is held for the rest of it, so an echo of it
 	// reaches neither the run's own output nor its log (F6).
 	run.hold(value)
+	// The add-time check (T7, D2352) runs here, with the value read and nothing
+	// written yet: a token that does not work, or that does not reach what its
+	// record states, is refused in front of the operator with the check's own
+	// one precise sentence, and this command then writes no bundle entry, no
+	// record and no identity at all.
+	//
+	// A project record may state its key instead of its UUID, and the check is
+	// what resolves it: R1 and R2 match a project by UUID and a key can be
+	// renamed, so the UUID the check read is what goes into the record and the
+	// operator's key stays beside it for display.
+	var btRes bbtokens.Result
+	if family {
+		if btRes, err = checkBitbucketToken(ctx, lc, btRec, string(value)); err != nil {
+			return err
+		}
+		if btRes.ProjectUUID != "" {
+			btRec.ProjectUUID = btRes.ProjectUUID
+		}
+	}
 	// A generated write is two entries of one document: the fresh value under
 	// NAME and the value it replaced under the window's name, so the window
 	// exists in the version that retires the old key rather than a version
@@ -777,10 +876,38 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 		}
 	}
 	w := cmd.OutOrStdout()
+	// The two other records of a typed token (R12, T2) are written only here,
+	// once the bundle entry is live and read back: the record that tells the
+	// proxy what the token reaches and the identity that tells a run's own
+	// comments apart are both about a credential that is really there. Which
+	// order they are written in is the fail-closed one — a value with no record
+	// serves nothing (R14), so the record first and the check's answer second,
+	// and a failure of either is the step's own failure rather than a silent
+	// half-write.
+	var btJSON *credsSetBitbucketResult
+	if family {
+		recOut := w
+		if o.asJSON {
+			// --json owns stdout, and userSave's "wrote <path>" line would be
+			// a byte of prose inside a document a script parses.
+			recOut = cmd.ErrOrStderr()
+		}
+		if err := btState.writeRecord(recOut, btRec); err != nil {
+			return credsStepFailed(st, err)
+		}
+		if err := btState.writeStatus(ctx, name, btRes.Identity, time.Now()); err != nil {
+			return credsStepFailed(st, err)
+		}
+		btJSON = &credsSetBitbucketResult{
+			Name: btRec.Name, Type: btRec.Type, Coverage: btRec.Coverage,
+			ProjectUUID: btRec.ProjectUUID, ProjectKey: btRec.ProjectKey, Expires: btRec.Expires,
+			Identity: btRes.Identity, WriteVerified: btRes.WriteVerified,
+		}
+	}
 	if o.asJSON {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		return enc.Encode(credsSetResult{Project: lc.Name, Secret: store.id, Version: version, Replaced: replaced, Disabled: retired, Window: window})
+		return enc.Encode(credsSetResult{Project: lc.Name, Secret: store.id, Version: version, Replaced: replaced, Disabled: retired, Window: window, Bitbucket: btJSON})
 	}
 	detail := "version " + safetext.Field(version)
 	switch {
@@ -800,6 +927,12 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 		// one fact of the run a person may not read past.
 		_, err = fmt.Fprintf(w, "%s now holds the value this run replaced, which the service verifies against and never signs with\n", safetext.Field(window))
 	}
+	if family {
+		// What the bundle write alone cannot say: what the record states, the
+		// identity the check read, the scopes it could not prove and the
+		// republish the coverage needs (T11).
+		bitbucketWriteLines(w, name, btRec, btRes)
+	}
 	return err
 }
 
@@ -812,13 +945,34 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 // (a first `--generate` for an account, and every write of a typed value). A
 // scripted rotation has no other way to learn it: what it prints is a NAME, and
 // the name is the whole of what an operator acts on (spec §6.3).
+// Bitbucket is the typed Bitbucket token's own record, present for that family
+// alone: what the write stored in the local config, the identity the check read
+// and whether the write scopes were proven (they were not, D2353). A field
+// added to this shape is a field an older reader ignores, which is what makes
+// this the right place for it: the alternative is a line of prose inside the
+// document a script parses.
 type credsSetResult struct {
-	Project  string `json:"project"`
-	Secret   string `json:"secret"`
-	Version  string `json:"version"`
-	Replaced string `json:"replaced,omitempty"`
-	Disabled bool   `json:"disabled"`
-	Window   string `json:"window,omitempty"`
+	Project   string                   `json:"project"`
+	Secret    string                   `json:"secret"`
+	Version   string                   `json:"version"`
+	Replaced  string                   `json:"replaced,omitempty"`
+	Disabled  bool                     `json:"disabled"`
+	Window    string                   `json:"window,omitempty"`
+	Bitbucket *credsSetBitbucketResult `json:"bitbucket,omitempty"`
+}
+
+// credsSetBitbucketResult is that record. It holds the token's NAME and never
+// its value, and WriteVerified is the machine-readable half of the "write
+// scopes not verified" line.
+type credsSetBitbucketResult struct {
+	Name          string   `json:"name"`
+	Type          string   `json:"type"`
+	Coverage      []string `json:"coverage"`
+	ProjectUUID   string   `json:"project_uuid,omitempty"`
+	ProjectKey    string   `json:"project_key,omitempty"`
+	Expires       string   `json:"expires,omitempty"`
+	Identity      string   `json:"identity,omitempty"`
+	WriteVerified bool     `json:"write_verified"`
 }
 
 // credsStepFailed ends the run's step as failed with the error the command
@@ -903,47 +1057,78 @@ func credsNameRefusal() error {
 		config.ReviewSigningKeySecret(config.DefaultClaudeAccount), config.ClaudeOAuthTokenPrefix, config.ReviewSigningKeySuffix, readConsumerShape, providerShape)
 }
 
-// refuseAProviderEntryTheServiceCannotRead is the guard at the bundle write
-// (AK10, F26): the write is refused when the document it would leave in place
-// carries an entry the credentials service that will read it predates.
+// bundleEntryReader is one entry of the bundle the guard below judges: the key,
+// the first release whose credentials service can read it, and whether the
+// document this write leaves in place holds it.
+type bundleEntryReader struct {
+	entry string
+	since string
+	held  bool
+}
+
+// bundleReaderRequirement answers the entry whose reader this write must not
+// outrun, among the entries the document it leaves in place will hold, or nil
+// when it holds none — which is every write of an ordinary credential, and the
+// answer that makes no Cloud Run read at all.
 //
-// The entry is the provider key (config.ProviderKeySecret, AK6b), and the
-// reason there is a guard at all is the loader's own strictness: an unknown
+// The NEWEST of the held entries is the answer, and not each of them in turn: a
+// document carrying two entries needs a service that reads both, so the release
+// required is the later of the two `since`s, and a refusal naming the older one
+// would tell an operator to reach a release that still cannot read the other.
+func bundleReaderRequirement(entries ...bundleEntryReader) *bundleEntryReader {
+	var out *bundleEntryReader
+	for i := range entries {
+		if !entries[i].held {
+			continue
+		}
+		if out == nil || imagePredates(out.since, entries[i].since) {
+			out = &entries[i]
+		}
+	}
+	return out
+}
+
+// refuseAnEntryTheServiceCannotRead is the guard at the bundle write (AK10,
+// F26; T11 for the Bitbucket token family): the write is refused when the
+// document it would leave in place carries an entry the credentials service
+// that will read it predates.
+//
+// The reason there is a guard at all is the loader's own strictness: an unknown
 // KEY refuses the WHOLE document (credsvc.ErrBundleUnknownKey) rather than the
 // entry, and the service answers that as a service-wide refusal — so a bundle
 // written by a CLI newer than the service that reads it halts every caller of
 // that service, coding runs included, until `fugaro update` moves it.
-// `fugaro creds set` is the bundle's only writer, so this is the one write
-// that can be stopped before it lands.
+// `fugaro creds set` is the bundle's only writer, so this is the one write that
+// can be stopped before it lands.
 //
 // What is DEPLOYED decides, and the pin only when nothing is deployed
 // (bundleReaderRelease, which says why); a record that cannot be read refuses
 // the write rather than warning about it, which is where this parts from
 // checkReviewAdmission — the alternative here is the halt above.
-func refuseAProviderEntryTheServiceCannotRead(ctx context.Context, lc *localcfg.Config) error {
+func refuseAnEntryTheServiceCannotRead(ctx context.Context, lc *localcfg.Config, entry, since string) error {
 	rel, image, why := bundleReaderRelease(ctx, lc)
 	switch {
 	case why != "":
-		return providerEntryRefusal(why)
+		return bundleEntryRefusal(entry, since, why)
 	case rel == "":
 		// Nothing serves the bundle and nothing is coming: no service can
 		// refuse the document, and there is none to halt. The write as today.
 		return nil
-	case !imagePredates(rel, providerEntrySince):
+	case !imagePredates(rel, since):
 		return nil
 	}
-	return providerEntryRefusal(fmt.Sprintf("this installation's credentials service is %s (image %s), and that release's service does not know the entry", rel, pluginwire.Printable(image)))
+	return bundleEntryRefusal(entry, since, fmt.Sprintf("this installation's credentials service is %s (image %s), and that release's service does not know the entry", rel, pluginwire.Printable(image)))
 }
 
-// providerEntryRefusal is the one sentence the guard refuses with, and why is
+// bundleEntryRefusal is the one sentence the guard refuses with, and why is
 // the clause that says which state was found — the read that failed, the
 // reference that carries no release, or the release that predates the entry.
 // It names `fugaro update` because that is the whole fix (CLAUDE.md's rule):
 // the command that resolves this release's credentials service image and
 // applies it.
-func providerEntryRefusal(why string) error {
+func bundleEntryRefusal(entry, since, why string) error {
 	return userErr("%s is an entry of the bundle that only a credentials service from fugaro %s on can read: the service's loader refuses a document holding a key it does not know, and it refuses the WHOLE document rather than that entry, so a bundle the deployed service cannot read halts every caller of that service, coding runs included. This write is refused: %s. Run fugaro update: that is the whole upgrade, and the command that moves this installation's credentials service onto this release's image. Nothing was read from you and nothing was written",
-		config.ProviderKeySecret, providerEntrySince, why)
+		pluginwire.Printable(entry), since, why)
 }
 
 // bundleReaderRelease answers the release of the credentials service that will
@@ -1105,20 +1290,37 @@ func revisionShort(name string) string {
 }
 
 // bundleHoldsProviderEntry reports whether a bundle document holds the
-// provider key's entry, which is what the guard above judges.
+// provider key's entry, which is one of the two the guard above judges.
+func bundleHoldsProviderEntry(raw []byte) bool {
+	return bundleHoldsKey(raw, func(key string) bool { return key == config.ProviderKeySecret })
+}
+
+// bundleHoldsFamilyEntry reports whether it holds any entry of the typed
+// Bitbucket token family (T1): the guard is about the FAMILY and not about one
+// name, because a document carrying bitbucket-token--ci is a document only a
+// service that reads the family can load whichever token this write is setting.
+func bundleHoldsFamilyEntry(raw []byte) bool {
+	return bundleHoldsKey(raw, func(key string) bool {
+		_, ok := config.BitbucketTokenAccount(key)
+		return ok
+	})
+}
+
+// bundleHoldsKey is the walk both of them are: the document's top-level keys,
+// held to a rule the caller states.
 //
 // It is a node walk and not a parse with the loader, because the question is
 // about ONE key and the loader answers about the whole document: the caller has
 // already run credsvc.ParseBundle over this document and refused a document it
 // rejects, so what is left is a lookup. An empty document, or one the walk
 // cannot read at all (unreachable after that parse), holds no entry.
-func bundleHoldsProviderEntry(raw []byte) bool {
+func bundleHoldsKey(raw []byte, want func(key string) bool) bool {
 	_, root, err := bundleNodes(raw)
 	if err != nil {
 		return false
 	}
 	for i := 0; i+1 < len(root.Content); i += 2 {
-		if root.Content[i].Value == config.ProviderKeySecret {
+		if want(root.Content[i].Value) {
 			return true
 		}
 	}

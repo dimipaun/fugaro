@@ -600,6 +600,30 @@ const reviewAdmissionSince = "0.21.0"
 // reading.
 const providerEntrySince = "0.22.0"
 
+// bitbucketTokenSince is the first fugaro release whose credentials service
+// reads the bundle's typed Bitbucket token family (config.BitbucketTokenPrefix,
+// D2350, R13 of docs/bitbucket-token-types): the keys
+// bitbucket-token--<name>, each holding one access token the service's proxy
+// serves. It is the family's own entry of the same kind as providerEntrySince
+// above, and it is a constant of its own rather than that one for the reason
+// that entry's comment gives: the loader refuses the WHOLE document for a key
+// it does not know, so the release a document is readable by is decided by the
+// newest entry it holds and not by one release for the document.
+//
+// `fugaro creds set` is the bundle's only writer, so the guard is at that write
+// too (creds.go's refuseAnEntryTheServiceCannotRead, which judges the release
+// that SERVES the document rather than the installation's pin).
+//
+// It names 0.24.0, the release T1's own commit (`6eda5ddf`, #2591) went out in
+// and therefore the first release whose credentials service was built with the
+// family's reader. The direction is providerEntrySince's: the constant is the
+// tag that shipped the key and not the release this guard is written in, and a
+// release that raised it would refuse `fugaro creds set bitbucket-token--<name>`
+// on installations whose deployed service already reads the family — which is
+// every installation on that release — with `fugaro update` no remedy for them.
+// docs/release.md's ("Before you tag") list carries that reading.
+const bitbucketTokenSince = "0.24.0"
+
 // gitSecretIDSince is the first fugaro release whose runner reads
 // CheckJobSpec's git_secret_id (internal/infra/spec.go): the daily image
 // check job's own rebuild names the secret ID Readiness resolved, so a
