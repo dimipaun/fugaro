@@ -1891,7 +1891,7 @@ var runAccountGrants = setOf(
 	// workflow at fetch time). The for_each is empty on an installation whose
 	// outputs carry no account, and empty while the opt-in is off, so nothing
 	// is granted where the service is not.
-	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | "serviceAccount:${var.credentials_service.account}" | for_each=local.service_secret_names [local.service_secret_names=var.credentials_service == null || var.credentials_service.account == "" ? toset([]) : toset(values(local.job_mounts))] | perms=`,
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | "serviceAccount:${var.credentials_service.account}" | for_each=local.service_secret_names [local.service_secret_names=try(var.credentials_service.account, "") == "" ? toset([]) : toset(values(local.job_mounts))] | perms=`,
 	// Reviewed for C1.18: the credentials service's own account, on the one
 	// bundle container C1.18 creates, and on nothing else. secretAccessor on
 	// a secret the installation creates is not a write path to the marker:

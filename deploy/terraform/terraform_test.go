@@ -5427,15 +5427,19 @@ func TestServiceWorkflowSecretGrantsMatchTheJobsMounts(t *testing.T) {
 	code := squash(stripComments(string(b)))
 
 	// The set is the mounts' values and nothing else: the same map job.tf
-	// iterates, read here rather than recomputed.
-	if !strings.Contains(code, "service_secret_names = var.credentials_service == null || var.credentials_service.account == \"\" ? toset([]) : toset(values(local.job_mounts))") {
-		t.Errorf("%s: service_secret_names must be `toset(values(local.job_mounts))`, empty while the service has no account — a set built any other way can drift from the mounts it has to equal (D2074):\n%s", path, code)
+	// iterates, read here rather than recomputed. The gate is a `try`, and not
+	// the obvious `var.credentials_service == null || var.credentials_service.account == ""`:
+	// Terraform's `||` does not short-circuit before 1.12 while these modules
+	// require 1.9 (versions.tf), so the `||` form reads an attribute of a null
+	// value and fails the plan of every repository root whose switch is off.
+	if !strings.Contains(code, `service_secret_names = try(var.credentials_service.account, "") == "" ? toset([]) : toset(values(local.job_mounts))`) {
+		t.Errorf("%s: service_secret_names must be `toset(values(local.job_mounts))` behind a `try(...) == \"\"` gate — a set built any other way can drift from the mounts it has to equal (D2074), and a gate that reads var.credentials_service.account under an `||` fails on Terraform 1.9-1.11:\n%s", path, code)
 	}
 
 	grants := workflowSecretGrants(t)
 	service, ok := grants["google_secret_manager_secret_iam_member.service"]
 	if !ok {
-		t.Fatalf("%s declares no google_secret_manager_secret_iam_member.service: the credentials service's account holds no reach on a workflow secret's container, and a run's fetch of a secret its job does not mount fails (D2074, B3.4)", path)
+		t.Fatalf("%s declares no google_secret_manager_secret_iam_member.service: the credentials service's account holds no reach on a mounted container, and a run's fetch of a secret its job does not mount fails (D2074, B3.4)", path)
 	}
 	for _, want := range []string{
 		"for_each = local.service_secret_names",
@@ -5515,8 +5519,8 @@ func TestNoServiceGrantWithoutTheService(t *testing.T) {
 		}
 	}
 
-	if !strings.Contains(code, "service_secret_names = var.credentials_service == null || var.credentials_service.account == \"\" ? toset([])") {
-		t.Errorf("%s: service_secret_names must be empty BOTH while the installation has no service and while the service it names has no account in it yet — an empty for_each creates nothing, so both plans are the ones this root planned before D2074 (D147, and the outputs of an installation applied before the account existed):\n%s", path, code)
+	if !strings.Contains(code, `service_secret_names = try(var.credentials_service.account, "") == "" ? toset([])`) {
+		t.Errorf("%s: service_secret_names must be empty BOTH while the installation has no service and while the service it names has no account in it yet — an empty for_each creates nothing, so both plans are the ones this root planned before D2074 (D147, and the outputs of an installation applied before the account existed). It is `try(...)`, not `var.credentials_service == null || ...`: `||` does not short-circuit before Terraform 1.12, and the `||` form reads an attribute of a null value, which fails the plan of every repository root whose switch is off on 1.9-1.11:\n%s", path, code)
 	}
 
 	// And the attribute itself, in the variable the repository root fills from

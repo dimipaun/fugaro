@@ -67,8 +67,8 @@ var secretReaderExceptions = []struct {
 			"internal/cli/credentials_serve.go",
 			"deploy/terraform/gcp/modules/installation/credentials.tf google_secret_manager_secret_iam_member.credentials_bundle",
 			// D2074's per-container grants, in a REPOSITORY root: one
-			// secretAccessor for the service's account on each workflow
-			// secret that repository's job mounts, so the service can read
+			// secretAccessor for the service's account on each secret
+			// container that repository's job mounts, so the service can read
 			// back the container a run asks it for (B3.4). The same account
 			// and the same role as the bundle's grant above, and a different
 			// decision — the module holds the set to the job's mounts

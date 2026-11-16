@@ -228,6 +228,16 @@ locals {
   # job's own accessor is neither moved nor widened by it: two accounts, two
   # grants, one container.
   #
+  # EVERY mount, and not only the secrets the repository declares under its own
+  # `secrets:` — this job's git credential and, while their mounts last, its
+  # model credentials are in the set too. That breadth is D2074's own wording
+  # ("one for each secret the job mounts, beside the job's own; a guard test
+  # holds the two sets equal"), and the set is derived rather than filtered for
+  # that reason: a narrower one would be a second, hand-kept list beside the
+  # mounts, which is the drift the guard exists to refuse. What narrows it is
+  # the FLIP: the plan that takes a mount away (C2.2's App key, C1.20's model
+  # mounts, B1.13's proxied token) empties that entry here in the same apply.
+  #
   # toset, not the list of mounts: two variables may mount the same logical
   # name, and a repeated name in a for_each is an error rather than a second
   # binding.
@@ -238,7 +248,15 @@ locals {
   # an older installation must plan exactly what it planned (the same
   # inertness CatalogCheckServiceAccount's empty value buys). An empty for_each
   # creates no resource at all, so nothing reads var.credentials_service there.
-  service_secret_names = var.credentials_service == null || var.credentials_service.account == "" ? toset([]) : toset(values(local.job_mounts))
+  #
+  # try, and not `var.credentials_service == null || var.credentials_service.account == ""`:
+  # Terraform's `||` does not short-circuit before 1.12, and these modules
+  # require 1.9 (versions.tf), so the `||` form reads an attribute of a null
+  # value and fails the plan of every repository root whose switch is off. try
+  # answers "" for a null object and for one that carries no account at all —
+  # the second is how deploy/terraform's proxied_git_test evaluates this file
+  # with a stub of only name and region.
+  service_secret_names = try(var.credentials_service.account, "") == "" ? toset([]) : toset(values(local.job_mounts))
 }
 
 # Each secret the job mounts and may read, at the secret level, never the
@@ -260,12 +278,22 @@ resource "google_secret_manager_secret_iam_member" "job" {
 # read and no run asked for, and a mount with no grant here is a fetch that
 # fails for a run the release meant to serve.
 #
+# The reach of each grant is the container the job's own env names, and that is
+# every mount of that job: the git credential, and its model credentials until
+# C1.20 drops their mounts, are in the set with the repository's own secrets.
+# D2074 rules the set to be the mounts — "one for each secret the job mounts,
+# beside the job's own; a guard test holds the two sets equal" — so this is the
+# decision and not an accident, and no run uses the reach while the mount is
+# still on (a mounted value always wins, B3.8). A narrower set would be a second
+# list beside the mounts, and nothing in a plan could keep the two in step.
+#
 # It is not a widening of the job's own accessor above into the service's, and
 # not a grant the service needs to broker anything else: the bundle's own
 # container is modules/installation/credentials.tf's one grant, and this
 # principal holds no project-level accessor (a project-level one cannot tell a
-# workflow secret from the git token or the model secrets the same repository
-# mounts — D2074's rejected alternative).
+# workflow secret's container from the git token's or the model secrets' — the
+# names are the same shape, dynamic-delivery F6 — which is D2074's rejected
+# alternative (b)).
 resource "google_secret_manager_secret_iam_member" "service" {
   for_each = local.service_secret_names
 
