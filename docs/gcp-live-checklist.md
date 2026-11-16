@@ -12627,17 +12627,11 @@ sentence is read against the service's own lines and never taken on its word: a 
 **served** is a FAIL only where that run's lines carry the served call behind it (one line with the one
 status that is not a refusal, `StatusOK`). Where the service's lines carry neither a class nor a served
 call at all the row is
-recorded as one the check could **not measure** (exit `2`), which is a reading of that run and not a
-claim about the code: an empty reading says the agent made no attempt that reached the service —
-**not** that nothing inside a review run can reach it, since the way there is the runner's own loopback
-forwarder, an unauthenticated listener that attaches the run's identity to whatever arrives and drops
-the caller's `Authorization` (`internal/gateway`'s `gitforward`), so a process that finds the port does
-reach the service. What nothing does is point such a run at it — the runner gives a review run's
-environment no git credential and no forwarder rewrite (`internal/runner`'s `refreshGitAuth`), and a
-`mode: review` recipe admits exactly one review step and no repository command (the run's own check
-command, the one route that reaches the forwarder, is therefore not there). Whether a review run should
-be given a route of its own — a review run's own command given a route to the forwarder, or a check step
-a `mode: review` recipe may carry — is the owner's decision and is not something this check builds);
+recorded as one the check could **not measure** (exit `2`), with one line of reason: a review-mode run
+has no route to the credentials service (`internal/runner`'s `refreshGitAuth` gives its agent no
+forwarder rewrite and no git credential, and a `mode: review` recipe admits exactly one review step and
+no repository command), and the owner decided to leave it that way, so no push of it reaches the service
+to be refused or served);
 `ended-identity` (the
 probe's record, the service's own lines and what it wrote, read together: **nothing written, no line for
 the probe in the service's own log, and the record's own sentence naming this execution's forwarder
