@@ -77,6 +77,7 @@ func (r *run) notePR(ctx context.Context, pr gitprov.PR) {
 	r.rec.PR = &runstore.PRRef{Number: pr.Number, URL: pr.URL, Desc: r.pr.desc}
 	r.save(ctx)
 	r.noteRegistryPRURL(r.rec.PR.URL)
+	r.noteChangeSetMember(ctx, pr)
 }
 
 // noteStatusWritten records when the status section was last written, in
@@ -829,6 +830,7 @@ func (r *run) sectionLines(head string, parts ...string) string {
 	// longer line -- a full run ID is what every version of the CLI takes.
 	id := inlineText(task.ShortRun(r.rec.RunID))
 	out := line + "\n"
+	out += r.changeSetPart()
 	out += r.ownerPart()
 	out += r.deferredPart()
 	if r.rec.DraftFallback {
@@ -836,6 +838,73 @@ func (r *run) sectionLines(head string, parts ...string) string {
 	}
 	return out + fmt.Sprintf("Run `%s` (a stale time here means the run died: `fugaro diagnose %s`)",
 		id, inlineText(r.rec.RunID))
+}
+
+// changeSetPart is the section's change-set block (D1): the run is one member
+// of a set launched together, and the block names the runs beside it so a
+// reader of one member's pull request can find them. It sits under the first
+// line, above the decisions and the deferrals, because it says what the run is
+// rather than what it left.
+//
+// "" for a run in no set, which is every other run: a launch that is in no
+// change set carries none (task.Spec.ChangeSet), and the section it writes is
+// the one it wrote before the field existed.
+//
+// The members are the run's own task's (D642) and are already canonical
+// (task.Validate), and no sibling's pull request is knowable here: a run
+// reaches only its own repository's prefixes in the runs bucket (SECURITY.md),
+// so the block a member writes leaves them unnamed and the settle step, which
+// reads every member's record, is what fills them in (D3).
+func (r *run) changeSetPart() string {
+	// A run under test can have no task at all (the section is rendered from
+	// the record alone in most of these paths), and a run with no task is in no
+	// set.
+	if r.spec == nil || r.spec.ChangeSet == nil {
+		return ""
+	}
+	cs := r.spec.ChangeSet
+	members := make([]gitprov.ChangeSetMember, 0, len(cs.Members))
+	for _, m := range cs.Members {
+		members = append(members, gitprov.ChangeSetMember{Repo: inlineText(m.Repo), RunID: inlineText(task.ShortRun(m.RunID))})
+	}
+	return gitprov.ChangeSetLine(inlineText(task.ShortRun(cs.ID)), inlineText(task.ShortRun(r.rec.RunID)), members)
+}
+
+// noteChangeSetMember records this run as a member of its change set, with the
+// pull request it just opened. The record lives in the run's own prefix, the
+// only one a run reaches, and it is what a step that reads a whole set reads
+// from this member (D3); the run's own verdict joins it when the run ends
+// (D2). A run in no change set records nothing.
+//
+// The repository is written canonically (task.CanonicalRepo) while the task
+// keeps the spelling it was launched with: the record is matched against the
+// member list every member's task carries, which is canonical, and a record
+// that spelled its own repository differently would not match the list it
+// repeats.
+func (r *run) noteChangeSetMember(ctx context.Context, pr gitprov.PR) {
+	cs := r.spec.ChangeSet
+	if cs == nil {
+		return
+	}
+	repo, err := task.CanonicalRepo(r.spec.Repo)
+	if err != nil {
+		r.d.Log.Warn("the run's repository is not a name a change set can record", "err", r.redact(err.Error()))
+		return
+	}
+	m := &runstore.ChangeSetMember{
+		Version: 1,
+		SetID:   cs.ID,
+		Repo:    repo,
+		RunID:   r.spec.RunID,
+		PRURL:   pr.URL,
+		At:      r.d.Now().UTC(),
+	}
+	if err := r.d.Store.WriteChangeSetMember(ctx, m); err != nil {
+		// The record is a coordination aid, not the run's own record: a set
+		// whose member cannot record its pull request is one the settle step
+		// reports rather than one this run fails over (T5).
+		r.d.Log.Warn("storing changeset.json failed", "err", r.redact(err.Error()))
+	}
 }
 
 // deferredPart is the section's list of the findings the run did not fix and
