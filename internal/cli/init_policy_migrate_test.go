@@ -417,6 +417,67 @@ func TestUpdatePublishesTheFirstPolicyNodeForACatalog(t *testing.T) {
 	}
 }
 
+// TestUpdatePublishesTheFirstPolicyNodeForTheCrafts is the crafts family's half
+// of #1656. A run reads what a craft's calls go out on — the credential or the
+// pool its access names, the model it runs, the pool that spreads it across
+// subscriptions — off the published node and nowhere else (docs/model-crafts
+// §1–3), so a project whose config states them and which has never published a
+// node had them in a file no run reads, with `fugaro project policy publish` as
+// the second command `fugaro update`'s one command must not need: the stage
+// reported there was nothing to do. The three blocks are entries of the list in
+// their own right, each naming what this file holds.
+func TestUpdatePublishesTheFirstPolicyNodeForTheCrafts(t *testing.T) {
+	f := newProjectFixture(t, craftMembersYAML)
+	h := newMigrationRig(t, f, &initOptions{})
+
+	st, err := h.s.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo {
+		t.Fatalf("the check says %s %q, want the first publish left to do", st.State, st.Detail)
+	}
+	for _, want := range []string{"no policy is published", "the crafts", "the craft credentials", "the craft pools"} {
+		if !strings.Contains(st.Detail, want) {
+			t.Errorf("the check does not say %q: %q", want, st.Detail)
+		}
+	}
+	if strings.Contains(st.Detail, "guardrails") || strings.Contains(st.Detail, "clone URLs") {
+		t.Errorf("the check names a member this config does not state: %q", st.Detail)
+	}
+	plan, err := h.s.Plan(context.Background(), initflow.Env{Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.NothingToDo {
+		t.Errorf("the plan leaves the first publish out: %+v", plan)
+	}
+	if v := f.db.Value(projectpolicy.PathShared()); v != nil {
+		t.Fatalf("the preview wrote a node of its own: %v", v)
+	}
+
+	// The write is behind the confirmation the stage's other node writes take.
+	fakeTerminal(t)
+	h.cmd.SetIn(strings.NewReader("aurora\n"))
+	out, err := h.apply(t, false)
+	if err != nil {
+		t.Fatalf("the first publish was refused: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "⚠ CONFIRM (project aurora)") {
+		t.Errorf("the first publish was not behind the confirmation:\n%s", out)
+	}
+	p := publishedPolicy(t, f)
+	if p.Crafts == nil || p.Crafts.Coder.Access != "acme-pool" || p.Crafts.SecurityReview.Access != "acme-main" {
+		t.Errorf("the published node carries the crafts %+v, want the file's own", p.Crafts)
+	}
+	if got := p.CraftCredentials; len(got) != 1 || got[0].Name != "acme-main" {
+		t.Errorf("the published node carries the credentials %+v, want the file's one", got)
+	}
+	if got := p.CraftPools; len(got) != 1 || got[0].Name != "acme-pool" {
+		t.Errorf("the published node carries the pools %+v, want the file's one", got)
+	}
+}
+
 // orchestratorConfigYAML is the guardrail block the way an owner writes it: one
 // cap below the person's max_parallel and one spawn rate, so the test can tell
 // the block it published from the defaults a node without one implies.

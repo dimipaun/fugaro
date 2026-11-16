@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -310,18 +311,15 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 // (SetsNothing). The publish would create a policy that admits nothing and
 // carry none of them with it.
 //
-// The rule is a member only the node can carry, listed here one at a time
-// rather than derived from the publisher's rows: `lc.X != nil` where the
-// publisher's guard for that member is (the bake switch and the triage switch
-// among them: BakeReposEffective and TriageEffective hand back a written answer
-// whatever it is, and the rows that compare them are reached by
-// `lc.BakeRepos != nil` and `lc.Triage != nil`). Being a publisher's row is not
-// by itself what puts a member in this list. The craft family is one — the
-// crafts, their credentials and their pools (MC18) — and it is not here, so a
-// config holding crafts and pools and nothing else is published by a first
-// publish with no typed confirmation to answer. Which members ask for that
-// confirmation is a product decision, so this list keeps the members it had
-// rather than growing by what the publish happens to write.
+// The rule is a member only the node can carry, listed here one at a time and
+// asked of the publisher's own guard for that member: `lc.X != nil` where the
+// publisher's guard is that (the bake switch and the triage switch among them:
+// BakeReposEffective and TriageEffective hand back a written answer whatever it
+// is, and the rows that compare them are reached by `lc.BakeRepos != nil` and
+// `lc.Triage != nil`), and the block's own emptiness where the publisher hands
+// the node's member back for a config that states none (the crafts family,
+// whose three members are compared by publishedCraftCredentials,
+// publishedCraftPools and publishedCrafts).
 func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
 	var out []string
 	if lc.ImageCatalogEffective(nil) != nil {
@@ -360,6 +358,25 @@ func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
 	// leave at all before this release (G3).
 	if lc.CloneURLsEffective(nil) != nil {
 		out = append(out, "the clone URLs")
+	}
+	// The crafts join them (MC18, D1667): what a craft's calls go out on — the
+	// credential or the pool its access names, the model it runs and the pool
+	// that spreads it across subscriptions — is read off the published node and
+	// nowhere else (docs/model-crafts §1–3), so a project whose config states
+	// them and which has never published a node has left the owner's crafts in a
+	// file no run reads, with `fugaro project policy publish` as the second
+	// command the HARD RULE forbids. Each block is its own entry because the
+	// list names what this file holds, and the guard is the publisher's own:
+	// publishedCraftCredentials, publishedCraftPools and publishedCrafts hand the
+	// node's member back for a config that states no block.
+	if len(lc.Credentials) > 0 {
+		out = append(out, "the craft credentials")
+	}
+	if len(lc.Pools) > 0 {
+		out = append(out, "the craft pools")
+	}
+	if lc.Crafts != (config.Crafts{}) {
+		out = append(out, "the crafts")
 	}
 	return out
 }
