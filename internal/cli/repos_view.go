@@ -250,14 +250,21 @@ type reposViewAllow struct {
 	// since it was printed.
 	Generation string `json:"generation"`
 	// State is the sentence for a read that did not answer — no node
-	// published, a node this build cannot read, a database that refused —
-	// and "" for one that did. Entries is empty in that case, and this member
-	// is the only thing that tells it apart from a policy published with an
-	// empty allow-list: the first is a list nobody could read, the second is
-	// a project that admits nothing, and NotAdmitted's own sentence makes the
-	// same distinction. There is deliberately no fallback here — the image
-	// selection falls back to this machine's file, and no local file states
-	// which repositories a project admits.
+	// published, a database that refused — and "" for one that did. Entries is
+	// empty in that case, and this member is the only thing that tells it apart
+	// from a policy published with an empty allow-list: the first is a list
+	// nobody could read, the second is a project that admits nothing, and
+	// NotAdmitted's own sentence makes the same distinction. There is
+	// deliberately no fallback here — the image selection falls back to this
+	// machine's file, and no local file states which repositories a project
+	// admits.
+	//
+	// A node that ANSWERED and that this build refuses — an unknown top-level
+	// key, a version this binary does not read — is deliberately not a state:
+	// every CLI reader of the node refuses it (refuseUnknownPolicyKeys,
+	// publishedPolicyOf), and a listing that carried the refusal as a sentence
+	// would be the one reader that acted on a half-read policy. The view
+	// returns that refusal rather than stating it.
 	State string `json:"state"`
 }
 
@@ -365,15 +372,21 @@ type reposViewCredential struct {
 // names each leave their own state sentence (F14), because the alternative —
 // an empty list — is a claim about the project drawn from a failure to read it.
 //
-// A read this run refuses is the other half, and the one thing that is
-// returned rather than stated: the sources that carry the project's identity
-// belong to it, and what a listing would draw from another project's is another
-// installation's data (refusedBySeen).
+// Two reads are the other half, and the two things returned rather than stated:
+// the sources that carry the project's identity belong to it, and what a listing
+// would draw from another project's is another installation's data
+// (refusedBySeen); and a published node that ANSWERED and that this build
+// refuses — an unknown key, a version it does not read — is a refusal every
+// reader of that node makes, which a state sentence would turn into a listing
+// drawn from the half of the policy that decoded (reposViewAllowOf).
 func newReposView(ctx context.Context, lc *localcfg.Config, db *rtdb.Client, canonical string) (*reposView, error) {
 	if lc == nil {
 		return nil, userErr("the enrolment view needs this machine's project config: select one, or run this from a checkout of the repository")
 	}
-	allow, cat, imap, projectBase := reposViewAllowOf(ctx, lc, db)
+	allow, cat, imap, projectBase, err := reposViewAllowOf(ctx, lc, db)
+	if err != nil {
+		return nil, err
+	}
 	local, keys := reposViewLocalOf(lc)
 
 	v := &reposView{Project: lc.Name, Allow: allow, Local: local}
@@ -489,10 +502,15 @@ func reposViewCanonicalOf(canonical string) (string, error) {
 // A policy read that failed is deliberately not a refusal: `ls` and `status`
 // still have rows to draw and a bucket to read, and a policy read that failed is
 // one member of the answer rather than the whole of it — with the sentence
-// saying so, which is the half an empty list loses.
-func reposViewAllowOf(ctx context.Context, lc *localcfg.Config, db *rtdb.Client) (reposViewAllow, *config.Catalog, map[string]string, string) {
-	fileOnly := func(state string) (reposViewAllow, *config.Catalog, map[string]string, string) {
-		return reposViewAllow{Entries: []string{}, State: state}, lc.ImageCatalogEffective(nil), lc.ImageMapEffective(nil), lc.BaseBranch
+// saying so, which is the half an empty list loses. **A node that answered and
+// that this build refuses is the other half, and it is returned rather than
+// stated**: an unknown top-level key and a version no reader here reads are
+// refusals every reader of the node makes (refuseUnknownPolicyKeys' own posture,
+// P8: the runner is the tolerant side), and the one reader that turned them into
+// a member would act on the half of the policy it could decode.
+func reposViewAllowOf(ctx context.Context, lc *localcfg.Config, db *rtdb.Client) (reposViewAllow, *config.Catalog, map[string]string, string, error) {
+	fileOnly := func(state string) (reposViewAllow, *config.Catalog, map[string]string, string, error) {
+		return reposViewAllow{Entries: []string{}, State: state}, lc.ImageCatalogEffective(nil), lc.ImageMapEffective(nil), lc.BaseBranch, nil
 	}
 	etag, found, raw, err := readPolicyNode(ctx, db, lc)
 	switch {
@@ -503,14 +521,14 @@ func reposViewAllowOf(ctx context.Context, lc *localcfg.Config, db *rtdb.Client)
 	}
 	p, err := publishedPolicyOf(raw, true)
 	if err != nil {
-		return fileOnly("the published policy could not be read, so the allow-list and the image selection it publishes are not in this answer: " + oneLineCLI(err.Error()))
+		return reposViewAllow{}, nil, nil, "", err
 	}
 	projectBase := lc.BaseBranch
 	if projectBase == "" {
 		projectBase = p.BaseBranch
 	}
 	return reposViewAllow{Entries: nonNil(p.AllowRepos), Generation: etag},
-		lc.ImageCatalogEffective(p.ImageCatalog), lc.ImageMapEffective(p.ImageMap), projectBase
+		lc.ImageCatalogEffective(p.ImageCatalog), lc.ImageMapEffective(p.ImageMap), projectBase, nil
 }
 
 // reposViewLocalOf is this machine's own half: the canonical names its config
