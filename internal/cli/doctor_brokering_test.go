@@ -990,9 +990,13 @@ func brokeringServiceStates() []brokeringServiceState {
 			// this" either: the deploy is the ordinary update, and what moves a
 			// repository's credential out of its jobs is the switch, so what is
 			// pinned here is the deploy's own reach and what the switch costs
-			// when it is on.
+			// when it is on. The switch's terms are pinned as of B2.4: the pin
+			// used to be "agent.auth: cascade", which was the whole of the
+			// condition while the switch admitted the cascade alone, and the
+			// line now has to name the two the other auths add — the budget
+			// mode, and the bundle entry the auth's runs are served under.
 			name:     "the installation carries no credentials service",
-			names:    []string{infra.CredentialsServiceName, selfCommand() + " update", "deploys one on every installation", "re-applied with the switch", "agent.auth: cascade", selfCommand() + " creds set github-app-key"},
+			names:    []string{infra.CredentialsServiceName, selfCommand() + " update", "deploys one on every installation", "re-applied with the switch", "an api-key or oauth one only where its budget mode is observe or enforce", selfCommand() + " creds set github-app-key"},
 			absent:   []string{"has not converged", "opt in", "provision-credentials", "nothing for a run to fetch"},
 			severity: "info",
 			build:    newBrokeringNoServiceRig,
