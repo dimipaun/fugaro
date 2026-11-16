@@ -355,3 +355,87 @@ func abSchemaAccepts(t *testing.T, sch *jsonschema.Schema, text string) bool {
 	}
 	return sch.Validate(inst) == nil
 }
+
+// TestWorkflowReviewerArm pins the workflow's own ask for an A/B reviewer arm
+// (WorkflowAB, the owner's ruling of 2026-11-16, docs/review-levels-ab-jobmax
+// O12): workflows.<name>.ab.reviewer_arm names the review level the arm
+// replays, and the launch and the launch's image gate both read that one key.
+//
+// The vocabulary is closed and `coder` is refused by name: a coder pair is
+// launched beside its champion at one moment (D571) and asks nothing of this
+// key, so accepting it would be a file asking for an arm no launcher can cut.
+// The schema is held to the decoder's answers here too, the way
+// TestABSchemasMatchDecoder holds the ab: block's.
+func TestWorkflowReviewerArm(t *testing.T) {
+	body := func(a string) []byte {
+		return []byte(minimalRepo + "git: { provider: github }\nworkflows:\n  default:\n    commands: { build: make, test: make test }\n" + a)
+	}
+	for _, lvl := range []string{"l1", "l2", "l3"} {
+		c, ps := Parse(body("    ab:\n      reviewer_arm: " + lvl + "\n"))
+		if len(ps) > 0 {
+			t.Fatalf("%s: problems = %v, want none", lvl, ps)
+		}
+		_, w, err := c.SelectWorkflow("")
+		if err != nil {
+			t.Fatalf("%s: SelectWorkflow: %v", lvl, err)
+		}
+		if got := w.ReviewerArm(); got != lvl {
+			t.Errorf("Workflow.ReviewerArm() = %q, want %q", got, lvl)
+		}
+		if got, ok := w.ReviewerArmLevel(); !ok || string(got) != lvl {
+			t.Errorf("Workflow.ReviewerArmLevel() = %q, %v, want %q, true", got, ok, lvl)
+		}
+		if w.AB.ReviewerArm != lvl {
+			t.Errorf("the decoded block = %+v, want the key read off the file", w.AB)
+		}
+	}
+
+	// A workflow that writes no block asks for no arm, and one that writes an
+	// empty block is refused: the key exists to make the ask, so a block
+	// without it names nothing a launch could act on.
+	c, ps := Parse(body(""))
+	if len(ps) > 0 {
+		t.Fatalf("problems = %v, want none: a workflow may ask for no arm", ps)
+	}
+	w := c.Workflows["default"]
+	if w.ReviewerArm() != "" {
+		t.Errorf("Workflow.ReviewerArm() = %q, want none", w.ReviewerArm())
+	}
+	if lv, ok := w.ReviewerArmLevel(); ok || lv != "" {
+		t.Errorf("Workflow.ReviewerArmLevel() = %q, %v, want \"\", false", lv, ok)
+	}
+
+	schema := compileABSchema(t, "fugaro.schema.json")
+	for _, tc := range []struct {
+		name, body, want string
+		ok               bool
+	}{
+		{"a level", "    ab:\n      reviewer_arm: l2\n", "", true},
+		{"the coder", "    ab:\n      reviewer_arm: coder\n", "names the coder", false},
+		{"a level that is no level", "    ab:\n      reviewer_arm: l4\n", "must be one of", false},
+		{"an empty level", "    ab:\n      reviewer_arm: ''\n", "must name the review level", false},
+		{"a block that names none", "    ab: {}\n", "must name the review level", false},
+		{"an unknown key", "    ab:\n      reviewer_arm: l2\n      arm: l2\n", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, ps := Parse(body(tc.body))
+			if got := len(ps) == 0; got != tc.ok {
+				t.Fatalf("the decoder accepted = %v, want %v (problems: %v)", got, tc.ok, ps)
+			}
+			// An unknown key is refused by the strict decoder before
+			// Validate runs, so it carries a line and no config path; the
+			// key's own refusals carry the workflow's path.
+			if !tc.ok && tc.want != "" {
+				if ps[0].Path != "workflows.default.ab.reviewer_arm" {
+					t.Errorf("problems = %v, want one at workflows.default.ab.reviewer_arm", ps)
+				}
+				if !bytes.Contains([]byte(ps[0].Message), []byte(tc.want)) {
+					t.Errorf("problems = %v, want a message holding %q", ps, tc.want)
+				}
+			}
+			if got := abSchemaAccepts(t, schema, string(body(tc.body))); got != tc.ok {
+				t.Errorf("fugaro.schema.json accepted = %v, want %v: the schema and the decoder disagree", got, tc.ok)
+			}
+		})
+	}
+}

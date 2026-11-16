@@ -573,6 +573,18 @@
             "max_total_bytes": { "type": "integer", "minimum": 0, "maximum": 4294967296, "description": "The most the WHOLE set may hold; absent or 0 means 1 GiB (config.DefaultInputTotalBytes). The runner stages these beside the render's originals, so the memory rule counts them (docs/design/artifact-runs.md §5.2)." }
           }
         },
+        "ab": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reviewer_arm"],
+          "description": "The A/B reviewer arm this workflow asks for (config.WorkflowAB): the review level a second run replays over this workflow's champion, once the champion's patch exists. It is a workflow key and not the top-level ab: block, whose rate, challengers and judge are the project's; absent means the workflow asks for no arm, which is every workflow today.",
+          "properties": {
+            "reviewer_arm": {
+              "enum": ["l1", "l2", "l3"],
+              "description": "The review level the reviewer arm replays (config.WorkflowAB.ReviewerArm): l1, l2 or l3. `coder` is refused: a coder pair is launched beside its champion at one moment and asks nothing of this key. A workflow that asks for an arm is launched only onto a job image whose runner acts on a review slot (internal/cli's slotSince)."
+            }
+          }
+        },
         "rebuild": {
           "type": "object",
           "additionalProperties": false,

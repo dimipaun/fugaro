@@ -907,6 +907,19 @@ type Workflow struct {
 	// Inputs caps what a launcher may attach to a run of this workflow
 	// (design artifact-runs.md §4). Binaries before 0.8.0 refuse the key.
 	Inputs Inputs `yaml:"inputs"`
+	// AB is the A/B reviewer arm this workflow asks for (WorkflowAB, the
+	// owner's ruling of 2026-11-16, docs/review-levels-ab-jobmax O12): the
+	// review level a second run replays over this workflow's champion.
+	//
+	// It is a workflow key and not a top-level one, and the launch that
+	// asks for the arm is fugaro run's own: an arm at a review slot is a
+	// second run of the workflow's own review, and no CLI flag asks for it,
+	// so a file that writes the key asks for it on every launch of that
+	// workflow and a file that writes none is every workflow today. The
+	// json tag is what Config.SHA256 hashes, so it is omitempty like every
+	// other key a file may leave out: a file that asks for no arm hashes
+	// exactly as it did before the key existed.
+	AB *WorkflowAB `yaml:"ab,omitempty" json:"ab,omitempty"`
 }
 
 // Checkout values of a workflow (design generic-tool.md §2, G3;

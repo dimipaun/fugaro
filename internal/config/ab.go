@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
@@ -183,6 +184,78 @@ func validateRepoAB(a *AB) []Problem {
 	}
 	return ps
 }
+
+// WorkflowAB is a workflow's own ab: block: whether this workflow asks for an
+// A/B reviewer arm, and at which level (the owner's ruling of 2026-11-16,
+// docs/review-levels-ab-jobmax, O12). It is not the top-level AB: the sampling
+// rate, the challenger list and the judge are the project's, sample a
+// repository's first code runs and are read by the pair launch (ee/ab's Plan);
+// this block asks for a second run at a review slot, which is a review of this
+// workflow's own, so the ask sits where every other per-workflow selection
+// does — under workflows.<name> — and the same key is what the launch's image
+// gate reads (internal/cli's slotAsk).
+//
+// The ask is a review level and never the coder: a coder pair is launched at
+// the champion's own moment (D571, A3.3), while a reviewer arm waits for the
+// champion's patch and replays that level over it (B1.2, B1.4), so `coder`
+// here would name the pair that needs no key at all.
+type WorkflowAB struct {
+	// ReviewerArm is the review level of the arm this workflow asks for: l1,
+	// l2 or l3. The absent block asks for no arm, and there is no spelling
+	// for "the arm at the workflow's own level": a level is what the pair
+	// varies, and a pair whose slot the launcher had to guess is one whose
+	// two arms B1.3 could not group.
+	ReviewerArm string `yaml:"reviewer_arm,omitempty" json:"reviewer_arm,omitempty"`
+}
+
+// ReviewerArm is the level this workflow asks its A/B reviewer arm to run at,
+// or "" when the workflow asks for none. It is the one reader of the key: the
+// launch (ee/ab's ReviewerArm) and the image gate that judges whether the job's
+// runner can carry an arm at all (internal/cli's slotAsk) read the same answer,
+// so a launch can never ask the gate about one level and write another.
+func (w Workflow) ReviewerArm() string {
+	if w.AB == nil {
+		return ""
+	}
+	return w.AB.ReviewerArm
+}
+
+// ReviewerArmLevel is ReviewerArm as the closed vocabulary of review levels:
+// the workflow's ask when it makes one, or "" when it asks for no arm. A file
+// whose ask is not one of the three is refused by Validate before any reader
+// sees it, so the boolean is a reader's own guard (a Config built in memory by
+// a caller) rather than a second refusal.
+func (w Workflow) ReviewerArmLevel() (policy.Level, bool) {
+	switch lv := policy.Level(w.ReviewerArm()); lv {
+	case policy.LevelL1, policy.LevelL2, policy.LevelL3:
+		return lv, true
+	default:
+		return "", false
+	}
+}
+
+// validateWorkflowAB checks a workflow's ab: block: the ask is one of the three
+// review levels and nothing else. `coder` is refused by name, because it is the
+// one value a reader would reasonably try and it names the pair every release
+// already runs; an unknown value is refused as what the vocabulary is, so a
+// typo is a refusal here rather than a launch that samples nothing.
+func validateWorkflowAB(p string, a *WorkflowAB) []Problem {
+	if a == nil {
+		return nil
+	}
+	switch a.ReviewerArm {
+	case string(policy.LevelL1), string(policy.LevelL2), string(policy.LevelL3):
+		return nil
+	case "":
+		return []Problem{{Path: p + ".reviewer_arm", Message: "must name the review level the A/B reviewer arm runs at (" + reviewerArmLevels + "): a block that names none asks for no arm, and this key is how a workflow asks for one"}}
+	case string(RoleCoder):
+		return []Problem{{Path: p + ".reviewer_arm", Message: "names the coder: a coder pair is launched at the champion's own moment (D571, A3.3) and asks nothing of this key, which is for the arm that replays a review level over the champion's patch (" + reviewerArmLevels + ")"}}
+	}
+	return []Problem{{Path: p + ".reviewer_arm", Message: "is " + showKey(a.ReviewerArm) + ": must be one of " + reviewerArmLevels + ", the levels a reviewer arm can replay"}}
+}
+
+// reviewerArmLevels is the vocabulary as a refusal prints it.
+const reviewerArmLevels = "l1, l2 or l3"
 
 // sortedModes is a map's modes in the vocabulary's order, an unknown mode
 // after them and sorted, so one bad block reports its problems in the same
