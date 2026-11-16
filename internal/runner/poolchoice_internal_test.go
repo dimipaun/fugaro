@@ -739,6 +739,10 @@ func TestThePublishedNodeIsThePoolTheRunWalks(t *testing.T) {
 	if member.Name != "or-primary" {
 		t.Fatalf("the stage is served by %q, want the member the node lists second and this repository may be given", member.Name)
 	}
+	if member.Type != config.CredentialTypeOpenRouter {
+		t.Errorf("the member is read as type %q, want the node's own credential definition of it (%q): the type is what decides which path serves the member",
+			member.Type, config.CredentialTypeOpenRouter)
+	}
 	if !strings.Contains(log.String(), "or-foreign") || !strings.Contains(log.String(), "allow_data_to") {
 		t.Errorf("the member this repository may not be given was not recorded as the skipped one: %q", log.String())
 	}

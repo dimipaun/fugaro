@@ -560,13 +560,15 @@ func TestProviderKeyIsAnsweredAsHeldAndNeverSelected(t *testing.T) {
 // and decides nothing else (F7, D154), because the tier is creds.Selector's and
 // it serves tier A before tier B.
 //
-// The three assertions are one walk. The offering carries the node's order with
-// the bundle's tier for each name, so a service that sorted its candidates — by
-// name, or by tier — would be ordering a pool the owner ordered deliberately.
-// The call is served by the pool's first tier-A member although the paid key is
-// listed before both of them, so the listed order does not outrank the tier. And
-// with both subscriptions held the key serves, which is the same rule from the
-// other end: the node's own order never decides a call on its own.
+// The three assertions are one walk of that document. The offering carries the
+// node's members in the node's own order with the bundle's tier for each name,
+// which is the order creds.Select breaks a tie inside a tier with — so a reader
+// that reordered them, by name say, would be re-ordering a pool its owner
+// ordered deliberately. The call is served by the pool's first tier-A member
+// although the paid key is listed before both of them, so the listed order does
+// not outrank the tier. And with both subscriptions held the key serves, which
+// is the same rule from the other end: the node's order never decides a call on
+// its own.
 func TestPublishedPoolOrderReachesTheService(t *testing.T) {
 	s := poolSvc(t, `"credentials": {"fallback": "auto"},
 		`+poolCraftBlock(
