@@ -34,7 +34,10 @@ package keyservice
 // nothing (D2186, D2195), and a caller of another organisation is a stranger to
 // all three — the same 404 whether the invitation is not there or is not
 // theirs. The operations membership reads across, as it reads everything, and
-// that read is written to the log by accessTo (D456, F9).
+// that read is written to the log by accessTo (D456, F9) — but reading across is
+// the whole of what it buys: inviting into an organisation and withdrawing an
+// invitation there are an owner's or an admin's to do, and an operations
+// membership that is a plain member is a plain member (inviteAccess).
 
 import (
 	"context"
@@ -209,16 +212,33 @@ func invitationMail(origin, organisation string, invitation WireInvite, ttl time
 
 // inviteAccess turns a request into one organisation's access and checks the
 // role the act needs: the caller's own membership of it or the operations
-// membership's read across (accessTo, which the audit line for that read is
-// written by), and an owner's or an admin's standing in it. The action is what
-// a read across organisations is filed under, and the acts that write file
-// their own lines beside it.
-func (s *Service) inviteAccess(ctx context.Context, actor Caller, organisationID, action string) (organisationAccess, error) {
+// membership it reaches the organisation through (accessTo, which the audit
+// line for that read is written by). The action is what a read across
+// organisations is filed under, and the acts that write file their own lines
+// beside it.
+//
+// **The role checked is the one held in the membership the request USES**, which
+// accessTo already answers: for a caller who belongs to the organisation it is
+// their role there, and for the operations membership it is their role in the
+// operations organisation. readsAcross says what that read across buys, and it is
+// the whole of the difference between the routes here: the list is one of the
+// reads the operations team makes everywhere and it asks for no role (P2.1's
+// apiListMembers' own reading, and the read is audited like every other), while
+// inviting somebody into an organisation and withdrawing an invitation there are
+// decisions D2186/D2195 give that organisation's owners and admins. Operations
+// reads across organisations; it does not decide for another organisation's
+// people, so an operations membership that is a plain member decides nothing
+// there either — a membership's role is the whole of the standing it carries,
+// wherever the records it acts on live.
+func (s *Service) inviteAccess(ctx context.Context, actor Caller, organisationID, action string, readsAcross bool) (organisationAccess, error) {
 	held, err := s.accessTo(ctx, actor, organisationID, action)
 	if err != nil {
 		return organisationAccess{}, err
 	}
-	if !held.Operations && held.Membership.Role != roleOwner && held.Membership.Role != roleAdmin {
+	if held.Operations && readsAcross {
+		return held, nil
+	}
+	if held.Membership.Role != roleOwner && held.Membership.Role != roleAdmin {
 		return organisationAccess{}, errInviteNotPermitted
 	}
 	return held, nil
@@ -271,14 +291,15 @@ func allowedInviteDomain(address string, domains []string) bool {
 
 // createInvitation writes one invitation of one organisation and mails it. What
 // is checked, in this order: the caller's standing in the organisation (an
-// owner or an admin), the role, the address as a member this tree can compare,
+// owner or an admin, of their own membership or of the operations one they reach
+// it through), the role, the address as a member this tree can compare,
 // and — for the operations organisation alone — the domain list the owner set
 // (F9). The invitation is written before the mail is sent, so a mail path that
 // fails leaves an invitation that stands and can be withdrawn rather than a link
 // to a record nothing holds; the failure is the caller's answer and never a
 // silent success.
 func (s *Service) createInvitation(ctx context.Context, actor Caller, organisationID string, asked WireInviteCreate) (WireInvite, error) {
-	held, err := s.inviteAccess(ctx, actor, organisationID, actionOrganisationRead)
+	held, err := s.inviteAccess(ctx, actor, organisationID, actionOrganisationRead, false)
 	if err != nil {
 		return WireInvite{}, err
 	}
@@ -350,7 +371,7 @@ func (s *Service) putInvitation(ctx context.Context, invitation WireInvite) erro
 // creation instant and then the id, so that two invitations created in the same
 // instant still have an order a page and a test can rely on.
 func (s *Service) listInvitations(ctx context.Context, actor Caller, organisationID string) ([]WireInvite, error) {
-	held, err := s.inviteAccess(ctx, actor, organisationID, actionInvitationList)
+	held, err := s.inviteAccess(ctx, actor, organisationID, actionInvitationList, true)
 	if err != nil {
 		return nil, err
 	}
@@ -381,7 +402,7 @@ func (s *Service) listInvitations(ctx context.Context, actor Caller, organisatio
 // invitation's id is the API's and a caller of one organisation naming another's
 // id is a caller reaching past their own records.
 func (s *Service) revokeInvitation(ctx context.Context, actor Caller, organisationID, invitationID string) (WireInvite, error) {
-	held, err := s.inviteAccess(ctx, actor, organisationID, actionOrganisationRead)
+	held, err := s.inviteAccess(ctx, actor, organisationID, actionOrganisationRead, false)
 	if err != nil {
 		return WireInvite{}, err
 	}

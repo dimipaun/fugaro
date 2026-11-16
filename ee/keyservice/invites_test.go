@@ -507,6 +507,68 @@ func TestAnotherOrgsInvitationsAreRefused(t *testing.T) {
 	f.accepted(samUID, samEmail, invitation.ID)
 }
 
+// TestAnOperationsMemberReadsButDecidesNothing: reading across organisations is
+// what the operations membership is for, and the invitation list keeps it — it is
+// a read the operations team makes everywhere and it is written to the log
+// (D456, F9). Inviting somebody into another organisation and withdrawing an
+// invitation there are not reads: they are decisions D2186 and D2195 give that
+// organisation's owners and admins, and an operations membership that is a plain
+// member is a plain member — the role that decides is the one held in the
+// membership the request uses, whichever organisation's records it names. An
+// operations owner is admitted the same two routes, so what refuses is the role
+// and not the operations membership as such.
+func TestAnOperationsMemberReadsButDecidesNothing(t *testing.T) {
+	f := newFixture(t)
+	customer := f.signedUp(danaUID, danaEmail, "Example Ltd")
+	f.actsAs(danaUID, danaEmail, signInGoogle)
+	invitation := f.invited(customer.ID, samEmail, roleMember)
+
+	operations := f.seededOrganisation("org_operations", "Operations", orgTypeOperations, opsUID, opsEmail, roleMember)
+	f.actsAs(opsUID, opsEmail, signInGoogle)
+
+	rec := f.apiAsCaller(http.MethodGet, apiOrgInvitesPathOf(customer.ID), "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("an operations member reading another organisation's invitations answered %d (%s), want them: reading across organisations is what the operations membership is for", rec.Code, rec.Body)
+	}
+	if listed := readAnswer[WireInviteList](f, rec).Invites; len(listed) != 1 || listed[0].ID != invitation.ID {
+		t.Errorf("the operations read answered %+v, want the invitation that organisation holds", listed)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{name: "inviting somebody", method: http.MethodPost, path: apiOrgInvitesPathOf(customer.ID), body: `{"email":"new@example.com","role":"owner"}`},
+		{name: "withdrawing an invitation", method: http.MethodDelete, path: apiOrgInvitePathOf(customer.ID, invitation.ID)},
+	} {
+		t.Run(tc.name+" as an operations member", func(t *testing.T) {
+			rec := f.apiAsCaller(tc.method, tc.path, tc.body)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("%s as an operations member answered %d (%s), want 403: reading across organisations is not deciding for them", tc.name, rec.Code, rec.Body)
+			}
+			if code := refusal(f, rec); code != "not_permitted" {
+				t.Errorf("the refusal carries the code %q, want not_permitted", code)
+			}
+		})
+	}
+	if held, _ := f.invitation(invitation.ID); held.State != invitePending {
+		t.Errorf("the refused withdrawal left the invitation %q, want it %q", held.State, invitePending)
+	}
+	if held := f.invitationsOf(customer.ID); len(held) != 1 || held[0].ID != invitation.ID {
+		t.Errorf("the refused invitation wrote %+v, want the one invitation that was already there", held)
+	}
+
+	f.setRole(operations.ID, opsUID, roleOwner)
+	if created := f.invited(customer.ID, "another@example.com", roleMember); created.OrganisationID != customer.ID {
+		t.Errorf("an operations owner's invitation names %q, want the organisation the request named", created.OrganisationID)
+	}
+	if rec := f.apiAsCaller(http.MethodDelete, apiOrgInvitePathOf(customer.ID, invitation.ID), ""); rec.Code != http.StatusNoContent {
+		t.Errorf("an operations owner withdrawing the invitation answered %d (%s), want 204", rec.Code, rec.Body)
+	}
+}
+
 // TestSeedIsAnInvitationBoundAtFirstSignIn: the operations organisation is
 // seeded, never signed up to: SeedOperations writes it, its own first
 // invitation and nothing else — no membership, no terms — and the person the
