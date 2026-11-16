@@ -656,10 +656,10 @@ Remove pools.<NAME> from this project's config: the pool goes, and a craft whose
 access names it is cleared with it rather than left pointing at nothing.
 
 It removes the pool from the installation's config only. A repository that
-selected the pool keeps its own file untouched, and this release's fugaro update
-leaves the pools the policy node already carries as they are: it never publishes
-this config's pools, which is MC4's job, so the removal withdraws nothing from
-the node.
+selected the pool keeps its own file untouched, and the published policy node
+keeps what it holds: fugaro update publishes the pools this file states — a pool
+with no owner is named and skipped — and never deletes a definition the file no
+longer states, so removing a pool here withdraws nothing from the node.
 
 Run it at your own terminal: a pool decides where a project's calls may be
 spent, so a coding agent's session is refused.
@@ -4875,7 +4875,7 @@ Subcommands:
 - `fugaro models provider` -- Write and remove the provider routes of this project's config
 - `fugaro models rm` -- Stop letting this project run a model: drop its claim, price and allow-list entry
 - `fugaro models search` -- Find a model in the built-in price catalog and the Claude table
-- `fugaro models use` -- Point one repository's own config at a model, in its working tree
+- `fugaro models use` -- Point a role or a model key at a model, in a repository or in the project layer
 
 ## `fugaro models add`
 
@@ -5190,30 +5190,42 @@ This command has no subcommands.
 
 ## `fugaro models use`
 
-Point one repository's own config at a model, in its working tree
+Point a role or a model key at a model, in a repository or in the project layer
 
-Prepare the change to a repository's own fugaro.yaml that makes one role run
-a model, in the checkout's working tree for the owner to review and commit.
+Write the key that makes a role, a level, a recipe or the project's own model
+run what is named, and nothing else in the file: every comment, every other
+byte and the key order are kept.
 
-The switch is judged the way a launch judges it: a route of the project config
-must claim the model and its allow_data_to must name the repository, the model
-must be priced, budget.allowed_models must admit it, and the repository's own
+A role name is the shorthand for agent.models.<role> — coder, reviewer,
+background, vision and diagnose — and a key may be named in full
+(agent.model, agent.recipe, agent.levels.l2.model, agent.levels.l2.effort).
+--layer repo, the default, writes the repository's own fugaro.yaml in the
+checkout's working tree for the owner to review and commit; --layer project
+writes this machine's project layer file, where the key is the
+layer.defaults.agent.<same> one and applies to every repository of the
+project. layer.claude_models, the Claude models a project's routes may
+serve, is written as provider=anthropic/<id> at --layer project alone.
+
+A switch is judged the way a launch judges it: a route of the project config
+must claim the model and its allow_data_to must name the repository (every
+repository the project onboards, for a project-layer write), the model must
+be priced, budget.allowed_models must admit it, and the repository's own
 agent.auth and budget must support a provider model. A failure is a refusal
 with nothing written, and the message names the `fugaro models add` that would
 fix a missing claim or price.
 
-Only agent.models.<role> changes: every comment and every other byte of the
-file is kept. The command never commits, pushes or opens a pull request — the
+The command never commits, pushes or opens a pull request — a repository's
 change reaches runs when the owner's own branch is merged to the base branch,
 which is what every run reads.
 
-Usage: `fugaro models use <repo> <coder|reviewer|background|vision> <id>`
+Usage: `fugaro models use [<repo>] <role|key> <id>`
 
 Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for use |
+| `--layer` | string | "" | no | where the write lands: repo (a repository's own fugaro.yaml, the default), project (this machine's project layer file) or local |
 
 Subcommands:
 
@@ -6259,27 +6271,58 @@ Flags:
 
 Subcommands:
 
-- `fugaro project repos add` -- Enroll a repository: add it to the policy's allow-list
+- `fugaro project repos add` -- Enroll a repository: one confirmation for the whole enrolment
 - `fugaro project repos ls` -- List the allow-list and the repositories that have run here
 - `fugaro project repos rm` -- Un-enroll a repository: remove it from the allow-list
 - `fugaro project repos set` -- Write a repository's workflow selection or a job profile, in this machine's project config
 
 ## `fugaro project repos add`
 
-Enroll a repository: add it to the policy's allow-list
+Enroll a repository: one confirmation for the whole enrolment
 
-Add a canonical repository (github/acme/app, bitbucket/acme/*) to the
-published policy's allow_repos, through the same ETag-guarded write the
-publisher uses, and print the change. A bare owner/name takes its provider
-from this machine's project config, and * is the list's own entry for every
-repository: it is written as it is. Only allow_repos changes.
+Enrol a repository in the project, behind one confirmation. The command
+reads what it can and never guesses one: the provider from this machine's
+config, then the checkout's own fugaro.yaml, then its origin remote; the
+workflows and the base branch from that fugaro.yaml; the image its job runs
+from the workflow's catalog reference, then this project's effective image
+map, then the catalog's default; the GitHub App ID and the Claude accounts
+from the project's other repositories. It prints the whole list of what it
+will change, asks once for the project's name, and then does each step as
+far as it can:
 
-Usage: `fugaro project repos add <provider/owner/name | owner/name | *>`
+  1. the repository's own fugaro.yaml: read, never written
+  2. this machine's project config: the repository's repos: entry
+  3. this machine's project config: its repo-to-image mapping
+  4. the published policy's allow_repos
+  5. the publish of the policy node (fugaro update's policy stage)
+  6. the repository's job set and its roles/run.invoker grant
+
+Every step is idempotent and the command is resumable: over a repository
+already enrolled nothing is written and each step says so, and over an
+enrolment a failure or a Ctrl-C left half done the missing steps are done
+and the ones already done are left alone. A value it cannot read it refuses
+with the one command that supplies it, and never guesses one.
+
+Step 6 converges the repository's own root, which is deployed from a
+checkout of it, so run this from that checkout: without one the command
+refuses and names --allow-list-only. The catalog's entry for the repository
+is mapped and never built — the first image build is billable and it is
+`fugaro image build <entry>`'s — and the map step merges the entry into the
+map the published node holds, so enrolling one repository cannot take
+another's mapping away. Nothing here asks a run to finish, and nothing
+rewrites what a run in flight holds.
+
+--allow-list-only writes the published allow-list entry and nothing else,
+as this command did before the enrolment converged: it is what * needs, and
+it is the whole of what a pattern such as owner/* can want.
+
+Usage: `fugaro project repos add <provider/owner/name | owner/name>`
 
 Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--allow-list-only` | bool | `false` | no | Write only the allow-list entry, as this command did before the whole enrolment converged (required for *) |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for add |
@@ -7276,6 +7319,7 @@ Flags:
 | `--attach` | stringArray | `[]` | no | attach a file to the run: repeatable, uploaded to the run's own inputs/ and downloaded by a mode: artifact run into the checkout's inputs/ (needs a mode: artifact recipe; refused on a run ID that already has a task) |
 | `--attempts` | int | `0` | no | launch N (2 to 4) independent runs of the same task, workflow, ref and recipe as a best-of-N batch (bestof-<first run id> unless --batch is given); refused with --pr, --run-id, --retry or a review-mode recipe |
 | `--batch` | string | "" | no | batch label, to group runs in fugaro runs ls |
+| `--change-set` | bool | `false` | no | launch one run per repository named by --repo (2 to 5) as members of one change set: every member's task carries the set's ID and the whole member list, and the members' pull requests are linked as siblings. Part of Fugaro Subscription Edition, and not available yet in any build: the settle step that flips a set's pull requests ready ships after this release, and a set launched now would stay in draft with nothing able to lift it |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--context` | stringArray | `[]` | no | a repository this run reads and never writes, as owner/name: repeatable, at most 5, each admitted by the project's allow_repos. The list goes into the task and into the run's own identity, and the run clones each one read-only, outside its working tree, as reference the prompt points it at: nothing in one is committed or pushed, and the read-only token a context repository is cloned with is the installation's credentials service's, which needs the GitHub App installed on it. Refused for a Bitbucket repository and where the installation's credentials service does not serve the repository |
 | `--continues` | string | "" | no | continue the chain of RUN (a run ID, or <repo-slug>/<run-id>): this launch inherits the chain's remaining limits, for a chain with no pull request — the run you name opened nothing to follow up. The chain's limit is read from the run that began it, and what it has spent from the chain's runs' budget ledgers; this launch's own --max-* may only tighten the remaining. Refused with --pr, --retry and --attempts, which name a chain's previous run themselves |
@@ -7297,7 +7341,7 @@ Flags:
 | `--recipe` | string | "" | no | the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's (ab-judge, default, escalate, lint-fix, merge-judge, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's |
 | `--ref` | string | "" | no | base branch or ref the run is cut from (default: the branch this checkout is on, when origin has it and it is not the base branch; else the base branch (fugaro.yaml git.base_branch, then the local config's, then the project's base_branch, then main)) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--repo` | string | "" | no | repository as owner/name, or a path inside its checkout (default: this checkout's origin) |
+| `--repo` | stringArray | `[]` | no | repository as owner/name, or a path inside its checkout (default: this checkout's origin); repeatable only with --change-set, which launches one run per repository named, 2 to 5 |
 | `--retry` | string | "" | no | launch the stored task of RUN (a full run ID, or <repo-slug>/<run-id>) that never started: a run an ending names is never launched, since the bucket cannot vouch for which run an ending means |
 | `--review-levels` | string | "" | no | read the run's own review levels from this YAML file, or - for stdin: the block the task stores as review_levels (l1, l2, l3, each of model, effort, none and focus), decoded strictly, with no key on no level meaning the configuration decides it. Asking for levels needs a job image whose runner acts on them, so a launch on an older one is refused and names fugaro image refresh; without the flag the run resolves its levels from its configuration and its mode alone |
 | `--run-id` | string | "" | no | run ID to use; repeating one reports its launch instead of starting another |
@@ -7331,7 +7375,7 @@ Flags:
 
 Subcommands:
 
-- `fugaro runs digest` -- Write a closed period's report of this repository into its own docs tree
+- `fugaro runs digest` -- Write a closed period's report of this repository, or print the stored one
 - `fugaro runs ls` -- List runs with their status, stage, cost and PR
 - `fugaro runs reports` -- Write every repository's closed-period reports into the runs bucket (the project's reports job)
 - `fugaro runs show` -- Show a run's chain and what is left of its limits
@@ -7341,7 +7385,7 @@ Subcommands:
 
 ## `fugaro runs digest`
 
-Write a closed period's report of this repository into its own docs tree
+Write a closed period's report of this repository, or print the stored one
 
 Write one closed period's report of this repository, from its run records, into
 the repository's own docs tree: <dir>/<YYYY>/<key>.md, plus the index
@@ -7389,6 +7433,19 @@ ones up rather than reading records.
 block and the patterns as {repo, period, summary, patterns[], skipped[]}. Neither
 writes a file, so a caller can read a report before committing it.
 
+--stored <period> prints a report that is already stored instead: the one the
+project's reports job wrote for this repository and that period into the runs
+bucket, at reports/<slug>/<YYYY>/<key>.md (fugaro runs reports --job). The period
+is the key itself -- 2026-10-25, 2026-W43, 2026-10 or 2026 -- and nothing else is
+read: no run record, no folder, and nothing is written. The bytes are the object's
+own, which are the file --stdout prints for that period, so a report outlives the
+90 days its records are kept and is read back long after. The read is the caller's
+own credential's: a launcher's bucket-wide read reaches reports/, and no launcher
+may write there, because the project's reports job is its one writer (E1, E4) --
+so --stored never writes, and a report is written from a checkout with --dir
+alone. --period, --date, --dir, --stdout, --json and --submit-draft have nothing
+to act on beside it and are refused by name.
+
 --due is the cadence's own reading: it names the periods that have closed with no
 report under --dir, newest first -- the period that ended most recently is the
 first line, and of two that ended on the same day the longer one comes first --
@@ -7428,6 +7485,7 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | the repository to report (owner/name, or a path inside its checkout); default: this checkout's origin |
 | `--stdout` | bool | `false` | no | print the report instead of writing it |
+| `--stored` | string | "" | no | print the report of this period the project's reports job stored in the runs bucket |
 | `--submit-draft` | bool | `false` | no | print a redacted learning draft for a "Skill learning" issue; sends nothing |
 
 Subcommands:

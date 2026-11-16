@@ -1,6 +1,7 @@
 package gitprov
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -250,6 +251,62 @@ func cutRunes(s string, max int) string {
 		s = s[:len(s)-1]
 	}
 	return s
+}
+
+// ChangeSetMember is one run of a change set as the section names it: the
+// repository the run is of, the run, and its pull request when the caller
+// knows it.
+type ChangeSetMember struct {
+	Repo  string
+	RunID string
+	PR    string
+}
+
+// ChangeSetLine is the section's change-set block: the set's name, how many
+// runs it holds and one line per member. setID, selfRunID and each member's
+// RunID are the short forms the CLI's own prose names runs by
+// (task.ShortRun): what a reader acts on is the repository beside them and the
+// pull request where the caller knows it. selfRunID is the run whose section
+// this is and is marked as such, so a reader who landed on one member's pull
+// request can tell which of the runs it is.
+//
+// A member run can never fill this in completely. Runs of one repository share
+// their prefixes in the runs bucket and no run reaches another repository's
+// (SECURITY.md), so a member knows its siblings' repositories and runs -- the
+// whole member list is in its own task (D642) -- and only its own pull
+// request. PR is "" for a member the caller cannot name a pull request for,
+// and the line says so rather than leaving the reader to read the absence as
+// no pull request; the settle step, which reads every member's record, is what
+// fills them in (D3).
+//
+// Every field is a name rather than prose, but a record is still the
+// launcher's and a pull request URL the forge's, so the caller passes text
+// already made safe for one line of the section (the runner's inlineText).
+//
+// "" for a run in no set.
+func ChangeSetLine(setID, selfRunID string, members []ChangeSetMember) string {
+	if setID == "" || len(members) == 0 {
+		return ""
+	}
+	// A set holds two to five runs (task.MaxChangeSetMembers), so the count is
+	// never one and the plural is always right.
+	var b strings.Builder
+	fmt.Fprintf(&b, "**Change set** `%s`: %d runs, one per repository, held in draft until every member is ready\n",
+		setID, len(members))
+	for _, m := range members {
+		if m.RunID == selfRunID {
+			fmt.Fprintf(&b, "- `%s` run `%s` (this run)\n", m.Repo, m.RunID)
+			continue
+		}
+		fmt.Fprintf(&b, "- `%s` run `%s`: ", m.Repo, m.RunID)
+		if m.PR != "" {
+			b.WriteString(m.PR)
+		} else {
+			b.WriteString("its pull request is not known to this run")
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 // cleanSection normalises the text to lines without terminators, makes

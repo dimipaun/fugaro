@@ -667,7 +667,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 			if c := oauthTokenAllowedCheck(lc, repo, token, authOf(rf)); c != nil {
 				o.Checks = append(o.Checks, *c)
 			}
-			if c := doctorModelKeyInAgent(lc, rf); c != nil {
+			if c := doctorModelKeyInAgent(lc, rf, repo); c != nil {
 				o.Checks = append(o.Checks, *c)
 			}
 			o.Checks = append(o.Checks, doctorVisionChecks(ctx, co.Root, lc, rf, repo)...)
@@ -3156,10 +3156,14 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) 
 		// rulesMarkerOlderText does: a device-generation marker already has the
 		// mailbox and only the coordinator's read grant is new to it, a
 		// coordinator-generation marker already has that grant too and only the
-		// voice policy node is new to it, and a voice-generation marker already
-		// has that node and only the registration kind's fields are new to it.
+		// voice policy node is new to it, a voice-generation marker already has
+		// that node and only the registration kind's fields are new to it, and a
+		// registration-generation marker already has those fields and only the
+		// four day-counter leaves a stage report writes per model are new to it.
 		adds := "the mailbox, the device binding and the coordinator's read grant"
 		switch {
+		case gen >= rulesRegistrationGeneration:
+			adds = "the four day-counter leaves a run's stage report writes per model"
 		case gen >= rulesVoiceGeneration:
 			adds = "the registration kind's fields on a mailbox message"
 		case gen >= rulesCoordinatorGeneration:
