@@ -2724,8 +2724,19 @@ NAME is the name in the document's own spelling — the name fugaro creds set
 takes. A named Claude account's row is claude-oauth-token-<account>, where <account>
 is the account the policy's accounts block speaks.
 
+A Bitbucket token carries more, because a name and a PRESENT answer are the
+same for a token that serves every call of its repository and for one Bitbucket
+refuses: its type, what it covers, the expiry the operator recorded, when the
+add-time check last proved it, the state the credential state store holds
+(available, exhausted, backed_off or broken), the time a hold ends when it has
+one, and how many requests it has served in the current window. bitbucket-token
+is the legacy key: the implicit untyped token, whose coverage is the
+project_secrets entry's allow_data_to list and whose expiry is the
+secret_expires entry of the same name.
+
 Nothing else is printed: never a value, never a prefix of one, never a length
-that would narrow a guess. --json carries the same shape.
+that would narrow a guess. --json carries the same shape, with those facts as
+fields of the row.
 
 The listing needs the container to exist, and it needs its newest version to be
 one the service could read: an absent container, a container with no version, an
@@ -2733,6 +2744,12 @@ unreadable payload, a document the service's own loader refuses, and a version
 that is DISABLED are each a named failure, never an empty list — a listing that
 answered nothing for any of them would read as "the bundle holds no credential"
 while the service is in fact issuing from one this command could not read.
+
+A document holding a Bitbucket token also needs the project's credential state,
+and a state store that does not answer is a named failure too, for the same
+reason: the row would say nothing about a token the store holds something
+about. A project with no Firebase backend has no such store, and its rows carry
+the record's facts alone.
 
 It is refused from a coding agent's session and from a run's process, before
 anything is read.
@@ -2953,10 +2970,13 @@ permissions Fugaro's runs ask for: that is the one thing that reads a secret's
 value (the App's private key, with your own credentials, held in memory only to
 sign, never printed), and it is refused in a coding agent's session. With
 --check-bitbucket-token, in your own terminal, it also reads the credentials
-service's bundle to see that it holds a Bitbucket token and asks Bitbucket
-whether it still accepts it, one GET /repositories/<repo> per proxied
-repository: that too reads a secret's value (with your own credentials, in
-memory only, never printed) and is refused in a coding agent's session.
+service's bundle to see which Bitbucket tokens it holds and asks Bitbucket
+whether it still accepts each of them, one GET /repositories/<repo> per proxied
+repository and per token that serves it (the narrowest token covering a
+repository is the one a run of it is served by): a repository no token covers,
+and a token the credential state holds as broken, are named too. That too reads
+a secret's value (with your own credentials, in memory only, never printed) and
+is refused in a coding agent's session.
 Otherwise it never prints a secret's value and never creates, enables or
 changes anything.
 
@@ -3017,7 +3037,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `--all` | bool | `false` | no | print every check, the informational and audit lines included |
-| `--check-bitbucket-token` | bool | `false` | no | also check the credentials service's bundle holds a Bitbucket token and that Bitbucket still accepts it: reads the bundle with your own credentials, in memory only, for one GET /repositories/<repo> per proxied repository (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it) |
+| `--check-bitbucket-token` | bool | `false` | no | also check the credentials service's bundle holds a Bitbucket token and that Bitbucket still accepts every token it holds: reads the bundle with your own credentials, in memory only, for one GET /repositories/<repo> per proxied repository, with the token that repository's runs are served by (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it) |
 | `--check-github-app` | bool | `false` | no | also check each recorded GitHub App is installed with the permissions runs ask for: reads the App's private key from Secret Manager with your own credentials, in memory only, for one signed token (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it) |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--dir` | string | `.` | no | a directory in the checkout, for the plugin wiring |
