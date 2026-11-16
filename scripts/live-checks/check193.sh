@@ -166,6 +166,7 @@ need_tools() {
 SCRATCH=""
 SCRATCH_MARKER=".chk193-mine"
 SCRATCH_REMOVED=no
+SCRATCH_KEPT=no
 PRINTED=""
 FACTS_CAPTURED=""
 CLEANUP_RUNNING=no
@@ -200,6 +201,10 @@ remove_scratch() {
     return 0
   fi
   if [ -n "$KEEP_SCRATCH" ]; then
+    # The knob docs/secrets-brokering/check193-steps.md tells the owner to set to
+    # read what the check wrote is not a directory that could not be removed:
+    # the row below says which of the two it is, and only the second is a FAIL.
+    SCRATCH_KEPT=yes
     say "keeping $SCRATCH (CHECK193_KEEP_SCRATCH is set)"
     return 0
   fi
@@ -237,6 +242,10 @@ finish() {
   # (exit 0)` would read as a pass.
   if [ -z "$SCRATCH" ]; then
     facts="${facts}"$'\n'"scratch-removed|PASS|nothing was created: the run stopped before it made a scratch directory, so there is none to remove"
+  elif [ "$SCRATCH_KEPT" = yes ]; then
+    # A directory the owner asked to keep is not one this check failed to remove:
+    # the row says it was kept, and the verdict stays whatever the reading found.
+    facts="${facts}"$'\n'"scratch-removed|PASS|kept on request (CHECK193_KEEP_SCRATCH is set), at $SCRATCH"
   else
     facts="${facts}"$'\n'"scratch-removed|$([ "$SCRATCH_REMOVED" = yes ] && echo PASS || echo FAIL)|the scratch directory $([ "$SCRATCH_REMOVED" = yes ] && echo "is gone" || echo "is still there, at $SCRATCH")"
   fi
@@ -927,6 +936,12 @@ record_accounts() { # record_accounts REPO
 # name (record_key). It is READ and never written: the record is the boundary
 # this check exists to confirm, and a check that rewrote one and failed to put
 # it back would refuse every run of that repository.
+#
+# On stdout it prints the REASON it could not read the record, and the caller is
+# what puts it in the block: the body curl wrote to OUT is a database answer and
+# never a diagnosis (a 404's body is `null`, a 000's file is empty), so a caller
+# that built the row out of OUT would print `FAIL — null` and the reason would
+# land above the block, outside it.
 auth_record() { # auth_record SLUG OUT
   local slug=$1 out=$2 code
   code=$(curl -sS -o "$out" -w '%{http_code}' --max-time 30 \
@@ -1001,7 +1016,7 @@ step_switch() {
 # `fugaro update --repo` wrote it under — the repository's own task slug, which
 # is the `fugaro_repo` label of its jobs and never its name (record_key).
 step_records() {
-  local repo key got ok=0
+  local repo key got reason ok=0
   if [ ! -s "$SCRATCH/jobs.json" ]; then
     unmeasured record "the installation's job list was not read (see the switch row), and a repository's record is keyed by its own task slug (creds/repoauth/<slug>, task.Slug), which is the 'fugaro_repo' label those jobs carry: without it the two records are not read at all"
     return 0
@@ -1012,8 +1027,11 @@ step_records() {
       unmeasured record "no job of ${repo} in the installation's job list carries its 'fugaro_repo' label, which is the slug its creds/repoauth record is keyed by (task.Slug: <readable>-<16 hex>), so the record cannot be read: run 'fugaro update --repo' in ${repo}, then this check again"
       return 0
     fi
-    if ! auth_record "$key" "$SCRATCH/auth-$key.json"; then
-      unmeasured record "$(cat "$SCRATCH/auth-$key.json" 2>/dev/null || printf 'the record could not be read')"
+    # The row is the REASON auth_record printed and never the file curl wrote:
+    # the file is the database's answer (a 404's body is `null`), so a row built
+    # from it would read `FAIL — null` and the reason would land above the block.
+    if ! reason=$(auth_record "$key" "$SCRATCH/auth-$key.json"); then
+      unmeasured record "${reason:-the record could not be read}"
       return 0
     fi
     got=$(reader auth "$SCRATCH/auth-$key.json" "$repo")
@@ -1114,6 +1132,23 @@ step_run() { # step_run REPO AUTH LABEL FACTKEY
 # run the ONE account it declared and refuses it every other one its repository's
 # record names.
 #
+# The account the run DECLARED comes from the launch and never from the run's
+# row: that row's `oauth_account` is the credential the service's own answers
+# carried (internal/runner's recordCredential, written from gateway.serviceAnswer:
+# "the account the run used last, as the answers of its calls report it"), so a
+# row that took the declaration from there would compare the answers with
+# themselves — a service that served one account the run never declared, but
+# which its repository's record names, would read as a pass. What the check knows
+# instead is the launch it made itself: it runs `fugaro run --repo …` with no
+# `--token`, and a launch that names no account declares the repository's DEFAULT
+# account — the empty declaration IS that account's name everywhere the service
+# speaks it (narrowToRepoAuth normalizes it with config.ReviewVariantAccount,
+# which answers config.DefaultClaudeAccount, "default"). So `want` is that name,
+# and every tier-A line the service wrote for the run is the OBSERVATION: it must
+# name that account and no other. (A tier-A line names the ACCOUNT itself — the
+# name the service's bundle holds that credential under, credsvc's loader — and
+# never the secret container it is stored in.)
+#
 # It is read from the run's own lines and not from a call the check makes, and
 # the reason is that the other half of the boundary cannot be reached from here:
 # `narrowToRepoAuth`'s oauth branch refuses a call that declares an account the
@@ -1121,59 +1156,41 @@ step_run() { # step_run REPO AUTH LABEL FACTKEY
 # `--token` against config.AllowedClaudeAccounts and the record is written from
 # infra.WorkflowAccounts over that same list (internal/cli/update_repoauth.go says
 # so in as many words), so a launched run's account is always one its own record
-# names. What IS reachable, and is what a run served the wrong account would
-# look like, is the reading below: the run's record says which account it
-# declared, and every tier-A line the service wrote for it must name that
-# account and no other. (A tier-A line names the ACCOUNT itself — the name the
-# service's bundle holds that credential under, credsvc's loader — and never the
-# secret container it is stored in.) The row is measured only where the record
-# names more than one account: a record that names one has nothing the run could
-# have been served besides it, and a row read there would be a row about
+# names. The row is measured only where the record names more than one account: a
+# record that names one leaves nothing the service could have served this run
+# besides the account it declared, and a row read there would be a row about
 # nothing.
 step_declared_account() {
-  local lines rid declared want named others="" accounts n row note
+  local lines rid want=default named others="" accounts n note
   accounts=$(record_accounts "$OAUTH_REPO")
   n=$(field_of accounts "$(reader auth "$SCRATCH/auth-$(record_key "$OAUTH_REPO").json" "$OAUTH_REPO")")
   if [ "${n:-0}" -lt 2 ]; then
-    unmeasured declared-account "${OAUTH_REPO}'s own record names ${n:-0} account(s) (${accounts:-none}), so there is no account the run did NOT declare that the service could have served it instead: the row would be a row about nothing. Let the repository's runs name a second Claude account (the account's own allow_data_to for it in this machine's local config, then 'fugaro update --repo' there), so its record names two, and run this check again"
+    unmeasured declared-account "${OAUTH_REPO}'s own record names ${n:-0} account(s) (${accounts:-none}): a record that names one account leaves nothing this run could have been served besides the account it declared, so the row would be a row about nothing. Let the repository's runs name a second Claude account (the account's own allow_data_to for it in this machine's local config, then 'fugaro update --repo' there), so its record names two, and run this check again"
     return 0
   fi
   rid=$(run_id two)
   lines=$SCRATCH/audit-two.json
-  # The account the run DECLARED is the run's own record's (`oauth_account`:
-  # the account the launch resolved — the runner sets X-Fugaro-Auth-Account from
-  # it, which is the header narrowToRepoAuth narrows by), and never a value
-  # inferred from what the service served: a row that read the declaration off
-  # the answer would pass whatever the answer was.
-  #
-  # The row carries no `oauth_account` for a run on the repository's DEFAULT
-  # account (a task spec may not say "default": the empty value already means
-  # it, internal/task), and the empty value IS that account's name everywhere
-  # the service speaks it — narrowToRepoAuth normalizes it with
-  # config.ReviewVariantAccount, which answers config.DefaultClaudeAccount
-  # ("default"), and the credential a tier-A line names is that account's own
-  # name. So `want` is the account's NAME — `default` or the named account —
-  # and never a secret container.
-  row=$(row_of two)
-  declared=$(field_of oauth_account "$row")
-  want=${declared:-default}
-  local note="the account the launch resolved, read off the run's own record"
-  [ -n "$declared" ] || note="the repository's default account, which a run declares by declaring none"
+  note="the account a launch that names no account declares, which is the launch this check made (fugaro run, no --token)"
   named=$(audit_named "$lines" "$rid")
-  # Every tier-A line of this run's own, whose credential is not the declared
-  # account: the service may only ever serve it the account it declared
-  # (narrowToRepoAuth keeps `tier A && Name == the declared account`), so a
-  # line naming anything else is the boundary not holding. `|| true`: the arm
-  # below this one is the run whose tier-A lines name the declared account and
-  # nothing else, and `grep -v` finding no such other line is exactly that
-  # case — not a failure of the pipeline.
-  others=$(printf '%s\n' "$named" | sed -n 's/^\(.*\)|A$/\1/p' | grep -vxF -- "${want}" | sort -u | tr '\n' ' ' || true)
+  # The accounts the run's own tier-A lines name, and then the ones of those that
+  # are not the declared account: the service may only ever serve it the account
+  # it declared (narrowToRepoAuth keeps `tier A && Name == the declared
+  # account`), so a line naming anything else is the boundary not holding. The
+  # lines are reduced to their accounts here so that a row speaks of accounts and
+  # not of every credential the run's calls named — the git purpose's token has
+  # no tier and is not an account at all. `|| true`: the arm below this one is the
+  # run whose tier-A lines name the declared account and nothing else, and
+  # `grep -v` finding no such other line is exactly that case — not a failure of
+  # the pipeline.
+  local tier_a
+  tier_a=$(printf '%s\n' "$named" | sed -n 's/^\(.*\)|A$/\1/p' | sort -u)
+  others=$(printf '%s\n' "$tier_a" | grep -vxF -- "${want}" | sort -u | tr '\n' ' ' | sed 's/ *$//' || true)
   if [ -n "$others" ]; then
-    fact declared-account FAIL "the oauth run (${rid}) of ${OAUTH_REPO} declared ${want} and the service served it ANOTHER account as well: its lines name ${want} and ${others% }. The service narrows an oauth call to the account the call itself declared (narrowToRepoAuth, D2070 (a): keepCandidates keeps tier A and Name == the declared account), so a line naming a second account — the record names $(printf '%s' "$accounts" | tr '\n' ' ') — is a run served an account it did not declare: this is the row Check 193 exists for. Read that run's lines ('gcloud logging read') and the service's own code path before anything else"
+    fact declared-account FAIL "the oauth run (${rid}) of ${OAUTH_REPO} declared ${want} (${note}) and the service served it ANOTHER account as well: the accounts its lines name are $(printf '%s\n' "$tier_a" | tr '\n' ' ' | sed 's/ *$//'), and the only account it declared is ${want}. The service narrows an oauth call to the account the call itself declared (narrowToRepoAuth, D2070 (a): keepCandidates keeps tier A and Name == the declared account), so a line naming another account — the record names $(printf '%s' "$accounts" | tr '\n' ' ') — is a run served an account it did not declare: this is the row Check 193 exists for. Read that run's lines ('gcloud logging read') and the service's own code path before anything else"
     return 0
   fi
   if ! printf '%s\n' "$named" | grep -qxF -- "${want}|A"; then
-    fact declared-account FAIL "the oauth run (${rid}) of ${OAUTH_REPO} declared ${want}, and no served line of its own names that account at tier A: the lines name $(printf '%s' "$named" | tr '\n' ' ' | sed 's/ *$//'). An oauth repository's runs are served a Claude account's credential and nothing else — a tier-A line names the account itself (`default` for the repository's default account, the bare account name for a named one), the paid key is tier B, and this repository's record says oauth — so a run whose lines name no account its record names was not served by the account it declared. Read 'fugaro runs show ${rid} --repo ${OAUTH_REPO}' and the service's lines for it"
+    fact declared-account FAIL "the oauth run (${rid}) of ${OAUTH_REPO} declared ${want} (${note}), and no served line of its own names that account at tier A: the accounts its lines name are $(printf '%s\n' "$tier_a" | tr '\n' ' ' | sed 's/ *$//' | sed 's/^$/<none>/'). An oauth repository's runs are served a Claude account's credential and nothing else — a tier-A line names the account itself (default for the repository's default account, the bare account name for a named one), the paid key is tier B, and this repository's record says oauth — so a run whose lines name no account its record names was not served by the account it declared. Read 'fugaro runs show ${rid} --repo ${OAUTH_REPO}' and the service's lines for it"
     return 0
   fi
   fact declared-account PASS "the oauth run (${rid}) of ${OAUTH_REPO} declared ${want} (${note}) and the service served it THAT account alone: every tier-A line of its own names ${want}, and ${n} account(s) are in its record ($(printf '%s' "$accounts" | tr '\n' ' ')) — so no line of the run names any other account the repository's own record would have allowed (narrowToRepoAuth, D2070)"

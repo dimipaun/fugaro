@@ -114,10 +114,16 @@ deletes. Read those before you start. This file is the commands.
   `default` for the unsuffixed `claude-oauth-token`, the bare account name for a named one — never the
   `claude-oauth-token[-<account>]` Secret Manager container the token is stored in: no audit line
   carries a container's name.
-- **`declared-account`** — the account read off the run's **own** row (`oauth_account`; the row carries
-  none for a run on the repository's default account, which the service names `default`), and then every
-  tier-A line of that run naming that account and no other account the repository's record names. A
-  record naming a single account leaves this row unmeasured (verdict `2`) rather than passing it.
+- **`declared-account`** — the account the **launch** declared, which for this check is the repository's
+  default account (`default`): the check runs `fugaro run` with no `--token`, and a launch that names no
+  account declares the default one. It is deliberately **not** read off the run's own row — that row's
+  `oauth_account` is the credential the service's answers carried, the account the run used **last**, so
+  a row that read the declaration there would compare the answers with themselves and pass a service
+  that served one account the run never declared. The observation is the run's tier-A lines: every one
+  of them must name `default` and no other account the repository's record names. A record naming a
+  single account leaves this row unmeasured (verdict `2`) rather than passing it, and a sandbox
+  repository whose own `fugaro.yaml` sets `agent.oauth_token` names an account there, which its run
+  declares instead — this row then reads the account it was served as one the run did not declare.
 - **`proxy`** — a line of the run's own under the purpose `git` or `bitbucket-api`, for the one of the
   two the published policy admits with `proxy: true` (F29). Unmeasured (verdict `2`) when neither is
   published with it.
@@ -161,7 +167,8 @@ knowing by name:
 ## What is left behind
 
 Nothing but the scratch directory, which the check removes itself (its own row says whether it did; set
-`CHECK193_KEEP_SCRATCH` if you want to read what it wrote before it goes). The **two**
+`CHECK193_KEEP_SCRATCH` if you want to read what it wrote before it goes — the row then reads `PASS`
+with "kept on request", and the verdict stays the reading's own). The **two**
 runs of the switch mode, and the **two more** of the `--after-flip` mode, open a branch and a pull
 request each on the sandbox repositories: they are ordinary runs and the check holds no credential to
 close them, so they are yours to settle — the block names every run id and pull request number it saw.

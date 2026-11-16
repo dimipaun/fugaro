@@ -12759,15 +12759,16 @@ half that only the flip can show:
   the unsuffixed `claude-oauth-token` and the bare account name for a named one, never the
   `claude-oauth-token[-<account>]` Secret Manager container the token is stored in — "a run served
   anything else is the boundary not holding".
-- **The account the `oauth` run declared** (**D2070 (a)**, `narrowToRepoAuth`). The account is read off
-  the run's **own row** (`fugaro runs ls --json`'s `oauth_account` — the account the launch resolved and
-  what the runner sends as its account header; the row carries none for a run on the repository's
-  default account, which the service names `default`) and never inferred from what was served: a row
-  that read the declaration off the answer would pass whatever the answer was. Every tier-A line of that
-  run must then name that account and **no other account the repository's own record names** — the
-  refusal the check exists for. A record naming only one account leaves the row **unmeasured** and the
-  verdict `2`: with nothing the run could have been served besides the account it declared, the row
-  would be a row about nothing.
+- **The account the `oauth` run declared** (**D2070 (a)**, `narrowToRepoAuth`). The account comes from
+  the **launch** — the check runs `fugaro run` with no `--token`, and a launch that names no account
+  declares the repository's default account, `default` — and never from the run's own row: that row's
+  `oauth_account` is the credential the service's answers carried, the account the run used **last**
+  (`internal/runner`'s `recordCredential`), so a row that read the declaration there would compare the
+  answers with themselves and pass a service that served one account the run never declared. Every
+  tier-A line of that run must then name `default` and **no other account the repository's own record
+  names** — the refusal the check exists for. A record naming only one account leaves the row
+  **unmeasured** and the verdict `2`: with nothing this run could have been served besides the account
+  it declared, the row would be a row about nothing.
 - **The proxy, for the one of the two the published policy admits with `proxy: true`** (**F29**, the
   plan's G7). A proxied Bitbucket repository's own git traffic goes **through** the service, which writes
   a line of that run's own under the purpose `git` (a fetch, the receive-pack advertisement, or a push)

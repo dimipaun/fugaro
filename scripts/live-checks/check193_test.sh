@@ -720,16 +720,33 @@ test_a_pair_that_is_not_one_api_key_and_one_oauth_stops() {
 # A record that is not there is the state of an installation whose `fugaro
 # update --repo` has not run since the release that writes one: no row below can
 # be measured, and the check says so rather than reading an absent record as an
-# answer.
+# answer. The REASON is the row's own text and not a line above the block: the
+# body curl wrote is the database's answer (`null` for a node that is not there),
+# so a row built from it would read `FAIL — null` and the diagnosis would land
+# outside the one block the owner pastes.
 test_a_record_that_is_not_there_is_unmeasured() {
   local dir=$work/norecord
   prepare "$dir"
   run193 "$dir" FAKE_CURL_MODE=record-missing
   expect_status "$status" 2 "no record: the check could not measure"
-  expect_contains "$out" "FACT record: FAIL" "no record: the row"
-  expect_contains "$out" "HTTP 404" "no record: the row names what came back"
+  expect_contains "$out" "FACT record: FAIL — the record is not there (HTTP 404)" "no record: the row carries the reason itself"
   expect_contains "$out" "update --repo" "no record: the row names the fix"
+  expect_absent "$err" "HTTP 404" "no record: the diagnosis is inside the block, not above it"
   expect_absent "$(cat "$dir/logs/fugaro.calls")" "run --repo" "no record: no run was launched"
+}
+
+# The other arm of the same read: an answer that is neither 200 nor 404 (here a
+# 500) carries no diagnosis at all, so the row has to name the status and the
+# path it asked for — the check has nothing else to go on.
+test_a_record_that_could_not_be_read_names_the_status_and_the_path() {
+  local dir=$work/badrecord
+  prepare "$dir"
+  run193 "$dir" FAKE_CURL_MODE=record-unreadable
+  expect_status "$status" 2 "unreadable record: the check could not measure"
+  expect_contains "$out" "FACT record: FAIL — the record could not be read (HTTP 500)" "unreadable record: the row carries the reason itself"
+  expect_contains "$out" "creds/repoauth/" "unreadable record: the row names the path it asked for"
+  expect_absent "$err" "the record could not be read" "unreadable record: the diagnosis is inside the block"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "run --repo" "unreadable record: no run was launched"
 }
 
 # THE HAPPY PATH, and the one the check exists for: both repositories on the
@@ -775,6 +792,22 @@ test_the_happy_path() {
   if [ -d "$scratch" ]; then fail "happy path: the scratch directory survived"; fi
 }
 
+# CHECK193_KEEP_SCRATCH is the knob the steps file tells the owner to set to read
+# what the check wrote before it goes. A directory kept because it was asked for
+# is not one the check failed to remove — that is what the row's FAIL is for —
+# so the row reads PASS and the verdict stays the reading's own: a run whose
+# every other row passes still ends `(exit 0)`.
+test_the_happy_path_with_the_scratch_directory_kept() {
+  local dir=$work/keep
+  prepare "$dir"
+  run193 "$dir" CHECK193_KEEP_SCRATCH=1
+  expect_status "$status" 0 "kept scratch: the verdict is the reading's own"
+  expect_contains "$out" "FACT scratch-removed: PASS" "kept scratch: the row is not a FAIL"
+  expect_contains "$out" "kept on request" "kept scratch: the row says the owner asked for it"
+  expect_contains "$out" "CHECK 193 RESULT END (exit 0)" "kept scratch: the end line"
+  [ -n "$scratch" ] && [ -d "$scratch" ] || fail "kept scratch: the directory was removed anyway"
+}
+
 # A run whose model calls were answered by something other than the service is
 # exactly what this check is for: a switched repository's runs are served the
 # credential its own RECORD names, and a run served another one is the boundary
@@ -799,10 +832,11 @@ test_a_second_account_served_is_a_failure() {
   expect_status "$status" 1 "second account: the verdict"
   expect_contains "$out" "FACT declared-account: FAIL" "second account: the row"
   expect_contains "$out" "served it ANOTHER account as well" "second account: the row says why"
-  # The second account is named the way the service names a tier-A credential —
-  # the ACCOUNT itself, `other` — and never as the secret container it is stored
-  # in (`claude-oauth-token-other`), which no audit line ever carries.
-  expect_contains "$out" "its lines name default and other" "second account: the row names it by its account"
+  # The row names the lines it read, the way the service names a tier-A
+  # credential — the ACCOUNT itself, `default` and `other` — and never the
+  # secret container it is stored in (`claude-oauth-token-other`), which no
+  # audit line ever carries.
+  expect_contains "$out" "the accounts its lines name are default other" "second account: the row names them by their accounts"
   expect_absent "$out" "claude-oauth-token" "second account: no row speaks of a secret container"
 }
 
@@ -841,19 +875,28 @@ test_a_job_without_the_repo_label_leaves_the_record_unmeasured() {
   fi
 }
 
-# A repository on a NAMED Claude account: the record names that account, the run
-# declares it, and the service's tier-A line names the ACCOUNT itself — `work` —
-# never the Secret Manager container the token is stored in
-# (`claude-oauth-token-work`), which no audit line carries.
-test_a_named_account_is_read_by_its_own_name() {
-  local dir=$work/named
+# A NAMED account's line is read as an account and never as a container, and the
+# expectation it is read against comes from the LAUNCH and never from the run's
+# own row: `oauth_account` is the credential the service's answers carried — the
+# account the run used last — so a row that took the declaration from there would
+# compare the answers with themselves. The record here names `default` and
+# `work`, the run's own row says `work` (what the service answered with) and its
+# line names `work` alone; the check's launch named no account, so it declared
+# `default`, and being served `work` is exactly the boundary not holding — the
+# state the row's own FAIL text calls "a run served an account it did not
+# declare: this is the row Check 193 exists for".
+test_a_served_account_the_run_never_declared_is_a_failure() {
+  local dir=$work/undeclared
   prepare "$dir"
   run193 "$dir" FAKE_OAUTH_ACCOUNT=work FAKE_CURL_MODE=record-named-account
-  expect_status "$status" 0 "named account: the verdict"
-  expect_contains "$out" "FACT served-oauth: PASS" "named account: the run was served"
-  expect_contains "$out" "work|A" "named account: the account's own name and its tier"
-  expect_contains "$out" "FACT declared-account: PASS" "named account: the account it declared"
-  expect_absent "$out" "claude-oauth-token" "named account: no row speaks of a secret container"
+  expect_status "$status" 1 "undeclared account: the verdict"
+  expect_contains "$out" "FACT served-oauth: PASS" "undeclared account: the service did serve the run, out of an account of its record"
+  expect_contains "$out" "work|A" "undeclared account: the account's own name and its tier"
+  expect_contains "$out" "FACT declared-account: FAIL" "undeclared account: the row"
+  expect_contains "$out" "served it ANOTHER account as well" "undeclared account: the row says why"
+  expect_contains "$out" "the accounts its lines name are work" "undeclared account: the row names the account it was served"
+  expect_contains "$out" "declared default" "undeclared account: the account comes from the launch, not from the row"
+  expect_absent "$out" "claude-oauth-token" "undeclared account: no row speaks of a secret container"
 }
 
 # A tier-A line naming an account the repository's own record does NOT name is a
@@ -1046,11 +1089,13 @@ t test_a_repository_off_the_switch_is_a_failure
 t test_a_budget_mode_of_off_is_a_failure
 t test_a_pair_that_is_not_one_api_key_and_one_oauth_stops
 t test_a_record_that_is_not_there_is_unmeasured
+t test_a_record_that_could_not_be_read_names_the_status_and_the_path
 t test_a_job_without_the_repo_label_leaves_the_record_unmeasured
 t test_the_happy_path
+t test_the_happy_path_with_the_scratch_directory_kept
 t test_a_run_served_the_wrong_credential_is_a_failure
 t test_a_second_account_served_is_a_failure
-t test_a_named_account_is_read_by_its_own_name
+t test_a_served_account_the_run_never_declared_is_a_failure
 t test_a_line_naming_an_account_the_record_does_not_name_is_a_failure
 t test_a_record_with_one_account_leaves_the_row_unmeasured
 t test_a_proxied_repository_whose_run_did_not_reach_the_service_is_a_failure
