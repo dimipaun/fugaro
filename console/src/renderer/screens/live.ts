@@ -2767,7 +2767,6 @@ function total(factory: LiveFactory, model: LiveModel): ScreenElement {
   numberCell(runsHead, factory, 'span', model.total.maxParallel, 'count', 'live-fleet-cap-limit')
   bar(runsCap, factory, model.fleet.concurrent, 'live-fleet-runs-cap')
 
-  wide.append(caps)
   wide.append(gauge(factory, model))
 
   if (model.fleet.headroom.value === 0) wide.append(fleetFullBanner(factory))
