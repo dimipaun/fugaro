@@ -98,6 +98,7 @@ type WorkItemOp struct {
 	Repo      *string   `json:"repo,omitempty"`
 	Recipe    *string   `json:"recipe,omitempty"`
 	RigorTier *string   `json:"rigor_tier,omitempty"`
+	Spec      *string   `json:"spec,omitempty"`
 	Brief     *string   `json:"brief,omitempty"`
 	DependsOn *[]string `json:"depends_on,omitempty"`
 	Note      *string   `json:"note,omitempty"`
@@ -270,6 +271,16 @@ func applyUpsert(s *State, op WorkItemOp, a Actor) error {
 	}
 	if op.RigorTier != nil {
 		w.RigorTier = *op.RigorTier
+	}
+	if op.Spec != nil {
+		// Stored as the label name is matched, lower-cased: the name a
+		// session wrote and the name a tick labels with are one value,
+		// shape-checked here rather than left for the syncer to skip.
+		spec, ok := specName(*op.Spec)
+		if !ok {
+			return fmt.Errorf("%w: the spec %q is not a plan folder name", ErrInvalid, safetext.OneLine(*op.Spec))
+		}
+		w.Spec = spec
 	}
 	if op.Brief != nil {
 		w.Brief = cleanText(*op.Brief, MaxBriefRunes)

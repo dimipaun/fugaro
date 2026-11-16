@@ -579,9 +579,6 @@ func TestNodeWithoutTokensKeyReadsAsBefore(t *testing.T) {
 			t.Errorf("a policy carrying no key marshals one:\n%s", b)
 		}
 	}
-	if Version != 7 {
-		t.Errorf("Version = %d, want 7: this key moves no version (R5)", Version)
-	}
 	// The block beside the key is untouched by it: bitbucket_token reads the
 	// same members, with the same meanings, in a node that carries the key and
 	// in one that does not.

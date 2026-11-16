@@ -16,6 +16,7 @@ import (
 	"gocloud.dev/gcerrors"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/orchestrator/service"
@@ -50,6 +51,15 @@ var testStateRoot string
 // every other test, and TestRepoImageRefreshIsDisabled asserts this instead —
 // a build that stopped answering the notice would otherwise pass the suite.
 var repoImagesOffShipped bool
+
+// repoSecretsOffShipped is the same pair for D2313's door (config.RepoSecretsOff,
+// internal/config/secrets_disabled.go): the ruling as the CLI ships it, read
+// before TestMain opens it. The tests of the machinery the ruling keeps — the
+// repository-scope store, the workflow-secret mounts, the credential service's
+// record — drive it with the door open, exactly as they did before the ruling,
+// and TestRepoScopeSecretsCommandsAnswerTheNotice is the test of the ruling
+// itself (it turns it back on for its own run and asserts this value).
+var repoSecretsOffShipped bool
 
 // TestMain closes the ways a test could reach real Google through a
 // gs:// bucket_url or an unfaked client: no application default
@@ -171,6 +181,15 @@ func TestMain(m *testing.M) {
 	// stopped answering the notice: that test asserts the value kept here.
 	repoImagesOffShipped = repoImagesOff
 	repoImagesOff = false
+	// D2313's door (config.RepoSecretsOff) is the third of these, and the one
+	// this package reaches into another one to open: a repository's `secrets:`
+	// is disabled for now, so the repository-scope store answers a notice and
+	// the workflow secrets record names no repository-level container, and the
+	// tests of that machinery -- every one still in the tree because the ruling
+	// keeps the code -- drive it with the door open. Read before it is opened
+	// for the same reason as the two above.
+	repoSecretsOffShipped = config.RepoSecretsOff
+	config.RepoSecretsOff = false
 	// Neither shipped gate needs a seam any more: managedDeployerShipped is
 	// true as of 0.10.0 and batchProvisionShipped as of 0.9.5, so the managed
 	// paths and the Batch provisioning run as they ship, with nothing opened
