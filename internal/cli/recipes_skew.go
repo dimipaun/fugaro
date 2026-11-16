@@ -736,13 +736,14 @@ const bitbucketTokenSince = "0.24.0"
 // a constant naming a released version would clear the write that halts that
 // version's service. The test that holds providerEntrySince and
 // bitbucketTokenSince to a release at or below docs/release-streams.yaml's
-// `current` therefore has no counterpart here — no release at or below that
+// `current` cannot be written in that form here — no release at or below that
 // `current` (the 0.25.0 tag) reads the family — so the value is verified against
 // the tag actually cut, as slotSince's and modelGradesSince's bullets record;
-// TestKeyCredentialSinceIsNeverBehindTheReleaseTheTreeIsOn holds the half that
-// does apply in both regimes (the constant is never behind the tree's own
-// release), and TestKeyCredentialSinceHasAReleaseBullet holds the checklist's
-// bullet.
+// TestKeyCredentialSinceIsNotAheadOfTheReleaseThatShipsIt holds the same bound
+// one release looser while the family is unreleased (never above the stream's
+// own release or the next one), which becomes the siblings' assertion itself
+// from 0.26.0 on, and TestKeyCredentialSinceHasAReleaseBullet holds the
+// checklist's bullet.
 //
 // The direction the siblings' tests protect holds from 0.26.0 on, and it is the
 // one to watch at the next release: a value ABOVE the tag that shipped the

@@ -932,19 +932,33 @@ func TestKeyCredentialSinceHasAReleaseBullet(t *testing.T) {
 	}
 }
 
-// TestKeyCredentialSinceIsNeverBehindTheReleaseTheTreeIsOn: the sibling
-// constants' direction read the way it applies to a family whose reader has
-// never been in a released image. Their tests hold the constant at or BELOW the
-// release the cli stream is at, because a value above it refuses writes the
-// deployed service already serves; this family cannot take that half until its
-// own release is cut — the 0.25.0 tag predates MC22's declaration, so a constant
-// naming 0.25.0 would clear the write that halts that release's service — and
-// the half that holds before the tag and after it alike is the other one: the
-// constant is never BEHIND the release this tree is on. That is the check a
-// release's own bump meets: a streams file moved to a release below the reader
-// (or a constant lowered to a release that has none) names a service that cannot
-// read a document holding the family, which is the fault that halts it.
-func TestKeyCredentialSinceIsNeverBehindTheReleaseTheTreeIsOn(t *testing.T) {
+// TestKeyCredentialSinceIsNotAheadOfTheReleaseThatShipsIt: the sibling
+// constants' direction, with the bound read off the release that ships the
+// family rather than off the stream. Their tests hold the constant at or BELOW
+// docs/release-streams.yaml's `current`, because what the guard judges is the
+// service an installation has DEPLOYED: a value above the release whose service
+// reads the family refuses `fugaro creds set credential-<name>-key` on every
+// installation that already serves it, where the refusal's remedy (`fugaro
+// update`) changes nothing. That form cannot be written here yet — the family
+// has never been in a released image, so the stream is BELOW the constant, and
+// the sibling's assertion would name the release that cannot read the family as
+// the one the constant may not pass, turning a release bump into a demand for
+// the raise the constant must never take.
+//
+// The same bound one release looser does hold in both regimes, and it is the
+// direction that bites: the family is in this tree, so the release that ships it
+// is the stream's own or the one the stream makes next (one name per minor, and
+// a hotfix is cut from its own branch and never merged back), and a constant
+// above THAT refuses writes on installations whose deployed service already
+// reads the family. From the release that ships the family on, this is the
+// sibling test's own assertion.
+//
+// The other direction — a constant naming a release BELOW the one that ships
+// the family, which admits the write that halts that release's service — has no
+// test here and cannot have one: it is invisible to a file a release bump reads
+// while moving `current`, and it is what the constant's bullet in
+// docs/release.md is verified against at the tag actually cut.
+func TestKeyCredentialSinceIsNotAheadOfTheReleaseThatShipsIt(t *testing.T) {
 	cat, err := streams.Parse("docs/release-streams.yaml", []byte(readDoc(t, "docs/release-streams.yaml")))
 	if err != nil {
 		t.Fatalf("docs/release-streams.yaml: %v", err)
@@ -953,8 +967,12 @@ func TestKeyCredentialSinceIsNeverBehindTheReleaseTheTreeIsOn(t *testing.T) {
 	if !ok {
 		t.Fatal("docs/release-streams.yaml carries no cli stream, so the release this tree is on cannot be read")
 	}
-	if imagePredates(keyCredentialSince, cli.Current.String()) {
-		t.Errorf("keyCredentialSince = %q is behind the cli stream's %s: that release's credentials service serves a bundle without the family (MC22's declaration and MC23's halves are newer than the %s tag), so the constant clears the write that halts it", keyCredentialSince, cli.Current, cli.Current)
+	shipping := cli.Current
+	if imagePredates(cli.Current.String(), keyCredentialSince) {
+		shipping = streams.Version{Major: cli.Current.Major, Minor: cli.Current.Minor + 1}
+	}
+	if imagePredates(shipping.String(), keyCredentialSince) {
+		t.Errorf("keyCredentialSince = %q is ahead of %s, the release that ships the family: the cli stream is at %s, this tree carries MC22's declaration and MC23's halves, and one release spends one minor, so a value above %s refuses `fugaro creds set credential-<name>-key` on installations whose deployed service already serves the family — a release verifies this constant against the tag actually cut and never raises it", keyCredentialSince, shipping, cli.Current, shipping)
 	}
 	if imagePredates(keyCredentialSince, providerEntrySince) {
 		t.Errorf("keyCredentialSince = %q predates providerEntrySince = %q: the family's reader is newer than the entry that shipped before it", keyCredentialSince, providerEntrySince)
