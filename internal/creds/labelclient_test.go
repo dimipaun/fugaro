@@ -403,8 +403,20 @@ func TestLabelClientRefusesWhatItWillNotSend(t *testing.T) {
 		{name: "a spec name longer than the host takes", call: func(m *ServiceLabeler) error {
 			return m.AddLabels(t.Context(), 7, labelRun, []string{"spec:" + strings.Repeat("a", 45)})
 		}},
-		{name: "a spec name that only lowers into Fugaro's own", call: func(m *ServiceLabeler) error {
+		{name: "a spec name spelled with a character outside ASCII", call: func(m *ServiceLabeler) error {
 			return m.AddLabels(t.Context(), 7, labelRun, []string{"spec:ſorge-labels"})
+		}},
+		// The two cells below are what holds the ASCII check to be FIRST: each
+		// name is one whose Unicode fold lands inside what this route writes —
+		// U+0130 onto "i" and U+212A onto "k" — so a check that folded the name
+		// before it looked at the bytes would admit a label the host would never
+		// match against Fugaro's own. The cell above does not pin that order: ſ
+		// stays ſ under folding, so R3's shape refuses it either way.
+		{name: "a status name that only folds into one of Fugaro's own", call: func(m *ServiceLabeler) error {
+			return m.AddLabels(t.Context(), 7, labelRun, []string{"fugaro:runnİng"})
+		}},
+		{name: "a spec name that only folds into R3's shape", call: func(m *ServiceLabeler) error {
+			return m.AddLabels(t.Context(), 7, labelRun, []string{"spec:Ka"})
 		}},
 		{name: "a removal of a spec label", call: func(m *ServiceLabeler) error {
 			return m.RemoveLabels(t.Context(), 7, labelRun, []string{"spec:forge-labels"})
