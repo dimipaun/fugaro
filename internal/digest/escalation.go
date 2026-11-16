@@ -467,14 +467,15 @@ func escalationMarkdown(e *Escalation) string {
 	var b strings.Builder
 	b.WriteString("## Escalation\n\n")
 	fmt.Fprintf(&b, "The escalation ladder's ledger for this repository, over the 24 hours and the 7 days ending with this period: %d work %s in all. "+
-		"A rung is where the ladder left an item; \"rung 3 merges\" is what it merged there; \"reverts\" is the regression proxy (O1), a revert of such a merge within 7 days and nothing else.\n\n",
+		"A rung is where the ladder left an item; \"rung 3 merges\" is what it merged there; \"reverts\" is the regression proxy (O1), a revert of such a merge within 7 days and nothing else; \"n/a\" is a figure nobody could measure (G5).\n\n",
 		e.Items, plural(e.Items, "item", "items"))
-	b.WriteString("| window | items | R0 | R1 | R2 | R3 | R4 | unplaced | rung 3 merges | reverts | follow-ups | closed | churn | hours past R1 | cost past R1 |\n")
-	b.WriteString("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
-	for _, w := range []struct {
+	windows := []struct {
 		name string
 		f    EscalationFigures
-	}{{"24h", e.Day}, {"7d", e.Week}} {
+	}{{"24h", e.Day}, {"7d", e.Week}}
+	b.WriteString("| window | items | R0 | R1 | R2 | R3 | R4 | unplaced | rung 3 merges | reverts | follow-ups | closed | churn | hours past R1 | cost past R1 |\n")
+	b.WriteString("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
+	for _, w := range windows {
 		counts := map[escalation.Rung]int{}
 		items := 0
 		for _, r := range w.f.Rungs {
@@ -486,6 +487,19 @@ func escalationMarkdown(e *Escalation) string {
 			counts[escalation.R3], counts[escalation.R4], w.f.Unplaced, w.f.Rung3Merges, w.f.Reverts,
 			w.f.FollowUps, w.f.FollowUpsClosed, w.f.Churn,
 			hours(w.f.PastR1, w.f.PastR1Items), USD(w.f.PastR1Cost))
+	}
+	// The median time to merge, per rung, in a table of its own: it is a
+	// duration per rung and not a count of items, so as extra columns of the
+	// table above the header would carry the five rung names twice.
+	b.WriteString("\n| window | R0 | R1 | R2 | R3 | R4 |\n")
+	b.WriteString("| --- | --- | --- | --- | --- | --- |\n")
+	for _, w := range windows {
+		med := map[escalation.Rung]string{}
+		for _, r := range w.f.Rungs {
+			med[r.Rung] = medianToMerge(r)
+		}
+		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s |\n", w.name,
+			med[escalation.R0], med[escalation.R1], med[escalation.R2], med[escalation.R3], med[escalation.R4])
 	}
 	b.WriteString("\n")
 	if len(e.Longest) > 0 {
@@ -513,4 +527,14 @@ func hours(d time.Duration, n int) string {
 	}
 	total := int64(d / time.Minute)
 	return fmt.Sprintf("%dh%02dm", total/60, total%60)
+}
+
+// medianToMerge is a rung's median time to merge as the table prints it, or
+// "n/a" where no merged item of the rung had a readable chain start (G5): a
+// median nobody could compute is not a fast merge.
+func medianToMerge(f EscalationRungFigures) string {
+	if !f.MedianKnown {
+		return "n/a"
+	}
+	return hours(f.MedianToMerge, 1)
 }

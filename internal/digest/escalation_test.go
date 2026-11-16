@@ -167,6 +167,11 @@ func TestDigestEscalationSection(t *testing.T) {
 	if r2 := rungFigures(e.Week, escalation.R2); r2.MedianKnown {
 		t.Errorf("R2's median time to merge is known (%s), want unknown: no item is at R2", r2.MedianToMerge)
 	}
+	// And the figure is a cell of the report and not only a field of the
+	// struct: the median table's week row opens with R0's 12 hours.
+	if !strings.Contains(out, "| 7d | 12h00m |") {
+		t.Errorf("the report's median-time-to-merge row for the week does not open with R0's 12h00m:\n%s", out)
+	}
 	if len(e.Longest) != 1 || e.Longest[0].PR != 103 || e.Longest[0].Rung != escalation.R3 {
 		t.Errorf("Longest = %+v, want the open #103 at R3", e.Longest)
 	}
