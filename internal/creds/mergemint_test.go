@@ -27,8 +27,8 @@ import (
 // rather than written down.
 func mergeHead(n int) string { return fmt.Sprintf("%040x", n) }
 
-// mintCall is one call the fake credentials service answered.
-type mintCall struct {
+// serviceCall is one call the fake credentials service answered.
+type serviceCall struct {
 	path  string
 	auth  string
 	body  string
@@ -37,15 +37,16 @@ type mintCall struct {
 	agent string
 }
 
-// mintFake stands in for the installation's credentials service. It records what
-// it was asked and answers with what the test says, so the client's request is
-// asserted against the bytes that actually left it rather than against the
-// struct it built.
-type mintFake struct {
+// serviceFake stands in for the installation's credentials service, for both
+// clients of this package that call it (the merge mint and the label client). It
+// records what it was asked and answers with what the test says, so a client's
+// request is asserted against the bytes that actually left it rather than
+// against the struct it built.
+type serviceFake struct {
 	srv *httptest.Server
 
 	mu    sync.Mutex
-	calls []mintCall
+	calls []serviceCall
 
 	// status is the status the answer carries; 0 is 200.
 	status int
@@ -56,16 +57,16 @@ type mintFake struct {
 	location string
 }
 
-func newMintFake(t *testing.T) *mintFake {
+func newServiceFake(t *testing.T) *serviceFake {
 	t.Helper()
-	f := &mintFake{}
+	f := &serviceFake{}
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("reading the call: %v", err)
 		}
 		f.mu.Lock()
-		f.calls = append(f.calls, mintCall{
+		f.calls = append(f.calls, serviceCall{
 			path:  r.URL.Path,
 			auth:  r.Header.Get("Authorization"),
 			body:  string(body),
@@ -90,10 +91,10 @@ func newMintFake(t *testing.T) *mintFake {
 }
 
 // seen is the calls the fake answered, in order.
-func (f *mintFake) seen() []mintCall {
+func (f *serviceFake) seen() []serviceCall {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]mintCall(nil), f.calls...)
+	return append([]serviceCall(nil), f.calls...)
 }
 
 // mintAnswer is a well-formed answer body: the token, its life, and the
@@ -119,7 +120,7 @@ const (
 // mintClient is the client under test, pointed at the fake: its URL is the
 // fake's loopback address, its ID token is the test's, and its clock is fixed so
 // the answer's expiry is comparable exactly.
-func mintClient(t *testing.T, f *mintFake, now time.Time) *ServiceMergeMint {
+func mintClient(t *testing.T, f *serviceFake, now time.Time) *ServiceMergeMint {
 	t.Helper()
 	return &ServiceMergeMint{
 		URL:     f.srv.URL,
@@ -138,7 +139,7 @@ func mintClient(t *testing.T, f *mintFake, now time.Time) *ServiceMergeMint {
 // by the service's run-identity refusal rather than by the class.
 func TestMergeMintClientAsksForOnePullRequestAtOneHead(t *testing.T) {
 	now := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
-	f := newMintFake(t)
+	f := newServiceFake(t)
 	f.answer = mintAnswer(testToken, testRepo, now.Add(time.Hour))
 	m := mintClient(t, f, now)
 
@@ -194,7 +195,7 @@ func TestMergeMintClientCarriesTheServicesRefusal(t *testing.T) {
 		{"the rate", http.StatusServiceUnavailable, "state_unavailable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newMintFake(t)
+			f := newServiceFake(t)
 			f.status = tc.status
 			f.answer = `{"error":"` + tc.code + `","message":"` + testToken + ` is in the service's own sentence"}`
 			m := mintClient(t, f, now)
@@ -230,7 +231,7 @@ func TestMergeMintClientCarriesTheServicesRefusal(t *testing.T) {
 // anything but a loopback address.
 func TestMergeMintClientRefusesWhatItWillNotSend(t *testing.T) {
 	now := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
-	f := newMintFake(t)
+	f := newServiceFake(t)
 	f.answer = mintAnswer(testToken, testRepo, now.Add(time.Hour))
 	base := mintClient(t, f, now)
 
@@ -296,7 +297,7 @@ func TestMergeMintClientRefusesAnAnswerItMustNotUse(t *testing.T) {
 		{"an answer whose life ends exactly now", mintAnswer(testToken, testRepo, now)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newMintFake(t)
+			f := newServiceFake(t)
 			f.answer = tc.answer
 			m := mintClient(t, f, now)
 			tok, err := m.MintMerge(t.Context(), testRepo, 7, mergeHead(1))
@@ -319,9 +320,9 @@ func TestMergeMintClientRefusesAnAnswerItMustNotUse(t *testing.T) {
 // refusal instead of presenting the credential to wherever it pointed.
 func TestMergeMintClientNeverFollowsARedirect(t *testing.T) {
 	now := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
-	elsewhere := newMintFake(t)
+	elsewhere := newServiceFake(t)
 	elsewhere.answer = mintAnswer(testToken, testRepo, now.Add(time.Hour))
-	f := newMintFake(t)
+	f := newServiceFake(t)
 	f.status, f.location = http.StatusFound, elsewhere.srv.URL+MergeMintPath
 
 	m := mintClient(t, f, now)
@@ -338,7 +339,7 @@ func TestMergeMintClientNeverFollowsARedirect(t *testing.T) {
 // memory whole.
 func TestMergeMintClientRefusesAnOversizedAnswer(t *testing.T) {
 	now := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
-	f := newMintFake(t)
+	f := newServiceFake(t)
 	f.answer = mintAnswer(testToken, testRepo, now.Add(time.Hour)) + strings.Repeat(" ", maxMergeAnswerBytes)
 	m := mintClient(t, f, now)
 	if _, err := m.MintMerge(t.Context(), testRepo, 7, mergeHead(1)); !errors.Is(err, ErrMergeMint) {
