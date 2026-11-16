@@ -270,6 +270,72 @@ func TestProjectJobKeepsItsMountsBeforeTheFlip(t *testing.T) {
 	}
 }
 
+// TestTheProjectJobsSwitchFollowsTheRecordsOfTheRun pins the re-derivation a
+// run owes the records it writes itself: the switch is read from the local
+// config's per-repository records, and two writers move them INSIDE a run that
+// applies the installation root — the upgrade backfill at the end of the
+// installation stage and the repository stage's own record write. A set derived
+// once, when the run's options were read, is behind those records from the
+// moment either has written, and the apply that follows would deploy a shared
+// job whose account the launcher has already been told to hand the service's
+// address — refused at the front door, with no fallback (D143).
+//
+// The record that has to move the answer is the repository's own kind: the
+// second config below is the first with ONE field added to the repository line
+// (projectJobRepoReadyLC), which is exactly what `recordCredentialsServiceReady`
+// writes, and every job of the profile that admits that repository has to gain
+// the service — and nothing else about it (the equality is
+// TestProjectJobKeepsItsMountsBeforeTheFlip's own).
+//
+// Mutations (run, restore): have RefreshProjectJobCredentialsService return its
+// input and the staleness answer is false and the jobs stay off; have it clear
+// the field instead of setting it and the equality fails.
+func TestTheProjectJobsSwitchFollowsTheRecordsOfTheRun(t *testing.T) {
+	tail := m5Additions + projectProfilesLCBlock
+	off := m4LocalConfig + projectJobRepoLC + tail + credentialsServiceLCBlock
+	on := m4LocalConfig + projectJobRepoReadyLC + tail + credentialsServiceLCBlock
+	before, after := parseLC(t, off), parseLC(t, on)
+	if off == on {
+		t.Fatal("the two fixtures are the same document: this test is about the one record that differs between them")
+	}
+	jobs := projectJobsFor(t, off)
+	if !ProjectJobsCredentialsServiceStale(jobs, after) {
+		t.Fatalf("the set derived before the record moved is not reported stale, though the config now serves the profile's repository: the run's last apply of the installation root is then skipped, and the grant lands only on a second fugaro update")
+	}
+	refreshed := RefreshProjectJobCredentialsService(jobs, after)
+	if ProjectJobsCredentialsServiceStale(refreshed, after) {
+		t.Errorf("the re-derived set is still stale: the answer has to be a fixed point of the config it was derived from, or every later stage plans the root again")
+	}
+	if ProjectJobsCredentialsServiceStale(jobs, before) {
+		t.Errorf("a set derived from the records as they stand is reported stale: it is, on a run where nothing moved, exactly what the config derives")
+	}
+	want := &CredentialsService{Name: CredentialsServiceName, Region: after.Region}
+	if got, wantNames := sortedJobNames(refreshed), sortedJobNames(jobs); !slices.Equal(got, wantNames) {
+		t.Fatalf("the re-derivation moved the job set to %v, want %v: one job per (profile, provider, account), whatever its repositories' records say", got, wantNames)
+	}
+	for name, job := range refreshed {
+		if job.CredentialsService == nil || *job.CredentialsService != *want {
+			t.Errorf("after the record moved, the job %s carries %v, want %+v: its profile admits the repository whose record says the service is ready", name, job.CredentialsService, *want)
+			continue
+		}
+		was := jobs[name]
+		was.CredentialsService, job.CredentialsService = nil, nil
+		if !reflect.DeepEqual(job, was) {
+			t.Errorf("the re-derivation changed the job %s to %+v, want the job it was, %+v, with the service cleared: it re-reads one field and touches nothing else (G17)", name, job, was)
+		}
+	}
+	// A job whose profile the config no longer declares is answered off: there
+	// is no profile left for a repository to be served through. The config
+	// records the repository whose record is on, so only the missing profile
+	// can be what moves the answer.
+	undeclared := parseLC(t, m4LocalConfig+projectJobRepoReadyLC+m5Additions+credentialsServiceLCBlock)
+	for name, job := range RefreshProjectJobCredentialsService(refreshed, undeclared) {
+		if job.CredentialsService != nil {
+			t.Errorf("the job %s carries the credentials service %+v, though the config declares no profile %q at all: the set is the door's, and a profile a person has removed serves nothing", name, *job.CredentialsService, job.Profile)
+		}
+	}
+}
+
 // The job's env is what the installation knows and nothing per-repository
 // (plan task 3.2 step 1): the four identity variables, plus the budget
 // backend's address and web key when the installation has them. The provider

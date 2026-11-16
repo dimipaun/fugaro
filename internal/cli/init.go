@@ -2897,6 +2897,19 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 			spec.Launchers, spec.Operators = operators, admins
 		}
 	}
+	// The shared project jobs' switch, derived again here for the same reason
+	// the lists above are read again: the records it is read from move inside a
+	// run that applies this root — the upgrade backfill writes them after this
+	// run's first apply (install), and the repository stage writes the entry of
+	// the checkout it converges — and the plan below is what makes the
+	// roles/run.invoker grant those records are a statement about. The launcher
+	// reads the same records live, so it hands a shared job the service's
+	// address the moment its profile's record says so; an apply left behind the
+	// records would leave that job's account refused at the service's front
+	// door, with nothing for the run to fall back to (D143). It touches one
+	// field and no other (RefreshProjectJobCredentialsService, G17), and it is
+	// a no-op for every run whose records have not moved.
+	spec.ProjectJobs = infra.RefreshProjectJobCredentialsService(spec.ProjectJobs, lc)
 	backend, err := prepare(wd, spec, im, verifiers, false)
 	if err != nil {
 		return outs, false, err

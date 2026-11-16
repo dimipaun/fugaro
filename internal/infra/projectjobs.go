@@ -841,6 +841,74 @@ func projectJobServesTheCredentialsService(lc *localcfg.Config, pr config.JobPro
 	return false
 }
 
+// RefreshProjectJobCredentialsService re-derives every job's
+// credentials_service — and nothing else about it — from the config as it
+// stands now, and returns the set carrying that answer.
+//
+// It exists because the answer is not a fact of the run's inputs alone: it is
+// read off the local config's per-repository records
+// (projectJobServesTheCredentialsService), and those records MOVE inside a run
+// that applies the installation root. Two writers do that, and both are later
+// than the moment the run's options were read: the upgrade backfill, which
+// writes the entries the field did not exist for at the end of the installation
+// stage (internal/cli's install), and the repository stage, which writes the
+// entry of the checkout it converges before it plans that checkout's root.
+//
+// A set derived once is therefore behind the records the moment either has
+// written, and the apply that follows would deploy the shared job of a profile
+// the records have just switched with no roles/run.invoker grant on the
+// service — while the launcher, which reads the same records live, hands that
+// job the service's address. The service refuses a caller without the grant at
+// its front door and a cascade run has nothing to fall back to (D143), so the
+// two have to converge in ONE run (CLAUDE.md's HARD RULE): the callers
+// re-derive immediately before the tfvars that plan the root.
+//
+// The set's KEYS never move — this is the same jobs, one per (profile,
+// provider, account), with one field re-read — so G17's mounts and every other
+// field stay exactly what the first derivation built. A job whose profile the
+// config no longer declares is answered off: there is no profile left for a
+// repository to be served through.
+func RefreshProjectJobCredentialsService(jobs map[string]ProjectJob, lc *localcfg.Config) map[string]ProjectJob {
+	if len(jobs) == 0 || lc == nil {
+		return jobs
+	}
+	out := maps.Clone(jobs)
+	for name, job := range out {
+		pr, declared := lc.Profiles[job.Profile]
+		job.CredentialsService = repoCredentialsService(installationCredentialsService(lc), declared && projectJobServesTheCredentialsService(lc, pr))
+		out[name] = job
+	}
+	return out
+}
+
+// ProjectJobsCredentialsServiceStale reports whether the switch on these jobs
+// answers differently from what the config now derives — whether a set derived
+// before a record moved is still what a run holds, and the grant the records ask
+// for has therefore not been applied.
+//
+// It is the credentials stage's own question (internal/cli): that stage is the
+// run's last apply of the installation root, so it is where a grant a mid-run
+// record write made necessary either lands or waits for a second `fugaro
+// update` — which is the command the owner is not asked to run twice.
+func ProjectJobsCredentialsServiceStale(jobs map[string]ProjectJob, lc *localcfg.Config) bool {
+	refreshed := RefreshProjectJobCredentialsService(jobs, lc)
+	for name, job := range jobs {
+		if credentialsServiceKey(job.CredentialsService) != credentialsServiceKey(refreshed[name].CredentialsService) {
+			return true
+		}
+	}
+	return false
+}
+
+// credentialsServiceKey is the switch as one comparable value: the two fields
+// the module reads off it, or "" for a job the service does not serve.
+func credentialsServiceKey(s *CredentialsService) string {
+	if s == nil {
+		return ""
+	}
+	return s.Name + "\x00" + s.Region
+}
+
 // sharedJobProviders are the provider kinds a shared project job serves
 // (SharedJobProvider). It is a list rather than a comparison so that the test
 // can walk it, and it holds kinds of config.Providers. Bitbucket joins it in
