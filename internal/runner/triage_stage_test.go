@@ -25,6 +25,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 	"github.com/dimipaun/fugaro/internal/triage"
+	"golang.org/x/oauth2"
 )
 
 // The triage stage in shadow (T-TR7a): every case below runs a real loop with
@@ -1106,5 +1107,56 @@ func TestTriageOnARoutedClaudeModelStillCalls(t *testing.T) {
 	}
 	if got := runner.Report(rec, "runs/acme-app/"+rec.RunID+"/", nil); strings.Contains(got, "skipped") {
 		t.Errorf("the report calls a routed round skipped:\n%s", got)
+	}
+}
+
+// TestTriageOnAVertexRunIsAsked: the key the skip looks for is the api-key
+// auth's own, the one the gateway sends in the call's header. A Vertex run
+// sends the job's Vertex identity instead — agent.BuildEnv's vertex arm sets
+// CLAUDE_CODE_USE_VERTEX, ANTHROPIC_VERTEX_PROJECT_ID and
+// CLAUDE_CODE_SKIP_VERTEX_AUTH and sets no ANTHROPIC_API_KEY — so the key's
+// absence says nothing about whether its judge can be asked: it can, on every
+// round, and no round of it is Skipped. The auth guard in triageUnserved
+// (servedAuth) is what keeps those apart; without it every Vertex — and every
+// cascade or switched — run with the stage on and no stage account would skip
+// its judge on every round.
+func TestTriageOnAVertexRunIsAsked(t *testing.T) {
+	cfg := strings.Replace(budgetedTriageCfg(t, 2, ""), "auth: api-key", "auth: vertex", 1)
+	if !strings.Contains(cfg, "auth: vertex") {
+		t.Fatal("the fixture has no auth line to put the run on Vertex")
+	}
+	g := newGW(t, cfg, "observe", "", out4k())
+	g.deps.Env = append(filterEnv(g.deps.Env, "ANTHROPIC_API_KEY"),
+		"CLOUD_ML_REGION=us-east5", "ANTHROPIC_VERTEX_PROJECT_ID=proj-1234")
+	g.deps.VertexTokens = oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "ya29.TEST", TokenType: "Bearer"})
+	b := attachBackend(t, g, "observe")
+	rec, err := b.run(t,
+		implement("feature"),
+		reviewScored("changes", blockingFinding()),
+		triageStep("block"),
+		fixStep,
+		review("ship", 0),
+		triageStep("defer"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls := triageCalls(b.agent.calls); len(calls) != 2 {
+		t.Fatalf("the fake claude was asked %d triage questions, want both rounds: the run's own Vertex credential serves the stage", len(calls))
+	}
+	tr := rec.Triage
+	if tr == nil || len(tr.Rounds) != 2 {
+		t.Fatalf("the record's triage block = %+v, want one round per review round", tr)
+	}
+	for _, rnd := range tr.Rounds {
+		if rnd.Skipped || rnd.Failed {
+			t.Errorf("the round = %+v, want an answered round: the key's absence on a Vertex run is not a stage nothing serves", rnd)
+		}
+	}
+	if e := tr.Rounds[0].Entries[0]; e.Source != runstore.TriageSourceAgent {
+		t.Errorf("the answered round's entry = %+v, want the judge's own placement", e)
+	}
+	if got := runner.Report(rec, "runs/acme-app/"+rec.RunID+"/", nil); strings.Contains(got, "skipped") {
+		t.Errorf("the report calls a Vertex run's round skipped:\n%s", got)
 	}
 }
