@@ -62,6 +62,13 @@ func PlanShard(plan string) Shard { return Shard(PlansNode + "/" + plan) }
 // the two name the same plan: an item's spec is the folder the import read, and
 // a plan whose two spellings differed would be a plan in two nodes — one the
 // import writes, the other the tick reads.
+//
+// The check is the transport's too. The plan name is a property name in the
+// tree, and the Realtime Database refuses `. $ # [ ] /` and control characters
+// anywhere in one (validate.go, TestRTDBFakeRejectsKeysRealRTDBRejects), so a
+// name admitted here and refused there would be a plan whose node no tick can
+// ever create — the orchestrator id wedged, since every tick derives the same
+// state again (D1231).
 func PathPlan(agentID, plan string) (string, error) {
 	name, ok := specName(plan)
 	if !ok {
