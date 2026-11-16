@@ -230,16 +230,21 @@ is narrow, which is exactly why a port that used `.sort()` would otherwise ship 
 
 That is the hard part of this task, because the two ends are JavaScript (the phone) and
 Go (the consumer), and the Go end cannot call into JavaScript. It reimplements the
-serialisation and **tests against [`vectors.json`](vectors.json)**: 24 cases — the four
+serialisation and **tests against [`vectors.json`](vectors.json)**: 25 cases — the five
 kinds, the heartbeat, the argv-shaped targets, HTML characters Go escapes by default,
 an emoji, an unknown field inside the bytes, the key order above, and the swaps a
 token-holder without the key would try (text, options, option order, `reply_to`, answer,
 agents, agent name, target, head SHA, confirmation, verb) and the three reflections across directions — each pinning the message,
-the exact bytes, the tag and whether it verifies — three `direction_pairs`, and **22 schema refusals**
+the exact bytes, the tag and whether it verifies — three `direction_pairs`, and **39 schema refusals**
 (`refusals`: an unsigned message of every kind and an unsigned heartbeat, a short, long,
 uppercase or null tag, an unknown verb, a short or uppercase head SHA, a merge without
 one, too many options, an oversize body, an unknown field, a parsed `__proto__`, a field
-on the wrong kind, an answer without `reply_to`, a float time, and a stored `direction` on a message and on a heartbeat), each with the value, the
+on the wrong kind, an answer without `reply_to`, a float time, a registration without its
+token, its platform or one of its switches, a token on a plain message and one a code
+unit past its bound, an unknown platform, a zone that is not a name or carries a path
+step, a window that is partial, has an unknown field inside it, ends on the same minute
+or names a minute outside the day or not whole, prefs with an unknown field, a switch
+that is not a boolean, and a stored `direction` on a message and on a heartbeat), each with the value, the
 record it is judged as and the code and field this validator answers. The Go consumer
 need not copy the codes' wording, but it must refuse every one of those values. A
 disagreement about key order, whitespace or escaping fails on the side that is wrong,

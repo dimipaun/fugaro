@@ -1353,6 +1353,93 @@
       "field": "prefs.quiet_hours.start"
     },
     {
+      "name": "a quiet-hours minute that is not a whole number",
+      "why": "a minute of the local day is a whole number, and a float is not one",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "registration",
+        "token": "not-a-real-registration-token",
+        "platform": "ios",
+        "prefs": {
+          "kill_switch": true,
+          "cap_reached": true,
+          "consumer_offline": true,
+          "cap_near": false,
+          "prompt": true,
+          "quiet_hours": {
+            "zone": "UTC",
+            "start": 1.5,
+            "end": 2
+          }
+        }
+      },
+      "code": "bad-window",
+      "field": "prefs.quiet_hours.start"
+    },
+    {
+      "name": "a quiet-hours window missing one of its ends",
+      "why": "a window is its zone and both of its ends, so a partial one would leave the consumer inventing a value the app never sent",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "registration",
+        "token": "not-a-real-registration-token",
+        "platform": "ios",
+        "prefs": {
+          "kill_switch": true,
+          "cap_reached": true,
+          "consumer_offline": true,
+          "cap_near": false,
+          "prompt": true,
+          "quiet_hours": {
+            "zone": "UTC",
+            "start": 1
+          }
+        }
+      },
+      "code": "missing-field",
+      "field": "prefs.quiet_hours.end"
+    },
+    {
+      "name": "an unknown field inside a quiet-hours window",
+      "why": "a quiet-hours window is a closed record like every other one here",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "registration",
+        "token": "not-a-real-registration-token",
+        "platform": "ios",
+        "prefs": {
+          "kill_switch": true,
+          "cap_reached": true,
+          "consumer_offline": true,
+          "cap_near": false,
+          "prompt": true,
+          "quiet_hours": {
+            "zone": "UTC",
+            "start": 1,
+            "end": 2,
+            "tz": "UTC"
+          }
+        }
+      },
+      "code": "unknown-field",
+      "field": "prefs.quiet_hours.tz"
+    },
+    {
       "name": "prefs without one of the switches",
       "why": "the message carries the whole switch state, so a partial one would leave the consumer choosing a value the app never sent",
       "record": "message",

@@ -255,8 +255,8 @@ func TestSchemaVectorDirectionPairs(t *testing.T) {
 func TestSchemaVectorRefusals(t *testing.T) {
 	file := loadVectors(t)
 	refusals := list(t, file["refusals"], "refusals")
-	if len(refusals) != 36 {
-		t.Fatalf("vectors.json carries %d refusals, not 36: the file, not the replay, is what changed", len(refusals))
+	if len(refusals) != 39 {
+		t.Fatalf("vectors.json carries %d refusals, not 39: the file, not the replay, is what changed", len(refusals))
 	}
 	for _, entry := range refusals {
 		vector := object(t, entry, "refusal")
