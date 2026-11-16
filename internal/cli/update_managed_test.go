@@ -2153,6 +2153,67 @@ func TestUpdateManagedPolicyStageRefusesTheAccountChoiceKeys(t *testing.T) {
 	}
 }
 
+// TestUpdateManagedPolicyStageRefusesTheCraftGrants: the craft members are the
+// third thing a publish can widen that is not a ceiling, and MC18's publish is
+// what makes them reachable at all — `craft_credentials`, `craft_pools` and
+// `crafts` are written from the installation's config now, so a config that
+// states one hands every run of the project a token a run's calls go out on, a
+// pool of them, and the crafts that name them (F12/D1628). The gate refuses it
+// by the rule the account keys are refused by: the step takes the Typed class
+// (D846), D1026 admits no plan gate's answer for a step that decides who is
+// admitted, and a coding agent's session is left the node as it was.
+//
+// The file states the three blocks and changes nothing else: the node's ceiling
+// is HIGHER than the local config's, so this publish narrows it, and the members
+// that move are the craft grants alone.
+func TestUpdateManagedPolicyStageRefusesTheCraftGrants(t *testing.T) {
+	r, db := updateBudgetRig(t)
+	r.managedRuns(t, initProjectName, initProject)
+	t.Setenv("CLAUDECODE", "1")
+	isolateGateCredentials(t)
+	// The publish of craftMembersYAML writes all three blocks, which is the
+	// widening this test is about. The node below carries one credential of its
+	// own, so "the refused step wrote nothing" is read against a block that is
+	// there and unchanged rather than against an absent one.
+	r.appendConfig(t, craftMembersYAML)
+	r.save(t)
+	updating(t, r)
+	r.setPlan(t, change("module.installation.google_service_account.scheduler", "create"))
+	node := staleBudgetNode()
+	node["craft_credentials"] = []any{map[string]any{"name": "other-main", "type": "anthropic"}}
+	db.Set(projectpolicy.PathShared(), node)
+	before := craftMembersOn(t, db)
+
+	got, err := updateRun(t, r, "update")
+	if err == nil {
+		t.Fatalf("a managed project's agent session published the crafts' credentials and pools:\n%s", got)
+	}
+	head := markLeft + " " + initflow.Policy + ":"
+	if !strings.Contains(got, head) {
+		t.Fatalf("the run did not reach the policy stage, so nothing here was judged:\n%s", got)
+	}
+	line := stepLineInLog(t, got, head)
+	if !strings.Contains(line, managedmode.NotConverged) {
+		t.Errorf("the policy step is the user's in a sentence that is not the gate's: %s", line)
+	}
+	if !strings.Contains(line, "the step is one no plan gate judges, whatever the document says (D1026)") {
+		t.Errorf("the refusal does not name the class rule that refused the node: %s", line)
+	}
+	if after := craftMembersOn(t, db); after != before {
+		t.Errorf("the refused step wrote the craft members anyway: %s, want the %s it had", after, before)
+	}
+	if got := ceilingOn(t, db); got != 9 {
+		t.Errorf("the published ceiling is %v, want the 9 it had: the refused step wrote the local config's 5", got)
+	}
+	for _, rec := range audits(t, r) {
+		for _, rule := range rec.Rules {
+			if strings.Contains(rule, "not behind the published node") {
+				t.Errorf("a step the gate never judged left a record: %+v", rec)
+			}
+		}
+	}
+}
+
 // TestUpdateManagedRefusesTheFirstPolicyPublish: the first node of a managed
 // project is the owner's to write, whichever door the session came through —
 // a first publish has no published list for its allow-list to be unchanged or

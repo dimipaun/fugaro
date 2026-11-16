@@ -329,13 +329,15 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 // (SetsNothing). The publish would create a policy that admits nothing and
 // carry none of them with it.
 //
-// The rule is the publisher's own rows, one member at a time: whatever
-// policyNodeForPublish would put in the node because the file states it is a
-// reason to create the node, and that is `lc.X != nil` where the publisher's
-// guard is (the bake switch and the triage switch among them:
+// The rule is a member only the node can carry, listed here one at a time and
+// asked of the publisher's own guard for that member: `lc.X != nil` where the
+// publisher's guard is that (the bake switch and the triage switch among them:
 // BakeReposEffective and TriageEffective hand back a written answer whatever it
 // is, and the rows that compare them are reached by `lc.BakeRepos != nil` and
-// `lc.Triage != nil`).
+// `lc.Triage != nil`), and the block's own emptiness where the publisher hands
+// the node's member back for a config that states none (the crafts family,
+// whose three members are compared by publishedCraftCredentials,
+// publishedCraftPools and publishedCrafts).
 func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
 	var out []string
 	if lc.ImageCatalogEffective(nil) != nil {
@@ -374,6 +376,25 @@ func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
 	// leave at all before this release (G3).
 	if lc.CloneURLsEffective(nil) != nil {
 		out = append(out, "the clone URLs")
+	}
+	// The crafts join them (MC18, D1667): what a craft's calls go out on — the
+	// credential or the pool its access names, the model it runs and the pool
+	// that spreads it across subscriptions — is read off the published node and
+	// nowhere else (docs/model-crafts §1–3), so a project whose config states
+	// them and which has never published a node has left the owner's crafts in a
+	// file no run reads, with `fugaro project policy publish` as the second
+	// command the HARD RULE forbids. Each block is its own entry because the
+	// list names what this file holds, and the guard is the publisher's own:
+	// publishedCraftCredentials, publishedCraftPools and publishedCrafts hand the
+	// node's member back for a config that states no block.
+	if len(lc.Credentials) > 0 {
+		out = append(out, "the craft credentials")
+	}
+	if len(lc.Pools) > 0 {
+		out = append(out, "the craft pools")
+	}
+	if lc.Crafts != (config.Crafts{}) {
+		out = append(out, "the crafts")
 	}
 	return out
 }
@@ -1142,6 +1163,19 @@ func (m *policyMigration) print(w io.Writer) {
 			printFirstPublishDiff(w, m.pub.drift, m.pub.sources)
 		} else {
 			printPolicyPublishDiff(w, m.pub.drift, m.pub.sources)
+		}
+		// A pool this file states that the node cannot carry is neither written
+		// nor dropped in silence (D2608): the line names it and says what it
+		// needs, asked of the publisher's own function so the line and the
+		// omission cannot part company — the call the explicit door's own diff
+		// makes (printPolicyDiff). It is printed here rather than carried as a
+		// drift row because such a pool can never reach the node: a row that
+		// reported it would fire on every run of `fugaro update` and never
+		// converge, which is the second command the HARD RULE forbids.
+		if _, lines := publishedCraftPools(m.lc, m.node, m.pub.pol.CraftCredentials); len(lines) > 0 {
+			for _, line := range lines {
+				fmt.Fprintln(w, line)
+			}
 		}
 		if m.pub.adopted {
 			// D854's other half: an installation that records no generation has

@@ -708,8 +708,9 @@ func (s *policyMigrateStage) gateStep(ctx context.Context, m *policyMigration) (
 	}
 	conv := managedmode.ConvergeAdmitted(doc, policyAdmittedRules)
 	if len(m.loosening()) > 0 {
-		// A publish that loosens a ceiling, sets an account-choice key or
-		// writes the project's first node is a step no plan gate judges,
+		// A publish that loosens a ceiling, sets an account-choice key, adds or
+		// rewrites a craft grant or writes the project's first node is a step
+		// no plan gate judges,
 		// whatever the document looks like (D1026): the record decides who is
 		// admitted to the project, so nothing here stands in for the owner's
 		// own word and nothing is recorded for it.
@@ -724,7 +725,8 @@ func (s *policyMigrateStage) gateStep(ctx context.Context, m *policyMigration) (
 		// The publish that widens the node is the owner's own step, and the
 		// fence on it is the session's rather than its class's (D1552): a
 		// loosening is what refuses here — m.loosening() is the node's
-		// ceilings, its account-choice members and its first publish, the three
+		// ceilings, its account-choice members, its craft grants (a credential,
+		// a pool or an access this publish adds) and its first publish, the
 		// widens this stage has — and the marker is what asks it, so the fence
 		// keeps refusing a coding agent's session when the class system goes
 		// (D1552's own reason for the fence being this one and not Typed). The

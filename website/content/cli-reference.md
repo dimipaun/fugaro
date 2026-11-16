@@ -656,10 +656,10 @@ Remove pools.<NAME> from this project's config: the pool goes, and a craft whose
 access names it is cleared with it rather than left pointing at nothing.
 
 It removes the pool from the installation's config only. A repository that
-selected the pool keeps its own file untouched, and this release's fugaro update
-leaves the pools the policy node already carries as they are: it never publishes
-this config's pools, which is MC4's job, so the removal withdraws nothing from
-the node.
+selected the pool keeps its own file untouched, and the published policy node
+keeps what it holds: fugaro update publishes the pools this file states — a pool
+with no owner is named and skipped — and never deletes a definition the file no
+longer states, so removing a pool here withdraws nothing from the node.
 
 Run it at your own terminal: a pool decides where a project's calls may be
 spent, so a coding agent's session is refused.
