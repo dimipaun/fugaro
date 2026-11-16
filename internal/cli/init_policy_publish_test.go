@@ -1098,8 +1098,12 @@ func TestUpdatePolicyPublishSkipsTheDatabaseTheRulesStageSkips(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if st.State != initflow.Skipped || st.Detail != policyNoDBReason {
-			t.Errorf("a project with no budget backend is %s %q, want the skip of a project with no node to read", st.State, st.Detail)
+		// Undone is the half a caller settling the record reads: the skip
+		// published nothing, so the step it was run for stays owed rather than
+		// being cleared as answered (applyAnswered).
+		if st.State != initflow.Skipped || st.Detail != policyNoDBReason || !st.Undone {
+			t.Errorf("a project with no budget backend is %s %q (undone=%v), want the skip of a project with no node to read, with the step left owed",
+				st.State, st.Detail, st.Undone)
 		}
 		if _, err := h.apply(t, true); err != nil {
 			t.Errorf("the skip is an error: %v", err)

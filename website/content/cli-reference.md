@@ -845,8 +845,8 @@ Run the follow-up steps a management change saved for later.
 A management command (settings set, image add, models rm, workspace add, ...)
 writes its change and then runs the steps that make it live: publishing the
 project policy, redeploying the checkout's repository, building a catalog
-image. With --no-apply it writes the change and stops, and this command runs
-what is owed later.
+image. A step its own run did not finish stays owed, and this command runs
+what is owed.
 
 Every owed step runs once, in the installation's own order, whatever queued it
 and however many changes asked for the same one. Each step checks the state

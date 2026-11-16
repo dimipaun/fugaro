@@ -2,7 +2,9 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -448,6 +450,80 @@ func TestApplyEachStepChecksFirstAndDoesNothingWhenNothingIsOwed(t *testing.T) {
 	})
 }
 
+// unreadableLayerBucket is the layer stage's read failing: the bucket this
+// machine would publish the project layer into cannot be read, so nothing of
+// the stage is decided. It is the one skip that is not "nothing to do"
+// (init_layer_stage.go's skipUndone), and the seam is the one the layer stage's
+// own tests use.
+func unreadableLayerBucket(t *testing.T) {
+	t.Helper()
+	read := layerPublishedRead
+	t.Cleanup(func() { layerPublishedRead = read })
+	layerPublishedRead = func(context.Context, *localcfg.Config, string) ([]byte, int64, bool, error) {
+		return nil, 0, false, errors.New("the bucket is not answering")
+	}
+}
+
+// TestApplyKeepsAStepOwedWhenItsStageSkipsWithoutDoingTheWork: a skip is not
+// always an answer. The layer stage skips when the bucket it would publish into
+// cannot be read, and nothing was published — so the step stays owed, the answer
+// does not report it as applied, and the record still names it (D1567, D1575).
+// The other skip, a stage that found nothing to do, is the answer of its own
+// test above.
+func TestApplyKeepsAStepOwedWhenItsStageSkipsWithoutDoingTheWork(t *testing.T) {
+	_, _ = applyWorld(t)
+	owed(t, initflow.Layer, apply.Change{Kind: apply.Setting, Key: "layer.defaults.agent.model"})
+	unreadableLayerBucket(t)
+
+	out, errOut, err := executeStdin(t, "", "apply")
+	if err == nil {
+		t.Fatalf("a step whose stage skipped without doing its work exited 0:\n%s", out+errOut)
+	}
+	got := out + errOut + ErrorText(err)
+	if !strings.Contains(got, "saved, not live yet: "+initflow.Layer+" still owed") {
+		t.Errorf("the answer does not keep the step owed:\n%s", got)
+	}
+	if strings.Contains(got, "applied "+initflow.Layer) {
+		t.Errorf("the answer reports the step as applied, and nothing was published:\n%s", got)
+	}
+
+	out, errOut, err = executeStdin(t, "", "apply", "--json")
+	if err == nil {
+		t.Fatalf("the run answered a step its stage never did:\n%s", out+errOut)
+	}
+	doc := applyDocOf(t, out)
+	if !slices.Equal(applySteps(doc.Pending), []string{initflow.Layer}) {
+		t.Errorf("the document owes %v, want the layer step: nothing was published", applySteps(doc.Pending))
+	}
+	if len(doc.Applied) != 0 {
+		t.Errorf("the document reports %v as applied, and the stage published nothing", doc.Applied)
+	}
+	applySchemaCheck(t, []string{"apply", "--json"}, out)
+	if p := record(t); !slices.Equal(pendingSteps(p), []string{initflow.Layer}) {
+		t.Errorf("the record after the run is %v, want the layer step still owed", pendingSteps(p))
+	}
+	if p := record(t); p.LastApply != "" {
+		t.Error("the run that answered nothing stamped the config as applied")
+	}
+}
+
+// TestUpdateLeavesAStepOwedWhenItsStageSkipsWithoutDoingTheWork: the rule is
+// one rule for both doors (D1567). `update` clears the entries of the stages it
+// ran successfully, and a stage that skipped because the bucket it publishes
+// into could not be read is not one of them: the step stays owed, for the run
+// that can do it.
+func TestUpdateLeavesAStepOwedWhenItsStageSkipsWithoutDoingTheWork(t *testing.T) {
+	r := updateManagedRig(t)
+	updating(t, r)
+	owed(t, initflow.Layer, apply.Change{Kind: apply.Setting, Key: "layer.defaults.agent.model"})
+	unreadableLayerBucket(t)
+
+	got, _ := updateRun(t, r, "update")
+	if steps := pendingSteps(record(t)); !slices.Contains(steps, initflow.Layer) {
+		t.Errorf("update cleared the layer step its own stage never answered: %v\n%s", steps, got)
+	}
+}
+
 // TestUpdateClearsOnlyTheStagesItRan: `update` runs every stage, so the stages
 // it answered are steps nothing owes any more and their entries are cleared —
 // and the catalog build, which `update` never runs, stays owed (D1567, D1577).
@@ -649,7 +725,7 @@ func TestApplyNeverOnboardsAnUnlistedRepository(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := stateOf(res, initflow.Repository); got != initflow.NeedsYou {
-		t.Fatalf("the repository stage is %v, want needs-you: this door onboarded a repository nobody opted in\n%s", got, res.Stages)
+		t.Fatalf("the repository stage is %v, want needs-you: this door onboarded a repository nobody opted in\n%+v", got, res.Stages)
 	}
 	if len(res.Left) != 1 || res.Left[0].Kind != initflow.LeftCommand || res.Left[0].Text != selfCommand()+" "+setupDoor.name {
 		t.Fatalf("the run leaves %+v, want the one line naming the door that enrols", res.Left)

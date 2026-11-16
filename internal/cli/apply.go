@@ -50,8 +50,8 @@ const applyLong = `Run the follow-up steps a management change saved for later.
 A management command (settings set, image add, models rm, workspace add, ...)
 writes its change and then runs the steps that make it live: publishing the
 project policy, redeploying the checkout's repository, building a catalog
-image. With --no-apply it writes the change and stops, and this command runs
-what is owed later.
+image. A step its own run did not finish stays owed, and this command runs
+what is owed.
 
 Every owed step runs once, in the installation's own order, whatever queued it
 and however many changes asked for the same one. Each step checks the state
@@ -295,10 +295,10 @@ func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, pending
 	res, runErr := initflow.Run(cmd.Context(), stages, opts)
 	cmd.SetOut(answer)
 
-	states := map[string]initflow.State{}
+	states := map[string]initflow.StageResult{}
 	if res != nil {
 		for _, st := range res.Stages {
-			states[st.Name] = st.State
+			states[st.Name] = st
 		}
 	}
 	for _, n := range stageNames {
@@ -311,7 +311,7 @@ func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, pending
 			kept = append(kept, n)
 			continue
 		}
-		if n == initflow.Repository && states[n] == initflow.Skipped {
+		if n == initflow.Repository && states[n].State == initflow.Skipped {
 			// The redeploy is per repository (D1574): a checkout that is not
 			// this repository's — or a machine that has no checkout of it at
 			// all — cannot redeploy it, and the step stays owed with the
@@ -387,13 +387,16 @@ func applyNothing(cmd *cobra.Command, lc *localcfg.Config, path string, pending 
 // applyRecordNote is what keeps a missing or stale record from being silent
 // (D1575). A machine that owes nothing and a machine whose record was deleted
 // read the same — nothing is owed — so the answer says which of the two it can
-// tell apart, and names the stamp `doctor` compares for the half it cannot.
+// tell apart, and neither sentence promises a comparison this build does not
+// make: the stamp beside the record (Pending.LastApply) is read here and
+// written here, and the command that recomputes what a config still needs
+// against it is not built yet.
 func applyRecordNote(w io.Writer, recorded, current bool) {
 	switch {
 	case !recorded:
-		fmt.Fprintln(w, "No record of what this machine owes is on disk: nothing is recorded as owed. A record that was deleted leaves the same answer, and what the project config still needs is not recomputed here — the last_apply stamp `fugaro doctor` compares is what says so.")
+		fmt.Fprintln(w, "No record of what this machine owes is on disk: nothing is recorded as owed. A record that was deleted leaves the same answer, and what the project config still needs is not recomputed here.")
 	case !current:
-		fmt.Fprintln(w, "The project config changed since the last apply, and nothing owed is recorded against it: `fugaro doctor` compares the last_apply stamp.")
+		fmt.Fprintln(w, "The project config changed since the last apply, and nothing owed is recorded against it.")
 	}
 }
 
@@ -419,14 +422,23 @@ func applyKeptLine(w io.Writer, kept []string) {
 // is it having found nothing to do — the read-only check first, which is the
 // rule every step obeys (D1575).
 //
-// Everything else leaves the step owed: Blocked and WaitingForBilling are a
+// A skip is the one answer of the three that is not always an answer: the layer
+// stage skips when the bucket it would publish into cannot be read, and the
+// policy stage when the node it migrates is held or is another installation's,
+// and neither published anything. Those carry Undone and leave the step owed
+// (D1567: what `update` clears is the steps of the stages it ran successfully;
+// D1575: a check that found nothing owed is what answers a step).
+//
+// Everything else leaves the step owed too: Blocked and WaitingForBilling are a
 // stage that never got to its work, NeedsYou is one only the person can finish,
 // Failed is the failure D1563 keeps, and Todo is a stage the loop did not reach
 // — none of them is an installation that has the change live.
-func applyAnswered(st initflow.State) bool {
-	switch st {
-	case initflow.Changed, initflow.Done, initflow.Skipped:
+func applyAnswered(st initflow.StageResult) bool {
+	switch st.State {
+	case initflow.Changed, initflow.Done:
 		return true
+	case initflow.Skipped:
+		return !st.Undone
 	}
 	return false
 }
@@ -470,8 +482,9 @@ func applyCatalogBuild(cmd *cobra.Command, lc *localcfg.Config) error {
 // because the step they leave owed is one `fugaro apply` runs again for nothing
 // (every step checks the state first). A stage that failed, one that was
 // blocked behind one that did not finish, one that left something for the
-// person and the redeploy of a repository with no checkout here all keep their
-// steps owed, and a catalog build is never touched: `update` does not run it
+// person, one that skipped without doing its own work (applyAnswered's Undone)
+// and the redeploy of a repository with no checkout here all keep their steps
+// owed, and a catalog build is never touched: `update` does not run it
 // (D1577).
 //
 // The stamp beside the entries is not this command's to write: it dates the
@@ -494,7 +507,7 @@ func (e *initEngine) clearAnsweredSteps(res *initflow.Result) {
 		if st.Name == initflow.Repository && st.State == initflow.Skipped {
 			continue
 		}
-		if applyAnswered(st.State) {
+		if applyAnswered(st) {
 			cleared = append(cleared, st.Name)
 		}
 	}

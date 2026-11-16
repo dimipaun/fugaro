@@ -447,6 +447,16 @@ type Status struct {
 	State  State
 	Detail string // one line: what is missing, or why skipped or blocked
 	Left   *Left  // for NeedsYou; else the stage's own Left() is used
+	// Undone marks a Skipped answer that left the stage's own work undone —
+	// the bucket it publishes into could not be read, the node it migrates is
+	// held or is another installation's — as against one that means the stage
+	// found nothing to do. Both are one word in State because both are true of
+	// the run: neither is a failure, neither stops the run, and the plan view
+	// prints the same line for the two. What reads this is a caller settling a
+	// record of the steps a machine still owes (internal/cli's applyAnswered):
+	// a step whose stage skipped without doing its work is a step still owed
+	// (D1567, D1575), and one whose stage found nothing to do is answered.
+	Undone bool
 }
 
 // Env is what a stage's Plan and Apply are told.

@@ -35,7 +35,7 @@
     },
     "current": {
       "type": "boolean",
-      "description": "Whether the record was stamped against the project config as it stands. False means the config changed since the last `fugaro apply` that finished, so what the record owes may be older than the config — or newer than it, when a change was just saved. The stamp is the hash of the local project config's bytes, and `fugaro doctor` is the command that compares it (D1575)."
+      "description": "Whether the record was stamped against the project config as it stands. False means the config changed since the last `fugaro apply` that finished, so what the record owes may be older than the config — or newer than it, when a change was just saved. The stamp is the hash of the local project config's bytes (D1575)."
     },
     "pending": {
       "type": "array",
