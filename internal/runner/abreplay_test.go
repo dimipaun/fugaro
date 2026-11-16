@@ -231,6 +231,15 @@ func TestABReplayRefusesPatchFromOtherRun(t *testing.T) {
 // the quoted headers below name a refused file in bytes that hold none of its
 // name (the review's finding of 2026-11-15), while an unquoted escape is the
 // file's own name and not a refused one.
+//
+// That reading of the headers is not the one that decides, and the last two
+// cases are the reviews' findings of 2026-11-16: git's older `rename old`/
+// `rename new` header is applied by git and named by no prefix the header
+// reading holds, and a quote git never closes is read by git from the line's
+// own bytes while the header reading keeps the whole remainder of the line. Both
+// patches write a refused path and both are refused by the fence's second
+// reading — the paths git wrote, listed from git once the patch is applied —
+// which is why the reviewer below runs no stage in either case.
 func TestABReplayRefusesPatchTouchingAgentConfig(t *testing.T) {
 	cases := []struct {
 		name string
@@ -323,6 +332,33 @@ new file mode 100644
 @@ -0,0 +1 @@
 +one line
 `,
+		},
+		{
+			// git's older rename spelling, which git applies and the fence's
+			// prefix list does not hold: the only header the first reading
+			// recognizes is the innocent diff --git line, so the fence's
+			// first reading returns "" and the path git writes is named by no
+			// header it looks at. The second reading — the paths git wrote —
+			// is what refuses it.
+			name: "a rename header git applies and the first reading does not hold",
+			path: "CLAUDE.md",
+			patch: `diff --git a/README.md b/README.md
+similarity index 100%
+rename old README.md
+rename new CLAUDE.md
+`,
+			comp: "CLAUDE.md",
+		},
+		{
+			// A quote git never closes: git gives up on the name and reads the
+			// line's own bytes, dropping the first path part, so the file it
+			// writes is CLAUDE.md while the fence's reader takes the whole
+			// remainder of the line — the trailing newline included — as the
+			// name, which matches no component. Refused by the paths git wrote.
+			name:  "a quoted path git never closes",
+			path:  "CLAUDE.md",
+			patch: "diff --git \"a/q b/q\nnew file mode 100644\n--- /dev/null\n+++ \"b/CLAUDE.md\n@@ -0,0 +1 @@\n+one line\n",
+			comp:  "CLAUDE.md",
 		},
 		{
 			// The same bytes unquoted: git takes them as they stand, so the

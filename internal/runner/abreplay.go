@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"slices"
 	"strings"
@@ -154,13 +155,35 @@ func (r *run) runReviewReplay(ctx context.Context) {
 	// line, clipped), and not as the bytes were written: this reason reaches the
 	// run record, the run log and the owner's watch output.
 	if comp := replayPatchRefusal(patch); comp != "" {
-		r.refuseReplay(fmt.Sprintf("the champion run %s's patch touches %s, and a patch that reaches a hook, an instruction file or a tool setting may not be replayed: the review this arm runs would load it as configuration of its own session (B1.2, D728). Launch the pair against a champion whose patch touches none of .claude, .claude-plugin, .fugaro, .github, .git*, fugaro.yaml, CLAUDE.md, CLAUDE.local.md or .mcp.json, at any depth", r.spec.AB.ChampionRun, r.stageErrorText(comp)))
+		r.refuseReplay(r.replayFenceReason("touches " + r.stageErrorText(comp)))
 		return
 	}
 	if err := replayApply(ctx, r.repo, patch); err != nil {
 		// git's own message quotes the paths the patch carries, so it is bytes
 		// out of the patch too and gets the same treatment.
 		r.refuseReplay(fmt.Sprintf("the champion run %s's patch does not apply to this checkout: %s. The arm applies the patch with git apply, which writes nothing when it refuses, so this is a patch written for another base: launch the arm at the commit the champion's run started from (B1.4)", r.spec.AB.ChampionRun, r.stageErrorText(err.Error())))
+		return
+	}
+	// The fence's second reading, and the one that decides: the paths git just
+	// wrote, listed from git itself rather than from the patch's own lines. A
+	// patch that reaches a run's own configuration is refused here even when no
+	// header the first reading holds names it (replayWrittenPaths).
+	written, err := replayWrittenPaths(ctx, r.repo)
+	if err != nil {
+		r.failReplayRead(ctx, fmt.Errorf("listing the paths the champion's patch wrote: %w", err))
+		return
+	}
+	if path, comp := replayWrittenRefusal(written); comp != "" {
+		// The change is discarded before the arm is refused. What it applied is
+		// what finalize would otherwise commit, record as this arm's own changed
+		// paths and upload as this arm's own patch object, and an arm that
+		// refused a patch may not carry it. HEAD is the arm's own base: the
+		// patch was applied and never committed, so nothing moved it.
+		if err := r.repo.ResetTo(ctx, "HEAD"); err != nil {
+			r.failReplayRead(ctx, fmt.Errorf("discarding the champion's refused patch: %w", err))
+			return
+		}
+		r.refuseReplay(r.replayFenceReason("writes " + r.stageErrorText(path)))
 		return
 	}
 	committed, err := r.repo.CommitAll(ctx, "fugaro: the champion's patch (run "+r.spec.AB.ChampionRun+"), replayed")
@@ -296,6 +319,16 @@ func (r *run) refuseReplay(reason string) {
 	r.d.Log.Warn("the reviewer replay was refused", "reason", reason)
 }
 
+// replayFenceReason is the refusal both fences of the arm write: what was read
+// (the component the patch's own headers named, or the path git wrote, each
+// already through stageErrorText, because both are bytes out of an untrusted
+// object) and why a patch that reaches this run's own configuration may not be
+// replayed. One wording for both, so a pair's owner reads one boundary rather
+// than two.
+func (r *run) replayFenceReason(what string) string {
+	return fmt.Sprintf("the champion run %s's patch %s, and a patch that reaches a hook, an instruction file or a tool setting may not be replayed: the review this arm runs would load it as configuration of its own session (B1.2, D728). Launch the pair against a champion whose patch touches none of .claude, .claude-plugin, .fugaro, .github, .git*, fugaro.yaml, CLAUDE.md, CLAUDE.local.md or .mcp.json, at any depth", r.spec.AB.ChampionRun, what)
+}
+
 // replayRefusedNames are the path components a champion's patch may not touch
 // (B1.2, D728): the files a review stage of this run would load as its own
 // configuration, or read as this run's. The list is the repository's own hygiene
@@ -329,6 +362,12 @@ var replayPatchPrefixes = []string{"rename from ", "rename to ", "copy from ", "
 // replayPatchRefusal is the path component of patch that no reviewer arm may
 // replay, "" when the patch touches none of them.
 //
+// It is the fence's first reading, and not the one that decides: it reads the
+// patch's own header lines, and a patch is free to spell a header git applies
+// and this list does not hold. What decides is the listing of the paths git
+// wrote, taken from git itself once the patch is applied (replayWrittenPaths);
+// this reading is the one that refuses before anything is written at all.
+//
 // The paths are read from the patch's own header lines rather than from git
 // (git apply --numstat names a rename's new path alone, so a rename away from a
 // refused path would escape the fence), and each is read as git's own reader
@@ -361,6 +400,52 @@ func replayPatchRefusal(patch []byte) string {
 	return ""
 }
 
+// replayWrittenPaths stages the checkout and lists the paths a commit would now
+// carry: every path the patch wrote, a rename read as the delete and the add it
+// is (--no-renames), NUL-separated so a path holding a newline survives the
+// listing. Staging is `git add -A`, the call the arm's own commit makes, so the
+// listing is exactly what that commit would carry and nothing beside it.
+//
+// It is the fence's second reading, and it is the one that decides, because it
+// is not a reading of the patch at all. The header fence reads the patch's own
+// lines the way git's reader reads them, and that reader has corners this one
+// cannot be trusted to have: `rename old`/`rename new` is a header git applies
+// and the fence's prefix list does not hold, and a name git cannot parse — a
+// quote never closed — is read by git from the line's own bytes with the first
+// path part stripped, which is not the name the fence's reader takes out of it.
+// The paths git wrote admit no such spelling: they are what git wrote
+// (TestABReplayRefusesPatchTouchingAgentConfig's last two cases).
+func replayWrittenPaths(ctx context.Context, repo *gitops.Repo) ([]string, error) {
+	if _, err := replayGit(ctx, repo, nil, "add", "-A"); err != nil {
+		return nil, err
+	}
+	out, err := replayGit(ctx, repo, nil, "--no-replace-objects", "diff", "--cached", "--no-renames", "--name-only", "-z", "HEAD")
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, p := range strings.Split(out, "\x00") {
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths, nil
+}
+
+// replayWrittenRefusal is the path among written that no reviewer arm may have
+// in its checkout, and the component of it the fence refuses: both "" when the
+// patch wrote none of them.
+func replayWrittenRefusal(written []string) (path, comp string) {
+	for _, p := range written {
+		for _, c := range strings.Split(p, "/") {
+			if replayRefusesComponent(c) {
+				return p, c
+			}
+		}
+	}
+	return "", ""
+}
+
 // replayHeaderNames are the path names that rest, a header line's remainder,
 // names: the diff --git line names two (the old path and the new one), every
 // other header one. Reading every name on the line is a superset of what git
@@ -390,10 +475,14 @@ func replayHeaderNames(rest string) []string {
 // the file's own name and not a dot.
 //
 // An escape git's writer never writes, and a quote never closed, are decoded to
-// the bytes they hold here. git reads such a header literally, so the file it
-// writes is the line's own bytes and carries no refused component that this
-// reading drops — a decode only ever removes a backslash — and refusing more
-// than git applies is the direction the fence is allowed to be wrong in.
+// the bytes they hold here, and that is not what git does with them: git gives
+// up on a name it cannot parse and reads the line's own bytes instead, dropping
+// the first path part, so `+++ "b/CLAUDE.md` writes CLAUDE.md while this reader
+// takes `b/CLAUDE.md\n` out of the line — a name no component of the fence
+// matches. A name this reader takes and git does not is one the fence may miss,
+// so this reading is not the fence's last word on a patch: the paths git wrote
+// are listed from git itself once the patch is applied (replayWrittenPaths), and
+// that listing is what decides.
 func replayHeaderName(rest string) (name, tail string) {
 	if rest[0] != '"' {
 		if i := strings.IndexFunc(rest, unicode.IsSpace); i >= 0 {
@@ -467,15 +556,25 @@ func replayEscape(e byte) byte {
 // writes through is refused by git itself, so both are refusals rather than
 // partial trees.
 func replayApply(ctx context.Context, repo *gitops.Repo, patch []byte) error {
-	cmd := exec.CommandContext(ctx, "git", "apply")
+	_, err := replayGit(ctx, repo, bytes.NewReader(patch), "apply")
+	return err
+}
+
+// replayGit runs one git command in the checkout with the runner's own standing
+// for its git calls (Repo.Environ: the process environment without the provider
+// credentials, which is what an agent-written filter or fsmonitor hook would
+// need), in on stdin, and returns its stdout. A nil in leaves the command with
+// no stdin to read, so nothing here can wait on one.
+func replayGit(ctx context.Context, repo *gitops.Repo, in io.Reader, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = repo.Dir
 	cmd.Env = repo.Environ()
-	cmd.Stdin = bytes.NewReader(patch)
+	cmd.Stdin = in
 	cmd.WaitDelay = 5 * time.Second
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+		return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
 	}
-	return nil
+	return stdout.String(), nil
 }
