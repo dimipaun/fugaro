@@ -1296,14 +1296,38 @@ func SecretMounts(gitSecret string, cfg *config.Config, name, token string, w co
 // serves it out of the bundle and this job mounts nothing for it — and a name
 // this config declares no key credential for is the ordinary provider key.
 func runnerKeyCredential(lc *localcfg.Config, provider, repo string) (string, bool) {
-	cred, ok := config.CredentialNamed(lc.Credentials, provider)
-	if !ok || !config.KeyCredentialType(cred.Type) || config.CredentialServingPath(cred.Type) != config.CredentialPathRunner {
+	secret := config.CredentialSecret(provider)
+	if _, ok := runnerKeyCredentialName(lc, secret); !ok || !lc.ClaudeAccounts[provider].AllowsData(repo) {
 		return "", false
 	}
-	if !lc.ClaudeAccounts[provider].AllowsData(repo) {
+	return secret, true
+}
+
+// runnerKeyCredentialName is the credential a logical secret is the derived
+// container of, when this installation declares it as a RUNNER-path key
+// credential (D1670, MC23). It is the one place that reads the half off a
+// container name, so the two rules that meet on it cannot disagree: the mount
+// SecretMounts builds for a provider of that name, and the project-secret
+// candidate ProjectSecretCandidateFromNode answers for -- a name the first
+// mounts and the second refuses is a mount Readiness can never resolve, which
+// is a job it refuses to deploy (or, for a job that exists, one whose mount is
+// dropped) over a key the operator did store.
+//
+// The serving path is the clause that keeps the other half out: a
+// service-served credential (anthropic) is read from the credentials service's
+// bundle and mounted nowhere, so its container is no job's secret and no
+// candidate; and a name in the namespace with no such credential declared
+// belongs to no mount either.
+func runnerKeyCredentialName(lc *localcfg.Config, secret string) (string, bool) {
+	name, ok := config.CredentialBySecret(secret)
+	if !ok {
 		return "", false
 	}
-	return config.CredentialSecret(provider), true
+	cred, declared := config.CredentialNamed(lc.Credentials, name)
+	if !declared || !config.KeyCredentialType(cred.Type) || config.CredentialServingPath(cred.Type) != config.CredentialPathRunner {
+		return "", false
+	}
+	return name, true
 }
 
 // WorkflowAccounts are the Claude accounts each of repo's workflows gets a
@@ -1912,7 +1936,26 @@ func ProjectSecretCandidateFromNode(lc *localcfg.Config, logical, repo, provider
 	if !eligible && namedProvider {
 		eligible = lc.Providers[modelProvider].AllowsData(repo)
 	}
-	claimed := listed || swept || namedAccount || namedProvider
+	// A runner-path key credential's own container is the fifth source, with a
+	// named account's shape: the credential is a declaration of this
+	// installation's config, its key is what the job mounts for the provider of
+	// its name (SecretMounts), and claude_accounts.<name>.allow_data_to is the
+	// reach the key may be sent to -- the field `fugaro accounts add --type
+	// openrouter` writes before the value is stored under that container
+	// (D1670, MC23). The branch is what makes the mount resolvable at all: the
+	// container is neither project_secrets nor an account's token nor a
+	// provider's .secret, so without it Readiness finds no copy of a name a job
+	// mounts, and the command it names for that state is not one the CLI accepts
+	// for this namespace.
+	//
+	// The serving path is what keeps the other half out: a service-served
+	// credential's container is read from the credentials service's bundle and
+	// mounted nowhere, so it is no job's secret and no candidate here.
+	keyCredential, namedKeyCredential := runnerKeyCredentialName(lc, logical)
+	if !eligible && namedKeyCredential {
+		eligible = lc.ClaudeAccounts[keyCredential].AllowsData(repo)
+	}
+	claimed := listed || swept || namedAccount || namedProvider || namedKeyCredential
 	if !eligible && !claimed {
 		// workflow_secrets is the fourth and last source, asked only for a
 		// name none of the others claims -- the order is the gate, so a
