@@ -976,6 +976,32 @@ func (r *Repo) OriginURL(ctx context.Context) (string, error) {
 	return r.git(ctx, "remote", "get-url", "origin")
 }
 
+// NoPushURL is what a checkout that must never be pushed from sets its push
+// URL to (DisablePush): a path that is no repository, so a push opens nothing.
+//
+// It is set, not removed, because git has no empty push URL: a remote without
+// a pushurl falls back to its fetch URL, and `remote get-url --push` answers
+// with that URL — so "no push URL" is not a state git can be put in, and a
+// reader could not tell it from a fetch URL that is a push target. An inert URL
+// is a state it can be put in: the read answers with it (a caller holding every
+// push URL to its own question sees the substitute and refuses the checkout),
+// and a push to it fails.
+const NoPushURL = "file:///dev/null"
+
+// DisablePush points the checkout's origin push URL at NoPushURL, leaving the
+// fetch URL alone. The clone still reads through it, including the blobs a
+// blobless clone fetches on demand, and nothing a push in the checkout does
+// opens the repository it was cloned from.
+//
+// A read-only context repository is cloned with a read-only token besides, but
+// a token is the weaker of the two guarantees: a push that reaches a repository
+// at all is one D613 refuses, whatever credential it carries, and the checkout
+// is one an agent's own git runs in.
+func (r *Repo) DisablePush(ctx context.Context) error {
+	_, err := r.git(ctx, "remote", "set-url", "--push", "origin", "--", NoPushURL)
+	return err
+}
+
 // PushURLs returns every URL a push to the checkout's origin remote would go
 // to (`git remote get-url --push --all origin`): the remote's pushurl entries
 // when it has any, and its fetch URL otherwise. git resolves insteadOf and
