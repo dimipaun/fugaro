@@ -700,6 +700,21 @@ function optionalMoneyAt(raw: Record<string, unknown>, key: string, field: strin
   return measured(value)
 }
 
+/** optionalCountAt reads a whole-number key a CLI older than the release that
+ * added it does not write (`max_parallel`, on `total` alone). Absent and `null`
+ * are both *unavailable*: the document has nothing to say about the cap, which
+ * is `n/a` and never a cap of none. A value of the wrong shape -- or a
+ * fractional or negative one, which no count of runs can be -- is a document
+ * this console has not learned to read, refused by name rather than
+ * half-read, the same way `optionalMoneyAt` treats `leased_usd`. */
+function optionalCountAt(raw: Record<string, unknown>, key: string, field: string, where: string): Reading {
+  const at = field === '' ? key : `${field}.${key}`
+  const value = raw[key]
+  if (value === undefined || value === null) return unavailable(`the document has no ${at}`)
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) return refuse('not-a-number', at, where)
+  return measured(value)
+}
+
 // ---------------------------------------------------------------------------
 // The shapes.
 // ---------------------------------------------------------------------------
@@ -741,6 +756,16 @@ export interface TotalsView {
   readonly leasedUsd: Reading
   /** null on the wire = no cap set, which is unavailable and not a cap of zero */
   readonly dailyCapUsd: Reading
+  /** maxParallel is the concurrent-run cap a launch is checked against
+   * (`JSONTotal.MaxParallel`), read as a count rather than as `number | null`
+   * for the reason every other figure here is a reading: a cap nobody read is
+   * `n/a`, and a bar drawn against it is a bar with no limit, never a full one.
+   *
+   * **It is `JSONTotal`'s key and no repository's** (`internal/watch/json.go`:
+   * `JSONRepo` carries none), so `repoAt` answers it with a sentence of its own
+   * rather than with the "the document has no repos[0].max_parallel" reason a
+   * shared read would build. */
+  readonly maxParallel: Reading
   readonly percent: Reading
   readonly burn: BurnView
   readonly kill: KillView | null
@@ -970,12 +995,12 @@ export const TOTAL_KEYS = [
   'daily_cap_usd',
   'percent',
   // Written by the CLI since the release that added it, and declared here as
-  // part of the struct's key set before any view reads it: `TOTAL_KEYS` is
-  // `JSONTotal`'s own keys, pinned against `internal/watch/json.go` by
-  // `schema.test.ts`, so a key the struct writes belongs in this list. The
-  // concurrent-runs cap bar is the view that will read it; a document from an
-  // older CLI carries no such key at all, and `null` is one whose writer had
-  // no cap to report -- never `0`.
+  // part of the struct's key set: `TOTAL_KEYS` is `JSONTotal`'s own keys,
+  // pinned against `internal/watch/json.go` by `schema.test.ts`, so a key the
+  // struct writes belongs in this list. The Live screen's concurrent-runs cap
+  // bar is the view that reads it (`totalsOf`'s `optionalCountAt`); a document
+  // from an older CLI carries no such key at all, and `null` is one whose
+  // writer had no cap to report -- never `0`.
   'max_parallel',
   'burn',
   'kill',
@@ -1355,6 +1380,7 @@ function totalsOf(total: Record<string, unknown>, field: string, where: string):
     notionalUsd: readingOf(total, 'notional_usd', `${field}.notional_usd`),
     leasedUsd: optionalMoneyAt(total, 'leased_usd', field, where),
     dailyCapUsd: readingOf(total, 'daily_cap_usd', `${field}.daily_cap_usd`),
+    maxParallel: optionalCountAt(total, 'max_parallel', field, where),
     percent: readingOf(total, 'percent', `${field}.percent`),
     burn: burnAt(required(total, 'burn', field, where), `${field}.burn`, where),
     kill: killAt(total.kill, `${field}.kill`, where),
@@ -1368,6 +1394,12 @@ function repoAt(raw: unknown, index: number, where: string): RepoView {
     slug: stringAt(required(repo, 'slug', field, where), `${field}.slug`, where),
     repo: stringAt(required(repo, 'repo', field, where), `${field}.repo`, where),
     ...totalsOf(repo, field, where),
+    // A repository is a total with two keys in front of it, and the concurrent
+    // cap is not one of them: `max_parallel` is `JSONTotal`'s own
+    // (`internal/watch/json.go`), so a row's is unmeasured for a reason of its
+    // own and never the "the document has no repos[0].max_parallel" sentence
+    // the shared read would build around a key no CLI writes there.
+    maxParallel: unavailable('the concurrent-run cap is the total\'s, and a repository row carries none'),
   }
 }
 

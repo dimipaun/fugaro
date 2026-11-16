@@ -2189,8 +2189,19 @@ func pluginStateProblem(id string, s pluginwire.State, r pluginwire.Report) stri
 
 // checksFail reports whether checks should fail doctor's exit code: any
 // ordinary check (Severity "") that isn't ok fails it; a "warning" one only
-// with strict; an "info" one never does.
+// with strict; an "info" one never does. It reads the list doctorRefusals
+// builds rather than walking the checks a second time.
 func checksFail(checks []doctorCheck, strict bool) bool {
+	return len(doctorRefusals(checks, strict)) > 0
+}
+
+// doctorRefusals is checksFail as the list rather than the verdict: the checks
+// that fail at this strictness, which a caller that REFUSES something on
+// doctor's behalf has to name (backendsUseGate is what does). It is the one
+// place the rule lives, and checksFail reads it, so a verdict and the list
+// under it cannot disagree about which checks count.
+func doctorRefusals(checks []doctorCheck, strict bool) []doctorCheck {
+	var out []doctorCheck
 	for _, c := range checks {
 		if c.OK {
 			continue
@@ -2198,14 +2209,15 @@ func checksFail(checks []doctorCheck, strict bool) bool {
 		switch c.Severity {
 		case "info":
 		case "warning":
-			if strict {
-				return true
+			if !strict {
+				continue
 			}
+			out = append(out, c)
 		default:
-			return true
+			out = append(out, c)
 		}
 	}
-	return false
+	return out
 }
 
 // printDoctorChecks prints one line per check doctor means to show (its
@@ -2503,7 +2515,8 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 	checks = append(checks, doctorCheck{ID: "policy-published", Severity: "info",
 		Problem: fmt.Sprintf("a policy is published at %s (version %d, %d allow-list entries)", shared, p.Version, len(p.AllowRepos)),
 		Fix:     "fugaro project policy show prints it"})
-	if err := refuseUnknownPolicyKeys(p); err != nil {
+	unknownKeys := refuseUnknownPolicyKeys(p)
+	if unknownKeys != nil {
 		// Published and in force by version and marker, and refused by every
 		// reader anyway: `policy show`, `project show` and `repos ls` refuse it
 		// through this same helper, and so do the launch gates that decide
@@ -2515,7 +2528,7 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 		// wording of it, so what doctor prints is what the command that refused
 		// the operator printed, and the two cannot drift.
 		checks = append(checks, doctorCheck{ID: "policy-unknown-keys", Severity: "warning",
-			Problem: "no run is bounded by the policy node: " + err.Error(),
+			Problem: "no run is bounded by the policy node: " + unknownKeys.Error(),
 			Fix:     "remove the unknown key from the node by hand (fugaro project policy show prints it), or upgrade Fugaro (brew upgrade dimipaun/tap/fugaro, then fugaro update) if a newer release writes it; 'fugaro project policy publish' refuses this node too, so publishing is not the fix"})
 	}
 	if len(p.AllowRepos) == 0 {
@@ -2532,6 +2545,14 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 	checks = append(checks, doctorCredsRules(ctx, db, p, lc)...)
 	if c := doctorPolicyVsJobs(lc); c != nil {
 		checks = append(checks, *c)
+	}
+	// A repository's own Bitbucket token copy, on the node in force (plan task
+	// T2.4): the shared-job decision is one the runs themselves make off this
+	// policy, so the check is asked only where the policy is the one they read
+	// — not for a node some unknown key has every reader refusing
+	// (policy-unknown-keys above).
+	if unknownKeys == nil {
+		checks = append(checks, doctorBitbucketOwnTokenSharedJob(ctx, lc, p)...)
 	}
 	// The two routing checks of plan task 1b.3 step 2, over the node in force:
 	// the switch is read off the policy the runs themselves read, and resolved
@@ -3089,11 +3110,14 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) 
 		// mailbox grant — the state the operator's app meets — unexplained.
 		// The fix names what the redeploy adds over the deployed generation, as
 		// rulesMarkerOlderText does: a device-generation marker already has the
-		// mailbox and only the coordinator's read grant is new to it, and a
+		// mailbox and only the coordinator's read grant is new to it, a
 		// coordinator-generation marker already has that grant too and only the
-		// voice policy node is new to it.
+		// voice policy node is new to it, and a voice-generation marker already
+		// has that node and only the registration kind's fields are new to it.
 		adds := "the mailbox, the device binding and the coordinator's read grant"
 		switch {
+		case gen >= rulesVoiceGeneration:
+			adds = "the registration kind's fields on a mailbox message"
 		case gen >= rulesCoordinatorGeneration:
 			adds = "the voice policy node"
 		case gen >= rulesDeviceGeneration:
