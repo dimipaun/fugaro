@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+# See ee/LICENSE for the terms.
+#
+# The Cloud Build of the portal's two images (portal plan P1.7): the API and the
+# minter, each from its own Dockerfile under ee/keyservice/cmd, pushed to the
+# project's own Artifact Registry repository. P9.2's deploy runs this and then
+# deploys both revisions from what it pushed; nothing else builds them.
+#
+# **Owner-run, always.** An agent never runs this and never deploys the service
+# (.claude/rules/ee.md R5 as amended by D440): the run that writes this file
+# cannot reach a build account, and the account that runs it holds the
+# repository's writer role and nothing that can sign.
+#
+# The context is the repository root, because each Dockerfile copies go.mod,
+# ee/, internal/ and images/ from it — the two programs reach most of the
+# repository through the coordinator's packages — and the file is named with -f
+# rather than by a directory build. Both builds are one Cloud Build so the two
+# images a release deploys are the two this build pushed, and the `images:` list
+# at the end is what pushes and what a deploy reads the digests from.
+#
+# Substitutions: _REGION and _REPOSITORY name the registry the installation
+# created (P0.2, `fugaro setup` writes them); the tags are the commit's own
+# short sha and `latest`, so a deploy can pin either.
+substitutions:
+  _REGION: europe-west1
+  _REPOSITORY: fugaro
+options:
+  logging: CLOUD_LOGGING_ONLY
+images:
+  - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/fugaro-portal-api:latest"
+  - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/fugaro-key-minter:latest"
+steps:
+  - id: portal-api
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --file
+      - ee/keyservice/cmd/portal-api/Dockerfile
+      - --tag
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/fugaro-portal-api:latest"
+      - --tag
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/fugaro-portal-api:$SHORT_SHA"
+      - .
+  - id: minter
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --file
+      - ee/keyservice/cmd/minter/Dockerfile
+      - --tag
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/fugaro-key-minter:latest"
+      - --tag
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/fugaro-key-minter:$SHORT_SHA"
+      - .

@@ -16,9 +16,10 @@
 // reads is LoadMinterConfig's three variables, and that loader refuses every
 // other FUGARO_ variable: a deployment that reused the API's environment here
 // would not start, so the signer cannot be handed a customer's secrets by a
-// mistake in a deploy script. TestMinterBinaryHoldsNoMailOrMerchantSecret reads
-// this file as text for the same reason — the other half of the boundary is that
-// this program never names the fields that hold them.
+// mistake in a deploy script. The boundary case in config_test.go reads this
+// file as text for the same reason — the other half of the boundary is that this
+// program never names the fields that hold them, and this file has to stay
+// readable by that case.
 //
 // **The public invoker is the platform's business.** This service is deployed
 // with no `allUsers` invoker and with the API's account as the only principal
