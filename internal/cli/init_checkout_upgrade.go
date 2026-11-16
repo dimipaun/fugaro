@@ -491,6 +491,7 @@ func (e *initEngine) stepCtx(env initflow.Env, loc pluginwire.Location) *stepCtx
 		cmd: e.r.cmd,
 		w:   e.r.w,
 		o: stepOptions{yes: env.Yes, refresh: refreshOptions{
+			door:        o.doorName(),
 			imageSource: o.imageSource, expectDigests: o.expectDigests, cloud: o.cloud,
 			// The refresh's own run prints and asks where its command says
 			// (newInitRun), and this stage runs inside the converge's step:

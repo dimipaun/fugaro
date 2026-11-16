@@ -117,6 +117,20 @@ type LevelInputs struct {
 	// no list, which allows every model; an empty non-nil list allows none,
 	// exactly as policy.Effective.HasAllowList reads it.
 	AllowedModels []string
+	// CraftModels is the model each craft resolved to, by craft name
+	// (CraftCoder, CraftReview, CraftSeniorReview, CraftSecurityReview): the
+	// caller's own craft resolution, read through craft.ModelFor (MC11), with
+	// the inheritance already applied (the review craft follows the coder). It
+	// is rung 3 of the model half's contract (D1660), so it answers a level
+	// that writes no model of its own, above the role slot that level pins —
+	// and it is the value MC12 writes into the stage's slot, so a level
+	// resolved against it names the model the run really runs.
+	//
+	// A caller that resolved no crafts passes none, and every level then runs
+	// its own model, else the role slot it pins, exactly as it did before the
+	// crafts reached this resolver: an installation that sets no craft is
+	// unchanged (D1662).
+	CraftModels map[string]string
 }
 
 // ResolveLevels decides the three review levels of one run.
@@ -177,14 +191,22 @@ func withRecipeRoles(a Agent, r *recipe.Recipe) Agent {
 }
 
 // levelSpec is one level's three possible answers — the merged
-// configuration's block, the task's and the mode's row — plus the model the
-// level runs when no layer names one.
+// configuration's block, the task's and the mode's row — plus the craft and
+// the role slot its model comes from when no layer names one.
 type levelSpec struct {
 	name policy.Level
+	// craft is the craft the level's stages belong to (F13, D1663): the review
+	// craft for level 1, the senior review's for level 2's review and its
+	// triage, the security review's for level 3's adversarial pass. It is the
+	// contract's map read at the level rather than at the stage, because the
+	// resolver's question is which model the level runs.
+	craft string
+	// role is the slot the level's stage pins (StageRole): the coder's for
+	// level 1's first-line review, the reviewer's for the other two.
+	role Role
 	cfg  *LevelSetting
 	task *LevelSetting
 	row  rigor.LevelState
-	def  string
 }
 
 // resolver is one ResolveLevels call's state.
@@ -201,19 +223,18 @@ type resolver struct {
 
 func (r *resolver) run() {
 	cfg := r.in.Config.Agent.Levels
+	l1 := levelSpec{name: policy.LevelL1, craft: CraftReview, role: RoleCoder, cfg: cfg.L1, task: taskLevel(r.in.Task, policy.LevelL1), row: r.row.L1}
+	l2 := levelSpec{name: policy.LevelL2, craft: CraftSeniorReview, role: RoleReviewer, cfg: cfg.L2, task: taskLevel(r.in.Task, policy.LevelL2), row: r.row.L2}
+	l3 := levelSpec{name: policy.LevelL3, craft: CraftSecurityReview, role: RoleReviewer, cfg: cfg.L3, task: taskLevel(r.in.Task, policy.LevelL3), row: r.row.L3}
+	// Only level 1 has a fallback. A mode's row that leaves level 2 or level 3
+	// unset means the level does not run — rigor.defaultLevels places level 2
+	// in every mode and level 3 at critical alone — and agent.first_line_review
+	// is not their answer.
 	first := r.firstLineDefault()
-	for _, s := range []levelSpec{
-		{name: policy.LevelL1, cfg: cfg.L1, task: taskLevel(r.in.Task, policy.LevelL1), row: r.row.L1, def: r.agent.ModelFor(RoleCoder)},
-		{name: policy.LevelL2, cfg: cfg.L2, task: taskLevel(r.in.Task, policy.LevelL2), row: r.row.L2, def: r.agent.ModelFor(RoleReviewer)},
-		{name: policy.LevelL3, cfg: cfg.L3, task: taskLevel(r.in.Task, policy.LevelL3), row: r.row.L3, def: r.agent.ModelFor(RoleReviewer)},
-	} {
-		// Only level 1 has a fallback. A mode's row that leaves level 2 or
-		// level 3 unset means the level does not run — rigor.defaultLevels
-		// places level 2 in every mode and level 3 at critical alone — and
-		// agent.first_line_review is not their answer.
-		r.one(s, s.name == policy.LevelL1 && first)
-	}
-	r.guard()
+	r.one(l1, first)
+	r.one(l2, false)
+	r.one(l3, false)
+	r.guard(l1, l2)
 }
 
 // one resolves a single level.
@@ -224,7 +245,7 @@ func (r *resolver) one(s levelSpec, fallback bool) {
 		return
 	}
 	lv := ResolvedLevel{
-		Model:  firstSet(s.def, s.cfg, s.task, levelModel),
+		Model:  firstSet(r.levelDef(s), s.cfg, s.task, levelModel),
 		Effort: firstSet("", s.cfg, s.task, func(l *LevelSetting) string { return l.Effort }),
 		Focus:  firstSet("", s.cfg, s.task, func(l *LevelSetting) string { return l.Focus }),
 	}
@@ -332,6 +353,54 @@ func levelModel(l *LevelSetting) string {
 	return l.Model
 }
 
+// levelDef is the model a level runs when no layer of its own names one: its
+// craft's own resolved model where the caller gave one — rung 3 of the model
+// half's contract (D1660), the model MC12 writes into the level's slot and so
+// the model the level's stages really run — and the role slot it pins below
+// that (agent.models.<role>, else agent.model). The level's own
+// agent.levels.lN.model is rung 2 and firstSet reads it above this.
+func (r *resolver) levelDef(s levelSpec) string {
+	if m := r.in.CraftModels[s.craft]; m != "" {
+		return m
+	}
+	return r.agent.ModelFor(s.role)
+}
+
+// levelSource is the key the model a level will run comes from, in the terms a
+// reader edits. A model the craft resolved — the level wrote none and rung 3
+// answered (D1660, MC13) — comes from the craft's key, which is what the level
+// has to be given to change it; every other model comes from the level's own
+// key, which is the one a message about the level has always named and the one
+// that overrules the role slot and agent.model below it (rungs 4 and 5).
+func (r *resolver) levelSource(s levelSpec) string {
+	if firstSet("", s.cfg, s.task, levelModel) == "" {
+		if m := r.in.CraftModels[s.craft]; m != "" {
+			return "agent.crafts." + s.craft + ".model"
+		}
+	}
+	return string(s.name) + ".model"
+}
+
+// levelWords is levelSource and the model itself: how a warning names the model
+// a level will run, so that a reader sees both the ID they are asked to change
+// and the line it is written on.
+func (r *resolver) levelWords(s levelSpec, model string) string {
+	return r.levelSource(s) + " " + model
+}
+
+// coderModel is the model the coder will really run: its craft's where the
+// caller resolved one (rung 3), else the coder slot, else agent.model below it
+// (rungs 4 and 5). The coder warning of D721 is about the model that wrote the
+// change, so it is this one and not the slot alone (D1664); the task's grade
+// and a review level's own model do not reach it, because neither is the
+// coder's.
+func (r *resolver) coderModel() string {
+	if m := r.in.CraftModels[CraftCoder]; m != "" {
+		return m
+	}
+	return r.agent.ModelFor(RoleCoder)
+}
+
 // firstLineDefault is level 1's answer when no layer names it. Level 1 is not
 // the rigor mode's to set: the mode leaves it to agent.first_line_review
 // (config.Agent.FirstLineOn), except at POC, which turns level 2 off and so
@@ -383,10 +452,15 @@ func (r *resolver) check(s levelSpec, lv ResolvedLevel) {
 		return
 	}
 	if r.in.AllowedModels != nil && !slices.Contains(r.in.AllowedModels, lv.Model) {
+		// The model is judged whatever named it, so the refusal names the key
+		// that did: a model the level wrote is refused at lN.model, and one its
+		// craft resolved at the craft's key, which is the line to change
+		// (D1664, MC13).
+		key := r.levelSource(s)
 		if len(r.in.AllowedModels) == 0 {
-			r.errf("%s.model %s is refused: the run's allowed_models is empty, so no model is allowed", s.name, lv.Model)
+			r.errf("%s %s is refused: the run's allowed_models is empty, so no model is allowed", key, lv.Model)
 		} else {
-			r.errf("%s.model %s is not in the run's allowed_models (%s)", s.name, lv.Model, strings.Join(r.in.AllowedModels, ", "))
+			r.errf("%s %s is not in the run's allowed_models (%s)", key, lv.Model, strings.Join(r.in.AllowedModels, ", "))
 		}
 	}
 	if lv.Effort == "" {
@@ -406,19 +480,28 @@ func (r *resolver) check(s levelSpec, lv ResolvedLevel) {
 // work is what level 1 is, and paying it twice is the cost the levels exist
 // to avoid, so the two levels never launch on the same exact model ID.
 //
+// It reads the models the two levels will really run, not the models a layer
+// wrote on them (D1664, MC13): rung 3 of the model half's contract is a level's
+// model wherever the level names none, so two crafts that resolve to one ID are
+// refused exactly as two levels that name it, and the two warnings follow the
+// same resolved value. Every message names the key the model came from, because
+// the line a reader has to change is the one that wrote it — a craft's
+// agent.crafts.<craft>.model or the level's own lN.model — and that is not
+// always the level the model landed on.
+//
 // The comparison is by exact ID and only for a level that is on: "" is the
 // agent's own default rather than an ID the resolver can compare, and a level
 // that does not run reviews nothing. Two levels both left unset are an
 // installation naming no models at all, which is an ordinary configuration
 // rather than a mistake to refuse — the owner ruled on 2026-11-01 that it
 // warns — but they are one model all the same, and it is the coder's.
-func (r *resolver) guard() {
+func (r *resolver) guard(l1s, l2s levelSpec) {
 	l1, l2 := r.levels.L1, r.levels.L2
 	if !l2.On {
 		return
 	}
-	if coder := r.agent.ModelFor(RoleCoder); l2.Model != "" && l2.Model == coder {
-		r.warnf(policy.LevelL2, "l2.model %s is the coder's own model: a review by the model that wrote the change is the first-line review's job, not the senior one", l2.Model)
+	if coder := r.coderModel(); l2.Model != "" && l2.Model == coder {
+		r.warnf(policy.LevelL2, "%s is the coder's own model: a review by the model that wrote the change is the first-line review's job, not the senior one", r.levelWords(l2s, l2.Model))
 	}
 	if !l1.On {
 		return
@@ -431,11 +514,11 @@ func (r *resolver) guard() {
 		return
 	}
 	if l1.Model == l2.Model {
-		r.errf("l2.model and l1.model are both %s: review level 2 may not run the same model as level 1 (D721); name another model for l2, or turn one of the two levels off", l1.Model)
+		r.errf("%s and %s are both %s: review level 2 may not run the same model as level 1 (D721); name another model for l2, or turn one of the two levels off", r.levelSource(l2s), r.levelSource(l1s), l1.Model)
 		return
 	}
 	if fam := ModelFamily(l1.Model); fam != "" && fam == ModelFamily(l2.Model) {
-		r.warnf(policy.LevelL2, "l2.model %s and l1.model %s are both %s: a family reviews its own work best when level 2 is a different one", l2.Model, l1.Model, fam)
+		r.warnf(policy.LevelL2, "%s and %s are both %s: a family reviews its own work best when level 2 is a different one", r.levelWords(l2s, l2.Model), r.levelWords(l1s, l1.Model), fam)
 	}
 }
 

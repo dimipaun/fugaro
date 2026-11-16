@@ -281,7 +281,7 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
 
 ### Slice K6: the setup wizard
 
-- **K6.1 The wizard's key step.** Files: the setup wizard's step table (the owner's setup-wizard plan names
+- **K6.1 The wizard's key step. DROPPED 2026-11-16 (the owner's ruling):** the key is set only by the `fugaro licence` command and no setup-wizard step exists, because the no-prompt policy (`docs/no-prompt-policy/`) forbids a step that waits for a person to sign in or paste. Slice K6 is empty and K6.1's number is not reused; the text below is kept as the record. Files: the setup wizard's step table (the owner's setup-wizard plan names
   the file; this task adds one step and waits for that plan's key-step slot). Optional step: browser sign-in
   (default) or paste; on success calls `licence set`. Depends on: K3.3. Commit: `setup: an optional licence key step`.
   UNVERIFIED: the wizard task that owns the step table.
@@ -305,10 +305,10 @@ Edges are the "Depends on" lines.
 | 2 | K2.3, K2.5, K2.7 |
 | 3 | K2.4, K3.2, K7.3 |
 | 4 | K3.3, K3.5, K4.1 |
-| 5 | K3.6, K4.2, K6.1 |
+| 5 | K3.6, K4.2 (K6.1 dropped, 2026-11-16) |
 | held | K3.4 (the owner's enforcement go, TN1), after level 3 |
 
-**Critical path:** K1.1 → K2.1 → K2.3 → K2.4 → K3.3 → K6.1 (six levels; K2.3 → K3.2 → K3.5 → K3.6 is as long). The sequence K2.3 → K2.4 → K2.6 → K2.7 on
+**Critical path:** K1.1 → K2.1 → K2.3 → K2.4 → K3.3 (five levels, since K6.1 was dropped on 2026-11-16; K2.3 → K3.2 → K3.5 → K3.6 is as long). The sequence K2.3 → K2.4 → K2.6 → K2.7 on
 `ee/keyservice/service.go` is gone: the portal's P1.0 owns that file and mounts the `/api/` registry,
 so K2.3, K2.4 and K2.7 register their routes from `renew.go`, `signin.go` and `trial.go` and K2.7 moves
 to level 2 with its edge on K2.6 dropped (2026-11-13). K4.1 → K4.2 is sequential because the job's

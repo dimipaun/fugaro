@@ -1498,7 +1498,7 @@ func TestDocsCheck81GrantListNamesTheTemplatesOwnPredicates(t *testing.T) {
 		{134, `(TOKEN && auth.token.fs == $slug) || USER`},
 		{190, `"RUN || USER"`},
 		{61, `"RUN"`}, {220, `"RUN"`},
-		{306, `"MAILBOX"`}, {350, `"MAILBOX"`},
+		{324, `"MAILBOX"`}, {386, `"MAILBOX"`},
 		{53, `"PAIRING"`},
 		{11, `".read": "USER"`},
 	} {

@@ -1182,15 +1182,21 @@ func TestResultSchemaAcceptsTriage(t *testing.T) {
 		t.Fatalf("schema rejects a record whose triage blocks are nil: %v", err)
 	}
 	rec.Triage = runstore.NewTriage([]runstore.TriageRound{
-		{Round: 1, Mode: rigor.Startup, Level: policy.LevelL2, Account: "team-a", Model: "claude-opus-5-5",
+		{Ordinal: 1, Round: 1, Mode: rigor.Startup, Level: policy.LevelL2, Account: "team-a", Model: "claude-opus-5-5",
 			Entries: []runstore.TriageEntry{
 				{Index: 0, Key: "9f2a1c", Verdict: runstore.VerdictDefer, Reason: "doc drift, not the main path", Group: "docs", Source: runstore.TriageSourceAgent},
 				{Index: 1, Key: "3b7e05", Verdict: runstore.VerdictBlock, Reason: "the build breaks on the new import", Source: runstore.TriageSourceAgent},
 			}},
-		// A round whose call failed keeps its round, its mode and its level
-		// and carries no entries at all (D1846): the block is the run's log,
-		// so the failure is a fact in it rather than a round that vanished.
-		{Round: 2, Mode: rigor.Pro, Level: policy.LevelL3, Failed: true, Entries: []runstore.TriageEntry{}},
+		// A round whose call failed keeps its round, its mode and its level,
+		// carries no entries at all and says why the call bought no verdict
+		// (D1846): the block is the run's log, so the failure is a fact in it
+		// rather than a round that vanished, and the cause is the one line a
+		// reader tells an expired credential from an answer that was refused
+		// by. It is marshalled from the record and not written out here, so a
+		// `cause` the schema does not carry is an unknown key this test
+		// rejects.
+		{Ordinal: 2, Round: 2, Mode: rigor.Pro, Level: policy.LevelL3, Failed: true, Cause: "Invalid API key · Fix external API key",
+			Entries: []runstore.TriageEntry{}},
 	})
 	rec.Deferred = runstore.NewDeferred([]runstore.DeferredFinding{
 		{Key: "9f2a1c", Summary: "a long comment restates the function", Reason: "doc drift, not the main path", Group: "docs", Source: runstore.TriageSourceAgent},
@@ -1211,9 +1217,13 @@ func TestResultSchemaAcceptsTriage(t *testing.T) {
 		{"a round the run never numbered", `,"triage":{"rounds":[{"round":0,"mode":"pro","level":"l2","total":0,"entries":[]}]}`},
 		{"a mode outside the vocabulary", `,"triage":{"rounds":[{"round":1,"mode":"paranoid","level":"l2","total":0,"entries":[]}]}`},
 		{"a level outside the vocabulary", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l4","total":0,"entries":[]}]}`},
+		{"an ordinal the run never counted", `,"triage":{"rounds":[{"ordinal":0,"round":1,"mode":"pro","level":"l2","total":0,"entries":[]}]}`},
+		{"an ordinal that is not a number", `,"triage":{"rounds":[{"ordinal":"1","round":1,"mode":"pro","level":"l2","total":0,"entries":[]}]}`},
 		{"a round with no entries list", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":0}]}`},
 		{"a round with no total", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","entries":[]}]}`},
 		{"a failed that is not a boolean", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","failed":"yes","total":0,"entries":[]}]}`},
+		{"an empty cause", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","failed":true,"cause":"","total":0,"entries":[]}]}`},
+		{"a cause longer than the bound", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","failed":true,"cause":"` + strings.Repeat("x", runstore.MaxTriageLine+1) + `","total":0,"entries":[]}]}`},
 		{"a member the round does not carry", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","verdict":"defer","total":0,"entries":[]}]}`},
 		{"more rounds than the bound", `,"triage":{"rounds":[` + strings.TrimSuffix(strings.Repeat(`{"round":1,"mode":"pro","level":"l2","total":0,"entries":[]},`, runstore.MaxTriageRounds+1), ",") + `]}`},
 		{"an entry with no key", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":1,"entries":[{"index":0,"verdict":"defer","reason":"why","source":"agent"}]}]}`},
@@ -1244,7 +1254,7 @@ func TestResultSchemaAcceptsTriage(t *testing.T) {
 	}
 	// The positive control: the same literal shape the refusals are built from
 	// is accepted when every member is one the block may carry.
-	good := head + `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","account":"team-a","model":"claude-opus-5-5","total":1,"entries":[{"index":0,"key":"9f2a1c","verdict":"defer","reason":"doc drift","group":"docs","source":"agent"}]}]}` +
+	good := head + `,"triage":{"rounds":[{"ordinal":1,"round":1,"mode":"pro","level":"l2","account":"team-a","model":"claude-opus-5-5","total":1,"entries":[{"index":0,"key":"9f2a1c","verdict":"defer","reason":"doc drift","group":"docs","source":"agent"}]}]}` +
 		`,"deferred":{"findings":[{"key":"9f2a1c","summary":"a long comment","reason":"doc drift","group":"docs","source":"agent"}],"total":1}}`
 	if err := validateLit(good); err != nil {
 		t.Fatalf("schema rejects a well-formed triage block: %v\n%s", err, good)
@@ -1805,6 +1815,69 @@ func TestResultSchemaStageCredential(t *testing.T) {
 		{"a credential nobody defined", head + `,"credential":"api-key"}`},
 		{"an empty credential", head + `,"credential":""}`},
 		{"a non-string credential", head + `,"credential":5}`},
+	} {
+		if err := validate(tc.stage); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, tc.stage)
+		}
+	}
+}
+
+// TestResultSchemaStageRound pins the schema half of the round a per-round
+// stage's attempt served, of the level that round belongs to and of the
+// triage round's own ordinal (docs/triage.md, D1846, D1847, D727): every
+// member is optional — every stage but the triage judge's, and every record
+// written before they existed, carries none of them — and where they are there
+// they are values the triage block's own `round`, `level` and `ordinal` could
+// carry, so the report can pair a row with its round's failure by a key
+// instead of by position. The ordinal is the key: the round and the level
+// beside it are a description, because both halves repeat — two levels of one
+// run both number a round 1, and a bounce numbers a level's rounds from 1
+// again.
+func TestResultSchemaStageRound(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	validate := func(stage string) error {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(
+			`{"version":1,"run_id":"20261116-100000-abcd","status":"running","stage":"review",` +
+				`"outcome":"none","cost_usd":0,"started_at":"2026-11-16T10:00:00Z","stages":[` + stage + `]}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	const head = `{"name":"triage","started_at":"2026-11-16T10:00:00Z","duration_s":1`
+	for _, tc := range []struct {
+		name  string
+		stage string
+	}{
+		{"the round the judge weighed", head + `,"round":2}`},
+		{"the first round", head + `,"round":1}`},
+		{"no round at all", head + `}`},
+		{"the pair of a level 2 round 1", head + `,"round":1,"level":"l2"}`},
+		{"the pair of a level 1 round 1", head + `,"round":1,"level":"l1"}`},
+		{"the level alone", head + `,"level":"l3"}`},
+		{"the ordinal of a row", head + `,"ordinal":3}`},
+		{"the ordinal with the round and level it describes", head + `,"ordinal":3,"round":1,"level":"l1"}`},
+	} {
+		if err := validate(tc.stage); err != nil {
+			t.Errorf("schema rejects a stage with %s: %v", tc.name, err)
+		}
+	}
+	for _, tc := range []struct {
+		name  string
+		stage string
+	}{
+		{"round zero", head + `,"round":0}`},
+		{"a negative round", head + `,"round":-1}`},
+		{"a fractional round", head + `,"round":1.5}`},
+		{"a round as a string", head + `,"round":"2"}`},
+		{"a level nobody defined", head + `,"round":1,"level":"l4"}`},
+		{"a level in another spelling", head + `,"round":1,"level":"level 2"}`},
+		{"a level as a number", head + `,"round":1,"level":2}`},
+		{"an empty level", head + `,"round":1,"level":""}`},
+		{"ordinal zero", head + `,"ordinal":0}`},
+		{"a negative ordinal", head + `,"ordinal":-1}`},
+		{"a fractional ordinal", head + `,"ordinal":1.5}`},
+		{"an ordinal as a string", head + `,"ordinal":"2"}`},
 	} {
 		if err := validate(tc.stage); err == nil {
 			t.Errorf("schema accepts %s: %s", tc.name, tc.stage)
@@ -3668,6 +3741,77 @@ func TestTaskSchemaRefusesReservedAccountName(t *testing.T) {
 //
 // Mutation (rename the property to `compressionOff` in schemas/task.schema.json):
 // the document carrying the field is rejected as an unknown key and this fails.
+// TestTaskSchemaContextReposMatchesTheGoRule ties the task schema's
+// `context_repos` property to the Go rules it mirrors (task.MaxContextRepos
+// and task.ContextReposProblem): the bounds are separate copies, so without
+// this a change to either would drift from the published schema with only the
+// corpus fixtures noticing — and a task.json the launcher writes is exactly
+// what this schema is for. The two are compared on instances rather than on
+// the pattern's text: the rule is task.CanonicalRepo's, which the pattern
+// cannot carry whole (a "." or ".." element is outside it, as the property's
+// own description says), so what must agree is which lists each side lets
+// through.
+//
+// There is no row for an empty list, and there cannot be one: Spec.ContextRepos
+// is omitempty, so the writer this test marshals with drops the key and both
+// sides see no context_repos at all. A hand-written `"context_repos": []` is
+// refused by the schema's minItems and by Spec.Validate alike, and that half is
+// pinned where the Go rule lives (internal/task's TestValidateContextRepos).
+func TestTaskSchemaContextReposMatchesTheGoRule(t *testing.T) {
+	data, err := os.ReadFile("task.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]struct {
+			MinItems    int  `json:"minItems"`
+			MaxItems    int  `json:"maxItems"`
+			UniqueItems bool `json:"uniqueItems"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	p, ok := doc.Properties["context_repos"]
+	if !ok {
+		t.Fatal("task.schema.json has no context_repos property: a launch with --context writes a task.json this schema refuses (additionalProperties: false)")
+	}
+	if p.MaxItems != task.MaxContextRepos || p.MinItems != 1 || !p.UniqueItems {
+		t.Errorf("context_repos carries minItems %d, maxItems %d, uniqueItems %v; want 1, task.MaxContextRepos (%d) and true",
+			p.MinItems, p.MaxItems, p.UniqueItems, task.MaxContextRepos)
+	}
+	sch := compile(t, "task.schema.json")
+	for _, tc := range []struct {
+		name  string
+		repos []string
+	}{
+		{"one", []string{"acme/lib"}},
+		{"five", []string{"acme/1", "acme/2", "acme/3", "acme/4", "acme/5"}},
+		{"six", []string{"acme/1", "acme/2", "acme/3", "acme/4", "acme/5", "acme/6"}},
+		{"the same repository twice", []string{"acme/lib", "acme/lib"}},
+		{"not a repository", []string{"acme"}},
+		{"a trailing slash", []string{"acme/"}},
+		{"a .git suffix", []string{"acme/lib.git"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := task.Spec{Version: 1, RunID: "20261116-093000-abcd", Repo: "acme/app", Ref: "main", Task: "x", ContextRepos: tc.repos}
+			body, err := json.Marshal(spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			schemaErr := sch.Validate(inst)
+			goErr := spec.Validate()
+			if (schemaErr == nil) != (goErr == nil) {
+				t.Errorf("schema and task.Validate disagree about %v:\n schema: %v\n go:     %v", tc.repos, schemaErr, goErr)
+			}
+		})
+	}
+}
+
 func TestTaskSchemaCompressionOffMatchesTheGoField(t *testing.T) {
 	sch := compile(t, "task.schema.json")
 	validate := func(s task.Spec) error {

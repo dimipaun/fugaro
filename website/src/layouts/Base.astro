@@ -168,10 +168,11 @@ const fonts = site.fonts
 // The sections of the site, in two groups (P3's menu, D182, **with the Reference group dropped
 // by the owner's feedback of 2026-10-21**: "let's drop the top reference menu. We'll move the
 // submenu console under product, and the rest go under Project"). The routes are the ones the
-// plan's page list fixes (how-it-works, why-gcp, getting-started, caps-and-costs, console,
-// mobile, docs, compatibility, security, changelog, faq, community) and each label is the route's
-// own words rather than a copy of a page's title — a nav that restated the pages would be a
-// second copy of them to keep in step. The groups' split is the feedback's, not a symmetry:
+// plan's page list fixes (how-it-works, features, why-gcp, getting-started, caps-and-costs,
+// console, mobile, docs, compatibility, security, changelog, faq, community) and each label is
+// the route's own words rather than a copy of a page's title — a nav that restated the pages
+// would be a second copy of them to keep in step. The groups' split is the feedback's, not a
+// symmetry:
 // *Product* carries the pages about running the thing the visitor came for (how it works,
 // how to start, what it costs, the console and the phone app), and *Project*
 // the ones about the project itself, Docs, Compatibility and Changelog included. **Why GCP is a *Project*
@@ -195,6 +196,17 @@ const fonts = site.fonts
 // with. The label is the page's own title and the URL is the page's own route, so the menu
 // holds no second name for either.
 //
+// **Features is the first item of *Product*, and it stands directly after "How it works"** (the
+// feature matrix, `docs/feature-matrix/implementation-plan.md` Task T4b). The owner's answer
+// **D2442** in that folder's reconciliation decides where the page lives — `/features/` on this
+// site, in the Product menu after "How it works" — and the answer of **2026-11-15** ("as
+// recommended") is the owner's approval of the entry, which is the approval `.claude/rules/website.md`
+// asks for before a nav label or URL moves. It is a *Product* item because the page is the matrix
+// of what the product does today: the group about running the thing, not the group about the
+// project. The label is the page's own title and the URL is the page's own route, so the menu
+// holds no second name for either — `website/test/base-styles.mjs` carries the same date and the
+// same answer, so the two files that hold the nav agree about who approved it and when.
+//
 // **Home is not one of them, and it is in the menu all the same** (the owner's feedback of
 // 2026-10-21: "I think we need a 'Home' as the first menu"). D182 took Home out of the menu
 // and left the wordmark as the one link to `/`; the feedback puts it back, as the item in
@@ -208,6 +220,7 @@ const NAV_GROUPS = [
     label: 'Product',
     items: [
       { href: '/how-it-works/', label: 'How it works' },
+      { href: '/features/', label: 'Features' },
       { href: '/getting-started/', label: 'Getting started' },
       { href: '/caps-and-costs/', label: 'Caps and costs' },
       { href: '/console/', label: 'Console' },

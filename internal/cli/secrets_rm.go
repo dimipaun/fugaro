@@ -153,6 +153,22 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 	if _, workflow := lc.WorkflowSecrets[name]; workflow {
 		block = secretsBlockWorkflow
 	} else if _, reserved := config.ReservedSecrets[name]; !reserved {
+		// A repository-level secret is D2313's case, and this is its answer:
+		// the feature is disabled for now, so there is no entry of it to remove
+		// and the command changes nothing (exit 0), in the shape the repository's
+		// own image is answered with (`fugaro image`, image.go). It is answered
+		// here, where the command already knows the name belongs to no block,
+		// and before the container lookup below: nothing is read and nothing is
+		// deleted for a value this installation no longer mounts.
+		//
+		// The names that are not this case keep the refusal below, which is
+		// why it is asked first: a provider's key, a provider's conventional
+		// name and a Claude account's token share this block's derived ID and
+		// belong to another block that this command does not remove, and a
+		// name no block holds at all is a typo rather than a disabled feature.
+		if config.RepoSecretsOff && config.RepoLevelSecret(name) && !platformSecretName(lc, name) {
+			return repoSecretsDisabled(cmd.OutOrStdout())
+		}
 		// project_secrets holds only the reserved names. Any other name sharing
 		// the derived ID and labels (a provider's key, a named Claude account's
 		// token, a workflow secret this config does not list) belongs to another

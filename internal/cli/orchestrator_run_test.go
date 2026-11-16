@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"go/parser"
 	"go/token"
 	"os"
@@ -15,8 +16,10 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 // The daemon: its start-up, its loop and the boundary it holds (O8).
@@ -161,9 +164,7 @@ const prevReleaseState = `{"schema_version":0,"rev":3,"agent_id":"aurora","role"
 func TestRunReportsUpdateDueAndDoesNothingElse(t *testing.T) {
 	f := newDaemonFixture(t)
 	d, out := f.daemon(t, "")
-	raw := `{"schema_version":3,"rev":9,"agent_id":"aurora","role":"orchestrator",
-		"goal":"from a newer release","work_items":[],"decisions":[],"facts":{},"archived":[],"intents":[]}`
-	f.setState(t, raw)
+	f.setState(t, newerReleaseState())
 	before := f.db.Value(f.statePath(t))
 
 	ctx := f.ctx
@@ -351,10 +352,17 @@ func TestOrchestratorRunIsRegistered(t *testing.T) {
 	}
 }
 
-// newerReleaseState is a state node a newer release wrote: this binary reads
-// schema_version 2 and stops over it (G8).
-const newerReleaseState = `{"schema_version":3,"rev":9,"agent_id":"aurora","role":"orchestrator",
-	"goal":"from a newer release","work_items":[],"decisions":[],"facts":{},"archived":[],"intents":[]}`
+// newerReleaseState is a state node a newer release wrote: one schema_version
+// above this release's, which this binary stops over rather than migrating
+// (G8). It is built from the constant and not written out, so a release that
+// raises SchemaVersion cannot leave this test handing the daemon a version the
+// daemon reads — the node would migrate, and the test would pass while
+// measuring nothing.
+func newerReleaseState() string {
+	return fmt.Sprintf(`{"schema_version":%d,"rev":9,"agent_id":"aurora","role":"orchestrator",
+		"goal":"from a newer release","work_items":[],"decisions":[],"facts":{},"archived":[],"intents":[]}`,
+		orchestrator.SchemaVersion+1)
+}
 
 // TestWaitHonoursTheInterval: the wait is the interval's, not the stream's.
 // Every connection opens with a full put of the node as it stands, which is a
@@ -562,7 +570,7 @@ func TestRunHoldsWhileAnUpdateIsDue(t *testing.T) {
 	f := newDaemonFixture(t)
 	binary := stubBinary(t, t.TempDir(), "fugaro", "echo v9.9.9")
 	d, out := f.daemon(t, binary)
-	f.setState(t, newerReleaseState)
+	f.setState(t, newerReleaseState())
 	waits := 0
 	d.wake = func(context.Context) error {
 		waits++
@@ -622,7 +630,7 @@ func TestDaemonRearmsTheBreakerWhenTheAnswerLands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !orchestrator.BreakerOpen(s) {
+	if !orchestrator.BreakerOpen(s, f.serverNow(t)) {
 		t.Fatal("the trip left no unanswered question on the node, so there is nothing for a person to answer")
 	}
 
@@ -666,7 +674,7 @@ func answerBreakerQuestion(t *testing.T, f *daemonFixture, s orchestrator.State,
 	f.setState(t, string(raw))
 	if after, _, err := d.node.Load(context.Background()); err != nil {
 		t.Fatal(err)
-	} else if orchestrator.BreakerOpen(after) {
+	} else if orchestrator.BreakerOpen(after, f.serverNow(t)) {
 		t.Fatal("the answer did not close the question, so the re-arm below would prove nothing")
 	}
 }
@@ -940,5 +948,74 @@ func TestDaemonGivesTheLeaseBackWhenItsBeatFails(t *testing.T) {
 	again, err := d.lease.Acquire(ctx)
 	if err != nil || !again.Held {
 		t.Fatalf("the restart the unit makes could not take the id: %+v, %v", again, err)
+	}
+}
+
+// TestRunViewCarriesTheWorkspaceRefusal pins the one thing the CLI owns in
+// O19's chain: the reader hands the run's own record to the fold whole. The
+// marker the workspace's credentials service wrote and the halt the member's
+// gateway recorded are two separate facts a reader fills from two separate
+// places, and nothing is decided here — a reader that judged the record would
+// be the second place the rule lives, and the rule is ee/orchestrator's
+// (WorkspaceRefused).
+//
+// A run no workspace refused carries neither: the field is absent from the
+// record, and what the reader answers for it is the zero Halt, which is the
+// report every other reader in this release already produced.
+func TestRunViewCarriesTheWorkspaceRefusal(t *testing.T) {
+	f, d, cs := crashDaemon(t, true, false)
+	ctx := context.Background()
+	reason, scope, detail := gateway.WorkspaceRefusalHalt()
+
+	rec := &runstore.Record{
+		Version: 1, RunID: cs.runID, Execution: "exec-1", Status: runstore.StatusHalted,
+		Stage: "run", Outcome: runstore.OutcomeNone, StartedAt: f.now,
+		Halt: &runstore.Halt{
+			Reason: runstore.HaltReason(reason), Scope: scope, Detail: detail,
+			WorkspaceRefusal: gateway.WorkspaceRefusalStop, At: f.now,
+		},
+	}
+	if err := f.runStore(t, cs.runID).WriteRecord(ctx, rec); err != nil {
+		t.Fatalf("writing the record a workspace refused: %v", err)
+	}
+
+	reports, err := d.tick.Runs.Runs(ctx, []string{cs.runID})
+	if err != nil {
+		t.Fatalf("the reader over a run a workspace refused: %v", err)
+	}
+	if len(reports) != 1 {
+		t.Fatalf("the reader answered %d report(s) for one run id", len(reports))
+	}
+	rep := reports[0]
+	if rep.WorkspaceRefusal != gateway.WorkspaceRefusalStop {
+		t.Errorf("the report carries the marker %q, want the one the record holds (%q)", rep.WorkspaceRefusal, gateway.WorkspaceRefusalStop)
+	}
+	if rep.Halt != (orchestrator.Halt{Reason: reason, Scope: scope, Detail: detail}) {
+		t.Errorf("the report carries the halt %+v, want the record's own: the rule holds the marker against it and decides nothing here", rep.Halt)
+	}
+	if !rep.Finished || rep.Outcome != orchestrator.OutcomeRefused {
+		t.Errorf("the report is finished=%v outcome=%q, want the refusal a halted record means (G4)", rep.Finished, rep.Outcome)
+	}
+
+	// A run that ended with no halt at all — the ordinary failure — carries no
+	// marker and no halt, and one that carries a marker this release does not
+	// know is handed on as it stands: the reader reports the record, and
+	// whether a value is one of the workspace's is the rule's to answer.
+	plain := &runstore.Record{
+		Version: 1, RunID: cs.runID, Execution: "exec-1", Status: runstore.StatusFailed,
+		Stage: "run", Outcome: runstore.OutcomeNone, StartedAt: f.now,
+	}
+	if err := f.runStore(t, cs.runID).WriteRecord(ctx, plain); err != nil {
+		t.Fatalf("writing an ordinary record: %v", err)
+	}
+	reports, err = d.tick.Runs.Runs(ctx, []string{cs.runID})
+	if err != nil {
+		t.Fatalf("the reader over an ordinary run: %v", err)
+	}
+	if len(reports) != 1 {
+		t.Fatalf("the reader answered %d report(s) for one ordinary run id", len(reports))
+	}
+	if reports[0].WorkspaceRefusal != "" || reports[0].Halt != (orchestrator.Halt{}) {
+		t.Errorf("an ordinary run's report is %+v, want no marker and no halt", reports[0])
 	}
 }

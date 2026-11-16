@@ -1,6 +1,6 @@
 # Licence key v2
 
-**Status as of 2026-11-11: plan only; nothing is implemented; no task approved.**
+**Status as of 2026-11-11: plan only; nothing is implemented; no task approved.** *Rulings since: all K* tasks approved 2026-11-13; **2026-11-16: K6.1 (the setup wizard's key step) is dropped, the key is set only by the `fugaro licence` command, with no wizard step, because of the no-prompt policy.***
 
 The owner's licence key spec, reconciled against the code. It replaces the key design of
 [docs/licensing/licence-key.md](../licensing/licence-key.md) (licensing L3.1, subscriptions S2.1) and

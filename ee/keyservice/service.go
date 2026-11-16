@@ -152,6 +152,17 @@ type Config struct {
 	// deploy's secret and it stays here: a transaction the browser could create
 	// is one whose custom_data is the buyer's to forge (F15).
 	PaddleAPIKey []byte
+	// PaddlePriceID is the price the portal's checkout sells (P4.1, D442,
+	// P0.2's one price per row). It is the deploy's and not the code's for two
+	// reasons: the price is a row of the seller's own account, so staging's
+	// sandbox price and production's live one are different ids for one product;
+	// and a price the SPA named would be a price a page chooses (F15).
+	//
+	// It is one price and not a map of the table's rows, because the checkout's
+	// wire shape (P1.1) names a workspace and no row: this deployment sells the
+	// Team month from the portal, and a second row sold there is a field that
+	// shape would have to gain first.
+	PaddlePriceID string
 	// ResendKey is the mail provider's key (P0.2), which is what the API's own
 	// mail path sends with (P2.2).
 	ResendKey []byte
@@ -287,9 +298,10 @@ type Service struct {
 	// two sign-ups in flight together would each read a count that does not hold
 	// the other's membership yet — the limit passed by racing it. The count
 	// belongs inside the sign-up's own transaction, and this is where it is not:
-	// api.go's Tx reads and writes by id and holds no query. It is this
-	// process's, like pageMu and for the same reason — what a second process
-	// does is the store's to hold, and when the store can count inside a
+	// a count is a query, and a query inside that transaction would make every
+	// other sign-up of the day a conflict with it (orgs.go's recordReader). It
+	// is this process's, like pageMu and for the same reason — what a second
+	// process does is the store's to hold, and when the store can count inside a
 	// transaction the lock is what goes.
 	signUpMu sync.Mutex
 	// renewMu is one renewal at a time in this process. A renewal reads the key's

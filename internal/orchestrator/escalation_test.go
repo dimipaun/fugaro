@@ -298,19 +298,20 @@ func TestValidateEscalationBounds(t *testing.T) {
 	}
 }
 
-// TestStateV1MigratesToV2 is the raise the ladder's ledger needed: this
-// release writes schema version 2, a node written by the release before it —
-// version 1, and the version 0 node before the schema carried a version at
+// TestStateV1MigratesToV2 is the raise the ladder's ledger needed: the release
+// that added it wrote schema version 2, a node written by the release before it
+// — version 1, and the version 0 node before the schema carried a version at
 // all — is raised by Migrate, and the raise is the whole of it. It is what
 // makes `fugaro update` the whole upgrade: the daemon runs Migrate on its own
 // state at start-up (internal/cli), so a person runs one command and nothing
-// else.
+// else. A later release's own step sits above these in the same chain, and what
+// this test holds is that the steps below the current version still run.
 //
 // Mutation: leave Migrate at 0 -> 1 and a version 1 node is refused as a
 // version this release does not read.
 func TestStateV1MigratesToV2(t *testing.T) {
-	if orchestrator.SchemaVersion != 2 {
-		t.Fatalf("this release writes schema version %d, want the 2 the ladder's ledger was added in", orchestrator.SchemaVersion)
+	if orchestrator.SchemaVersion < 2 {
+		t.Fatalf("this release writes schema version %d, and the ladder's ledger was added in 2", orchestrator.SchemaVersion)
 	}
 	current, err := orchestrator.DecodeState(readFixture(t))
 	if err != nil {
@@ -325,8 +326,8 @@ func TestStateV1MigratesToV2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a node from the release before this one did not decode: %v", err)
 	}
-	if raised.SchemaVersion != 2 {
-		t.Fatalf("the node came back at schema version %d, want 2", raised.SchemaVersion)
+	if raised.SchemaVersion != orchestrator.SchemaVersion {
+		t.Fatalf("the node came back at schema version %d, want %d", raised.SchemaVersion, orchestrator.SchemaVersion)
 	}
 
 	// Nothing but the version moved: the ledger on the item is the one that was
@@ -351,13 +352,13 @@ func TestStateV1MigratesToV2(t *testing.T) {
 	// from the version before the schema carried a version: Migrate steps, and
 	// the daemon's start-up does not have to know which node it found.
 	direct, changed := orchestrator.Migrate(mustDecode(t, previous, false))
-	if !changed || direct.SchemaVersion != 2 {
+	if !changed || direct.SchemaVersion != orchestrator.SchemaVersion {
 		t.Fatalf("Migrate over a version 1 node: changed = %v, version = %d", changed, direct.SchemaVersion)
 	}
 	doc["schema_version"] = 0
 	oldest := remarshal(t, doc)
 	both, changed := orchestrator.Migrate(mustDecode(t, oldest, false))
-	if !changed || both.SchemaVersion != 2 {
+	if !changed || both.SchemaVersion != orchestrator.SchemaVersion {
 		t.Fatalf("Migrate over a version 0 node: changed = %v, version = %d", changed, both.SchemaVersion)
 	}
 	if _, err := orchestrator.DecodeState(oldest); err != nil {
