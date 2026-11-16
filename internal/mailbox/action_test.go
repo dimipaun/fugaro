@@ -140,7 +140,7 @@ func TestConfirmCodesAreTheModulesSet(t *testing.T) {
 // a restart is spent after it, so a record re-sent under a new message id -- or
 // the same one -- is refused by the second process too.
 func TestConfirmMemorySurvivesARestart(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "confirm.json")
+	path := filepath.Join(t.TempDir(), "pending.json")
 	now := int64(1_700_000_000_000)
 	first := openTestMemory(t, path, ConfirmMaxPrompts)
 
@@ -170,7 +170,7 @@ func TestConfirmMemorySurvivesARestart(t *testing.T) {
 // and a prompt still to be answered is kept however old it is -- dropping it
 // would lose the safe answer it is owed.
 func TestConfirmMemoryPrunesOnlyWhatTheWindowAllows(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "confirm.json")
+	path := filepath.Join(t.TempDir(), "pending.json")
 	start := int64(1_700_000_000_000)
 	retention := int64(ConfirmWindowMs)
 	m := openTestMemory(t, path, ConfirmMaxPrompts)
@@ -207,7 +207,7 @@ func TestConfirmMemoryPrunesOnlyWhatTheWindowAllows(t *testing.T) {
 // TestConfirmMemoryQueueFullAtTheBoundary: the cap is a cap, and the prompt that
 // would exceed it is refused with P6.5's own word.
 func TestConfirmMemoryQueueFullAtTheBoundary(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "confirm.json")
+	path := filepath.Join(t.TempDir(), "pending.json")
 	m := openTestMemory(t, path, 2)
 	now := int64(1_700_000_000_000)
 
@@ -235,7 +235,7 @@ func TestConfirmMemoryQueueFullAtTheBoundary(t *testing.T) {
 // the TTL, and a second pass over the same memory -- a restart, or the next
 // sweep -- hands back nothing.
 func TestConfirmMemoryExpiresAPromptExactlyOnce(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "confirm.json")
+	path := filepath.Join(t.TempDir(), "pending.json")
 	start := int64(1_700_000_000_000)
 	ttl := testPromptTtlMs
 	m := openTestMemory(t, path, ConfirmMaxPrompts)
@@ -266,7 +266,7 @@ func TestConfirmMemoryExpiresAPromptExactlyOnce(t *testing.T) {
 // TestConfirmMemoryStopsWhenThereIsNoSafeAnswer: a destructive prompt hands back
 // a stop rather than a destructive answer.
 func TestConfirmMemoryStopsWhenThereIsNoSafeAnswer(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "confirm.json")
+	path := filepath.Join(t.TempDir(), "pending.json")
 	start := int64(1_700_000_000_000)
 	ttl := testPromptTtlMs
 	m := openTestMemory(t, path, ConfirmMaxPrompts)
@@ -286,7 +286,7 @@ func TestConfirmMemoryStopsWhenThereIsNoSafeAnswer(t *testing.T) {
 // consumer to answer that pairing's prompts once and forget them, and to leave
 // every other pairing's alone.
 func TestConfirmMemoryDropsOnePairingsPrompts(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "confirm.json")
+	path := filepath.Join(t.TempDir(), "pending.json")
 	now := int64(1_700_000_000_000)
 	m := openTestMemory(t, path, ConfirmMaxPrompts)
 	for _, p := range []ConfirmPrompt{
@@ -325,13 +325,18 @@ func TestConfirmMemoryRefusesAFileItCannotTrust(t *testing.T) {
 	}{
 		{"not json", "{"},
 		{"an unknown field", `{"now":1700000000000,"spent":[],"prompts":[],"extra":1}`},
-		{"a spent id of an unknown kind", `{"now":1700000000000,"spent":[{"Kind":"prompt","ID":"x","At":1700000000000}],"prompts":[]}`},
-		{"a duplicate spent id", `{"now":1700000000000,"spent":[{"Kind":"action","ID":"x","At":1700000000000},{"Kind":"action","ID":"x","At":1700000000000}],"prompts":[]}`},
-		{"a prompt with no pairing", `{"now":1700000000000,"spent":[],"prompts":[{"prompt":"p","announcedAt":1700000000000}]}`},
+		{"a spent id of an unknown kind", `{"now":1700000000000,"spent":[{"kind":"prompt","id":"x","at":1700000000000}],"prompts":[]}`},
+		{"a duplicate spent id", `{"now":1700000000000,"spent":[{"kind":"action","id":"x","at":1700000000000},{"kind":"action","id":"x","at":1700000000000}],"prompts":[]}`},
+		{"a prompt with no pairing", `{"now":1700000000000,"spent":[],"prompts":[{"id":"p","at":1700000000000}]}`},
+		// The phone's own key names for its queue entry are not this file's: a
+		// record that re-used `prompt`/`announcedAt` is a shape this consumer
+		// does not read, and refusing it is what keeps the two from being taken
+		// for one another.
+		{"the queue entry's phone names", `{"now":1700000000000,"spent":[],"prompts":[{"prompt":"p","announcedAt":1700000000000,"mailbox":"m~a"}]}`},
 		{"a now that is not a time", `{"now":0,"spent":[],"prompts":[]}`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "confirm.json")
+			path := filepath.Join(t.TempDir(), "pending.json")
 			if err := os.WriteFile(path, []byte(c.body), 0o600); err != nil {
 				t.Fatalf("writing the fixture: %v", err)
 			}
@@ -347,7 +352,7 @@ func TestConfirmMemoryRefusesAFileItCannotTrust(t *testing.T) {
 // sweep interval, so a caller that has not is refused rather than given a
 // memory that forgets on a window nobody chose.
 func TestConfirmMemoryNeedsARetentionWindow(t *testing.T) {
-	if _, err := OpenConfirmMemory(ConfirmMemoryOptions{Path: filepath.Join(t.TempDir(), "confirm.json")}); err == nil {
+	if _, err := OpenConfirmMemory(ConfirmMemoryOptions{Path: filepath.Join(t.TempDir(), "pending.json")}); err == nil {
 		t.Fatal("a memory with no retention window was opened")
 	}
 }
@@ -372,6 +377,9 @@ func TestConfirmMemoryIsBesideTheLedger(t *testing.T) {
 	}
 	if filepath.Dir(ledger) != filepath.Dir(memory) {
 		t.Errorf("the ledger is at %s and the memory at %s, want one directory", ledger, memory)
+	}
+	if filepath.Base(memory) != "pending.json" {
+		t.Errorf("the memory is at %s, want the consumer's own state file beside the ledger", memory)
 	}
 	if _, err := confirmMemoryPath(getenv, "linux", "../escape"); err == nil {
 		t.Error("a project name that is a path step was accepted")

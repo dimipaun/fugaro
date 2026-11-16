@@ -327,9 +327,9 @@ type ConfirmPending struct {
 
 // ConfirmSpent is one id the machine's ledger remembers.
 type ConfirmSpent struct {
-	Kind string
-	ID   string
-	At   int64
+	Kind string `json:"kind"`
+	ID   string `json:"id"`
+	At   int64  `json:"at"`
 }
 
 // ConfirmState is the machine: the phase and the four knobs, the read-backs
@@ -1390,13 +1390,17 @@ func ConfirmValidateAction(a *Action, o ConfirmActionOptions) (*ConfirmRecord, *
 
 // ConfirmPrompt is one prompt the consumer is holding: its id, when it was
 // produced, the pairing it belongs to, whether it is destructive, and the
-// non-destructive answer to hand back when it expires. The first four fields are
-// `shared/prompts`' own entry (`{prompt, destructive, safe, announcedAt}`) under
-// its own names; `mailbox` and `done` are the consumer's, because a pairing can
+// non-destructive answer to hand back when it expires. It holds what
+// `shared/prompts`' own entry holds (`{prompt, destructive, safe, announcedAt}`)
+// — the same values, under **this file's own key names**, because the phone's
+// module keeps the whole prompt message in `prompt` and the instant the phone
+// spoke it in `announcedAt`, and a local record re-using those two names for its
+// id and its production time would be a different shape under the same spelling.
+// `mailbox` and `done` are the consumer's on top of that, because a pairing can
 // be revoked and an expiry happens exactly once.
 type ConfirmPrompt struct {
-	ID          string `json:"prompt"`
-	At          int64  `json:"announcedAt"`
+	ID          string `json:"id"`
+	At          int64  `json:"at"`
 	Mailbox     string `json:"mailbox"`
 	Destructive bool   `json:"destructive,omitempty"`
 	Safe        string `json:"safe,omitempty"`
@@ -1417,6 +1421,13 @@ type ConfirmExpiry struct {
 // ConfirmMemoryOptions configure the memory. Path defaults to
 // ConfirmMemoryPath(Project), and RetentionMs is required: the caller binds
 // D118's TTL plus one sweep interval rather than this file declaring one.
+//
+// **One file holds both halves**, the queue and the ids spent, and it is named
+// for what the plan names the consumer's own state beside the dedupe ledger
+// (`pending.json`, §6): the ids this memory spends are ids *inside* a message —
+// an action's, a confirmation's — so they are not entries of the delivery
+// ledger, which is keyed by message id and whose format is P4.1's; the two are
+// written by one atomic rename here rather than torn between two files.
 type ConfirmMemoryOptions struct {
 	Path        string
 	Project     string
@@ -1447,10 +1458,10 @@ const maxConfirmMemoryBytes = 4 << 20
 
 // confirmTmpPattern is the memory's temporary file, inside the destination
 // directory: a rename is atomic only within one filesystem.
-const confirmTmpPattern = ".confirm-*.tmp"
+const confirmTmpPattern = ".pending-*.tmp"
 
 // ConfirmMemoryPath is the memory's default location, beside the dedupe ledger:
-// `$XDG_STATE_HOME/fugaro/mailbox/<project>/confirm.json`.
+// `$XDG_STATE_HOME/fugaro/mailbox/<project>/pending.json`.
 func ConfirmMemoryPath(project string) (string, error) {
 	return confirmMemoryPath(os.Getenv, runtime.GOOS, project)
 }
@@ -1466,7 +1477,7 @@ func confirmMemoryPath(getenv func(string) string, goos, project string) (string
 	if err != nil {
 		return "", fmt.Errorf("mailbox: no state directory to keep the memory in: %w", err)
 	}
-	return filepath.Join(base, "fugaro", "mailbox", project, "confirm.json"), nil
+	return filepath.Join(base, "fugaro", "mailbox", project, "pending.json"), nil
 }
 
 // OpenConfirmMemory opens the memory at o.Path (or ConfirmMemoryPath(o.Project))
