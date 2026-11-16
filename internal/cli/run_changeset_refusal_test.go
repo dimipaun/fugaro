@@ -1,5 +1,3 @@
-//go:build !ee
-
 package cli
 
 import (
@@ -9,16 +7,18 @@ import (
 
 // TestChangeSetRefusedByUntaggedBuild: a change set is the Subscription
 // Edition's (D616) — the settle step and the ordering that flips a set's pull
-// requests ready are ee/ behaviour — so a build without the code refuses the
+// requests ready are ee/ behaviour — so a build without that code refuses the
 // flag the way it refuses a paid command, in D522's sentence, at the caller and
 // before any cloud call: no execution, no stored task, no token.
 //
-// The file is tagged because the sentence is a build's own answer, not a
-// runtime choice: a tagged binary reaches the same refusal by a different
-// sentence (changeSetRefusal, and it keeps the flag refused until the settle
-// step ships), and TestChangeSetRefusedUntilSettleExists judges both in
-// process. What only this file can judge is that the released, untagged build
-// answers the exact sentence a paid name gets.
+// The test carries no build tag, and needs none: this package links no ee/
+// (R6 — only cmd/fugaro/ee_on.go may, and only under `//go:build ee`), so
+// Edition() is core in every test binary of it, tagged or not, which is why
+// the refusal is a function of the edition it is handed (changeSetRefusal).
+// A `//go:build !ee` file is what the boundary rule refuses in core, so the
+// untagged build's answer is judged here rather than under a tag. What a
+// tagged CLI answers is the other sentence, and TestChangeSetRefusedUntilSettleExists
+// judges both in process.
 func TestChangeSetRefusedByUntaggedBuild(t *testing.T) {
 	f := changeSetFixture(t)
 	_, errOut, err := execute(t, "run", "--change-set", "--repo", "acme/app", "--repo", "acme/other", "Add a feature")
