@@ -43,6 +43,16 @@ const (
 	// All remotes count, not only origin's fetch URL: a token in a pushurl
 	// would also send the runner's pushes to a stale embedded credential.
 	GitCredentialRemoteURLKey = `^remote\..*\.(url|pushurl)$`
+	// GitConfigCredentialText matches a git config file's own text that
+	// carries a credential: a credential section, a helper, an
+	// http.extraheader, or a URL with userinfo. The constants above are
+	// `git config --get-regexp` patterns over a *key*, read lowercased, and
+	// cannot be applied to the file as it is written; this is the same thing
+	// a reader with no git to ask greps for. images/scan.sh's leak check and
+	// images/trivy-secret.yaml's fugaro-git-config-credential rule both carry
+	// it verbatim (a test pins that), so the two never disagree about what a
+	// credential in a config is.
+	GitConfigCredentialText = `\[credential|^[[:space:]]*helper[[:space:]]*=|extraheader|` + GitCredentialURL
 )
 
 // CloudBuild is images/derived/cloudbuild.yaml, which fugaro image build
@@ -56,3 +66,17 @@ var CloudBuild []byte
 //
 //go:embed base/tools.tsv
 var BaseTools string
+
+// ScanScript is images/scan.sh, the leak scan, and TrivySecretConfig is
+// images/trivy-secret.yaml, the rules and allowances it passes Trivy. The
+// catalog build runs the two of them (internal/backend/gcp's catalog-scan
+// step, B3), where the script cannot be read from a checkout: the CLI embeds
+// them, and the step writes both out and runs the script, so the build scans
+// its image with the same script CI does rather than with a second copy of
+// the checks.
+//
+//go:embed scan.sh
+var ScanScript []byte
+
+//go:embed trivy-secret.yaml
+var TrivySecretConfig []byte
