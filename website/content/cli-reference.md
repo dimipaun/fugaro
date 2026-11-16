@@ -178,7 +178,11 @@ installation on it.
 
 It writes claude_accounts.<name>.allow_data_to — the repositories the account's
 token may be used by, and the field every other rule is built on — and adds the
-name to one profile's claude_accounts, so the profile's jobs may serve it.
+name to one profile's claude_accounts, so the profile's jobs may serve it. A key
+credential (--type openrouter or anthropic) is added to no profile's list and
+gets no job of its own: that list is what serves an account's Claude OAuth
+token, and a key credential's value is stored under the credential's own derived
+secret name, which no job mounts yet.
 
 --repos defaults to this checkout's origin repository. A profile that lists
 accounts must write its own allow_repos, and every account it lists must cover
@@ -192,9 +196,11 @@ credentials block: the entry that lets a pool list the name as a member
 serves; openrouter and anthropic are the two key types, and a key is read the
 same way the token is — from stdin, or at the hidden prompt on your terminal —
 and stored project-wide under the credential's own derived secret name
-(credential-<name>-key) rather than the account's. vertex is built in and is
-never defined, and the two types the spec lists as future work are refused in
-words that say so. What carries a key credential's key to a model call is not
+(credential-<name>-key) rather than the account's, so --profile is refused with
+them: a profile's list is what deploys the job mounting the account's token, and
+that job would read a container nothing writes. vertex is built in and is never
+defined, and the two types the spec lists as future work are refused in words
+that say so. What carries a key credential's key to a model call is not
 installed by this command yet: the credential is declared and its key stored,
 and a run serves it once that half ships. Without the flag nothing but
 claude_accounts and the profile is written, which is what this command has
@@ -238,7 +244,7 @@ Flags:
 | `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this declaration would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed |
 | `--claude` | bool | `false` | no | run Anthropic's own claude setup-token login on this terminal first, then paste the token at the hidden prompt |
 | `-h`, `--help` | bool | `false` | no | help for add |
-| `--profile` | string | "" | no | the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one) |
+| `--profile` | string | "" | no | the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one); refused for a key credential, which is added to no profile's list |
 | `--repos` | string | "" | no | the repositories the token may be used by, as owner/name,owner/name (default: this checkout's origin) |
 | `--type` | string | "" | no | declare the name as a typed credential too, so a craft or a pool may spend it: claude-oauth (this command's OAuth token step), or a key type (openrouter or anthropic), whose value is read the same way and stored under the credential's own derived secret name (without it, the name is declared in claude_accounts alone, as it always was) |
 

@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -119,14 +120,90 @@ func TestAccountsAddOpenRouterKey(t *testing.T) {
 	if got := lc.ClaudeAccounts["team-a"].AllowDataTo; !slices.Equal(got, []string{"owner/repo-a"}) {
 		t.Errorf("claude_accounts.team-a.allow_data_to = %v, want the repository the value may reach: the account entry is what bounds the credential's reach", got)
 	}
-	if !slices.Contains(lc.Profiles["standard"].ClaudeAccounts, "team-a") {
-		t.Errorf("profiles.standard.claude_accounts = %v, want team-a: the profile is what serves the name", lc.Profiles["standard"].ClaudeAccounts)
+	// No profile lists the name, and no job of the account's own exists for it:
+	// profiles.<p>.claude_accounts is the list that serves a Claude account
+	// TOKEN, which is what deploys the job mounting it as CLAUDE_CODE_OAUTH_TOKEN
+	// — a container this credential's value is never stored in. Listing the name
+	// there deployed a job reading an empty token, published the name into the
+	// node's accounts block as a run's account, and handed doctor a fix line no
+	// run of it could clear.
+	if slices.Contains(lc.Profiles["standard"].ClaudeAccounts, "team-a") {
+		t.Errorf("profiles.standard.claude_accounts = %v, want no team-a: a key credential is not a run's Claude account token", lc.Profiles["standard"].ClaudeAccounts)
+	}
+	jobs := r.projectJobs(t)
+	if _, ok := jobs[gcp.ProjectJobName("standard", "github", "team-a")]; ok {
+		t.Errorf("the job set carries a job for the key credential: jobs = %v", slices.Sorted(maps.Keys(jobs)))
+	}
+	for jobName, j := range jobs {
+		for _, mounted := range j.SecretEnv {
+			if mounted == config.ClaudeAccountSecret("team-a") {
+				t.Errorf("job %s mounts %s, which nothing writes for a key credential: its value is %s", jobName, mounted, config.CredentialSecret("team-a"))
+			}
+		}
+	}
+	if !strings.Contains(out+errOut, "no job: a key credential rides no job of its own") {
+		t.Errorf("the command does not say that no job was deployed for it:\n%s\n%s", out, errOut)
+	}
+	// The confirmation and the block speak the key credential's words and not
+	// the account's (accountsAddWhat): the name is served by no profile, so
+	// "no profile serves it yet" would describe a state the command just left
+	// behind on purpose, and what a run beyond this checkout may reach is the
+	// key — a run cannot print a token nothing holds.
+	shown := out + errOut
+	for _, wrong := range []string{"no profile serves it yet", "print team-a's token", "fugaro run --token"} {
+		if strings.Contains(shown, wrong) {
+			t.Errorf("the command's answer uses the account's word %q for a key credential:\n%s", wrong, shown)
+		}
+	}
+	if !strings.Contains(shown, "can have that run use team-a's key") {
+		t.Errorf("the command does not say what the reach beyond this checkout means for a key:\n%s", shown)
 	}
 	if read := readFileString(t, r.cfg); strings.Contains(read, addToken()) {
 		t.Errorf("the local config carries the value:\n%s", read)
 	}
-	if shown := out + errOut; strings.Contains(shown, addToken()) {
+	if strings.Contains(shown, addToken()) {
 		t.Errorf("the command printed the value:\n%s", shown)
+	}
+}
+
+// TestAKeyCredentialTakesNoProfile is the flag half of leaving the name out of
+// profiles.<p>.claude_accounts: the list that would carry it is the one a run's
+// Claude account TOKEN is served by, so `--profile` is refused for a key
+// credential before anything is read or written — the person (or the script)
+// whose habit adds the flag hears what the list serves and what to drop,
+// rather than getting the job reading an empty token the flag used to write.
+// The refusal follows the credential the config declares and not this run's
+// flag, which is what the second half asserts: a re-run carries no --type.
+func TestAKeyCredentialTakesNoProfile(t *testing.T) {
+	for _, c := range []struct {
+		what, local string
+		args        []string
+	}{
+		{"the flag declares the type", addRigLocal, []string{"accounts", "add", "team-a", "--repos", "owner/repo-a", "--type", "openrouter", "--profile", "standard"}},
+		{"the config already declares it", accountsAddKeyCredentialLocal, []string{"accounts", "add", "team-a", "--repos", "owner/repo-a", "--profile", "standard"}},
+	} {
+		t.Run(c.what, func(t *testing.T) {
+			path := accountsAddFixture(t, c.local)
+			before := readFileString(t, path)
+
+			out, errOut, err := executeStdin(t, addToken()+"\n", c.args...)
+			if err == nil {
+				t.Fatalf("--profile was accepted for a key credential:\n%s\n%s", out, errOut)
+			}
+			want := "--profile standard: profiles.<p>.claude_accounts serves a Claude account TOKEN to a run, and team-a is a key credential"
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not read %q: %v", want, err)
+			}
+			if !strings.Contains(err.Error(), config.CredentialSecret("team-a")) || !strings.Contains(err.Error(), "drop --profile") {
+				t.Errorf("the refusal does not name the container the value lives in and the fix: %v", err)
+			}
+			if got := readFileString(t, path); got != before {
+				t.Errorf("the refused write changed the file:\n%s", got)
+			}
+			if strings.Contains(out+errOut, addToken()) {
+				t.Errorf("the refusal printed the value:\n%s\n%s", out, errOut)
+			}
+		})
 	}
 }
 

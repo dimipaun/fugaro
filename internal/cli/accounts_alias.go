@@ -477,7 +477,10 @@ func accountsAliasReport(cmd *cobra.Command, lc *localcfg.Config, stages map[str
 	// per (profile, provider, account), so this is the same job `accounts add`
 	// names for that account.
 	profile := accountsAddProfileOf(lc, target)
-	row("deploy", "jobs", accountsAddDeployLine(lc, profile, target, stages[initflow.Installation]))
+	// The target's type is the config's own reading of it, the same one
+	// accountsAddDeployLine takes from `accounts add`: a key credential has no
+	// job of the account's own, and its own line says so.
+	row("deploy", "jobs", accountsAddDeployLine(lc, accountsAddCredentialType(lc, target), profile, target, stages[initflow.Installation]))
 	row("publish", "policy node", accountsAliasPublishLine(stages[initflow.Policy], members, why))
 	fmt.Fprintln(w, accountsAliasLastLine(alias, target, removed))
 }

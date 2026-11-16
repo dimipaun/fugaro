@@ -432,8 +432,8 @@ func accountsAddReport(cmd *cobra.Command, lc *localcfg.Config, stages map[strin
 		row("profile", profile, "profiles."+pluginwire.Printable(profile)+".claude_accounts += "+pluginwire.Printable(name))
 	}
 	row("mark", name, mark)
-	row("publish", "policy node", accountsAddPublishLine(name, stages[initflow.Policy], allow, unpublished))
-	row("deploy", "jobs", accountsAddDeployLine(lc, profile, name, stages[initflow.Installation]))
+	row("publish", "policy node", accountsAddPublishLine(name, typ, stages[initflow.Policy], allow, unpublished))
+	row("deploy", "jobs", accountsAddDeployLine(lc, typ, profile, name, stages[initflow.Installation]))
 	if check.Repo != "" {
 		row("check", "accounts ls", pluginwire.Printable(check.Repo)+" may use: "+strings.Join(check.Accounts, ", "))
 	}
@@ -460,10 +460,20 @@ func accountsAddReport(cmd *cobra.Command, lc *localcfg.Config, stages map[strin
 // one thing this line may not do is report it as written. A stage that was
 // skipped prints its own reason, and every other state speaks in the node's
 // terms — the account's list, or the fact that the node does not carry it.
-func accountsAddPublishLine(name string, st initflow.StageResult, allow []string, unpublished string) string {
+//
+// A key credential is the one state whose absence from the node is by design
+// rather than a failure: the accounts block is derived from the profiles'
+// claude_accounts lists (projectpolicy.DeriveAccounts) and no profile lists a
+// key credential, because what that list serves is a run's Claude account
+// token and never a key (accounts_add.go). Saying "not published: the node
+// names no account team-a" there would read as the stage having failed to
+// write what the command asked for.
+func accountsAddPublishLine(name, typ string, st initflow.StageResult, allow []string, unpublished string) string {
 	switch {
 	case st.State == initflow.Skipped:
 		return "skipped: " + oneLine(st.Detail)
+	case config.KeyCredentialType(typ):
+		return "no account entry: a key credential is not served to a run as a Claude account, so the node carries none — its reach is claude_accounts." + pluginwire.Printable(name) + ".allow_data_to"
 	case allow != nil:
 		return "accounts." + pluginwire.Printable(name) + ".allow_repos = [" + strings.Join(allow, ", ") + "]"
 	}
@@ -474,7 +484,12 @@ func accountsAddPublishLine(name string, st initflow.StageResult, allow []string
 // job it names is the one this account's own entry in the job set is: one job
 // and one service account per (profile, provider, account), with
 // secretAccessor on that account's secret and no other account's.
-func accountsAddDeployLine(lc *localcfg.Config, profile, name string, st initflow.StageResult) string {
+//
+// A key credential has no job of its own, and that is not a job missing: the
+// name is in no profile (accounts_add.go), which is exactly what keeps a job
+// from mounting an empty claude-oauth-token-<name> as the account's token. What
+// carries its key to a call is the serving half of its type (D1670, MC23).
+func accountsAddDeployLine(lc *localcfg.Config, typ, profile, name string, st initflow.StageResult) string {
 	switch st.State {
 	case "":
 		return "not run: the stage reported no result"
@@ -490,6 +505,9 @@ func accountsAddDeployLine(lc *localcfg.Config, profile, name string, st initflo
 		return string(st.State) + ": " + oneLine(st.Detail)
 	}
 	if profile == "" {
+		if config.KeyCredentialType(typ) {
+			return "no job: a key credential rides no job of its own"
+		}
 		return "no job: no profile serves " + pluginwire.Printable(name) + " yet"
 	}
 	// The job's name is gcp.ProjectJobName's — the one function the job set,
