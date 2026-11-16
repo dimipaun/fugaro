@@ -973,6 +973,88 @@ func TestExternalIDShapeUniqueAndDaemonOnly(t *testing.T) {
 	}
 }
 
+// TestBodySHA256Shape holds the body hash's shape together in the four places
+// it is written: the check a stored item passes, the check an upsert passes,
+// and the pattern each schema declares. The hash is a hash of text read from
+// outside (D2720), so it is a shape and never free text: it is what says the
+// body a run is briefed with is the body a person approved, and a second
+// spelling of the same sum -- upper case, a `sha256:` prefix, a digit short or
+// long -- is a value nothing compares equal to the one the ingest wrote.
+//
+// The item's field and the op's are both fed, and both schemas with them,
+// because a pattern that drifted from the check is a document the daemon writes
+// and then refuses to read back.
+//
+// Mutation: relax bodySHA256RE or either schema's pattern (accept upper case,
+// or drop an anchor) and the case that feeds it lands here.
+func TestBodySHA256Shape(t *testing.T) {
+	now := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
+	const hash = "0f3d1c2b4a5968778695a4b3c2d1e0f19a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d"
+	stateSch := compileSchema(t, "../../schemas/orchestrator-state.schema.json")
+	patchSch := compileSchema(t, "../../schemas/orchestrator-patch.schema.json")
+	validates := func(sch *jsonschema.Schema, raw []byte) error {
+		t.Helper()
+		doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(doc)
+	}
+	upsert := func(sum string) []byte {
+		t.Helper()
+		raw, err := json.Marshal(map[string]any{
+			"base_rev": 7,
+			"ops": []any{map[string]any{
+				"op":        "work_item_upsert",
+				"work_item": map[string]any{"id": "wi-1", "body_sha256": sum},
+			}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+
+	// An item no ticket was read for carries no key at all -- the field is
+	// `omitempty` -- so the empty string is not a value either schema ever
+	// reads: it is absent from both, and the shape is what is left.
+	for _, tc := range []struct {
+		name string
+		sum  string
+		ok   bool
+	}{
+		{"a body's hash", hash, true},
+		{"sixty-four zeroes", strings.Repeat("0", 64), true},
+		{"upper case", strings.ToUpper(hash), false},
+		{"the prefixed digest this package writes for a spec", "sha256:" + hash, false},
+		{"a digit short", hash[:63], false},
+		{"a digit long", hash + "0", false},
+		{"a letter that is not hex", hash[:63] + "g", false},
+		{"a space where a digit belongs", hash[:63] + " ", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			carried := document(t, readFixture(t))
+			workItemAt(t, carried, 0)["body_sha256"] = tc.sum
+			if err := validates(stateSch, remarshal(t, carried)); (err == nil) != tc.ok {
+				t.Errorf("the state schema reads the body hash %q as ok=%v, want %v (err = %v)", tc.sum, err == nil, tc.ok, err)
+			}
+			if err := validates(patchSch, upsert(tc.sum)); (err == nil) != tc.ok {
+				t.Errorf("the patch schema reads the body hash %q as ok=%v, want %v (err = %v)", tc.sum, err == nil, tc.ok, err)
+			}
+
+			s := stateWithAQueuedItem(t, now)
+			s.WorkItems[0].BodySHA256 = tc.sum
+			if err := orchestrator.ValidateState(s); (err == nil) != tc.ok {
+				t.Errorf("a node carrying the body hash %q validates as ok=%v, want %v (err = %v)", tc.sum, err == nil, tc.ok, err)
+			}
+			op := upsertOp("wi-1", func(op *orchestrator.WorkItemOp) { op.BodySHA256 = ptr(tc.sum) })
+			if err := orchestrator.ValidatePatch(orchestrator.Patch{BaseRev: 7, Ops: []orchestrator.Op{op}}); (err == nil) != tc.ok {
+				t.Errorf("an upsert carrying the body hash %q validates as ok=%v, want %v (err = %v)", tc.sum, err == nil, tc.ok, err)
+			}
+		})
+	}
+}
+
 // TestAdoptedIsDaemonOnlyBookkeeping is the mark D2702 puts on an item the
 // daemon wrote for a run that was already in flight, and the two things it must
 // not do.
