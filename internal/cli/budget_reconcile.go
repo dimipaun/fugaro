@@ -67,6 +67,12 @@ const (
 	budgetReconcileMixed = "mixed"
 )
 
+// budgetReconcileMaxRuns is how many runs one reading opens: the same bound
+// runs stats reads a window by (UserStatsMaxRuns), and a variable so that a
+// test can drive the truncation the output has to own without seeding five
+// thousand runs.
+var budgetReconcileMaxRuns = UserStatsMaxRuns
+
 type budgetReconcileOptions struct {
 	cloud       cloudOptions
 	from, to    string
@@ -270,17 +276,17 @@ func runBudgetReconcile(cmd *cobra.Command, o *budgetReconcileOptions) error {
 	// by the reader rather than taking a place the bound keeps for a run of
 	// the window.
 	until := time.UnixMilli((to + 1) * 86_400_000).UTC()
-	objs, unlaunched, truncated, err := cloud.ReadRunRecords(ctx, slugs, time.UnixMilli(from*86_400_000).UTC(), until, UserStatsMaxRuns)
+	objs, unlaunched, truncated, err := cloud.ReadRunRecords(ctx, slugs, time.UnixMilli(from*86_400_000).UTC(), until, budgetReconcileMaxRuns)
 	if err != nil {
 		return err
 	}
 
 	doc := budgetReconcileDoc{
 		Project: env.lc.Name, From: o.from, To: o.to, Repo: o.repo, All: o.all,
-		MaxRuns: UserStatsMaxRuns, Truncated: truncated,
+		MaxRuns: budgetReconcileMaxRuns, Truncated: truncated,
 	}
 	if truncated {
-		doc.Warnings = append(doc.Warnings, fmt.Sprintf("the window holds more runs than the %d this reading opens: only its newest %d are counted, so a run outside them is in no row", UserStatsMaxRuns, UserStatsMaxRuns))
+		doc.Warnings = append(doc.Warnings, fmt.Sprintf("the window holds more runs than the %d this reading opens: only its newest %d are counted, so a run outside them is in no row", budgetReconcileMaxRuns, budgetReconcileMaxRuns))
 	}
 	runs := make([]reconcileRun, 0, len(objs))
 	for _, obj := range objs {
@@ -615,8 +621,15 @@ func reconcileSummary(t budgetReconcileTotals) []string {
 			money(microsOfUSD(t.ChargeUSD)), money(microsOfUSD(t.ChargeWithoutFeeUSD))),
 	}
 	if t.ReportUSD > 0 {
-		out = append(out, fmt.Sprintf("report:   %s reported by the providers over %d of %d runs; the table band over those calls is %s",
-			money(microsOfUSD(t.ReportUSD)), t.RunsWithReport, t.Runs, reconcileBand(microsOfUSD(t.BandLoUSD), microsOfUSD(t.BandHiUSD))))
+		line := fmt.Sprintf("report:   %s reported by the providers over %d of %d runs",
+			money(microsOfUSD(t.ReportUSD)), t.RunsWithReport, t.Runs)
+		// A record written before SA1.6 carries no band, and a window of them
+		// says so by saying nothing rather than by printing a dash beside the
+		// figure it would be read against.
+		if t.BandLoUSD > 0 || t.BandHiUSD > 0 {
+			line += fmt.Sprintf("; the table band over those calls is %s", reconcileBand(microsOfUSD(t.BandLoUSD), microsOfUSD(t.BandHiUSD)))
+		}
+		out = append(out, line)
 	} else {
 		out = append(out, fmt.Sprintf("report:   the providers reported no call of this window (of %d runs with a cost breakdown)", t.Runs))
 	}
