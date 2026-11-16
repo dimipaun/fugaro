@@ -6,7 +6,12 @@ companion of the spec's R5 and R6 and of the decisions D2648 and D2650; the fiel
 `docs/design/m10-multi-model.md` §"Real vs notional dollars" describes, and the node they join is
 `docs/design/m9-budget-and-dashboard.md` §6.2 and the schema at the end of that document.
 
-The node, as rules generation 6 (SA5.0) grants it:
+These leaves are granted by **rules generation 7**, the next free one. The reconciliation (RS8) and the plan (SA5.0)
+say 6, both written before generation 6 was taken: 6 is the mailbox registration kind, `projectpolicy.RulesVersion = 6`
+is already deployed on every updated installation, and a writer that gated these leaves on 6 would write leaves no
+deployed document grants and have every stage report it sends denied (F10).
+
+The node, as rules generation 7 (SA5.0) grants it:
 
 ```
 /spend/<day>/repos/<slug>/byModel/<escaped model>/{micros,in,out,cr,cw,notional,rep,tlo,thi}
@@ -14,7 +19,7 @@ The node, as rules generation 6 (SA5.0) grants it:
 
 `in`, `out`, `cr` and `cw` are the gateway's token counts for the model, and `micros` is the whole of its dollars.
 Amounts are integer micro-dollars, as everywhere in the database; every leaf is increase-only and at most MAXRES per
-write, and a writer that lacks a generation-6 deployment writes only the leaves it always wrote (SA5.1, F10).
+write, and a writer that lacks a generation-7 deployment writes only the leaves it always wrote (SA5.1, F10).
 
 ## `micros`, `notional` and the billed figure
 
@@ -27,8 +32,8 @@ write, and a writer that lacks a generation-6 deployment writes only the leaves 
   alone, so for as long as that run lasts the day's `notional` can exceed the part of `micros` it explains. Clamping
   is what keeps a report from printing negative dollars; the day is left wrong until that run ends, stated and not
   fixed.
-- **Under generation 6, `notional` is written with every `micros` write of that model, a 0 included** (RS8). A
-  gateway-only model therefore has `notional: 0` and its whole `micros` is billed.
+- **From the generation that grants them, `notional` is written with every `micros` write of that model, a 0
+  included** (RS8). A gateway-only model therefore has `notional: 0` and its whole `micros` is billed.
 - **The leaf's presence is the signal, not its value.** A day written before the leaf existed reads `notional` as 0
   exactly like a gateway-only model does, and the two are different facts: one has a billed figure that is unknown, the
   other has a billed figure equal to its `micros`. `budget.ModelUse` and `budget.ModelTotals` carry `NotionalSet`

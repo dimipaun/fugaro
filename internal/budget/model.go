@@ -378,8 +378,10 @@ func (l RunLedger) Unsettled() Micros { return l.Reserved - l.Released - l.Spent
 // ModelUse is one model's usage under a repository's day counter.
 //
 // Micros is the whole of the model's dollars, billed and notional together.
-// Notional, Rep, TLo and THi are the four spend leaves rules generation 6
-// adds (spend-accuracy D2648, D2650; docs/spend-accuracy/day-leaves.md): the
+// Notional, Rep, TLo and THi are the four spend leaves the spend-accuracy
+// rules add -- generation 7, the next free one, since generation 6 is the
+// mailbox registration kind already deployed on every updated installation
+// (spend-accuracy D2648, D2650; docs/spend-accuracy/day-leaves.md): the
 // subscription part of Micros, the cost the provider reported for the calls
 // that came back with a report, and the table's charge over those same calls
 // at the two ends of the tier that served them, with no route fee in either.
