@@ -216,13 +216,31 @@ func (s layerGenerationState) text() string {
 func (s *layerStage) plan(ctx context.Context) (*layerPlan, error) {
 	if !s.planned {
 		s.planned = true
-		var mode rigor.Mode
-		if s.e.r.o.setupCreates(s.e.firstRun()) {
-			mode = rigor.Mode(s.e.r.o.rigor)
-		}
-		s.p, s.err = layerPlanFor(ctx, s.e.lc, mode)
+		s.p, s.err = layerPlanFor(ctx, s.e.lc, s.rigorMode())
 	}
 	return s.p, s.err
+}
+
+// rigorMode is the wizard's rigor answer this run writes (task W of
+// docs/rigor-command/implementation-plan.md; D900): the answer this run was
+// given, when it is the run that creates the installation, and otherwise the
+// one a run that was asked wrote down in the local config before it stopped
+// (localcfg.Config.RigorPending, written by writeConfig).
+//
+// The second reading is what keeps the answer from being lost. The question is
+// asked once, and a config that exists means no later run is asked it — the
+// wizard asks nothing and refuses --rigor by name (setupRigorRefusal) — so a
+// first run that failed or stopped between its Installation stage, which writes
+// that config, and this stage would otherwise leave the project on the built-in
+// pro with `fugaro rigor set` as the only way back.
+func (s *layerStage) rigorMode() rigor.Mode {
+	if s.e.r.o.setupCreates(s.e.firstRun()) {
+		return rigor.Mode(s.e.r.o.rigor)
+	}
+	if s.e.lc == nil {
+		return ""
+	}
+	return rigor.Mode(s.e.lc.RigorPending)
 }
 
 // layerPlanFor reads the state and decides what this run does about it. A
@@ -516,6 +534,12 @@ func (s *layerStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outc
 		if err := s.writeRigor(env, p); err != nil {
 			return initflow.Outcome{}, err
 		}
+		// The hand-off is over once the layer file carries the mode: what is
+		// left of it in the config would write this answer again over the
+		// owner's later `fugaro rigor set` (clearRigorPending).
+		if err := s.clearRigorPending(p); err != nil {
+			return initflow.Outcome{}, err
+		}
 		if p.pubSkip != "" {
 			fmt.Fprintf(s.e.r.w, "%s; %s is written and left unpublished: run %s to publish it\n", p.pubSkip, p.path, selfCommand()+" update")
 			return initflow.Outcome{Changed: true, Detail: fmt.Sprintf("wrote the wizard's rigor answer (%s) into %s, which is left unpublished", p.rigor.mode, p.path)}, nil
@@ -572,6 +596,47 @@ func (s *layerStage) writeRigor(env initflow.Env, p *layerPlan) error {
 		Yes:     env.Yes,
 		Ask:     r.asksBack(),
 	})
+}
+
+// clearRigorPending takes the wizard's rigor answer out of the local project
+// config once the layer file carries it (task W of
+// docs/rigor-command/implementation-plan.md; D900). The key is a hand-off
+// between the two stages, and a value left behind is not harmless: the next
+// converge would read it, write that mode into the layer file again, and
+// publish it — over the owner's `fugaro rigor set` in between.
+//
+// It is the in-place edit layerGenerationRecord makes, and for its reason: the
+// config is a file a person edits by hand, so the key is removed from the text
+// (yamledit) with the file backed up and written atomically, and every other
+// byte, comment and order is left as it is. A run whose config carries no
+// answer — every run that was asked nothing, and every run after the one that
+// wrote it — has nothing to clear.
+func (s *layerStage) clearRigorPending(p *layerPlan) error {
+	if p.lc == nil || p.lc.RigorPending == "" || p.configPath == "" {
+		return nil
+	}
+	old, err := os.ReadFile(p.configPath)
+	if err != nil {
+		return userErr("clearing the wizard's rigor answer from %s: %v", p.configPath, err)
+	}
+	out, err := yamledit.RemoveKey(old, []string{"rigor_pending"})
+	if err != nil {
+		return userErr("clearing the wizard's rigor answer from %s: %v", p.configPath, err)
+	}
+	if !yamledit.Changed(old, out) {
+		p.lc.RigorPending = ""
+		return nil
+	}
+	backup, err := backupFile(p.configPath, old, time.Now())
+	if err != nil {
+		return userErr("backing up %s before clearing the wizard's rigor answer: %v", p.configPath, err)
+	}
+	if err := writeFileAtomic(p.configPath, out); err != nil {
+		return userErr("clearing the wizard's rigor answer from %s: %v", p.configPath, err)
+	}
+	fmt.Fprintf(s.e.r.w, "cleared the wizard's rigor answer from %s: the project layer carries the mode now (backup at %s)\n", p.configPath, backup)
+	p.lc.RigorPending = ""
+	return nil
 }
 
 // seed writes the published object's bytes to the local layer file, which is

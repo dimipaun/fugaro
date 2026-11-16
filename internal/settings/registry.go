@@ -846,6 +846,7 @@ var localRows = []Row{
 	loc("registry", "none: the legacy shared registry", "setup", docSetup),
 	loc("registry_host", "none: no image has been pinned yet", "setup", docSetup),
 	loc("setup_pending", "none: setup ran to the end", "setup", docSetup),
+	loc("rigor_pending", "none: the wizard's rigor answer has been written into the project layer", "setup", docSetup),
 	loc("policy_generation", "none: no generation is recorded; the next update adopts the published one", "update", docSetup),
 	loc("layer_generation", "none: no generation is recorded; the next update adopts the published one", "update", docSetup),
 	loc("base_images", "the installation's own base image per kind", "setup", docSetup),

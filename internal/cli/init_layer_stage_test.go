@@ -887,6 +887,116 @@ func TestSetupWritesTheRigorAnswerAndPublishesItInTheSameRun(t *testing.T) {
 	}
 }
 
+// pendingRigor writes the hand-off a first run that stopped before its Layer
+// stage leaves in the local config (writeConfig): the wizard's answer, waiting
+// for the converge that reaches this stage.
+func pendingRigor(t *testing.T, path, mode string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, []byte("rigor_pending: "+mode+"\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// rerunStage makes the rig's run the converge of an installation that is
+// already there (initEngine.old is the config file that exists, and the config
+// it holds is read again): that is what the run after a stopped first run is,
+// and it is the run the wizard asks nothing on.
+func rerunStage(t *testing.T, r *layerStageRig) {
+	t.Helper()
+	old, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.s.e.old, r.s.e.lc = old, lc
+}
+
+// TestTheLayerStageWritesTheRigorAnswerAStoppedFirstRunLeft: the wizard's
+// answer survives the run that was asked (task W of
+// docs/rigor-command/implementation-plan.md; D900). A first run that fails or
+// stops after its Installation stage wrote the local config — which is what
+// makes the next converge not a first run — and before this stage leaves the
+// answer in that config (writeConfig, localcfg.Config.RigorPending), and this
+// converge is the one that writes it into the project layer and publishes it.
+//
+// Without the hand-off the answer is lost for good: this run asks the wizard
+// nothing, because a config exists, and refuses --rigor by name
+// (setupRigorRefusal), so the project would run the built-in pro with nobody
+// having chosen it and `fugaro rigor set` as the only way back.
+func TestTheLayerStageWritesTheRigorAnswerAStoppedFirstRunLeft(t *testing.T) {
+	// No --rigor: the flag is a first run's, and the person who answered the
+	// question once is not asked it again.
+	r := newRigorStageRig(t, "", "", "", "")
+	pendingRigor(t, r.cfg, string(rigor.Critical))
+	rerunStage(t, r)
+	ctx := context.Background()
+
+	st, err := r.s.Check(ctx)
+	if err != nil {
+		t.Fatalf("check: %v\n%s", err, r.out)
+	}
+	if st.State != initflow.Todo || !strings.Contains(st.Detail, "the wizard's rigor answer (critical)") {
+		t.Fatalf("the answer the stopped run left is not what this run plans to write (%s):\n%s", st.Detail, r.out)
+	}
+	if _, err := r.s.Apply(ctx, initflow.Env{Yes: true}); err != nil {
+		t.Fatalf("apply: %v\n%s", err, r.out)
+	}
+	got := readFileString(t, localLayerPath(t))
+	l, problems := config.ParseProjectLayer([]byte(got), config.LayerAnchor{Project: initProjectName, GCPProject: initProject})
+	if len(problems) > 0 {
+		t.Fatalf("the file this run wrote does not read back as a project layer: %s\n%s", layerProblemsText(problems), got)
+	}
+	if l.Defaults.Rigor.Default != rigor.Critical {
+		t.Errorf("defaults.rigor.default = %q, want critical: the answer the stopped run was given was lost\n%s", l.Defaults.Rigor.Default, got)
+	}
+	if obj, ok := rigorObject(t, r); !ok || obj != got {
+		t.Errorf("the answer is in the file and the layer was not published as this run's own bytes (published=%v):\n%s", ok, r.out)
+	}
+	// The hand-off is over once the layer file carries the mode: a value left
+	// behind would write this answer again over the owner's later
+	// `fugaro rigor set` on the next converge.
+	after, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatalf("the config does not parse after the run: %v", err)
+	}
+	if after.RigorPending != "" {
+		t.Errorf("the config still records the pending answer %q", after.RigorPending)
+	}
+	if data := readFileString(t, r.cfg); strings.Contains(data, "rigor_pending") {
+		t.Errorf("the pending answer is still in the config text:\n%s", data)
+	}
+	if err := r.s.Verify(ctx); err != nil {
+		t.Fatalf("the write this run claims does not verify: %v", err)
+	}
+}
+
+// TestTheLayerStageWritesNoRigorAnswerItWasNotGiven: the reading of the
+// hand-off is a reading of a key and nothing else, so a converge of a project
+// whose config carries no answer plans no rigor write — which is every run
+// that was asked nothing, and every run after the one that cleared the key.
+func TestTheLayerStageWritesNoRigorAnswerItWasNotGiven(t *testing.T) {
+	r := newRigorStageRig(t, "", "", "", "")
+	rerunStage(t, r)
+
+	st, err := r.s.Check(context.Background())
+	if err != nil {
+		t.Fatalf("check: %v\n%s", err, r.out)
+	}
+	if strings.Contains(st.Detail, "the wizard's rigor answer") {
+		t.Errorf("a run with no answer in its config planned to write one (%s):\n%s", st.Detail, r.out)
+	}
+	if _, err := os.Stat(localLayerPath(t)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a run with no answer wrote a layer file: %v", err)
+	}
+}
+
 // TestTheLayerStageRefusesAModeNoLayerMaySet is the stage's own half of the
 // door above (task W; D834): the mode this stage writes is read by the
 // question's own reader (setupRigorMode) where it is spliced, so a walk whose

@@ -3446,6 +3446,27 @@ func (r *initRun) carryBakeAnswer(next *localcfg.Config) bool {
 	return true
 }
 
+// carryRigorAnswer writes the wizard's rigor answer into the local config the
+// run is about to write (task W of docs/rigor-command/implementation-plan.md;
+// D900) — the question's answer, or --rigor.
+//
+// It is written because the answer is a person's, given once, and the two
+// writes are stages apart: this file is written by the Installation stage, and
+// the Layer stage that writes the mode into the project layer comes after the
+// Repository stage. A run that fails or stops in between would otherwise lose
+// the answer for good — the config it left means the next converge is not a
+// first run, so the wizard asks nothing and --rigor is refused by name
+// (setupRigorRefusal), and the project runs the built-in pro until the person
+// finds `fugaro rigor set`. The Layer stage reads the key and clears it once
+// the layer file carries the mode (init_layer_stage.go), so what a later run
+// writes is the owner's `fugaro rigor set` and never this answer again.
+func (r *initRun) carryRigorAnswer(next *localcfg.Config) {
+	if r.o.rigor == "" {
+		return
+	}
+	next.RigorPending = r.o.rigor
+}
+
 // writeConfig writes the local config from the installation's outputs and
 // the flags, keeping everything else (repos, the legacy registry, the
 // endpoints) and dropping build.service_account. It shows the diff first,
@@ -3458,6 +3479,7 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 	r.res.Outputs = &outs
 	next := *lc
 	carried := r.carryBakeAnswer(&next)
+	r.carryRigorAnswer(&next)
 	if outs.RunsBucket != "" {
 		next.RunsBucket = outs.RunsBucket
 	}
