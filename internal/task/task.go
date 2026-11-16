@@ -172,7 +172,7 @@ type Spec struct {
 	// ContextRepos are the repositories this run READS and never writes,
 	// from fugaro run --context: one to MaxContextRepos owner/name paths,
 	// each of which the project's published allow_repos has admitted (plan
-	// tasks C5a; D613's read-only rule, reconciliation-image-setup D652).
+	// task C5a; D613's read-only rule, reconciliation-image-setup D652).
 	// The runner clones them outside the work tree and the prompt names
 	// them as reference; nothing copies one into the run's own repository
 	// and nothing the run commits can reach one.

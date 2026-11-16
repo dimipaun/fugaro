@@ -188,7 +188,7 @@ func ValidSegment(s string) bool {
 // signs them, and ClaimsSize, which measures them before the launcher asks for
 // a signature (MaxClaimsBytes).
 //
-// A claim a run does not have is written at all: fb and fpr are written only
+// A claim a run does not have is not written at all: fb and fpr are written only
 // when the run pushes or writes a pull request, and fcr only when the launch
 // named a context repository, so a run with none of them mints the claim set
 // every earlier release minted.
