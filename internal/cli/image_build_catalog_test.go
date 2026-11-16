@@ -1171,20 +1171,29 @@ func TestCatalogBuildBakesNothingWithoutTheMap(t *testing.T) {
 }
 
 // addRepoToProject adds a repository to the project's own `repos` in the config
-// the fixture wrote. The G4 fixture names one repository, and the map tests need
-// a second one: the map is read against the project's own list, so a key the
-// project does not admit and a key it does are two different answers
+// the fixture wrote, beside the acme/app row catalogBuildCheckoutFor placed
+// there — which is the row this anchors on, spelled as that fixture spelled it
+// for the provider and App ID. The G4 fixture names one repository, and the map
+// tests need a second one: the map is read against the project's own list, so a
+// key the project does not admit and a key it does are two different answers
 // (imagebake.Decide).
-func addRepoToProject(t *testing.T, name string) {
+func addRepoToProject(t *testing.T, name, provider, appID string) {
 	t.Helper()
-	const appRepo = "  acme/app: { provider: bitbucket, base_branch: main, workflows: [web] }"
+	// appID is what the fixture's own acme/app row carries, which only a GitHub
+	// repository has (infra.Repo refuses one without it).
+	id := ""
+	if appID != "" {
+		id = ", github_app_id: \"" + appID + "\""
+	}
+	appRepo := "  acme/app: { provider: " + provider + id + ", base_branch: main, workflows: [web] }"
+	added := "  " + name + ": { provider: " + provider + id + ", workflows: [web] }"
 	path := os.Getenv("FUGARO_CONFIG")
 	cfg := readFileString(t, path)
-	added := strings.Replace(cfg, appRepo, appRepo+"\n  "+name+": { provider: bitbucket, workflows: [web] }", 1)
-	if added == cfg {
+	updated := strings.Replace(cfg, appRepo, appRepo+"\n"+added, 1)
+	if updated == cfg {
 		t.Fatal("the fixture config's repos entry has changed shape")
 	}
-	if err := os.WriteFile(path, []byte(added), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -1216,7 +1225,7 @@ func TestCatalogBuildRefusesAnUnadmittedRepo(t *testing.T) {
 
 	t.Run("the repository admitted", func(t *testing.T) {
 		fb, gcs, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
-		addRepoToProject(t, "acme/other")
+		addRepoToProject(t, "acme/other", gitprov.KindBitbucket, "")
 		f.appendConfig(t, shared)
 
 		_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
@@ -1297,7 +1306,7 @@ func TestCatalogBuildClonesABakedRepoFromTheProjectsCloneURL(t *testing.T) {
 	// the build asks for (repourl.CloneURL, imagebake.Decide).
 	const urls = "clone_urls:\n  bitbucket/acme/other: https://bitbucket.org/acme/other\n"
 	_, gcs, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
-	addRepoToProject(t, "acme/other")
+	addRepoToProject(t, "acme/other", gitprov.KindBitbucket, "")
 	f.appendConfig(t, shared+urls)
 
 	_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
