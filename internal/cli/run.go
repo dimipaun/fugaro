@@ -1872,6 +1872,15 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if err := checkCloneReviewLevelsImage(env.lc, spec, levelsAsk, warn); err != nil {
 			return config.Inputs{}, err
 		}
+		// The A/B pair's slot, on the same configuration read and beside
+		// those: a workflow that asks for a reviewer arm
+		// (workflows.<name>.ab.reviewer_arm) asks for a runner that acts on
+		// a review slot, and one older than slotSince runs the whole coding
+		// loop on the challenger's model in place of that one review
+		// (slotAsk).
+		if err := checkCloneSlotImage(env.lc, spec, slotAsk(fileCfg, spec), warn); err != nil {
+			return config.Inputs{}, err
+		}
 		// The spelling's own gate, on the same configuration read and
 		// beside the one above: a runner older than noneModelSince reads
 		// `model: none` as a model ID rather than as the level's switch
@@ -2030,6 +2039,11 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		// The review levels' gate, the same as the clone branch's above
 		// and for the same reason: see reviewLevelsAsk.
 		if err := checkReviewLevelsImage(ctx, env, slug, spec, kind, levelsAsk, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The same gate as the clone branch's above and for the same
+		// reason: see slotAsk.
+		if err := checkSlotImage(ctx, env, slug, spec, kind, slotAsk(fileCfg, spec), warn); err != nil {
 			return config.Inputs{}, err
 		}
 		// The same gate as the clone branch's above, and for the same

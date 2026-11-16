@@ -29,20 +29,25 @@ import (
 // then, cut at the commit the champion's record says the champion started
 // from rather than at a ref that resolves today.
 //
-// Nothing in this tree asks for the arm yet. What a launcher would do with the
-// answer — writing the task under the arm's run id, asking the job image's
-// slot gate (checkSlotImage, the gate slotSince declares and docs/release.md
-// names this arm as the caller of) and starting the run — are `fugaro run`'s
-// own steps (freshLaunchGates, createTask, launchRun) and no seam this package
-// can reach exports them: launchRun is unexported, fcli.Cloud reads the runs
-// bucket and writes nothing, a Pair is always two runs written and started at
-// one moment, and the runner's step seam hands a step no launcher. So the
-// deferred launch is core work that does not exist yet, and until it does
-// nothing reads a finished champion's patch, writes a slot or asks that gate:
+// The workflow asks for the arm and this function reads the ask (O12): a file
+// that writes workflows.<name>.ab.reviewer_arm asks for a second run at that
+// level on every launch of that workflow, and the champion's own launch reads
+// the same key at the job image's slot gate (internal/cli's slotAsk, the gate
+// slotSince declares), so the ask is gated before any money is spent and this
+// function cannot be asked for a level the file does not ask for.
+//
+// Nothing in this tree calls ReviewerArm yet. What a launcher would do with the
+// answer — writing the task under the arm's run id and starting the run — is
+// `fugaro run`'s own work (freshLaunchGates, createTask, launchRun) and no seam
+// this package can reach exports them: launchRun is unexported, fcli.Cloud
+// reads the runs bucket and writes nothing, a Pair is always two runs written
+// and started at one moment, and the runner's step seam hands a step no
+// launcher. So the deferred launch is core work that does not exist yet, and
+// until it does nothing reads a finished champion's patch or writes a slot:
 // what this file carries is the decision the launch asks for, and every read
 // behind it is a read of the champion's own objects in the runs bucket.
 //
-// The slot is asked for here and never drawn: Plan writes no slot on any task,
+// The level is asked for here and never drawn: Plan writes no slot on any task,
 // so no launch of A3.3's can put a reviewer slot on the wire, and the launch
 // that asks this one is the only one that writes ab.slot and ab.champion_run
 // (B1.1).
@@ -82,22 +87,27 @@ const (
 // champion is the champion's record as every other reader of a run reads one
 // (fcli.RunRecord): the arm's pair, run id and start commit are the record's
 // own, so a launch cannot replay a patch of a run other than the one it names.
-// slot is the level the pair varies, and it is judged against the champion's
-// own block (B1.1: the launcher writes the pair's slot on both arms, and an
-// absent one means coder), so an arm is never cut at a level the champion's
-// pair does not vary. The arm's model is deliberately not an argument: the
-// owner names the challengers (D556) and Admit picks one exactly
-// as it picks a coder pair's, judged for this repository by the same rules.
+// The level is not an argument either: a launch asks for an arm through its
+// workflow's own key (workflows.<name>.ab.reviewer_arm, config.WorkflowAB —
+// the owner's ruling of 2026-11-16, O12) and never through a flag, so the ask
+// and the image gate that judges whether a job's runner can carry the arm
+// (internal/cli's slotAsk) read one value, and a caller cannot ask this
+// function for a level its own file does not ask for. The level it does ask
+// for is judged against the champion's own block (B1.1: the launcher writes
+// the pair's slot on both arms, and an absent one means coder), so an arm is
+// never cut at a level the champion's pair does not vary.
 //
 // An error is for a caller that asked for an arm no champion can carry (a
-// coder slot, a run that is not a pair's champion, a slot the champion's own
-// block does not name, a patch recorded under a key that is not the run's own)
-// or for a read whose absence leaves the decision unfounded. A reason is a champion that is simply not ready yet: the
-// launcher prints it, and nothing about the champion's own run is affected,
-// just as a coder pair's skip never is (D554).
-func ReviewerArm(ctx context.Context, run fcli.PlannedRun, champion fcli.RunRecord, slot task.ABSlot) (*task.Spec, string, error) {
-	if !slot.IsReviewer() {
-		return nil, "", fmt.Errorf("a deferred arm varies a review slot, and %q is not one: a coder pair is launched as a pair at the champion's own moment (D571, A3.3)", slot)
+// workflow whose file asks for none or names no review level, a run that is
+// not a pair's champion, a slot the champion's own block does not name, a
+// patch recorded under a key that is not the run's own) or for a read whose
+// absence leaves the decision unfounded. A reason is a champion that is simply
+// not ready yet: the launcher prints it, and nothing about the champion's own
+// run is affected, just as a coder pair's skip never is (D554).
+func ReviewerArm(ctx context.Context, run fcli.PlannedRun, champion fcli.RunRecord) (*task.Spec, string, error) {
+	slot, err := reviewerArmSlot(run)
+	if err != nil {
+		return nil, "", err
 	}
 	if run.Cloud == nil || run.Cloud.RunsBucket() == nil {
 		return nil, "", errors.New("the reviewer arm was asked about a launch with no runs bucket to read the champion's patch in")
@@ -166,9 +176,18 @@ func ReviewerArm(ctx context.Context, run fcli.PlannedRun, champion fcli.RunReco
 	if layer != nil {
 		pair = *layer
 	}
+	// What this arm's challenger must not be is the model the slot it varies
+	// runs, and that model is read off the same resolution the launch itself
+	// read: the owner's list is still the owner's (D556) and every other check
+	// is a coder pair's, but a reviewer pair varies the review's model and not
+	// the coder's (O12).
+	varied, err := reviewSlotModel(run, slot)
+	if err != nil {
+		return nil, "", err
+	}
 	judged := *cfg
 	judged.Agent = launchAgent(*cfg)
-	model, ok, why := Admit(judged, pair, run.Repo, run.Policy, run.Providers, run.Prices, run.ServiceHeldKey)
+	model, ok, why := admitAgainst(judged, pair, run.Repo, run.Policy, run.Providers, run.Prices, run.ServiceHeldKey, varied)
 	if !ok {
 		return nil, why, nil
 	}
@@ -197,6 +216,77 @@ func ReviewerArm(ctx context.Context, run fcli.PlannedRun, champion fcli.RunReco
 		return nil, "", err
 	}
 	return arm, "", nil
+}
+
+// reviewerArmSlot is the level this launch asks a reviewer arm for: the
+// workflow's own key (workflows.<name>.ab.reviewer_arm, config.WorkflowAB),
+// read off the configuration the launch resolved and the task it would launch.
+// A launch whose workflow asks for no arm has no slot to replay, and cutting
+// one anyway would be this package sampling a pair the owner's file never
+// asked for — the arm is a second paid run, so it is asked for in the file and
+// never inferred.
+func reviewerArmSlot(run fcli.PlannedRun) (task.ABSlot, error) {
+	spec, cfg := run.Spec, run.Config
+	switch {
+	case cfg == nil:
+		return "", errors.New("the reviewer arm was asked about a launch with no configuration to read its workflow's ask off")
+	case spec == nil:
+		return "", errors.New("the reviewer arm was asked about a launch with no task, and the ask for an arm is its workflow's own key")
+	}
+	name, wf, err := cfg.SelectWorkflow(spec.Workflow)
+	if err != nil {
+		return "", fmt.Errorf("the reviewer arm's launch names no workflow this configuration defines, so no key of it asks for an arm: %w", err)
+	}
+	lv := task.ABSlot(wf.ReviewerArm())
+	switch {
+	case lv == "":
+		return "", fmt.Errorf("the workflow %s asks for no A/B reviewer arm: a launch asks for one with fugaro.yaml's workflows.%s.ab.reviewer_arm, and this launch is not one", name, name)
+	case !lv.IsReviewer():
+		return "", fmt.Errorf("the workflow %s asks for a reviewer arm at %q, which is not a review level: a reviewer arm replays l1, l2 or l3 over the champion's patch, and a coder pair is launched as a pair at the champion's own moment (D571, A3.3)", name, lv)
+	}
+	return lv, nil
+}
+
+// reviewSlotModel is the model the slot this arm varies runs: what the arm's
+// challenger must not be, since a pair is two runs that differ in the one thing
+// the slot varies (D555) and for a review slot that one thing is the review's
+// model. The model is the launch's own resolution of its levels, with the same
+// call and the same inputs the launcher's own level gates make: the merged
+// configuration, the launch's rigor mode, the owner's floor for that mode, the
+// task's own review_levels block and the recipe.
+//
+// A recipe that travels as a name alone (a repository recipe, which the task
+// carries no text of) resolves here as no recipe at all, exactly as
+// recipeMode's own read of it comes out empty: the recipe's role mapping is
+// then not applied to the levels' default models, so a file that maps the
+// reviewer role onto the coder's could admit a challenger that is the model
+// the level runs. That is a wrong pair and never a wrong arm: the challenger
+// is still a model the owner allows, priced and routed for this repository,
+// and the runner refuses the arm at bootstrap if the level it replays is one
+// its own resolution does not have.
+func reviewSlotModel(run fcli.PlannedRun, slot task.ABSlot) (string, error) {
+	spec, cfg := run.Spec, run.Config
+	mode := launchedMode(cfg, spec)
+	levels, _, err := config.ResolveLevels(config.LevelInputs{
+		Config: cfg, Mode: mode, Floor: run.Policy.ReviewFloor(mode), Task: spec.ReviewLevels,
+		Recipe: embeddedRecipe(spec), Providers: run.Providers,
+	})
+	if err != nil {
+		return "", fmt.Errorf("the levels of the run this arm would join do not resolve, so the model the %s slot runs is not known: %w", slot, err)
+	}
+	var lv config.ResolvedLevel
+	switch slot {
+	case task.ABSlotL2:
+		lv = levels.L2
+	case task.ABSlotL3:
+		lv = levels.L3
+	default:
+		lv = levels.L1
+	}
+	if !lv.On {
+		return "", fmt.Errorf("the %s level does not run for this launch, so a pair at it would vary a review the champion's own run never made", slot)
+	}
+	return lv.Model, nil
 }
 
 // reviewerArmSpec is the arm's task: the champion's own stored task with the

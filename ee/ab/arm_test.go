@@ -40,6 +40,14 @@ const (
 	// champion's own task names a branch that has moved on since.
 	armStartSHA = "9f2c1b0a4d3e5f60718293a4b5c6d7e8f9012345"
 	armDiff     = "diff --git a/one.txt b/one.txt\n--- a/one.txt\n+++ b/one.txt\n@@ -1 +1 @@\n-alpha\n+beta\n"
+	// armWorkflow is the workflow the champion ran, whose own ab: block is
+	// where a launch asks for a reviewer arm (O12).
+	armWorkflow = "web"
+	// armLevelModel is the model the fixture's reviewed level runs: named in the
+	// configuration so the level is on — a pair at a level the run does not run
+	// varies a review nobody made, which the arm refuses — and so the challenger
+	// is judged against a model that is not its own.
+	armLevelModel = "claude-opus-5-5"
 )
 
 // armFixture is one champion's own prefix in a runs bucket no cloud is needed
@@ -111,19 +119,43 @@ func (f *armFixture) champion() fcli.RunRecord {
 }
 
 // plannedRun is the launch's own facts: the project layer's challenger list,
-// the route that serves it opened to this repository, and the budget mode a
-// provider-served challenger needs (F18).
-func (f *armFixture) plannedRun() fcli.PlannedRun {
+// the route that serves it opened to this repository, the budget mode a
+// provider-served challenger needs (F18), and the workflow's own ask for a
+// reviewer arm at level — which is the only way a launch asks for one, so a
+// test that wants another level writes it there rather than passing it in.
+func (f *armFixture) plannedRun(level task.ABSlot) fcli.PlannedRun {
 	return fcli.PlannedRun{
-		Cloud: f.cloud, Slug: f.slug, Repo: armRepo,
+		Cloud: f.cloud, Slug: f.slug, Repo: armRepo, Spec: armChampionTask(),
 		Config: &config.Config{
-			Git:   config.Git{Provider: gitprov.KindGitHub},
-			Agent: config.Agent{Auth: "api-key", Models: config.ModelRoles{Coder: abLaunchChampion}},
+			Git: config.Git{Provider: gitprov.KindGitHub},
+			Agent: config.Agent{
+				Auth:   "api-key",
+				Models: config.ModelRoles{Coder: abLaunchChampion},
+				Levels: armLevels(level, armLevelModel),
+			},
 			Layer: &config.ProjectLayer{AB: &config.AB{Challengers: []string{abLaunchChallenger}}},
+			Workflows: map[string]config.Workflow{
+				armWorkflow: {AB: &config.WorkflowAB{ReviewerArm: string(level)}},
+			},
 		},
 		Policy:    policy.Effective{Mode: policy.ModeEnforce},
 		Providers: armProviders(),
 		Prices:    armPrices(f.t),
+	}
+}
+
+// armLevels is the configuration's own levels block with the reviewed level
+// turned on and named model — the shape a file has when it asks for an arm at a
+// level a mode's row leaves out (level 1 and level 3 are off outside critical).
+func armLevels(level task.ABSlot, model string) config.ReviewLevels {
+	block := &config.LevelSetting{Model: model}
+	switch level {
+	case task.ABSlotL1:
+		return config.ReviewLevels{L1: block}
+	case task.ABSlotL3:
+		return config.ReviewLevels{L3: block}
+	default:
+		return config.ReviewLevels{L2: block}
 	}
 }
 
@@ -155,10 +187,11 @@ func armPrices(t *testing.T) *pricing.Table {
 	return table
 }
 
-// arm is the reviewer arm's answer for the fixture's champion.
-func (f *armFixture) arm(slot task.ABSlot) (*task.Spec, string, error) {
+// arm is the reviewer arm's answer for the fixture's champion, with the
+// workflow's own ask set to level.
+func (f *armFixture) arm(level task.ABSlot) (*task.Spec, string, error) {
 	f.t.Helper()
-	return ReviewerArm(context.Background(), f.plannedRun(), f.champion(), slot)
+	return ReviewerArm(context.Background(), f.plannedRun(level), f.champion())
 }
 
 // championRecord is the champion's record as its job leaves one: finished, cut
@@ -186,7 +219,7 @@ func (f *armFixture) otherPatchKey(runID string) string {
 func armChampionTask() *task.Spec {
 	return &task.Spec{
 		Version: 1, RunID: armChampion, Repo: armRepo, Ref: armChampionRef,
-		Task: "Add a feature", Batch: "ab-" + armPairID,
+		Workflow: armWorkflow, Task: "Add a feature", Batch: "ab-" + armPairID,
 		AB: &task.AB{PairID: armPairID, Arm: task.ABArmChampion},
 	}
 }
@@ -437,4 +470,206 @@ func TestABReviewerArmUsesChampionStartSHA(t *testing.T) {
 	if string(want) != string(got) {
 		t.Errorf("the arm's task differs from the champion's but for its run id, its ref and its block:\nchampion %s\narm      %s", want, got)
 	}
+}
+
+// armWith is arm with the launch's own facts edited: the refusal paths of a
+// launch whose configuration, task or champion is not what a reviewer arm needs
+// are all one field away from the fixture's, and each is a caller's mistake
+// answered with an error rather than a reason.
+func (f *armFixture) armWith(level task.ABSlot, edit func(run *fcli.PlannedRun)) (*task.Spec, string, error) {
+	f.t.Helper()
+	run := f.plannedRun(level)
+	edit(&run)
+	return ReviewerArm(context.Background(), run, f.champion())
+}
+
+// TestABReviewerArmAsksThroughTheWorkflowsOwnKey: the ask is the workflow's key
+// and never a caller's argument (the owner's ruling of 2026-11-16, O12), so a
+// launch whose workflow asks for no arm — no block at all, or a key that names
+// the coder — is refused rather than answered with an arm nobody asked for, and
+// a launch whose task names a workflow the configuration does not define is
+// refused too: there is no key to read the ask off.
+func TestABReviewerArmAsksThroughTheWorkflowsOwnKey(t *testing.T) {
+	f := newArmFixture(t)
+	f.seed(championRecord(f.store(), task.ABSlotL2))
+	f.putPatch(armDiff)
+	for _, tc := range []struct {
+		name string
+		edit func(run *fcli.PlannedRun)
+		want string
+	}{
+		{"a workflow with no ab block", func(run *fcli.PlannedRun) {
+			run.Config.Workflows[armWorkflow] = config.Workflow{}
+		}, "asks for no A/B reviewer arm"},
+		{"a workflow asking for the coder", func(run *fcli.PlannedRun) {
+			run.Config.Workflows[armWorkflow] = config.Workflow{AB: &config.WorkflowAB{ReviewerArm: "coder"}}
+		}, "not a review level"},
+		{"a task naming no workflow the file defines", func(run *fcli.PlannedRun) {
+			run.Spec.Workflow = "api"
+		}, "names no workflow this configuration defines"},
+		{"a launch with no task at all", func(run *fcli.PlannedRun) {
+			run.Spec = nil
+		}, "no task"},
+		{"a launch with no configuration", func(run *fcli.PlannedRun) {
+			run.Config = nil
+		}, "no configuration"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			arm, why, err := f.armWith(task.ABSlotL2, tc.edit)
+			if err == nil || arm != nil || why != "" {
+				t.Fatalf("spec = %v, why = %q, err = %v, want an error and no arm", arm, why, err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the refusal %q does not say %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestABReviewerArmRefusesARunThatIsNoPairsChampion: the arm replays the
+// champion's own patch, so a run whose record names no champion arm — no pair
+// block at all, or the challenger's own arm — is refused rather than replayed:
+// cutting an arm over it would file a pair under a champion that never ran one
+// (B1.1, B1.3).
+func TestABReviewerArmRefusesARunThatIsNoPairsChampion(t *testing.T) {
+	f := newArmFixture(t)
+	f.putPatch(armDiff)
+	for _, tc := range []struct {
+		name  string
+		block *task.AB
+	}{
+		{"a run that is no pair at all", nil},
+		{"a challenger of a pair", &task.AB{PairID: armPairID, Arm: task.ABArmChallenger, Slot: task.ABSlotL2, ChampionRun: armChampion}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := championRecord(f.store(), task.ABSlotL2)
+			rec.AB = tc.block
+			f.seed(rec)
+			arm, why, err := f.arm(task.ABSlotL2)
+			if err == nil || arm != nil || why != "" {
+				t.Fatalf("spec = %v, why = %q, err = %v, want an error and no arm", arm, why, err)
+			}
+			if !strings.Contains(err.Error(), "not the champion of a pair") || !strings.Contains(err.Error(), armChampion) {
+				t.Errorf("the refusal %q does not name the run whose record it judged", err)
+			}
+		})
+	}
+}
+
+// TestABReviewerArmRefusesACorruptChampionRecord: a result.json the bucket
+// holds and this build cannot read is never read as "this run wrote none"
+// (fcli.RunRecord.RecordCorrupt). The champion's readiness is the whole
+// question the arm asks, and a record nobody can read is no answer to it: the
+// launch is refused, not answered with ReasonNoChampionPatch, which would be
+// this build reporting a champion's silence it cannot see.
+func TestABReviewerArmRefusesACorruptChampionRecord(t *testing.T) {
+	f := newArmFixture(t)
+	f.seed(championRecord(f.store(), task.ABSlotL2))
+	f.putPatch(armDiff)
+	if err := f.store().PutFile(context.Background(), "result.json", []byte("{not json"), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	champion := f.champion()
+	if !champion.RecordCorrupt() || champion.Record() != nil {
+		t.Fatalf("the fixture's champion reads as record = %+v, corrupt = %v, want an unreadable record", champion.Record(), champion.RecordCorrupt())
+	}
+	arm, why, err := f.arm(task.ABSlotL2)
+	if err == nil || arm != nil || why != "" {
+		t.Fatalf("spec = %v, why = %q, err = %v, want an error and no arm", arm, why, err)
+	}
+	if !strings.Contains(err.Error(), "cannot read") || !strings.Contains(err.Error(), armChampion) {
+		t.Errorf("the refusal %q does not name the record it could not read", err)
+	}
+}
+
+// TestABReviewerArmRefusesAChampionWithNoStartCommit: the arm is cut at the
+// commit the champion's record names, and the patch was made against that
+// commit (B1.2). A record that names no full SHA — an ending old enough to
+// predate the field — answers the closed reason and never an arm cut at the
+// task's own ref, which is the branch the champion's cut may have moved on from
+// and which the diff was not written against.
+func TestABReviewerArmRefusesAChampionWithNoStartCommit(t *testing.T) {
+	f := newArmFixture(t)
+	f.putPatch(armDiff)
+	for _, start := range []string{"", armChampionRef, "9f2c1b0"} {
+		t.Run("start "+start, func(t *testing.T) {
+			rec := championRecord(f.store(), task.ABSlotL2)
+			rec.StartSHA = start
+			f.seed(rec)
+			arm, why, err := f.arm(task.ABSlotL2)
+			if err != nil || why != ReasonNoChampionStart || arm != nil {
+				t.Fatalf("start %q: spec = %v, why = %q, err = %v, want %q and no task", start, arm, why, err, ReasonNoChampionStart)
+			}
+		})
+	}
+}
+
+// TestABReviewerArmSkipsWhenNoChallengerIsAdmitted: a reviewer arm is still one
+// of the owner's challengers and nobody else's (D556), so a launch nothing is
+// admitted for answers a reason and no arm — the same answer a coder pair's
+// launch gives, printed by the launcher's skip line.
+func TestABReviewerArmSkipsWhenNoChallengerIsAdmitted(t *testing.T) {
+	f := newArmFixture(t)
+	f.seed(championRecord(f.store(), task.ABSlotL2))
+	f.putPatch(armDiff)
+	arm, why, err := f.armWith(task.ABSlotL2, func(run *fcli.PlannedRun) {
+		run.Config.Layer = &config.ProjectLayer{AB: &config.AB{}}
+	})
+	if err != nil || why != ReasonNoChallenger || arm != nil {
+		t.Fatalf("spec = %v, why = %q, err = %v, want %q and no task", arm, why, err, ReasonNoChallenger)
+	}
+}
+
+// TestABReviewerArmJudgesTheSlotItVaries: a pair is two runs that differ in the
+// one thing the slot varies, and for a review slot that is the model the level
+// runs (the owner's ruling of 2026-11-16, O12). A challenger that is the
+// level's own model varies nothing and is refused as champion-model, while a
+// challenger that is the coder's model is admitted: the coder's model is what a
+// coder pair varies, and judging this one against it would refuse the arm that
+// varies the review — the whole point of the pair — and admit the one that
+// repeats the champion's own review.
+func TestABReviewerArmJudgesTheSlotItVaries(t *testing.T) {
+	f := newArmFixture(t)
+	f.seed(championRecord(f.store(), task.ABSlotL2))
+	f.putPatch(armDiff)
+
+	t.Run("a challenger that is the level's own model", func(t *testing.T) {
+		arm, why, err := f.armWith(task.ABSlotL2, func(run *fcli.PlannedRun) {
+			run.Config.Agent.Levels.L2 = &config.LevelSetting{Model: abLaunchChallenger}
+		})
+		if err != nil || why != ReasonChampionModel || arm != nil {
+			t.Fatalf("spec = %v, why = %q, err = %v, want %q and no task", arm, why, err, ReasonChampionModel)
+		}
+	})
+
+	t.Run("a challenger that is the coder's model", func(t *testing.T) {
+		arm, why, err := f.armWith(task.ABSlotL2, func(run *fcli.PlannedRun) {
+			run.Config.Agent.Models.Coder = abLaunchChallenger
+		})
+		if err != nil || why != "" || arm == nil {
+			t.Fatalf("spec = %v, why = %q, err = %v, want the arm", arm, why, err)
+		}
+		if arm.AB.Challenger != abLaunchChallenger {
+			t.Errorf("the arm's challenger is %q, want %q", arm.AB.Challenger, abLaunchChallenger)
+		}
+		if arm.AB.Slot != task.ABSlotL2 {
+			t.Errorf("the arm's slot is %q, want %q", arm.AB.Slot, task.ABSlotL2)
+		}
+	})
+
+	t.Run("a level the run does not run", func(t *testing.T) {
+		// Level 3 is off in every mode but critical, and the champion's own
+		// pair has to vary the level the workflow asks for, so the level off
+		// is the one the pair is at.
+		f.seed(championRecord(f.store(), task.ABSlotL3))
+		arm, why, err := f.armWith(task.ABSlotL3, func(run *fcli.PlannedRun) {
+			run.Config.Agent.Levels = config.ReviewLevels{}
+		})
+		if err == nil || arm != nil || why != "" {
+			t.Fatalf("spec = %v, why = %q, err = %v, want an error and no arm", arm, why, err)
+		}
+		if !strings.Contains(err.Error(), string(task.ABSlotL3)+" level does not run") {
+			t.Errorf("the refusal %q does not name the level that does not run", err)
+		}
+	})
 }

@@ -2261,10 +2261,14 @@ func triageSubject(repo string, written *bool) (subject, alt string) {
 // docs/release.md's Before-you-tag list verifies the number against the release
 // that actually carries B1.2, the way it does for the other *Since constants.
 //
-// The launch that reads it is the reviewer arm's own (B1.4, ee/ab): it writes
-// `ab.slot` and `ab.champion_run` onto the challenger once the champion's patch
-// exists, and it asks this gate first, exactly as the pair launch (A3.3) asks
-// its own gate before writing an `ab` block at all.
+// The launches that read it are the workflow that asks for a reviewer arm and
+// the arm's own (B1.4, ee/ab, and the owner's ruling of 2026-11-16): the ask
+// is the workflow's own key (workflows.<name>.ab.reviewer_arm, config.WorkflowAB),
+// so the launch of the champion — the only run whose start can still be refused
+// before the money is spent — asks this gate about that key, exactly as the pair
+// launch (A3.3) asks its own gate before writing an `ab` block at all, and
+// ee/ab's ReviewerArm reads the same key to cut the arm. A task that carries
+// `ab.slot` itself, replayed or hand-written, asks too (B1.1).
 const slotSince = "0.24.0"
 
 // slotKnows names, for the image gates' messages, what the job image's runner
@@ -2272,10 +2276,18 @@ const slotSince = "0.24.0"
 const slotKnows = "the A/B pair's slot (ab.slot, ab.champion_run)"
 
 // slotAsk is what a launch asks of its job image's runner about the pair's
-// slot, in the terms the refusal names, and "" when it asks nothing: a task
-// with no `ab` block, and one whose block names no slot at all, are launches
-// every release runs identically — the second is the coder pair A1.1 already
-// wrote, which B1.1 reads as coder without a key.
+// slot, in the terms the refusal names, and "" when it asks nothing.
+//
+// Two launches ask. The first is the workflow's own ask for an A/B reviewer
+// arm (workflows.<name>.ab.reviewer_arm, config.WorkflowAB): the arm at a
+// review slot is cut only once the champion's patch exists, so the launch that
+// can still refuse the image is the champion's own, and the ask is read off the
+// configuration rather than off a task field, which cannot carry an arm that is
+// not launched yet. The second is a task that carries `ab.slot` itself — a
+// replayed or hand-written one — which is what B1.1 declared this gate for. A
+// task with no `ab` block, and one whose block names no slot at all, ask
+// nothing: the second is the coder pair A1.1 already wrote, which B1.1 reads as
+// coder without a key.
 //
 // The gate is written on the key's presence and not on its value: a slot a
 // launcher spells out is written by the release whose runner acts on slots, and
@@ -2283,8 +2295,18 @@ const slotKnows = "the A/B pair's slot (ab.slot, ab.champion_run)"
 // all. A coder pair — the pair A3.3 samples — writes neither key, so this gate
 // is never the one that refuses it: that launch is judged by the `ab` field's
 // own gate (A3.3).
-func slotAsk(spec *task.Spec) string {
-	if spec.AB == nil || spec.AB.Slot == "" {
+func slotAsk(cfg *config.Config, spec *task.Spec) string {
+	if cfg != nil && spec != nil {
+		// A workflow the configuration does not define selects nothing, and a
+		// launch that far along is refused by its own reader of the selection
+		// (SelectWorkflow): an ask is only read off a workflow that resolved.
+		if name, wf, err := cfg.SelectWorkflow(spec.Workflow); err == nil {
+			if lvl := wf.ReviewerArm(); lvl != "" {
+				return fmt.Sprintf("workflows.%s.ab.reviewer_arm (%s)", name, lvl)
+			}
+		}
+	}
+	if spec == nil || spec.AB == nil || spec.AB.Slot == "" {
 		return ""
 	}
 	return fmt.Sprintf("the task's ab.slot (%s)", spec.AB.Slot)

@@ -37,8 +37,11 @@ const (
 	// the repository rather than about the challenger, and the arm would be
 	// refused at the same place for the same reason.
 	ReasonServiceHeldKey = "service-held-key"
-	// ReasonChampionModel is a challenger that is the champion's own coder
-	// model: the arms would differ in nothing (D555).
+	// ReasonChampionModel is a challenger that is the model the pair varies:
+	// the champion's own coder model for a coder pair (D555), and the model
+	// that level runs for a pair whose slot is a review level (O12, the
+	// owner's ruling of 2026-11-16). Either way the arms would differ in
+	// nothing.
 	ReasonChampionModel = "champion-model"
 	// ReasonNotAllowed is a challenger the run's allow-list leaves out: the
 	// merge of every layer that writes one, so a repository can only tighten
@@ -132,6 +135,24 @@ const (
 // A nil prices table skips the price rule, exactly as config.CheckProviderPolicy
 // does with one: a caller that has no table has no price question to ask.
 func Admit(cfg config.Config, layer config.AB, repo string, eff policy.Effective, providers map[string]config.ModelProvider, prices *pricing.Table, serviceHeldKey bool) (model string, ok bool, why string) {
+	return admitAgainst(cfg, layer, repo, eff, providers, prices, serviceHeldKey, cfg.Agent.ModelFor(config.RoleCoder))
+}
+
+// admitAgainst is Admit's body with the model the pair varies given rather than
+// read off the coder role. A coder pair varies the coder's model (D555, the
+// call above) and a pair whose slot is a review level varies the model that
+// level runs (the owner's ruling of 2026-11-16, docs/review-levels-ab-jobmax
+// O12): a reviewer arm replays its level over the champion's patch with the
+// challenger's model, so what it must not be is that model, and judging it
+// against the coder's would refuse a challenger that varies the review — the
+// whole point of the arm — while admitting one that is the very model the
+// champion's own review ran.
+//
+// Everything else is shared, and deliberately: the owner's list, the run's
+// allow-list, the provider policy, the pin rule, the credential and the
+// gateway are the same questions about the same repository whichever slot a
+// challenger's code goes to.
+func admitAgainst(cfg config.Config, layer config.AB, repo string, eff policy.Effective, providers map[string]config.ModelProvider, prices *pricing.Table, serviceHeldKey bool, varied string) (model string, ok bool, why string) {
 	if cfg.Git.Provider == gitprov.KindBitbucket {
 		return "", false, ReasonBitbucket
 	}
@@ -144,7 +165,6 @@ func Admit(cfg config.Config, layer config.AB, repo string, eff policy.Effective
 			why = reason
 		}
 	}
-	champion := cfg.Agent.ModelFor(config.RoleCoder)
 	for _, c := range layer.Challengers {
 		if c == "" {
 			// An entry names a model, which the layer's own validation holds
@@ -152,7 +172,7 @@ func Admit(cfg config.Config, layer config.AB, repo string, eff policy.Effective
 			// is not a challenger to skip the rest of the list for.
 			continue
 		}
-		if c == champion {
+		if c == varied {
 			refuse(ReasonChampionModel)
 			continue
 		}

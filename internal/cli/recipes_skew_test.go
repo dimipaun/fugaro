@@ -434,13 +434,13 @@ func TestRecipesSkewRefusesSlotOnOldImage(t *testing.T) {
 	coder.ChampionRun = ""
 	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web",
 		Task: "x", AB: challenger(task.ABSlotL2)}
-	if ask := slotAsk(spec); ask != "the task's ab.slot (l2)" {
+	if ask := slotAsk(nil, spec); ask != "the task's ab.slot (l2)" {
 		t.Fatalf("ask = %q, want the slot the launcher wrote", ask)
 	}
 	check := func(baseRef string) (string, error) {
 		var warn bytes.Buffer
 		writeBuildRecord(t, f, appSlug, "web", baseRef)
-		err := checkSlotImage(context.Background(), env, appSlug, spec, "base", slotAsk(spec), &warn)
+		err := checkSlotImage(context.Background(), env, appSlug, spec, "base", slotAsk(nil, spec), &warn)
 		return warn.String(), err
 	}
 	old := shiftRelease(t, slotSince, -1)
@@ -467,12 +467,12 @@ func TestRecipesSkewRefusesSlotOnOldImage(t *testing.T) {
 	lc := *env.lc
 	lc.BaseImages = map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:" + old}
 	var cloneWarn bytes.Buffer
-	err = checkCloneSlotImage(&lc, spec, slotAsk(spec), &cloneWarn)
+	err = checkCloneSlotImage(&lc, spec, slotAsk(nil, spec), &cloneWarn)
 	if err == nil || !strings.Contains(err.Error(), "fugaro "+slotSince+" or later") || !strings.Contains(err.Error(), "release "+old) || ExitCode(err) != ExitUserError {
 		t.Fatalf("clone %s: warn = %q, err = %v", old, cloneWarn.String(), err)
 	}
 	lc.BaseImages["base"] = "ghcr.io/dimipaun/fugaro-base:" + slotSince
-	if err := checkCloneSlotImage(&lc, spec, slotAsk(spec), &bytes.Buffer{}); err != nil {
+	if err := checkCloneSlotImage(&lc, spec, slotAsk(nil, spec), &bytes.Buffer{}); err != nil {
 		t.Fatalf("clone %s: %v", slotSince, err)
 	}
 	// The pairs that ask nothing: a task with no block at all, one whose block
@@ -482,20 +482,52 @@ func TestRecipesSkewRefusesSlotOnOldImage(t *testing.T) {
 	// slot it names.
 	quiet := *spec
 	quiet.AB = nil
-	if ask := slotAsk(&quiet); ask != "" {
+	if ask := slotAsk(nil, &quiet); ask != "" {
 		t.Errorf("a task with no pair block asked %q, want nothing", ask)
 	}
 	quiet.AB = &task.AB{PairID: "20261029-120000-abcd", Arm: task.ABArmChampion}
-	if ask := slotAsk(&quiet); ask != "" {
+	if ask := slotAsk(nil, &quiet); ask != "" {
 		t.Errorf("a pair naming no slot asked %q, want nothing", ask)
 	}
 	quiet.AB = coder
-	if ask := slotAsk(&quiet); ask != "the task's ab.slot (coder)" {
+	if ask := slotAsk(nil, &quiet); ask != "the task's ab.slot (coder)" {
 		t.Errorf("a coder pair spelled out asked %q, want the slot", ask)
 	}
 	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+old)
 	if err := checkSlotImage(context.Background(), env, appSlug, &quiet, "base", "", &bytes.Buffer{}); err != nil {
 		t.Fatalf("a launch that asks nothing: %v", err)
+	}
+
+	// The workflow's own ask is the third: a file that names
+	// workflows.web.ab.reviewer_arm asks for a reviewer arm on every launch of
+	// that workflow (the owner's ruling of 2026-11-16, O12), and the champion's
+	// own launch — the one whose task carries no slot at all — is where an
+	// image whose runner would ignore the arm is still refusable.
+	bare := *spec
+	bare.AB = nil
+	cfg := &config.Config{Workflows: map[string]config.Workflow{
+		"web": {AB: &config.WorkflowAB{ReviewerArm: "l2"}},
+	}}
+	if ask := slotAsk(cfg, &bare); ask != "workflows.web.ab.reviewer_arm (l2)" {
+		t.Errorf("a workflow asking for an arm asked %q, want the workflow's own key", ask)
+	}
+	err = checkSlotImage(context.Background(), env, appSlug, &bare, "base", slotAsk(cfg, &bare), &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "workflows.web.ab.reviewer_arm (l2)") || ExitCode(err) != ExitUserError {
+		t.Fatalf("a workflow asking for an arm on %s: err = %v", old, err)
+	}
+	// A launch whose workflow the configuration does not define asks nothing
+	// here: the selection is refused by its own reader, and this gate never
+	// answers for a workflow nobody resolved.
+	other := &config.Config{Workflows: map[string]config.Workflow{
+		"api": {AB: &config.WorkflowAB{ReviewerArm: "l3"}},
+	}}
+	if ask := slotAsk(other, &bare); ask != "" {
+		t.Errorf("a launch of a workflow the file does not define asked %q, want nothing", ask)
+	}
+	// And the ask is the workflow's own: the same configuration leaves a task
+	// that carries a slot gated by that slot, which is what B1.1 declared.
+	if ask := slotAsk(other, spec); ask != "the task's ab.slot (l2)" {
+		t.Errorf("a task carrying a slot under another workflow asked %q, want the task's own", ask)
 	}
 }
 
