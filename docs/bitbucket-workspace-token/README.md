@@ -33,7 +33,7 @@ it does not make the service admit a *shared* job —
 `projectpolicy.SharedBitbucketProfile` has no production caller. T2.2, T2.4, T2.6's phase-3 half
 and T2.7 wait on B5.1 (S5), which is not started. **Done since the census:** T1.1's remainder and
 T1.3. **The reading's decisions are D1980–D1984, and the owner answered all five on 2026-11-10, as
-recommended**: T2.2 stays owed and waits on B5.1 (D1980); T2.9 closes as replaced (D1981); T2.4 is
+recommended**: T2.2 stays owed and waits on B5.1 (D1980); **2026-11-16: T2.4 and T2.6's phase-3 half are rewritten for the proxy (a shared Bitbucket job holds no token and the proxy serves it, docs/shared-jobs-default S1, D2302) and approved to launch**; T2.9 closes as replaced (D1981); T2.4 is
 kept for S5 (D1982); and D1983 and D1984 are **done** — the three corrections in
 `docs/git-providers.md`, and T2.11's step 5 as a dated amendment to the shipped 0.14.0 operator
 draft. Its block is D1980–D1999.
