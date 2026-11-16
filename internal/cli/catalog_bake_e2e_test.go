@@ -266,10 +266,6 @@ func newBuildRoute(t *testing.T, imageMap projectpolicy.ImageMap) *buildRoute {
 	if err != nil {
 		t.Fatalf("the fake database's client: %v", err)
 	}
-	// One store serves the state, the slips and the build pairings, which is the
-	// shape a deployment has: the service wraps the state in its own reader and
-	// refuses to start without a slip store (credsvc.NewServer).
-	store := &creds.RTDBStore{DB: client}
 	// The installation's repository table, in the key space the route reads a
 	// repository in (buildEntryRepos): the slug of a repository's name against
 	// the canonical name the published policy speaks.
@@ -286,10 +282,15 @@ func newBuildRoute(t *testing.T, imageMap projectpolicy.ImageMap) *buildRoute {
 		repos[slug] = canonical
 	}
 	srv, err := credsvc.NewServer(credsvc.Config{
-		Auth:        r.verifier,
-		Bundles:     &credsvc.BundleLoader{Source: buildRouteBundle{doc: buildRouteBundleDoc(t)}},
-		Policy:      buildRoutePolicy{imageMap: imageMap},
-		State:       store,
+		Auth:    r.verifier,
+		Bundles: &credsvc.BundleLoader{Source: buildRouteBundle{doc: buildRouteBundleDoc(t)}},
+		Policy:  buildRoutePolicy{imageMap: imageMap},
+		// One database serves the state and the slips, as a deployment's does,
+		// and the two stores are literals inside this call for a reason
+		// internal/creds' boundary test states: a store this package binds to a
+		// name is a store it can claim through, so a creds store is admitted
+		// here only where it leaves the file, handed to the service.
+		State:       &creds.RTDBStore{DB: client},
 		Kills:       buildRouteKills{},
 		JobAccounts: []credsvc.JobAccount{{Email: buildE2EIdentity, Slug: mustSlug(gitprov.KindGitHub, "acme/app"), Repo: "acme/app"}},
 		Repos:       repos,
@@ -297,7 +298,7 @@ func newBuildRoute(t *testing.T, imageMap projectpolicy.ImageMap) *buildRoute {
 		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
 		DB:          client,
 		Probes:      client,
-		Slips:       store,
+		Slips:       &creds.RTDBStore{DB: client},
 		AuditLog:    slog.NewJSONHandler(r.audit, nil),
 		// BaseURL is the Bitbucket half's — the address a grant points the
 		// build's git at — and this entry's repositories are GitHub's.
