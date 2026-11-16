@@ -95,14 +95,24 @@ func TestBakedCheckoutResetRefusesAGitdirFileAlternatesOrSubmoduleHooks(t *testi
 // the image wrote into that directory is a command of the image's that runs
 // there.
 //
-// The second case is the shape git itself writes: a .git file naming the
+// The middle case (F29) is the same worktree with the gitlink only in HEAD: the
+// index is the image's, so an entry the image dropped from it (update-index
+// --force-remove) is one the reset's own reset --hard HEAD puts back — measured:
+// the entry is in the index again after that command — and the clean that
+// follows leaves the planted directory alone. The paths read for the refusal are
+// therefore HEAD's tree's gitlinks as well as the index's, and the row fails
+// whenever only the index is read.
+//
+// The last case is the shape git itself writes: a .git file naming the
 // checkout's own .git/modules is accepted, so what is refused is the directory
 // the file names and not the file.
 //
 // Mutation (run, restored): drop the refuseSubmoduleWorktrees call from
 // refuseUnresettableBakedGit. Both entry points return nil for the first case —
 // "BakedGitOrigin err = <nil>, want a refusal naming ...", and the same for
-// ResetBakedGit — so the external git directory outlives the reset.
+// ResetBakedGit — so the external git directory outlives the reset. Read the
+// index alone (drop the read of HEAD's tree) and the middle case is accepted the
+// same way, ResetBakedGit included.
 func TestBakedCheckoutResetRefusesASubmoduleWorktreeNamingAnotherGitdir(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -111,6 +121,12 @@ func TestBakedCheckoutResetRefusesASubmoduleWorktreeNamingAnotherGitdir(t *testi
 	}{
 		{"a git directory outside the checkout", "this checkout's own .git/modules does not hold", func(t *testing.T, repo *Repo) {
 			plantGitlink(t, repo, "vendor/dep")
+			writeAt(t, filepath.Join(repo.Dir, "vendor", "dep", ".git"), "gitdir: "+t.TempDir()+"\n")
+		}},
+		{"a gitlink HEAD holds and the index does not", "this checkout's own .git/modules does not hold", func(t *testing.T, repo *Repo) {
+			plantGitlink(t, repo, "vendor/dep")
+			testutil.Git(t, repo.Dir, "commit", "--quiet", "-m", "a submodule the image committed")
+			testutil.Git(t, repo.Dir, "update-index", "--force-remove", "vendor/dep")
 			writeAt(t, filepath.Join(repo.Dir, "vendor", "dep", ".git"), "gitdir: "+t.TempDir()+"\n")
 		}},
 		{"the checkout's own .git/modules", "", func(t *testing.T, repo *Repo) {

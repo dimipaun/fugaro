@@ -1413,27 +1413,53 @@ func (r *Repo) refuseUnresettableBakedGit(ctx context.Context) error {
 // — its status runs the submodule's own status — and no reset of the top-level
 // .git reaches it.
 //
-// The paths are the index's gitlinks, which is exactly what clean -ffdx leaves
-// alone: a nested repository git does not track is removed with the rest of the
-// untracked tree, and one it does track is a submodule. A submodule inside a
+// The paths are HEAD's tree's gitlinks and the index's together, which is
+// exactly what clean -ffdx leaves alone: a nested repository git does not track
+// is removed with the rest of the untracked tree, and one it does track is a
+// submodule — and the index the clean reads is not the index read here. The
+// index is the image's, and an entry the image dropped from it (update-index
+// --force-remove) is one the reset's own reset --hard HEAD puts back, before the
+// clean that then leaves that path alone. HEAD's gitlinks are what such an entry
+// comes back as, so the same rule is applied to them, and only where the path is
+// in the worktree at all: a gitlink whose directory is absent puts nothing of
+// the image's in front of the run. A submodule inside a
 // submodule needs no walk of its own here: its git directory is a submodule's
 // own, which refuseSubmoduleState refuses for its configuration at any depth.
 //
 // core.fsmonitor is turned off for the read of the index alone, because reading
 // the index is enough to make git run a configured one and the image's
 // configuration is still in place here: the fixed one is written below, after
-// this refusal.
+// this refusal. A read of HEAD's tree reads no index, so no such flag is needed
+// there.
 func (r *Repo) refuseSubmoduleWorktrees(ctx context.Context) error {
+	var paths []string
+	seen := map[string]bool{}
+	collect := func(out []byte) {
+		for _, entry := range strings.Split(string(out), "\x00") {
+			meta, path, ok := strings.Cut(entry, "\t")
+			if !ok || !strings.HasPrefix(meta, "160000 ") || seen[path] {
+				continue
+			}
+			seen[path] = true
+			paths = append(paths, path)
+		}
+	}
 	out, err := r.gitRaw(ctx, "-c", "core.fsmonitor=false", "ls-files", "--stage", "-z")
 	if err != nil {
 		return err
 	}
-	modules := filepath.Join(r.Dir, ".git", "modules")
-	for _, entry := range strings.Split(string(out), "\x00") {
-		meta, path, ok := strings.Cut(entry, "\t")
-		if !ok || !strings.HasPrefix(meta, "160000 ") {
-			continue
+	collect(out)
+	// A checkout the image baked before its first commit has no HEAD to read, and
+	// nothing for a reset to put back either.
+	if _, err := r.git(ctx, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"); err == nil {
+		out, err := r.gitRaw(ctx, "ls-tree", "-r", "-z", "HEAD")
+		if err != nil {
+			return err
 		}
+		collect(out)
+	}
+	modules := filepath.Join(r.Dir, ".git", "modules")
+	for _, path := range paths {
 		dotGit := filepath.Join(r.Dir, filepath.FromSlash(path), ".git")
 		info, err := os.Lstat(dotGit)
 		if errors.Is(err, os.ErrNotExist) {
