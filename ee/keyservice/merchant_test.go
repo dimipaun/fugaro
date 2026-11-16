@@ -484,12 +484,8 @@ func TestABindingThroughAMinterThatCannotAnswerV1IsRefused(t *testing.T) {
 	licence := f.onlyEntitlement(t)
 	mailed := len(f.mail.sent)
 
-	f.actsAsOwnerOf("acme.example")
-	previous := probeInstallation
-	probeInstallation = projectInstallation{database: "https://%s.example", client: &http.Client{Transport: presentProject{}}}
-	t.Cleanup(func() { probeInstallation = previous })
-	if _, err := f.svc.bindEntitlement(context.Background(), f.signIn.caller, licence.ID, workspaceID); err == nil {
-		t.Error("binding a licence through a minter that answers no v1 request was answered, want a refusal: the older format's key carries no key_id for a revocation to name")
+	if err := f.bindingAttempt("acme.example", "sub-acme.example"); err == nil {
+		t.Errorf("binding the licence %s through a minter that answers no v1 request was answered, want a refusal: the older format's key carries no key_id for a revocation to name", licence.ID)
 	}
 	if got := f.signer.calls; got != 0 {
 		t.Errorf("a binding through a minter that answers no v1 request signed %d key(s), want none", got)
@@ -1469,43 +1465,35 @@ func TestTestModeEventsMintStagingKeysOnly(t *testing.T) {
 	}
 }
 
-// TestThePurchaseNoticeCarriesTheLinkAndNoKey: F3 and D2182 — no key is ever
-// mailed, and the purchase notice is where that shows. There is no key at the
-// purchase to mail (D2196 mints it at the binding), and a key mailed to a buyer
-// who has bound nothing would be bound to no project, which every verifier
-// refuses (TN2). What the customer is told is where the licence is and where
-// the key is issued from.
+// TestThePurchaseNoticeCarriesNeitherHalfOfThePair: F3, D2182 and §7.3 — the
+// pair a licence is renewed with is the mint's own, and the notice a purchase
+// sends carries neither half of it. There is no key at the purchase to carry
+// (D2196 mints it at the binding), and a key mailed to a buyer who has bound
+// nothing would be bound to no project, which every verifier refuses (TN2);
+// the renewal secret is the customer's, and a notice that carried it would put
+// a live renewal credential in a mailbox for a licence that has no key yet.
 //
-// What is D2135's and the binding's is the pair the licence is renewed with:
-// the mint answers a secret, the key carries its digest, and the store keeps
-// that digest and never the secret (§7.3, K2.2). The notice carries neither
-// half — the only mail that carries them is `paidKeyMail`, which a binding
-// sends to `applicant=""` and so sends nobody (D2182).
-func TestThePurchaseNoticeCarriesTheLinkAndNoKey(t *testing.T) {
+// What the notice does carry — the portal's address, and its own address and
+// subject — is TestPurchaseMailCarriesNoKey's (paddleevents_test.go); what is
+// here is the half the customer keeps and the digest the store keeps of it.
+func TestThePurchaseNoticeCarriesNeitherHalfOfThePair(t *testing.T) {
 	f := newFixture(t)
 	bought := f.purchase("evt-1", "acme.example", 5, 365)
 	minted := f.mintedKeys()[0]
 	claims := v1Verified(t, f, minted)
-
-	if got := len(f.mail.sent); got != 1 {
-		t.Fatalf("the purchase mailed %d message(s), want the one notice that carries the portal's address", got)
-	}
-	sent := f.mail.sent[0]
-	if sent.To != buyerAddress("acme.example") || sent.Subject != licenceSubject {
-		t.Fatalf("the purchase mailed %+v, want the licence notice to the buyer's own address", sent)
-	}
-	if link := f.svc.portalLink(); !strings.Contains(sent.Body, link) {
-		t.Errorf("the notice is %q, want it to carry the portal's own address %q: the portal is where the key is bound and issued", sent.Body, link)
-	}
-	if strings.Contains(sent.Body, minted) {
-		t.Errorf("the notice carries the key %q, want no key at all: there is none at the purchase, and the binding's key is issued in the portal (D2196, F3)", minted)
-	}
 	secret := f.secretOf(t, minted)
 	if secret == "" {
 		t.Fatalf("the mint that issued %s answered no renewal secret, want the pair every v1 mint answers (D2135)", minted)
 	}
-	if strings.Contains(sent.Body, secret) {
-		t.Errorf("the notice carries the renewal secret, want neither half of the pair: a notice is not the mail a key arrives in")
+
+	if got := len(f.mail.sent); got != 1 {
+		t.Fatalf("the purchase mailed %d message(s), want the one notice it sends", got)
+	}
+	sent := f.mail.sent[0]
+	for _, half := range []string{minted, secret} {
+		if strings.Contains(sent.Body, half) {
+			t.Errorf("the notice reads %q, want neither half of the pair in it: the key is the portal's to issue and the secret is the customer's (F3, D2182)", sent.Body)
+		}
 	}
 
 	// The store keeps that digest and never the secret: what a renewal is checked
