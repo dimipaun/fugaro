@@ -21,12 +21,12 @@ type scanFixture struct {
 	files map[string]string
 }
 
-// cleanFixture is an image the scan passes. Its config carries the variables a
-// base image's own, one of which merely contains a credential word
-// (DISABLE_AUTOUPDATER), and its files hold the git configs a base image really
-// has: /etc/gitconfig as images/base/byproducts.sh writes it (git-lfs's four
-// filter keys), a user config whose only useful line is an ssh mirror, and a
-// baked checkout whose remote is an https URL with no userinfo.
+// cleanFixture is an image the scan passes. Its config carries the variables
+// the base image's own sets, none of them named like a credential, and its
+// files hold the git configs a base image really has: /etc/gitconfig as
+// images/base/byproducts.sh writes it (git-lfs's four filter keys), a user
+// config whose only useful line is an ssh mirror, and a baked checkout whose
+// remote is an https URL with no userinfo.
 var cleanFixture = scanFixture{
 	env: []string{"PATH=/usr/local/bin:/usr/bin", "LANG=C.UTF-8", "DISABLE_AUTOUPDATER=1"},
 	files: map[string]string{
@@ -134,11 +134,10 @@ func TestScanVulnUnchanged(t *testing.T) {
 	}
 }
 
-// TestScanPassesACleanImage is the other half of every refusal below: an image
-// that carries no credential of a build's is scanned and passes. It runs the
-// whole leak check, so the passing fixture is one whose config names a
-// variable that merely contains a credential word and whose files hold a git
-// config with a name and a credential-free remote.
+// TestScanPassesACleanImage is the other half of every refusal around it: an
+// image that carries no credential of a build's is scanned and passes. It runs
+// the whole leak check, so the passing fixture is one whose environment, files
+// and git configs are what a base image and a baked checkout really hold.
 func TestScanPassesACleanImage(t *testing.T) {
 	out, log, err := runScan(t, cleanFixture, "0", "--secrets", "fugaro-base:ci")
 	if err != nil {
