@@ -12,9 +12,9 @@ import (
 // segment — `pools.*.owner` is written at `pools.team.owner`, and `<1>` is
 // where the name goes.
 //
-// The store of every one of them is local: a pool is declared in the
-// installation's own config, and the node that serves it is reconciled from
-// there rather than written by this command.
+// The store of every one of them is local: `accounts pool` writes the
+// installation's own config and nothing else, and the node a pool is served
+// from is not this command's to write.
 //
 // The value a template leaves for the caller is written as the literal
 // "<value>" rather than as a constant: that is C1's own spelling of it, and
