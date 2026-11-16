@@ -396,8 +396,9 @@ A pool is declared in this installation's own config, and this command removes
 the declaration from that file. The removal is recorded beside it, because the
 published node keeps a pool the config says nothing about: the record is what
 says the pool was taken away rather than never stated, and it is what a
-reconcile acts on. A repository that selected the pool keeps its own file
-untouched.
+reconcile acts on. No reconcile is in this release yet, so the removal
+withdraws nothing from the node: a node that already carries the pool goes on
+serving it. A repository that selected the pool keeps its own file untouched.
 
 --layer picks the layer the removal lands in. A pool is declared in this
 installation's own config, so the only layer it has is local, and --layer with
@@ -474,7 +475,7 @@ func runAccountsPoolRm(cmd *cobra.Command, name string, o accountsPoolWriteOptio
 	if err := settingsLayerGate(cmd, target, wo, key, old, next); err != nil {
 		return err
 	}
-	what := fmt.Sprintf("remove pools.%s (members %s) and record it as removed, for the reconcile that takes it off the node", pluginwire.Printable(name), strings.Join(pool.Members, ", "))
+	what := fmt.Sprintf("remove pools.%s (members %s) and record it as removed, for a reconcile that is not in this release: the node goes on serving it", pluginwire.Printable(name), strings.Join(pool.Members, ", "))
 	if len(cleared) > 0 {
 		what += fmt.Sprintf("; clear %s, which named it and would have nothing to spend without it", craftAccessKeys(cleared))
 	}

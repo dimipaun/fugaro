@@ -644,8 +644,9 @@ A pool is declared in this installation's own config, and this command removes
 the declaration from that file. The removal is recorded beside it, because the
 published node keeps a pool the config says nothing about: the record is what
 says the pool was taken away rather than never stated, and it is what a
-reconcile acts on. A repository that selected the pool keeps its own file
-untouched.
+reconcile acts on. No reconcile is in this release yet, so the removal
+withdraws nothing from the node: a node that already carries the pool goes on
+serving it. A repository that selected the pool keeps its own file untouched.
 
 --layer picks the layer the removal lands in. A pool is declared in this
 installation's own config, so the only layer it has is local, and --layer with
