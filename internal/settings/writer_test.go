@@ -14,47 +14,30 @@ import (
 // `writertest.` namespace or a `wtest`-prefixed one, so that no pattern a family
 // registers can collide with one of theirs, and so that a pattern left in the
 // table by a test matches no registry row. Each registration is dropped again by
-// registerForTest, so the package's tests run twice (`-count=2`) without a
+// registerWriters, so the package's tests run twice (`-count=2`) without a
 // second run meeting the first run's table as another family's registrations.
 
 // sameWriter is the equality a Writer needs: it carries an Argv, so two
-// writers with the same fields are not comparable with ==.
+// writers with the same fields are not comparable with ==. Every field the
+// registry sets is compared, `Node` included, so a test cannot pass on a writer
+// whose node fact differs from the one it registered.
 func sameWriter(a, b Writer) bool {
 	return a.Command == b.Command && a.Store == b.Store && a.Label == b.Label &&
-		a.Reason == b.Reason && slices.Equal(a.Argv, b.Argv)
+		a.Reason == b.Reason && a.Node == b.Node && slices.Equal(a.Argv, b.Argv)
 }
 
-// registerForTest registers w and drops the pattern again when the test ends.
-// Without the cleanup a second run of this package's tests (go test -count=2)
-// meets its own registrations as another family's, which is the duplicate
-// RegisterWriter refuses.
-func registerForTest(t *testing.T, pattern string, w Writer) {
+// registerWriters registers rows and drops each pattern again when the test
+// ends. The table is package state and `-count` re-runs a test in the same
+// process, where a second registration of a pattern is refused: a pattern left
+// behind is what a later repeat would meet as another family's, so every one a
+// test registers is taken back out.
+func registerWriters(t *testing.T, rows ...writerRow) {
 	t.Helper()
-	if err := RegisterWriter(pattern, w); err != nil {
-		t.Fatalf("%s: %v", pattern, err)
-	}
-	t.Cleanup(func() { unregisterWriter(pattern) })
-}
-
-// registerWriters registers rows and puts the table back as it found it when
-// the test ends. The table is package state and `-count` re-runs a test in the
-// same process, where a second registration of a pattern is refused: restoring
-// it is what lets every repeat register from the same slice instead of
-// inheriting the order an earlier repeat left behind.
-func registerWriters(t *testing.T, rows []writerRow) {
-	t.Helper()
-	writerMu.Lock()
-	saved := slices.Clone(writerRows)
-	writerMu.Unlock()
-	t.Cleanup(func() {
-		writerMu.Lock()
-		writerRows = saved
-		writerMu.Unlock()
-	})
 	for _, r := range rows {
 		if err := RegisterWriter(r.pattern, r.writer); err != nil {
 			t.Fatalf("%s: %v", r.pattern, err)
 		}
+		t.Cleanup(func() { unregisterWriter(r.pattern) })
 	}
 }
 
@@ -75,20 +58,19 @@ func TestWriterOfMatchesWildcardRows(t *testing.T) {
 
 	// The registrations are a slice and not a map: a lookup answers from the
 	// table's own order (comparePatterns sorts it), and an order a Go map
-	// happened to iterate in is an answer nothing pins. Each pattern is
-	// registered AFTER the one that must beat it, so a lookup that stopped
-	// sorting — or sorted by something other than the rule under test — fails
-	// here rather than passing by luck: the broad pattern of each specificity
-	// pair comes first, and the equal-specificity pair below is registered with
-	// the LATER text first, because with those two neither is the more specific
-	// and the tie-break is the pattern's own text.
-	registerWriters(t, []writerRow{
-		{pattern: "wtesta.*.leaf", writer: broad},
-		{pattern: "wtesta.exact.leaf", writer: exact},
-		{pattern: "wtestb.*.leaf", writer: wild},
-		{pattern: "wtestc.*.*.leaf", writer: broad},
-		{pattern: "wtestc.wide.*.leaf", writer: specific},
-	})
+	// happened to iterate in is an answer nothing pins. Each broad pattern is
+	// registered BEFORE the narrower one that must beat it, so a lookup that
+	// stopped sorting — or sorted by something other than the rule under test —
+	// fails here rather than passing by luck. No two rows below share a star
+	// count, so no pair of them reaches the text tie-break: the star count alone
+	// decides every answer here.
+	registerWriters(t,
+		writerRow{pattern: "wtesta.*.leaf", writer: broad},
+		writerRow{pattern: "wtesta.exact.leaf", writer: exact},
+		writerRow{pattern: "wtestb.*.leaf", writer: wild},
+		writerRow{pattern: "wtestc.*.*.leaf", writer: broad},
+		writerRow{pattern: "wtestc.wide.*.leaf", writer: specific},
+	)
 
 	for _, tc := range []struct {
 		key   string
@@ -125,10 +107,6 @@ func TestWriterOfMatchesWildcardRows(t *testing.T) {
 			why: "the pattern with two varying segments is the only one that matches, so it is the writer however specific it is not",
 		},
 		{
-			key: "wteste.x.leaf.deeper",
-			why: "the key has one segment more than either pattern, and a * never spans a dot",
-		},
-		{
 			key: "wtestb.name.leaf.deeper",
 			why: "the key has one segment more than the pattern",
 		},
@@ -159,7 +137,7 @@ func TestWriterOfMatchesWildcardRows(t *testing.T) {
 func TestRegisterWriterRefusesADuplicatePattern(t *testing.T) {
 	const pattern = "writertest.duplicate.leaf"
 	first := Writer{Command: "fugaro writertest first", Argv: []string{"writertest", "first", KeyPlaceholder}, Store: StoreLocal}
-	registerForTest(t, pattern, first)
+	registerWriters(t, writerRow{pattern: pattern, writer: first})
 	// The second writer states both shapes in full, so that what the call below
 	// refuses is the duplicate and not a writer the vocabulary already rejects.
 	err := RegisterWriter(pattern, Writer{Command: "fugaro writertest second", Argv: []string{"writertest", "second", KeyPlaceholder}, Store: StoreRepo})
@@ -284,19 +262,19 @@ func TestLabelIsOneOfTheThree(t *testing.T) {
 func TestArgvForFillsTheKeyAndItsSegments(t *testing.T) {
 	// A1's row shape, spelled as the probe had it. The pattern is A1's to
 	// register; cleanup takes it back out, so this test leaves no row behind.
-	registerForTest(t, "pools.*.owner", Writer{
+	registerWriters(t, writerRow{pattern: "pools.*.owner", writer: Writer{
 		Command: "fugaro accounts pool add",
 		Argv:    []string{"accounts", "pool", "add", "<1>", "--owner", ValuePlaceholder},
 		Store:   StoreLocal,
-	})
+	}})
 	// Two stars that are not adjacent, so that `<1>` and `<2>` are the segments
 	// of the first and the second star (the key's second and fourth) rather than
 	// its first two.
-	registerForTest(t, "wtestp.*.mid.*", Writer{
+	registerWriters(t, writerRow{pattern: "wtestp.*.mid.*", writer: Writer{
 		Command: "fugaro writertest segments",
 		Argv:    []string{"writertest", KeyPlaceholder, "<1>", "<2>", ValuePlaceholder},
 		Store:   StoreLocal,
-	})
+	}})
 
 	for _, tc := range []struct {
 		key  string
@@ -332,11 +310,11 @@ func TestArgvForFillsTheKeyAndItsSegments(t *testing.T) {
 // error to refuse with. A word silently dropped would run a different command
 // than the template states.
 func TestArgvForLeavesAPlaceholderItDoesNotOwn(t *testing.T) {
-	registerForTest(t, "wtestq.*.leaf", Writer{
+	registerWriters(t, writerRow{pattern: "wtestq.*.leaf", writer: Writer{
 		Command: "fugaro writertest untouched",
 		Argv:    []string{"writertest", "--pool=<1>", "<1>", "<2>", ValuePlaceholder, KeyPlaceholder},
 		Store:   StoreRepo,
-	})
+	}})
 	w, ok := WriterOf("wtestq.name.leaf")
 	if !ok {
 		t.Fatalf("wtestq.name.leaf: no writer was registered for the key")
@@ -359,11 +337,13 @@ func TestArgvForLeavesAPlaceholderItDoesNotOwn(t *testing.T) {
 // patterns with the same number of varying segments that can match one key
 // cannot both stand, because which of the two answered would then be the
 // table's text order and not the specificity the contract promises. Patterns of
-// different varying counts stay allowed — they meet only where one is strictly
-// the more specific, and the more specific wins.
+// different varying counts stay allowed even where they overlap, and the star
+// count alone decides the answer between them, so the refusal is what enforces
+// one writer per field among equal-star patterns and the star-count rule is
+// what enforces it across different counts.
 func TestRegisterWriterRefusesAnOverlappingPattern(t *testing.T) {
 	first := Writer{Command: "fugaro writertest first", Argv: []string{"writertest", "first", KeyPlaceholder}, Store: StoreLocal}
-	registerForTest(t, "wtestr.*.b", first)
+	registerWriters(t, writerRow{pattern: "wtestr.*.b", writer: first})
 
 	// `wtestr.x.*` and `wtestr.*.b` both match wtestr.x.b, each varying one
 	// segment: the second registration is refused, and it names both patterns.
@@ -383,7 +363,7 @@ func TestRegisterWriterRefusesAnOverlappingPattern(t *testing.T) {
 	// The same two patterns with different varying counts are the case the
 	// contract keeps: the row written out in full is the more specific one.
 	specific := Writer{Command: "fugaro writertest specific", Argv: []string{"writertest", "specific", KeyPlaceholder}, Store: StoreNode}
-	registerForTest(t, "wtestr.x.b", specific)
+	registerWriters(t, writerRow{pattern: "wtestr.x.b", writer: specific})
 	if got, ok := WriterOf("wtestr.x.b"); !ok || !sameWriter(got, specific) {
 		t.Errorf("WriterOf(wtestr.x.b) = %+v, %v, want %+v: a pattern with no varying segment may be registered beside a broader one and answers first", got, ok, specific)
 	}
@@ -399,7 +379,7 @@ func TestRegisterWriterRefusesAnOverlappingPattern(t *testing.T) {
 func TestWriterOfClonesTheArgv(t *testing.T) {
 	const key = "wtests.clone.leaf"
 	template := []string{"writertest", "clone", KeyPlaceholder}
-	registerForTest(t, "wtests.*.leaf", Writer{Command: "fugaro writertest clone", Argv: template, Store: StoreProject})
+	registerWriters(t, writerRow{pattern: "wtests.*.leaf", writer: Writer{Command: "fugaro writertest clone", Argv: template, Store: StoreProject}})
 	want := []string{"writertest", "clone", KeyPlaceholder}
 
 	template[0] = "edited after registration"
@@ -432,10 +412,11 @@ func TestWriterOfClonesTheArgv(t *testing.T) {
 }
 
 // TestWriterStoreSaysTheNodeServesAPool pins the fact the stage choice cannot be
-// read from a key's registry row: a pool's row is stated at the pattern
-// `pools.*.*` and carries one layer, the local config, so `Lookup` answers
-// nothing for the concrete key a command writes and no row says the node serves
-// it either. The writer that answers `pools.team.owner` is therefore the only
+// read from a key's registry row: a pool's rows are stated one per leaf,
+// `pools.*.owner` and its siblings, each carrying one layer, the local config,
+// so `Lookup`, which matches a key spelling and not a pattern, answers nothing
+// for the concrete key a command writes and no row says the node serves it
+// either. The writer that answers `pools.team.owner` is therefore the only
 // place the node half of D2615's two facts is stated, and this is the case a
 // hook reading the store alone gets wrong: store `local`, and the `policy` stage
 // owed all the same.
@@ -446,7 +427,7 @@ func TestWriterStoreSaysTheNodeServesAPool(t *testing.T) {
 		Store:   StoreLocal,
 		Node:    true,
 	}
-	registerForTest(t, "pools.*.*", pools)
+	registerWriters(t, writerRow{pattern: "pools.*.*", writer: pools})
 
 	got, ok := WriterOf("pools.team.owner")
 	if !ok {

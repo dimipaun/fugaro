@@ -50,10 +50,14 @@ type.
   and `a.x.*` — naming both. Which of the two answered would otherwise be the
   table's text order rather than the specificity this document promises, and a
   reader cannot tell from either pattern that the other exists. Patterns of
-  different varying counts stay allowed: they meet only where one is strictly
-  the more specific, and the more specific wins. The first registration stands,
-  and two families naming one row is a diff to settle, not a registration to
-  win.
+  different star counts stay allowed even where they overlap — `a.x.*` and
+  `*.*.b` both match `a.x.b` and neither contains the other — and the answer
+  there is the pattern with the fewest varying segments, fixed by the star
+  count and never by the order the two registered in. One writer per field is
+  therefore enforced exactly among equal-star patterns, by this refusal, and
+  across different counts by the star-count rule the table is ordered by. The
+  first registration stands, and two families naming one row is a diff to
+  settle, not a registration to win.
 - **Registration is a package `init`, and its error is a programming error.**
   The family panics on it, so a duplicate or an out-of-vocabulary writer fails
   every command of the binary and the conformance test loudly rather than one
