@@ -136,6 +136,16 @@ var secretReaderExceptions = []struct {
 			"deploy/terraform/gcp/modules/installation/intake.tf google_project_iam_member.intake_lister",
 		},
 	},
+	// The licence renewal job's account (K4.2, docs/licence-key-v2): the one
+	// reader of the renewal container, which `update` creates empty and
+	// `fugaro licence set` later writes. The role is a CUSTOM one
+	// (fugaroLicenceRenewal) carrying exactly K4.1's four calls -- the
+	// container's metadata, its enabled versions, one version's payload and the
+	// version a renewal writes -- so no predefined role is close: the two that
+	// would cover the four (secretmanager.secretVersionManager and
+	// secretmanager.viewer) also carry create, delete, destroy, enable, disable
+	// and getIamPolicy on the container, none of which the job calls.
+	{id: "E27", keys: []string{"deploy/terraform/gcp/modules/installation/licence.tf google_secret_manager_secret_iam_member.licence_renewal"}},
 }
 
 // A key under this prefix names a rule the scan enforces rather than a hit it

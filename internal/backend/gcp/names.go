@@ -794,7 +794,7 @@ const (
 	LicenceKeyObject = "fugaro/licence.json"
 )
 
-// LicenceReadObjects are the objects the renewal job reads, and the whole of
+// licenceReadObjects are the objects the renewal job reads, and the whole of
 // its read of the runs bucket. The key object is one of them; the other two
 // are how the job knows WHICH installation it is renewing for. It runs in a
 // Cloud Run container with no project config on disk and no checkout, so it
@@ -806,7 +806,7 @@ const (
 //
 // The order is the read's own and is part of the bytes: the condition the plan
 // carries is compared with these, so reordering them is another condition.
-var LicenceReadObjects = []string{LicenceMarkerObject, LicenceConfigObject, LicenceKeyObject}
+var licenceReadObjects = []string{LicenceMarkerObject, LicenceConfigObject, LicenceKeyObject}
 
 // licenceObjectCondition is the one definition of the renewal job's two
 // conditions: the bucket's objects whose NAME is one of objects, joined with
@@ -836,7 +836,7 @@ func licenceObjectCondition(bucket string, objects []string) string {
 // the installation's licence renewal job holds on the runs bucket: the three
 // objects above, by name, and nothing else in the bucket.
 func LicenceReadCondition(bucket string) string {
-	return licenceObjectCondition(bucket, LicenceReadObjects)
+	return licenceObjectCondition(bucket, licenceReadObjects)
 }
 
 // LicenceWriteCondition is the condition of the read-write (objectUser) grant
