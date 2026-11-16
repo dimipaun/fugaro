@@ -129,8 +129,10 @@ workflows:
     commands:
       build: npm run build
       test: npm test
-    secrets:                  # logical names; values stored with fugaro secrets set
-      - { name: npm-token, env: NPM_TOKEN }
+    # secrets:                # logical names; disabled for now and ignored (D2313): a shared
+    #                         # job mounts only the project's secrets, so store the value for the
+    #                         # project instead (`fugaro secrets set NAME`, no `--repo`)
+    #   - { name: npm-token, env: NPM_TOKEN }
     resources: { cpu: 4, memory: 8Gi }
     timeouts: { total: 3h, stage: 60m, verify: 30m, finalize_reserve: 5m }
 ```

@@ -1,6 +1,7 @@
 package runner_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -666,5 +668,199 @@ func TestTriageSwitchIsReadFromThePublishedNode(t *testing.T) {
 				t.Errorf("%d triage stages, want %d", n, c.want)
 			}
 		})
+	}
+}
+
+// triageTextStep is a judge call that answered words and no verdict: the shape
+// Claude Code leaves when the endpoint it was pointed at refused the run's own
+// credential — "Invalid API key · Fix external API key" is the text, and the
+// process ran, exited zero and reported a successful result, so this is a
+// Result and not an error. It is the call run 20261115-194116-0846 bought
+// twice, at one second each, with no verdict behind either.
+func triageTextStep(text string) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		return agent.Result{Text: text, Subtype: "success"}, nil
+	}
+}
+
+// triageStructuredStep is a judge call that answered the structured output the
+// schema should have produced, with something in it the reader refuses: a
+// verdict word outside the two, a key that names no finding, a reason the
+// model wrapped onto a second line.
+func triageStructuredStep(raw string) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		return agent.Result{Structured: json.RawMessage(raw), Subtype: "success"}, nil
+	}
+}
+
+// triageLogEntry is the run's own log line about a round whose call bought no
+// verdict: the first entry whose message is the runner's sentence about it,
+// parsed out of the JSON the logger writes.
+func triageLogEntry(t *testing.T, raw []byte) map[string]any {
+	t.Helper()
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		var entry map[string]any
+		if json.Unmarshal([]byte(line), &entry) != nil {
+			continue
+		}
+		if msg, _ := entry["message"].(string); strings.Contains(msg, "produced no readable verdict") {
+			return entry
+		}
+	}
+	t.Fatalf("the run's log carries no line about the round's unreadable verdict:\n%s", raw)
+	return nil
+}
+
+// TestTriageAuthFailureIsRecordedWithItsCause: a judge call an installation's
+// own credential was refused for bought no verdict, and the run says so
+// everywhere a person reads it rather than recording a stage that looks like
+// any other one. The call is a *successful* result — the process ran — so
+// nothing else in the run would have marked it; the round is failed with the
+// call's own words as its cause (D1846), the log line is an ERROR naming that
+// cause, and the pull request's status section carries both the marked stage
+// row and the line above the table saying the judge did not run and the
+// fail-safe blocked what the mode's table blocks.
+func TestTriageAuthFailureIsRecordedWithItsCause(t *testing.T) {
+	const answer = "Invalid API key · Fix external API key"
+	var logs bytes.Buffer
+	h := newHarness(t, startupCfg(t, 2, ""), nil)
+	h.deps.Log = runner.NewLogger(&logs)
+	rec, err := h.run(t,
+		implement("feature"),
+		reviewScored("changes", blockingFinding()),
+		triageTextStep(answer),
+		fixStep,
+		review("ship", 0),
+		triageStep("defer"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, want the run the failed judge did not end", rec)
+	}
+	tr := rec.Triage
+	if tr == nil || len(tr.Rounds) != 2 {
+		t.Fatalf("the record's triage block = %+v, want the failed round kept beside the one that answered", tr)
+	}
+	failed := tr.Rounds[0]
+	if !failed.Failed || failed.Round != 1 {
+		t.Errorf("the failed round = %+v, want round 1 marked failed", failed)
+	}
+	if failed.Cause != answer {
+		t.Errorf("the failed round's cause = %q, want the call's own words %q", failed.Cause, answer)
+	}
+	if e := failed.Entries[0]; e.Verdict != runstore.VerdictBlock || e.Source != runstore.TriageSourceFailSafe {
+		t.Errorf("the failed round's entry = %+v, want the fail-safe's block and not a judge's placement", e)
+	}
+	if second := tr.Rounds[1]; second.Failed || second.Cause != "" {
+		t.Errorf("the second round = %+v, want the round that answered and no cause", second)
+	}
+	entry := triageLogEntry(t, logs.Bytes())
+	if entry["severity"] != "ERROR" || entry["cause"] != answer {
+		t.Errorf("the run's log line about the round = %v, want an ERROR naming the cause", entry)
+	}
+	got := runner.Report(rec, "runs/acme-app/"+rec.RunID+"/", nil)
+	for _, want := range []string{
+		"**Triage:** the judge did not run for round 1: " + answer + ", so the fail-safe blocked every finding the mode's table blocks.",
+		"| triage (failed: " + answer + ") |",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the report lacks %q:\n%s", want, got)
+		}
+	}
+	if n := strings.Count(got, "| triage"); n != 2 {
+		t.Errorf("the report has %d triage rows, want the run's two rounds", n)
+	}
+}
+
+// TestTriageUnreadableVerdictIsRecordedWithTheReadersCause: a judge that ran
+// and answered something shaped like a verdict the reader refused is a
+// different fact from one that never answered at all, and the record tells the
+// two apart: the round failed with the reader's own cause rather than the
+// answer's text, which is what a reader seeing the two records side by side
+// needs to tell "the judge did not run" from "the judge's answer was unusable"
+// (runstore.TriageCauseUnreadable).
+func TestTriageUnreadableVerdictIsRecordedWithTheReadersCause(t *testing.T) {
+	// Shaped like the schema's own object and refused by it: the word is
+	// neither of the two the round answers with.
+	const answer = `{"version":1,"findings":[{"index":0,"key":"9f2a1c4d5e6a7b8c","verdict":"maybe","reason":"judged for this test"}]}`
+	var logs bytes.Buffer
+	h := newHarness(t, startupCfg(t, 2, ""), nil)
+	h.deps.Log = runner.NewLogger(&logs)
+	rec, err := h.run(t,
+		implement("feature"),
+		reviewScored("changes", blockingFinding()),
+		triageStructuredStep(answer),
+		fixStep,
+		review("ship", 0),
+		triageStep("defer"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := rec.Triage
+	if tr == nil || len(tr.Rounds) != 2 {
+		t.Fatalf("the record's triage block = %+v, want the failed round kept beside the one that answered", tr)
+	}
+	failed := tr.Rounds[0]
+	if !failed.Failed || failed.Cause != runstore.TriageCauseUnreadable {
+		t.Errorf("the failed round = %+v, want round 1 failed with %q", failed, runstore.TriageCauseUnreadable)
+	}
+	if e := failed.Entries[0]; e.Source != runstore.TriageSourceFailSafe {
+		t.Errorf("the failed round's entry = %+v, want the fail-safe's block", e)
+	}
+	if entry := triageLogEntry(t, logs.Bytes()); entry["cause"] != runstore.TriageCauseUnreadable {
+		t.Errorf("the run's log line = %v, want the reader's own cause", entry)
+	}
+	got := runner.Report(rec, "runs/acme-app/"+rec.RunID+"/", nil)
+	for _, want := range []string{
+		"**Triage:** the judge did not run for round 1: " + runstore.TriageCauseUnreadable + ",",
+		"| triage (failed: " + runstore.TriageCauseUnreadable + ") |",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the report lacks %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestTriageCauseIsOneRedactedBoundedLine: the cause is a service's own
+// sentence about the call, it is one line, and it reaches a record, a report
+// and a terminal — so it is the call's first line, with this run's secrets and
+// the credential shapes no value list can name taken out of it, clipped to the
+// record's own bound (runstore.MaxTriageLine). A service's auth error quotes
+// the credential it refused, which is exactly the key this run does not hold a
+// copy of, and an agent's transcript carries its own account of itself over
+// several lines.
+func TestTriageCauseIsOneRedactedBoundedLine(t *testing.T) {
+	token := "sk-" + strings.Repeat("Q", 32)
+	text := "the upstream refused this run's key: " + token + " " + strings.Repeat("x", 300) + "\nand the trace below it is not the cause"
+	h := newHarness(t, startupCfg(t, 1, ""), nil)
+	rec, err := h.run(t,
+		implement("feature"),
+		reviewScored("changes", blockingFinding()),
+		triageTextStep(text),
+		fixStep,
+		review("ship", 0),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := rec.Triage
+	if tr == nil || len(tr.Rounds) != 1 || !tr.Rounds[0].Failed {
+		t.Fatalf("the record's triage block = %+v, want the one failed round", tr)
+	}
+	cause := tr.Rounds[0].Cause
+	if strings.Contains(cause, token) || strings.Contains(cause, "sk-") {
+		t.Errorf("the cause carries the credential the call quoted: %q", cause)
+	}
+	if !strings.Contains(cause, "[REDACTED]") {
+		t.Errorf("the cause = %q, want the credential's shape replaced rather than the line dropped", cause)
+	}
+	if strings.Contains(cause, "trace below") || strings.Contains(cause, "\n") {
+		t.Errorf("the cause = %q, want the call's first line alone", cause)
+	}
+	if got := utf8.RuneCountInString(cause); got != runstore.MaxTriageLine {
+		t.Errorf("the cause is %d runes, want it clipped to %d", got, runstore.MaxTriageLine)
 	}
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/logtail"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -140,6 +141,18 @@ type Diagnosis struct {
 	// record's bytes, which a hand can edit. Absent when the record has no
 	// reviews, and when there is no record at all.
 	Reviews []runstore.ReviewSummary `json:"reviews,omitempty"`
+	// Triage is the record's triage rounds (runstore.TriageRecord, D1846,
+	// D1850) as a diagnosis reads them: one entry per round the stage ran, in
+	// the record's own order and bounded again on read, with the review round
+	// it judged, the mode, level, model and account it ran under, whether its
+	// call failed, why it failed (Cause), and its placements counted by source.
+	// The entries themselves are the record's and stay in it — this is the
+	// shape a reader needs to see which rounds a judge weighed and which ones
+	// the fail-safe decided, and a diagnosis that dropped a failed round would
+	// be showing a run whose findings look judged (D1846). Absent — never an
+	// empty list — for a run that triaged nothing, and for every record written
+	// before the field existed.
+	Triage []TriageRound `json:"triage,omitempty"`
 	// Reported is what providers said the run's calls cost, beside Charge,
 	// what the run charged the provider routes' calls -- the table's price
 	// with the fee, or the report where it floors an unpriced tier's charge.
@@ -173,6 +186,57 @@ type Diagnosis struct {
 	// that took no governance halt: a budget or credential halt carries none,
 	// and neither does a record written before the field existed.
 	Checkpoint *runstore.Checkpoint `json:"checkpoint,omitempty"`
+}
+
+// TriageRound is one triage round as a diagnosis prints it: the review round
+// the judge was asked about, the mode and level in force at it, the model and
+// account that served the call where the record names them, whether the call
+// failed and the one-line cause the record kept for the failure, and how the
+// round's findings were placed, counted by source.
+//
+// It is not the record's own round (runstore.TriageRound), which carries the
+// placements themselves: a diagnosis is the answer to "what happened to this
+// run", and each round's answer is the failure and the four counts it was read
+// with. The entries stay in the record, which is the run's own document, and
+// each one's source is what these counts are — a round with no fail_safe entry
+// is a round a judge really answered.
+type TriageRound struct {
+	Round int          `json:"round"`
+	Mode  rigor.Mode   `json:"mode"`
+	Level policy.Level `json:"level"`
+	Model string       `json:"model,omitempty"`
+	// Account is the Claude account that served the round, empty for a round
+	// that ran on the run's own credential.
+	Account string `json:"account,omitempty"`
+	// Failed is whether the call failed or its answer could not be read: the
+	// fail-safe blocks every finding the mode's table blocks (D1846), and the
+	// fix round that follows works on those findings, which no judge weighed.
+	Failed bool `json:"failed,omitempty"`
+	// Cause is why the round failed, one line, and absent for a round that did
+	// not (runstore.TriageRound.Cause): the call's own first line where it
+	// answered nothing shaped like a verdict, or `unreadable verdict` where it
+	// answered one the reader refused.
+	Cause string `json:"cause,omitempty"`
+	// Sources is the round's placements counted by where they came from. The
+	// four sum to the entries the record holds, which is Total unless the
+	// record's cap cut the list.
+	Sources TriageSources `json:"sources"`
+	// Total is how many findings the round read (runstore.TriageRound.Total),
+	// the record's own count and never less than the entries it holds.
+	Total int `json:"total"`
+}
+
+// TriageSources counts one triage round's placements by their source
+// (runstore.TriageSource): the judge's own answers, the mode's table deciding
+// on its own, the fail-safe a round with no verdict takes, and the cap's own
+// deferral (D1846, D1850, D1858). All four are always printed, zeros included:
+// a reader comparing two rounds must not have to tell "nothing came from the
+// fail-safe" from "the fail-safe is not shown".
+type TriageSources struct {
+	Agent    int `json:"agent"`
+	Table    int `json:"table"`
+	FailSafe int `json:"fail_safe"`
+	Cap      int `json:"cap"`
 }
 
 type diagnoseOptions struct {
@@ -325,6 +389,7 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 		d.Ruling = clipRunes(red(rec.OwnerRuled), task.MaxOwnerRuledBytes)
 		d.Retries = rec.Retries
 		d.Reviews = reviewsOf(rec.Reviews, red)
+		d.Triage = triageRoundsOf(rec.Triage, red)
 		d.Checkpoint = checkpointOf(rec.Checkpoint, red)
 		d.Verify = rec.Verify
 		for i := range d.Verify {
@@ -488,6 +553,112 @@ func reviewsOf(reviews []runstore.ReviewSummary, red func(string) string) []runs
 		r.Tier, r.Verdict = red(r.Tier), red(r.Verdict)
 		r.Model, r.Effort, r.Head = red(r.Model), red(r.Effort), red(r.Head)
 		out = append(out, r)
+	}
+	return out
+}
+
+// triageFlag is the line a diagnosis carries at the top when any triage round
+// failed, "" for a run whose rounds all answered and for one that triaged
+// nothing: the rounds whose calls failed with the cause of each, and what the
+// fail-safe did with the findings — every finding the mode's table blocks
+// blocked, which is what the fix round that follows was handed (D1846). It is
+// the summary of the block below it, written from the same reading, so the two
+// cannot say different things about one round.
+func triageFlag(rounds []TriageRound) string {
+	var parts []string
+	for _, r := range rounds {
+		if !r.Failed {
+			continue
+		}
+		part := fmt.Sprintf("round %d", r.Round)
+		if r.Cause != "" {
+			part += ": " + r.Cause
+		}
+		parts = append(parts, part)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("failed (%s); the fail-safe blocked every finding the mode's table blocks",
+		strings.Join(parts, "; "))
+}
+
+// triageLine is one triage round as the human block prints it: the round it
+// judged, the mode and level it ran under, the model and the account that
+// answered where the record names them, the findings it read and how they were
+// placed, counted by source — and, for a round whose call failed, the word
+// FAILED and the cause the record kept for it.
+//
+// All four counts are printed, zeros included, because a reader comparing two
+// rounds must not have to tell "nothing came from the fail-safe" from "the
+// fail-safe is not shown", and a round nothing was placed on still says how
+// many findings it read (Total).
+func triageLine(r TriageRound) string {
+	where := []string{string(r.Mode), string(r.Level)}
+	if r.Model != "" {
+		where = append(where, r.Model)
+	}
+	if r.Account != "" {
+		where = append(where, "account "+clipRunes(r.Account, maxNameCellRunes))
+	}
+	line := fmt.Sprintf("round %d (%s): %s — agent %d, table %d, fail_safe %d, cap %d",
+		r.Round, strings.Join(where, ", "), runner.Plural(r.Total, "finding"),
+		r.Sources.Agent, r.Sources.Table, r.Sources.FailSafe, r.Sources.Cap)
+	if !r.Failed {
+		return line
+	}
+	line += "; FAILED"
+	if r.Cause != "" {
+		line += ": " + r.Cause
+	}
+	return line
+}
+
+// triageRoundsOf is the record's triage rounds for the document: the record's
+// own order, bounded again on read — the write-side bound is
+// runstore.MaxTriageRounds, and the record is an object a hand can edit — and
+// with every string redacted, the cause, the account and the model included,
+// which are the record's bytes. nil for a record carrying no triage block, so
+// the key is absent rather than an empty list, and the rounds are counted here
+// and not stored: the counts are a reading of the entries, which are the
+// record's own.
+//
+// The counts are of the entries the record holds, and Total is the record's own
+// count of the findings the round read: the two differ where the cap cut a
+// round's list to MaxTriageEntries, and a diagnosis of such a round shows the
+// counts it can stand behind with the total beside them.
+func triageRoundsOf(t *runstore.TriageRecord, red func(string) string) []TriageRound {
+	if t == nil || len(t.Rounds) == 0 {
+		return nil
+	}
+	out := make([]TriageRound, 0, min(len(t.Rounds), runstore.MaxTriageRounds))
+	for _, r := range t.Rounds {
+		if len(out) == runstore.MaxTriageRounds {
+			break
+		}
+		tr := TriageRound{
+			Round:   r.Round,
+			Mode:    rigor.Mode(red(string(r.Mode))),
+			Level:   policy.Level(red(string(r.Level))),
+			Model:   red(r.Model),
+			Account: red(r.Account),
+			Failed:  r.Failed,
+			Cause:   red(r.Cause),
+			Total:   r.Total,
+		}
+		for _, e := range r.Entries {
+			switch runstore.TriageSource(red(string(e.Source))) {
+			case runstore.TriageSourceAgent:
+				tr.Sources.Agent++
+			case runstore.TriageSourceTable:
+				tr.Sources.Table++
+			case runstore.TriageSourceFailSafe:
+				tr.Sources.FailSafe++
+			case runstore.TriageSourceCap:
+				tr.Sources.Cap++
+			}
+		}
+		out = append(out, tr)
 	}
 	return out
 }
@@ -906,6 +1077,17 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 	if r.Reason != "" {
 		fmt.Fprintf(&b, "Reason:   %s\n", oneLine(r.Reason))
 	}
+	// A triage round whose call failed is said here, at the top, and not only
+	// in the block below: it changes what the run's own numbers mean. A fix
+	// round that looks like any other was handed the findings the mode's table
+	// blocks by the fail-safe, which no judge weighed (D1846), so a reader who
+	// stops at the status block must not come away thinking every round of the
+	// run was judged. The line names each failed round and its cause, and is
+	// the same reading the block below and the pull request's own line are
+	// written from.
+	if line := triageFlag(d.Triage); line != "" {
+		fmt.Fprintf(&b, "Triage:   %s\n", oneLine(line))
+	}
 	if acct := r.OAuthAccount; acct != "" && acct != "default" {
 		fmt.Fprintf(&b, "Account:  %s\n", oneLine(clipRunes(acct, maxNameCellRunes)))
 	}
@@ -1042,6 +1224,28 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 		// the difference between a short list and a complete one (F19).
 		if len(d.Reviews) == diagnoseReviews {
 			fmt.Fprintf(&b, "  … at most %d review rounds are printed\n", diagnoseReviews)
+		}
+	}
+	// The triage rounds, under the reviews whose rounds they judged (D1846,
+	// D1850): which rounds a judge really weighed, and for each one the model
+	// and account that answered, how its findings were placed and — where the
+	// call failed — the FAILED word and the record's own cause. It is the block
+	// that says a round was decided by the fail-safe rather than by a judge,
+	// which the findings list below cannot: those findings are the round's
+	// either way, and a run whose triage call failed has every one of them that
+	// the mode's table blocks in it.
+	if len(d.Triage) > 0 {
+		fmt.Fprintf(&b, "\nTriage\n")
+		for _, tr := range d.Triage {
+			fmt.Fprintf(&b, "  %s\n", oneLine(triageLine(tr)))
+		}
+		// Bounded like the reviews above and for the same reason (F19): the
+		// record's own bound is a writer's, and a hand-edited record need
+		// never have been bounded at all. A list that reaches the bound is
+		// cut, and saying so is the difference between a short list and a
+		// complete one.
+		if len(d.Triage) == runstore.MaxTriageRounds {
+			fmt.Fprintf(&b, "  … at most %d triage rounds are printed\n", runstore.MaxTriageRounds)
 		}
 	}
 	if len(d.Findings) > 0 {

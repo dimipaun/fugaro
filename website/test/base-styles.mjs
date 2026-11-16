@@ -2507,8 +2507,16 @@ export function navFailures(html, rel) {
   // the owner (docs/compatibility-matrix/reconciliation.md §4; the *Project* group is the
   // candidate it named). `website/src/layouts/Base.astro` carries the same date and the same
   // quote, so the two files that hold the nav agree about who approved it and when.
+  // **Features is the newest route, and the first of *Product*, directly after "How it works"**
+  // (the feature matrix: `docs/feature-matrix/implementation-plan.md` Task T4b, the owner's answer
+  // D2442 of 2026-11-15 in that folder's reconciliation). The page is the matrix of what the
+  // product does today, so it sits in the group about running the thing and not in the group about
+  // the project. The owner's approval of 2026-11-15 ("as recommended") is the approval
+  // `.claude/rules/website.md` asks for before a nav label or URL moves, and
+  // `website/src/layouts/Base.astro` carries the same date and the same answer, so the two files
+  // that hold the nav agree about who approved it and when.
   const GROUPS_WANTED = [
-    ['Product', ['/how-it-works/', '/getting-started/', '/caps-and-costs/', '/console/', '/mobile/']],
+    ['Product', ['/how-it-works/', '/features/', '/getting-started/', '/caps-and-costs/', '/console/', '/mobile/']],
     ['Project', ['/docs/', '/compatibility/', '/security/', '/why-gcp/', '/faq/', '/community/', '/changelog/']],
   ]
   groups.forEach((group, at) => {
@@ -2588,10 +2596,11 @@ test('the section nav is a labelled landmark of keyboard-reachable links, with t
 
 // The two groups, as the layout writes them (the owner's feedback of 2026-10-21 dropped the
 // Reference group: Console under *Product*, Docs and Changelog under *Project*; the owner's
-// approval of 2026-11-10 put Compatibility under *Project* after Docs), so a fixture is the real
+// approval of 2026-11-10 put Compatibility under *Project* after Docs, and the approval of
+// 2026-11-15 put Features under *Product* after "How it works"), so a fixture is the real
 // shape and not a smaller one the rule happens to accept.
 const FIXTURE_GROUPS = [
-  ['Product', [['/how-it-works/', 'How it works'], ['/getting-started/', 'Getting started'], ['/caps-and-costs/', 'Caps and costs'], ['/console/', 'Console'], ['/mobile/', 'Mobile']]],
+  ['Product', [['/how-it-works/', 'How it works'], ['/features/', 'Features'], ['/getting-started/', 'Getting started'], ['/caps-and-costs/', 'Caps and costs'], ['/console/', 'Console'], ['/mobile/', 'Mobile']]],
   ['Project', [['/docs/', 'Docs'], ['/compatibility/', 'Compatibility'], ['/security/', 'Security'], ['/why-gcp/', 'Why GCP'], ['/faq/', 'FAQ'], ['/community/', 'Community'], ['/changelog/', 'Changelog']]],
 ]
 

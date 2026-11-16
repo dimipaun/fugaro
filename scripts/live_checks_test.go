@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -367,6 +369,147 @@ const liveCheckTimeout = 12 * time.Minute
 // package is about the longest shard instead of the sum.
 const liveCheckShards = 3
 
+// liveCheckCIShardEnv is how CI's `scripts-live-*` runners split the checks
+// between them: `<index>/<of>`, the shape of the `-run` filter that used to
+// stand in for it. It has to be a variable read here because `-run` cannot do
+// it: the shards below are goroutines in this test's body rather than
+// subtests, and Go runs a top-level test whose name matches the first element
+// of a multi-element pattern even when no subtest of it matches -- so the
+// filter `^TestLiveCheckScripts$/^[^/]+$/^shard0$` selected this test on all
+// three runners and each one ran every check.
+const liveCheckCIShardEnv = "LIVE_CHECK_SHARD"
+
+// parseLiveCheckCIShard reads that variable. An empty value is the local case
+// and runs everything; a value it cannot read is an error rather than a
+// fallback to the whole suite, because a typo would otherwise put every check
+// on every runner again -- the state this variable exists to end, and one that
+// costs the runner its whole budget rather than reporting itself.
+func parseLiveCheckCIShard(env string) (index, of int, set bool, err error) {
+	if env == "" {
+		return 0, 0, false, nil
+	}
+	i, o, ok := strings.Cut(env, "/")
+	if !ok {
+		return 0, 0, false, fmt.Errorf("%s=%q is not <index>/<of>", liveCheckCIShardEnv, env)
+	}
+	index, err = strconv.Atoi(i)
+	if err != nil {
+		return 0, 0, false, fmt.Errorf("%s=%q: %v is not a shard index", liveCheckCIShardEnv, env, i)
+	}
+	of, err = strconv.Atoi(o)
+	if err != nil {
+		return 0, 0, false, fmt.Errorf("%s=%q: %v is not a shard count", liveCheckCIShardEnv, env, o)
+	}
+	if of < 1 || index < 0 || index >= of {
+		return 0, 0, false, fmt.Errorf("%s=%q: a shard is 0 <= <index> < <of>, so no runner would own this one", liveCheckCIShardEnv, env)
+	}
+	return index, of, true, nil
+}
+
+// TestLiveCheckCIShardCoversTheSuiteOnce: the split CI makes is a partition of
+// this file's items -- every one of them on exactly one runner, each item
+// unchanged -- and a variable it cannot read is refused rather than run whole.
+// The suite is 171 items on one runner and under a minute each; a split that
+// dropped one, ran one twice or fell back to everything would show up as a
+// green run that tested less, which is the failure this pins.
+func TestLiveCheckCIShardCoversTheSuiteOnce(t *testing.T) {
+	var items []liveCheckShard
+	for _, c := range liveCheckScripts {
+		for i := 0; i < liveCheckShards; i++ {
+			items = append(items, liveCheckShard{c.test, i})
+		}
+	}
+	for _, of := range []int{1, 2, 3, 4, 6, 8} {
+		seen := map[liveCheckShard]int{}
+		for index := 0; index < of; index++ {
+			shard := ciLiveCheckShards(items, index, of)
+			if len(shard) == 0 {
+				t.Fatalf("of %d: runner %d is given nothing: one runner of a split this size would report success having run no check at all", of, index)
+			}
+			// In the file's order, so that the split is a property of this
+			// file rather than of the runner: two runs of the same commit
+			// hand a runner the same list.
+			next := 0
+			for _, s := range shard {
+				for next < len(items) && items[next] != s {
+					next++
+				}
+				if next == len(items) {
+					t.Fatalf("of %d: runner %d is given %v after %v, and this file lists them the other way round", of, index, s, shard[0])
+				}
+				seen[s]++
+				next++
+			}
+		}
+		if len(seen) != len(items) {
+			t.Fatalf("of %d: the runners are given %d distinct items and this file lists %d: the split has to cover the suite, and a drop is a green run that tested less", of, len(seen), len(items))
+		}
+		for s, n := range seen {
+			if n != 1 {
+				t.Fatalf("of %d: %v is given to %d runners: an item run twice spends a runner's budget on work another runner is doing", of, s, n)
+			}
+		}
+	}
+
+	for _, c := range []struct {
+		env        string
+		index, of  int
+		set        bool
+		wantRefuse bool
+	}{
+		{env: ""},
+		{env: "0/1", index: 0, of: 1, set: true},
+		{env: "2/3", index: 2, of: 3, set: true},
+		{env: " 0/3", wantRefuse: true},
+		{env: "0 /3", wantRefuse: true},
+		{env: "0", wantRefuse: true},
+		{env: "0/", wantRefuse: true},
+		{env: "/3", wantRefuse: true},
+		{env: "x/3", wantRefuse: true},
+		{env: "0/x", wantRefuse: true},
+		{env: "0/0", wantRefuse: true},
+		{env: "-1/3", wantRefuse: true},
+		{env: "3/3", wantRefuse: true},
+		{env: "4/3", wantRefuse: true},
+		{env: "0/3/4", wantRefuse: true},
+	} {
+		index, of, set, err := parseLiveCheckCIShard(c.env)
+		switch {
+		case c.wantRefuse:
+			if err == nil {
+				t.Errorf("%s=%q was read as shard %d of %d: a runner told to run something that is not a shard would run the whole suite or none of it, and neither says so", liveCheckCIShardEnv, c.env, index, of)
+			}
+		case err != nil:
+			t.Errorf("%s=%q: %v", liveCheckCIShardEnv, c.env, err)
+		case set != c.set || (set && (index != c.index || of != c.of)):
+			t.Errorf("%s=%q was read as shard %d of %d (set %v), want %d of %d (set %v)", liveCheckCIShardEnv, c.env, index, of, set, c.index, c.of, c.set)
+		}
+	}
+}
+
+// liveCheckShard is one item of the live suite: one script's test, and which
+// of that script's own CHECK_TEST_SHARD shards it is.
+type liveCheckShard struct {
+	test string
+	n    int
+}
+
+// ciLiveCheckShards is the shard of this file's items a CI runner runs: item i
+// goes to runner i%of, so every item runs on exactly one runner, the assignment
+// is stable across runs, and a check added to liveCheckScripts lands on a
+// runner on its own. The items are numbered in the order this file lists them,
+// which is what makes that stability a property of the file rather than of the
+// runner.
+func ciLiveCheckShards(shards []liveCheckShard, index, of int) []liveCheckShard {
+	var mine []liveCheckShard
+	for i, s := range shards {
+		if i%of == index {
+			mine = append(mine, s)
+		}
+	}
+	return mine
+}
+
 // liveCheckWorkers is how many shards run at once. Splitting a script into
 // shards only shortens the package if the shards really run side by side, and
 // subtests under t.Parallel() are capped at -parallel, which defaults to
@@ -408,24 +551,34 @@ func (b *syncBuffer) String() string {
 //
 // The shards go through liveCheckWorkers goroutines rather than through
 // t.Parallel() subtests, so that how much of the package runs at once is this
-// file's decision and not -parallel's: see the comment on that constant.
+// file's decision and not -parallel's: see the comment on that constant. The
+// same choice is why CI splits this test by liveCheckCIShardEnv instead of by
+// `-run`: what a runner is given is the list it starts from, and the list is
+// built here.
 func TestLiveCheckScripts(t *testing.T) {
 	for _, tool := range []string{"bash", "python3"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skipf("%s is not installed", tool)
 		}
 	}
-	type shard struct {
-		test string
-		n    int
-	}
-	var shards []shard
+	var shards []liveCheckShard
 	for _, c := range liveCheckScripts {
 		for i := 0; i < liveCheckShards; i++ {
-			shards = append(shards, shard{c.test, i})
+			shards = append(shards, liveCheckShard{c.test, i})
 		}
 	}
-	queue := make(chan shard)
+	// What this runner was given of them, when CI says so. It is read after
+	// the whole list is built rather than left to the workflow's `-run`
+	// filter, which cannot reach into this test: see liveCheckCIShardEnv.
+	if index, of, set, err := parseLiveCheckCIShard(os.Getenv(liveCheckCIShardEnv)); err != nil {
+		t.Fatal(err)
+	} else if set {
+		all := len(shards)
+		if shards = ciLiveCheckShards(shards, index, of); len(shards) == 0 {
+			t.Fatalf("%s=%d/%d takes none of this file's %d shards, so this runner would report success having run nothing", liveCheckCIShardEnv, index, of, all)
+		}
+	}
+	queue := make(chan liveCheckShard)
 	var (
 		mu       sync.Mutex
 		failures []string
