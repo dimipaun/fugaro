@@ -1,7 +1,10 @@
 package cli
 
-// docs/backlog/ is this repository's one backlog (rigor-modes, the owner's
-// ruling of 2026-10-20: D26–D32, plan T4.3 and T4.4).
+// docs/backlog/ is this repository's backlog history (rigor-modes, the owner's
+// ruling of 2026-10-20: D26–D32, plan T4.3 and T4.4) — the ruling the
+// orchestrator graph estimates work retires: the standing backlog is the
+// project's work items, `fugaro backlog add` files one, and this folder stays
+// as history (D2716).
 //
 // One Markdown file per item, named `<id>-<slug>.md`, so that two pull
 // requests filing an item at once write two differently named files and the
@@ -680,6 +683,54 @@ func TestDocsBacklogIndexGuardCatchesAnUnregeneratedItem(t *testing.T) {
 // the format accepts rather than a stub.
 func itemDoc(id, title string) string {
 	return backlogItemDoc(id, title, "open", "## What was left open\n\nthe thing.\n\n## Why\n\nbecause.\n")
+}
+
+// TestBacklogHeaderSaysHistory: D2716 folds docs/backlog/ into the standing
+// backlog and retires it, so this folder is history and `fugaro backlog add`
+// files an item now. Render's header is where a reader meets that, and it is
+// the document's head rather than a footnote under the rows; the hand-written
+// FORMAT.md beside it says the same, because a folder that is history in one
+// document and live in the other is a folder whose reader cannot tell which to
+// believe.
+//
+// The committed index is not read here: TestDocsBacklogIndexIsCurrent is the
+// regenerate-and-compare pin that holds docs/backlog/README.md to the bytes
+// Render writes, so this test pins the generator's own words and that pin
+// carries them into the file.
+//
+// Mutation (verified, run and restored): put Render's preamble back the way it
+// was before this test — this fails naming the missing sentence, and it is
+// B8's red step.
+func TestBacklogHeaderSaysHistory(t *testing.T) {
+	items, err := backlog.LoadDir(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	index := backlog.Render(items)
+
+	// The header is the document above its count line: what a reader meets
+	// before the first figure, rather than a sentence after the rows.
+	countAt := strings.Index(index, "items: ")
+	if countAt < 0 {
+		t.Fatalf("Render's index carries no count line, so its header cannot be read off it:\n%s", index)
+	}
+	header := flattenDoc(index[:countAt])
+
+	history := []string{
+		"This folder is history",
+		"`fugaro backlog add` files an item now",
+	}
+	for _, want := range history {
+		if !strings.Contains(header, want) {
+			t.Errorf("the index's header does not say %q: D2716 retires this folder as the backlog, and a reader who opens the index has to meet that before the rows (header: %s)", want, header)
+		}
+	}
+	format := flattenDoc(readDoc(t, backlogFormat))
+	for _, want := range history {
+		if !strings.Contains(format, want) {
+			t.Errorf("%s does not say %q: the hand-written document beside the index says the same, so a reader finds one story in the folder (D2716)", backlogFormat, want)
+		}
+	}
 }
 
 // TestDocsBacklogIndexIsDeterministic: the index is a pure function of the
