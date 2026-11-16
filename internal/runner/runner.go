@@ -3031,6 +3031,16 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err := r.fetchWorkflowSecrets(ctx, wf); err != nil {
 		return err
 	}
+	// Every name the workflow declares a secret for, whether this job mounts the
+	// value or the fetch above read it from the installation's credentials
+	// service. The image arm drops an undeclared name by this set as well as by
+	// the job's own FUGARO_SECRET_ENVS (agentenv.go's imageEnv): after the flip a
+	// job names none of these, and a review run declares none of them, so this is
+	// what keeps a fetched value out of a review run's agent (G12).
+	wfSecretEnvs := make([]string, len(wf.Secrets))
+	for i, s := range wf.Secrets {
+		wfSecretEnvs[i] = s.Env
+	}
 	// A review run's agent gets none of the workflow's secrets (design
 	// generic-tool §3.6, G12): it runs a reviewed pull request's own,
 	// untrusted checkout and prompt (a hook, an auto-loaded CLAUDE.md), so
@@ -3040,10 +3050,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// prompt injection: that is the residual risk the design accepts.
 	var secretEnvs []string
 	if !r.review {
-		secretEnvs = make([]string, len(wf.Secrets))
-		for i, s := range wf.Secrets {
-			secretEnvs[i] = s.Env
-		}
+		secretEnvs = wfSecretEnvs
 	} else {
 		// Keeping secretEnvs empty stops agent.BuildEnv from putting these
 		// in the agent's own environment, but the runner process still
@@ -3146,7 +3153,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// The operator's own catalog image's variables, for a job whose image
 		// the catalog chose (agentenv.go's imageEnv): nil for every other job,
 		// whatever its environment holds.
-		ImageEnv: r.imageEnv(secretEnvs),
+		ImageEnv: r.imageEnv(secretEnvs, wfSecretEnvs),
 		Gateway:  r.gateway(), Compression: r.compression,
 		// Docker stays false here, so the agent's environment has no
 		// DOCKER_HOST: nothing yet tells this runner that its workflow asked

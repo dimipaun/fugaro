@@ -236,6 +236,10 @@ func secretsRun(t *testing.T, extra string, spec *task.Spec, svc *secretsService
 // fixtureJob is the job name the fixture's runs are in.
 func fixtureJob() string { return gcp.JobName(repoSlug, gcp.WorkflowVariant("app", "")) }
 
+// imageEntryName is the catalog entry an image-env case's job is stamped with,
+// the way the flip's derived image stamps one (docs/image-env, D1370).
+const imageEntryName = "fixture-entry"
+
 // TestBootstrapFetchesMissingWorkflowSecretsFromTheService is B3.4's red step:
 // a run whose job does not carry a declared secret's value fails today with
 // "secret FIXTURE_FAILS_FILE is not set in the runner environment", and with
@@ -381,6 +385,11 @@ func TestReviewRunFetchedSecretsNeverReachTheAgent(t *testing.T) {
 	// cannot place.
 	spec.Workflow = "app"
 	b := secretsRun(t, "", spec, svc)
+	// The flipped repository's job runs a derived image, so it carries the
+	// catalog stamp -- which is what turns the image arm on: without it the run
+	// passes none of its own environment on (D1371's fail-closed), and with it a
+	// name the run did not declare must still not reach this agent (F8).
+	b.harness.deps.Env = append(b.harness.deps.Env, runner.ImageEntryEnv+"="+imageEntryName)
 	pushReviewBranch(t, b.harness, "someone-elses-change", func(dir string) {
 		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
 	})
