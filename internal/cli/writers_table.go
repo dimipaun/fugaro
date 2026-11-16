@@ -55,16 +55,17 @@ func init() {
 // A key here is a flag of one command rather than a key named on the command
 // line: `caps.global.per_day_usd` is `budget set --global --daily`, and the
 // registry's spelling of the row goes to the reader and the refusal rather than
-// into the argv. `caps.mode` carries the caps beside the mode because the
-// writer checks that a mode of enforce has caps to enforce, and an installation
-// whose caps are unset is exactly the one this test probes; the two flags name
-// values the row does not claim to write.
+// into the argv. `caps.mode` carries `--mode` and nothing else: the command
+// takes `observe` or `enforce`, and only `enforce` needs caps, so naming caps
+// beside the mode would put amounts this row does not write into the line a
+// refusal prints — the command refuses an `enforce` the database has no caps
+// for with its own sentence naming the two flags to add.
 //
 // `kill.global.on` is the one writer here that takes no value: the switch is
 // turned on by `budget kill --all` itself, and no word of the command line
 // carries the row's value.
 var writersBudgetRows = map[string][]string{
-	"caps.mode":                 {"budget", "set", "--global", "--daily", "5", "--per-run", "1", "--mode", writersValueWord},
+	"caps.mode":                 {"budget", "set", "--global", "--mode", writersValueWord},
 	"caps.global.per_day_usd":   {"budget", "set", "--global", "--daily", writersValueWord},
 	"caps.global.per_run_usd":   {"budget", "set", "--global", "--per-run", writersValueWord},
 	"caps.defaults.per_day_usd": {"budget", "set", "--defaults", "--daily", writersValueWord},

@@ -98,7 +98,7 @@ var writerProbeNames = map[string]string{
 var writerProbeLadder = []string{
 	"1", "2", "true", "false", "30m", "1h", "1m", "5s", "10s",
 	"web", "svc", "conformance", "baked", "go", "24", "main", "github", "bitbucket",
-	"2Gi", "30d", "off", "warn", "enforce", "acme/web", "src/**",
+	"2Gi", "30d", "off", "warn", "observe", "enforce", "acme/web", "src/**",
 	"strong", "strongest", "fast", "oauth", "api-key", "vertex",
 	"fugaro", "launcher", "18", "52",
 }
