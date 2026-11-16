@@ -207,6 +207,50 @@ func TestAKeyCredentialTakesNoProfile(t *testing.T) {
 	}
 }
 
+// TestAKeyCredentialTakesNoClaudeLogin is the other flag a habit adds, and the
+// one the value's own rule refuses: --claude runs Anthropic's own
+// `claude setup-token` login and then reads the token it printed at the hidden
+// prompt — so against a key credential it would store a Claude OAuth token
+// under the credential's own derived name, as if it were the key the provider
+// issues, and nothing would ever detect the swap. The run is refused before the
+// login is screened and before a byte is written.
+//
+// The refusal follows the credential the config declares and not this run's
+// flag, which is what the second case asserts: a re-run carries no --type, and
+// accountsAddSecretType answers the type the file already declares — so the
+// flag is refused for a credential declared by an earlier run too.
+func TestAKeyCredentialTakesNoClaudeLogin(t *testing.T) {
+	for _, c := range []struct {
+		what, local string
+		args        []string
+	}{
+		{"the flag declares the type", addRigLocal, []string{"accounts", "add", "team-a", "--repos", "owner/repo-a", "--type", "openrouter", "--claude"}},
+		{"the config already declares it", accountsAddKeyCredentialLocal, []string{"accounts", "add", "team-a", "--repos", "owner/repo-a", "--claude"}},
+	} {
+		t.Run(c.what, func(t *testing.T) {
+			path := accountsAddFixture(t, c.local)
+			before := readFileString(t, path)
+
+			out, errOut, err := executeStdin(t, addToken()+"\n", c.args...)
+			if err == nil {
+				t.Fatalf("--claude was accepted for a key credential:\n%s\n%s", out, errOut)
+			}
+			if want := "--claude runs Anthropic's own"; !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not read %q: %v", want, err)
+			}
+			if !strings.Contains(err.Error(), config.CredentialSecret("team-a")) || !strings.Contains(err.Error(), "without --claude") {
+				t.Errorf("the refusal does not name the container the value would land in and the fix: %v", err)
+			}
+			if got := readFileString(t, path); got != before {
+				t.Errorf("the refused write changed the file:\n%s", got)
+			}
+			if strings.Contains(out+errOut, addToken()) {
+				t.Errorf("the refusal printed the value:\n%s\n%s", out, errOut)
+			}
+		})
+	}
+}
+
 // TestAccountsAddAnthropicKey is the same for the other key type: the type is
 // declared and the value lands under the credential's own derived secret name,
 // which is the one container both the service-served and the runner-served

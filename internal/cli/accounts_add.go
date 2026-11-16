@@ -203,6 +203,20 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// the edit below writes, and what carries its value to a call is the serving
 	// half of its type (D1670, MC23) — never a job of the account's own.
 	typ := accountsAddSecretType(lc, name, o.typ)
+	// --claude is refused for a key credential, and it is refused for the VALUE
+	// and not for the terminal: the login is Anthropic's, run so that the token
+	// pasted at the hidden prompt below is the one it just printed
+	// (accounts_add_login.go). Against a key credential that token is not the
+	// credential's — the value here is the key its provider issued — so the run
+	// would store a Claude OAuth token under credential-<name>-key as if it were
+	// that key, and neither the container nor the credential's own reader could
+	// tell the two apart afterwards. The type is the resolved one and not the
+	// flag's (accountsAddSecretType): a re-run of an account an earlier run
+	// declared a key credential carries no --type and is refused here too.
+	if o.claude && config.KeyCredentialType(typ) {
+		return userErr("--claude runs Anthropic's own claude setup-token login and then stores the token it printed, and %s is a key credential (%s): the value this command stores for it is the key its provider issued, which would be replaced by the login's Claude token under %s, and nothing could tell the two apart afterwards. Run this again without --claude, and paste the key its provider issued at the same hidden prompt; nothing was written",
+			pluginwire.Printable(name), pluginwire.Printable(typ), config.CredentialSecret(name))
+	}
 	profile := ""
 	if config.KeyCredentialType(typ) {
 		if o.profile != "" {

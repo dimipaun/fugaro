@@ -341,6 +341,21 @@ func validProfiles(profiles map[string]Profile, accounts map[string]Account) err
 			if config.CodexOAuthSecret(secret) {
 				return fmt.Errorf("%s.secrets[%d]: %s and the names starting %s are reserved for the Codex harness's OAuth credential, which Fugaro does not drive yet: no job mounts one, so no profile may name it", at, i, config.CodexOAuthToken, config.CodexOAuthTokenPrefix)
 			}
+			// A typed credential's own derived secret name is the third
+			// namespace, and the same rule: `fugaro accounts add --type
+			// openrouter|anthropic` declares a credential whose value is stored
+			// under credential-<name>-key (config.CredentialSecret, MC22), and a
+			// shared job mounts a name Fugaro reserves or a configured model
+			// provider's key (internal/infra's projectSecretEnv) and nothing
+			// else — so the deployer refuses a profile carrying this entry. This
+			// reader accepting it is what the rule above exists to prevent: a
+			// policy would publish a profile `fugaro update` then refuses to
+			// deploy, and the two readers of one profile would be telling
+			// different stories about it. A credential's value reaches a run by
+			// its own type's path and never as a shared job's mount (D1670).
+			if config.KeyCredentialSecret(secret) {
+				return fmt.Errorf("%s.secrets[%d]: the names starting %s are a typed credential's own derived secret name (credentials in the local config), where that credential's value is stored, and no job mounts one as a secret of its own: a shared job's secret_env is a name Fugaro reserves or a configured model provider's key, which is why the deployer refuses a profile carrying this entry. A credential reaches a run by its own type's path and not as a shared job's mount — `fugaro accounts add` declares it and stores its value; take the entry off the profile", at, i, config.CredentialSecretPrefix)
+			}
 			if seen[secret] {
 				return fmt.Errorf("%s.secrets[%d]: a secret is listed twice; list each secret once", at, i)
 			}
