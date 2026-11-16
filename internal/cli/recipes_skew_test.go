@@ -3091,6 +3091,200 @@ func TestMergeJudgeSinceHasAReleaseBullet(t *testing.T) {
 	if !strings.Contains(bullet, "E6") {
 		t.Errorf("docs/release.md's mergeJudgeSince bullet does not name the runner half the release must carry")
 	}
+	// The bullet carries both halves of the release's gate, and a release that
+	// verified the step alone would ship the craft key ungated: the second gate
+	// is the half the v0.25.0 note invites an operator to write.
+	for _, want := range []string{"agent.crafts.merge-judge", "defaults.agent.crafts.merge-judge", "checkMergeJudgeCraftImage", "checkCloneMergeJudgeCraftImage", "freshLaunchGates"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's mergeJudgeSince bullet does not say %q", want)
+		}
+	}
+}
+
+// mergeJudgeCraftSkewHead is configSkewHead with the judge's craft written, the
+// repository half of the key this gate judges. The block is written empty —
+// which sets neither half of the craft and so inherits both — because it is the
+// key an older runner's KnownFields decoder refuses and not the values it
+// holds: the same reason visionSkewHead's slot is judged whatever it names.
+const mergeJudgeCraftSkewHead = "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nagent: { auth: api-key, crafts: { merge-judge: {} } }\n"
+
+// mergeJudgeCraftSkewLayer is the project layer
+// TestRunRefusesTheLayersMergeJudgeCraftOnAnOlderBaseImage publishes:
+// testProjectLayer's own text with the key written under defaults.agent.crafts,
+// its other home (config.Scopes: InProject | InRepo). The block is written
+// empty — which sets neither half of the craft — for visionSkewLayer's reason:
+// the layer's text writes the key, an older runner refuses it whatever it
+// holds, and a gate that read the resolved craft would see the coder's and
+// launch. A null leaf is not an option here, as it is for the vision slot: a
+// craft is a block of keys, so the layer's own validator refuses `merge-judge:`
+// before any runner meets it.
+const mergeJudgeCraftSkewLayer = "version: 1\nproject: aurora\ngcp_project: proj-1234\ndefaults:\n  git: { provider: github }\n  agent: { auth: api-key, crafts: { merge-judge: {} } }\nprofiles:\n  svc:\n    commands: { build: sh build.sh, test: sh test.sh }\ndefault_profile: svc\n"
+
+// TestMergeJudgeCraftSinceRefusesAnOlderImage is mergeJudgeSince's gate on the
+// judge's craft, the half the finding that added it named: a repository whose
+// fugaro.yaml writes agent.crafts.merge-judge launched against a job image
+// older than the release was deployed and then died at bootstrap, on a key
+// nobody could do anything about any more — "field merge-judge not found in
+// type config.Crafts", refused by the runner's own strict decoder. The judge is
+// the workflow's build record, as it is for every other per-workflow image gate
+// (checkImageSince), and the key is what is judged and not the craft it names.
+func TestMergeJudgeCraftSinceRefusesAnOlderImage(t *testing.T) {
+	f := newCloudFixture(t)
+	older := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, mergeJudgeSince, -1)
+	configSkewCheckout(t, f, mergeJudgeCraftSkewHead+configSkewWorkflow)
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", older)
+	_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the launch refused", err)
+	}
+	for _, want := range []string{
+		"fugaro.yaml's agent.crafts.merge-judge of acme/other",
+		"knows the merge judge's craft (agent.crafts.merge-judge)",
+		"fugaro " + mergeJudgeSince + " or later",
+		older + ", release " + shiftRelease(t, mergeJudgeSince, -1),
+		imageGateRemedy,
+		"; or remove agent.crafts.merge-judge from fugaro.yaml",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%v lacks %q", err, want)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("%d executions, want none", n)
+	}
+}
+
+// TestMergeJudgeCraftSinceAllowsTheReleaseItself: the boundary is the
+// constant's own — one release below is refused, the constant's release and one
+// above launch — and a configuration that writes no judge craft is never held
+// to it, which is the shape every other key's gate has. The control is also the
+// gate's scope: the four other crafts are 0.24.0's keys, so a file that writes
+// them is admitted on the image below.
+func TestMergeJudgeCraftSinceAllowsTheReleaseItself(t *testing.T) {
+	below, above := shiftRelease(t, mergeJudgeSince, -1), shiftRelease(t, mergeJudgeSince, 1)
+	for _, c := range []struct {
+		rel     string
+		refused bool
+	}{
+		{below, true},
+		{mergeJudgeSince, false},
+		{above, false},
+	} {
+		t.Run(c.rel, func(t *testing.T) {
+			f := newCloudFixture(t)
+			configSkewCheckout(t, f, mergeJudgeCraftSkewHead+configSkewWorkflow)
+			writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+c.rel)
+			_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+			if !c.refused {
+				if err != nil {
+					t.Fatalf("release %s: err = %v, want launched", c.rel, err)
+				}
+				return
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want the launch refused", err)
+			}
+		})
+	}
+	t.Run("a file that writes no judge craft", func(t *testing.T) {
+		f := newCloudFixture(t)
+		configSkewCheckout(t, f, configSkewHead+configSkewWorkflow)
+		writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+below)
+		if _, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task"); err != nil {
+			t.Fatalf("err = %v, want launched: the gate is the key's", err)
+		}
+	})
+	t.Run("a file that writes the other four crafts", func(t *testing.T) {
+		f := newCloudFixture(t)
+		configSkewCheckout(t, f, "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nagent: { auth: api-key, crafts: { coder: {}, review: {}, senior-review: {}, security-review: {} } }\n"+configSkewWorkflow)
+		writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+below)
+		if _, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task"); err != nil {
+			t.Fatalf("err = %v, want launched: 0.24.0's runner decodes the four crafts it shipped", err)
+		}
+	})
+}
+
+// TestRunRefusesTheLayersMergeJudgeCraftOnAnOlderBaseImage: the key's other home
+// is the project layer, and the subject says so — that key is the operator's to
+// remove and it breaks every repository of the project whose job image is
+// older, while the repository's own file says nothing about it. The layer
+// writes the key with nothing under it, so a gate that read the resolved craft
+// would launch a run that dies at bootstrap on a line the operator did write.
+func TestRunRefusesTheLayersMergeJudgeCraftOnAnOlderBaseImage(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, mergeJudgeCraftSkewLayer)
+	dir := layerCheckout(t, f, minimalAnchored)
+	registerOtherLocally(t, f)
+	commitRef(t, dir, "main")
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, mergeJudgeSince, -1))
+	_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the launch refused", err)
+	}
+	for _, want := range []string{
+		"the project layer's defaults.agent.crafts.merge-judge (read for acme/other)",
+		"knows the merge judge's craft (the project layer's defaults.agent.crafts.merge-judge)",
+		imageGateRemedy,
+		"remove defaults.agent.crafts.merge-judge from the project layer",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%v lacks %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "fugaro.yaml's agent.crafts.merge-judge") {
+		t.Errorf("the refusal blames the repository's file, which writes no judge craft: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+}
+
+// TestRunRefusesMergeJudgeCraftOnACloneWorkflowsOlderBaseImage: a checkout:
+// clone workflow's job has no derived image and so no build record to judge, so
+// the gate judges base_images.base's own release (checkCloneImageSince) and
+// names the fix that image has — fugaro update --base base — rather than an
+// image refresh of a workflow that is never built. The boundary is the
+// constant's own, as it is on the built-image route.
+func TestRunRefusesMergeJudgeCraftOnACloneWorkflowsOlderBaseImage(t *testing.T) {
+	for _, c := range []struct {
+		rel     string
+		refused bool
+	}{
+		{shiftRelease(t, mergeJudgeSince, -1), true},
+		{mergeJudgeSince, false},
+	} {
+		t.Run(c.rel, func(t *testing.T) {
+			f := newCloudFixture(t)
+			base := "ghcr.io/dimipaun/fugaro-base:" + c.rel
+			f.appendConfig(t, "base_images: {base: "+base+"}\n")
+			configSkewCheckout(t, f, mergeJudgeCraftSkewHead+
+				"workflows:\n  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n")
+			_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+			if !c.refused {
+				if err != nil {
+					t.Fatalf("release %s: err = %v, want launched", c.rel, err)
+				}
+				return
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want the launch refused", err)
+			}
+			for _, want := range []string{
+				"fugaro.yaml's agent.crafts.merge-judge of acme/other",
+				"knows the merge judge's craft (agent.crafts.merge-judge)",
+				"Run fugaro update --base base",
+				base,
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%v lacks %q", err, want)
+				}
+			}
+			if n := len(f.run.Executions()); n != 0 {
+				t.Fatalf("%d executions, want none", n)
+			}
+		})
+	}
 }
 
 // TestPairImageWhy: a pair is dropped when either judge of the job image — the

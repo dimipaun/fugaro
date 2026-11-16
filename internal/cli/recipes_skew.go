@@ -436,26 +436,39 @@ const escalationSince = "0.23.0"
 const evaluateSince = "0.24.0"
 
 // mergeJudgeSince is the first fugaro release whose runner runs the merge
-// judge's step (E6, D2031): its recipe parser knows `merge_judge` as a kind,
-// and mode: evaluate's own step list carries it, so the judge's recipe — one
-// step, and that step — is a run.
+// judge (E6, D2031): its recipe parser knows `merge_judge` as a kind, and
+// mode: evaluate's own step list carries it, so the judge's recipe — one step,
+// and that step — is a run; and its configuration reader knows the judge's
+// craft, `agent.crafts.merge-judge`, which the five-craft block adds (its
+// `Crafts` struct carries a field per craft, so the decoder refuses the field
+// and not the block).
 //
 // **It is not evaluateSince, and the two are a release apart.** 0.24.0 reads
 // mode: evaluate, which is the mode the judge's task carries, so that gate
 // admits a launch against a 0.24.0 job image and cannot tell this run from any
 // other evaluate one; its parser then refuses `merge_judge` outright ("is not a
-// step type"), so the run dies at bootstrap with the launch already paid for
-// and nothing judged. What judges the launch is therefore the recipe's own
-// constructs (recipe.UsesMergeJudge, read from the embedded text a catalog
-// launch carries) and the catalog's own name, for the task that names it and
-// carries no text — the two arms of recipeSinceFor, not the mode's.
+// step type") and its decoder refuses the craft key ("field merge-judge not
+// found in type config.Crafts"), so the run dies at bootstrap with the launch
+// already paid for and nothing judged. What judges a launch is therefore the
+// recipe's own constructs (recipe.UsesMergeJudge, read from the embedded text a
+// catalog launch carries) and the catalog's own name, for the task that names
+// it and carries no text — the two arms of recipeSinceFor, not the mode's —
+// and, for the craft key, the two files the configuration writes it in
+// (mergeJudgeCraftLaunchSources, checkMergeJudgeCraftImage).
+//
+// The two halves are one constant because they are one release and one
+// feature, but they are judged apart and a launch may carry either without the
+// other: a repository's file may set the judge's craft with no judge run ever
+// launched from it (the ladder launches the judge, and its task is the
+// ladder's), and a judge run may be launched where no layer sets the craft,
+// the judge then following the coder.
 //
 // It names 0.25.0, the release this work lands in, which is not tagged yet:
 // docs/release.md's ("Before you tag") checklist verifies the constant against
 // the tag actually cut, the way digestSince's, adversarialSince's and
 // evaluateSince's bullets record. A wrong value refuses too late (a launch
-// reaches a runner that refuses its recipe) or too early (an image that can
-// judge stays blocked).
+// reaches a runner that refuses its recipe or its configuration) or too early
+// (an image that can judge stays blocked).
 const mergeJudgeSince = "0.25.0"
 
 // escalationRecipes are the catalog recipe names whose runner half ships in
@@ -3563,6 +3576,100 @@ func checkCloneVisionImage(lc *localcfg.Config, spec *task.Spec, cfg *config.Con
 	}
 	subject, alt := visionSubject(spec.Repo, fromRepo, fromLayer)
 	return checkCloneImageSince(lc, spec, visionSince, subject, visionKnows(fromRepo, fromLayer), "; or "+alt, warn)
+}
+
+// mergeJudgeCraftLaunchSources reports, for the launch's mergeJudgeSince gate
+// on the judge's craft, whether the configuration the run will read writes
+// agent.crafts.merge-judge: the repository's fugaro.yaml
+// (RepoMergeJudgeCraftSet) or the project layer it resolves over
+// (SetsMergeJudgeCraft), the two homes config.Scopes gives agent.crafts, read
+// the way visionLaunchSources reads the vision slot's.
+//
+// It is the merge judge's craft key and not the crafts block: the other four
+// crafts are 0.24.0's, so a runner older than mergeJudgeSince decodes them, and
+// it is this one field that its KnownFields decoder refuses ("field merge-judge
+// not found in type config.Crafts"). Both files are read for the reason
+// visionLaunchSources reads both: an older runner refuses the key in either,
+// and the layer's is the one that reaches every repository of the project.
+func mergeJudgeCraftLaunchSources(cfg *config.Config) (fromRepo, fromLayer bool) {
+	if cfg == nil {
+		return false, false
+	}
+	return cfg.RepoMergeJudgeCraftSet, cfg.Layer.SetsMergeJudgeCraft()
+}
+
+// mergeJudgeCraftSubject names, for the gates' messages, which file wrote the
+// key, and the way out that file's author has: the craft is a choice of which
+// credential the judge's call goes out on, not a behaviour the run depends on —
+// a runner that does not read it resolves the judge's craft from the craft it
+// follows (the coder, config.CraftParent), which is what a run that sets no
+// judge craft already does — so removing the key is a way out with no image to
+// move, at the cost of the credential the operator asked for. The distinction
+// between the two files is visionSubject's: the layer's key reaches every
+// repository of the project and only its operator can remove it.
+func mergeJudgeCraftSubject(repo string, fromRepo, fromLayer bool) (subject, alt string) {
+	const (
+		repoAlt  = "remove agent.crafts.merge-judge from fugaro.yaml: a runner that does not read it resolves the judge's craft from the coder's, which is what a run that sets no judge craft already does"
+		layerAlt = "remove defaults.agent.crafts.merge-judge from the project layer and publish it again: until then every repository of the project whose job image predates it fails the same way, and a runner that does not read the key resolves the judge's craft from the coder's"
+	)
+	switch {
+	case fromRepo && fromLayer:
+		return "fugaro.yaml's agent.crafts.merge-judge and the project layer's defaults.agent.crafts.merge-judge of " + repo,
+			"remove the key from fugaro.yaml and " + layerAlt
+	case fromLayer:
+		return "the project layer's defaults.agent.crafts.merge-judge (read for " + repo + ")", layerAlt
+	}
+	return "fugaro.yaml's agent.crafts.merge-judge of " + repo, repoAlt
+}
+
+// mergeJudgeCraftKnows names, for the image gates' messages, the key the job
+// image's runner has to know: the message reads "needs a job image whose runner
+// knows <this>", so it has to name whichever of the two files wrote it.
+func mergeJudgeCraftKnows(fromRepo, fromLayer bool) string {
+	switch {
+	case fromRepo && fromLayer:
+		return "the merge judge's craft (agent.crafts.merge-judge and the project layer's defaults.agent.crafts.merge-judge)"
+	case fromLayer:
+		return "the merge judge's craft (the project layer's defaults.agent.crafts.merge-judge)"
+	}
+	return "the merge judge's craft (agent.crafts.merge-judge)"
+}
+
+// checkMergeJudgeCraftImage and checkCloneMergeJudgeCraftImage are the launch's
+// own mergeJudgeSince gate for the judge's craft, for a workflow whose job
+// image is a derived one and for a checkout: clone workflow respectively — the
+// pair every other per-workflow image gate has (checkImageSince and
+// checkCloneImageSince), judged on the key the configuration the run will read
+// writes (mergeJudgeCraftLaunchSources), exactly as checkVisionImage is judged
+// on the vision slot's.
+//
+// It is the second half of the release's gate on the merge judge: the step
+// gate (mergeJudgeSince, recipeSinceFor) judges the judge's recipe, and this
+// one judges the craft key its configuration writes. A launch may carry either
+// without the other — a hand launch of another recipe in a repository whose
+// file sets the judge's craft, and a judge run whose file sets none — so the
+// two are separate reads of the same constant. A repository's or the project's
+// file that writes the key is refused at the terminal, naming the file, the
+// release and the image to move, rather than at bootstrap on a runner that
+// cannot decode it.
+func checkMergeJudgeCraftImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, cfg *config.Config, warn io.Writer) error {
+	fromRepo, fromLayer := mergeJudgeCraftLaunchSources(cfg)
+	if !fromRepo && !fromLayer {
+		return nil
+	}
+	subject, alt := mergeJudgeCraftSubject(spec.Repo, fromRepo, fromLayer)
+	return checkImageSince(ctx, env, slug, spec, kind, mergeJudgeSince, subject, mergeJudgeCraftKnows(fromRepo, fromLayer), "; or "+alt, warn)
+}
+
+// checkCloneMergeJudgeCraftImage is checkMergeJudgeCraftImage for a checkout:
+// clone workflow: see checkCloneImageSince.
+func checkCloneMergeJudgeCraftImage(lc *localcfg.Config, spec *task.Spec, cfg *config.Config, warn io.Writer) error {
+	fromRepo, fromLayer := mergeJudgeCraftLaunchSources(cfg)
+	if !fromRepo && !fromLayer {
+		return nil
+	}
+	subject, alt := mergeJudgeCraftSubject(spec.Repo, fromRepo, fromLayer)
+	return checkCloneImageSince(lc, spec, mergeJudgeSince, subject, mergeJudgeCraftKnows(fromRepo, fromLayer), "; or "+alt, warn)
 }
 
 // modelGradesImageWarnings warns, once, that a configuration which writes the

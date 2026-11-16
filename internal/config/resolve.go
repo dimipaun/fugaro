@@ -119,6 +119,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 		repo.RepoTriageSet = setsTriage(tree)
 		repo.RepoModelGradesSet = setsModelGrades(tree)
 		repo.RepoVisionSet = setsVision(tree)
+		repo.RepoMergeJudgeCraftSet = setsMergeJudgeCraft(tree)
 		res := &Resolution{Sources: map[string]string{}}
 		markLeaves(tree, "", SourceRepo, res.Sources)
 		res.ConfigSHA256 = repo.SHA256()
@@ -172,6 +173,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	c.RepoTriageSet = setsTriage(tree)
 	c.RepoModelGradesSet = setsModelGrades(tree)
 	c.RepoVisionSet = setsVision(tree)
+	c.RepoMergeJudgeCraftSet = setsMergeJudgeCraft(tree)
 	applyDefaults(&c)
 	if ps := Validate(&c); len(ps) > 0 {
 		return nil, nil, annotate(ps, res, profileOf)
@@ -590,6 +592,38 @@ func setsModelGrades(tree map[string]any) bool {
 // older runner's decoder refuses. Its answer becomes Config.RepoVisionSet.
 func setsVision(tree map[string]any) bool {
 	return visionKey(tree["agent"])
+}
+
+// setsMergeJudgeCraft is ProjectLayer.SetsMergeJudgeCraft for a repository
+// file's own tree: whether the text writes agent.crafts.merge-judge, at any
+// value, which is the same walk both trees take for the key — agent.crafts is
+// InProject | InRepo (config.Scopes), so either file may write it and either
+// may be the one the older runner's decoder refuses. Its answer becomes
+// Config.RepoMergeJudgeCraftSet.
+func setsMergeJudgeCraft(tree map[string]any) bool {
+	return mergeJudgeCraftKey(tree["agent"])
+}
+
+// mergeJudgeCraftKey reports whether an agent block writes crafts.merge-judge,
+// the walk both trees read the same way: the key's own presence in the
+// mapping, whatever it holds, and false when the block or the crafts mapping
+// is written as something other than a mapping (which the block's own decode
+// refuses anyway). A null leaf and an empty block count, which is why this is
+// not a value read: `crafts: { merge-judge: }` and `merge-judge: {}` are the
+// same line to a runner older than mergeJudgeSince as a block naming a model
+// and an access. The other four crafts are not asked about: their keys are
+// 0.24.0's and an older runner's decoder knows them.
+func mergeJudgeCraftKey(agent any) bool {
+	a, ok := agent.(map[string]any)
+	if !ok {
+		return false
+	}
+	c, ok := a["crafts"].(map[string]any)
+	if !ok {
+		return false
+	}
+	_, ok = c[CraftMergeJudge]
+	return ok
 }
 
 // visionKey reports whether an agent block writes models.vision, the walk both
