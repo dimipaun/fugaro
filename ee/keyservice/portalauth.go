@@ -278,22 +278,25 @@ func (p PortalSignIn) RequireSSO(caller Caller, rule SSORule) error {
 }
 
 // signInOf is a caller as the sign-in the rules are written over. The two types
-// carry the same facts — the account, the address, the provider, the sign-in's
-// instant, the Identity Platform tenant the client named and the Microsoft
-// directory the token reported — and this is the one place they are converted,
-// so a rule that starts reading a field is given it here rather than in every
-// area that applies one. The directory is the fact D2207's reseller rule reads
-// (DirectoryID), and the tenant beside it is carried for the caller that asked
-// for one rather than for any rule.
+// carry the same facts — the account, the address, the member the claimed
+// address folds to, the provider, the sign-in's instant, the Identity Platform
+// tenant the client named and the Microsoft directory the token reported — and
+// this is the one place they are converted, so a rule that starts reading a
+// field is given it here rather than in every area that applies one. The
+// directory is the fact D2207's reseller rule reads (DirectoryID), and the
+// tenant beside it is carried for the caller that asked for one rather than for
+// any rule.
 //
-// Member is the one fact the seam's caller has no field for, and that is a gap
-// rather than a decision: the folded address is what invitations are compared
-// against (P2.2, F10), and whichever rule needs it is the one that adds it to
-// api.go's Caller and carries it here.
+// Member is carried in both directions because it is the fact an invitation is
+// compared against (P2.2, F10) and it is not derivable from Email: mcpauth
+// folds the whole address while access.Member keeps the local part byte for
+// byte, so a member rebuilt from Email would be one a capitalised local part can
+// never equal.
 func signInOf(caller Caller) VerifiedSignIn {
 	return VerifiedSignIn{
 		UID:         caller.UID,
 		Email:       caller.Email,
+		Member:      caller.Member,
 		Provider:    caller.Provider,
 		AuthTime:    caller.AuthTime,
 		TenantID:    caller.TenantID,
@@ -307,6 +310,7 @@ func callerOf(signIn VerifiedSignIn) Caller {
 	return Caller{
 		UID:         signIn.UID,
 		Email:       signIn.Email,
+		Member:      signIn.Member,
 		Provider:    signIn.Provider,
 		AuthTime:    signIn.AuthTime,
 		TenantID:    signIn.TenantID,

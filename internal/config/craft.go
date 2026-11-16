@@ -422,12 +422,7 @@ func SupportedCredentialTypes() []string {
 // that name meaning two things.
 func ValidatePools(pools []Pool, creds []Credential) []Problem {
 	var ps []Problem
-	defined := map[string]bool{CredentialVertex: true}
-	for _, c := range creds {
-		if c.Name != "" {
-			defined[c.Name] = true
-		}
-	}
+	defined := definedCredentialNames(creds)
 	poolNames := map[string]bool{}
 	for i, p := range pools {
 		at := fmt.Sprintf("pools[%d]", i)
@@ -470,6 +465,114 @@ func ValidatePools(pools []Pool, creds []Credential) []Problem {
 		ps = append(ps, poolAccessProblems(at, p)...)
 	}
 	return ps
+}
+
+// ValidatePoolPaths reports D1668's rule for the pools a command is about to
+// WRITE: every member of a pool is served by one half of a run, so a member
+// list naming both is refused rather than written, its sentence naming the two
+// members, the half each is served by and the fix. `fugaro accounts pool add` is
+// its one caller, and it hands it the pool it would write alone rather than the
+// block it would write it into: a pool that already exists is not this
+// function's business — poolCrossingProblem says why a reader leaves one to the
+// step that converges it — and a crossing an earlier release wrote elsewhere in
+// the block must not stand in the way of the next declaration.
+func ValidatePoolPaths(pools []Pool, creds []Credential) []Problem {
+	defined := definedCredentialNames(creds)
+	var ps []Problem
+	for i, p := range pools {
+		at := fmt.Sprintf("pools[%d]", i)
+		if p.Name != "" {
+			at = "pools." + pluginwire.Printable(p.Name)
+		}
+		if prob, ok := poolCrossingProblem(at, p, creds, defined); ok {
+			ps = append(ps, prob)
+		}
+	}
+	return ps
+}
+
+// definedCredentialNames is the names a pool may list: the credentials block of
+// the same document, and the built-in vertex.
+func definedCredentialNames(creds []Credential) map[string]bool {
+	defined := map[string]bool{CredentialVertex: true}
+	for _, c := range creds {
+		if c.Name != "" {
+			defined[c.Name] = true
+		}
+	}
+	return defined
+}
+
+// poolCrossingProblem is D1668's rule: every member of a pool is served by one
+// path. Its listed order is what failover walks (D1632), and only one half of a
+// run can walk a list — the credentials service selects by tier and the listed
+// order only breaks a tie (F7, D154), while a run's own gateway holds one
+// upstream per stage and never retries a call across a secret (F20, D1635) — so
+// a pool that names members of both halves is a pool whose order can mean
+// nothing, and it is refused where it is written rather than resolved to one of
+// them. It is refused rather than failed over inside a stage because the fix
+// for that is a rewrite of the gateway's one-upstream-per-stage model, bought
+// for a case two pools express exactly.
+//
+// It is the same one sentence wherever it is said — `fugaro accounts pool add`
+// today, and the config's load and the published node's read once the split
+// below has landed — because the operator meets it at whichever door a pool
+// was written through, and it has to name the fix there.
+//
+// The two members the sentence names are named in path order, the credentials
+// service's first, so it reads the same whichever way the pool listed them, and
+// the path it is reported at is where the pool's own order crosses: the first
+// member whose half is not the half the first member is on, which is the pair
+// the operator has to separate.
+//
+// A member this document does not define is left out of the crossing: the
+// member's own problem reports it, and a name no layer places is not a half
+// either. The built-in vertex is not one of those — being built in is what
+// defines it — so a subscription beside vertex is refused like any other
+// crossing.
+//
+// It is the one rule of this file that a pool an earlier release wrote cannot
+// satisfy, so it is not one of the rules the READERS of a pool hold: 0.25.0's
+// `accounts pool add` wrote a pool naming both halves and its `accounts pool ls`
+// read it as valid, so a config or a node that carries one is a document no step
+// of this release can repair, and refusing it there would leave an installation
+// that cannot read its own config — the broken installation CLAUDE.md's HARD
+// RULE forbids, `fugaro update` reading the project config through the same
+// load. A pool that already crosses is therefore converged and not refused
+// (D1668, D1673: the split in `fugaro update` for the config, a step of the
+// policy chain for the published node), and this rule moves into ValidatePools
+// and ValidatePublishedPools in the change that lands that split — the
+// activation plan's MC21, in this refusal's own release (row 43). What protects
+// an installation until then is the door a NEW pool is written through, which
+// is the only caller of ValidatePoolPaths.
+func poolCrossingProblem(at string, p Pool, creds []Credential, defined map[string]bool) (Problem, bool) {
+	members := PoolMembers(p, creds)
+	credsvc, runner, crossed, first := -1, -1, -1, ""
+	for i, m := range members {
+		if m.Path == "" || !defined[m.Name] {
+			continue
+		}
+		if first == "" {
+			first = m.Path
+		} else if crossed < 0 && m.Path != first {
+			crossed = i
+		}
+		if m.Path == CredentialPathCredsvc && credsvc < 0 {
+			credsvc = i
+		}
+		if m.Path == CredentialPathRunner && runner < 0 {
+			runner = i
+		}
+	}
+	if credsvc < 0 || runner < 0 || crossed < 0 {
+		return Problem{}, false
+	}
+	svc, run := pluginwire.Printable(members[credsvc].Name), pluginwire.Printable(members[runner].Name)
+	return Problem{
+		Path: fmt.Sprintf("%s.members[%d]", at, crossed),
+		Message: fmt.Sprintf("members %s and %s are served by different halves of a run (%s's type is served by the credentials service, %s's by the run's own gateway), and a pool's order can therefore mean nothing: name two pools, one per half, and let each craft's access name the one its stages need",
+			svc, run, svc, run),
+	}, true
 }
 
 // poolAccessProblems reports the rules a pool's owner block is held to wherever

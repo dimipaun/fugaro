@@ -141,6 +141,8 @@ var exemptListings = map[string]exemptListing{
 	"creds ls":             {"a listing: the credential names and metadata the bundle holds, never a value", true},
 	"diagnose":             {"a listing: how one run went, as a report or a document under --json", true},
 	"doctor":               {"a listing: one screen of checks, which G9 keeps to a single screen", true},
+	"escalation ls":        {"a listing: the ladder's ledger per pull request, as a table or a document", true},
+	"escalation show":      {"a listing: one pull request's ledger and its transitions, table or document", true},
 	"image check":          {"a listing: whether each workflow's image needs a rebuild, table or document", true},
 	"image ls":             {"a listing: the project's image catalog entries, as a table or a document", true},
 	"image render":         {"a listing: the Dockerfile that builds the workflow's image, printed whole", false},

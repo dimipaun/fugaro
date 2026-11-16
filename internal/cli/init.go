@@ -611,6 +611,12 @@ type initRun struct {
 	// providers every repository may use: the converge's repository stage
 	// runs the repo engine too, and the note belongs once.
 	notedOpenProviders bool
+	// notedCatalogSecrets is the once-per-run guard on the warning about a
+	// published catalog entry that asks for a secret of its own (D2311): the
+	// fact is the entry's and not a repository's, and a converge that reaches
+	// several repositories that run one entry says it once
+	// (doctor_catalog.go's warnCatalogSecrets).
+	notedCatalogSecrets map[string]bool
 
 	// buildsLeft is the workflows whose first image build was not offered
 	// because this run cannot take a typed confirmation (--yes, --json, a pipe
@@ -720,16 +726,21 @@ type initRun struct {
 	// their confirmation is the ruling of 2026-11-01 rather than a verdict.
 	refresh *refreshManaged
 
-	// credsRead, credsReady and credsRecord are the credentials service's
-	// bundle as this run read it (credentialsBundleReady, init_credentials.go):
-	// whether it holds a model credential, read once and recorded on the
-	// repository entry the run writes. Read once because it is one
-	// installation's bundle and one secret read; a read that FAILED answers
-	// nothing at all — the entry keeps the record the last reading left on it,
-	// and credsRecord is what carries that answer to this run's second door —
-	// and the warning it prints is why.
+	// credsRead, credsNames and credsRecord are the credentials service's
+	// bundle as this run read it (readCredentialsBundle, init_credentials.go):
+	// the model credentials it holds, by the name each is served under, read
+	// once and judged for the repository entry the run writes. Names rather
+	// than one yes/no answer because the question is per repository — an
+	// `api-key` repository needs the Anthropic key and an `oauth` one every
+	// account its runs may go out on (credentialsBundleServes) — while the
+	// READING is one, and the run's two doors (the installation's backfill
+	// and the repository stage) must answer from it rather than read it twice.
+	// A read that FAILED answers nothing at all — the entry keeps the record
+	// the last reading left on it, and credsRecord is what carries that answer
+	// to this run's second door — and the warning it prints is why.
 	credsRead   bool
-	credsReady  bool
+	credsNames  map[string]bool
+	credsAppKey bool
 	credsRecord bool
 
 	// managed is true once this run read that the project it installs into
@@ -4483,11 +4494,16 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// held-off root and only the NEXT run's plan switched on (the review of
 	// 2026-11-07's fourth round). On main one run sufficed, and one run still
 	// does.
-	r.recordCredentialsServiceReady(ctx, lc, outs, repo, cfg.Git.Provider, cfg.Agent.Auth)
+	// The accounts are infra.WorkflowAccounts' own answer for this repository
+	// and not the document's agent.oauth_token alone: they are the accounts its
+	// jobs go out on and the ones the record below names, so a launch on any of
+	// them (`--token`, D2070 (a)) is a run this bundle reading has to cover.
+	r.recordCredentialsServiceReady(ctx, lc, outs, repo, cfg.Git.Provider, cfg.Agent.Auth, infra.WorkflowAccounts(cfg, lc, repo), policyBudgetMode(in.Policy))
 	if spec, err = infra.Repo(in); err != nil {
 		return initErr(err)
 	}
 	printWorkflowWarnings(r, spec)
+	r.warnCatalogSecrets(ctx, lc, spec)
 	if err := t.Init(ctx, backend); err != nil {
 		return remote(err)
 	}
@@ -4519,6 +4535,12 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// workflow secrets is read from is the one THIS plan mounts, and `ready`
 	// is the decision MountSecretID reads back (update_workflowsecrets.go).
 	r.writeWorkflowSecrets(ctx, lc, ready, cfg)
+	// The repository auth record is written from the same spec, and for the
+	// same reason, one step later (D2070 (a), R7): it is what narrows this
+	// repository's calls at the service to the auth and the accounts its own
+	// configuration names, and `cfg` is the document a run of this repository
+	// checks out rather than this working tree (update_repoauth.go).
+	r.writeRepoAuth(ctx, lc, ready, cfg)
 	versions, err := infra.SecretVersions(ctx, c, ready)
 	if err != nil {
 		return r.retireLeftover(spec, initErr(err))

@@ -961,10 +961,12 @@ func rawOrigin(ctx context.Context) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// nonNil is ss, or an empty list for nil, so JSON says [] not null.
-func nonNil(ss []string) []string {
+// nonNil is ss, or an empty list for nil, so JSON says [] not null. It is
+// generic because the list members of a document are not all lists of strings:
+// the enrolment view's are lists of rows, of workflows and of seen names.
+func nonNil[T any](ss []T) []T {
 	if ss == nil {
-		return []string{}
+		return []T{}
 	}
 	return ss
 }

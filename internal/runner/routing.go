@@ -844,7 +844,13 @@ func (r *run) stageModel(stage string) string {
 // layer wrote or one whose block names no model: the level then runs the
 // model its role slot answers.
 func (r *run) levelModel(level policy.Level) string {
-	if b := r.levelBlock(level); b != nil {
+	return cfgLevelModel(r.cfg, level)
+}
+
+// cfgLevelModel is levelModel over a configuration a caller holds, the run's
+// own or one it is judging a run's crafts against (internal/cli's launch).
+func cfgLevelModel(cfg *config.Config, level policy.Level) string {
+	if b := *cfgLevelBlockFor(cfg, level); b != nil {
 		return b.Model
 	}
 	return ""
@@ -861,7 +867,12 @@ func (r *run) levelBlock(level policy.Level) *config.LevelSetting {
 // what makes the whole run agree — applyRouting's rule, applied to the levels
 // — so every consumer reads one answer rather than resolving again.
 func (r *run) levelBlockFor(level policy.Level) **config.LevelSetting {
-	lv := &r.cfg.Agent.Levels
+	return cfgLevelBlockFor(r.cfg, level)
+}
+
+// cfgLevelBlockFor is levelBlockFor over a configuration a caller holds.
+func cfgLevelBlockFor(cfg *config.Config, level policy.Level) **config.LevelSetting {
+	lv := &cfg.Agent.Levels
 	switch level {
 	case policy.LevelL1:
 		return &lv.L1
@@ -876,7 +887,15 @@ func (r *run) levelBlockFor(level policy.Level) **config.LevelSetting {
 // block for a level no layer wrote: the resolved model of a level that runs
 // is a fact about the run, not a default left to a second resolution.
 func (r *run) setLevelModel(level policy.Level, model string) {
-	block := r.levelBlockFor(level)
+	setCfgLevelModel(r.cfg, level, model)
+}
+
+// setCfgLevelModel is setLevelModel over a configuration a caller holds: the
+// run's own, and one a caller judges a run's crafts against (MC12's write,
+// WriteCraftLevels) — which is why the write is asked of the same function
+// rather than a second copy of the rule.
+func setCfgLevelModel(cfg *config.Config, level policy.Level, model string) {
+	block := cfgLevelBlockFor(cfg, level)
 	if *block == nil {
 		*block = &config.LevelSetting{}
 	}

@@ -727,12 +727,18 @@ and no host — and the two writes are the **owner's**: a pool decides where a p
 spent, so a coding agent's session is refused, whatever it passes (§7's rule, and the same one
 `fugaro accounts add` states for the token).
 
-**A pool's members are served by two halves, and one pool cannot cross them.** An `openrouter` or
-`vertex` member is served by the run's own gateway; a `claude-oauth` or `anthropic` member is served
-by the credentials service, which **selects by tier within a run — a subscription before an API
-key** (D154). A pool that mixes the two is therefore one that can fail over only where the
-credential is chosen again, which is a **stage boundary** and not mid-call, and `fugaro accounts
-pool ls` says which half serves each member for exactly that reading.
+**A pool's members are all served by one half of a run, and a pool may not name members of both.**
+An `openrouter` or `vertex` member is served by the run's own gateway; a `claude-oauth` or
+`anthropic` member is served by the credentials service, which **selects by tier within a run — a
+subscription before an API key** (D154). Neither half can walk an order that spans them — the
+service serves by tier, with the listed order only breaking a tie, and a gateway holds one upstream
+per stage — so a pool that names a member of each is **refused where it is declared**: `fugaro
+accounts pool add`, the one door a new member list comes through, turns it down in one sentence that
+names the two members and the half each is served by. The fix the sentence names is two pools, one
+per half, with each craft's access naming the one its stages need; `fugaro accounts pool ls` says
+which half serves a pool's members. A pool an earlier release wrote is read as it stands — an
+installation's own config keeps loading, `fugaro update`'s own load included — and the step that
+splits such a pool into one pool per half ships in the same release as this rule.
 
 **A pool of two or more Claude OAuth credentials serves nothing until the owner says otherwise.**
 Fugaro spreads one run across subscriptions only once the project's `subscription_spread` switch is
