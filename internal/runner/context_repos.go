@@ -153,7 +153,7 @@ func (r *run) cloneContexts(ctx context.Context, plan []contextClone) error {
 			return fmt.Errorf("building the credentials of the read-only context repository %s: %w", c.repo, err)
 		}
 		env := gitops.WithVars(gitops.IdentityEnvFor(r.identity), vars)
-		repo, err := gitops.CloneBlobless(ctx, dir, c.url, "", env, modelCredentialVars...)
+		repo, err := contextCloneAt(ctx, dir, c.url, env)
 		if err != nil {
 			return fmt.Errorf("cloning the read-only context repository %s: %w", c.repo, err)
 		}
@@ -166,6 +166,35 @@ func (r *run) cloneContexts(ctx context.Context, plan []contextClone) error {
 		r.d.Log.Info("read-only context repository cloned", "repo", c.repo, "dir", dir)
 	}
 	return nil
+}
+
+// contextCloneAt makes dir hold the read-only checkout of url and returns it:
+// a blobless clone when dir holds none, and the checkout already there when it
+// does.
+//
+// A checkout at dir is not the anomaly it would be in a container nobody has
+// run in: bootstrap can run twice on one container — the restart claimRecord
+// carries on from, and the earlier run of a container openCheckout tolerates —
+// and `git clone` refuses a directory that holds anything, so a second
+// bootstrap of a run that names a context repository would die on its own
+// clone. What is reopened is a checkout of this URL and no other: a directory
+// at that path holding a checkout of something else is not the repository this
+// run was launched to read, and reading it would be reading whatever put it
+// there.
+func contextCloneAt(ctx context.Context, dir, url string, env []string) (*gitops.Repo, error) {
+	existing, err := gitops.Open(dir, env)
+	if err != nil {
+		return gitops.CloneBlobless(ctx, dir, url, "", env, modelCredentialVars...)
+	}
+	existing.StripEnv = modelCredentialVars
+	origin, err := existing.OriginURL(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if origin != url {
+		return nil, fmt.Errorf("%s holds a checkout of %s and this run reads the context repository %s: nothing is read from a checkout this run did not make", dir, origin, url)
+	}
+	return existing, nil
 }
 
 // contextRepoLines is what the agent's system prompt says about this run's

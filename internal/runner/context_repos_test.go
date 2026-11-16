@@ -216,6 +216,56 @@ func TestNoContextReposNoClone(t *testing.T) {
 	}
 }
 
+// TestContextReposSecondCloneIsNoOp: bootstrap may run twice on one container —
+// the restart claimRecord carries on from — and git will not clone into a
+// directory that holds a checkout, so the second clone opens the checkout the
+// first made and the file is still there to read. Without this a run that names
+// a context repository would die at bootstrap on a restart, with the clone it
+// made itself in the way.
+func TestContextReposSecondCloneIsNoOp(t *testing.T) {
+	r, work, _ := contextTestRun(t)
+	plan := contextPlan(contextRemote(t))
+	ctx := context.Background()
+	if err := r.cloneContexts(ctx, plan); err != nil {
+		t.Fatalf("cloning the context repository: %v", err)
+	}
+	if err := r.cloneContexts(ctx, plan); err != nil {
+		t.Fatalf("a second bootstrap of the same run could not open the context repository it had cloned itself: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(ContextRepoDir(work, contextRepoFixture), "lib.go"))
+	if err != nil || string(got) != "package lib\n" {
+		t.Errorf("the context repository's working tree holds %q (%v) after a second clone, want the fixture's file: the retry reads the checkout the first clone made", got, err)
+	}
+}
+
+// TestContextReposForeignCheckoutIsRefused: a checkout already at a context
+// repository's path is opened only when it is a checkout of that repository.
+// The path is one this layout owns and an earlier run on the same container
+// shares, so anything else at it is not the repository this run was launched to
+// read — and a run that read it instead would be reading whatever put it there,
+// outside the launch's admission and the read-only mint alike.
+func TestContextReposForeignCheckoutIsRefused(t *testing.T) {
+	r, work, _ := contextTestRun(t)
+	ctx := context.Background()
+	other := testutil.NewHTTPRemote(t, map[string]string{"other.go": "package other\n"},
+		testutil.Token(github.GitUsername, contextToken))
+	vars, err := contextCloneVars(contextClone{repo: contextRepoFixture, url: other.URL, token: contextToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := gitops.WithVars(gitops.IdentityEnvFor(nil), vars)
+	if _, err := contextCloneAt(ctx, ContextRepoDir(work, contextRepoFixture), other.URL, env); err != nil {
+		t.Fatal(err)
+	}
+	err = r.cloneContexts(ctx, contextPlan(contextRemote(t)))
+	if err == nil {
+		t.Fatal("a checkout of another repository at a context repository's path was read as that repository")
+	}
+	if !strings.Contains(err.Error(), "a checkout this run did not make") {
+		t.Errorf("the refusal %q does not say that the checkout at the path is not this run's: the reader has to know a foreign checkout is what stopped the run", err)
+	}
+}
+
 // TestContextReposNamedInPrompt: the agent's system prompt names every context
 // repository by the path it is checked out at and the repository it holds, and
 // says what a reader has to be told about it — that it is read-only reference
