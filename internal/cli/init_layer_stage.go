@@ -206,10 +206,21 @@ func (s layerGenerationState) text() string {
 }
 
 // plan reads the object, the file and the record once per run.
+//
+// The answer is read under the question's own condition (setupCreates), and
+// not from the flag alone: the Layer stage is the flag's only reader, so a
+// value that reached the options on a run that was never asked — a walk that
+// settles the name from an installation and returns before the question, a
+// door that creates nothing — would be written and published here by a run
+// whose question nobody answered.
 func (s *layerStage) plan(ctx context.Context) (*layerPlan, error) {
 	if !s.planned {
 		s.planned = true
-		s.p, s.err = layerPlanFor(ctx, s.e.lc, rigor.Mode(s.e.r.o.rigor))
+		var mode rigor.Mode
+		if s.e.r.o.setupCreates(s.e.firstRun()) {
+			mode = rigor.Mode(s.e.r.o.rigor)
+		}
+		s.p, s.err = layerPlanFor(ctx, s.e.lc, mode)
 	}
 	return s.p, s.err
 }

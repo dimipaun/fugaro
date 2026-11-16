@@ -610,6 +610,22 @@ func setupRigorRefusal(answer string) error {
 	return userErr("--rigor is a first run's flag: this installation already has a project config, so its rigor mode is asked once, when the installation is created, and the one command that changes a project's default is `fugaro rigor set %s`; nothing was asked and nothing was written", pluginwire.Printable(answer))
 }
 
+// updateRigorRefusal is --rigor on `fugaro update`, the door that creates
+// nothing (setupCreates). The mode is the question of the run that CREATES the
+// installation, so this door asks it nowhere and its Layer stage writes no
+// answer — a value left on the run's options has no reader there, and the walk
+// that would carry it never passes the question (the installation settles the
+// name and returns, or --name settles it): it would be spliced into
+// `defaults.rigor.default` and published by a run nobody asked. Refused by
+// name instead, before anything is read, in the sentence that names the one
+// command that does change a project's default.
+func updateRigorRefusal(answer string) error {
+	if answer == "" {
+		return nil
+	}
+	return userErr("--rigor is a first run's flag: fugaro update re-converges an installation that is already there and creates nothing, so a project's rigor mode is set when `fugaro setup` creates it, and the one command that changes a project's default is `fugaro rigor set %s`; nothing was asked and nothing was written", pluginwire.Printable(answer))
+}
+
 // askRigor is the wizard's rigor question (task W of
 // docs/rigor-command/implementation-plan.md; D900): the project's default mode,
 // asked once, with no suggestion and no silent default — Enter prints "a value

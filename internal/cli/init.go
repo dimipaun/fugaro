@@ -1723,6 +1723,19 @@ func (o *initOptions) check() error {
 		// no error. Refused by name here, as the two flags above are.
 		return userErr("--rigor is the mode of the project a first run creates, written by that run's Layer stage; it has no use with --forget, --config-only, --print-vars and --publish-config")
 	}
+	if o.rigor != "" && o.door == updateDoor.name {
+		// The question belongs to the run that creates the installation, and
+		// this door never does (setupCreates): its Layer stage asks nothing and
+		// writes nothing, so a value here has no reader at all. Left alone it
+		// rides the run's options into that stage, which would splice it into
+		// defaults.rigor.default and publish it — the hole the wizard's own
+		// refusal does not cover, because the walk that settles the name from
+		// the installation returns before the question, and the walk with
+		// --name never enters that branch. Refused by name here, before
+		// anything is read, and after the one-shot refusal above so the flag
+		// that stops before the stages keeps the sentence that names it.
+		return updateRigorRefusal(o.rigor)
+	}
 	n := 0
 	for _, b := range []bool{o.planOnly, o.printVars, o.configOnly, o.forget, o.publishConfig, o.anchor} {
 		if b {

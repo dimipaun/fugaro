@@ -369,37 +369,78 @@ func TestUpdateNeverAsksTheRigorQuestion(t *testing.T) {
 	}
 }
 
-// TestUpdateRefusesRigorOnAMachineWithNoProjectConfig: the one walk that
-// reaches the installation lookup below is `fugaro update` on a machine with no
-// project config, and it settles the name from the installation and returns
-// BEFORE the question — so `--rigor` was neither asked nor refused there, and an
-// unread value rode the run's options into the layer stage, whose
-// write-and-publish path splices it into `defaults.rigor.default`. hotfix is
-// what that path may not carry (D834, and neither other door writes it), so a
-// flag on this walk is refused in the same sentence the converge gives it.
+// TestUpdateRefusesRigorOnAMachineWithNoProjectConfig: `fugaro update` on a
+// machine with no project config is the walk that reaches the installation
+// lookup, and the one that settles the name from the installation RETURNS
+// before the wizard's rigor question — so `--rigor` there was neither asked nor
+// refused, and an unread value rode the run's options into the layer stage,
+// whose write-and-publish path splices it into `defaults.rigor.default`. hotfix
+// is what that path may not carry (D834), and any other valid mode is worse in
+// its own way: `poc` would drop every repository of the project to level-1-only
+// review with nobody having answered the question.
+//
+// The refusal is the door's own now (initOptions.check), which is before the
+// walk is decided: all three shapes of it — the installation settling the name,
+// --name settling it, and no installation answering at all — are refused alike,
+// and none of them asks a question on the way to it.
 func TestUpdateRefusesRigorOnAMachineWithNoProjectConfig(t *testing.T) {
-	for _, mode := range []string{string(rigor.Hotfix), "Pro", string(rigor.Critical)} {
-		t.Run(mode, func(t *testing.T) {
-			old := installationName
-			installationName = func(context.Context, string, string, string) string { return initProjectName }
-			t.Cleanup(func() { installationName = old })
+	for _, tc := range []struct {
+		name      string
+		installed string   // what the installation lookup answers
+		extra     []string // what else the run is given
+	}{
+		{"the installation settles the name", initProjectName, nil},
+		{"--name settles the name", initProjectName, []string{"--name", initProjectName}},
+		{"no installation answers", "", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, mode := range []string{string(rigor.Hotfix), "Pro", string(rigor.Critical), string(rigor.POC)} {
+				t.Run(mode, func(t *testing.T) {
+					firstRunEnv(t)
+					fakeTerminal(t)
+					old := installationName
+					installationName = func(context.Context, string, string, string) string { return tc.installed }
+					t.Cleanup(func() { installationName = old })
 
-			r, out := wizardRun(t, "proj-1234\n\n", &initOptions{rigor: mode})
-			r.o.door = updateDoor.name
-			err := r.gatherInputs(t.Context())
-			if err == nil || ExitCode(err) != ExitUserError {
-				t.Fatalf("fugaro update --rigor %s on a machine with no project config went on: %v\n%s", mode, err, out)
-			}
-			for _, want := range []string{"--rigor is a first run's flag", "fugaro rigor set", "nothing was written"} {
-				if !strings.Contains(err.Error(), want) {
-					t.Errorf("the refusal lacks %q: %v", want, err)
-				}
-			}
-			if asked := out.String(); strings.Contains(asked, questionFor("--name").what) || strings.Contains(asked, rigorQuestionLead) {
-				t.Errorf("the run asked a question on its way to refusing the flag:\n%s", asked)
+					args := append([]string{"update", "--rigor", mode}, tc.extra...)
+					out, errOut, err := executeStdin(t, "", args...)
+					if err == nil || ExitCode(err) != ExitUserError {
+						t.Fatalf("fugaro update --rigor %s on a machine with no project config went on: %v\n%s%s", mode, err, out, errOut)
+					}
+					for _, want := range []string{"--rigor is a first run's flag", "fugaro rigor set", "nothing was written",
+						// The door's own sentence and not the one a run with a
+						// project config gets: this walk has no config at all.
+						"re-converges an installation that is already there"} {
+						if !strings.Contains(err.Error(), want) {
+							t.Errorf("the refusal lacks %q: %v", want, err)
+						}
+					}
+					if asked := out + errOut; strings.Contains(asked, questionFor("--name").what) || strings.Contains(asked, rigorQuestionLead) {
+						t.Errorf("the run asked a question on its way to refusing the flag:\n%s", asked)
+					}
+				})
 			}
 		})
 	}
+
+	// The other half, and the one that holds if a walk ever stops refusing the
+	// flag: the layer stage is the flag's only reader, so it reads it under the
+	// question's own condition (setupCreates) and not from the flag alone. This
+	// rig is the state the walks above would leave — the update door, the flag
+	// on the run's options, and no question asked anywhere — and it writes no
+	// file and publishes no object.
+	t.Run("the layer stage writes and publishes nothing", func(t *testing.T) {
+		r := newLayerStageRigFor(t, "", "", "", &initOptions{door: updateDoor.name, rigor: string(rigor.POC)})
+		if _, err := r.s.Apply(t.Context(), initflow.Env{}); err != nil {
+			t.Fatalf("the update door's layer stage failed over a mode it does not write: %v\n%s", err, r.out)
+		}
+		if _, ok := rigorObject(t, r); ok {
+			t.Error("the update door's layer stage published a rigor mode nobody was asked for")
+		}
+		if _, err := os.Stat(localLayerPath(t)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("the update door's layer stage wrote a local layer file: %v", err)
+		}
+	})
 }
 
 // TestRigorIsRefusedOnEveryWalkThatNeverReachesTheLayerStage: the Layer stage
