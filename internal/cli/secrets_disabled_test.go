@@ -296,6 +296,87 @@ func TestNoWorkflowSecretsRecordIsWrittenForAnIgnoredSecret(t *testing.T) {
 	}
 }
 
+// TestNoIgnoredSecretReachesTheBuildRequest: the derived-image build a
+// repository is offered reads the containers its own job mounts, and no other
+// (D2313).
+//
+// The build's list used to be the file's `secrets:` with each container
+// derived from it — (slug, name), the repository's own — which is exactly the
+// container the ruling leaves empty: var.repo.secrets still declares it and no
+// store may put a version in it. Cloud Build refuses a secret with no version,
+// so the build `fugaro update` newly offers such a repository could only fail,
+// after the apply, before the deploy plan and every later stage, on every
+// attempt. This is the layer nothing reached before: the infra test stops at
+// NeedsBuild, and no fake models an available secret.
+//
+// The name that resolves project-wide is the control beside it: what a build
+// reads is the mounts its job has, not "no secrets at all", and the project's
+// copy is one of them — the container the record the credentials service reads
+// names for the same name (workflowSecretMountID is both answers). With the
+// door off the pre-ruling list is what the same spec gives, which is the
+// machinery the ruling keeps.
+func TestNoIgnoredSecretReachesTheBuildRequest(t *testing.T) {
+	cfg, problems := config.Parse([]byte(workflowSecretsYAML))
+	if len(problems) > 0 {
+		t.Fatal(problems)
+	}
+	repoSecretsOn(t)
+	spec, err := infra.Repo(infra.Inputs{LC: repoSecretsLC(t), Repo: "acme/app", Cfg: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoID, projectID := gcp.SecretID(spec.Slug, "npm-token"), gcp.ProjectSecretID("aurora", "deploy-token")
+	if got := spec.Secrets["npm-token"]; got != repoID {
+		t.Fatalf("the spec's own container for npm-token is %q, want %q: the fixture is not the state this case is about", got, repoID)
+	}
+	// Readiness's own decision for the name the project covers (resolveProject):
+	// this repository may mount the project's copy, so that copy is the one its
+	// job mounts, whatever the file wrote under `secrets:`.
+	spec.ProjectSecrets = map[string]string{"deploy-token": projectID}
+
+	request := func(t *testing.T) string {
+		t.Helper()
+		bs, err := cloudBuildSpec(spec, cfg, "app", checkBase, "E2_HIGHCPU_8", "gs://fugaro-runs-proj-1234", appliedGitSecretID(spec))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req, err := gcp.BuildRequest("proj-1234", bs)
+		if err != nil {
+			t.Fatalf("the build of a repository whose declared secret the ruling ignores is not submittable: %v", err)
+		}
+		var versions []string
+		for _, s := range req.AvailableSecrets.SecretManager {
+			versions = append(versions, s.Env+"="+s.VersionName)
+		}
+		return strings.Join(versions, " ") + " | _SECRET_ENVS=" + req.Substitutions["_SECRET_ENVS"]
+	}
+	// The provider credential is always there and is what the fixture's
+	// provider names it: a github build reads the App key, where bitbucket's
+	// reads the token (cloudbuild.yaml's own variable, rewritten by
+	// BuildRequest).
+	gitVersion := "GITHUB_APP_KEY=projects/proj-1234/secrets/" + appliedGitSecretID(spec) + "/versions/latest"
+	got := request(t)
+	want := gitVersion +
+		" DEPLOY_TOKEN=projects/proj-1234/secrets/" + projectID + "/versions/latest" +
+		" | _SECRET_ENVS=DEPLOY_TOKEN"
+	if got != want {
+		t.Errorf("the build reads\n%s\nwant\n%s\nthe repository's own container for npm-token has no version and no store may give it one", got, want)
+	}
+	if strings.Contains(got, repoID) || strings.Contains(got, "NPM_TOKEN") {
+		t.Errorf("the request names the ignored secret at all:\n%s", got)
+	}
+	// The door off is the answer before the ruling, unchanged.
+	config.RepoSecretsOff = false
+	got = request(t)
+	want = gitVersion +
+		" NPM_TOKEN=projects/proj-1234/secrets/" + repoID + "/versions/latest" +
+		" DEPLOY_TOKEN=projects/proj-1234/secrets/" + projectID + "/versions/latest" +
+		" | _SECRET_ENVS=NPM_TOKEN DEPLOY_TOKEN"
+	if got != want {
+		t.Errorf("with the door off the build reads\n%s\nwant\n%s", got, want)
+	}
+}
+
 // TestSecretsStageDoesNotAskForARepositoryLevelSecret: a repository-level
 // secret is one no shared job mounts (D2313), so the stage must not take one.
 // Every store a line or a prompt could name for it answers the ruling's notice

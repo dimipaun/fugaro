@@ -500,10 +500,40 @@ func cloudBuildSpec(rs infra.RepoSpec, cfg *config.Config, name, base, machineTy
 		Image:       gcp.ImageName(rs.RegistryPath, rs.Slug, name),
 		GitSecretID: gitSecretID, GitUser: rs.GitUser, GitHubAppID: rs.GitHubAppID,
 		ServiceAccount: rs.BuildServiceAccountEmail, MachineType: machineType,
-		WorkflowSecrets:    cfg.Workflows[name].Secrets,
+		WorkflowSecrets:    buildSecrets(rs, cfg.Workflows[name].Secrets),
 		Bucket:             bucket,
 		ProjectLayerSHA256: layerSHAOf(cfg),
 	}, nil
+}
+
+// buildSecrets are the workflow secrets a build of this repository may read:
+// one entry per declared secret whose container a job of this repository
+// mounts, and no entry at all for a name no job mounts.
+//
+// The container is resolved here rather than left to the build request, which
+// used to name the repository's own container of (slug, name) for every
+// declared secret. That is not the container a job mounts whenever Readiness
+// resolved the name to the project's copy, and under D2313 it is not the
+// container a job mounts at all: the repository's own is kept with no version
+// in it (var.repo.secrets, prevent_destroy — the ruling's own text), so a
+// build naming it asks Cloud Build for a version nothing has, which Cloud
+// Build refuses. `fugaro update` would then build the image of a repository
+// the ruling says is brought up, fail every attempt, and take every later
+// stage with it — after the apply has landed.
+//
+// workflowSecretMountID is the one answer to which container this repository
+// mounts for a name, and the one the credentials service's record is written
+// from: the same ruling, asked once, so the two cannot name different
+// containers for the same name — a value the service would serve the build
+// reads, or the reverse.
+func buildSecrets(rs infra.RepoSpec, declared []config.Secret) []gcp.BuildSecret {
+	out := make([]gcp.BuildSecret, 0, len(declared))
+	for _, s := range declared {
+		if id := workflowSecretMountID(rs, s.Name); id != "" {
+			out = append(out, gcp.BuildSecret{Name: s.Name, Env: s.Env, ID: id})
+		}
+	}
+	return out
 }
 
 // originURL is the checkout's origin as an https URL without credentials,

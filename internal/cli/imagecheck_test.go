@@ -238,13 +238,18 @@ func TestCheckJobSubmitsBuild(t *testing.T) {
 		t.Fatalf("lines = %+v", lines)
 	}
 
-	// The request is the one fugaro image build sends for the workflow.
-	cfg, _ := config.Parse([]byte(bitbucketYAML))
+	// The request is the one fugaro image build sends for the workflow, and the
+	// fixture's workflow declares one secret of its own: the build reads it
+	// from the container this repository mounts for it — the repository's own,
+	// here, because nothing resolved the name project-wide
+	// (TestNoIgnoredSecretReachesTheBuildRequest is the same assertion where
+	// the ruling is what decides the answer).
 	want, err := gcp.BuildRequest("proj-1234", gcp.BuildSpec{
 		Slug: f.slug, GitProvider: "bitbucket", RepoURL: checkRepoURL, BaseBranch: "main", Workflow: "app", Base: checkBase,
 		Image: f.image, GitSecretID: gcp.SecretID(f.slug, "bitbucket-token"), GitUser: "x-token-auth",
 		ServiceAccount: gcp.BuildServiceAccountID(f.slug) + "@proj-1234.iam.gserviceaccount.com", MachineType: "E2_HIGHCPU_8",
-		WorkflowSecrets: cfg.Workflows["app"].Secrets, Bucket: "gs://" + checkBucket,
+		WorkflowSecrets: []gcp.BuildSecret{{Name: "npm-token", Env: "NPM_TOKEN", ID: gcp.SecretID(f.slug, "npm-token")}},
+		Bucket:          "gs://" + checkBucket,
 	})
 	if err != nil {
 		t.Fatal(err)
