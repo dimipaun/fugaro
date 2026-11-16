@@ -135,11 +135,12 @@ func writeAccountsPoolLs(w interface {
 }
 
 // accountsPoolServingText is the path a pool's members are served by, as a
-// person reads it. A pool this read can load is served on one path, because a
-// pool that lists members of both is refused where it is written (D1668); both
-// names are joined for a document the loader refuses, which this read still
-// renders rather than hiding, and a pool with no members at all says nothing is
-// served.
+// person reads it. A pool this release writes is served on one path, because a
+// pool that lists members of both is refused where it is written (D1668); a
+// config an earlier release wrote may still hold one that names both, and both
+// names are joined for it, with the boundary its failover is left at, rather
+// than hidden from the person reading the file. A pool with no members at all
+// says nothing is served.
 func accountsPoolServingText(paths []string) string {
 	var out []string
 	for _, p := range paths {
@@ -158,7 +159,7 @@ func accountsPoolServingText(paths []string) string {
 	case 1:
 		return out[0]
 	default:
-		return strings.Join(out, " and ")
+		return strings.Join(out, " and ") + ": failover at a stage boundary"
 	}
 }
 
@@ -211,7 +212,19 @@ func runAccountsPoolAdd(cmd *cobra.Command, name string, members []string, o acc
 	// with a pool are one rule, and its sentences are the ones the loader
 	// prints for the same block, so the two cannot part company.
 	pool := config.Pool{Name: name, Strategy: o.strategy, Members: members}
-	if ps := config.ValidatePools(accountsPoolNext(lc, pool), lc.Credentials); len(ps) > 0 {
+	pools := accountsPoolNext(lc, pool)
+	if ps := config.ValidatePools(pools, lc.Credentials); len(ps) > 0 {
+		return userErr("%s", ps[0].Message)
+	}
+	// And the rule no reader of a pool holds, because a pool an earlier release
+	// wrote may already break it: this command is the one door a NEW member list
+	// comes through, so it is the door that refuses to write a crossing
+	// (config.ValidatePoolPaths, D1668). It judges the pool being written and not
+	// the block it lands in: a pool 0.25.0 already wrote stays exactly as it is —
+	// the split that converges it is MC21's — and a refusal over the whole block
+	// would leave an installation holding one unable to declare the two pools the
+	// sentence tells it to.
+	if ps := config.ValidatePoolPaths([]config.Pool{pool}, lc.Credentials); len(ps) > 0 {
 		return userErr("%s", ps[0].Message)
 	}
 	command := accountsPoolAddCommand(name, members, o.strategy)

@@ -321,8 +321,9 @@ an ordered list of members, declared with `fugaro accounts pool add <name> <memb
 with `fugaro accounts pool ls` ([project-claude-accounts.md](project-claude-accounts.md) §13). **A
 pool's members are all served by one half**: a run that is served by its own gateway cannot hand one
 call to the credentials service, and the other way round, so a pool that names a member of each is
-**refused** where it is written and wherever the published node is read. Name two pools, one per
-half, and let each craft's access name the one its stages need.
+**refused** where it is written: `fugaro accounts pool add` will not declare it. Name two pools, one
+per half, and let each craft's access name the one its stages need. A pool an earlier release wrote
+is still read, and is split into one pool per half by the step that ships with this rule.
 
 A run's four **crafts** — coder, first-line review, senior review and security review — each name a
 model and an **access**, the credential or pool their calls go out on, and the two halves inherit

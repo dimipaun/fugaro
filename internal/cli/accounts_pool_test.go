@@ -459,9 +459,9 @@ func TestPoolWritesRefuseInAgentSession(t *testing.T) {
 
 // accountsPoolLsPools is the read's own fixture: a round-robin pool of two
 // subscriptions (the credentials service alone) and a pool of a route and the
-// built-in vertex (a run's own gateway alone). It holds no pool that lists a
-// member of each: such a pool is refused where it is written (D1668), so there
-// is no config this read could find one in.
+// built-in vertex (a run's own gateway alone). Neither lists a member of each
+// half: a pool this release writes is one path's, because the door it comes
+// through refuses a crossing (D1668).
 const accountsPoolLsPools = `
 pools:
   - name: subs
@@ -496,6 +496,51 @@ func TestPoolLsReadsEachMemberAndThePathThatServesIt(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("the read does not carry %q:\n%s", want, out)
 		}
+	}
+}
+
+// accountsPoolLsCrossingPools is a pools block 0.25.0 could have left behind:
+// `mixed` names a subscription and a route, which that release's `accounts pool
+// add` wrote and whose `accounts pool ls` read as valid.
+const accountsPoolLsCrossingPools = `
+pools:
+  - name: mixed
+    members:
+      - oauth-one
+      - router-one
+`
+
+// TestPoolLsReadsAPoolAnEarlierReleaseWrote is the staging this refusal ships
+// under, and the reason it is the write door's rule and not the readers': a
+// config 0.25.0 wrote may hold a pool naming a member of each half, and nothing
+// in this release may refuse it. The read loads the config through the very
+// path `fugaro update` loads it through, so a read that prints is an
+// installation that still works — and it renders the pool with both halves and
+// the boundary its failover is left at rather than hiding a pool the person
+// wrote. The step that splits such a pool into one pool per half is MC21's, and
+// it ships in the same release as this rule (activation plan row 43).
+func TestPoolLsReadsAPoolAnEarlierReleaseWrote(t *testing.T) {
+	accountsPoolHomeWith(t, accountsPoolCredentials+accountsPoolLsCrossingPools)
+
+	out, _, err := execute(t, "accounts", "pool", "ls")
+	if err != nil {
+		t.Fatalf("a config an earlier release wrote no longer loads: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"mixed",
+		"oauth-one, router-one",
+		"the credentials service and a run's own gateway: failover at a stage boundary",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the read does not carry %q:\n%s", want, out)
+		}
+	}
+	// The pool already there does not stand in the way of the next write: the
+	// door refuses the list it is given, not the document it is given it in, so
+	// an installation holding a crossing pool can still declare the two pools
+	// the refusal's sentence tells it to.
+	if _, _, err := execute(t, "accounts", "pool", "add", "subs", "oauth-one", "oauth-two"); err != nil {
+		t.Errorf("a write beside a pool an earlier release wrote was refused: %v", err)
 	}
 }
 

@@ -187,29 +187,27 @@ func TestPoolMembersAreServedByTierOrder(t *testing.T) {
 	}
 }
 
-// TestOpenRouterAndVertexMembersNeverReachCredsvc is D1634's half of F7 and the
-// seam D1668 closes: an OpenRouter and the built-in vertex member are the
-// runner path's — the job that holds their key is the one that spends it — so a
-// pool that listed them beside a subscription would be a listed order neither
-// half could honour, and the node carrying one is refused at its own read
-// (config.ValidatePublishedPools, which Decode runs) rather than handed to this
-// service with the runner's members filtered out of it. A pool whose members
-// are all of that other path is a pool this service cannot serve at all, and it
-// is refused rather than served by something the pool does not name.
+// TestOpenRouterAndVertexMembersNeverReachCredsvc is D1634's half of F7: an
+// OpenRouter and the built-in vertex member are the runner path's — the job
+// that holds their key is the one that spends it — so this service serves
+// neither of them, a pool that lists them beside a subscription is served by
+// the subscription, and a pool whose members are all of that other path is
+// refused rather than served by something the pool does not name.
 func TestOpenRouterAndVertexMembersNeverReachCredsvc(t *testing.T) {
-	t.Run("a pool that names both halves is refused at the node", func(t *testing.T) {
-		raw := poolNode(`"credentials": {"fallback": "auto"},
-			` + poolCraftBlock(
+	t.Run("a mixed pool is served by its own member", func(t *testing.T) {
+		s := poolSvc(t, `"credentials": {"fallback": "auto"},
+			`+poolCraftBlock(
 			`{"name": "`+testRouterCredential+`", "type": "openrouter"},
 				{"name": "`+testAccount+`", "type": "claude-oauth"}`,
-			testRouterCredential, config.CredentialVertex, testAccount))
+			testRouterCredential, config.CredentialVertex, testAccount)+`,
+			"subscription_spread": true`)
 
-		_, _, err := projectpolicy.Decode([]byte(raw))
-		if err == nil {
-			t.Fatal("a node whose pool names a member of each half was read: this service would be handed a pool whose listed order it cannot honour (D1668)")
+		resp, body := s.call(t, callBody("pool-runner-members"))
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("the call is %d, want the pool's subscription member to serve it: %s", resp.StatusCode, body)
 		}
-		if !strings.Contains(err.Error(), "different halves of a run") {
-			t.Errorf("the refusal %q is not the crossing's own sentence", err)
+		if got := resp.Header.Get(HeaderCredential); got != testAccount {
+			t.Errorf("%s = %q, want %q: the OpenRouter and vertex members are the runner path's and this service holds neither", HeaderCredential, got, testAccount)
 		}
 	})
 

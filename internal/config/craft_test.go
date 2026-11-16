@@ -295,7 +295,7 @@ func TestPoolCannotCrossTheTwoPaths(t *testing.T) {
 		{"a crossing, and then the half it started on", []string{"router-one", "sub-one", "key-one"}, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ps := ValidatePools([]Pool{{Name: "mixed", Members: tc.members}}, poolCrossingMembers())
+			ps := ValidatePoolPaths([]Pool{{Name: "mixed", Members: tc.members}}, poolCrossingMembers())
 			if len(ps) != 1 {
 				t.Fatalf("the pool %v is answered with %d problem(s), want one: %v", tc.members, len(ps), ps)
 			}
@@ -307,17 +307,49 @@ func TestPoolCannotCrossTheTwoPaths(t *testing.T) {
 	// A pool this document does not define a member of is reported for that and
 	// not also for a crossing: a name no layer places is not a half, and the
 	// operator has one thing to fix, not two.
-	ps := ValidatePools([]Pool{{Name: "mixed", Members: []string{"sub-one", "nowhere"}}}, poolCrossingMembers())
+	undefined := []Pool{{Name: "mixed", Members: []string{"sub-one", "nowhere"}}}
+	ps := ValidatePools(undefined, poolCrossingMembers())
 	if len(ps) != 1 || !strings.Contains(ps[0].Message, "no credential of this name is defined") {
 		t.Errorf("a pool naming an undefined member is answered with %v, want the member's own problem alone", ps)
+	}
+	if ps := ValidatePoolPaths(undefined, poolCrossingMembers()); len(ps) != 0 {
+		t.Errorf("a pool naming an undefined member is refused a second time for a crossing: %v", ps)
+	}
+}
+
+// TestTheReadersLeaveACrossingPoolToTheSplit is the staging this refusal ships
+// under, and it is the test that keeps it deliberate: D1668's rule is the door a
+// pool is WRITTEN through and not a rule of the two readers, because 0.25.0's
+// `accounts pool add` wrote a pool naming both halves and its `accounts pool ls`
+// read it as valid — so a config or a published node that carries one is a
+// document no step of this release can repair, and a reader that refused it
+// would leave an installation that cannot read its own config, `fugaro update`'s
+// own load included. MC21 converges a pool that already crosses — the config in
+// place in `fugaro update`, the published node by a step of the policy chain —
+// and moves the rule into these two functions in the change that lands it, which
+// is this refusal's own release (row 43). This test is what fails if the rule
+// reaches the readers before that step does.
+func TestTheReadersLeaveACrossingPoolToTheSplit(t *testing.T) {
+	pool := Pool{Name: "mixed", Members: []string{"sub-one", "router-one"}, Owner: "owner@example.com"}
+	for name, ps := range map[string][]Problem{
+		"ValidatePools":          ValidatePools([]Pool{pool}, poolCrossingMembers()),
+		"ValidatePublishedPools": ValidatePublishedPools([]Pool{pool}, poolCrossingMembers()),
+	} {
+		if len(ps) != 0 {
+			t.Errorf("%s refuses a pool an earlier release wrote: %v", name, ps)
+		}
+	}
+	if ps := ValidatePoolPaths([]Pool{pool}, poolCrossingMembers()); len(ps) != 1 {
+		t.Errorf("the door a pool is written through does not refuse the crossing: %v", ps)
 	}
 }
 
 // TestCrossPathPoolRefusedWithTheSplitSentence pins the ONE sentence D1668 rules
 // the refusal is: it names the two members, the half each is served by, and the
 // fix — two pools, one per half, and each craft's access naming the one its
-// stages need. It is the same sentence in both documents a pool lives in,
-// because an operator meets it in whichever one they wrote through.
+// stages need. It is the sentence where the pool is written today, and the one
+// the config's load and the node's read say too once MC21 moves the rule into
+// them, so the operator reads the same thing whichever door they met it at.
 func TestCrossPathPoolRefusedWithTheSplitSentence(t *testing.T) {
 	creds := []Credential{
 		{Name: "openrouter-x", Type: CredentialTypeOpenRouter},
@@ -333,19 +365,15 @@ func TestCrossPathPoolRefusedWithTheSplitSentence(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			pool := Pool{Name: "mixed", Members: tc.members, Owner: "owner@example.com"}
-			for _, ps := range [][]Problem{
-				ValidatePools([]Pool{pool}, creds),
-				ValidatePublishedPools([]Pool{pool}, creds),
-			} {
-				if len(ps) != 1 {
-					t.Fatalf("the pool %v is answered with %d problem(s), want one: %v", tc.members, len(ps), ps)
-				}
-				if ps[0].Message != want {
-					t.Errorf("the refusal is\n%s\nwant\n%s", ps[0].Message, want)
-				}
-				if ps[0].Path != "pools.mixed.members[1]" {
-					t.Errorf("the refusal is at %q, want pools.mixed.members[1]", ps[0].Path)
-				}
+			ps := ValidatePoolPaths([]Pool{pool}, creds)
+			if len(ps) != 1 {
+				t.Fatalf("the pool %v is answered with %d problem(s), want one: %v", tc.members, len(ps), ps)
+			}
+			if ps[0].Message != want {
+				t.Errorf("the refusal is\n%s\nwant\n%s", ps[0].Message, want)
+			}
+			if ps[0].Path != "pools.mixed.members[1]" {
+				t.Errorf("the refusal is at %q, want pools.mixed.members[1]", ps[0].Path)
 			}
 		})
 	}
@@ -368,9 +396,12 @@ func TestPoolOfOnePathStillAdmitsEveryMemberOfIt(t *testing.T) {
 		{"the built-in alone", []string{CredentialVertex}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ps := ValidatePools([]Pool{{Name: "claude", Members: tc.members}}, poolCrossingMembers())
-			if len(ps) != 0 {
+			pools := []Pool{{Name: "claude", Members: tc.members}}
+			if ps := ValidatePools(pools, poolCrossingMembers()); len(ps) != 0 {
 				t.Errorf("the pool %v is refused: %v", tc.members, ps)
+			}
+			if ps := ValidatePoolPaths(pools, poolCrossingMembers()); len(ps) != 0 {
+				t.Errorf("the pool %v is refused where it would be written: %v", tc.members, ps)
 			}
 		})
 	}
