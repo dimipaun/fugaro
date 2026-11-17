@@ -925,7 +925,11 @@ func TestAProviderKeyTheServiceCannotReadRefuses(t *testing.T) {
 // and none may hold a byte of the key.
 func TestTheValueIsInNoDocumentTheRunRecordCarries(t *testing.T) {
 	r := newAddRig(t)
-	out, errOut := r.add(t, "team-a", "--repos", "owner/repo-a", "--type", "anthropic")
+	// The declaration of a key credential puts craft_credentials on the shared
+	// node, which is a loosening the publish confirms by the project's name
+	// typed at a terminal — the same door every other key credential in this
+	// file is added through (accounts_add_key_test.go's own `addTyped` sites).
+	out, errOut := r.addTyped(t, "team-a", "--repos", "owner/repo-a", "--type", "anthropic")
 	value := addToken()
 	// The documents below are worth scanning only because they are the ones a
 	// run about this credential decodes: the config declares it, so the node and
