@@ -530,7 +530,7 @@ func TestTheMergeReadReachesEveryNode(t *testing.T) {
 	planState := o6Node(t, now, planItem, after)
 	planState.Intents = []orchestrator.Intent{planAttempt}
 
-	h := newMergeHarness(t, mainState, now, afterRun)
+	h := newMergeWaitHarness(t, mainState, now, afterRun)
 	plan := h.withShard(t, orchestrator.PlanShard(planFolder), planState)
 	h.reader.reports = []orchestrator.RunReport{mergeReport(mergeRunA, 12), mergeReport(mergeRunB, 14)}
 	h.reads.states[mergeKey(mergeRepo, 12)] = orchestrator.MergeMerged

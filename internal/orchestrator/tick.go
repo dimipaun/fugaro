@@ -122,7 +122,7 @@ type Tick struct {
 	// cycle reads nothing at all, which is the same direction Labels fails in —
 	// an item whose pull request is never read stays in `review`, and nothing
 	// about a merge fails a cycle.
-	Merge MergeSeams
+	Merge MergeWaitSeams
 	// Now is the database server's clock (rtdb.ServerNow). Every stamp a cycle
 	// writes comes from it, and a cycle that cannot read it refuses rather
 	// than stamping anything with this machine's clock (D1230).
