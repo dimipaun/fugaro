@@ -2185,6 +2185,7 @@ Subcommands:
 - `fugaro coordinator logout` -- Delete the front door credential this project's keychain holds
 - `fugaro coordinator report` -- Declare the work you are about to start
 - `fugaro coordinator roadmap` -- Change the project's roadmap record, through the installation's front door
+- `fugaro coordinator settle` -- Make a change set's pull requests ready together
 - `fugaro coordinator show` -- Show one pull request as the host has it
 - `fugaro coordinator status` -- Show the work in flight, and where it collides
 
@@ -2699,6 +2700,62 @@ Flags:
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro coordinator settle`
+
+Make a change set's pull requests ready together
+
+Settle one change set: read every member's records and every member's pull
+request as the host has it now, and — only when every member has shipped, with
+passing tests on the commit its pull request is at — make every pull request
+ready, through the settle-only token.
+
+A change set is one piece of work spanning several repositories: a run per
+repository, launched together, each opening its own pull request. A member's
+run never makes its own pull request ready, because a set's pull requests are
+read together; this is the step that lifts that hold, and it is the only thing
+that does.
+
+--change-set names the set, which is the id of the run of its FIRST member, and
+--repo names that member's repository (the default is the local config's, when
+it lists one): the two together are what the member list is read from. Every
+other member, its repository and its run are read from that list, and a member
+whose task lists another set holds the whole set back (membership is fixed when
+a set is launched).
+
+Nothing is written until every member has been read and found shippable, so a
+set with one member still working is left exactly as it was, and the report says
+which member holds it. It is idempotent: a member whose pull request is already
+ready counts as ready, so a settle that flipped some of a set and then met a
+failure is finished by the next one rather than undone.
+
+The credential is the settle-only one: an installation token scoped to the
+members' repositories, carrying pull requests write and nothing else, minted
+where the App's key is and taken back when the command ends. A repository whose
+provider is not GitHub is reported rather than written to.
+
+Exit codes: 0 whether or not the set settled — the report is the answer, and
+the coordinator job runs this on every tick — 1 when the set named cannot be
+read (no such run, a run in no change set), and 2 for a failure of the host.
+
+Usage: `fugaro coordinator settle`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--change-set` | string | "" | no | the change set to settle (the id of its first member's run) |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for settle |
+| `--json` | bool | `false` | no | print the settle's report as JSON |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | the repository of the set's first member (owner/name; default: the local config's, when it lists one) |
 
 Subcommands:
 
@@ -7588,7 +7645,7 @@ Flags:
 | `--attach` | stringArray | `[]` | no | attach a file to the run: repeatable, uploaded to the run's own inputs/ and downloaded by a mode: artifact run into the checkout's inputs/ (needs a mode: artifact recipe; refused on a run ID that already has a task) |
 | `--attempts` | int | `0` | no | launch N (2 to 4) independent runs of the same task, workflow, ref and recipe as a best-of-N batch (bestof-<first run id> unless --batch is given); refused with --pr, --run-id, --retry or a review-mode recipe |
 | `--batch` | string | "" | no | batch label, to group runs in fugaro runs ls |
-| `--change-set` | bool | `false` | no | launch one run per repository named by --repo (2 to 5) as members of one change set: every member's task carries the set's ID and the whole member list, and the members' pull requests are linked as siblings. Part of Fugaro Subscription Edition, and not available yet in any build: the settle step that flips a set's pull requests ready ships after this release, and a set launched now would stay in draft with nothing able to lift it |
+| `--change-set` | bool | `false` | no | launch one run per repository named by --repo (2 to 5) as members of one change set: every member's task carries the set's ID and the whole member list, and the members' pull requests are linked as siblings, each left in draft for the settle step to make ready once every member is verified. Part of Fugaro Subscription Edition |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--context` | stringArray | `[]` | no | a repository this run reads and never writes, as owner/name: repeatable, at most 5, each admitted by the project's allow_repos. The list goes into the task and into the run's own identity, and the run clones each one read-only, outside its working tree, as reference the prompt points it at: nothing in one is committed or pushed, and the read-only token a context repository is cloned with is the installation's credentials service's, which needs the GitHub App installed on it. Refused for a Bitbucket repository and where the installation's credentials service does not serve the repository |
 | `--continues` | string | "" | no | continue the chain of RUN (a run ID, or <repo-slug>/<run-id>): this launch inherits the chain's remaining limits, for a chain with no pull request — the run you name opened nothing to follow up. The chain's limit is read from the run that began it, and what it has spent from the chain's runs' budget ledgers; this launch's own --max-* may only tighten the remaining. Refused with --pr, --retry and --attempts, which name a chain's previous run themselves |
