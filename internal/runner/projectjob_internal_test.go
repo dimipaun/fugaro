@@ -1089,7 +1089,7 @@ func TestCodingRunIsNotHandedTheReviewCandidate(t *testing.T) {
 	if _, _, _, err := r.jobIdentity(context.Background()); err == nil {
 		t.Fatalf("a coding run was admitted to the review variant (%s)", variant)
 	} else {
-		for _, want := range []string{variant, "review-only variant", "is not a review", "The run stops"} {
+		for _, want := range []string{variant, "review-only variant", "neither a review nor a diagnosis", "The run stops"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("the refusal %q lacks %q", err, want)
 			}
@@ -1156,6 +1156,128 @@ func TestReviewClassIsDecidedByTheMarkerAndTheJob(t *testing.T) {
 	}
 }
 
+// TestReviewClassFieldAdmitsADiagnosisToTheVariant (docs/troubleshoot-cloud
+// T-TC12, D2411): the second class marker, and the door it opens. The cloud
+// tier of `fugaro troubleshoot` runs a mode: artifact recipe (D2402) on the
+// review-only variant (D2403) — the container that mounts no App key and no
+// Claude token, and whose model call the credentials service serves as a
+// review's — and the mode alone is a coding class, which is exactly what
+// checkJobClass refuses. task.Spec.ReviewClass is the launcher's marker that
+// says which class that run is; its pair — the same spec with the field unset,
+// refused by the variant's own halt — is TestJobClassHaltNamesADiagnosis.
+//
+// Mutation (run, restored): read the mode alone in runClass. This run is
+// refused with the variant's own halt, and no diagnosis can ever start.
+func TestReviewClassFieldAdmitsADiagnosisToTheVariant(t *testing.T) {
+	p := servingPolicy([]string{"acme-personal"}, map[string][]string{
+		"acme-personal": {"github/acme/app"},
+	})
+	slug := identitySlug(t, "github", "acme/app")
+	variant := credsvc.ReviewJobName("standard", "github", "acme-personal")
+	spec := &task.Spec{Version: 1, RunID: "20261117-070000-abcd", Repo: "acme/app", Ref: "main",
+		Workflow: identityWorkflow, Task: "diagnose the failed command",
+		Mode: recipe.ModeArtifact, ReviewClass: true}
+
+	r := identityRun(t, variant, slug, spec, p, true)
+	profile, provider, account, err := r.jobIdentity(context.Background())
+	if err != nil {
+		t.Fatalf("the diagnosis was refused the review-only variant (%s), which is the job D2403 runs it on: %v", variant, err)
+	}
+	if profile != "standard" || provider != "github" ||
+		account != config.ReviewVariantAccount("acme-personal")+config.ReviewVariantSuffix {
+		t.Fatalf("jobIdentity(%s) = %q/%q/%q, want the variant's own account segment", variant, profile, provider, account)
+	}
+	if _, project := r.projectJob(); !project {
+		t.Fatal("the diagnosis adopted no identity: the variant's candidate is the job it is in")
+	}
+}
+
+// TestReviewClassIsTheModeOrTheField (docs/troubleshoot-cloud T-TC12, D2411):
+// the class is the mode OR the field, and the mode still wins where the two
+// would disagree — so a review is a review whatever the field says, and the
+// field is the only thing that makes a mode: artifact run a member of the
+// review class. This is the test that keeps the marker from *replacing* the
+// mode: a launcher that wrote the field on every launch would still send a
+// review to the variant, and a run whose field is absent is classed exactly as
+// it was before the field existed.
+//
+// Mutation (run, restored): read the field alone in runClass. The
+// review-with-the-field-unset case is classed as a coding run, and every
+// `fugaro review` in flight halts in the variant's job.
+func TestReviewClassIsTheModeOrTheField(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		mode  string
+		field bool
+		want  jobClass
+	}{
+		{"a review with the field unset", recipe.ModeReview, false, classReview},
+		{"a review that carries the field too", recipe.ModeReview, true, classReview},
+		{"a diagnosis: the mode alone is a coding run", recipe.ModeArtifact, true, classReview},
+		{"an artifact run that is not a diagnosis", recipe.ModeArtifact, false, classCoding},
+		{"an implement run", recipe.ModeImplement, false, classCoding},
+		{"a spec with no mode at all", "", false, classCoding},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &run{spec: &task.Spec{Version: 1, Mode: tc.mode, ReviewClass: tc.field}}
+			if got := r.runClass(); got != tc.want {
+				t.Errorf("runClass() = %d, want %d (mode %q, review_class %v)", got, tc.want, tc.mode, tc.field)
+			}
+		})
+	}
+}
+
+// TestJobClassHaltNamesADiagnosis (docs/troubleshoot-cloud T-TC12, D2411): both
+// halt sentences of the class door name the second class. The variant exists
+// for a review AND for a diagnosis — the two runs whose container mounts no App
+// key and no Claude token — so the sentence a diagnosis reads when it is in the
+// wrong job names the job it should have been launched onto (the diagnosis in
+// the shared coding job), and the sentence a run of neither class reads in the
+// variant says what that job is for rather than calling it a review-only job a
+// plain artifact run has no business in.
+//
+// Mutation (run, restored): leave the two sentences about reviews alone. Both
+// halves fail on "a diagnosis" / "nor a diagnosis": the operator reading the
+// diagnosis's halt is sent looking for a review that does not exist.
+func TestJobClassHaltNamesADiagnosis(t *testing.T) {
+	p := servingPolicy([]string{"acme-personal"}, map[string][]string{
+		"acme-personal": {"github/acme/app"},
+	})
+	slug := identitySlug(t, "github", "acme/app")
+	coding := gcp.ProjectJobName("standard", "github", "acme-personal")
+	variant := credsvc.ReviewJobName("standard", "github", "acme-personal")
+	spec := func() *task.Spec {
+		return &task.Spec{Version: 1, RunID: "20261117-070000-abcd", Repo: "acme/app", Ref: "main",
+			Workflow: identityWorkflow, Task: "diagnose the failed command", Mode: recipe.ModeArtifact, ReviewClass: true}
+	}
+
+	r := identityRun(t, coding, slug, spec(), p, true)
+	_, _, _, err := r.jobIdentity(context.Background())
+	if err == nil {
+		t.Fatalf("a diagnosis was admitted to the shared coding job (%s), whose container holds the App key", coding)
+	}
+	for _, want := range []string{"a review or a diagnosis", coding, variant, "The run stops"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q lacks %q", err, want)
+		}
+	}
+
+	// The other direction: a mode: artifact run with no marker in the variant,
+	// which is the run the field exists to tell apart from a diagnosis.
+	plain := spec()
+	plain.ReviewClass = false
+	r = identityRun(t, variant, slug, plain, p, true)
+	_, _, _, err = r.jobIdentity(context.Background())
+	if err == nil {
+		t.Fatalf("a run of neither class was admitted to the review variant (%s)", variant)
+	}
+	for _, want := range []string{"neither a review nor a diagnosis", variant, "The run stops"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q lacks %q", err, want)
+		}
+	}
+}
+
 // TestReviewRunAdmitsAJobWithNoToken (CSR8): the review arm of the credential
 // check. An OAuth review run in the review variant is admitted although the job
 // it is in holds no Claude token at all — config.ProjectJobTokenAccount knows
@@ -1204,9 +1326,9 @@ func TestReviewRunAdmitsAJobWithNoToken(t *testing.T) {
 // and no Claude token is not one the launcher puts that run in.
 //
 // Mutation (run, restored): return classReview for any run with pull requests
-// in its task (r.review). The first half fails with "is not a review", and
-// every `fugaro run --pr N --recipe review-only` on a project's shared job
-// halts.
+// in its task (r.review). The first half fails with "neither a review nor a
+// diagnosis", and every `fugaro run --pr N --recipe review-only` on a project's
+// shared job halts.
 func TestReviewRecipeRunOnTheSharedJobIsAdmitted(t *testing.T) {
 	p := servingPolicy([]string{"acme-personal"}, map[string][]string{
 		"acme-personal": {"github/acme/app"},
@@ -1234,7 +1356,7 @@ func TestReviewRecipeRunOnTheSharedJobIsAdmitted(t *testing.T) {
 	if _, _, _, err := r.jobIdentity(context.Background()); err == nil {
 		t.Fatalf("a mode: review recipe run was admitted to the review variant (%s), which the launcher never puts it in", variant)
 	} else {
-		for _, want := range []string{variant, "review-only variant", "is not a review", "The run stops"} {
+		for _, want := range []string{variant, "review-only variant", "neither a review nor a diagnosis", "The run stops"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("the refusal %q lacks %q", err, want)
 			}
@@ -1507,7 +1629,7 @@ func TestACodingRunIsNotPlacedInTheImplicitReviewJob(t *testing.T) {
 			if err == nil {
 				t.Fatalf("a coding run was placed in the implicit review-only job %s", implicitReviewJobName(provider))
 			}
-			for _, want := range []string{implicitReviewJobName(provider), "review-only variant", "is not a review", "The run stops"} {
+			for _, want := range []string{implicitReviewJobName(provider), "review-only variant", "neither a review nor a diagnosis", "The run stops"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("the refusal %q lacks %q", err, want)
 				}

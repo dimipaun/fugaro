@@ -1337,6 +1337,19 @@ func (s *Service) signInMint(ctx context.Context, subscriptionID, account string
 	record.Source = signInSource(sub.ID, record.KeyID)
 	record.Subscription = sub.ID
 	record.Email = account
+	// And the licence the subscription bought, which every key's record names
+	// since P3.6: F27's gate reads a key's own record to know which licence must
+	// still run before it mints a successor, and F29's refund walks a licence's
+	// keys — a key of a paid licence that named none would be one no refund could
+	// reach and no renewal could serve. A subscription whose origin names no
+	// licence is left as it is rather than refused: the key is still the
+	// customer's, and what follows for it is F27's own rule for a record with no
+	// licence (renew.go).
+	if origin, held, readErr := s.origin(ctx, sub.ID); readErr != nil {
+		return MintedV1{}, readErr
+	} else if held {
+		record.EntitlementID = origin.EntitlementID
+	}
 	if err := s.store.SaveIssuance(ctx, record); err != nil {
 		return MintedV1{}, err
 	}

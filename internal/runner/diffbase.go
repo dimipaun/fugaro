@@ -117,28 +117,47 @@ func (r *run) narrowed() string {
 // origin/<reviewPromptBase>, except for a first run whose range was narrowed
 // to its own commits (narrowReviewRange), where it is the commit before them.
 //
-// The narrowed commit is used only while it is still an ancestor of HEAD. A
-// fix round that rebases the run's commits elsewhere (onto origin/main, say)
-// leaves it behind, and `<it>...HEAD` would then start at its merge base
-// with HEAD — the integration branch's fork point, which can be a larger
-// range than the recorded one. That round reads the recorded range instead,
-// which is what it would have read before narrowing existed; the prompt's
-// scope line, built once before the first round, still names the commit,
-// so that round's prompt says the range moved (narrowLeftNote), and the
-// input's own header names the range it was built over.
+// A round that moved the branch off the narrowed commit reads the recorded
+// range instead, which is what it would have read before narrowing existed
+// (narrowedLeading); the prompt's scope line, built once before the first
+// round, still names the commit, so that round's prompt says the range moved
+// (narrowLeftNote), and the input's own header names the range it was built
+// over.
 func (r *run) reviewRev(ctx context.Context) string {
-	if nb := r.narrowed(); nb != "" && r.repo != nil {
-		head, err := r.repo.HeadSHA(ctx)
-		if err == nil {
-			var ok bool
-			if ok, err = r.repo.IsAncestor(ctx, nb, head); err == nil && ok {
-				return nb
-			}
-		}
-		r.d.Log.Warn("the run's own range no longer leads to HEAD; this diff uses the recorded range",
-			"narrowed", nb, "err", r.redactErr(err))
+	if nb := r.narrowedLeading(ctx); nb != "" {
+		return nb
 	}
 	return "origin/" + r.reviewPromptBase()
+}
+
+// narrowedLeading is the commit a first run's range was narrowed to
+// (narrowed), while it is still an ancestor of HEAD, and "" when the range was
+// never narrowed or a round has since moved the branch off it.
+//
+// The narrowed commit is used only while it still leads to HEAD: a fix round
+// that rebases the run's commits elsewhere (onto origin/main, say) leaves it
+// behind, and `<it>...HEAD` would then start at its merge base with HEAD — the
+// integration branch's fork point, which can be a larger range than the
+// recorded one. Every reader of the narrowed commit takes it from here — the
+// review range and the base the checkpoint prompt's own facts are read from
+// (checkpointBase) — so the two can never disagree about whether the range
+// still holds, and each falls back to its own recorded range with this warn
+// saying why.
+func (r *run) narrowedLeading(ctx context.Context) string {
+	nb := r.narrowed()
+	if nb == "" || r.repo == nil {
+		return ""
+	}
+	head, err := r.repo.HeadSHA(ctx)
+	if err == nil {
+		var ok bool
+		if ok, err = r.repo.IsAncestor(ctx, nb, head); err == nil && ok {
+			return nb
+		}
+	}
+	r.d.Log.Warn("the run's own range no longer leads to HEAD; the recorded range is used instead",
+		"narrowed", nb, "err", r.redactErr(err))
+	return ""
 }
 
 // narrowReviewRange narrows a first run's review range to the commits the
@@ -326,6 +345,55 @@ type ownRange struct {
 	Narrow bool
 	WhyNot string
 	Why    string
+}
+
+// reviewScopeNow is the review-scope comparison as it stands before a review
+// round, which is what the review-scope stop reads (governance_hook.go,
+// StageView.ReviewScope, T7.3): the record's own while the range that round
+// reads still starts at the commit the run's own commits do, and the same
+// comparison read again when it does not.
+//
+// The record's comparison is taken once, after implement (narrowReviewRange),
+// and it is a statement about the range that run had. A fix round can move the
+// branch off the commit the range was narrowed to (reviewRev), and the round
+// that follows then reads the recorded range instead — the drift reviewRev
+// names in the prompt (narrowLeftNote) and internal/digest flags. Read over
+// the commit the range was narrowed to rather than over the commit the run's
+// own commits now start after, that comparison is the drift itself:
+// reviewRev answers the recorded range, Applicable is false, and the reason is
+// runstore.ReviewScopeRangeMoved — the range is not the run's own commits any
+// more. The record keeps it, so the record and the stop cannot disagree about
+// what a reviewer was handed.
+//
+// A run that skipped implement has no comparison to take again: it has no
+// implement set for the range to be compared with, so its record says the
+// comparison does not apply and is never a mismatch (reviewScopeSkippedImplement,
+// T5.2), and a not-applicable scope never halts (T7.3). Reading one over the
+// range the round reads would replace that reason with the range-moved
+// mismatch the stop halts on, for a run whose record never claimed the range
+// was its own commits.
+//
+// A comparison that cannot be read hands nothing to the stop and leaves the
+// record alone: an absent comparison is never an empty one (G5), and the
+// record's own describes a range the round is not reading.
+func (r *run) reviewScopeNow(ctx context.Context, nb, rev string) *runstore.ReviewScope {
+	if r.rec == nil {
+		return nil
+	}
+	if nb == "" || rev == nb || r.rec.ReviewScope == nil {
+		return r.rec.ReviewScope
+	}
+	if r.reviewScopeSkippedImplement() != "" {
+		return r.rec.ReviewScope
+	}
+	now := r.readReviewScope(ctx, ownRange{Base: nb, Narrow: true})
+	if now.WhyNot == runstore.ReviewScopeReadFailed {
+		return nil
+	}
+	r.rec.ReviewScope = now
+	r.d.Log.Warn("the commit the run's review range was narrowed to no longer leads to HEAD; the record carries the comparison of the range the next review round reads",
+		"narrowed", nb, "range", r.redact(rev)+"...HEAD")
+	return now
 }
 
 // ownRangeBase reads the run's own commits and counts the two ranges: the

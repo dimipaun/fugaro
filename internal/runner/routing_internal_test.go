@@ -1442,6 +1442,46 @@ func TestReviewJobModelPathIsKeyedOnTheRunClass(t *testing.T) {
 	}
 }
 
+// TestDiagnosisTakesTheReviewModelPath (docs/troubleshoot-cloud T-TC12,
+// D2411): the model path the class marker buys, and not the coding one. D2403
+// promises that a cloud diagnosis's model call is signed by the installation's
+// credentials service — the review class — because its container mounts no
+// credential of its own and the project's cascade pays for the call. The class
+// is what reviewClassRun reads, and it reads it through runClass, so a
+// diagnosis is a review here in everything but its marker: the same run with
+// the marker cleared is an ordinary artifact run, which the class door refuses
+// before any model path is chosen and which keeps its own configuration's auth
+// either way.
+//
+// Mutation (run, restored): read the mode alone in runClass. The diagnosis
+// falls back to its own configuration's auth (oauth, a token the variant's
+// container does not mount) and the service is never asked for the class.
+func TestDiagnosisTakesTheReviewModelPath(t *testing.T) {
+	r := reviewClassRun(t, "oauth", policy.ModeEnforce)
+	r.spec.Mode, r.spec.ReviewClass = recipe.ModeArtifact, true
+	if !r.reviewClassRun() {
+		t.Fatal("a diagnosis admitted to the review variant is not of its class")
+	}
+	if got := r.modelAuth(); got != config.AuthCascade {
+		t.Errorf("a diagnosis's modelAuth() = %q, want %s: its call is the credentials service's", got, config.AuthCascade)
+	}
+	if !r.gatewayOn() {
+		t.Error("a diagnosis has no gateway: its call has no path to the class's credential")
+	}
+
+	plain := reviewClassRun(t, "oauth", policy.ModeEnforce)
+	plain.spec.Mode, plain.spec.ReviewClass = recipe.ModeArtifact, false
+	if plain.reviewClassRun() {
+		t.Fatal("an artifact run with no class marker is of the review class")
+	}
+	if err := plain.checkJobClass(plain.job); err == nil {
+		t.Fatal("an artifact run with no class marker was admitted to the review variant's job")
+	}
+	if got := plain.modelAuth(); got != "oauth" {
+		t.Errorf("a run the class check refuses: modelAuth() = %q, want its own configuration's auth", got)
+	}
+}
+
 // TestReviewRunWithTheBudgetOffNeverReachesACredentialOfItsOwn (CSR13, Open
 // item 6's answer of 2026-11-05/06): a cloud review does not run with the
 // installation's budget off. The class's calls are the credentials service's,

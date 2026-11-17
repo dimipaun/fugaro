@@ -120,9 +120,11 @@ func TestCatalogSkipsUnclaimedModel(t *testing.T) {
 // TestRequireZDRFalseUsesAllTier pins the switch by the rate charged, not by
 // the field surviving a round trip (Review Focus 3): unset prices the
 // ZDR-eligible endpoints, false prices every endpoint the model is served by,
-// and the two charges differ.
+// and the two charges differ. The policy is spelled out as cheapest on both
+// routes, so the charge reads the tier and nothing else: the default is
+// highest (D2644) and both tiers would move with it.
 func TestRequireZDRFalseUsesAllTier(t *testing.T) {
-	zdr := mustTable(t, providers(nil), nil, fixtureCatalog("2026-10-14"))
+	zdr := mustTable(t, providers(func(p *ModelProvider) { p.PricePolicy = PricePolicyCheapest }), nil, fixtureCatalog("2026-10-14"))
 	m, ok := zdr.Lookup(catModel)
 	if !ok {
 		t.Fatal("no row")
@@ -134,7 +136,7 @@ func TestRequireZDRFalseUsesAllTier(t *testing.T) {
 		t.Errorf("require_zdr unset charged %d µ$ for 1000/1000 tokens, want 1500 (input 0.5, output 1)", got)
 	}
 	no := false
-	all := mustTable(t, providers(func(p *ModelProvider) { p.RequireZDR = &no }), nil, fixtureCatalog("2026-10-14"))
+	all := mustTable(t, providers(func(p *ModelProvider) { p.RequireZDR = &no; p.PricePolicy = PricePolicyCheapest }), nil, fixtureCatalog("2026-10-14"))
 	m, _ = all.Lookup(catModel)
 	if m.Catalog.Tier != "all" {
 		t.Errorf("require_zdr: false priced the %q tier, want all", m.Catalog.Tier)
@@ -151,10 +153,10 @@ func TestRequireZDRFalseUsesAllTier(t *testing.T) {
 // charge (Review Focus 4): highest charges the top of the selected tier's
 // range, not the same number as cheapest.
 func TestPricePolicyHighestChargesTierMax(t *testing.T) {
-	cheap := mustTable(t, providers(nil), nil, fixtureCatalog("2026-10-14"))
+	cheap := mustTable(t, providers(func(p *ModelProvider) { p.PricePolicy = PricePolicyCheapest }), nil, fixtureCatalog("2026-10-14"))
 	m, _ := cheap.Lookup(catModel)
 	if m.Catalog.Bound != "min" {
-		t.Errorf("the default policy charged the %q bound, want min", m.Catalog.Bound)
+		t.Errorf("price_policy: cheapest charged the %q bound, want min", m.Catalog.Bound)
 	}
 	if got := m.Rates.Cost(usage); got != 1500 {
 		t.Errorf("cheapest charged %d µ$, want 1500", got)
@@ -169,19 +171,19 @@ func TestPricePolicyHighestChargesTierMax(t *testing.T) {
 	}
 }
 
-// TestPricePolicyZeroValueIsCheapest pins that the default is the switch's
+// TestPricePolicyZeroValueIsHighest pins that the default is the switch's
 // own default and not the accident of an unset field reaching the wrong
-// branch: an empty price_policy and an explicit cheapest are one table.
-func TestPricePolicyZeroValueIsCheapest(t *testing.T) {
+// branch: an empty price_policy and an explicit highest are one table.
+func TestPricePolicyZeroValueIsHighest(t *testing.T) {
 	unset := mustTable(t, providers(nil), nil, fixtureCatalog("2026-10-14"))
-	explicit := mustTable(t, providers(func(p *ModelProvider) { p.PricePolicy = PricePolicyCheapest }), nil, fixtureCatalog("2026-10-14"))
+	explicit := mustTable(t, providers(func(p *ModelProvider) { p.PricePolicy = PricePolicyHighest }), nil, fixtureCatalog("2026-10-14"))
 	a, _ := unset.Lookup(catModel)
 	b, _ := explicit.Lookup(catModel)
 	if a.Rates != b.Rates || a.Catalog.Bound != b.Catalog.Bound {
-		t.Errorf("unset priced %+v (%s), cheapest %+v (%s)", a.Rates, a.Catalog.Bound, b.Rates, b.Catalog.Bound)
+		t.Errorf("unset priced %+v (%s), highest %+v (%s)", a.Rates, a.Catalog.Bound, b.Rates, b.Catalog.Bound)
 	}
-	if a.Rates.InputPerM != 0.5 {
-		t.Errorf("the default policy priced input at %v, want the zdr minimum 0.5", a.Rates.InputPerM)
+	if a.Rates.InputPerM != 1 {
+		t.Errorf("the default policy priced input at %v, want the zdr maximum 1", a.Rates.InputPerM)
 	}
 }
 
@@ -191,7 +193,10 @@ func TestPricePolicyZeroValueIsCheapest(t *testing.T) {
 // check fails here, in the direction that matters (an old catalog must
 // over-count, never under-price).
 func TestStaleCatalogChargesTierMax(t *testing.T) {
-	stale := mustTable(t, providers(nil), nil, fixtureCatalog("2026-03-01")) // 233 days before catNow
+	// A route that asked for cheapest: staleness overrides the policy, which
+	// is the direction that matters — an old file must over-count.
+	cheapest := func(p *ModelProvider) { p.PricePolicy = PricePolicyCheapest }
+	stale := mustTable(t, providers(cheapest), nil, fixtureCatalog("2026-03-01")) // 233 days before catNow
 	m, _ := stale.Lookup(catModel)
 	if got := m.Rates.Cost(usage); got != 3000 {
 		t.Errorf("a stale catalog charged %d µ$ under cheapest, want the tier maximum 3000", got)
@@ -200,7 +205,7 @@ func TestStaleCatalogChargesTierMax(t *testing.T) {
 		t.Errorf("the stale row is not marked: %+v", m.Catalog)
 	}
 	// Inside the window the policy's own bound stands.
-	fresh := mustTable(t, providers(nil), nil, fixtureCatalog("2026-09-25")) // 25 days
+	fresh := mustTable(t, providers(cheapest), nil, fixtureCatalog("2026-09-25")) // 25 days
 	m, _ = fresh.Lookup(catModel)
 	if m.Catalog.Stale || m.Rates.Cost(usage) != 1500 {
 		t.Errorf("a 25-day-old catalog charged %d µ$ (stale %v), want the cheapest 1500", m.Rates.Cost(usage), m.Catalog.Stale)

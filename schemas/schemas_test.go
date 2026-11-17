@@ -6294,6 +6294,11 @@ func TestSettingsWriteSchema(t *testing.T) {
 		{"widening", `{"version":1,"key":"budget.per_run_usd","layer":"repo","path":"/checkout/fugaro.yaml","changed":true,"widening":true,"why":"this raises a limit","old":"10","new":"50","refusal":""}`},
 		{"removal", `{"version":1,"key":"budget.per_run_usd","layer":"repo","path":"/checkout/fugaro.yaml","changed":true,"widening":true,"why":"removing a ceiling hands the decision back to a looser layer","old":"10","new":"","refusal":""}`},
 		{"no change", `{"version":1,"key":"budget.per_run_usd","layer":"repo","path":"/checkout/fugaro.yaml","changed":false,"widening":false,"why":"","old":"10","new":"10","refusal":""}`},
+		// A run of several records (S1): the one document that names no key,
+		// because the keys are the records' own. It is here because the records
+		// member is a reference to this schema itself, and a reference nothing
+		// validates is a member no reader has a shape for.
+		{"run", `{"version":1,"layer":"local","path":"/home/x/.config/fugaro/projects/aurora.yaml","changed":true,"widening":false,"why":"","old":"","new":"","refusal":"","records":[{"version":1,"key":"secret_rotation_days","layer":"local","path":"/home/x/.config/fugaro/projects/aurora.yaml","changed":true,"widening":false,"why":"","old":"","new":"30","refusal":""},{"version":1,"key":"bitbucket_api_roots","layer":"local","path":"/home/x/.config/fugaro/projects/aurora.yaml","changed":true,"widening":false,"why":"","old":"","new":"https://bitbucket.example.com","refusal":""}]}`},
 	} {
 		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(tc.instance))
 		if err != nil {

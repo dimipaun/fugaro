@@ -114,11 +114,22 @@ func (r *run) noteIgnoredAB() {
 	}
 }
 
-// applyChallenger puts a challenger arm's coder model in place: the model the
+// applyChallenger puts a challenger arm's own model in place: the model the
 // task names, on the coder role alone, after the recipe's own role mapping has
 // run (ApplyRoles) so the reviewer keeps the model the champion's run has
 // (D555) — with a recipe that maps one role onto the other the mapping stands
 // and only the coder moves.
+//
+// A pair at a review slot is the other half of that rule (D728): its challenger
+// is a reviewer model, so nothing of the arm's configuration moves here — the
+// coder stays the champion's — and the model is written into the slot level's
+// own block once the policy has resolved the levels (bootstrap, below
+// resolvePolicy), where every consumer of a level's model reads it
+// (setLevelModel). What this sets is r.replay, the level the arm reviews at.
+// The champion's coder is recorded for such an arm too, which is what keeps
+// resolveLevelsForcing's shadow swap — level 1's answer is read off the coder's
+// model — a no-op, so the arm resolves the champion's levels and its review
+// stage is the one the champion's own round at that level ran (abreplay.go).
 //
 // It is also the arm's re-check at bootstrap, which the launcher's admission
 // cannot be: a task replayed by hand, or edited after it was stored, names a
@@ -128,9 +139,10 @@ func (r *run) noteIgnoredAB() {
 // and a task whose layer names none admits none: fail-closed, since a run that
 // cannot read the list cannot know the model is the owner's. The run's own
 // allow-list, price table and provider policy then judge the model the
-// ordinary way, as the coder the run is pinned to, because this runs before
-// checkBudget — and a problem one of them reports about the coder pin is what
-// bootstrap reads as the arm's own refusal (modelRefusal, gateway.go).
+// ordinary way, as the coder the run is pinned to (or, for a reviewer arm, as
+// the slot level's own model), because this runs before checkBudget — and a
+// problem one of them reports about the coder pin is what bootstrap reads as
+// the arm's own refusal (modelRefusal, gateway.go).
 func (r *run) applyChallenger(a *config.Agent) error {
 	if !r.shadow {
 		return nil
@@ -153,8 +165,31 @@ func (r *run) applyChallenger(a *config.Agent) error {
 	case !slices.Contains(r.ab.Challengers, ch):
 		return r.refuseArm(fmt.Sprintf("the task's ab.challenger %q is not one of the project layer's ab.challengers: a challenger is the owner's to name, and never the repository's (D556)", ch))
 	}
-	r.championCoder = a.ModelFor(config.RoleCoder)
-	a.Models.Coder = ch
+	// The slot says which one thing the pair varies (D728), and it decides
+	// where the challenger model goes: a coder pair runs the whole task on it,
+	// while a pair at a review slot holds the coder fixed and replays that
+	// level over the champion's recorded patch with it (abreplay.go, B1.2).
+	// The champion's coder is recorded either way — for a reviewer arm it is
+	// the coder the arm already has, which is what makes the shadow half of
+	// resolveLevelsForcing a no-op and the pair's two arms resolve the same
+	// levels (D555).
+	slot := r.spec.AB.EffectiveSlot()
+	level, reviewer := replayLevels[slot]
+	switch {
+	case slot == task.ABSlotCoder:
+		r.championCoder = a.ModelFor(config.RoleCoder)
+		a.Models.Coder = ch
+	case !reviewer:
+		// Unreachable through the launcher, which refuses a slot outside its
+		// own vocabulary (task.Validate), and reachable through a task.json
+		// edited after it was stored, which this runner decodes but does not
+		// validate. Reading such a slot as a coder pair would run the whole
+		// coding loop for a pair that asked for one review: it is refused.
+		return r.refuseArm(fmt.Sprintf("the task's ab.slot %q is not a slot this runner knows: a pair varies the coder or one of the three review levels (%s, %s, %s), and a slot outside them names no pair to run", slot, task.ABSlotL1, task.ABSlotL2, task.ABSlotL3))
+	default:
+		r.championCoder = a.ModelFor(config.RoleCoder)
+		r.replay = level
+	}
 	return nil
 }
 
@@ -353,7 +388,7 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 	// and an arm whose record said succeeded while the champion's said failed
 	// would be a pair read as two runs of different work (D555). What this arm
 	// has no branch for is the push, not the answer.
-	strays, err := r.strayArtifacts(ctx)
+	strays, _, err := r.strayArtifacts(ctx)
 	if err != nil {
 		return fmt.Errorf("listing what the run left untracked: %w", err)
 	}
@@ -368,7 +403,12 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 	// and not returned as an error: the two arms' records have to say the same
 	// thing about the same work (D555), and the champion's own finalize refuses
 	// the run and carries on (runner.go).
-	added, err := r.committedBinaries(ctx)
+	//
+	// What the arm drops is the admitted half of the two answers, which the
+	// champion's status section reports and this arm has no surface for: it
+	// writes no pull request and no section (D554), so a list here would be
+	// text nothing reads.
+	added, _, err := r.committedBinaries(ctx)
 	unread := ""
 	if err != nil {
 		unread = r.redact(err.Error())

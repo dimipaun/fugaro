@@ -710,14 +710,19 @@ func (f *failingIssuances) SaveIssuance(ctx context.Context, r Record) error {
 }
 
 // mailedBundle is the pair a paid mail carries: the key and, on the line below
-// it, the renewal secret (D2135).
+// it, the renewal secret (D2135) — or the key alone, with the reissue's own note
+// in the secret's place, which is what a mail for a licence whose secret the
+// holder already has carries (D2200).
 func mailedBundle(t *testing.T, body string) (key, secret string) {
 	t.Helper()
 	lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
 	for i, line := range lines {
 		if strings.HasPrefix(strings.TrimSpace(line), "fgk_") {
-			if i+1 >= len(lines) || strings.TrimSpace(lines[i+1]) == "" {
-				t.Fatalf("the mail ends on the key line, want the renewal secret below it (D2135): %q", body)
+			if i+1 >= len(lines) {
+				t.Fatalf("the mail ends on the key line, want the renewal secret or the reissue's own note below it (D2135, D2200): %q", body)
+			}
+			if strings.TrimSpace(lines[i+1]) == "" {
+				return strings.TrimSpace(line), ""
 			}
 			return strings.TrimSpace(line), strings.TrimSpace(lines[i+1])
 		}
@@ -943,8 +948,10 @@ func TestRenewalKeyIssuesThirtyDaysBeforeExpiry(t *testing.T) {
 	// the rest of the licence machinery can act on: its own `key_id`, which §8's
 	// list and a K2.3 reissue name; the workspace the purchase bound, which every
 	// verifier reads (TN2, D2134); the row its term is sold under; and the
-	// renewal secret mailed beside it and kept as a digest, which is the pair the
-	// term after this one is renewed with (D2135).
+	// renewal secret that renews the term after this one — which is the licence's
+	// own and not a fresh one, because D2200 keeps the hash a seat change or a
+	// renewal is reissued under, so the installation renews with the secret it
+	// already holds.
 	if claims.KeyID == first.KeyID || !strings.HasPrefix(claims.KeyID, keyIDPrefix) {
 		t.Errorf("the renewal key's key id is %q, and the purchase's is %q, want a new %q id: a reissue is a new key (§8)", claims.KeyID, first.KeyID, keyIDPrefix)
 	}
@@ -954,19 +961,26 @@ func TestRenewalKeyIssuesThirtyDaysBeforeExpiry(t *testing.T) {
 	if minted.Record.Plan != PolicyTeamAnnual {
 		t.Errorf("the renewal mints under the row %q, want the one the subscription's year is sold under (%q)", minted.Record.Plan, PolicyTeamAnnual)
 	}
-	if minted.RenewalSecret == "" {
-		t.Error("the renewal answered with no renewal secret, want the one its own renewal needs (D2135)")
+	if minted.RenewalSecret != "" {
+		t.Errorf("the renewal answered the renewal secret %q, want none: it is a reissue under the licence a key already exists for, so the secret is the one the installation holds (D2200)", minted.RenewalSecret)
+	}
+	kept := secretHash(f.secretOf(t, f.mintedKeys()[0]))
+	if claims.RenewalSecretHash != kept {
+		t.Errorf("the renewal key claims the secret hash %q, want the licence's own (%q): a reissue under an entitlement keeps the secret the installation renews with (D2200)", claims.RenewalSecretHash, kept)
 	}
 	state, held, err := f.store.KeyState(context.Background(), claims.KeyID)
 	if err != nil || !held {
 		t.Fatalf("the store holds no key state for the renewal's key %s (held=%v, err=%v), so the term it covers could never be renewed", claims.KeyID, held, err)
 	}
-	if state.RenewalSecretHash != secretHash(minted.RenewalSecret) {
-		t.Errorf("the store holds the digest %q for the renewal's key, want the hash of the secret it answered, %q", state.RenewalSecretHash, secretHash(minted.RenewalSecret))
+	if state.RenewalSecretHash != kept {
+		t.Errorf("the store holds the digest %q for the renewal's key, want the licence's own %q: the state is what a renewal compares the holder's secret against, and one hashed from an empty answer is a key nobody can renew", state.RenewalSecretHash, kept)
 	}
 	sent := f.mail.sent[len(f.mail.sent)-1]
-	if !strings.Contains(sent.Body, minted.Key) || !strings.Contains(sent.Body, minted.RenewalSecret) {
-		t.Errorf("the renewal's mail is %q, want both lines of D2135's bundle: the key and the secret beside it", sent.Body)
+	if !strings.Contains(sent.Body, minted.Key) {
+		t.Errorf("the renewal's mail is %q, want it to carry the key", sent.Body)
+	}
+	if !strings.Contains(sent.Body, "renewal secret you were sent with it is unchanged") {
+		t.Errorf("the renewal's mail is %q, want it to say the secret is unchanged: a reissue mails one line, because the second is the one the holder already has (D2200)", sent.Body)
 	}
 
 	if _, again, err := f.svc.Renew(context.Background(), "sub-acme.example"); err != nil || again {
@@ -1664,7 +1678,10 @@ func TestRefundRevokesTheKey(t *testing.T) {
 func TestARefundRevokesTheWholeRotationChain(t *testing.T) {
 	f, _ := renewing(t)
 	refunded := f.purchase("evt-1", "acme.example", 5, 365)
-	untouched := f.purchase("evt-2", "widget.example", 3, 30)
+	// The licence this refund must not reach: another workspace's, because two
+	// purchases in one workspace are one licence under D2204 and the second
+	// supersedes the first (heldKeyIn).
+	untouched, _, _ := heldKeyIn(t, f, PolicyTeamMonthly, "widget-workshop")
 	// Two renewals, so the licence the refund names has been succeeded twice: the
 	// chain the walk has to follow is three keys long. Each term is written as
 	// paid for before the rotation is asked for it, and written directly rather
@@ -1677,8 +1694,8 @@ func TestARefundRevokesTheWholeRotationChain(t *testing.T) {
 	third, _ := renewThroughTheEndpoint(t, f, second.KeyID, secondSecret)
 	// The two successors are left naming no subscription, which is the shape a
 	// rotation written before the record carried one has: the walk's subscription
-	// step cannot reach them, so what this test pins from here on is the other
-	// step of D2147 — the `rotation:<key>` the successor's own source is.
+	// step cannot reach them, and what reaches them from here on is F29's own rule
+	// — the licence the record of every key names (P3.6).
 	setSubscription(t, f, second.KeyID, "")
 	setSubscription(t, f, third.KeyID, "")
 
@@ -1694,8 +1711,8 @@ func TestARefundRevokesTheWholeRotationChain(t *testing.T) {
 			t.Errorf("the entry for %s is %+v, want %q at the event's own instant %s", keyID, entry, ReasonRefund, at)
 		}
 	}
-	if _, held, _ := f.store.Revocation(context.Background(), untouched.KeyID); held {
-		t.Errorf("the refund of %s withdrew the key %s as well, want another licence's key left alone", refunded.KeyID, untouched.KeyID)
+	if _, held, _ := f.store.Revocation(context.Background(), untouched); held {
+		t.Errorf("the refund of %s withdrew the key %s as well, want another licence's key left alone", refunded.KeyID, untouched)
 	}
 	if got := len(f.revocations()); got != 3 {
 		t.Errorf("§8's list holds %d entry(ies), want the three keys of the chain", got)
@@ -1737,7 +1754,11 @@ func TestARefundRevokesTheWholeRotationChain(t *testing.T) {
 func TestARefundRevokesEveryKeyOfTheLicence(t *testing.T) {
 	f, _ := renewing(t)
 	refunded := f.purchase("evt-1", "acme.example", 5, 30)
-	untouched := f.purchase("evt-2", "widget.example", 3, 30)
+	// The licence this refund must not reach: one bound in another workspace,
+	// because two purchases in one workspace are one licence under D2204 — the
+	// second supersedes the first — and a case whose subject is the line between
+	// two licences needs two of them (heldKeyIn).
+	untouched, _, _ := heldKeyIn(t, f, PolicyTeamMonthly, "widget-workshop")
 
 	f.advance(20 * day)
 	minted, renewed, err := f.svc.Renew(context.Background(), refunded.Subscription)
@@ -1754,15 +1775,17 @@ func TestARefundRevokesEveryKeyOfTheLicence(t *testing.T) {
 		t.Fatalf("the seat change minted %d key(s), want one", len(records)-before)
 	}
 	reissued := records[len(records)-1].KeyID
-	// The endpoint's rotation of that key, so the walk also has to reach one it
-	// found by subscription: the rotation names the key it replaces and stamps
-	// the subscription beside it. The term it hands out is the one the merchant's
-	// next renewal would pay for, written here directly so that the keys of this
-	// licence stay the four this test names.
-	theSubscriptionCovers(t, f, minted.Record.KeyID)
-	rotated, _ := renewThroughTheEndpoint(t, f, minted.Record.KeyID, minted.RenewalSecret)
+	// The endpoint's rotation of the seat change's key, so the walk also has to
+	// reach one it found by subscription: the rotation names the key it replaces
+	// and stamps the subscription beside it. It is asked with the licence's own
+	// secret, which the merchant's renewal and the seat change both kept (D2200),
+	// and the term it hands out is the one the merchant's next renewal would pay
+	// for, written here directly so that the keys of this licence stay the four
+	// this test names.
+	theSubscriptionCovers(t, f, reissued)
+	rotated, _ := renewThroughTheEndpoint(t, f, reissued, f.secretOf(t, f.mintedKeys()[0]))
 	if rotated.KeyID == reissued {
-		t.Fatalf("the endpoint's rotation of %s minted the seat change's key %s", minted.Record.KeyID, reissued)
+		t.Fatalf("the endpoint's rotation of %s minted the seat change's key %s", reissued, reissued)
 	}
 
 	at := f.now
@@ -1777,8 +1800,8 @@ func TestARefundRevokesEveryKeyOfTheLicence(t *testing.T) {
 			t.Errorf("the entry for %s is %+v, want %q at the event's own instant %s", keyID, entry, ReasonRefund, at)
 		}
 	}
-	if entry, held, _ := f.store.Revocation(context.Background(), untouched.KeyID); held {
-		t.Errorf("the refund of %s withdrew the key %s (%+v), want another licence's key left alone", refunded.KeyID, untouched.KeyID, entry)
+	if entry, held, _ := f.store.Revocation(context.Background(), untouched); held {
+		t.Errorf("the refund of %s withdrew the key %s (%+v), want another licence's key left alone", refunded.KeyID, untouched, entry)
 	}
 	if got := len(f.revocations()); got != 4 {
 		t.Errorf("§8's list holds %d entry(ies), want the four keys of the refunded licence", got)
@@ -1897,7 +1920,7 @@ func TestAReissueThatKeepsTheSecretWritesTheHashItKept(t *testing.T) {
 		Seats:             5,
 		TermDays:          365,
 		RenewalSecretHash: kept,
-	}, buyerAddress("acme.example"), "reissue:evt-2", "sub-acme.example")
+	}, buyerAddress("acme.example"), "reissue:evt-2", "sub-acme.example", "ent-acme.example")
 	if err != nil {
 		t.Fatalf("reissuing onto the entitlement's own secret hash: %v", err)
 	}
@@ -1926,6 +1949,156 @@ func TestAReissueThatKeepsTheSecretWritesTheHashItKept(t *testing.T) {
 	}
 	if strings.Contains(body, answer.Key+"\n\n\n") {
 		t.Errorf("the reissue's mail is %q, want no empty second line: no secret was minted, so the line is left out rather than sent blank (D2200)", body)
+	}
+}
+
+// TestSeatChangeIsTheNextRenewal: D2200 — a seat change reissues under the
+// licence with the secret hash it already has, and the installation still
+// running the key that was replaced reaches its new key through `/renew`. That
+// is the whole reason the predecessor is left a handover: the seat change mails
+// its key, and a customer who never opens the mail would otherwise keep a key
+// whose seats are the old ones until its own term ended — the licence looking
+// dark from the installation's side while the service has already issued the key
+// it is for (F2).
+//
+// The call below is taken from *inside* the handover's day and *outside* the
+// replaced key's own renewal window, so the answer can only be the handover:
+// nothing about the old key's calendar would hand it anything, and a key minted
+// from its record would be a second successor beside the one the seat change
+// minted. What it is answered is the seat change's own key, no secret (the
+// secret is the licence's and the installation holds it already), and no mint.
+func TestSeatChangeIsTheNextRenewal(t *testing.T) {
+	f, spy := renewing(t)
+	bought := f.purchase("evt-next-1", "acme.example", 5, 365)
+	if bought.EntitlementID == "" {
+		t.Fatal("the purchase's key names no licence, so there is nothing here to reissue under (P3.6)")
+	}
+	licenceID := bought.EntitlementID
+	secret := f.secretOf(t, f.mintedKeys()[0])
+	f.advance(100 * day)
+	before := len(f.records())
+	f.event(Event{ID: "evt-next-2", Type: EventSeatChange, Organisation: "acme.example", Seats: 8, TermDays: 365})
+	records := f.records()
+	if len(records) != before+1 {
+		t.Fatalf("the seat change minted %d key(s), want one", len(records)-before)
+	}
+	reissued := records[len(records)-1]
+	if reissued.EntitlementID != licenceID {
+		t.Fatalf("the reissued key names the licence %q, want the one the purchase minted under (%q): a seat change is a reissue of that licence and not a second one (D2200)", reissued.EntitlementID, licenceID)
+	}
+	state, held, err := f.store.KeyState(context.Background(), reissued.KeyID)
+	if err != nil || !held {
+		t.Fatalf("the reissued key has no state (held=%v, err=%v), want one: a key with no state is one nothing can renew", held, err)
+	}
+	if state.RenewalSecretHash != digest(secret) {
+		t.Errorf("the reissued key's state holds %q, want the digest of the secret its holder already has: a reissue keeps the licence's secret and never rotates it (D2200)", state.RenewalSecretHash)
+	}
+
+	hand, live, err := f.store.Handover(context.Background(), bought.KeyID, f.now)
+	if err != nil || !live {
+		t.Fatalf("the store holds no live handover for the replaced key %s (live=%v, err=%v): a seat change leaves one for it or the installation only learns of its key from the mail", bought.KeyID, live, err)
+	}
+	if hand.SecretHash != digest(secret) {
+		t.Fatalf("the handover's digest is not the digest of the secret the installation holds, so the call below would be the mint rather than the handover")
+	}
+	// The replaced key is past its own end here — D2202's thirty days — and the
+	// installation is still running it, which is the state this handover exists
+	// for: nothing about that key's calendar reaches the seat change's key, so
+	// without the handover the call below would mint a second successor from its
+	// record and leave the installation on neither.
+	if bought.Expires.After(f.now) {
+		t.Fatalf("the replaced key still runs to %s, so a mint from its record would be an ordinary renewal and not the second successor this case is about", bought.Expires)
+	}
+
+	rec := f.call(RouteRenew, RenewalCall{KeyID: bought.KeyID, WorkspaceID: workspaceID, RenewalSecret: secret})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the replaced key's renewal was answered %d (%q), want the seat change's key", rec.Code, rec.Body.String())
+	}
+	answer := answerOf(t, rec)
+	if !answer.NewerKey {
+		t.Error("the answer is not marked as a newer key, want it: the seat change's key replaces the one the caller presented (D2200)")
+	}
+	if got := v1Verified(t, f, answer.Key).KeyID; got != reissued.KeyID {
+		t.Errorf("`/renew` handed the replaced key the key %s, want the licence's newest %s (D2200)", got, reissued.KeyID)
+	}
+	if answer.RenewalSecret != "" {
+		t.Errorf("the handover carried a renewal secret (%d bytes), want none: the secret is the licence's own and the installation keeps the one it holds (D2200)", len(answer.RenewalSecret))
+	}
+	if got := spy.minted(); got != 0 {
+		t.Errorf("the minter was asked for %d key(s) while handing over the seat change's key, want none: a second successor is one the licence's newest key is not", got)
+	}
+
+	// And the key the licence is on now is the one that carries it on: its own
+	// renewal mints a successor under the same licence, so the chain the seat
+	// change opened does not end at the key nobody installed.
+	theSubscriptionCovers(t, f, reissued.KeyID)
+	successor, _ := renewThroughTheEndpoint(t, f, reissued.KeyID, secret)
+	if successor.EntitlementID != licenceID {
+		t.Errorf("the seat change's key renewed into a successor naming %q, want the licence %q: a successor naming none could not be reissued or revoked with it (D2200, F29)", successor.EntitlementID, licenceID)
+	}
+	if got := spy.minted(); got != 1 {
+		t.Errorf("the minter was asked for %d key(s) in all, want the seat change's key's one successor", got)
+	}
+}
+
+// TestASeatChangesKeyIsNewerToTheJobsCheck: D2200 as the job reads it. A seat
+// change leaves the key it replaced a handover and no `rotation:` record beside
+// it, so the record walk alone answers that nothing came after it — while the
+// job's check renews only inside the key's own window or on this answer
+// (`renewWanted = inWindow || answer.NewerKey`, ee/register's licence_renew). With
+// the handover invisible to `/status`, the seat change's key reaches no
+// unattended installation at all: the mail is the only way it arrives, the
+// handover's day passes unused, and the installation renews at its own window
+// into a second successor beside the licence's newest key — the fork the handover
+// is there to prevent.
+//
+// The calls below are the job's own order, with the replaced key presented: the
+// check first, and the renewal only because of what the check answered.
+func TestASeatChangesKeyIsNewerToTheJobsCheck(t *testing.T) {
+	f, spy := renewing(t)
+	bought := f.purchase("evt-check-1", "acme.example", 5, 365)
+	secret := f.secretOf(t, f.mintedKeys()[0])
+	f.advance(100 * day)
+	f.event(Event{ID: "evt-check-2", Type: EventSeatChange, Organisation: "acme.example", Seats: 8, TermDays: 365})
+	records := f.records()
+	reissued := records[len(records)-1]
+
+	rec := f.call(RouteStatus, RenewalCall{KeyID: bought.KeyID, RenewalSecret: secret})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the replaced key's check was answered %d (%q), want its state", rec.Code, rec.Body.String())
+	}
+	if answer := answerOf(t, rec); !answer.NewerKey {
+		t.Fatal("the check says there is no newer key while the store holds the seat change's handover for this key: the job renews only in the key's window or on this answer, so the installation would keep the replaced key for as long as it runs and the handover's day would pass unused")
+	}
+	assertNoKeyIn(t, rec, secret)
+
+	rec = f.call(RouteRenew, RenewalCall{KeyID: bought.KeyID, WorkspaceID: workspaceID, RenewalSecret: secret})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the replaced key's renewal was answered %d (%q), want the seat change's key", rec.Code, rec.Body.String())
+	}
+	answer := answerOf(t, rec)
+	if !answer.NewerKey {
+		t.Error("the answer is not marked as a newer key, want it: the seat change's key replaces the one the caller presented (D2200)")
+	}
+	if got := v1Verified(t, f, answer.Key).KeyID; got != reissued.KeyID {
+		t.Errorf("the job was handed the key %s, want the licence's newest %s (D2200)", got, reissued.KeyID)
+	}
+	if got := spy.minted(); got != 0 {
+		t.Errorf("the minter was asked for %d key(s), want none: the seat change's key is one the licence has already bought", got)
+	}
+
+	// The same answer once the money covers what a successor would be minted for,
+	// which is the call a job that read the handover late makes: the licence's
+	// newest key is the one this key is left, and a mint here is exactly the second
+	// successor the handover exists to prevent.
+	theSubscriptionCovers(t, f, bought.KeyID)
+	repeated := f.call(RouteRenew, RenewalCall{KeyID: bought.KeyID, WorkspaceID: workspaceID, RenewalSecret: secret})
+	again := answerOf(t, repeated)
+	if again.Key == "" || v1Verified(t, f, again.Key).KeyID != reissued.KeyID {
+		t.Errorf("the second call answered %+v, want the licence's newest key %s again (D2200)", again, reissued.KeyID)
+	}
+	if got := spy.minted(); got != 0 {
+		t.Errorf("the minter was asked for %d key(s) in all, want none: a mint beside the seat change's key is the fork this handover prevents", got)
 	}
 }
 

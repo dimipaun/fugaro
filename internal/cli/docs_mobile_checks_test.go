@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
@@ -40,15 +41,16 @@ func TestDocsMobileChecklistHasCheck81And82And89(t *testing.T) {
 	const path = "docs/gcp-live-checklist.md"
 	doc := readDoc(t, path)
 
-	// The register paragraph: P4.2a wrote 81, 82 and 89, and the rest of the
-	// allocation is untouched and still Task P4.2's to write.
+	// The register paragraph: P4.2a wrote 81, 82 and 89, and the allocation's
+	// other seven are Task P4.2's own -- written since, by the paragraph
+	// TestDocsMobileChecklistHasChecks80And83To88 reads.
 	for _, want := range []string{
 		"Task P4.2a",
-		"80 and 83–88 are still unwritten and belong to Task P4.2",
+		"80 and 83–88 are Task P4.2's, and P4.2 has written them",
 		"mobile/README.md",
 	} {
 		if !strings.Contains(doc, want) {
-			t.Errorf("%s does not carry %q: the register says which task wrote which check, and which numbers are still empty (Task P4.2a writes 81, 82 and 89; 80 and 83–88 stay P4.2's)", path, want)
+			t.Errorf("%s does not carry %q: the register says which task wrote which check, and where the rest of the allocation stands (Task P4.2a writes 81, 82 and 89; 80 and 83–88 are P4.2's)", path, want)
 		}
 	}
 
@@ -272,6 +274,173 @@ func TestDocsMobileChecklistHasCheck81And82And89(t *testing.T) {
 		}
 		if !strings.Contains(section81, c.name) {
 			t.Errorf("## Check 81: does not name %s, one of the P2.2/P6.4 cases it is the live counterpart of", c.name)
+		}
+	}
+}
+
+// TestDocsMobileChecklistHasChecks80And83To88 pins P4.2's half of the mobile
+// plan in docs/gcp-live-checklist.md: the seven summary rows, the seven
+// sections they point at, and the register paragraph that records which task
+// wrote them and that none of the seven has been run.
+//
+// The shape is the same one P4.2a's three are held to, and for the same reason:
+// a check that exists as a section but not as a row is a check nobody reads
+// first, a row with no section is a command nobody can follow, and a check
+// written as something an agent runs is a check that will be run by an agent --
+// all of 80-89 are owner-run because a live database, a real phone and the
+// owner's own installation are not an agent's to touch (Global Constraints 9,
+// 10 and 11; D120, F31).
+//
+// Two pins are the task's own rather than the register's shape:
+//
+//   - each guard has to stop for a reason the owner can read -- the task that
+//     builds what is missing -- rather than looking like a broken checkout, and
+//     check 87's carries the owner gate (CHK87_OWNER_RUN), because it names
+//     `belong`;
+//   - every one of the seven is **NOT RUN**: the guards stop today, and a row
+//     that read PASSED would be a live claim no one made.
+func TestDocsMobileChecklistHasChecks80And83To88(t *testing.T) {
+	const path = "docs/gcp-live-checklist.md"
+	doc := readDoc(t, path)
+	flat := strings.Join(strings.Fields(doc), " ")
+
+	// The paragraph: P4.2 wrote the seven, beside P4.2a's three, and none has
+	// been run.
+	for _, want := range []string{
+		"checks 80 and 83–88 are written by Task P4.2 (2026-11-17)",
+		"Every one of the seven is owner-run",
+		"no one of them has been run",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("%s does not carry %q: the register is where a reader learns which task wrote these seven and that none has been run (plan Task P4.2)", path, want)
+		}
+	}
+
+	for _, c := range []struct {
+		n string
+		// row are strings the summary row must carry besides the four every
+		// owner-run row carries.
+		row []string
+		// stops are strings the guard block must carry: the path it stops on and
+		// the task the refusal names.
+		stops []string
+	}{
+		{
+			n:     "80",
+			row:   []string{"never `belong`", "P5.1"},
+			stops: []string{"[ -f \"$ROOT/internal/cli/mailbox.go\" ]", "mailboxHandOff", "--orchestrator", "P5.1c"},
+		},
+		{
+			n:     "83",
+			row:   []string{"never `belong`", "P4.2"},
+			stops: []string{"[ -f \"$ROOT/internal/mailbox/ledger.go\" ]", "createMailboxClient", "P3.6"},
+		},
+		{
+			n:     "84",
+			row:   []string{"never `belong`", "D117"},
+			stops: []string{"[ -f \"$ROOT/shared/presence/index.js\" ]", "pairingScreen: null", "mailbox-not-wired"},
+		},
+		{
+			n:     "85",
+			row:   []string{"never `belong`", "D123"},
+			stops: []string{"[ -d \"$ROOT/internal/voicesvc\" ]", "no speech engine", "P3.4", "P5.3.3 and P5.3.5"},
+		},
+		{
+			n:     "86",
+			row:   []string{"never `belong`", "U7"},
+			stops: []string{"UIBackgroundModes", "NSMicrophoneUsageDescription", "RECORD_AUDIO", "VS2.1", "VS2.2"},
+		},
+		{
+			n:     "87",
+			row:   []string{"`belong`", "F31"},
+			stops: []string{"CHK87_OWNER_RUN", "CURSOR_AGENT", "[ -d \"$ROOT/mobile/src/accounts\" ]", "P6.8"},
+		},
+		{
+			n:     "88",
+			row:   []string{"never `belong`", "P5.2"},
+			stops: []string{"[ -f \"$ROOT/internal/cli/push.go\" ]", "firebasecloudmessaging.messages.create", "P5.2.7", "P5.2.4"},
+		},
+	} {
+		row := ""
+		for _, line := range strings.Split(doc, "\n") {
+			if strings.HasPrefix(line, "| "+c.n+" |") {
+				if row != "" {
+					t.Errorf("%s has more than one `| %s |` row: one check, one row", path, c.n)
+				}
+				row = line
+			}
+		}
+		if row == "" {
+			t.Errorf("the summary table has no `| %s |` row: the check is in the register's index or it is not in the register", c.n)
+		} else {
+			for _, want := range append([]string{
+				"USER-RUN, NOT RUN",
+				"**you** run it",
+				"no agent runs any step of it",
+				`See "Check ` + c.n + `" below`,
+			}, c.row...) {
+				if !strings.Contains(row, want) {
+					t.Errorf("the `| %s |` row does not carry %q: %s", c.n, want, row)
+				}
+			}
+		}
+
+		section := docSection(t, path, doc, "## Check "+c.n+":")
+		for _, want := range []string{
+			"NOT RUN",
+			"**Guard block",
+			"**FACT:**",
+			"**Passes when:**",
+			"**Fails when:**",
+			"**Paste back:**",
+			"**Restore.**",
+		} {
+			if !strings.Contains(section, want) {
+				t.Errorf("## Check %s: does not carry %q: a live check says who runs it, what to run and look at, when it passes, what failing looks like and how to undo it (plan Task P4.2)", c.n, want)
+			}
+		}
+		// An owner-run live check is not an environment-gated harness: the
+		// FUGARO_LIVE_ switches in internal/e2e are how a live test is turned on
+		// for an agent, and none of these seven is one.
+		if strings.Contains(section, "FUGARO_LIVE_") {
+			t.Errorf("## Check %s: carries FUGARO_LIVE_, which would make an owner-run check something an agent can be pointed at", c.n)
+		}
+		guard := codeBlockAfter(t, section, "# === Check "+c.n+": setup + guard.")
+		if !strings.Contains(guard, "set -u") {
+			t.Errorf("## Check %s: the guard block does not open with `set -u`: an unset variable in a block the owner re-runs before every step is a command that runs against the wrong thing instead of stopping", c.n)
+		}
+		for _, want := range c.stops {
+			if !strings.Contains(guard, want) {
+				t.Errorf("## Check %s: the guard block does not carry %q: each guard stops on a path this checkout may not have and names the task that builds it, so a stop the owner reads says which task is missing rather than looking like a broken checkout (plan Task P4.2)", c.n, want)
+			}
+		}
+	}
+
+	// Check 87 is the one that names `belong` as an installation it switches
+	// between, so its guard refuses a coding agent's session by the markers
+	// internal/agentenv reads and refuses until the owner types the gate: a
+	// check that names `belong` and runs under an agent is the thing Global
+	// Constraint 11 and F31 forbid.
+	section87 := docSection(t, path, doc, "## Check 87:")
+	for _, want := range []string{
+		"CHK87_OWNER_RUN=yes",
+		"no agent touches belong",
+		"internal/agentenv",
+		// The markers the gate reads, held to the list internal/agentenv carries
+		// rather than typed: a marker the tree adds is one this pin and the gate
+		// see together, because both read agentenv.AgentMarkers.
+	} {
+		if !strings.Contains(section87, want) {
+			t.Errorf("## Check 87: does not carry %q: this is the one check of the seven that switches between two installations one of which is `belong`, and the gate is what keeps an agent out of it (F31, Global Constraint 11)", want)
+		}
+	}
+	// The agent-set markers, not every marker: CLAUDE_CODE_SSE_PORT alone at a
+	// real terminal is a person's own integrated terminal (agentenv.IDEMarker,
+	// and the register says so of its own setup check), so a gate that refused
+	// on it would refuse the owner running this check in the IDE.
+	for _, marker := range agentenv.AgentMarkers {
+		if !strings.Contains(section87, marker) {
+			t.Errorf("## Check 87: the owner gate does not read the marker %q, which internal/agentenv's AgentMarkers carries: the gate and its pin read the one list, so a marker missing here is a session the gate admits (F31)", marker)
 		}
 	}
 }

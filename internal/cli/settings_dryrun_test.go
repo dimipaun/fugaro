@@ -74,9 +74,10 @@ func settingsWriteSchema(t *testing.T) (*jsonschema.Schema, map[string]any) {
 
 // settingsWriteOptionalMembers is the document's optional members, read off the
 // struct that writes them: a member whose json tag carries omitempty is one a
-// document may leave out, which is the whole of what D1164 added to version 1.
-// It is read from the type rather than a second list, so a member added later
-// is checked in the schema's properties without an edit here.
+// document may leave out — the four entry members (D1164), the key a run of
+// several records names none of, and the records such a run carries. It is read
+// from the type rather than a second list, so a member added later is checked in
+// the schema's properties without an edit here.
 func settingsWriteOptionalMembers(t *testing.T) []string {
 	t.Helper()
 	typ := reflect.TypeOf(settingsWriteDoc{})
@@ -410,11 +411,12 @@ func TestSettingsSetDryRunJSONMatchesSchema(t *testing.T) {
 }
 
 // TestSettingsWriteDocWithoutTheEntryMembersStillDecodes: the settings-write
-// document stays at version 1 and gains the entry write's members as optional
-// ones (D1164), so the console's settings edit — which pins that version —
-// reads a document of the shape it has always read. Both halves are checked:
-// the schema declares the members without requiring them, and the document a
-// plain scalar write prints carries none of them and still validates.
+// document stays at version 1 and grows only members a document may leave out
+// (D1164's entry members, and S1's `records`), so the console's settings edit —
+// which pins that version — reads a document of the shape it has always read.
+// Both halves are checked: the schema declares the optional members without
+// requiring them, and the document a plain scalar write prints carries the key
+// it is about and none of them, and still validates.
 func TestSettingsWriteDocWithoutTheEntryMembersStillDecodes(t *testing.T) {
 	sch, tree := settingsWriteSchema(t)
 	settingsWriteHome(t)
@@ -443,9 +445,13 @@ func TestSettingsWriteDocWithoutTheEntryMembersStillDecodes(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &printed); err != nil {
 		t.Fatalf("the dry run printed no document: %v\n%s", err, out)
 	}
+	// The optional members split in two, and the split is what a scalar write
+	// prints: an entry write's four are left out, `key` is carried because this
+	// document is about one key, and `records` is the run's own and is carried
+	// by a run alone (S1).
 	for _, member := range settingsWriteOptionalMembers(t) {
-		if _, ok := printed[member]; ok {
-			t.Errorf("the document of a scalar write carries %s, and no entry write produced this one:\n%s", member, out)
+		if _, carried := printed[member]; carried != (member == "key") {
+			t.Errorf("the document of a scalar write carries %s = %v: it prints the one key it is about, and none of the members an entry write or a run of several produces:\n%s", member, carried, out)
 		}
 	}
 	if printed["version"] != float64(1) {
