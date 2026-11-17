@@ -1197,8 +1197,10 @@ func TestWatchAWithdrawnListenIsADownScopeAndNotAnExit(t *testing.T) {
 	// land between the cancel and the document that says the scope is down, so
 	// the test reads on to the first one that does.
 	down := sink.next(t, testPatience)
+	read := 1
 	for i := 0; i < 20 && (len(down.Sources) != 1 || down.Sources[0].State != graph.SourceDown); i++ {
 		down = sink.next(t, testPatience)
+		read++
 	}
 	if len(down.Sources) != 1 || down.Sources[0].State != graph.SourceDown {
 		t.Fatalf("the scope is %+v after the listen was withdrawn, want it down", down.Sources)
@@ -1209,9 +1211,9 @@ func TestWatchAWithdrawnListenIsADownScopeAndNotAnExit(t *testing.T) {
 	if len(down.Nodes) == 0 {
 		t.Errorf("the withdrawn listen dropped the graph: the last nodes are what a screen still draws (H3)")
 	}
-	if down.StreamID != first.StreamID || down.Seq != first.Seq+1 {
-		t.Errorf("the document after the withdrawal is %q seq %d, want %q seq %d: the same child, the next document",
-			down.StreamID, down.Seq, first.StreamID, first.Seq+1)
+	if down.StreamID != first.StreamID || down.Seq != first.Seq+uint64(read) {
+		t.Errorf("the document after the withdrawal is %q seq %d, want %q seq %d: the same child, the documents in order",
+			down.StreamID, down.Seq, first.StreamID, first.Seq+uint64(read))
 	}
 	child.stillRunning(t, 20*testFloor)
 
