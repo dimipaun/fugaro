@@ -192,6 +192,14 @@ func coordinatorSettleSet(ctx context.Context, env *fcli.Cloud, repo, set string
 // coordinatorSettlerFor builds the step the command runs: the member reader over
 // the runs bucket, and the opener that mints the settle-only token per owner and
 // installs it on the member's provider.
+//
+// The App credential is asked for here, before anything is read, the way the
+// reader's own opener asks for it: a settle that cannot mint is the
+// environment's failure and never a member's, so it is the caller's own refusal
+// (exit 1) and it comes before the report rather than as a row of it. A settle
+// of a set that turns out not to need the credential pays one environment read
+// for that, and no credential is minted until a member reaches the host
+// (coordinator.Settler.Open).
 func coordinatorSettlerFor(ctx context.Context, env *fcli.Cloud, set *task.ChangeSet, warn io.Writer) (*coordinator.Settler, *coordinatorSettleTokens, error) {
 	if coordinatorSettleTest != nil {
 		return coordinatorSettleTest, &coordinatorSettleTokens{}, nil
