@@ -55,20 +55,30 @@ The tree invocation's own critical path is one package: `scripts` at 374.1 s of 
 
 **It is not a few slow tests and not a pile of sleeps.** The thirty slowest are under a third, and the ~1150 tests between 0.1 s and 1 s are another 42%: the length is a broad middle of end-to-end tests that each build a rig, run a command through the whole command tree and assert on what landed.
 
-The ten slowest, and what makes each long:
+The twenty slowest, and what makes each long (`scripts/test-time-report.sh` prints thirty):
 
 | seconds | test | why |
 | --- | --- | --- |
 | 46.17 | `TestWriterConformanceTheOwnerWritesTheKey` | runs every registry row that names a writer: each is a `fugaro` command in its own rig, and the table is the registry's size |
 | 20.01 | `TestNoRealGCSFromTests` | the whole test is a 20 s context deadline: it waits for the GCS client to give up on a bucket that does not exist |
-| 13.65 | `TestReleaseGateRequiresTheConsoleCheck` | two subtests (8.5 s, 5.1 s) reading the console's own checks |
+| 13.65 | `TestReleaseGateRequiresTheConsoleCheck` | two subtests (8.5 s and 5.1 s) reading the console's own checks |
 | 11.19 | `TestNoFixedRunIDsInRecencyTests` | parses the AST of every file in a directory of test files |
 | 9.11 | `TestUpdateRunsThePluginAndImages` | an update end to end against fake tools |
 | 9.02 | `TestDaemonDoesNotDependOnGatedCommands` | walks the command tree |
-| 7.08 | `TestLiveInitCensusMatchesTheFrozenList` | census over the frozen list |
+| 7.08 | `TestLiveInitCensusMatchesTheFrozenList` | the census over the frozen list |
 | 6.00 | `TestEveryWizardQuestionHasAFlag` | one command per wizard question |
-| 5.59 | `TestAccountsAddRefusesInAnAgentSession` | 5.5 s of it in one subtest, `CLAUDECODE` |
-| 5.13 | `TestReleaseGateRequiresTheConsoleCheck/default_set` | the second half of the 13.65 s above |
+| 5.59 | `TestAccountsAddRefusesInAnAgentSession` | one command per agent marker, 5.5 s of it in the `CLAUDECODE` subtest |
+| 5.01 | `TestSettingsCloudLayersAreBoundedInTime` | a bounded read, measured against the wait an unbounded one would take |
+| 5.01 | `TestAccountsLsStateReadIsBounded` | the same shape: its own comment says it waits out `internal/rtdb`'s 30 s per-call timeout |
+| 4.03 | `TestPlanTestListsNamesOnlyTestsThatExist` | the plan documents read and parsed |
+| 4.01 | `TestWaitPassesOverTheSnapshotAReconnectOpensWith` | a reconnect wait, "about a second in, with an interval of four" |
+| 4.00 | `TestPickerPicksByNumberAndReasksOnNonsense` | a picker command in a rig |
+| 3.99 | `TestWatchChildExitsZeroOnSIGTERM` | a child process and a signal |
+| 3.96 | `TestWizardResumesAtTheUnansweredQuestion` | a wizard answer in a rig |
+| 3.93 | `TestEnablingIsTheRunsOwnConfirmationAndNothingStandsInForIt` | a billing confirmation in a rig |
+| 3.92 | `TestEnableOfferedOnlyWhenTheQuotaProjectIsTheProject` | the same |
+| 3.69 | `TestNothingIsEnabledWithoutAnAnswer` | the same |
+| 3.56 | `TestPickerStoresNothing` | the same |
 
 The waits worth naming: `TestNoRealGCSFromTests` 20.0 s, `TestWaitPassesOverTheSnapshotAReconnectOpensWith` 4.0 s, `TestWatchChildDiesBySIGPIPEWhenItsReaderGoesAway` 2.2 s, `TestPtyFirstRunPrompts` 1.5 s. In the tree, `TestSignalsLeaveMain` 8.1 s is the largest.
 
