@@ -44,6 +44,12 @@ const (
 	// (GET .../info/refs?service=git-upload-pack) and the request that
 	// follows it (POST .../git-upload-pack). Both are reads of the
 	// repository the run already has.
+	//
+	// It also covers git-lfs's two reads - the batch request a client opens
+	// with and the download of an object it names (LFS, R4): an LFS read is
+	// an answer to "what does this repository hold", exactly as fetching a
+	// ref is, so what decides one is the rule that decides a fetch and no
+	// rule of its own.
 	KindFetch Kind = "fetch"
 	// KindAdvertisement is the receive-pack ref advertisement
 	// (GET .../info/refs?service=git-receive-pack), which git sends before
@@ -58,6 +64,30 @@ const (
 	// update request the rules decide on.
 	KindPush Kind = "push"
 	KindREST Kind = "rest"
+)
+
+// LFSKind names one of the two git-lfs calls this proxy carries: the batch
+// request a client opens with and the download of one object it named. Both
+// are reads of the run's own repository and both are KindFetch (U2, R4), so
+// this names WHICH read a request is rather than how it is decided - the route
+// that forwards one rebuilds git-lfs's path out of it (G13), and nothing else
+// reads it.
+//
+// git-lfs's writes are not named here at all, deliberately: the object upload
+// is a PUT to the same object path and the lock calls live under
+// .../info/lfs/locks/, and neither is a call this proxy carries. A call the
+// file does not name is one it refuses (Classify), which is what "an LFS write
+// is refused" means in one place instead of two.
+type LFSKind string
+
+const (
+	// LFSBatch is POST .../<workspace>/<repo>.git/info/lfs/objects/batch: the
+	// request a git-lfs client opens with, which names the objects it wants,
+	// and whose answer carries the href each one is downloaded from.
+	LFSBatch LFSKind = "lfs_batch"
+	// LFSObject is GET .../<workspace>/<repo>.git/info/lfs/objects/<oid>: one
+	// object's bytes, which the batch call named by its id.
+	LFSObject LFSKind = "lfs_object"
 )
 
 // Call names one of the REST calls the Bitbucket adapter makes (G4). The list
@@ -180,6 +210,19 @@ type Request struct {
 	// classification has already held it to a hex hash (validRev) before it is
 	// put here.
 	Rev string
+	// LFS names the git-lfs call this request is (LFSBatch or LFSObject), and
+	// is empty for every other request. A fetch of a ref and a fetch of an
+	// object are both KindFetch, and the route that forwards one has to know
+	// which of git-lfs's two paths to rebuild - from a name of this closed set
+	// and never from a segment of the caller's path (G13).
+	LFS LFSKind
+	// OID is the object a git-lfs object call names (LFSObject only), held to
+	// the shape an object id has (validOID) before it is put here. It is the
+	// one segment of git-lfs's route that is a value rather than a name this
+	// file can derive, exactly as Rev is for the commit route, and it is here
+	// for the same reason: the upstream URL is rebuilt from what this file
+	// decided on.
+	OID string
 	// Query is exactly the query the call may carry: the parameters
 	// bitbucket.Provider's own code sends to it, and nothing else the caller
 	// may have appended. The upstream URL is rebuilt from these.
@@ -310,8 +353,10 @@ func Classify(method, path string, query url.Values) (Request, error) {
 		// and git's info/refs GET needs two segments no REST route takes for
 		// the same repository. So the git shape is asked first and the REST
 		// routes only when it does not match, and neither reading can hide a
-		// request from the other.
-		if gitShape(method, segs) {
+		// request from the other. git-lfs's route is a third reading of the
+		// same two repository segments and is asked with the first: its
+		// "info/lfs/objects" tail is no REST route either.
+		if gitShape(method, segs) || lfsShape(segs) {
 			return classifyGit(method, segs, query)
 		}
 		return classifyREST(method, segs[1:], query)
@@ -415,10 +460,13 @@ func lowerHex(c byte) byte {
 	return c
 }
 
-// classifyGit reads the two git services on bitbucket.org. The action is what
-// tells a push from a fetch and nothing else does: both services take a POST
-// and both begin with an info/refs GET.
+// classifyGit reads the two git services on bitbucket.org, and git-lfs's route
+// beside them. The action is what tells a push from a fetch and nothing else
+// does: both services take a POST and both begin with an info/refs GET.
 func classifyGit(method string, segs []string, query url.Values) (Request, error) {
+	if lfsShape(segs) {
+		return classifyLFS(method, segs, query)
+	}
 	if !gitShape(method, segs) {
 		return Request{}, &Refusal{Reason: ReasonCallNotAllowed}
 	}
@@ -460,6 +508,81 @@ func finishGit(kind Kind, workspace, repo string, query url.Values) (Request, er
 		return Request{}, &Refusal{Reason: ReasonCallNotAllowed}
 	}
 	return Request{Kind: kind, Repo: canonical, Query: query}, nil
+}
+
+// lfsShape reports whether the segments are git-lfs's object route: a
+// repository and then "info/lfs/objects/<what>". It is a shape of its own and
+// not a case of gitShape, because what follows it is decided by the method:
+// git's route has no "objects" segment at all and this one has no "info/refs"
+// and no action segment, so the two cannot both match one path.
+func lfsShape(segs []string) bool {
+	return len(segs) == 6 && segs[2] == "info" && segs[3] == "lfs" && segs[4] == "objects"
+}
+
+// classifyLFS reads git-lfs's two reads: the batch call a client opens with
+// (POST .../objects/batch) and the download of one object that call named
+// (GET .../objects/<oid>). Both are reads of the run's own repository's objects,
+// so both are KindFetch and the rule that decides them is Decide's - this
+// function names the request and adds no rule of its own (R4, U2).
+//
+// What it does not name is as deliberate as what it does. git-lfs's writes are
+// refused here: the object upload is a PUT to the very path the download GETs,
+// and the locks are POSTs under .../info/lfs/locks/. A run pushes its branch
+// through git-receive-pack, where the rules decide the refs on the update
+// request git sends in front of the pack, and an object upload has no update
+// request to decide on at all - so accepting one would be forwarding a write
+// nothing checked. A lock call is refused for a second reason: git-lfs is
+// never asked for one by anything this tree runs, so a call to it is a call
+// nobody decided on carrying.
+//
+// The method is part of the shape rather than something read afterwards: the
+// same path spelled with another method is a request this file has not decided
+// about, and that is the one answer it never gives.
+func classifyLFS(method string, segs []string, query url.Values) (Request, error) {
+	if len(query) != 0 {
+		// git-lfs sends no query on either call, and the one parameter a
+		// caller could append is one this file would have to decide about.
+		return Request{}, &Refusal{Reason: ReasonCallNotAllowed}
+	}
+	what := segs[5]
+	switch {
+	case method == http.MethodPost && what == "batch":
+		return finishLFS(LFSBatch, segs[0], segs[1], "")
+	case method == http.MethodGet && what != "batch" && validOID(what):
+		return finishLFS(LFSObject, segs[0], segs[1], what)
+	}
+	return Request{}, &Refusal{Reason: ReasonCallNotAllowed}
+}
+
+// finishLFS canonicalises the repository a git-lfs request names and returns
+// the call with it, exactly as finishGit does for a ref: a repository that is
+// not "owner/name" is refused here and never repaired into one.
+func finishLFS(kind LFSKind, workspace, repo, oid string) (Request, error) {
+	canonical, err := canonicalRepo(workspace, repo)
+	if err != nil {
+		return Request{}, &Refusal{Reason: ReasonCallNotAllowed}
+	}
+	return Request{Kind: KindFetch, Repo: canonical, LFS: kind, OID: oid}, nil
+}
+
+// validOID holds a git-lfs object id to the shape one has: lower-case hex, in
+// the widths the protocol's two hashes have. It is validRev's rule for the
+// same kind of value - an object id is a hash and not a name - and the widths
+// are bounded the same way: git-lfs writes the id the server's batch answer
+// gave it, and a value that is not a hash is one this proxy would be deciding
+// on without knowing what it names. Upper case is not accepted, and never
+// needs to be: git-lfs writes what it read, and Bitbucket answers lower case.
+func validOID(oid string) bool {
+	if len(oid) < 7 || len(oid) > 64 {
+		return false
+	}
+	for i := 0; i < len(oid); i++ {
+		c := oid[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // classifyREST reads the REST paths the Bitbucket adapter calls, given the

@@ -729,7 +729,7 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 	// repository a call is served for is fixed before the rules see it and is
 	// never widened by anything the request names.
 	if verdict := gitproxy.Decide(req, proxyIdentity(id), canonical, shared.BitbucketToken); !verdict.Allow {
-		s.refuseProxy(ctx, w, id, purpose, credential, verdict.Reason)
+		s.refuseProxyRepository(ctx, w, id, purpose, credential, verdict.Reason, req.Repo, canonical)
 		return
 	}
 
@@ -1537,6 +1537,21 @@ func upstreamURL(req gitproxy.Request) (string, error) {
 	}
 	if req.Kind != gitproxy.KindREST {
 		base := bitbucket.DefaultOAuthRoot + "/" + escapeSeg(workspace) + "/" + escapeSeg(repo) + ".git"
+		if req.LFS != "" {
+			// git-lfs's route, rebuilt the same way and from the same two
+			// facts: the action from the name the classification gave the
+			// call and the object id from the one segment it held to a hash.
+			// Nothing of the caller's path is copied (G13) — the batch path
+			// is this file's own constant, never the tail of what was asked
+			// for.
+			switch req.LFS {
+			case gitproxy.LFSBatch:
+				return base + "/info/lfs/objects/batch", nil
+			case gitproxy.LFSObject:
+				return base + "/info/lfs/objects/" + escapeSeg(req.OID), nil
+			}
+			return "", errors.New("credsvc: the git-lfs call is not one this route forwards")
+		}
 		switch req.Kind {
 		case gitproxy.KindFetch:
 			if len(req.Query) > 0 {
@@ -1645,6 +1660,49 @@ func (s *Server) refuseProxy(ctx context.Context, w http.ResponseWriter, id Iden
 func (s *Server) refuseProxyReason(ctx context.Context, w http.ResponseWriter, id Identity, purpose, credential, class string, cause error) {
 	s.logProxyRefusal(id, purpose, class, cause)
 	s.refuseCall(ctx, w, id, purpose, credential, "", StatusRequestRefused, ErrorRequestRefused, requestRefused+class)
+}
+
+// refuseProxyRepository answers a call the rules refused for the repository it
+// names, and it is refuseProxyReason with exactly one class saying more.
+//
+// That class is other_repository, and the sentence that names a repository is
+// for a NESTED fetch: a submodule or a git-lfs object of a repository other
+// than the one the run is paired to is refused here, and the useful fact about
+// such a refusal is WHICH repository the checkout asked for - an operator
+// reads it to know which .gitmodules entry or submodule URL to fix (R4, the
+// spec's "a submodule in a repo the job's token doesn't cover should fail with
+// a clear message naming the repo", and S2's contract, "the sentence refusing
+// a call names the repository the call asked for"). It is request text and it
+// is deliberately the one place in this route where a refusal carries any: the
+// verdict is unchanged by it - what a call may reach was decided before this
+// sentence was built - and the name is the classification's own,
+// canonicalised, provider-qualified form ("bitbucket/acme/sibling") and never
+// a byte of the caller's spelling.
+//
+// The operator's own lines still carry the class alone and never the
+// repository asked for: a line names the act, and a byte the caller sent is not
+// what it is for (S2's own rule for this route, and the reason the sentence is
+// not simply handed to refuseCall). The refusal is still recorded exactly as
+// every other refusal of the service is — one audit line, the class's own line
+// and the refusal log's — and only the sentence the CALLER reads is the one
+// that names a repository, which is why the logged message is built separately
+// from the answered one here rather than in refuseCall.
+//
+// Every other class is answered exactly as refuseProxyReason answers it, and
+// the requested repository is ignored: not_admitted and proxy_off are refusals
+// of the RUN's own repository, which the caller already knows.
+func (s *Server) refuseProxyRepository(ctx context.Context, w http.ResponseWriter, id Identity, purpose, credential, class, requested, paired string) {
+	s.logProxyRefusal(id, purpose, class, nil)
+	if class != gitproxy.ReasonOtherRepository || requested == "" {
+		s.refuseCall(ctx, w, id, purpose, credential, "", StatusRequestRefused, ErrorRequestRefused, requestRefused+class)
+		return
+	}
+	if err := s.auditCall(ctx, id, purpose, credential, "", ErrorRequestRefused); err != nil {
+		s.log.Error("credsvc: a refused call could not be audited", "error", err)
+	}
+	s.logRefusal(ctx, id, ErrorRequestRefused, StatusRequestRefused, requestRefused+class, nil, nil)
+	s.refuse(w, StatusRequestRefused, ErrorRequestRefused,
+		requestRefused+class+": the call names "+requested+", and this run reaches "+paired+" alone")
 }
 
 // logProxyRefusal writes this route's own line for a refusal: the class, which
