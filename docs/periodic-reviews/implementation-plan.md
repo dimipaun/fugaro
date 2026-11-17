@@ -2,8 +2,11 @@
 
 **Status: design answered by the owner 2026-11-04, ruled on again 2026-11-05, and its decisions
 D1430–D1449 answered 2026-11-07 with all tasks approved 2026-11-07 (owner: "All tasks approved.
-Jobmax").** **Plan only when this was written; part of Part I has landed since — R0–R4, R6 and R13,
-each named with its commit in [README.md](README.md)'s status line — and the reports job has not.**
+Jobmax").** **E6, the designated repository — Open item 1 — was answered by the owner on 2026-11-17**
+([reconciliation.md](reconciliation.md) §7, D2750–D2754), which unblocks **R9** and adds **R14**,
+**R15** and **R16**. **Plan only when this was written; part of Part I has landed since — R0–R4, R6
+and R13, each named with its commit in [README.md](README.md)'s status line — and the reports job
+has not.**
 
 Every task is written to the owner's answers of 2026-11-04 (D960–D971,
 [reconciliation.md](reconciliation.md) §3) **and to the owner's rulings of 2026-11-05**
@@ -1088,7 +1091,10 @@ lines, and the second is a "when you want it", not a step:
    `jobs.reports.paused: false` (and `jobs.catalog_check.paused: false` for the catalog check) in the
    project layer and run `fugaro update` again; the schedule then runs until the setting says
    otherwise. Nothing else is needed, and nothing is committed anywhere until you run the opt-in
-   commit (R9)."
+   commit (R9) — which is also the only step that asks where the reports are to be committed: name
+   the repository once as `reports_commit` in your local project config, and the next
+   `fugaro update` or `fugaro project policy publish` puts it on the node. **Naming none commits no
+   report anywhere, and is the default.**"
 
 **One command, and no second step.** The reports job is `fugaro update`'s plan — an installation at
 the previous version converges in that one run
