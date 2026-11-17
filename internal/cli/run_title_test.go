@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,8 @@ import (
 	"gocloud.dev/blob"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -527,5 +530,239 @@ func TestRunsLsRowsCarryTheJobTitle(t *testing.T) {
 	human, _, err := execute(t, "runs", "ls")
 	if err != nil || strings.Contains(human, "TITLE") {
 		t.Fatalf("human ls = %q, %v", human, err)
+	}
+}
+
+// followUpTitleHost is one fake code host a follow-up launch reads its title
+// from, and what the launch did with it.
+type followUpTitleHost struct {
+	prov *fake.Provider
+	// opened is true once the launch asked this machine for a provider at
+	// all: a launch that carries a title of its own must not.
+	opened bool
+	// noHost makes the opener itself fail, the way a machine holding no
+	// credential for the repository does.
+	noHost bool
+	// failRead makes the read fail, the way a forge that answers a bad
+	// request (or one whose connection dies) does.
+	failRead bool
+}
+
+// followUpTitleStub installs the launch's own title read
+// (openFollowUpTitleProvider) over one fake host holding prs: the provider
+// kind is resolved from this machine's config for real, and the read is the
+// fake's, which is the network no test has.
+func followUpTitleStub(t *testing.T, prs ...fake.PRState) *followUpTitleHost {
+	t.Helper()
+	h := &followUpTitleHost{prov: &fake.Provider{Repo: "acme/app", State: fake.State{PRs: prs}}}
+	was := openFollowUpTitleProvider
+	openFollowUpTitleProvider = func([]string, func(string)) (string, gitprov.Opener, error) {
+		h.opened = true
+		if h.noHost {
+			return "", nil, fmt.Errorf("no credential on this machine for acme/app")
+		}
+		return "", func(_ context.Context, _, repo string) (gitprov.Provider, []string, error) {
+			if repo != "acme/app" {
+				return nil, nil, fmt.Errorf("no credential on this machine for %s", repo)
+			}
+			if h.failRead {
+				h.prov.FailPullRequest = 1
+			}
+			return h.prov, nil, nil
+		}, nil
+	}
+	t.Cleanup(func() { openFollowUpTitleProvider = was })
+	return h
+}
+
+// titlePR is PR 7 of the fake host, carrying title as the host shows it.
+func titlePR(title string) fake.PRState {
+	return fake.PRState{
+		PR:   gitprov.PR{Number: 7, URL: "https://forge.example/acme/app/pull/7"},
+		Spec: gitprov.PRSpec{Branch: "fugaro/" + rootID, Base: "main", Title: title},
+	}
+}
+
+// launchFollowUp launches a follow-up of acme/app's PR 7 under fuID with the
+// given extra flags and TEXT ("" for none), and returns its stored task.
+func launchFollowUp(t *testing.T, f *cloudFixture, extra []string, text string) *task.Spec {
+	t.Helper()
+	writeBuildRecord(t, f, appSlug, "web", release085)
+	args := append([]string{"run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID}, extra...)
+	if text != "" {
+		args = append(args, text)
+	}
+	if _, _, err := execute(t, args...); err != nil {
+		t.Fatalf("%v: %v", args, err)
+	}
+	return readSpec(t, f, fuID)
+}
+
+// A follow-up with no task file takes the run's title from the pull request
+// it continues: the pull request's own title as the host reports it, stored
+// in the field a brief's title is stored in, so every surface that lists a
+// run by title (watch, runs ls, the console) lists this one by the pull
+// request's name instead of a "-".
+//
+// Mutation (drop the followUpPRTitle call from newFollowUpSpec): the stored
+// task carries no title, TitleLine falls back to the follow-up's own
+// instructions, and this test fails on its first assertion.
+func TestFollowUpWithoutABriefTakesThePRTitle(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+	h := followUpTitleStub(t, titlePR("Rename the gadget"))
+	spec := launchFollowUp(t, f, nil, "")
+	if !h.opened {
+		t.Fatal("the launch never read the pull request it was launched on")
+	}
+	if spec.Title != "Rename the gadget" || spec.TitleLine() != "Rename the gadget" {
+		t.Fatalf("title = %q, TitleLine = %q, want the pull request's", spec.Title, spec.TitleLine())
+	}
+	// Stored in the ONE field a brief's title goes to: a reader outside this
+	// binary (the console, the history) reads the same key.
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(taskJSON(t, f, fuID)), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc["title"] != "Rename the gadget" {
+		t.Fatalf("task.json title = %v, want the pull request's", doc["title"])
+	}
+}
+
+// A brief of its own still wins: TEXT (and --task-file, which is the same
+// text) names the run, and the launch does not reach for the host at all —
+// nothing to read, nothing to wait for.
+//
+// Mutation (read the pull request's title unconditionally, i.e. drop the
+// `text == ""` condition): the host's title replaces the brief's first line
+// and this test fails; mutation (store the host's title even when one is
+// already there, i.e. cmp.Or the other way round): same failure.
+func TestFollowUpBriefBeatsThePRTitle(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		extra []string
+		text  string
+		want  string
+	}{
+		{"TEXT", nil, "also rename x", "also rename x"},
+		{"--task-file", []string{"--task-file", "brief.md"}, "", "# Task: Rename it properly"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+			h := followUpTitleStub(t, titlePR("Rename the gadget"))
+			if tc.name == "--task-file" {
+				dir := t.TempDir()
+				testutil.WriteFiles(t, dir, map[string]string{"brief.md": "# Task: Rename it properly\n\nDo it the way the plan says.\n"})
+				t.Chdir(dir)
+			}
+			spec := launchFollowUp(t, f, tc.extra, tc.text)
+			if spec.Title != "" {
+				t.Fatalf("title = %q, want none: the brief names the run", spec.Title)
+			}
+			if got := spec.TitleLine(); got != tc.want {
+				t.Fatalf("TitleLine() = %q, want the brief's first line", got)
+			}
+			if h.opened {
+				t.Fatal("the launch read the pull request although it had a title of its own")
+			}
+		})
+	}
+}
+
+// A pull request whose title cannot be read is not a follow-up that cannot be
+// launched: a machine holding no credential for the repository, a host that
+// fails the read, an empty title and a title that is nothing once sanitised
+// all leave the run with the empty title such a launch had before this
+// existed, and the launch succeeds.
+//
+// Mutation (return an error from newFollowUpSpec when the read fails): the
+// first three rows refuse a follow-up nobody can get past.
+func TestFollowUpWithoutAReadablePRTitle(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		prs  []fake.PRState
+		host func(*followUpTitleHost)
+	}{
+		{"the opener fails", []fake.PRState{titlePR("Rename the gadget")}, func(h *followUpTitleHost) { h.noHost = true }},
+		{"the read fails", []fake.PRState{titlePR("Rename the gadget")}, func(h *followUpTitleHost) { h.failRead = true }},
+		{"no such pull request", nil, nil},
+		{"an empty title", []fake.PRState{titlePR("")}, nil},
+		{"a title that is nothing", []fake.PRState{titlePR("\x1b[31m ​  ")}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+			h := followUpTitleStub(t, tc.prs...)
+			if tc.host != nil {
+				tc.host(h)
+			}
+			spec := launchFollowUp(t, f, nil, "")
+			if spec.Title != "" {
+				t.Fatalf("title = %q, want none", spec.Title)
+			}
+			// The follow-up is the one it always was: no title, and the run
+			// named by its own instructions.
+			if spec.RunID != fuID || !spec.IsFollowUp() || spec.PR != 7 {
+				t.Fatalf("task = %+v, want the follow-up of PR 7", spec)
+			}
+		})
+	}
+}
+
+// A pull request's title is repository-supplied text, and it reaches a
+// terminal row and a pull request's own title: it goes through the
+// sanitiser the --title flag's value goes through, capped at the same
+// length, so no newline, escape sequence, bidi override or screenful of
+// characters gets through, and what is stored is a title task.Validate
+// accepts (readSpec parses the task back).
+func TestFollowUpSanitisesThePRTitle(t *testing.T) {
+	for _, tc := range []struct{ name, raw, want string }{
+		{"a second line", "Rename\nthe gadget", "Rename the gadget"},
+		{"a CRLF", "Rename\r\nthe gadget", "Rename the gadget"},
+		{"a line separator", "Rename the gadget", "Rename the gadget"},
+		{"NEL", "Rename\u0085the gadget", "Rename the gadget"},
+		{"an SGR sequence", "Rename \x1b[31mgadget\x1b[0m", "Rename gadget"},
+		{"an OSC sequence", "Rename \x1b]0;title\x07the gadget", "Rename the gadget"},
+		{"a bell", "Rename\x07 the gadget", "Rename the gadget"},
+		{"a bidi override", "Rename‮gnp.exe", "Renamegnp.exe"},
+		{"a zero-width space", "Rename​the gadget", "Renamethe gadget"},
+		{"runs of spaces", "Rename   the    gadget", "Rename the gadget"},
+		{"over-long", strings.Repeat("x", task.MaxTitleRunes+40), strings.Repeat("x", task.MaxTitleRunes)},
+		{"cut back off the space it lands on", strings.Repeat("x", task.MaxTitleRunes-1) + " y", strings.Repeat("x", task.MaxTitleRunes-1)},
+		{"nothing", "", ""},
+		{"nothing but controls", "\x1b[31m​\x07", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := followUpTitle(tc.raw)
+			if got != tc.want {
+				t.Fatalf("followUpTitle(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+			// What the launcher stores, the runner accepts: an empty title
+			// is legal (the run falls back to its instructions), anything
+			// else must be one line the runner would not refuse at bootstrap.
+			if got != "" {
+				if p := task.TitleProblem(got); p != "" {
+					t.Fatalf("followUpTitle(%q) = %q, which %s", tc.raw, got, p)
+				}
+			}
+		})
+	}
+}
+
+// The same, end to end and on the wire: a hostile title comes out of the
+// launch as one printable line, in the field a brief's title goes to, and
+// task.Parse accepts the task that was written (a stored title the runner
+// would refuse would fail a launch it already paid for).
+func TestFollowUpStoresASanitisedTitle(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+	followUpTitleStub(t, titlePR("Rename\nthe \x1b[31mgadget‮"))
+	spec := launchFollowUp(t, f, nil, "")
+	if spec.Title != "Rename the gadget" {
+		t.Fatalf("title = %q, want the sanitised pull request title", spec.Title)
+	}
+	if data := taskJSON(t, f, fuID); strings.ContainsAny(data, "\x1b\x07") || strings.Contains(data, "\\u001b") {
+		t.Fatalf("task.json carries the raw title:\n%s", data)
 	}
 }

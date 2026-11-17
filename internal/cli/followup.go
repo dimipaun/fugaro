@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/tier"
 )
@@ -706,6 +708,94 @@ func reuseStored(ctx context.Context, env *cloudEnv, slug string, o *runOptions,
 	return have, true, nil
 }
 
+// followUpTitleTimeout bounds the one read a follow-up's title may cost
+// (followUpPRTitle). A launch is a command a person waits on, and the name of
+// the pull request it continues is a nicety beside it: a host that has not
+// answered within this is a host this launch does without, and the run is then
+// listed by its own instructions' first line. The bound is well under the
+// default request timeout of the adapters (httpjson.DefaultTimeout, 30s), so
+// the wait ends here rather than at whatever the client would have allowed.
+const followUpTitleTimeout = 10 * time.Second
+
+// openFollowUpTitleProvider is OpenProvider, a seam for the one read
+// followUpPRTitle makes on a code host (openFollowUpsProvider's pattern in
+// followups.go): the launch opens the provider of the repository the pull
+// request lives in from this process's own environment, the way every read
+// outside a run's own job is. Tests replace it with a fake host.
+var openFollowUpTitleProvider = OpenProvider
+
+// followUpPRTitle is the title a follow-up with no title of its own and no
+// brief takes from the pull request it continues (fugaro run --pr N): the
+// pull request's own title as the code host reports it, made fit to be a run's
+// title the way the --title flag's value is (followUpTitle).
+//
+// It is BEST EFFORT, and it is never a refusal: a repository this machine
+// cannot name a provider for, a host it cannot open, a read that fails or
+// times out, and a title that is empty or sanitises to nothing all answer ""
+// — the empty title such a launch had before this existed, which leaves the
+// run named by its own instructions' first line. The launch must not fail,
+// and must not wait, over the name of a pull request: the read is one the run
+// would make itself, and a launcher that refused a follow-up because a forge
+// was slow would be a launcher nobody could use.
+func followUpPRTitle(ctx context.Context, env *cloudEnv, repo string, pr int, warn io.Writer) string {
+	co := checkoutConfig(ctx, repo)
+	if co == nil {
+		co = &config.Config{}
+	}
+	kind := env.repoProvider(repo, co)
+	if kind == "" {
+		return ""
+	}
+	if warn == nil {
+		warn = io.Discard
+	}
+	_, open, err := openFollowUpTitleProvider(os.Environ(), func(w string) {
+		fmt.Fprintf(warn, "warning: %s\n", w)
+	})
+	if err != nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(ctx, followUpTitleTimeout)
+	defer cancel()
+	p, _, err := open(ctx, kind, repo)
+	if err != nil || p == nil {
+		return ""
+	}
+	info, err := p.PullRequest(ctx, pr)
+	if err != nil {
+		return ""
+	}
+	return followUpTitle(info.Title)
+}
+
+// followUpTitle is a title read off a pull request as the run's own title, or
+// "" when what came back is no title at all. It is the treatment a brief's
+// title gets, in the same order and through the same two rules: safetext.Field
+// (the sanitiser titleFlag stores with — escape sequences and controls dropped,
+// bidi and zero-width characters dropped, every line break and run of
+// whitespace made one space) and then task's own cap and shape
+// (task.MaxTitleRunes, task.TitleProblem), which is what the runner applies to
+// a stored title when it reads the task back.
+//
+// The two differences from titleFlag are the ones a title nobody typed needs:
+// an over-long title is CUT to the cap rather than refused (the task says cap
+// it, and a launch that refused a pull request because its title is long would
+// be a launch that cannot continue that pull request), and a title that is
+// nothing after sanitising is no title rather than a mistake to report. Both
+// leave a value the runner accepts: Field's output is one printable line, and
+// cutting it at a rune boundary and trimming the space the cut may leave
+// yields text Field would return unchanged.
+func followUpTitle(raw string) string {
+	title := safetext.Field(raw)
+	if r := []rune(title); len(r) > task.MaxTitleRunes {
+		title = strings.TrimSpace(string(r[:task.MaxTitleRunes]))
+	}
+	if task.TitleProblem(title) != "" {
+		return ""
+	}
+	return title
+}
+
 // newFollowUpSpec is the task of a new follow-up of chain c: its branch and
 // PR, the previous run it continues, and that run's base branch and
 // workflow; nothing else is inherited.
@@ -880,8 +970,18 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 	// The follow-up's title: the flag's when it is given, else the previous
 	// run's own (c.Title), so a chain of follow-ups keeps naming itself by
 	// the job it is. A chain whose first run carried no title has none to
-	// inherit, and writes no title at all — the follow-up is then listed by
-	// its own instructions' first line, exactly as before the flag existed.
+	// inherit; a follow-up that then has no brief of its own takes the title
+	// of the pull request it continues instead (followUpPRTitle), so the
+	// common plain `--pr N` launch — no TEXT, no --task-file, no --title —
+	// is named by the pull request a person is looking at rather than by
+	// nothing at all. It is read last and only there: a brief's own first
+	// line is a title somebody wrote for this run and always wins (TitleLine
+	// falls back to it), so the read is skipped whenever this launch has text
+	// of its own, and it never overrides a title the chain already carries.
+	title := cmp.Or(o.title, c.Title)
+	if title == "" && text == "" {
+		title = followUpPRTitle(ctx, env, repo, o.pr[0], warn)
+	}
 	// The follow-up's plan task is the flag's alone, never the run's it
 	// continues: a follow-up is joined to the graph through its pull request
 	// number (the run it follows holds the node), and a chain that kept
@@ -899,7 +999,7 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 	// under, which a follow-up of it keeps (resolvePR). No flag and no
 	// recorded tier is no expectation at all.
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: c.Ref, BaseBranch: specBaseBranch(c.Ref), Workflow: workflow, Task: text,
-		Title:          cmp.Or(o.title, c.Title),
+		Title:          title,
 		PlanTask:       o.planTask,
 		CompressionOff: c.CompressionOff,
 		Branch:         c.Branch, PR: o.pr[0], PreviousRun: c.Previous.RunID, RequestedBy: me, Batch: o.batch, Recipe: rcp,
