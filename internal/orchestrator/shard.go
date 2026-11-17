@@ -27,9 +27,10 @@ import (
 )
 
 // Shard is which node of one project's orchestrator subtree a store reads and
-// writes. Its values are the node's own name under `orchestrator/<id>`, so a
-// shard named by a patch's `node` and a shard a daemon iterates are the same
-// value and not two spellings of it.
+// writes. Its value is the node's own name under `orchestrator/<id>` —
+// `backlog`, and `plans/<plan>` — and the state node is the one that carries
+// none here, because a store built without a shard is the node every caller of
+// this package had before there were shards (ShardState, D2735).
 type Shard string
 
 const (
