@@ -2115,7 +2115,7 @@ func TestRecordPublishedGenerationFoldsAnEmptyAllowList(t *testing.T) {
 	payload := []byte(fmt.Sprintf(`{"version":%d,"allow_repos":[]}`, projectpolicy.Version))
 	f.db.Set(projectpolicy.PathShared(), map[string]any{"version": projectpolicy.Version})
 
-	if err := recordPublishedGeneration(t.Context(), io.Discard, db, lc, f.path, payload); err != nil {
+	if err := recordPublishedGeneration(t.Context(), io.Discard, db, lc, f.path, payload, nil); err != nil {
 		t.Fatalf("the record was refused for a member the database drops: %v", err)
 	}
 	if gen, want := recordedGeneration(t, f), nodeETag(t, f); gen != want {

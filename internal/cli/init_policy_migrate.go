@@ -591,6 +591,15 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 	if err := m.refuseRunsInFlight(ctx, yes, inflight, managed, c, w); err != nil {
 		return err
 	}
+	// A publish that carries a grant is refused in a coding agent's session
+	// whatever the gate said (D2617): the grant members are judged on the gate's
+	// side — loosening() is what the gate refuses a managed project's --yes for
+	// — and the session's own refusal is asked here beside it, before the diff,
+	// so a grant a coding agent queued in the local config is published by the
+	// owner's own next `fugaro update` and never by the session that wrote it.
+	if err := m.refuseGrantsInAnAgentSession(c); err != nil {
+		return err
+	}
 	// --ask's own read, the one confirmNow asks its question on: it puts back a
 	// confirmation only where the gate replaced one, and this door's read of the
 	// marks is that fact here (initRun.asksBack is the same read made at the
@@ -697,13 +706,20 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 			if stdinIsTerminal(cmd.InOrStdin()) {
 				fmt.Fprintf(w, "%s\n", why)
 			}
+			// Two widenings this run may carry without the typed name, and both
+			// are the sentence above being the whole of what is asked:
+			//
 			// The account the owner just chose with the command they typed is
-			// the one widening this run may carry without the typed name: for
-			// that door the sentence above IS the report, and the confirmation
-			// would be a second one for a decision already made at this same
-			// terminal (D2097, F10). Everything else — a ceiling raised, a
-			// removed member, a first node — keeps it.
-			if !(ownerHand && m.accountChoiceOnly(loosening)) {
+			// one of them — for that door the sentence IS the report, and the
+			// confirmation would be a second one for a decision already made at
+			// this same terminal (D2097, F10) — and a grant is the other, at
+			// every door: `fugaro update` asks nothing for a grant (D1542,
+			// D1552, F24), because a grant is what the owner's own update
+			// publishes and a typed name in front of it would be the prompt the
+			// HARD RULE's own migration cannot carry. Everything else — a
+			// ceiling raised, a member removed, an account choice this door did
+			// not make, a first node — keeps it.
+			if !(m.grantOnly(loosening) || (ownerHand && m.accountChoiceOnly(loosening))) {
 				if err := confirmTypedStrict(cmd, m.lc, why, what); err != nil {
 					return err
 				}
@@ -901,7 +917,14 @@ func (m *policyMigration) doneDetail() string {
 // whose file already records the generation the node is at.
 func (m *policyMigration) recordGeneration(ctx context.Context, cmd *cobra.Command) error {
 	if m.writesNode() {
-		return recordPublishedGeneration(ctx, cmd.OutOrStdout(), m.db, m.lc, m.path, m.payload())
+		// The node the run built is handed on so the record of what it removed
+		// can be cleared in the same write of the file (published, nil for a run
+		// that migrated a node and published none).
+		var published *projectpolicy.Policy
+		if m.pub != nil {
+			published = m.pub.pol
+		}
+		return recordPublishedGeneration(ctx, cmd.OutOrStdout(), m.db, m.lc, m.path, m.payload(), published)
 	}
 	if m.record == "" {
 		return nil
