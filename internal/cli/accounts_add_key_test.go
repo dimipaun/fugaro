@@ -14,7 +14,12 @@ import (
 	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/streams"
 )
 
 // accounts_add_key_test.go is `accounts add --type` for the two KEY
@@ -705,6 +710,369 @@ func TestACredentialTheConfigAlreadyDeclaresIsRefusedNotDuplicated(t *testing.T)
 	}
 	if len(lc.Credentials) != 1 || lc.Credentials[0].Name != "key-one" || lc.Credentials[0].Type != config.CredentialTypeClaudeOAuth {
 		t.Errorf("the credentials block is %v, want key-one alone, still claude-oauth", lc.Credentials)
+	}
+}
+
+// keyCredentialMounts is the job's own mounts for repo, built by internal/infra
+// from a local config: SecretMounts is the one place that decides what a
+// repository's job mounts, and the api-key auth is the shape a runner-path
+// credential is spent under (the run's own gateway reads the provider key out of
+// the job's environment).
+func keyCredentialMounts(t *testing.T, lc *localcfg.Config, repo string) []infra.SecretMount {
+	t.Helper()
+	cfg := &config.Config{Agent: config.Agent{Auth: "api-key"}}
+	mounts, err := infra.SecretMounts(config.GitHubAppKeySecret, cfg, "web", "", config.Workflow{}, lc, repo)
+	if err != nil {
+		t.Fatalf("SecretMounts(%s): %v", repo, err)
+	}
+	return mounts
+}
+
+// TestKeyCredentialReachesItsServingHalf is MC23's red step (D1670): the value
+// of a key credential reaches the HALF of a run that serves its type, and never
+// the other one. config.CredentialServingPath answers which half a type is on,
+// and the two halves are two documents the value has to be in: the bundle the
+// credentials service reads (one model entry per credential, at the tier the
+// service offers it by) and the job's own mounts, which internal/infra builds
+// from the installation's config.
+//
+// After MC22 alone both halves are empty: the declaration exists and the value
+// is stored under the credential's own derived secret name, and nothing reads
+// that container on either path.
+func TestKeyCredentialReachesItsServingHalf(t *testing.T) {
+	t.Run("a service-served credential is a model entry of the bundle", func(t *testing.T) {
+		// The skew fake with nothing deployed and no pin: this installation has
+		// no credentials service yet, which is the state the entry is written in
+		// (the guard's own test below is what an OLDER deployed service answers).
+		skew := newRunServiceSkew(t)
+		f, _ := credsSkewFixture(t, "none", skew)
+		appendConfig(t, "credentials:\n  - { name: team-a, type: anthropic }\nclaude_accounts:\n  team-a: { allow_data_to: [acme/app] }\n")
+		other := config.ClaudeOAuthToken + ": " + credsValue(t, "existing") + "\n"
+		f.seed(t, []byte(other))
+		value := credsValue(t, "keycred")
+
+		if _, _, err := executeStdin(t, value+"\n", "creds", "set", config.CredentialSecret("team-a")); err != nil {
+			t.Fatalf("creds set %s: %v", config.CredentialSecret("team-a"), err)
+		}
+		doc := f.value(t)
+		b, err := credsvc.ParseBundle([]byte(doc))
+		if err != nil {
+			t.Fatalf("the document is one the service's own loader refuses: %v\n%s", err, doc)
+		}
+		entry, ok := b.Lookup("team-a")
+		if !ok {
+			t.Fatalf("the bundle holds no credential team-a, so the service offers a craft nothing for it:\n%s", doc)
+		}
+		if entry.Key != config.CredentialSecret("team-a") || entry.Kind != credsvc.KindModel {
+			t.Errorf("the entry is %s/%s, want %s/%s", entry.Key, entry.Kind, config.CredentialSecret("team-a"), credsvc.KindModel)
+		}
+		if entry.Value() != value {
+			t.Errorf("the entry does not hold the value this write read")
+		}
+		// The tier is the paid key's, which is what makes the service offer it
+		// to a craft's call at all: creds.Select takes tier A first and B beside
+		// the project's own Anthropic key.
+		if got := b.Credentials(); !slices.Contains(got, creds.Credential{Name: "team-a", Tier: creds.TierB}) {
+			t.Errorf("the service's credential list is %v, want team-a at tier B", got)
+		}
+		if !strings.Contains(doc, credsValue(t, "existing")) {
+			t.Errorf("the write dropped the entry the document already held:\n%s", doc)
+		}
+	})
+
+	t.Run("a runner-path credential is in the job's mounts and not in the bundle", func(t *testing.T) {
+		f := credsFixtureFor(t)
+		appendConfig(t, "credentials:\n  - { name: team-or, type: openrouter }\nclaude_accounts:\n  team-or: { allow_data_to: [acme/app] }\n")
+		f.seed(t, []byte(config.ClaudeOAuthToken+": "+credsValue(t, "existing")+"\n"))
+		before := f.value(t)
+		value := credsValue(t, "keycred")
+
+		// The bundle is refused: this type's half is the job's own mounts, and
+		// an entry here would be a copy no call of it ever reads.
+		out, errOut, err := executeStdin(t, value+"\n", "creds", "set", config.CredentialSecret("team-or"))
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("the bundle took a runner-path credential's key: err = %v", err)
+		}
+		if !strings.Contains(err.Error(), "the runner path serves that type") {
+			t.Errorf("the refusal does not name the half that serves it: %v", err)
+		}
+		if n := f.writes(); n != 0 {
+			t.Errorf("%d version(s) written, want none", n)
+		}
+		if got := f.value(t); got != before {
+			t.Errorf("the refused write changed the document: %q", got)
+		}
+		if leak := out + errOut + err.Error(); strings.Contains(leak, value) {
+			t.Errorf("the refusal echoed the value: %q", leak)
+		}
+
+		lc := &localcfg.Config{
+			Credentials:    []config.Credential{{Name: "team-or", Type: config.CredentialTypeOpenRouter}},
+			ClaudeAccounts: map[string]config.ClaudeAccount{"team-or": {AllowDataTo: []string{"acme/app"}}},
+			Providers: map[string]config.ModelProvider{"team-or": {
+				Secret:      "team-or-key",
+				BaseURL:     "https://openrouter.example/api/v1",
+				Auth:        "bearer",
+				Models:      []string{"deepseek/*"},
+				AllowDataTo: []string{"acme/app"},
+			}},
+		}
+		want := infra.SecretMount{Logical: config.CredentialSecret("team-or"), Env: lc.Providers["team-or"].SecretEnv()}
+		if got := keyCredentialMounts(t, lc, "acme/app"); !slices.Contains(got, want) {
+			t.Errorf("the job's mounts are %v, want %v among them: the credential's own container is what the job that spends it mounts", got, want)
+		}
+		// The credential's own bound decides as well: a repository
+		// claude_accounts.team-or.allow_data_to does not name gets the
+		// provider's own secret mounted as before and no credential key.
+		if got := keyCredentialMounts(t, lc, "acme/other"); slices.Contains(got, want) {
+			t.Errorf("a repository the credential does not admit mounts its key: %v", got)
+		}
+		// And a service-served credential is never a job's mount: the
+		// credentials service serves it out of the bundle.
+		lc.Credentials = []config.Credential{{Name: "team-or", Type: config.CredentialTypeAnthropic}}
+		if got := keyCredentialMounts(t, lc, "acme/app"); slices.Contains(got, want) {
+			t.Errorf("a service-served credential is mounted into the job: %v", got)
+		}
+	})
+}
+
+// TestAProviderKeyTheServiceCannotReadRefuses is AK10's guard over the new
+// family (D1670, MC23): the bundle's loader refuses a document holding a key it
+// does not know, and it refuses the WHOLE document rather than that entry — so a
+// credentials service older than the release that reads the family must refuse
+// the write, and `fugaro update` is the whole remedy.
+//
+// Both of the guard's triggers are here: the entry this write would add, and an
+// entry the document already holds beside it (the write of ANY other credential
+// into a document carrying the family needs a service that reads it).
+func TestAProviderKeyTheServiceCannotReadRefuses(t *testing.T) {
+	declared := "credentials:\n  - { name: team-a, type: anthropic }\nclaude_accounts:\n  team-a: { allow_data_to: [acme/app] }\n"
+	older := "0.24.0" // the release before the family's reader
+
+	t.Run("the entry this write adds", func(t *testing.T) {
+		skew := newRunServiceSkew(t)
+		f, _ := credsSkewFixture(t, "none", skew)
+		appendConfig(t, declared)
+		f.seed(t, []byte(config.ClaudeOAuthToken+": "+credsValue(t, "existing")+"\n"))
+		skew.deployedService(credentialsImage(older), credentialsImage(older))
+		before := f.value(t)
+		value := credsValue(t, "keycred")
+
+		out, errOut, err := executeStdin(t, value+"\n", "creds", "set", config.CredentialSecret("team-a"))
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("a service that cannot read the family took the entry: err = %v", err)
+		}
+		for _, want := range []string{config.CredentialSecret("team-a"), keyCredentialSince, "fugaro update", "Nothing was read from you and nothing was written"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not say %q: %v", want, err)
+			}
+		}
+		if n := f.writes(); n != 0 {
+			t.Errorf("%d version(s) written, want none", n)
+		}
+		if got := f.value(t); got != before {
+			t.Errorf("the refused write changed the document: %q", got)
+		}
+		if leak := out + errOut + err.Error(); strings.Contains(leak, value) {
+			t.Errorf("the refusal echoed the value: %q", leak)
+		}
+	})
+
+	t.Run("an entry the document already holds", func(t *testing.T) {
+		skew := newRunServiceSkew(t)
+		f, _ := credsSkewFixture(t, "none", skew)
+		f.seed(t, []byte(config.CredentialSecret("team-a")+": "+credsValue(t, "held")+"\n"))
+		skew.deployedService(credentialsImage(older), credentialsImage(older))
+
+		// Another credential's write: the document it would leave in place is
+		// the one that decides, and this one carries the family.
+		_, _, err := executeStdin(t, credsValue(t, "other")+"\n", "creds", "set", config.ClaudeOAuthToken)
+		if err == nil {
+			t.Fatal("a write into a document holding the family was admitted against a service that cannot read it")
+		}
+		if !strings.Contains(err.Error(), config.CredentialSecretPrefix+"<name>"+config.CredentialKeySuffix) {
+			t.Errorf("the refusal does not name the family entry it judged: %v", err)
+		}
+		if n := f.writes(); n != 0 {
+			t.Errorf("%d version(s) written, want none", n)
+		}
+	})
+
+	t.Run("a service at the family's own release takes it", func(t *testing.T) {
+		skew := newRunServiceSkew(t)
+		f, _ := credsSkewFixture(t, "none", skew)
+		appendConfig(t, declared)
+		f.seed(t, []byte(config.ClaudeOAuthToken+": "+credsValue(t, "existing")+"\n"))
+		skew.deployedService(credentialsImage(keyCredentialSince), credentialsImage(keyCredentialSince))
+
+		if _, _, err := executeStdin(t, credsValue(t, "keycred")+"\n", "creds", "set", config.CredentialSecret("team-a")); err != nil {
+			t.Fatalf("creds set %s against a service that reads the family: %v", config.CredentialSecret("team-a"), err)
+		}
+		if n := f.writes(); n != 1 {
+			t.Fatalf("%d version(s) written, want one", n)
+		}
+	})
+}
+
+// TestTheValueIsInNoDocumentTheRunRecordCarries: the value a key credential is
+// stored with reaches the ONE half that serves it, and no document a run is
+// built from carries it. The documents here are the ones a run's own record and
+// the surfaces around it are assembled out of: the local config, the published
+// node the runner and the credentials service both decode, the installation's
+// job set (terraform.tfvars.json, which is the job spec's own source), and the
+// command's own answer. Every one of them NAMES the credential — that is what
+// makes the scan about the value and not about a document that says nothing —
+// and none may hold a byte of the key.
+func TestTheValueIsInNoDocumentTheRunRecordCarries(t *testing.T) {
+	r := newAddRig(t)
+	out, errOut := r.add(t, "team-a", "--repos", "owner/repo-a", "--type", "anthropic")
+	value := addToken()
+	// The documents below are worth scanning only because they are the ones a
+	// run about this credential decodes: the config declares it, so the node and
+	// the job set derived from it are this credential's own.
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, ok := config.CredentialNamed(lc.Credentials, "team-a"); !ok || c.Type != config.CredentialTypeAnthropic {
+		t.Fatalf("the config does not declare team-a as an anthropic credential (%v): this scan would pass on a document that says nothing about it", lc.Credentials)
+	}
+
+	node, err := json.Marshal(r.db.Value(projectpolicy.PathShared()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, err := infra.InstallationWorkdir(os.Getenv, initProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vars, err := infra.ReadWorkdirVars(dir, "installation")
+	if err != nil {
+		t.Fatalf("the installation's variables were not written: %v", err)
+	}
+	for what, doc := range map[string]string{
+		"the local config":           readFileString(t, r.cfg),
+		"the published node":         string(node),
+		"the installation's job set": string(vars),
+		"the command's own answer":   out + errOut,
+	} {
+		if strings.Contains(doc, value) {
+			t.Errorf("%s carries the value:\n%s", what, doc)
+		}
+	}
+	// And the credential's own container is the one place it IS, written by the
+	// command's own call: the negative above is worth nothing unless something
+	// stored it.
+	if got := string(r.sm.Latest(credentialSecretID("team-a"))); got != value {
+		t.Errorf("the credential's container holds %q, want the value this command read", got)
+	}
+}
+
+// TestTheBundleWriteIsNotInAnAgentSession: an agent's session may write the
+// DECLARATION and never the value (D1671, MC23). The bundle carries every model
+// credential the service issues, so `fugaro creds set` is the owner's own step
+// (credsOwnerOnly) — and the entry this task adds is not an exception to it: the
+// value of a service-served key credential is read at the owner's terminal like
+// every other entry, and an agent's session that reaches for it is refused
+// before anything is read.
+func TestTheBundleWriteIsNotInAnAgentSession(t *testing.T) {
+	f := credsFixtureFor(t)
+	appendConfig(t, "credentials:\n  - { name: team-a, type: anthropic }\nclaude_accounts:\n  team-a: { allow_data_to: [acme/app] }\n")
+	f.seed(t, []byte(config.ClaudeOAuthToken+": "+credsValue(t, "existing")+"\n"))
+	before := f.value(t)
+	agentSession(t)
+	value := credsValue(t, "keycred")
+
+	out, errOut, err := executeStdin(t, value+"\n", "creds", "set", config.CredentialSecret("team-a"))
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("a coding agent's session wrote a credential's key: err = %v", err)
+	}
+	for _, want := range []string{"nothing was written", "person at their own terminal"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if n := f.writes(); n != 0 {
+		t.Errorf("%d version(s) written, want none", n)
+	}
+	if got := f.value(t); got != before {
+		t.Errorf("the refused write changed the document: %q", got)
+	}
+	if leak := out + errOut + err.Error(); strings.Contains(leak, value) {
+		t.Errorf("the refusal echoed the value: %q", leak)
+	}
+}
+
+// TestKeyCredentialSinceHasAReleaseBullet: keyCredentialSince names the release
+// whose credentials service first reads the family, and it is the first such
+// constant whose release is not tagged yet, so docs/release.md's Before-you-tag
+// list is where a release verifies it against the tag actually cut — and where
+// the direction that matters (a raise) is pinned.
+func TestKeyCredentialSinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `keyCredentialSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no keyCredentialSince bullet: the checklist is where a release verifies the constant")
+	}
+	if !strings.Contains(bullet, "currently `\""+keyCredentialSince+"\"`") {
+		t.Errorf("docs/release.md's keyCredentialSince bullet does not carry the constant's release (%q)", keyCredentialSince)
+	}
+	for _, want := range []string{"the release that ships the family", "fugaro creds set", "must not raise it", "not tagged yet"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's keyCredentialSince bullet does not say %q", want)
+		}
+	}
+}
+
+// TestKeyCredentialSinceIsNotAheadOfTheReleaseThatShipsIt: the sibling
+// constants' direction, with the bound read off the release that ships the
+// family rather than off the stream. Their tests hold the constant at or BELOW
+// docs/release-streams.yaml's `current`, because what the guard judges is the
+// service an installation has DEPLOYED: a value above the release whose service
+// reads the family refuses `fugaro creds set credential-<name>-key` on every
+// installation that already serves it, where the refusal's remedy (`fugaro
+// update`) changes nothing. That form cannot be written here yet — the family
+// has never been in a released image, so the stream is BELOW the constant, and
+// the sibling's assertion would name the release that cannot read the family as
+// the one the constant may not pass, turning a release bump into a demand for
+// the raise the constant must never take.
+//
+// The same bound one release looser does hold in both regimes, and it is the
+// direction that bites: the family is in this tree, so the release that ships it
+// is the stream's own or the one the stream makes next (one name per minor, and
+// a hotfix is cut from its own branch and never merged back), and a constant
+// above THAT refuses writes on installations whose deployed service already
+// reads the family. From the release that ships the family on, this is the
+// sibling test's own assertion.
+//
+// The other direction — a constant naming a release BELOW the one that ships
+// the family, which admits the write that halts that release's service — has no
+// test here and cannot have one: it is invisible to a file a release bump reads
+// while moving `current`, and it is what the constant's bullet in
+// docs/release.md is verified against at the tag actually cut.
+func TestKeyCredentialSinceIsNotAheadOfTheReleaseThatShipsIt(t *testing.T) {
+	cat, err := streams.Parse("docs/release-streams.yaml", []byte(readDoc(t, "docs/release-streams.yaml")))
+	if err != nil {
+		t.Fatalf("docs/release-streams.yaml: %v", err)
+	}
+	cli, ok := cat.Lookup(streams.CLI)
+	if !ok {
+		t.Fatal("docs/release-streams.yaml carries no cli stream, so the release this tree is on cannot be read")
+	}
+	shipping := cli.Current
+	if imagePredates(cli.Current.String(), keyCredentialSince) {
+		shipping = streams.Version{Major: cli.Current.Major, Minor: cli.Current.Minor + 1}
+	}
+	if imagePredates(shipping.String(), keyCredentialSince) {
+		t.Errorf("keyCredentialSince = %q is ahead of %s, the release that ships the family: the cli stream is at %s, this tree carries MC22's declaration and MC23's halves, and one release spends one minor, so a value above %s refuses `fugaro creds set credential-<name>-key` on installations whose deployed service already serves the family — a release verifies this constant against the tag actually cut and never raises it", keyCredentialSince, shipping, cli.Current, shipping)
+	}
+	if imagePredates(keyCredentialSince, providerEntrySince) {
+		t.Errorf("keyCredentialSince = %q predates providerEntrySince = %q: the family's reader is newer than the entry that shipped before it", keyCredentialSince, providerEntrySince)
 	}
 }
 
