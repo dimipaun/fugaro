@@ -26,6 +26,27 @@ const (
 	maxModelKey       = 100
 )
 
+// spendLeavesGeneration is the rules generation that first grants the four
+// spend-accuracy leaves under a model's day counter -- `notional`, `rep`,
+// `tlo` and `thi` (spend-accuracy SA5.0, D2648 as amended by D2650,
+// docs/spend-accuracy/day-leaves.md). A session writes them only where the
+// installation's deployed generation reaches it, which is what Config's
+// RulesGeneration carries.
+//
+// It is a fixed number and deliberately not projectpolicy.RulesVersion, which
+// is the generation *this binary* deploys and rises with every change to the
+// document. A binary one release ahead compares its own RulesVersion with the
+// installation's marker, so an installation one generation behind -- the
+// ordinary state between a release and the owner running 'fugaro update' --
+// would stop writing the four figures although its document still grants them,
+// in silence. Which generation the leaves arrived in is a fact about the
+// leaves, and it does not move. It is not 6 either: generation 6 is the
+// mailbox registration kind, already deployed on every updated installation
+// when this was written, so a writer gated on 6 would write leaves no deployed
+// document grants and have every report refused (F10,
+// docs/spend-accuracy/day-leaves.md).
+const spendLeavesGeneration = 7
+
 // leaseSource is the gateway.Lease of one run.
 type leaseSource struct{ s *Session }
 
@@ -74,6 +95,14 @@ func (s *Session) jitter(n int) time.Duration {
 // A job-level observe must not loosen what the repository committed under an
 // enforcing project.
 func (s *Session) policyBinds(c Caps) bool { return s.cfg.LocalEnforce || c.Enforcing() }
+
+// spendLeaves reports whether this installation's deployed rules grant the
+// four spend-accuracy leaves under a model's day counter
+// (spendLeavesGeneration, F10). The generation is read once, at Open, so one
+// run's answer is the same from its first report to its last: a redeploy under
+// a run in flight makes the leaves writable to the runs that bootstrap after
+// it, and this one goes on writing the leaves it knew.
+func (s *Session) spendLeaves() bool { return s.cfg.RulesGeneration >= spendLeavesGeneration }
 
 // leaseSize picks the size of the next lease: clamp(5% of the smallest
 // headroom, $0.25, $2.00), never less than need, never more than the largest
@@ -251,33 +280,36 @@ func (s *Session) advise(d *Decision) {
 
 // pending is what the run has to report and has not.
 type pending struct {
-	calls    int64
-	tokens   int64
-	overrun  Micros
-	byModel  map[string]Micros   // gateway runs: settled spend by serving model
-	byTier   map[string]Micros   // cascade runs: settled money by the tier that paid for it (C1.16)
-	notional Micros              // a subscription's figure: Claude Code's own, or the gateway's tier A (C1.16)
-	nby      map[string]ModelUse // oauth runs: usage by model
+	calls   int64
+	tokens  int64
+	overrun Micros
+	// use is one entry per model under the repository's day counter, each
+	// field an increment to the leaf that must carry it: the gateway's
+	// per-model dollars and tokens and its notional, reported and band
+	// figures (report), and an oauth stage's own usage (AddNotional), which
+	// is notional whole. Every source of a model's figure lands in this one
+	// entry, so a model a flush has both a billed and a notional amount for
+	// is written once with the sum rather than twice with the second write
+	// overwriting the first (F26).
+	use      map[string]ModelUse
+	byTier   map[string]Micros // cascade runs: settled money by the tier that paid for it (C1.16)
+	notional Micros            // a subscription's figure: Claude Code's own, or the gateway's tier A (C1.16)
 }
 
 func (p pending) empty() bool {
-	return p.calls == 0 && p.tokens == 0 && p.overrun == 0 && len(p.byModel) == 0 &&
-		len(p.byTier) == 0 && p.notional == 0 && len(p.nby) == 0
+	return p.calls == 0 && p.tokens == 0 && p.overrun == 0 && len(p.use) == 0 &&
+		len(p.byTier) == 0 && p.notional == 0
 }
 
 func (p pending) clone() pending {
 	q := p
-	q.byModel = map[string]Micros{}
-	for k, v := range p.byModel {
-		q.byModel[k] = v
+	q.use = map[string]ModelUse{}
+	for k, v := range p.use {
+		q.use[k] = v
 	}
 	q.byTier = map[string]Micros{}
 	for k, v := range p.byTier {
 		q.byTier[k] = v
-	}
-	q.nby = map[string]ModelUse{}
-	for k, v := range p.nby {
-		q.nby[k] = v
 	}
 	return q
 }
@@ -311,17 +343,68 @@ func modelName(m string) string {
 	return m
 }
 
+// addUse adds one model's increments to its pending entry, under the name the
+// day counter's key is built from. The caller holds s.mu.
+func (s *Session) addUse(model string, add ModelUse) {
+	if s.pend.use == nil {
+		s.pend.use = map[string]ModelUse{}
+	}
+	k := modelName(model)
+	c := s.pend.use[k]
+	c.Micros, c.Notional = satAdd(c.Micros, add.Micros), satAdd(c.Notional, add.Notional)
+	c.Rep, c.TLo, c.THi = satAdd(c.Rep, add.Rep), satAdd(c.TLo, add.TLo), satAdd(c.THi, add.THi)
+	c.In, c.Out = satAddN(c.In, add.In), satAddN(c.Out, add.Out)
+	c.CR, c.CW = satAddN(c.CR, add.CR), satAddN(c.CW, add.CW)
+	s.pend.use[k] = c
+}
+
 // report queues a finished stage's figures and sends them.
 func (s *Session) report(ctx context.Context, rep gateway.StageReport) error {
 	s.mu.Lock()
 	s.pend.calls += int64(rep.Calls)
 	s.pend.tokens += rep.Tokens
 	s.pend.overrun = add(s.pend.overrun, rep.Overrun)
-	if s.pend.byModel == nil {
-		s.pend.byModel = map[string]Micros{}
-	}
+	// ByModel is the stage's whole per-model figure: an increment to the
+	// model's own entry, whose `micros` leaf is it.
 	for m, v := range rep.ByModel {
-		s.pend.byModel[modelName(m)] = add(s.pend.byModel[modelName(m)], v)
+		s.addUse(m, ModelUse{Micros: v})
+	}
+	// The tokens the stage's calls reported, by the model that served them
+	// (F25): the day counter's four token leaves, which every deployed
+	// document has carried since long before the policy nodes, so they are
+	// written whatever generation this installation is at. A gatewayed run's
+	// model row therefore carries its tokens beside its dollars, which only
+	// an oauth stage's row did before (AddNotional). `cw` is one leaf: the two
+	// cache-write TTLs the report keeps apart are one count here, as they are
+	// in the run's own totals.
+	for m, u := range rep.TokensBy {
+		s.addUse(m, ModelUse{In: u.Input, Out: u.Output, CR: u.CacheRead, CW: satAddN(u.CacheWrite5m, u.CacheWrite1h)})
+	}
+	// The four leaves this stage's remaining figures are written to: the
+	// tier-A part of the model's charge (F23), and what the providers reported
+	// for the stage's calls and what the price table would have charged those
+	// same calls at the two ends of the tier that served them (F7, D2650). A
+	// generation that does not grant them is never asked for them, rather
+	// than being told figures it may not write: a leaf that could never be
+	// written would sit in the pending figures for the rest of the run,
+	// keeping it from ever reporting itself settled (the argument tierKey
+	// makes for a tier with no leaf) -- and the `notional` figure is no
+	// exception, because plan writes that leaf only where the document
+	// carries it, so a queued one could never be taken off the pending
+	// figures and no round would ever empty them.
+	if s.spendLeaves() {
+		for m, v := range rep.NotionalBy {
+			s.addUse(m, ModelUse{Notional: v})
+		}
+		for m, v := range rep.ReportedBy {
+			s.addUse(m, ModelUse{Rep: v})
+		}
+		for m, v := range rep.TableLoBy {
+			s.addUse(m, ModelUse{TLo: v})
+		}
+		for m, v := range rep.TableHiBy {
+			s.addUse(m, ModelUse{THi: v})
+		}
 	}
 	// The split of the settled money by the tier that paid for it (C1.16,
 	// D140). Only a call that went through the credentials service carries a
@@ -355,14 +438,17 @@ func (s *Session) AddNotional(ctx context.Context, notional Micros, byModel map[
 	s.mu.Lock()
 	s.pend.notional = add(s.pend.notional, notional)
 	s.notionalTotal = add(s.notionalTotal, notional)
-	if s.pend.nby == nil {
-		s.pend.nby = map[string]ModelUse{}
-	}
 	for m, u := range byModel {
-		k := modelName(m)
-		c := s.pend.nby[k]
-		c.Micros, c.In, c.Out, c.CR, c.CW = add(c.Micros, u.Micros), c.In+u.In, c.Out+u.Out, c.CR+u.CR, c.CW+u.CW
-		s.pend.nby[k] = c
+		// Every dollar an oauth stage reports is a subscription figure: the
+		// model's entry takes it as the whole of its dollars and as the
+		// notional part of them in one go, so `micros` stays the whole and
+		// `notional` is what of it was never charged (RS8). Under a
+		// generation without the leaf the whole is all there is to write.
+		add := ModelUse{Micros: u.Micros, In: u.In, Out: u.Out, CR: u.CR, CW: u.CW}
+		if s.spendLeaves() {
+			add.Notional = u.Micros
+		}
+		s.addUse(m, add)
 	}
 	s.mu.Unlock()
 	var err error
@@ -384,7 +470,7 @@ func (s *Session) plan(ctx context.Context) (upd map[string]any, took pending, m
 	}
 	s.mu.Unlock()
 	upd = map[string]any{}
-	took = pending{byModel: map[string]Micros{}, byTier: map[string]Micros{}, nby: map[string]ModelUse{}}
+	took = pending{use: map[string]ModelUse{}, byTier: map[string]Micros{}}
 	// The per-write bound of every amount is the largest single lease. An
 	// oauth run is admitted without one, so it is needed only to report.
 	var maxRes Micros
@@ -509,7 +595,7 @@ func (s *Session) plan(ctx context.Context) (upd map[string]any, took pending, m
 		took.notional = n
 		more = more || n < p.notional
 	}
-	if p.calls > 0 || len(p.byModel) > 0 || p.notional > 0 || len(p.nby) > 0 {
+	if p.calls > 0 || len(p.use) > 0 || p.notional > 0 {
 		c, err := counterAt(today)
 		if err != nil {
 			return nil, took, false, err
@@ -525,20 +611,34 @@ func (s *Session) plan(ctx context.Context) (upd map[string]any, took pending, m
 			upd[PathSpendRepo(today, slug)+"/notional"] = add(c.repo.Notional, took.notional)
 			upd[PathSpendGlobal(today)+"/notional"] = add(c.global.Notional, took.notional)
 		}
-		for m, v := range p.byModel {
-			n := min(v, maxRes)
+		leaves := s.spendLeaves()
+		for m, u := range p.use {
 			cur := c.repo.ByModel[Key(m)]
-			upd[PathByModel(today, slug, m)+"/micros"] = add(cur.Micros, n)
-			took.byModel[m] = n
-			more = more || n < v
-		}
-		for m, u := range p.nby {
-			cur := c.repo.ByModel[Key(m)]
+			base := PathByModel(today, slug, m)
+			// Every leaf of the round is cut at its own per-write bound and
+			// the rest waits for the round after, exactly as `micros` always
+			// has: the rules bound a money leaf by the largest single lease
+			// (MAXRES) and a token leaf by maxTokensPerWrite, and one update
+			// carries all of a model's leaves atomically.
 			n := ModelUse{Micros: min(u.Micros, maxRes), In: min(u.In, maxTokensPerWrite), Out: min(u.Out, maxTokensPerWrite),
 				CR: min(u.CR, maxTokensPerWrite), CW: min(u.CW, maxTokensPerWrite)}
-			base := PathByModel(today, slug, m)
+			if leaves {
+				n.Notional, n.Rep = min(u.Notional, maxRes), min(u.Rep, maxRes)
+				n.TLo, n.THi = min(u.TLo, maxRes), min(u.THi, maxRes)
+			}
 			if n.Micros > 0 {
 				upd[base+"/micros"] = add(cur.Micros, n.Micros)
+				// `notional` is written with every `micros` write of the
+				// model, a 0 included (RS8): the leaf's presence is what tells
+				// a reader the billed figure -- micros - notional -- is
+				// recorded, and a gateway-only model's 0 is a fact where a day
+				// written before the leaf existed has an absence. It is the
+				// one leaf whose write is tied to another's rather than to a
+				// figure of its own, which is why the generation is asked here
+				// and not by `n.Notional > 0`.
+				if leaves {
+					upd[base+"/notional"] = add(cur.Notional, n.Notional)
+				}
 			}
 			if n.In > 0 {
 				upd[base+"/in"] = cur.In + n.In
@@ -552,7 +652,20 @@ func (s *Session) plan(ctx context.Context) (upd map[string]any, took pending, m
 			if n.CW > 0 {
 				upd[base+"/cw"] = cur.CW + n.CW
 			}
-			took.nby[m] = n
+			// The report and the band are over the calls that carried a
+			// report, so a model with none of either has neither leaf and its
+			// absence means zero (day-leaves.md); `notional` is the only leaf
+			// written at 0.
+			if n.Rep > 0 {
+				upd[base+"/rep"] = add(cur.Rep, n.Rep)
+			}
+			if n.TLo > 0 {
+				upd[base+"/tlo"] = add(cur.TLo, n.TLo)
+			}
+			if n.THi > 0 {
+				upd[base+"/thi"] = add(cur.THi, n.THi)
+			}
+			took.use[m] = n
 			more = more || n != u
 		}
 	}
@@ -825,23 +938,20 @@ func (s *Session) commit(took pending) {
 	p.tokens -= took.tokens
 	p.overrun -= took.overrun
 	p.notional -= took.notional
-	for m, v := range took.byModel {
-		if p.byModel[m] -= v; p.byModel[m] <= 0 {
-			delete(p.byModel, m)
-		}
-	}
 	for tier, v := range took.byTier {
 		if p.byTier[tier] -= v; p.byTier[tier] <= 0 {
 			delete(p.byTier, tier)
 		}
 	}
-	for m, u := range took.nby {
-		c := p.nby[m]
-		c.Micros, c.In, c.Out, c.CR, c.CW = c.Micros-u.Micros, c.In-u.In, c.Out-u.Out, c.CR-u.CR, c.CW-u.CW
+	for m, u := range took.use {
+		c := p.use[m]
+		c.Micros, c.Notional = c.Micros-u.Micros, c.Notional-u.Notional
+		c.Rep, c.TLo, c.THi = c.Rep-u.Rep, c.TLo-u.TLo, c.THi-u.THi
+		c.In, c.Out, c.CR, c.CW = c.In-u.In, c.Out-u.Out, c.CR-u.CR, c.CW-u.CW
 		if c == (ModelUse{}) {
-			delete(p.nby, m)
+			delete(p.use, m)
 		} else {
-			p.nby[m] = c
+			p.use[m] = c
 		}
 	}
 }

@@ -427,6 +427,31 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(managedStatusRetirements{}),
 		reflect.TypeOf(localcfg.UpdateProject{}),
 		reflect.TypeOf(localcfg.UpdateRetirement{}),
+		// §6.27's shapes (the repos-management plan's RE2, D2409/D2410): the
+		// listing's own document, the enrolment view it embeds and every shape
+		// under that view — the row, the workflow, the two halves of a row's
+		// enrolment, the allow-list, what has run here and this machine's own
+		// half. They are one set and serve both documents of the group: RE1's
+		// `status` prints the same view under a version of its own.
+		//
+		// This file is outside RE2's own file list -- the task names five, and
+		// this is not one of them -- and had to change with it: the two
+		// struct-derived checks here are what make the section a contract
+		// rather than a description, and a section whose shape is not listed
+		// here is one neither of them reads.
+		reflect.TypeOf(reposLsDoc{}),
+		reflect.TypeOf(reposView{}),
+		reflect.TypeOf(reposViewRepo{}),
+		reflect.TypeOf(reposViewWorkflow{}),
+		reflect.TypeOf(reposViewRepoPublished{}),
+		reflect.TypeOf(reposViewRepoLocal{}),
+		reflect.TypeOf(reposViewAllow{}),
+		reflect.TypeOf(reposViewSeen{}),
+		reflect.TypeOf(reposViewSeenRepo{}),
+		reflect.TypeOf(reposViewLocal{}),
+		reflect.TypeOf(reposViewNamed{}),
+		reflect.TypeOf(reposViewCredentials{}),
+		reflect.TypeOf(reposViewCredential{}),
 		// §6.26, the enrolment's doctor (the repos-management plan's RE1):
 		// the document, the repository under it and the row, which is the
 		// shape doctor's own checks are rendered as.
@@ -798,6 +823,25 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(securityPathsDoc{}), reflect.TypeOf(securityListDoc{}),
 		reflect.TypeOf(securityPattern{}), reflect.TypeOf(securityPathAnswer{}),
 		reflect.TypeOf(securityMatch{}),
+		// §6.27's shapes, the same set as the test above (the repos-management
+		// plan's RE2, D2409/D2410): the `ls` document and the enrolment view
+		// under it. They are here for this test's own reason — a field table
+		// that names a key no shape carries is a field invented rather than
+		// read — and the view is listed whole because a reader outside this
+		// binary builds against all of it.
+		reflect.TypeOf(reposLsDoc{}),
+		reflect.TypeOf(reposView{}),
+		reflect.TypeOf(reposViewRepo{}),
+		reflect.TypeOf(reposViewWorkflow{}),
+		reflect.TypeOf(reposViewRepoPublished{}),
+		reflect.TypeOf(reposViewRepoLocal{}),
+		reflect.TypeOf(reposViewAllow{}),
+		reflect.TypeOf(reposViewSeen{}),
+		reflect.TypeOf(reposViewSeenRepo{}),
+		reflect.TypeOf(reposViewLocal{}),
+		reflect.TypeOf(reposViewNamed{}),
+		reflect.TypeOf(reposViewCredentials{}),
+		reflect.TypeOf(reposViewCredential{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command,
 		// as in the test above.
 	}
@@ -1154,6 +1198,15 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// (D1514 defers the screen) — but the document describes its two flags, so
 	// they are checked against this constructor like any other command's.
 	"security paths": newSecurityPathsCmd,
+	// §6.27 documents the group's listing (the repos-management plan's RE2,
+	// D2409/D2410): one versioned enrolment document, whose rows
+	// are the repositories this machine's config holds and the concrete names
+	// the published allow-list admits, with the allow-list and what has run
+	// kept apart from them. Its console row in §5.1 is that plan's RE5 and not
+	// this task's (D2413), so the console does not spawn it yet — but the
+	// document describes its flags, so they are checked against this
+	// constructor like any other command's.
+	"project repos ls": newProjectReposLsCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document
@@ -6911,17 +6964,21 @@ func TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource(t *testing.T) {
 	sameSet(t, "verify kind", kinds, tsList(t, scrub, `VERIFY_KINDS = \[([^\]]*)\]`, "VERIFY_KINDS"))
 
 	// The two status words `Record.Summary` picks between, the flag it appends
-	// to the kind, the one warning sentence it writes, and the note it appends
-	// to a run that found the tree dirty. The last two are the CLI's own text
-	// sitting in the middle of the line: the scrub spells them out, so a second
-	// warning or a reworded note fails here rather than making the recorder
-	// refuse an ordinary run.
+	// to the kind, the warning sentences it writes -- `verify.go` picks between
+	// two of them, one for a workflow that declared report paths and one for a
+	// workflow that declared none -- and the note it appends to a run that found
+	// the tree dirty. The last ones are the CLI's own text sitting in the middle
+	// of the line: the scrub spells them out, so a third warning or a reworded
+	// note fails here rather than making the recorder refuse an ordinary run.
 	statuses := sourceValues(t, "internal/verify/verify.go", verifyGo, `status (?::=|=) "([A-Za-z]+)"`)
 	sameSet(t, "verify status", statuses, tsList(t, scrub, `VERIFY_STATUSES = \[([^\]]*)\]`, "VERIFY_STATUSES"))
 	rerun := sourceValues(t, "internal/verify/verify.go", verifyGo, `kind \+= " ([^"]+)"`)
 	sameSet(t, "verify rerun flag", rerun, []string{tsConst(t, scrub, "VERIFY_RERUN_FLAG")})
 	sameSet(t, "verify warning", sourceValues(t, "internal/verify/verify.go", verifyGo,
-		`rec\.Warning = "([^"]*)"`), []string{tsConst(t, scrub, "VERIFY_WARNING_PREFIX")})
+		`rec\.Warning = "([^"]*)"`), []string{
+		tsConst(t, scrub, "VERIFY_WARNING_PREFIX"),
+		tsConst(t, scrub, "VERIFY_WARNING_NO_REPORTS"),
+	})
 	sameSet(t, "verify clean-tree note", sourceValues(t, "internal/verify/verify.go", verifyGo,
 		"s \\+= \"; ([^\"]*)\"\n\t}\n\treturn s"), []string{tsConst(t, scrub, "VERIFY_CLEAN_TREE")})
 
@@ -7015,12 +7072,12 @@ func TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource(t *testing.T) {
 	//
 	// Both sides are rendered to one string per segment, from their own sources:
 	// a literal as written (with the writer's `%d` as the digits marker), the
-	// test-name joins as the names marker, and `r.Warning` -- which verify.go
-	// builds as the sentence below plus the repository's reports -- as that
-	// sentence followed by the globs marker. Nothing is retyped here, so a
-	// reworded, dropped, reordered or added segment fails on the two renderings.
-	warning := sourceValues(t, "internal/verify/verify.go", verifyGo, `rec\.Warning = "([^"]*)"`)[0]
-	goTail := summaryTail(t, verifyGo, warning+"\x02globs")
+	// test-name joins as the names marker, and `r.Warning` -- whose two
+	// sentences are the sameSet above and which the scrub's tail carries as one
+	// slot, VERIFY_WARNING_PREFIX included -- as the warning marker. Nothing is
+	// retyped here, so a reworded, dropped, reordered or added segment fails on
+	// the two renderings.
+	goTail := summaryTail(t, verifyGo, tailWarning)
 	tsTail := verifyTailRendered(t, scrub)
 	if len(goTail) == 0 || len(tsTail) == 0 {
 		t.Fatalf("%s: the tail scan read nothing (verify.go %q, scrub.ts %q); the sources have moved", scrubTS, goTail, tsTail)
@@ -7046,13 +7103,14 @@ func TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource(t *testing.T) {
 	}
 }
 
-// tailDigits, tailNames and tailGlobs mark, in the two renderings compared
+// tailDigits, tailNames and tailWarning mark, in the two renderings compared
 // above, the places a segment is not literal text: a `%d`, the test-name lists
-// verify.go joins with ", ", and the report globs inside its warning.
+// verify.go joins with ", ", and the warning the scrub's tail carries as a slot
+// (whose two sentences the sameSet above holds, prefix and all).
 const (
-	tailDigits = "\x03"
-	tailNames  = "\x02names"
-	tailGlobs  = "\x02globs"
+	tailDigits  = "\x03"
+	tailNames   = "\x02names"
+	tailWarning = "\x02warning"
 )
 
 // summaryTail renders the statements Record.Summary appends, in order, one string
@@ -10503,8 +10561,8 @@ func TestDocsDesktopConsoleContractFinishesTheSettingsWrite(t *testing.T) {
 		"`widening`",
 		"`changed`",
 		"`refusal`",
-		// The four optional members version 1 has since grown (D1164), off the
-		// four `omitempty` fields of `settingsWriteDoc` and the four rows
+		// The four optional entry members version 1 has since grown (D1164),
+		// off the four `omitempty` entry fields of `settingsWriteDoc` and the four rows
 		// `writeSettingsWriteTable` prints below `refusal`. The console's own
 		// row cannot build an entry write, so its reader ignores them — but the
 		// section is the document described member by member, and a reader who

@@ -985,9 +985,9 @@ func scanFilesTar(files map[string]string) (*bytes.Buffer, error) {
 // step the derived build has no use for — the clone step, which checks the
 // entry's repository out at the commit the copy pinned, between the step that
 // reads the copied Dockerfile and the step that pins it (D1396), and hands it
-// to the entry's build as a named context (B8). It clones by commit and never
-// by branch: the branch head at build time is the tree the copy pinned only by
-// accident (D1394).
+// to the entry's build as an image of the worker's own (B8). It clones by commit
+// and never by branch: the branch head at build time is the tree the copy pinned
+// only by accident (D1394).
 //
 // An entry that names no context gets the same step, at the commit the copied
 // definition was taken from: its Dockerfile clones with the credential itself
@@ -1082,9 +1082,8 @@ func TestCatalogContextEntryBuildsTheCopiedDockerfile(t *testing.T) {
 // the same one (F23's regression grammar: the build step and what it builds are
 // unchanged, and what changed is where its Dockerfile gets the repository's
 // files from). The clone step is in this request too, at the commit the copied
-// definition was taken from, and it writes the checkout the entry's build
-// copies as a named context — it is not the directory this build step builds
-// from.
+// definition was taken from, and it writes the checkout the entry's build copies
+// as an image — it is not the directory this build step builds from.
 func TestCatalogBuildWithoutAContextBuildsTheCopiedDefinition(t *testing.T) {
 	s := catalogBuildSpec(t)
 	b, err := CatalogBuildRequest("proj-1234", s)
@@ -1104,17 +1103,17 @@ func TestCatalogBuildWithoutAContextBuildsTheCopiedDefinition(t *testing.T) {
 		t.Fatalf("the derived build's _CONTEXT_DIR = %q, want %q", got, contextDirDefault)
 	}
 	// The Dockerfile is the copied one, and the positional context is the
-	// directory it lives in: the checkout the clone step wrote is a named
-	// context and never this build's context argument.
+	// directory it lives in: the checkout the clone step wrote is an image and
+	// never this build's context argument.
 	script := strings.Join(step(t, b, "build").Args, "\n")
 	if !strings.Contains(script, "--file /workspace/context/Dockerfile") || !strings.Contains(script, `--tag "$$candidate" "$$CONTEXT_DIR"`) {
 		t.Fatalf("the build step does not build the copied definition: %q", script)
 	}
-	// The derived build does not get the named context: it clones in its own
+	// The derived build is handed no checkout at all: it clones in its own
 	// Dockerfile, with the credential, which is what a catalog entry may no
 	// longer do (B8 is the catalog path's).
-	if derivedBuild := strings.Join(step(t, derived, "build").Args, "\n"); strings.Contains(derivedBuild, "build-context") {
-		t.Fatalf("the derived build is handed a named context it does not have: %q", derivedBuild)
+	if derivedBuild := strings.Join(step(t, derived, "build").Args, "\n"); strings.Contains(derivedBuild, catalogCloneImage) {
+		t.Fatalf("the derived build is handed a checkout it does not have: %q", derivedBuild)
 	}
 }
 
@@ -1247,22 +1246,42 @@ func TestCatalogBuildRefusesATemplateSaltThatIsNotAHexDigest(t *testing.T) {
 }
 
 // catalogDockerStub is the docker the clone step runs against in the tests
-// below: `docker image inspect` answers a digest, and the clone the step builds
-// leaves a checkout holding whatever TREE writes, where the step asked the
-// build to export it (--output type=local,dest=...). The checkout is in
-// "$CHECKOUT" and the workspace the script's /workspace names is in
-// "$WORKSPACE".
+// below: `docker image inspect` answers a digest, and each of the two builds the
+// step runs has to write what the entry's build waits for — the tagged image it
+// copies the checkout out of, and, for an entry that names a context, the
+// `type=local` export into the directory the guard then looks for the context
+// in, and where the tree's own "$CHECKOUT" is. The workspace the script's
+// /workspace names is in "$WORKSPACE".
+//
+// `create` and `cp` fail here on purpose: unpacking the tagged image through a
+// container would write the daemon's own files of that container's rootfs
+// (/.dockerenv, /etc/hosts, /etc/hostname, /etc/resolv.conf, /dev, /proc, /sys)
+// into the directory the entry's build is handed as its context, where a `COPY .`
+// of its Dockerfile would bake them into the image. The context holds the
+// checkout and nothing else (TestCatalogContextStepExportsOnlyTheClonedTree).
 const catalogDockerStub = `#!/bin/sh
 case "$1" in
 image) echo "sha256:1111"; exit 0 ;;
 build)
+  tagged= exported=
+  prev=
   for a in "$@"; do
-    case "$a" in type=local,dest=*) dest=${a#type=local,dest=} ;; esac
+    case "$a" in
+      ` + catalogCloneImage + `) [ "$prev" = --tag ] && tagged=1 ;;
+      type=local,dest=*) [ "$prev" = --output ] && exported=${a#type=local,dest=} ;;
+    esac
+    prev=$a
   done
-  [ -n "$dest" ] || { echo "the clone's build exports no checkout" >&2; exit 1; }
-  mkdir -p "$dest" || exit 1
-  CHECKOUT="$dest" sh -c "$TREE" || exit 1
+  if [ -n "$exported" ]; then
+    mkdir -p "$exported" || exit 1
+    CHECKOUT="$exported" sh -c "$TREE" || exit 1
+    exit 0
+  fi
+  [ -n "$tagged" ] || { echo "the clone's build writes neither the checkout's tag nor an export" >&2; exit 1; }
   exit 0 ;;
+create|cp)
+  echo "the step unpacks the checkout through a container's own rootfs" >&2
+  exit 1 ;;
 esac
 exit 0
 `
@@ -1364,6 +1383,74 @@ func TestCatalogContextStepRefusesAContextThatLeavesTheCheckoutByALink(t *testin
 			checkCatalogCloneGuard(t, st, "${WS}/src/ci", tc.tree, tc.refused)
 		})
 	}
+}
+
+// TestCatalogContextStepExportsOnlyTheClonedTree: the directory the build step
+// hands docker as a context entry's context is the checkout and nothing else. It
+// is written by the same clone build's own `type=local` export, whose whole
+// content is the scratch stage's /out — not by unpacking the tagged image
+// through a container, whose rootfs carries the daemon's files of that container
+// on top of the image (/.dockerenv, /etc/hosts, /etc/hostname, /etc/resolv.conf,
+// /dev, /proc, /sys). Those land in the context, a `COPY .` of the entry's
+// Dockerfile bakes them into the shared catalog image, and every job then starts
+// in a checkout holding files no repository has and that an agent's `git add -A`
+// commits.
+func TestCatalogContextStepExportsOnlyTheClonedTree(t *testing.T) {
+	s := catalogContextSpec(t)
+	b, err := CatalogBuildRequest("proj-1234", s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := step(t, b, catalogCloneStepID)
+	script := strings.Join(st.Args, "\n")
+	if want := `--output "type=local,dest=` + catalogCloneDest + `"`; !strings.Contains(script, want) {
+		t.Errorf("the clone step does not export the checkout with %s:\n%s", want, script)
+	}
+	for _, verb := range []string{"create", "cp", "save", "import"} {
+		if strings.Contains(script, "docker "+verb+" ") {
+			t.Errorf("the step runs `docker %s`: a container's rootfs is the image plus the daemon's own files, and none of them is the checkout", verb)
+		}
+	}
+	// What it leaves there, run for real against the stub docker: the tree the
+	// clone wrote, with the directory holding nothing else. The context an entry
+	// that names "." is handed is the export's own root.
+	ws := t.TempDir()
+	tree := `mkdir -p "$CHECKOUT/repo/.git" "$CHECKOUT/repo/ci"
+printf 'a\n' > "$CHECKOUT/repo/.git/config"
+printf 'b\n' > "$CHECKOUT/repo/ci/main.go"`
+	if out, err := runCatalogCloneGuard(t, st, ws, tree, "${WS}/src"); err != nil {
+		t.Fatalf("the clone step failed: %v\n%s", err, out)
+	}
+	want := []string{"repo", "repo/.git", "repo/.git/config", "repo/ci", "repo/ci/main.go"}
+	if got := dirPaths(t, filepath.Join(ws, "src")); !slices.Equal(got, want) {
+		t.Errorf("the exported context holds %v, want the cloned tree and nothing else: %v", got, want)
+	}
+}
+
+// dirPaths is every path under root, relative to it and sorted, with root
+// itself left out: what a directory holds, as a test can compare it.
+func dirPaths(t *testing.T, root string) []string {
+	t.Helper()
+	var got []string
+	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if p == root {
+			return nil
+		}
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return err
+		}
+		got = append(got, rel)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(got)
+	return got
 }
 
 // TestCatalogContextStepResolvesTheContextAsTheBuildStepDoes: docker resolves

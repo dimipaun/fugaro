@@ -5,9 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 )
 
@@ -83,6 +85,17 @@ func TestSecurityMdStatesTheModelAndItsLimits(t *testing.T) {
 	// against.
 	for _, v := range regexp.MustCompile("`([A-Z][A-Z0-9_]{2,})`").FindAllStringSubmatch(s, -1) {
 		if v[1] == "PIP_INDEX_URL" {
+			continue
+		}
+		// B5.4: a name the credentials service reads and no module renders yet
+		// is a name this document has to be able to state — the class's own
+		// table is exactly the limit B5.4 exists to write down — and the
+		// exemption expires by itself rather than by memory: the day the
+		// deployment renders the name it leaves
+		// CredentialsServiceEnvAwaitingTheModule (internal/infra/tf's own
+		// tripwire), and this loop then fails over the sentence until the name
+		// is one knownEnvName can find.
+		if slices.Contains(tf.CredentialsServiceEnvAwaitingTheModule(), v[1]) {
 			continue
 		}
 		if !knownEnvName(t, v[1]) {
@@ -405,6 +418,17 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"an Editor reads a secret directly, only through its own `secretAccessor` grant; indirectly, by carrying `iam.serviceAccounts.actAs` and `run.services.update`, which let it deploy code that runs as an account holding one",
 		// Q6's shape and its cost.
 		"One secret, one grant, one leak",
+		// And Q6's shape scoped, the way secret-readers.md E7 scopes it: the
+		// bundle's grant is the installation root's one UNCONDITIONED
+		// accessor, while the account also holds one per container a switched
+		// repository's job mounts (B3.3, D2074) and the dynamic class's
+		// prefix-conditioned project accessor (D1931, E25). Pinned, because
+		// the flat count this paragraph carried ("its only grant on Secret
+		// Manager") is false on this tree and reads as a contradiction beside
+		// S3's own sentence below (the review finding on B3.5).
+		"exactly one unconditioned `secretmanager.secretAccessor` grant in the installation root",
+		"one `secretmanager.secretAccessor` per container the job's own environment mounts",
+		"conditioned on that grammar's two name prefixes",
 		"a read of the bundle is every credential the service holds at once",
 		// Deployed on every installation, and the switch a run reads -- the
 		// posture the owner's ruling of 2026-11-05 replaced "off by default,
@@ -438,18 +462,66 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"a per-repository `cascade` job holds no model credential at all",
 		"an `api-key` or `oauth` one is served by the service while its job still mounts its credential",
 		"the job keeps its model mount and its service account keeps `secretAccessor` on it",
-		"a shared project job is the one job it does not reach",
+		// B5.4. The shared class is a caller the service serves now (B5.1's
+		// pairing, B5.2's address), so the section states what a shared coding
+		// run reaches and what its job keeps, where it used to state the
+		// refusal. Three separate facts, pinned separately, because a reader
+		// outside the same binary consumes them: the launch hands the address,
+		// the service admits the caller for the profile's repositories, and the
+		// job keeps every mount (G17 — the drop is B5.7's flip).
+		"**A shared project job is given the address too, on the same switch, and the class is served for its profile's repositories (B5.1, B5.2, D2078)**",
+		"the profile, and not an IAM grant, is the boundary between the repositories one job serves",
+		"**A shared coding run is served by the service for its profile's repositories, and no shared job loses a mount here**",
+		"the job keeps the GitHub App key, the profile's provider keys and its Claude account's token",
+		// The class has no deployment: the table its callers are read from is
+		// rendered by no module, so every deployed service starts empty and
+		// refuses the class whole. Stated rather than left to be discovered,
+		// because it is the difference between "served" and "served here".
+		"its table is `FUGARO_SHARED_JOB_ACCOUNTS`",
+		"refuses the class whole",
 		"fugaro creds set",
+		// S3 (B3.5). The service brokers a workflow's own `secrets:` too, and
+		// the claim that matters is the one F4 makes: the reach does NOT
+		// change — the code under test still reads a plain variable in the
+		// job's environment, so the service is where the runner fetches the
+		// value, not a place the value stops. Pinned separately from the
+		// model-credential sentences above, because a reader who takes the
+		// two together would believe S3 narrows what a run can reach, and it
+		// does not.
+		"**The service reads the workflow's own `secrets:` too",
+		"the reach does not change",
+		"the same value in the same variable a mount put there",
+		"`creds/workflowsecrets/<slug>`",
+		"variable names and container IDs, never a value",
+		// The runner's fetch, and what it is bound to: the verified job
+		// account decides the repository and the workflow, never a header the
+		// run writes (G19).
+		"the service's own route, which binds the repository and the workflow to the **verified** job account",
+		// A mounted value wins, so the flip is a no-op until B3.8 lands it.
+		"**A mounted value always wins:**",
+		// And the run-start dependency S3 adds, with D501's cold start and
+		// D1934's heartbeat — the two facts a reader of the plan's T3 owes.
+		"halts the run at bootstrap, before any agent call, rather than carrying on without the value (D143)",
+		"pays a **cold start** on a run's own start",
+		"keeps the instance serving it warm while it runs",
+		"no redundancy beyond Cloud Run's own",
+		// The permanent exception D2075 answers: a Batch VM is not a job
+		// account the service admits, so its workflow secrets stay the VM's
+		// own `secretVariables` and S3's fetch never reaches it.
+		"**A repository on `backend: cloud-batch` keeps its workflow secrets on the VM (D2075):**",
+		"a Batch VM is not a job account the service admits",
+		"a permanent listed exception",
 		// The invariant, spelled as the code enforces it.
 		"an OAuth token is only ever sent to Anthropic's own endpoint",
 		// Unreachable halts rather than falls back (D143) — and the claim is
 		// scoped to the job the opt-in reaches: a shared project job keeps its
 		// mounts, so "the job has nothing to fall back to" is only true of a
-		// per-repository job, and the shared job is refused rather than served
-		// from its own token.
+		// per-repository job, while a shared job's run that the service cannot
+		// serve stops at the service rather than being answered from the App
+		// key its container still holds.
 		"never falls back",
 		"the mount is the switch's, not the outage's",
-		"refused at the gateway rather than answered from the job's own token",
+		"halts at the service's door rather than being answered from the App key its container still holds",
 		// The stop flag.
 		"fugaro budget kill --all",
 		// The database role's reach, said plainly rather than left to be
@@ -466,13 +538,31 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"turn off its own stop switch or widen the policy it is checked against",
 		"the same identity already holds every model credential a call can be given",
 		"The fence is the service's own behaviour",
+		// The database role's count, scoped (the review finding on B3.5): the
+		// paragraph said it was the account's ONLY project-level grant and
+		// that the installation project holds nothing else of the account's,
+		// which the two project-level Secret Manager bindings of E25 falsify
+		// in the installation project — the prefix-conditioned accessor and
+		// the lister role — in either layout. Pinned as the scoped sentences,
+		// because the flat count is what a reader checks against
+		// modules/installation/credentials.tf and finds wrong.
+		"the account's **only grant on the database**",
+		"two of them are project-level in the installation project",
+		"the installation project holds the two Secret Manager bindings and nothing of the database's",
 		// The revocation, stated exactly: write-once outcome, and fx as the
 		// only bound until it exists.
 		"the write-once outcome",
 		"the only bound on a replayed identity",
-		// The accepted limits the owner ruled on 2026-10-19.
+		// The accepted limits the owner ruled on 2026-10-19, and the one S5
+		// adds to them (B5.4, the residue the plan names): one account serves a
+		// whole profile, so a launcher can aim a run at another of that
+		// profile's repositories and the service will serve it. Recorded
+		// beside the other two rather than closed, because closing it is an
+		// identity per repository, which is what a shared job is not.
 		"The launcher's reach",
 		"The replay bounds",
+		"**A shared job's reach is its profile's, and that is the residue this slice accepts (D475, G21):**",
+		"can still mint a run identity naming another repository the profile admits",
 		// The cap is advisory.
 		"ADVISORY",
 		// Egress stays a known limit (D144).
@@ -501,6 +591,18 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"A repository whose `agent.auth` is not `cascade` is never switched on",
 		"a repository job in another `agent.auth` mode has no model credential at all",
 		"the drop is auth-blind",
+		// The pre-B5.1 refusal, in every spelling this document carried before
+		// B5.4: the service serves a shared coding caller for its profile's
+		// repositories now, so each of these sentences tells a `cascade` user
+		// that a path which exists is closed to them — and tells a reader of
+		// the trust model that a class of caller is excluded when the gate is
+		// the published profile instead.
+		"the service refuses a caller whose account belongs to one",
+		"A shared project job is not given the address and is not served",
+		"a `cascade` workflow cannot be served",
+		"A shared project job is not wired either",
+		"is deployed with no address at all",
+		"refused at the gateway rather than answered from the job's own token",
 	} {
 		if strings.Contains(flattenDoc(s), banned) {
 			t.Errorf("SECURITY.md says %q: that claim is wider than the code on this tree", banned)
@@ -556,8 +658,25 @@ func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
 		"FUGARO_CREDENTIALS_SERVICE_URL",
 		"a switched `api-key` or `oauth` repository's job still declares its model credential and its account still holds `secretAccessor` on it",
 		"the credential is the job's own copy until that release and the agent can reach it",
-		"A shared project job is not wired either",
+		// B5.4 rewrote this limit, deliberately: B5.2 hands a switched
+		// profile's shared job the address on the same switch a repository's
+		// own job is judged with, and B5.1 pairs its account, so "not wired
+		// either" is false. What HAS not landed is the class's own table —
+		// FUGARO_SHARED_JOB_ACCOUNTS is rendered by no module, so a deployed
+		// service starts with the empty set and refuses the class whole.
+		// Stated rather than dropped: an owner who reads "wired" and finds a
+		// shared run refused at the door has to be able to find out why here.
+		"**A shared project job is wired too, and it is the last job the switch reaches**",
+		"the class's own table (`FUGARO_SHARED_JOB_ACCOUNTS`) is rendered by no module yet",
+		"a deployed service refuses the class whole",
 		"a repository whose root has not been re-applied with the switch on is byte for byte what it was",
+		// S3's own limit (B3.5): the fetch is wired, and the mount the flip
+		// takes away has NOT been taken away — a mounted value wins, so the
+		// workflow's `secrets:` stay in the job until B3.8 lands the flip.
+		// Stated here rather than only beside the fetch, because a reader who
+		// takes "the runner fetches them" as the whole story would conclude a
+		// switched job no longer holds one.
+		"the read leaves the job only when the flip lands",
 		// And the App key's own limit stays: the mount and the grant are
 		// still there, the runner just no longer reads the key.
 		"the release after the owner's live Check 96 proves the deployed service mints",
@@ -575,8 +694,8 @@ func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
 // "state the limit" voice. The claims pinned here are the ones the plan's
 // task B1.10 names: the agent can act as the run at the proxy (R3, O1), the
 // reach it is narrowed to (one repository, the run's branch and pull
-// requests, the run's life), D462's reach ending for a proxied repository and
-// the flip that has not landed on this tree, the build account's copy until
+// requests, the run's life), D462's reach ending for a proxied repository with
+// the flip landed, the build account's copy until
 // S4, D501's cold starts and no redundancy, D504's revocation and what a
 // cancel does not end, and O6's cross-repository fetch refusal.
 //
@@ -657,13 +776,14 @@ func TestSecurityMdStatesTheBitbucketGitProxy(t *testing.T) {
 		// credential of its own.
 		"loopback forwarder",
 		"no credential of its own",
-		// D462's reach ends for a proxied repository, and the flip that takes
-		// the mount is not on this tree -- the claim is "the job reads no
-		// token", not "the token is out of the job".
+		// D462's reach ends for a proxied repository: the run's own traffic
+		// carries no token, and the flip has landed -- the list names the token
+		// -- so the mount and the accessor are gone too. What is left is the
+		// build account's copy, and every repository the node does not proxy.
 		"config.ProxiedGitSecretNames",
-		"empty on this tree",
+		"names `bitbucket-token`",
 		"reads no token at all",
-		"not that the token is out of the job",
+		"holds no `secretAccessor` on the token",
 		// The build account's copy until S4.
 		"build account still holds the token",
 		"until S4",
@@ -770,16 +890,15 @@ func TestSecurityMdStatesTheBitbucketGitProxy(t *testing.T) {
 		}
 	}
 	// The overclaims a rewrite drifts into: the proxy is not a sandbox, the
-	// token is not out of the job on this tree, the job is not tokenless,
-	// and the reach is not "no reach". Read out of the whole document,
+	// token is not out of every job, the reach is not "no reach", and the
+	// drop is not a repository's whole cloud. Read out of the whole document,
 	// because a bullet that points here is as wrong as the section.
 	//
-	// Every one of them was written into this section once and is false
-	// while `config.ProxiedGitSecretNames` is empty: the mount stays, so the
-	// agent can read the token out of the runner's `/proc` and use the
-	// token's own reach, workspace-wide where the token is a workspace one.
-	// What the proxy narrows is the job's **own git traffic**, and the
-	// job-wide reach ends only once the flip lands.
+	// Every one of them was written into this section once and is still false
+	// after the flip: the flip takes the mount off a **proxied** repository's
+	// job and nothing else, so a repository the node does not proxy keeps its
+	// mount and the token's own reach, the build account keeps its copy until
+	// S4, and what the proxy narrows is still the job's **own git traffic**.
 	for _, banned := range []string{
 		"the agent cannot reach Bitbucket at all",
 		"the Bitbucket token is out of the job",

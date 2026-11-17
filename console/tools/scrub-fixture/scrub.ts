@@ -47,12 +47,12 @@
 //
 // `verify` is the one kept value whose middle the CLI fills from the repository
 // it ran in, so it has two rules: `isVerifySummary`, which the scrub applies and
-// which takes any text in those slots, and `isKnownVerifySummary`, which the
-// fixture's own scan applies and which pins the glob list to the CLI's own
-// vocabulary (a test name has none -- see VERIFY_SLOTS). The scrub's rule has to
-// be the open one: a real recording's test names are the writer's own output,
-// and a vocabulary that refused one would refuse an ordinary run, which is the
-// failure the lists below exist to avoid.
+// which takes any text in the name slots, and `isKnownVerifySummary`, which the
+// fixture's own scan applies and which pins the warning to the CLI's own
+// vocabulary (the name slots have none -- see VERIFY_SLOTS). The scrub's rule
+// has to be the open one: a real recording's test names are the writer's own
+// output, and a vocabulary that refused one would refuse an ordinary run, which
+// is the failure the lists below exist to avoid.
 //
 // Nothing about a removed value is ever persisted, not even a hash: a bare hash of
 // a low-entropy value (a small integer, an amount, a repo-style name) is recovered
@@ -176,11 +176,16 @@ export const VERIFY_STATUSES = ['passed', 'FAILED'] as const
 export const VERIFY_RERUN_FLAG = '--rerun-failed'
 /** VERIFY_CLEAN_TREE is verify.go's note for a run that found the tree dirty. */
 export const VERIFY_CLEAN_TREE = 'working tree not clean, so this run cannot mark the PR ready: commit first'
-/** VERIFY_WARNING_PREFIX is verify.go's own opening for the one warning it
- * writes -- `rec.Warning = "no JUnit reports found under " + strings.Join(
- * s.Reports, ", ")` -- so the sentence is the CLI's, and only the globs after it
- * come from the repository. */
+/** VERIFY_WARNING_PREFIX is verify.go's own opening for the warning it writes
+ * when a workflow declared report paths and none were found -- `rec.Warning =
+ * "no JUnit reports found under " + strings.Join(s.Reports, ", ")` -- so the
+ * sentence is the CLI's, and only the globs after it come from the repository. */
 export const VERIFY_WARNING_PREFIX = 'no JUnit reports found under '
+/** VERIFY_WARNING_NO_REPORTS is the other warning verify.go writes, for a
+ * workflow that declared no report paths of its own: it was handed
+ * `config.DefaultReports` (internal/config/defaults.go), whose globs it never
+ * wrote, so there is no path to name and the whole sentence is the CLI's. */
+export const VERIFY_WARNING_NO_REPORTS = 'this workflow declares no test report paths, so the record carries no test counts'
 /**
  * VERIFY_CLIP_RUNES is internal/runner's `verifySummaryRunes`: the registry
  * clips the summary to this many runes before the document carries it, so a
@@ -190,19 +195,20 @@ export const VERIFY_CLIP_RUNES = 120
 
 /**
  * VerifySlot names the two places `Record.Summary` writes text this file cannot
- * know: the failed and flaky name lists, and the report globs after the warning
- * sentence.
+ * know: the failed and flaky name lists, and the warning, whose text is the
+ * CLI's own two sentences with the repository's report globs inside one of them.
  */
-type VerifySlot = 'names' | 'globs'
+type VerifySlot = 'names' | 'warning'
 
 /**
  * VERIFY_TAIL is the writer's tail, part by part, after the `(exit <code>`
  * VERIFY_HEAD matches: `Record.Summary` in internal/verify/verify.go, in the
  * order it appends them. `parts` are the literal texts, `digits` a `%d`, and
  * `free` a slot the writer fills from the repository -- the test names its
- * reports carry, and the globs it was configured to read. The first group is the
- * counts: only a test run writes them (VERIFY_TEST_TAIL_FROM) and a test run
- * always writes them (VERIFY_TEST_GROUPS_REQUIRED).
+ * reports carry, and the warning, which starts with one of the CLI's two
+ * sentences. The first group is the counts: only a test run writes them
+ * (VERIFY_TEST_TAIL_FROM) and a test run always writes them
+ * (VERIFY_TEST_GROUPS_REQUIRED).
  */
 type VerifyPart = { readonly text: string } | { readonly digits: true } | { readonly free: VerifySlot }
 const VERIFY_TAIL: readonly (readonly VerifyPart[])[] = [
@@ -210,17 +216,17 @@ const VERIFY_TAIL: readonly (readonly VerifyPart[])[] = [
   [{ text: ': ' }, { free: 'names' }],
   [{ text: '; flaky: ' }, { free: 'names' }],
   [{ text: '; timed out' }],
-  [{ text: '; warning: ' + VERIFY_WARNING_PREFIX }, { free: 'globs' }],
+  [{ text: '; warning: ' }, { free: 'warning' }],
   [{ text: '; ' + VERIFY_CLEAN_TREE }],
   [{ text: ')' }],
 ]
 
 /**
- * VERIFY_REPORT_GLOBS is the vocabulary the `globs` slot can carry: the report
- * patterns `internal/config/defaults.go` sets for `commands.reports` (a JUnit
- * glob and one under the build test-results directory) -- which are what
- * `internal/verify/verify.go` joins, in configuration order, into the warning
- * sentence.
+ * VERIFY_REPORT_GLOBS is the vocabulary the warning can carry after
+ * VERIFY_WARNING_PREFIX: the report patterns `internal/config/defaults.go` sets
+ * for `commands.reports` (a JUnit glob and one under the build test-results
+ * directory) -- which are what `internal/verify/verify.go` joins, in
+ * configuration order, into the warning sentence.
  *
  * A repository may configure others, and `doublestar` accepts any glob, so no
  * finite list can enumerate what the CLI might write there. These two are what
@@ -246,12 +252,36 @@ function isGlobList(value: string, cut: boolean): boolean {
   return false
 }
 
+/** isWarning reports whether `value` is one of the two warnings verify.go
+ * writes -- VERIFY_WARNING_PREFIX followed by the report globs it was
+ * configured with (isGlobList), or the whole of VERIFY_WARNING_NO_REPORTS for a
+ * workflow that declared none -- with `cut` allowing the clip to have stopped
+ * inside either. The clip can stop inside the CLI's own opening as well as
+ * inside the globs after it: a long head (`--rerun-failed`, a timeout) leaves
+ * the warning past VERIFY_CLIP_RUNES and the recording ends mid-word, so a cut
+ * value is a prefix of either sentence, opening included. */
+function isWarning(value: string, cut: boolean): boolean {
+  if (value.startsWith(VERIFY_WARNING_PREFIX)) {
+    return isGlobList(value.slice(VERIFY_WARNING_PREFIX.length), cut)
+  }
+  if (!cut) return value === VERIFY_WARNING_NO_REPORTS
+  return VERIFY_WARNING_NO_REPORTS.startsWith(value) || VERIFY_WARNING_PREFIX.startsWith(value)
+}
+
 /**
- * VERIFY_SLOTS is the vocabulary of the slots that HAVE one, twice over: `full`
- * matches a whole piece, `cut` one the clip stopped inside.
+ * VERIFY_SLOTS is the vocabulary of the slots that HAVE one, in each of the
+ * three questions the walk asks of a slot: `open` a whole warning the writer
+ * could have written whatever the repository configured, `full` one it could
+ * have written with the stock `commands.reports`, and `cut` whether the clip
+ * stopped inside one.
  *
- * Only the report globs are such a slot. They are the two `commands.reports`
- * defaults (VERIFY_REPORT_GLOBS), so a glob the CLI was not given is refused.
+ * Only the warning is such a slot, and it is anchored even in the branch the
+ * scrub itself uses: its text is one of the CLI's two sentences, and the
+ * repository's own part is the globs after VERIFY_WARNING_PREFIX -- so a
+ * recording whose `; warning:` carries prose the CLI never writes is refused by
+ * `isVerifySummary` too. The globs themselves are open there (`open`), because a
+ * repository may configure any glob; `full` is what the fixture's own scan uses
+ * (VERIFY_REPORT_GLOBS).
  *
  * The test-name slots are not in this table, and cannot be. A name is the
  * report's own text: `internal/verify/junit.go` builds each ID as
@@ -265,16 +295,20 @@ function isGlobList(value: string, cut: boolean): boolean {
  * guard for them is the fixture scan's forbidden-substring pass, which runs over
  * the whole verify value, name list included.
  *
- * Only `isKnownVerifySummary` uses this table, and only for the globs slot. The
- * scrub's own rule (`isVerifySummary`) takes any text in either slot on purpose:
- * a real recording's report globs come from its own configuration, so a
- * vocabulary that refused them would refuse an ordinary run, which is the
- * failure this file's lists exist to avoid.
+ * Only `isKnownVerifySummary` uses `full` and `cut`; `isVerifySummary` reads
+ * `open` alone, since a real recording's report globs come from its own
+ * configuration and a vocabulary that refused them would refuse an ordinary run,
+ * which is the failure this file's lists exist to avoid.
  */
-const VERIFY_SLOTS: Record<'globs', { full: (v: string) => boolean; cut: (v: string) => boolean }> = {
-  globs: {
-    full: (v) => isGlobList(v, false),
-    cut: (v) => isGlobList(v, true),
+const VERIFY_SLOTS: Record<'warning', {
+  open: (v: string) => boolean
+  full: (v: string) => boolean
+  cut: (v: string) => boolean
+}> = {
+  warning: {
+    open: (v) => v.startsWith(VERIFY_WARNING_PREFIX) || VERIFY_WARNING_NO_REPORTS.startsWith(v),
+    full: (v) => isWarning(v, false),
+    cut: (v) => isWarning(v, true),
   },
 }
 /** VERIFY_TEST_TAIL_FROM is the index of the first tail group a non-test kind
@@ -326,7 +360,10 @@ export const VERIFY_HEAD = new RegExp(
  * them, and the clip can never cut them, so a test line without them is one no
  * run can produce (VERIFY_TEST_GROUPS_REQUIRED).
  *
- * The slots are open: whatever the repository put in them, the writer wrote.
+ * The name slots are open: whatever the repository put in them, the writer
+ * wrote. The warning is not -- its text is the CLI's two sentences with the
+ * repository's globs inside one of them (VERIFY_SLOTS) -- so a `; warning:`
+ * carrying prose verify.go never writes is refused here too.
  */
 export function isVerifySummary(value: string): boolean {
   return verifySummary(value, false)
@@ -334,11 +371,11 @@ export function isVerifySummary(value: string): boolean {
 
 /**
  * isKnownVerifySummary is the same question with the one pinnable slot pinned
- * (VERIFY_SLOTS): the report globs after the warning sentence are held to the
- * CLI's own vocabulary. The name list is not, and cannot be -- see VERIFY_SLOTS.
+ * (VERIFY_SLOTS): the warning after `; warning: ` is held to the CLI's own
+ * vocabulary. The name list is not, and cannot be -- see VERIFY_SLOTS.
  *
  * The scrub does not use it, for the reason VERIFY_SLOTS gives. The fixture's
- * own scan does, because the globs slot is the one place a value could carry
+ * own scan does, because the warning slot is the one place a value could carry
  * text this file never vouched for: `isVerifySummary` alone would let a glob the
  * CLI was not configured with ride in the `; warning:` slot and pass the
  * positive allow-list.
@@ -417,20 +454,22 @@ function isPrefixOfTail(
       for (let n = 1; n <= run.length; n++) if (walkPart(group, part + 1, at + n)) return true
       return false
     }
-    // A free slot is open -- it absorbs whatever the repository put there --
-    // unless the slot has a vocabulary and this is the pinned matcher: only the
-    // globs slot does (VERIFY_SLOTS), because a test ID is the report's own text
-    // and no character class can hold it without refusing real ones. No required
-    // group has a free slot (the counts are two `%d`s and two literals), so
-    // `required` does not have to be read here.
-    const slot = pinned && piece.free === 'globs' ? VERIFY_SLOTS.globs : undefined
+    // A slot with a vocabulary is held to it -- the warning is the CLI's own two
+    // sentences with the repository's globs inside one of them (VERIFY_SLOTS),
+    // whichever matcher is asking -- and a slot without one is open: a test ID is
+    // the report's own text and no character class can hold it without refusing
+    // real ones. No required group has a free slot (the counts are two `%d`s and
+    // two literals), so `required` does not have to be read here.
+    const slot = piece.free === 'warning' ? VERIFY_SLOTS.warning : undefined
     if (slot === undefined) {
       for (let n = 0; n <= tail.length; n++) if (walkPart(group, part + 1, at + n)) return true
       return false
     }
-    // A whole piece of the slot's vocabulary, then the rest of the line.
+    // A whole piece of the slot's vocabulary -- the pinned matcher's own, or the
+    // open one the scrub's rule asks -- then the rest of the line.
+    const whole = pinned ? slot.full : slot.open
     for (let n = tail.length; n > 0; n--) {
-      if (slot.full(tail.slice(0, n)) && walkPart(group, part + 1, at + n)) return true
+      if (whole(tail.slice(0, n)) && walkPart(group, part + 1, at + n)) return true
     }
     // Or the cut stopped inside the slot, or exactly at its start (an empty
     // tail here is a prefix of a line whose slot the writer filled).

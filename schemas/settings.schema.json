@@ -1433,6 +1433,9 @@
         "rigor.default": {
           "default": "unset = pro (rigor.Default)"
         },
+        "rigor_pending": {
+          "default": "unset = none: the wizard's rigor answer has been written into the project layer"
+        },
         "routing.claude.models": {
           "default": "unset = none"
         },

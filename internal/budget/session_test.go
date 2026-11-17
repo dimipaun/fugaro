@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -1200,4 +1201,282 @@ func captureLog(f *fixture) *syncBuf {
 	b := &syncBuf{}
 	f.cfg.Log = slog.New(slog.NewTextHandler(b, nil))
 	return b
+}
+
+// The model the spend-accuracy tests report under, and the deployed rules
+// generation that first grants the four spend-accuracy leaves of a model's day
+// counter -- `notional`, `rep`, `tlo` and `thi` (docs/spend-accuracy/
+// day-leaves.md, D2648 as amended by D2650). The generation is pinned here
+// rather than read off projectpolicy, because what these tests are about is
+// the session's own gate: the number the runner reads off the installation's
+// marker and hands it through budget.Config (SA5.1, F27).
+const (
+	model            = "claude-sonnet-5-5"
+	leavesGeneration = 7
+)
+
+// TestReportWritesModelTokens (F9, F25, SA5.1): a gatewayed stage's tokens are
+// written to the model's day counter, on the four leaves every deployed
+// document has carried since long before the policy nodes -- `in`, `out`, `cr`
+// and `cw` -- so a gatewayed model's row carries its tokens beside its
+// dollars, which only an oauth stage's row did before. `cw` is one leaf: the
+// two cache-write TTLs the stage report keeps apart are one count here, as
+// they are in the run's own totals.
+func TestReportWritesModelTokens(t *testing.T) {
+	f := newFixture(t)
+	s := f.started(budget.AgentEntry{Stage: "implement"})
+	ctx := context.Background()
+	d := today()
+	if _, err := s.Lease().Grant(ctx, 1_000_000); err != nil {
+		t.Fatal(err)
+	}
+	rep := gateway.StageReport{
+		Calls: 2, Used: 300_000, Tokens: 1_840,
+		ByModel:  map[string]pricing.Micros{model: 300_000},
+		TokensBy: map[string]pricing.Usage{model: {Input: 1000, Output: 500, CacheRead: 200, CacheWrite5m: 100, CacheWrite1h: 40}},
+	}
+	if err := s.Lease().Report(ctx, rep); err != nil {
+		t.Fatal(err)
+	}
+	base := budget.PathByModel(d, slug, model)
+	for leaf, want := range map[string]int64{"in": 1000, "out": 500, "cr": 200, "cw": 140} {
+		if got := f.num(base + "/" + leaf); got != want {
+			t.Errorf("%s = %d, want %d", leaf, got, want)
+		}
+	}
+	if got := f.num(base + "/micros"); got != 300_000 {
+		t.Fatalf("micros = %d, want the stage's whole charge beside its tokens", got)
+	}
+}
+
+// TestReportWritesRepAndBand (F7, D2650, SA5.1): a gatewayed stage's report --
+// what the providers said its calls cost -- and the band the price table would
+// have charged those same calls between land on the model's `rep`, `tlo` and
+// `thi`, the three leaves generation 7 added beside `notional`.
+func TestReportWritesRepAndBand(t *testing.T) {
+	f := newFixture(t)
+	f.cfg.RulesGeneration = leavesGeneration
+	s := f.started(budget.AgentEntry{Stage: "implement"})
+	ctx := context.Background()
+	d := today()
+	if _, err := s.Lease().Grant(ctx, 1_000_000); err != nil {
+		t.Fatal(err)
+	}
+	s.SetUsage(func() budget.Micros { return 200_000 })
+	rep := gateway.StageReport{
+		Calls: 3, Used: 200_000,
+		ByModel:    map[string]pricing.Micros{model: 200_000},
+		ReportedBy: map[string]pricing.Micros{model: 180_000},
+		TableLoBy:  map[string]pricing.Micros{model: 150_000},
+		TableHiBy:  map[string]pricing.Micros{model: 260_000},
+	}
+	if err := s.Lease().Report(ctx, rep); err != nil {
+		t.Fatal(err)
+	}
+	base := budget.PathByModel(d, slug, model)
+	for leaf, want := range map[string]int64{"micros": 200_000, "rep": 180_000, "tlo": 150_000, "thi": 260_000} {
+		if got := f.num(base + "/" + leaf); got != want {
+			t.Errorf("%s = %d, want %d", leaf, got, want)
+		}
+	}
+	// The report and the band are figures about the charge, not charges: the
+	// settled money is the gateway's own and no leaf of the band moves it.
+	if f.run("spent") != 200_000 || f.repo(d, "spent") != 200_000 {
+		t.Fatalf("spent: run %d, repo %d", f.run("spent"), f.repo(d, "spent"))
+	}
+}
+
+// TestNotionalLeaf (F23, SA5.1): the tier-A dollars a gatewayed stage settled
+// are the `notional` part of the model's day-counter entry -- `micros` stays
+// the whole of its dollars -- and the run's own notional leaf takes them too.
+// A tier-A dollar is the run's subscription, so it feeds no cap: the
+// reservation the lease holds is untouched by it.
+func TestNotionalLeaf(t *testing.T) {
+	f := newFixture(t)
+	f.cfg.RulesGeneration = leavesGeneration
+	s := f.started(budget.AgentEntry{Stage: "implement"})
+	ctx := context.Background()
+	d := today()
+	if _, err := s.Lease().Grant(ctx, 1_000_000); err != nil {
+		t.Fatal(err)
+	}
+	rep := gateway.StageReport{
+		Calls: 2, Used: 900_000, Notional: 400_000,
+		ByModel:    map[string]pricing.Micros{model: 900_000},
+		NotionalBy: map[string]pricing.Micros{model: 400_000},
+	}
+	if err := s.Lease().Report(ctx, rep); err != nil {
+		t.Fatal(err)
+	}
+	base := budget.PathByModel(d, slug, model)
+	if got := f.num(base + "/micros"); got != 900_000 {
+		t.Fatalf("micros = %d, want the whole of the model's dollars", got)
+	}
+	if got := f.num(base + "/notional"); got != 400_000 {
+		t.Fatalf("notional = %d, want the tier-A part of them", got)
+	}
+	if f.run("notional") != 400_000 || f.repo(d, "notional") != 400_000 || f.global(d, "notional") != 400_000 {
+		t.Fatalf("notional: run %d, repo %d, global %d", f.run("notional"), f.repo(d, "notional"), f.global(d, "notional"))
+	}
+	if f.repo(d, "counted") != 1_000_000 || f.global(d, "counted") != 1_000_000 || f.run("reserved") != 1_000_000 {
+		t.Fatalf("a notional figure moved a counted one: repo %d, global %d, reserved %d", f.repo(d, "counted"), f.global(d, "counted"), f.run("reserved"))
+	}
+}
+
+// TestNotionalWrittenAsZero (RS8, SA5.1): a gateway-only model's notional
+// figure is 0, and the leaf is written anyway, in the very write that carries
+// the model's `micros`: the leaf's presence is what tells a reader the billed
+// figure -- micros less notional -- is recorded, where a day written before
+// the leaf existed has an absence. Under a document that does not grant the
+// leaf nothing is written at all, because one leaf that document lacks refuses
+// the whole multi-path update (F10).
+func TestNotionalWrittenAsZero(t *testing.T) {
+	for _, tc := range []struct {
+		gen  int
+		leaf bool
+	}{
+		{leavesGeneration, true},
+		{leavesGeneration - 1, false},
+	} {
+		f := newFixture(t)
+		f.cfg.RulesGeneration = tc.gen
+		s := f.started(budget.AgentEntry{Stage: "implement"})
+		ctx := context.Background()
+		d := today()
+		if _, err := s.Lease().Grant(ctx, 300_000); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Lease().Report(ctx, gateway.StageReport{Calls: 1, Used: 300_000, ByModel: map[string]pricing.Micros{model: 300_000}}); err != nil {
+			t.Fatal(err)
+		}
+		base := budget.PathByModel(d, slug, model)
+		if got := f.num(base + "/micros"); got != 300_000 {
+			t.Fatalf("generation %d: micros = %d", tc.gen, got)
+		}
+		v := f.db.Value(base + "/notional")
+		if (v != nil) != tc.leaf {
+			t.Fatalf("generation %d: notional = %#v, want the leaf written: %v", tc.gen, v, tc.leaf)
+		}
+		if tc.leaf && f.num(base+"/notional") != 0 {
+			t.Fatalf("generation %d: notional = %d, want 0 for a model nobody served on tier A", tc.gen, f.num(base+"/notional"))
+		}
+	}
+}
+
+// TestGeneration5WritesTodaysLeaves (F10, SA5.1): under a deployed document
+// below the generation that grants them, a session writes exactly the leaves
+// it always wrote -- the model's charge, its four token counts, the run's
+// tokens and its notional -- and none of `notional`, `rep`, `tlo` or `thi`,
+// whatever the stage reported. Realtime Database applies a stage report's
+// multi-path update atomically, so one leaf the deployed document lacks
+// refuses the whole report and the stage fails. Generation 6 is the mailbox
+// registration kind and carries none of the four either, so it is pinned
+// beside the absent marker (0) and the policy generation (5).
+func TestGeneration5WritesTodaysLeaves(t *testing.T) {
+	for _, gen := range []int{0, 5, 6} {
+		f := newFixture(t)
+		f.cfg.RulesGeneration = gen
+		s := f.started(budget.AgentEntry{Stage: "implement"})
+		ctx := context.Background()
+		d := today()
+		if _, err := s.Lease().Grant(ctx, 1_000_000); err != nil {
+			t.Fatal(err)
+		}
+		rep := gateway.StageReport{
+			Calls: 2, Used: 300_000, Tokens: 1_840, Notional: 300_000,
+			ByModel:    map[string]pricing.Micros{model: 300_000},
+			TokensBy:   map[string]pricing.Usage{model: {Input: 1000, Output: 500, CacheRead: 200, CacheWrite5m: 100, CacheWrite1h: 40}},
+			NotionalBy: map[string]pricing.Micros{model: 300_000},
+			ReportedBy: map[string]pricing.Micros{model: 180_000},
+			TableLoBy:  map[string]pricing.Micros{model: 150_000},
+			TableHiBy:  map[string]pricing.Micros{model: 260_000},
+		}
+		if err := s.Lease().Report(ctx, rep); err != nil {
+			t.Fatal(err)
+		}
+		base := budget.PathByModel(d, slug, model)
+		node, _ := f.db.Value(base).(map[string]any)
+		todays := map[string]bool{"micros": true, "in": true, "out": true, "cr": true, "cw": true}
+		if len(node) != len(todays) {
+			t.Fatalf("generation %d wrote %v, want exactly the leaves %v", gen, node, todays)
+		}
+		for leaf := range node {
+			if !todays[leaf] {
+				t.Fatalf("generation %d wrote %s, a leaf its deployed document does not grant", gen, leaf)
+			}
+		}
+		for leaf, w := range map[string]int64{"micros": 300_000, "in": 1000, "out": 500, "cr": 200, "cw": 140} {
+			if got := f.num(base + "/" + leaf); got != w {
+				t.Fatalf("generation %d: %s = %d, want %d", gen, leaf, got, w)
+			}
+		}
+		// The run's own leaves are not gated: `tokens` and `notional` are the
+		// run's ledger figures and every deployed document has carried them
+		// since long before the policy nodes.
+		if f.run("tokens") != 1_840 || f.run("notional") != 300_000 {
+			t.Fatalf("generation %d: the run's tokens %d, notional %d", gen, f.run("tokens"), f.run("notional"))
+		}
+		// One round wrote the model: nothing the document cannot carry is left
+		// pending, so no figure sits there failing to be written for the rest
+		// of the run.
+		if n := len(leafSteps(f, base+"/micros")); n != 1 {
+			t.Fatalf("generation %d wrote the model's charge in %d writes, want one round", gen, n)
+		}
+		// And nothing at all is still pending. A figure whose leaf this
+		// document does not grant would never leave the pending figures -- no
+		// round can write it and so none can take it off -- so every beat
+		// after the report would read the day counters again to find that
+		// out, for the rest of the run. A beat with nothing pending reads no
+		// day counter at all.
+		landed := len(f.db.Requests())
+		time.Sleep(150 * time.Millisecond) // several beats at the fixture's 40 ms
+		for _, r := range f.db.Requests()[landed:] {
+			if r.Method == http.MethodGet && strings.Contains(r.Path, "/spend/") {
+				t.Fatalf("generation %d: a beat after the report landed read the day counters (%s): a figure the deployed document cannot hold is still pending", gen, r.Path)
+			}
+		}
+	}
+}
+
+// TestOneFlushSumsBilledAndNotional (F26, RS8, SA5.1): a stage's billed
+// dollars and the notional ones queued for the same model between two failed
+// writes are one figure for the model's `micros` by the time the round is
+// built, so the single write that lands carries their sum rather than either
+// alone. The two leaves they feed are summed apart -- `micros` the whole,
+// `notional` the part.
+func TestOneFlushSumsBilledAndNotional(t *testing.T) {
+	f := newFixture(t)
+	f.cfg.Grace = 5 * time.Second
+	f.cfg.RulesGeneration = leavesGeneration
+	s := f.started(budget.AgentEntry{Stage: "implement"})
+	ctx := context.Background()
+	d := today()
+	if _, err := s.Lease().Grant(ctx, 1_000_000); err != nil {
+		t.Fatal(err)
+	}
+	f.db.Refuse(503, "UNAVAILABLE", "", "down")
+	if err := s.Lease().Report(ctx, gateway.StageReport{Calls: 1, Used: 40_000, ByModel: map[string]pricing.Micros{model: 40_000}}); err == nil {
+		t.Fatal("no error while the backend is down")
+	}
+	if err := s.AddNotional(ctx, 25_000, map[string]budget.ModelUse{model: {Micros: 25_000, In: 10, Out: 5}}); err == nil {
+		t.Fatal("no error while the backend is down")
+	}
+	f.db.Refuse(0, "", "", "")
+	base := budget.PathByModel(d, slug, model)
+	waitFor(t, "the kept figures to land", func() bool { return f.num(base+"/micros") == 65_000 })
+	if got := f.num(base + "/notional"); got != 25_000 {
+		t.Fatalf("notional = %d, want the oauth stage's own figure", got)
+	}
+	// Every write that carried the model's charge carried the sum: a round
+	// built from the two figures separately would have written one of them
+	// alone first.
+	steps := leafSteps(f, base+"/micros")
+	if len(steps) == 0 {
+		t.Fatalf("no write carried the model's micros")
+	}
+	for _, v := range steps {
+		if v != 65_000 {
+			t.Fatalf("a write carried %d for the model's micros: the stage's billed 40000 and its notional 25000 are one figure, summed before the update is built (F26): %v", v, steps)
+		}
+	}
 }

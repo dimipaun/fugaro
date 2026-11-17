@@ -425,35 +425,137 @@ func TestDocsCheck195IsRegistered(t *testing.T) {
 	}
 }
 
-// TestDocsSecretReadersStatesTheBitbucketProxysState is task B1.10's pin on the
-// audit's Bitbucket rows. The proxy shipped (B1.5, B1.6, B1.7), so a reader
-// has to learn two things and not one: on a repository the published node
-// admits with `proxy: true` the job reads no `bitbucket-token` at all (the
-// runner opens its provider tokenless and the service puts the credential on
-// the wire), and the flip that takes the mount and the accessor away has NOT
-// been filled -- `config.ProxiedGitSecretNames` is empty until B1.13 part two
-// -- so E1's row still lists the token and the job still mounts it. A doc that
-// says only one of the two reads as "the proxy took the token" or as "nothing
-// changed".
+// TestDocsCheck193IsRegistered: B2.5 writes Check 193, S2's own reading — an
+// `api-key` and an `oauth` repository through the credentials service, and the
+// flip measured by the same script's `--after-flip` — and the register carries
+// both halves of its registration, in the pairing TestDocsCheck190IsRegistered
+// and TestDocsCheck195IsRegistered pin: a `| 193 |` row in the summary table and
+// a `## Check 193:` section below it. A row without its section is a promise of
+// steps that are not written, and a section without its row is a check nothing
+// points at. The section says four things a reader needs and cannot infer: the
+// check is **NOT RUN** (the owner runs it in B2.6, and again in B2.8 after the
+// flip), no agent runs any step of it, the owner's own steps are in the work's
+// own file rather than in the register, and it has two halves — one script, one
+// `--after-flip` — because a section that named only the first would read as a
+// check the flip is not measured by.
+func TestDocsCheck193IsRegistered(t *testing.T) {
+	register := readDoc(t, liveChecksDoc)
+	if !regexp.MustCompile(`(?m)^\|\s*193\s*\|`).MatchString(register) {
+		t.Errorf("%s's register has no `| 193 |` row: Check 193 is written below it, and the table is where a reader finds it", liveChecksDoc)
+	}
+	heading := "\n## Check 193:"
+	i := strings.Index(register, heading)
+	if i < 0 {
+		t.Fatalf("%s has no `## Check 193:` section: the row above points at steps that have to be there", liveChecksDoc)
+	}
+	// Bounded by the next `## ` heading, so a check written after this one does
+	// not widen what is read here.
+	section := register[i+1:]
+	if end := strings.Index(section, "\n## "); end >= 0 {
+		section = section[:end]
+	}
+	flat := strings.ToLower(flattenDoc(section))
+	for _, want := range []string{
+		// The banner, before either run of it: nothing has measured S2 yet.
+		"**not run",
+		// The register's own rule for an owner-run check: no agent runs any step
+		// of it, and the text has to say so.
+		"no agent runs any step of it",
+		// Where the owner's own steps live, so the section does not have to carry
+		// them (and cannot drift from them).
+		"secrets-brokering/check193-steps.md",
+		// The second half: one script, and the mode the flip is read by.
+		"check193.sh --after-flip",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("Check 193's section does not say %q: the check is owner-run, not yet run, its steps are the work's own file, and its second half is the --after-flip mode — a section that leaves any of them out reads as something an agent did, or as a check the flip is not measured by", want)
+		}
+	}
+}
+
+// TestDocsCheck197IsRegistered: B5.5 writes Check 197, S5's own reading — a
+// coding run on a shared project job served by the credentials service, a
+// repository outside the job's profile refused, and the flip measured by the
+// same script's `--after-flip` — and the register carries both halves of its
+// registration, in the pairing TestDocsCheck190IsRegistered,
+// TestDocsCheck195IsRegistered and TestDocsCheck193IsRegistered pin: a
+// `| 197 |` row in the summary table and a `## Check 197:` section below it. A
+// row without its section is a promise of steps that are not written, and a
+// section without its row is a check nothing points at. The section says four
+// things a reader needs and cannot infer: the check is **NOT RUN** (the owner
+// runs it in B5.6, and again in B5.8 after the flip, which B5.7 gates), no
+// agent runs any step of it, the owner's own steps are in the work's own file
+// rather than in the register, and it has two halves — one script, one
+// `--after-flip` — because a section that named only the first would read as a
+// check the flip is not measured by. A FAIL stops S5 and returns to the owner
+// as a decision, which is what B5.6's own row in the plan says of it.
+func TestDocsCheck197IsRegistered(t *testing.T) {
+	register := readDoc(t, liveChecksDoc)
+	if !regexp.MustCompile(`(?m)^\|\s*197\s*\|`).MatchString(register) {
+		t.Errorf("%s's register has no `| 197 |` row: Check 197 is written below it, and the table is where a reader finds it", liveChecksDoc)
+	}
+	heading := "\n## Check 197:"
+	i := strings.Index(register, heading)
+	if i < 0 {
+		t.Fatalf("%s has no `## Check 197:` section: the row above points at steps that have to be there", liveChecksDoc)
+	}
+	// Bounded by the next `## ` heading, so a check written after this one does
+	// not widen what is read here.
+	section := register[i+1:]
+	if end := strings.Index(section, "\n## "); end >= 0 {
+		section = section[:end]
+	}
+	flat := strings.ToLower(flattenDoc(section))
+	for _, want := range []string{
+		// The banner, before either run of it: nothing has measured S5 yet.
+		"**not run",
+		// The register's own rule for an owner-run check: no agent runs any step
+		// of it, and the text has to say so.
+		"no agent runs any step of it",
+		// Where the owner's own steps live, so the section does not have to carry
+		// them (and cannot drift from them).
+		"secrets-brokering/check197-steps.md",
+		// The second half: one script, and the mode the flip is read by.
+		"check197.sh --after-flip",
+		// The gate: a FAIL here is a decision for the owner and stops S5, which
+		// is the one thing a reader of this row has to know before running it.
+		"stops s5",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("Check 197's section does not say %q: the check is owner-run, not yet run, its steps are the work's own file, its second half is the --after-flip mode, and a FAIL stops S5 — a section that leaves any of them out reads as something an agent did, or as a check the flip is not measured by", want)
+		}
+	}
+}
+
+// TestDocsSecretReadersStatesTheBitbucketProxysState is B1.10's pin on the
+// audit's Bitbucket rows, corrected by B1.13 part two. The proxy shipped (B1.5,
+// B1.6, B1.7), so a reader has to learn two things and not one: on a repository
+// the published node admits with `proxy: true` the job reads no `bitbucket-token`
+// at all (the runner opens its provider tokenless and the service puts the
+// credential on the wire), and the flip that takes the mount and the accessor
+// away has landed -- `config.ProxiedGitSecretNames` names the token -- so E1's
+// row is the token given up for that repository and no other. A doc that says
+// only one of the two reads as "the proxy took the token everywhere" or as
+// "nothing changed".
 //
-// Mutation (verified, run and restored): the paragraph's "still mounts it"
-// sentence dropped fails this on that pin and on "still mounts".
+// Mutation (verified, run and restored): the paragraph's "given up" sentence
+// dropped fails this on that pin.
 func TestDocsSecretReadersStatesTheBitbucketProxysState(t *testing.T) {
 	flat := flattenDoc(readDoc(t, secretReadersDoc))
 	for _, want := range []string{
 		// The half that moved: a proxied job reads no token.
 		"a proxied job reads no token at all",
-		// The half that has not: the flip list is empty on this tree, so the
-		// mount and the accessor stay.
+		// The half the flip moves: the mount and the accessor are gone for a
+		// proxied repository's job, and the list is what names the credential.
 		"config.ProxiedGitSecretNames",
-		"is empty",
-		"still mounts it",
+		"names `bitbucket-token`",
+		"given up",
 		// And the third copy that is older than both: the build account's,
 		// which S4 ends (E3).
 		"build account keeps its own copy until S4",
 	} {
 		if !strings.Contains(flat, want) {
-			t.Errorf("%s does not say %q: the Bitbucket rows have to state both what the proxy changed and what the flip has not yet taken", secretReadersDoc, want)
+			t.Errorf("%s does not say %q: the Bitbucket rows have to state what the proxy changed and what the flip has taken away", secretReadersDoc, want)
 		}
 	}
 }

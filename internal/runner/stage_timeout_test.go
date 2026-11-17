@@ -65,6 +65,8 @@ func TestRegistryShowsTheStagesOwnDeadline(t *testing.T) {
 			return 0
 		},
 		TimedOut: func(runner.StageView) runner.StageDecision { return runner.StageDecision{} },
+		Stopped:  func(runner.StageView) runner.StageDecision { return runner.StageDecision{} },
+		Before:   func(runner.StageView) runner.StageDecision { return runner.StageDecision{} },
 	}); err != nil {
 		t.Fatal(err)
 	}

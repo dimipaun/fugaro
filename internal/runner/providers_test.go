@@ -85,7 +85,8 @@ func TestProvidersEnvOmitsDefaultSwitchKeys(t *testing.T) {
 
 // TestProvidersFromEnvAcceptsOldAndNewShapes pins the other side of P4: a
 // value written before the two switches existed decodes to their defaults
-// (require_zdr on, cheapest), and one that carries them is read.
+// (require_zdr on, and highest — what an unset price_policy means since
+// D2644), and one that carries them is read.
 func TestProvidersFromEnvAcceptsOldAndNewShapes(t *testing.T) {
 	const old = `{"openrouter":{"kind":"anthropic-compat","base_url":"https://openrouter.ai/api","auth":"bearer",` +
 		`"secret":"openrouter-api-key","models":["deepseek/*"],"allow_data_to":["acme/app"]}}`
@@ -93,7 +94,7 @@ func TestProvidersFromEnvAcceptsOldAndNewShapes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p := got["openrouter"]; !p.RequireZDROn() || p.PricePolicySet() != config.PricePolicyCheapest {
+	if p := got["openrouter"]; !p.RequireZDROn() || p.PricePolicySet() != config.PricePolicyHighest {
 		t.Errorf("an old value decoded to require_zdr %v and policy %q", p.RequireZDROn(), p.PricePolicySet())
 	}
 	const new = `{"openrouter":{"kind":"anthropic-compat","base_url":"https://openrouter.ai/api","auth":"bearer",` +

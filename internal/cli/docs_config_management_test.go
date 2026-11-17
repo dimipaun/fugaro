@@ -261,8 +261,14 @@ const (
 // none: the repository's `workflows.*.ab.reviewer_arm` is a workflow's ask for
 // an A/B reviewer arm (O12), a key a person states in `fugaro.yaml` by hand and
 // the launch reads, and no name and no prefix in the allowlist reaches it.
+//
+// W of docs/rigor-command/ moved it once more, by one row and by none: the local
+// project config gains `rigor_pending`, the wizard's rigor answer waiting for
+// the Layer stage that writes it into the project layer (D900), and its owner is
+// `setup` — the door whose run is asked the question and writes the answer down,
+// and whose Layer stage clears the key — so the generic path carries none of it.
 const (
-	cfmRegistryRows   = 481
+	cfmRegistryRows   = 482
 	cfmAllowlistNamed = 118
 )
 

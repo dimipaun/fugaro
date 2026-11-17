@@ -115,6 +115,24 @@ type Config struct {
 	// record, beside the policy stage's PolicyGeneration: one record per
 	// stage that publishes, and neither is wire.
 	LayerGeneration string `yaml:"layer_generation,omitempty"`
+	// RigorPending is the wizard's rigor answer (task W of
+	// docs/rigor-command/implementation-plan.md; D900) while it is still to be
+	// written into the project layer: the mode a person typed at the question
+	// (`defaults.rigor.default` of the layer file, written by the Layer stage).
+	//
+	// It is carried because the two writes are stages apart — the answer is
+	// given before the Installation stage writes this file, and the Layer stage
+	// that writes it into the layer file comes after the Repository stage — and
+	// a first run that fails or stops in between would otherwise lose a
+	// person's answer for good: the config it left means the next converge is
+	// not a first run, so the wizard asks nothing and `--rigor` is refused by
+	// name, and the project silently runs the built-in pro until the person
+	// finds `fugaro rigor set` (setupRigorRefusal, wizardResumesCreation's own
+	// reason one pause later). writeConfig writes it, and the Layer stage
+	// clears it once the layer file carries the mode: a value left behind would
+	// write the old answer over a later `fugaro rigor set` on the next
+	// converge.
+	RigorPending string `yaml:"rigor_pending,omitempty"`
 	// BaseImages are the base images the image builds and the daily image
 	// check start from, by base kind (config.Bases). A workflow builds from
 	// the image of its base kind, so a project needs an entry for each kind
@@ -1279,6 +1297,58 @@ func (m *ModelPrice) cachePrices() []cachePrice {
 			cacheKey{"cache_write_1h_per_m", &m.CacheWrite1hPerM},
 		},
 	}
+}
+
+// CacheKeyRename is one cache price an entry was written under an old key
+// name, with the name this release documents for the same number. Both spell
+// one price: the old key has always meant a multiple of input_per_m, and
+// cache_read_mult says so (D2646).
+type CacheKeyRename struct {
+	Old, Mult string
+	Value     float64
+}
+
+// legacyCacheKeys are the dimensions of one entry that were written under an
+// old key name. The loader folds every spelling into the multiplier field, so
+// the old name is the one that set it and neither of the other two is there:
+// a file that wrote cache_read_mult or cache_read_per_m, and one that left the
+// dimension out to take the list default, are both not this.
+func (m *ModelPrice) legacyCacheKeys() []cachePrice {
+	var out []cachePrice
+	for _, p := range m.cachePrices() {
+		if *p.old.field != nil && *p.mult.field == nil && *p.perM.field == nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// LegacyCacheKeys is what a migration rewrites: every cache price this entry
+// holds under an old key name, in the order the three dimensions are listed
+// everywhere else.
+func (m ModelPrice) LegacyCacheKeys() []CacheKeyRename {
+	legacy := m.legacyCacheKeys()
+	out := make([]CacheKeyRename, 0, len(legacy))
+	for _, p := range legacy {
+		out = append(out, CacheKeyRename{Old: p.old.key, Mult: p.mult.key, Value: **p.old.field})
+	}
+	return out
+}
+
+// RenameLegacyCacheKeys moves every old spelling onto the name this release
+// documents, in place, and answers what it moved. The multiplier field is left
+// where it is: it is the field every reader below this package reads
+// (Overrides, and so the policy node, the shared copy and
+// FUGARO_MODEL_PRICES), and clearing it would turn a price the owner wrote
+// into the list default. What a write back out keeps is the named spelling,
+// because that is the one MarshalYAML prefers.
+func (m *ModelPrice) RenameLegacyCacheKeys() []CacheKeyRename {
+	renames := m.LegacyCacheKeys()
+	for _, p := range m.legacyCacheKeys() {
+		value := **p.old.field
+		*p.mult.field = &value
+	}
+	return renames
 }
 
 // foldCacheSpellings reads every cache price an entry writes into the

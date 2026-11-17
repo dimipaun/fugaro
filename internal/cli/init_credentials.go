@@ -147,12 +147,30 @@ const credsServiceSince = "0.10.0"
 // model credential" out of a memo the first door wrote as "there was no
 // reading": a false no read produced, written into the entry and published for
 // the installation, which is the one write this function exists to refuse.
+//
+// The reading has a further answer, credsBitbucket: whether the document holds
+// the upstream Bitbucket token, which `fugaro update`'s gate on the flip's drop
+// asks before it applies a proxied repository's root (bundleBitbucketToken,
+// update_proxied.go; O8). It is settled from the same parsed document for the
+// same reason — the gate and the switch record are two questions about one
+// apply, so a second read would let them answer from two documents — and it is
+// false wherever there was no reading and wherever the bundle holds no
+// document, which is the fact said twice rather than a fourth state.
+//
+// The marker of a session that may not open the bundle is remembered beside
+// them (credsUnreadMarker), because a caller has to tell that no-reading from a
+// read that FAILED: the first is a question the session may not answer at all,
+// and the second is a state a person can be sent to fix — so the gate above
+// goes on under the first and refuses on the second, and a branch added here
+// that answers without a read is refused on by default.
 func (r *initRun) readCredentialsBundle(ctx context.Context, lc *localcfg.Config) (names map[string]bool, record bool) {
 	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
+		r.credsUnreadMarker = m
 		r.warn(fmt.Sprintf("the credentials service's bundle was not read (%s is set, so this is a coding agent's session) and the switch's record is left as this machine last wrote it: the bundle holds every model credential the service issues, and a person's own %s reads it", m, selfCommand()))
 		return nil, false
 	}
 	if m := managedFlagRunMarker(os.Getenv); m != "" {
+		r.credsUnreadMarker = m
 		r.warn(fmt.Sprintf("the credentials service's bundle was not read (%s is set, so this process is a Fugaro run's) and the switch's record is left as this machine last wrote it: the bundle holds every model credential the service issues, and a person's own %s reads it", m, selfCommand()))
 		return nil, false
 	}
@@ -211,6 +229,14 @@ func (r *initRun) readCredentialsBundle(ctx context.Context, lc *localcfg.Config
 	// paid key — and the GitHub App's private key, which a repository on
 	// GitHub needs the service to mint with and which is no model credential
 	// at all.
+	// The same reading answers the gate on the flip's drop: whether the bundle
+	// holds the upstream Bitbucket token, which is a question about the document
+	// just parsed and not a second read of the secret (bundleBitbucketToken,
+	// update_proxied.go). The three states above answered with no document at
+	// all — and a document read is one that may hold the token, so they leave it
+	// false, which is what they say: an empty container, a DISABLED newest
+	// version and a config with no service hold nothing to fetch.
+	_, r.credsBitbucket = b.BitbucketToken()
 	creds := b.Credentials()
 	names = make(map[string]bool, len(creds))
 	for _, c := range creds {

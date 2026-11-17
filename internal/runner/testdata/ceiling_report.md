@@ -7,6 +7,12 @@
 | implement | <dur> |
 | review | <dur> |
 
+| Verify | Head | Result | Tests | Duration |
+|---|---|---|---|---|
+| test | `<sha>` | passed (exit 0) | 3 tests | <dur> |
+
+**Verify time:** 0s, <pct>% of the run's 0s wall clock
+
 **Reviews:** round 1: ship
 
 **Rigor:** pro, from default, at bootstrap, read from origin/main

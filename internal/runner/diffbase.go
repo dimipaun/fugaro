@@ -117,28 +117,47 @@ func (r *run) narrowed() string {
 // origin/<reviewPromptBase>, except for a first run whose range was narrowed
 // to its own commits (narrowReviewRange), where it is the commit before them.
 //
-// The narrowed commit is used only while it is still an ancestor of HEAD. A
-// fix round that rebases the run's commits elsewhere (onto origin/main, say)
-// leaves it behind, and `<it>...HEAD` would then start at its merge base
-// with HEAD — the integration branch's fork point, which can be a larger
-// range than the recorded one. That round reads the recorded range instead,
-// which is what it would have read before narrowing existed; the prompt's
-// scope line, built once before the first round, still names the commit,
-// so that round's prompt says the range moved (narrowLeftNote), and the
-// input's own header names the range it was built over.
+// A round that moved the branch off the narrowed commit reads the recorded
+// range instead, which is what it would have read before narrowing existed
+// (narrowedLeading); the prompt's scope line, built once before the first
+// round, still names the commit, so that round's prompt says the range moved
+// (narrowLeftNote), and the input's own header names the range it was built
+// over.
 func (r *run) reviewRev(ctx context.Context) string {
-	if nb := r.narrowed(); nb != "" && r.repo != nil {
-		head, err := r.repo.HeadSHA(ctx)
-		if err == nil {
-			var ok bool
-			if ok, err = r.repo.IsAncestor(ctx, nb, head); err == nil && ok {
-				return nb
-			}
-		}
-		r.d.Log.Warn("the run's own range no longer leads to HEAD; this diff uses the recorded range",
-			"narrowed", nb, "err", r.redactErr(err))
+	if nb := r.narrowedLeading(ctx); nb != "" {
+		return nb
 	}
 	return "origin/" + r.reviewPromptBase()
+}
+
+// narrowedLeading is the commit a first run's range was narrowed to
+// (narrowed), while it is still an ancestor of HEAD, and "" when the range was
+// never narrowed or a round has since moved the branch off it.
+//
+// The narrowed commit is used only while it still leads to HEAD: a fix round
+// that rebases the run's commits elsewhere (onto origin/main, say) leaves it
+// behind, and `<it>...HEAD` would then start at its merge base with HEAD — the
+// integration branch's fork point, which can be a larger range than the
+// recorded one. Every reader of the narrowed commit takes it from here — the
+// review range and the base the checkpoint prompt's own facts are read from
+// (checkpointBase) — so the two can never disagree about whether the range
+// still holds, and each falls back to its own recorded range with this warn
+// saying why.
+func (r *run) narrowedLeading(ctx context.Context) string {
+	nb := r.narrowed()
+	if nb == "" || r.repo == nil {
+		return ""
+	}
+	head, err := r.repo.HeadSHA(ctx)
+	if err == nil {
+		var ok bool
+		if ok, err = r.repo.IsAncestor(ctx, nb, head); err == nil && ok {
+			return nb
+		}
+	}
+	r.d.Log.Warn("the run's own range no longer leads to HEAD; the recorded range is used instead",
+		"narrowed", nb, "err", r.redactErr(err))
+	return ""
 }
 
 // narrowReviewRange narrows a first run's review range to the commits the
@@ -326,6 +345,55 @@ type ownRange struct {
 	Narrow bool
 	WhyNot string
 	Why    string
+}
+
+// reviewScopeNow is the review-scope comparison as it stands before a review
+// round, which is what the review-scope stop reads (governance_hook.go,
+// StageView.ReviewScope, T7.3): the record's own while the range that round
+// reads still starts at the commit the run's own commits do, and the same
+// comparison read again when it does not.
+//
+// The record's comparison is taken once, after implement (narrowReviewRange),
+// and it is a statement about the range that run had. A fix round can move the
+// branch off the commit the range was narrowed to (reviewRev), and the round
+// that follows then reads the recorded range instead — the drift reviewRev
+// names in the prompt (narrowLeftNote) and internal/digest flags. Read over
+// the commit the range was narrowed to rather than over the commit the run's
+// own commits now start after, that comparison is the drift itself:
+// reviewRev answers the recorded range, Applicable is false, and the reason is
+// runstore.ReviewScopeRangeMoved — the range is not the run's own commits any
+// more. The record keeps it, so the record and the stop cannot disagree about
+// what a reviewer was handed.
+//
+// A run that skipped implement has no comparison to take again: it has no
+// implement set for the range to be compared with, so its record says the
+// comparison does not apply and is never a mismatch (reviewScopeSkippedImplement,
+// T5.2), and a not-applicable scope never halts (T7.3). Reading one over the
+// range the round reads would replace that reason with the range-moved
+// mismatch the stop halts on, for a run whose record never claimed the range
+// was its own commits.
+//
+// A comparison that cannot be read hands nothing to the stop and leaves the
+// record alone: an absent comparison is never an empty one (G5), and the
+// record's own describes a range the round is not reading.
+func (r *run) reviewScopeNow(ctx context.Context, nb, rev string) *runstore.ReviewScope {
+	if r.rec == nil {
+		return nil
+	}
+	if nb == "" || rev == nb || r.rec.ReviewScope == nil {
+		return r.rec.ReviewScope
+	}
+	if r.reviewScopeSkippedImplement() != "" {
+		return r.rec.ReviewScope
+	}
+	now := r.readReviewScope(ctx, ownRange{Base: nb, Narrow: true})
+	if now.WhyNot == runstore.ReviewScopeReadFailed {
+		return nil
+	}
+	r.rec.ReviewScope = now
+	r.d.Log.Warn("the commit the run's review range was narrowed to no longer leads to HEAD; the record carries the comparison of the range the next review round reads",
+		"narrowed", nb, "range", r.redact(rev)+"...HEAD")
+	return now
 }
 
 // ownRangeBase reads the run's own commits and counts the two ranges: the
@@ -523,6 +591,104 @@ func (r *run) reviewDiffSize(ctx context.Context) DiffSize {
 		return DiffSize{}
 	}
 	return size
+}
+
+// The status letters §4.2's readings need: a path the range adds, one it
+// deletes — which is what a move of a tracked file looks like under
+// --no-renames — and one whose type it changes, which is what a tracked
+// symlink or gitlink replaced by a regular file arrives as.
+const (
+	statusAdded       = 'A'
+	statusDeleted     = 'D'
+	statusTypeChanged = 'T'
+)
+
+// modeGitlink is the mode of a submodule's entry: the tree holds a commit id
+// where a blob would be, so there are no bytes at that path to read — what a
+// `--raw` row or a diff prints for one is a pointer, and no reading of it has a
+// payload to refuse.
+const modeGitlink = "160000"
+
+// rawChange is one path in a range, as `git diff --raw` reports it: how the
+// range changed it, the mode its new side has, and both blob ids the row
+// carries — the old side's, all zeroes for a path the base does not hold, and
+// the new side's, all zeroes for one HEAD does not.
+//
+// The new mode is read because a row's letter alone does not say whether there
+// are bytes at that path to be read at all: a typechange's new side may be a
+// symlink or a gitlink, where a blob id sits in a place whose content is a path
+// name or a commit id (addedBinaries).
+type rawChange struct {
+	path    string
+	status  byte
+	newMode string
+	oldBlob string
+	newBlob string
+}
+
+// rawChanges reads which paths a range changed, how, and both their blob ids:
+// `git diff --raw -z --no-renames --no-abbrev <rng>`.
+//
+// It is a second reading of the range beside diffSize's numstat one, and not a
+// replacement: numstat is what says whether git calls a path binary, and this
+// is what says which paths were *added* and what the blobs were before and
+// after (F14). The two are separate git invocations, so nothing may pair them
+// by position — see addedBinaries, which pairs them by path.
+//
+// `--no-renames` so a move arrives as a delete and an add rather than as a
+// status letter a reader has to know, and `--no-abbrev` so the ids a move is
+// recognised by are whole: the default abbreviation is briefly read, and two
+// different blobs whose prefixes agree would make a move of a tracked file look
+// like an addition of new bytes.
+func rawChanges(ctx context.Context, repo *gitops.Repo, rng string) ([]rawChange, error) {
+	out, err := sessionGit(ctx, repo, "diff", "--raw", "-z", "--no-renames", "--no-abbrev",
+		"--no-ext-diff", "--no-textconv", "--end-of-options", rng)
+	if err != nil {
+		return nil, err
+	}
+	return parseRawDiff(out)
+}
+
+// parseRawDiff reads `git diff --raw -z`'s output: one header and one path per
+// changed path, NUL-separated — "…<status>\0<path>\0" — where the header is
+// ":<old mode> <new mode> <old blob> <new blob> <status>".
+//
+// The header and the path are paired positionally, which is the one pairing git
+// itself is making here (the output has no other shape), and it is not the
+// pairing that matters: what must never be positional is the pairing of this
+// reading with the numstat reading of the same range (addedBinaries).
+func parseRawDiff(out string) ([]rawChange, error) {
+	fields := strings.Split(out, "\x00")
+	changes := make([]rawChange, 0, len(fields)/2)
+	for i := 0; i < len(fields); i++ {
+		meta := fields[i]
+		if meta == "" {
+			// The empty piece a NUL-terminated listing ends with.
+			continue
+		}
+		if i+1 >= len(fields) || fields[i+1] == "" {
+			return nil, fmt.Errorf("reading the changed paths: %q carries no path", meta)
+		}
+		i++
+		c, err := parseRawMeta(meta, fields[i])
+		if err != nil {
+			return nil, err
+		}
+		changes = append(changes, c)
+	}
+	return changes, nil
+}
+
+// parseRawMeta reads one `--raw` header against the path that follows it. The
+// shape is fixed under --no-renames — four fields and a one-letter status — so
+// a header that is not that shape is a git whose reading this is not, refused
+// rather than read past.
+func parseRawMeta(meta, path string) (rawChange, error) {
+	fields := strings.Fields(meta)
+	if len(fields) != 5 || !strings.HasPrefix(fields[0], ":") || len(fields[4]) != 1 {
+		return rawChange{}, fmt.Errorf("reading the changed paths: %q is not a --raw header", meta)
+	}
+	return rawChange{path: path, status: fields[4][0], newMode: fields[1], oldBlob: fields[2], newBlob: fields[3]}, nil
 }
 
 // parseNumstat reads `git diff --numstat -z`'s output: one record per

@@ -165,6 +165,7 @@ var settingsLabelRows = []settingsLabelRow{
 	{"region", labelPlumbing, "`fugaro setup` writes it when it creates the file: the installation's GCP region"},
 	{"registry", labelFile, "the legacy shared registry's address, stated in the local config: no command writes it"},
 	{"registry_host", labelPlumbing, "`fugaro setup` writes it from the apply's outputs as it installs: the registry's host"},
+	{"rigor_pending", labelPlumbing, "`fugaro setup` writes the wizard's rigor answer into it, and the layer stage clears it once the project layer carries the mode: the answer a run that stopped before its Layer stage left for the next one"},
 	{"runs_bucket", labelPlumbing, "`fugaro setup` writes it from the apply's outputs as it installs: the bucket a run's task is written to"},
 	{"scheduler_region", labelPlumbing, "`fugaro setup` writes it as it installs: the region the installation's Cloud Scheduler job runs in"},
 	{"setup_pending", labelPlumbing, "`fugaro setup` writes and clears it as it installs: the marker an installation carries while one of its steps is unfinished"},

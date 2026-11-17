@@ -370,6 +370,7 @@ gives it a command — with the converge flag that changes it when the two doors
 | `region` | `--region` |
 | `registry` | — |
 | `registry_host` | — |
+| `rigor_pending` | — |
 | `runs_bucket` | `--runs-bucket` |
 | `scheduler_region` | `--scheduler-region` |
 | `setup_pending` | — |

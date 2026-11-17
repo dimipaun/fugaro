@@ -830,8 +830,16 @@ func stageCraft(stage string) string {
 }
 
 // stageModel is the model a stage runs: the level's own model when the stage
-// runs a review level a layer named one for, and the role slot's otherwise.
+// runs a review level a layer named one for, the diagnose stage's own key when
+// the stage is a cloud diagnosis, and the role slot's otherwise.
 func (r *run) stageModel(stage string) string {
+	if stage == stageDiagnose {
+		// D2403: the cloud diagnosis runs the key the local tier reads, so the
+		// same question gets the same model either way. It is read here rather
+		// than through a role slot for the reason diagnoseModel gives, and it
+		// is the model the gateway's stage set admits and prices.
+		return r.diagnoseModel()
+	}
 	if level, ok := stageLevel(stage); ok {
 		if m := r.levelModel(level); m != "" {
 			return m
@@ -934,7 +942,7 @@ func resolvedLevel(levels config.Levels, level policy.Level) config.ResolvedLeve
 // a plain membership test, while the list that bounds this run is
 // config.CheckAllowed's, which admits a route ID where the switch routes the
 // model to it and names the key the owner wrote — the run's own pins by their
-// paths and a level's own model as agent.levels.lN.model (checkLevels,
+// paths and a level's own model as agent.levels.lN.model (checkModels,
 // levelModelPath). A list filled in here would refuse a level model before
 // checkBudget judged it, and refuse it by a rule that does not know the run's
 // routes: the routed level model this run may use would be reported as one it
