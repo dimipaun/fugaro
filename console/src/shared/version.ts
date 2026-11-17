@@ -419,28 +419,22 @@ export function licenceKeySupported(
  * is the local half and what it owes is read back from `apply.pending` rather
  * than run behind the settings window.
  *
- * **No release carries the flag yet, so the constant is `null` and this console
- * passes the word to no child at all.** `addNoApplyFlag`
- * (`internal/cli/apply.go`) has no caller on this tree: `settings set` and
- * `settings unset` gain it with that plan's AP5 and AP6, and the plan gives AP8
- * (the console half) the same parallel level as those two, so the row word lands
- * here before the CLI can answer it. A floor is a claim about a release that
- * exists, and a version this console guessed at would be a word handed to a CLI
- * that answers it with `unknown flag: --no-apply` and fails the whole write --
- * every confirmed settings edit from the console, on every installed CLI. Unset
- * is therefore the safe direction and the only honest one: the write is spawned
- * without the word, which is the behaviour of every release so far, and the
- * release that registers the flag names itself here.
+ * **0.26.0 is the first release that carries the flag**: `settings set` and
+ * `settings unset` register it with the composite-commands plan's AP5 and AP6,
+ * and every older CLI answers it with `unknown flag: --no-apply` and fails the
+ * whole write. The console therefore asks the resolved binary's own version
+ * (`noApplySupported`) and passes the word only at or above this floor; an older
+ * CLI is spawned without it, which is the behaviour of every release before.
  *
  * It is a floor and not a switch, so every older CLI keeps getting no word --
  * the same patch-level comparison the seven floors above use, and the fourth
  * constant beside them that is unset while nothing can answer it
  * (`LICENCE_KEY_CLI_FLOOR`). `docs_desktop_console_test.go`'s own pin holds the
  * two halves together: a command of this tree that registers `--no-apply` fails
- * that test until this constant names the release and the console's tables stop
- * calling the word held.
+ * that test until this constant names the release, and the gate that reads it
+ * has to stay.
  */
-export const NO_APPLY_CLI_FLOOR: string | null = null
+export const NO_APPLY_CLI_FLOOR: string | null = '0.26.0'
 
 /**
  * noApplySupported answers whether one version line may be handed `--no-apply`,
@@ -455,8 +449,7 @@ export const NO_APPLY_CLI_FLOOR: string | null = null
  *
  * `floor` is the constant by default and an argument only so that the branch a
  * release will take can be tested: with the constant unset, every version is
- * refused, which is the state this console is in until a release registers the
- * flag (`version.test.ts` drives both).
+ * refused (`version.test.ts` drives both).
  */
 export function noApplySupported(
   version: string,

@@ -1633,10 +1633,10 @@ describe('the settings edit behind the same window', () => {
     expect(shown.argv).toStrictEqual(settingsArgv('widening', set))
     expect(shown.argv).not.toContain('--dry-run')
     // **And no write phase word either, on this tree.** The write's one word is
-    // `--no-apply` (D1565, D1572), and it is held off the wire while
-    // `NO_APPLY_CLI_FLOOR` is unset -- no release of the CLI registers the flag,
-    // so no child is handed it (`spawn.test.ts` drives the other branch, a child
-    // whose CLI has it). Spawning it regardless is what would make every
+    // `--no-apply` (D1565, D1572), and it is held off the wire
+    // below `NO_APPLY_CLI_FLOOR` (0.26.0), and this installation's stub CLI is
+    // older, so no child is handed it (`spawn.test.ts` drives the other branch, a
+    // child whose CLI has it). Spawning it regardless is what would make every
     // confirmed edit fail with `unknown flag: --no-apply` instead of saving the
     // change.
     expect(shown.argv).not.toContain('--no-apply')

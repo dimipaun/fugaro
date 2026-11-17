@@ -29,6 +29,18 @@ import (
 // own `credsvc: audit` lines for the throwaway runs the fake `fugaro` records,
 // so a case can say what served a run, what the run declared and what it was
 // served instead), fake `gcloud`, `fugaro`
+// and `curl` for Check 194 (194's fake `gcloud` holds two sandbox repositories'
+// Cloud Run jobs, each mounting the installation's project-wide secret
+// container of a workflow secret, carrying an account of its own and answering
+// the check's Cloud Logging reads with the credentials service's own
+// `credsvc: audit` lines -- and it evaluates the IAM policy of one of those
+// containers, so a case can say what an account holds an accessor on; its fake
+// credentials service behind a fake `curl` serves the two
+// `creds/workflowsecrets` records -- the one that lists the repository under
+// test and the one that admits the whole workspace -- and refuses every write,
+// so a case says both records' container ids, what a run was served, what
+// another repository's job was refused and that no record ever carried a
+// value), fake `gcloud`, `fugaro`
 // and `curl` for Check 195 (a small project whose service and account appear and
 // disappear, whose IAM policy names what was granted to it, and whose build ends
 // the way its own step's line says), a fake `gcloud` that
@@ -83,8 +95,17 @@ import (
 // and the tool log is the child's own. Checks 500 and 501 drive a fake `gcloud`
 // and a fake `fugaro` that logs every call with the directory it was made in, so
 // a case says both what the check measured and that no image was built, no
-// `fugaro update` was answered for the owner and no run was launched. Check 581
-// drives those same two fakes over the multi-repository catalog build: a fake
+// `fugaro update` was answered for the owner and no run was launched. Check 580
+// drives a fake `fugaro`, a fake `gcloud` and a fake `git` over one Bitbucket
+// shared job's run: the fake `git` answers the sandbox checkout's own origin, the
+// fake `fugaro` answers `version`, `doctor --json`, `project policy show --json`
+// and `runs ls --json`, launches the run under the id it is given and prints the
+// row template the case wrote, and the fake `gcloud` serves the job list and the
+// credentials service's own `credsvc: audit` lines for that run -- so a case can
+// bend the policy, the profile's jobs, the run's row and the service's lines and
+// say what the check made of each, and can say that no run was launched at all
+// where it must not be.
+// Check 581 drives those same two fakes over the multi-repository catalog build: a fake
 // `fugaro` that answers `version`, `doctor --json`, `image ls --json`, `image
 // survey --json` and `image build`, printing the submitted line and the bake
 // note the real one prints and marking the entry as built so the second catalog
@@ -369,6 +390,7 @@ var liveCheckScripts = []struct {
 	{"check190.sh", "check190_test.sh"},
 	{"check191.sh", "check191_test.sh"},
 	{"check193.sh", "check193_test.sh"},
+	{"check194.sh", "check194_test.sh"},
 	{"check195.sh", "check195_test.sh"},
 	{"check197.sh", "check197_test.sh"},
 	{"check291.sh", "check291_test.sh"},
@@ -390,6 +412,7 @@ var liveCheckScripts = []struct {
 	{"check-410.sh", "check-410_test.sh"},
 	{"check-500.sh", "check-500_test.sh"},
 	{"check-501.sh", "check-501_test.sh"},
+	{"check-580.sh", "check-580_test.sh"},
 	{"check-581.sh", "check-581_test.sh"},
 	{"check-411.sh", "check-411_test.sh"},
 	{"check-412.sh", "check-412_test.sh"},
@@ -489,6 +512,9 @@ func parseLiveCheckCIShard(env string) (index, of int, set bool, err error) {
 // a minute each; a split that dropped one, ran one twice or fell back to
 // everything would show up as a green run that tested less, which is the failure
 // this pins.
+// The suite is 195 items on one runner and under a minute each; a split that
+// dropped one, ran one twice or fell back to everything would show up as a
+// green run that tested less, which is the failure this pins.
 func TestLiveCheckCIShardCoversTheSuiteOnce(t *testing.T) {
 	var items []liveCheckShard
 	for _, c := range liveCheckScripts {

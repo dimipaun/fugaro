@@ -5557,8 +5557,10 @@ log. patch applies one document from -f, and the ops only a person may
 land (approving a work item, setting the goal, closing a decision that
 waits on a person) are confirmed at a real terminal with the project's
 name typed: a session that has none writes nothing.
-import loads the one-time session dump, validated as a patch and refused
-the person's own ops: no dump approves work.
+import loads one of two documents: a plan's graph, which becomes the
+work items of the plan's own node, or the one-time session dump,
+validated as a patch and refused the person's own ops: no dump approves
+work, and no import approves anything.
 
 run is the daemon itself, in the foreground. install, uninstall and
 status are the login unit that keeps it running: the three read no
@@ -5577,7 +5579,7 @@ Flags:
 Subcommands:
 
 - `fugaro orchestrator events` -- Read the orchestrator's audit log
-- `fugaro orchestrator import` -- Load the one-time session dump into the orchestrator's state
+- `fugaro orchestrator import` -- Load a plan's graph, or the one-time session dump, into the orchestrator
 - `fugaro orchestrator install` -- Install or re-render the login unit that runs the daemon
 - `fugaro orchestrator ls` -- List the installation's orchestrators
 - `fugaro orchestrator patch` -- Apply one typed patch document to the orchestrator's state
@@ -5615,14 +5617,28 @@ This command has no subcommands.
 
 ## `fugaro orchestrator import`
 
-Load the one-time session dump into the orchestrator's state
+Load a plan's graph, or the one-time session dump, into the orchestrator
 
-Load the one-time session dump (the spec's Migration) into the project's
-orchestrator state, from -f's file or from stdin with -f -. The dump is one
-patch document (schemas/orchestrator-patch.schema.json) a session wrote out,
-and it is read by the same validator and bounded by the same caps as
-fugaro orchestrator patch: it is the one document in this loop written by a
-model, and everything it carries is data, never an instruction.
+Load work into the orchestrator from one of two documents, never both.
+
+--plan <folder> imports a plan: it reads <folder>/implementation-plan.graph.json
+with fugaro plan's own reader and writes the plan's node (orchestrator <id>/
+plans/<plan>) one work item per node of the graph — the task's id, the plan's
+name as its spec, <plan>/<task> as its plan task, the graph's edges as its
+dependencies, and a brief that pins the plan's commit and the SHA-256 of the
+task's own section (D2704, D2737). A re-import writes only the items nothing
+has launched yet and keeps an unchanged section's brief, so an approval a
+person already gave still stands (D2745); a graph this build refuses writes
+nothing at all. It lands as a session, which is who runs it — the session in
+the checkout the plan merged in — so it approves nothing: the items arrive
+unapproved, and --json prints them with the digests approving them takes.
+
+-f loads the one-time session dump (the spec's Migration), from its file or
+from stdin with -f -. The dump is one patch document
+(schemas/orchestrator-patch.schema.json) a session wrote out, and it is read
+by the same validator and bounded by the same caps as fugaro orchestrator
+patch: it is the one document in this loop written by a model, and everything
+it carries is data, never an instruction.
 
 The dump lands as the person who runs this, because the migration is theirs
 to make, and it lands nothing a session may not land: approving a work
@@ -5642,6 +5658,8 @@ Flags:
 | `-f`, `--file` | string | "" | no | the session dump to import, or - to read it from stdin |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for import |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--plan` | string | "" | no | the plan to import, as its folder under docs/ (docs/<plan>): reads its implementation-plan.graph.json into the plan's node |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
@@ -9268,7 +9286,13 @@ schemas/settings-write.schema.json describes, which is what a caller that draws
 an edit reads. --dry-run takes no bare --json (the two answer different
 questions).
 
-Every write ends with one line: next: fugaro update.
+A write runs the steps its key declares: the published policy node for a key
+the machine's own config carries, the project layer file for a project-layer
+key, and nothing at all for a write into a checkout's fugaro.yaml — that file
+is live once the change is merged, and no step here can make it live before
+then. A step that fails leaves the change saved and the step pending and exits
+non-zero. --no-apply saves the change and runs none of the steps: `fugaro apply`
+runs them later.
 
 Usage: `fugaro settings set KEY VALUE`
 
@@ -9285,6 +9309,7 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for set |
 | `--json` | bool | `false` | no | print the dry run's document (with --dry-run) |
 | `--layer` | string | "" | no | the layer to write (local, project, repo) |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--remove` | string | "" | no | remove an item from a string-list key |
 | `--remove-entry` | stringArray | `[]` | no | remove one entry from a map or an object list (the member's name, or the key field's value) |
@@ -9320,7 +9345,13 @@ terminal, and with --json it prints the versioned document
 schemas/settings-write.schema.json describes. --dry-run takes no bare --json
 (the two answer different questions).
 
-Every write ends with one line: next: fugaro update.
+A removal runs the steps its key declares, exactly as writing one does: the
+published policy node for a key the machine's own config carries, the project
+layer file for a project-layer key, and nothing at all for a checkout's
+fugaro.yaml — that file is live once the change is merged, and no step here can
+make it live before then. A step that fails leaves the change saved and the
+step pending and exits non-zero. --no-apply saves the change and runs none of
+the steps: `fugaro apply` runs them later.
 
 Usage: `fugaro settings unset KEY`
 
@@ -9335,6 +9366,7 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for unset |
 | `--json` | bool | `false` | no | print the dry run's document (with --dry-run) |
 | `--layer` | string | "" | no | the layer to write (local, project, repo) |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--repo` | string | "" | no | the repository whose fugaro.yaml to edit (owner/name, or a path inside its checkout) |
 

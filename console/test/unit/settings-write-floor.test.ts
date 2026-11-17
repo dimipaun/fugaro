@@ -18,11 +18,11 @@
 // through `argvFor` with the fact handed in, which is the level **below** the
 // decision.
 //
-// **The floor is unset today** (`NO_APPLY_CLI_FLOOR === null`: no release of the
-// CLI registers the word yet, and AP5/AP6 of the composite-commands plan are
-// what will), so the branch below the floor is the shape the shipped console
-// takes and the branch above it is reachable only by overriding the predicate's
-// own default. That is the one thing this file mocks -- the module is the real
+// **The floor is 0.26.0 today** (`NO_APPLY_CLI_FLOOR`: AP5/AP6 of the
+// composite-commands plan are what register the word), and the test installation
+// below runs a stub CLI of its own version, so the branch above the floor is
+// reached only by overriding the predicate's own default and the branch below it
+// by leaving it unset. That is the one thing this file mocks -- the module is the real
 // one with `noApplySupported`'s default floor read from a holder a case sets,
 // which is the same parameter `version.test.ts` passes by hand -- and it is what
 // makes both directions of the line assertions rather than one.
@@ -39,8 +39,8 @@ import { SETTINGS_EDIT_KEY, installStub } from './stub'
 import type { Stub } from './stub'
 import { itHostRoute } from '../support/hostRoute'
 
-/** floor is the floor this file's cases set: `null` is the state the constant
- * ships in today, and a version line stands for the release that carries
+/** floor is the floor this file's cases set: `null` stands for a CLI no floor
+ * answers for, and a version line stands for the release that carries
  * `--no-apply` on the CLI's own side. */
 const floor = vi.hoisted(() => ({ value: null as string | null }))
 

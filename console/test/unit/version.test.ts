@@ -545,19 +545,24 @@ describe('licenceKeySupported', () => {
 // ---------------------------------------------------------------------------
 
 describe('noApplySupported', () => {
-  it('refuses every version while no release registers the flag', () => {
-    // The constant is unset today, and that is the whole state of the word: the
-    // composite-commands plan gives the console's half (AP8) the same parallel
-    // level as the CLI's own (`settings set` and `settings unset` gain
-    // `--no-apply` with AP5 and AP6), and `addNoApplyFlag`
-    // (`internal/cli/apply.go`) has no caller on this tree -- so **no release of
-    // the CLI accepts the word**, and a write spawned with it fails whole
-    // (`fugaro: unknown flag: --no-apply`) rather than saving the change. An
-    // unset floor is therefore a refusal for every line, a hypothetical 99.99.99
-    // included: the question is about a release, and none carries it.
-    expect(NO_APPLY_CLI_FLOOR).toBeNull()
-    for (const line of ['0.11.2', '0.16.0', '0.22.0', '1.4.2', '99.99.99']) {
+  it('names 0.26.0, the release whose settings set and unset register the flag', () => {
+    // `settings set` and `settings unset` gain `--no-apply` with AP5 and AP6 of
+    // the composite-commands plan, which ship in 0.26.0; a CLI below it answers
+    // the word with `unknown flag: --no-apply` and fails the whole write, so
+    // every line below the floor is refused and every line at or above it is
+    // not, through the constant's own default.
+    expect(NO_APPLY_CLI_FLOOR).toBe('0.26.0')
+    for (const line of ['0.11.2', '0.22.0', '0.25.0', '0.25.9', '0.26.0-rc.1', 'dev']) {
       expect(noApplySupported(line), line).toBe(false)
+    }
+    for (const line of ['0.26.0', '0.26.1', '0.27.0', '1.4.2']) {
+      expect(noApplySupported(line), line).toBe(true)
+    }
+  })
+
+  it('refuses every version while the floor is unset', () => {
+    for (const line of ['0.26.0', '1.4.2', '99.99.99']) {
+      expect(noApplySupported(line, null), line).toBe(false)
     }
   })
 

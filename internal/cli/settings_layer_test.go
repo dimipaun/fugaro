@@ -12,6 +12,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/settings"
@@ -67,10 +68,14 @@ func TestSettingsSetLayerProfileEntryWritesTheLayerFile(t *testing.T) {
 	if rf == nil || rf.Command != "pytest -k" {
 		t.Errorf("the loader reads the profile's rerun command as %v, want %q", rf, "pytest -k")
 	}
-	// And the write ends where every layer write ends (D1176): the publish is
-	// `fugaro update`'s own step and not a second command.
-	if !strings.Contains(out, "next: fugaro update") {
-		t.Errorf("the layer write does not end with the next step:\n%s", out)
+	// And the write ends where every project-layer write ends: the publish is
+	// the layer stage, which this command runs itself (composite AP5, D830/D831),
+	// and no line sends the operator to a second command (spec §1).
+	if !strings.Contains(out, "applied "+initflow.Layer) {
+		t.Errorf("the layer write does not end on the stage that publishes it:\n%s", out)
+	}
+	if strings.Contains(out, "next:") {
+		t.Errorf("the layer write hands off to a second command:\n%s", out)
 	}
 }
 

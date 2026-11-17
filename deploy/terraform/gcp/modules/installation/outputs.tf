@@ -138,6 +138,15 @@ output "intake" {
   }
 }
 
+output "voice_service" {
+  description = "The voice hop's Cloud Run service name, region and URL, or null while the installation has not opted in. This is the ONE output of the three services that is not read back into a variable: the hop's audience is the installation's Firebase project and not its own URL (var.voice_service carries no url member), so there is no fill step and no second apply. url is published for the operator and for the checks that read an installation back — nothing in this module consumes it, and internal/cli does not write it anywhere."
+  value = var.voice_service == null ? null : {
+    name   = google_cloud_run_v2_service.voice[0].name
+    region = var.region
+    url    = google_cloud_run_v2_service.voice[0].uri
+  }
+}
+
 output "project_secrets" {
   description = "The project-wide secret containers by logical name (their secret IDs), so a consumer waits for the container: the project job module grants each job the ones its profile mounts."
   value       = { for name, s in google_secret_manager_secret.project : name => s.secret_id }

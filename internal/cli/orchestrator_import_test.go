@@ -11,11 +11,18 @@ package cli
 // against the state it found.
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/orchestrator"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // emptyOrchestratorState is the node a one-time import lands on: nobody has
@@ -228,5 +235,564 @@ func TestImportRefusesAnOversizeDump(t *testing.T) {
 
 	if v := f.db.Value(orchestratorPath(t, orchestrator.StateNode)); v != nil {
 		t.Error("a refused dump wrote the state node")
+	}
+}
+
+// TestImportDumpJSONIsThePatchDocument: `--json` on the dump path prints
+// `orchestrator patch --json`'s own document, because the dump is a patch
+// document and the write that landed is the same write. It is additive — the
+// prose path is untouched — and it is here so the flag means one thing on both
+// paths rather than printing prose over a dump.
+func TestImportDumpJSONIsThePatchDocument(t *testing.T) {
+	newOrchestratorFixture(t)
+	asPerson(t)
+	path := patchFile(t, patchDoc(t, 0, workItemUpsert("web-fix", "fix the web build")))
+
+	out, _, err := runOrchestrator(t, "", "orchestrator", "import", "-f", path, "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	orchestratorDocMatchesSchema(t, out)
+	var doc struct {
+		Kind  string `json:"kind"`
+		ID    string `json:"id"`
+		Rev   int64  `json:"rev"`
+		Actor string `json:"actor"`
+		Ops   int    `json:"ops"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("the document is not JSON: %v\n%s", err, out)
+	}
+	if doc.Kind != "patch" || doc.ID != orchestratorTestID || doc.Actor != string(orchestrator.Person) || doc.Ops != 1 || doc.Rev != 1 {
+		t.Errorf("the dump's document is %+v, and the dump lands as the person, one op, at rev 1", doc)
+	}
+}
+
+// G1: `--plan`, a plan's graph imported into the plan's own node (docs/
+// orchestrator-graph-estimates, D2704, D2735, D2737). The unit's own tests
+// (internal/orchestrator) hold what one import writes; these hold what the
+// command around it does — where it reads the graph and the plan from, that a
+// graph it refuses leaves the node untouched, and that --json prints the
+// document an approval of the plan's items takes.
+
+// planImportGraph is the fixture's graph: three tasks, A sized trivial, B
+// large and C unsized, with B and C waiting on A.
+const planImportGraph = `{
+  "schema_version": 3,
+  "plan": "docs/demo/implementation-plan.md",
+  "nodes": [
+    {"id": "A", "title": "build the thing", "run": null, "version": null, "tier": "trivial",
+     "footprint": {"prediction": true, "paths": ["internal/a.go"]}},
+    {"id": "B", "title": "use the thing", "run": null, "version": null, "tier": "large",
+     "footprint": {"prediction": true, "paths": ["internal/b.go"]}},
+    {"id": "C", "title": "describe the thing", "run": null, "version": null,
+     "footprint": {"prediction": true, "paths": ["internal/c.go"]}}
+  ],
+  "edges": [
+    {"task": "B", "needs": "A", "reason": "one file: both edit internal/b.go"},
+    {"task": "C", "needs": "A", "reason": "one file: both edit internal/a.go"}
+  ]
+}
+`
+
+// planImportDottedGraph is a graph whose task is numbered the way two of the
+// committed plans number theirs, with a dot: the id rule an item id goes by
+// admits none (F37), so the import has no item to write for this node.
+const planImportDottedGraph = `{
+  "schema_version": 3,
+  "plan": "docs/demo/implementation-plan.md",
+  "nodes": [
+    {"id": "SA2.1", "title": "the task numbered with a dot", "run": null, "version": null,
+     "footprint": {"prediction": true, "paths": ["internal/a.go"]}}
+  ],
+  "edges": []
+}
+`
+
+// planImportSectionlessGraph is a graph naming a task the plan it points at does
+// not describe: there is no section to hash, so no brief for it is writeable.
+const planImportSectionlessGraph = `{
+  "schema_version": 3,
+  "plan": "docs/demo/implementation-plan.md",
+  "nodes": [
+    {"id": "Z", "title": "the task the plan never mentions", "run": null, "version": null,
+     "footprint": {"prediction": true, "paths": ["internal/z.go"]}}
+  ],
+  "edges": []
+}
+`
+
+// planImportPlanMD is the plan those tasks are described in: one section each,
+// which is what a brief pins the hash of.
+const planImportPlanMD = `# The demo plan
+
+Prose that belongs to no task.
+
+### A: build the thing
+
+Do A, and nothing else.
+
+- **Acceptance**: A builds.
+
+### B: use the thing
+
+Do B, which needs A.
+
+### C: describe the thing
+
+Do C.
+`
+
+// planImportSectionA is A's section as a reader of the plan sees it, written out
+// here so the digest the brief carries is checked against a reader's own
+// arithmetic rather than the code that produced it.
+const planImportSectionA = "### A: build the thing\n\nDo A, and nothing else.\n\n- **Acceptance**: A builds.\n"
+
+// planImportCheckout is planImportCheckoutAt for the one folder every plan of
+// the fixture sits in, docs/demo.
+func planImportCheckout(t *testing.T, graph, planMD string) string {
+	t.Helper()
+	return planImportCheckoutAt(t, "docs/demo", graph, planMD)
+}
+
+// planImportCheckoutAt writes a checkout holding a plan at folder and its graph,
+// with an origin remote naming the repository the items are for, and returns its
+// path. The command reads the graph off disk and the plan's text at HEAD, so the
+// two have to be a real checkout with a real commit for any of this to mean
+// anything: a fixture with the files and no history would test neither pin.
+func planImportCheckoutAt(t *testing.T, folder, graph, planMD string) string {
+	t.Helper()
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "--quiet", "-b", "main")
+	testutil.WriteFiles(t, dir, map[string]string{
+		folder + "/implementation-plan.graph.json": graph,
+		folder + "/implementation-plan.md":         planMD,
+	})
+	// The URL is read and never reached: the import takes the repository's
+	// owner/name from origin and asks the network for nothing.
+	testutil.Git(t, dir, "remote", "add", "origin", "https://github.com/acme/app.git")
+	testutil.Git(t, dir, "add", "-A")
+	testutil.Git(t, dir, "commit", "--quiet", "-m", "the plan and its graph")
+	return dir
+}
+
+// planImportPath is the plan node's path, built by the package that owns it.
+func planImportPath(t *testing.T, plan string) string {
+	t.Helper()
+	path, err := orchestrator.PathPlan(orchestratorTestID, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// storedPlanState reads a plan's node back the way the CLI reads it.
+func storedPlanState(t *testing.T, f *budgetFixture, plan string) orchestrator.State {
+	t.Helper()
+	v := f.db.Value(planImportPath(t, plan))
+	if v == nil {
+		t.Fatalf("the node of plan %s is not written", plan)
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := orchestrator.DecodeState(raw)
+	if err != nil {
+		t.Fatalf("reading the plan's node back: %v", err)
+	}
+	return s
+}
+
+// planImportDocDigest is the digest of one task's section, computed the way the
+// brief says a run computes it: the SHA-256 of the section's text.
+func planImportDocDigest(t *testing.T, section string) string {
+	t.Helper()
+	sum := sha256.Sum256([]byte(section))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// TestOrchestratorImportPlanWritesTheGraph is G1 at the command: the graph under
+// <folder>/implementation-plan.graph.json becomes the items of the plan's own
+// node, and nothing at all of the state node.
+//
+// Mutation: write into the state node rather than the plan's, and the last
+// assertion fails; take the plan name from the graph's node ids rather than the
+// folder, and the plan task and the node's path disagree.
+func TestOrchestratorImportPlanWritesTheGraph(t *testing.T) {
+	f := newOrchestratorFixture(t)
+	dir := planImportCheckout(t, planImportGraph, planImportPlanMD)
+	t.Chdir(dir)
+	commit := testutil.Git(t, dir, "rev-parse", "HEAD")
+
+	out, _, err := runOrchestrator(t, "", "orchestrator", "import", "--plan", "docs/demo")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, want := range []string{"imported 3 ops into demo's node as a session", "3 of the plan's 3 tasks unapproved"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the import does not say %q:\n%s", want, out)
+		}
+	}
+	if v := f.db.Value(orchestratorPath(t, orchestrator.StateNode)); v != nil {
+		t.Error("the import wrote the state node: a plan's items live in the plan's own node (D2735)")
+	}
+
+	s := storedPlanState(t, f, "demo")
+	if len(s.WorkItems) != 3 {
+		t.Fatalf("the plan's node holds %d work items, want one per node of the graph", len(s.WorkItems))
+	}
+	wantDigest := planImportDocDigest(t, planImportSectionA)
+	for _, tc := range []struct {
+		id, title, tier string
+		deps            []string
+	}{
+		{id: "A", title: "build the thing", tier: "trivial"},
+		{id: "B", title: "use the thing", tier: "large", deps: []string{"A"}},
+		{id: "C", title: "describe the thing", tier: "medium", deps: []string{"A"}},
+	} {
+		w, ok := s.Item(tc.id)
+		if !ok {
+			t.Fatalf("the graph's task %q was not imported", tc.id)
+		}
+		if w.Title != tc.title || w.RigorTier != tc.tier || w.Spec != "demo" || w.PlanTask != "demo/"+tc.id {
+			t.Errorf("item %q is %q/%s spec %q task %q", tc.id, w.Title, w.RigorTier, w.Spec, w.PlanTask)
+		}
+		if w.Repo != "acme/app" {
+			t.Errorf("item %q is for %q, and origin names acme/app", tc.id, w.Repo)
+		}
+		if !slices.Equal(w.DependsOn, tc.deps) {
+			t.Errorf("item %q depends on %v, want %v", tc.id, w.DependsOn, tc.deps)
+		}
+		if w.Phase != orchestrator.PhaseQueued || w.Approved != nil {
+			t.Errorf("item %q arrived %s and approved by %v, and the import approves nothing", tc.id, w.Phase, w.Approved)
+		}
+	}
+	a, _ := s.Item("A")
+	if !strings.Contains(a.Brief, "docs/demo/implementation-plan.md") {
+		t.Errorf("A's brief does not name the plan document: %q", a.Brief)
+	}
+	if !strings.Contains(a.Brief, commit) {
+		t.Errorf("A's brief does not pin the checkout's HEAD (%s): %q", commit, a.Brief)
+	}
+	if !strings.Contains(a.Brief, wantDigest) {
+		t.Errorf("A's brief does not carry the SHA-256 of its section (%s): %q", wantDigest, a.Brief)
+	}
+	if !strings.HasPrefix(a.Brief, "# Task: demo A: build the thing\n") {
+		t.Errorf("A's brief does not open with the task's own line: %q", a.Brief)
+	}
+}
+
+// TestOrchestratorImportPlanReadsThePlanAtTheCommit: the section a brief hashes
+// is the section at the commit the brief pins, not whatever the working tree
+// holds. A plan edited but not committed is a plan no approval can bind — the
+// run reads the plan at the commit — so hashing the working tree would put a
+// digest in the brief that the run then refuses to match (F49).
+func TestOrchestratorImportPlanReadsThePlanAtTheCommit(t *testing.T) {
+	f := newOrchestratorFixture(t)
+	dir := planImportCheckout(t, planImportGraph, planImportPlanMD)
+	t.Chdir(dir)
+	edited := strings.Replace(planImportPlanMD, "Do A, and nothing else.", "Do A differently, in a way nobody has committed.", 1)
+	if err := os.WriteFile(filepath.Join(dir, "docs/demo/implementation-plan.md"), []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runOrchestrator(t, "", "orchestrator", "import", "--plan", "docs/demo"); err != nil {
+		t.Fatalf("the import refused a checkout with an uncommitted plan edit: %v", err)
+	}
+	a, _ := storedPlanState(t, f, "demo").Item("A")
+	if !strings.Contains(a.Brief, planImportDocDigest(t, planImportSectionA)) {
+		t.Errorf("the brief does not pin the committed section: %q", a.Brief)
+	}
+	if strings.Contains(a.Brief, planImportDocDigest(t, strings.Replace(planImportSectionA, "Do A, and nothing else.", "Do A differently, in a way nobody has committed.", 1))) {
+		t.Error("the brief pinned the section the working tree holds, which no commit carries")
+	}
+}
+
+// TestOrchestratorImportPlanJSONIsTheDocumentTheApprovalTakes: --json prints the
+// items with the digests `plan_approve` takes (D2706), which is the whole reason
+// a session can hand the plan over without approving anything itself. The
+// document is held to schemas/orchestrator-output.schema.json, the contract its
+// readers go by.
+func TestOrchestratorImportPlanJSONIsTheDocumentTheApprovalTakes(t *testing.T) {
+	f := newOrchestratorFixture(t)
+	dir := planImportCheckout(t, planImportGraph, planImportPlanMD)
+	here, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	commit := testutil.Git(t, dir, "rev-parse", "HEAD")
+
+	out, _, err := runOrchestrator(t, "", "orchestrator", "import", "--plan", "docs/demo", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	// The schema is read from the checkout this test came from, so the
+	// document is held to the contract beside the code rather than to nothing.
+	t.Chdir(here)
+	orchestratorDocMatchesSchema(t, out)
+	var doc struct {
+		Version int    `json:"version"`
+		Kind    string `json:"kind"`
+		ID      string `json:"id"`
+		Plan    string `json:"plan"`
+		Commit  string `json:"commit"`
+		Rev     int64  `json:"rev"`
+		Ops     int    `json:"ops"`
+		Items   []struct {
+			ID     string `json:"id"`
+			Digest string `json:"digest"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("the document is not JSON: %v\n%s", err, out)
+	}
+	if doc.Kind != "plan_import" || doc.ID != orchestratorTestID || doc.Plan != "demo" || doc.Commit != commit {
+		t.Errorf("the document is %+v, and it should report the plan import of demo at %s", doc, commit)
+	}
+	if doc.Ops != 3 || doc.Rev != 1 {
+		t.Errorf("the document reports %d ops at rev %d, want 3 at 1", doc.Ops, doc.Rev)
+	}
+	s := storedPlanState(t, f, "demo")
+	seen := map[string]bool{}
+	for _, it := range doc.Items {
+		w, ok := s.Item(it.ID)
+		if !ok {
+			t.Fatalf("the document names the item %q, which the node does not hold", it.ID)
+		}
+		// The digest is the one an approval binds: what the state model itself
+		// computes over the item, and not a value the command derived its own
+		// way.
+		if it.Digest != string(orchestrator.SpecDigest(w)) {
+			t.Errorf("the document's digest for %q is %s, and the item hashes to %s", it.ID, it.Digest, orchestrator.SpecDigest(w))
+		}
+		if w.Approved != nil {
+			t.Errorf("the item %q is approved, and the import approves nothing", it.ID)
+		}
+		seen[it.ID] = true
+	}
+	for _, id := range []string{"A", "B", "C"} {
+		if !seen[id] {
+			t.Errorf("the document does not name the item %q", id)
+		}
+	}
+}
+
+// TestOrchestratorImportPlanReimportWritesNothing: running it again over the
+// node it wrote changes nothing at all — not a revision, not a digest — which is
+// what leaves the approvals a person gave over the plan's items standing
+// (D2745). The command says so rather than reporting a write it did not make.
+func TestOrchestratorImportPlanReimportWritesNothing(t *testing.T) {
+	f := newOrchestratorFixture(t)
+	dir := planImportCheckout(t, planImportGraph, planImportPlanMD)
+	t.Chdir(dir)
+	if _, _, err := runOrchestrator(t, "", "orchestrator", "import", "--plan", "docs/demo"); err != nil {
+		t.Fatalf("%v", err)
+	}
+	before := storedPlanState(t, f, "demo")
+	digests := map[string]string{}
+	for _, w := range before.WorkItems {
+		digests[w.ID] = string(orchestrator.SpecDigest(w))
+	}
+
+	out, _, err := runOrchestrator(t, "", "orchestrator", "import", "--plan", "docs/demo")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "nothing to write") {
+		t.Errorf("the second import does not say it wrote nothing:\n%s", out)
+	}
+	after := storedPlanState(t, f, "demo")
+	if after.Rev != before.Rev {
+		t.Errorf("the second import moved the node from rev %d to %d, and it wrote no op", before.Rev, after.Rev)
+	}
+	for _, w := range after.WorkItems {
+		if digests[w.ID] != string(orchestrator.SpecDigest(w)) {
+			t.Errorf("the item %q changed under a re-import that wrote nothing", w.ID)
+		}
+	}
+}
+
+// TestOrchestratorImportPlanRefusedGraphWritesNothing: a graph this build cannot
+// honour is refused whole, and the plan's node is left exactly as it was — not
+// created, not partly written. This is G1's own acceptance sentence, and the
+// graph here is one of the two committed plans whose task ids carry dots (F37).
+func TestOrchestratorImportPlanRefusedGraphWritesNothing(t *testing.T) {
+	f := newOrchestratorFixture(t)
+	dir := planImportCheckout(t, planImportDottedGraph, planImportPlanMD)
+	t.Chdir(dir)
+
+	out, _, err := runOrchestrator(t, "", "orchestrator", "import", "--plan", "docs/demo")
+	if err == nil {
+		t.Fatalf("a graph whose task ids carry dots was imported:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "F37") {
+		t.Errorf("the refusal does not say why the id cannot be one: %v", err)
+	}
+	if v := f.db.Value(planImportPath(t, "demo")); v != nil {
+		t.Error("the refused graph wrote the plan's node")
+	}
+	if v := f.db.Value(orchestratorPath(t, orchestrator.StateNode)); v != nil {
+		t.Error("the refused graph wrote the state node")
+	}
+
+	// The same graph with a task the plan describes in no section is refused
+	// too: a brief pins the section's hash, and there is none to pin.
+	dir = planImportCheckout(t, planImportSectionlessGraph, planImportPlanMD)
+	t.Chdir(dir)
+	if _, _, err := runOrchestrator(t, "", "orchestrator", "import", "--plan", "docs/demo"); err == nil {
+		t.Error("a graph with a task the plan does not describe was imported")
+	} else if !strings.Contains(err.Error(), "describes no section") {
+		t.Errorf("the refusal does not say the plan describes no such section: %v", err)
+	}
+}
+
+// TestOrchestratorImportRefusesTwoDocumentsAtOnce, and the bare run: `import`
+// loads one document or the other, and it says which flags there are rather than
+// picking one. A bare run reads nothing at all — the closed stdin of the
+// no-prompt harness is no document — which is why the refusal is made before any
+// read.
+func TestOrchestratorImportRefusesTwoDocumentsAtOnce(t *testing.T) {
+	f := newOrchestratorFixture(t)
+	dir := planImportCheckout(t, planImportGraph, planImportPlanMD)
+	t.Chdir(dir)
+	path := patchFile(t, patchDoc(t, 0, workItemUpsert("web-fix", "fix the web build")))
+
+	if _, _, err := runOrchestrator(t, "", "orchestrator", "import", "--plan", "docs/demo", "-f", path); err == nil {
+		t.Error("the import accepted a plan and a dump in one run")
+	} else if !strings.Contains(err.Error(), "not both") {
+		t.Errorf("the refusal does not say two documents were given: %v", err)
+	}
+	out, _, err := runOrchestrator(t, "", "orchestrator", "import")
+	if err == nil {
+		t.Fatalf("a bare import read something:\n%s", out)
+	}
+	for _, want := range []string{"--plan", "-f"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %s: %v", want, err)
+		}
+	}
+	if v := f.db.Value(planImportPath(t, "demo")); v != nil {
+		t.Error("a refused run wrote the plan's node")
+	}
+}
+
+// TestOrchestratorImportPlanHashesTheFileItsBriefsName: the brief every item
+// carries sends a run to docs/<plan>/implementation-plan.md, with the plan's
+// name folded the way the node's path folds it, and the digest beside it covers
+// a section of one file. So the plan has to be that file: a folder outside
+// docs/, a folder whose case the fold changes, or a graph naming another
+// document in its own folder would put a digest over a document the run never
+// opens, and the approval would bind text nobody reads (F49, D2737).
+//
+// Mutation: drop either check in runOrchestratorPlanImport and the shape it
+// covers imports here, writing items whose brief points at a path the hashed
+// text does not live at.
+func TestOrchestratorImportPlanHashesTheFileItsBriefsName(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		folder string
+		plan   string // the document the graph names, relative to the checkout
+		args   string // the folder --plan is given
+		says   string // what the refusal has to name
+	}{
+		{
+			name:   "a folder outside docs/",
+			folder: "notdocs",
+			plan:   "notdocs/implementation-plan.md",
+			args:   "notdocs",
+			says:   "docs/notdocs",
+		},
+		{
+			name:   "a folder whose case the fold changes",
+			folder: "docs/Demo",
+			plan:   "docs/Demo/implementation-plan.md",
+			args:   "docs/Demo",
+			says:   "docs/demo",
+		},
+		{
+			name:   "a graph naming another document in its folder",
+			folder: "docs/demo",
+			plan:   "docs/demo/other.md",
+			args:   "docs/demo",
+			says:   "docs/demo/other.md",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newOrchestratorFixture(t)
+			graph := strings.Replace(planImportGraph, `"plan": "docs/demo/implementation-plan.md"`, `"plan": "`+tc.plan+`"`, 1)
+			if graph == planImportGraph && tc.plan != "docs/demo/implementation-plan.md" {
+				t.Fatal("the fixture graph was not rewritten, so this case tests nothing")
+			}
+			t.Chdir(planImportCheckoutAt(t, tc.folder, graph, planImportPlanMD))
+
+			out, _, err := runOrchestrator(t, "", "orchestrator", "import", "--plan", tc.args)
+			if err == nil {
+				t.Fatalf("a plan whose briefs would name a file other than the one hashed was imported:\n%s", out)
+			}
+			if !strings.Contains(err.Error(), tc.says) {
+				t.Errorf("the refusal does not name %s: %v", tc.says, err)
+			}
+			if !strings.Contains(err.Error(), "nothing was written") {
+				t.Errorf("the refusal does not say nothing was written: %v", err)
+			}
+			// No plan node at all, whatever name the refused shape would have
+			// been given: the refusal is made before the node is even built.
+			plans, err := orchestrator.PathPlans(orchestratorTestID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if v := f.db.Value(plans); v != nil {
+				t.Error("the refused plan wrote a node")
+			}
+		})
+	}
+}
+
+// TestOrchestratorImportPlanNeedsACheckout: the graph is read from the plan
+// folder and the plan itself from git, so a run with no checkout to read is
+// refused rather than importing items with no pinned commit in them.
+func TestOrchestratorImportPlanNeedsACheckout(t *testing.T) {
+	newOrchestratorFixture(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+	_, _, err := runOrchestrator(t, "", "orchestrator", "import", "--plan", "docs/demo")
+	if err == nil {
+		t.Fatal("the import ran outside a checkout")
+	}
+	if !strings.Contains(err.Error(), "checkout") {
+		t.Errorf("the refusal does not say a checkout is needed: %v", err)
+	}
+}
+
+// TestOrchestratorImportPlanRefusesAPlanBelowDocs: a plan this command imports
+// is a folder of its own under docs/, because its name is the node's property
+// and the items' spec. A graph deeper than that — the plan documents in
+// docs/plans/ are named by date and title — has no single name to key them by, so
+// it is refused with the reason rather than keyed by a guess.
+func TestOrchestratorImportPlanRefusesAPlanBelowDocs(t *testing.T) {
+	f := newOrchestratorFixture(t)
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "--quiet", "-b", "main")
+	testutil.WriteFiles(t, dir, map[string]string{
+		"docs/plans/2026-01-01-the-demo/implementation-plan.graph.json": strings.Replace(planImportGraph, "docs/demo/", "docs/plans/2026-01-01-the-demo/", 1),
+		"docs/plans/2026-01-01-the-demo/implementation-plan.md":         planImportPlanMD,
+	})
+	testutil.Git(t, dir, "remote", "add", "origin", "https://github.com/acme/app.git")
+	testutil.Git(t, dir, "add", "-A")
+	testutil.Git(t, dir, "commit", "--quiet", "-m", "a plan below docs")
+	t.Chdir(dir)
+
+	out, _, err := runOrchestrator(t, "", "orchestrator", "import", "--plan", "docs/plans/2026-01-01-the-demo")
+	if err == nil {
+		t.Fatalf("a plan below docs/ was imported:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "folder of its own under docs/") {
+		t.Errorf("the refusal does not say where a plan this command imports sits: %v", err)
+	}
+	if v := f.db.Value(planImportPath(t, "plans")); v != nil {
+		t.Error("the refused plan wrote a node")
 	}
 }
