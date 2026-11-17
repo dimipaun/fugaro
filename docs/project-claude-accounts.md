@@ -696,7 +696,12 @@ on your terminal, and never from an argument, a flag or the environment — and 
 under the credential's own derived name, `credential-<name>-key`, rather than the account's. A key
 credential is added to **no** profile's list and rides no job of its own: what serves its key is the
 half its type names ([multi-model.md](multi-model.md) §"Crafts, credentials and pools"), which is
-also what the command's last line says. So `--profile` is **refused** with the two key types, and so
+also what the command's last line says. **What serves the key is not the `add` alone.** The
+credentials service reads the bundle and nothing else, so an `anthropic` key is served once
+`fugaro creds set credential-<name>-key` — the bundle's one writer, refused in a coding agent's
+session — has written the value there, and the run's own gateway mounts the key in the job of the
+provider of the same name, so an `openrouter` key is served once a `providers.<name>` entry exists.
+So `--profile` is **refused** with the two key types, and so
 is a name a profile already lists — that list is what deploys the job mounting the account's token,
 and the job would read a container nothing writes. Take the name off the list first
 (`fugaro accounts rm <name> --profile <profile>`) or declare the key credential under another name.
