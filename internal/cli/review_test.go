@@ -1409,8 +1409,8 @@ const bitbucketReviewClaim = "acme/bb"
 func bitbucketReviewPolicy() string {
 	widened := strings.Replace(projectJobAccountsPolicy,
 		`"allow_repos":["github/acme/*"]`, `"allow_repos":["github/acme/*","bitbucket/acme/*"]`, 1)
-	return strings.Replace(widened, `{"version":5,`,
-		`{"version":5,"bitbucket_token":{"allow_repos":["bitbucket/acme/*"],"proxy":true},`, 1)
+	return strings.Replace(widened, `{"version":9,`,
+		`{"version":9,"bitbucket_token":{"allow_repos":["bitbucket/acme/*"],"proxy":true},`, 1)
 }
 
 // bitbucketReviewPolicyUnbrokered is bitbucketReviewPolicy with the operator's
