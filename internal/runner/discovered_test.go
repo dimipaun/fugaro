@@ -3,6 +3,7 @@ package runner_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -45,13 +46,19 @@ func writeState(body string) func(t *testing.T, req agent.Request) {
 // Mutation (read the file from the checkout instead of the state directory):
 // TestDiscoveredFileInCheckoutIgnored fails, and this one finds nothing.
 // Mutation (copy the lists through unbounded): the clipped reason this test
-// measures comes back at its written length.
+// measures comes back at its written length. Mutation (copy them through
+// runstore.NewDiscovered without redacting them): the value the file echoes
+// out of the run's own environment comes back in the clear.
 func TestDiscoveredFileCopiedIntoRecord(t *testing.T) {
 	h := newHarness(t, "", nil)
+	secret := envValue(h.deps.Env, "ANTHROPIC_API_KEY")
+	// redacted is the word every redaction writes in a value's place.
+	const redacted = "[REDACTED]"
 	long := strings.Repeat("why ", runstore.MaxDiscoveredText)
 	body := `{"blocks":[` +
 		`{"plan_task":"E3","reason":"the fold reads what this run writes"},` +
-		`{"path":"internal/runner/discovered.go","reason":"` + long + `"}],` +
+		`{"path":"internal/runner/discovered.go","reason":"` + long + `"},` +
+		`{"plan_task":"E3","reason":"the key is ` + secret + `"}],` +
 		`"needed":[{"plan_task":"X2","reason":"the record's own shapes"}]}`
 	rec, err := h.run(t, then(implement("feature"), writeState(body)), review("ship", 0))
 	if err != nil {
@@ -68,14 +75,23 @@ func TestDiscoveredFileCopiedIntoRecord(t *testing.T) {
 	if d == nil {
 		t.Fatalf("the record carries no discovered block: %+v", stored)
 	}
-	if want := (runstore.DiscoveredItem{PlanTask: "E3", Reason: "the fold reads what this run writes"}); len(d.Blocks) != 2 || d.Blocks[0] != want {
-		t.Fatalf("blocks = %+v, want the task entry the file named first", d.Blocks)
+	if want := (runstore.DiscoveredItem{PlanTask: "E3", Reason: "the fold reads what this run writes"}); len(d.Blocks) != 3 || d.Blocks[0] != want {
+		t.Fatalf("blocks = %+v, want the three entries the file named, in its order", d.Blocks)
 	}
 	if it := d.Blocks[1]; it.Path != "internal/runner/discovered.go" || len([]rune(it.Reason)) != runstore.MaxDiscoveredText || !strings.HasPrefix(long, it.Reason) {
 		t.Fatalf("the second block entry = %+v, want the path entry with its reason clipped to %d runes", it, runstore.MaxDiscoveredText)
 	}
 	if want := (runstore.DiscoveredItem{PlanTask: "X2", Reason: "the record's own shapes"}); len(d.Needed) != 1 || d.Needed[0] != want {
 		t.Fatalf("needed = %+v, want the entry the file named", d.Needed)
+	}
+	// The block is published text like everything else the run writes: an
+	// agent that echoed a value out of its own environment into a reason does
+	// not put it on the record in the clear.
+	if got := d.Blocks[2]; got.Reason != "the key is "+redacted {
+		t.Fatalf("the third block entry = %+v, want the value in its reason redacted", got)
+	}
+	if raw, err := json.Marshal(stored.Discovered); err != nil || strings.Contains(string(raw), secret) {
+		t.Fatalf("the record's block carries the value in the clear (%v): %s", err, raw)
 	}
 	if !reflect.DeepEqual(rec.Discovered, d) {
 		t.Fatalf("the run's own record carries %+v and the stored one %+v", rec.Discovered, d)
