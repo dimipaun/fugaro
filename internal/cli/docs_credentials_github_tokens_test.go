@@ -37,9 +37,11 @@ import (
 // the keyless path is in the tree and not in effect while
 // internal/cli/run.go's credentialsServiceLaunchEnv sets the variable on a
 // repository job; the "The launch is what puts it there" paragraph's
-// "a repository's own job and on no other" clause changed to include shared
-// project jobs → FAIL, because the service refuses a shared job's account
-// (Global Constraint 6) and the variable is what opens the provider keyless; the
+// "on the shared project job a switched profile sends its runs to" clause
+// softened back to "and on no other" → FAIL, because the launch hands a
+// switched profile's shared job the address too (B5.2) and the paragraph's
+// pinned sentence would say the opposite while a reader takes the wiring the
+// wrong way; the
 // "A repository whose root has not been re-applied with the switch on gets no
 // variable at all" sentence
 // deleted → FAIL; the ErrMintNoAppKey sentence deleted → FAIL.
@@ -106,7 +108,7 @@ func TestDocsGitProvidersStateWhatReachesTheAgentExactly(t *testing.T) {
 		// environment") is banned below.
 		"**The launch is what puts it there**",
 		"`internal/cli/run.go`'s `credentialsServiceLaunchEnv`",
-		"a repository's own job and on no other",
+		"a repository's own job and on the shared project job a switched profile sends its runs to",
 		"A repository whose root has not been re-applied with the switch on gets no variable at all",
 		// The bundle has to hold the key, or the mint is a named refusal.
 		"`ErrMintNoAppKey`",
