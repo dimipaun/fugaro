@@ -115,6 +115,24 @@ type Config struct {
 	// record, beside the policy stage's PolicyGeneration: one record per
 	// stage that publishes, and neither is wire.
 	LayerGeneration string `yaml:"layer_generation,omitempty"`
+	// RigorPending is the wizard's rigor answer (task W of
+	// docs/rigor-command/implementation-plan.md; D900) while it is still to be
+	// written into the project layer: the mode a person typed at the question
+	// (`defaults.rigor.default` of the layer file, written by the Layer stage).
+	//
+	// It is carried because the two writes are stages apart — the answer is
+	// given before the Installation stage writes this file, and the Layer stage
+	// that writes it into the layer file comes after the Repository stage — and
+	// a first run that fails or stops in between would otherwise lose a
+	// person's answer for good: the config it left means the next converge is
+	// not a first run, so the wizard asks nothing and `--rigor` is refused by
+	// name, and the project silently runs the built-in pro until the person
+	// finds `fugaro rigor set` (setupRigorRefusal, wizardResumesCreation's own
+	// reason one pause later). writeConfig writes it, and the Layer stage
+	// clears it once the layer file carries the mode: a value left behind would
+	// write the old answer over a later `fugaro rigor set` on the next
+	// converge.
+	RigorPending string `yaml:"rigor_pending,omitempty"`
 	// BaseImages are the base images the image builds and the daily image
 	// check start from, by base kind (config.Bases). A workflow builds from
 	// the image of its base kind, so a project needs an entry for each kind

@@ -123,6 +123,22 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,43}$",
           "description": "The plan's folder under docs/ the work belongs to (docs/forge-labels, R3), which becomes the daemon's `spec:<name>` label. Either case is accepted here and stored lower-cased; the class is ASCII and nothing else, so a name that would fold into a passing one — the Kelvin sign into a \"k\" — is refused as written. A session or a person sets it in the upsert that declares the item, and an upsert that omits it leaves the item's own alone."
         },
+        "external": {
+          "type": "string",
+          "pattern": "^github:[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*#[1-9][0-9]{0,18}$",
+          "description": "The external ticket this item is, as `github:<owner>/<repo>#<n>` (D2728): the owner and the name lower-case as the installation's own App answers them and GitHub the only host, because it is a dedupe key and two spellings of one ticket would be two items. The ingest builds it and writes it as built — it is checked for shape and never folded. The daemon's alone to write, like the fields below it, and unique across the node's items."
+        },
+        "body_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "The SHA-256 of the external ticket's body as it was when the item was ingested, lower-case hex (D2720). The ingest writes it, and it is digested: an item whose issue was edited is not the work a person approved, so the approval is revoked the way any other spec change revokes it."
+        },
+        "plan_task": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+$",
+          "maxLength": 128,
+          "description": "The plan node the item is, as `<plan>/<task>` in the shape task.PlanTaskProblem checks (D2704), the same shape and the same bound as the launch record's own field (schemas/task.schema.json). The plan import writes it, and it is part of the spec a person approves: an upsert that changes it revokes a standing approval like any other declaration. Two rules of task.PlanTaskProblem the pattern cannot carry are that a '.' or '..' element and a control character are refused."
+        },
         "brief": { "type": "string", "minLength": 1, "maxLength": 2000 },
         "depends_on": {
           "type": "array",
@@ -130,6 +146,10 @@
           "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$" }
         },
         "note": { "type": "string", "maxLength": 600 },
+        "adopted": {
+          "type": "boolean",
+          "description": "Set on an item the daemon wrote for a run already in flight when it took that run's id over (D2702). The daemon's alone to write, and bookkeeping: it says how the item entered the node rather than what the work is, so it moves no digest and the ladder skips every rung that merges for such an item until a person approves it."
+        },
         "phase": {
           "enum": ["queued", "running", "review", "done", "failed", "blocked", "cancelled"],
           "description": "The daemon's to write, like the fields below it: a patch from a session or a person that carries one of them is refused whole, so an approved item cannot be requeued by whoever is told to carry it out."

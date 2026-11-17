@@ -248,8 +248,22 @@ const (
 // cache_write_1h (D2646, R4). All six name the `models` family, which is where
 // `fugaro models price set` writes an entry's prices (D2613), so the generic
 // path carries none of them.
+//
+// R1 of docs/orchestrator-graph-estimates/ is the last mover, by two rows and by
+// none: the orchestrator's switch `orchestrator_enabled` (D2701, D2739) and the
+// project's issue adapter `issue_sync` (D2733) are top-level keys of the
+// published policy node and of nothing else, so `policy` is the whole of their
+// Layers — and both name the `project` family, the family whose command is the
+// node's door, so the generic path refuses them in its name rather than writing
+// them somewhere they do not live.
+//
+// W of docs/rigor-command/ moved it once more, by one row and by none: the local
+// project config gains `rigor_pending`, the wizard's rigor answer waiting for
+// the Layer stage that writes it into the project layer (D900), and its owner is
+// `setup` — the door whose run is asked the question and writes the answer down,
+// and whose Layer stage clears the key — so the generic path carries none of it.
 const (
-	cfmRegistryRows   = 478
+	cfmRegistryRows   = 481
 	cfmAllowlistNamed = 118
 )
 

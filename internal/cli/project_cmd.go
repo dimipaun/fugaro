@@ -1429,6 +1429,25 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		// publish gets here. It is what the diff reads (printPolicyDiff's kept
 		// line) and what the node is built from.
 		pol.ModelGrades = old.ModelGrades
+		// The daemon's switch and the project's issue adapter are kept for the
+		// model grades' reason (R1 of docs/orchestrator-graph-estimates, D2701,
+		// D2733, D2739): no key of this machine's config states either — the
+		// switch is the project's own answer to whether the daemon launches, and
+		// the adapter is which repositories' issues the backlog is fed from —
+		// and the node is the only place both exist. A publish that built a node
+		// without them would turn the daemon back on for a project whose owner
+		// turned it off, and stop ingesting the issues of a project whose
+		// adapter names repositories, silently, from a machine whose config
+		// merely predates the keys.
+		//
+		// The typed copy is the whole of both, the credentials block's reading:
+		// the adapter is strict inside (decodeIssueSync, its nested block
+		// included), so a member this Fugaro does not model is refused by
+		// publishedPolicyOf before a publish gets here, and the switch is one
+		// bool. The two are what the diff reads (printPolicyDiff's kept lines)
+		// and what the node is built from.
+		pol.OrchestratorEnabled = old.OrchestratorEnabled
+		pol.IssueSync = old.IssueSync
 	}
 	// The crafts' credentials, their pools and the crafts that choose among
 	// them are the operator's own blocks from this release on (docs/model-crafts
@@ -2581,6 +2600,19 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	if new.ModelGrades != nil {
 		fmt.Fprintf(out, "  model_grades kept: %s\n", modelGradesText(new.ModelGrades))
 	}
+	// The daemon's switch and the project's issue adapter are kept too (R1 of
+	// docs/orchestrator-graph-estimates, D2701, D2733), and the operator reading
+	// this diff has to be told: no key of this machine's config states either,
+	// so the member is unchanged and no +/- line above mentions it — and a
+	// person who turned the daemon off, or named the repositories whose issues
+	// feed the backlog, would read that silence as "it is gone". It is the model
+	// grades' line and the clone URLs' `kept` one, for the same reason.
+	if new.OrchestratorEnabled != nil {
+		fmt.Fprintf(out, "  orchestrator_enabled kept: %v\n", *new.OrchestratorEnabled)
+	}
+	if new.IssueSync != nil {
+		fmt.Fprintf(out, "  issue_sync kept: %s\n", issueSyncText(new.IssueSync))
+	}
 	// The crafts, their credentials and their pools are the operator's own
 	// blocks (docs/model-crafts §1–3, MC18, D1667), so a publish that writes
 	// them names them: a credential by its name and its type, a pool by its
@@ -2720,6 +2752,26 @@ func modelGradesText(g *projectpolicy.ModelGrades) string {
 		return "written with no grade in it"
 	}
 	return strings.Join(parts, ", ")
+}
+
+// issueSyncText is the issue adapter as one line: the repositories whose open
+// issues are ingested into the backlog, and whether an item of the project with
+// no spec and no external id opens an issue of its own (D2719, D2733). Only what
+// the block writes is printed, the credentials block's line: an absent `github`
+// is the absent adapter and not an adapter with no repository, and a mirror that
+// is not written is off.
+func issueSyncText(b *projectpolicy.IssueSync) string {
+	if b == nil || b.GitHub == nil {
+		return "none"
+	}
+	repos := "no repository"
+	if len(b.GitHub.Repos) > 0 {
+		repos = strings.Join(b.GitHub.Repos, ", ")
+	}
+	if b.GitHub.Mirror {
+		return repos + ", mirror on: an item with no spec and no external id opens an issue"
+	}
+	return repos
 }
 
 // binariesText is the binaries block as one line, member by member and only the

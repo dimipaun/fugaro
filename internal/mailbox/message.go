@@ -726,6 +726,20 @@ type Agent struct {
 	Name string
 }
 
+// AgentList is an advertised agent list as the wire carries it: each agent an
+// object of its two fields, in the order it was advertised (the array's order
+// is in the covered bytes, so "the first agent" is a fact about the record the
+// phone reads and the consumer signs). It exists so that the one writer of the
+// list — the heartbeat's signer — and every reader of it build the same values,
+// which is what makes a tag over them a tag over what is stored.
+func AgentList(agents []Agent) []any {
+	list := make([]any, 0, len(agents))
+	for _, agent := range agents {
+		list = append(list, Record{"id": agent.ID, "name": agent.Name})
+	}
+	return list
+}
+
 // ValidateMessage decides whether r is a mailbox message.
 //
 // It mirrors shared/mailbox-schema's validateMessage field for field and in the

@@ -169,6 +169,246 @@ func TestFinalizeRefusesAnIntentToAddBinary(t *testing.T) {
 	}
 }
 
+// replacingTrackedSymlink is the payload left at a path the base commit holds a
+// *symlink* at, and the reason it is a leftover like any other: the link is
+// removed first — writing through it would edit the file it points at — so what
+// the checkout holds there is a regular file where HEAD's entry is a link. No
+// listing that asks about tracked-ness alone sees it (the path is tracked, so
+// `ls-files --others` skips it) and no list of *additions* sees it either (git
+// calls the row `T`, a typechange): it is the file `git add -A` at finalize
+// carries, and the base never held bytes there to be the run's own.
+func replacingTrackedSymlink(t *testing.T, req agent.Request, name string) {
+	t.Helper()
+	if err := os.Remove(filepath.Join(req.Dir, name)); err != nil {
+		t.Fatal(err)
+	}
+	compiledBinary(t, req, name)
+}
+
+// TestFinalizeRefusesABinaryLeftAtATrackedSymlink: the typechange's uncommitted
+// side. The branch is cut from a base tracking a link at the path, the run puts
+// a compiled file there and never commits it, and what it left is a payload at a
+// path no list admits: the run is a draft whose reason names the file, and the
+// branch keeps the base's link rather than the bytes.
+func TestFinalizeRefusesABinaryLeftAtATrackedSymlink(t *testing.T) {
+	const path = "assets/logo.webp"
+	h := newHarnessFiles(t, gwConfig(t, ""), nil, nil)
+	symlinkInBase(t, h, path, "logo-target.bin")
+	rec, err := h.run(t, implementLeaving(path, replacingTrackedSymlink), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("record = status %s, outcome %s, reason %q; want a draft: what the run left where the base tracks a link is a payload", rec.Status, rec.Outcome, rec.Reason)
+	}
+	for _, want := range []string{path, "it is not text"} {
+		if !strings.Contains(rec.Reason, want) {
+			t.Errorf("reason = %q; want it to name %q", rec.Reason, want)
+		}
+	}
+	// The branch carries the path, because the base does: what says the payload
+	// was not committed is the entry's mode — the base's symlink (120000) and
+	// not the regular file git would write for the bytes.
+	if entry := testutil.Git(t, h.remote, "ls-tree", "-r", rec.Branch, "--", path); !strings.HasPrefix(entry, "120000 ") {
+		t.Errorf("the branch carries %q at %s; want the base's symlink, entry mode 120000: the payload was committed", entry, path)
+	}
+	if !slices.Contains(branchFiles(t, h, rec.Branch), "feature.txt") {
+		t.Errorf("the branch does not carry the run's own work: %v", branchFiles(t, h, rec.Branch))
+	}
+}
+
+// commitPayload is the payload one step further along than stagedBinary: the
+// agent commits it itself, so no listing finalize's untracked check reads names
+// it — it is in a commit, and the run's own diff is the only reader that sees
+// it (spec.md §4.2).
+type commitPayload func(t *testing.T, req agent.Request, name string)
+
+// selfCommitBinary is that payload in its ordinary shape: the agent writes the
+// artifact and commits its work, `git add -A` and all.
+func selfCommitBinary(t *testing.T, req agent.Request, name string) {
+	t.Helper()
+	compiledBinary(t, req, name)
+	shell(t, req, "git add -A && git commit -qm 'Add a vendored tool'")
+}
+
+// commitIntentToAddBinary is F4's shape: `git add -N` records the path in the
+// index without its content and the commit that follows carries the bytes
+// anyway, so the payload is in a commit and in no listing either.
+func commitIntentToAddBinary(t *testing.T, req agent.Request, name string) {
+	t.Helper()
+	compiledBinary(t, req, name)
+	shell(t, req, "git add -N "+name+" && git commit -qam 'Add a vendored tool'")
+}
+
+// selfCommitBinaryClaimedText is the payload with the one line that changes
+// git's own answer about it: a committed .gitattributes marking the path
+// diffable, which makes `git diff --numstat` count its lines and report it as
+// text. The bytes are what the rule reads; this is the answer it must not.
+func selfCommitBinaryClaimedText(t *testing.T, req agent.Request, name string) {
+	t.Helper()
+	compiledBinary(t, req, name)
+	if err := os.WriteFile(filepath.Join(req.Dir, ".gitattributes"), []byte(name+" diff\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	shell(t, req, "git add -A && git commit -qm 'Add a vendored tool'")
+}
+
+// selfCommitBinaryReplaced is the payload with a ref planted under
+// refs/replace: HEAD is pointed at a commit carrying the base's own tree, so a
+// reader that follows replacement refs diffs a commit that added nothing while
+// the commit the branch really carries holds the payload. The doctored commit
+// keeps HEAD's parent and message, so the substitution is invisible to every
+// other reading.
+func selfCommitBinaryReplaced(t *testing.T, req agent.Request, name string) {
+	t.Helper()
+	compiledBinary(t, req, name)
+	shell(t, req, "git add -A && git commit -qm 'Add a vendored tool'")
+	head := strings.TrimSpace(testutil.Git(t, req.Dir, "rev-parse", "HEAD"))
+	base := strings.TrimSpace(testutil.Git(t, req.Dir, "rev-parse", "HEAD~1"))
+	tree := strings.TrimSpace(testutil.Git(t, req.Dir, "rev-parse", "HEAD~1^{tree}"))
+	doctored := strings.TrimSpace(testutil.Git(t, req.Dir, "commit-tree", tree, "-p", base, "-m", "Add a vendored tool"))
+	shell(t, req, "git replace "+head+" "+doctored)
+}
+
+// symlinkInBase commits a symlink at path onto the fixture's remote, so a run
+// that replaces it with a regular file changes that path's *type*: git reports
+// a typechange as `T`, and the base never held the bytes the new row carries.
+func symlinkInBase(t *testing.T, h *harness, path, target string) {
+	t.Helper()
+	dir := t.TempDir()
+	testutil.Git(t, dir, "clone", "--quiet", h.remote, dir)
+	full := filepath.Join(dir, filepath.FromSlash(path))
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, full); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, dir, "add", path)
+	testutil.Git(t, dir, "commit", "--quiet", "-m", "Track a link")
+	testutil.Git(t, dir, "push", "--quiet", "origin", "HEAD:refs/heads/main")
+}
+
+// selfCommitBinaryRepointed is the payload with the remote-tracking base the
+// reading's range is measured against moved: the agent's own git holds
+// refs/remotes/origin/main, and pointing it at the run's own tip makes
+// `<base>...HEAD` diff as a run that added nothing while the branch carries
+// the payload.
+func selfCommitBinaryRepointed(t *testing.T, req agent.Request, name string) {
+	t.Helper()
+	compiledBinary(t, req, name)
+	shell(t, req, "git add -A && git commit -qm 'Add a vendored tool' && git update-ref refs/remotes/origin/main HEAD")
+}
+
+// selfCommitOverSymlink is the payload committed where the base tracks a
+// symlink: the link is removed first (writing through it would edit the file
+// it points at), so the commit changes the path's type — a `T` row, whose new
+// bytes the base never held.
+func selfCommitOverSymlink(t *testing.T, req agent.Request, name string) {
+	t.Helper()
+	if err := os.Remove(filepath.Join(req.Dir, name)); err != nil {
+		t.Fatal(err)
+	}
+	compiledBinary(t, req, name)
+	shell(t, req, "git add -A && git commit -qm 'Add a vendored tool'")
+}
+
+// selfCommitSymlinkOverBinary is that typechange the other way round: the base
+// tracks a binary at the path and the run replaces it with a symlink, so the
+// path's new bytes are a path name — text — and nothing was added to the
+// branch to read.
+func selfCommitSymlinkOverBinary(t *testing.T, req agent.Request, name string) {
+	t.Helper()
+	if err := os.Remove(filepath.Join(req.Dir, name)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("logo-target.bin", filepath.Join(req.Dir, name)); err != nil {
+		t.Fatal(err)
+	}
+	shell(t, req, "git add -A && git commit -qm 'Replace the image with a link'")
+}
+
+// selfCommitGitlinkOverBinary is the third side of a typechange: the base tracks
+// a binary and the run commits a submodule pointer in its place. A gitlink's
+// entry holds a commit id where a blob would be, so no bytes at all are added to
+// the tree — `git diff` prints the pointer, and `git ls-tree -l` has no size for
+// it. The empty directory is what an uninitialised submodule looks like in the
+// working tree, and it is what keeps the tree clean, so finalize's leftover
+// commit has nothing of its own to add and the case reads the commit the agent
+// made.
+func selfCommitGitlinkOverBinary(t *testing.T, req agent.Request, name string) {
+	t.Helper()
+	full := filepath.Join(req.Dir, name)
+	if err := os.Remove(full); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(full, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sha := strings.TrimSpace(testutil.Git(t, req.Dir, "rev-parse", "HEAD"))
+	shell(t, req, "git add -A && git update-index --add --cacheinfo 160000,"+sha+","+name+" && git commit -qm 'Add a submodule'")
+}
+
+// selfCommitImage is the same commit at a path the project's policy admits and
+// over its cap: the payload is the run's own asset, and the size is the one the
+// rule refuses it for.
+func selfCommitImage(size int) commitPayload {
+	return func(t *testing.T, req agent.Request, name string) {
+		t.Helper()
+		writeImage(t, req, name, size)
+		shell(t, req, "git add -A && git commit -qm 'Add an asset'")
+	}
+}
+
+// committing is implement's own shape — the run does its work, commits it, runs
+// the suite, writes its pull request — with one change of the case's own made
+// before the suite runs, so the run's verified test is the one it earned and
+// the binary rule is the only thing that can end it.
+func committing(change func(t *testing.T, req agent.Request)) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo feature > feature.txt")
+		change(t, req)
+		verifyTest(t, ctx, req)
+		pr := filepath.Join(envValue(req.Env, "FUGARO_STATE_DIR"), "pr.md")
+		if err := os.WriteFile(pr, []byte("# Add feature\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return agent.Result{CostUSD: 1}, nil
+	}
+}
+
+// implementCommitting is committing with the payload the case commits.
+func implementCommitting(name string, commit commitPayload) step {
+	return committing(func(t *testing.T, req agent.Request) { commit(t, req, name) })
+}
+
+// implementReplacingBinary is a run that rewrites a binary the base commit
+// already holds: the modification §2.1 leaves alone, whatever its bytes are.
+func implementReplacingBinary(path string, size int) step {
+	return committing(func(t *testing.T, req agent.Request) {
+		writeImage(t, req, path, size)
+		shell(t, req, "git add -A && git commit -qm 'Replace the image'")
+	})
+}
+
+// implementMovingBinary is a run that moves a tracked binary to another path:
+// under --no-renames that reads as a delete and an add, and the two blob ids
+// say it is the same file moved.
+func implementMovingBinary(from, to string) step {
+	return committing(func(t *testing.T, req agent.Request) {
+		shell(t, req, "mkdir -p "+filepath.Dir(to)+" && git mv "+from+" "+to+" && git add -A && git commit -qm 'Move the image'")
+	})
+}
+
+// implementAddingThenDeletingBinary is §4.2's deliberate hole: the agent adds a
+// payload, commits it, then takes it out again in a later commit.
+func implementAddingThenDeletingBinary(path string) step {
+	return committing(func(t *testing.T, req agent.Request) {
+		compiledBinary(t, req, path)
+		shell(t, req, "git add -A && git commit -qm 'Add a vendored tool' && git rm -q "+path+" && git commit -qm 'Remove it again'")
+	})
+}
+
 // TestFinalizeCommitsAnUntrackedScript: what the rule deliberately leaves
 // alone. A file the run left executable and forgot to commit is a script
 // someone wrote — text, which a reviewer can read — and the leftover commit is

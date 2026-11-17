@@ -1315,34 +1315,34 @@ func (r *run) admissionCheck(ctx context.Context) error {
 		// No policy published here: the binding is the whole check (Task 1.3
 		// step 1's absent case). Reading this as an empty allow-list would
 		// refuse every run of every installation that has published nothing.
-		// A project job cannot be here — its candidates are the policy's — so
-		// this is the per-repository path's end.
+		// A project job reaches this too, and it is the implicit review-only
+		// one: its candidates are the runner's own (implicitReviewCandidates,
+		// matched by name whether or not a policy is published), so the slug
+		// binding above is the whole of what admits a review launched onto it.
+		// What refuses such a run is the credentials service, at its first
+		// credential request: every credential of that job is the service's
+		// (O1), and its pairing admits an account to a repository through the
+		// published policy's admissions, so with no policy there is nothing to
+		// admit it.
 		return nil
 	}
 	canonical, err := projectpolicy.Canonical(kind, repo)
 	if err != nil {
 		return fmt.Errorf("the repository this run was launched for cannot be named in the project's allow-list: %w", err)
 	}
-	if project {
-		if job.Implicit {
-			// The installation's implicit default review-only job is not a job
-			// of any profile this policy defines: it is the ONE review job a
-			// project has whether or not it declares a profile
-			// (implicitReviewCandidate, internal/infra's implicitReviewVariant),
-			// and the repositories it may be about are the project's own
-			// allow_repos — the very gate the launch of such a repository met,
-			// worded by the same function the launcher's advisory twin uses
-			// (internal/cli's allowListRefusal), so a repository this project
-			// never enrolled is refused here too. A profile's admission is
-			// deliberately not asked: the default profile's own list bounds the
-			// repositories of the job it names, and a project whose default
-			// profile pins another provider has no profile that could admit a
-			// github repository at all.
-			if !projectpolicy.AdmitRepo(p.AllowRepos, canonical) {
-				return fmt.Errorf("%s. The run stops before any lease exists", projectpolicy.NotAdmitted(p.AllowRepos, canonical))
-			}
-			return nil
+	if project && job.Implicit {
+		// The implicit review-only job: no profile of the policy defines it, so
+		// there is no profile whose list could admit this repository, and the
+		// list that does bound it is the project's own allow_repos — the rule a
+		// per-repository run gets, and the only one that exists here. Reading
+		// the profile anyway would refuse every review in the job the launch
+		// resolved onto, which is the one job this run can be in.
+		if !projectpolicy.AdmitRepo(p.AllowRepos, canonical) {
+			return fmt.Errorf("%s. The run stops before any lease exists", projectpolicy.NotAdmitted(p.AllowRepos, canonical))
 		}
+		return nil
+	}
+	if project {
 		// The profile's admission (plan task 3.3 step 4, design §4.1): the
 		// repository must be admitted for the (profile, provider, account) this
 		// run is actually on, so a repository's own fugaro.yaml cannot widen its
