@@ -3422,19 +3422,22 @@ func TestPolicyCraftWideningNamesTheGrants(t *testing.T) {
 // VALUES are in them (D1667). A value is not a shape, so the node's version
 // does not move — and a release that bumped it here would refuse every older
 // CLI the project's own node for a change no runner has to enforce.
+//
+// The version this test holds the publish to is read from the constant rather
+// than typed: what it is about is that the craft members write no version of
+// their own, and a number spelled here would fail for every later bump instead
+// (the craft members' own premise is pinned where it belongs, in
+// projectpolicy's tests of the members).
 func TestPolicyVersionUnchangedByTheCraftMembers(t *testing.T) {
-	if projectpolicy.Version != 9 {
-		t.Fatalf("the policy Version is %d, and this test is written for 9: update it deliberately with the version", projectpolicy.Version)
-	}
 	f := newProjectFixture(t, craftMembersYAML)
 	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := nodeAt(f.db.Value(projectpolicy.PathShared()), "version"); fmt.Sprintf("%v", got) != "9" {
-		t.Errorf("the published version = %v (%T), want 9: the craft members move no version", got, got)
+	if got, _ := nodeAt(f.db.Value(projectpolicy.PathShared()), "version"); fmt.Sprintf("%v", got) != fmt.Sprint(projectpolicy.Version) {
+		t.Errorf("the published version = %v (%T), want %d: the craft members move no version", got, got, projectpolicy.Version)
 	}
-	if p := publishedPolicy(t, f); p.Version != 9 {
-		t.Errorf("the node decodes at version %d, want 9", p.Version)
+	if p := publishedPolicy(t, f); p.Version != projectpolicy.Version {
+		t.Errorf("the node decodes at version %d, want %d", p.Version, projectpolicy.Version)
 	}
 	if len(publishedPolicy(t, f).CraftCredentials) == 0 {
 		t.Error("the node carries no craft_credentials, so this test says nothing about the version they are written at")

@@ -522,26 +522,30 @@ func TestNoShippedTextNamesTheRetiredOAuthGate(t *testing.T) {
 // reference paragraph said, in the present tense, that "the policy is version 2
 // from fugaro 0.8.5" — and the bumps raise `projectpolicy.Version` (VersionSince
 // [8] = "0.26.0", the release whose own config states the binaries block, AR1,
-// and VersionSince[9] = "0.26.0", the one-path pool MC20 and MC21 ship), so the
-// sentence must name the version and release this tree writes. The paragraph now
-// leads with version 9 and keeps version 8 as the node that came before it,
+// VersionSince[9] = "0.26.0", the one-path pool MC20 and MC21 ship, and
+// VersionSince[10] = "0.26.0", the designated reports repository R14 ships), so
+// the sentence must name the version and release this tree writes. The paragraph
+// now leads with version 10 and keeps version 9 as the node that came before it,
 // which is what the table says.
 //
 // The version the page names is read from the constants rather than typed
 // twice, so the next bump fails here instead of shipping a page describing
-// another release's node.
+// another release's node. The clause after the release is the one part that is
+// typed, because it is a description of the member the version carries and not a
+// value any constant holds — the bump moves it by hand, and this test is what
+// makes that hand move fail loudly when it is not made.
 //
 // Mutation (verified, run and restored): put back the clause the bump
-// replaced — "the release whose own config states the binaries block" for
-// "the release that refuses a pool naming members of both halves of a run" —
-// and this test fails naming the sentence it wants.
+// replaced — "the release that refuses a pool naming members of both halves of a
+// run" for "the release that designates the repository a project's reports are
+// committed into" — and this test fails naming the sentence it wants.
 func TestDocsProjectLayerStatesThePolicyVersionItShips(t *testing.T) {
 	doc := readDoc(t, "docs/project-layer.md")
 	rel, ok := projectpolicy.VersionRelease(projectpolicy.Version)
 	if !ok {
 		t.Fatalf("projectpolicy.VersionSince has no row for Version %d, and this page names the release each version came in", projectpolicy.Version)
 	}
-	want := fmt.Sprintf("**The policy is version %d from fugaro %s, the release that refuses a pool naming members of both halves of a run**", projectpolicy.Version, rel)
+	want := fmt.Sprintf("**The policy is version %d from fugaro %s, the release that designates the repository a project's reports are committed into**", projectpolicy.Version, rel)
 	if !strings.Contains(doc, want) {
 		t.Errorf("docs/project-layer.md does not say %q: the page describes the node this release writes, and projectpolicy.Version/%d is that node", want, projectpolicy.Version)
 	}
@@ -675,6 +679,13 @@ func TestDocsProjectLayerSaysWhatTiesARepositoryToAProject(t *testing.T) {
 // spend on — and it has to say that a grade nobody sets is no grade, because
 // that is the answer a rung's refusal prints.
 //
+// R14's `reports_commit` row is the third of the kind, and the one whose absence
+// would be invisible in the way the `binaries` row's was: the member is the
+// designation a commit run reads, no run of this release reads it yet (the
+// commit run is periodic-reviews R9), and an operator who published one has
+// nowhere else to read what a run does with it or who may write it — so the row
+// says both, and says that a version-9 reader decodes past the key.
+//
 // The row set is pinned as a list rather than derived from the Policy struct:
 // the table groups the four `budget` members into one row and deliberately
 // leaves out the members whose effect is not a run's (base_branch, credentials,
@@ -686,7 +697,7 @@ func TestDocsProjectLayerSaysWhatTiesARepositoryToAProject(t *testing.T) {
 // naming it; put "decoded, validated and accepted, **not applied**" back as the
 // row's whole description without the written-block half — it fails naming that;
 // delete the `model_grades` row — it fails naming the key the table stopped
-// describing.
+// describing; delete the `reports_commit` row — it fails naming it.
 func TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes(t *testing.T) {
 	const header = "| Policy key | What the run does with it today |"
 	doc := readDoc(t, "docs/project-layer.md")
@@ -719,6 +730,7 @@ func TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes(t *testing.T) {
 		"model_grades",
 		"routing",
 		"profiles",
+		"reports_commit",
 	}
 	if !slices.Equal(keys, want) {
 		t.Errorf("docs/project-layer.md's policy table lists %v, want %v: every key of the node the page describes has a row, and a member that ships without one is invisible to the operator reading what a run does with it", keys, want)
@@ -750,6 +762,26 @@ func TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes(t *testing.T) {
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("docs/project-layer.md's `model_grades` row lacks %q: the row is where an operator reads what the grades do today, that they are the project's own, and what an unset one means", want)
+		}
+	}
+	for _, want := range []string{
+		"| `reports_commit` | decoded, validated and accepted, **not applied**",
+		"the one repository a report run may open its pull request in",
+		"the layout's own `docs/fugaro-reviews` unless the project says otherwise",
+		"A block with no `repo` is refused where it is read",
+		"a folder that is absolute or walks out of the checkout is refused with it",
+		"the commit run that would is [periodic-reviews/](periodic-reviews/) R9",
+		"the key is that config's and never `fugaro.yaml`'s",
+		"a key there would let a prompt-injected agent designate the repository its own reports are committed to",
+		"`layerTopKeys` does not list it, so a layer that writes it is refused by name",
+		"a config that states nothing keeps the node's designation",
+		"a written empty block is how it is taken away on purpose",
+		"An agent's `project policy publish` refuses it",
+		"`fugaro project policy show` prints it either way",
+		"A version-9 reader lists the key as unknown and decodes past it, which is why the node is version 10",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/project-layer.md's `reports_commit` row lacks %q: the row is where an operator reads what the member does today, who may write it, and what writing an empty one means", want)
 		}
 	}
 }
