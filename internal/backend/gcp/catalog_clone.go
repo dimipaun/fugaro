@@ -98,8 +98,10 @@ const (
 // read (rule 6).
 //
 // The export is the checkout and nothing else: the clone writes under /out, the
-// entry's build reads the directory it lands in, and the stage the credential
-// ran in leaves this build no other way than through the scratch stage below.
+// stage the credential ran in leaves this build no other way than through the
+// scratch stage below, and what that stage carries out is the image the step
+// tags for the entry's build to copy — or, for an entry that names a build
+// context, the directory the step unpacks out of it.
 // The frontend is pinned as every Dockerfile Fugaro writes pins it
 // (images/derived/Dockerfile.tmpl and the four beside it), so the clone is
 // built by the same frontend the entries are.
