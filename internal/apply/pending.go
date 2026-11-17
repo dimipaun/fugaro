@@ -288,6 +288,18 @@ func (p *Pending) ClearUnchanged(read *Pending, names ...string) {
 	})
 }
 
+// Clone is a copy of the document as it stands, for a caller that reads it,
+// queues its own entries and later settles those that are still the ones it
+// read (ClearUnchanged): internal/cli's chain reads the record before a run of
+// minutes and settles after it, and the read it holds has to be a copy, because
+// the document Add queues into is the same one.
+func (p *Pending) Clone() *Pending {
+	if p == nil {
+		return EmptyPending()
+	}
+	return &Pending{Version: p.Version, LastApply: p.LastApply, Seq: p.Seq, Steps: slices.Clone(p.Steps)}
+}
+
 // Names is the steps the document owes, deduped and in the order they run
 // (Order): what `fugaro apply` runs and what `fugaro apply --status` prints.
 func (p *Pending) Names() []string {

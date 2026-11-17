@@ -131,6 +131,14 @@ func TestCoordinatorSettleSettlesASetFromTheRunsBucket(t *testing.T) {
 	if !strings.Contains(out, "settled") || strings.Contains(out, "not settled") {
 		t.Errorf("the report = %q, want the set settled", out)
 	}
+	// The report states the set's advisory merge order (D4, D615): the
+	// coordinator's view of a whole set names the order its members are meant
+	// to be merged in — the order the launch named them — and says that nothing
+	// enforces it. Every member's own pull request body carries the same order
+	// (gitprov.ChangeSetLine), and a reader here sees the whole set at once.
+	if want := "merge order (advisory): acme/app, then acme/other — merge in this order; nothing blocks a merge\n"; !strings.Contains(out, want) {
+		t.Errorf("the report does not state the set's merge order %q: %q", want, out)
+	}
 	for repo, host := range hosts {
 		prs := host.Snapshot().PRs
 		if len(prs) != 1 {

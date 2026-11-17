@@ -192,11 +192,23 @@ write_fake_gh() { # dir
 `api` shapes the check reads answer `commit-<sha>.json` and
 `contents-<path>.json`. Anything else fails: a command the check got wrong is
 not answered by a plausible document.
+
+Every call must name the sandbox's own repository — `--repo <owner/name>`, or a
+`repos/<owner>/<name>/...` path on an `api` call. gh resolves a pull request and
+a workflow run in the CURRENT directory's repository when no `--repo` is given,
+and the check is documented to be run from the Fugaro checkout, so a call
+naming none would read Fugaro's own pull requests; a call naming another
+repository reads the wrong one. Both are refused rather than answered.
+
+A `contents` read is answered only at a COMMIT oid: GitHub deletes a merged pull
+request's head branch, so a read at a branch ref is the 404 the provider gives
+after the merge, which is the pull request step 10 is about.
 """
-import os, sys
+import os, re, sys
 
 DOCS = os.environ["FAKE_DOCS"]
 LOG = os.environ["FAKE_LOG_DIR"]
+ALLOWED = [r for r in os.environ.get("FAKE_GH_REPOS", "sandbox-org/scratch").split(",") if r]
 args = sys.argv[1:]
 with open(os.path.join(LOG, "gh.calls"), "a") as fh:
     fh.write("gh " + " ".join(args) + "\n")
@@ -209,6 +221,30 @@ def emit(path):
     sys.stdout.write(open(path, encoding="utf-8").read())
 
 
+def named_repo():
+    """The repository the call names: `--repo`, or the path of an `api` call."""
+    if "--repo" in args:
+        i = args.index("--repo")
+        if i + 1 < len(args):
+            return args[i + 1]
+    for a in args:
+        if a.startswith("repos/"):
+            parts = a.split("/")
+            if len(parts) > 2:
+                return "%s/%s" % (parts[1], parts[2])
+    return ""
+
+
+named = named_repo()
+if not named:
+    sys.stderr.write("gh(fake): %s names no repository, so it would read the "
+                     "current directory's one\n" % " ".join(args))
+    sys.exit(3)
+if named not in ALLOWED:
+    sys.stderr.write("gh(fake): %s names %s and not the sandbox's own repository\n"
+                     % (" ".join(args), named))
+    sys.exit(3)
+
 if args[:1] == ["pr"] and args[1:2] == ["view"]:
     emit(os.path.join(DOCS, "pr-%s.json" % args[2]))
 elif args[:2] == ["run", "list"]:
@@ -219,6 +255,15 @@ elif args[:1] == ["api"] and len(args) > 1:
         emit(os.path.join(DOCS, "commit-%s.json" % ref.rsplit("/", 1)[1]))
     elif "/contents/" in ref:
         path = ref.split("/contents/", 1)[1].split("?", 1)[0]
+        at = ""
+        if "?" in ref:
+            for kv in ref.split("?", 1)[1].split("&"):
+                if kv.startswith("ref="):
+                    at = kv[len("ref="):]
+        if not re.fullmatch(r"[0-9a-f]{40}", at):
+            sys.stderr.write("gh(fake): 404 Not Found: %s is no commit of this "
+                             "repository (a merged pull request's branch is gone)\n" % (at or "no ref"))
+            sys.exit(1)
         emit(os.path.join(DOCS, "contents-%s.json" % path.replace("/", "__")))
     else:
         sys.exit(2)
@@ -352,6 +397,8 @@ w("config.json", config("poc"))
 w("config-second.json", config("pro"))
 if variant == "same-default":
     w("config-second.json", config("poc"))
+if variant == "default-not-poc":
+    w("config.json", config("hotfix"))
 if variant == "no-default":
     w("config.json", {"config_sha256": "0" * 64, "values": [
         {"path": "git.base_branch", "value": "main", "source": "project"},
@@ -634,16 +681,33 @@ test_refuses_a_traced_shell() {
   expect_contains "$(cat "$dir/err")" "this shell is tracing" "xtrace: the stop says why"
 }
 
+# checkout_files DIR... — every file under the checkouts with the hash of its
+# bytes, one line per file. It is the reference for "the check wrote nothing in
+# the checkout": the listing is taken AFTER the fixtures are written and
+# compared with the same listing taken after the run, so a fixture can never
+# count as a write of the check's own — a clock tick decides nothing here, which
+# is what an mtime reference could not promise (`find -newer <a fixture>` counts
+# every fixture written in the same tick as the reference).
+checkout_files() { # checkout_files DIR...
+  python3 - "$@" <<'PY'
+import hashlib, os, sys
+for root in sys.argv[1:]:
+    for base, dirs, files in os.walk(root):
+        dirs.sort()
+        for name in sorted(files):
+            p = os.path.join(base, name)
+            with open(p, "rb") as fh:
+                print("%s %s" % (hashlib.sha256(fh.read()).hexdigest(), p))
+PY
+}
+
 test_happy_path() {
-  local dir
+  local dir before after
   dir=$work/happy
   prepare "$dir"
-  # The marker is made after every fixture is written, so only a write of the
-  # check's own can be newer than it: index.md is written before the checkouts'
-  # backlog files, and a reference taken from it counts the fixtures themselves
-  # whenever the writes land in different clock ticks.
-  : >"$dir/.fixtures-written"
-  sleep 1
+  # The reference is taken here, after every fixture is written, and again after
+  # the run: only a write of the check's own can make the two differ.
+  before=$(checkout_files "$dir/scratch" "$dir/second")
   run127 "$dir" $(full_args "$dir")
   expect_status "$status" 0 "happy: exits 0"
   expect_contains "$out" "CHECK 127 RESULT END (exit 0)" "happy: the block ends clean"
@@ -679,11 +743,16 @@ test_happy_path() {
   expect_absent "$out" "FAIL" "happy: no row failed"
   expect_absent "$out" "not reached" "happy: every row was reached"
   # Nothing wrote into the checkouts, and the backlog index was regenerated in
-  # the scratch copy alone.
+  # the scratch copy alone. The two listings are compared whole — every path and
+  # every byte — so a file the check created, rewrote or restored is caught
+  # whatever the clock did.
   expect_contains "$(cat "$dir/logs/fugaro.calls")" "backlog index --dir" "happy: the index is regenerated in a copy"
   expect_absent "$(cat "$dir/logs/fugaro.calls")" "backlog index --dir $dir/scratch/docs" "happy: never in the checkout itself"
-  [ -z "$(find "$dir/scratch" "$dir/second" -newer "$dir/.fixtures-written" -type f 2>/dev/null)" ] ||
-    fail "happy: a fixture in the checkout was written"
+  after=$(checkout_files "$dir/scratch" "$dir/second")
+  if [ "$before" != "$after" ]; then
+    fail "happy: a fixture in the checkout was written:
+$(diff <(printf '%s\n' "$before") <(printf '%s\n' "$after") | cut -c1-160 | head -6)"
+  fi
 }
 
 # The modes' own scale: the run that asked for POC has to say so, and the
@@ -872,7 +941,7 @@ test_an_item_the_pull_request_left_open_is_a_failure() {
   run127 "$dir" $(full_args "$dir")
   expect_status "$status" 1 "not flipped: the verdict"
   expect_contains "$out" "FACT item-pr: FAIL" "not flipped: the row"
-  expect_contains "$out" "reads closed (or dropped) at its head" "not flipped: the reading"
+  expect_contains "$out" "reads closed (or dropped) at 1111111111111111111111111111111111111111" "not flipped: the reading, at the commit the item is read at"
 }
 
 test_two_branches_that_named_their_item_the_same_are_a_failure() {
@@ -927,15 +996,86 @@ test_the_steps_that_were_not_given_their_evidence_are_info() {
 # project, and the second repository's listing is read under its own name: a
 # check that read another repository's rows would pass on the wrong evidence.
 test_every_read_stays_in_the_sandbox() {
-  local calls
+  local calls gh_total gh_scoped
   [ -f "$work/happy/logs/fugaro.calls" ] || test_happy_path
   calls=$(cat "$work/happy/logs/fugaro.calls")
   expect_contains "$calls" "runs ls --json --since 0 --repo sandbox-org/scratch" "reads: the sandbox's listing"
   expect_contains "$calls" "runs ls --json --since 0 --repo sandbox-org/second" "reads: the second repository's listing"
   expect_absent "$calls" "belong" "reads: no call names the owner's own repository"
   expect_absent "$(cat "$work/happy/logs/gh.calls")" "belong" "reads: no gh call names it either"
-  expect_contains "$(cat "$work/happy/logs/gh.calls")" "pr view 123" "reads: step 5's pull request"
+  expect_contains "$(cat "$work/happy/logs/gh.calls")" "pr view 123 --repo sandbox-org/scratch" "reads: step 5's pull request is the sandbox's"
+  expect_contains "$(cat "$work/happy/logs/gh.calls")" "run list --branch main --repo sandbox-org/scratch" "reads: the CI read is the sandbox's"
   expect_contains "$(cat "$work/happy/logs/gh.calls")" "repos/sandbox-org/scratch/contents/docs/backlog/2026-11-17-1-first.md" "reads: the item is read out of the sandbox's repository"
+  expect_absent "$(cat "$work/happy/logs/gh.calls")" "?ref=fugaro/" "reads: the item is read at a commit and not at the head branch"
+  # EVERY gh call names the repository: gh answers a pull request and a workflow
+  # run out of the current directory's one when no --repo is given, and this
+  # check is documented to be run from the Fugaro checkout.
+  gh_total=$(grep -c . "$work/happy/logs/gh.calls" || true)
+  gh_scoped=$(grep -c -e '--repo sandbox-org/scratch' -e '^gh api repos/sandbox-org/scratch/' "$work/happy/logs/gh.calls" || true)
+  [ "$gh_total" = "$gh_scoped" ] ||
+    fail "reads: $((gh_total - gh_scoped)) of $gh_total gh call(s) name no repository of the sandbox:
+$(cat "$work/happy/logs/gh.calls")"
+}
+
+# gh resolves a pull request and a workflow run in the CURRENT directory's
+# repository when no --repo is given, and this check is documented to be run
+# from the Fugaro checkout, where that is Fugaro's own: a call naming no
+# repository reads another repository's pull request, and one naming a different
+# repository reads the wrong one. The fake refuses both, so a check that dropped
+# the flag reads no pull request at all rather than passing on Fugaro's.
+test_a_gh_call_that_names_no_repository_is_refused() {
+  local dir status=0
+  dir=$work/ghscope
+  prepare "$dir"
+  logs_clear "$dir"
+  env PATH="$dir/bin:$PATH" FAKE_DOCS="$dir/docs" FAKE_LOG_DIR="$dir/logs" \
+    gh pr view 410 --json state >/dev/null 2>&1 || status=$?
+  [ "$status" -ne 0 ] || fail "gh scope: the fake answered a call that names no repository"
+  status=0
+  env PATH="$dir/bin:$PATH" FAKE_DOCS="$dir/docs" FAKE_LOG_DIR="$dir/logs" \
+    gh pr view 410 --repo other-org/other --json state >/dev/null 2>&1 || status=$?
+  [ "$status" -ne 0 ] || fail "gh scope: the fake answered a call that names another repository"
+  status=0
+  env PATH="$dir/bin:$PATH" FAKE_DOCS="$dir/docs" FAKE_LOG_DIR="$dir/logs" \
+    gh pr view 410 --repo sandbox-org/scratch --json state >/dev/null 2>&1 || status=$?
+  [ "$status" -eq 0 ] || fail "gh scope: the fake refused a call that names the sandbox's own repository"
+  run127 "$dir" $(full_args "$dir")
+  expect_status "$status" 0 "gh scope: the check passes with every call scoped to the sandbox"
+}
+
+# Step 1's run ASKED for POC — Critical is the default (D19), so a repository
+# shown to be running at POC is one that asked — and its mode therefore comes
+# from the request and not from the sandbox's own rigor.default. Step 6 judges
+# that key on a run that named no mode, so a default that is not poc is no
+# finding about the repository's key: it is the second repository's run,
+# launched with no --mode, that reads its own.
+test_a_sandbox_whose_default_is_not_poc_is_not_a_failure() {
+  local dir
+  dir=$work/otherdefault
+  prepare "$dir" default-not-poc
+  run127 "$dir" $(full_args "$dir")
+  expect_status "$status" 0 "other default: the verdict"
+  expect_contains "$out" "FACT poc-run: PASS" "other default: step 1 is still the POC run"
+  expect_contains "$out" "FACT project-default: PASS" "other default: step 6's row"
+  expect_contains "$out" "the mode step 1 asks for and so the request's, not sandbox-org/scratch's own rigor.default 'hotfix'" "other default: the request decided step 1's run"
+  expect_absent "$out" "the repository's key is not what its runs resolve" "other default: the key is not judged off a run that asked"
+}
+
+# Step 10 reads an item's own front matter at a COMMIT and never at the pull
+# request's head branch: GitHub deletes that branch when the pull request
+# merges, so a contents read at it is a 404 for exactly the pull request step 10
+# is about — the row would read as one that could not be measured. The fake
+# answers a commit oid alone, so a check that read at the branch reads nothing.
+test_the_item_is_read_at_a_commit_and_not_at_the_deleted_branch() {
+  local dir
+  dir=$work/atcommit
+  prepare "$dir"
+  run127 "$dir" $(full_args "$dir")
+  expect_status "$status" 0 "at a commit: the verdict"
+  expect_contains "$out" "FACT item-pr: PASS" "at a commit: step 10 was read"
+  expect_contains "$out" "closed at 1111111111111111111111111111111111111111" "at a commit: the row names the commit the item was read at"
+  expect_contains "$(cat "$dir/logs/gh.calls")" "contents/docs/backlog/2026-11-17-1-first.md?ref=1111111111111111111111111111111111111111" "at a commit: the item is read at the pull request's merge commit"
+  expect_absent "$(cat "$dir/logs/gh.calls")" "ref=fugaro/" "at a commit: nothing is read at the head branch"
 }
 
 # Sharding, so a Go test could run these side by side: CHECK_TEST_SHARD="i/n"
@@ -982,6 +1122,9 @@ t test_an_index_that_is_not_current_is_a_failure
 t test_a_second_branch_that_was_not_merged_stops_the_run
 t test_the_steps_that_were_not_given_their_evidence_are_info
 t test_every_read_stays_in_the_sandbox
+t test_a_gh_call_that_names_no_repository_is_refused
+t test_a_sandbox_whose_default_is_not_poc_is_not_a_failure
+t test_the_item_is_read_at_a_commit_and_not_at_the_deleted_branch
 
 if [ "$failures" -ne 0 ]; then
   echo "check127_test.sh: $failures failure(s)" >&2

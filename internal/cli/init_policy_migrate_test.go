@@ -478,6 +478,73 @@ func TestUpdatePublishesTheFirstPolicyNodeForTheCrafts(t *testing.T) {
 	}
 }
 
+// cascadeGradesYAML is N1's two carriers the way an owner writes them: a cascade
+// block whose fallback and threshold are not the defaults a node without one
+// implies, and one of the ladder's two grades.
+const cascadeGradesYAML = "credential_cascade: { fallback: auto, wait_threshold: 90s }\n" +
+	"model_grades:\n" +
+	"  strong: { model: claude-sonnet-5 }\n"
+
+// TestUpdatePublishesTheFirstPolicyNodeForTheCascadeAndTheGrades is N4's half of
+// #1656, the crafts' entries one block over (D2607, F5, F6). The credentials
+// service reads the cascade off the published node — its fallback, its threshold
+// and D142's two controls — and a rung reads a grade's model and its access
+// there (runner/policy.go), so a project whose config states them and which has
+// never published a node had the owner's own statement in a file no run reads,
+// with `fugaro project policy publish` as the second command `fugaro update`'s
+// one command must not need: the stage reported there was nothing to do. The
+// publish's drift rows close that gap for a project that already holds a node;
+// this is the door for one that holds none.
+func TestUpdatePublishesTheFirstPolicyNodeForTheCascadeAndTheGrades(t *testing.T) {
+	f := newProjectFixture(t, cascadeGradesYAML)
+	h := newMigrationRig(t, f, &initOptions{})
+
+	st, err := h.s.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo {
+		t.Fatalf("the check says %s %q, want the first publish left to do", st.State, st.Detail)
+	}
+	for _, want := range []string{"no policy is published", "the credential cascade", "the model grades"} {
+		if !strings.Contains(st.Detail, want) {
+			t.Errorf("the check does not say %q: %q", want, st.Detail)
+		}
+	}
+	if strings.Contains(st.Detail, "the crafts") || strings.Contains(st.Detail, "image_catalog") {
+		t.Errorf("the check names a member this config does not state: %q", st.Detail)
+	}
+	plan, err := h.s.Plan(context.Background(), initflow.Env{Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.NothingToDo {
+		t.Errorf("the plan leaves the first publish out: %+v", plan)
+	}
+	if v := f.db.Value(projectpolicy.PathShared()); v != nil {
+		t.Fatalf("the preview wrote a node of its own: %v", v)
+	}
+
+	// The write is behind the confirmation every first publish takes, and the
+	// node it creates carries the two blocks the file states.
+	fakeTerminal(t)
+	h.cmd.SetIn(strings.NewReader(initProjectName + "\n"))
+	out, err := h.apply(t, false)
+	if err != nil {
+		t.Fatalf("the first publish was refused: %v\n%s", err, out)
+	}
+	p := publishedPolicy(t, f)
+	if p.Credentials == nil || p.Credentials.Fallback != projectpolicy.FallbackAuto || p.Credentials.WaitThreshold != "90s" {
+		t.Errorf("the published node carries the cascade %+v, want the file's own", p.Credentials)
+	}
+	if p.ModelGrades == nil {
+		t.Fatalf("the published node carries no grades: %+v", p)
+	}
+	if got := p.ModelGrades.Of(config.GradeStrong); got.Model != "claude-sonnet-5" {
+		t.Errorf("the published node carries model_grades.strong = %+v, want the file's model", got)
+	}
+}
+
 // orchestratorConfigYAML is the guardrail block the way an owner writes it: one
 // cap below the person's max_parallel and one spawn rate, so the test can tell
 // the block it published from the defaults a node without one implies.

@@ -30,6 +30,23 @@ import (
 // current one rather than reading a shape that moved. It is deliberately its
 // own number: the state's schema_version answers a different question, and the
 // cache outlives the node it was generated from.
+//
+// It stays at 1 while the brief's text changes (S5): the version answers whether
+// the file's shape is one a reader can decode, and the three fields, the document
+// they carry and the writer that places them did not move when the generator
+// learned to render the ready-by range of the nodes beside the state node. Moving
+// it for a text change would strand every cache a release behind wrote — the
+// daemon the update left running keeps executing the old binary and writing the
+// old number, and the cache of an id whose daemon has stopped stays as it is —
+// and both readers refuse a file they cannot place (CachedBriefs for
+// `orchestrator ls`, internal/cli's reader for `state --brief --offline`), which
+// leaves deleting the file by hand as the only way out: the one thing an update
+// that is the whole upgrade does not allow.
+//
+// A change to the file itself — a fourth field, a different stamp — is what moves
+// it, and then the readers have to keep reading the version behind, or update has
+// to migrate or remove those files, with a test that a file of the previous
+// version still lists and prints.
 const BriefCacheVersion = 1
 
 // BriefCache is the file's shape on the wire. The reader (internal/cli's
