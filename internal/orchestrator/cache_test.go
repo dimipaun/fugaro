@@ -83,8 +83,8 @@ func TestCacheCarriesItsFreshnessStamp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading the cache: %v", err)
 	}
-	if c.Version != 1 {
-		t.Errorf("the cache carries schema_version %d, want 1", c.Version)
+	if c.Version != orchestrator.BriefCacheVersion {
+		t.Errorf("the cache carries schema_version %d, want %d", c.Version, orchestrator.BriefCacheVersion)
 	}
 	if c.Brief != orchestrator.Summarize(s) {
 		t.Errorf("the cache carries a brief the state does not generate:\n%q\nwant\n%q", c.Brief, orchestrator.Summarize(s))

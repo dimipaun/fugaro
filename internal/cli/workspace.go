@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/apply"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pricing"
@@ -157,11 +158,51 @@ func workspaceEditResult(path string, out []byte, err error) ([]byte, error) {
 // printed only when the file changed: a write that changed nothing converges
 // nothing, and `next: fugaro update` beside a `no change` would be a promise
 // about a write that did not happen.
+//
+// The writes of the workspace family itself no longer call it (AP6: they run
+// their own steps, or declare none). The commands of the other families that
+// still hand off — accounts allow, the project profile and routing writes — are
+// AP7's audit, and they keep this helper until then.
 func workspaceHandoff(cmd *cobra.Command, old, next []byte) {
 	if yamledit.Changed(old, next) {
 		fmt.Fprintln(cmd.OutOrStdout(), "next: fugaro update")
 	}
 }
+
+// workspaceChain is what every write of this family does once its edit has
+// landed: the steps the change owes, run here (AP6), or saved for `fugaro
+// apply` under --no-apply.
+//
+// The changes are the family's own declaration, per write. The two writes that
+// change only the MEMBER's half of a membership — `workspace add` and
+// `workspace rm` — declare none, and they are the ones apply's table answers
+// with no steps for a reason of its own (settingSteps' `workspace` and
+// `workspace_pin.` rows): the member's record is read by that project's own
+// commands and nothing publishes it, so the change is live when the file is
+// written and this returns without opening a run.
+//
+// The owner's half is what the two stages behind the record are for: the
+// workspace's own project, whose root creates its service account and the one
+// grant that reaches its database, and the published record that service reads
+// (apply's ResourceWorkspace row and the `workspace_members.`/`workspace_cap.`
+// rows, in initflow's order).
+func workspaceChain(cmd *cobra.Command, lc *localcfg.Config, path string, old, next []byte, door string, changes []apply.Change, noApply bool) error {
+	if !yamledit.Changed(old, next) {
+		return nil
+	}
+	return chainApply(cmd.Context(), cmd, lc, localcfg.Selection{Path: path}, door, changes, noApply)
+}
+
+// workspaceOwnerHalf is the change the owner's own declarations owe: the two
+// stages the workspace's own project and its published record are.
+func workspaceOwnerHalf() []apply.Change {
+	return []apply.Change{{Kind: apply.Resource, Key: apply.ResourceWorkspace}}
+}
+
+// workspaceDoor is one command's own name, for the run its chain opens: the
+// door the run is filed and printed under, so every line a person reads names
+// the command they ran (modelsAddDoor's reason).
+func workspaceDoor(name string) string { return "workspace " + name }
 
 type workspaceAddOptions struct {
 	firebaseProject string
@@ -258,8 +299,7 @@ func runWorkspaceAdd(cmd *cobra.Command, name string, o *workspaceAddOptions) er
 	if err := workspaceEditLocal(cmd, lc, sel.Path, edit); err != nil {
 		return err
 	}
-	workspaceHandoff(cmd, old, next)
-	return nil
+	return workspaceChain(cmd, lc, sel.Path, old, next, workspaceDoor("add"), nil, false)
 }
 
 // workspaceOrNone is a config's membership key as a sentence names it.
@@ -392,8 +432,7 @@ func runWorkspaceRm(cmd *cobra.Command, name string, o *workspaceRmOptions) erro
 	}); err != nil {
 		return err
 	}
-	workspaceHandoff(cmd, old, next)
-	return nil
+	return workspaceChain(cmd, lc, sel.Path, old, next, workspaceDoor("rm"), nil, false)
 }
 
 func newWorkspaceMemberCmd() *cobra.Command {
@@ -424,6 +463,9 @@ type workspaceMemberAddOptions struct {
 	exchangeURL        string
 	repos              []string
 	yes                bool
+	// noApply is --no-apply (D1565): the change is written and the steps that
+	// make it live are saved for `fugaro apply` instead of run here.
+	noApply *bool
 }
 
 func newWorkspaceMemberAddCmd() *cobra.Command {
@@ -476,6 +518,7 @@ builds.`,
 	f.StringVar(&o.fp, "fp", "", "the member's Fugaro project name, which the token's fp claim must be")
 	f.StringVar(&o.exchangeURL, "exchange-url", "", "the member's exchange endpoint, where the workspace's signer mints a member-bound assertion for")
 	f.StringArrayVar(&o.repos, "repo", nil, "a repository the member contributes to the workspace, as owner/name (repeatable)")
+	o.noApply = addNoApplyFlag(cmd)
 	return cmd
 }
 
@@ -558,8 +601,7 @@ func runWorkspaceMemberAdd(cmd *cobra.Command, workspace, project string, o *wor
 	if err := workspaceEditLocal(cmd, lc, path, edit); err != nil {
 		return err
 	}
-	workspaceHandoff(cmd, old, next)
-	return nil
+	return workspaceChain(cmd, lc, path, old, next, workspaceDoor("member add"), workspaceOwnerHalf(), *o.noApply)
 }
 
 // workspaceMemberAddWhat is the sentence the write prints for one member
@@ -621,6 +663,8 @@ func workspaceMemberAddCommand(workspace, project string, o *workspaceMemberAddO
 
 type workspaceMemberRmOptions struct {
 	yes bool
+	// noApply is --no-apply (D1565), as workspaceMemberAddOptions'.
+	noApply *bool
 }
 
 func newWorkspaceMemberRmCmd() *cobra.Command {
@@ -643,6 +687,7 @@ file is kept. The owner's fugaro update publishes the record the table builds.`,
 			return runWorkspaceMemberRm(cmd, args[0], args[1], &o)
 		},
 	}
+	o.noApply = addNoApplyFlag(cmd)
 	return cmd
 }
 
@@ -671,8 +716,7 @@ func runWorkspaceMemberRm(cmd *cobra.Command, workspace, project string, o *work
 	}); err != nil {
 		return err
 	}
-	workspaceHandoff(cmd, old, next)
-	return nil
+	return workspaceChain(cmd, lc, path, old, next, workspaceDoor("member rm"), workspaceOwnerHalf(), *o.noApply)
 }
 
 func newWorkspaceCapCmd() *cobra.Command {
@@ -696,6 +740,8 @@ type workspaceCapOptions struct {
 	workspace string
 	monthly   float64
 	yes       bool
+	// noApply is --no-apply (D1565), as workspaceMemberAddOptions'.
+	noApply *bool
 }
 
 func newWorkspaceCapSetCmd() *cobra.Command {
@@ -718,6 +764,7 @@ file is kept.`,
 	f := cmd.Flags()
 	f.StringVar(&o.workspace, "workspace", "", "the workspace whose cap this is (required: a cap is never spelled globally)")
 	f.Float64Var(&o.monthly, "monthly", 0, "the cap in US dollars per month, more than zero")
+	o.noApply = addNoApplyFlag(cmd)
 	return cmd
 }
 
@@ -767,8 +814,7 @@ func runWorkspaceCapSet(cmd *cobra.Command, o *workspaceCapOptions) error {
 	if err := workspaceEditLocal(cmd, lc, path, edit); err != nil {
 		return err
 	}
-	workspaceHandoff(cmd, old, next)
-	return nil
+	return workspaceChain(cmd, lc, path, old, next, workspaceDoor("cap set"), workspaceOwnerHalf(), *o.noApply)
 }
 
 type workspaceLsOptions struct {

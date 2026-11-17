@@ -6,7 +6,7 @@ Nine slices, ordered so that each one merges alone and leaves `main` green, and
 so that a repository that configures nothing sees only what D19's answer made
 observable — the default is **Pro**, so what "ready" means for an unconfigured
 repository changes with the commit that gives the mode a reader, and the
-migration note (T8.2) and the one-line pin `rigor.default: critical` are what a
+migration note (T8.3) and the one-line pin `rigor.default: critical` are what a
 repository answers that with. This plan is written from [reconciliation.md](reconciliation.md)'s
 findings **F1–F48**, decisions **D1–D32**, items **O1–O7** and the UNVERIFIED
 table **U1–U12**, and it cites them rather than restating them. Slice 1 is
@@ -32,7 +32,7 @@ merging alone.
   Critical** (the D18 floors, outside every layer), and a repository that wants
   today's behaviour exactly pins it back with `rigor.default: critical`. Every
   claim below that a slice "relaxes nothing" or is "byte-identical to today" is
-  therefore **true of Critical mode only**, and T8.2's migration note is the loud
+  therefore **true of Critical mode only**, and T8.3's migration note is the loud
   version of this paragraph.
 - **It does not add a merge path, a deployer, or a scheduler.** `gitprov` has no
   merge call and the runner never deploys (F29); D13 and D15 say what Hotfix and
@@ -98,7 +98,7 @@ one of them is named so a reader can check the claim:
 | **5** | the task file, and Hotfix | a task may ask for a mode; Hotfix opens a ready PR | 3 |
 | **6** | cost | per-mode budget defaults; `budget preview --mode` | 3 |
 | **7** | the documentation and the practice | `docs/rigor-modes.md`, the project layer, `docs/dogfooding.md` | 4, 5, 6 |
-| **8** | the live checks, and the migration note | Check 119; the release note | 7 |
+| **8** | the live checks, and the migration note | Check 127; the release note | 7 |
 
 Slices 4, 5 and 6 are independent of each other and may be built in any order or
 in parallel (§6). Slice 7 needs all three because it documents them. The
@@ -120,11 +120,11 @@ filed later is a file in that same pull request.
 
 ## 3. Check numbers this plan takes
 
-**This plan proposes Check 119.** The register is
+**This plan takes Check 127.** The register is
 `docs/gcp-live-checklist.md`, and `docs/coordinator/README.md` §"The numbers
 this work holds" is the table that reads it. At `1d325928`: **Checks 1–109 are
 taken or reserved** (block by block, as that register's own row lists), and above
-them every number to 118 is held by an open claim:
+them every number to 118 was held by an open claim:
 
 | Number | Who holds it, and in what state |
 | --- | --- |
@@ -133,19 +133,20 @@ them every number to 118 is held by an open claim:
 | **112** | **proposed** by `docs/windows-cli/` — one owner-run first run on a real Windows machine (its PR #757 is merged) |
 | **113–118** | taken by `docs/mobile/voice-session/` — six checks, **numbered but not written**, its D219 |
 
-So the next free number is **119**, and this plan takes it. The register's own
-rule governs a collision, and this plan is written to it: **whichever of two open
-claims merges second renumbers itself**, to the number free at its own merge, and
-updates the register's paragraph in the same commit. It never renumbers a number
-an earlier plan has already written, and a reserved number is never reused. The
-six numbers above 112 — 113 to 118 — are claims rather than written sections:
-`docs/mobile/voice-session/` is merged at this plan's own base `1d325928` and its
-D219 sits in the tree there (the D-block paragraph below reads it), so the claim
-is written down and what is outstanding is the check sections themselves. Written
-or not, this plan does **not** move up into the gap: it keeps 119, which is free
-either way. The
-task that writes the check (T8.1) owns any renumbering and the register line in
-the same commit.
+**This plan first took 119**, the next free number at that base, and the owner
+ruled on **2026-11-17** that it does not keep it: **the rigor live check takes
+Check 127** — 119 is the console-on-Windows work's (claimed 2026-11-14, and
+written: the register carries its section and `scripts/live-checks/check119.sh`
+its one scripted step), 125 is cloud-senior-review's, and 130–134 are licensing's.
+So the number this plan writes in every task, in §9 and in the register is
+**127**, and the six numbers 113 to 118 stay what they were: claims rather than
+written sections — `docs/mobile/voice-session/` is merged at this plan's own base
+`1d325928` and its D219 sits in the tree there (the D-block paragraph below reads
+it), so the claim is written down and what is outstanding is the check sections
+themselves. A number the owner has already ruled on is not one this plan moves
+into. The
+task that writes the check (T8.1) owns the register line and this section's
+number in the same commit.
 
 **This plan takes no D-number.** Its decisions are **D1–D32**, folder-local and
 distinct by folder, like `docs/windows-cli/`'s D1–D16 and
@@ -1125,7 +1126,7 @@ before Slice 3, and T3.1 waits for T4.5 (§2, §6).
 
 ### Slice 8 — the live checks, and the migration note
 
-**T8.1 — Check 119, written**
+**T8.1 — Check 127, written**
 - **Files.** `docs/gcp-live-checklist.md` (the section, and the register's
   paragraph), `docs/coordinator/README.md` (the check-number row, which
   `docs_coordinator_test.go` holds), and this plan's §3 if the number moved.
@@ -1138,7 +1139,7 @@ before Slice 3, and T3.1 waits for T4.5 (§2, §6).
 - **Depends on.** T7.1, and the register being free at its merge (§3's
   renumber-second rule).
 - **Reviewer.** senior (in-loop).
-- **Commit.** `docs(live-checks): Check 119, the modes on a real repository`
+- **Commit.** `docs(live-checks): Check 127, the modes on a real repository`
 
 **T8.2 — the live checks, run** *(an owner action, not a task an agent can finish)*
 - **Files.** `docs/gcp-live-checklist.md` (the section's status line, from NOT
@@ -1150,17 +1151,39 @@ before Slice 3, and T3.1 waits for T4.5 (§2, §6).
 - **Verification.** The five live checks in §9.
 - **Depends on.** T8.1, and a real repository configured with at least two modes.
 - **Reviewer.** **operator** — the owner, at their own terminal.
-- **Commit.** `docs(live-checks): Check 119, <result>`
+- **Commit.** `docs(live-checks): Check 127, <result>`
 
 **T8.3 — the migration note**
-- **Files.** `docs/releases/` (the 0.10.0 notes), where the default is stated:
-  **Critical, today's behaviour, nothing relaxed** (D19).
-- **Tests.** The release-notes pin.
-- **Red step.** The note does not state the default.
+- **Files.** `docs/releases/v0.11.0.md` — the release that shipped the modes,
+  named by the owner's ruling of 2026-11-17, and already cut, so what this amends
+  is the repository's record of that release and the page the site renders from
+  it: the GoReleaser body is frozen from the tag and stays as cut. The note there
+  states the default a reader of that release meets — **Pro**, with
+  `rigor.default: critical` the one line that puts a repository back on the
+  behaviour of the releases before this one (D19) — beside the cap ladder the
+  mode sets. It states nothing the release does not wire: the security tier's
+  floors (T1.5) and Hotfix's narrowed blocking row (Slice 5's T5.3) are not in
+  it, and they stay in the `### Known limits` section the file already carries,
+  which says the thresholds table is not wired and the sensitive-path floors are
+  not built. The release that wires a bound is the one whose notes announce it,
+  and a note that claimed one here would read as live behaviour this release
+  does not have. The `### For operators` section stays as it is, and the file's one
+  line in `website/data/release-summaries.yaml` (no backticks, no links) moves
+  only if the line it carries stops being true.
+- **Tests.** The release-notes pin — `internal/cli/docs_release_notes_test.go`'s
+  format rules for a release file and its no-links rule over every file in
+  `docs/releases/` — and the site's own check that a released file has its line in
+  `website/data/release-summaries.yaml`.
+- **Red step.** The note states the default without the way back, so a repository
+  that upgraded and wants today's cap has nothing to act on. The format pin holds
+  the file's shape and is green on any wording, so the red step is the missing
+  sentence on the page rather than a failing test.
 - **Verification.** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Release' -count=1 -timeout 40m`
-- **Depends on.** T8.1.
+- **Depends on.** T8.1, and the owner's ruling of 2026-11-17 that names 0.11.0:
+  a note for the release that wires a bound waits for that release, and this
+  one is the default the modes already shipped.
 - **Reviewer.** senior (in-loop).
-- **Commit.** `docs(releases): 0.10.0 runs at Critical until you say otherwise`
+- **Commit.** `docs(releases): 0.11.0 runs at Pro until you say otherwise`
 
 ## 9. The live checks the owner would run
 
@@ -1181,7 +1204,7 @@ a claim rather than a fact.
 | 10 | the pull request that fixes a filed item — the flip and the regenerated index in one commit (D31) | a real pull request, read as a diff by a person |
 | 11 | two branches filing items on the same day, merged in either order (D26, D28: a rename, and one command to reconcile the index) | two real branches and the provider's own conflict |
 
-Checks 1–11 are **Check 119**, written by T8.1 and run by T8.2. Checks 6–9 are the
+Checks 1–11 are **Check 127**, written by T8.1 and run by T8.2. Checks 6–9 are the
 scope ruling's own (the reconciliation's §1.2 and §7); checks 10 and 11 are the
 backlog ruling's (§1.3); and check 9 is the only one that needs a deploy before
 it can be run at all.
@@ -1190,7 +1213,7 @@ it can be run at all.
 `fugaro watch` row needs a new registry child, a rules regeneration with its
 golden file, and a deploy — and the deploy is the owner's to run, not a run's
 (§5's last constraint). It is therefore written as a plan part with an operator
-step, and it is **not** folded into Check 119's numbering: the register in
+step, and it is **not** folded into Check 127's numbering: the register in
 `docs/gcp-live-checklist.md` is not touched by it, and T8.1's task writes it as a
 step beside the check rather than as a check. What it says: regenerate the rules
 with the new child, deploy them, start a run, and read the mode in
@@ -1238,7 +1261,7 @@ from `Recipe` as the thing to watch for on an installation whose rules are older
    security-sensitive tier stays Critical (D18's floors), the one-line pin
    `rigor.default: critical` restores today's behaviour exactly, and **Pro's
    threshold table is now the behaviour of every unconfigured repository**, which
-   is why §7 gives it its own review question. T8.2's migration note is what tells
+   is why §7 gives it its own review question. T8.3's migration note is what tells
    those repositories about it.
 3. **T3.1 still gets a human eye.** It is the one change that can make a pull
    request ready that would not have been ready before, and it is now the change

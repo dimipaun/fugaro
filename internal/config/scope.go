@@ -190,6 +190,13 @@ var Scopes = []ScopeRow{
 	// the project's policy and a repository chooses among them, so only its own
 	// file may state this reference.
 	{Key: "workflows.*.needs", In: InRepo, Why: "it is a repository's own reference to an entry of the project's image catalog, and the entries themselves are the project's (D1155)"},
+	// A repository's ask for an A/B reviewer arm (the owner's ruling of
+	// 2026-11-16, O12): the review level the arm replays over the champion's
+	// own recorded patch. The ask turns a second review of this repository's
+	// runs on, and the challengers such an arm is admitted against are the
+	// project's top-level ab: block's (D556), so only the repository's own,
+	// PR-reviewed file may state it, as workflows.*.needs beside it is.
+	{Key: "workflows.*.ab.reviewer_arm", In: InRepo, Why: "it asks for a second review of this repository's own runs, and the challengers that review is admitted against are the project's (the top-level ab: block, D556), so the repository's own, PR-reviewed file is where the ask is stated"},
 	// A repository's A/B opt-out (D556, F18): the ab: block is the project
 	// layer's, because a repository author could name a challenger model and
 	// send that repository's code to a provider the owner opened only to

@@ -150,6 +150,89 @@ func digestAfter(t *testing.T, s orchestrator.State, up orchestrator.Op, id stri
 	return orchestrator.SpecDigest(w)
 }
 
+// planItemUpsert is one item of an imported plan: a work item tagged with the
+// plan's folder and carrying the plan task the import writes.
+func planItemUpsert(id, plan, title string) orchestrator.Op {
+	op := workItemUpsert(id, title)
+	op.WorkItem.Spec = strPtr(plan)
+	op.WorkItem.PlanTask = strPtr(plan + "/" + id)
+	return op
+}
+
+// planApprove is the op an import's own `--json` list becomes: the ids and the
+// digests the person was shown.
+func planApprove(t *testing.T, s orchestrator.State, node string, ids ...string) orchestrator.Op {
+	t.Helper()
+	items := make([]orchestrator.PlanApproveItem, 0, len(ids))
+	for _, id := range ids {
+		w, ok := s.Item(id)
+		if !ok {
+			t.Fatalf("the state carries no item %s", id)
+		}
+		items = append(items, orchestrator.PlanApproveItem{ID: id, Digest: orchestrator.SpecDigest(w)})
+	}
+	return orchestrator.Op{Op: orchestrator.OpPlanApprove, PlanApprove: &orchestrator.PlanApproveOp{Node: node, Items: items}}
+}
+
+// TestAPlanApprovalIsPersonOnlyAndShowsItsItems is G2's fence at the CLI
+// (D1225, D2706, D2717). Approving a plan's imported items is an op only a
+// person may land, and one actor lands the whole document: a session that
+// rides a plan approval beside an op of its own — the goal, here — hands the
+// person a patch whose approval list is not on the screen, and the person
+// approves up to a hundred items they never read. So the op is marked as the
+// person's own word and every item of the list is shown with the spec the
+// digest on it binds, which is what the op's id list exists for (D2706).
+func TestAPlanApprovalIsPersonOnlyAndShowsItsItems(t *testing.T) {
+	f := newOrchestratorFixture(t)
+	asPerson(t)
+	s := seedOrchestratorState(t, f,
+		planItemUpsert("plan-a", "graph-import", "the plan's first task"),
+		planItemUpsert("plan-b", "graph-import", "the plan's second task"))
+	doc := patchDoc(t, s.Rev,
+		planApprove(t, s, "graph-import", "plan-a", "plan-b"),
+		orchestrator.Op{Op: orchestrator.OpGoalSet, Goal: &orchestrator.GoalOp{Goal: "carry the plan to merged pull requests"}})
+	path := patchFile(t, doc)
+
+	// No terminal: nothing lands, and neither item carries an approval.
+	out, _, err := runOrchestrator(t, "", "orchestrator", "patch", "-f", path)
+	if err == nil {
+		t.Fatalf("a plan approval landed with no terminal:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "real terminal") {
+		t.Errorf("the refusal does not say what it needs: %v", err)
+	}
+	for _, id := range []string{"plan-a", "plan-b"} {
+		if w, _ := storedOrchestratorState(t, f).Item(id); w.Approved != nil {
+			t.Fatalf("%s was approved by a run with no terminal", id)
+		}
+	}
+
+	// A real terminal and the project's name: the items the list names are
+	// approved as the person, and what they read first is every one of them.
+	typed(t)
+	out, _, err = runOrchestrator(t, orchestratorTestID+"\n", "orchestrator", "patch", "-f", path)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "[person-only] approving the items of graph-import") {
+		t.Errorf("the confirmation does not mark a plan approval as the person's own word:\n%s", out)
+	}
+	for _, want := range []string{
+		"plan-a against spec", "plan-b against spec",
+		"spec graph-import", "the plan's first task", "the plan's second task",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the confirmation does not show %q:\n%s", want, out)
+		}
+	}
+	for _, id := range []string{"plan-a", "plan-b"} {
+		w, _ := storedOrchestratorState(t, f).Item(id)
+		if w.Approved == nil || w.Approved.By != orchestratorPerson {
+			t.Fatalf("%s carries %+v, and the confirmed patch approves it as the person", id, w.Approved)
+		}
+	}
+}
+
 // TestThePersonConfirmationShowsTheGoalThatLands: setting the goal is a
 // person's op as well, and the line the person reads before typing their
 // project's name is the goal itself — that it is a goal is the op's kind, and

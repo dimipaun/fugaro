@@ -77,6 +77,13 @@ type PendingStep struct {
 	// `fugaro apply` so the step is not a mystery, and it is the change's
 	// subject only: never a value.
 	Change Change `json:"change"`
+	// Queued is the queue sequence Add issued for this entry, and it is what
+	// tells the entry a run read from the entry that replaced it: every other
+	// member is the same for a change that set the same key to another value —
+	// the change is the subject and never the value (D1570) — so without it
+	// the two are one entry, and a step queued while a run was going would read
+	// as the step that run answered and be cleared (ClearUnchanged).
+	Queued uint64 `json:"queued"`
 }
 
 // Pending is the whole document.
@@ -90,6 +97,12 @@ type Pending struct {
 	// (D1575). This package neither writes nor compares it — the caller that
 	// has the config in hand does both.
 	LastApply string `json:"last_apply,omitempty"`
+	// Seq is the last queue sequence this document issued, and every entry Add
+	// writes carries the next one (Queued). It is what keeps a stamp from ever
+	// being issued twice: the counter is written with the document, and the
+	// clears that drop entries leave it where it is, so a document this build
+	// wrote never reuses a number even across the entries it cleared.
+	Seq uint64 `json:"seq"`
 	// Steps is what is owed, and it is written even when it is empty: `[]` is
 	// "this machine owes nothing", which is a different answer from a document
 	// still carrying an earlier change's steps.
@@ -215,7 +228,16 @@ func pendingVersion(path string) (int, error) {
 // replaced, so two changes that owe the same step leave one entry — the one
 // that stays names the last change to ask for it. The steps dedupe and run
 // once (spec rule 3, the global constraint).
+//
+// Every entry is stamped with the document's next queue sequence, because the
+// entry it replaces may be one a run is holding: two changes that set the same
+// key to different values leave entries that are identical in every other
+// member (D1570), so a run settling by value alone would drop the later change
+// as the step it answered (ClearUnchanged). An entry that goes through Add is
+// owed as of that call, a copy of an earlier one included.
 func (p *Pending) Add(s PendingStep) {
+	p.Seq = p.nextQueued()
+	s.Queued = p.Seq
 	for i, have := range p.Steps {
 		if have.Step == s.Step {
 			p.Steps[i] = s
@@ -225,6 +247,19 @@ func (p *Pending) Add(s PendingStep) {
 	p.Steps = append(p.Steps, s)
 }
 
+// nextQueued is the sequence this document issues next: one past the last it
+// issued and one past every sequence its entries carry. The entries are read as
+// well as the counter because the counter is a member of the same file —
+// hand-edited, restored from elsewhere, or written by a build that had none —
+// and a stamp that came out equal to an entry's own would be no stamp at all.
+func (p *Pending) nextQueued() uint64 {
+	next := p.Seq
+	for _, s := range p.Steps {
+		next = max(next, s.Queued)
+	}
+	return next + 1
+}
+
 // Clear drops the entries for the named steps and leaves the rest: `fugaro
 // update` clears the stages it ran successfully and nothing else, so a catalog
 // build it never runs stays owed (D1567).
@@ -232,6 +267,37 @@ func (p *Pending) Clear(names ...string) {
 	p.Steps = slices.DeleteFunc(p.Steps, func(s PendingStep) bool {
 		return slices.Contains(names, s.Step)
 	})
+}
+
+// ClearUnchanged drops the entries of the named steps that are still the ones
+// the caller read, and leaves every entry that is not: a step that was owed,
+// run, and queued again while the run was going — the same step, for a change
+// made after its stage ran — is a new thing to do, and dropping it would leave
+// that change unrun while the record reads as settled (D1563, D1567).
+//
+// The comparison is the entry whole: the step, the project pair it is bound to,
+// the change that asked for it and the queue sequence Add stamped it with. The
+// stamp is what makes the comparison hold for the case it exists for — a change
+// that set the same key to another value leaves an entry identical in every
+// other member (D1570) — so an entry a writer replaced while the run was going
+// (Add) is a different entry and stays, and a step the caller read nothing
+// about is never dropped.
+func (p *Pending) ClearUnchanged(read *Pending, names ...string) {
+	p.Steps = slices.DeleteFunc(p.Steps, func(s PendingStep) bool {
+		return slices.Contains(names, s.Step) && slices.Contains(read.Steps, s)
+	})
+}
+
+// Clone is a copy of the document as it stands, for a caller that reads it,
+// queues its own entries and later settles those that are still the ones it
+// read (ClearUnchanged): internal/cli's chain reads the record before a run of
+// minutes and settles after it, and the read it holds has to be a copy, because
+// the document Add queues into is the same one.
+func (p *Pending) Clone() *Pending {
+	if p == nil {
+		return EmptyPending()
+	}
+	return &Pending{Version: p.Version, LastApply: p.LastApply, Seq: p.Seq, Steps: slices.Clone(p.Steps)}
 }
 
 // Names is the steps the document owes, deduped and in the order they run

@@ -412,7 +412,62 @@ export function licenceKeySupported(
 }
 
 /**
- * meetsCliFloor is the one patch-level comparison all seven floors above are
+ * NO_APPLY_CLI_FLOOR is the oldest CLI whose `settings set` and `settings unset`
+ * register **`--no-apply`** -- the word that says *save this and run none of its
+ * follow-up steps* (the composite-commands plan's D1565, D1572). The console's
+ * settings write passes it as the second phase word, so that the change it wrote
+ * is the local half and what it owes is read back from `apply.pending` rather
+ * than run behind the settings window.
+ *
+ * **No release carries the flag yet, so the constant is `null` and this console
+ * passes the word to no child at all.** `addNoApplyFlag`
+ * (`internal/cli/apply.go`) has no caller on this tree: `settings set` and
+ * `settings unset` gain it with that plan's AP5 and AP6, and the plan gives AP8
+ * (the console half) the same parallel level as those two, so the row word lands
+ * here before the CLI can answer it. A floor is a claim about a release that
+ * exists, and a version this console guessed at would be a word handed to a CLI
+ * that answers it with `unknown flag: --no-apply` and fails the whole write --
+ * every confirmed settings edit from the console, on every installed CLI. Unset
+ * is therefore the safe direction and the only honest one: the write is spawned
+ * without the word, which is the behaviour of every release so far, and the
+ * release that registers the flag names itself here.
+ *
+ * It is a floor and not a switch, so every older CLI keeps getting no word --
+ * the same patch-level comparison the seven floors above use, and the fourth
+ * constant beside them that is unset while nothing can answer it
+ * (`LICENCE_KEY_CLI_FLOOR`). `docs_desktop_console_test.go`'s own pin holds the
+ * two halves together: a command of this tree that registers `--no-apply` fails
+ * that test until this constant names the release and the console's tables stop
+ * calling the word held.
+ */
+export const NO_APPLY_CLI_FLOOR: string | null = null
+
+/**
+ * noApplySupported answers whether one version line may be handed `--no-apply`,
+ * by comparing it against `NO_APPLY_CLI_FLOOR` at the patch level.
+ *
+ * **Its caller is `CliSource`'s `#plan`** (`src/source/cli.ts`), the one place
+ * every settings edit's argv is built -- the dry run's plan and the write's
+ * alike, so the argv the window draws and the argv the child is started with
+ * are decided by the same answer. It asks the resolved binary's own version
+ * line, and `argvFor` emits the word only for a plan that carries the answer
+ * (`SETTINGS_EDIT_PHASE_WORDS`), so nothing a renderer sends can turn it on.
+ *
+ * `floor` is the constant by default and an argument only so that the branch a
+ * release will take can be tested: with the constant unset, every version is
+ * refused, which is the state this console is in until a release registers the
+ * flag (`version.test.ts` drives both).
+ */
+export function noApplySupported(
+  version: string,
+  floor: string | null = NO_APPLY_CLI_FLOOR,
+): boolean {
+  if (floor === null) return false
+  return meetsCliFloor(version, floor)
+}
+
+/**
+ * meetsCliFloor is the one patch-level comparison all eight floors above are
  * asked by, so a rule learned on one of them cannot be missing from the others.
  *
  * The order of the tests is the rule, and each refusal is on the safe side of a

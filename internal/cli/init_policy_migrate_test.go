@@ -2183,3 +2183,55 @@ func TestPublishRequiresADefaultPerProviderInUse(t *testing.T) {
 		}
 	}
 }
+
+// TestAReportsCommitNodeMigratesInPlaceOnceThePolicyStageRuns: the bump to
+// version 10 is shape-free, so a node one version behind that already carries
+// the member the bump introduces keeps its bytes and moves only its number
+// (projectpolicy's shapeFreeSteps). That is the whole of what the bump buys an
+// installation: `fugaro update` is the one command (the HARD RULE), and a commit
+// run of the release that follows reads the designation the node carried with
+// nobody publishing again.
+//
+// Version 9 is this release's own predecessor: no *released* binary wrote a
+// version-9 node without version 10 — both are 0.26.0, uncut — so the fixture
+// stands for an installation running this line's own build from before the
+// change landed, which is the one state in which a node of that version can
+// carry a member no publish of it writes.
+func TestAReportsCommitNodeMigratesInPlaceOnceThePolicyStageRuns(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":        9,
+		"budget":         map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos":    []string{"github/acme/app"},
+		"reports_commit": map[string]any{"repo": "acme/reports", "dir": "docs/reports"},
+	})
+	h := newMigrationRig(t, f, &initOptions{})
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("the policy stage refused a version-9 node carrying the member: %v\n%s", err, out)
+	}
+	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
+		t.Fatalf("the node is version %d, want %d", got, projectpolicy.Version)
+	}
+	if !strings.Contains(out, "the version field: 9 to 10") {
+		t.Errorf("the migration does not report the step it made:\n%s", out)
+	}
+	p := publishedPolicy(t, f)
+	if got := p.ReportsCommitRepo(); got != "acme/reports" {
+		t.Errorf("ReportsCommitRepo() = %q, want acme/reports: the step dropped the designation the node carried", got)
+	}
+	if got := p.ReportsCommitDir(); got != "docs/reports" {
+		t.Errorf("ReportsCommitDir() = %q, want docs/reports", got)
+	}
+	// The block is the node's own bytes and not a re-encode of a value this
+	// binary chose: a step that rewrote the member would be one a reader a
+	// version behind could not be handed its own node for (ReadsVersion's
+	// shape-free tolerance), and the whole point of the step is that it moves
+	// the number alone.
+	raw := nodeJSON(t, f, projectpolicy.PathShared())
+	for _, want := range []string{`"reports_commit"`, `"acme/reports"`, `"docs/reports"`} {
+		if !strings.Contains(raw, want) {
+			t.Errorf("the migrated node does not carry %s:\n%s", want, raw)
+		}
+	}
+}

@@ -268,6 +268,104 @@ func TestMintRepositoriesToken(t *testing.T) {
 	}
 }
 
+// TestSettleTokenIsPullRequestsWriteOnly is D641's rule: the settle step that
+// flips a change set's pull requests ready (D614) is the one coordinator-side
+// actor that writes, and the token it writes with carries the one write the
+// flip needs and no reach beyond it.
+//
+// It is asserted as an equality rather than as "one write" alone, the rule the
+// coordinator's set keeps: a permission asked for and never used is reach a
+// stolen token would have for nothing. And the mint is driven against a fixture
+// whose recorded body IS this set, so the set is not merely declared here but
+// is what reaches GitHub: a change to the map that left the fixture alone fails
+// on the fixture, and a change that widened the map fails on the map.
+//
+// What it is NOT is any other class's set. The coordinator's read, the run's,
+// the review's and the context clone's are four declarations of their own, and
+// the settle's being the coordinator's widened would make a change to either
+// silently widen the other — which is the drift the coordinator's own test
+// forbids from its side.
+func TestSettleTokenIsPullRequestsWriteOnly(t *testing.T) {
+	want := map[string]string{"pull_requests": "write", "metadata": "read"}
+	if !maps.Equal(settleTokenPermissions, want) {
+		t.Fatalf("settleTokenPermissions = %v, want %v", settleTokenPermissions, want)
+	}
+	writes := 0
+	for name, level := range settleTokenPermissions {
+		if strings.Contains(level, "write") {
+			writes++
+			if name != "pull_requests" {
+				t.Errorf("the settle mint asks GitHub to write %s: %s, and a settle step writes no file", name, level)
+			}
+		}
+	}
+	if writes != 1 {
+		t.Errorf("the settle mint asks for %d writes, want exactly the pull requests one", writes)
+	}
+	for _, other := range []struct {
+		name string
+		set  map[string]string
+	}{
+		{name: "the coordinator's", set: CoordinatorTokenPermissions()},
+		{name: "a run's", set: RunTokenPermissions()},
+		{name: "a review's", set: ReviewTokenPermissions()},
+		{name: "a context clone's", set: ContextTokenPermissions()},
+	} {
+		if maps.Equal(other.set, want) {
+			t.Errorf("the settle mint's set is %s set: the two are two declarations, so a change to either cannot widen the other", other.name)
+		}
+	}
+	now := time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC)
+	srv := httpfixture.Serve(t, filepath.Join("testdata", "settle_token.json"))
+	tok, exp, err := MintSettleToken(context.Background(), Options{
+		Owner: "acme", AppID: "1234", PrivateKey: key(t), BaseURL: srv.URL,
+		HTTP: &http.Client{Transport: jwtCheck{t, &key(t).PublicKey}}, Now: func() time.Time { return now },
+	}, []string{"web", "api"})
+	if err != nil || tok != "ghs_fixture_settle_token" || !exp.Equal(now.Add(time.Hour)) {
+		t.Fatalf("MintSettleToken = %q %s %v", tok, exp, err)
+	}
+}
+
+// TestSettleTokenNamesOnlyMemberRepos: a settle token covers the members of
+// the set it settles and nothing else. The fixture's access_tokens body names
+// exactly the two repositories the caller named, so reaching the token is
+// GitHub having been asked for a token over those two — a body that covered
+// one member, or the installation's every repository, fails here rather than
+// at a settle that could flip a pull request outside the set.
+//
+// The names are within one owner, because that is the endpoint's shape: a set's
+// members may span owners (D642), so the caller mints once per owner and a
+// member of another owner is not a name this mint can be given. The three
+// shapes it refuses rather than sending to GitHub are the ones
+// MintRepositoriesToken refuses, and they matter here for the same reason: a
+// token covering less than the caller asked for would leave a member unflipped
+// with the failure surfacing far from its cause.
+func TestSettleTokenNamesOnlyMemberRepos(t *testing.T) {
+	now := time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC)
+	srv := httpfixture.Serve(t, filepath.Join("testdata", "settle_token.json"))
+	opts := Options{
+		Owner: "acme", AppID: "1234", PrivateKey: key(t), BaseURL: srv.URL,
+		HTTP: &http.Client{Transport: jwtCheck{t, &key(t).PublicKey}}, Now: func() time.Time { return now },
+	}
+	if _, _, err := MintSettleToken(context.Background(), opts, []string{"web", "api"}); err != nil {
+		t.Fatalf("MintSettleToken: %v", err)
+	}
+	for _, tc := range []struct {
+		name  string
+		repos []string
+	}{
+		{name: "another owner's member is not a name", repos: []string{"acme/web", "acme/api"}},
+		{name: "one member twice is not two members", repos: []string{"web", "web"}},
+		{name: "a set with no member to name", repos: nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, _, err := MintSettleToken(context.Background(), opts, tc.repos); err == nil {
+				t.Error("a settle token was minted for repositories that are not the set's members")
+			}
+		})
+	}
+}
+
 // TestRevokeInstallationToken: the token's own end. GitHub revokes an
 // installation token at DELETE /installation/token, authenticated with the
 // token itself -- the App's JWT is not needed, and the endpoint revokes the
@@ -320,6 +418,33 @@ func TestRunTokenPermissionsAreTheRuns(t *testing.T) {
 	perms["administration"] = "write"
 	if again := RunTokenPermissions(); !maps.Equal(again, want) {
 		t.Errorf("RunTokenPermissions() after a caller mutated its copy = %v, want %v", again, want)
+	}
+}
+
+// TestIssueTokenPermissionsAreTheServicesWrite: the set the credentials
+// service's issue route mints with (B3 of
+// docs/orchestrator-graph-estimates/implementation-plan.md, D2718) is `issues:
+// write` and `metadata: read` and nothing else — the creation is the act that
+// needs the write and GitHub has no read-only issue permission beside it — and
+// it is a copy, so a caller that mutates what it was handed cannot widen what
+// the next mint asks GitHub for.
+//
+// It is the same set RequiredPermissions holds the App's installation to, which
+// is what makes an installation granted only `issues: read` an init-time
+// finding rather than a 422 at the first issue the service opens, and what
+// makes the owner's ruling of 2026-11-17 (U3) mechanical.
+func TestIssueTokenPermissionsAreTheServicesWrite(t *testing.T) {
+	want := map[string]string{"issues": "write", "metadata": "read"}
+	perms := IssueTokenPermissions()
+	if !maps.Equal(perms, want) {
+		t.Fatalf("IssueTokenPermissions() = %v, want %v", perms, want)
+	}
+	perms["contents"] = "write"
+	if again := IssueTokenPermissions(); !maps.Equal(again, want) {
+		t.Errorf("IssueTokenPermissions() after a caller mutated its copy = %v, want %v", again, want)
+	}
+	if maps.Equal(RunTokenPermissions(), want) {
+		t.Error("the issue route's set is the run's: the two are two declarations, and the write is the service's alone")
 	}
 }
 

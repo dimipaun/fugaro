@@ -1395,6 +1395,7 @@ func TestServedRoutesCensus(t *testing.T) {
 		{http.MethodPost, GitHubReadPath},
 		{http.MethodPost, MergeMintPath},
 		{http.MethodPost, LabelPath},
+		{http.MethodPost, IssuePath},
 		{http.MethodPost, BuildTokenPath},
 		{http.MethodPost, SlipPath},
 		{http.MethodPost, SlipClaimPath},

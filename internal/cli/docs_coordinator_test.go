@@ -1746,6 +1746,7 @@ const (
 	coordinatorMobileReadme      = "docs/mobile/README.md"
 	coordinatorMobilePlan        = "docs/mobile/implementation-plan.md"
 	coordinatorCredentialsReadme = "docs/credentials-service/README.md"
+	coordinatorRigorPlan         = "docs/rigor-modes/implementation-plan.md"
 )
 
 // coordinatorChecksRowHead and coordinatorDecisionsRowHead are the first cells of the two rows
@@ -1831,6 +1832,11 @@ var coordinatorCheckBlocks = []coordinatorNumberBlock{
 	{"170–179", coordinatorChecklist, "**Checks 170–179 are the subscriptions work's, and all ten are written below**", "**170–179** the subscriptions work's, all ten written and **NOT RUN**"},
 	{"", coordinatorChecklist, "**Numbering ruling (owner's assistant, 2026-10-13).**", "the numbering ruling of 2026-10-13"},
 	{"", coordinatorMobileReadme, "Checks 70–79 are unused and deliberately not taken", "records them as unused and not taken"},
+	// The rigor-modes work's own check, which renumbered itself out of 119 when the owner ruled
+	// that 119 is the console-on-Windows work's. It is a citation in the row and not a block the
+	// table reads from the register: the number is the owner's ruling, and the plan's §3 is the
+	// line that carries it.
+	{"", coordinatorRigorPlan, "**This plan takes Check 127.**", "**127** the rigor-modes work's"},
 }
 
 // coordinatorSectionCitationRE finds the citations the numbers section makes: a backticked

@@ -58,10 +58,15 @@ func TestDocsCheck301IsOneScriptTheOwnerRuns(t *testing.T) {
 		"fugaro/check301",
 		// The register's own rule for an owner-run check.
 		"no agent runs any step of it",
-		// The boundary the check measures: an update re-renders a unit that is
-		// there and never installs one, which is `setup`'s and `orchestrator
-		// install`'s.
-		"never **installs** a unit",
+		// The boundary the check measures, as D2700 moved it: `fugaro update`
+		// installs the unit a machine is missing (and re-renders an installed
+		// one as before), writes nothing where nobody is at the terminal, and
+		// a platform with no service manager is one line and an update that
+		// still succeeds.
+		"**installs** the login unit on a machine that has none",
+		"which supersedes t7's \"never installs\"",
+		"the person's own next terminal `fugaro update` installs it",
+		"a machine with neither launchd nor a systemd user unit gets one line and the update still succeeds",
 	} {
 		if !strings.Contains(flat, want) {
 			t.Errorf("Check 301's section does not say %q: the section is where the owner reads what the check settles and how to run it", want)
@@ -108,6 +113,12 @@ func TestDocsCheck302IsOneScriptTheOwnerRuns(t *testing.T) {
 		// The state the phases share, and the confirmation each asks for.
 		"fugaro/check302",
 		"no agent runs any step of it",
+		// Where the daemon comes from, since D2700: the same `fugaro update`
+		// the HARD RULE hands over installs the login unit on a machine that
+		// has none, so the cutover this check watches starts with one command
+		// at the owner's own terminal and nothing typed at it.
+		"the login unit `fugaro update` installs on a machine that has none",
+		"**d2700**, which supersedes t7's \"never installs one\"",
 		// T1's reading, in the section of the check that verifies it: the
 		// rollback is the steps by hand and no command stands in for them.
 		"no rollback command exists",

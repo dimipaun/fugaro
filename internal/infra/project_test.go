@@ -283,11 +283,25 @@ func TestCoverNamesAreTheCodes(t *testing.T) {
 	if BuildIdentityAccountID != tf.BuildIdentityAccountID || has(tf.FugaroAccounts, BuildIdentityAccountID) {
 		t.Errorf("the project's build identity %s must be tf.BuildIdentityAccountID (%s), its own kind, and not one of tf.FugaroAccounts", BuildIdentityAccountID, tf.BuildIdentityAccountID)
 	}
-	buildIdentity := tf.Cover{Projects: []string{"proj-1"}}
-	grant := &tf.Plan{ResourceChanges: []tf.ResourceChange{{Address: "m.google_project_iam_member.x", Type: "google_project_iam_member",
-		Change: tf.Change{Actions: []string{"create"}, After: map[string]any{"member": "serviceAccount:" + BuildIdentityEmail("proj-1"), "role": "roles/logging.logWriter"}, AfterUnknown: map[string]any{}}}}}
-	if got := buildIdentity.NotCovered(grant, nil); len(got) == 0 {
-		t.Error("a project role to the build identity is covered: its whole reach is the credentials service's invoker bit, and every other row's role is refused")
+	project := tf.Cover{Projects: []string{"proj-1"}}
+	projectGrant := func(role string) *tf.Plan {
+		return &tf.Plan{ResourceChanges: []tf.ResourceChange{{Address: "m.google_project_iam_member.x", Type: "google_project_iam_member",
+			Change: tf.Change{Actions: []string{"create"}, After: map[string]any{"member": "serviceAccount:" + BuildIdentityEmail("proj-1"), "role": role}, AfterUnknown: map[string]any{}}}}}
+	}
+	// The ONE project-level role it holds, and the one a catalog build cannot
+	// run without: Cloud Build writes a build's step logs as the account the
+	// build runs as and a catalog build submits with Logging: CLOUD_LOGGING_ONLY
+	// (B6's third review found the build refused, or every step log lost, by an
+	// account holding no roles/logging.logWriter). The role is project-wide
+	// because Cloud Logging offers the write no narrower.
+	if got := project.NotCovered(projectGrant("roles/logging.logWriter"), nil); len(got) != 0 {
+		t.Errorf("roles/logging.logWriter to the build identity is not covered: %v — a build that names a user-specified service account is written to Cloud Logging as that account, so the identity has to hold the role", got)
+	}
+	// ... and every OTHER project role stays refused: its reach is the
+	// credentials service's invoker bit, that one logging role, and the rows
+	// whose own resource names it.
+	if got := project.NotCovered(projectGrant("roles/datastore.user"), nil); len(got) == 0 {
+		t.Error("a project role to the build identity is covered: its whole reach is the credentials service's invoker bit and the one logging role its own step logs need, and every other row's role is refused")
 	}
 	c := tf.Cover{Projects: []string{"proj-1"}}
 	for _, id := range []string{gcp.ServiceAccountID("acme-web", "web"), gcp.BuildServiceAccountID("acme-web")} {

@@ -530,11 +530,16 @@ func TestRecipesSkewRefusesSlotOnOldImage(t *testing.T) {
 	if err := checkSlotImage(context.Background(), env, appSlug, &quiet, "base", "", &bytes.Buffer{}); err != nil {
 		t.Fatalf("a launch that asks nothing: %v", err)
 	}
+	// The gate answers for the task alone: the workflow's own ask for a
+	// reviewer arm is a key of the file the job decodes rather than a field of
+	// the task, and it has its own constant and its own test
+	// (workflowABSince, TestRecipesSkewRefusesWorkflowABOnOldImage).
 }
 
-// TestSlotSinceHasAReleaseBullet: slotSince names 0.24.0, which is not tagged,
-// so docs/release.md's Before-you-tag list is what holds the constant to the
-// release actually cut — the job every other *Since constant's bullet does.
+// TestSlotSinceHasAReleaseBullet: slotSince names 0.26.0, the untagged release
+// this work ships in — not the tagged release the field itself ships in — so
+// docs/release.md's Before-you-tag list is what holds the constant to the
+// release actually cut, the job every other *Since constant's bullet does.
 // Nothing else ties the number the gate accepts to the release whose runner
 // replays a reviewer pair's champion patch, and a release that landed the
 // replay elsewhere would otherwise keep refusing images that have it.
@@ -552,7 +557,7 @@ func TestSlotSinceHasAReleaseBullet(t *testing.T) {
 	if !strings.Contains(bullet, "currently `\""+slotSince+"\"`") {
 		t.Errorf("docs/release.md's slotSince bullet does not carry the constant's release (%q)", slotSince)
 	}
-	for _, want := range []string{"ab.slot", "not tagged yet", "checkSlotImage", "checkCloneSlotImage", "slotAsk"} {
+	for _, want := range []string{"ab.slot", "not tagged yet", "checkSlotImage", "checkCloneSlotImage", "slotAsk", "0.25.0"} {
 		if !strings.Contains(bullet, want) {
 			t.Errorf("docs/release.md's slotSince bullet does not say %q", want)
 		}
@@ -862,6 +867,84 @@ func TestRecipesSkewAdmitsACurrentServiceBesideAnOlderBasePin(t *testing.T) {
 	writeInstallationServiceImage(t, state, lc.GCPProject, "0.20.3")
 	if _, err := checkReviewAdmissionWarn(&lc); err == nil {
 		t.Fatal("a 0.20.3 service beside the same older base pin was admitted")
+	}
+}
+
+// TestDiagnoseSinceNamesARelease: the constant is the release whose runner
+// executes the diagnose step, and the guide's own bullet for the step is what
+// names it, the way the digest bullet names digestSince (docs/recipes.md).
+// Both halves matter to a release cutting the tag: a value that is not a
+// release is one no build record can carry, and a guide that names another
+// number sends the person reading the refusal to a release the gate does not
+// judge with.
+func TestDiagnoseSinceNamesARelease(t *testing.T) {
+	if rel, ok := releaseOf("ghcr.io/dimipaun/fugaro-base:" + diagnoseSince); !ok || rel != diagnoseSince {
+		t.Fatalf("diagnoseSince = %q is not the X.Y.Z release a build record's base_ref carries", diagnoseSince)
+	}
+	want := "first release whose runner executes the step is " + diagnoseSince
+	if doc := readDoc(t, "docs/recipes.md"); !strings.Contains(doc, want) {
+		t.Errorf("docs/recipes.md's diagnose bullet does not say %q: the guide is where a person reads which release the step needs", want)
+	}
+}
+
+// TestDiagnoseRefusalNamesUpdate: the refusal a cloud diagnosis meets is the
+// whole of what a person standing in front of a broken machine acts on, so it
+// carries the family's three facts (docs/recipes.md): the release whose runner
+// first executes the step, the job image it judged and the release that image
+// was built from, and the one command that moves it — run at a terminal,
+// never in a coding agent's session.
+func TestDiagnoseRefusalNamesUpdate(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	spec := &task.Spec{Version: 1, RunID: "20261117-100000-dg01", Repo: "acme/app", Ref: "main", Workflow: "web",
+		Task: "diagnose a failed run", Mode: recipe.ModeArtifact, ReviewClass: true}
+	below := shiftRelease(t, diagnoseSince, -1)
+	check := func(baseRef string) (string, error) {
+		var warn bytes.Buffer
+		writeBuildRecord(t, f, appSlug, "web", baseRef)
+		err := checkDiagnoseImage(context.Background(), env, appSlug, spec, "base", &warn)
+		return warn.String(), err
+	}
+	for _, rel := range []string{"0.5.0", below} {
+		warn, err := check("ghcr.io/dimipaun/fugaro-base:" + rel)
+		if err == nil || ExitCode(err) != ExitUserError ||
+			!strings.Contains(err.Error(), diagnoseSubject+" needs a job image whose runner knows "+diagnoseKnows+" (fugaro "+diagnoseSince+" or later)") {
+			t.Fatalf("%s: warn = %q, err = %v", rel, warn, err)
+		}
+		for _, want := range []string{"fugaro update", "in your own terminal window", "release " + rel} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: the refusal does not name %q: %v", rel, want, err)
+			}
+		}
+		if warn != "" {
+			t.Errorf("%s: warning %q, want none", rel, warn)
+		}
+	}
+	if warn, err := check("ghcr.io/dimipaun/fugaro-base:" + diagnoseSince); err != nil {
+		t.Fatalf("%s: warn = %q, err = %v", diagnoseSince, warn, err)
+	}
+	warn, err := check("us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c")
+	if err != nil {
+		t.Fatalf("dev base: %v", err)
+	}
+	if !strings.Contains(warn, "not a release base image") {
+		t.Errorf("dev base: warning %q, want the not-a-release note", warn)
+	}
+	// The same diagnosis on a checkout: clone workflow, whose job has no
+	// derived image and so no build record: the gate raises
+	// checkCloneImageSince's threshold on base_images.base itself.
+	lc := *env.lc
+	lc.BaseImages = map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:" + below}
+	var cloneWarn bytes.Buffer
+	err = checkCloneDiagnoseImage(&lc, spec, &cloneWarn)
+	if err == nil || ExitCode(err) != ExitUserError ||
+		!strings.Contains(err.Error(), diagnoseSubject+" needs a job image whose runner knows "+diagnoseKnows+" (fugaro "+diagnoseSince+" or later)") ||
+		!strings.Contains(err.Error(), "release "+below) {
+		t.Fatalf("clone %s: warn = %q, err = %v", below, cloneWarn.String(), err)
+	}
+	lc.BaseImages["base"] = "ghcr.io/dimipaun/fugaro-base:" + diagnoseSince
+	if err := checkCloneDiagnoseImage(&lc, spec, &bytes.Buffer{}); err != nil {
+		t.Fatalf("clone %s: %v", diagnoseSince, err)
 	}
 }
 

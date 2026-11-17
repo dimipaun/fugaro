@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -20,6 +21,17 @@ var changeSetRepos = []string{"acme/app", "acme/other"}
 // member's run, so a test that reads the set back has to know which run that
 // is.
 var changeSetRunIDs = []string{"20261116-140000-a1b2", "20261116-140001-c3d4"}
+
+// changeSetBlock is the block a member's task carries, as runChangeSet writes
+// it: the set, named by its first member's run, and both of its members — this
+// run's repository and the sibling's, which is another repository's run and so
+// not one this fixture ever seeds.
+func changeSetBlock(memberRun string) *task.ChangeSet {
+	return &task.ChangeSet{ID: memberRun, Members: []task.ChangeSetMember{
+		{Repo: changeSetRepos[0], RunID: memberRun},
+		{Repo: changeSetRepos[1], RunID: changeSetRunIDs[1]},
+	}}
+}
 
 // changeSetFixture is the launch fixture with a second repository enrolled: a
 // change set launches one run per repository, so a fixture with one repository
@@ -147,6 +159,49 @@ func TestChangeSetMembersFixedAtLaunch(t *testing.T) {
 	}
 }
 
+// TestChangeSetFollowUpCarriesTheBlock: a follow-up on a member's pull request
+// resolves from the run it continues and carries that run's change set into the
+// task it writes, members and all (resolvePR, newFollowUpSpec) — nothing on the
+// launch names the set, since a follow-up's only door to a set is the run it
+// follows. The block is what holds the follow-up's pull request a draft while
+// the set is unfinished: a follow-up that dropped it would be the way to flip a
+// held member ready on its own, from `fugaro run --pr N` (F15). The copy is
+// what `fugaro run --pr N` must make without any --change-set flag, which this
+// build refuses outright.
+//
+// Mutation (drop ChangeSet from the spec literal in newFollowUpSpec, or the
+// `c.ChangeSet = prev.ChangeSet` that fills it): the follow-up's stored task
+// carries no set and this test fails.
+func TestChangeSetFollowUpCarriesTheBlock(t *testing.T) {
+	f := newCloudFixture(t)
+	// The image must be one whose runner reads the field: the inherited block
+	// is what the launch is gated on (changeSetSince).
+	writeBuildRecord(t, f, appSlug, "web", releasePolicy)
+	root := firstRunSpec(rootID)
+	root.ChangeSet = changeSetBlock(rootID)
+	seedSpec(t, f, root, false)
+	rec := prRecord(rootID, "", 7, 1)
+	rec.StartedAt = time.Now().Add(-time.Hour)
+	writeRecord(t, f, rootID, rec)
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "tidy up"); err != nil {
+		t.Fatalf("follow-up on a member's pull request: %v", err)
+	}
+	got := readSpec(t, f, fuID).ChangeSet
+	want := changeSetBlock(rootID)
+	if got == nil {
+		t.Fatal("the follow-up's task carries no change set: the hold its member is under would not bind it, and the follow-up would flip the pull request ready")
+	}
+	if got.ID != want.ID || len(got.Members) != len(want.Members) {
+		t.Fatalf("follow-up change set = %+v, want %+v", got, want)
+	}
+	for i, m := range want.Members {
+		if got.Members[i] != m {
+			t.Fatalf("follow-up change set names %+v at %d, want %+v", got.Members[i], i, m)
+		}
+	}
+}
+
 // TestChangeSetRefusesOneRepositoryTwice: a change set is one run per
 // repository, and two --repo values that reduce to one repository are one
 // member named twice — which would write a task whose own member list repeats
@@ -201,26 +256,40 @@ func TestChangeSetGateTheJobImage(t *testing.T) {
 	}
 }
 
-// TestChangeSetRefusedUntilSettleExists: nothing in this release flips a change
-// set's pull requests ready, and the draft hold is the whole point of creating
-// one (D614) — so a build that HAS the code still refuses the flag, in its own
-// words, rather than creating a set whose pull requests nothing can lift
-// (D616). The two answers are judged here together because only one of them is
+// TestChangeSetLaunchesOnceSettleExists: the release that ships the settle step
+// is the one that lifts D1's refusal. A set whose members' pull requests nothing
+// could flip ready would stay in draft for good — the draft hold (D614) is the
+// whole point of creating one — so a build without the step still refuses the
+// flag, in D522's sentence, and a build with it launches the set (D616).
+//
+// The two answers are judged here together because only one of them is
 // reachable through the command in any one build: a test binary of this package
 // never loads ee/register (only cmd/fugaro does), so Edition() is core whatever
-// tag the binary carries.
-func TestChangeSetRefusedUntilSettleExists(t *testing.T) {
-	core := changeSetRefusal(Edition())
+// tag the binary carries. The tagged launch is driven with the marker set the
+// way ee/register's init sets it, so what the command does with the flag is
+// judged and not just the sentence it prints.
+func TestChangeSetLaunchesOnceSettleExists(t *testing.T) {
+	core := changeSetRefusal(EditionCore)
 	if !strings.Contains(core, "Subscription Edition") {
 		t.Fatalf("the refusal an untagged build prints = %q, want D522's paid-feature sentence", core)
 	}
-	tagged := changeSetRefusal(EditionEE)
-	if tagged == core {
-		t.Fatal("a tagged build prints the untagged build's refusal")
+	if tagged := changeSetRefusal(EditionEE); tagged != "" {
+		t.Fatalf("a build that has the settle step still refuses --change-set: %q", tagged)
 	}
-	for _, want := range []string{"--change-set", "settle", "draft"} {
-		if !strings.Contains(tagged, want) {
-			t.Errorf("the refusal a tagged build prints does not say %q: %q", want, tagged)
+
+	f := changeSetFixture(t)
+	setMaxParallel(t, 5)
+	fixedRunIDs(t)
+	old := editionEE
+	editionEE = true
+	t.Cleanup(func() { editionEE = old })
+	if _, _, err := execute(t, "run", "--change-set", "--repo", changeSetRepos[0], "--repo", changeSetRepos[1], "Add a feature"); err != nil {
+		t.Fatalf("a build with the settle step refused the change set launch: %v", err)
+	}
+	for i, repo := range changeSetRepos {
+		spec := readSpecOf(t, f.cloudFixture, mustSlug("github", repo), changeSetRunIDs[i])
+		if spec.ChangeSet == nil || spec.ChangeSet.ID != changeSetRunIDs[0] {
+			t.Fatalf("%s's task carries %+v, want the set named by the first member's run %s", repo, spec.ChangeSet, changeSetRunIDs[0])
 		}
 	}
 }
