@@ -942,7 +942,7 @@ func resolvedLevel(levels config.Levels, level policy.Level) config.ResolvedLeve
 // a plain membership test, while the list that bounds this run is
 // config.CheckAllowed's, which admits a route ID where the switch routes the
 // model to it and names the key the owner wrote — the run's own pins by their
-// paths and a level's own model as agent.levels.lN.model (checkLevels,
+// paths and a level's own model as agent.levels.lN.model (checkModels,
 // levelModelPath). A list filled in here would refuse a level model before
 // checkBudget judged it, and refuse it by a rule that does not know the run's
 // routes: the routed level model this run may use would be reported as one it

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/diagnoseagent"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -145,6 +147,29 @@ func diagnoseTree(t *testing.T, h *harness) string {
 		return dir, srctree.Record{Version: o.Version, Commit: o.Commit, Kind: srctree.KindTarball}, nil
 	})
 	return dir
+}
+
+// diagnoseCfg is the configuration a diagnosis runs against: the fixture with
+// the models pinned, so the rules that judge models have pins to judge, and
+// with commands.render, which the artifact gate reads (a mode: artifact recipe
+// whose workflow leaves it empty is refused before the budget gate, which is
+// T-TC11's own task). diagnose is the repository's own agent.models.diagnose,
+// "" for a file that writes none — which leaves the run the built-in default
+// the local tier reads (diagnoseModel).
+func diagnoseCfg(t *testing.T, coder, reviewer, diagnose string) string {
+	t.Helper()
+	models := "  models: { coder: " + coder + ", reviewer: " + reviewer + ", background: " + haiku
+	if diagnose != "" {
+		models += ", diagnose: " + diagnose
+	}
+	models += " }\n"
+	cfg := renderCfg(t, "", "")
+	out := strings.Replace(cfg, "  review_rounds: 2\n", "  review_rounds: 2\n  model: "+sonnet+"\n"+models+
+		"  max_output_tokens: { coder: 4096, reviewer: 4096 }\n", 1)
+	if out == cfg {
+		t.Fatal("the fixture has no review_rounds line to add the models beside")
+	}
+	return out
 }
 
 // answerNonceRE is the answer fence's nonce as the prompt carries it.
@@ -542,4 +567,86 @@ func TestDiagnoseStageReportedABadAnswerAsAFailure(t *testing.T) {
 	if len(rec.Artifacts) != 0 {
 		t.Fatalf("a refused answer uploaded %v", artifactNames(rec.Artifacts))
 	}
+}
+
+// TestDiagnoseModelOutsideTheAllowListRefused: the owner's allow-list bounds
+// every model a run may call, and the diagnose stage's own model is one of them
+// (D2403, D2407). It is deliberately not a role slot, so no pin rule names it:
+// a list that leaves it off has to refuse the run at bootstrap, before any
+// model call, or a diagnosis answers on a model the owner's policy never
+// admitted — with the failure's own logs in its prompt.
+//
+// The run's own pins are all on the list and the diagnose model is the only
+// model off it, so a refusal naming agent.models.diagnose can only be about the
+// diagnose stage's model.
+func TestDiagnoseModelOutsideTheAllowListRefused(t *testing.T) {
+	cases := []struct {
+		name, coder, reviewer, diagnose, off string
+	}{
+		{
+			name: "the key the repository wrote",
+			// The pins are sonnet and haiku, which the list carries; the
+			// diagnose model is the one it does not.
+			coder: sonnet, reviewer: sonnet, diagnose: opus, off: opus,
+		},
+		{
+			// No layer writes the key and the run still calls a model: the
+			// built-in default the local tier reads is what this run would
+			// hand the evidence to, so the list has to judge that one.
+			name:  "the model this run applies when no layer writes the key",
+			coder: opus, reviewer: opus, off: config.DefaultDiagnoseModel,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarnessFiles(t, diagnoseCfg(t, tc.coder, tc.reviewer, tc.diagnose), diagnoseSpec(t), nil)
+			h.deps.Spend = ceilingOf(t, runner.AllowedModelsEnv, tc.coder+","+haiku)
+			// The stage may never be reached: the refusal is bootstrap's, and
+			// a run that got past it would fetch a source tree over the
+			// network, which no test of this package may do.
+			runner.SetDiagnoseSource(t, func(context.Context, srctree.Options) (string, srctree.Record, error) {
+				t.Error("the run reached the diagnose stage: the refusal is not before it")
+				return "", srctree.Record{}, errors.New("no source fetch in this test")
+			})
+			refused(t, h, "agent.models.diagnose", tc.off, "allowed_models from ceiling")
+			if len(h.agent.calls) != 0 {
+				t.Errorf("the run called a model %d times before the refusal", len(h.agent.calls))
+			}
+		})
+	}
+}
+
+// TestDiagnoseModelJudgedByEveryModelRule: the diagnose stage's model is judged
+// by the rules that judge a pin — the owner's data policy for provider models,
+// the auth rule and the price rule — and not only by the allow-list. Each case
+// leaves the run's own pins on Claude models the provider does not serve and
+// the catalog prices, so the refusal can only be about the diagnose stage's
+// model, and each is refused before any model call.
+func TestDiagnoseModelJudgedByEveryModelRule(t *testing.T) {
+	t.Run("a provider the owner did not approve this repository for", func(t *testing.T) {
+		// The stage's prompt carries the evidence a failed command left
+		// behind, so a provider whose allow_data_to does not name this
+		// repository must refuse the run rather than be handed it.
+		g := providerGW(t, diagnoseCfg(t, sonnet, sonnet, deepseek), "acme/other")
+		g.setSpec(t, diagnoseSpec(t))
+		refusedBeforeAnyCall(t, g, "agent.models.diagnose", deepseek, "allow_data_to", "acme/app")
+	})
+	t.Run("a provider model under oauth", func(t *testing.T) {
+		// An oauth token is a Claude subscription credential and is never
+		// sent to another provider (config.CheckProviderAuth), the diagnose
+		// stage's own model included.
+		cfg := strings.Replace(diagnoseCfg(t, sonnet, sonnet, deepseek), "auth: api-key", "auth: oauth", 1)
+		g := providerGW(t, cfg, "acme/app")
+		g.setSpec(t, diagnoseSpec(t))
+		refusedBeforeAnyCall(t, g, "agent.models.diagnose", deepseek, "oauth", "api-key")
+	})
+	t.Run("a model the catalog cannot price", func(t *testing.T) {
+		// A stage's call reserves its whole output allowance at the gateway
+		// before it spends, and a model with no price row cannot be reserved
+		// at all: under enforce the run stops here rather than at the ledger.
+		const unpriced = "claude-unpriced-9"
+		g := newGW(t, diagnoseCfg(t, sonnet, sonnet, unpriced), "enforce", "50")
+		g.setSpec(t, diagnoseSpec(t))
+		refusedBeforeAnyCall(t, g, "agent.models.diagnose", unpriced, "has no price")
+	})
 }
