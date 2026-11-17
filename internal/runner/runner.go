@@ -6131,10 +6131,13 @@ func (r *run) finalize(ctx context.Context) error {
 	default:
 		r.recordEnd(runstore.StatusFailed, runstore.OutcomeDraft, class, reason)
 	}
-	// The verdict joins the member's record after the ending, never at the
-	// hold above: what the set's step reads is the ending this run reached, so
-	// a run whose ready answer something later took away — a pull request that
-	// could not be set up, say — leaves no `ship` behind it.
+	// The verdict joins the member's record once the ending is known — here
+	// and not at the hold above — so what the set's step reads is the ending
+	// this run reached. Every ending that gets this far writes it, the empty
+	// word included, which is what clears a `ship` an earlier attempt at the
+	// same pull request left behind; an ending that returns above this line (a
+	// push that failed, a pull request closed during the run) writes nothing
+	// and leaves the last word about this pull request standing.
 	r.recordChangeSetVerdict(ctx, pr, verdict)
 	r.updateCost()
 	r.narrowText = r.narrowSummary(ctx)
