@@ -353,9 +353,9 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		runsvc  = "google_cloud_run_v2_service_iam_member"
 		logview = "google_logging_log_view_iam_member"
 	)
-	// The project's build identity (B5, D2301), whose one row the cells below
-	// pin: the invoker bit on the credentials service, and no role of any
-	// other row.
+	// The project's build identity (B5, D2301), whose cells below are pinned:
+	// the invoker bit on the credentials service and the writer and tag-mover
+	// pair on the shared registry (B6), and no role of any other row.
 	const buildIdentity = "serviceAccount:" + BuildIdentityAccountID + "@proj-1.iam.gserviceaccount.com"
 	for _, c := range []struct {
 		typ, role, member string
@@ -387,9 +387,21 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		{secret, "roles/secretmanager.secretAccessor", account, true},
 		{runjob, "projects/proj-1/roles/fugaroJobRunner", person, true},
 		{runjob, "roles/run.invoker", account, true},
-		// The project's build identity's one row (B5, D2301): the same role on
-		// the SERVICE type, which is the whole of what the account may hold.
+		// The project's build identity's three cells (B5, D2301; the registry
+		// pair added by B6): the invoker bit on the SERVICE type, the class
+		// the service answers the build route for, and the two roles on the
+		// ONE shared registry the per-repository build account held before
+		// it — which is the whole of what the account may hold.
 		{runsvc, "roles/run.invoker", buildIdentity, true},
+		{repo, "roles/artifactregistry.writer", buildIdentity, true},
+		{repo, "projects/proj-1/roles/fugaroTagMover", buildIdentity, true},
+		// ... and a role it does NOT hold: the reader, which is no part of a
+		// catalog push through a grant ("nothing wider" — what a build pulls
+		// it pulls with its key or its own registry write), and which the
+		// per-repository build account held on the base and ghcr registries
+		// (modules/repo/build.tf's build_base and build_ghcr) beside the two
+		// rows above.
+		{repo, "roles/artifactregistry.reader", buildIdentity, false},
 		{logview, "roles/logging.viewAccessor", person, true},
 		// The credentials service's two rows, and only these two (0.10.1,
 		// ledger #903): the bundle's accessor and its own database role. The
@@ -847,13 +859,15 @@ func TestCoordinatorAccountIsItsOwnPrincipalKind(t *testing.T) {
 // the identity a shared repository's catalog build runs as a job runner's
 // role, the history account's datastore.user or a build account's registry
 // writer. What a catalog build does need of the registry is a role another
-// task adds to this table deliberately; before that, its whole reach is the
-// one row below — roles/run.invoker on the credentials service, the class the
-// service answers the build route for.
+// task adds to this table deliberately, and B6 is that task: the identity's
+// whole reach is the cells `allowed` names — roles/run.invoker on the
+// credentials service, the class the service answers the build route for, and
+// the writer and tag-mover pair on the ONE shared registry every catalog image
+// is pushed into.
 //
 // The table alone does not hold that: TestGrantRulesMatrix computes its
 // expectation from the table under test, so it follows a row that gains the
-// kind. This is the hand-written half — the one row the account may hold,
+// kind. This is the hand-written half — the cells the account may hold,
 // asserted over every (type, role) cell of grantRules and then for real
 // through the cover, role by role — and TestGrantRulesPinnedCells pins the
 // positive cell and two refusals beside it.
@@ -863,12 +877,17 @@ func TestBuildIdentityIsItsOwnPrincipalKind(t *testing.T) {
 	if slices.Contains(FugaroAccounts, BuildIdentityAccountID) {
 		t.Errorf("the project's build identity is one of FugaroAccounts, so every toAccounts row accepts it: one confirmation would then cover granting the identity a catalog build runs as a job runner's role or a build account's registry writer")
 	}
-	// The one row it may hold, and nothing else: a second row that gains
-	// toBuildIdentity is a role this account may be granted, which is a
-	// decision the account's own task makes and not one a widened row makes
-	// silently.
+	// The cells it may hold, and nothing else: a row that gains
+	// toBuildIdentity without being named here is a role this account may be
+	// granted, which is a decision the account's own tasks make and not one a
+	// widened row makes silently. B6 is the second of those tasks and added
+	// the registry pair.
 	allowed := map[string]map[string]bool{
 		"google_cloud_run_v2_service_iam_member": {"roles/run.invoker": true},
+		"google_artifact_registry_repository_iam_member": {
+			"roles/artifactregistry.writer": true,
+			customKey + "fugaroTagMover":    true,
+		},
 	}
 	for typ, row := range grantRules {
 		for key, w := range row {
