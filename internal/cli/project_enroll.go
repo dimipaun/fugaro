@@ -590,7 +590,9 @@ func putAllowRepos(ctx context.Context, out io.Writer, configPath string, lc *lo
 	if lc.PolicyGeneration != etag {
 		return nil
 	}
-	return recordPublishedGeneration(ctx, out, db, lc, configPath, patched)
+	// The node is patched here and not reconciled: no craft member is
+	// rewritten, so no removal record has anything to clear.
+	return recordPublishedGeneration(ctx, out, db, lc, configPath, patched, nil)
 }
 
 // removalWarning is what `repos rm` asks the operator to confirm. Removing an

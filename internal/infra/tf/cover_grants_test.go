@@ -353,8 +353,12 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		runsvc  = "google_cloud_run_v2_service_iam_member"
 		logview = "google_logging_log_view_iam_member"
 	)
-	// The project's build identity (B5, D2301), whose one row the cells below
-	// pin: the invoker bit on the credentials service, and no role of any
+	// The project's build identity (B5, D2301), whose cells below are pinned:
+	// the invoker bit on the credentials service, the writer and tag-mover
+	// pair on the shared registry, the reader on the two registries a build
+	// pulls from, the bucket's read of the copied definitions and write of one
+	// repository's record, the provider credential a build clones with, the
+	// one project-level role its own step logs need (B6), and no role of any
 	// other row.
 	const buildIdentity = "serviceAccount:" + BuildIdentityAccountID + "@proj-1.iam.gserviceaccount.com"
 	for _, c := range []struct {
@@ -387,9 +391,40 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		{secret, "roles/secretmanager.secretAccessor", account, true},
 		{runjob, "projects/proj-1/roles/fugaroJobRunner", person, true},
 		{runjob, "roles/run.invoker", account, true},
-		// The project's build identity's one row (B5, D2301): the same role on
-		// the SERVICE type, which is the whole of what the account may hold.
+		// The project's build identity's four cells (B5, D2301; the registry
+		// roles added by B6): the invoker bit on the SERVICE type, the class
+		// the service answers the build route for, the writer and the tag
+		// mover on the ONE shared registry every catalog image lands in, and
+		// the reader on the base and ghcr registries a build's own steps pull
+		// through — the whole of what the account may hold.
 		{runsvc, "roles/run.invoker", buildIdentity, true},
+		{repo, "roles/artifactregistry.writer", buildIdentity, true},
+		{repo, "projects/proj-1/roles/fugaroTagMover", buildIdentity, true},
+		// The reader is not a fifth cell of its own: this type's row carries
+		// one reader cell for every principal that pulls an image, and the
+		// identity is one of them now that a catalog build's first pull — the
+		// credential step's own base image — is made as the account the build
+		// runs as.
+		{repo, "roles/artifactregistry.reader", buildIdentity, true},
+		// The bucket and the secret cells the same review added, which are the
+		// three reaches a catalog build's own steps still make as the identity:
+		// the copied definitions its pin step reads, the record its record step
+		// writes, and the provider credential its clone step resolves. The
+		// conditions these carry are the check's own input and
+		// TestBuildIdentityBucketGrantsAreTheConditions reads them at the size
+		// the plan writes them.
+		{bkt, "roles/storage.objectViewer", buildIdentity, true},
+		{bkt, "roles/storage.objectUser", buildIdentity, true},
+		{secret, "roles/secretmanager.secretAccessor", buildIdentity, true},
+		// The one project-level role the identity holds, and the one cell of
+		// that row it shares with an account of Fugaro's own beside the
+		// credentials service's datastore role: a build that names a
+		// user-specified service account is written to Cloud Logging as that
+		// account, so a catalog build without it is refused or loses every step
+		// log (catalog.go submits with Logging: CLOUD_LOGGING_ONLY). The
+		// per-repository build account this identity replaces held the same
+		// role at the same level.
+		{project, "roles/logging.logWriter", buildIdentity, true},
 		{logview, "roles/logging.viewAccessor", person, true},
 		// The credentials service's two rows, and only these two (0.10.1,
 		// ledger #903): the bundle's accessor and its own database role. The
@@ -414,13 +449,16 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		// Roles on the wrong type, or to the wrong kind of principal.
 		{bkt, "roles/storage.objectAdmin", account, false},
 		{project, "roles/storage.objectAdmin", person, false},
-		// The build identity is refused every role but its one row (B5,
-		// D2301): a bucket write — which is how a registry writer, the role a
-		// later task adds to this table on purpose, would look if it were
-		// widened into a row silently — and the invoker bit on the type that
-		// is not the service it invokes.
-		{bkt, "roles/storage.objectUser", buildIdentity, false},
+		// The build identity on the types and roles it does not hold: a
+		// project-level secretAccessor, which would reach every secret of the
+		// installation rather than the one repository's provider credential its
+		// own cell grants, and the invoker bit on the type that is not the
+		// service it invokes. (The runs bucket's two object roles came off this
+		// list with the review that found a catalog build's own pin, record and
+		// clone steps unreached; their conditions are what narrow them, and
+		// TestBuildIdentityBucketGrantsAreTheConditions reads them.)
 		{runjob, "roles/run.invoker", buildIdentity, false},
+		{project, "roles/secretmanager.secretAccessor", buildIdentity, false},
 		{project, "roles/secretmanager.secretAccessor", account, false},
 		{project, "roles/iam.serviceAccountUser", person, false},
 		{project, "projects/proj-1/roles/fugaroTokenMinter", person, false},
@@ -847,13 +885,15 @@ func TestCoordinatorAccountIsItsOwnPrincipalKind(t *testing.T) {
 // the identity a shared repository's catalog build runs as a job runner's
 // role, the history account's datastore.user or a build account's registry
 // writer. What a catalog build does need of the registry is a role another
-// task adds to this table deliberately; before that, its whole reach is the
-// one row below — roles/run.invoker on the credentials service, the class the
-// service answers the build route for.
+// task adds to this table deliberately, and B6 is that task: the identity's
+// whole reach is the cells `allowed` names — roles/run.invoker on the
+// credentials service, the class the service answers the build route for, and
+// the writer and tag-mover pair on the ONE shared registry every catalog image
+// is pushed into.
 //
 // The table alone does not hold that: TestGrantRulesMatrix computes its
 // expectation from the table under test, so it follows a row that gains the
-// kind. This is the hand-written half — the one row the account may hold,
+// kind. This is the hand-written half — the cells the account may hold,
 // asserted over every (type, role) cell of grantRules and then for real
 // through the cover, role by role — and TestGrantRulesPinnedCells pins the
 // positive cell and two refusals beside it.
@@ -863,12 +903,45 @@ func TestBuildIdentityIsItsOwnPrincipalKind(t *testing.T) {
 	if slices.Contains(FugaroAccounts, BuildIdentityAccountID) {
 		t.Errorf("the project's build identity is one of FugaroAccounts, so every toAccounts row accepts it: one confirmation would then cover granting the identity a catalog build runs as a job runner's role or a build account's registry writer")
 	}
-	// The one row it may hold, and nothing else: a second row that gains
-	// toBuildIdentity is a role this account may be granted, which is a
-	// decision the account's own task makes and not one a widened row makes
-	// silently.
+	// The cells it may hold, and nothing else: a row that gains
+	// toBuildIdentity without being named here is a role this account may be
+	// granted, which is a decision the account's own tasks make and not one a
+	// widened row makes silently. B6 is the second of those tasks, and it
+	// added the registry roles a catalog build needs as the account it runs
+	// as: the writer and the tag mover on the ONE shared registry, where every
+	// catalog image lands, and the reader on the two registries a build pulls
+	// from (fugaro-base and the ghcr remote) — the three roles the
+	// per-repository build account held (modules/repo/build.tf's build_base
+	// and build_ghcr, and modules/repo/registry.tf's pair).
 	allowed := map[string]map[string]bool{
 		"google_cloud_run_v2_service_iam_member": {"roles/run.invoker": true},
+		"google_artifact_registry_repository_iam_member": {
+			"roles/artifactregistry.reader": true,
+			"roles/artifactregistry.writer": true,
+			customKey + "fugaroTagMover":    true,
+		},
+		// The one project-level role, and the only place this account reaches
+		// outside a resource of its own: Cloud Logging writes a build's step
+		// logs as the account the build runs as, so a catalog build — which
+		// submits with Logging: CLOUD_LOGGING_ONLY — needs logging.logWriter,
+		// and the role is project-wide because Cloud Logging offers the write
+		// no narrower. It is what the per-repository build account held too
+		// (modules/repo/build.tf's `build` row), moved here with the account.
+		"google_project_iam_member": {"roles/logging.logWriter": true},
+		// The runs bucket and the provider credentials a catalog build's own
+		// steps reach, which the same review found missing after the build
+		// moved onto this identity: the definitions its pin step reads
+		// (objectViewer), the record its record step writes (objectUser), and
+		// the credential its clone step resolves through AvailableSecrets
+		// (secretAccessor). The conditions are the catalog check's own input
+		// and catalogReadGrant and catalogRecordsGrant are what pin them, one
+		// repository's records area at a time (see
+		// TestBuildIdentityBucketGrantsAreTheConditions).
+		"google_storage_bucket_iam_member": {
+			"roles/storage.objectUser":   true,
+			"roles/storage.objectViewer": true,
+		},
+		"google_secret_manager_secret_iam_member": {"roles/secretmanager.secretAccessor": true},
 	}
 	for typ, row := range grantRules {
 		for key, w := range row {

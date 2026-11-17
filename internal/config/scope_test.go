@@ -300,6 +300,10 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 		"workflows.*.inputs.max_bytes":       InProfile | InRepo,
 		"workflows.*.inputs.max_total_bytes": InProfile | InRepo,
 		"workflows.*.needs":                  InRepo,
+		// A repository's ask for an A/B reviewer arm (O12, the owner's ruling
+		// of 2026-11-16): the repository's own file, as workflows.*.needs
+		// beside it is, and for its reason.
+		"workflows.*.ab.reviewer_arm": InRepo,
 
 		"ab.rate": InRepo,
 
