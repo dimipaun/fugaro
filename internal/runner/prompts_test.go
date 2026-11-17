@@ -342,6 +342,40 @@ func TestTheImplementPromptNamesTheAdmittedPaths(t *testing.T) {
 	}
 }
 
+// TestTheImplementPromptStatesACapItDoesNotRound: the brief's size is the one
+// the run enforces at the end (D992, spec.md §5), so a cap that is not a whole
+// unit of its spelling is named in bytes. fmtBytes spells a 1600000-byte cap as
+// "2 MiB", and a coder that trusted that number would write an asset the
+// refusal turns down — the draft this clause exists to prevent — while a
+// rounded-down "1 MiB" would leave room the project granted. A whole-unit cap
+// keeps the words every brief carries today, which the second run pins.
+//
+// Mutation (brief fmtBytes(maxBytes) instead of binaryCapWords): the first run
+// names the 2 MiB the project does not admit and never the byte count.
+func TestTheImplementPromptStatesACapItDoesNotRound(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		max     string
+		want    string
+		notWant string
+	}{
+		{"a cap that is not a whole unit", "1600000", "no larger than 1600000 bytes", "2 MiB"},
+		{"a cap that is", "1048576", "no larger than 1 MiB", "1048576 bytes"},
+	} {
+		b := policyRun(t, gwConfig(t, ""), "off", "", binariesNode(`"website/public/**"`, c.max))
+		if _, err := b.run(t, implement("feature"), review("ship", 0)); err != nil {
+			t.Fatal(err)
+		}
+		sys := b.harness.agent.calls[0].AppendSystemPrompt
+		if !strings.Contains(sys, c.want) {
+			t.Errorf("%s: the implement prompt does not name %q:\n%s", c.name, c.want, sys)
+		}
+		if strings.Contains(sys, c.notWant) {
+			t.Errorf("%s: the implement prompt names %q:\n%s", c.name, c.notWant, sys)
+		}
+	}
+}
+
 // TestTheStatusLineIsBounded: the pull request's status section names the
 // binaries the run added at a path the project admits, so a reader of the pull
 // request knows an unreadable file is in the diff without opening it (D993,
