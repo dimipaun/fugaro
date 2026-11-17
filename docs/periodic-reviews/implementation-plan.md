@@ -101,8 +101,8 @@ ends at the gates below.
 | 0 | R0, R12, R13 | R0: nothing. R12: **the listing check's result** (its own owner-run live check, before the grants are written) — and nothing in this plan. R13: nothing |
 | 1 | R1, R7 | R1: R0. R7: R12 (the module, the conditions and the guard), R13 (the two `paused` settings) and, through R12, the listing check's result |
 | 2 | R2, R4 | R1 |
-| 3 | R3, R11, R14, R15 | R3: R4 (the skill's rule list names the rules R4 adds) and #1488 landed; R11: R7 (the job's spec and its own assignment) and R4 (the rules' source, E7); R14: nothing of this plan (the release slot is its only outside dependency); R15: R14 (the rows are the member's own surface) |
-| 4 | R6, R8, R9 | R6: R1–R4, R7 and R12, and #1488; R8: R11 (the job's own loop); R9: R11 (what it stored) **and R14 (the designation it reads)** |
+| 3 | R3, R11, R14 | R3: R4 (the skill's rule list names the rules R4 adds) and #1488 landed; R11: R7 (the job's spec and its own assignment) and R4 (the rules' source, E7); R14: nothing of this plan (the release slot is its only outside dependency) |
+| 4 | R6, R8, R9, R15 | R6: R1–R4, R7 and R12, and #1488; R8: R11 (the job's own loop); R9: R11 (what it stored) **and R14 (the designation it reads)**; R15: R14 (the rows are the member's own surface) — **one level below it, because a task sits below every task it depends on** |
 | 5 | R10, R16 | R10: R8 (the writer it writes through), R1 and R2 (`internal/cli/runs_digest.go`) — and **its bucket write is blocked on Open item 5**, the only blocked half this plan has left; R16: R9 (there is nothing to hand bytes to before the step exists) and R14 |
 | — | R5 | the owner, at their terminal; no agent step |
 
@@ -127,7 +127,9 @@ is the other half of the check: the Terraform module, `internal/backend/gcp/name
 alone, and the setting's files are R13's alone. **R14 and R15 share nothing** — the member and its
 version on one side, the settings rows and the counts on the other — and R14's files are
 `internal/projectpolicy`'s and `internal/localcfg`'s, which no task of this plan holds at any level
-before it.
+before it. **R15 sits one level below R14 rather than beside it**, because the rows are the member's
+surface: its files are R13's at 0 — `internal/settings/registry.go` and its test, the three count
+pins — and nothing at level 4 holds them.
 
 **Three chains are the longest, and all are named.** The first is **R0 → R1 → R4 → R11 → R8 → R10**,
 and it is the rulings that lengthened it: before 2026-11-05 the longest chain was three levels
@@ -140,7 +142,9 @@ it can be the longer of the two; **it ends at R6**, which is a leaf — nothing 
 it, and R10 does not wait on it. `R12 → R7 → R11` is the third chain and the shortest: it starts at
 level 0, so it joins the first one at R11 rather than lengthening it. **The 2026-11-17 answer adds a
 fourth, `R14 → R9 → R16`** — three levels, starting at 3 and ending at 5, so it too joins rather than
-lengthens: the designation is what the run reads, and the flag is what hands it the bytes. Its own
+lengthens: the designation is what the run reads, and the flag is what hands it the bytes. **R15
+hangs off the same R14 one level below it and ends at 4** — the member's rows are its surface, so they
+wait for it rather than riding beside it. Its own
 outside edge is the release slot, and **no task of this plan waits on R16**: it is the launcher's
 half, and a project that designates nothing launches nothing.
 
@@ -174,7 +178,7 @@ run — the module has no test of its own that a hermetic test can hold — and 
 | `internal/infra/tf/cover.go` | R12 | the reports account's own principal kind, and the grants it must refuse |
 | `deploy/terraform/gcp/modules/installation/reports.tf`, `variables.tf`, `bucket.tf` | R12 | the job, its account, its Scheduler job, its grants, **its own alert** and the `reports/` lifecycle rule |
 | `deploy/terraform/gcp/roots/installation/` | R7 | the `reports` variable and its pass-through to the module |
-| `internal/config/layer.go`, `schemas/project-layer.schema.json`, `internal/settings/registry.go`, `internal/settings/registry_test.go`, `schemas/settings.schema.json`, `docs/config-management/README.md`, `docs/config-management/reconciliation.md`, `internal/cli/docs_config_management_test.go` | R13 (**0**) and R15 (**3**) for `registry.go`, `registry_test.go` and the three count pins | R13 writes the `jobs:` block, its two rows, its schema entry and the count pins; R15 adds `reports_commit.repo` and `reports_commit.dir` to the same registry, the same coverage test and the same three pins — one writer per level, and the pins are `docs/config-management`'s, which no other task of the release writes |
+| `internal/config/layer.go`, `schemas/project-layer.schema.json`, `internal/settings/registry.go`, `internal/settings/registry_test.go`, `schemas/settings.schema.json`, `docs/config-management/README.md`, `docs/config-management/reconciliation.md`, `internal/cli/docs_config_management_test.go` | R13 (**0**) and R15 (**4**) for `registry.go`, `registry_test.go` and the three count pins | R13 writes the `jobs:` block, its two rows, its schema entry and the count pins; R15 adds `reports_commit.repo` and `reports_commit.dir` to the same registry, the same coverage test and the same three pins — one writer per level, and the pins are `docs/config-management`'s, which no other task of the release writes |
 | `plugin/skills/working/reference/periodic-reviews.md` | R3, R6 | R3 adds the due signal, the schedule and the rule list; R6 adds §7's sentences — levels 3 and 4 |
 | `docs/recipes.md` | R1, R9, R10 | the `--due` pointer and the checklist line (R1), the `commit-reports` row (R9) and the sentence E8 changes (R10) — levels 1, 4 and 5; **R6 does not touch it**, and **R16 does not either**, which is what keeps R16 and R10 apart |
 | `internal/cli/recipes_skew.go` | R11, R16 | R11 adds the release constant that names `fugaro runs reports`; R16 adds the one that names the `reports` member of the task — levels 3 and 5 |
@@ -709,6 +713,19 @@ R14 and R15 are the designation it reads and R16 is the half that hands the byte
   report is already in the folder with the same bytes the step ends the run the way a caught-up digest
   step ends one (`endWithoutPR`, "every stored report is already in the folder: nothing to commit")
   instead of opening an empty pull request.
+- **The name check, and why the input rule is not enough.** Each object's `name` must be a report of
+  the mirror's own shape and nothing else — **`<slug>/<YYYY>/<key>.md`** for a repository's report or
+  **`<YYYY>/<key>.md`** for the aggregate, with `<YYYY>` and `<key>` the layout's own period and key
+  (`digest.Dir`'s layout, D960) — and **a name outside that shape is refused before a byte is
+  written**, the object's own sentence naming it. The check is `internal/digest/mirror.go`'s own
+  reader (`ParseMirrorPath`, `MirrorPath`'s inverse), so the step and the launcher that builds the
+  names read one definition (R16). **`task.InputNameProblem` is not that check and is not enough for
+  it:** the function admits a name beginning with a dot on purpose, because an `--attach` input is
+  written under the git-excluded `inputs/` and `.git/hooks/pre-commit` there cannot reach the
+  repository's own `.git` (`internal/task/task.go:886`) — and **this step commits what it writes**, so
+  the same name would be a path in the repository. Nor does the handed-in SHA-256 stand in for the
+  check: it matches the bytes to the hash the task document itself declares, and says nothing about
+  where the file lands.
 - **The designation it reads, and the refusal when there is none.** `reports_commit.repo` must match
   the repository the run is running in (`task.Slug`, so the two cannot disagree about what a
   repository is) and `reports_commit.dir` is the folder (`digest.Dir`, `docs/fugaro-reviews`, unless
@@ -749,6 +766,8 @@ R14 and R15 are the designation it reads and R16 is the half that hands the byte
   `TestCommitReportsLeavesAFileTheStoreDoesNotHold`,
   `TestCommitReportsEndsWithoutADRWhenNothingDiffers`,
   `TestCommitReportsRefusesAByteWhoseHashDisagrees`,
+  `TestCommitReportsRefusesANameOutsideTheMirrorShape` (a dot-prefixed name among its cases, since
+  that is the name the input rule admits),
   `TestCommitReportsRefusesADesignationOfAnotherRepository`,
   `TestCommitReportsRefusesAnAttachedInput` (and the other direction: `--attach` refuses the recipe,
   which is what keeps the report objects out of the input caps),
@@ -1200,8 +1219,8 @@ all the tasks it depends on; no level holds two writers of one file. The two wor
 | **0** | R0, R12, R13 | FC1 | the reports job writes `internal/digest/due.go`, `internal/backend/gcp/names.go`, `internal/infra/tf/cover.go`, `deploy/terraform/gcp/modules/installation/**` and the setting's own files; FC1 writes `internal/runstore/runstore.go`, `schemas/result.schema.json`, `internal/cli/runs_test.go` and `internal/cli/docs_pr_state_test.go` — no file is both |
 | **1** | R1, R7 | FC2 | R1 holds `internal/cli/runs_digest.go`, which R2 and R10 take at 2 and 5; R7 holds `internal/infra/tfvars.go`, which R13 took at 0; FC2 holds `internal/runner/runner.go` and the package's other FC2–FC4 files — **not `internal/runner/digest.go` or `digest_test.go`, which R0 took at 0** — and `internal/cli/docs_pr_state_test.go`, which FC1 took at 0 |
 | **2** | R2, R4 | FC3 | R4 holds `internal/digest/patterns.go`, which R11 takes at 3 and FC7 at 4; FC3 holds `internal/runner/runner.go`, which FC2 took at 1 and FC4 takes at 3 |
-| **3** | R3, R11, **R14, R15** | FC4, FC5 | R11 holds `internal/cli/runs.go`, which FC6 takes at 4; R3 holds `plugin/skills/working/reference/periodic-reviews.md`, which R6 takes at 4 — and FC8's own skill file, `plugin/skills/working/reference/diagnose.md`, is not one of R3's four; FC5 holds `internal/cli/runs_test.go`, which FC1 took at 0 and FC6 takes at 4. **R14 and R15 are the 2026-11-17 answer's own and hold no file either work touches** — `internal/projectpolicy/**`, `internal/localcfg`, `internal/settings` and `schemas/settings.schema.json` — and R15's count pins are `docs/config-management`'s, which no task of the release writes |
-| **4** | R6, R8, R9 | FC6, FC7 | R8 holds `internal/digest/store.go`, which R11 took at 3 and R10 takes at 5; FC7 holds `internal/digest/patterns.go`, which R4 took at 2 and R11 at 3. **R9 holds `internal/runner/runner.go`, which FC2 took at 1, FC3 at 2 and FC4 at 3** — the job's step is the fourth writer of that file and the last, and it adds an arm the three class writers never touch; the rest of R9's list is new files and `internal/task`, `internal/recipe` and `internal/digest/mirror.go`, none of which either work holds |
+| **3** | R3, R11, **R14** | FC4, FC5 | R11 holds `internal/cli/runs.go`, which FC6 takes at 4; R3 holds `plugin/skills/working/reference/periodic-reviews.md`, which R6 takes at 4 — and FC8's own skill file, `plugin/skills/working/reference/diagnose.md`, is not one of R3's four; FC5 holds `internal/cli/runs_test.go`, which FC1 took at 0 and FC6 takes at 4. **R14 is the 2026-11-17 answer's own and holds no file either work touches** — `internal/projectpolicy/**` and `internal/localcfg`, plus `docs/project-layer.md`, `docs/release.md` and their `internal/cli` pins, which no task of either work writes |
+| **4** | R6, R8, R9, **R15** | FC6, FC7 | R8 holds `internal/digest/store.go`, which R11 took at 3 and R10 takes at 5; FC7 holds `internal/digest/patterns.go`, which R4 took at 2 and R11 at 3. **R9 holds `internal/runner/runner.go`, which FC2 took at 1, FC3 at 2 and FC4 at 3** — the job's step is the fourth writer of that file and the last, and it adds an arm the three class writers never touch; the rest of R9's list is new files and `internal/task`, `internal/recipe` and `internal/digest/mirror.go`, none of which either work holds. **R15 is here rather than beside the R14 it depends on** — the member's rows are the member's surface — and every file it shares is R13's at 0: `internal/settings/registry.go` and its test, `schemas/settings.schema.json` and the three count pins of `docs/config-management`, none of them written at 4 |
 | **5** | R10, **R16** | FC8 | the three are the last of their chains, and they share no file: R16 writes `schemas/task.schema.json`, `schemas/schemas_test.go`, `internal/cli/recipes_skew.go` and `plugin/skills/working/SKILL.md`, and the failures report writes `docs/design/v1.md`, the contract, this folder's reconciliation, `diagnose.md`, `docs_desktop_console_test.go` and the release note |
 
 **No task moves a level, and that is a property of the two designs rather than a coincidence.** The
@@ -1238,9 +1257,9 @@ and the design's own: **no level holds two writers of one file.**
 | `internal/runner/runner.go` | FC2 (1), FC3 (2), FC4 (3), **R9 (4)** | `recordEnd`, the structural classes, the message classifier, and the reports-commit step's arm and call site |
 | `internal/runner/refused.go` | FC2 (1), FC3 (2) | `endRefused`'s call and the push rejection's class |
 | `internal/infra/tfvars.go` | R13 (0), R7 (1) | the two `paused` settings, then the `reports` node and `reports_days` |
-| `internal/settings/registry.go`, `registry_test.go` | R13 (0), R15 (3) | R13's two `jobs.*.paused` rows and R15's two `reports_commit.*` rows, and the one coverage test that fails for either |
-| `internal/cli/docs_config_management_test.go` | R13 (0), R15 (3) | the registry's count pin, which each task's rows move |
-| `docs/config-management/README.md`, `reconciliation.md` | R13 (0), R15 (3) | the same count, in prose, in the two documents the config-management work owns |
+| `internal/settings/registry.go`, `registry_test.go` | R13 (0), R15 (4) | R13's two `jobs.*.paused` rows and R15's two `reports_commit.*` rows, and the one coverage test that fails for either |
+| `internal/cli/docs_config_management_test.go` | R13 (0), R15 (4) | the registry's count pin, which each task's rows move |
+| `docs/config-management/README.md`, `reconciliation.md` | R13 (0), R15 (4) | the same count, in prose, in the two documents the config-management work owns |
 | `internal/cli/recipes_skew.go` | R11 (3), R16 (5) | R11's constant names `fugaro runs reports`; R16's names the task's `reports` member |
 | `plugin/skills/working/SKILL.md` | R3 (3), R16 (5) | R3's due signal and the report's place; R16's sentence naming `fugaro run --commit-reports` |
 | `plugin/skills/working/reference/periodic-reviews.md` | R3 (3), R6 (4), and FC8 (5) if D1449 puts the rules' list there | the rule list and the report's place, §7's two sentences, and the two class rules' names |
@@ -1438,7 +1457,7 @@ from being a formality:
   the class is `unclassified`. **Reviewer:** standard. **Commit:**
   `feat(runner): the classes the runner knows from its own state`.
 
-#### Level 3 — R3, R11, R14, R15, FC4, FC5
+#### Level 3 — R3, R11, R14, FC4, FC5
 
 **R3 — the skills carry the signal and the schedule (slice P).** Part I, `## R3`. **Sequenced after
 #1488.**
@@ -1501,23 +1520,6 @@ from being a formality:
   **Reviewer:** opus + mandatory independent review (the bump changes what every installation reads).
   **Commit:** `feat(policy): reports_commit, and the version that carries it`.
 
-**R15 — the designation's settings surface (slice P).** Part I, `## R15`.
-- **Files (6):** `internal/settings/registry.go`, `internal/settings/registry_test.go`,
-  `schemas/settings.schema.json`, `docs/config-management/README.md`,
-  `docs/config-management/reconciliation.md` and `internal/cli/docs_config_management_test.go`.
-  **The last four are R13's, which took them at 0** (§P4): the two rows move one count that three
-  places state, and R13 is the level-0 task that wrote both.
-- **Interfaces:** the two `locLocal` rows — `reports_commit.repo` and `reports_commit.dir`, the
-  `binaries.*` rows' own shape — and the two keys `schemas/settings.schema.json` names.
-  **`fugaro settings set` does not write them** (the generic allowlist is not widened; Open item 6).
-- **Tests, and the command:** `GOFLAGS=-p=2 go test ./internal/settings ./internal/cli -run
-  'RegistryCoversEveryConfigField|RegistryIsInKeyOrder|SettingsSchemaNamesTheReportsCommitRows|DocsConfigManagement'
-  -count=1`.
-- **Depends on:** R14 (the rows are its member's surface, and the carrier field has to exist for the
-  coverage test to fail on it). **Red step:** `TestRegistryCoversEveryConfigField` fails on the
-  carrier field with no row. **Reviewer:** standard. **Commit:**
-  `feat(settings): the reports_commit rows, and the count they move`.
-
 **FC4 — the classifier over the agent's own message (slice F).** The design, `### FC4`.
 - **Files (4), the design's list:** `internal/runner/runner.go` (`stageFailureClass`, the phrase
   tables, the `res.IsError` case), `internal/runner/stageerror_internal_test.go` (or the existing
@@ -1547,7 +1549,7 @@ from being a formality:
   function that returns the class only when the field is present. **Reviewer:** standard. **Commit:**
   `feat(runview): read a legacy record's class from its reason`.
 
-#### Level 4 — R6, R8, R9, FC6, FC7
+#### Level 4 — R6, R8, R9, R15, FC6, FC7
 
 **R6 — the learnings' two ends, documented (slice P).** Part I, `## R6`. **Sequenced after #1488.**
 - **Files (3):** `CONTRIBUTING.md`, `docs/periodic-reviews/README.md` (the status line), and
@@ -1602,7 +1604,7 @@ for an answer.
   kind `commit_reports` and `UsesCommitReports` beside `UsesDigest`), `task.Spec.Reports` and the
   runner's own `reports_commit.go`, and `digest.Mirror` — the index rendered over the folder with
   the repository a row belongs to named when it belongs to one.
-- **Tests, and the command:** **Part I's own list is the list of record** — it names eleven tests,
+- **Tests, and the command:** **Part I's own list is the list of record** — it names twelve tests,
   from `TestCommitReportsRecipeIsInTheCatalog` and
   `TestCommitReportsRefusesADesignationOfAnotherRepository` (the two red-step ones) through
   `TestCommitReportsWritesEachRepositorysReportUnderItsSlug`,
@@ -1611,6 +1613,8 @@ for an answer.
   `TestCommitReportsLeavesAFileTheStoreDoesNotHold`,
   `TestCommitReportsEndsWithoutADRWhenNothingDiffers`,
   `TestCommitReportsRefusesAByteWhoseHashDisagrees`,
+  `TestCommitReportsRefusesANameOutsideTheMirrorShape` (a dot-prefixed name among its cases, since
+  that is the name the input rule admits),
   `TestCommitReportsRefusesAnAttachedInput`, `TestTaskSpecCarriesTheStoredReports` and
   `TestCommitReportsStepRunsNoModelStage` — under
   `GOFLAGS=-p=2 go test ./internal/recipe ./internal/task ./internal/runner ./internal/digest -run
@@ -1628,6 +1632,25 @@ for an answer.
   this design that writes into a repository**, which is why it is also the one that carries the
   independent half. **Commit:** `feat(runner): commit the stored reports into the designated
   repository`.
+
+**R15 — the designation's settings surface (slice P).** Part I, `## R15`. **It sits here, one level
+below the R14 it depends on, rather than beside it at 3** — the rows are that member's surface, and a
+task sits below every task it depends on.
+- **Files (6):** `internal/settings/registry.go`, `internal/settings/registry_test.go`,
+  `schemas/settings.schema.json`, `docs/config-management/README.md`,
+  `docs/config-management/reconciliation.md` and `internal/cli/docs_config_management_test.go`.
+  **The last four are R13's, which took them at 0** (§P4): the two rows move one count that three
+  places state, and R13 is the level-0 task that wrote both.
+- **Interfaces:** the two `locLocal` rows — `reports_commit.repo` and `reports_commit.dir`, the
+  `binaries.*` rows' own shape — and the two keys `schemas/settings.schema.json` names.
+  **`fugaro settings set` does not write them** (the generic allowlist is not widened; Open item 6).
+- **Tests, and the command:** `GOFLAGS=-p=2 go test ./internal/settings ./internal/cli -run
+  'RegistryCoversEveryConfigField|RegistryIsInKeyOrder|SettingsSchemaNamesTheReportsCommitRows|DocsConfigManagement'
+  -count=1`.
+- **Depends on:** R14 (the rows are its member's surface, and the carrier field has to exist for the
+  coverage test to fail on it). **Red step:** `TestRegistryCoversEveryConfigField` fails on the
+  carrier field with no row. **Reviewer:** standard. **Commit:**
+  `feat(settings): the reports_commit rows, and the count they move`.
 
 **FC6 — `runs ls --group-by failure_class` (slice F).** The design, `### FC6`.
 - **Files (6), the design's list:** `internal/cli/runs.go` (the flag, `lsOptions`, `lsDoc.Groups`,
@@ -1756,7 +1779,8 @@ ordering:**
 FC2's test is a guard over the tree and not a fixture per site. **R12 is the union's widest gate**:
 it waits on an owner-run check (Check 340, §P8), and neither work's schedule may be enabled before
 its grants are proven. **R9 is on the path now and lengthens nothing**: the 2026-11-17 answer
-unblocked it, so it sits at 4 with **R16** after it at 5 and **R14**/**R15** before it at 3, and
+unblocked it, so it sits at 4 with **R16** after it at 5 and **R14** before it at 3 — and **R15**,
+which waits on that same R14, sits at 4 rather than beside it at 3 — and
 **the 2026-11-17 tasks add no edge between the works at all** — R9's being the fourth writer of
 `internal/runner/runner.go` is an ordering the levels already give (FC2 at 1, FC3 at 2, FC4 at 3,
 R9 at 4), not a dependency, and R14's, R15's and R16's files are shared within the reports job or

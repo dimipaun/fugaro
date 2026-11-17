@@ -980,7 +980,12 @@ own ruling with the mechanism E6 asked for (D2754):
    deletes a report, and the store only adds and overwrites. If every stored report is already in the
    folder with the same bytes, the step ends the run the way the digest step ends a caught-up one
    (`endWithoutPR`, "every stored report is already in the folder: nothing to commit") rather than
-   opening an empty pull request.
+   opening an empty pull request. **An object's name must be one of those two shapes and nothing
+   else**, and a name outside them is refused before a byte is written: the step commits the path it
+   writes, so the input rule — which admits a dot-prefixed name on purpose, an `--attach` input
+   landing under the git-excluded `inputs/` (`internal/task/task.go:886`) — does not carry over, and
+   neither does the handed-in SHA-256, which only matches the bytes to the hash the task document
+   itself declares.
 
 ### 7.3 The census this round takes
 
@@ -1010,14 +1015,16 @@ Three tasks and one rewrite, all in [implementation-plan.md](implementation-plan
 | Task | What it is | Level | Needs |
 | --- | --- | --- | --- |
 | **R14** | the member: `reports_commit` on the policy node, its carrier in the owner's local project config, version 10 and its shape-free step, `fugaro project policy show`'s read and the managed gate's refusal | 3 | nothing of this plan (the release slot is its only outside dependency) |
-| **R15** | the member's settings surface: the two registry rows, `schemas/settings.schema.json`, the three count pins of `docs/config-management` | 3 | R14 (the rows are its surface) — **and it is R14's sibling rather than part of it because the plan's twelve-file bound is what split them** |
+| **R15** | the member's settings surface: the two registry rows, `schemas/settings.schema.json`, the three count pins of `docs/config-management` | 4 | R14 (the rows are its surface) — **and it is R14's sibling rather than part of it because the plan's twelve-file bound is what split them**; it sits at 4 rather than beside R14 at 3 because **a level's tasks run concurrently and every task sits below the tasks it depends on**, and its shared files are R13's at 0 |
 | **R9** | the commit run: the catalog recipe `commit-reports`, its step, the task's `reports` member, the folder's write, the index over it, the runner's own arm, and the recipe's own sentence in `docs/recipes.md` | 4 | R11 (what it stored) and R14 (the designation it reads) |
 | **R16** | the launcher's half of the transfer: `fugaro run --commit-reports`, the read of `reports/`, the upload into the run's prefix, the refusals, the `…Since` constant and the working skill's sentence naming the command | 5 | R9 (there is nothing to hand bytes to before the step exists) and R14 |
 
 **No level holds two writers of one file**, and the new tasks keep that: R14 and R15 share none, and
 neither touches a file R3 or R11 holds at level 3 (`plugin/**`, `internal/cli/runs_reports.go`,
 `internal/digest/store.go`, `internal/digest/patterns.go`, `internal/cli/recipes_skew.go` — which
-**R16** takes at 5, one level apart); R9's files are its own new ones plus
+**R16** takes at 5, one level apart); **and R15 sits below R14 rather than beside it**, because the
+rows are that member's surface and the level table's own rule is that every task sits below the tasks
+it depends on; R9's files are its own new ones plus
 `internal/task/task.go`, `internal/recipe/recipe.go`, `internal/recipe/catalog_test.go`,
 `internal/runner/runner.go` and `internal/digest/mirror.go`, none of which this folder's own tasks
 write at 3 or 4 — and the one file in the list another work already holds,
