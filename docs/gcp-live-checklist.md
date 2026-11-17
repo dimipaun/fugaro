@@ -7020,7 +7020,7 @@ echo "Check 80 ready: the phone, the consumer and the orchestrator are all on th
 
 **Restore.** The check's own effects are small and its undos are named:
 
-- The **paired device** stays paired only if you want it: `fugaro pair revoke <uid>` deletes the device node (so the next read from that uid is refused) and removes the keychain item, which is what makes every message that phone signs stop verifying; the config entry `mailbox.keychain_item[<uid>]` is the operator's to edit, and a revoked pairing with no key is served by no pass — the consumer reports it and drops the prompts it was holding.
+- The **paired device** stays paired only if you want it: `fugaro pair revoke --uid <uid>` deletes the device node (so the next read from that uid is refused) and removes the keychain item, which is what makes every message that phone signs stop verifying; the config entry `mailbox.keychain_item[<uid>]` is the operator's to edit, and a revoked pairing with no key is served by no pass — the consumer reports it and drops the prompts it was holding.
 - The **messages** the check left in the mailbox (`inbox/<id>`, the `outbox/<id>` and its `acked`, and the heartbeat) are removed with your own IAM credentials, exactly as they were read: they are this installation's own, and no sweep deletes them — the offline sweeper's remit is P4.1's own state and **nothing in the store**.
 - The **consumer's own state** (`$XDG_STATE_HOME/fugaro/mailbox/<project>/ledger.json` and `pending.json`) is safe to leave: it is a keyed memory of deliveries, it names no secret, and its horizon is the plan's window. Delete the directory if you want a clean first run.
 - Nothing else changed: no rules deploy, no node written by hand but the two negatives of step 3, no commit, and nothing on `belong` was ever in reach.
@@ -9362,11 +9362,11 @@ echo "Check 101 ready: fugaro $VER at $ROOT — the device token you revoke is a
    ```
    **FACT:** with `$AT`, the same two nodes the check is about: `config/admin/devices/$DEV` (exists, and the value is only `true`: the rules read the node's existence and no field of it) and the device's Auth user (present, with its creation time), recorded **before** anything is revoked. The node's body is read with `$AT` because no client token may read it at all; a `200` here is the operator's IAM, not the app's.
 
-2. **The node goes first, and the very next read is denied.** *(Guard block, run by you, on the phone; this step sets `$OLD`, which step 3 reads, and it reads `$DEV` from step 1.)* On the phone, make one read that works (the app's own overview refreshes: it reads the granted nodes, and it succeeds). Put the ID token the phone is holding into `OLD` **before** revoking — from the app's own debug output or its secure storage, in this shell only: it is a bearer credential, and it is never printed and never pasted. Then, at the terminal, run `fugaro pair revoke` for `$DEV` and **immediately**, on the phone, repeat the same read.
+2. **The node goes first, and the very next read is denied.** *(Guard block, run by you, on the phone; this step sets `$OLD`, which step 3 reads, and it reads `$DEV` from step 1.)* On the phone, make one read that works (the app's own overview refreshes: it reads the granted nodes, and it succeeds). Put the ID token the phone is holding into `OLD` **before** revoking — from the app's own debug output or its secure storage, in this shell only: it is a bearer credential, and it is never printed and never pasted. Then, at the terminal, run `fugaro pair revoke --uid $DEV` and **immediately**, on the phone, repeat the same read.
 
    ```bash
    OLD=<the ID token the phone holds, copied in before the revocation>   # $OLD, never printed, never pasted
-   fugaro pair revoke        # the interactive door: it names the device you are removing
+   fugaro pair revoke --uid "$DEV"   # the device uid step 1 read off 'fugaro pair ls'
    AT=$(gcloud auth print-access-token)
    curl -sS -H "Authorization: Bearer $AT" "https://$DB/config/admin/devices/$DEV.json"   # must be null now
    ```
