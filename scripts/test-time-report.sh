@@ -123,8 +123,12 @@ fi
 # function's end.
 : > "$work/waits.tsv"
 if [ -s "$work/files.tsv" ]; then
-  cut -f2 "$work/files.tsv" | sort -u > "$work/testfiles.txt"
-  xargs -r -d '\n' awk '
+  # The list is separated by NULs, and read with `xargs -0`, as the scan above
+  # is: `xargs -d` is GNU's alone, and on a BSD xargs the scan it fed came back
+  # empty with nothing said. `tr` makes the same list out of the sorted lines,
+  # since a NUL-separated `sort` is GNU's alone too.
+  cut -f2 "$work/files.tsv" | sort -u | tr '\n' '\0' > "$work/testfiles.nul"
+  xargs -0 -r awk '
     # Wall-clock waits. A body holding one of these is a body whose length is a
     # clock: time.Sleep and time.After are the plain ones, the timer and ticker
     # constructors the same in another shape, and WithTimeout/WithDeadline are
@@ -155,7 +159,10 @@ if [ -s "$work/files.tsv" ]; then
     }
     body { if (iswait($0)) wait = 1 }
     END { if (name != "" && wait) print name "\t" file }
-  ' < "$work/testfiles.txt" > "$work/waits.tsv" || true
+  ' < "$work/testfiles.nul" > "$work/waits.tsv" || {
+    echo "test-time-report: the wait scan could not read the test file list" >&2
+    exit 1
+  }
 fi
 
 # --- the tables -------------------------------------------------------------
