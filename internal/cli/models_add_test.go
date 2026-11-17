@@ -225,20 +225,23 @@ func TestModelsAddLeavesAnAbsentAllowListAbsent(t *testing.T) {
 	}
 }
 
-// TestModelsAddExplainsTheSpreadAndWritesNoSwitch: a model the catalog prices
-// needs no price, and the command explains what it will be charged at — the
-// tier, the bound charged and the spread to the dearest endpoint of that tier,
-// which is what a call served from the dearest one can be billed. It writes no
-// price_policy switch and names no flag that would: the route is where the
-// switch belongs, and `fugaro update --repo` deploys it from there (D795, F29).
-func TestModelsAddExplainsTheSpreadAndWritesNoSwitch(t *testing.T) {
+// TestModelsAddNamesTheEndChargedAndWritesNoSwitch: a model the catalog
+// prices needs no price, and the command explains what it will be charged at —
+// the tier, the end of that tier's range that is charged, and the switch that
+// would charge the other end. It writes no price_policy switch and names no
+// flag that would: the route is where the switch belongs, and `fugaro
+// update --repo` deploys it from there (D795, F29).
+func TestModelsAddNamesTheEndChargedAndWritesNoSwitch(t *testing.T) {
 	_, path := modelsWriteHome(t)
 
 	out, _, err := execute(t, "models", "add", "deepseek/deepseek-v4-pro")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	for _, want := range []string{"cheapest end", "dearest endpoint", "price_policy", "fugaro update --repo"} {
+	// The route names no price_policy, so the note names the dearest end —
+	// what an unset policy charges (D2644) — and the switch that would move
+	// the charge down.
+	for _, want := range []string{"charged the dearest end", "price_policy: cheapest", "fugaro update --repo"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the price note does not explain %q:\n%s", want, out)
 		}
@@ -251,6 +254,42 @@ func TestModelsAddExplainsTheSpreadAndWritesNoSwitch(t *testing.T) {
 	}
 	if p := modelsWriteLocalConfig(t, path).Providers["openrouter"]; p.PricePolicy != "" {
 		t.Errorf("the route's price_policy is %q, want it left unset", p.PricePolicy)
+	}
+}
+
+// modelsWriteCheapestExtra is modelsWriteExtra's route with the policy spelled
+// out, the one shape in which the note names the cheapest end (D2644).
+const modelsWriteCheapestExtra = `
+providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    price_policy: cheapest
+    models:
+      - deepseek/*
+    allow_data_to:
+      - owner/repo-a
+repos:
+  owner/repo-a: {}
+`
+
+// TestModelsAddNamesTheCheapestEndWhenTheRouteSpellsItOut: the note reads the
+// row's own bound, so a route that asked for cheapest is told that end is
+// charged, the spread to the dearest endpoint of the tier — the undercharge it
+// leaves — and that price_policy: highest would move the charge up.
+func TestModelsAddNamesTheCheapestEndWhenTheRouteSpellsItOut(t *testing.T) {
+	modelsWriteHomeWith(t, modelsWriteCheapestExtra)
+
+	out, _, err := execute(t, "models", "add", "deepseek/deepseek-v4-pro")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, want := range []string{"charged the cheapest end", "dearest endpoint of the tier", "price_policy: highest"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the price note does not explain %q:\n%s", want, out)
+		}
 	}
 }
 

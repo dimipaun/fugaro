@@ -880,8 +880,8 @@ func TestValidateProviderModels(t *testing.T) {
 	// coder's, and the coder's price comes from the built-in price catalog,
 	// which is a warning (the tier and the end of the range charged). The
 	// clock is pinned inside the catalog's own window, because the note
-	// below names the end of the range this test expects (the cheapest, by
-	// the default price_policy) and a stale catalog names the other one.
+	// below names the end of the range this test expects (the dearest, the
+	// route naming no price_policy) and a stale catalog would mark the row.
 	cat := shippedCatalog(t)
 	pinCatalogClock(t, cat, 24*time.Hour)
 	path := budgetProject(t, budget, coder)
@@ -891,16 +891,16 @@ func TestValidateProviderModels(t *testing.T) {
 		t.Fatalf("%v\nout: %s\nerr: %s", err, out, errOut)
 	}
 	// The note says which tier and which end of its range is charged, and
-	// for the default (cheapest) row that the charge is the cheapest of the
-	// tier's endpoints, with the switch that would charge the top (P11,
-	// Task 5 step 2). The endpoint count is the row's own: the note names
+	// for the default (highest) row that the charge is the dearest of the
+	// tier's endpoints, with the switch that would charge the bottom (P11,
+	// Task 5 step 2, D2644). The endpoint count is the row's own: the note names
 	// the zdr tier's endpoints, and regenerating the catalog is a release
 	// step (design §7), so a test written against today's number would
 	// break on a regeneration that changed no rule.
 	endpoints := strconv.Itoa(cat.Models["deepseek/deepseek-v4-flash"].ZDREndpoints) + " endpoint(s)"
 	for _, want := range []string{
 		"warning: agent.models.coder: deepseek/deepseek-v4-flash is priced from the built-in provider price catalog: the zdr tier",
-		endpoints, "the cheapest of those endpoints", "price_policy: highest", "model_prices",
+		endpoints, "the dearest of those endpoints", "price_policy: cheapest", "model_prices",
 	} {
 		if !strings.Contains(errOut, want) {
 			t.Errorf("validate's catalog note lacks %q:\n%s", want, errOut)

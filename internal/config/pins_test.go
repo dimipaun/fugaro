@@ -97,13 +97,15 @@ func placeholderPrices() *pricing.Table {
 // TestCatalogPriceWarns: a pin the built-in catalog priced says so — which
 // tier, how many endpoints, which end of its range is charged — and names the
 // two switches that move it, so an owner who wants the other end (or the
-// other tier) is told how.
+// other tier) is told how. The switch it names is the one that would move the
+// charge, never the one already in force: highest is the default (D2644), so
+// a row at the top of its range names cheapest.
 func TestCatalogPriceWarns(t *testing.T) {
 	ws := PinWarnings(providerAgent("deepseek/deepseek-v4-flash"), providerPrices(t))
 	if len(ws) != 2 || ws[0].Code != CodeCatalogPrice {
 		t.Fatalf("warnings: %v", ws)
 	}
-	for _, want := range []string{"built-in provider price catalog", "zdr", "cheapest", "require_zdr", "price_policy: highest", "model_prices"} {
+	for _, want := range []string{"built-in provider price catalog", "zdr", "dearest of those endpoints", "require_zdr", "price_policy: cheapest", "model_prices"} {
 		if !strings.Contains(ws[0].Message, want) {
 			t.Errorf("the catalog note does not name %q: %s", want, ws[0].Message)
 		}
@@ -117,7 +119,7 @@ func TestCatalogPriceWarns(t *testing.T) {
 // prices input 0.5..1 and output 1..2, so a cheapest row is 2x on each, stated
 // to the one decimal the documents quote.
 func TestCatalogPriceWarnsTheUndercharge(t *testing.T) {
-	ws := PinWarnings(pinned(catModel), mustTable(t, providers(nil), nil, fixtureCatalog("2026-10-14")))
+	ws := PinWarnings(pinned(catModel), mustTable(t, providers(func(p *ModelProvider) { p.PricePolicy = PricePolicyCheapest }), nil, fixtureCatalog("2026-10-14")))
 	if len(ws) == 0 {
 		t.Fatal("no warning")
 	}
@@ -127,9 +129,10 @@ func TestCatalogPriceWarnsTheUndercharge(t *testing.T) {
 			t.Errorf("the warning lacks %q: %s", want, msg)
 		}
 	}
-	// The dearest end leaves nothing to size, so the numbers are absent
-	// there: the row already charges what the dearest endpoint prices.
-	high := mustTable(t, providers(func(p *ModelProvider) { p.PricePolicy = PricePolicyHighest }), nil, fixtureCatalog("2026-10-14"))
+	// The dearest end — the default — leaves nothing to size, so the numbers
+	// are absent there: the row already charges what the dearest endpoint
+	// prices.
+	high := mustTable(t, providers(nil), nil, fixtureCatalog("2026-10-14"))
 	ws = PinWarnings(pinned(catModel), high)
 	if len(ws) == 0 {
 		t.Fatal("no warning at the dearest bound")
