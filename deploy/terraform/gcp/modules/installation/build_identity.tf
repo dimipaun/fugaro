@@ -10,28 +10,41 @@
 # credentials service on, and it outlives every repository the catalog bakes
 # (design §"one project identity", D2301).
 #
-# What it holds HERE, and what it deliberately does not. Five grants, and no
-# sixth: the invoker bit on the credentials service, because the credential a
-# build runs on is minted by that service's build route and Cloud Run refuses a
-# caller at IAM before the container decides the class (iam.tf's verifier grant
-# is the same fact); the writer and tag-mover roles on the ONE shared registry,
-# below, which are the reach a catalog build's own push needs and the two roles
-# the per-repository build account held there (modules/repo/registry.tf's
-# build_shared and build_shared_tag_mover, whose comments this file repeats the
-# reasons of); and the READER on the two registries a build pulls from —
-# fugaro-base and the ghcr remote — because a build pulls as the account it
-# runs as: its own step images are the base images in fugaro-base, and the
-# derived build's step image and the FROM it builds on come through the ghcr
-# remote (design §6, and the smoke stage of a D2305 entry pulls its pinned
-# base). The per-repository build account held exactly those two readers for
-# exactly that reason (modules/repo/build.tf's build_base and build_ghcr), and
-# this file carries them over with the rest of the account's reach a catalog
-# build needs.
+# What it holds HERE, and what it deliberately does not. Every grant below is
+# one of the per-repository build account's (modules/repo/build.tf and
+# registry.tf, whose comments this file repeats the reasons of), moved onto the
+# one account a catalog build now runs as — no more, and each of them as narrow
+# as the grant it replaces:
 #
-# Nothing wider than the five (B6's acceptance): no role on any repository's
-# own registry, no project role, no bucket, no secret. That the identity can
-# read the two registries every build reads is not a widening beyond what a
-# build does; a role anywhere else would be.
+#   - the invoker bit on the credentials service, because the credential a
+#     build runs on is minted by that service's build route and Cloud Run
+#     refuses a caller at IAM before the container decides the class (iam.tf's
+#     verifier grant is the same fact);
+#   - the writer and tag-mover roles on the ONE shared registry, which are the
+#     reach a catalog build's own push needs (modules/repo/registry.tf's
+#     build_shared and build_shared_tag_mover);
+#   - the READER on the two registries a build pulls from — fugaro-base and the
+#     ghcr remote — because a build pulls as the account it runs as: its own
+#     step images are the base images in fugaro-base, and the derived build's
+#     step image and the FROM it builds on come through the ghcr remote (design
+#     §6, and the smoke stage of a D2305 entry pulls its pinned base);
+#   - objectViewer on the copied catalog definitions, objectUser on the
+#     repositories' build records and one secretAccessor per repository's
+#     provider credential, which are the three reads and the one write a
+#     catalog build's own steps make as the account they run as — the pin step
+#     describes the definition, the record step writes the record the check
+#     reads back, and the clone step's credential is resolved by Cloud Build's
+#     AvailableSecrets as the build's account. Their targets are
+#     var.catalog_check's repositories and the conditions that input carries:
+#     the repositories whose catalog entries this project builds, which is
+#     nobody else's.
+#
+# Nothing wider than that. No role on any repository's own registry, no
+# project-level role, no bucket-wide prefix, no secret beyond the credentials a
+# build of this project's catalog clones with: the records grants are one
+# repository's builds/<slug>/catalog/ each and never a project-wide builds/
+# one, which would reach every repository's check state and the definitions
+# beside them; the definitions read is objectViewer and stays read-only.
 #
 # The ID is a LITERAL, which is the load-bearing half of the answer, exactly
 # as verifier.tf's own comment says of the verifier: a module that knows
@@ -146,4 +159,81 @@ resource "google_artifact_registry_repository_iam_member" "build_identity_ghcr_r
   repository = google_artifact_registry_repository.ghcr.repository_id
   role       = "roles/artifactregistry.reader"
   member     = google_service_account.build_identity[0].member
+}
+
+# The rest of a catalog build's own steps, which stopped being a repository
+# build account's when B6 moved the build onto this identity: the copied
+# definitions a build reads, the record it writes and the provider credential
+# it clones with. Without them every catalog build — the operator's and the
+# nightly check's alike — fails on the first step that reaches one of them,
+# because those steps run as the identity and it holds nothing of the runs
+# bucket or of Secret Manager.
+#
+# Both the set of repositories and the two conditions are the catalog check's
+# own input (var.catalog_check), and that is the honest carrier rather than a
+# second list beside it: its repositories are exactly the repositories whose
+# catalog entries this project builds, which is exactly whose definitions a
+# build reads, whose record it writes and whose credential it clones with. A
+# repository the catalog does not build needs none of the three, and a
+# repository added to the catalog is a tfvars change the same `fugaro update`
+# that re-renders the check's grants applies.
+#
+# The definitions read is objectViewer and not objectUser, for the reason
+# catalogcheck.tf's own grant gives: a build that could rewrite a definition
+# could make every repository run an image of its choosing. The expression is
+# the input's byte for byte (gcp.CatalogReadCondition); the title is the one
+# gcp builds for THIS account (gcp.CatalogReadConditionTitle), because the
+# condition an input carries is titled for the check job's account and a grant
+# is read by whose it is.
+resource "google_storage_bucket_iam_member" "build_identity_definitions" {
+  count = local.credentials_service_on && var.catalog_check != null ? 1 : 0
+
+  bucket = google_storage_bucket.runs.name
+  role   = "roles/storage.objectViewer"
+  member = google_service_account.build_identity[0].member
+
+  condition {
+    title      = "fugaro-catalog-read-${google_service_account.build_identity[0].account_id}"
+    expression = var.catalog_check.definitions_condition.expression
+  }
+}
+
+# The build record the catalog check reads back: one repository's
+# builds/<slug>/catalog/ and nothing else, under that repository's own
+# condition byte for byte (gcp.CatalogRecordsCondition) — the grant
+# catalogcheck.tf makes to the check job, made to the account that now writes
+# the record instead. One grant per repository, so the identity's reach is the
+# union of the repositories this project's catalog builds and never a
+# project-wide builds/ prefix, which would reach every other repository's
+# records, its check state and the definitions beside them.
+resource "google_storage_bucket_iam_member" "build_identity_records" {
+  for_each = local.credentials_service_on && var.catalog_check != null ? { for r in var.catalog_check.repositories : r.slug => r } : {}
+
+  bucket = google_storage_bucket.runs.name
+  role   = "roles/storage.objectUser"
+  member = google_service_account.build_identity[0].member
+
+  condition {
+    title      = each.value.records_condition.title
+    expression = each.value.records_condition.expression
+  }
+}
+
+# The provider credential a build of one of this repository's entries clones
+# with, resolved by internal/infra through the one predicate the repository's
+# own jobs resolve it through (the project's container when the name is
+# project-scoped for the repository, the repository's own otherwise). Cloud
+# Build resolves AvailableSecrets as the account the build runs as, which is
+# the identity now, so this is modules/repo/build.tf's own build grant —
+# roles/secretmanager.secretAccessor on that repository's credential — one
+# account over. The container is not this module's (a repository root's, or a
+# project-wide one), which is why the grant names a secret ID rather than a
+# resource.
+resource "google_secret_manager_secret_iam_member" "build_identity_git_secret" {
+  for_each = local.credentials_service_on && var.catalog_check != null ? { for r in var.catalog_check.repositories : r.slug => r if try(r.git_secret_id, "") != "" } : {}
+
+  project   = var.project
+  secret_id = each.value.git_secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = google_service_account.build_identity[0].member
 }

@@ -1998,18 +1998,48 @@ var runAccountGrants = setOf(
 	// registry repository — never the project and never the runs bucket, so
 	// none is a write path to the marker. What the identity deliberately does
 	// NOT hold is the reader on the SHARED registry (its write already reads
-	// what it pushes) or any role on a repository's own registry: its whole
-	// reach in this module is these five rows.
+	// what it pushes) or any role on a repository's own registry. Their five
+	// rows are the top half of its reach here; the three below are the rest.
 	`google_artifact_registry_repository_iam_member | "roles/artifactregistry.writer" | repository=google_artifact_registry_repository.shared.repository_id | google_service_account.build_identity[0].member | for_each= | perms=`,
 	`google_artifact_registry_repository_iam_member | "projects/${var.project}/roles/fugaroTagMover" | repository=google_artifact_registry_repository.shared.repository_id | google_service_account.build_identity[0].member | for_each= | perms=artifactregistry.tags.delete`,
 	`google_artifact_registry_repository_iam_member | "roles/artifactregistry.reader" | repository=google_artifact_registry_repository.base.repository_id | google_service_account.build_identity[0].member | for_each= | perms=`,
 	`google_artifact_registry_repository_iam_member | "roles/artifactregistry.reader" | repository=google_artifact_registry_repository.ghcr.repository_id | google_service_account.build_identity[0].member | for_each= | perms=`,
+	// Reviewed for B6's review (a catalog build's own steps): the identity's
+	// reach inside the runs bucket and inside Secret Manager, which is what a
+	// build that ran as the per-repository build account had there and lost
+	// when the build moved onto this one account — the definition its pin step
+	// describes, the record its record step writes back and the provider
+	// credential its clone step resolves through Cloud Build's
+	// AvailableSecrets. Without them every catalog build, the operator's and
+	// the nightly check's alike, fails on the first of the three it reaches.
+	//
+	// None of the three is a write path to the marker. The definitions read is
+	// objectViewer, and its condition is the input's own byte for byte —
+	// builds/catalog/ of the runs bucket and nothing else (gcp.CatalogReadCondition),
+	// which does not contain fugaro/managed.json; objectViewer grants no write
+	// at all, so nothing here can rewrite ANY object, the marker's included. The records write is objectUser, which is a write role on the
+	// runs bucket, so what keeps it off the marker is the condition: ONE
+	// repository's builds/<slug>/catalog/ per grant (gcp.CatalogRecordsCondition,
+	// the condition the catalog check job's own row above carries), never the
+	// bucket's root and never a project-wide builds/ prefix, and the set of
+	// slugs is the catalog check's own input rather than a second list. Neither
+	// role carries a permission to grant a role, to act as another account or
+	// to mint a token, and the runs bucket is not a storage write of the
+	// managed configuration's own object path. The secretAccessor is on a
+	// secret_id and not on the project: it reads the VALUE of one repository's
+	// provider credential, which is the reach the repository's own build
+	// account held (modules/repo/build.tf's build row, whose key above reads
+	// the same way), and the for_each set is exactly the repositories of
+	// var.catalog_check that name one.
+	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | google_service_account.build_identity[0].member | for_each= | perms=`,
+	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=google_storage_bucket.runs.name | google_service_account.build_identity[0].member | for_each=local.credentials_service_on && var.catalog_check != null ? { for r in var.catalog_check.repositories : r.slug => r } : {} [local.credentials_service_on=var.credentials_service != null] | perms=`,
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=each.value.git_secret_id | google_service_account.build_identity[0].member | for_each=local.credentials_service_on && var.catalog_check != null ? { for r in var.catalog_check.repositories : r.slug => r if try(r.git_secret_id, "") != "" } : {} [local.credentials_service_on=var.credentials_service != null] | perms=`,
 	// Reviewed for B6's other half: the project's catalog check job may act as
 	// that identity, which is what makes every build it submits run as the
 	// project's one build account rather than a repository's. actAs on ONE
 	// account is not actAs on the project and not a role on anything: it lets
 	// the job mint that account's token and submit a build that names it, so
-	// what the check reaches through it is exactly that account's five rows
+	// what the check reaches through it is exactly that account's eight rows
 	// above — and it reaches them already, holding cloudbuild.builds.create. The target is
 	// the literal path of the identity this module creates (a computed
 	// service_account_id is a grant internal/infra/tf's cover cannot read), and

@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 )
 
 // buildIdentityPlan is the installation fixture planned for real with the
@@ -256,6 +258,12 @@ type catalogCheckIdentityPlan struct {
 	// are the same addresses in the IAM spelling a grant's own field carries.
 	identity, identityMember string
 	check, checkMember       string
+	// runsBucket is the installation's bucket and repos the catalog check's
+	// own repositories — the slug, the records condition and the provider
+	// credential each of them carries — which is the input the identity's
+	// bucket and secret grants are rendered from.
+	runsBucket string
+	repos      []CatalogCheckRepository
 }
 
 func newCatalogCheckIdentityPlan(t *testing.T) catalogCheckIdentityPlan {
@@ -295,6 +303,8 @@ func newCatalogCheckIdentityPlan(t *testing.T) catalogCheckIdentityPlan {
 		identityMember: "serviceAccount:" + identity,
 		check:          check,
 		checkMember:    "serviceAccount:" + check,
+		runsBucket:     lc.RunsBucket,
+		repos:          spec.CatalogCheck.Repositories,
 	}
 }
 
@@ -381,18 +391,24 @@ func TestCatalogCheckGrantSurvivesRetiringARepoRoot(t *testing.T) {
 }
 
 // The identity's whole reach (B6's "nothing wider"), read off the plan: every
-// resource that names it as a MEMBER is a grant TO it, and there are exactly
-// five — the invoker bit on the credentials service, the writer and tag mover
-// on the installation's ONE shared registry, which are the two roles the
-// per-repository build account held there (modules/repo/registry.tf) and the
-// two a catalog push needs, and the READER on the two registries a build pulls
-// its own steps from: fugaro-base, whose base images the generated credential
-// step runs, and the ghcr remote, through which the derived build's step image
-// and its FROM arrive (modules/repo/build.tf's build_base and build_ghcr
-// before this task). Reader is the whole of it on those two: neither registry
-// is written by a build, and a write role for this identity on a repository's
-// own registry would be the per-repository account's reach, which this task
-// deliberately does not carry over.
+// resource that names it as a MEMBER is a grant TO it, and each one is the
+// per-repository build account's own reach for one step of a catalog build —
+// the invoker bit on the credentials service; the writer and tag mover on the
+// installation's ONE shared registry, which are the two roles the
+// per-repository account held there (modules/repo/registry.tf) and the two a
+// catalog push needs; the READER on the two registries a build pulls its own
+// steps from: fugaro-base, whose base images the generated credential step
+// runs, and the ghcr remote, through which the derived build's step image and
+// its FROM arrive (modules/repo/build.tf's build_base and build_ghcr before
+// this task); the definitions read, the records write and the provider
+// credential of one repository each, which the build's own pin, record and
+// clone steps make as the account it runs as (a code review of this diff
+// found those three missing: a catalog build whose identity holds none of the
+// runs bucket or Secret Manager fails on the first of them it reaches).
+// Reader is the whole of it on the two registries: neither is written by a
+// build, and a write role for this identity on a repository's own registry
+// would be the per-repository account's reach, which this task deliberately
+// does not carry over.
 func TestBuildIdentityHoldsOnlyTheRegistryRoles(t *testing.T) {
 	p := newCatalogCheckIdentityPlan(t)
 	shared, ok := p.rows["module.installation.google_artifact_registry_repository.shared"]
@@ -409,7 +425,14 @@ func TestBuildIdentityHoldsOnlyTheRegistryRoles(t *testing.T) {
 		invoker    = "module.installation.google_cloud_run_v2_service_iam_member.credentials_build_identity[0]"
 		baseReader = "module.installation.google_artifact_registry_repository_iam_member.build_identity_base_reader[0]"
 		ghcrReader = "module.installation.google_artifact_registry_repository_iam_member.build_identity_ghcr_reader[0]"
+		defsRead   = "module.installation.google_storage_bucket_iam_member.build_identity_definitions[0]"
 	)
+	recordsAddr := func(slug string) string {
+		return "module.installation.google_storage_bucket_iam_member.build_identity_records[\"" + slug + "\"]"
+	}
+	gitSecretAddr := func(slug string) string {
+		return "module.installation.google_secret_manager_secret_iam_member.build_identity_git_secret[\"" + slug + "\"]"
+	}
 	got := map[string]string{}
 	for addr, row := range p.rows {
 		// The account's own row carries the same member (the provider renders
@@ -430,9 +453,16 @@ func TestBuildIdentityHoldsOnlyTheRegistryRoles(t *testing.T) {
 		tagMover:   "projects/" + p.project + "/roles/" + RoleTagMover,
 		baseReader: "roles/artifactregistry.reader",
 		ghcrReader: "roles/artifactregistry.reader",
+		defsRead:   "roles/storage.objectViewer",
+	}
+	for _, r := range p.repos {
+		want[recordsAddr(r.Slug)] = "roles/storage.objectUser"
+		if r.GitSecretID != "" {
+			want[gitSecretAddr(r.Slug)] = "roles/secretmanager.secretAccessor"
+		}
 	}
 	if !maps.Equal(got, want) {
-		t.Errorf("the plan grants the build identity %v, want exactly %v: the writer and the tag mover are the two roles the per-repository build account held on the shared registry, the invoker bit is the build route's class, the two readers are the registries a build's own steps pull from, and a sixth grant would be a reach this task did not carry over", got, want)
+		t.Errorf("the plan grants the build identity %v, want exactly %v: the writer and the tag mover are the two roles the per-repository build account held on the shared registry, the invoker bit is the build route's class, the two readers are the registries a build's own steps pull from, and the definitions read, the records write and the provider credential of one repository each are what a catalog build's own steps make as the account it runs as — a further grant here would be a reach this task did not carry over", got, want)
 	}
 	for _, addr := range []string{writer, tagMover} {
 		row, ok := p.rows[addr]
@@ -470,4 +500,161 @@ func TestBuildIdentityHoldsOnlyTheRegistryRoles(t *testing.T) {
 			t.Errorf("%s grants in project %q, want %q", addr, r, p.project)
 		}
 	}
+}
+
+// The identity's reach INSIDE the runs bucket and inside Secret Manager, which
+// is what a catalog build's own steps use and what a build that ran as the
+// per-repository account used to have: the definition it describes, the record
+// it writes back and the provider credential it clones with. A code review of
+// B6's first cut found this missing — the identity held the registry roles and
+// nothing else, so every catalog build and every nightly rebuild failed on the
+// first of these steps it reached — and this test is the shape of the fix.
+//
+// Read whole, because each half is a different kind of narrowing: the bucket,
+// the role, the member, and the condition's title AND expression. The
+// expression is the one internal/backend/gcp builds for that grant's own
+// target — the copied definitions for the read, one repository's
+// builds/<slug>/catalog/ for each record — which is what keeps the identity
+// out of every other repository's records, out of the repositories' daily
+// check state beside them, and out of writing the definitions at all: this is
+// the grant modules/repo/catalogcheck.tf makes to the check job, made to the
+// account that now writes the record instead. The title is the one gcp builds
+// for THIS account and not the check job's, because the input carries the
+// job's title and a grant is read by whose it is.
+func TestBuildIdentityBucketGrantsAreTheConditions(t *testing.T) {
+	p := newCatalogCheckIdentityPlan(t)
+	runsRow, ok := p.rows["module.installation.google_storage_bucket.runs"]
+	if !ok {
+		t.Fatal("the plan creates no runs bucket, so the grants below have no target")
+	}
+	bucket, _ := runsRow.After["name"].(string)
+	if bucket == "" || bucket != p.runsBucket {
+		t.Fatalf("%s is %q, want the installation's own %q", runsRow.Address, bucket, p.runsBucket)
+	}
+	if len(p.repos) == 0 {
+		t.Fatal("the fixture's catalog names no repository, so the per-repository grants below are not exercised")
+	}
+
+	const defsRead = "module.installation.google_storage_bucket_iam_member.build_identity_definitions[0]"
+	defs, ok := p.rows[defsRead]
+	if !ok {
+		t.Fatalf("the plan carries no %s, so the pin step of a catalog build cannot read the definition it describes", defsRead)
+	}
+	if defs.Type != "google_storage_bucket_iam_member" {
+		t.Errorf("%s is a %s, want the bucket IAM member", defs.Address, defs.Type)
+	}
+	if role, _ := defs.After["role"].(string); role != "roles/storage.objectViewer" {
+		t.Errorf("%s grants %q, want roles/storage.objectViewer: a build that could WRITE a definition could make every repository run an image of its choosing (gcp.CatalogReadCondition's own reason)", defs.Address, role)
+	}
+	if got, _ := defs.After["member"].(string); got != p.identityMember {
+		t.Errorf("%s grants to %q, want %q", defs.Address, got, p.identityMember)
+	}
+	if got, _ := defs.After["bucket"].(string); got != bucket {
+		t.Errorf("%s grants on bucket %q, want the runs bucket %q", defs.Address, got, bucket)
+	}
+	defsCond := oneCondition(t, defs)
+	if got, want := defsCond["title"], gcp.CatalogReadConditionTitle(BuildIdentityAccountID); got != want {
+		t.Errorf("%s titles its condition %q, want %q: the input's condition is titled for the check job's account, and this grant is the identity's", defs.Address, got, want)
+	}
+	if got, want := defsCond["expression"], gcp.CatalogReadCondition(bucket); got != want {
+		t.Errorf("%s conditions on %q, want %q: the copied catalog definitions (gcp.CatalogBucketPrefix) and nothing else, byte for byte what the input carries", defs.Address, got, want)
+	}
+
+	// One records grant per repository the catalog names, and no more: the
+	// union of these is the honest reading of "the repositories whose entries
+	// this project builds", while one project-wide builds/ grant would be every
+	// repository's records, their check state and the definitions beside them.
+	records := 0
+	for addr, row := range p.rows {
+		if !strings.HasPrefix(addr, "module.installation.google_storage_bucket_iam_member.build_identity_records[") {
+			continue
+		}
+		records++
+		slug := forEachKey(t, addr)
+		if role, _ := row.After["role"].(string); role != "roles/storage.objectUser" {
+			t.Errorf("%s grants %q, want roles/storage.objectUser: the record step writes the record the check reads back", addr, role)
+		}
+		if got, _ := row.After["member"].(string); got != p.identityMember {
+			t.Errorf("%s grants to %q, want %q", addr, got, p.identityMember)
+		}
+		if got, _ := row.After["bucket"].(string); got != bucket {
+			t.Errorf("%s grants on bucket %q, want the runs bucket %q", addr, got, bucket)
+		}
+		cond := oneCondition(t, row)
+		if got, want := cond["title"], gcp.CatalogRecordsConditionTitle(slug); got != want {
+			t.Errorf("%s titles its condition %q, want %q", addr, got, want)
+		}
+		if got, want := cond["expression"], gcp.CatalogRecordsCondition(bucket, slug); got != want {
+			t.Errorf("%s conditions on %q, want %q: ONE repository's builds/<slug>/catalog/ and nothing else", addr, got, want)
+		}
+	}
+	if records != len(p.repos) {
+		t.Errorf("the plan carries %d records grants, want one per repository the catalog names (%d): %v", records, len(p.repos), p.repos)
+	}
+
+	// The provider credential, one secretAccessor per repository whose entries
+	// this project builds. Cloud Build resolves AvailableSecrets as the account
+	// the build runs as, so without this the clone step of every catalog build
+	// is refused; a project-wide secretAccessor instead would reach the
+	// credentials bundle and every repository's webhook secret with it.
+	for _, r := range p.repos {
+		addr := "module.installation.google_secret_manager_secret_iam_member.build_identity_git_secret[\"" + r.Slug + "\"]"
+		row, ok := p.rows[addr]
+		if r.GitSecretID == "" {
+			if ok {
+				t.Errorf("the plan carries %s for a repository whose provider credential this installation cannot name: no build of its entries is submitted, so it needs no reach on one", addr)
+			}
+			continue
+		}
+		if !ok {
+			t.Fatalf("the plan carries no %s, so the clone step of a build of %s is refused its credential", addr, r.Slug)
+		}
+		if row.Type != "google_secret_manager_secret_iam_member" {
+			t.Errorf("%s is a %s, want the secret IAM member", addr, row.Type)
+		}
+		if role, _ := row.After["role"].(string); role != "roles/secretmanager.secretAccessor" {
+			t.Errorf("%s grants %q, want roles/secretmanager.secretAccessor: the build reads the credential and never writes it", addr, role)
+		}
+		if got, _ := row.After["member"].(string); got != p.identityMember {
+			t.Errorf("%s grants to %q, want %q", addr, got, p.identityMember)
+		}
+		if got, _ := row.After["secret_id"].(string); got != r.GitSecretID {
+			t.Errorf("%s grants on secret %q, want %q (the repository's own provider credential, resolved the way its jobs resolve it)", addr, got, r.GitSecretID)
+		}
+		if got, _ := row.After["project"].(string); got != p.project {
+			t.Errorf("%s grants in project %q, want %q", addr, got, p.project)
+		}
+	}
+}
+
+// oneCondition is the row's single condition, read by key: a grant whose
+// narrowing is missing or doubled is a different grant, and both are how a
+// plan over-reaches silently.
+func oneCondition(t *testing.T, row plannedResource) map[string]string {
+	t.Helper()
+	raw, ok := row.After["condition"].([]any)
+	if !ok || len(raw) != 1 {
+		t.Fatalf("%s carries conditions %v, want exactly one", row.Address, row.After["condition"])
+	}
+	out := map[string]string{}
+	cond, _ := raw[0].(map[string]any)
+	for _, k := range []string{"title", "expression"} {
+		v, _ := cond[k].(string)
+		if v == "" {
+			t.Fatalf("%s's condition has no %s: %v", row.Address, k, cond)
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// forEachKey is the for_each key of an instance address
+// (…[<"slug">]) — the repository the grant is for.
+func forEachKey(t *testing.T, addr string) string {
+	t.Helper()
+	open := strings.LastIndex(addr, "[")
+	if open < 0 {
+		t.Fatalf("%s is not a for_each instance address", addr)
+	}
+	return strings.Trim(strings.TrimSuffix(addr[open+1:], "]"), "\"")
 }

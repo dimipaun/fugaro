@@ -355,8 +355,10 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 	)
 	// The project's build identity (B5, D2301), whose cells below are pinned:
 	// the invoker bit on the credentials service, the writer and tag-mover
-	// pair on the shared registry, and the reader on the two registries a
-	// build pulls from (B6), and no role of any other row.
+	// pair on the shared registry, the reader on the two registries a build
+	// pulls from, the bucket's read of the copied definitions and write of one
+	// repository's record, and the provider credential a build clones with
+	// (B6), and no role of any other row.
 	const buildIdentity = "serviceAccount:" + BuildIdentityAccountID + "@proj-1.iam.gserviceaccount.com"
 	for _, c := range []struct {
 		typ, role, member string
@@ -403,6 +405,16 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		// credential step's own base image — is made as the account the build
 		// runs as.
 		{repo, "roles/artifactregistry.reader", buildIdentity, true},
+		// The bucket and the secret cells the same review added, which are the
+		// three reaches a catalog build's own steps still make as the identity:
+		// the copied definitions its pin step reads, the record its record step
+		// writes, and the provider credential its clone step resolves. The
+		// conditions these carry are the check's own input and
+		// TestBuildIdentityBucketGrantsAreTheConditions reads them at the size
+		// the plan writes them.
+		{bkt, "roles/storage.objectViewer", buildIdentity, true},
+		{bkt, "roles/storage.objectUser", buildIdentity, true},
+		{secret, "roles/secretmanager.secretAccessor", buildIdentity, true},
 		{logview, "roles/logging.viewAccessor", person, true},
 		// The credentials service's two rows, and only these two (0.10.1,
 		// ledger #903): the bundle's accessor and its own database role. The
@@ -427,13 +439,16 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		// Roles on the wrong type, or to the wrong kind of principal.
 		{bkt, "roles/storage.objectAdmin", account, false},
 		{project, "roles/storage.objectAdmin", person, false},
-		// The build identity is refused every role but its one row (B5,
-		// D2301): a bucket write — which is how a registry writer, the role a
-		// later task adds to this table on purpose, would look if it were
-		// widened into a row silently — and the invoker bit on the type that
-		// is not the service it invokes.
-		{bkt, "roles/storage.objectUser", buildIdentity, false},
+		// The build identity on the types and roles it does not hold: a
+		// project-level secretAccessor, which would reach every secret of the
+		// installation rather than the one repository's provider credential its
+		// own cell grants, and the invoker bit on the type that is not the
+		// service it invokes. (The runs bucket's two object roles came off this
+		// list with the review that found a catalog build's own pin, record and
+		// clone steps unreached; their conditions are what narrow them, and
+		// TestBuildIdentityBucketGrantsAreTheConditions reads them.)
 		{runjob, "roles/run.invoker", buildIdentity, false},
+		{project, "roles/secretmanager.secretAccessor", buildIdentity, false},
 		{project, "roles/secretmanager.secretAccessor", account, false},
 		{project, "roles/iam.serviceAccountUser", person, false},
 		{project, "projects/proj-1/roles/fugaroTokenMinter", person, false},
@@ -895,6 +910,20 @@ func TestBuildIdentityIsItsOwnPrincipalKind(t *testing.T) {
 			"roles/artifactregistry.writer": true,
 			customKey + "fugaroTagMover":    true,
 		},
+		// The runs bucket and the provider credentials a catalog build's own
+		// steps reach, which the same review found missing after the build
+		// moved onto this identity: the definitions its pin step reads
+		// (objectViewer), the record its record step writes (objectUser), and
+		// the credential its clone step resolves through AvailableSecrets
+		// (secretAccessor). The conditions are the catalog check's own input
+		// and catalogReadGrant and catalogRecordsGrant are what pin them, one
+		// repository's records area at a time (see
+		// TestBuildIdentityBucketGrantsAreTheConditions).
+		"google_storage_bucket_iam_member": {
+			"roles/storage.objectUser":   true,
+			"roles/storage.objectViewer": true,
+		},
+		"google_secret_manager_secret_iam_member": {"roles/secretmanager.secretAccessor": true},
 	}
 	for typ, row := range grantRules {
 		for key, w := range row {
