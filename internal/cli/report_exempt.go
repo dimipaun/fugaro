@@ -115,10 +115,14 @@ type builtLogName struct {
 var builtLogNames = map[string]builtLogName{
 	"accounts alias rm":  {builder: "accountsAliasLogName"},
 	"accounts alias set": {builder: "accountsAliasLogName"},
-	"budget kill":        {builder: "budgetKillLogName"},
-	"budget resume":      {builder: "budgetKillLogName"},
-	"setup":              {builder: "doorName", door: "setupDoor"},
-	"update":             {builder: "doorName", door: "updateDoor"},
+	// The one command whose name is its whole path: runLogName reads a chain's
+	// name off the command a person typed, and this door's own word is written
+	// there as the literal the census can read.
+	"apply":         {builder: "runLogName"},
+	"budget kill":   {builder: "budgetKillLogName"},
+	"budget resume": {builder: "budgetKillLogName"},
+	"setup":         {builder: "doorName", door: "setupDoor"},
+	"update":        {builder: "doorName", door: "updateDoor"},
 }
 
 // exemptListing is one command D1354 keeps off the reporter because its stdout

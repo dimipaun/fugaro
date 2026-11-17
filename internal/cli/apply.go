@@ -504,7 +504,14 @@ func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, o apply
 // files accounts-add) and never the door this run borrowed — `fugaro apply`
 // files `apply`, and a management command's chain files its own path. What the
 // log keeps is the record of one command line somebody ran.
+//
+// A chain's name is read off the path a person typed, which no scan of the
+// source can see; this door's is its whole path, so it is written out here as
+// the literal report_exempt.go's builtLogNames hands the census.
 func runLogName(cmd *cobra.Command) string {
+	if cmd.Name() == applyName {
+		return "apply"
+	}
 	return strings.Join(strings.Fields(cmd.CommandPath())[1:], "-")
 }
 
