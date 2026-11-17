@@ -549,13 +549,22 @@ step_critical() {
   rounds=$(field_of rounds "$answer")
   tolerated=$(field_of tolerated "$answer")
   levels=$(field_of levels "$answer")
+  # A lenient half that was never read is not a zero: with no POC figure the
+  # comparison has nothing on its left, and ${POC_TOLERATED:-0} would make a
+  # strict run that tolerated a great deal read as the one that tolerated no
+  # more. The POC half's own row is unmeasured in the block above, so the diff
+  # is a step that could not be read rather than a verdict about the modes.
+  if [ -z "$POC_TOLERATED" ]; then
+    unmeasured mode-diff "step 2's diff needs the POC run's own figure and it was never read — the POC row above says why (the listing does not hold $RUN_REF, or fugaro diagnose did not answer) — so the Critical run's tolerated findings are not compared against anything: an implied 0 would read as the strict run tolerating no more"
+    return 0
+  fi
   # The diff is one-directional and that is the claim: a mode higher on the scale
   # tolerates no more than a lower one over the same task (D1's table), so the
   # strict run's tolerated count may not exceed the lenient one's. The rounds and
   # the levels the two runs reached are printed as they are rather than compared:
   # a run spends the rounds it needs, and Critical's five senior rounds are a
   # default and not a floor.
-  if [ "${tolerated:-0}" -gt "${POC_TOLERATED:-0}" ]; then
+  if [ "${tolerated:-0}" -gt "$POC_TOLERATED" ]; then
     fact mode-diff FAIL "the Critical run tolerated $tolerated finding(s) where the POC run of the same task tolerated $POC_TOLERATED: a mode higher on the scale must tolerate no more than a lower one (D1's table), so the strict run is the more lenient of the two here"
     return 1
   fi

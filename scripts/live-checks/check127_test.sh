@@ -710,7 +710,14 @@ test_a_run_the_listing_does_not_hold_could_not_be_read() {
   expect_status "$status" 2 "no row: the run could not tell"
   expect_contains "$out" "FACT poc-run: FAIL" "no row: the row is not a pass"
   expect_contains "$out" "does not hold the run" "no row: the reading"
-  expect_contains "$err" "rows that could not be read: poc-run" "no row: the unmeasured keys are named"
+  expect_contains "$err" "rows that could not be read: poc-run mode-diff" "no row: the unmeasured keys are named"
+  # Step 2's diff is not written against a figure that was never read: with no
+  # POC count the row is one that could not be read, and the comparison the
+  # steps exist for is not claimed either way.
+  expect_contains "$out" "FACT mode-diff: FAIL" "no row: the diff could not be read"
+  expect_contains "$out" "an implied 0 would read as the strict run tolerating no more" "no row: it says why"
+  expect_absent "$out" "the strict run tolerated no more" "no row: no comparison was claimed"
+  expect_absent "$out" "must tolerate no more than a lower one" "no row: no comparison was claimed"
 }
 
 # Step 3's floor is the one row that is written to FAIL rather than trusted: a
