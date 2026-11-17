@@ -138,6 +138,8 @@ doctor)
   # looks like on a real machine.
   if [ -n "${FAKE_CHECKOUT_PROJECT:-}" ] && [ "$PWD" = "${FAKE_CHECKOUT_DIR:-}" ]; then
     printf '{"version":1,"ok":true,"checks":[],"project":{"name":"other","gcp_project":"%s","region":"us-east5"}}\n' "$FAKE_CHECKOUT_PROJECT"
+    # ... and it can fail to answer there at all, which is no project to name.
+    [ -z "${FAKE_CHECKOUT_DOCTOR_STATUS:-}" ] || exit "$FAKE_CHECKOUT_DOCTOR_STATUS"
   else
     cat "$FAKE_JSON_DIR/doctor.json"
   fi
@@ -708,6 +710,19 @@ test_a_checkout_of_another_project_than_the_sandbox_one_is_refused() {
   assert_no_build "$dir" "a checkout of another project"
 }
 
+test_a_checkout_whose_project_cannot_be_read_is_not_measured() {
+  local dir=$work/checkout-unreadable
+  prepare "$dir"
+  # A doctor that does not answer is no answer, not an empty project: the check
+  # cannot say which project the build would run in, so it runs none.
+  run_check "$dir" CHECK581_CHECKOUT="$dir/other" \
+    FAKE_CHECKOUT_DIR="$dir/other" FAKE_CHECKOUT_PROJECT=another-chk581-project \
+    FAKE_CHECKOUT_DOCTOR_STATUS=2
+  expect_status "$status" 2 "a checkout whose project cannot be read"
+  expect_contains "$out" "FACT build: FAIL — fugaro doctor --json did not answer in $dir/other" "a checkout whose project cannot be read: the row says why"
+  assert_no_build "$dir" "a checkout whose project cannot be read"
+}
+
 test_a_checkout_that_is_not_one_is_not_measured() {
   local dir=$work/badcheckout
   prepare "$dir"
@@ -955,6 +970,7 @@ t test_a_build_refused_for_the_checkout_says_so
 t test_an_entry_can_be_built_from_its_own_checkout
 t test_a_checkout_of_a_belong_project_is_refused
 t test_a_checkout_of_another_project_than_the_sandbox_one_is_refused
+t test_a_checkout_whose_project_cannot_be_read_is_not_measured
 t test_a_checkout_that_is_not_one_is_not_measured
 t test_a_build_with_no_build_id_is_a_finding
 t test_a_note_that_names_one_repository_is_a_finding
