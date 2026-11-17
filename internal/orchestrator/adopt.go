@@ -220,7 +220,10 @@ func Adopt(ctx context.Context, lister RunLister, node *Node) (int, error) {
 // A review run and an artifact run are the runs the daemon does not adopt
 // (D2702): they are a job somebody else asked for — a second reading of a pull
 // request, a render — and not work of the project's that a dependent waits on,
-// so an item for one would be an item nothing folds and nothing launches. What
+// so an item for one would be an item nothing folds and nothing launches. An
+// evaluation is the same shape and is left the same way: a mode the catalog has
+// that is neither the implement mode nor the empty one a spec that names none
+// carries is a run that is not a code change. What
 // is left out here is named nowhere: a run id that is not one (task.ValidRunID)
 // cannot be an item's id at all (idRE), which makes it a lister's bug rather
 // than a run in flight, and a fact naming it would be a fact carrying whatever
