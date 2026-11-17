@@ -14,7 +14,7 @@ import (
 
 // How a call was priced and settled, as the log line says.
 const (
-	pricedTable    = "table"    // the table's own charge: the serving model's rates, or the maximum rates for a model the table doesn't know
+	pricedTable    = "table"    // the serving model's rates
 	pricedMax      = "max"      // an unknown serving model: the table's maximum rates
 	pricedSurprise = "surprise" // a dimension the request didn't allow: maximum rates × SurpriseMultiplier
 	pricedTier     = "tier"     // a service tier no one prices: the rates the call was priced at × ConservativeTierMultiplier, floored by the provider's report on a partial call

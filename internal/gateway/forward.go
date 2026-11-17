@@ -1299,14 +1299,14 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, w pricing.Micros, p
 	// D2650) are recorded where the charge records the report and not
 	// wherever the response carried one: a call whose response carried no
 	// report at all, and a call on a route that reports no cost, are in no
-	// split the run's report total carries. The band is the table's own charge at the row's
-	// ends -- no route fee, and no multiple either: the conservative tier and
-	// surprise multiples are what the charge adds to an estimate (F12), while
-	// the band is the price a report is read against, and a doubled band
-	// would put every reported call of a tier the table does not price below
-	// its own floor. It is taken over the usage the report is over, which for
-	// a partial call is the usage the provider sent and not the output it
-	// reserved.
+	// split the run's report total carries -- but the band is the table's own
+	// charge at the row's ends, no route fee and no multiple either: the
+	// conservative tier and surprise multiples are what the charge adds to an
+	// estimate (F12), while the band is the price a report is read against,
+	// and a band carrying a multiple would sit above the floor that same
+	// usage is charged at. It is taken over the usage the report is over,
+	// which for a partial call is the usage the provider sent and not the
+	// output it reserved.
 	if !partial {
 		// The report is recorded on its own terms (F7, D2650) whatever the
 		// charge below turns out to be: it is what the provider said the call
