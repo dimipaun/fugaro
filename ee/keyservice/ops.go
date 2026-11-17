@@ -178,6 +178,12 @@ var (
 	// errOperationsBadSeats is a seat count nobody can use, or one the row
 	// carries its own of (D2184).
 	errOperationsBadSeats = errors.New("keyservice: that seat count is not one this row may be granted with")
+	// errOperationsNotActive is a term action asked of a licence that is not
+	// serving: a revoked one, and a superseded one, which a grant in the same
+	// workspace already replaced. F29's rule is that such a licence is one no key
+	// is minted from again, and the seat change is the one action of the four that
+	// mints.
+	errOperationsNotActive = errors.New("keyservice: that licence is not active")
 	// errOperationsBadTerm is an end outside the row's own term: F30 lets
 	// operations shorten a term and never exceed the row.
 	errOperationsBadTerm = errors.New("keyservice: that end is not inside the row's own term")
@@ -667,6 +673,16 @@ func (s *Service) operationsAct(ctx context.Context, actor Caller, asked WireEnt
 		changed.EndsAt = ends
 		action = actionEntitlementExtend
 	case operationsSeats:
+		// F29: a licence that is not active is one no key is minted from again,
+		// and the seat change is the one action of the four that mints. A revoked
+		// licence is one §8's own withdrawal already reached, and a superseded one
+		// is one a later grant in this workspace replaced; the reissue below would
+		// mint the key the binding route refuses on the same status
+		// (`bindEntitlement`), so neither is a licence a count is moved on. Which
+		// term it is comes back under is a grant's or a renewal's question.
+		if entitlement.Status != entitlementActive {
+			return WireEntitlement{}, fmt.Errorf("%w: the licence is %q", errOperationsNotActive, entitlement.Status)
+		}
 		if asked.Seats == nil || *asked.Seats < 1 || (row.Seats != 0 && *asked.Seats != row.Seats) {
 			return WireEntitlement{}, fmt.Errorf("%w: the %s row carries %d seat(s)", errOperationsBadSeats, row.Name, row.Seats)
 		}
@@ -787,7 +803,8 @@ func (s *Service) reissueSeatsOf(ctx context.Context, entitlement WireEntitlemen
 	return err
 }
 
-// withdrawEveryKeyOf withdraws every key one licence ever minted (F29).
+// licenceKeys answers every key one licence ever minted (F29), which is the walk
+// the withdrawal and a project transfer both take to them.
 //
 // Every record that names the licence is a key of it, whatever minted it: the
 // binding's key, the one a seat change reissued, the one a renewal minted and
@@ -797,53 +814,40 @@ func (s *Service) reissueSeatsOf(ctx context.Context, entitlement WireEntitlemen
 // cannot see is still a key an installation may be running: a reissue's source
 // names the event that caused it and not the key it replaced (D2200 keeps the
 // secret, so nothing about that key is spent).
-//
-// It is `merchant.go`'s walk read at a second door rather than a second rule:
-// what a withdrawal is, is F29's, and the two callers must reach the same keys.
-// The reason is the licensor's own word for it (store.go's Revocation) and
-// never what reaches the holder.
-func (s *Service) withdrawEveryKeyOf(ctx context.Context, entitlementID string, now time.Time) error {
+func (s *Service) licenceKeys(ctx context.Context, entitlementID string) ([]string, error) {
 	records, err := s.store.Issuances(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	seen := map[string]bool{}
-	walk := []string{}
-	revoke := func(keyID string) error {
+	keys := []string{}
+	note := func(keyID string) {
 		if keyID == "" || seen[keyID] {
-			return nil
+			return
 		}
 		seen[keyID] = true
-		walk = append(walk, keyID)
-		return s.store.Revoke(ctx, Revocation{KeyID: keyID, Reason: ReasonOperations, At: now})
+		keys = append(keys, keyID)
 	}
 	bound, err := s.bindingKeys(ctx, entitlementID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, keyID := range bound {
-		if err := revoke(keyID); err != nil {
-			return err
-		}
+		note(keyID)
 	}
 	for _, record := range entitlementRecords(records, entitlementID) {
-		if err := revoke(record.KeyID); err != nil {
-			return err
-		}
+		note(record.KeyID)
 	}
 	subscription, err := s.licenceSubscription(ctx, entitlementID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// The empty subscription is not a licence: an unsold key names none, so
 	// matching on "" would withdraw every hand-minted key there is.
 	if subscription != "" {
 		for _, record := range records {
-			if record.Subscription != subscription {
-				continue
-			}
-			if err := revoke(record.KeyID); err != nil {
-				return err
+			if record.Subscription == subscription {
+				note(record.KeyID)
 			}
 		}
 	}
@@ -853,13 +857,33 @@ func (s *Service) withdrawEveryKeyOf(ctx context.Context, entitlementID string, 
 			successors[from] = append(successors[from], record.KeyID)
 		}
 	}
-	for len(walk) > 0 {
-		keyID := walk[len(walk)-1]
-		walk = walk[:len(walk)-1]
-		for _, next := range successors[keyID] {
-			if err := revoke(next); err != nil {
-				return err
-			}
+	// The successors are followed from the keys noted so far, and a successor's
+	// own rotations are followed in turn: a rotation chain is as long as the keys
+	// the licence's term outlived, and the walk above reaches the first key of it
+	// only.
+	for i := 0; i < len(keys); i++ {
+		for _, next := range successors[keys[i]] {
+			note(next)
+		}
+	}
+	return keys, nil
+}
+
+// withdrawEveryKeyOf withdraws every key one licence ever minted (F29), which is
+// `licenceKeys`' walk written out as the store's own revocations.
+//
+// It is `merchant.go`'s walk read at a second door rather than a second rule:
+// what a withdrawal is, is F29's, and the two callers must reach the same keys.
+// The reason is the licensor's own word for it (store.go's Revocation) and
+// never what reaches the holder.
+func (s *Service) withdrawEveryKeyOf(ctx context.Context, entitlementID string, now time.Time) error {
+	keys, err := s.licenceKeys(ctx, entitlementID)
+	if err != nil {
+		return err
+	}
+	for _, keyID := range keys {
+		if err := s.store.Revoke(ctx, Revocation{KeyID: keyID, Reason: ReasonOperations, At: now}); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -922,7 +946,11 @@ func (s *Service) operationsTransfer(ctx context.Context, actor Caller, asked Wi
 	now := s.now().UTC()
 	var replacing []string
 	if source.EntitlementID != nil {
-		replacing, err = s.bindingKeys(ctx, *source.EntitlementID)
+		// Every key the licence minted, which is the walk a revocation takes and
+		// not the binding's own keys alone (F29): the key an installation is
+		// running may be a seat change's, a renewal's or a rotation's successor,
+		// and each of those names the project this transfer is taking away.
+		replacing, err = s.licenceKeys(ctx, *source.EntitlementID)
 		if err != nil {
 			return WireWorkspace{}, err
 		}
@@ -958,6 +986,18 @@ func (s *Service) operationsTransfer(ctx context.Context, actor Caller, asked Wi
 		if held.ProjectID != nil && *held.ProjectID != asked.ProjectID {
 			return errOperationsDestinationBound
 		}
+		// The licence is read here, with the two workspaces and before anything
+		// is written: the deploy's store refuses a read after a write in one
+		// transaction (docstore's ErrReadAfterWrite), and the withdrawal below is
+		// the write.
+		var licence WireEntitlement
+		licenceHeld := false
+		if heldSource.EntitlementID != nil {
+			licence, licenceHeld, err = getRecord[WireEntitlement](ctx, tx, entitlementsCollection, *heldSource.EntitlementID)
+			if err != nil {
+				return err
+			}
+		}
 		if err := s.revokeProjectKeys(ctx, tx, replacing, now); err != nil {
 			return err
 		}
@@ -966,20 +1006,13 @@ func (s *Service) operationsTransfer(ctx context.Context, actor Caller, asked Wi
 		if err := putRecord(ctx, tx, workspacesCollection, heldSource.ID, heldSource); err != nil {
 			return err
 		}
-		if heldSource.EntitlementID != nil {
-			licence, present, err := getRecord[WireEntitlement](ctx, tx, entitlementsCollection, *heldSource.EntitlementID)
-			if err != nil {
+		if licenceHeld {
+			// D2198's clock starts with a binding, and this is the one place a
+			// licence is left bindable without one: the workspace whose project
+			// was taken is the person D2198's window must not hold back.
+			licence.RebindableAt = &bound
+			if err := putRecord(ctx, tx, entitlementsCollection, licence.ID, licence); err != nil {
 				return err
-			}
-			if present {
-				// D2198's clock starts with a binding, and this is the one
-				// place a licence is left bindable without one: the workspace
-				// whose project was taken is the person D2198's window must not
-				// hold back.
-				licence.RebindableAt = &bound
-				if err := putRecord(ctx, tx, entitlementsCollection, licence.ID, licence); err != nil {
-					return err
-				}
 			}
 		}
 		held.ProjectID = &project
@@ -995,8 +1028,8 @@ func (s *Service) operationsTransfer(ctx context.Context, actor Caller, asked Wi
 	return answered, nil
 }
 
-// revokeProjectKeys withdraws the keys a workspace's binding minted, through
-// the transaction that moves its project id (D2204).
+// revokeProjectKeys withdraws the keys of the licence whose project id the
+// workspace held, through the transaction that moves that id (D2204).
 //
 // The store's own Revoke would open a transaction of its own, which the backend
 // refuses inside this one (workspaces.go's revokeReplacedBindingKeys says the

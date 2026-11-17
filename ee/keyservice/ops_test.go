@@ -1237,9 +1237,9 @@ func TestProjectTransferIsAudited(t *testing.T) {
 		t.Errorf("the destination is %+v in the store, want it holding %q", stored, opsProject)
 	}
 
-	// Every key the source binding minted is withdrawn (F29), and the licence
-	// itself is untouched: it is the licence the customer still holds, and it is
-	// bindable again at once.
+	// Every key of the licence the source workspace held is withdrawn (F29), and
+	// the licence itself is untouched: it is the licence the customer still
+	// holds, and it is bindable again at once.
 	revoked, withdrawn, err := f.store.Revocation(context.Background(), opsKeyID)
 	if err != nil {
 		t.Fatalf("reading the withdrawal of %s: %v", opsKeyID, err)
@@ -1303,6 +1303,152 @@ func TestProjectTransferIsAudited(t *testing.T) {
 	}
 	if code := refusal(f, rec); code != "workspace_bound" {
 		t.Errorf("the refusal carries the code %q, want workspace_bound", code)
+	}
+}
+
+// TestProjectTransferWithdrawsEveryKeyOfTheLicence: F29 at D2204's remedy.
+//
+// The transfer takes one Firebase project id away from the workspace that bound
+// it, and the keys it must reach are the **licence's** and not the binding's
+// alone: what an installation is running a term later is the successor a
+// rotation left, whose source names the key it replaced and not the binding, so
+// a walk that followed `binding:` sources would withdraw the key nobody holds
+// any more and leave the working one live on a project the customer no longer
+// has. It is the same walk a revocation takes (withdrawEveryKeyOf), and the two
+// must reach the same keys.
+func TestProjectTransferWithdrawsEveryKeyOfTheLicence(t *testing.T) {
+	f := newBindingFixtureWith(t, func(f *fixture) { f.deps.MintsV1 = f.recording })
+	org := f.seededOrganisation(opsCustomerID, "Dana Ltd", orgTypeCustomer, danaUID, danaEmail, roleOwner)
+	workspace := f.seedWorkspace(opsBoundWS, org.ID, "Dana's bound")
+	f.seedWorkspace(opsFreeWS, org.ID, "Dana's spare")
+	held := f.grant(t, entitlementGrant{
+		At:             f.now,
+		OrganisationID: org.ID,
+		WorkspaceID:    &workspace.ID,
+		Source:         entitlementSourceOperations,
+		Row:            PolicyTeamAnnual,
+		Seats:          3,
+		StartsAt:       f.now,
+	})
+	if rec := f.bind(t, held.ID, opsProject); rec.Code != http.StatusOK {
+		t.Fatalf("binding the licence answered %d (%s), want the key the transfer has to reach", rec.Code, rec.Body)
+	}
+	binding := f.records()[0]
+	secret := f.secretOf(t, f.mintedKeys()[0])
+
+	// One rotation, which is the term a connected row's key turns over in
+	// (D2202). The key the installation runs from here on is the rotation's, and
+	// nothing about its source names the binding that minted the first one.
+	f.inTheRenewalWindow(t, binding.KeyID)
+	if rec := f.call(RouteRenew, RenewalCall{KeyID: binding.KeyID, WorkspaceID: opsProject, RenewalSecret: secret}); rec.Code != http.StatusOK {
+		t.Fatalf("the renewal was answered %d (%q), want the successor", rec.Code, rec.Body.String())
+	}
+	var rotated Record
+	for _, record := range f.records() {
+		if record.Source == rotationSource(binding.KeyID) {
+			rotated = record
+		}
+	}
+	if rotated.KeyID == "" || rotated.EntitlementID != held.ID {
+		t.Fatalf("the renewal left the record %+v, want a successor of %s: this case is about the key an installation runs now", rotated, held.ID)
+	}
+
+	// The sign-in is made after the clock moved, or D2187's five minutes would
+	// refuse the transfer for a reason this case is not about.
+	f.operationsOrg(roleOwner)
+	at := f.now
+	rec := f.apiAsCaller(http.MethodPost, apiOpsProjectTransfersPath,
+		transferBody(t, opsProject, opsFreeWS, jsonString(t, "the customer moved the project")))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the transfer answered %d (%s), want it made", rec.Code, rec.Body)
+	}
+
+	for _, keyID := range []string{binding.KeyID, rotated.KeyID} {
+		entry, withdrawn, err := f.store.Revocation(context.Background(), keyID)
+		if err != nil || !withdrawn {
+			t.Errorf("the transfer left no entry for %s (withdrawn=%v err=%v), want every key of the licence withdrawn: a key naming the project the customer no longer holds is a live licence somewhere nobody is looking", keyID, withdrawn, err)
+			continue
+		}
+		if entry.Reason != ReasonOperations || !entry.At.Equal(at) {
+			t.Errorf("the entry for %s is %+v, want %q at the instant the transfer was made %s", keyID, entry, ReasonOperations, at)
+		}
+	}
+	if got := len(f.revocations()); got != 2 {
+		t.Errorf("§8's list holds %d entry(ies), want the binding's key and its successor", got)
+	}
+	if source, _ := f.workspace(opsBoundWS); source.ProjectID != nil || source.BoundAt != nil {
+		t.Errorf("the source workspace is %+v, want it unbound", source)
+	}
+	if moved, _ := f.workspace(opsFreeWS); moved.ProjectID == nil || *moved.ProjectID != opsProject {
+		t.Errorf("the destination is %+v, want it holding %q", moved, opsProject)
+	}
+}
+
+// TestOperationsSeatChangeNeedsAnActiveLicence: F29's rule at the one action of
+// the four that mints.
+//
+// A licence that is not active is one no key is minted from again: a revoked one
+// is the licence §8's own withdrawal already reached, and a superseded one is a
+// licence a later grant in the same workspace replaced. The seat change is the
+// only action that reissues, and the count is a claim in the key — so moving it
+// on either would mint a fresh, unrevoked key for a licence nothing else would
+// mint for, which is the gap F29 states.
+func TestOperationsSeatChangeNeedsAnActiveLicence(t *testing.T) {
+	f := newBindingFixtureWith(t, func(f *fixture) { f.deps.MintsV1 = f.recording })
+	org := f.seededOrganisation(opsCustomerID, "Dana Ltd", orgTypeCustomer, danaUID, danaEmail, roleOwner)
+	workspace := f.seedWorkspace(opsBoundWS, org.ID, "Dana's bound")
+	held := f.grant(t, entitlementGrant{
+		At:             f.now,
+		OrganisationID: org.ID,
+		WorkspaceID:    &workspace.ID,
+		Source:         entitlementSourceOperations,
+		Row:            PolicyTeamAnnual,
+		Seats:          3,
+		StartsAt:       f.now,
+	})
+	if rec := f.bind(t, held.ID, opsProject); rec.Code != http.StatusOK {
+		t.Fatalf("binding the licence answered %d (%s), want the key the seat change is about", rec.Code, rec.Body)
+	}
+
+	// The revoked licence, through the revocation this area's own door writes.
+	f.operationsOrg(roleOwner)
+	rec := f.apiAsCaller(http.MethodPost, apiOpsEntitlementActionsPath, actionBody(t, held.ID, "revoke", "null", "null", "null"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the revocation answered %d (%s), want it made", rec.Code, rec.Body)
+	}
+
+	for _, status := range []string{entitlementRevoked, entitlementSuperseded} {
+		t.Run(status, func(t *testing.T) {
+			// The revocation above is this area's own door and writes the first
+			// of the two. A superseded licence is a state no route of this area
+			// creates — a grant another grant replaced writes it — so that one
+			// is stood up here, the way the seeded ground of these cases is.
+			now, _ := heldRecord[WireEntitlement](f.fixture, entitlementsCollection, held.ID)
+			if now.Status != status {
+				if now.Status != entitlementRevoked || status != entitlementSuperseded {
+					t.Fatalf("the licence reads %q, and this case has no way to reach %q", now.Status, status)
+				}
+				now.Status = status
+				f.seed(entitlementsCollection, held.ID, now)
+			}
+			before := len(f.records())
+			rec := f.apiAsCaller(http.MethodPost, apiOpsEntitlementActionsPath, actionBody(t, held.ID, "seats", "5", "null", "null"))
+			if rec.Code != http.StatusConflict {
+				t.Fatalf("the seat change on a %s licence answered %d (%s), want the refusal", status, rec.Code, rec.Body)
+			}
+			if code := refusal(f.fixture, rec); code != "licence_not_active" {
+				t.Errorf("the refusal carries the code %q, want licence_not_active", code)
+			}
+			if after, _ := heldRecord[WireEntitlement](f.fixture, entitlementsCollection, held.ID); after.Seats != held.Seats {
+				t.Errorf("the licence states %d seat(s) after the refusal, want the %d it had", after.Seats, held.Seats)
+			}
+			if minted := len(f.records()); minted != before {
+				t.Errorf("the refusal left %d record(s) where the store held %d: a seat change on a licence that is not active mints an unrevoked key for a licence nothing else would mint for (F29)", minted, before)
+			}
+			if got := len(f.revocations()); got != 1 {
+				t.Errorf("§8's list holds %d entry(ies), want the revocation's own one", got)
+			}
+		})
 	}
 }
 

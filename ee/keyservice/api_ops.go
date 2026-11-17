@@ -534,6 +534,8 @@ func refuseOperations(w http.ResponseWriter, err error) {
 		refuseAPI(w, http.StatusUnprocessableEntity, "invalid_project_id", "A Firebase project id is 6 to 30 characters of lower-case letters, digits and dashes, and begins with a letter.")
 	case errors.Is(err, errOperationsBadRow):
 		refuseAPI(w, http.StatusUnprocessableEntity, "invalid_row", "That row is not one the policy table carries.")
+	case errors.Is(err, errOperationsNotActive):
+		refuseAPI(w, http.StatusConflict, "licence_not_active", "That licence is not serving: a revoked or superseded one has no term to change. Grant it again, or change the licence the workspace holds now.")
 	case errors.Is(err, errOperationsBadSeats):
 		refuseAPI(w, http.StatusUnprocessableEntity, "invalid_seats", "That seat count is not one this row may be granted with: a row that carries its own takes no other, and nobody can use fewer than one.")
 	case errors.Is(err, errOperationsBadTerm):
