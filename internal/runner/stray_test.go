@@ -2,6 +2,7 @@ package runner_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -739,5 +740,95 @@ func TestAnUnreadableCommittedReadingRefusesButStillShips(t *testing.T) {
 	}
 	if !strings.Contains(arec.Reason, "could not read the run's own diff") {
 		t.Errorf("the arm's reason = %q; want it to name the reading that failed, as the champion's does", arec.Reason)
+	}
+}
+
+// keepUpWithBase is implement with the move a run's base makes while it works:
+// a person's commit lands on the branch the run is measured against, and the
+// run fetches it and merges it in, as one told to keep up with its base does.
+// The commit is the base's own work and not the run's — which is what the
+// committed reading has to tell apart when the commit it adds is a binary.
+func keepUpWithBase(h *harness, base, path, own string) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		advanceBranch(t, h.remote, base, map[string]string{path: string(imageBytes(512))})
+		shell(t, req, "git fetch -q origin "+base+" && git merge -q --no-edit origin/"+base)
+		if own != "" {
+			writeImage(t, req, own, 512)
+			shell(t, req, "git add -A && git commit -qm \"Add the run's own asset\"")
+		}
+		return implement("feature")(t, ctx, req)
+	}
+}
+
+// TestABaseBranchsOwnBinaryIsNotRefusedForTheRun: the base branch moves on
+// while the run works and the run merges the move in, so a binary the base's
+// own commit added — at a path binaries.allow does not name — is inside the
+// range the committed reading takes, as an `A` row, because the range starts
+// at the commit the run was cut from. It is not a path the run's commits added:
+// the file is on the base's history, it is in the pull request's base, and
+// refusing the run for it fails a run for work it never did. The reading
+// subtracts the bases the run works from (withoutBasePaths), the same
+// subtraction the workflow guard reads its own work through (refused.go,
+// guardBounds), and the run ends the ordinary way.
+//
+// The third run is the other way the same move is read — the run rebases its
+// own commit onto the base rather than merging it in, so the base's commit is
+// an ancestor of the run's work instead of a second parent. The rows the range
+// adds are the same, and so is the answer.
+//
+// The second run is what keeps the subtraction from disarming the rule: the
+// same run with a binary of its own committed beside the base's is refused, and
+// the reason names the run's own path alone.
+func TestABaseBranchsOwnBinaryIsNotRefusedForTheRun(t *testing.T) {
+	const baseBinary = "assets/logo.webp"
+	b := policyRun(t, gwConfig(t, ""), "off", "", binariesNode(`"website/public/**"`, "1048576"))
+	rec, err := b.run(t, keepUpWithBase(b.harness, "main", baseBinary, ""), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("record = status %s, outcome %s, reason %q; want the ordinary ending: the binary the run merged in is the base's own commit", rec.Status, rec.Outcome, rec.Reason)
+	}
+	files := branchFiles(t, b.harness, rec.Branch)
+	if !slices.Contains(files, baseBinary) {
+		t.Errorf("the branch does not carry the base's own binary the run merged in: %v", files)
+	}
+	if !slices.Contains(files, "feature.txt") {
+		t.Errorf("the branch does not carry the run's own work: %v", files)
+	}
+
+	rebasing := policyRun(t, gwConfig(t, ""), "off", "", binariesNode(`"website/public/**"`, "1048576"))
+	rec, err = rebasing.run(t, committing(func(t *testing.T, req agent.Request) {
+		shell(t, req, "git add -A && git commit -qm 'Add feature'")
+		advanceBranch(t, rebasing.harness.remote, "main", map[string]string{baseBinary: string(imageBytes(512))})
+		shell(t, req, "git fetch -q origin main && git rebase -q origin/main")
+	}), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("the rebase: record = status %s, outcome %s, reason %q; want the ordinary ending: the base's own binary is in the range the run was rebased onto", rec.Status, rec.Outcome, rec.Reason)
+	}
+	if files := branchFiles(t, rebasing.harness, rec.Branch); !slices.Contains(files, baseBinary) {
+		t.Errorf("the rebase: the branch does not carry the base's own binary: %v", files)
+	}
+
+	const own = "vendor/tool.bin"
+	refusing := policyRun(t, gwConfig(t, ""), "off", "", binariesNode(`"website/public/**"`, "1048576"))
+	rec, err = refusing.run(t, keepUpWithBase(refusing.harness, "main", baseBinary, own), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("record = status %s, outcome %s, reason %q; want a draft: the run's own commit added a binary", rec.Status, rec.Outcome, rec.Reason)
+	}
+	if !strings.Contains(rec.Reason, own) {
+		t.Errorf("reason = %q; want it to name the binary the run's own commit added", rec.Reason)
+	}
+	if strings.Contains(rec.Reason, baseBinary) {
+		t.Errorf("reason = %q; want the base's own binary left out of it: the run never added that file", rec.Reason)
+	}
+	if files := branchFiles(t, refusing.harness, rec.Branch); !slices.Contains(files, own) {
+		t.Errorf("the branch does not carry the commit the run made, which a refusal does not rewrite: %v", files)
 	}
 }

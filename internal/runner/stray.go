@@ -112,7 +112,8 @@ func (r *run) strayArtifact(path string) *strayArtifact {
 // make — the untracked files and the ones the agent staged — and a path the
 // agent committed itself is in neither listing, because it is in a commit;
 // this reads the run's own diff (`committedRange`...HEAD, the range the review
-// stage is handed) and asks the same question of the paths it adds. A binary
+// stage is handed) and asks the same question of the paths it adds, less the
+// paths a base the run works from already tracks (withoutBasePaths). A binary
 // the run merely *edited* is not an addition and is left alone, the same
 // tolerance §2.1 gives a file the base commit already holds.
 func (r *run) committedBinaries(ctx context.Context) ([]strayArtifact, error) {
@@ -129,6 +130,10 @@ func (r *run) committedBinaries(ctx context.Context) ([]strayArtifact, error) {
 		return nil, err
 	}
 	added, binary := addedBinaries(raw, numstat)
+	// The bases the run works from are subtracted before anything is asked
+	// about the rows that are left: a path one of them already holds a file at
+	// is not a path the run's commits added, whatever the range calls it.
+	added = r.withoutBasePaths(ctx, added)
 	// Which added paths are binary is read from the bytes and not from git's
 	// own answer: that answer is the checkout's to make, and one committed
 	// .gitattributes line (`test_dup_case2 diff`) makes numstat count a
@@ -226,11 +231,120 @@ func (r *run) committedBinaries(ctx context.Context) ([]strayArtifact, error) {
 // out of the range. A start bootstrap could not resolve (startErr) leaves the
 // base branch as the range's start: workBase's own fallback, and the one case
 // with no recorded commit to measure from.
+//
+// A base that moved on while the run worked is inside this range even so, its
+// commit having landed after the run was cut from it: the paths that base holds
+// are subtracted from the rows the range reports (withoutBasePaths), which is
+// what keeps the range's own start from deciding whether a file is the run's.
 func (r *run) committedRange(ctx context.Context) string {
 	if nb := r.narrowed(); nb != "" && r.onOrigin(ctx, nb) {
 		return nb
 	}
 	return r.workBase()
+}
+
+// withoutBasePaths drops the added rows whose path a base the run works from
+// already holds a file at, at its tip.
+//
+// The range starts at the commit the run was cut from, and a base can move on
+// while the run works: main's own commit is then inside the range, every path
+// it added is an `A` row, and a binary it added at a path binaries.allow does
+// not name refused the run for a file it never added — a refusal for work that
+// is not the run's, which the workflow guard has left out since it learned to
+// subtract a base's own commits (refused.go, guardBounds). This is that
+// subtraction read at the paths rather than at the commits: a path a base
+// already holds a file at is a file the repository has, and the range calls its
+// row an add only because the range starts before that base's own commit. §2.1
+// leaves a tracked file's bytes alone whenever the same state is read over a
+// range that starts after it — the row is an `M` then — so the verdict must not
+// turn on where the range starts.
+//
+// Only an entry that *is* a file counts (baseHoldsBytes): a base's symlink or
+// gitlink at a path holds no bytes there, and a run that puts a binary where
+// one of those was is adding them — the typechange §4.2 refuses, which a base's
+// own entry must not be read as admitting.
+//
+// Both bases the run works from are read (workBases), each as origin names the
+// branch now (`ls-remote`) and as the commit its tip is, never the checkout's
+// origin/<base>, which the agent's own git can repoint. A base that cannot be
+// read — no such branch on origin, a tip this checkout does not hold —
+// subtracts nothing rather than failing the reading, which leaves those rows
+// in and so refuses more rather than less: the direction a bound that cannot be
+// read has to fail in, the one readableBounds takes.
+func (r *run) withoutBasePaths(ctx context.Context, added []rawChange) []rawChange {
+	if len(added) == 0 {
+		return added
+	}
+	paths := make([]string, 0, len(added))
+	for _, c := range added {
+		paths = append(paths, c.path)
+	}
+	held := make(map[string]bool, len(paths))
+	for _, base := range r.workBases() {
+		for path := range r.baseFiles(ctx, base, paths) {
+			held[path] = true
+		}
+	}
+	if len(held) == 0 {
+		return added
+	}
+	own := make([]rawChange, 0, len(added))
+	for _, c := range added {
+		if !held[c.path] {
+			own = append(own, c)
+		}
+	}
+	return own
+}
+
+// baseFiles is the paths base holds a regular file at (baseHoldsBytes), read
+// from the branch as origin names it now. A base this cannot read as a commit
+// on origin, or whose tree cannot be read, holds nothing: the answer is empty
+// or partial rather than an error, which subtracts less and so refuses more.
+func (r *run) baseFiles(ctx context.Context, base string, paths []string) map[string]bool {
+	files := make(map[string]bool)
+	tip, err := r.repo.RemoteTip(ctx, base)
+	if err != nil || !gitops.IsFullSHA(tip) {
+		why := "origin has no branch by that name"
+		if err != nil {
+			why = r.redact(err.Error())
+		}
+		r.d.Log.Warn("a base branch could not be read on origin; a binary the base's own commits added is refused as the run's", "base", base, "why", why)
+		return nil
+	}
+	for _, batch := range reviewBatches(paths, reviewPathsPerCall) {
+		// The paths are the pull request's own and are passed as literals for
+		// the reason treeSizes passes them so: a changed file named
+		// ":(exclude)icon.png" is otherwise magic, and ls-tree fails outright
+		// on it.
+		out, err := sessionGit(ctx, r.repo, append([]string{"--literal-pathspecs", "ls-tree", "-z", "--end-of-options", tip, "--"}, batch...)...)
+		if err != nil {
+			r.d.Log.Warn("a base branch's tree could not be read; a binary the base's own commits added is refused as the run's", "base", base, "tip", tip, "err", r.redact(err.Error()))
+			return files
+		}
+		for _, entry := range strings.Split(out, "\x00") {
+			if entry == "" {
+				continue
+			}
+			meta, path, ok := strings.Cut(entry, "\t")
+			if !ok {
+				r.d.Log.Warn("a base branch's tree read back an entry with no path; a binary the base's own commits added is refused as the run's", "base", base, "tip", tip)
+				return files
+			}
+			if mode, _, _ := strings.Cut(meta, " "); baseHoldsBytes(mode) {
+				files[path] = true
+			}
+		}
+	}
+	return files
+}
+
+// baseHoldsBytes reports whether a base's tree entry for a path is a regular
+// file, which is the one entry that holds bytes at that path at all: a
+// symlink's entry carries the path it points at, a gitlink's a commit id, and a
+// directory's a tree.
+func baseHoldsBytes(mode string) bool {
+	return mode == "100644" || mode == "100755"
 }
 
 // addedBinaries is §4.2's pairing of the two readings of one range: the rows

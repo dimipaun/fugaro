@@ -105,16 +105,7 @@ func (r *run) guardBounds(ctx context.Context) (since string, except []string) {
 	if since == r.baseRef() {
 		return since, nil
 	}
-	seen := map[string]bool{}
-	// The two bases, in the order the run's own work is read: what the diff
-	// is measured against, then the branch its configuration came from. They
-	// are the same branch for most runs, and reading it once is also what
-	// keeps one commit from being named twice.
-	for _, base := range []string{r.diffBase(), r.cfg.Git.BaseBranch} {
-		if base == "" || seen[base] {
-			continue
-		}
-		seen[base] = true
+	for _, base := range r.workBases() {
 		tip, err := r.repo.RemoteTip(ctx, base)
 		if err != nil || !gitops.IsFullSHA(tip) {
 			if err != nil {
@@ -139,6 +130,25 @@ func (r *run) guardBounds(ctx context.Context) (since string, except []string) {
 		}
 	}
 	return since, except
+}
+
+// workBases are the branches the run's own work is read against, in the order
+// it is read: what the run's diff is measured against (diffBase), then the
+// branch its configuration came from (git.base_branch). They are the same
+// branch for most runs, and each is named once, here, so that a reader of the
+// run's own work can neither subtract one twice nor leave one out.
+// guardBounds states why there are two and what each leaves out.
+func (r *run) workBases() []string {
+	var bases []string
+	seen := make(map[string]bool, 2)
+	for _, base := range []string{r.diffBase(), r.cfg.Git.BaseBranch} {
+		if base == "" || seen[base] {
+			continue
+		}
+		seen[base] = true
+		bases = append(bases, base)
+	}
+	return bases
 }
 
 // onOrigin reports whether commit is held by a branch on origin other than
