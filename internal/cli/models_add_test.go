@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // modelsAddCloudExtra is what the offline test appends to the cloud fixture's
@@ -281,6 +282,11 @@ repos:
 // leaves — and that price_policy: highest would move the charge up.
 func TestModelsAddNamesTheCheapestEndWhenTheRouteSpellsItOut(t *testing.T) {
 	modelsWriteHomeWith(t, modelsWriteCheapestExtra)
+	// A clock inside the shipped catalog's 30-day window, so the route's own
+	// cheapest policy is the bound that holds: a stale catalog is charged the
+	// dearest end whatever the route says, and this test's words are the
+	// cheapest one's.
+	pinCatalogClock(t, shippedCatalog(t), 3*24*time.Hour)
 
 	out, _, err := execute(t, "models", "add", "deepseek/deepseek-v4-pro")
 	if err != nil {
