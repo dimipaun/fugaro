@@ -256,13 +256,16 @@ function isGlobList(value: string, cut: boolean): boolean {
  * writes -- VERIFY_WARNING_PREFIX followed by the report globs it was
  * configured with (isGlobList), or the whole of VERIFY_WARNING_NO_REPORTS for a
  * workflow that declared none -- with `cut` allowing the clip to have stopped
- * inside either. */
+ * inside either. The clip can stop inside the CLI's own opening as well as
+ * inside the globs after it: a long head (`--rerun-failed`, a timeout) leaves
+ * the warning past VERIFY_CLIP_RUNES and the recording ends mid-word, so a cut
+ * value is a prefix of either sentence, opening included. */
 function isWarning(value: string, cut: boolean): boolean {
   if (value.startsWith(VERIFY_WARNING_PREFIX)) {
     return isGlobList(value.slice(VERIFY_WARNING_PREFIX.length), cut)
   }
-  if (cut) return VERIFY_WARNING_NO_REPORTS.startsWith(value)
-  return value === VERIFY_WARNING_NO_REPORTS
+  if (!cut) return value === VERIFY_WARNING_NO_REPORTS
+  return VERIFY_WARNING_NO_REPORTS.startsWith(value) || VERIFY_WARNING_PREFIX.startsWith(value)
 }
 
 /**

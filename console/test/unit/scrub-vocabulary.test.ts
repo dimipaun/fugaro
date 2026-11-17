@@ -33,8 +33,8 @@ import { describe, expect, it } from 'vitest'
 
 import {
   CONNECTION_REASONS, INVENTED_CONNECTION_REASON, INVENTED_LEASE_USD, INVENTED_MAX_PARALLEL, TIME_SHIFT_RANGE_MS,
-  VERIFY_CLIP_RUNES, VOCAB, isKnownVerifySummary, isVerifySummary, randomTimeShiftMs, scrubDocument,
-  timeShiftFromDraw,
+  VERIFY_CLIP_RUNES, VERIFY_WARNING_PREFIX, VOCAB, isKnownVerifySummary, isVerifySummary, randomTimeShiftMs,
+  scrubDocument, timeShiftFromDraw,
 } from '../../tools/scrub-fixture/scrub'
 import { FINISHED_KEYS, RUN_KEYS } from '../../src/shared/schema'
 
@@ -214,6 +214,35 @@ describe('the scrub: the verify line verify.go writes', () => {
     }
     for (let n = afterCounts; n <= clipped.length; n++) {
       expect(isVerifySummary([...clipped].slice(0, n).join('')), `cut at ${n}`).toBe(true)
+    }
+  })
+
+  it('accepts a line the clip cut inside the opening of the warning', () => {
+    // The clip is VERIFY_CLIP_RUNES runes and the warning's opening is the CLI's
+    // own sentence, so a head long enough to push the warning past the clip -- a
+    // `--rerun-failed` and a timeout, here -- ends the recording inside that
+    // sentence rather than inside the globs after it: `... warning: no JUnit
+    // reports found `. Both matchers have to take that, or the scrub and the
+    // fixture's scan both refuse a real recording, and a recording the scan
+    // refuses cannot be committed. The line carries no name list, which would
+    // otherwise absorb the cut: the name slots are open in both matchers, so a
+    // line whose warning follows one is taken whatever the warning says.
+    const full = 'fugaro verify test --rerun-failed #8: FAILED (exit -1, 41 tests, 3 failures; timed out; warning: no JUnit reports found under **/junit*.xml)'
+    const opened = full.indexOf(VERIFY_WARNING_PREFIX)
+    const clipped = [...full].slice(0, VERIFY_CLIP_RUNES).join('')
+    expect(opened).toBeLessThan(VERIFY_CLIP_RUNES)
+    expect(VERIFY_CLIP_RUNES).toBeLessThan(opened + VERIFY_WARNING_PREFIX.length)
+    expect(clipped.endsWith('found ')).toBe(true)
+    const afterCounts = 'fugaro verify test --rerun-failed #8: FAILED (exit -1, 41 tests, 3 failures'.length
+    const matchers: ReadonlyArray<readonly [string, (value: string) => boolean]> = [
+      ['the scrub', isVerifySummary],
+      ['the pinned scan', isKnownVerifySummary],
+    ]
+    for (const [what, matcher] of matchers) {
+      expect(matcher(clipped), what).toBe(true)
+      for (let n = afterCounts; n <= full.length; n++) {
+        expect(matcher([...full].slice(0, n).join('')), `${what}, cut at ${n}`).toBe(true)
+      }
     }
   })
 
