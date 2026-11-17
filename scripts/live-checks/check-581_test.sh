@@ -12,8 +12,9 @@
 # that model is bent: a catalog that is empty, a map that puts no entry on two
 # repositories, a project that bakes nothing, a build that fails or is refused, a
 # note that names one repository or leaves one out, a build whose steps have no
-# scan or put it after the promote, a build that cannot be described, and an
-# entry that records no digest.
+# scan or put it after the promote, a build that cannot be described, a build
+# that reports another digest than the entry records, a repeated build that
+# records nothing, and an entry that records no digest.
 #
 # Usage: bash scripts/live-checks/check-581_test.sh
 set -euo pipefail
@@ -160,6 +161,18 @@ image)
     esac
     if [ "$mode" != no-id ]; then
       printf 'fugaro: Cloud Build build fake-build-1 of us-east5-docker.pkg.dev/fugaro-chk581-test/fugaro/%s:20261117 submitted; log: https://console.cloud.google.com/cloud-build/builds/fake-build-1\n' "$entry"
+      # What the build says it made: the digest the entry's record step writes,
+      # unless the case bends it — a build that reports no digest of its own, or
+      # one that reports a digest the catalog does not carry.
+      case "$mode" in
+      no-digest-report)
+        printf 'built us-east5-docker.pkg.dev/fugaro-chk581-test/fugaro/%s, digest unknown: Cloud Build reported no pushed image (Cloud Build build fake-build-1)\n' "$entry"
+        ;;
+      digest-other)
+        printf 'built us-east5-docker.pkg.dev/fugaro-chk581-test/fugaro/%s@sha256:9999999999 (Cloud Build build fake-build-1)\n' "$entry"
+        ;;
+      *) printf 'built us-east5-docker.pkg.dev/fugaro-chk581-test/fugaro/%s@sha256:3333333333 (Cloud Build build fake-build-1)\n' "$entry" ;;
+      esac
     fi
     case "$mode" in
     one-repo)
@@ -393,7 +406,7 @@ test_happy_path() {
   expect_contains "$out" "FACT scan: PASS" "happy path: the scan"
   expect_contains "$out" "'catalog-scan' at step 7 with status SUCCESS, before 'promote' at step 8" "happy path: where the scan stands"
   expect_contains "$out" "FACT digest: PASS" "happy path: the digest"
-  expect_contains "$out" "recorded the digest sha256:3333333333 (before this check's build: sha256:1111111111)" "happy path: the digest it read back"
+  expect_contains "$out" "records the digest sha256:3333333333 the build fake-build-1 reported it made" "happy path: the digest the build made, read back from the entry"
   expect_contains "$out" "FACT restore: PASS" "happy path: the restore row"
   expect_contains "$out" "CHECK 581 RESULT END (exit 0)" "happy path: the end line"
   # Every command ran in the checkout it belongs to, and the reads are the ones
@@ -761,6 +774,37 @@ JSON
   expect_contains "$out" "before it: sha256:1111111111" "an entry that records no digest: the digest it had"
 }
 
+test_a_build_that_reports_another_digest_than_the_entry_records_is_a_finding() {
+  local dir=$work/digest-other
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=digest-other
+  expect_status "$status" 1 "a build that reports another digest"
+  expect_contains "$out" "FACT digest: FAIL" "a build that reports another digest: the row is a failure"
+  expect_contains "$out" "reported the digest sha256:9999999999 and the entry records sha256:3333333333" "a build that reports another digest: both digests are named"
+}
+
+test_a_repeated_build_that_records_nothing_is_not_measured() {
+  local dir=$work/repeat
+  prepare "$dir"
+  # The entry is the one it was before the build, and the build reported no
+  # digest of its own: a build that recorded nothing and one that recorded the
+  # digest the entry already carried look the same here, so the row says so
+  # rather than passing on the digest that was already there.
+  cp "$dir/json/catalog.json" "$dir/json/catalog-after.json"
+  run_check "$dir" FAKE_MODE=no-digest-report
+  expect_status "$status" 2 "a repeated build that records nothing"
+  expect_contains "$out" "FACT digest: FAIL — the build fake-build-1 of web printed no digest of its own, and the entry records the same digest it had before the build (sha256:1111111111)" "a repeated build that records nothing: the row says what it cannot tell"
+}
+
+test_a_build_that_reports_no_digest_and_a_changed_entry_is_read_from_the_change() {
+  local dir=$work/no-report-changed
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=no-digest-report
+  expect_status "$status" 0 "a build that reports no digest, and an entry that changed"
+  expect_contains "$out" "FACT digest: PASS" "a build that reports no digest: the row passes on the change"
+  expect_contains "$out" "records the digest sha256:3333333333, where it recorded sha256:1111111111 before this check's build" "a build that reports no digest: the digests it read"
+}
+
 test_a_build_that_never_ends_is_not_measured() {
   local dir=$work/slow
   prepare "$dir"
@@ -839,6 +883,9 @@ t test_a_build_that_ended_in_failure_is_a_finding
 t test_a_build_that_cannot_be_described_is_not_measured
 t test_a_describe_that_is_not_a_document_is_not_measured
 t test_an_entry_that_records_no_digest_is_a_finding
+t test_a_build_that_reports_another_digest_than_the_entry_records_is_a_finding
+t test_a_repeated_build_that_records_nothing_is_not_measured
+t test_a_build_that_reports_no_digest_and_a_changed_entry_is_read_from_the_change
 t test_a_build_that_never_ends_is_not_measured
 t test_kept_scratch_is_reported
 t test_an_unknown_argument_is_refused

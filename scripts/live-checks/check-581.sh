@@ -40,8 +40,10 @@
 #     and to having succeeded — with the build itself SUCCESS, since a scan that
 #     refused fails the build and nothing is promoted;
 #   * the digest the build recorded, read back from `fugaro image ls --json`. The
-#     build writes its record after the promote, so a digest that appeared is the
-#     promote's own record — and the promote is what the scan stands in front of.
+#     build writes its record after the promote, so the row reads the digest the
+#     build's own output says it made (`built <image>@<digest>`) and holds the
+#     entry to carrying that one: a repeated build that recorded nothing leaves
+#     the digest the entry already had, and the row does not pass on it.
 #
 # What it creates: nothing of its own choosing. One Cloud Build of an entry the
 # catalog already lists (**billable**, and the build leases its cost from the
@@ -287,6 +289,17 @@ step_index() { # step_index FILE ID
 # step_status FILE ID — the status Cloud Build recorded for one step.
 step_status() { # step_status FILE ID
   awk -F'\t' -v id="$2" '$1 == "step" && $3 == id { print $4; exit }' "$1" 2>/dev/null || true
+}
+
+# build_digest FILE... — the digest the build's own output says it made, out of
+# the two sentences the CLI prints when a build ends: `built <image>@<digest>
+# (Cloud Build build <id>)`, and `smoked <image>@<digest> (…)` for a prebuilt
+# entry. "" is a build that reported no digest of its own (its "digest unknown"
+# sentence), which is what a row cannot attribute a catalog digest to.
+build_digest() { # build_digest FILE...
+  local text
+  text=$(cat "$@" 2>/dev/null || true)
+  printf '%s\n' "$text" | sed -n 's/.*[^ ]*@\([^ ]*\) (Cloud Build build .*/\1/p' | head -n 1 || true
 }
 
 # repos_on_entry FILE ENTRY — the repositories the project's map puts on one
@@ -651,8 +664,11 @@ step_scan() {
 }
 
 # step_digest: the digest the build recorded, read back from the catalog. The
-# record is written after the promote, so a digest that appeared is the promote's
-# own record — and the promote is what the scan stands in front of.
+# record step stands after the promote, so the row is only worth reading when the
+# digest the entry carries is the one this build made: the build's own output
+# names it (`built <image>@<digest>`), and a repeated build that recorded nothing
+# leaves the digest the entry already had. A row that passed on that digest would
+# report a record that never happened.
 step_digest() {
   if [ "$BUILT" != yes ]; then
     unmeasured digest "no build ran, so there is no digest to read: the row above says why"
@@ -668,13 +684,26 @@ step_digest() {
     unmeasured digest "fugaro image ls --json printed a document this check could not read after the build: what it printed is in $SCRATCH/digests.out"
     return 0
   fi
-  local digest
+  local digest reported
   digest=$(entry_field "$SCRATCH/digests.txt" "$ENTRY" 6)
+  reported=$(build_digest "$SCRATCH/build.out" "$SCRATCH/build.err")
   if [ -z "$digest" ]; then
-    fact digest FAIL "the entry ${ENTRY} recorded no digest after the build ${BUILD_ID} ran (before it: ${ENTRY_DIGEST_BEFORE:-none}): the digest is written by the build's own record step, which runs after the promote, so an entry with none is one whose build did not reach the end — and what a job's record, the daily check and a rebuild compare is the digest. What fugaro image ls --json printed is in $SCRATCH/digests.out"
+    fact digest FAIL "the entry ${ENTRY} recorded no digest after the build ${BUILD_ID} ran (before it: ${ENTRY_DIGEST_BEFORE:-none}, and the build itself reported ${reported:-no digest}): the digest is written by the build's own record step, which runs after the promote, so an entry with none is one whose build did not reach the end — and what a job's record, the daily check and a rebuild compare is the digest. What fugaro image ls --json printed is in $SCRATCH/digests.out"
     return 0
   fi
-  fact digest PASS "the entry ${ENTRY} recorded the digest ${digest} (before this check's build: ${ENTRY_DIGEST_BEFORE:-none}), read back from fugaro image ls --json: the build reached its record step, which stands after the promote the scan guards"
+  if [ -n "$reported" ]; then
+    if [ "$digest" = "$reported" ]; then
+      fact digest PASS "the entry ${ENTRY} records the digest ${reported} the build ${BUILD_ID} reported it made, read back from fugaro image ls --json: the record step, which stands after the promote the scan guards, ran for this build"
+      return 0
+    fi
+    fact digest FAIL "the build ${BUILD_ID} of ${ENTRY} reported the digest ${reported} and the entry records ${digest} (before this check's build: ${ENTRY_DIGEST_BEFORE:-none}): the record step is what writes the digest the build made, so an entry carrying another one is one whose record did not take this build — and what a job's record, the daily check and a rebuild compare is the digest. Read the build with 'gcloud builds log ${BUILD_ID} --project=${PROJECT}', and what fugaro image ls --json printed is in $SCRATCH/digests.out"
+    return 0
+  fi
+  if [ "$digest" = "${ENTRY_DIGEST_BEFORE:-}" ]; then
+    unmeasured digest "the build ${BUILD_ID} of ${ENTRY} printed no digest of its own, and the entry records the same digest it had before the build (${digest}): this check cannot tell a build that recorded the digest it made from one that recorded nothing, and the digest is the one thing the record step is for. Read the build with 'gcloud builds log ${BUILD_ID} --project=${PROJECT}'; the build's own output is in $SCRATCH/build.out and $SCRATCH/build.err"
+    return 0
+  fi
+  fact digest PASS "the entry ${ENTRY} records the digest ${digest}, where it recorded ${ENTRY_DIGEST_BEFORE:-none} before this check's build: the build ${BUILD_ID} printed no digest of its own, so the record is read from the change — the record step stands after the promote the scan guards, and it is the only thing that writes a digest there"
 }
 
 # restore: what this check changed, said rather than assumed.
