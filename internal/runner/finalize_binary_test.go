@@ -169,6 +169,54 @@ func TestFinalizeRefusesAnIntentToAddBinary(t *testing.T) {
 	}
 }
 
+// replacingTrackedSymlink is the payload left at a path the base commit holds a
+// *symlink* at, and the reason it is a leftover like any other: the link is
+// removed first — writing through it would edit the file it points at — so what
+// the checkout holds there is a regular file where HEAD's entry is a link. No
+// listing that asks about tracked-ness alone sees it (the path is tracked, so
+// `ls-files --others` skips it) and no list of *additions* sees it either (git
+// calls the row `T`, a typechange): it is the file `git add -A` at finalize
+// carries, and the base never held bytes there to be the run's own.
+func replacingTrackedSymlink(t *testing.T, req agent.Request, name string) {
+	t.Helper()
+	if err := os.Remove(filepath.Join(req.Dir, name)); err != nil {
+		t.Fatal(err)
+	}
+	compiledBinary(t, req, name)
+}
+
+// TestFinalizeRefusesABinaryLeftAtATrackedSymlink: the typechange's uncommitted
+// side. The branch is cut from a base tracking a link at the path, the run puts
+// a compiled file there and never commits it, and what it left is a payload at a
+// path no list admits: the run is a draft whose reason names the file, and the
+// branch keeps the base's link rather than the bytes.
+func TestFinalizeRefusesABinaryLeftAtATrackedSymlink(t *testing.T) {
+	const path = "assets/logo.webp"
+	h := newHarnessFiles(t, gwConfig(t, ""), nil, nil)
+	symlinkInBase(t, h, path, "logo-target.bin")
+	rec, err := h.run(t, implementLeaving(path, replacingTrackedSymlink), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("record = status %s, outcome %s, reason %q; want a draft: what the run left where the base tracks a link is a payload", rec.Status, rec.Outcome, rec.Reason)
+	}
+	for _, want := range []string{path, "it is not text"} {
+		if !strings.Contains(rec.Reason, want) {
+			t.Errorf("reason = %q; want it to name %q", rec.Reason, want)
+		}
+	}
+	// The branch carries the path, because the base does: what says the payload
+	// was not committed is the entry's mode — the base's symlink (120000) and
+	// not the regular file git would write for the bytes.
+	if entry := testutil.Git(t, h.remote, "ls-tree", "-r", rec.Branch, "--", path); !strings.HasPrefix(entry, "120000 ") {
+		t.Errorf("the branch carries %q at %s; want the base's symlink, entry mode 120000: the payload was committed", entry, path)
+	}
+	if !slices.Contains(branchFiles(t, h, rec.Branch), "feature.txt") {
+		t.Errorf("the branch does not carry the run's own work: %v", branchFiles(t, h, rec.Branch))
+	}
+}
+
 // commitPayload is the payload one step further along than stagedBinary: the
 // agent commits it itself, so no listing finalize's untracked check reads names
 // it — it is in a commit, and the run's own diff is the only reader that sees

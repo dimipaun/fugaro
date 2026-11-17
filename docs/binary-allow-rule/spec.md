@@ -18,7 +18,7 @@ What remains a proposal is this folder's own rule — §§2–5 — and the labe
 `git add -A` and a commit: everything the run left behind went onto the branch. A check now sits in
 front of it:
 
-- `gitops.NewPaths` (`internal/gitops/gitops.go:647`) lists what a commit would carry that no commit
+- `gitops.NewPaths` (`internal/gitops/gitops.go:656`) lists what a commit would carry that no commit
   has: the untracked paths **and the ones the agent staged itself** — `git add -N` is in this set,
   which an `ls-files --others` reading would have missed (that widening is pinned by
   `TestNewPathsSeesAnIntentToAddFile`).
@@ -378,7 +378,7 @@ That gap is not exotic:
 - `git add -N payload.bin` puts a path in the index without its content, so a reading built on
   `ls-files --others` would stop listing it — and the `git add -A` inside
   `CommitAll`/`CommitAllExcept` would then stage its bytes into the leftover commit. **That half is
-  already closed**: the reading is `gitops.NewPaths` (`gitops.go:647`), which lists the staged paths
+  already closed**: the reading is `gitops.NewPaths` (`gitops.go:656`), which lists the staged paths
   too, and `TestNewPathsSeesAnIntentToAddFile` pins it. What `git add -N` still buys an agent is the
   *committed* case — stage with intent to add, then commit — which is exactly what §4.2 reads.
 

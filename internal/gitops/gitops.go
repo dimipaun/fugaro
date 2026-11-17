@@ -634,16 +634,25 @@ func (r *Repo) CommitAll(ctx context.Context, msg string) (bool, error) {
 // NewPaths lists the paths the checkout holds that no commit has and that a
 // commit would carry: the untracked ones git would add (`git ls-files --others
 // --exclude-standard`, ignored ones aside) and the ones the index holds that HEAD
-// does not (`git diff --name-only --no-renames --diff-filter=A HEAD`, the working
+// does not (`git diff --name-only --no-renames --diff-filter=AT HEAD`, the working
 // tree against HEAD, which sees a file added with `git add -N` as well). Both read
 // NUL-separated, so a path with a newline in it survives.
 //
 // The second listing is not an afterthought: a file the agent `git add`-ed and
 // never committed is new all the same, is absent from `--others` because it is
-// in the index, and is exactly what a commit would carry first. A path in
-// neither listing is one the base commit already holds — the run's own, however
-// much it changed — or one git ignores, which `git add -A` skips the same way,
-// so a path this call does not return cannot reach the commit either.
+// in the index, and is exactly what a commit would carry first. `T` is in the
+// filter beside `A` for the same reason: a typechange is a path HEAD and the
+// checkout disagree about the *kind* of, so one of the two entries is a symlink
+// or a gitlink, which holds no bytes at that path. Where that entry is HEAD's —
+// the base tracks a symlink or a submodule — the file the checkout holds there
+// is one no commit has, and `git add -A` carries it as it carries an addition;
+// where that entry is the checkout's, the path is a symlink the caller reads as
+// the path name it commits (stray.go's rule, which reads it rather than refusing
+// it). A path in
+// neither listing is one the base commit already holds a *file* at — the run's
+// own, however much it changed — or one git ignores, which `git add -A` skips
+// the same way, so a path this call does not return cannot reach the commit
+// either.
 func (r *Repo) NewPaths(ctx context.Context) ([]string, error) {
 	untracked, err := r.gitRaw(ctx, "ls-files", "--others", "--exclude-standard", "-z")
 	if err != nil {
@@ -656,7 +665,7 @@ func (r *Repo) NewPaths(ctx context.Context) ([]string, error) {
 	// `diff --cached` and is in the index, so neither listing would name it, and
 	// --no-renames keeps a new file that merely resembles a deleted tracked one
 	// an addition rather than a rename the filter drops.
-	staged, err := r.gitRaw(ctx, "--no-replace-objects", "diff", "--name-only", "--no-renames", "--diff-filter=A", "-z", "HEAD")
+	staged, err := r.gitRaw(ctx, "--no-replace-objects", "diff", "--name-only", "--no-renames", "--diff-filter=AT", "-z", "HEAD")
 	if err != nil {
 		return nil, err
 	}
