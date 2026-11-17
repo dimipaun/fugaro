@@ -54,6 +54,28 @@ func voiceServiceEntry(t *testing.T, r *imagesRig) map[string]any {
 // writer of the key there is, which is the opt-in's own shape.
 func seedVoiceService(t *testing.T, r *imagesRig, image string) {
 	t.Helper()
+	seedVoiceServiceKey(t, r, map[string]any{
+		"account_id": infra.VoiceAccountID,
+		"service":    infra.VoiceServiceName,
+		"image":      image,
+	})
+}
+
+// seedVoiceServiceOff writes the installation root's voice_service as the
+// owner's own off switch: the key present and null, which is what voice.tf's
+// count reads as "no hop" and what a run may not compose a block back over
+// (init.go's keepVoiceHop, infra.VoiceServiceRecorded).
+func seedVoiceServiceOff(t *testing.T, r *imagesRig) {
+	t.Helper()
+	seedVoiceServiceKey(t, r, nil)
+}
+
+// seedVoiceServiceKey is the one write of the installation root's
+// voice_service entry, by hand and in the installation's own document, which is
+// how both states of it are reached: the block that asks for the hop, and the
+// null that turns it off.
+func seedVoiceServiceKey(t *testing.T, r *imagesRig, value any) {
+	t.Helper()
 	path := filepath.Join(r.root(), infra.VarsFile)
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -63,11 +85,7 @@ func seedVoiceService(t *testing.T, r *imagesRig, image string) {
 	if err := json.Unmarshal(b, &doc); err != nil {
 		t.Fatal(err)
 	}
-	doc["voice_service"] = map[string]any{
-		"account_id": infra.VoiceAccountID,
-		"service":    infra.VoiceServiceName,
-		"image":      image,
-	}
+	doc["voice_service"] = value
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		t.Fatal(err)
@@ -517,5 +535,102 @@ func TestUpdateKeepsTheVoiceHopOnAMachineWithNoTfvars(t *testing.T) {
 	}
 	if got := voiceServiceEntry(t, r)["image"]; got != r.credentialsRef() {
 		t.Errorf("voice_service.image = %v after the second update, want %s: the block the run composed from the installation's own state is not a key the next run drops", got, r.credentialsRef())
+	}
+}
+
+// TestUpdatePlansTheVoiceHopAwayWhenTheOwnerTurnsItOff is the other end of the
+// opt-in, and the one SECURITY.md leans on: the hop is a PUBLIC endpoint
+// (voice.tf's allUsers binding) whose account reads the installation's whole
+// database, so the spend it can cause outside every budget cap is bounded by
+// three things, the last of which is "the installation's own switch, which
+// takes the service and its grant away". A switch a later `fugaro update`
+// writes back over is not one.
+//
+// The switch is the key written as null in the installation root's tfvars. It
+// is null rather than the key deleted because a missing key is a fact this side
+// cannot tell apart from a machine that never held the document
+// (TestUpdateKeepsTheVoiceHopOnAMachineWithNoTfvars): keepVoiceHop composes the
+// block back out of the installation's own state for that one, and it is right
+// to — so a hop turned off by deleting the block would come back, service,
+// account, public invoker binding and state read with it, on the next update.
+// Null is a decision the document records (infra.VoiceServiceRecorded), so
+// keepVoiceHop leaves it alone and prepare's carry keeps it across every later
+// rewrite (infra.CarriedVoiceService).
+//
+// The plan follows from the document rather than from this test's fixture, as
+// in the opt-in's own test: voice.tf's count reads var.voice_service, so the
+// document every apply of this root reads — this one with the key null — is the
+// plan that removes the hop's account, its service, its public invoker binding
+// and its state read. A real run meets the guard on that plan, which is the
+// delete route every other managed resource of this tree takes: the addresses
+// are named on the command line, and nothing about the hop is special-cased.
+//
+// Mutation (run, restore): read the document with infra.VoiceServiceOf instead
+// of infra.VoiceServiceRecorded in init.go's keepVoiceHop, or drop a null entry
+// from infra.CarriedVoiceService, and this fails at the tfvars assertion and
+// then at the first apply's: the run has composed the block back, and the plan
+// it made is the one that creates the public endpoint again.
+func TestUpdatePlansTheVoiceHopAwayWhenTheOwnerTurnsItOff(t *testing.T) {
+	r := credentialsRig(t)
+	// An ordinary update of this root, with a change beside the hop scripted as
+	// its plan: what the run PLANS is this test's own fixture, while what the
+	// plan is built from — the document every apply of this root reads — is the
+	// point.
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	// The installation HAS the hop: its own outputs carry the service, which is
+	// the module's voice_service output and exists exactly while the variable
+	// does. That is what makes this the owner turning it off rather than an
+	// installation that never asked for it.
+	voiceServiceOutputs(t, r)
+	seedCredentialsService(t, r, r.credentialsRef())
+	seedVoiceServiceOff(t, r)
+	applies := r.captureApplies(t)
+
+	out, errOut, err := executeStdin(t, "", "update")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("one fugaro update of an installation whose owner turned the hop off failed: %v\n%s", err, s)
+	}
+	if voice, ok := r.tfvars(t)["voice_service"]; !ok {
+		t.Errorf("the installation's tfvars carry no voice_service key after the update: the owner's off switch is a key the document records, and one the run drops is what the next run reads as a machine that never had the block — which is the run that composes the hop, its public invoker binding and its read of the whole database back\n%s", s)
+	} else if voice != nil {
+		t.Errorf("voice_service = %v after the update, want null: the run composed the hop back over the owner's off switch, and the plan it wrote is the one that creates the service, its account and its public invoker binding again\n%s", voice, s)
+	}
+	ran := capturedApplies(t, applies, "installation")
+	if len(ran) == 0 {
+		t.Fatalf("the update applied the installation root not at all, so nothing read the document this test is about:\n%s", s)
+	}
+	for i, doc := range ran {
+		voice, ok := doc["voice_service"]
+		if !ok {
+			t.Errorf("the installation root's apply %d ran with no voice_service key: an installation that opted in and then had the key dropped is the state this run has to keep off, and one that wrote the key away is the run the next update reads as a machine with no document\n%v", i+1, doc)
+			continue
+		}
+		if voice != nil {
+			t.Errorf("the installation root's apply %d ran with voice_service = %v: voice.tf's count reads that variable, so the plan built from this document keeps the hop — its account, its service, its public invoker binding and its read of the whole database — on an installation whose owner turned it off\n%s", i+1, voice, s)
+		}
+	}
+
+	// And a SECOND update leaves it off, which is the switch being a decision
+	// rather than one run's state: the null is what prepare carried forward and
+	// what keepVoiceHop read as the owner's own answer, on a machine whose
+	// installation still publishes the hop.
+	before := len(r.ran(t, "apply"))
+	r.script["plan"] = map[string]any{"exit": 0}
+	r.setPlanAt(t, "installation")
+	r.setPlan(t)
+	out, errOut, err = executeStdin(t, "", "update")
+	s = out + errOut
+	if err != nil {
+		t.Fatalf("the second update of an installation whose owner turned the hop off failed: %v\n%s", err, s)
+	}
+	if after := len(r.ran(t, "apply")); after != before {
+		t.Errorf("the second update applied %d time(s): an installation whose plan is empty has nothing left to do\n%s", after-before, s)
+	}
+	if !strings.Contains(s, "No changes") {
+		t.Errorf("the second update does not report a converged installation:\n%s", s)
+	}
+	if voice, ok := r.tfvars(t)["voice_service"]; !ok || voice != nil {
+		t.Errorf("voice_service = %v (present: %v) after the second update, want the null the owner wrote: the switch is not a state the next run undoes, and a block here is the public endpoint back\n%s", voice, ok, s)
 	}
 }

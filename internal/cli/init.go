@@ -3296,8 +3296,8 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 }
 
 // keepVoiceHop re-composes the voice hop's block in the installation root's
-// tfvars when this run's document carries none and the installation's own state
-// says it has a hop.
+// tfvars when this run's document records nothing for it and the installation's
+// own state says it has a hop.
 //
 // It exists because the opt-in is recorded in two places and the run reads only
 // one of them: prepare carries the block forward from the workdir's own
@@ -3324,6 +3324,17 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 // this composes nothing out of the local config, which is what makes the hop
 // opt-in rather than default-on like the two services beside it.
 //
+// A document that records the key as null is the owner turning the hop OFF, and
+// it is the one form of "no hop" a run can act on: a missing key is also what a
+// machine that never held the document has, which is what the state read above
+// is for, while the key written as null is a decision the owner made in the
+// installation's own tfvars. So the block is composed only into a document that
+// records nothing at all (infra.VoiceServiceRecorded), and the plan that follows
+// a null is the hop's removal — its service, its account, its public invoker
+// binding and its state read — which is SECURITY.md's "the installation's own
+// switch, which takes the service and its grant away". Composing over it would
+// put the one PUBLIC endpoint of this tree back on every later update.
+//
 // The image is the credentials service's recorded reference, which the document
 // this run composed carries: the three services are one pin of one image, and
 // the run's move of them onto this release's is the credentials-service stage's
@@ -3341,9 +3352,11 @@ func (r *initRun) keepVoiceHop(wd *infra.Workdir, prior infra.InstallationOutput
 	if err != nil {
 		return userErr("reading the installation's %s: %v", infra.VarsFile, err)
 	}
-	if _, have, err := infra.VoiceServiceOf(doc); err != nil {
+	recorded, err := infra.VoiceServiceRecorded(doc)
+	if err != nil {
 		return userErr("reading the installation's %s: %v", infra.VarsFile, err)
-	} else if have {
+	}
+	if recorded {
 		return nil
 	}
 	image, ok, err := infra.CredentialsServiceImageOf(doc)

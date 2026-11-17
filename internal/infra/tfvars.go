@@ -1414,6 +1414,31 @@ func VoiceServiceOf(vars []byte) (VoiceServiceSpec, bool, error) {
 	return spec, true, nil
 }
 
+// VoiceServiceRecorded returns whether the installation root's tfvars record a
+// decision about the voice hop at all: the key present with a block (the
+// installation has the hop), or present as null (the owner has turned it off).
+//
+// It is not VoiceServiceOf with another name. That one answers whether a
+// revision could be created from what the document holds, so a null block and a
+// missing key are the same answer there; here they are opposite ones, and the
+// difference is the one a run may not get wrong — only a document that records
+// NOTHING may be given a block composed from the installation's own state
+// (init.go's keepVoiceHop), because a null is the owner saying no, and a run
+// that composed over it would put the service, its account and its public
+// invoker binding back on every later `fugaro update` (SECURITY.md: the
+// installation's own switch, which takes the service and its grant away).
+func VoiceServiceRecorded(vars []byte) (bool, error) {
+	if vars == nil {
+		return false, nil
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return false, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	_, ok := doc["voice_service"]
+	return ok, nil
+}
+
 // CarriedVoiceService returns vars with the voice_service entry the document
 // prev carried, when vars carry none of their own — CarriedIntake's carry, on
 // the third variable this side reads and the spec never holds.
@@ -1435,6 +1460,13 @@ func VoiceServiceOf(vars []byte) (VoiceServiceSpec, bool, error) {
 // before prepare rewrites the file. An entry is carried forward present or
 // absent: an installation that has the hop keeps it across an ordinary run's
 // rewrite, and one that never had it is unchanged rather than given one.
+//
+// The key present as null is carried as null, and that is deliberate: null is
+// the owner's own off switch, and dropping it here would hand keepVoiceHop a
+// document that records nothing — which is what a machine that never held the
+// document has — and let the hop be composed back onto an installation whose
+// owner turned it off (VoiceServiceRecorded is the reader that tells the two
+// apart).
 func CarriedVoiceService(vars, prev []byte) ([]byte, error) {
 	if prev == nil {
 		return vars, nil // no workdir held one: nothing to carry
@@ -1446,7 +1478,7 @@ func CarriedVoiceService(vars, prev []byte) ([]byte, error) {
 		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
 	}
 	block, ok := previous["voice_service"]
-	if !ok || block == nil {
+	if !ok {
 		return vars, nil
 	}
 	doc, err := varsDoc(vars)
