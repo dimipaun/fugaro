@@ -269,7 +269,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.refuse(403, "forbidden")
                 return
             if MODE == "user-200-no-identity":
-                self.reply(200, {"uuid": "", "display_name": "", "nickname": ""}, self.scopes())
+                # A kind this check knows beside no name at all: the row is the
+                # FAIL the register names ("a 200 with a kind and no readable
+                # name is a FAIL"), so the body has to carry the kind or the
+                # mode would exercise the unrecognised-kind row instead.
+                kind = KINDS[self.token] if self.token != REPO else "repository_access_token"
+                self.reply(200, {"uuid": "", "display_name": "", "nickname": "", "kind": kind}, self.scopes())
                 return
             if MODE == "user-unknown-kind":
                 self.reply(200, {"uuid": UUID, "display_name": "Fugaro sandbox", "kind": "personal_access_token"}, self.scopes())
@@ -502,6 +507,42 @@ test_a_repository_token_with_an_identity() {
   expect_contains "$out" "kind 'repository_access_token'" "the repository token's own kind"
   expect_contains "$out" "FACT verifier-repo: PASS" "the verifier row"
   expect_contains "$out" "does NOT happen" "the verifier row says this is the case R14 says does not happen"
+}
+
+# A 200 whose body names a kind this check does not know settles NOTHING about
+# U1, whatever the body's identity says -- the register's own words: "anything
+# else is UNVERIFIED". The reader prints `identity=account` or
+# `identity=no-account` and never anything else, so an arm that wildcards the
+# identity would swallow this body and read the question U1 exists to answer off
+# a kind the check cannot name. This is the reading that catches it.
+test_an_unrecognised_kind_is_incomplete() {
+  RUN590_API_MODE=user-unknown-kind run590 unknown-kind
+  expect_status "$status" 3 "an unrecognised kind"
+  expect_last_line "$out" "CHECK 590 RESULT: INCOMPLETE (exit 3)" "an unrecognised kind"
+  expect_contains "$out" "FACT U1-project: UNVERIFIED" "a kind the check does not know settles nothing"
+  expect_contains "$out" "FACT U1-workspace: UNVERIFIED" "and the same for the workspace token"
+  expect_absent "$out" "FACT U1-project: PASS" "U1 is not answered off an unknown kind"
+  expect_absent "$out" "FACT U1-workspace: PASS" "U1 is not answered off an unknown kind"
+  expect_contains "$out" "names no kind this check knows" "the row says why it is unmeasured"
+  expect_absent "$out" "personal_access_token" "the body's own kind text is never printed"
+  expect_contains "$out" "FACT U1-repository: PASS" "the repository token's 403 is unaffected"
+  expect_contains "$out" "FACT U2-project: PASS" "the other rows are still measured"
+}
+
+# The other half of the same axis: a 200 that DOES carry a kind this check knows
+# beside no name at all. That is the FAIL the register names ("a 200 with a kind
+# and no readable name is a FAIL"), and it is a measured failure rather than an
+# unmeasured row: a record the add-time check would write as identity none while
+# Bitbucket returns one is not one this check can vouch for.
+test_a_known_kind_with_no_name_is_a_failure() {
+  RUN590_API_MODE=user-200-no-identity run590 no-name
+  expect_status "$status" 1 "a known kind with no name"
+  expect_last_line "$out" "CHECK 590 RESULT: FAIL (exit 1)" "a known kind with no name"
+  expect_contains "$out" "FACT U1-project: FAIL" "the unreadable identity is a failure"
+  expect_contains "$out" "FACT U1-workspace: FAIL" "and the same for the workspace token"
+  expect_contains "$out" "kind 'project_access_token' but no name" "the row names the kind it did read"
+  expect_absent "$out" "FACT U1-project: UNVERIFIED" "a kind this check knows is measured, not unmeasured"
+  expect_contains "$out" "FACT U1-repository: PASS" "the repository token's 403 is unaffected"
 }
 
 # A row that could not be measured is UNVERIFIED, and a block with one is
@@ -808,6 +849,8 @@ test_index=0
 t test_happy_path
 t test_each_type_is_read_itself
 t test_a_repository_token_with_an_identity
+t test_an_unrecognised_kind_is_incomplete
+t test_a_known_kind_with_no_name_is_a_failure
 t test_no_scope_header_is_incomplete
 t test_no_identity_for_a_project_token_is_incomplete
 t test_narrow_scopes_are_a_failure

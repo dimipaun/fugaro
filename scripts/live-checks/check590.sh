@@ -762,14 +762,19 @@ step_type_probe() { # step_type_probe TYPE
   identity=$(field_of identity "$facts")
   error=$(field_of error "$facts")
   case "$status:$kind:$identity" in
+  # The reader prints `identity=account` or `identity=no-account` and nothing
+  # else, so this arm has to come before the two that wildcard the identity: a
+  # 200 whose body names no kind this check knows is UNVERIFIED whatever the
+  # identity says, and reading it as the PASS above would answer U1 with a kind
+  # the check does not know.
+  200:none:*)
+    fact "U1-$type" UNVERIFIED "the ${type} token answers GET /2.0/user with HTTP 200 but the body names no kind this check knows (Bitbucket's four access-token kinds are repository_access_token, project_access_token, workspace_access_token and access_token), so what a ${type} token reports there is NOT settled by this run (U1 for the ${type} token stays UNVERIFIED: the body's own text is never printed here)"
+    ;;
   200:*:account)
-    fact "U1-$type" PASS "the ${type} token answers GET /2.0/user with HTTP 200, an identity and kind '${kind}', so this type HAS an identity at that endpoint and Bitbucket names its own type there (U1 for the ${type} token). The check read the account UUID, which the verifier's own row below records — no name or UUID is printed here"
+    fact "U1-$type" PASS "the ${type} token answers GET /2.0/user with HTTP 200, an identity and kind '${kind}', so this type HAS an identity at that endpoint and Bitbucket names its own type there (U1 for the ${type} token). The name the body carried, and the identity the verifier's own row below records, are never printed here"
     ;;
   200:*:no-account)
     fact "U1-$type" FAIL "the ${type} token answers GET /2.0/user with HTTP 200 and kind '${kind}' but no name this check can read, so the identity it answers with could not be read: an identity the add-time check would record as none while Bitbucket returns one is a record this check cannot vouch for (U1 for the ${type} token)"
-    ;;
-  200:none:*)
-    fact "U1-$type" UNVERIFIED "the ${type} token answers GET /2.0/user with HTTP 200 but the body names no kind this check knows (Bitbucket's four access-token kinds are repository_access_token, project_access_token, workspace_access_token and access_token), so what a ${type} token reports there is NOT settled by this run (U1 for the ${type} token stays UNVERIFIED: the body's own text is never printed here)"
     ;;
   403:*:*)
     # The design's own answer for a REPOSITORY token (R14, O7): a 403 at /user is
