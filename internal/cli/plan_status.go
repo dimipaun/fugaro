@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -17,7 +18,11 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/estimate"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/plan"
+	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/streams"
@@ -130,7 +135,7 @@ type planStatusDoc struct {
 	// repository".
 	Repo string `json:"repo"`
 	// Plans are the plans the walk found, in path order.
-	Plans []plan.StatePlan `json:"plans"`
+	Plans []planStatusPlan `json:"plans"`
 	// Totals are every plan's figures added up, over every task, listed or
 	// collapsed: the header line a screen draws before the plans.
 	Totals planStatusTotals `json:"totals"`
@@ -142,6 +147,25 @@ type planStatusDoc struct {
 	// artifact this build refuses, and a catalogue it could not read. Each is a
 	// sentence of ours with the path it is about, never a word a run wrote.
 	Warnings []string `json:"warnings"`
+}
+
+// planStatusPlan is one plan as this document carries it: the state the join
+// answered, and the plan's estimate beside it (S3).
+//
+// The estimate is a field of its own rather than one of plan.StatePlan's, and
+// the state is embedded so the document reads exactly as it did before the
+// estimate existed: every key the console already reads stays where it was, at
+// the same depth, and the block is additive (S3's own rule, and the reason
+// nothing here is a new shape for the rest of the document).
+type planStatusPlan struct {
+	plan.StatePlan
+	// Estimate is what the plan has left to take and what it costs, from the
+	// history this read's own invitation to the runs bucket gave it and what
+	// the join says about each task (D2722, D2723). It is absent where the plan
+	// is an artifact older than the schema that carries a task's tier, which is
+	// what a screen shows nothing for — the block's own absence is "no estimate
+	// here", and never a zero figure.
+	Estimate *plan.Estimate `json:"estimate,omitempty"`
 }
 
 // planStatusTotals is the read's own figures over every plan it printed.
@@ -157,7 +181,14 @@ func runPlanStatus(cmd *cobra.Command, o *planStatusOptions) error {
 	errw := cmd.ErrOrStderr()
 
 	doc := planStatusDoc{
-		Plans: []plan.StatePlan{}, Streams: []plan.StateStream{}, Warnings: []string{},
+		Plans: []planStatusPlan{}, Streams: []plan.StateStream{}, Warnings: []string{},
+	}
+	// Everything this read could not do but could live without says so in the
+	// same two places: stderr, where a rejection goes, and the document, which
+	// is what a screen draws.
+	warn := func(sentence string) {
+		fmt.Fprintf(errw, "warning: %s\n", sentence)
+		doc.Warnings = append(doc.Warnings, sentence)
 	}
 
 	// The catalogue comes first, and a refusal is a warning rather than the end
@@ -178,7 +209,17 @@ func runPlanStatus(cmd *cobra.Command, o *planStatusOptions) error {
 	// its own, and what is lost is said in a warning. The join itself is
 	// fail-closed either way — plan.State joins nothing when the repository is
 	// unknown.
+	now := time.Now().UTC()
 	facts := []plan.RunFact{}
+	// The estimate's two inputs from the cloud side: the history the runs
+	// carry, and the cap `max_running` defaults to (A6). Both fall back to what
+	// this machine runs at when the checkout has no repository to read.
+	maxRunning := localcfg.DefaultMaxParallel
+	var (
+		rows  []runview.Row
+		table *estimate.Table
+		recs  map[string]*runstore.Record
+	)
 	if repo, err := originRepo(ctx); err != nil {
 		doc.Warnings = append(doc.Warnings, "this checkout's repository could not be read: no run is joined")
 	} else {
@@ -192,20 +233,21 @@ func runPlanStatus(cmd *cobra.Command, o *planStatusOptions) error {
 		if err != nil {
 			return err
 		}
+		maxRunning = env.lc.MaxParallel
 		// The listing is bounded by the runs bucket's own age, the window
 		// `run --pr` reads with (followUpLookback is that lifecycle): a join
 		// wants every run the bucket still holds — an older one has been
 		// deleted with its run and can never join a task — and nothing beyond
 		// it, so the read costs what the bucket holds rather than everything
 		// the repository has ever launched.
-		now := time.Now().UTC()
-		rows, err := loadRows(ctx, env, lsFilter{
+		rows, err = loadRows(ctx, env, lsFilter{
 			slugs: []string{slug}, since: now.Add(-followUpLookback), warn: errw,
 		}, now)
 		if err != nil {
 			return err
 		}
 		facts = planRunFacts(rows)
+		table, recs = planHistory(ctx, env, slug, now, warn)
 	}
 
 	// The plans are read before a single run is asked about. Which plans exist
@@ -251,22 +293,41 @@ func runPlanStatus(cmd *cobra.Command, o *planStatusOptions) error {
 	// from costing what the plans hold rather than what the repository's whole
 	// history holds.
 	joined := plan.JoinedRuns(plans, facts, doc.Repo)
-	merge := planMerges(ctx, joined, doc.Repo, func(sentence string) {
-		fmt.Fprintf(errw, "warning: %s\n", sentence)
-		doc.Warnings = append(doc.Warnings, sentence)
-	})
+	merge := planMerges(ctx, joined, doc.Repo, warn)
+
+	// What every plan's estimate is computed from, gathered once: the history
+	// the runs bucket just answered with, the rows the join read, and the cap
+	// and the clock the formula takes.
+	in := planEstimateInputs{
+		table: table, rows: rows, recs: recs, repo: doc.Repo, maxRunning: maxRunning, now: now,
+	}
 
 	for _, p := range plans {
 		path := paths[p.ID]
+		// --all is asked for whatever the read was given, because the estimate
+		// is over every task of the plan and not over the ones a reader asked
+		// to see: a done task weighs nothing on the path and costs what it
+		// cost, and a collapsed read that lost it would answer for the open
+		// work alone. What the flag decides is what is *listed*, and a closed
+		// node says so itself (StateNode.Closed), which is the field the flag
+		// turns on.
 		st, err := plan.State(p.ID, p.Doc, joined, plan.StateOptions{
-			Artifact: path, Repo: doc.Repo, All: o.all, Catalogue: cat, Merge: merge,
+			Artifact: path, Repo: doc.Repo, All: true, Catalogue: cat, Merge: merge,
 		})
 		if err != nil {
 			fmt.Fprintf(errw, "warning: %s\n", oneLine(err.Error()))
 			doc.Warnings = append(doc.Warnings, planCell(path)+" could not be read: its tasks are not listed")
 			continue
 		}
-		doc.Plans = append(doc.Plans, st)
+		est, err := in.of(p, st)
+		if err != nil {
+			fmt.Fprintf(errw, "warning: %s\n", oneLine(err.Error()))
+			doc.Warnings = append(doc.Warnings, planCell(path)+" could not be estimated")
+		}
+		if !o.all {
+			st.Nodes = slices.DeleteFunc(st.Nodes, func(n plan.StateNode) bool { return n.Closed })
+		}
+		doc.Plans = append(doc.Plans, planStatusPlan{StatePlan: st, Estimate: est})
 	}
 
 	doc.Totals = planStatusTotals{Plans: len(doc.Plans)}
@@ -461,12 +522,18 @@ func printPlanStatus(w io.Writer, doc planStatusDoc, asJSON bool) error {
 	return nil
 }
 
-func printPlanStatusPlan(w io.Writer, p plan.StatePlan) {
+func printPlanStatusPlan(w io.Writer, p planStatusPlan) {
 	stream := ""
 	if p.Stream != nil {
 		stream = ", stream " + planCell(*p.Stream)
 	}
 	fmt.Fprintf(w, "%s (%s%s)\n", planCell(p.Artifact), planCell(p.ID), stream)
+	// What the plan has left to take and what it costs, over every task of it
+	// — the ones collapsed below included — because the figure is the plan's
+	// and not the listing's.
+	if p.Estimate != nil {
+		fmt.Fprintf(w, "  %s\n", planEstimateLine(*p.Estimate, ""))
+	}
 	if len(p.Releases) > 0 {
 		parts := make([]string, 0, len(p.Releases))
 		for _, r := range p.Releases {
@@ -512,6 +579,174 @@ func releaseLabel(r plan.StateRelease) string {
 		label += " (shipped)"
 	}
 	return label
+}
+
+// planEstimateRuns bounds the history the estimate is drawn from. A plan's
+// figures are per tier and per rigor, so the sample is the runs behind those
+// groups rather than the runs behind one plan, and the window is the runs
+// bucket's own (followUpLookback, as the join's listing is). It is the same
+// bound `runs stats` reads its window with, for the same reason: past it a read
+// is one nobody asked for.
+const planEstimateRuns = 5000
+
+// planHistory reads the run history this plan status's estimate is drawn from,
+// and writes it to the local cache the offline reads read back (D2714 as
+// amended).
+//
+// It is a second pass over the bucket's records, and it is a second pass on
+// purpose: the rows the join reads carry neither the tier nor the finish time a
+// sample is grouped by — runview.Row is deliberately narrower than a record —
+// and this read may not spend a cloud call it does not need, so the records are
+// read here as records (readRunObjects, the one reader behind runs stats and
+// report) rather than widened into the listing's view.
+//
+// A history that cannot be read is a warning and not the end of the read: the
+// estimate then answers every tier its seed minutes with no cost at all
+// (D2712), and the line says which sample answered each task. The cache write
+// is the same shape of trouble: what it costs is that the offline reads fall
+// back to the seeds, which is what they do on a machine that has never run this
+// command.
+//
+// The records come back as well, by run id: the estimate wants what a task's
+// run has cost so far and how long it has been going, and a record is where a
+// cost figure is a figure rather than a zero.
+func planHistory(ctx context.Context, env *cloudEnv, slug string, now time.Time, warn func(string)) (*estimate.Table, map[string]*runstore.Record) {
+	objs, _, _, err := readRunObjects(ctx, env, []string{slug}, now.Add(-followUpLookback), time.Time{}, planEstimateRuns)
+	if err != nil {
+		warn("this repository's run history could not be read: the estimate is its tiers' seed minutes alone")
+		return nil, nil
+	}
+	records := make([]runstore.Record, 0, len(objs))
+	recs := make(map[string]*runstore.Record, len(objs))
+	for _, o := range objs {
+		if o.record == nil {
+			continue
+		}
+		records = append(records, *o.record)
+		recs[o.id] = o.record
+	}
+	table := estimate.Build(records, now)
+	if path, err := estimate.CachePath(os.Getenv, runtime.GOOS); err != nil {
+		warn("warning: " + oneLine(err.Error()))
+	} else if err := table.WriteCache(path); err != nil {
+		warn("the estimate's cached history could not be written: " + oneLine(err.Error()))
+	}
+	return table, recs
+}
+
+// planEstimateInputs is what one plan's estimate needs beyond the plan itself:
+// the history, the runs the join read and what their records cost, the
+// repository the join is scoped to, and the cap and the clock the formula
+// takes.
+type planEstimateInputs struct {
+	table      *estimate.Table
+	rows       []runview.Row
+	recs       map[string]*runstore.Record
+	repo       string
+	maxRunning int
+	now        time.Time
+}
+
+// of is one plan's estimate: what it has left to take and what it costs, from
+// the history this read has just read and what the join says about each task
+// (D2722, D2723).
+//
+// It is the same read `fugaro plan graph` makes, from the same shape of inputs,
+// and the two callers differ in exactly the one thing D2714 as amended says
+// they do: this one read the history, and that one reads the cache back.
+//
+// An artifact older than the schema that carries a task's tier is not estimated
+// at all: there is no tier in it to estimate a task from, and the estimate is a
+// schema-3 answer (D2711) — so the block is absent, which is what a screen
+// already reads as "no estimate here".
+func (in planEstimateInputs) of(p plan.PlanRef, st plan.StatePlan) (*plan.Estimate, error) {
+	if p.Doc.SchemaVersion < plan.SchemaVersion {
+		return nil, nil
+	}
+	// Fugaro's own default mode, for `plan graph`'s reason: a plan's tasks are
+	// launched from a repository whose rigor this read does not resolve.
+	est, err := plan.EstimatePlan(p.Doc, in.table, in.progress(p.ID, p.Doc, st.Nodes), in.maxRunning, rigor.Default, in.now)
+	if err != nil {
+		return nil, err
+	}
+	return &est, nil
+}
+
+// progress is what this read knows about each task of a plan beyond its graph:
+// whether its work is done or going, how long the run working on it has been
+// going and what that run has cost so far (D2722, D2723).
+//
+// Two readings meet here, and each is the one that already knows the answer.
+// Whether a task is done or running is the join's own (plan.State: a confirmed
+// merge first, then a live run, then a cancellation) and is taken as it stands
+// — a second reading of the same facts here would be a second answer to a
+// question the table above the line already prints. The run beside it is the
+// latest one that claims the task, found by the join's own rule (i): the plan's
+// id, a slash, and a task of this plan, in the checkout's own repository. It is
+// found here rather than read off the StateNode because that carries four
+// characters of a run id (task.ShortRun), and four characters name a run to a
+// person and to nobody else.
+//
+// A task the join calls cancelled is neither done nor running, and the estimate
+// counts it as work that has not started — the reading that keeps a cancelled
+// task's minutes in the plan's answer rather than dropping the work it was for.
+func (in planEstimateInputs) progress(planID string, doc plan.Document, nodes []plan.StateNode) map[string]plan.NodeProgress {
+	ids := make(map[string]bool, len(doc.Nodes))
+	for _, n := range doc.Nodes {
+		ids[n.ID] = true
+	}
+	latest := map[string]runview.Row{}
+	for _, r := range in.rows {
+		if !planSameRepo(r.Repo, in.repo) {
+			continue
+		}
+		id := planClaim(planID, r.PlanTask, ids)
+		if id == "" {
+			continue
+		}
+		if cur, ok := latest[id]; !ok || r.RunID > cur.RunID {
+			latest[id] = r
+		}
+	}
+	out := make(map[string]plan.NodeProgress, len(nodes))
+	for _, n := range nodes {
+		done, running := n.State == plan.StateDone, n.State == plan.StateRunning
+		if !done && !running {
+			continue
+		}
+		p := plan.NodeProgress{Done: done, Running: running}
+		if r, ok := latest[n.ID]; ok {
+			if elapsed, started := r.Elapsed(in.now); started {
+				p.ElapsedMinutes = elapsed.Minutes()
+			}
+			// A record with no cost block is no figure (a result.json from
+			// before the breakdown existed), and the plan's total then reads
+			// unknown rather than counting that task as free (D2723).
+			if rec := in.recs[r.RunID]; rec != nil && rec.Cost != nil {
+				cost := rec.Cost.TotalUSD
+				p.CostUSD = &cost
+			}
+		}
+		out[n.ID] = p
+	}
+	return out
+}
+
+// planClaim is the task of this plan a run's plan_task claims, and "" for a
+// claim that joins nothing. It is the join's own rule, read here for the one
+// field the join does not hand back (the runs a task's state was made of): the
+// claim splits at its last slash, because a plan id is a path under docs/ and
+// may hold slashes of its own, and the task it names has to be one this graph
+// carries.
+func planClaim(planID, planTask string, ids map[string]bool) string {
+	i := strings.LastIndexByte(planTask, '/')
+	if i <= 0 || i == len(planTask)-1 || planTask[:i] != planID {
+		return ""
+	}
+	if taskID := planTask[i+1:]; ids[taskID] {
+		return taskID
+	}
+	return ""
 }
 
 // planSameRepo compares two repositories the way the join does
