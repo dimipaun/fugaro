@@ -276,7 +276,11 @@ func initStages(e *initEngine) []initflow.Stage {
 	// local config when it does not carry what the config states — and the
 	// stages before it are what those runs are launched against (see the
 	// stage's own file for why it is a migration and never a delete and a
-	// republish).
+	// republish). Its write and the Bitbucket proxy switch S6 turns on in the
+	// local config are ONE step for the reason the switch's file gives: the node
+	// and the entry have to agree for every reader of this same update, and the
+	// repository stage, which is the reader that refuses a disagreement, is
+	// earlier in this list.
 	stages = append(stages, newSecretsStage(e), newPluginStage(e), e.repo)
 	// The rules stage before the policy stage: the deployed security rules
 	// generation is what a published policy node is read under, and the policy
