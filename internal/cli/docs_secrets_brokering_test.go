@@ -425,6 +425,54 @@ func TestDocsCheck195IsRegistered(t *testing.T) {
 	}
 }
 
+// TestDocsCheck193IsRegistered: B2.5 writes Check 193, S2's own reading — an
+// `api-key` and an `oauth` repository through the credentials service, and the
+// flip measured by the same script's `--after-flip` — and the register carries
+// both halves of its registration, in the pairing TestDocsCheck190IsRegistered
+// and TestDocsCheck195IsRegistered pin: a `| 193 |` row in the summary table and
+// a `## Check 193:` section below it. A row without its section is a promise of
+// steps that are not written, and a section without its row is a check nothing
+// points at. The section says four things a reader needs and cannot infer: the
+// check is **NOT RUN** (the owner runs it in B2.6, and again in B2.8 after the
+// flip), no agent runs any step of it, the owner's own steps are in the work's
+// own file rather than in the register, and it has two halves — one script, one
+// `--after-flip` — because a section that named only the first would read as a
+// check the flip is not measured by.
+func TestDocsCheck193IsRegistered(t *testing.T) {
+	register := readDoc(t, liveChecksDoc)
+	if !regexp.MustCompile(`(?m)^\|\s*193\s*\|`).MatchString(register) {
+		t.Errorf("%s's register has no `| 193 |` row: Check 193 is written below it, and the table is where a reader finds it", liveChecksDoc)
+	}
+	heading := "\n## Check 193:"
+	i := strings.Index(register, heading)
+	if i < 0 {
+		t.Fatalf("%s has no `## Check 193:` section: the row above points at steps that have to be there", liveChecksDoc)
+	}
+	// Bounded by the next `## ` heading, so a check written after this one does
+	// not widen what is read here.
+	section := register[i+1:]
+	if end := strings.Index(section, "\n## "); end >= 0 {
+		section = section[:end]
+	}
+	flat := strings.ToLower(flattenDoc(section))
+	for _, want := range []string{
+		// The banner, before either run of it: nothing has measured S2 yet.
+		"**not run",
+		// The register's own rule for an owner-run check: no agent runs any step
+		// of it, and the text has to say so.
+		"no agent runs any step of it",
+		// Where the owner's own steps live, so the section does not have to carry
+		// them (and cannot drift from them).
+		"secrets-brokering/check193-steps.md",
+		// The second half: one script, and the mode the flip is read by.
+		"check193.sh --after-flip",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("Check 193's section does not say %q: the check is owner-run, not yet run, its steps are the work's own file, and its second half is the --after-flip mode — a section that leaves any of them out reads as something an agent did, or as a check the flip is not measured by", want)
+		}
+	}
+}
+
 // TestDocsSecretReadersStatesTheBitbucketProxysState is B1.10's pin on the
 // audit's Bitbucket rows, corrected by B1.13 part two. The proxy shipped (B1.5,
 // B1.6, B1.7), so a reader has to learn two things and not one: on a repository
