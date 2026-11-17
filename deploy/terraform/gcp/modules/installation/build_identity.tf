@@ -10,17 +10,18 @@
 # credentials service on, and it outlives every repository the catalog bakes
 # (design §"one project identity", D2301).
 #
-# What it holds HERE, and what it deliberately does not. One grant: the
+# What it holds HERE, and what it deliberately does not. Three grants: the
 # invoker bit on the credentials service, because the credential a build runs
 # on is minted by that service's build route and Cloud Run refuses a caller at
 # IAM before the container decides the class (iam.tf's verifier grant is the
-# same fact). It holds NO role on any repository's registry and none on the
-# shared one in this task: the identity a build runs as must be able to run a
-# build at all and nothing wider, and the registry reach that makes a catalog
-# build able to push — the shared registry's writer and tag-mover roles — is
-# B6's, which adds it to THIS file beside the account (the plan's file
-# ownership: build_identity.tf is B5 (L2) and B6 (L4)). Nothing here reads a
-# secret, mounts a bucket or holds a project role.
+# same fact); and the writer and tag-mover roles on the ONE shared registry,
+# below, which are the reach a catalog build's own push needs and the two roles
+# the per-repository build account held there (modules/repo/registry.tf's
+# build_shared and build_shared_tag_mover, whose comments this file repeats the
+# reasons of). It holds NO role on any repository's registry, and nothing
+# wider than those three (B6's acceptance): the entry's build pushes catalog
+# images into the shared registry and moves their tags, and that is the whole
+# of what the identity is granted.
 #
 # The ID is a LITERAL, which is the load-bearing half of the answer, exactly
 # as verifier.tf's own comment says of the verifier: a module that knows
@@ -62,4 +63,41 @@ resource "google_cloud_run_v2_service_iam_member" "credentials_build_identity" {
   name     = var.credentials_service.service
   role     = "roles/run.invoker"
   member   = google_service_account.build_identity[0].member
+}
+
+# What a catalog build's own push needs, on the installation's ONE shared
+# registry: the writer role, which is where every catalog image lands
+# (D1152), and the tag mover beside it — writer lacks tags.delete, and a
+# catalog build's promote moves the moving latest and its content tag, which
+# is the definition's own sha256 and so is moved again by every rebuild of an
+# unchanged entry (PIC3's tag step). Both are the grants the per-repository
+# build account held on this registry and on no other repository
+# (modules/repo/registry.tf), moved here with the account they now belong to
+# (B6): after M2 retires every repository root, an entry may name repositories
+# whose build account is gone, and a build that pushed as one of those would
+# push as an account that no longer exists.
+#
+# The tag mover is spelled as the literal path of the installation's own role
+# and not read from google_project_iam_custom_role.tag_mover.name, for the
+# reason credentials.tf's bindings give: the role resource's name attribute is
+# computed, so a binding through it reaches the plan as an unknown role and
+# internal/infra/tf's cover could not say which role the plan grants.
+resource "google_artifact_registry_repository_iam_member" "build_identity_shared_writer" {
+  count = local.credentials_service_on ? 1 : 0
+
+  project    = var.project
+  location   = google_artifact_registry_repository.shared.location
+  repository = google_artifact_registry_repository.shared.repository_id
+  role       = "roles/artifactregistry.writer"
+  member     = google_service_account.build_identity[0].member
+}
+
+resource "google_artifact_registry_repository_iam_member" "build_identity_shared_tag_mover" {
+  count = local.credentials_service_on ? 1 : 0
+
+  project    = var.project
+  location   = google_artifact_registry_repository.shared.location
+  repository = google_artifact_registry_repository.shared.repository_id
+  role       = "projects/${var.project}/roles/fugaroTagMover"
+  member     = google_service_account.build_identity[0].member
 }

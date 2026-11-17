@@ -84,18 +84,20 @@ func runImageBuildCatalogOrDerived(cmd *cobra.Command, name string, o imageBuild
 
 // runImageBuildCatalog submits one Cloud Build per entry of cat (D1144):
 // each reads the Dockerfile the entry's source resolved to and this command
-// copied into the project's bucket, builds it as the checkout's repository's
-// build account with that repository's provider credential and no secret of
-// it, and promotes the image into the installation's shared registry
-// (D1152). The credential is the clone step's alone and no step of an entry's
-// build mounts a secret (B9, D2311): the entry's definition is refused at
-// publish if it asks for one, and a build handed none cannot satisfy a mount
-// the refusal failed to read.
+// copied into the project's bucket, builds it with the checkout's
+// repository's provider credential and no secret of it, and promotes the
+// image into the installation's shared registry (D1152). The build runs as
+// the project's build identity (B6), which is the installation's account and
+// not the repository's: an entry may name repositories whose build account
+// the retirement of their roots has destroyed, so the account a catalog build
+// runs as has to outlive them. The credential is the clone step's alone and
+// no step of an entry's build mounts a secret (B9, D2311): the entry's
+// definition is refused at publish if it asks for one, and a build handed
+// none cannot satisfy a mount the refusal failed to read.
 //
-// Everything a build is named from — the build account, the credential and
-// the record's slug — is the checkout's repository's, so an
+// The credential and the record's slug are the checkout's repository's, so an
 // entry whose Dockerfile lives in another repository is refused rather than
-// submitted: its build would run as an account that does not hold that
+// submitted: its build would clone with an account that does not hold that
 // repository's credential. Building one from anywhere is a decision this
 // command does not take on its own.
 //
@@ -349,8 +351,8 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	}
 	plan := buildPlan{
 		Repo: repo, Origin: origin, Entries: entryNames, Kind: kind, Base: base,
-		Account: rs.BuildServiceAccountEmail, Registry: registry, Machine: lc.Build.MachineType,
-		What: catalogBuildBanner(entries, lc.Build.MachineType, rs.BuildServiceAccountEmail, registry),
+		Account: gcp.BuildIdentityEmail(lc.GCPProject), Registry: registry, Machine: lc.Build.MachineType,
+		What: catalogBuildBanner(entries, lc.Build.MachineType, gcp.BuildIdentityEmail(lc.GCPProject), registry),
 	}
 	// What this command is about to build, printed once for the whole
 	// invocation: the banner the typed confirmation used to show under it. What
@@ -454,7 +456,7 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		// which CatalogBuildSpec.checkPrebuilt refuses one by one.
 		spec := gcp.CatalogBuildSpec{
 			Entry: e.Name, Slug: rs.Slug,
-			ServiceAccount: rs.BuildServiceAccountEmail, MachineType: lc.Build.MachineType,
+			ServiceAccount: gcp.BuildIdentityEmail(lc.GCPProject), MachineType: lc.Build.MachineType,
 			Bucket: lc.RecordBucketURL(), NoSmoke: o.noSmoke,
 			// The record carries the template this build ran, so a release that
 			// changes how catalog images are built reaches the entry the next
@@ -759,11 +761,11 @@ func catalogBuildEntryGuard(e config.Entry, repo string, noSmoke bool) error {
 }
 
 // catalogBuildWrongRepo is the refusal of one entry that this checkout cannot
-// build: its Dockerfile is another repository's, and a build runs as the
-// build account of the repository it was submitted from, holding that
-// repository's credential.
+// build: its Dockerfile is another repository's, and a build submitted from
+// here clones with the checkout's repository's credential rather than that
+// repository's.
 func catalogBuildWrongRepo(e config.Entry, repo string) error {
-	return userErr("the catalog entry %s is built from %s's Dockerfile, and a build runs as the build account of the repository it is submitted from, with that repository's credential: run this from %s's checkout (or from %s, which is already there)",
+	return userErr("the catalog entry %s is built from %s's Dockerfile, and a build submitted from here clones with the credential of the repository it is submitted from: run this from %s's checkout (or from %s, which is already there)",
 		pluginwire.Printable(e.Name), pluginwire.Printable(e.Source.Repo), pluginwire.Printable(e.Source.Repo), pluginwire.Printable(repo))
 }
 
