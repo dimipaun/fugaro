@@ -83,8 +83,17 @@ import (
 // and the tool log is the child's own. Checks 500 and 501 drive a fake `gcloud`
 // and a fake `fugaro` that logs every call with the directory it was made in, so
 // a case says both what the check measured and that no image was built, no
-// `fugaro update` was answered for the owner and no run was launched. Check 581
-// drives those same two fakes over the multi-repository catalog build: a fake
+// `fugaro update` was answered for the owner and no run was launched. Check 580
+// drives a fake `fugaro`, a fake `gcloud` and a fake `git` over one Bitbucket
+// shared job's run: the fake `git` answers the sandbox checkout's own origin, the
+// fake `fugaro` answers `version`, `doctor --json`, `project policy show --json`
+// and `runs ls --json`, launches the run under the id it is given and prints the
+// row template the case wrote, and the fake `gcloud` serves the job list and the
+// credentials service's own `credsvc: audit` lines for that run -- so a case can
+// bend the policy, the profile's jobs, the run's row and the service's lines and
+// say what the check made of each, and can say that no run was launched at all
+// where it must not be.
+// Check 581 drives those same two fakes over the multi-repository catalog build: a fake
 // `fugaro` that answers `version`, `doctor --json`, `image ls --json`, `image
 // survey --json` and `image build`, printing the submitted line and the bake
 // note the real one prints and marking the entry as built so the second catalog
@@ -369,6 +378,7 @@ var liveCheckScripts = []struct {
 	{"check-410.sh", "check-410_test.sh"},
 	{"check-500.sh", "check-500_test.sh"},
 	{"check-501.sh", "check-501_test.sh"},
+	{"check-580.sh", "check-580_test.sh"},
 	{"check-581.sh", "check-581_test.sh"},
 	{"check-411.sh", "check-411_test.sh"},
 	{"check-412.sh", "check-412_test.sh"},
