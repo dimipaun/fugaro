@@ -742,7 +742,8 @@ reaches.
 
 Then it converges, in the same command and after that one sentence: the
 policy node the account was published in, the job set and this checkout's
-repository root, through the stages fugaro update runs.
+repository root, through the stages fugaro update runs. With --no-apply the
+removal is saved and that converge is owed, and fugaro apply runs it later.
 
 If the delete fails after the config was written, the config is put back the
 way it was and the command stops: an account whose declaration is gone while
@@ -761,6 +762,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for rm |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--profile` | string | "" | no | the profile whose claude_accounts loses the name (a profile that lists accounts is taken out of it one at a time) |
 
 Subcommands:
@@ -5119,11 +5121,13 @@ it; when it is absent it stays absent.
 Only the keys it changes are rewritten: every comment and every other key of
 the file is kept.
 
-The change reaches a run through `fugaro update`, which publishes the policy
-node: a model_prices entry and a budget.allowed_models entry are what a run
-reads from there. A route's own claim is not — a run routes by the copy of
-the providers block in its job's environment — so a repository routes to the
-model once `fugaro update --repo .` has been run in its checkout.
+The change reaches a run when the policy node is published, which this command
+does itself: a model_prices entry and a budget.allowed_models entry are what a
+run reads from there. With --no-apply the change is saved and the publish is
+owed, and `fugaro apply` runs it later. A route's own claim is not published —
+a run routes by the copy of the providers block in its job's environment — so a
+repository routes to the model once `fugaro update --repo .` has been run in
+its checkout.
 
 Usage: `fugaro models add <id>`
 
@@ -5132,6 +5136,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for add |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--price-in` | float64 | `0` | no | input price, dollars per million tokens (required for a model the catalog does not price) |
 | `--price-out` | float64 | `0` | no | output price, dollars per million tokens (required for a model the catalog does not price) |
 | `--route` | string | "" | no | the route that claims the model (default: the route that claims it already, or the only one) |
@@ -5367,11 +5372,12 @@ of each one fails at launch with no provider for the model, until the pin is
 changed with `fugaro models use` or the model is added back.
 
 Only the keys it changes are rewritten: every comment and every other key of
-the file is kept. `fugaro update` publishes the policy node, which carries the
-model_prices and budget.allowed_models halves of the removal to the runs that
-read it; the route's own claims are in the copy of the providers block each
-job holds, so a repository stops routing to the model when `fugaro update
---repo .` is run in its checkout.
+the file is kept. The command publishes the policy node itself, which carries
+the model_prices and budget.allowed_models halves of the removal to the runs
+that read it; with --no-apply the change is saved and the publish is owed, and
+`fugaro apply` runs it later. The route's own claims are in the copy of the
+providers block each job holds, so a repository stops routing to the model when
+`fugaro update --repo .` is run in its checkout.
 
 Usage: `fugaro models rm <id>`
 
@@ -5380,6 +5386,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for rm |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 
 Subcommands:
 
@@ -6564,6 +6571,10 @@ rewrites what a run in flight holds.
 as this command did before the enrolment converged: it is what * needs, and
 it is the whole of what a pattern such as owner/* can want.
 
+--no-apply writes the enrolment and stops there: the publish of the node
+and the deploy of the repository's own root are saved in this machine's
+record, and `fugaro apply` runs them later.
+
 Usage: `fugaro project repos add <provider/owner/name | owner/name>`
 
 Flags:
@@ -6574,6 +6585,7 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for add |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
@@ -10517,6 +10529,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for set |
 | `--monthly` | float64 | `0` | no | the cap in US dollars per month, more than zero |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--workspace` | string | "" | no | the workspace whose cap this is (required: a cap is never spelled globally) |
 
 Subcommands:
@@ -10652,6 +10665,7 @@ Flags:
 | `--fp` | string | "" | no | the member's Fugaro project name, which the token's fp claim must be |
 | `-h`, `--help` | bool | `false` | no | help for add |
 | `--job-service-account` | stringArray | `[]` | no | a job service account of the member, which the workspace's service resolves a caller by (repeatable) |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--repo` | stringArray | `[]` | no | a repository the member contributes to the workspace, as owner/name (repeatable) |
 
 Subcommands:
@@ -10680,6 +10694,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for rm |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 
 Subcommands:
 
