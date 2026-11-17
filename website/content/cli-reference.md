@@ -2738,9 +2738,15 @@ members' repositories, carrying pull requests write and nothing else, minted
 where the App's key is and taken back when the command ends. A repository whose
 provider is not GitHub is reported rather than written to.
 
-Exit codes: 0 whether or not the set settled — the report is the answer, and
-the coordinator job runs this on every tick — 1 when the set named cannot be
+Exit codes: 0 whether or not the set settled — the report is the answer, and a
+set that is merely waiting is not a failure — 1 when the set named cannot be
 read (no such run, a run in no change set), and 2 for a failure of the host.
+
+Nothing runs this on a schedule yet: the coordinator job's tick is `fugaro
+coordinator sweep`, which writes no pull request, so a change set's pull
+requests stay drafts until this command is run — by hand, in an environment
+holding the App's key (the coordinator job's own holds it where the sweep
+reads GitHub), or from a job wired to run it.
 
 Usage: `fugaro coordinator settle`
 

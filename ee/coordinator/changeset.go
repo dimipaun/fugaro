@@ -194,7 +194,7 @@ type settleFlip struct {
 // asked about at all; then every remaining member's pull request is read live,
 // and nothing is written until every one of them has answered. So a set with a
 // member still working costs one bucket read per member and no credential at
-// all — which matters for a job that settles every set it knows on every tick.
+// all — which is what a caller settling every set it knows wants.
 //
 // The write is then one pull request at a time, and a failure part way leaves
 // the ones already flipped ready: they are ready, which is where the set is

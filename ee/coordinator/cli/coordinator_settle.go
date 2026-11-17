@@ -27,10 +27,10 @@ import (
 
 // This file is the settle command (D3 of
 // docs/forge-authorship-images/implementation-plan.md): the entry point the
-// coordinator's own step runs through, by hand or from a job. The decision it
-// makes lives in ee/coordinator/changeset.go; what is here is the environment —
-// the runs bucket the members' records come out of, and the settle-only token
-// (D641) each member's pull request is written with.
+// coordinator's own step runs through — by hand today, from any job wired to run
+// it later. The decision it makes lives in ee/coordinator/changeset.go; what is
+// here is the environment — the runs bucket the members' records come out of,
+// and the settle-only token (D641) each member's pull request is written with.
 
 // coordinatorSettleTimeout bounds one settle. A set is at most five members
 // (task.MaxChangeSetMembers), each costing a handful of calls to one host, so
@@ -82,9 +82,14 @@ func newCoordinatorSettleCmd() *cobra.Command {
 			"members' repositories, carrying pull requests write and nothing else, minted\n" +
 			"where the App's key is and taken back when the command ends. A repository whose\n" +
 			"provider is not GitHub is reported rather than written to.\n\n" +
-			"Exit codes: 0 whether or not the set settled — the report is the answer, and\n" +
-			"the coordinator job runs this on every tick — 1 when the set named cannot be\n" +
-			"read (no such run, a run in no change set), and 2 for a failure of the host.",
+			"Exit codes: 0 whether or not the set settled — the report is the answer, and a\n" +
+			"set that is merely waiting is not a failure — 1 when the set named cannot be\n" +
+			"read (no such run, a run in no change set), and 2 for a failure of the host.\n\n" +
+			"Nothing runs this on a schedule yet: the coordinator job's tick is `fugaro\n" +
+			"coordinator sweep`, which writes no pull request, so a change set's pull\n" +
+			"requests stay drafts until this command is run — by hand, in an environment\n" +
+			"holding the App's key (the coordinator job's own holds it where the sweep\n" +
+			"reads GitHub), or from a job wired to run it.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), coordinatorSettleTimeout)

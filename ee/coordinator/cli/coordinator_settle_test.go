@@ -199,9 +199,9 @@ func TestCoordinatorSettleSettlesASetFromTheRunsBucket(t *testing.T) {
 
 // TestCoordinatorSettleReportsASetThatHasNotShipped: a set one of whose members
 // has not shipped is left exactly as it was and reported, exit 0 — the report
-// is the answer and the coordinator job runs this on every tick — and no
+// is the answer, and a set that is merely waiting is not a failure — and no
 // credential is minted for it, which is the half of the decision that matters
-// for a job that settles every set it knows.
+// for a caller settling every set it knows.
 func TestCoordinatorSettleReportsASetThatHasNotShipped(t *testing.T) {
 	f := newCloudFixture(t)
 	enrollSettleRepo(t, "acme/other", gitprov.KindGitHub)
