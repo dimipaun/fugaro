@@ -53,7 +53,7 @@ release could observe or lose.
 | --- | --- | --- | --- | --- |
 | default profiles | Writes the default job profile of every provider the project's repositories use into the local config, before the first stage plans, so that the installation stage deploys its job in this same update (S5, R1, D2310); a config that can no longer compose the job of one of those profiles — the last GitHub repository moved to Bitbucket, or a repository on a second App added — is planned from the installation's own record of that job instead, which the plan then leaves alone (`installSpec`, `infra.CarriedProjectJobs`) | None. The file is this machine's and no run reads it: the profile reaches a run through the policy stage's node and the shared job the installation stage deploys, and both are this run's own writes (the rows below). The carry changes no job either: it puts back the job the installation already holds, whole, so the plan proposes no change to it | Safe | `createDefaultProfiles`, `installSpec`, `internal/cli/init_policy_migrate.go`, `CarriedProjectJobs`, `internal/infra/tfvars.go` |
 | preflight | Reads the environment and the local config; no cloud write | None | Safe | `preflightStage` |
-| installation | Terraform root `installation`: the GCS bucket, the Artifact Registry, the credential containers, the history/coordinator/catalog-check jobs, the shared project jobs, the credentials service's own block (its image is moved by the credentials-service row below) | A create or an update, never a replace: `google_storage_bucket.runs`, the registries and the secret containers carry `prevent_destroy` (`deploy/terraform/gcp/modules/installation/bucket.tf`, `registry.tf`, `secrets.tf`, `credentials.tf`). A job whose *name* would change is ForceNew and is destroyed — see the job row below | Safe, with the job-name caveat | `newInstallationStage`, `deploy/terraform/gcp/roots/installation/main.tf` |
+| installation | Terraform root `installation`: the GCS bucket, the Artifact Registry, the credential containers, the history/coordinator/catalog-check jobs, the shared project jobs, the credentials service's own block (its image is moved by the credentials-service row below), and — for an installation whose tfvars carry an `orchestrator` block, a key no release writes yet, so today it is on no installation unless its owner put it there by hand, and that block every update carries forward rather than planning it away (`internal/infra/tfvars.go`'s `CarriedOrchestrator`) — the resident orchestrator's own service account and section 4.3's bindings (`modules/installation/orchestrator.tf`; mobile plan task P5.1b) | A create or an update, never a replace: `google_storage_bucket.runs`, the registries and the secret containers carry `prevent_destroy` (`deploy/terraform/gcp/modules/installation/bucket.tf`, `registry.tf`, `secrets.tf`, `credentials.tf`). A job whose *name* would change is ForceNew and is destroyed — see the job row below. The orchestrator's block is one more create, in a step that already runs: the block is `null` unless the installation asked for one, and a `null` variable creates nothing, so the step is a **no-op** for every installation that has not opted in — it plans and applies exactly what it planned and applied before the module file existed — and nothing the account holds is anything a run in flight uses | Safe, with the job-name caveat | `newInstallationStage`, `deploy/terraform/gcp/roots/installation/main.tf`, `deploy/terraform/gcp/modules/installation/orchestrator.tf` |
 | installation, the implicit review job (piece 1 of `docs/review-job/spec.md`) | One review-only job per (provider, account) for a project that declares no profile (`ImplicitReviewJobName`), with its own service account and the row the credentials service admits a review caller by. It is composed by the run that finds the `credentials_service` block in the installation's tfvars (`specReviewJobsOfTheService`), so an installation at the previous version — the block deployed by the release behind, no review job beside it — gets the job from ONE `fugaro update`; a config that can no longer compose it keeps the job the record holds (`CarriedProjectReviewJobs`) | None: a create beside the jobs the run's own execution runs on, never a replace of one — a job's template reaches the next execution, and a run in flight holds its own execution's. The next update hands terraform the same entry with two members moved and no others: the base image, because the installation stage composes this root before the images stage pins this release's, and `FUGARO_CREDENTIALS_SERVICE_URL`, because the address the run that deployed the service records reaches a shared job on the apply after that one (`internal/infra/projectjobs.go`); the update after that hands it back byte for byte. The job's name, its service account and its class never move, which is what a destroy would need | Safe | `implicitReviewVariant`, `internal/infra/projectjobs.go`; `specReviewJobsOfTheService`, `internal/cli/init_stages.go`; `CarriedProjectReviewJobs`, `internal/infra/tfvars.go`; `TestUpdateAddsTheImplicitReviewJobAndLeavesARunInFlightRunning`, `internal/cli/update_review_job_test.go` |
 | Firebase | The Realtime Database instance, the web API key, the token-signing service account | The run reaches the database with an ID token exchanged from a custom token minted by its own launcher: `token.Exchange`, `internal/budget/token/exchange.go`; the database identity is not an IAM identity (`deploy/terraform/gcp/modules/firebase/iam.tf`). A re-apply of the instance's own fields does not invalidate it | Safe | `newFirebaseStage`, `deploy/terraform/gcp/modules/firebase/firebase.tf` |
 | images | Pins `base_images.<kind>` by digest, mirrors the history image, and rebuilds the catalog entries of this checkout whose recorded build was built FROM an older release base (naming the ones another checkout builds, never passing one over); never patches a job | A run's own execution already holds its image; the pin and the rebuilds reach the *next* execution | Safe | `imagesStage`, `internal/cli/init_images.go`, `internal/cli/init_images_catalog.go` |
@@ -94,27 +94,32 @@ deploy over a marker above this binary's generation.
 carried with the task for the layer. The update's own write is ETag-conditional
 and preserves the values a migration moves.
 
-**A version bump is a shape question, and this release's is shape-free.** The
+**A version bump is a shape question, and the ordering plus the carry is what
+makes it safe.** The
 update migrates the node in its policy stage and replaces the credentials
 service in the stage immediately after it, with nothing between the two (the
 owner's ruling of 2026-11-10): the re-pin cannot stay in the installation stage,
 which runs before the image builds, because a version-4 → 5 bump in between
 would have made every cascade and Bitbucket-proxied call refuse the node for the
 length of those builds. The service this release installs is therefore never
-handed a node it has not migrated — and it does not need to be, because the step
-moves the version member and nothing else and the readers accept a node one
-shape-free step behind (`projectpolicy`'s `ReadsVersion`, which `Decode` and the
-credentials service both go through) — while a version whose step carries a
-Note, like 3 → 4, stays refused in both directions and must not be bumped this
-way. What the order cannot close is the mirror of the same window: until this
+handed a node it has not migrated — and it does not need to be, because the
+credentials service's own read carries a node behind it forward in memory
+rather than refusing it (`DecodeCarriedForwardShapeFree`, whose floor is
+`ShapeFreeFloor` = 4, `server.go`): the steps between the node and this release
+are applied to its bytes for the length of one call and written nowhere, so the
+service serves a node the release behind published whether the step between
+them moves the version member alone or rewrites blocks — which this release's
+own step from 8 does (the split, MC21, D1668). What the order cannot close is
+the mirror of the same window: until this
 stage's apply lands, the process in the project is the one the release behind
 deployed, and that binary refuses a node above its own version. The window is
 one apply — the two stages are adjacent, and this stage builds no image — and
 the binary that reads it was released, so it cannot be taught anything, and it is
 named in the update's own line about the runs in flight (`credentialsWindowOpens`)
-rather than left to be discovered by a refused call. A later bump that changes
-the shape has to solve the same window again: the reader can only be taught to
-accept a predecessor whose members it reads verbatim.
+rather than left to be discovered by a refused call. What such a bump must not
+be is a step that needs something OUTSIDE the node: 3 → 4's republish is the
+one, no reader can derive the block it adds from the bytes it holds, and
+`ShapeFreeFloor` is where the carry stops for exactly that reason.
 
 Two writes are the pair's precondition rather than a second attempt at ordering
 them. The image the move pins is resolved and verified **before** the policy

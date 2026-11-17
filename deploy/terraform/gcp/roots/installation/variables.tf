@@ -360,6 +360,13 @@ variable "project_jobs" {
       expression = string
     })
     vertex = bool
+    # The installation's credentials service, or null for a profile it does
+    # not serve (B5.2): the module grants such a job's account
+    # roles/run.invoker on it, and changes nothing else about the job.
+    credentials_service = optional(object({
+      name   = string
+      region = string
+    }))
   }))
   default  = {}
   nullable = false
@@ -391,7 +398,32 @@ variable "project_review_jobs" {
       expression = string
     })
     vertex = bool
+    # Null for every variant (B5.2): the module's object type is one type, so
+    # the attribute is here, and internal/infra's reviewVariant sets none — a
+    # variant is pointed at the service by its own deployment's environment,
+    # and no variant account carries the roles/run.invoker grant sa.tf makes
+    # from a value here.
+    credentials_service = optional(object({
+      name   = string
+      region = string
+    }))
   }))
   default  = {}
   nullable = false
+}
+
+variable "orchestrator" {
+  type = object({
+    account_id        = string
+    firebase_project  = string
+    signer_account_id = string
+  })
+  # The resident orchestrator's own identity (mobile plan task P5.1b), OFF by
+  # default: null creates nothing, so an installation that has not opted in
+  # plans exactly what it planned before the module file existed, and every
+  # `fugaro update` that carries it is a no-op for that installation. All three
+  # fields are computed by internal/infra (the module's type is the same
+  # object, and its validation is the one that holds them to their shape, so
+  # this root declares the value and decides nothing about it).
+  default = null
 }

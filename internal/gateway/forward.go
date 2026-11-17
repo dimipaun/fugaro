@@ -1168,17 +1168,33 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, w pricing.Micros, p
 	o := outcome{servingModel: serving, pricedAs: pricedTable, errorType: t.errorType}
 	rates := s.o.Prices.Max()
 	mult := int64(1)
+	// lo and hi are the two ends of the row this call's band is taken from
+	// (D2650, SA1.6), and haveRow says the table knows a row for the call at
+	// all. The band is the table's charge for the call at those ends, so its
+	// row is the row the charge's own rates come from where the table prices
+	// the call by the serving model, and the pin's for a call the table
+	// prices at its maximum (RS7) -- including a serving name that is no
+	// model of the table's at all. A call whose pin the table doesn't know
+	// either has no row and no band: the table's maximum is not a row, and a
+	// band of Claude's dearest rates would claim a prediction the table
+	// never made.
+	var lo, hi pricing.Rates
+	haveRow := false
 	if m, ok := s.o.Prices.Lookup(serving); ok {
-		rates = m.Rates
+		rates, lo, hi, haveRow = m.Rates, m.Lo, m.Hi, true
 		if pin, pinned := s.o.Prices.Lookup(p.model); pr != nil && pinned && pin.ID != m.ID {
 			rates = pricing.MaxOf(pin.Rates, m.Rates)
+			lo, hi = pin.Lo, pin.Hi
 			o.pricedAs = pricedMax
 		}
 	} else if pin, pinned := s.o.Prices.Lookup(p.model); pr != nil && pinned && pinSpelling(serving, p.model) {
 		// The pin with a date or other suffix: the pin's own model.
-		rates = pin.Rates
+		rates, lo, hi, haveRow = pin.Rates, pin.Lo, pin.Hi, true
 	} else {
 		o.pricedAs = pricedMax
+		if pin, pinned := s.o.Prices.Lookup(p.model); pinned {
+			lo, hi, haveRow = pin.Lo, pin.Hi, true
+		}
 		if pr != nil {
 			s.log.Warn("budget: serving model not in the price table, priced at the table maximum",
 				"serving_model", logValue(serving), "pinned_model", logValue(p.model))
@@ -1278,10 +1294,22 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, w pricing.Micros, p
 	// What this call had cached is what a switch after it re-reads (F24), and
 	// it is known because this call's usage was read.
 	o.usageRead = true
+	// The provider's own figure and the table's band over this call (F7,
+	// D2650) are recorded where the charge records the report and not
+	// wherever the response carried one: a call the table settled itself, and
+	// a call on a route that reports no cost, are in no split the run's
+	// report total carries. The band is the table's own charge at the row's
+	// ends -- no route fee, and no multiple either: the conservative tier and
+	// surprise multiples are what the charge adds to an estimate (F12), while
+	// the band is the price a report is read against, and a doubled band
+	// would put every reported call of a tier the table does not price below
+	// its own floor. It is taken over the usage the report is over, which for
+	// a partial call is the usage the provider sent and not the output it
+	// reserved.
 	if !partial {
 		o.amount, o.settled = max(reported, floor), settledUsage
 		if pr != nil && t.acc.hasReported {
-			o.charge.reported = t.acc.reported // a record for comparison: it prices the call only where it floors a tier charge
+			o.charge.recordReport(t.acc.reported, lo, hi, u, haveRow) // a record for comparison: it prices the call only where it floors a tier charge
 		}
 		return o
 	}
@@ -1298,7 +1326,7 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, w pricing.Micros, p
 		// where the record carries a report -- would go silent on the run
 		// that needs it. A partial call the floor does not price keeps
 		// recording nothing, as it always has.
-		o.charge.reported = t.acc.reported
+		o.charge.recordReport(t.acc.reported, lo, hi, u, haveRow)
 	}
 	return o
 }

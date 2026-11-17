@@ -76,7 +76,8 @@ func newBudgetCmd() *cobra.Command {
 			"which a plain project Viewer cannot (see docs/gcp-setup.md).",
 	}
 	cmd.AddCommand(newBudgetShowCmd(), newBudgetSetCmd(), newBudgetKillCmd(true), newBudgetKillCmd(false),
-		newBudgetPreviewCmd(), newBudgetChainCmd(), newBudgetPricesCmd(), newBudgetHistoryCmd())
+		newBudgetPreviewCmd(), newBudgetChainCmd(), newBudgetPricesCmd(), newBudgetReconcileCmd(),
+		newBudgetHistoryCmd())
 	return cmd
 }
 

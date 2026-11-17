@@ -482,7 +482,7 @@ func TestProjectSyncNeedsAnAppID(t *testing.T) {
 // the launch creating an execution for a repository that is still admitted.
 func TestProjectRemoveRepoStopsAdmittingTheRepo(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
-	publishPolicy(t, f, `{"version":5,"allow_repos":["github/acme/app"]}`)
+	publishPolicy(t, f, `{"version":9,"allow_repos":["github/acme/app"]}`)
 	if allow := allowReposOf(t, f.db); !projectpolicy.AdmitRepo(allow, "github/acme/app") {
 		t.Fatalf("allow_repos = %v: the fixture does not start with the repository admitted", allow)
 	}
@@ -1412,7 +1412,7 @@ func TestEnrollableArgAgreesWithReposAddOnEveryName(t *testing.T) {
 		if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := execute(t, "project", "repos", "add", name); err != nil {
+		if _, _, err := execute(t, "project", "repos", "add", name, "--allow-list-only"); err != nil {
 			t.Errorf("enrollableArg(%q) = %q, and a listing prints `fugaro project repos add %s`, but `repos add` refuses it: %v", name, got, name, err)
 		}
 	}
@@ -1428,7 +1428,7 @@ func TestEnrollableArgAgreesWithReposAddOnEveryName(t *testing.T) {
 		if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := execute(t, "project", "repos", "add", name); err == nil {
+		if _, _, err := execute(t, "project", "repos", "add", name, "--allow-list-only"); err == nil {
 			t.Errorf("`repos add` accepted %q, so refusing it in the listing loses a remedy that works", name)
 		}
 	}
@@ -1447,10 +1447,10 @@ func TestReposAddTakesTheLengthEnrollableArgBoundsAt(t *testing.T) {
 		t.Fatal(err)
 	}
 	at := "github/acme/" + strings.Repeat("a", projectpolicy.MaxPatternLen-len("github/acme/"))
-	if _, _, err := execute(t, "project", "repos", "add", at); err != nil {
+	if _, _, err := execute(t, "project", "repos", "add", at, "--allow-list-only"); err != nil {
 		t.Fatalf("`repos add` refused a %d-byte name, the length enrollableArg prints a command for: %v", len(at), err)
 	}
-	if _, _, err := execute(t, "project", "repos", "add", at+"a"); err == nil {
+	if _, _, err := execute(t, "project", "repos", "add", at+"a", "--allow-list-only"); err == nil {
 		t.Fatalf("`repos add` accepted a %d-byte name, one byte over the bound enrollableArg refuses at: the gate and the command have drifted apart", len(at)+1)
 	}
 }
@@ -1470,7 +1470,7 @@ func TestProjectAllowListDoorsAreRefusedInAnAgentSession(t *testing.T) {
 		args []string
 		sync bool
 	}{
-		{"repos add", []string{"project", "repos", "add", "github/acme/new"}, false},
+		{"repos add", []string{"project", "repos", "add", "github/acme/new", "--allow-list-only"}, false},
 		{"repos rm", []string{"project", "repos", "rm", "github/acme/app"}, false},
 		{"sync", []string{"project", "sync", "--github-app-id", "12345"}, true},
 		{"sync --github-app-key", []string{"project", "sync", "--github-app-id", "12345", "--github-app-key"}, true},

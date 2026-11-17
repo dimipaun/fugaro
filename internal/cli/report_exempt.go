@@ -69,13 +69,19 @@ var reporterCommands = map[string]string{
 	"managed apply":      "managed-apply",
 	"managed flag":       "managed-flag",
 	"managed unflag":     "managed-unflag",
-	"reaper":             "reaper",
-	"restore":            "restore",
-	"run":                "run",
-	"secrets rm":         "secrets-rm",
-	"secrets set":        "secrets-set",
-	"setup":              "setup",
-	"update":             "update",
+	// The enrolment converged behind one confirmation (RE3): this command
+	// writes this machine's entry, the image mapping, the allow-list, the
+	// publish and the repository's own root, and prints each as a step of its
+	// run rather than one row by hand — which is what keeps its siblings,
+	// whose write is one row each, in exemptAnswers below.
+	"project repos add": "project-repos-add",
+	"reaper":            "reaper",
+	"restore":           "restore",
+	"run":               "run",
+	"secrets rm":        "secrets-rm",
+	"secrets set":       "secrets-set",
+	"setup":             "setup",
+	"update":            "update",
 }
 
 // builtLogName is one reporter command whose log name is not a literal at the
@@ -132,6 +138,7 @@ var exemptListings = map[string]exemptListing{
 	"backlog list":         {"a listing: the backlog's items as the index lists them, table or document", true},
 	"budget preview":       {"a listing: a batch's worst-case spend, as a table or a document", true},
 	"budget prices":        {"a listing: the effective model price table, which is the answer itself", true},
+	"budget reconcile":     {"a listing: a window's charged, reported and table spend per model, table or document", true},
 	"budget show":          {"a listing: the caps, counters, kill switches and headroom, table or document", true},
 	"config example":       {"a listing: the annotated fugaro.yaml template, printed whole", false},
 	"config layer":         {"a listing: the project layer published for this checkout, table or document", true},
@@ -168,6 +175,7 @@ var exemptListings = map[string]exemptListing{
 	"project profile show": {"a listing: one run profile, or every one, as a table or a document", true},
 	"project routing show": {"a listing: the project's routing posture, as a table or a document", true},
 	"project repos ls":     {"a listing: the allow-list and the repositories that have run here, printed whole", false},
+	"project repos status": {"a listing: one repository's enrolment as the nine rows of checks, table or document, and never a secret's value", true},
 	"project show":         {"a listing: the effective project: caps, policy, allow-list and runs in flight", true},
 	"recipes ls":           {"a listing: the recipes of this checkout, the project and the catalog, and the winner", true},
 	"recipes show":         {"a listing: the recipe a run would get for a name, and the layer it comes from", true},
@@ -251,7 +259,6 @@ var exemptAnswers = map[string]string{
 	"project repos set":      "writes one repository's workflow selection or one job profile, and prints the row it wrote",
 	"project routing set":    "writes the project's routing posture into this machine's project config, and prints it",
 	"project routing unset":  "removes the project's routing posture from this machine's project config, and prints the result",
-	"project repos add":      "adds one repository to the policy's allow-list, and prints the entry it wrote",
 	"project repos rm":       "removes one repository from the policy's allow-list, and prints what it dropped",
 	"project sync":           "offers the installed repositories the allow-list does not admit, printing its own account by hand",
 	"recipes publish":        "publishes one recipe to the project, printing its own account of the write by hand",

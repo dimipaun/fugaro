@@ -11,7 +11,7 @@ import (
 // so a file that is invalid for the wrong reason fails. Every file there must
 // be listed.
 var invalidWhy = map[string]string{
-	"artifact-no-render.yaml":      "one render step, optionally after one plan step",
+	"artifact-no-render.yaml":      "one render or diagnose step, optionally after one plan step",
 	"autofix-not-lint.yaml":        "autofix is only for command: lint",
 	"bounce-bad-value.yaml":        "bounce can only be first_line",
 	"bounce-no-first-line.yaml":    "bounce: first_line needs a first_line step before the review",
