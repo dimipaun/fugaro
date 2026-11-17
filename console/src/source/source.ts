@@ -607,7 +607,9 @@ export interface FugaroSource {
    *
    * The argv is a pure function of the three arguments and carries **no**
    * renderer-supplied flag: the phase (`--dry-run --json` for the
-   * classification, and no word for either write) and the layer (`--layer <L>`)
+   * classification, and the write's one word `--no-apply` when the child's own
+   * CLI registers it -- `NO_APPLY_CLI_FLOOR`, unset today, so the write carries
+   * no phase word at all until a release does) and the layer (`--layer <L>`)
    * are main-process facts (`argvFor`'s own `settingsEdit`), and the value is
    * the operator's one element behind the `--` terminator.
    *
@@ -619,7 +621,8 @@ export interface FugaroSource {
   settingsEditArgv(args: ValidatedArguments, phase: SettingsEditPhase, layer: string): Promise<readonly string[]>
   /**
    * settingsEdit runs one phase: the dry run (which writes nothing, D1106) or
-   * the write (whose one word is `--no-apply`, D1107 and D1572). It answers the
+   * the write (whose one word is `--no-apply`, D1107 and D1572, passed only
+   * above `NO_APPLY_CLI_FLOOR`). It answers the
    * dry run's document or the write's sentence, or the CLI's own refusal
    * sentence -- see `SettingsEditSpawn`.
    *

@@ -1292,7 +1292,10 @@ export const CONSOLE_OPERATIONS = [
   // confirmed write's carries `--no-apply` (D1565, D1572) -- which is not a set
   // of flags this operation *fixes*, so it is the phase the main process decides
   // (`SETTINGS_EDIT_PHASE_WORDS`, `src/main/spawn.ts`) rather than a column
-  // here. A screen chooses none of them: not `--dry-run`, not even `--json`.
+  // here. **The write's word is held behind a floor as well**
+  // (`NO_APPLY_CLI_FLOOR`, `src/shared/version.ts`), because no released CLI
+  // registers it yet: no child gets it today, and a renderer has no part in that
+  // either. A screen chooses none of them: not `--dry-run`, not even `--json`.
   //
   // **The schema is three keys and no more**, and the layer is not one of them:
   // it is the read's own `target_layer`, held in this process's copy of the

@@ -73,7 +73,7 @@ import { createSpawnLog } from '../main/spawnlog'
 import type { SpawnLogWriter } from '../main/spawnlog'
 import type { OperationName, ValidatedArguments } from '../main/ipc'
 import { MAX_TEXT_INPUT_LENGTH } from '../shared/sanitize'
-import { licenceKeySupported } from '../shared/version'
+import { licenceKeySupported, noApplySupported } from '../shared/version'
 import {
   SourceRefusal,
   refusalFrom,
@@ -521,13 +521,25 @@ export class CliSource implements FugaroSource {
     const licenceKey = licenceKeySupported(this.installation.version)
       ? this.#options.licenceKey?.(this.#options.target.project)
       : undefined
+    // The settings write's own floor, asked the same way and in the same place:
+    // `--no-apply` is the plan's row word (D1565, D1572) and no release of the
+    // CLI registers it yet, so **no child is handed it today** -- the write is
+    // spawned without it, which is the argv every installed CLI answers. The
+    // question is asked here rather than at the spawn sites because this is the
+    // one builder of a settings edit's plan, so the argv the confirmation window
+    // drew (`settingsEditArgv`) and the argv the child is started with
+    // (`settingsEdit`) read one answer (`sameArgv`).
+    const settingsEdit =
+      facts?.settingsEdit === undefined
+        ? undefined
+        : { ...facts.settingsEdit, noApply: noApplySupported(this.installation.version) }
     return planFor(operation, args, {
       target: this.#options.target,
       binaryPath: this.#binaryPath,
       directory: this.#directory,
       appEnv: this.#env,
       ...(licenceKey === undefined ? {} : { licenceKey }),
-      ...(facts?.settingsEdit === undefined ? {} : { settingsEdit: facts.settingsEdit }),
+      ...(settingsEdit === undefined ? {} : { settingsEdit }),
       ...(facts?.roadmapMove === undefined ? {} : { roadmapMove: facts.roadmapMove }),
     })
   }
@@ -991,8 +1003,10 @@ export class CliSource implements FugaroSource {
   /**
    * settingsEdit runs one phase of the settings write (the settings-edit plan's
    * C3): the dry run, which classifies the edit and writes nothing (D1106), or
-   * the write itself, whose one word is `--no-apply` (D1107, D1572): the change
-   * is saved and what it owes is run later by `fugaro apply`.
+   * the write itself, whose one word is `--no-apply` (D1107, D1572) -- passed
+   * only to a CLI at or above `NO_APPLY_CLI_FLOOR`, which no release is yet, so
+   * the write going out today asks for no follow-up word at all: the change is
+   * saved and what it owes is run later by `fugaro apply`.
    *
    * **A non-zero exit is a returned refusal and not a thrown one**, unlike every
    * read beside it: a dry run the CLI refuses is a sentence the settings window

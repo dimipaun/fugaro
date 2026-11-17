@@ -111,6 +111,7 @@ import {
   wslStopArgs,
   wslWrapperMarker,
   SpawnTimeout,
+  SETTINGS_EDIT_PHASE_WORD_GATES,
   SETTINGS_EDIT_PHASE_WORDS,
 } from '../../src/main/spawn'
 import { WSL_UTF8_VAR, WSL_UTF8_VALUE } from '../../src/main/wsl'
@@ -1557,6 +1558,14 @@ describe('the spawn table and the argv it builds', () => {
     // classification decides the console's own question -- the tick, which gates
     // Confirm for a widening -- and not a word of this argv.
     //
+    // **The write carries it only for a child that registers it**, and
+    // `noApply: true` below is that child: the fact is the main process's answer
+    // to `NO_APPLY_CLI_FLOOR` (`noApplySupported`, asked once in `CliSource`'s
+    // `#plan`), and no released CLI has the flag yet -- so this vector is the
+    // day a release registers it, which is what the plan's own test asks for
+    // (`--no-apply` on both write phases), and the case after this one is the
+    // same plan with the answer absent, which is today's write.
+    //
     // **The phase table is the only place a phase becomes words.**
     // `SETTINGS_EDIT_PHASE_WORDS` is keyed by the main process's own phase
     // (`settingsedit.ts`'s `phaseOf`, from the dry run's `widening` field), and
@@ -1564,7 +1573,7 @@ describe('the spawn table and the argv it builds', () => {
     const args = { op: 'set', key: 'budget.cap_usd', value: '25' }
     const narrowing = [...argvFor('settings.edit', args, {
       ...safeContext({ project: 'chosen' }),
-      settingsEdit: { phase: 'narrowing', layer: 'project' },
+      settingsEdit: { phase: 'narrowing', layer: 'project', noApply: true },
     })]
     expect(narrowing).toEqual([
       'settings',
@@ -1588,7 +1597,7 @@ describe('the spawn table and the argv it builds', () => {
     const args = { op: 'set', key: 'budget.cap_usd', value: '25' }
     const context = (phase: 'widening' | 'narrowing'): Parameters<typeof argvFor>[2] => ({
       ...safeContext({ project: 'chosen' }),
-      settingsEdit: { phase, layer: 'project' },
+      settingsEdit: { phase, layer: 'project', noApply: true },
     })
     const widening = [...argvFor('settings.edit', args, context('widening'))]
     const narrowing = [...argvFor('settings.edit', args, context('narrowing'))]
@@ -1605,6 +1614,59 @@ describe('the spawn table and the argv it builds', () => {
       '25',
     ])
     expect(narrowing).toEqual(widening)
+  })
+
+  it('holds `--no-apply` off the wire for a child whose CLI does not register it', () => {
+    // **The other side of the gate, and the write this console spawns today.**
+    // `--no-apply` is the plan's row word (D1565, D1572) and no release of the
+    // CLI registers it, so `noApplySupported` answers `false` for every version
+    // an operator can have installed (`NO_APPLY_CLI_FLOOR` is unset) and the
+    // plan's third fact is absent -- which is what makes the word leave the
+    // argv while the phase table keeps it. Without this, every confirmed
+    // settings edit would be spawned into `unknown flag: --no-apply`, which is
+    // the whole write failing rather than the change being saved.
+    //
+    // Both write phases carry it, and the dry run is untouched by the gate: it
+    // never had a word of that kind (`--dry-run --json` are the command's own).
+    const args = { op: 'set', key: 'budget.cap_usd', value: '25' }
+    for (const phase of ['widening', 'narrowing'] as const) {
+      expect([
+        ...argvFor('settings.edit', args, {
+          ...safeContext({ project: 'chosen' }),
+          settingsEdit: { phase, layer: 'project' },
+        }),
+      ]).toEqual(['settings', 'set', 'budget.cap_usd', '--layer', 'project', '--project', 'chosen', '--', '25'])
+      // An explicit `false` is the same answer as an absent fact: the gate is
+      // `!== true`, so neither spelling can put the word on the wire.
+      expect([
+        ...argvFor('settings.edit', args, {
+          ...safeContext({ project: 'chosen' }),
+          settingsEdit: { phase, layer: 'project', noApply: false },
+        }),
+      ]).not.toContain('--no-apply')
+    }
+    expect([
+      ...argvFor('settings.edit', args, {
+        ...safeContext({ project: 'chosen' }),
+        settingsEdit: { phase: 'dry-run', layer: 'project', noApply: true },
+      }),
+    ]).toEqual([
+      'settings',
+      'set',
+      'budget.cap_usd',
+      '--layer',
+      'project',
+      '--dry-run',
+      '--json',
+      '--project',
+      'chosen',
+      '--',
+      '25',
+    ])
+    // And the gate is per word and keyed by name: the table that holds the word
+    // names the plan fact it is held behind, so a word cannot be gated on the
+    // phase or the layer.
+    expect(SETTINGS_EDIT_PHASE_WORD_GATES).toEqual({ '--no-apply': 'noApply' })
   })
 
   it('puts only the dry run’s own words on a dry run, and never a value anywhere but after `--`', () => {
@@ -1638,7 +1700,7 @@ describe('the spawn table and the argv it builds', () => {
     const tricky = [...argvFor(
       'settings.edit',
       { op: 'set', key: 'budget.cap_usd', value: '--layer' },
-      { ...safeContext({ project: 'chosen' }), settingsEdit: { phase: 'narrowing', layer: 'local' } },
+      { ...safeContext({ project: 'chosen' }), settingsEdit: { phase: 'narrowing', layer: 'local', noApply: true } },
     )]
     expect(tricky).toEqual([
       'settings',
@@ -1665,7 +1727,7 @@ describe('the spawn table and the argv it builds', () => {
       ...argvFor(
         'settings.edit',
         { op: 'unset', key: 'budget.cap_usd' },
-        { ...safeContext({ project: 'chosen' }), settingsEdit: { phase: 'narrowing', layer: 'local' } },
+        { ...safeContext({ project: 'chosen' }), settingsEdit: { phase: 'narrowing', layer: 'local', noApply: true } },
       ),
     ]).toEqual([
       'settings',
@@ -1685,7 +1747,7 @@ describe('the spawn table and the argv it builds', () => {
       ...argvFor(
         'settings.edit',
         { op: 'unset', key: 'rigor.areas' },
-        { ...safeContext({ project: 'chosen' }), settingsEdit: { phase: 'widening', layer: 'repo' } },
+        { ...safeContext({ project: 'chosen' }), settingsEdit: { phase: 'widening', layer: 'repo', noApply: true } },
       ),
     ]).toEqual([
       'settings',
@@ -1708,7 +1770,7 @@ describe('the spawn table and the argv it builds', () => {
         { op: 'set', key: 'budget.cap_usd', value: '25' },
         {
           ...safeContext({ project: 'chosen', configPath: '/tmp/owner/config.yaml' }),
-          settingsEdit: { phase: 'narrowing', layer: 'project' },
+          settingsEdit: { phase: 'narrowing', layer: 'project', noApply: true },
         },
       ),
     ]).toEqual([
@@ -1729,7 +1791,10 @@ describe('the spawn table and the argv it builds', () => {
     // `phase` are not keys of the operation's schema, so a payload carrying one
     // is refused before a word is built; the layer reaches the argv only through
     // `context.settingsEdit`, which only the main process holds.
-    const context = { ...safeContext({ project: 'chosen' }), settingsEdit: { phase: 'narrowing' as const, layer: 'project' } }
+    const context = {
+      ...safeContext({ project: 'chosen' }),
+      settingsEdit: { phase: 'narrowing' as const, layer: 'project', noApply: true },
+    }
     for (const key of ['layer', 'phase', 'yes', 'dir', 'project', 'config', 'add', 'remove']) {
       expect(() => argvFor('settings.edit', { op: 'set', key: 'k', value: 'v', [key]: 'x' }, context), key).toThrow(
         /does not declare/,
@@ -1767,8 +1832,12 @@ describe('the spawn table and the argv it builds', () => {
     // run's two, and then **`--no-apply`** for either write phase (D1565,
     // D1572) -- the word that says *save this and run none of its follow-up
     // steps*, which is what the console's own chain (`apply.pending` and the
-    // `fugaro apply` that follows it) is for. A fourth phase, a write phase that
-    // lost the word, or a word on the dry run fails here.
+    // `fugaro apply` that follows it) is for. **The table is the spelling and
+    // not the argv**: the write's word goes out only for a plan whose
+    // `noApply` answers for it (`SETTINGS_EDIT_PHASE_WORD_GATES`, unset
+    // `NO_APPLY_CLI_FLOOR`), which the two cases above drive from both sides. A
+    // fourth phase, a write phase that lost the word, or a word on the dry run
+    // fails here.
     expect(Object.keys(SETTINGS_EDIT_PHASE_WORDS).sort()).toEqual(['dry-run', 'narrowing', 'widening'])
     expect(SETTINGS_EDIT_PHASE_WORDS['dry-run']).toEqual(['--dry-run', '--json'])
     expect(SETTINGS_EDIT_PHASE_WORDS['widening']).toEqual(['--no-apply'])

@@ -2882,7 +2882,8 @@ of the group: `--ask` is about the confirmations a write is given, which a dry
 run has none of and asks for none of (a managed project writes on the gate's
 verdict and asks nothing, and `--ask` is the flag that puts those questions
 back). **A console passes the dry run's spelling and nothing else** —
-`--dry-run --json` for the read, and `--no-apply` for the write — and the CLI
+`--dry-run --json` for the read, and `--no-apply` for the write, above the floor
+that registers it — and the CLI
 is what makes the choice a property rather than a convention: `--ask` is not a
 word of the console's argv (design §5.1 rule 6), because the questions it
 restores are asked at a terminal and the console's child has none, so the write
@@ -2890,7 +2891,14 @@ it spawns asks nothing and needs no flag to say so. **`--no-apply` is the one
 word in this section that no command of this build registers yet**: `settings
 set` and `settings unset` gain it in the composite-commands plan's AP5 and AP6,
 and the helper that will spell it once for every management command
-(`addNoApplyFlag`) is already in `internal/cli/apply.go`. **The write's own word
+(`addNoApplyFlag`) is already in `internal/cli/apply.go`. **And a word no
+release answers goes to no child**: the write carries it only above the floor
+that registers it (`NO_APPLY_CLI_FLOOR`, `console/src/shared/version.ts`, unset
+while no release answers the word), which the one place that builds a settings
+edit's plan asks (`CliSource`'s `#plan`) — so the argv the console spawns today
+is the dry run's spelling for the read and, for the write, the command with no
+phase word at all, which is the argv every installed CLI accepts; a release that
+registers the flag moves that one constant and nothing else. **The write's own word
 is not an answer to a question either** (the composite-commands plan's AP8,
 D1565, D1572): it says *save this and run none of its follow-up steps*, so the
 console writes the local half of a change and what it owes is run later by
@@ -3881,7 +3889,7 @@ file.
 owes.** A management command (`settings set`, `image add`, `models rm`, `workspace
 add`, …) writes its change and then runs the steps that make it live — publishing the project policy, redeploying the checkout's
 repository, building a catalog image — and `--no-apply` is the skip word
-that saves the change and stops — `--no-apply`, spelled in §6.20 (D1565). What it leaves behind is a local record per
+that saves the change and stops — `--no-apply`, spelled in §6.20 (D1565), and passed by the console's settings write only above the floor that registers it. What it leaves behind is a local record per
 machine, and `fugaro apply` runs it. **`--status` prints what is owed, runs
 nothing and writes nothing**, which is what makes it the arm the console is
 admitted to (the composite-commands plan's AP8, D1569; design §5.1 rule 6's
@@ -4011,7 +4019,7 @@ and **not** off this document or the design:
 | `coordinator status` | yes (`newCoordinatorStatusCmd`, §6.13) — with `--from-store` it is the one read here that asks nothing of the host (the stored view, through the caller's own credentials), and it is a cloud read all the same: the view lives in the project's database, so it carries `--project` and `--config` like the rest |
 | `coordinator show` | yes (`newCoordinatorShowCmd`, §6.15) — the pull request read (coordinator v2 C3, D816): `--repo` and `--pr` are its own two arguments, both required, and it carries `--project` and `--config` like the rest because it resolves the repository's provider the way the project view does. **The second row here whose child mints a credential of the host's** — the first is `run`'s below, whose child is a run and mints the write-capable token it pushes and opens the pull request with; this row's is the person read set's own read-only installation token (contents, pull requests and metadata, all read), revoked when the command is done — so its argv is the whole of what a renderer may influence about it |
 | `coordinator intents` | yes (`newCoordinatorIntentsCmd`, §6.16) — the declarations read (coordinator v2 C4, D827): it has **no argument of its own** (`--all` and `--json` are the console row's fixed words), and it carries `--project` and `--config` like the rest because it resolves the local config the way the project view does. **The one row here whose child asks nothing of the host at all**: the declarations are the caller's own database node, read through the same credentials §6.13's stored read uses, so there is no App key, no installation token and no provider anywhere in it |
-| `settings set\|unset` | yes (`newSettingsCmd`, §6.20) — **the second row here that writes** (the settings-edit plan's C3, design §5.1 rule 12): the dry run and the confirmed write are the same command with the same aiming pair, and the layer written is §6.19's `target_layer` rather than a flag a renderer chose. The write carries `--no-apply` (the composite-commands plan's AP8, D1572), so the change is saved and its follow-up steps are owed rather than run |
+| `settings set\|unset` | yes (`newSettingsCmd`, §6.20) — **the second row here that writes** (the settings-edit plan's C3, design §5.1 rule 12): the dry run and the confirmed write are the same command with the same aiming pair, and the layer written is §6.19's `target_layer` rather than a flag a renderer chose. The write carries `--no-apply` (the composite-commands plan's AP8, D1572), so the change is saved and its follow-up steps are owed rather than run — and it carries it only above the floor that registers the word (`NO_APPLY_CLI_FLOOR`, unset until that plan's AP5 and AP6 ship it, §6.20), so no child gets the word today |
 | `apply --status` | yes (`newApplyCmd`, §6.28) — **the third row here that writes**, and the only one with a read arm: `fugaro apply` runs the follow-up steps a management command saved for later (the composite-commands plan's D1560). The console is admitted to `apply --status --json` and nothing else (D1569, design §5.1 rule 6): the bare `apply` is a row of that table the console does not spawn yet, and the read costs no cloud, so the pair here is what aims it at an installation |
 | **`run`** | yes (`newRunCmd`, §6.14) — **the other row here that writes**: the launch (design §5.1 rule 11) is cut for a project like every cloud command, so it carries `--project` and `--config` too, and the task itself arrives on stdin rather than as a flag |
 

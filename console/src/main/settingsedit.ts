@@ -21,12 +21,16 @@
 //      `SETTINGS_EDIT_REFUSED`).
 //   3. **the window** -- `confirm.ts`'s, one implementation for both questions
 //      (D1115), showing C2's `settingsView` of that dry run.
-//   4. **the write** -- `settings set|unset KEY --layer <L> --no-apply
+//   4. **the write** -- `settings set|unset KEY --layer <L> [--no-apply]
 //      -- <VALUE>`, reached only from a yes on that window's own top frame. The
 //      write's one word is `--no-apply`: *save this and run none of its
 //      follow-up steps* (docs/composite-commands, D1565, D1572), so what the
 //      change owes is run by `fugaro apply` -- the pending-steps read the
-//      console draws -- and never from behind this window. It answers no
+//      console draws -- and never from behind this window. **It is passed only
+//      to a CLI that registers it** (`NO_APPLY_CLI_FLOOR`,
+//      `src/shared/version.ts`): no release is yet, so the write going out today
+//      carries no phase word and the CLI runs what the change owes itself,
+//      exactly as every installed CLI does. It answers no
 //      question the CLI asks (D1107, C3): `applySettingsEdit` refuses only
 //      inside a coding agent's session, never a plain piped one
 //      (`internal/cli/settings_write.go`), so there is no word to answer with

@@ -1273,6 +1273,15 @@ func TestDocsDesktopConsoleContractNamesOnlyRealFlags(t *testing.T) {
 	// and **an entry that stops being absent fails**: the moment a command
 	// gains the flag this test says so, and the two sentences -- the
 	// document's and this map's -- move together.
+	//
+	// The console holds the word off the wire until that release ships
+	// (`NO_APPLY_CLI_FLOOR` is unset, and `CliSource`'s plan asks it before it
+	// puts the word on a child's argv), so the absence is not a hazard the
+	// console runs into: it is the state the console is written for. The pin
+	// that keeps the two halves of that arrangement together --
+	// TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters, in this file --
+	// reads the floor constant and this document's own map from opposite sides,
+	// and the entry below is the one it moves with.
 	documentedAbsent := map[string]bool{"version": true, "no-apply": true}
 
 	// (1) Every flag token in the document, outside the sections whose command
@@ -1647,11 +1656,16 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// then the write's -- with the value last, after the terminator, and
 		// the `unset` form the same words with no value at all. **The two
 		// phase groups are alternatives and never a pair** (the composite-
-		// commands plan's AP8, D1565, D1572): a write now carries `--no-apply`
+		// commands plan's AP8, D1565, D1572): a write carries `--no-apply`
 		// -- the word that saves the change and runs none of its follow-up
 		// steps -- where it used to carry nothing at all, because what a
 		// management command leaves owed is run later by `fugaro apply` and
-		// never from behind the settings window.
+		// never from behind the settings window. The word is the console's
+		// once the release that registers it ships, and until then it goes to
+		// no child at all (`NO_APPLY_CLI_FLOOR` is unset; the row is this
+		// table's because the row word is the plan's, and
+		// TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters is what holds
+		// the two halves together).
 		"settings set KEY --layer <L> [--dry-run --json] [--no-apply] --project <name> [--config <path>] -- <VALUE>",
 		// The managed state and its audit trail (the managed screens' plan's
 		// CM3, the `managed.status` operation, D1472 to D1477): the two marks'
@@ -2292,6 +2306,278 @@ func TestDocsDesktopConsoleDesignSurfaceIsTheConsoleSource(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("%s spawns %s's argv as %q, and no row of %s's §5.1 rule 6 allow-list leads with those words: every spawn is an argv the design admits, and a row added to SPAWN_COMMANDS is a rule 6 row (with consoleReadPaths' command, if it is a read) in the same commit", consoleSpawnPath, row.operation, strings.Join(row.words, " "), path)
+		}
+	}
+}
+
+// consoleMovedFlagWords are the spawn words whose command lives under ee/ and
+// cannot be reached from this build's root: the same exemption
+// consoleMovedSections and consoleMovedRows make for the document's sections,
+// keyed by the word rather than by the heading because a flag word carries no
+// heading with it. Each entry names the command the word belongs to, so a word
+// whose command moves back into the core is an entry to delete rather than a
+// hole nobody can read -- and the check below fails on an entry the core does
+// register, which is what makes it one.
+//
+// It is a list of words, not of commands, and that is the limit worth stating:
+// the check asks whether some command in this tree registers the word, so a
+// moved command's word that another core command happens to spell the same way
+// passes it -- `--watch` is on this list's theme but belongs to `runs ls` here,
+// and `--to` to `budget reconcile`, so neither needs an entry. The moved
+// command's own contract test is where its row is held to its command
+// (ee/coordinator/cli/console_contract_test.go and ee/report/cli's), which is
+// also where its flags are checked against the code that registers them.
+var consoleMovedFlagWords = map[string]string{
+	"--from-store": "fugaro coordinator status",
+	"--source":     "fugaro graph",
+	"--until":      "fugaro report",
+	"--expect":     "fugaro coordinator roadmap move",
+}
+
+// consoleGateFloorConstants names the console constant each gate in
+// `SETTINGS_EDIT_PHASE_WORD_GATES` holds its word behind: the fact the gate is
+// named by, and the `NO_APPLY_CLI_FLOOR`-shaped constant in
+// console/src/shared/version.ts that is the release the word waits for. A gate
+// whose fact is not here fails rather than passing unread, because a held word
+// with no floor is a word the console would emit to a CLI that refuses it.
+var consoleGateFloorConstants = map[string]string{"noApply": "NO_APPLY_CLI_FLOOR"}
+
+// consoleWordConstRE is a console module's `export const NAME = '--word'`: the
+// one spelling a word several lists share is written as
+// (`NO_APPLY_PHASE_WORD`), and the shape a list member this test resolves
+// through must have.
+var consoleWordConstRE = regexp.MustCompile(`(?m)^export const ([A-Z][A-Z0-9_]*) = '(--[^']*)'$`)
+
+// consoleFlagWordRE is a single-quoted flag word inside one of the module's
+// lists.
+var consoleFlagWordRE = regexp.MustCompile(`'(--[^']*)'`)
+
+// consoleWordMemberRE is a bare identifier inside one of the module's lists -- a
+// word written once and named by the lists that carry it
+// (`[NO_APPLY_PHASE_WORD]`) rather than spelled again in each.
+var consoleWordMemberRE = regexp.MustCompile(`\[([A-Z][A-Z0-9_]*)\]`)
+
+// consoleConstBlock is the source of one `export const NAME …` declaration: from
+// the name to the next `export const`, so a pattern read inside it cannot match
+// a member of the constant after it.
+func consoleConstBlock(t *testing.T, src, name string) string {
+	t.Helper()
+	at := strings.Index(src, "export const "+name)
+	if at < 0 {
+		t.Fatalf("%s no longer declares %s: the spawn allow-list is the console half of the design's §5.1 fence, and this test reads its words from here", consoleSpawnPath, name)
+	}
+	block := src[at:]
+	if next := strings.Index(block[len("export const "+name):], "\nexport const "); next >= 0 {
+		block = block[:len("export const "+name)+next]
+	}
+	return block
+}
+
+// consoleFlagWords is every flag word one of the module's lists carries: the
+// single-quoted members, and the members that name an `export const NAME =
+// '--word'` written once above them. Duplicates are kept out, so the walk below
+// is over the words rather than over the mentions, and a member naming a
+// constant the module does not declare is a failure rather than a word silently
+// dropped from the walk.
+func consoleFlagWords(t *testing.T, src, name string) []string {
+	t.Helper()
+	block := consoleConstBlock(t, src, name)
+	spelled := map[string]string{}
+	for _, m := range consoleWordConstRE.FindAllStringSubmatch(src, -1) {
+		spelled[m[1]] = m[2]
+	}
+	var out []string
+	seen := map[string]bool{}
+	add := func(word string) {
+		if word != "" && !seen[word] {
+			seen[word] = true
+			out = append(out, word)
+		}
+	}
+	for _, m := range consoleFlagWordRE.FindAllStringSubmatch(block, -1) {
+		add(m[1])
+	}
+	for _, m := range consoleWordMemberRE.FindAllStringSubmatch(block, -1) {
+		word, ok := spelled[m[1]]
+		if !ok {
+			t.Fatalf("%s's %s names %s, and no `export const %s = '--…'` above it says which word that is: this test reads a list's words from the constants the list names", consoleSpawnPath, name, m[1], m[1])
+		}
+		add(word)
+	}
+	if len(out) == 0 {
+		t.Fatalf("%s's %s carries no flag word this test could read: the constant's shape moved, and an empty walk would pass every check below", consoleSpawnPath, name)
+	}
+	return out
+}
+
+// consoleGateFacts reads `SETTINGS_EDIT_PHASE_WORD_GATES`: the word a phase word
+// is held by, and the fact the plan must answer for it before it goes out.
+func consoleGateFacts(t *testing.T, src string) map[string]string {
+	t.Helper()
+	block := consoleConstBlock(t, src, "SETTINGS_EDIT_PHASE_WORD_GATES")
+	spelled := map[string]string{}
+	for _, m := range consoleWordConstRE.FindAllStringSubmatch(src, -1) {
+		spelled[m[1]] = m[2]
+	}
+	out := map[string]string{}
+	for _, m := range regexp.MustCompile(`\[([A-Z][A-Z0-9_]*)\]: '([a-zA-Z]+)'`).FindAllStringSubmatch(block, -1) {
+		word, ok := spelled[m[1]]
+		if !ok {
+			t.Fatalf("%s's SETTINGS_EDIT_PHASE_WORD_GATES holds %s, and no `export const %s = '--…'` above it says which word that is", consoleSpawnPath, m[1], m[1])
+		}
+		out[word] = m[2]
+	}
+	if len(out) == 0 {
+		t.Fatalf("%s's SETTINGS_EDIT_PHASE_WORD_GATES carries no gate this test could read, and the check below reads the table to know which words the console holds off the wire: an empty read would call every held word unregistered and refuse the module", consoleSpawnPath)
+	}
+	return out
+}
+
+// cliFlagNames is every flag name a command reachable from the root registers:
+// its own, its own persistent set, and the ones it inherits from its parents.
+// Which command has a flag is the document's business rather than this test's --
+// what is asked here is only whether the CLI in this tree has the word at all,
+// which is the fact a console word nobody answers turns on.
+func cliFlagNames() map[string]bool {
+	out := map[string]bool{}
+	var walk func(*cobra.Command)
+	walk = func(cmd *cobra.Command) {
+		for _, set := range []*pflag.FlagSet{cmd.Flags(), cmd.PersistentFlags(), cmd.InheritedFlags()} {
+			set.VisitAll(func(f *pflag.Flag) { out[f.Name] = true })
+		}
+		for _, child := range cmd.Commands() {
+			walk(child)
+		}
+	}
+	walk(NewRootCmd())
+	return out
+}
+
+// TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters ties the console's two
+// spawn tables to the CLI they are spawned against: every flag word the console
+// may put on a child's command line must be a flag some command reachable from
+// this build's root registers -- or a word the console holds behind a floor, or
+// a word of a command that lives under ee/ (consoleMovedFlagWords).
+//
+// The gap it closes is the one a review of the composite-commands plan's AP8
+// found, and it is the shape a cross-tree allow-list always has: `spawn.ts` grew
+// `--no-apply` because the plan's row for the settings write carries it (D1565,
+// D1572), while the CLI half that registers the word is AP5 and AP6 of that same
+// plan and had not landed -- so every confirmed settings edit from the console
+// would have spawned an argv the CLI answers with `unknown flag: --no-apply`,
+// and the console's own tests could not see it: `stub.ts` answers any argv, and
+// the design's `documentedAbsent` map recorded the absence as intended rather
+// than as a hazard. The console's answer is a floor (a word a release has to
+// carry goes out only to a CLI at or above the release that carries it), and
+// this test is what holds the two halves of that answer together: the word stays
+// on the list the plan gives it, and no child gets it while no command registers
+// it.
+//
+// Three claims, one per line of the answer:
+//
+//  1. **Every word the console may emit is a flag of this tree.** A word in
+//     `SPAWN_FLAGS`, in one of the `*_EQUALS_FLAGS` prefixes or in
+//     `SETTINGS_EDIT_PHASE_WORDS` that no command registers is either held (2) or
+//     a word of a moved command; anything else is the AP8 shape and fails here.
+//  2. **A phase word is answered or held, never neither.** The write's words are
+//     `SETTINGS_EDIT_PHASE_WORDS`, and each one must be either registered by the
+//     CLI or gated in `SETTINGS_EDIT_PHASE_WORD_GATES` -- the table that turns
+//     "which phase is this" into "does this child's CLI answer for this word".
+//     The other direction fails too: a gate on a word the CLI now registers is a
+//     word the console holds back for no reason.
+//  3. **A held word's floor is unset while no command registers it.** The gate's
+//     fact names a constant (`consoleGateFloorConstants`), and that constant has
+//     to still read `string | null = null` in `console/src/shared/version.ts`:
+//     set it to a release and the console hands the word to CLIs below that
+//     release, which is the failure the floor exists to prevent.
+//
+// The mutations that prove it: add a flag word to `SPAWN_FLAGS` that no command
+// has (claim 1 fails, naming the word); take `--no-apply` out of
+// `SETTINGS_EDIT_PHASE_WORDS`' gate map while no command registers it (claim 2
+// fails, from the phase table's side); register `--no-apply` on a command here
+// without moving the console (claims 2 and 3 fail, and the design's own
+// `documentedAbsent` entry fails beside them); and set `NO_APPLY_CLI_FLOOR` to a
+// version while no command registers the word (claim 3 fails, naming the
+// constant and the release it would need).
+func TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters(t *testing.T) {
+	spawn := readDoc(t, consoleSpawnPath)
+	version := readDoc(t, "console/src/shared/version.ts")
+
+	registered := cliFlagNames()
+	if len(registered) < 50 {
+		t.Fatalf("NewRootCmd()'s tree registers %d flags, which is too few to be the whole CLI: this test's whole claim is that the console's words are among them, so a walk that lost the tree would refuse the module rather than read it", len(registered))
+	}
+
+	var words []string
+	words = append(words, consoleFlagWords(t, spawn, "SPAWN_FLAGS")...)
+	for _, name := range regexp.MustCompile(`(?m)^export const ([A-Z][A-Z0-9_]*_EQUALS_FLAGS)`).FindAllStringSubmatch(spawn, -1) {
+		for _, word := range consoleFlagWords(t, spawn, name[1]) {
+			words = append(words, strings.TrimSuffix(word, "="))
+		}
+	}
+	phase := consoleFlagWords(t, spawn, "SETTINGS_EDIT_PHASE_WORDS")
+	words = append(words, phase...)
+	gates := consoleGateFacts(t, spawn)
+
+	// The console spells a word with its dashes and pflag stores it without
+	// them: `--no-apply` is the word, `no-apply` is the name, and the two are one
+	// lookup.
+	has := func(word string) bool { return registered[strings.TrimPrefix(word, "--")] }
+
+	// Claim 1: every word the console may emit is a flag of this tree, unless it
+	// is held behind a floor or belongs to a command under ee/.
+	for _, word := range words {
+		if has(word) {
+			if fact, held := gates[word]; held {
+				t.Errorf("%s's gate holds %s behind %q, and a command reachable from NewRootCmd() registers it: the release the floor waits for has shipped, so set %s to that release and take the word out of SETTINGS_EDIT_PHASE_WORD_GATES -- a word the CLI answers for is one the console may hand over", consoleSpawnPath, word, fact, consoleGateFloorConstants[fact])
+			}
+			continue
+		}
+		if _, moved := consoleMovedFlagWords[word]; moved {
+			continue
+		}
+		if _, held := gates[word]; held {
+			continue
+		}
+		t.Errorf("%s may emit %s and no command reachable from NewRootCmd() registers it: a child would answer `unknown flag: %s` and the whole spawn would fail, so either the CLI half lands in the same train or the word is held behind a floor (SETTINGS_EDIT_PHASE_WORD_GATES, and a constant in console/src/shared/version.ts naming the release that carries it)", consoleSpawnPath, word, strings.TrimPrefix(word, "--"))
+	}
+
+	// Claim 2: a phase word is answered by the CLI or held, never neither.
+	for _, word := range phase {
+		_, held := gates[word]
+		switch {
+		case has(word) && held:
+			t.Errorf("%s's SETTINGS_EDIT_PHASE_WORDS carries %s, which a command in this tree registers, and SETTINGS_EDIT_PHASE_WORD_GATES still holds it: the settings write would go out without a word the CLI now answers for, which is the console choosing the CLI's older behaviour on its own", consoleSpawnPath, word)
+		case !has(word) && !held:
+			t.Errorf("%s's SETTINGS_EDIT_PHASE_WORDS carries %s and no command in this tree registers it, with no gate in SETTINGS_EDIT_PHASE_WORD_GATES: the phase table is what a settings write emits, so this is a write spawned into `unknown flag: %s` -- hold the word behind a floor the way the table's other words are held", consoleSpawnPath, word, strings.TrimPrefix(word, "--"))
+		}
+	}
+
+	// Claim 3: a held word's floor is still unset while no command registers it,
+	// and every gate names a constant this test can find.
+	for word, fact := range gates {
+		name, ok := consoleGateFloorConstants[fact]
+		if !ok {
+			t.Errorf("%s's gate on %s answers for %q, and this test has no floor constant for that fact: name the console constant the gate holds the word behind, here and in console/src/shared/version.ts", consoleSpawnPath, word, fact)
+			continue
+		}
+		if has(word) {
+			continue // claim 1's error above already names what to do
+		}
+		if !regexp.MustCompile(`(?m)^export const ` + name + `: string \| null = null$`).MatchString(version) {
+			t.Errorf("console/src/shared/version.ts no longer declares `%s: string | null = null`, and no command in this tree registers %s: a floor set to a release hands the word to every CLI at or above it, and none of them answers it -- the constant stays unset until the release that registers the word ships", name, word)
+		}
+	}
+	if len(gates) == 0 {
+		t.Fatalf("%s holds no word off the wire, so this test's claim 3 read nothing: a word no CLI answers is either absent from the tables or held, and a gate table that emptied itself is the first case failing silently", consoleSpawnPath)
+	}
+
+	// The exemption list is a list of holes, so an entry the core now registers
+	// is an entry to delete: the moved command came home, and the word is this
+	// tree's to check.
+	for word, command := range consoleMovedFlagWords {
+		if has(word) {
+			t.Errorf("consoleMovedFlagWords exempts %s as a word of %s, and a command reachable from NewRootCmd() registers it: the exemption is a hole in this test's own claim, so delete the entry rather than leave %s unchecked", word, command, word)
 		}
 	}
 }
