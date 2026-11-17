@@ -25,6 +25,7 @@ package keyservice
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"reflect"
 	"testing"
@@ -274,6 +275,23 @@ func TestBuySeatsUpdatesTheQuantity(t *testing.T) {
 	if ended.Seats != 2 {
 		t.Errorf("a cancelled subscription holds %d seats, want the 2 it was sold", ended.Seats)
 	}
+
+	// And its quantity cannot be changed. The merchant charges at the moment of
+	// the change (Paddle's own proration) and the event that would carry the new
+	// quantity is the one `seatChanged` drops for a cancelled subscription
+	// (S2.1), so a change here is a customer charged for seats this service never
+	// licences — and the screen offers the form to anyone who holds a
+	// subscription, so the rule is the service's rather than the form's.
+	notRenewing := f.apiAsCaller(http.MethodPost, seatsPath(gone.ID), `{"seats":4}`)
+	if notRenewing.Code != http.StatusConflict {
+		t.Fatalf("buying seats on a subscription that is not renewing answered %d: %s", notRenewing.Code, notRenewing.Body)
+	}
+	if code := refusal(f.fixture, notRenewing); code != "not_running" {
+		t.Errorf("buying seats on a subscription that is not renewing was refused with %q, want %q", code, "not_running")
+	}
+	if !reflect.DeepEqual(f.paddle.seats, []int{7, 7}) {
+		t.Errorf("the merchant was asked for the quantities %v, want the [7 7] it was asked for while the subscription ran", f.paddle.seats)
+	}
 }
 
 // TestCustomerPortalLinkIsPerOrg: the customer-portal session is minted for the
@@ -331,6 +349,24 @@ func TestCustomerPortalLinkIsPerOrg(t *testing.T) {
 	}
 	if f.paddle.customerID != customerOf(erin.ID) {
 		t.Errorf("Erin's session was minted for the customer %q, want her organisation's own %q", f.paddle.customerID, customerOf(erin.ID))
+	}
+
+	// The session is a URL a browser is sent to, so what leaves here is checked
+	// to be https. The merchant's own client checks only that the answer is not
+	// empty (paddleclient.go's PortalSession), so this guard is the only one
+	// there is, and a session naming another scheme is a failure rather than an
+	// answer: nothing is handed to the screen to open.
+	f.paddle.portalURL = "http://sandbox-portal.paddle.example/session/2"
+	plain := f.apiAsCaller(http.MethodGet, portalPath(theirs.ID), "")
+	if plain.Code != http.StatusInternalServerError {
+		t.Fatalf("a session that is not https answered %d: %s", plain.Code, plain.Body)
+	}
+	if code := refusal(f.fixture, plain); code != "unavailable" {
+		t.Errorf("a session that is not https was refused with %q, want the failure %q", code, "unavailable")
+	}
+	var handed WireCustomerPortal
+	if err := json.Unmarshal(plain.Body.Bytes(), &handed); err != nil || handed.URL != "" {
+		t.Errorf("the answer to a session that is not https carries the URL %q (unmarshal: %v), want none", handed.URL, err)
 	}
 }
 

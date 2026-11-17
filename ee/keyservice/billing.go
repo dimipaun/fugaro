@@ -78,6 +78,12 @@ var (
 	// handler's check and not `decodeWire`'s (P1.1): the body decodes, and a
 	// quantity below one is a request that has nothing to buy.
 	errSeatsBelowOne = errors.New("keyservice: a subscription is for one seat or more")
+	// errSubscriptionNotRunning is a seat change on a subscription that is not
+	// running: cancelled, or past the end of the term it paid for. Nothing would
+	// licence the seats it bought — a seat change reissues the key, and a
+	// cancelled subscription gets no reissue (merchant.go's `seatChanged`, S2.1)
+	// — so the merchant would charge for seats this service never hands over.
+	errSubscriptionNotRunning = errors.New("keyservice: that subscription is not running, so its seats cannot be changed")
 )
 
 // billingHeld is what every route of this area reads before it answers: the
@@ -283,6 +289,11 @@ func (s *Service) mirror(ctx context.Context, workspace WireWorkspace, sub Subsc
 // itself applied twice, which is what makes this route idempotent without a
 // record of its own.
 //
+// It is a change to a subscription that is still running, by the rule the
+// renewal reads (renew.go) and a second checkout is refused by (checkout.go):
+// what a quantity buys is a licence, and a subscription nothing will reissue is
+// one whose seats nobody would hold.
+//
 // The answer is the mirror with the quantity Paddle has just taken. The event
 // that carries it (P3.6) has not arrived when this answers, so the mirror would
 // otherwise state the number the customer just replaced.
@@ -296,6 +307,17 @@ func (s *Service) buySeats(ctx context.Context, actor Caller, workspaceID string
 	}
 	if held.membership.Role != roleOwner && held.membership.Role != roleAdmin {
 		return WireSubscription{}, errBillingNotPermitted
+	}
+	// A subscription that is not running is one this service will not licence a
+	// change on, and the merchant charges at the moment of the change (Paddle's
+	// own proration), so asking it to is a charge for seats that never arrive:
+	// the event that carries the new quantity reissues the key, and a cancelled
+	// subscription is one `seatChanged` drops (S2.1). The screen offers the
+	// quantity form to anyone holding a subscription
+	// (`ee/portal/src/screens/billing/billing.tsx` gates it on the subscription
+	// existing), so the rule belongs here rather than to the form.
+	if !runningSubscription(held.subscription, s.now().UTC()) {
+		return WireSubscription{}, errSubscriptionNotRunning
 	}
 	if err := s.paddle.SetSeats(ctx, held.subscription.ID, asked.Seats); err != nil {
 		return WireSubscription{}, fmt.Errorf("the merchant of record did not take the new quantity: %w", err)

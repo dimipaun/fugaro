@@ -123,6 +123,8 @@ func refuseBilling(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, errSeatsBelowOne):
 		refuseAPI(w, http.StatusUnprocessableEntity, "invalid_seats", "A subscription is for one seat or more.")
+	case errors.Is(err, errSubscriptionNotRunning):
+		refuseAPI(w, http.StatusConflict, "not_running", "This subscription is not renewing, so its seats cannot be changed. Buying a licence for this workspace starts a new one.")
 	case errors.Is(err, ErrSSORequired), errors.Is(err, ErrDirectoryNotPinned):
 		refuseAPI(w, http.StatusForbidden, "sso_required", "This organisation's members sign in with Google or Microsoft. Sign in that way to use it.")
 	case errors.Is(err, errBillingNotPermitted):
