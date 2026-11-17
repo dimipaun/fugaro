@@ -147,11 +147,15 @@ what the guard at the end of this section re-runs.
   address an object-list entry by its key field, and the write path's dispatch
   (`internal/cli/settings_set.go:2140`) reaches only `SetScalar`, `AddListItem` and `RemoveListItem`.
   The gap is one dispatch and one flag pair, not a new editor.
-- **F9 — the settings-write document is version 1 with ten required members, and the console reads it.**
-  `schemas/settings-write.schema.json:20` pins `"const": 1`, and `version`, `key`, `layer`, `path`,
-  `changed`, `widening`, `why`, `old`, `new`, `refusal` are required. Its own description carries the
-  rule this design works under: **members are only added within a version (D848)**. The console's
-  settings edit is the consumer ([docs/console-settings-edit](../console-settings-edit/README.md)).
+- **F9 — the settings-write document is version 1 with nine required members, and the console reads it.**
+  `schemas/settings-write.schema.json:20` pins `"const": 1`, and `version`, `layer`, `path`,
+  `changed`, `widening`, `why`, `old`, `new`, `refusal` are required. `key` is required of every
+  document about one edit, and the one document that is about several — a run of `fugaro secrets
+  set`'s record flags, which answers with one document carrying every record in `records`
+  (config-ownership S1) — leaves it out; where the member is present it is never empty. Its own
+  description carries the rule this design works under: **members are only added within a version
+  (D848)**. The console's settings edit is the consumer
+  ([docs/console-settings-edit](../console-settings-edit/README.md)).
 - **F10 — a prebuilt image entry cannot be created by a command.** `fugaro image add <name>`
   (`internal/cli/image_catalog.go:295`) takes `--dockerfile`, `--inline`, `--tags`, `--branch`,
   `--description`, `--default` and **no `--image`**, while `config.SourceImage`
