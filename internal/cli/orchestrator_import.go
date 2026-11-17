@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/plan"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // orchestratorImportOptions are `fugaro orchestrator import`'s flags.
@@ -170,12 +171,20 @@ func runOrchestratorPlanImport(cmd *cobra.Command, o *orchestratorImportOptions)
 		// this import cannot place rather than one to name after a guess.
 		return userErr("the plan sits at %s, and a plan this command imports is a folder of its own under docs/ (docs/<plan>): a plan below that has no single name to key its node and its items by, and nothing was written", safetext.Field(rel))
 	}
-	// The graph names the plan document it describes, and that is the document
-	// the briefs send a run to: one that names another folder is a graph that
-	// moved without being rewritten, and reading it would write items pointing
-	// at a plan nobody put them under.
-	if dir := filepath.ToSlash(filepath.Dir(doc.Plan)); dir != rel {
-		return userErr("the graph names the plan document %s and it sits in %s: a plan's artifact and the document beside it are one plan, and nothing was written", safetext.Field(doc.Plan), safetext.Field(rel))
+	// Where the plan sits and which document it is are both fixed by the brief,
+	// so both are checked here rather than trusted. Every brief this import
+	// writes sends a run to docs/<plan>/implementation-plan.md, with the plan's
+	// name folded the way the node's own path folds it (specName, R3), and the
+	// section it hashes is read from the document the graph names. The two have
+	// to be one file: a folder outside docs/, one whose case the fold changes,
+	// or a graph naming another document in its folder would put a digest over
+	// one file in a brief that sends the run to another, which is the approval
+	// F49 and D2737 exist to make impossible.
+	if want := plan.DocsDir + "/" + task.ASCIILower(name); rel != want {
+		return userErr("the plan sits at %s, and a plan this command imports sits at %s/<plan> with the plan's name folded (%s): the brief of every item it writes names that path, and a plan anywhere else would carry a digest over a document the run never reads; nothing was written", safetext.Field(rel), safetext.Field(plan.DocsDir), safetext.Field(want))
+	}
+	if doc.Plan != rel+"/implementation-plan.md" {
+		return userErr("the graph names the plan document %s, and the brief of every item it writes sends a run to %s/implementation-plan.md: the plan, its graph and its briefs are one document, and nothing was written", safetext.Field(doc.Plan), safetext.Field(rel))
 	}
 	commit, err := gitRead(ctx, ".", "rev-parse", "HEAD")
 	if err != nil {
