@@ -214,6 +214,12 @@ func Steps(change Change) ([]string, bool) {
 // It is the one rule for every caller: the settings commands' own chain and the
 // after-write hook both ask it, so the steps a command says it owes and the
 // steps it runs cannot come to be two answers (D1561).
+//
+// A key neither the table nor the registry answers for owes nothing at all, and
+// the store does not fill the gap in: a step run for a key the program cannot
+// name is this rule deciding about a key it has never heard of, which is the
+// fail-closed direction read the wrong way round — and it is the answer the
+// after-write hook gave for such a key before this function was its rule.
 func WriteSteps(change Change, store settings.Store) []string {
 	// A checkout's file owes nothing, whatever the key's own row says: the
 	// branch's merge is what makes the change live, and no step of this
@@ -221,7 +227,10 @@ func WriteSteps(change Change, store settings.Store) []string {
 	if store == settings.StoreRepo {
 		return nil
 	}
-	steps, _ := Steps(change)
+	steps, ok := Steps(change)
+	if !ok {
+		return nil
+	}
 	switch store {
 	case settings.StoreProject:
 		steps = append(steps, initflow.Layer)
