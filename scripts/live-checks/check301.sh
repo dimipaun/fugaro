@@ -1032,8 +1032,8 @@ phase_after_reboot() {
   else
     state_remove
   fi
-  fact human-next INFO "the next step is the upgrade half, on a THROWAWAY machine (macOS or Linux, never this one if you care about it): there run 'fugaro orchestrator install' (typing the word install), then: bash scripts/live-checks/check301.sh upgrade --machine <label>"
-  say "next, on a throwaway machine: fugaro orchestrator install, then bash scripts/live-checks/check301.sh upgrade"
+  fact human-next INFO "the next step is the upgrade half, on a THROWAWAY machine (macOS or Linux, never this one if you care about it) whose login unit is NOT installed yet: the half reads D2700's boundary on it — 'fugaro update' at your own terminal is what installs the first unit and loads it — so install nothing there first, or that reading is one the half skips: bash scripts/live-checks/check301.sh upgrade --machine <label>"
+  say "next, on a throwaway machine with no login unit (the half installs it and reads D2700's boundary there): bash scripts/live-checks/check301.sh upgrade"
 }
 
 phase_upgrade() {
@@ -1273,8 +1273,12 @@ phase_update() {
 
   # The agent-marked run comes first: it is the reading that only exists while
   # something is still there to re-render, and it must not be the run that
-  # re-renders it.
-  if ! bounded_ok 900 boundary env CLAUDECODE=1 fugaro update --yes; then
+  # re-renders it. Every 'fugaro update --yes' in this phase keeps this shell's
+  # own standard input (bounded_ok_here): the door asks whether a person is at
+  # the run's own standard input, and a script's background job gets /dev/null
+  # before any redirection, so a run started that way would read the hole
+  # instead of the person the row above names.
+  if ! bounded_ok_here 900 boundary env CLAUDECODE=1 fugaro update --yes; then
     fact boundary FAIL "fugaro update --yes exited $BOUNDED_STATUS with CLAUDECODE=1 set: the agent-marked run did not finish, so what it wrote cannot be read. Its last lines: $(tail -n 5 "$SCRATCH/boundary.out" "$SCRATCH/boundary.err" 2>/dev/null | tr '\n' ' ')"
   else
     local after_sha after_pid
@@ -1292,7 +1296,7 @@ phase_update() {
     fi
   fi
 
-  if ! bounded_ok 3600 update fugaro update --yes; then
+  if ! bounded_ok_here 3600 update fugaro update --yes; then
     fact update FAIL "fugaro update --yes exited $BOUNDED_STATUS: the one command T7's half is about did not finish. Its last lines: $(tail -n 8 "$SCRATCH/update.out" "$SCRATCH/update.err" 2>/dev/null | tr '\n' ' ')"
     fact re-render FAIL "not measured: the update above did not exit 0"
   else
@@ -1327,7 +1331,7 @@ phase_update() {
   quiet_before_sha=$(unit_hash "$UNIT_PATH")
   read_manager manager-before-quiet
   quiet_before_pid=$MANAGER_PID
-  if ! bounded_ok 3600 quiet fugaro update --yes; then
+  if ! bounded_ok_here 3600 quiet fugaro update --yes; then
     fact quiet FAIL "the second 'fugaro update --yes' exited $BOUNDED_STATUS: a repeated update must finish and must write nothing. Its last lines: $(tail -n 5 "$SCRATCH/quiet.out" "$SCRATCH/quiet.err" 2>/dev/null | tr '\n' ' ')"
   else
     quiet_sha=$(unit_hash "$UNIT_PATH")

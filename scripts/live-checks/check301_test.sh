@@ -195,7 +195,12 @@ update)
   case "$(cat "$D/update.mode" 2>/dev/null || echo quiet)" in
   quiet) ;;
   render)
-    if ! cmp -s "$D/unit.new" "$(cat "$D/unit.path")"; then render_unit; fi
+    # A re-render is a write to the unit, and both the write and a first install
+    # need a person at the run: the same `[ -t 0 ]` as install-unit below, on the
+    # standard input this fake inherits from the check that ran it. A case that
+    # starts the run with /dev/null for its standard input gets what the real
+    # door gets there — nothing written.
+    if [ -t 0 ] && ! cmp -s "$D/unit.new" "$(cat "$D/unit.path")"; then render_unit; fi
     ;;
   install-unit)
     # D2700 installs the unit where a person is at the terminal, and F48 fences
