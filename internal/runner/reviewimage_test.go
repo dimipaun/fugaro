@@ -29,6 +29,16 @@ const pngReviewer = "deepseek/deepseek-v4.1-flash"
 // run's pull request added under mobile/assets/.
 const pngFixture = "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\x0aIDAT\x08\xd7\x63\x00\x01\x00\x00\x05\x00\x01\x0d\x0a\x2d\xb4\x00\x00\x00\x00IEND\xae\x42\x60\x82"
 
+// pngPolicyNode admits the path implementPNG and fixWithPNG commit to, the way
+// a project whose run adds an app icon publishes it. Both tests below build
+// their run on a harness that has a policy database for this and nothing else:
+// a run that adds a binary at a path the project does not admit is refused at
+// finalize (stray.go's committed reading), which is not what these two are
+// about. A project that publishes no binaries block at all admits nothing.
+func pngPolicyNode() string {
+	return binariesNode(`"mobile/assets/*.png"`, "1048576")
+}
+
 // implementPNG is the failing run's implement stage: it commits a PNG and a
 // line of text beside it, the way a pull request that adds an app icon does,
 // verifies and writes pr.md.
@@ -85,9 +95,9 @@ func capturePrompt(prompts *[]string, verdict string, findings int) step {
 // Mutation (build the input once, in agentLoop, before the loops): the second
 // round's prompt carries no marker and this test fails.
 func TestReviewInputIsRebuiltForEveryRound(t *testing.T) {
-	h := newHarness(t, "", nil)
+	b := policyRun(t, gwConfig(t, ""), "off", "", pngPolicyNode())
 	var prompts []string
-	rec, err := h.run(t,
+	rec, err := b.run(t,
 		implement("feature"),
 		capturePrompt(&prompts, "changes", 1),
 		fixWithPNG,
@@ -178,29 +188,30 @@ func TestReviewOfAPullRequestThatAddsAPngSendsNoImage(t *testing.T) {
 	cfg = strings.Replace(cfg, "reviewer: "+sonnet, "reviewer: "+pngReviewer, 1)
 	cfg = strings.Replace(cfg, "background: "+haiku, "background: "+pngReviewer, 1)
 	prices := `{"` + pngReviewer + `": {"input_per_m": 1, "output_per_m": 2}}`
-	g := routeRun(t, cfg, "enforce", "50", []string{"deepseek/*"}, prices,
+	b := policyRun(t, cfg, "enforce", "50", pngPolicyNode())
+	wireRoutes(t, b.gw, []string{"deepseek/*"}, prices,
 		[]anthropicfake.Reply{anthropicfake.Compat{}.MessageOK(pngReviewer, pricing.Usage{Input: 1000, Output: 500})}, "acme/app")
 
 	// The reviewer's price row: the owner's token rates, and no image rate.
-	m, ok := g.deps.Spend.Prices.Lookup(pngReviewer)
+	m, ok := b.deps.Spend.Prices.Lookup(pngReviewer)
 	if !ok || m.ImageTokens != 0 {
 		t.Fatalf("the reviewer's price row is %+v, want one with no image rate", m)
 	}
 
 	var status int
 	var body string
-	rec, err := g.run(t, implementPNG, reviewThePrompt(&status, &body))
+	rec, err := b.run(t, implementPNG, reviewThePrompt(&status, &body))
 	if err != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
 	if status != 200 {
 		t.Fatalf("the review call got %d: %s", status, body)
 	}
-	if n := g.compat.Count(); n != 1 {
+	if n := b.compat.Count(); n != 1 {
 		t.Fatalf("the provider saw %d calls, want 1", n)
 	}
-	sent := string(g.compat.Body(0))
-	text := sentText(t, g.compat.Body(0))
+	sent := string(b.compat.Body(0))
+	text := sentText(t, b.compat.Body(0))
 	marker := fmt.Sprintf(`binary file "mobile/assets/icon.png" changed, %d bytes`, len(pngFixture))
 	if !strings.Contains(text, marker) {
 		t.Errorf("the request does not name the PNG in one line (%q):\n%s", marker, text)
