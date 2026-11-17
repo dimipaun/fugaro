@@ -72,6 +72,11 @@ type applyOptions struct {
 	asJSON  bool
 	config  string
 	project string
+	// chain says this run is a management command's own follow-up rather than
+	// `fugaro apply` (AP6). The steps it runs are the ones the command's own
+	// change owes, and the rule that decides whether one is answered is the
+	// chain's (chainAnswered) rather than the record reader's (applyAnswered).
+	chain bool
 }
 
 func newApplyCmd() *cobra.Command {
@@ -259,9 +264,9 @@ func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, o apply
 // applyRunRecord is the run itself: names, each once, in the order the record
 // gives them, settled against the record on disk when the run ends. It is the
 // one runner of a step — `fugaro apply` names every entry the record owes, and
-// a management command names the steps its own change owes (chainRun) — so the
-// order, the check-first rule, the clearing and the sentence a step left owed
-// are one code path and not two that can come to disagree.
+// a management command names the steps its own change owes (chainApply) — so
+// the order, the check-first rule, the clearing and the sentence a step left
+// owed are one code path and not two that can come to disagree.
 //
 // r is the run the caller opened, with the workdirs lock already held: the lock
 // is the caller's, because what a run reads before the lock is the caller's own
@@ -363,7 +368,7 @@ func applyRunRecord(cmd *cobra.Command, r *initRun, lc *localcfg.Config, path st
 			kept = append(kept, n)
 			continue
 		}
-		if applyAnswered(states[n]) {
+		if o.answered(states[n]) {
 			ran = append(ran, n)
 			continue
 		}
@@ -401,6 +406,11 @@ func applyRunRecord(cmd *cobra.Command, r *initRun, lc *localcfg.Config, path st
 		fmt.Fprintln(cmd.OutOrStdout(), string(applyDocJSON(lc, after, wrote, current, ran)))
 	case len(kept) > 0:
 		applyKeptLine(cmd.OutOrStdout(), kept)
+	case o.chain:
+		// A chain says nothing of its own when its steps answered: the command
+		// that called has already said what it wrote, and the steps' own lines
+		// are the run's account (spec rule 4: no internal word on the answer of
+		// a command whose change is live).
 	default:
 		fmt.Fprintf(cmd.OutOrStdout(), "applied %s\n", strings.Join(ran, ", "))
 	}
@@ -515,6 +525,52 @@ func applyAnswered(st initflow.StageResult) bool {
 		return true
 	case initflow.Skipped:
 		return !st.Undone
+	}
+	return false
+}
+
+// answered is the rule of the run at hand: the record reader's or the chain's.
+func (o applyOptions) answered(st initflow.StageResult) bool {
+	if o.chain {
+		return chainAnswered(st)
+	}
+	return applyAnswered(st)
+}
+
+// chainAnswered reports whether a stage's own answer means the step a
+// management command's own chain ran it for is done (AP6).
+//
+// It is applyAnswered's rule with one difference, and the difference is what
+// the two doors are. `fugaro apply` settles a record a command wrote earlier —
+// possibly in another terminal, possibly for another installation, possibly
+// for a change this run never saw — so it clears a step only where the stage
+// really did the work (D1575: the record is a hint, and a step that cleared
+// with nothing published would be a change nothing remembers is not live). A
+// chain is the command that made the change answering for it here and now: it
+// is the same process, the same installation and the same config file, and
+// spec rule 1 asks it to finish with the change live and nothing pending.
+//
+// A stage that skipped without doing its work is therefore an answer to a
+// chain, and it is the answer the after-write hook already gives the same
+// stage in the same state (write_publish.go: a run that failed or left
+// something for the person is "saved and not live yet", and a skip is
+// neither). The skips in question are the ones that say the thing the step
+// would publish does not exist here at all — a project whose config names no
+// database, so there is no published node to read, and a database the
+// ownership pair does not prove is ours, so there is nothing to migrate here —
+// and a step left owed for them is a command that can never finish on such a
+// project, with `fugaro apply` sent to a wall it cannot pass either.
+//
+// What it does not answer is a stage that stopped short with work to do: those
+// leave the run on an error or on a line for the person (a failed plan, a node
+// held where it is, a first publish only the owner's terminal may confirm), and
+// this rule reads them exactly as applyAnswered does. The redeploy is kept owed
+// before either rule is asked, because a checkout this machine does not have is
+// not an answer (D1574, applyRunRecord).
+func chainAnswered(st initflow.StageResult) bool {
+	switch st.State {
+	case initflow.Changed, initflow.Done, initflow.Skipped:
+		return true
 	}
 	return false
 }

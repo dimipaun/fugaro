@@ -164,7 +164,7 @@ func chainApply(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config, se
 	if err != nil {
 		return err
 	}
-	return applyRunRecord(cmd, r, lc, sel.Path, pending, recorded, names, applyOptions{})
+	return applyRunRecord(cmd, r, lc, sel.Path, pending, recorded, names, applyOptions{chain: true})
 }
 
 // chainSavedLine is what a command says when --no-apply left the steps owed
