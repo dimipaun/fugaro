@@ -1023,12 +1023,12 @@ neither touches a file R3 or R11 holds at level 3 (`plugin/**`, `internal/cli/ru
 write at 3 or 4 — and the one file in the list another work already holds,
 `internal/runner/runner.go`, is FC2's at 1, FC3's at 2 and FC4's at 3, so R9's step arm is its
 **fourth writer and the last**, which Part II §P3 states where it levels the union (the task
-document's JSON Schema is R16's, with the launcher's half, because it is `fugaro
-run` that writes a task document); and R16's list holds one file another level already holds —
-`docs/recipes.md`, which R1 took at 1 and **R10 takes at 5**. R16 sits at 5 beside R10, so **the two
-would write one file at one level, which the plan's own rule refuses**. That is why the file is R9's
-instead: **`docs/recipes.md` is in R9's list** (level 4, between R1's and R10's) and R16's does not
-name it. The plan's rules are the plan's own and it is amended where they are stated rather than
+document's JSON Schema is R16's, with the launcher's half, because it is `fugaro run` that writes a
+task document); and R16's list would otherwise hold one file another level already
+holds — `docs/recipes.md`, which R1 took at 1 and **R10 takes at 5**. R16 sits at 5 beside R10, so
+**the two would write one file at one level, which the plan's own rule refuses**. That is why the file
+is R9's instead: **`docs/recipes.md` is in R9's list** (level 4, between R1's and R10's) and R16's
+does not name it. The plan's rules are the plan's own and it is amended where they are stated rather than
 broken in silence: the twelve-file bound is why R14 and R15 are two tasks (and why R9's list stays at
 eleven plus its own tests rather than taking the schema too), and the shared-file rule is why the
 recipe's sentence is R9's.
