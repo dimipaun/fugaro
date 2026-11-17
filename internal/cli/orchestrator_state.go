@@ -27,13 +27,14 @@ import (
 // format, written beside the document it carries so that a reader tells an
 // older file from a current one rather than reading a shape that moved.
 //
-// It moved to 2 with the brief's own content (S5): the generated brief now
-// carries the ready-by range of every node beside the state node, so the number
-// answers which release's generator wrote a file. It moves with the writer's
-// constant (internal/orchestrator.BriefCacheVersion), because the two are one
-// contract: a reader that moved alone would refuse every cache a daemon of the
-// release behind still writes.
-const orchestratorBriefCacheVersion = 2
+// It stays at 1 while the brief's text changes (S5), and it moves with the
+// writer's constant (internal/orchestrator.BriefCacheVersion) when the file's
+// shape does, because the two are one contract: a bump here alone, or one for a
+// text whose document did not move, refuses every cache the release behind wrote.
+// The daemon an update left running keeps executing the old binary and keeps
+// writing the old number, and a bump would leave deleting the file by hand as
+// the only way out of it.
+const orchestratorBriefCacheVersion = 1
 
 // orchestratorStateOptions are `fugaro orchestrator state`'s flags.
 type orchestratorStateOptions struct {

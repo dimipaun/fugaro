@@ -471,7 +471,11 @@ func TestStateBriefOfflineReadsOnlyTheCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	doc, err := json.Marshal(map[string]any{
-		"schema_version": orchestrator.BriefCacheVersion,
+		// The version is spelled rather than taken from BriefCacheVersion: it is
+		// the file's format and not the brief's text, so the cache a release
+		// behind wrote is still one this print reads (the review's finding on
+		// the S5 bump).
+		"schema_version": 1,
 		"brief":          "the daemon's brief",
 		"written_at":     orchestratorTestNow.Add(-5 * time.Minute).Format(time.RFC3339),
 	})
