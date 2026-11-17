@@ -338,6 +338,15 @@ variable "catalog_check" {
         title      = string
         expression = string
       })
+      # The repository's provider credential (internal/infra's
+      # CatalogCheckRepository.GitSecretID), which the project's build identity
+      # holds one secretAccessor on: a build of one of this repository's
+      # entries runs as the identity now (B6, D2301) and reads that container
+      # through AvailableSecrets, so the reach the per-repository build account
+      # held (modules/repo/build.tf's own build grant) has to be the
+      # identity's. Optional, and absent for a repository whose credential this
+      # installation cannot name, where no build of its entries is submitted.
+      git_secret_id = optional(string)
     }))
   })
   default = null

@@ -99,11 +99,25 @@ type CatalogCheckSpec struct {
 }
 
 // CatalogCheckRepository is one repository's records grant: the storage slug
-// the job's build records live under, and the IAM condition scoping the grant
-// to that slug's catalog area.
+// the job's build records live under, the IAM condition scoping the grant to
+// that slug's catalog area, and the provider credential a build of one of its
+// entries clones with.
 type CatalogCheckRepository struct {
 	Slug             string    `json:"slug"`
 	RecordsCondition Condition `json:"records_condition"`
+	// GitSecretID is the repository's provider credential — the secret a build
+	// of one of its entries resolves through AvailableSecrets, and the same
+	// value CatalogCheckRepoSpec carries for the job's own submissions
+	// (catalogCheckRepo resolves it through the one predicate the repository's
+	// jobs resolve it through). It is here because the build runs as the
+	// PROJECT's build identity (B6, D2301) and not as the repository's own
+	// build account: the identity holds one secretAccessor per repository whose
+	// entries this project builds (modules/installation/build_identity.tf),
+	// which is the reach modules/repo/build.tf's own build grant gave that
+	// account. Empty for a repository whose provider credential this
+	// installation cannot name, where no build of its entries is submitted at
+	// all (catalogCheckRepo's own refusals).
+	GitSecretID string `json:"git_secret_id,omitempty"`
 }
 
 // CatalogCheckJobSpec is the document CatalogCheckSpecEnv carries: the whole
@@ -282,7 +296,8 @@ func CatalogCheck(lc *localcfg.Config, bucket string, paused bool) (*CatalogChec
 	}
 	for _, r := range repos {
 		out.Repositories = append(out.Repositories, CatalogCheckRepository{
-			Slug: r.Slug,
+			Slug:        r.Slug,
+			GitSecretID: r.GitSecretID,
 			RecordsCondition: Condition{
 				Title:      gcp.CatalogRecordsConditionTitle(r.Slug),
 				Expression: gcp.CatalogRecordsCondition(bucket, r.Slug),

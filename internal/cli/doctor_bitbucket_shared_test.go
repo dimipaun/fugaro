@@ -95,13 +95,18 @@ func TestDoctorWarnsABitbucketOwnCopyOnASharedProfile(t *testing.T) {
 }
 
 // TestDoctorIsQuietWhereNoSharedJobServesBitbucket: the launcher's own
-// provider predicate is the first gate, and internal/infra's list is github
-// alone today, so a Bitbucket repository is kept on its per-repository job
-// whatever its profile says — the job that mounts the copy. Every other fact
-// here is the warning test's, so the only thing keeping doctor quiet is that
-// no shared job serves Bitbucket: without this gate the check would warn about
-// a state no installation can be in.
+// provider predicate is the first gate — the check reads it, as the launcher
+// does — so a Bitbucket repository whose provider no shared job serves is kept
+// on its per-repository job whatever its profile says, which is the job that
+// mounts the copy. Every other fact here is the warning test's, so the only
+// thing keeping doctor quiet is that no shared job serves Bitbucket.
+//
+// Bitbucket is withheld from that list for the length of this test: the tree
+// admitted github alone when this was written, and I1 admitted Bitbucket too,
+// so the state the gate is reached in is now the one an installation whose
+// list is narrower than the tree's is in (withholdSharedJobProvider).
 func TestDoctorIsQuietWhereNoSharedJobServesBitbucket(t *testing.T) {
+	withholdSharedJobProvider(t, "bitbucket")
 	r, _ := doctorPolicyRig(t, bitbucketOwnTokenSharedPolicy(), bitbucketOwnTokenSharedConfig)
 	seedOwnBitbucketToken(t, r, mustSlug("bitbucket", "workspace-a/repo-a"))
 
