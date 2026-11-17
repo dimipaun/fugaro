@@ -56,8 +56,17 @@ const (
 	// that names a build context: catalogContextRoot, the directory the derived
 	// build's own source step clones into, which a context entry's build step
 	// already builds from. A build context is a directory docker tars, so the
-	// image below is unpacked there for one (catalogCloneMaterialize) and the
-	// entry that names no context is spared it.
+	// checkout is exported there by the build that made it (catalogCloneStepScript)
+	// and the entry that names no context is spared it.
+	//
+	// Exported and not unpacked out of the image below: the image's root is the
+	// checkout, but a container made from it has a rootfs of its own — the
+	// daemon's /.dockerenv, /etc/hosts, /etc/hostname, /etc/resolv.conf, /dev,
+	// /proc and /sys — so a `docker create` and a `docker cp` of that container
+	// would write files no repository has into the context, and a `COPY .` of
+	// the entry's Dockerfile would bake them into the image as untracked files
+	// an agent's `git add -A` then commits. The export writes the tree and
+	// nothing else.
 	catalogCloneDest = catalogContextRoot
 	// catalogCloneImage is the name the checkout reaches the entry's build
 	// under: the step tags what its build exports with it, and an entry's
@@ -100,8 +109,8 @@ const (
 // The export is the checkout and nothing else: the clone writes under /out, the
 // stage the credential ran in leaves this build no other way than through the
 // scratch stage below, and what that stage carries out is the image the step
-// tags for the entry's build to copy — or, for an entry that names a build
-// context, the directory the step unpacks out of it.
+// tags for the entry's build to copy — and, for an entry that names a build
+// context, the same tree exported as the directory docker is handed.
 // The frontend is pinned as every Dockerfile Fugaro writes pins it
 // (images/derived/Dockerfile.tmpl and the four beside it), so the clone is
 // built by the same frontend the entries are.
@@ -376,6 +385,14 @@ func (s CatalogBuildSpec) cloneCommit() string {
 // the guard refusing included — an exit trap, the shape the template's own build
 // step uses for the same file. The step is the last that mounts the volume it
 // lives in, and the entry's build step no longer mounts it at all.
+//
+// The generated Dockerfile is built twice, and the two builds differ in their
+// last flag alone: once tagged catalogCloneImage, which is the image the entry's
+// Dockerfile copies the checkout out of, and — for an entry that names a build
+// context — once more with the `type=local` export catalogCloneDest is written
+// by. The second build is the first one's own cache — the same Dockerfile at the
+// same arguments — so the clone itself runs once, and what the export writes is
+// the tree the scratch stage carries out and nothing else.
 func catalogCloneStepScript(script string, context bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "set -eu\nexport LC_ALL=C\ninstall -d -m 0700 %s\n", catalogCloneWork)
@@ -384,7 +401,21 @@ func catalogCloneStepScript(script string, context bool) string {
 	fmt.Fprintf(&b, "cat > %s <<'FUGARO_SCRIPT'\n%sFUGARO_SCRIPT\n", catalogCloneScript, script)
 	b.WriteString(`base=$(docker image inspect --format '{{index .RepoDigests 0}}' "$FUGARO_BASE") \
   || { echo "the base image $FUGARO_BASE is not on this worker" >&2; exit 1; }
-docker build --progress plain \
+docker build ` + catalogCloneBuildFlags + `  --tag ` + catalogCloneImage + ` \
+  ` + catalogCloneWork + "\n")
+	if context {
+		b.WriteString("docker build " + catalogCloneBuildFlags +
+			`  --output "type=local,dest=` + catalogCloneDest + `" \
+  ` + catalogCloneWork + "\n")
+		b.WriteString(catalogCloneGuard)
+	}
+	return b.String()
+}
+
+// catalogCloneBuildFlags is the flag list both builds of the generated
+// Dockerfile take, ending in the continuation that joins the line after it: the
+// same build twice, with the output the only difference between them.
+const catalogCloneBuildFlags = `--progress plain \
   --file ` + catalogCloneDockerfile + ` \
   --build-arg "FUGARO_BASE=$base" \
   --build-arg "REPO_URL=$REPO_URL" \
@@ -392,30 +423,6 @@ docker build --progress plain \
   --build-arg "REPO_HOST=$REPO_HOST" \
   --build-arg "GITHUB_API=$GITHUB_API" \
   --secret "id=git-credentials,src=` + catalogCloneCredential + `" \
-  --tag ` + catalogCloneImage + ` \
-  ` + catalogCloneWork + "\n")
-	if context {
-		b.WriteString(catalogCloneMaterialize)
-		b.WriteString(catalogCloneGuard)
-	}
-	return b.String()
-}
-
-// catalogCloneMaterialize is the checkout as a directory, which an entry that
-// names a build context needs and one that names none is spared: the build step
-// hands docker a directory as its context and docker tars what it finds there.
-// The image is the only place the checkout exists, and a container made from it
-// is the one shape the docker CLI unpacks an image's filesystem with — docker cp
-// keeps the ownership the clone set, which is what the entry's own COPY of the
-// same tree would have read.
-//
-// The command given to create is never run — the container is never started, and
-// nothing of this image is executable anyway — but docker refuses to create a
-// container from an image whose final stage, FROM scratch, declares none.
-const catalogCloneMaterialize = `install -d -m 0755 ` + catalogCloneDest + `
-cid=$(docker create ` + catalogCloneImage + ` true)
-docker cp -a "$cid:/." ` + catalogCloneDest + `
-docker rm "$cid"
 `
 
 // catalogCloneGuard is the check the clone step ends with for an entry that

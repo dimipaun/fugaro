@@ -246,7 +246,7 @@ func TestEntryBuildCarriesNoSecretAndNoIdentity(t *testing.T) {
 				t.Fatalf("the entry's build is handed the checkout by a flag the worker's docker does not take: %q", script)
 			}
 			// What the entry's build builds from: the checkout the clone step
-			// unpacked for an entry that names a context, and the copied
+			// exported for an entry that names a context, and the copied
 			// definition's own directory for one that names none — which copies
 			// the checkout out of the image instead. Either way the directory is
 			// one this request made.

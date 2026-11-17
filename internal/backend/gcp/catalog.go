@@ -113,7 +113,7 @@ func catalogScanValueName(substitution string, i int) string {
 
 // catalogContextRoot is where the clone step puts the entry's repository for an
 // entry that names a build context: the path the derived build's own source
-// step clones into, and the path a catalog build unpacks its checkout into. It
+// step clones into, and the path a catalog build exports its checkout into. It
 // is not /workspace/context, which holds the copied Dockerfile the build reads
 // and the pin step verifies (D1404).
 const catalogContextRoot = "/workspace/src"
