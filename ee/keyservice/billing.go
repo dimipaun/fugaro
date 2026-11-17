@@ -225,6 +225,37 @@ func (s *Service) mirror(ctx context.Context, workspace WireWorkspace, sub Subsc
 		PriceID:  s.cfg.PaddlePriceID,
 		StartsAt: sub.At,
 	}
+	// The origin record is what ties a subscription to the two records behind the
+	// mirror's other fields: the licence the purchase granted, whose start is the
+	// payment's instant, and the transaction the checkout opened, which is where
+	// the price was sold. Both are read for **either** state, because a running
+	// subscription and an ended one state them the same way — and neither is a
+	// field of the store's own record: `sub.At` is the instant of the last event
+	// that moved the subscription (a seat change, a renewal, a cancellation,
+	// P4.2) and not the instant it began, and the store holds no price at all. A
+	// subscription this service has a record of and no purchase behind it is one
+	// the mirror still has to draw, so a missing record leaves the field at what
+	// the subscription itself states.
+	origin, held, err := s.origin(ctx, sub.ID)
+	if err != nil {
+		return WireSubscription{}, err
+	}
+	if held {
+		grant, found, err := getRecord[WireEntitlement](ctx, s.docs, entitlementsCollection, origin.EntitlementID)
+		if err != nil {
+			return WireSubscription{}, err
+		}
+		if found && !grant.StartsAt.IsZero() {
+			answer.StartsAt = grant.StartsAt
+		}
+		bought, found, err := getRecord[checkoutTransaction](ctx, s.docs, checkoutTransactionsCollection, origin.TransactionID)
+		if err != nil {
+			return WireSubscription{}, err
+		}
+		if found && strings.TrimSpace(bought.PriceID) != "" {
+			answer.PriceID = bought.PriceID
+		}
+	}
 	if runningSubscription(sub, now) {
 		renews := sub.Expires
 		answer.RenewsAt = &renews
@@ -242,33 +273,6 @@ func (s *Service) mirror(ctx context.Context, workspace WireWorkspace, sub Subsc
 	if sub.Cancelled {
 		cancelled := sub.At
 		answer.CancelledAt = &cancelled
-	}
-	// The origin record is what ties a subscription to the two records behind the
-	// mirror's other fields: the licence the purchase granted, whose start is the
-	// payment's instant, and the transaction the checkout opened, which is where
-	// the price was sold. A subscription this service has a record of and no
-	// purchase behind it is one the mirror still has to draw, so a missing record
-	// leaves the field at what the subscription itself states.
-	origin, held, err := s.origin(ctx, sub.ID)
-	if err != nil {
-		return WireSubscription{}, err
-	}
-	if !held {
-		return answer, nil
-	}
-	grant, found, err := getRecord[WireEntitlement](ctx, s.docs, entitlementsCollection, origin.EntitlementID)
-	if err != nil {
-		return WireSubscription{}, err
-	}
-	if found && !grant.StartsAt.IsZero() {
-		answer.StartsAt = grant.StartsAt
-	}
-	bought, found, err := getRecord[checkoutTransaction](ctx, s.docs, checkoutTransactionsCollection, origin.TransactionID)
-	if err != nil {
-		return WireSubscription{}, err
-	}
-	if found && strings.TrimSpace(bought.PriceID) != "" {
-		answer.PriceID = bought.PriceID
 	}
 	return answer, nil
 }

@@ -36,6 +36,13 @@ import (
 // the field were the whole or an increment.
 const billingSeats = 3
 
+// soldPrice is the price these cases' subscriptions were sold at, and it is
+// deliberately not the price the deployment sells at now (checkoutPrice, which
+// newCheckoutFixture configures). The mirror states the sale and not the
+// catalogue — the schema keeps the field for exactly that — and a case that
+// seeded one price in both places could not tell which of the two it read.
+const soldPrice = "pri_fixture_team_annual"
+
 // The three routes of this area, as the screen builds them.
 func subscriptionPath(workspaceID string) string {
 	return "/api/workspaces/" + workspaceID + "/subscription"
@@ -72,6 +79,11 @@ func (f *bindingFixture) paidWorkspace(t *testing.T, organisationID, id, project
 	workspace := f.boundWorkspace(id, organisationID, "Dana's portal", project)
 	at := f.now.Add(-24 * time.Hour)
 	transaction := "txn-" + subscriptionID
+	// The licence's start is the payment's instant (D2197) and the subscription's
+	// own instant is the last event's (P4.2), which is the same instant only for
+	// as long as nothing has happened since: they are seeded a day apart, which is
+	// the state a renewal or a seat change leaves, so a mirror that read `starts_at`
+	// off the store's record would answer the wrong day.
 	licence, err := f.svc.grantEntitlement(context.Background(), entitlementGrant{
 		At:             at,
 		OrganisationID: organisationID,
@@ -90,7 +102,7 @@ func (f *bindingFixture) paidWorkspace(t *testing.T, organisationID, id, project
 		ID:              transaction,
 		OrganisationID:  organisationID,
 		WorkspaceID:     workspace.ID,
-		PriceID:         checkoutPrice,
+		PriceID:         soldPrice,
 		Seats:           seats,
 		UID:             owner.UID,
 		Email:           owner.Email,
@@ -115,7 +127,7 @@ func (f *bindingFixture) paidWorkspace(t *testing.T, organisationID, id, project
 		Seats:        seats,
 		TermDays:     30,
 		Email:        owner.Email,
-		At:           at,
+		At:           at.Add(24 * time.Hour),
 		Expires:      expires,
 		Cancelled:    cancelled,
 	}); err != nil {
@@ -173,11 +185,11 @@ func TestBuySeatsUpdatesTheQuantity(t *testing.T) {
 	if held.State != "active" || held.Seats != billingSeats {
 		t.Errorf("the mirror says %q with %d seats, want %q with %d", held.State, held.Seats, "active", billingSeats)
 	}
-	if held.PriceID != checkoutPrice {
-		t.Errorf("the mirror's price is %q, want %q", held.PriceID, checkoutPrice)
+	if held.PriceID != soldPrice {
+		t.Errorf("the mirror's price is %q, want the price the sale was made at %q and not the deployment's %q", held.PriceID, soldPrice, checkoutPrice)
 	}
 	if !held.StartsAt.Equal(f.now.Add(-24 * time.Hour)) {
-		t.Errorf("the mirror starts at %s, want the licence's own instant %s", held.StartsAt, f.now.Add(-24*time.Hour))
+		t.Errorf("the mirror starts at %s, want the licence's own instant %s and not the store's %s", held.StartsAt, f.now.Add(-24*time.Hour), f.now)
 	}
 	if held.RenewsAt == nil || !held.RenewsAt.Equal(f.now.Add(20*24*time.Hour)) {
 		t.Errorf("the mirror renews at %v, want the paid term's end", held.RenewsAt)
@@ -233,5 +245,193 @@ func TestBuySeatsUpdatesTheQuantity(t *testing.T) {
 	}
 	if !reflect.DeepEqual(f.paddle.seats, []int{7, 7}) {
 		t.Errorf("the merchant was asked for the quantities %v after two refusals, want [7 7]", f.paddle.seats)
+	}
+
+	// The other state the records tell apart (billing.go): a cancellation was
+	// recorded, so nothing renews this one and the mirror says so — the term the
+	// customer paid for still runs to the end of it, and the instant of the
+	// cancellation is the instant the store's record was last moved. The state is
+	// read off the records and not stored: P4.2 keeps no Paddle status, so the
+	// only two words the mirror may answer are the two the records decide.
+	gone := f.paidWorkspace(t, org.ID, "ws-2", secondProject, "sub-gone", 2, f.now.Add(6*24*time.Hour), true)
+	read = f.apiAsCaller(http.MethodGet, subscriptionPath(gone.ID), "")
+	if read.Code != http.StatusOK {
+		t.Fatalf("reading the cancelled subscription answered %d: %s", read.Code, read.Body)
+	}
+	ended := readAnswer[WireSubscription](f.fixture, read)
+	if ended.State != subscriptionStateCanceled {
+		t.Errorf("a cancelled subscription reads as %q, want %q", ended.State, subscriptionStateCanceled)
+	}
+	if ended.RenewsAt != nil {
+		t.Errorf("a cancelled subscription renews at %v, want nothing", ended.RenewsAt)
+	}
+	if ended.EndsAt == nil || !ended.EndsAt.Equal(f.now.Add(6*24*time.Hour)) {
+		t.Errorf("a cancelled subscription ends at %v, want the end of the term it paid for", ended.EndsAt)
+	}
+	if ended.CancelledAt == nil || !ended.CancelledAt.Equal(f.now) {
+		t.Errorf("a cancelled subscription was cancelled at %v, want the instant its record was last moved (%s)", ended.CancelledAt, f.now)
+	}
+	if ended.Seats != 2 {
+		t.Errorf("a cancelled subscription holds %d seats, want the 2 it was sold", ended.Seats)
+	}
+}
+
+// TestCustomerPortalLinkIsPerOrg: the customer-portal session is minted for the
+// organisation and never for anything a request says (P4.3, P4.1's record).
+// Paddle's customer is what an organisation's invoices, payment methods and
+// subscription hang on, so the one value a request must not be able to name is a
+// customer — and this route names none of the three: it takes a workspace, reads
+// the organisation that owns it and reads the customer off that organisation's
+// own purchases. Every workspace of one organisation therefore answers the same
+// customer, and another organisation answers its own.
+func TestCustomerPortalLinkIsPerOrg(t *testing.T) {
+	f := newCheckoutFixture(t)
+	f.paddle.portalURL = "https://sandbox-portal.paddle.example/session/1"
+	org, first := f.payingWorkspace(t, 1)
+	second := f.paidWorkspace(t, org.ID, "ws-2", secondProject, "sub-dana-2", 1, f.now.Add(20*24*time.Hour), false)
+
+	for _, workspace := range []WireWorkspace{first, second} {
+		rec := f.apiAsCaller(http.MethodGet, portalPath(workspace.ID), "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("asking for the customer portal of %s answered %d: %s", workspace.ID, rec.Code, rec.Body)
+		}
+		if got := readAnswer[WireCustomerPortal](f.fixture, rec).URL; got != f.paddle.portalURL {
+			t.Errorf("the portal of %s is %q, want the session the merchant answered (%q)", workspace.ID, got, f.paddle.portalURL)
+		}
+		if f.paddle.customerID != customerOf(org.ID) {
+			t.Errorf("the session for %s was minted for the customer %q, want the organisation's own %q", workspace.ID, f.paddle.customerID, customerOf(org.ID))
+		}
+	}
+
+	// Another organisation's workspace is another customer, and no request can
+	// reach across: the route has no field for an organisation, a subscription or
+	// a customer, and the one it mints for is read from the caller's membership.
+	erin := f.seededOrganisation("org-erin", "Erin Ltd", orgTypeCustomer, erinUID, erinEmail, roleOwner)
+	theirs := f.paidWorkspace(t, erin.ID, "ws-erin", "erin-portal-4821", "sub-erin", 1, f.now.Add(20*24*time.Hour), false)
+	// A purchase recorded before the merchant named a customer carries none
+	// (checkout.go's record), and it is the newer one here: the customer a
+	// session is minted for is the newest purchase that has one, because a
+	// session for the empty string would be a call about nobody.
+	f.seed(checkoutTransactionsCollection, "txn-erin-unstamped", checkoutTransaction{
+		ID:              "txn-erin-unstamped",
+		OrganisationID:  erin.ID,
+		WorkspaceID:     theirs.ID,
+		PriceID:         checkoutPrice,
+		Seats:           1,
+		UID:             erinUID,
+		Email:           erinEmail,
+		TermsVersion:    checkoutTerms,
+		TermsAcceptedAt: f.now,
+		CreatedAt:       f.now,
+	})
+	f.actsAs(erinUID, erinEmail, signInGoogle)
+	rec := f.apiAsCaller(http.MethodGet, portalPath(theirs.ID), "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("asking for Erin's own customer portal answered %d: %s", rec.Code, rec.Body)
+	}
+	if f.paddle.customerID != customerOf(erin.ID) {
+		t.Errorf("Erin's session was minted for the customer %q, want her organisation's own %q", f.paddle.customerID, customerOf(erin.ID))
+	}
+}
+
+// TestOnlyOwnersAndAdminsBuy: acting on a subscription is an owner's or an
+// admin's (D2186), and reading it is a member's — the screen is a member's to
+// open, and the number on it is not. Both acts go the same way: Paddle's own
+// customer portal is where a payment method is changed and a subscription
+// cancelled, so a session minted for a member is a member cancelling the
+// organisation's subscription.
+func TestOnlyOwnersAndAdminsBuy(t *testing.T) {
+	f := newCheckoutFixture(t)
+	org, workspace := f.payingWorkspace(t, 1)
+	f.setRole(org.ID, danaUID, roleMember)
+
+	// A member reads the facts the billing screen is drawn from.
+	read := f.apiAsCaller(http.MethodGet, subscriptionPath(workspace.ID), "")
+	if read.Code != http.StatusOK {
+		t.Fatalf("a member reading the subscription answered %d: %s", read.Code, read.Body)
+	}
+	if seats := readAnswer[WireSubscription](f.fixture, read).Seats; seats != 1 {
+		t.Errorf("a member reading the subscription saw %d seats, want the one it holds", seats)
+	}
+
+	for _, call := range []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{name: "buying seats", method: http.MethodPost, path: seatsPath(workspace.ID), body: `{"seats":4}`},
+		{name: "opening the customer portal", method: http.MethodGet, path: portalPath(workspace.ID)},
+	} {
+		rec := f.apiAsCaller(call.method, call.path, call.body)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("a member's %s answered %d: %s", call.name, rec.Code, rec.Body)
+		}
+		if code := refusal(f.fixture, rec); code != "not_permitted" {
+			t.Errorf("a member's %s was refused with %q, want %q", call.name, code, "not_permitted")
+		}
+	}
+	if len(f.paddle.seats) != 0 || f.paddle.customerID != "" {
+		t.Errorf("the merchant was reached for a member: %v seats, customer %q", f.paddle.seats, f.paddle.customerID)
+	}
+
+	// An admin does both, which is the other half of the line.
+	f.setRole(org.ID, danaUID, roleAdmin)
+	if rec := f.apiAsCaller(http.MethodPost, seatsPath(workspace.ID), `{"seats":4}`); rec.Code != http.StatusOK {
+		t.Fatalf("an admin buying seats answered %d: %s", rec.Code, rec.Body)
+	}
+	if rec := f.apiAsCaller(http.MethodGet, portalPath(workspace.ID), ""); rec.Code != http.StatusOK {
+		t.Fatalf("an admin opening the customer portal answered %d: %s", rec.Code, rec.Body)
+	}
+	if !reflect.DeepEqual(f.paddle.seats, []int{4}) {
+		t.Errorf("the merchant was asked for the quantities %v, want [4]", f.paddle.seats)
+	}
+	if f.paddle.customerID != customerOf(org.ID) {
+		t.Errorf("the admin's session was minted for the customer %q, want the organisation's own %q", f.paddle.customerID, customerOf(org.ID))
+	}
+}
+
+// TestAnotherOrgsSubscriptionIsRefused: every route of this area is a workspace
+// of the caller's own or nothing. Another organisation's workspace is answered
+// as one that is not there — the same 404 for "not there" and "not yours", which
+// is what the organisation reads answer and for the same reason: which
+// workspaces exist is a list of the portal's customers — and the merchant is
+// never reached for one, so a refusal is not a call that could have changed
+// somebody else's subscription.
+func TestAnotherOrgsSubscriptionIsRefused(t *testing.T) {
+	f := newCheckoutFixture(t)
+	f.payingWorkspace(t, 1)
+	erin := f.seededOrganisation("org-erin", "Erin Ltd", orgTypeCustomer, erinUID, erinEmail, roleOwner)
+	theirs := f.paidWorkspace(t, erin.ID, "ws-erin", "erin-portal-4821", "sub-erin", 1, f.now.Add(20*24*time.Hour), false)
+
+	for _, tc := range []struct {
+		name      string
+		workspace string
+	}{
+		{name: "another organisation's workspace", workspace: theirs.ID},
+		{name: "a workspace that is not there", workspace: "ws-nope"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, call := range []struct {
+				method string
+				path   string
+				body   string
+			}{
+				{method: http.MethodGet, path: subscriptionPath(tc.workspace)},
+				{method: http.MethodPost, path: seatsPath(tc.workspace), body: `{"seats":9}`},
+				{method: http.MethodGet, path: portalPath(tc.workspace)},
+			} {
+				rec := f.apiAsCaller(call.method, call.path, call.body)
+				if rec.Code != http.StatusNotFound {
+					t.Fatalf("%s %s answered %d: %s", call.method, call.path, rec.Code, rec.Body)
+				}
+				if code := refusal(f.fixture, rec); code != "not_found" {
+					t.Errorf("%s %s was refused with %q, want %q", call.method, call.path, code, "not_found")
+				}
+			}
+		})
+	}
+	if len(f.paddle.seats) != 0 || f.paddle.customerID != "" {
+		t.Errorf("the merchant was reached for a workspace that is not the caller's: %v seats, customer %q", f.paddle.seats, f.paddle.customerID)
 	}
 }
