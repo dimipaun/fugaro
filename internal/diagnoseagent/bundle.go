@@ -174,9 +174,10 @@ func ReadBundle(r io.Reader) (Bundle, error) {
 
 // Validate checks the manifest's own rules: a version this package writes, at
 // least one part, a name that is a name, a size that is a size, and a SHA-256
-// for every part. It is called on both sides — the CLI before it uploads, the
-// job after it downloads — so a bundle one end would refuse is never written
-// by the other.
+// for every part. It is called on both sides — the CLI when it writes the
+// manifest, the job when it reads one — so a bundle one end would refuse is
+// never written by the other, and a manifest that fails here is a refusal in
+// the command that could still say why rather than in a job's log.
 //
 // The names go through task.InputNameProblem, the ONE rule for a name that
 // becomes a key under inputs/ (the --attach path). It is the same rule here
@@ -199,6 +200,13 @@ func (b Bundle) Validate() error {
 	for _, p := range b.Parts {
 		if problem := task.InputNameProblem(p.Name); problem != "" {
 			bad("the bundle manifest names a part %q that %s", p.Name, problem)
+			continue
+		}
+		if p.Name == BundleManifestName {
+			// The manifest is the bundle's account of itself and not one of its
+			// parts: a reader downloading a part named after it would write
+			// over the list it is reading.
+			bad("the bundle manifest names itself (%s) as one of its parts", BundleManifestName)
 			continue
 		}
 		if seen[p.Name] {

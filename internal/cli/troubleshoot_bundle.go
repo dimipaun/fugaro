@@ -210,9 +210,10 @@ func troubleshootReadAnswer(ctx context.Context, s *runstore.Store) (troubleshoo
 }
 
 // troubleshootArtifact reads one file the record says the run delivered. The
-// record's own row for the name decides which object is read and what it has
-// to hash to, and a name the record does not carry is a refusal rather than an
-// attempt: the object may exist, and it would be something else entirely.
+// name is this command's own constant and never the record's — the row only
+// decides what the bytes have to hash to — and a record with no row for it is
+// a refusal rather than an attempt: the object may exist, and it would be
+// something else entirely.
 //
 // The row is held to the same rules `fugaro artifacts get` holds it to (a
 // digest of the right shape, a size that is a size) and a row that fails one
