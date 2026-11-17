@@ -19718,8 +19718,8 @@ Bitbucket matches, the key is display. Needs `bash`, `mktemp`, `python3`, `curl`
 PATH — **not** `gcloud`, and **not** a checkout: nothing here launches a run.
 
 **Run Check 590 before Check 591.** Its three writes name the records `bitbucket-token--ck590-repo`,
-`bitbucket-token--ck590-project` and `bitbucket-token--ck590-workspace`, which is exactly what Check 591's
-defaults are, so 591 follows 590 with no names to pass.
+`bitbucket-token--ck590-project` and `bitbucket-token--ck590-workspace`, and the first two are exactly what
+Check 591's defaults are, so 591 follows 590 with no record names to pass.
 
 **What you type** (plan first — `--dry-run` prints the plan and touches nothing):
 
@@ -19740,9 +19740,9 @@ Bitbucket project); `xtrace` (that the shell this ran in was not tracing — `ba
 so a traced run is refused rather than read); the six `U1-*` and `U2-*` rows above; `verifier-repo`,
 `verifier-project` and `verifier-workspace` (the add path's own document, per type); `U5-project`; and
 `restore`. **Exit 0** is every criterion measured and holding, **1** is a measured criterion that did not
-hold or a guard that stopped the check, **2** is the check not being able to measure (a missing tool, a file
-that is not 0600, a token that does not read the repository, an add path that refused), and **3** is a run
-that reached the end with at least one row reading UNVERIFIED. Only an all-PASS block is a PASS.
+hold, **2** is the check stopping before it could measure everything (a missing tool, a file that is not
+0600, a token that does not read the repository, an add path that refused), and **3** is a run that reached
+the end with at least one row reading UNVERIFIED. Only an all-PASS block is a PASS.
 
 **What it costs, and what it leaves.** Three `creds set` writes into the sandbox installation — three bundle
 keys, three local records and three identities in the credential state — a handful of read-only Bitbucket
@@ -19801,9 +19801,16 @@ check's: with the two tokens to hand, it asks Bitbucket directly and records tha
 reads the first repository and is **refused** (403 or 404) at the second, while the **project** token reads
 **both** — and `fugaro creds ls --json` is read to confirm the two records are the ones these sentences
 assume (each present, of its type, the repository token covering the first repository **alone** and not the
-second, the project token covering both). A repository token that reaches both repositories, or a project
-token that does not reach the second, **stops** the check before anything is launched: the swap would not be
-a choice, so the reading would be about a premise rather than about the selection.
+second, the project token covering both). **The `bundle` row is the one that stops the check before
+anything is launched**: a record that is missing, mistyped, does not admit the repository it is recorded
+for, or — the one this check exists to keep honest — whose coverage **also** admits the second repository
+(the narrowest token would then serve both and the swap would not happen), each of them a FAIL with the two
+`creds set` commands that fix it and the republish that carries a coverage to the node. The Bitbucket reads
+themselves do not stop it: a repository token that reaches **both** repositories is a PASS with its own
+sentence — the strong premise wants a token created for the first repository alone, and the reading is then
+the design's narrowest-first order over the **records** rather than a necessity at Bitbucket — and a project
+token that does not reach the second is a FAIL row that the block carries beside whatever the runs then
+show.
 
 **Prerequisites.** Installation `fugaro` with GCP project `fugaro-dev`, region `us-east5`, and the Bitbucket
 sandbox workspace `dimi_bmb` — hard-coded and overridable by `CHECK591_INSTALLATION`,
