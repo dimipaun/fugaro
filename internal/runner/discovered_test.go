@@ -146,25 +146,47 @@ func TestDiscoveredFileInCheckoutIgnored(t *testing.T) {
 
 // TestMalformedDiscoveredDropped: a file that is not the object the brief asks
 // for is dropped with one log line, and the run ends exactly as the same run
-// without it would — succeeded and ready, with no block on the record. The
-// shape is never improvised: an entry a reader could not place, a key the
-// brief never named, a second object after the first and a path that is not a
-// file at all are all the same answer (E2, D2709).
+// without it would — succeeded and ready, with no block on the record. Each
+// case also says which line it is dropped by, so the guard that dropped it is
+// the one the case is about rather than whichever guard happens to fail first:
+// the shape is never improvised — an entry a reader could not place, a key the
+// brief never named, a second object after the first, and a path that is a
+// directory or a link are all the same answer (E2, D2709; F41).
+//
+// Mutation (drop the regular-file check from readDiscovered): the directory
+// case's line becomes the decode's, not the one that says what the path is,
+// and its assertion fails. Mutation (open the path without O_NOFOLLOW): the
+// link case's block — a valid object of the right shape, at a path the agent
+// chose — lands on the record.
 func TestMalformedDiscoveredDropped(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		write func(t *testing.T, req agent.Request)
+		// want is the one log line the case leaves, as the reader writes it:
+		// the guard that dropped the file, rather than a decode that failed on
+		// what that guard had already refused.
+		want string
 	}{
-		{"not JSON", writeState("this is not JSON at all\n")},
-		{"an array where the object goes", writeState(`[{"plan_task":"E3","reason":"x"}]`)},
-		{"a key the brief never named", writeState(`{"blocks":[{"plan_task":"E3","reason":"x","why":"because"}]}`)},
-		{"a second object after the first", writeState(`{"blocks":[{"plan_task":"E3","reason":"x"}]}{"blocks":[]}`)},
+		{"not JSON", writeState("this is not JSON at all\n"), "is not the JSON object the brief asks for"},
+		{"an array where the object goes", writeState(`[{"plan_task":"E3","reason":"x"}]`), "is not the JSON object the brief asks for"},
+		{"a key the brief never named", writeState(`{"blocks":[{"plan_task":"E3","reason":"x","why":"because"}]}`), "is not the JSON object the brief asks for"},
+		{"a second object after the first", writeState(`{"blocks":[{"plan_task":"E3","reason":"x"}]}{"blocks":[]}`), "carries more than the one JSON object"},
 		{"a directory under that name", func(t *testing.T, req agent.Request) {
 			t.Helper()
 			if err := os.MkdirAll(filepath.Join(envValue(req.Env, "FUGARO_STATE_DIR"), discoveredName), 0o755); err != nil {
 				t.Fatal(err)
 			}
-		}},
+		}, "is not a regular file"},
+		{"a link to a valid block elsewhere", func(t *testing.T, req agent.Request) {
+			t.Helper()
+			target := filepath.Join(t.TempDir(), "elsewhere.json")
+			if err := os.WriteFile(target, []byte(`{"blocks":[{"plan_task":"E3","reason":"a file the link points at"}]}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, filepath.Join(envValue(req.Env, "FUGARO_STATE_DIR"), discoveredName)); err != nil {
+				t.Fatal(err)
+			}
+		}, "reading " + discoveredName + " failed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t, "", nil)
@@ -180,8 +202,17 @@ func TestMalformedDiscoveredDropped(t *testing.T) {
 			if rec.Discovered != nil {
 				t.Fatalf("the record carries a block read from a file no reader can use: %+v", rec.Discovered)
 			}
-			if n := strings.Count(logs.String(), discoveredName); n != 1 {
-				t.Fatalf("%d log lines name %s, want the one line that says it was dropped:\n%s", n, discoveredName, logs.String())
+			lines := 0
+			for _, line := range strings.Split(logs.String(), "\n") {
+				if strings.Contains(line, discoveredName) {
+					lines++
+				}
+			}
+			if lines != 1 {
+				t.Fatalf("%d log lines name %s, want the one line that says it was dropped:\n%s", lines, discoveredName, logs.String())
+			}
+			if !strings.Contains(logs.String(), tc.want) {
+				t.Fatalf("no log line says %q:\n%s", tc.want, logs.String())
 			}
 		})
 	}
