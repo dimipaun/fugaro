@@ -14,9 +14,11 @@ import (
 	"github.com/dimipaun/fugaro/internal/firestore"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // This file is the one exported surface the core offers the commands the owner
@@ -128,6 +130,31 @@ func (c *Cloud) NoBudgetCheck() bool { return c.env.noBudgetCheck }
 // RepoSlug is repo's slug, as run and ls take it.
 func (c *Cloud) RepoSlug(ctx context.Context, repo string) (string, error) {
 	return repoSlugOf(ctx, c.env.lc, repo)
+}
+
+// ReviewLevels is the three review levels the run a launch plans will run,
+// resolved the way the launch's own level gate resolves them
+// (launchReviewLevelsAsk asks its question of the same call): the launch's
+// rigor mode, the floor the project published for it, the task's own
+// review_levels block, the recipe, and the run's own request for the strongest
+// review. It is what a planner that has to know what the run runs reads — an
+// A/B challenger arm whose slot is a review level varies that level's model,
+// so the model it must not be is this answer's.
+//
+// It answers the resolution's own refusal and never a set of levels the run
+// may not use. warn takes the one line the resolution can have to show (a
+// mode: review recipe, which allows one review step and so drops the request
+// for the strongest review), which the launch's own gate prints; a caller with
+// no line of its own passes io.Discard, since the resolution and its refusal
+// are the same either way.
+//
+// A cloud over a runs bucket alone (CloudOverBucket) has no project config: it
+// reads no published policy and has no provider table, so it resolves with an
+// empty floor, which is the answer the gate itself gets when nothing is
+// published.
+func (c *Cloud) ReviewLevels(ctx context.Context, spec *task.Spec, cfg *config.Config, rcp *recipe.Recipe, warn io.Writer) (config.Levels, error) {
+	levels, _, _, err := launchReviewLevels(ctx, c.env, spec, cfg, rcp, warn)
+	return levels, err
 }
 
 // BudgetDB is the project's budget database, checked to be the database of the

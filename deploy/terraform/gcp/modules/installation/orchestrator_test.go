@@ -17,7 +17,10 @@
 // (its metadata permissions, rows 1 and 3 of the table in one custom role), the
 // runs bucket's conditional write and its unconditioned read, the token-minter
 // role on the budget signer, and the launch of the installation's jobs, which
-// is the root's own resource (roots/installation/main.tf) because the jobs are.
+// is the root's own resource (roots/installation/main.tf) because the jobs are,
+// and — P5.1e — the pairing key's cloud copy: one container per installation and
+// the accessor row that lets this account read it, which is section 6 rule 5's
+// own exception rather than a row of the launcher's set.
 package installation
 
 import (
@@ -42,6 +45,8 @@ const orchestratorMemberExpr = `"serviceAccount:${var.orchestrator.account_id}@$
 // removed from it is a row the account can no longer reach.
 var orchestratorResources = []struct{ typ, name string }{
 	{"google_service_account", "orchestrator"},
+	{"google_secret_manager_secret", "pairing_key"},
+	{"google_secret_manager_secret_iam_member", "orchestrator_pairing_key"},
 	{"google_project_iam_member", "orchestrator_launcher"},
 	{"google_storage_bucket_iam_member", "orchestrator_runs_launcher"},
 	{"google_storage_bucket_iam_member", "orchestrator_runs_reader"},
@@ -64,10 +69,12 @@ func tfBlock(src, typ, name string) string {
 }
 
 // TestOrchestratorModuleGrantsTheDesignsTable is the module's half of the
-// table: the account exists, and the four bindings beside it are the launcher's
-// role, the bucket's write under the launchers' own condition, the bucket's
-// read with no condition, and the token-minter role on the signer account —
-// each of them naming exactly what section 4.3 names and nothing else.
+// table: the account exists, and the bindings beside it are the pairing key's
+// container and its one reader (P5.1e — the exception section 6 rule 5 states,
+// because the MAC is symmetric), the launcher's role, the bucket's write under
+// the launchers' own condition, the bucket's read with no condition, and the
+// token-minter role on the signer account — each of them naming exactly what
+// section 4.3 names and nothing else.
 //
 // It fails on a resource added to the file (a grant with no row in the table),
 // on one removed, on a role or a bucket retargeted, on a write that lost the
@@ -105,14 +112,43 @@ func TestOrchestratorModuleGrantsTheDesignsTable(t *testing.T) {
 	// .orchestrator[0].member is computed, so a grant using it would reach the
 	// plan as an unknown member — which internal/infra/tf's cover reads as an
 	// ordinary account, the one kind the never-list's eleventh rule keeps this
-	// account out of. The four rows below each carry the expression in `need`
-	// for that reason, and the computed form in `absent`.
+	// account out of. Every row below carries the expression in `need` for that
+	// reason, and the computed form in `absent`.
 	for _, c := range []struct {
 		what   string
 		block  string
 		need   []string
 		absent []string
 	}{
+		{
+			what:  "the pairing key's cloud copy: one container per installation, and never a logical secret of the project's set",
+			block: tfBlock(src, "google_secret_manager_secret", "pairing_key"),
+			need: []string{
+				`secret_id = "fugaro-orch-pairing"`,
+				`fugaro         = "managed"`,
+				`fugaro_project = var.fugaro_project`,
+				"prevent_destroy = true",
+			},
+			// fugaro_secret is the label `fugaro update`'s discovery reads to
+			// decide which logical secret of the project's secret set a
+			// container holds; this container is one version per pairing with
+			// two writers and neither of them Terraform (credentials.tf's own
+			// reason), so carrying it would plan the same secret ID twice.
+			absent: []string{"fugaro_secret"},
+		},
+		{
+			what:  "the pairing key's reader: the account above, on that one container",
+			block: tfBlock(src, "google_secret_manager_secret_iam_member", "orchestrator_pairing_key"),
+			need: []string{
+				`role      = "roles/secretmanager.secretAccessor"`,
+				`member    = ` + orchestratorMemberExpr,
+			},
+			// The project-wide accessor is refused by the cover's own rule for
+			// every principal but the credentials service's account
+			// (dynamicSecretsGrant), and a role beside the accessor is a reach
+			// section 4.3's table has no row for.
+			absent: []string{"orchestrator[0].member", "roles/secretmanager.secretVersionAdder", "roles/secretmanager.viewer", "roles/secretmanager.secrets.setIamPolicy"},
+		},
 		{
 			what:  "the launcher's project role: rows 1 and 3 of the table, the metadata permissions",
 			block: tfBlock(src, "google_project_iam_member", "orchestrator_launcher"),

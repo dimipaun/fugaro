@@ -19,6 +19,12 @@
       "type": "string",
       "description": "The stamp `doctor` compares: the hash of the project config's bytes at the last apply that finished, absent when none has. It is what tells a machine that owes nothing from one whose file was deleted or lost — a stamp that no longer matches the config, with no pending document, says the config changed since and that nothing owed is recorded (D1575). Neither written nor compared by internal/apply: the caller that has the config in hand does both."
     },
+    "seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "The last queue sequence this document issued: every entry `Add` writes carries the next one (`queued`). It is what keeps a stamp from being issued twice — the counter is written with the document, and the clears that drop entries leave it where they are — so a re-queue can never wear the stamp of the entry it replaced. Absent in a document an earlier build wrote, where it reads as 0 and the entries' own sequences are what the next one is taken past.",
+      "$comment": "Pending.Seq in internal/apply/pending.go."
+    },
     "steps": {
       "type": "array",
       "description": "What is owed, written even when it is empty: `[]` is \"this machine owes nothing\", which is a different answer from a document still carrying an earlier change's steps. Two changes that owe the same step leave one entry, so the steps dedupe (spec rule 3).",
@@ -47,6 +53,12 @@
             "type": "string",
             "minLength": 1,
             "description": "The GCP project ID of the installation the entry was queued in, the other half of that binding (D1575). A document restored into another project's config directory holds entries bound to the installation the changes were made in, and the read refuses them by name."
+          },
+          "queued": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The queue sequence `Add` issued for this entry, and the one member that tells the entry a run read from the entry that replaced it: every other member of an entry is the same for a change that set the same key to another value, because the change is the subject and never the value (D1570). Without it a step queued while a run was going would read as the step that run answered and be cleared. Absent in a document an earlier build wrote, where it reads as 0 and the entry compares by its other members, which is what it did before the stamp existed.",
+            "$comment": "PendingStep.Queued in internal/apply/pending.go, stamped by Pending.Add."
           },
           "change": {
             "type": "object",

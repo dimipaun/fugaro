@@ -417,7 +417,17 @@ var grantRules = map[string]map[string]who{
 		// are the repositories' own — one grant per repository whose entries
 		// this project's catalog builds, exactly the secrets the repository's
 		// own build account read (modules/repo/build.tf's build grant).
-		"roles/secretmanager.secretAccessor":     toAccounts | toCredentials | toCoordinator | toBuildIdentity,
+		//
+		// toOrchestrator is P5.1e's row and the only one the resident
+		// orchestrator has here: a cloud consumer verifies the phone's tag, the
+		// tag is a symmetric HMAC, so it holds the key — one container per
+		// installation, `fugaro-orch-pairing`, written and destroyed by `fugaro
+		// pair` and `fugaro pair revoke` (the design's section 4.2 and its
+		// section 4.7 step 2b). It is the per-secret row and never the
+		// project-wide one above, and it is a reader in section 4.3's table
+		// rather than the only one: a project Owner or Editor reads any
+		// container's value past its own policy.
+		"roles/secretmanager.secretAccessor":     toAccounts | toCredentials | toCoordinator | toBuildIdentity | toOrchestrator,
 		"roles/secretmanager.secretVersionAdder": toPeople,
 		"roles/secretmanager.viewer":             toPeople,
 	},

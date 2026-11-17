@@ -10,6 +10,11 @@ package keyservice
 // is the only surface those three have — the routes that read them are K2.3's
 // and K2.7's, and a test written through them would be pinning a handler that
 // does not exist yet.
+//
+// The one exception is the withdrawal itself, which is not a store call at all:
+// what a refund withdraws is decided by the merchant's event and the records
+// that name the licence (P3.6, F29), and `TestRevocationCoversEveryRotation` is
+// here because what it reads back is the list this package's store keeps.
 
 import (
 	"context"
@@ -17,6 +22,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 )
@@ -299,5 +305,90 @@ func TestTheLastSeenLeavesTheDigestAlone(t *testing.T) {
 	}
 	if _, held, err := store.KeyState(ctx, "lk_test_never_issued"); err != nil || held {
 		t.Errorf("a sighting of an unknown key wrote a state for it: held=%v err=%v", held, err)
+	}
+}
+
+// TestRevocationCoversEveryRotation: F29 — revocation is by **entitlement**, so
+// a refund withdraws every key the licence ever minted and not the one the
+// merchant's own record happens to name. Withdrawing the purchase's `key_id`
+// alone leaves the keys that came after it live: a rotation's successor, which
+// the customer's installation is running, and the successor a reveal will hand
+// over when P3.2 lands. Either is a paid key the money has gone back for, which
+// is the gap F29 states and this test is the closing of.
+//
+// The licence's keys here are the three shapes its records come in: the
+// purchase's binding (`binding:<licence>:`), the successor `/renew` minted
+// (`rotation:<key>`), and one that names the licence and nothing else — no
+// subscription, so the subscription step cannot match it, and no prefix the walk
+// follows, so the walk cannot reach it either. The first two are withdrawn by
+// the walk as well as by the sweep, and the third is withdrawn by the sweep
+// alone: with the sweep taken out, this case fails on exactly that key, which is
+// the F29 gap in one line.
+//
+// That third record is written straight into the store because the route that
+// will mint it is P3.2's reveal, which depends on this task and is not here yet;
+// its source is the test's own name for the record, and no part of the sweep
+// reads a source at all — the entitlement id is the whole of what it matches on.
+func TestRevocationCoversEveryRotation(t *testing.T) {
+	f, _ := renewing(t)
+	ctx := context.Background()
+	bought := f.purchase("evt-covers-1", "acme.example", 5, 365)
+	licenceID := bought.EntitlementID
+	if licenceID == "" {
+		t.Fatal("the purchase's key names no licence, so there is nothing here for a refund to withdraw (P3.6)")
+	}
+	theSubscriptionCovers(t, f, bought.KeyID)
+	rotated, _ := renewThroughTheEndpoint(t, f, bought.KeyID, f.secretOf(t, f.mintedKeys()[0]))
+
+	unreachable := Record{
+		Source:        "reveal:test:" + bought.KeyID,
+		KeyID:         "lk_test_revealed",
+		EntitlementID: licenceID,
+		Plan:          bought.Plan,
+		Tier:          bought.Tier,
+		Seats:         bought.Seats,
+		Organisation:  bought.Organisation,
+		Issued:        f.now,
+		Expires:       bought.Expires,
+		TermDays:      bought.TermDays,
+	}
+	if err := f.store.SaveIssuance(ctx, unreachable); err != nil {
+		t.Fatalf("writing the reveal's successor into the store: %v", err)
+	}
+	// Another licence's key, in another workspace: what a refund of this one
+	// withdraws is its own keys, and a sweep by anything but the entitlement would
+	// take a stranger's licence with it.
+	elsewhere, _, _ := heldKeyIn(t, f, PolicyTeamMonthly, "widget-workshop")
+	if got := f.issuance(t, elsewhere).EntitlementID; got == licenceID {
+		t.Fatalf("the key %s names this licence, so it is not the case's negative", elsewhere)
+	}
+
+	at := f.now
+	if rec := f.event(Event{ID: "evt-covers-2", Type: EventRefund, OccurredAt: at, Subscription: bought.Subscription}); rec.Code != http.StatusOK {
+		t.Fatalf("the refund was answered %d (%q), want it applied", rec.Code, rec.Body.String())
+	}
+
+	withdrawn := map[string]Revocation{}
+	for _, revocation := range f.revocations() {
+		withdrawn[revocation.KeyID] = revocation
+	}
+	for _, keyID := range []string{bought.KeyID, rotated.KeyID, unreachable.KeyID} {
+		got, held := withdrawn[keyID]
+		if !held {
+			t.Errorf("the refund left the key %s live, want every key of the licence withdrawn: revocation is by entitlement (F29)", keyID)
+			continue
+		}
+		if got.Reason != ReasonRefund {
+			t.Errorf("the key %s was withdrawn for %q, want %q", keyID, got.Reason, ReasonRefund)
+		}
+		if !got.At.Equal(at) {
+			t.Errorf("the key %s was withdrawn at %s, want the instant the money went back (%s)", keyID, got.At, at)
+		}
+	}
+	if _, held := withdrawn[elsewhere]; held {
+		t.Errorf("the refund withdrew %s, a key of another licence: what the sweep reads is the entitlement and never the workspace or the address", elsewhere)
+	}
+	if got := len(f.revocations()); got != 3 {
+		t.Errorf("the list holds %d entr(ies), want the licence's three keys and nothing else: %+v", got, f.revocations())
 	}
 }

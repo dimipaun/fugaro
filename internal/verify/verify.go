@@ -45,7 +45,13 @@ type Settings struct {
 	Lint        string              `json:"lint,omitempty"`
 	RerunFailed *config.RerunFailed `json:"rerun_failed,omitempty"`
 	Reports     []string            `json:"reports"`
-	TimeoutS    int                 `json:"timeout_s"`
+	// ReportsDeclared is whether the workflow set `commands.reports` itself.
+	// Reports carries config.DefaultReports when it did not, and by then the
+	// two are indistinguishable: a test run that found no report of a workflow
+	// that declared none has no globs to name, and warning about default paths
+	// describes a repository that never wrote them.
+	ReportsDeclared bool `json:"reports_declared,omitempty"`
+	TimeoutS        int  `json:"timeout_s"`
 }
 
 // WriteSettings stores settings in stateDir and prepares the records directory.
@@ -258,7 +264,11 @@ func Run(ctx context.Context, o Options) (Record, error) {
 			return Record{}, err
 		}
 		if len(cases) == 0 {
-			rec.Warning = "no JUnit reports found under " + strings.Join(s.Reports, ", ")
+			if s.ReportsDeclared {
+				rec.Warning = "no JUnit reports found under " + strings.Join(s.Reports, ", ")
+			} else {
+				rec.Warning = "this workflow declares no test report paths, so the record carries no test counts"
+			}
 		}
 		if prev == nil {
 			rec.Tests, rec.Skipped, rec.Failed = summarize(cases)

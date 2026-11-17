@@ -58,6 +58,20 @@ func TestChangedFilesListsTheRunsOwnPaths(t *testing.T) {
 	if got, err := repo.ChangedFiles(ctx, "HEAD"); err != nil || len(got) != 0 {
 		t.Fatalf("since HEAD: %v, %v; want nothing", got, err)
 	}
+
+	// A refs/replace/<sha> planted in the checkout the agent writes would
+	// otherwise decide which paths this read reports: the base reads as the
+	// commit the planted ref names, so the comparison a run's record is built
+	// from is that traversal's answer and not the run's own paths.
+	//
+	// Mutation (drop --no-replace-objects): this read fails outright — git
+	// answers "no merge base" for the replaced range — and a read that fails is
+	// an empty comparison, which a review-scope stop never halts on.
+	testutil.Git(t, repo.Dir, "replace", base, "HEAD")
+	own := []string{"earlier.txt", "renamed.txt", "src/a.go", "src/b.go"}
+	if got, err := repo.ChangedFiles(ctx, base); err != nil || !reflect.DeepEqual(got, own) {
+		t.Fatalf("with a replacement ref on the base: %v, %v; want %v", got, err, own)
+	}
 }
 
 // TestChangedFilesRefusesAnythingButARef: since reaches a git command line,

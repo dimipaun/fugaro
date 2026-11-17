@@ -651,10 +651,12 @@ still holds with a provider on** here and in the register. **The reading as it w
   numbering paragraph records what it read at `1d325928`: written sections to **89**, with **90–99
   the credentials service's** and **100–109 the mobile functional spec's**. Of those, **100–104**
   are proposed by that plan's **P6.11** (approved 2026-10-18) and **105–109 reserved and unused**.
-  The mobile block is **ten numbers, 80–89**: **81, 82 and 89 are written** and **80 and 83–88** are
-  still unwritten and belong to the mobile plan's **Task P4.2** — which is why three of the block's
-  ten are in the register, and why `docs/mobile/implementation-plan.md` says *"all ten are run by
-  the owner"* of a set only three of which exist as text. **110 is claimed, twice, and written by
+  The mobile block is **ten numbers, 80–89**, and **all ten are in the register now** — a summary
+  row and a `## Check` section each, none of them run: **81, 82 and 89** written by the mobile
+  plan's **Task P4.2a** (2026-10-18), **80 and 83–88** by its **Task P4.2** (2026-11-17) — so
+  `docs/mobile/implementation-plan.md`'s *"all ten are run by the owner"* is said of a set of ten
+  texts that all exist. *(This sentence read "81, 82 and 89 are written" and "80 and 83–88 are
+  still unwritten" until P4.2 wrote the seven.)* **110 is claimed, twice, and written by
   nobody**: `docs/central-orchestrator/README.md` records the two claims — `docs/mobile/design/voice-evaluation-switch.md`
   (P5.3) and the always-on orchestrator design in **PR #632** (§7) — and the register's paragraph
   records the state rather than the claimants (*"110 is claimed by an open pull request"*). **A
