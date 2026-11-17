@@ -455,11 +455,27 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	// sentence naming the change is the proof this fixture reaches the write.
 	"fugaro rigor floor set":   {args: []string{"pro", "l2"}, reaches: "set review_floor.pro from l2, l3 to l2 in", seed: closedStdinRigorFloorSeed},
 	"fugaro rigor floor unset": {args: []string{"pro"}, reaches: "remove review_floor.pro (l2, l3) in", seed: closedStdinRigorFloorSeed},
-	"fugaro settings get":      {args: []string{"a.b"}},
-	"fugaro stats runs":        {args: []string{"--project", "proj-1234"}},
-	"fugaro user add":          {args: []string{"someone@example.com"}},
-	"fugaro user grant":        {args: []string{"someone@example.com", "--role", "operator", "--scope", "project"}},
-	"fugaro user revoke":       {args: []string{"someone@example.com", "--role", "operator", "--scope", "project"}},
+	// The security writer's two leaves, over the same layer file `rigor set`'s
+	// seed writes with one row of the list: the add writes a second row and the
+	// removal takes one away — the lowering direction, whose fence is the marker
+	// and not a question (M4 of docs/config-ownership). This world sets no
+	// marker, so both reach their write and ask nothing, which is what the
+	// sentence naming the row and the key is the proof of.
+	"fugaro rigor security add": {
+		args:    []string{"--name", "payments", "--match", "internal/payments/**", "--category", "guards"},
+		reaches: "add the security path payments to security.patterns in",
+		seed:    closedStdinSecurityLayerSeed,
+	},
+	"fugaro rigor security rm": {
+		args:    []string{"--name", "billing"},
+		reaches: "remove the security path billing from security.patterns in",
+		seed:    closedStdinSecurityLayerSeed,
+	},
+	"fugaro settings get": {args: []string{"a.b"}},
+	"fugaro stats runs":   {args: []string{"--project", "proj-1234"}},
+	"fugaro user add":     {args: []string{"someone@example.com"}},
+	"fugaro user grant":   {args: []string{"someone@example.com", "--role", "operator", "--scope", "project"}},
+	"fugaro user revoke":  {args: []string{"someone@example.com", "--role", "operator", "--scope", "project"}},
 	// Offboarding takes the member's address as its argument, and the body it
 	// then reaches refuses here: this world selects no project, so there is no
 	// roster to read and no intake to call. The write and the sweep are driven
@@ -921,6 +937,17 @@ func closedStdinProjectSecretAllowListSeed(repos ...string) func(*testing.T, *bu
 func closedStdinRigorLayerSeed(t *testing.T, _ *budgetFixture) {
 	t.Helper()
 	settingsManagedLayerFile(t, minimalAnchored+"defaults:\n  rigor:\n    default: pro\n")
+}
+
+// closedStdinSecurityLayerSeed gives the world the file `fugaro rigor security`
+// edits — this machine's own project layer file, with the world's own anchors
+// and a list of one row a person could have written. Without it both leaves
+// refuse the missing file (D830's step 4, naming `fugaro update`), which is a
+// refusal before the write and not the write these fixtures are for, and the
+// removal would have no row of the list to take away.
+func closedStdinSecurityLayerSeed(t *testing.T, _ *budgetFixture) {
+	t.Helper()
+	settingsManagedLayerFile(t, minimalAnchored+"security:\n  patterns:\n    - name: billing\n      match: internal/billing/**\n      category: credentials\n")
 }
 
 // closedStdinRigorFloorSeed gives the world's own project config the review
