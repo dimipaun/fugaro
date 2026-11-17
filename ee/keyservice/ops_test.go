@@ -1802,6 +1802,10 @@ func TestOperationsActSurvivesACompetingAct(t *testing.T) {
 // mints a second key without withdrawing the first. What the revocation moves is
 // the status, and the guard the act itself asks is asked of the state it read —
 // a licence that is active when the act is decided is one this act withdraws.
+//
+// The binding here lands before the walk, so the walk reaches the key it minted;
+// `TestOperationsRevokeReachesTheKeyBoundInItsOwnWindow` is the same pair of
+// writes the other way round.
 func TestOperationsRevokeSurvivesACompetingBind(t *testing.T) {
 	f, gap, held := gapGround(t, false)
 	var bound *httptest.ResponseRecorder
@@ -1830,6 +1834,79 @@ func TestOperationsRevokeSurvivesACompetingBind(t *testing.T) {
 	}
 	if after.Seats != held.Seats || !after.EndsAt.Equal(held.EndsAt) || after.Source != held.Source {
 		t.Errorf("the licence reads %+v, want the term, the seats and the source of %+v: a revocation moves the status and nothing else", after, held)
+	}
+}
+
+// TestOperationsRevokeReachesTheKeyBoundInItsOwnWindow: the walk over a licence's
+// keys and the write of its status are two steps of one act, and a key minted
+// between them goes out with the licence.
+//
+// The walk reads the licence's keys before the status is written, and a binding
+// that mints its key and commits in between read the licence active — its own
+// transaction re-reads the status, so it would be refused once the revocation is
+// on the record — and the key it minted is one no step of the act has seen. The
+// act takes the walk again once the status is the store's, which is what reaches
+// that key (F29: a licence left revoked with a live key is the gap the rule
+// forbids). Without it the customer's installation holds a key nothing on §8's
+// list names, running to the end of the term the operator withdrew.
+func TestOperationsRevokeReachesTheKeyBoundInItsOwnWindow(t *testing.T) {
+	var gap *transferGap
+	f := newBindingFixtureWith(t, func(f *fixture) {
+		f.deps.MintsV1 = f.recording
+		gap = &transferGap{Docs: f.deps.Docs}
+		f.deps.Docs = gap
+	})
+	org := f.seededOrganisation(opsCustomerID, "Dana Ltd", orgTypeCustomer, danaUID, danaEmail, roleOwner)
+	workspace := f.seedWorkspace(opsBoundWS, org.ID, "Dana's bound")
+	held := f.grant(t, entitlementGrant{
+		At:             f.now,
+		OrganisationID: org.ID,
+		WorkspaceID:    &workspace.ID,
+		Source:         entitlementSourceOperations,
+		Row:            PolicyTeamAnnual,
+		Seats:          3,
+		StartsAt:       f.now,
+	})
+	f.operationsOrg(roleOwner)
+
+	// The window between the walk and the write is real and a millisecond wide,
+	// so a case cannot reach it by timing and the act itself closes it by walking
+	// again rather than by reading anything above the write. It is opened here:
+	// the step below runs where the withdrawal's own transaction would, so the
+	// walk has answered and the status is not yet the store's.
+	var bound *httptest.ResponseRecorder
+	gap.arm(func() {
+		f.actsAs(danaUID, danaEmail, signInGoogle)
+		bound = f.bind(t, held.ID, opsProject)
+	})
+
+	rec := f.apiAsCaller(http.MethodPost, apiOpsEntitlementActionsPath,
+		actionBody(t, held.ID, "revoke", "null", "null", "null"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the revocation answered %d (%s), want it made", rec.Code, rec.Body)
+	}
+	if bound == nil || bound.Code != http.StatusOK {
+		t.Fatalf("the binding this case put in the window answered %v, want the key: the case is about a binding that really landed", bound)
+	}
+	records := f.records()
+	if len(records) != 1 {
+		t.Fatalf("the licence minted %d key(s), want the binding's one", len(records))
+	}
+	entry, withdrawn, err := f.store.Revocation(context.Background(), records[0].KeyID)
+	if err != nil || !withdrawn {
+		t.Errorf("the key %s the binding minted is not on §8's list (withdrawn=%v err=%v): it was minted in the window between the revocation's walk and its status, and nothing walked the licence again — a revoked licence with a live key is the gap F29 forbids", records[0].KeyID, withdrawn, err)
+	} else if entry.Reason != ReasonOperations || !entry.At.Equal(f.now) {
+		t.Errorf("the key's entry is %+v, want %q at the act's own instant %s", entry, ReasonOperations, f.now)
+	}
+	if got := len(f.revocations()); got != 1 {
+		t.Errorf("§8's list holds %d entry(ies), want the licence's one key: the walk is taken twice and the store keeps the first entry for a key", got)
+	}
+	after, _ := heldRecord[WireEntitlement](f.fixture, entitlementsCollection, held.ID)
+	if after.Status != entitlementRevoked {
+		t.Errorf("the licence reads %q, want %q: the binding in the window does not save it", after.Status, entitlementRevoked)
+	}
+	if after.BoundAt == nil {
+		t.Errorf("the licence reads %+v, want the binding's own instant on it: the binding that landed in the window is not the revocation's to unmake", after)
 	}
 }
 

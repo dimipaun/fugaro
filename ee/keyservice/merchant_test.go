@@ -1664,6 +1664,80 @@ func TestRefundRevokesTheKey(t *testing.T) {
 	}
 }
 
+// TestARefundReachesTheKeyBoundInItsOwnWindow: the refund's walk over a
+// licence's keys and the write of the licence's own status are two steps, and a
+// key minted between them goes out with the licence.
+//
+// The walk reads the licence's keys before the status is written, and a binding
+// that mints its key and commits in between read the licence active — its own
+// transaction re-reads the status, so it would be refused once the revocation is
+// on the record — and the key it minted is one no step of the walk has seen. The
+// refund walks the licence again once the status is the store's, which is what
+// reaches that key (F29: the customer of a licence the money went back for keeps
+// nothing that serves). `TestOperationsRevokeReachesTheKeyBoundInItsOwnWindow`
+// is the same window at the operator's own door, which shares the walk.
+func TestARefundReachesTheKeyBoundInItsOwnWindow(t *testing.T) {
+	var gap *transferGap
+	f := newBindingFixtureWith(t, func(f *fixture) {
+		f.deps.MintsV1 = f.recording
+		gap = &transferGap{Docs: f.deps.Docs}
+		f.deps.Docs = gap
+	})
+	// The purchase writes the licence and the origin record the refund's
+	// subscription resolves through, and no key: the key is the customer's own
+	// binding (D2196). It is held back so that the binding this case puts in the
+	// window is the licence's first, which is the path that mints rather than the
+	// rebind path behind D2198's clock.
+	delivered := f.deliver(Event{
+		ID: "evt-1", Type: EventPurchase, Mode: Live, OccurredAt: f.now,
+		Subscription: "sub-acme.example", Organisation: "acme.example",
+		WorkspaceID: workspaceID, Email: buyerAddress("acme.example"), Seats: 5, TermDays: 365,
+	})
+	if delivered.Code != http.StatusOK {
+		t.Fatalf("the purchase answered %d, want the licence the refund is about", delivered.Code)
+	}
+	held := f.entitlements(t)[0]
+	f.actsAsOwnerOf(held.OrganisationID)
+
+	// The window is opened where the withdrawal's own transaction would run: the
+	// walk has answered and the status is not yet the store's.
+	bound, boundBody := 0, ""
+	gap.arm(func() {
+		f.actsAs(danaUID, danaEmail, signInGoogle)
+		answered := f.bind(t, held.ID, opsProject)
+		bound, boundBody = answered.Code, answered.Body.String()
+	})
+
+	at := f.now
+	body := paddleBody(t, Event{
+		ID: "evt-2", Type: EventRefund, Mode: Live, OccurredAt: at,
+		Subscription: "sub-acme.example",
+	})
+	if rec := f.deliverRaw(body, signEvent(f.secret, at, body)); rec.Code != http.StatusOK {
+		t.Fatalf("the refund answered %d, want the merchant told nothing about which of its events were applied", rec.Code)
+	}
+	if bound != http.StatusOK {
+		t.Fatalf("the binding this case put in the window answered %d (%s), want the key: the case is about a binding that really landed", bound, boundBody)
+	}
+	records := f.records()
+	if len(records) != 1 {
+		t.Fatalf("the licence minted %d key(s), want the binding's one", len(records))
+	}
+	entry, withdrawn, err := f.store.Revocation(context.Background(), records[0].KeyID)
+	if err != nil || !withdrawn {
+		t.Errorf("the key %s the binding minted is not on §8's list (withdrawn=%v err=%v): it was minted in the window between the refund's walk and its status, and nothing walked the licence again — a revoked licence with a live key is the gap F29 forbids", records[0].KeyID, withdrawn, err)
+	} else if entry.Reason != ReasonRefund || !entry.At.Equal(at) {
+		t.Errorf("the key's entry is %+v, want %q at the event's own instant %s", entry, ReasonRefund, at)
+	}
+	if got := len(f.revocations()); got != 1 {
+		t.Errorf("§8's list holds %d entry(ies), want the licence's one key: the walk is taken twice and the store keeps the first entry for a key", got)
+	}
+	after, _ := heldRecord[WireEntitlement](f.fixture, entitlementsCollection, held.ID)
+	if after.Status != entitlementRevoked {
+		t.Errorf("the licence reads %q, want %q: the binding in the window does not save it", after.Status, entitlementRevoked)
+	}
+}
+
 // TestARefundRevokesTheWholeRotationChain: §8 and D2147 as the owner ruled on
 // 2026-11-13 — a refund withdraws the key its event names **and every successor
 // a rotation minted from it**. Those successors are the same licence continued,

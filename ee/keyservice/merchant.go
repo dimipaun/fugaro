@@ -1238,7 +1238,14 @@ func (s *Service) withdrawn(ctx context.Context, e Event) error {
 	if _, err := s.revokeEntitlement(ctx, entitlement); err != nil {
 		return err
 	}
-	return nil
+	// The walk above ran while the licence was still active, and a binding that
+	// minted its key and committed in the window between it and this write read
+	// the licence active: its key is one the walk never reached, and the status
+	// just written is not a withdrawal of it. The walk is taken again now that
+	// the licence is not active, with the same reason and the same instant as the
+	// first pass, and it reaches every key the licence has — the walk is
+	// idempotent, so the keys it already reached are only reached again.
+	return s.withdrawEveryKeyOf(ctx, entitlement.ID, reason, e.OccurredAt)
 }
 
 // entitlementFor resolves the entitlement one event is about: the licence the

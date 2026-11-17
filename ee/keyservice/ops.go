@@ -679,7 +679,7 @@ func (s *Service) operationsAct(ctx context.Context, actor Caller, asked WireEnt
 		// that are already dead and a licence a retry withdraws again — the walk
 		// is idempotent — rather than a licence that is dead with its keys still
 		// live, which is the gap F29 states.
-		if err := s.withdrawEveryKeyOf(ctx, entitlement.ID, now); err != nil {
+		if err := s.withdrawEveryKeyOf(ctx, entitlement.ID, ReasonOperations, now); err != nil {
 			return WireEntitlement{}, err
 		}
 		// The status is moved on the record the store holds now and not on the
@@ -687,7 +687,20 @@ func (s *Service) operationsAct(ctx context.Context, actor Caller, asked WireEnt
 		// while the keys were being walked — a binding, another operator's act —
 		// would otherwise be written away by that stale read, and a revocation
 		// moves the status and nothing else.
-		return s.revokeEntitlement(ctx, entitlement)
+		revoked, err := s.revokeEntitlement(ctx, entitlement)
+		if err != nil {
+			return WireEntitlement{}, err
+		}
+		// The walk is taken again now that the licence is not active, and it is
+		// the half of F29 the status write cannot do: a binding that minted its
+		// key and committed while the first walk was running read the licence
+		// active, so the key it minted is one that walk never saw and no later
+		// act withdraws. Every key the licence has now goes out with it, and the
+		// walk is idempotent, so the first pass's keys are only reached again.
+		if err := s.withdrawEveryKeyOf(ctx, entitlement.ID, ReasonOperations, now); err != nil {
+			return WireEntitlement{}, err
+		}
+		return revoked, nil
 	}
 	// The change is made inside the transaction that re-reads the licence and
 	// asks the guards again. The record this act was decided on is a read from
@@ -978,15 +991,24 @@ func (s *Service) licenceKeys(ctx context.Context, entitlementID string) ([]stri
 //
 // It is `merchant.go`'s walk read at a second door rather than a second rule:
 // what a withdrawal is, is F29's, and the two callers must reach the same keys.
-// The reason is the licensor's own word for it (store.go's Revocation) and
-// never what reaches the holder.
-func (s *Service) withdrawEveryKeyOf(ctx context.Context, entitlementID string, now time.Time) error {
+// The reason and the instant are the caller's own word for the withdrawal — an
+// operator's act, or the money going back at the event's own instant — and
+// neither is what reaches the holder (store.go's Revocation).
+//
+// Each door takes this walk **twice**, once before the licence's own status is
+// written and once after it, and the second pass is what F29's rule owes a key
+// nothing else reaches: a binding that minted its key and committed while the
+// first walk ran read the licence as active, so its key is one that walk never
+// saw, and the status the door writes afterwards is not a withdrawal of it. The
+// walk is idempotent — the store keeps the first entry for a key and ignores the
+// rest — so the second pass adds what appeared and takes nothing back.
+func (s *Service) withdrawEveryKeyOf(ctx context.Context, entitlementID, reason string, at time.Time) error {
 	keys, err := s.licenceKeys(ctx, entitlementID)
 	if err != nil {
 		return err
 	}
 	for _, keyID := range keys {
-		if err := s.store.Revoke(ctx, Revocation{KeyID: keyID, Reason: ReasonOperations, At: now}); err != nil {
+		if err := s.store.Revoke(ctx, Revocation{KeyID: keyID, Reason: reason, At: at}); err != nil {
 			return err
 		}
 	}
