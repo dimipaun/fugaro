@@ -38,26 +38,27 @@ func TimedOut(runner.StageView) runner.StageDecision {
 }
 
 // Stopped is the decision when the run's gateway stopped a stage (T7.2, T7.3):
-// the per-stage budgets, the review ratio and the fan-out are the guardrails
-// G7 names as stops a person decides about rather than silent kills, so the
-// halt they leave carries a checkpoint report and the draft pull request that
-// goes with it (Checkpoint true), and the runner asks the stopping agent for
-// the report's three model-written fields after it.
+// the per-stage budgets, the review ratio, the fan-out and the run's expected
+// cost are the guardrails G7 names as stops a person decides about rather than
+// silent kills, so the halt they leave carries a checkpoint report and the
+// draft pull request that goes with it (Checkpoint true), and the runner asks
+// the stopping agent for the report's three model-written fields after it.
 //
 // The stop arrives whole in v.Stop: the gateway's own reason for it and the
 // figures it saw. The reason is the halt's unless this function names another,
 // and it is the gateway's sentence that is carried as the detail — the halt's
 // detail is what a reader of the record has to explain the stop with, and the
-// gateway counted the dollars, the calls and the sub-agents the sentence names.
+// gateway counted the dollars, the calls, the sub-agents and the run's own
+// spend the sentences name.
 //
-// Only the three governance reasons get a checkpoint call. A stop outside them
-// is not this hook's to decide: it is returned unhalted, which leaves the
+// Only these governance reasons get a checkpoint call. A stop outside them is
+// not this hook's to decide: it is returned unhalted, which leaves the
 // gateway's own halt to the core (governance_hook.go, gatewayStop), and the
 // core's vocabulary check would refuse a reason this hook invented anyway.
 func Stopped(v runner.StageView) runner.StageDecision {
 	reason := runstore.HaltReason(v.Stop.Reason)
 	switch reason {
-	case runstore.HaltStageBudget, runstore.HaltReviewRatio, runstore.HaltFanout:
+	case runstore.HaltStageBudget, runstore.HaltReviewRatio, runstore.HaltFanout, runstore.HaltExpectedExceeded:
 	default:
 		return runner.StageDecision{}
 	}

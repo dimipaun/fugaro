@@ -881,10 +881,6 @@ func TestDiagnoseSinceNamesARelease(t *testing.T) {
 	if rel, ok := releaseOf("ghcr.io/dimipaun/fugaro-base:" + diagnoseSince); !ok || rel != diagnoseSince {
 		t.Fatalf("diagnoseSince = %q is not the X.Y.Z release a build record's base_ref carries", diagnoseSince)
 	}
-	// The phrase and not the sentence's first word: the diagnose bullet is the
-	// one whose sentence about the release stands after a full stop, so the
-	// guide writes it with a capital T (docs/recipes.md), and a case-sensitive
-	// search that started at "the" could never match the guide that names it.
 	want := "first release whose runner executes the step is " + diagnoseSince
 	if doc := readDoc(t, "docs/recipes.md"); !strings.Contains(doc, want) {
 		t.Errorf("docs/recipes.md's diagnose bullet does not say %q: the guide is where a person reads which release the step needs", want)

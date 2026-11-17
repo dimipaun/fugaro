@@ -456,6 +456,61 @@ variable "reports" {
   }
 }
 
+variable "licence" {
+  description = "The installation's licence renewal job (plan K4.2 of docs/licence-key-v2), or null on an installation that has no coordinator: the scheduled Cloud Run job that runs `fugaro licence renew --job`, whose CODE is the Subscription Edition's (ee/register/licence_renew.go). It is created UNDER the coordinator's own condition and not a switch of its own (licence.tf reads local.deploy_coordinator): its image is the coordinator's, so an installation that has not opted into the coordinator has no tagged image to run. Its job name must not start with fugaro-, which fugaro runs ls and max_parallel count as workflow jobs. account_id is the one ID internal/infra/tf reads as this job's own kind of principal, so it is pinned to that literal; renewal_secret is the ID of the Secret Manager container the job reads and writes, derived by internal/infra.LicenceRenewalSecretID because a container ID with a hash in it cannot be computed in Terraform. The container is created EMPTY and nothing here ever reads a key (D524): an installation that buys no licence holds a job that no-ops and says so, and `fugaro licence set` is what writes the first version (K3.2). The two IAM conditions are the input's (the three-object read the job finds its installation by, internal/backend/gcp's gcp.LicenceReadCondition, and the licence object's write, gcp.LicenceWriteCondition): what makes a grant narrow here is its condition, and it is the bytes the plan review reads."
+  type = object({
+    account_id       = string
+    job              = string
+    image            = string
+    scheduler_job    = string
+    scheduler_region = string
+    env              = map(string)
+    read_condition = object({
+      title      = string
+      expression = string
+    })
+    write_condition = object({
+      title      = string
+      expression = string
+    })
+    renewal_secret = string
+  })
+  default = null
+
+  validation {
+    condition = var.licence == null ? true : (
+      # Pinned to the one ID the plan review knows as the licence job's account
+      # (tf.LicenceAccountID), for the reports account's reason: an ID the review
+      # reads as one of the project's job accounts (fugaro-<readable>-<8 hex>,
+      # tf's jobAccount) would be a member every toAccounts row accepts, and the
+      # three rows this account's own kind opens are narrowed by the conditions
+      # and the container below alone.
+      var.licence.account_id == "fugaro-licence" &&
+      can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.licence.job)) &&
+      !startswith(var.licence.job, "fugaro-") &&
+      can(regex("^[a-zA-Z][a-zA-Z0-9_-]{0,62}$", var.licence.scheduler_job)) &&
+      can(regex("^[a-z]+-[a-z]+[0-9]+$", var.licence.scheduler_region)) &&
+      length(var.licence.image) > 0 &&
+      length(var.licence.renewal_secret) > 0 &&
+      length(var.licence.read_condition.title) > 0 &&
+      length(var.licence.read_condition.expression) > 0 &&
+      length(var.licence.write_condition.title) > 0 &&
+      length(var.licence.write_condition.expression) > 0
+    )
+    error_message = "licence needs the service account ID fugaro-licence — the one internal/infra/tf reads as this job's own kind of principal, so a job-account-shaped ID would be covered by the rows that accept those — an image, a job name that doesn't start with fugaro- (ls counts those), a Scheduler job name and region, the renewal container's ID and the two IAM conditions."
+  }
+
+  # The job finds WHICH installation it renews for from its environment: it is a
+  # Cloud Run container with no checkout and no config file, so FUGARO_PROJECT
+  # and FUGARO_GCP_PROJECT are the whole of what names the project whose
+  # published config it reads (internal/cli's selectWith), and the job's own
+  # preconditions in licence.tf check the same two against this root's.
+  validation {
+    condition     = var.licence == null ? true : contains(keys(var.licence.env), "FUGARO_PROJECT") && contains(keys(var.licence.env), "FUGARO_GCP_PROJECT")
+    error_message = "licence.env must carry FUGARO_PROJECT and FUGARO_GCP_PROJECT: a container has no checkout and no config file, so those two names are how the job finds the installation whose licence it renews."
+  }
+}
+
 variable "coordinator" {
   description = "The coordinator's aggregation job (P5, D194), used only with enable_budget: the scheduled sweep that re-reads each repository's runs and pull requests and writes the view. Its job name must not start with fugaro-, which fugaro runs ls and max_parallel count as workflow jobs. deploy_job stays false in the first apply and is set once the Firebase root has output rtdb_url (the third apply), the job's image exists and the credentials its repositories need are recorded: a GitHub App ID where it reconciles a GitHub repository (the sweep mints its own read-only installation token from the App), and the credentials service where it reconciles a Bitbucket one (the sweep mints a read token there — F24)."
   type = object({

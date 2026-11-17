@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/apply"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pricing"
@@ -15,7 +16,14 @@ import (
 
 type modelsRmOptions struct {
 	yes bool
+	// noApply is --no-apply (D1565): the change is written and the steps that
+	// make it live are saved for `fugaro apply` instead of run here.
+	noApply *bool
 }
+
+// modelsRmDoor is this command's own name: the door its chain's run is filed
+// and printed under (modelsAddDoor's reason).
+const modelsRmDoor = "models rm"
 
 func newModelsRmCmd() *cobra.Command {
 	var o modelsRmOptions
@@ -33,14 +41,16 @@ func newModelsRmCmd() *cobra.Command {
 			"of each one fails at launch with no provider for the model, until the pin is\n" +
 			"changed with `fugaro models use` or the model is added back.\n\n" +
 			"Only the keys it changes are rewritten: every comment and every other key of\n" +
-			"the file is kept. `fugaro update` publishes the policy node, which carries the\n" +
-			"model_prices and budget.allowed_models halves of the removal to the runs that\n" +
-			"read it; the route's own claims are in the copy of the providers block each\n" +
-			"job holds, so a repository stops routing to the model when `fugaro update\n" +
-			"--repo .` is run in its checkout.",
+			"the file is kept. The command publishes the policy node itself, which carries\n" +
+			"the model_prices and budget.allowed_models halves of the removal to the runs\n" +
+			"that read it; with --no-apply the change is saved and the publish is owed, and\n" +
+			"`fugaro apply` runs it later. The route's own claims are in the copy of the\n" +
+			"providers block each job holds, so a repository stops routing to the model when\n" +
+			"`fugaro update --repo .` is run in its checkout.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runModelsRm(cmd, args[0], &o) },
 	}
+	o.noApply = addNoApplyFlag(cmd)
 	return cmd
 }
 
@@ -116,7 +126,17 @@ func runModelsRm(cmd *cobra.Command, id string, o *modelsRmOptions) error {
 	if !changed && claim.route == "" && claim.by == "" {
 		fmt.Fprintf(out, "%s is not a model of this project's config or of its price table: nothing to remove\n", oneLine(id))
 	}
-	return nil
+	if !changed {
+		return nil
+	}
+	// The change's own follow-up (AP6): the policy stage publishes the
+	// model_prices and budget.allowed_models halves of the removal into the node
+	// every run of the project is admitted by. The route's own claim is not
+	// published — that copy is each job's, refreshed by its repository's own
+	// redeploy, which is per checkout (D1574) and so is never queued by a
+	// project-wide change (apply's ResourceModel row).
+	return chainApply(cmd.Context(), cmd, lc, sel, modelsRmDoor,
+		[]apply.Change{{Kind: apply.Resource, Key: apply.ResourceModel}}, *o.noApply)
 }
 
 // modelsRmRefuseID refuses an ID the config cannot carry, the shapes

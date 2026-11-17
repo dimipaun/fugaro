@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"syscall"
@@ -17,11 +18,14 @@ import (
 	"gocloud.dev/blob"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/estimate"
 	"github.com/dimipaun/fugaro/internal/plan"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
+	"github.com/dimipaun/fugaro/internal/tier"
 )
 
 // statusGraph is the graph artifact the rig's checkout carries: three tasks in
@@ -771,5 +775,151 @@ echo MERGED
 	}
 	if widest > planLookupWorkers {
 		t.Errorf("gh was asked about %d pull requests at once, want at most %d: GitHub's secondary rate limits discourage concurrent requests", widest, planLookupWorkers)
+	}
+}
+
+// statusTieredGraph is the graph the estimate tests read: two tasks of one tier
+// in a chain, so the plan's path is both of them and the history behind a tier
+// is the whole of what answers it.
+const statusTieredGraph = `{
+  "schema_version": 3,
+  "plan": "a tiered plan",
+  "nodes": [
+    {"id": "A", "title": "first task", "tier": "small", "size": 2, "footprint": {"prediction": true, "paths": []}},
+    {"id": "B", "title": "second task", "tier": "small", "size": 2, "footprint": {"prediction": true, "paths": []}}
+  ],
+  "edges": [
+    {"task": "B", "needs": "A", "reason": "B reads what A writes"}
+  ]
+}`
+
+// seedHistoryRun is one run of the repository's own history: a run that carries
+// the tier, the mode and the cost a sample is drawn from and claims no plan
+// task. It is not work on the plan — it is what the plan's tasks are estimated
+// from.
+func seedHistoryRun(t *testing.T, f *cloudFixture, id string, tr tier.Tier, minutes, usd float64) {
+	t.Helper()
+	start := time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
+	end := start.Add(time.Duration(minutes) * time.Minute)
+	seedPlanRun(t, f, id, "", &runstore.Record{
+		Status: runstore.StatusSucceeded, StartedAt: start, FinishedAt: &end,
+		Tier: &runstore.TierRecord{Tier: tr}, Rigor: &runstore.RigorRecord{Mode: rigor.Pro},
+		Cost: &runstore.Cost{TotalUSD: usd},
+	})
+}
+
+// TestPlanStatusPrintsEstimateLine: the read estimates the plan it has just
+// joined, from the repository's own runs, and prints one line over it — every
+// task of the plan, the collapsed ones among them, because a done task weighs
+// nothing on the path and counts what it actually cost (D2722, D2723).
+// Mutation caught: totalling the tasks a reader is shown, which would read a
+// plan ready the moment its last task was done, and pricing a done task at its
+// tier's estimate rather than at what it cost.
+func TestPlanStatusPrintsEstimateLine(t *testing.T) {
+	mergedGH(t)
+	f := planStatusRig(t, statusTieredGraph)
+	today := runDay()
+	for i := range estimate.MinRuns {
+		seedHistoryRun(t, f, fmt.Sprintf("%s-09000%d-aa0%d", today, i, i), tier.Small, 30, 2)
+	}
+	// A's own run, merged, so A is done. It is a run of another tier and mode,
+	// so it is not also a sixth sample of the history the two tasks are
+	// estimated from.
+	start := time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
+	end := start.Add(30 * time.Minute)
+	seedPlanRun(t, f, today+"-120000-bbbb", "plan/A", &runstore.Record{
+		Status: runstore.StatusSucceeded, Outcome: runstore.OutcomeReady,
+		PR:        &runstore.PRRef{Number: 1, URL: "https://github.com/acme/app/pull/1"},
+		StartedAt: start, FinishedAt: &end,
+		Tier: &runstore.TierRecord{Tier: tier.Medium}, Rigor: &runstore.RigorRecord{Mode: rigor.Pro},
+		Cost: &runstore.Cost{TotalUSD: 2.5},
+	})
+
+	human, _, err := execute(t, "plan", "status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "  ready in 30–30 min, $4.5–$4.5 (2 tasks; history for 2)\n"
+	if !strings.Contains(human, want) {
+		t.Errorf("the estimate line is not %q:\n%s", want, human)
+	}
+
+	// The listing is still the open work alone: the estimate is over the plan's
+	// tasks, and the table is over the ones a reader asked for.
+	got, _ := planStatusJSON(t)
+	if len(got.Plans) != 1 || len(got.Plans[0].Nodes) != 1 || got.Plans[0].Nodes[0].ID != "B" {
+		t.Errorf("plans = %+v, want the open task alone", got.Plans)
+	}
+}
+
+// TestPlanStatusJSONHasEstimate: the estimate is one additive block on the plan
+// it is about — every key the console already reads stays where it was, at the
+// same depth — and an artifact older than the schema that carries a task's tier
+// carries no block at all, which is what a screen reads as "no estimate here"
+// rather than as a plan that is instantly ready and free (D2711, S3).
+// Mutation caught: replacing the plan's document with the estimate, which would
+// move every key a console reads today.
+func TestPlanStatusJSONHasEstimate(t *testing.T) {
+	f := planStatusRig(t, statusTieredGraph)
+	writeCheckoutFile(t, checkoutDir(t), "docs/plans/old.graph.json", statusGraph)
+	today := runDay()
+	for i := range estimate.MinRuns {
+		seedHistoryRun(t, f, fmt.Sprintf("%s-09000%d-aa0%d", today, i, i), tier.Small, 30, 2)
+	}
+
+	got, _ := planStatusJSON(t, "--all")
+	if len(got.Plans) != 2 {
+		t.Fatalf("plans = %+v, want the tiered one and the v2 one", got.Plans)
+	}
+	p := got.Plans[0]
+	if p.ID != "plan" || p.Estimate == nil {
+		t.Fatalf("plans[0] = %+v, want the tiered plan with its estimate", p)
+	}
+	// Both tasks are unanswered by a run of their own and answered by the
+	// history: the path is the two of them, and the cap is the person's own
+	// max_parallel (A6) rather than a default this read invented.
+	if e := *p.Estimate; e.ReadyInMinutes != (estimate.Range{Low: 60, High: 60}) || e.MaxRunning != 2 {
+		t.Errorf("estimate = %+v, want 60–60 minutes at the fixture's own cap of 2", e)
+	}
+	if p.Estimate.CostUSD == nil || *p.Estimate.CostUSD != (estimate.Range{Low: 4, High: 4}) || p.Estimate.CostUnknownTasks != 0 {
+		t.Errorf("cost = %+v (%d unknown), want $4–$4 with nothing unknown", p.Estimate.CostUSD, p.Estimate.CostUnknownTasks)
+	}
+	if p.Estimate.ComputedAt.IsZero() {
+		t.Error("the estimate carries no computed_at, so a screen cannot say how stale it is")
+	}
+	if len(p.Estimate.Nodes) != 2 || p.Estimate.Nodes[0].ID != "A" || p.Estimate.Nodes[0].Basis != estimate.BasisHistory {
+		t.Errorf("nodes = %+v, want both tasks in the plan's own order, answered by the history", p.Estimate.Nodes)
+	}
+
+	out, _, err := execute(t, "plan", "status", "--json", "--all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var top struct {
+		Plans []map[string]any `json:"plans"`
+	}
+	if err := json.Unmarshal([]byte(out), &top); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	want := []string{"artifact", "closed", "estimate", "id", "nodes", "open", "plan", "releases", "tasks"}
+	if k := keysOf(t, top.Plans[0]); !reflect.DeepEqual(k, want) {
+		t.Errorf("a plan's keys = %v, want the keys it always had and the estimate beside them", k)
+	}
+	est, ok := top.Plans[0]["estimate"].(map[string]any)
+	if !ok {
+		t.Fatalf("the plan's document carries an estimate of %v, not a block: %v",
+			top.Plans[0]["estimate"], top.Plans[0])
+	}
+	if k := keysOf(t, est); !reflect.DeepEqual(k,
+		[]string{"computed_at", "cost_usd", "max_running", "nodes", "ready_in_minutes"}) {
+		t.Errorf("the estimate's keys = %v", k)
+	}
+	if got.Plans[1].Estimate != nil {
+		t.Errorf("the v2 plan carries an estimate: %+v", got.Plans[1].Estimate)
+	}
+	for _, k := range keysOf(t, top.Plans[1]) {
+		if k == "estimate" {
+			t.Errorf("the v2 plan's document carries an estimate key: %v", top.Plans[1])
+		}
 	}
 }

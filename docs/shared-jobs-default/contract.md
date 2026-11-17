@@ -1,15 +1,15 @@
 # The shared-job contract (C1)
 
 The Go half is [`internal/sharedjob`](../../internal/sharedjob/sharedjob.go): `Pairing`, `RunIdentity`, `JobChoice` and
-`BitbucketProfile`, and a stub for each shape. This document is the prose half, and it is the half the sides are held
-to: it says what each side may rely on, what none of them may, and what changing the contract costs.
+`BitbucketProfile`. This document is the prose half, and it is the half the sides are held to: it says what each side
+may rely on, what none of them may, and what changing the contract costs.
 
 C1 is a contract and not an implementation (plan C1, slice `bb-shared-jobs`). It exists because four tasks are written
 in parallel against the same two decisions and cannot wait for each other: S1 and S4 (which together carry
 `docs/bitbucket-workspace-token`'s T2.2) are the deployer and the launcher, S2 (`docs/secrets-brokering`'s B5.3) is the
-credentials service's pairing, and S3 is the runner. The shapes in `internal/sharedjob` are what they call; the stubs
-(`internal/sharedjob/stub.go`, and the test beside it) return a shape and decide nothing, and **I1 deletes exactly those
-two files** when it wires the sides.
+credentials service's pairing, and S3 is the runner. The shapes in `internal/sharedjob` are what they call; C1 wrote a
+stub for each of them (`internal/sharedjob/stub.go`, and the test beside it) that returned a shape and decided nothing,
+and I1 deleted exactly those two files when it wired the sides.
 
 The contract rests on the owner's answers of 2026-11-13 ([reconciliation.md](reconciliation.md)): the pairing is the
 verified run identity paired against the profile's repositories, and a shared Bitbucket job holds no token at all
