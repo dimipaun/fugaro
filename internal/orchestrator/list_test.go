@@ -111,6 +111,12 @@ func TestReadLeaseNodeNamesTheHolderAndItsBeat(t *testing.T) {
 // program's, a temp file a write is in the middle of — is not an orchestrator
 // and is left out; a cache this release cannot read is a refusal rather than a
 // silent omission.
+//
+// The version the first cache carries is spelled out rather than taken from
+// BriefCacheVersion, because the number is the file's format and not the brief's
+// text: a release that moved it for what the brief says would strand every file
+// a release behind wrote, and this test fails with it (the review's finding on
+// the S5 bump).
 func TestCachedBriefsListTheLocalFiles(t *testing.T) {
 	cache := filepath.Join(t.TempDir(), "fugaro", "orchestrator")
 	t.Setenv("XDG_CACHE_HOME", filepath.Dir(filepath.Dir(cache)))
@@ -137,7 +143,7 @@ func TestCachedBriefsListTheLocalFiles(t *testing.T) {
 		}
 	}
 	write("aurora.json", map[string]any{
-		"schema_version": orchestrator.BriefCacheVersion,
+		"schema_version": 1,
 		"brief":          "the daemon's brief",
 		"written_at":     listNow.Add(-2 * time.Minute).Format(time.RFC3339),
 	})
