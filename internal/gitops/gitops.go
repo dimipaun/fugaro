@@ -9,10 +9,8 @@ import (
 	"io"
 	"io/fs"
 	"maps"
-	"net/url"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -586,13 +584,29 @@ func (r *Repo) Submodules(ctx context.Context) ([]Submodule, error) {
 
 // resolveSubmoduleURL resolves a submodule URL the way git resolves one: a URL
 // beginning with "./" or "../" — the shape almost every repository writes — is
-// relative to the URL of the repository that declares it, and git appends it to
-// that URL's path and cleans the result, so "../lib.git" under
-// https://bitbucket.org/acme/app.git is https://bitbucket.org/acme/lib.git and
-// one "../" too many clamps at the host. An origin that is not a URL at all (a
-// local path, the shape a local run's checkout takes) is joined as the path it
-// is, and an empty one leaves the URL as the repository wrote it — a URL that
-// reaches PointSubmoduleAt's caller as one no remote can be resolved against.
+// relative to the URL of the repository that declares it, and each "../"
+// removes one path component of that URL, so "../lib.git" under a repository at
+// acme/app.git is acme/lib.git.
+//
+// This is git's own chop and not a path join (submodule.c's relative_url, which
+// `git submodule init` and every nested clone go through), because a resolution
+// that differed from git's would have the run decide coverage for one
+// repository while git fetched another: the component a "../" removes is the
+// base URL's last "/" and nothing else, so one "../" too many cuts into the
+// "//" of the scheme — git's own answer for "../../../../x/y.git" under an
+// https base is "https:/x/y.git" — and one further cuts at the ":" of an
+// scp-like remote (git@bitbucket.org:acme/app.git) and joins with the ":" back.
+// A base with nothing left to cut leaves the URL as the repository wrote it,
+// which reaches the caller as one no remote can be resolved against — git dies
+// here ("cannot strip one component off url") for the base shapes it holds
+// relative, and a run that refused the whole checkout for a submodule URL git
+// would have refused anyway is the worse of the two. The joined result loses
+// one trailing "/", which is what git does to it, and nothing else is cleaned:
+// an absolute URL is returned exactly as written, trailing slash and all.
+//
+// A base that is a local path — a local run's checkout, which routeNestedFetches
+// never routes — is chopped and joined the same way and keeps its leading "/",
+// and an empty base leaves the URL as written.
 func resolveSubmoduleURL(origin, raw string) string {
 	if !strings.HasPrefix(raw, "./") && !strings.HasPrefix(raw, "../") {
 		return raw
@@ -600,12 +614,29 @@ func resolveSubmoduleURL(origin, raw string) string {
 	if origin == "" {
 		return raw
 	}
-	if u, err := url.Parse(origin); err == nil && u.Host != "" {
-		u.Path = path.Join(u.Path, raw)
-		u.RawPath = ""
-		return u.String()
+	out, rest := strings.TrimSuffix(origin, "/"), raw
+	colon := false
+	for {
+		switch {
+		case strings.HasPrefix(rest, "../"):
+			rest = rest[3:]
+			i := strings.LastIndex(out, "/")
+			if i < 0 {
+				if i = strings.LastIndex(out, ":"); i < 0 {
+					return raw
+				}
+				colon = true
+			}
+			out = out[:i]
+		case strings.HasPrefix(rest, "./"):
+			rest = rest[2:]
+		default:
+			if colon {
+				return strings.TrimSuffix(out+":"+rest, "/")
+			}
+			return strings.TrimSuffix(out+"/"+rest, "/")
+		}
 	}
-	return path.Join(origin, raw)
 }
 
 // OriginConfigURL returns the URL this checkout's origin is *configured* with,
