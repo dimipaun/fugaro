@@ -494,6 +494,13 @@ type LeaseOptions struct {
 	Attempts int
 	// Sign signs the heartbeat. It is required: no signer, no write, no lease.
 	Sign LeaseSigner
+	// Agents is the list the heartbeat advertises (D161, P6.7): the agents this
+	// consumer runs, which the phone reads out to answer "list agents" and to
+	// default a bare "talk to <agent>" to (D163). It is signed with the rest of
+	// the heartbeat — `agents` is in the covered set whenever it is written — and
+	// an empty list writes no `agents` field at all, because the schema refuses
+	// an empty list and the node's field set is what a reader expects to find.
+	Agents []Agent
 	// NoHeartbeat is `--no-heartbeat`: take no lease, write nothing, act on
 	// nothing. It exists for diagnosis, and it is what keeps a consumer with no
 	// writable heartbeat from acting at all.
@@ -787,16 +794,22 @@ func readHeartbeat(ctx context.Context, store HeartbeatStore, path string, ttl i
 }
 
 // signedHeartbeat is the value a take writes: `{at, boot, mac}`, the three
-// fields the merged rules allow on the heartbeat and no fourth. It is signed
-// **before** it is written (M4b) and validated against the schema after signing
-// (M10: every value this consumer writes is validated first), so a value that
-// cannot be signed, or that the schema would refuse, is never written — and
-// therefore never becomes a lease.
+// fields the merged rules allow on the heartbeat and no fourth, plus `agents`
+// when this consumer advertises a list (D161). It is signed **before** it is
+// written (M4b) and validated against the schema after signing (M10: every value
+// this consumer writes is validated first), so a value that cannot be signed, or
+// that the schema would refuse, is never written — and therefore never becomes a
+// lease.
+//
+// The signature covers the list, so the list cannot be changed in the store
+// without the phone noticing: `agents` is in the covered set whenever it is
+// present, which is why the signer is handed the list rather than the list being
+// added to the record afterwards.
 func signedHeartbeat(opts LeaseOptions) (Record, error) {
 	if opts.Sign == nil {
 		return nil, ErrLeaseNoSigner
 	}
-	mac, err := opts.Sign(Heartbeat{At: opts.At, Boot: opts.Holder})
+	mac, err := opts.Sign(Heartbeat{At: opts.At, Boot: opts.Holder, Agents: opts.Agents})
 	if err != nil {
 		// M4's third row in ErrUnsignable's shape (T2a): the key is loaded and
 		// it is **this value** the signer errored on, so nothing is written and
@@ -808,6 +821,9 @@ func signedHeartbeat(opts LeaseOptions) (Record, error) {
 		return nil, fmt.Errorf("%w: the heartbeat could not be signed, so nothing is written and no lease is taken: %w", ErrUnsignable, err)
 	}
 	value := Record{"at": opts.At, "boot": opts.Holder, "mac": mac}
+	if len(opts.Agents) > 0 {
+		value["agents"] = AgentList(opts.Agents)
+	}
 	if _, refusal := ValidateHeartbeat(value); refusal != nil {
 		return nil, fmt.Errorf("mailbox: the signed heartbeat is not a heartbeat this schema accepts (%s), so nothing is written", refusal.Code)
 	}
