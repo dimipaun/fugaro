@@ -219,11 +219,16 @@ repos:
 // (D2097, the no-prompt policy D1540). The loop is over agentMarkers itself
 // rather than a copy, so a marker the tree adds is one this command is held to.
 //
-// What the sentence has to carry is the marker as well as the command: the write
-// path's own refusal is a second fence behind this one, so an outcome-only test
-// would stay green over a deleted call site. The file is byte-identical
-// afterwards, and nothing is printed but the sentence — the refusal is the first
-// thing the command does, which is why no diff is offered here.
+// What the sentence has to carry is the marker as well as the command, and what
+// has to be empty is stdout: the write path's own fence is a second one behind
+// this, and it names the same marker and the same command, so a case that only
+// read the outcome would stay green over a deleted call site (applySettingsEdit's
+// refusal is what answers the write form then). The two forms that path never
+// sees are the ones that carry the call site on their own — --dry-run and the
+// form whose plan is empty — and both read the config, the access gate and the
+// plan before printing, which is what D2097 keeps a session out of. The file is
+// byte-identical afterwards, and nothing is printed at all — the refusal is the
+// first thing the command does, which is why no diff is offered here.
 func TestAccountsSwitchWritesRefusedInAgentSession(t *testing.T) {
 	switchFixture(t, switchChoiceTail)
 	before := switchFile(t)
@@ -231,21 +236,45 @@ func TestAccountsSwitchWritesRefusedInAgentSession(t *testing.T) {
 		t.Run(marker, func(t *testing.T) {
 			t.Setenv(marker, "1")
 
-			out, errOut, err := execute(t, "accounts", "switch", "team-a", "team-b", "--yes")
-			if err == nil {
-				t.Fatalf("the switch was admitted in a coding agent's session:\n%s\n%s", out, errOut)
-			}
-			if ExitCode(err) != ExitUserError {
-				t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
-			}
-			if !strings.Contains(err.Error(), marker) {
-				t.Errorf("the refusal does not name %s, so nobody knows which variable to unset: %v", marker, err)
-			}
-			if !strings.Contains(err.Error(), "fugaro accounts switch team-a team-b") {
-				t.Errorf("the refusal does not print the command to run at a terminal: %v", err)
-			}
-			if after := switchFile(t); after != before {
-				t.Errorf("the refusal wrote the file anyway:\n%s", after)
+			for _, tc := range []struct {
+				name string
+				args []string
+			}{
+				{"the write", []string{"accounts", "switch", "team-a", "team-b", "--yes"}},
+				{"--dry-run", []string{"accounts", "switch", "team-a", "team-b", "--dry-run"}},
+				// team-b is declared and its allow_data_to covers every
+				// repository the keys serve, so nothing but the guard refuses
+				// this one: without it the command would print the "no change"
+				// line and exit 0.
+				{"nothing names FROM", []string{"accounts", "switch", "team-b", "team-a"}},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					from, to := tc.args[2], tc.args[3]
+					out, errOut, err := execute(t, tc.args...)
+					if err == nil {
+						t.Fatalf("the switch was admitted in a coding agent's session:\n%s\n%s", out, errOut)
+					}
+					if ExitCode(err) != ExitUserError {
+						t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+					}
+					// The guard's own sentence, and not only its shape: a
+					// refusal from anywhere else would name another step.
+					if !strings.Contains(err.Error(), "refusing to switch a model account") {
+						t.Errorf("the refusal is not this command's own (accountsSwitchSession): %v", err)
+					}
+					if !strings.Contains(err.Error(), marker) {
+						t.Errorf("the refusal does not name %s, so nobody knows which variable to unset: %v", marker, err)
+					}
+					if !strings.Contains(err.Error(), "fugaro accounts switch "+from+" "+to) {
+						t.Errorf("the refusal does not print the command to run at a terminal: %v", err)
+					}
+					if out != "" {
+						t.Errorf("the refusal printed the plan a person would read:\n%s", out)
+					}
+					if after := switchFile(t); after != before {
+						t.Errorf("the refusal wrote the file anyway:\n%s", after)
+					}
+				})
 			}
 		})
 	}
