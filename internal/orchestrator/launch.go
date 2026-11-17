@@ -29,6 +29,18 @@ type Spec struct {
 	Recipe    string
 	RigorTier string
 	Brief     string
+	// PlanTask is the node of a plan the item stands for (WorkItem.PlanTask),
+	// and External the ticket it came from outside Fugaro with
+	// (WorkItem.External). Both are carried here rather than read by the
+	// launcher off the state, and both are digested with the declaration, so
+	// what a launcher is handed is still the spec a person approved: the
+	// launcher writes them out as the run's own record — the plan task in
+	// task.json and launch.json, where `plan status` and the `--plan-task`
+	// duplicate refusal read it (F38), and the external id in task.json,
+	// which the run's pull request builds its `Fixes` line from (B5,
+	// D2727).
+	PlanTask string
+	External string
 }
 
 // SpecOf is the launch spec of a work item. It reads the item's own fields and
@@ -42,6 +54,8 @@ func SpecOf(w WorkItem) Spec {
 		Recipe:    w.Recipe,
 		RigorTier: w.RigorTier,
 		Brief:     w.Brief,
+		PlanTask:  w.PlanTask,
+		External:  w.External,
 	}
 }
 
