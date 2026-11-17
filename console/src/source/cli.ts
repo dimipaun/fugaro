@@ -245,6 +245,14 @@ export function feedSilence(
 export const FUGARO_INSTALL_COMMAND = 'brew install dimipaun/tap/fugaro'
 
 /**
+ * USER_ERROR_EXIT is `ExitUserError` (`internal/cli/root.go`): the code the CLI
+ * exits with when it refused something the operator can act on. One read of this
+ * surface prints its answer and *then* exits with it (`repos.status`), so the
+ * number is named here rather than written as a bare `1` at that one call site.
+ */
+const USER_ERROR_EXIT = 1
+
+/**
  * NoInstallationState is the console's state when there is no `fugaro` to read:
  * everything design section 6.3's first screen needs, with no document in it.
  * `renderer/screens/degraded.ts` draws it, and `degraded.spec.ts` holds one
@@ -532,17 +540,36 @@ export class CliSource implements FugaroSource {
     })
   }
 
-  /** readDocument runs one one-shot read and returns the document it printed. */
-  async #readDocument(operation: OperationName, args: ValidatedArguments): Promise<Snapshot> {
+  /** readDocument runs one one-shot read and returns the document it printed.
+   *
+   * `documentBeatsExit` is the one exit code a read may fail with **and still
+   * have answered** (`repos.status` alone, and `USER_ERROR_EXIT` is the code):
+   * that command writes its document and then exits 1 when a row that blocks a
+   * launch failed (`reposStatusPrint`, `internal/cli/project_status.go`), so the
+   * failing rows and the fix each one names are exactly what the read is for,
+   * and a console that refused them would refuse the one case it exists to draw
+   * (`docs/design/desktop-console.md` §5.1: "this operation's answer is the
+   * document rather than the status").
+   *
+   * stdout is read first and the code is only a refusal when there is no
+   * document to hand back: a tolerated code with nothing parseable beside it is a
+   * refusal, and any other code is a refusal whatever the bytes are. Every read
+   * that leaves it out keeps the contract it had, where a nonzero exit is the
+   * CLI's own sentence: the default is 0, and a code of 0 was never one. */
+  async #readDocument(
+    operation: OperationName,
+    args: ValidatedArguments,
+    documentBeatsExit = 0,
+  ): Promise<Snapshot> {
     const plan = this.#plan(operation, args)
     const result = await runToCompletion(plan, {
       log: this.#log,
       ...(this.#options.spawner === undefined ? {} : { spawner: this.#options.spawner }),
     })
-    if (result.code !== 0) {
+    const read = parseStdout(result.stdout, this.#stamp())
+    if (result.code !== 0 && result.code !== documentBeatsExit) {
       throw refusalFrom(operation, cliSentence(result.stderr))
     }
-    const read = parseStdout(result.stdout, this.#stamp())
     if (read.document === null) {
       throw refusalFrom(operation, cliSentence(result.stderr) ?? `${operation} printed no JSON document`)
     }
@@ -888,9 +915,14 @@ export class CliSource implements FugaroSource {
    * argument of the operation, so no caller aims the child at one. It writes
    * nothing on any path and never fetches a secret's value -- the credential row
    * carries a container's name, whether it holds an enabled version and that
-   * version's age -- so this child stores nothing and sends nothing. */
+   * version's age -- so this child stores nothing and sends nothing.
+   *
+   * **The document is the answer even when the child exits 1**, which is the one
+   * place on this surface where a nonzero exit is not a refusal: the command
+   * exits `USER_ERROR_EXIT` when a row that blocks a launch failed, and those
+   * rows and the fix each names are the whole reason the read exists. */
   reposStatus(args: ValidatedArguments): Promise<Snapshot> {
-    return this.#readDocument('repos.status', args)
+    return this.#readDocument('repos.status', args, USER_ERROR_EXIT)
   }
 
   diagnoseRun(args: ValidatedArguments): Promise<Snapshot> {

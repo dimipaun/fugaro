@@ -5337,6 +5337,79 @@ describe('the source as a whole', () => {
     expect((error as SourceRefusal).sentence).toBe('no runs matched --since 3d')
   })
 
+  itHostRoute('answers `project repos status` with its document even though a failing row makes it exit 1', async () => {
+    // The one read whose exit status is not its answer: the command writes the
+    // document and *then* exits `ExitUserError` when a row that blocks a launch
+    // failed (`reposStatusPrint`, `internal/cli/project_status.go`), so a source
+    // that read the code first would refuse exactly the case the read exists for
+    // -- the failing rows and the fix each one names (`docs/design/desktop-
+    // console.md` section 5.1: "this operation's answer is the document rather
+    // than the status").
+    const directory = freshDirectory()
+    const statusDocument = {
+      version: 1,
+      project: PROJECT,
+      repos: [
+        {
+          canonical: 'acme/app',
+          enrolled: true,
+          state: '',
+          rows: [
+            {
+              id: 'credential-version',
+              ok: false,
+              problem: 'the github-app-key container holds no enabled version',
+              fix: 'fugaro secrets set github-app-key --repo acme/app',
+              severity: 'blocking',
+            },
+          ],
+        },
+      ],
+    }
+    const stub = installStub(directory, {
+      commands: { version: { stdout: '1.4.2\n' }, 'project repos status': { stdout: `${JSON.stringify(statusDocument)}\n`, code: 1 } },
+    })
+    const source = await CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} })
+    const snapshot = await source.reposStatus({})
+    expect(snapshot.document).toEqual(statusDocument)
+    const rows = (snapshot.document['repos'] as readonly Record<string, unknown>[])[0]?.['rows'] as readonly Record<string, unknown>[]
+    expect(rows[0]?.['ok']).toBe(false)
+    expect(rows[0]?.['fix']).toBe('fugaro secrets set github-app-key --repo acme/app')
+  })
+
+  itHostRoute('refuses `project repos status` that exited 1 with no document to hand back', async () => {
+    // The tolerance is for the code *with* a document and never for the code
+    // alone: a failure that printed nothing is the CLI's own sentence, as it is
+    // for every other read.
+    const directory = freshDirectory()
+    const stub = installStub(directory, {
+      commands: {
+        version: { stdout: '1.4.2\n' },
+        'project repos status': { stderr: 'fugaro: the runs bucket could not be read\n', code: 1 },
+      },
+    })
+    const source = await CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} })
+    const error = await source.reposStatus({}).catch((thrown: unknown) => thrown)
+    expect(error).toBeInstanceOf(SourceRefusal)
+    expect((error as SourceRefusal).sentence).toBe('the runs bucket could not be read')
+  })
+
+  itHostRoute('refuses every other exit code, even beside a whole document', async () => {
+    // One code is tolerated and it is `ExitUserError`'s, so this is a decision
+    // about `repos.status` and not a general "ignore the exit status": a code
+    // the CLI uses for something else with a document on stdout is still a
+    // refusal, and the read stays the only one that can fail and answer.
+    const directory = freshDirectory()
+    const stub = installStub(directory, {
+      commands: {
+        version: { stdout: '1.4.2\n' },
+        'project repos status': { stdout: '{"version":1,"project":"fugaro","repos":[]}\n', code: 2 },
+      },
+    })
+    const source = await CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} })
+    await expect(source.reposStatus({})).rejects.toBeInstanceOf(SourceRefusal)
+  })
+
   itHostRoute('returns the version line and the one link as text, with no document in them', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, {
