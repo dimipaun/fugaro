@@ -1289,8 +1289,8 @@ export const CONSOLE_OPERATIONS = [
   //
   // **`flags` is empty, and that is the one place this row differs from every
   // read beside it.** The dry run's argv carries `--dry-run --json` and a
-  // confirmed write's carries no flag at all -- which is not a set of flags this
-  // operation *fixes*, so it is the phase the main process decides
+  // confirmed write's carries `--no-apply` (D1565, D1572) -- which is not a set
+  // of flags this operation *fixes*, so it is the phase the main process decides
   // (`SETTINGS_EDIT_PHASE_WORDS`, `src/main/spawn.ts`) rather than a column
   // here. A screen chooses none of them: not `--dry-run`, not even `--json`.
   //

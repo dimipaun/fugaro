@@ -619,9 +619,9 @@ export interface FugaroSource {
   settingsEditArgv(args: ValidatedArguments, phase: SettingsEditPhase, layer: string): Promise<readonly string[]>
   /**
    * settingsEdit runs one phase: the dry run (which writes nothing, D1106) or
-   * the write (which carries no flag, D1107). It answers the dry run's
-   * document or the write's sentence, or the CLI's own refusal sentence -- see
-   * `SettingsEditSpawn`.
+   * the write (whose one word is `--no-apply`, D1107 and D1572). It answers the
+   * dry run's document or the write's sentence, or the CLI's own refusal
+   * sentence -- see `SettingsEditSpawn`.
    *
    * `shown` is the argv the confirmation window drew for that phase, and a plan
    * whose argv differs from it is **refused rather than spawned**: an operator
