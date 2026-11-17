@@ -117,6 +117,8 @@ func orchestratorPath(t *testing.T, node string) string {
 		path, err = orchestrator.PathState(orchestratorTestID)
 	case orchestrator.AuditNode:
 		path, err = orchestrator.PathAudit(orchestratorTestID)
+	case orchestrator.BacklogNode:
+		path, err = orchestrator.PathBacklog(orchestratorTestID)
 	default:
 		t.Fatalf("%q is not one of the node's three siblings", node)
 	}

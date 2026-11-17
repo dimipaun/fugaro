@@ -40,11 +40,20 @@ const orchestratorOutputVersion = 1
 // database, and a write into somebody else's installation is what that check
 // is for.
 func openOrchestrator(ctx context.Context, o cloudOptions) (*localcfg.Config, *orchestrator.Node, *rtdb.Client, error) {
+	return openOrchestratorShard(ctx, o, orchestrator.ShardState)
+}
+
+// openOrchestratorShard is openOrchestrator for one of the nodes beside the
+// state node: the standing backlog's (D2715) or an imported plan's (D2735).
+// Which node the caller gets is the shard and nothing else — the id, the role,
+// the lease and the ownership check are the same for all three — because a
+// second opener would be a second place for one of those four to differ.
+func openOrchestratorShard(ctx context.Context, o cloudOptions, shard orchestrator.Shard) (*localcfg.Config, *orchestrator.Node, *rtdb.Client, error) {
 	lc, db, err := openBudget(ctx, o)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	node, err := orchestratorNodeFor(lc, db)
+	node, err := orchestratorNodeShard(lc, db, shard)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -53,11 +62,18 @@ func openOrchestrator(ctx context.Context, o cloudOptions) (*localcfg.Config, *o
 
 // orchestratorNodeFor builds the state node of the project's orchestrator.
 func orchestratorNodeFor(lc *localcfg.Config, db orchestrator.CAS) (*orchestrator.Node, error) {
+	return orchestratorNodeShard(lc, db, orchestrator.ShardState)
+}
+
+// orchestratorNodeShard builds one node of the project's orchestrator: the
+// state node (ShardState, the zero shard), the standing backlog's
+// (ShardBacklog) or one imported plan's (PlanShard).
+func orchestratorNodeShard(lc *localcfg.Config, db orchestrator.CAS, shard orchestrator.Shard) (*orchestrator.Node, error) {
 	id, err := orchestratorID(lc)
 	if err != nil {
 		return nil, err
 	}
-	node, err := orchestrator.NewNode(orchestrator.NodeOptions{DB: db, AgentID: id, Role: orchestrator.RoleOrchestrator})
+	node, err := orchestrator.NewNode(orchestrator.NodeOptions{DB: db, AgentID: id, Role: orchestrator.RoleOrchestrator, Shard: shard})
 	if err != nil {
 		return nil, userErr("%v", err)
 	}
