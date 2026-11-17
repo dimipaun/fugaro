@@ -171,16 +171,49 @@ type LadderLog interface {
 // LadderSeams. A hook that returns an error ends the item's turn in the cycle
 // the way an error of the executor's own would.
 //
-// What it answers besides the error is whether it made a move: a run it
-// started, a landing it made, a landing's owed work it replayed, a split. A
-// hook that read a head and found nothing it may do — a pull request that is
-// already merged with nothing left to file, a gate that waits for a person, a
-// judge that vetoed, a run of its own still going — made no move, and the cycle
-// that called it did no work either. The distinction is the cycle's own: what
-// counts a hook's work is Report.Escalated, and a hook whose every return read
-// as a move would make an item the ladder can never finish read as progress
-// every cycle, which is the breaker defeated for good (D1228).
-type LadderBeyond func(ctx context.Context, item WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) (bool, error)
+// What it answers besides the error is what it did with the cycle (LadderAct):
+// a move it made — a run it started, a landing it made, a landing's owed work it
+// replayed, a split — a wait it is keeping, or neither. A hook that read a head
+// and found nothing it may do — a pull request that is already merged with
+// nothing left to file, a gate that waits for a person, a judge that vetoed —
+// made no move, and the cycle that called it did no work either. The distinction
+// is the cycle's own: what counts a hook's work is Report.Escalated, and a hook
+// whose every return read as a move would make an item the ladder can never
+// finish read as progress every cycle, which is the breaker defeated for good
+// (D1228).
+type LadderBeyond func(ctx context.Context, item WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) (LadderAct, error)
+
+// LadderAct is what a hook past rung 2 did with one cycle, as the executor
+// counts it: the three answers LadderBeyond has, and the reason its answer
+// cannot be a boolean.
+//
+// The distinction that needs the third one is the wait. A hook that finds the
+// reading still moving has neither acted nor asked anybody, and a cycle read as
+// one that did nothing is a cycle the breaker counts — three of them in a row
+// pause every spawn on the node while naming no item, which is the wrong answer
+// twice over: nothing has gone wrong in the daemon, and the item's own question
+// is what a wait that never ends owes a person (boundRetry, mergeRetryWindow).
+// So the wait is an answer of its own, and the cycle that gets it reads as
+// in-flight — the reading the loop already gives a cycle whose only news is a
+// run still going (outcome, Report.Waited, D1228, D2705).
+type LadderAct int
+
+const (
+	// LadderIdle is a hook that read the item and moved nothing: a refusal
+	// that asked a person, a launch it may not make, an item it has finished
+	// with. The cycle it leaves is one that did nothing.
+	LadderIdle LadderAct = iota
+	// LadderMoved is a hook that moved the item on: a run started, a landing
+	// made, a landing's owed work replayed, a split filed. It is what
+	// Report.Escalated counts.
+	LadderMoved
+	// LadderWaiting is a hook that found the reading still moving and retried
+	// the wait (MergeOutcome.Retry). It moves nothing and asks nobody, and it
+	// is not a cycle that did nothing: the daemon is waiting on something the
+	// reading says is going, and what bounds the wait is the hook's own clock
+	// rather than the breaker. It is what Report.Waited counts.
+	LadderWaiting
+)
 
 // escalate is one cycle's turn at the ladder: every item on the node, walked as
 // far as the facts take it.
@@ -447,16 +480,19 @@ func (c *cycle) ladderOuter(w WorkItem, step escalation.Step, read LadderReading
 // question rather than reading as an idle daemon — the ladder's question about
 // the item is on the node from the first cycle the hook refuses on one
 // (mergeQuestionOp), and it names the item the daemon is stuck on. A wait on
-// something still moving asks nobody and is retried (MergeOutcome.Retry): the
-// cycles it spans are cycles of the hook's own that neither acted nor asked,
-// and three of those in a row are the breaker's — whose question is the
-// daemon's and names no item (D1228). Those cycles are bounded rather than left
-// to the breaker, because a reading can look like movement and never move: past
-// the bound the wait is a refusal like any other and asks the item's own
-// question (boundRetry, mergeRetryWindow), so what reaches a person names the
-// item whatever the reading did. The item a hook has finished with is not
-// left to the breaker either: the hook stops it, and the cycle after it finds
-// an item the ladder reads no further rungs for.
+// something still moving asks nobody, and the cycles it spans are not the
+// breaker's either: the hook answers LadderWaiting, Report.Waited counts it, and
+// the cycle reads as one waiting on something still going — the reading the loop
+// already gives a cycle whose attempt has not reported (outcome, D2705), because
+// a daemon waiting on a run is not a daemon that did nothing. What bounds such a
+// wait is the hook's own clock and not the breaker, because a reading can look
+// like movement and never move: past the bound the wait is a refusal like any
+// other and asks the item's own question (boundRetry, mergeRetryWindow). So what
+// reaches a person names the item whatever the reading did, and a reading that
+// only looks like movement never pauses the node over an item nobody was told
+// about (D1228). The item a hook has finished with is not left to the breaker
+// either: the hook stops it, and the cycle after it finds an item the ladder
+// reads no further rungs for.
 func (c *cycle) ladderBeyond(ctx context.Context, w WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) error {
 	if c.tick.Ladder.Beyond == nil {
 		runID := w.RunID
@@ -465,15 +501,18 @@ func (c *cycle) ladderBeyond(ctx context.Context, w WorkItem, step escalation.St
 		}
 		return c.ladderSay(ctx, w, step, reason, runID)
 	}
-	acted, err := c.tick.Ladder.Beyond(ctx, w, step, reason, read)
+	act, err := c.tick.Ladder.Beyond(ctx, w, step, reason, read)
 	if err != nil {
 		if rerr := c.reread(ctx); rerr != nil {
 			return errors.Join(err, rerr)
 		}
 		return err
 	}
-	if acted {
+	switch act {
+	case LadderMoved:
 		c.rep.Escalated++
+	case LadderWaiting:
+		c.rep.Waited++
 	}
 	return c.reread(ctx)
 }
