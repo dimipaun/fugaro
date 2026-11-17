@@ -436,8 +436,13 @@ func newRunCmd() *cobra.Command {
 			"A plan task already being worked on is a refusal: while a run of it is in\n" +
 			"flight, or a run of it left a pull request behind, the launch stops before\n" +
 			"anything is pushed or started and names what holds the task and the ways out\n" +
-			"(--pr, --retry, --continues). --allow-duplicate launches anyway, for a second\n" +
-			"attempt that is deliberate, such as the redundant attempts of one hard task.\n" +
+			"of what it found: --pr where a run of it left a pull request behind, and\n" +
+			"nothing but waiting (fugaro runs ls) where a run of it is still going.\n" +
+			"--retry and --continues are not among them: every run it could name has\n" +
+			"launched already, so a --retry of it would do nothing, and a --continues of\n" +
+			"it would start a second run of the task this refusal just stopped.\n" +
+			"--allow-duplicate launches anyway, for a second attempt that is deliberate,\n" +
+			"such as the redundant attempts of one hard task.\n" +
 			"The check reads the run records and never the code host, so a pull request a\n" +
 			"run left is still refused once it has been merged; a read that cannot be made\n" +
 			"is skipped with one warning, and the launch goes ahead: it never blocks on its\n" +
@@ -876,7 +881,7 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	// for a launch that starts a new task, since a --pr, --retry or --continues
 	// launch is a way out of its refusal rather than one that could meet it.
 	if o.retry == "" && !prSet && o.continues == "" {
-		if err := planTaskDuplicate(ctx, env, o, slug, spec.RunID, cmd.ErrOrStderr()); err != nil {
+		if err := planTaskDuplicate(ctx, env, o, slug, spec.Repo, spec.RunID, cmd.ErrOrStderr()); err != nil {
 			return err
 		}
 	}
@@ -3041,7 +3046,7 @@ func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, 
 	// that is already being worked on is exactly the second run the guard
 	// refuses, and it costs the batch's own run ids nothing -- none of them
 	// exists yet, so the read has no run of this launch's to leave out.
-	if err := planTaskDuplicate(ctx, env, o, plan.slug, "", warn); err != nil {
+	if err := planTaskDuplicate(ctx, env, o, plan.slug, plan.repo, "", warn); err != nil {
 		return err
 	}
 	noteRigorRequest(ctx, o, plan.repo, warn)
