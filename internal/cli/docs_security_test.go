@@ -418,6 +418,17 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"an Editor reads a secret directly, only through its own `secretAccessor` grant; indirectly, by carrying `iam.serviceAccounts.actAs` and `run.services.update`, which let it deploy code that runs as an account holding one",
 		// Q6's shape and its cost.
 		"One secret, one grant, one leak",
+		// And Q6's shape scoped, the way secret-readers.md E7 scopes it: the
+		// bundle's grant is the installation root's one UNCONDITIONED
+		// accessor, while the account also holds one per container a switched
+		// repository's job mounts (B3.3, D2074) and the dynamic class's
+		// prefix-conditioned project accessor (D1931, E25). Pinned, because
+		// the flat count this paragraph carried ("its only grant on Secret
+		// Manager") is false on this tree and reads as a contradiction beside
+		// S3's own sentence below (the review finding on B3.5).
+		"exactly one unconditioned `secretmanager.secretAccessor` grant in the installation root",
+		"one `secretmanager.secretAccessor` per container the job's own environment mounts",
+		"conditioned on that grammar's two name prefixes",
 		"a read of the bundle is every credential the service holds at once",
 		// Deployed on every installation, and the switch a run reads -- the
 		// posture the owner's ruling of 2026-11-05 replaced "off by default,
