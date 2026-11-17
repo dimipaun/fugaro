@@ -85,16 +85,20 @@ func rigorRepoMode(t *testing.T, path string) rigor.Mode {
 // TestRigorSetRepoLayerWritesTheCheckout is the red step: `--layer repo` writes
 // the mode into the checkout's own fugaro.yaml — the file every run of that
 // repository reads from the base branch — and nowhere else. This machine's
-// project layer file is not created, let alone edited, and the write is not a
-// commit, a stage or a push: it is a change in a working tree for the owner to
-// review and carry to the base branch themselves (D1564).
+// project layer file is not edited, and the write is not a commit, a stage or a
+// push: it is a change in a working tree for the owner to review and carry to
+// the base branch themselves (D1564).
+//
+// The layer file is seeded first and unchanged after, and the seeding is the
+// reader's own precondition rather than the fixture's convenience: the mode this
+// write is ranked against is that layer's, so a machine that does not hold it
+// yet is refused outright (rigorMachineBlock, D2617). Seeding it at `pro` is
+// also what makes the `critical` written below a raise.
 func TestRigorSetRepoLayerWritesTheCheckout(t *testing.T) {
 	settingsWriteHome(t)
+	layerPath := rigorModeSet(t, rigorAnchors, "pro")
+	beforeLayer := readFileString(t, layerPath)
 	path := modelsWriteGitCheckout(t, "owner/repo-a", rigorRepoLayerYAML)
-	layerPath := localLayerPath(t)
-	if _, err := os.Stat(layerPath); err == nil {
-		t.Fatalf("the fixture wrote %s: this test is about the layer file NOT being written", layerPath)
-	}
 	dir := filepath.Dir(path)
 	head := modelsUseGit(t, dir, "rev-parse", "HEAD")
 
@@ -109,8 +113,8 @@ func TestRigorSetRepoLayerWritesTheCheckout(t *testing.T) {
 	if !strings.Contains(readFileString(t, path), "rigor:") {
 		t.Errorf("the write did not land under the repository's own `rigor:` block:\n%s", readFileString(t, path))
 	}
-	if _, err := os.Stat(layerPath); err == nil {
-		t.Error("the --layer repo write created this machine's project layer file")
+	if got := readFileString(t, layerPath); got != beforeLayer {
+		t.Errorf("the --layer repo write reached this machine's project layer file:\n%s", got)
 	}
 	// D1564's sentence, and no `next: fugaro update` beside it: that stage
 	// publishes the project layer file, and this write is not in it.
@@ -293,6 +297,103 @@ func TestRigorSetLayerFlag(t *testing.T) {
 	}
 	if got := readFileString(t, layerPath); !strings.Contains(got, "default: critical") {
 		t.Errorf("the --layer repo write changed the layer file:\n%s", got)
+	}
+}
+
+// rigorStaleLayerYAML is a machine's project layer file as an older installation
+// of this project left it: the anchors name another GCP project, so the file is
+// not this project's layer any more and nothing of it is read. It still carries
+// a `critical` default, which is what makes the test's point: the mode below is
+// not unknown because the file says nothing, but because the file cannot be
+// read, and a reader that fell back to the built-in default would compare
+// against a `pro` this repository does not resolve.
+const rigorStaleLayerYAML = "version: 1\nproject: aurora\ngcp_project: aurora-old-gcp\ndefaults:\n  rigor:\n    default: critical\n"
+
+// TestRigorSetRepoLayerRefusesAnUnreadableMachineLayer is the third state this
+// fence has to answer, after "a lowering" and "not a lowering": the baseline
+// itself cannot be read. A machine whose project layer file is absent, is not
+// readable, or is not this project's file is one where what that repository
+// resolves today cannot be told, and a reader that answered "no layer" with an
+// empty block would resolve the built-in default `pro` — looser than what the
+// repository's runs really resolve — so a lowering of them would read as no
+// change at all, `Typed` would be false, and a coding agent's session would write
+// a mode into a checkout the owner then merges (D2617).
+//
+// The three paths are walked in a coding agent's session and at the owner's own
+// terminal, and a RAISE is walked beside the lowering: what refuses is the layer
+// that does not read and not the widening class, which a terminal admits, so no
+// session and no direction talks its way past a baseline nobody can name. The
+// sentence names the file and the one command that seeds it, and the checkout is
+// left byte-identical.
+func TestRigorSetRepoLayerRefusesAnUnreadableMachineLayer(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		seed func(t *testing.T, path string) []string
+	}{
+		{
+			name: "absent",
+			seed: func(t *testing.T, path string) []string {
+				t.Helper()
+				if _, err := os.Stat(path); err == nil {
+					t.Fatalf("the fixture wrote %s: this path is the machine that never seeded one", path)
+				}
+				return []string{"no local project layer file at " + path, "fugaro update seeds it from the published layer"}
+			},
+		},
+		{
+			name: "unreadable",
+			seed: func(t *testing.T, path string) []string {
+				t.Helper()
+				return []string{"the local project layer file " + path + " is not read", unreadableLayerFile(t, path, "symlink")}
+			},
+		},
+		{
+			name: "another project's file",
+			seed: func(t *testing.T, path string) []string {
+				t.Helper()
+				settingsManagedLayerFile(t, rigorStaleLayerYAML)
+				return []string{path + " is not this project's layer file", "but it is read for GCP project"}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			settingsWriteHome(t)
+			path := modelsWriteGitCheckout(t, "owner/repo-a", rigorRepoLayerYAML)
+			before := readFileString(t, path)
+			want := tc.seed(t, localLayerPath(t))
+
+			for _, session := range []struct {
+				name string
+				set  func(*testing.T)
+			}{
+				{"agent", agentSession},
+				{"terminal", func(t *testing.T) { noAgentSession(t); noTerminal(t) }},
+			} {
+				session.set(t)
+				for _, argv := range [][]string{
+					{"rigor", "set", "pro", "--layer", "repo", "--repo", "owner/repo-a"},
+					{"rigor", "set", "critical", "--layer", "repo", "--repo", "owner/repo-a"},
+				} {
+					line := strings.Join(argv, " ")
+					out, _, err := execute(t, argv...)
+					if err == nil {
+						t.Fatalf("%s at a %s was ranked against a layer that does not read:\n%s", line, session.name, out)
+					}
+					if ExitCode(err) != ExitUserError {
+						t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+					}
+					for _, w := range want {
+						if !strings.Contains(err.Error(), w) {
+							t.Errorf("the refusal does not say %q: %v", w, err)
+						}
+					}
+					assertNoPrompt(t, out)
+					if got := readFileString(t, path); got != before {
+						t.Fatalf("the refused write changed the checkout:\n%s", got)
+					}
+				}
+			}
+		})
 	}
 }
 

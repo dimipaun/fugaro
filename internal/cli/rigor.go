@@ -427,9 +427,19 @@ func runRigorSet(cmd *cobra.Command, name string, o rigorOptions) error {
 	// has nothing below it: the two layers below it are the built-in default and
 	// the repository's own file, and neither is a value this layer may be
 	// compared against (rigorBaseline's own comment).
+	//
+	// The layer below a repository's write is a read that can FAIL, and a failure
+	// is the refusal it hands back rather than an empty block: an empty block is
+	// the built-in default, which is looser than what that repository's runs
+	// really resolve, so a lowering this fence exists to refuse would read as no
+	// change at all (D2617).
 	base := rigorBaseline{repo: layer == settingsLayerRepo}
 	if base.repo {
-		base.below = rigorMachineBlock(lc)
+		below, err := rigorMachineBlock(lc)
+		if err != nil {
+			return err
+		}
+		base.below = below
 	}
 	baseline := base.mode(prev.block, o.area)
 	after := base.mode(edited.block, o.area)
@@ -735,35 +745,47 @@ func (b rigorBaseline) where() string {
 
 // rigorMachineBlock is the project layer's own rigor block as this machine holds
 // it: the file `fugaro update` seeds and publishes, read the way every reader of
-// it reads it (readLayerFile, projectLayerProblems). A file that is absent,
-// unreadable or does not read answers nothing rather than the half of it that
-// parsed — the same reading init_review.go's projectRigor makes of the same file
-// and for the same reason — and the built-in default then stands in for it, which
-// is what a repository name nothing of its own resolves through anyway.
+// it reads it (readLayerFile, projectLayerProblems).
+//
+// A file that is absent, unreadable or does not read is an ERROR and never an
+// empty block. The block is the layer under a repository's own write, and the
+// empty one resolves to the built-in default — looser than what that repository's
+// runs really resolve — so answering it would make a real lowering of those runs
+// read as no change at all, `Typed` false, and a coding agent's session free to
+// write a mode into a checkout the owner then merges and publishes unseen
+// (D2617). "The layer could not be read" is therefore the command's own refusal:
+// what this repository resolves today cannot be told, so no write of it is
+// ranked. init_review.go's projectRigor reads the same file into the built-in
+// default on those paths, and may: it prints the summary line of a converge that
+// is about to seed the file, and nothing it decides rests on the value.
 //
 // The published object is not read for it: this is the layer under a
 // repository's own write, one input of a comparison, and a cloud read for it
 // would make a write of a checkout's file depend on the runs bucket answering
 // (D1564: the write is judged on the machine it is made on). The local file is
 // the same value that object is published FROM, so it is the answer this machine
-// has.
-func rigorMachineBlock(lc *localcfg.Config) rigorBlock {
+// has — and a machine that does not hold it yet is told the one command that
+// seeds it, rather than being handed a baseline of the built-in default.
+func rigorMachineBlock(lc *localcfg.Config) (rigorBlock, error) {
 	if lc == nil || lc.Name == "" {
-		return rigorBlock{}
+		return rigorBlock{}, userErr("a --layer repo write is ranked against this machine's project layer, and no project is selected to read one for: run this from the installation's project; nothing was written")
 	}
 	path, err := localcfg.LayerFile(os.Getenv, lc.Name)
 	if err != nil {
-		return rigorBlock{}
+		return rigorBlock{}, userErr("%v", err)
 	}
 	data, err := readLayerFile(path)
-	if err != nil {
-		return rigorBlock{}
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return rigorBlock{}, userErr("no local project layer file at %s: a repository's own mode is ranked against the layer this machine holds, and fugaro update seeds it from the published layer; nothing was written", path)
+	case err != nil:
+		return rigorBlock{}, userErr("the local project layer file %s is not read: %s; a repository's own mode is ranked against it, so nothing was written", path, oneLineCLI(err.Error()))
 	}
 	l, problems := projectLayerProblems(data, lc)
 	if len(problems) > 0 {
-		return rigorBlock{}
+		return rigorBlock{}, userErr("%s is not this project's layer file, so the layer a repository's own mode is ranked against cannot be read: %s; repair or remove the file, and fugaro update seeds it from the published layer; nothing was written", path, layerProblemsText(problems))
 	}
-	return rigorBlock{def: l.Defaults.Rigor.Default, areas: l.Defaults.Rigor.Areas}
+	return rigorBlock{def: l.Defaults.Rigor.Default, areas: l.Defaults.Rigor.Areas}, nil
 }
 
 // rigorWideningWhy is the sentence a widening write prints (D1552, D1555): what
