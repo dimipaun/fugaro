@@ -38,7 +38,7 @@ The tree invocation's own critical path is one package: `scripts` at 374.1 s of 
 
 ## Where `internal/cli`'s 634 seconds go
 
-7166 tests over 606 test files, every one of them `package cli`, in 559.9 s of package time.
+7166 tests over 606 test files, every one of them `package cli`, in 642.4 s of package time — the two invocations' own runs summed, which is the figure the report's summary prints.
 
 | size of test | tests | seconds | share |
 | --- | --- | --- | --- |

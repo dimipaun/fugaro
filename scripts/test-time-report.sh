@@ -211,7 +211,13 @@ awk -F'\t' '
 ' "$work/toplevel.tsv" | sort -k1,1 > "$work/agg.tsv"
 [ -s "$work/packages.tsv" ] || printf '\t0\n' > "$work/packages.tsv"
 awk -F'\t' '
-  NR == FNR { if ($1 != "") pkg[$1] = $2; next }
+  # A package is named by one row per stream that ran it, and the documented
+  # invocation runs internal/cli twice, once per half of its tests. The two
+  # columns beside this one are summed over every stream, so this one is
+  # summed the same way and the row agrees with the summary line: keeping the
+  # last stream alone would put one half of the runs beside both halves of
+  # the tests and of the seconds.
+  NR == FNR { if ($1 != "") pkg[$1] += $2; next }
   { printf "%.2f\t%d\t%.2f\t%s\n", (pkg[$1] == "" ? 0 : pkg[$1]), $2, $3, $1 }
 ' "$work/packages.tsv" "$work/agg.tsv" | sort -rn \
   | awk -F'\t' '{printf "  %9.2f  %7d  %12.2f  %s\n", $1, $2, $3, $4}'

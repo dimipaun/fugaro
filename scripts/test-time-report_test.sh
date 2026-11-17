@@ -226,6 +226,14 @@ two=$(bash "$script" --source-root "$tree" --peak-mib 1 "$work/stream.jsonl" "$w
 expect_contains "$two" "streams:        2" "both streams are read"
 expect_contains "$two" "failed:         2 tests, 2 packages" "failures from both are counted"
 
+# example.com/b is named by both streams, as internal/cli is by the two halves
+# verify runs it in: the row's elapsed sums the runs, which is the figure the
+# summary prints, so the table cannot show one stream's run beside both
+# streams' tests and seconds.
+expect_contains "$two" "package seconds: 35.20" "the summary sums every stream's package run"
+b_row=$(printf '%s\n' "$(section "$two" "time per package")" | grep 'example.com/b$' || true)
+expect_contains "$b_row" "3.20" "a package two streams name sums their elapsed, as its tests and seconds are"
+
 if [ "$failures" -ne 0 ]; then
   echo "test-time-report_test: $failures case(s) failed" >&2
   exit 1
