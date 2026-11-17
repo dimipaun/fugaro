@@ -742,28 +742,35 @@ profiles:
 	}
 }
 
-// Bitbucket stays on the per-repository path until I1 admits it to the
-// shared-job list, and this test is that list read from the deployer's side:
-// the Bitbucket path itself is built and tested beside this one
-// (TestProjectJobsDeployABitbucketProfile), and no profile of a provider the
-// list does not hold reaches it. What a shared job never does, whatever
-// provider the profile names, is mount the Bitbucket token.
+// A profile of a provider the shared-job list does not hold is skipped and not
+// refused, which is the whole of this test: the policy layer admits such a
+// profile (projectpolicy.validProfiles, and TestProfileAdmitsOnlyItsOwnProvider),
+// a repository's workflow may select it, and the runner only requires a selected
+// profile to be defined — so an installation whose local config names one must
+// deploy, and the profile simply gets no job. Refusing the installation whole,
+// as this function used to, made `fugaro update` fail on a document `fugaro
+// project policy publish` accepts.
 //
-// A Bitbucket profile is skipped and not refused, which is the whole of this
-// test: the policy layer admits such a profile (projectpolicy.validProfiles,
-// and TestProfileAdmitsOnlyItsOwnProvider), a Bitbucket repository's workflow
-// may select it, and the runner only requires a selected profile to be
-// defined — so an installation whose local config names one must deploy, and
-// the profile simply gets no job. Refusing the installation whole, as this
-// function used to, made `fugaro update` fail on a document `fugaro project
-// policy publish` accepts.
+// The list serves every kind config.Providers names since I1 (github and
+// bitbucket — TestSharedJobProviderIsTheProvidersList is the shipped list's own
+// test), so no profile reaches this path today and the test holds the list back
+// to github to walk it. It is live code all the same: the skip is what keeps the
+// next provider kind inert until its whole path is built, which is exactly the
+// reason I1's own change waited on the sides of docs/shared-jobs-default.
 //
-// Mutation (verified, run and restored): put the refusal back (return nil,
-// userErr(...) for !SharedJobProvider) — the first case below stops with an
-// error instead of deploying the GitHub profile. Mutation: drop the
-// SharedJobProvider skip — the first case deploys a job for the Bitbucket
-// profile the list does not hold.
+// What a shared job never does, whatever provider the profile names, is mount
+// the Bitbucket token, which the last case below refuses under the held list
+// too.
+//
+// Mutation (verified, run and restored): refuse instead of skipping (return
+// nil, userErr(...) for !SharedJobProvider) — the first case stops with that
+// refusal instead of deploying the GitHub profile beside it. Mutation: drop the
+// skip (projectJobs), and the first case stops on the Bitbucket profile's own
+// refusal of this fixture, which records no credentials service: the skip is
+// what keeps a profile the list does not hold out of the rest of the composer,
+// and never what hides it from the policy's rules.
 func TestProjectJobsSkipBitbucketProfiles(t *testing.T) {
+	admitSharedJobProviders(t, "github")
 	// A project with repositories on both providers defines both profiles
 	// (the plan's own example, standard and standard-bitbucket): the GitHub
 	// one is deployed, the Bitbucket one is not, and the call succeeds.
@@ -772,7 +779,7 @@ func TestProjectJobsSkipBitbucketProfiles(t *testing.T) {
   standard-bitbucket: { provider: bitbucket, cpu: 2, memory: 8Gi, timeout_class: 6h }
 `)
 	if got := slices.Sorted(maps.Keys(jobs)); !slices.Equal(got, []string{gcp.ProjectJobName("standard", "github", "")}) {
-		t.Errorf("jobs = %v, want the GitHub profile's alone: a shared job never serves Bitbucket", got)
+		t.Errorf("jobs = %v, want the GitHub profile's alone: a shared job never serves a provider the list does not hold", got)
 	}
 	// The Bitbucket profile is still held to the policy's rules — CheckProfiles
 	// runs over every profile before any of them is skipped, so a skip is not
@@ -811,12 +818,13 @@ profiles:
 	}
 }
 
-// admitSharedJobProviders makes the shared-job provider list serve the kinds
-// named, for the duration of one test: the deployer's Bitbucket path is gated
-// on that list, and S1 leaves the list itself as it ships (docs/shared-jobs-default
-// S1's acceptance: this slice merges with no effect on a Bitbucket project, and
-// I1 makes the one-line change). A test of that path therefore admits the
-// provider for itself, so that what it exercises is the path and not the list.
+// admitSharedJobProviders holds the shared-job provider list to the kinds
+// named, for the duration of one test. The list is what decides whether a
+// profile is served, and the skip path — a profile of a provider the list does
+// not hold, skipped rather than refused — is reachable only with the list held
+// back: the release serves both kinds config.Providers names since I1
+// (SharedJobProvider), and a test of a served provider reads the list as it
+// ships.
 func admitSharedJobProviders(t *testing.T, kinds ...string) {
 	t.Helper()
 	orig := sharedJobProviders
@@ -839,26 +847,19 @@ const bitbucketProjectLC = `profiles:
 // required instead, because the job is shared by every repository its profile
 // admits and the token's reach is a per-repository list it cannot honour.
 //
-// The provider is admitted by THIS TEST and not by the code under it: S1 leaves
-// sharedJobProviders as the release ships it (github alone), so that this
-// slice's tasks merge inertly and a release cut midway changes nothing for a
-// Bitbucket project; I1 is the one-line change that admits bitbucket. The first
-// half below is that same fact read from the other side, and it is the red
-// step: with the list as it ships, the profile this test deploys a job for gets
-// none.
+// The provider is served by the list as it ships since I1, and that is the red
+// step this test used to fail at: it replaces the list no longer, so the job
+// below is composed by the code under it — remove "bitbucket" from
+// sharedJobProviders (the pre-I1 state) and the first call deploys nothing.
 func TestProjectJobsDeployABitbucketProfile(t *testing.T) {
 	lc := parseLC(t, m4LocalConfig+m5Additions+credentialsServiceLCBlock+bitbucketProjectLC)
-	if jobs := projectJobsFor(t, m4LocalConfig+m5Additions+credentialsServiceLCBlock+bitbucketProjectLC); len(jobs) != 0 {
-		t.Fatalf("jobs = %v, want none: sharedJobProviders is the list the release ships, and only I1 changes it", sortedJobNames(jobs))
-	}
-	admitSharedJobProviders(t, "github", "bitbucket")
 	jobs, err := ProjectJobs(lc, "fugaro-runs-proj-1234", false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	name := gcp.ProjectJobName("standard", "bitbucket", "")
 	if !slices.Equal(sortedJobNames(jobs), []string{name}) {
-		t.Fatalf("jobs = %v, want the profile's one job %s", sortedJobNames(jobs), name)
+		t.Fatalf("jobs = %v, want the profile's one job %s: a shared job serves every provider kind SharedJobProvider holds", sortedJobNames(jobs), name)
 	}
 	j := jobs[name]
 	if j.Profile != "standard" || j.Provider != "bitbucket" || j.Account != "" {
@@ -920,7 +921,6 @@ func TestProjectJobsDeployABitbucketProfile(t *testing.T) {
 // and the next apply reads that record and puts the address on the job.
 func TestProjectJobsBitbucketJobConvergesOnTheServiceURL(t *testing.T) {
 	const before = m4LocalConfig + m5Additions + credentialsBudgetLC + bitbucketProjectLC
-	admitSharedJobProviders(t, "github", "bitbucket")
 	name := gcp.ProjectJobName("standard", "bitbucket", "")
 	jobs, err := ProjectJobs(parseLC(t, before), "fugaro-runs-proj-1234", false)
 	if err != nil {
@@ -972,7 +972,6 @@ func TestProjectJobsRefuseAProfileThatMountsTheBitbucketToken(t *testing.T) {
 profiles:
   standard: { provider: bitbucket, cpu: 2, memory: 8Gi, timeout_class: 6h, secrets: [bitbucket-token], allow_repos: [bitbucket/acme/sandbox] }
 `
-	admitSharedJobProviders(t, "github", "bitbucket")
 	jobs, err := ProjectJobs(parseLC(t, mounting), "fugaro-runs-proj-1234", false)
 	if err == nil {
 		t.Fatalf("jobs = %v, want the profile refused: a shared Bitbucket job mounts no token (D2302)", sortedJobNames(jobs))
@@ -1009,8 +1008,17 @@ profiles:
 // not silently given a shared job by a forgotten line here, which is the
 // mutation this test is for.
 func TestSharedJobProviderIsTheProvidersList(t *testing.T) {
+	// Both kinds a repository may use are served since I1: the slice that
+	// built the Bitbucket path merged behind this list (a job that mounts no
+	// token, requires the credential proxy, D2302, and is proven end to end),
+	// and I1 is the line that put it in service. A provider kind is admitted
+	// here only with its whole path built — the job the deployer builds, the
+	// credential the job does not hold and the launcher that chooses the job —
+	// which is why the expectation is written out rather than derived: a third
+	// kind added to config.Providers must fail here, not be silently served.
+	served := []string{"github", "bitbucket"}
 	for _, kind := range config.Providers {
-		want := kind == "github"
+		want := slices.Contains(served, kind)
 		if got := SharedJobProvider(kind); got != want {
 			t.Errorf("SharedJobProvider(%q) = %v, want %v", kind, got, want)
 		}
@@ -1580,11 +1588,14 @@ profiles:
 // of the naming rule: the variant the deployer built IS the account the service
 // admits.
 //
-// A Bitbucket profile is the second case and it is a contrast, not a refusal:
-// no shared job is deployed for one (the owner's ruling of 2026-10-15), so no
-// variant is either, and an installation whose only profile is a Bitbucket one
-// has no review job at all. That is why this test reads both sets off the
-// config rather than only the sentinel's coding job.
+// A profile of a provider the shared-job list does not hold is the second case
+// and it is a contrast, not a refusal: the test holds the list back to github
+// for it, no shared job is deployed for such a profile, so no variant is
+// either, and an installation whose only profile is one of those has no review
+// job at all. That is why this test reads both sets off the config rather than
+// only the sentinel's coding job. (The release serves bitbucket since I1, so an
+// installation that can deploy the credentials service gets that job and its
+// variant — TestReviewJobVariantFollowsTheProfiles is the positive half.)
 //
 // Mutation (run, restore): keep AK4's refusal (return the userErr ProjectJobs
 // carried for this profile) — the GitHub case has no jobs to read; or drop the
@@ -1592,12 +1603,13 @@ profiles:
 // claude_accounts.<sentinel>.allow_data_to, a key config.ValidateClaudeAccounts
 // refuses.
 func TestReviewJobIsDeployedForAProjectWithNoClaudeAccount(t *testing.T) {
+	admitSharedJobProviders(t, "github")
 	for name, tc := range map[string]struct {
 		provider, allowRepos, keyReach string
 		serves                         bool
 	}{
-		"a shared-job profile with no Claude account":          {"github", "github/acme/webapp", "acme/webapp", true},
-		"a Bitbucket profile this deployer deploys no job for": {"bitbucket", "bitbucket/acme/sandbox", "acme/sandbox", false},
+		"a shared-job profile with no Claude account":               {"github", "github/acme/webapp", "acme/webapp", true},
+		"a Bitbucket profile the held-back list deploys no job for": {"bitbucket", "bitbucket/acme/sandbox", "acme/sandbox", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			lc := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+`project_secrets:
@@ -2525,8 +2537,10 @@ func TestReviewJobVariantRefusesAnAccountCarryingTheSuffix(t *testing.T) {
 // whose whole purpose a project without the service has nothing to serve
 // (TestImplicitReviewJobIsDeployedWithoutProfiles). The review job is a project
 // job with a suffix, so it follows the same predicate the coding set follows
-// (infra.SharedJobProvider) — a variant for a Bitbucket profile would be a job
-// every consumer of the axis looks for and no deployment creates.
+// (infra.SharedJobProvider): a variant for a profile the list does not hold
+// would be a job every consumer of the axis looks for and no deployment
+// creates, and a profile the list serves has one of its own — Bitbucket's since
+// I1, which is the positive half below.
 func TestReviewJobVariantFollowsTheProfiles(t *testing.T) {
 	if got := projectReviewJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions); got != nil {
 		t.Errorf("an installation with no profiles and no credentials service built the review variants %v, want none", sortedJobNames(got))
@@ -2534,8 +2548,15 @@ func TestReviewJobVariantFollowsTheProfiles(t *testing.T) {
 	bitbucket := `profiles:
   standard: { provider: bitbucket, cpu: 2, memory: 8Gi, timeout_class: 6h }
 `
+	served := m4LocalConfig + projectJobRepoLC + m5Additions + credentialsServiceLCBlock + bitbucket
+	want := credsvc.ReviewJobName("standard", "bitbucket", infraReviewAccount(""))
+	if got := sortedJobNames(projectReviewJobsFor(t, served)); !slices.Contains(got, want) {
+		t.Errorf("a Bitbucket installation with the credentials service on built the review variants %v, want the profile's own %s beside the installation's implicit job: the list serves bitbucket since I1, and the variants follow the coding set",
+			got, want)
+	}
+	admitSharedJobProviders(t, "github")
 	if got := projectReviewJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+bitbucket); len(got) != 0 {
-		t.Errorf("a Bitbucket profile built the review variants %v, want none: no shared job serves it", sortedJobNames(got))
+		t.Errorf("a Bitbucket profile built the review variants %v, want none: no shared job serves a provider the list does not hold", sortedJobNames(got))
 	}
 }
 
