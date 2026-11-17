@@ -3642,10 +3642,12 @@ so no further command is needed. --no-apply saves the entry and leaves those
 steps to fugaro apply. --default marks the entry a job whose repositories
 name no needs runs; a catalog marks one entry, or none.
 
-In a coding agent's session --inline, --image and --default are refused: what
-they define is executable content the project's jobs run, and a person writes
-it. --dockerfile is read from the project's own repository, where it was
-committed and reviewed, so it is allowed there as it is anywhere else.
+In a coding agent's session --inline, --image, --default and --branch are
+refused: the first three define executable content the project's jobs run,
+and --branch reads an entry's Dockerfile from a branch no review here has
+vouched for, which a session may have pushed itself. --dockerfile alone is
+allowed there as it is anywhere else: it reads the project's own repository
+at its base branch, where the file was committed and reviewed.
 
 Usage: `fugaro image add <name>`
 
@@ -3653,7 +3655,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--branch` | string | "" | no | the branch --dockerfile reads (default: the repository's base branch) |
+| `--branch` | string | "" | no | the branch --dockerfile reads (default: the repository's base branch; a coding agent's session is refused it) |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--default` | bool | `false` | no | the entry a job whose repositories name no needs runs (one entry, or none) |
 | `--description` | string | "" | no | what the entry is for, printed by fugaro image ls |

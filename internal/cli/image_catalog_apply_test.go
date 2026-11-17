@@ -296,9 +296,12 @@ func TestImageAddNoApplyLeavesPending(t *testing.T) {
 // managed gate's: this project is not managed at all, no gate is read, and
 // nothing is written either way.
 //
-// `--dockerfile` is deliberately not among them and is not refused here: it
-// names a Dockerfile in one of the project's own repositories, committed and
-// reviewed there.
+// `--dockerfile` alone is deliberately not among them: it names a Dockerfile in
+// one of the project's own repositories, committed and reviewed there. `--branch`
+// is, and it is the arm that closes the route --dockerfile would otherwise leave
+// open: with it the entry reads that Dockerfile from a branch no review has
+// vouched for, which the session may have pushed itself, so the build a person's
+// next `fugaro apply` runs would bake content no person wrote.
 func TestImageAddRefusesExecutableContentForAnAgent(t *testing.T) {
 	df := entryDockerfile(t, catalogBuildInline)
 	for _, tc := range []struct {
@@ -308,6 +311,7 @@ func TestImageAddRefusesExecutableContentForAnAgent(t *testing.T) {
 		{"an inline definition", []string{"image", "add", "extra", "--inline", df}},
 		{"the default entry", []string{"image", "add", "extra", "--default"}},
 		{"a prebuilt image", []string{"image", "add", "extra", "--image", "docker.io/library/node:22"}},
+		{"a Dockerfile read from a branch", []string{"image", "add", "extra", "--dockerfile", "acme/app:.fugaro/app.Dockerfile", "--branch", "release-1.0"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			catalogFixture(t)
