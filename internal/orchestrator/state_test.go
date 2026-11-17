@@ -781,7 +781,7 @@ func TestStateSchemasAcceptSpec(t *testing.T) {
 
 // TestSpecDigestCoversEveryFieldButTheBookkeepingList is what makes an
 // approval mean one spec and not another. Every field that describes the work
-// moves the digest when it changes, the seven bookkeeping fields move it not at
+// moves the digest when it changes, the eight bookkeeping fields move it not at
 // all, and the two sets together are every field of the struct — so a field
 // added to a work item is digested by default and only leaves the digest on
 // purpose. That is what an edit to a brief, a repository or a dependency does:
@@ -791,7 +791,7 @@ func TestStateSchemasAcceptSpec(t *testing.T) {
 // digest stops moving for it; add one to bookkeepingFields by mistake and the
 // same assertion fails from the other side.
 func TestSpecDigestCoversEveryFieldButTheBookkeepingList(t *testing.T) {
-	want := []string{"approved", "attempts", "escalation", "note", "phase", "run_id", "spent_approval_at"}
+	want := []string{"adopted", "approved", "attempts", "escalation", "note", "phase", "run_id", "spent_approval_at"}
 	got := orchestrator.BookkeepingFields()
 	sort.Strings(got)
 	if !slices.Equal(got, want) {
@@ -832,6 +832,589 @@ func TestSpecDigestCoversEveryFieldButTheBookkeepingList(t *testing.T) {
 		if !slices.Contains(fields, name) {
 			t.Fatalf("%q is on the bookkeeping list and is not a field of a work item", name)
 		}
+	}
+}
+
+// TestExternalIDShapeUniqueAndDaemonOnly is the dedupe key and its fence. An
+// external id is what says two items are one ticket (D2728): the mirroring loop
+// that reads a project's issues closes by finding the item that already carries
+// the key, so one ticket spelled two ways would be two items, two runs and two
+// pull requests on one piece of work. The shape is one spelling and nothing
+// else, and the key is the daemon's alone to write — a session that could write
+// it could claim the ticket another item holds, or take an item off the one it
+// came from.
+//
+// The uniqueness the key needs is across a project's nodes, which no one node
+// can see; what a node can hold is its own items, and that is what the
+// validator refuses to let two of them share (the ingest is the other half).
+//
+// Mutation: drop External from the daemon-only set and the session's upsert
+// lands; drop the seen map and two items on one ticket are a state this release
+// reads and writes; widen the pattern and an id for another host, or the
+// clone's `.git` suffix, is stored as a key no ingest will ever match.
+func TestExternalIDShapeUniqueAndDaemonOnly(t *testing.T) {
+	now := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
+	const ticket = "github:owner/repo#1234"
+	stateSch := compileSchema(t, "../../schemas/orchestrator-state.schema.json")
+	patchSch := compileSchema(t, "../../schemas/orchestrator-patch.schema.json")
+	validates := func(sch *jsonschema.Schema, raw []byte) error {
+		t.Helper()
+		doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(doc)
+	}
+	upsert := func(id string) []byte {
+		t.Helper()
+		raw, err := json.Marshal(map[string]any{
+			"base_rev": 7,
+			"ops": []any{map[string]any{
+				"op":        "work_item_upsert",
+				"work_item": map[string]any{"id": "wi-1", "external": id},
+			}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+
+	// One spelling: lower-case as the installation's own App answers the names,
+	// GitHub the only host the ingest reads, and the issue's number from one.
+	// The document's validator and both schemas read the list the same way, so
+	// a pattern that drifted from the check shows up here.
+	for _, tc := range []struct {
+		name string
+		id   string
+		ok   bool
+	}{
+		{"a ticket", ticket, true},
+		{"the first issue", "github:owner/repo#1", true},
+		{"a nineteen-digit issue number", "github:owner/repo#" + strings.Repeat("9", 19), true},
+		{"another host", "gitlab:owner/repo#1", false},
+		{"a capitalised host", "GitHub:owner/repo#1", false},
+		{"a capitalised owner", "github:Owner/repo#1", false},
+		{"no issue number", "github:owner/repo", false},
+		{"no host", "owner/repo#1", false},
+		{"issue zero", "github:owner/repo#0", false},
+		{"a name spelled with dots", "github:owner/repo.js#1", true},
+		{"a twenty-digit issue number", "github:owner/repo#" + strings.Repeat("9", 20), false},
+		{"a space in the number", "github:owner/repo#12 34", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			carried := document(t, readFixture(t))
+			workItemAt(t, carried, 0)["external"] = tc.id
+			if err := validates(stateSch, remarshal(t, carried)); (err == nil) != tc.ok {
+				t.Errorf("the state schema reads the external id %q as ok=%v, want %v (err = %v)", tc.id, err == nil, tc.ok, err)
+			}
+			if err := validates(patchSch, upsert(tc.id)); (err == nil) != tc.ok {
+				t.Errorf("the patch schema reads the external id %q as ok=%v, want %v (err = %v)", tc.id, err == nil, tc.ok, err)
+			}
+
+			s := stateWithAQueuedItem(t, now)
+			s.WorkItems[0].External = tc.id
+			if err := orchestrator.ValidateState(s); (err == nil) != tc.ok {
+				t.Errorf("a node carrying the external id %q validates as ok=%v, want %v (err = %v)", tc.id, err == nil, tc.ok, err)
+			}
+		})
+	}
+
+	// An item with none is exactly the item this release wrote before the field
+	// existed: no key, and no field on the wire.
+	bare := stateWithAQueuedItem(t, now)
+	raw, err := orchestrator.EncodeState(bare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte(`"external":`)) {
+		t.Fatalf("an item with no external id carries the field:\n%s", raw)
+	}
+
+	// The daemon's alone: the ingest is what holds the key, and the item it
+	// names is what a session would be claiming.
+	s := stateWithAQueuedItem(t, now)
+	if _, err := applyAs(t, s, orchestrator.Session, "session:20261107-090000-abcd", now,
+		upsertOp("wi-1", func(op *orchestrator.WorkItemOp) { op.External = ptr(ticket) })); !errors.Is(err, orchestrator.ErrActorNotAllowed) {
+		t.Fatalf("a session wrote a work item's external id: err = %v, want %v", err, orchestrator.ErrActorNotAllowed)
+	}
+
+	written := mustApply(t, s, orchestrator.Daemon, "orchestrator-a", now,
+		upsertOp("wi-1", func(op *orchestrator.WorkItemOp) { op.External = ptr(ticket) }))
+	if got := written.WorkItems[0].External; got != ticket {
+		t.Fatalf("the external id came back as %q, want %q", got, ticket)
+	}
+	encoded, err := orchestrator.EncodeState(written)
+	if err != nil {
+		t.Fatalf("a state carrying an external id is not one this release writes: %v", err)
+	}
+	back, err := orchestrator.DecodeState(encoded)
+	if err != nil {
+		t.Fatalf("a state this release wrote is not one it reads: %v", err)
+	}
+	if got := back.WorkItems[0].External; got != ticket {
+		t.Fatalf("the external id did not survive the wire: %q", got)
+	}
+
+	// Unique: a second item on the same ticket is the duplicate the key exists
+	// to close, whichever write makes it.
+	twins := stateWithAQueuedItem(t, now)
+	twins.WorkItems = append(twins.WorkItems, workItemOf("wi-2"))
+	twins.WorkItems[0].External, twins.WorkItems[1].External = ticket, ticket
+	if err := orchestrator.ValidateState(twins); !errors.Is(err, orchestrator.ErrInvalid) {
+		t.Fatalf("a node with two items on one ticket is one this release reads: err = %v, want %v", err, orchestrator.ErrInvalid)
+	}
+	onOne := stateWithAQueuedItem(t, now)
+	onOne.WorkItems = append(onOne.WorkItems, workItemOf("wi-2"))
+	onOne.WorkItems[0].External = ticket
+	if _, err := applyAs(t, onOne, orchestrator.Daemon, "orchestrator-a", now,
+		upsertOp("wi-2", func(op *orchestrator.WorkItemOp) { op.External = ptr(ticket) })); !errors.Is(err, orchestrator.ErrInvalid) {
+		t.Fatalf("the daemon put a second item on a ticket another item holds: err = %v, want %v", err, orchestrator.ErrInvalid)
+	}
+}
+
+// TestBodySHA256Shape holds the body hash's shape together in the four places
+// it is written: the check a stored item passes, the check an upsert passes,
+// and the pattern each schema declares. The hash is a hash of text read from
+// outside (D2720), so it is a shape and never free text: it is what says the
+// body a run is briefed with is the body a person approved, and a second
+// spelling of the same sum -- upper case, a `sha256:` prefix, a digit short or
+// long -- is a value nothing compares equal to the one the ingest wrote.
+//
+// The item's field and the op's are both fed, and both schemas with them,
+// because a pattern that drifted from the check is a document the daemon writes
+// and then refuses to read back.
+//
+// Mutation: relax bodySHA256RE or either schema's pattern (accept upper case,
+// or drop an anchor) and the case that feeds it lands here.
+func TestBodySHA256Shape(t *testing.T) {
+	now := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
+	const hash = "0f3d1c2b4a5968778695a4b3c2d1e0f19a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d"
+	stateSch := compileSchema(t, "../../schemas/orchestrator-state.schema.json")
+	patchSch := compileSchema(t, "../../schemas/orchestrator-patch.schema.json")
+	validates := func(sch *jsonschema.Schema, raw []byte) error {
+		t.Helper()
+		doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(doc)
+	}
+	upsert := func(sum string) []byte {
+		t.Helper()
+		raw, err := json.Marshal(map[string]any{
+			"base_rev": 7,
+			"ops": []any{map[string]any{
+				"op":        "work_item_upsert",
+				"work_item": map[string]any{"id": "wi-1", "body_sha256": sum},
+			}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+
+	// An item no ticket was read for carries no key at all -- the field is
+	// `omitempty` -- so the empty string is not a value either schema ever
+	// reads: it is absent from both, and the shape is what is left.
+	for _, tc := range []struct {
+		name string
+		sum  string
+		ok   bool
+	}{
+		{"a body's hash", hash, true},
+		{"sixty-four zeroes", strings.Repeat("0", 64), true},
+		{"upper case", strings.ToUpper(hash), false},
+		{"the prefixed digest this package writes for a spec", "sha256:" + hash, false},
+		{"a digit short", hash[:63], false},
+		{"a digit long", hash + "0", false},
+		{"a letter that is not hex", hash[:63] + "g", false},
+		{"a space where a digit belongs", hash[:63] + " ", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			carried := document(t, readFixture(t))
+			workItemAt(t, carried, 0)["body_sha256"] = tc.sum
+			if err := validates(stateSch, remarshal(t, carried)); (err == nil) != tc.ok {
+				t.Errorf("the state schema reads the body hash %q as ok=%v, want %v (err = %v)", tc.sum, err == nil, tc.ok, err)
+			}
+			if err := validates(patchSch, upsert(tc.sum)); (err == nil) != tc.ok {
+				t.Errorf("the patch schema reads the body hash %q as ok=%v, want %v (err = %v)", tc.sum, err == nil, tc.ok, err)
+			}
+
+			s := stateWithAQueuedItem(t, now)
+			s.WorkItems[0].BodySHA256 = tc.sum
+			if err := orchestrator.ValidateState(s); (err == nil) != tc.ok {
+				t.Errorf("a node carrying the body hash %q validates as ok=%v, want %v (err = %v)", tc.sum, err == nil, tc.ok, err)
+			}
+			op := upsertOp("wi-1", func(op *orchestrator.WorkItemOp) { op.BodySHA256 = ptr(tc.sum) })
+			if err := orchestrator.ValidatePatch(orchestrator.Patch{BaseRev: 7, Ops: []orchestrator.Op{op}}); (err == nil) != tc.ok {
+				t.Errorf("an upsert carrying the body hash %q validates as ok=%v, want %v (err = %v)", tc.sum, err == nil, tc.ok, err)
+			}
+		})
+	}
+}
+
+// TestAdoptedIsDaemonOnlyBookkeeping is the mark D2702 puts on an item the
+// daemon wrote for a run that was already in flight, and the two things it must
+// not do.
+//
+// It must not be a session's to write: adoption is what the daemon knows about
+// a run it found and the launch it already has, and an item marked adopted is
+// one the ladder treats differently — a session that could forge the mark could
+// hold work still.
+//
+// And it must not move the digest. It says how the item entered the node rather
+// than what the work is, so it is bookkeeping, and an item adopted under a
+// standing approval keeps that approval: a person who approved the brief in
+// front of them approved exactly the work the adopted run is carrying out.
+//
+// Mutation: add Adopted to the daemon-only set's complement (let a session
+// write it) and the first case lands; take `adopted` off bookkeepingFields and
+// the digest moves, the approval falls off the item the daemon just adopted.
+func TestAdoptedIsDaemonOnlyBookkeeping(t *testing.T) {
+	now := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
+	approved, digest := approvedState(t, now)
+
+	if _, err := applyAs(t, approved, orchestrator.Session, "session:20261107-090000-abcd", now,
+		upsertOp("wi-1", func(op *orchestrator.WorkItemOp) { op.Adopted = ptr(true) })); !errors.Is(err, orchestrator.ErrActorNotAllowed) {
+		t.Fatalf("a session wrote a work item's adoption mark: err = %v, want %v", err, orchestrator.ErrActorNotAllowed)
+	}
+
+	adopted := mustApply(t, approved, orchestrator.Daemon, "orchestrator-a", now,
+		upsertOp("wi-1", func(op *orchestrator.WorkItemOp) { op.Adopted = ptr(true) }))
+	item := adopted.WorkItems[0]
+	if !item.Adopted {
+		t.Fatal("the daemon's adoption mark did not land")
+	}
+	if got := orchestrator.SpecDigest(item); got != digest {
+		t.Fatalf("adopting an item moved its spec digest from %s to %s, and the approval a person gave is no longer the item's", digest, got)
+	}
+	if item.Approved == nil || item.Approved.SpecDigest != orchestrator.SpecDigest(item) {
+		t.Fatalf("the approval fell off the item the daemon adopted: %+v", item.Approved)
+	}
+	if !slices.Contains(orchestrator.BookkeepingFields(), "adopted") {
+		t.Fatal("adopted is not on the bookkeeping list the digest skips, and every adoption would revoke an approval")
+	}
+
+	// It is on the wire, and an item the daemon has not adopted is the item
+	// this release wrote before the field existed.
+	encoded, err := orchestrator.EncodeState(adopted)
+	if err != nil {
+		t.Fatalf("a state carrying an adoption mark is not one this release writes: %v", err)
+	}
+	back, err := orchestrator.DecodeState(encoded)
+	if err != nil {
+		t.Fatalf("a state this release wrote is not one it reads: %v", err)
+	}
+	if !back.WorkItems[0].Adopted {
+		t.Fatal("the adoption mark did not survive the wire")
+	}
+	plain, err := orchestrator.EncodeState(approved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(plain, []byte(`"adopted":`)) {
+		t.Fatalf("an item nobody adopted carries the field:\n%s", plain)
+	}
+}
+
+// TestPlanTaskShape is the plan node an item is, in the one shape both ends of
+// the field accept. The item names the node the plan's dependency graph spells,
+// and the launch record names the same one (task.Spec.PlanTask), so the two
+// have one rule between them rather than two that drift: task.PlanTaskProblem,
+// which the launcher applies on write and the runner on read.
+//
+// The document's pattern is that rule, and the same one the task schema
+// carries; the cases below sit on its boundaries, so a pattern widened on one
+// side of the wire is caught here rather than by a run that refuses its own
+// task.
+//
+// Mutation: widen the pattern and an id with an absolute path or a `.` element
+// is a document this release reads and the runner refuses; drop plan_task from
+// validateItem and a plan import writes a node the graph cannot name.
+func TestPlanTaskShape(t *testing.T) {
+	now := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
+	atBound := "plan/" + strings.Repeat("a", 123)
+	stateSch := compileSchema(t, "../../schemas/orchestrator-state.schema.json")
+	patchSch := compileSchema(t, "../../schemas/orchestrator-patch.schema.json")
+	validates := func(sch *jsonschema.Schema, raw []byte) error {
+		t.Helper()
+		doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(doc)
+	}
+	upsert := func(task string) []byte {
+		t.Helper()
+		raw, err := json.Marshal(map[string]any{
+			"base_rev": 7,
+			"ops": []any{map[string]any{
+				"op":        "work_item_upsert",
+				"work_item": map[string]any{"id": "wi-1", "plan_task": task},
+			}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+
+	if len(atBound) != 128 {
+		t.Fatalf("the boundary case is %d bytes, and the bound it is about is 128", len(atBound))
+	}
+	for _, tc := range []struct {
+		name string
+		task string
+		ok   bool
+	}{
+		{"a plan's task", "orchestrator-graph-estimates/X1", true},
+		{"a task three deep", "docs/plans/x", true},
+		{"a name at the 128-byte bound", atBound, true},
+		{"a name one byte past it", atBound + "a", false},
+		{"a plan with no task", "orchestrator-graph-estimates", false},
+		{"an absolute path", "/orchestrator-graph-estimates/X1", false},
+		{"a trailing slash", "orchestrator-graph-estimates/", false},
+		{"a parent element", "orchestrator-graph-estimates/../X1", false},
+		{"a space", "orchestrator graph estimates/X1", false},
+		{"a newline", "orchestrator-graph-estimates/X1\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			carried := document(t, readFixture(t))
+			workItemAt(t, carried, 0)["plan_task"] = tc.task
+			if err := validates(stateSch, remarshal(t, carried)); (err == nil) != tc.ok {
+				t.Errorf("the state schema reads the plan task %q as ok=%v, want %v (err = %v)", tc.task, err == nil, tc.ok, err)
+			}
+			if err := validates(patchSch, upsert(tc.task)); (err == nil) != tc.ok {
+				t.Errorf("the patch schema reads the plan task %q as ok=%v, want %v (err = %v)", tc.task, err == nil, tc.ok, err)
+			}
+
+			s := stateWithAQueuedItem(t, now)
+			s.WorkItems[0].PlanTask = tc.task
+			if err := orchestrator.ValidateState(s); (err == nil) != tc.ok {
+				t.Errorf("a node carrying the plan task %q validates as ok=%v, want %v (err = %v)", tc.task, err == nil, tc.ok, err)
+			}
+			// The upsert is the writer's half of the same rule, and it refuses
+			// an empty id as well: a plan import that names nothing is a bug in
+			// the import, not an item without a task.
+			op := upsertOp("wi-1", func(op *orchestrator.WorkItemOp) { op.PlanTask = ptr(tc.task) })
+			err := orchestrator.ValidatePatch(orchestrator.Patch{BaseRev: 7, Ops: []orchestrator.Op{op}})
+			if (err == nil) != tc.ok {
+				t.Errorf("an upsert carrying the plan task %q validates as ok=%v, want %v (err = %v)", tc.task, err == nil, tc.ok, err)
+			}
+		})
+	}
+
+	if err := orchestrator.ValidatePatch(orchestrator.Patch{BaseRev: 7, Ops: []orchestrator.Op{
+		upsertOp("wi-1", func(op *orchestrator.WorkItemOp) { op.PlanTask = ptr("") }),
+	}}); !errors.Is(err, orchestrator.ErrInvalid) {
+		t.Fatalf("an upsert naming an empty plan task landed: err = %v, want %v", err, orchestrator.ErrInvalid)
+	}
+
+	// An item no plan named is the item this release wrote before the field
+	// existed: the field is absent, and the graph reads no node for it.
+	plain := stateWithAQueuedItem(t, now)
+	raw, err := orchestrator.EncodeState(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte(`"plan_task":`)) {
+		t.Fatalf("an item no plan named carries the field:\n%s", raw)
+	}
+}
+
+// TestDigestCoversExternalBodyAndPlanTask is what makes the three fields X1
+// adds to the walk an approval's business. Each of them is a declaration: the
+// ticket the item is, the body of that ticket as it was read, and the plan node
+// it is. A person approves the work they were shown, so writing any of the
+// three is an edit, and an edit takes the standing approval off the item —
+// which is the same rule every other declaration follows, and the reason the
+// walk is a skip list rather than a list of fields somebody remembers to add.
+//
+// The three are in the walk by default and not only in the migration: an item
+// carrying them is a different spec from the same item with any one of them
+// cleared, which is what a digest that quietly skipped them would not say.
+//
+// Mutation: name any of the three in bookkeepingFields and the approval stands
+// on a spec nobody read; drop one from the struct's walk (a skip that outlives
+// its migration step) and the cleared-and-carried digests are one.
+func TestDigestCoversExternalBodyAndPlanTask(t *testing.T) {
+	now := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
+	const (
+		ticket = "github:owner/repo#1234"
+		hash   = "0f3d1c2b4a5968778695a4b3c2d1e0f19a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d"
+		task   = "orchestrator-graph-estimates/X1"
+	)
+
+	// Writing one under a standing approval is an edit: the approval is off.
+	for _, tc := range []struct {
+		name  string
+		write func(*orchestrator.WorkItemOp)
+	}{
+		{"an external id", func(op *orchestrator.WorkItemOp) { op.External = ptr(ticket) }},
+		{"a ticket body's hash", func(op *orchestrator.WorkItemOp) { op.BodySHA256 = ptr(hash) }},
+		{"a plan task", func(op *orchestrator.WorkItemOp) { op.PlanTask = ptr(task) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			approved, digest := approvedState(t, now)
+			edited := mustApply(t, approved, orchestrator.Daemon, "orchestrator-a", now, upsertOp("wi-1", tc.write))
+			item := edited.WorkItems[0]
+			if got := orchestrator.SpecDigest(item); got == digest {
+				t.Fatalf("writing %s left the spec digest alone, and the approval a person gave would stand on it", tc.name)
+			}
+			if item.Approved != nil {
+				t.Fatalf("writing %s left the approval standing on an item the person never read", tc.name)
+			}
+		})
+	}
+
+	// Each of the three is a declaration of its own, and the whole item is one
+	// spec: clearing any one of them is another edit, and an item that carries
+	// none is what this release wrote before the fields existed.
+	carried := stateWithAQueuedItem(t, now).WorkItems[0]
+	carried.External, carried.BodySHA256, carried.PlanTask = ticket, hash, task
+	whole := orchestrator.SpecDigest(carried)
+	if whole == orchestrator.SpecDigest(stateWithAQueuedItem(t, now).WorkItems[0]) {
+		t.Fatal("an item carrying an external id, a body hash and a plan task digests as one carrying none")
+	}
+	for _, tc := range []struct {
+		name  string
+		clear func(*orchestrator.WorkItem)
+	}{
+		{"the external id", func(w *orchestrator.WorkItem) { w.External = "" }},
+		{"the body hash", func(w *orchestrator.WorkItem) { w.BodySHA256 = "" }},
+		{"the plan task", func(w *orchestrator.WorkItem) { w.PlanTask = "" }},
+	} {
+		t.Run("without "+tc.name, func(t *testing.T) {
+			cleared := carried
+			tc.clear(&cleared)
+			if orchestrator.SpecDigest(cleared) == whole {
+				t.Errorf("clearing %s left the spec digest alone, and an approval covers it", tc.name)
+			}
+		})
+	}
+
+	// And the walk reads the item as it is written: an item carrying all three
+	// digests the same after a trip through the wire, so the digest a person
+	// approved and the digest a launcher computes cannot drift.
+	s := stateWithAQueuedItem(t, now)
+	s.WorkItems[0] = carried
+	raw, err := orchestrator.EncodeState(s)
+	if err != nil {
+		t.Fatalf("a state carrying all three is not one this release writes: %v", err)
+	}
+	back, err := orchestrator.DecodeState(raw)
+	if err != nil {
+		t.Fatalf("a state this release wrote is not one it reads: %v", err)
+	}
+	if got := orchestrator.SpecDigest(back.WorkItems[0]); got != whole {
+		t.Fatalf("the item digests to %s on the wire and to %s in Go", got, whole)
+	}
+}
+
+// TestMigrateToCurrentRewritesOnlyOwnDigests is X1's schema bump, which is the
+// one that reaches work already in a node (the HARD RULE: `fugaro update` is
+// the whole upgrade, and it never rewrites what a run in flight holds). The
+// walk gained three fields, so every digest a version 4 node stored for an item
+// is now a digest of something else: an approval whose digest is no longer the
+// item's is an approval the launcher refuses, an intent recovery abandons as an
+// edited spec, and a ladder with nothing to stand on.
+//
+// The step rewrites a stored digest only where it is what release 4's walk
+// answered for that item, which is what keeps it exact in the other direction:
+// an approval an edit has already moved past is left as it is, because
+// rewriting it would be this release blessing an approval of a spec nobody
+// read. Both halves are below — the one that moves, and the one that does not.
+//
+// Mutation: drop `case 4` and the migrated node keeps release 4's digests,
+// which are no item's; rewrite every digest rather than the ones equal to the
+// old walk's answer and the foreign approval is blessed.
+func TestMigrateToCurrentRewritesOnlyOwnDigests(t *testing.T) {
+	// What release 4's walk stored for the fixture's item: the digest a node
+	// written before the external id, the body hash and the plan task joined
+	// the walk really carries.
+	const digestV4 = orchestrator.Digest("sha256:b56fc366cac5a65c96d4aaee38d43bbae825f8230991c3348e5e3c8dd951d1de")
+
+	version4 := func(t *testing.T, mutate func(map[string]any)) []byte {
+		t.Helper()
+		doc := document(t, readFixture(t))
+		doc["schema_version"] = 4
+		workItemAt(t, doc, 0)["approved"].(map[string]any)["spec_digest"] = string(digestV4)
+		listAt(t, doc, "intents")[0].(map[string]any)["spec_digest"] = string(digestV4)
+		if mutate != nil {
+			mutate(doc)
+		}
+		return remarshal(t, doc)
+	}
+
+	// The fixture as release 5 wrote it: the same item, the digest this
+	// release's walk computes for it. The migration has to land on it exactly.
+	current, err := orchestrator.DecodeState(readFixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := orchestrator.SpecDigest(current.WorkItems[0])
+	if want == digestV4 {
+		t.Fatalf("this release's walk answers %s for the fixture's item, which is what release 4's answered: the walk did not change", want)
+	}
+
+	raised, err := orchestrator.DecodeState(version4(t, nil))
+	if err != nil {
+		t.Fatalf("a version 4 node did not decode: %v", err)
+	}
+	if raised.SchemaVersion != orchestrator.SchemaVersion {
+		t.Fatalf("the node came back at schema version %d, want %d", raised.SchemaVersion, orchestrator.SchemaVersion)
+	}
+	item, ok := raised.Item("wi-1")
+	if !ok {
+		t.Fatal("the raised node carries no wi-1")
+	}
+	if item.Approved == nil || item.Approved.SpecDigest != want {
+		t.Fatalf("the approval a person gave before the update carries %+v, and the item digests to %s", item.Approved, want)
+	}
+	if got := orchestrator.SpecDigest(item); got != want {
+		t.Fatalf("the raised item digests to %s, and this release's walk answers %s for it", got, want)
+	}
+	// The intent moves with the approval: recovery reads the pair, and one that
+	// moved without the other is a spec edited since the attempt was committed.
+	for _, it := range raised.Intents {
+		if it.SpecDigest != want {
+			t.Fatalf("the intent %q carries %s and the item it is under digests to %s", it.ID, it.SpecDigest, want)
+		}
+	}
+
+	// Exact: an approval that was never this item's is left where it is, and
+	// the intent beside it — which did carry the old walk's answer — moves to
+	// the item's own digest. Same document, two stored digests, and only the
+	// one the old walk wrote is rewritten.
+	elsewhere := version4(t, func(doc map[string]any) {
+		workItemAt(t, doc, 0)["approved"].(map[string]any)["spec_digest"] =
+			string(orchestrator.SpecDigest(orchestrator.WorkItem{ID: "another-spec"}))
+	})
+	foreign, err := orchestrator.DecodeState(elsewhere)
+	if err != nil {
+		t.Fatalf("a version 4 node carrying another spec's digest did not decode: %v", err)
+	}
+	kept, ok := foreign.Item("wi-1")
+	if !ok || kept.Approved == nil {
+		t.Fatalf("the raised node carries no approved wi-1: %+v", kept.Approved)
+	}
+	if kept.Approved.SpecDigest == want || kept.Approved.SpecDigest == digestV4 {
+		t.Fatalf("the migration blessed an approval of a spec nobody read: %s", kept.Approved.SpecDigest)
+	}
+	if got := foreign.Intents[0].SpecDigest; got != want {
+		t.Fatalf("the intent that carried the old walk's answer was left at %s, want the item's own %s", got, want)
+	}
+
+	// And a node this release already wrote is not touched again: the step is
+	// for the version it raises from, and running it twice is running it once.
+	again, changed := orchestrator.Migrate(raised)
+	if changed || again.SchemaVersion != orchestrator.SchemaVersion {
+		t.Fatalf("Migrate touched a node already at this release's version: changed = %v, version = %d", changed, again.SchemaVersion)
+	}
+	if got := again.WorkItems[0].Approved.SpecDigest; got != want {
+		t.Fatalf("the second Migrate moved the digest to %s, want %s", got, want)
 	}
 }
 
@@ -1492,6 +2075,8 @@ func changedField(t *testing.T, w orchestrator.WorkItem, f reflect.StructField) 
 		v.SetString(v.String() + " (changed)")
 	case reflect.Int:
 		v.SetInt(v.Int() + 1)
+	case reflect.Bool:
+		v.SetBool(!v.Bool())
 	case reflect.Slice:
 		v.Set(reflect.ValueOf([]string{"wi-changed"}))
 	case reflect.Pointer:

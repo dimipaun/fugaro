@@ -1644,7 +1644,7 @@ func (r *run) unstampedCommits(ctx context.Context) (total, unstamped int, err e
 	// gitops.readableBounds: a base branch's tip that this checkout never
 	// fetched is a bound git ignores rather than a git that refuses the whole
 	// range, so a base the remote moved on to cannot cost the run its count.
-	args := []string{"--no-replace-objects", "log", "--ignore-missing",
+	args := []string{"log", "--ignore-missing",
 		"--format=%H%x09%(trailers:key=" + gitops.TrailerRun + ",valueonly)",
 		"--end-of-options", since + "..HEAD"}
 	for _, e := range except {
@@ -5808,8 +5808,27 @@ func (r *run) finalize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listing what the run left untracked: %w", err)
 	}
-	if len(strays) > 0 {
-		r.fail(strayRefusal(strays))
+	// And the other end of the same reading: a binary the run's own commits
+	// added is in a commit, so the untracked listing above cannot see it and no
+	// commit finalize makes would carry it (stray.go, spec.md §4.2, D997). Both
+	// are answers of one predicate, and a run refused by both is refused once,
+	// with both lists named.
+	//
+	// A reading that fails is one of those answers and not an error out of
+	// finalize: a run whose own commits nothing read is refused rather than
+	// passed — the check is the last thing between a payload and the branch —
+	// and refusing it is not a stop, which is what the note above says of every
+	// other refusal here. Returning the error instead would leave the person
+	// with nothing at all: no branch, no pull request, and a run whose work the
+	// agent did and nobody can see.
+	added, err := r.committedBinaries(ctx)
+	unread := ""
+	if err != nil {
+		unread = r.redact(err.Error())
+		r.d.Log.Error("reading the run's own diff for binaries it added failed; the run is refused for it", "err", unread)
+	}
+	if len(strays) > 0 || len(added) > 0 || unread != "" {
+		r.fail(strayRefusal(strays, added, unread))
 	}
 	committed, err := r.repo.CommitAllExcept(ctx, leftover, strayPaths(strays))
 	if err != nil {

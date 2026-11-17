@@ -627,13 +627,18 @@ step_service() {
   SVCURL=$(field_of url "$answer")
   SVC_FPROJ=$(field_of fproj "$answer")
   SVCSA=$(field_of sa "$answer")
+  # Whether the deployed revision carries the shared class's own table. It decides
+  # nothing here and everything in the job-env row: a shared project job's calls
+  # are refused whole while the set this name fills is empty, so the claims below
+  # (the mint, the pairing, the audit lines) cannot be measured for that class.
+  SVC_SHARED=$(field_of shared "$answer")
   [ -n "$SVCURL" ] || stop "'$SVC' has no URL: it is not serving, and every caller's ID token would be minted for an audience no revision answers to"
   [ -n "$SVCSA" ] || stop "'$SVC' runs as no service account, so this check cannot tell whose is the bundle's one accessor (Q6)"
   [ "$SVC_FPROJ" = "$FPROJ" ] || stop "the service's container names FUGARO_PROJECT=$SVC_FPROJ and the installation's own state names the Fugaro project $FPROJ: the run identity's fp claim and the service it is presented to are two different projects, so the mint could only be refused"
   if [ -n "$CFG_URL" ] && [ "$CFG_URL" != "$SVCURL" ]; then
     stop "the config in force records the credentials service at $CFG_URL and the deployed service answers at $SVCURL: a launch would hand its repository jobs an address that is not this service, and every call would be answered 401"
   fi
-  fact service PASS "the credentials service is $SVC, deployed in $P/$REGION, serving at $SVCURL as $SVCSA, and its container names FUGARO_PROJECT=$SVC_FPROJ — the Fugaro project the installation's own state names$([ -n "$CFG_URL" ] && printf ', and the same URL the config in force records' || printf '; the config in force records no credentials service URL, so what the launch hands a job is judged in the job-env row')"
+  fact service PASS "the credentials service is $SVC, deployed in $P/$REGION, serving at $SVCURL as $SVCSA, and its container names FUGARO_PROJECT=$SVC_FPROJ — the Fugaro project the installation's own state names$([ -n "$CFG_URL" ] && printf ', and the same URL the config in force records' || printf '; the config in force records no credentials service URL, so what the launch hands a job is judged in the job-env row') — and FUGARO_SHARED_JOB_ACCOUNTS reads $SVC_SHARED in its container environment, which is the shared class's own table: it is absent on this release because no module under deploy/terraform/ renders the name yet, so the service refuses a shared project job's caller whole"
 }
 
 # step_job finds the sandbox repository's job by its own label: the job's name
@@ -743,15 +748,28 @@ step_job() {
 # names only, never a value — and holds what it finds to the installation's own
 # record of the switch: the keyless path is opened by FUGARO_CREDENTIALS_SERVICE_URL
 # alone (internal/gitprov/providers/providers.go), the launch is what puts it on
-# a repository's job (internal/cli/run.go's credentialsServiceLaunchEnv), and
-# the address it writes is the credential_service.url of the config in force.
+# a repository's own job and, since B5.2, on the shared project job a switched
+# profile sends the run to (internal/cli/run.go's credentialsServiceLaunchEnv),
+# and the address it writes is the credential_service.url of the config in force.
 # The variable and the record are held to each other in BOTH directions: the
-# section's expectation is the variable present on a switched-on repository's own
-# job and absent on every other — a shared project job, and any job of a
-# repository the record does not call switched on — so a repository job that
-# carries it while the record says otherwise is the job and the record having
-# moved apart, and PASSing it would state the opposite of what the same sentence
-# read off the spec.
+# section's expectation is the variable present on the job of a repository the
+# record calls switched on and absent on the job of one it does not — so a job
+# that carries it while the record says otherwise is the job and the record
+# having moved apart, and PASSing it would state the opposite of what the same
+# sentence read off the spec.
+#
+# A shared project job is judged by the SAME switch, and that is the one
+# expectation rather than two: credentialsServiceLaunchEnv decides a shared job's
+# address from the repository the run is for, exactly as it decides its own job's
+# (B5.2, D505, D2078 — the class is admitted for the repositories its profile
+# admits, G21/F40), so the two jobs differ only in what these messages call them
+# and in what the service then does with the caller. What the service does with a
+# shared caller it knows from its own FUGARO_SHARED_JOB_ACCOUNTS table alone, and
+# no module under deploy/terraform/ renders that name yet: while the set is empty
+# the service refuses the class whole, so a shared job's own row is judged here
+# and the run then stops — every claim below this row calls as the job's own
+# account, and for a shared job they would read that refusal rather than an
+# answer about the release.
 step_job_env() {
   local answer envs mounts refs appkey url
   answer=$(reader job <"$SCRATCH/job.json")
@@ -767,35 +785,57 @@ step_job_env() {
   say "the job's container environment: $key_names"
   say "its mounts: $mounts; its secret environment references: $refs"
 
+  # What this job is, in the words every message below uses. A shared project job
+  # is judged by the same switch and differs only in this name: the launch decides
+  # its address from the repository the run is for, exactly as it decides a
+  # repository's own job's (B5.2).
+  local jobsaid="the repository's own job $JOB"
   if [ "$JOB_KIND" = project ]; then
-    if [ "$url" = present ]; then
-      fact job-env FAIL "the job $JOB is a SHARED PROJECT job (fugaro_profile) and its environment carries FUGARO_CREDENTIALS_SERVICE_URL: the variable is what opens the github provider keyless, and a shared project job's account is the one caller the service refuses, so telling it would break every GitHub run on it (Global Constraint 6). The launch puts the address on a repository's own job and on no other"
-      return 0
-    fi
-    fact job-env PASS "the job $JOB is a shared project job: its environment does not carry FUGARO_CREDENTIALS_SERVICE_URL, which is the expected answer there (the service refuses its account as a caller, so the launch deliberately does not tell it), and FUGARO_GITHUB_APP_PRIVATE_KEY is $appkey in its environment"
-    return 0
+    jobsaid="the SHARED PROJECT job $JOB (fugaro_profile), which is the job a repository with no job of its own runs on"
   fi
   if [ -z "$CFG_URL" ]; then
     if [ "$url" = present ]; then
-      fact job-env FAIL "the config in force records no credentials service (credentials_service.url is absent), so the launch hands no job an address, and the repository's own job $JOB carries FUGARO_CREDENTIALS_SERVICE_URL: the variable is what opens the github provider keyless, so this job's runner mints at a service the config in force does not name, and the job and the record it is launched from have moved apart. Point FUGARO_CONFIG at the config this installation was applied with, or re-apply the root from the config in force ('fugaro update --repo' in a checkout of $REPO) so the job reads what the config records"
+      fact job-env FAIL "the config in force records no credentials service (credentials_service.url is absent), so the launch hands no job an address, and $jobsaid carries FUGARO_CREDENTIALS_SERVICE_URL: the variable is what opens the github provider keyless, so this job's runner mints at a service the config in force does not name, and the job and the record it is launched from have moved apart. Point FUGARO_CONFIG at the config this installation was applied with, or re-apply the root from the config in force ('fugaro update --repo' in a checkout of $REPO) so the job reads what the config records"
     else
-      fact job-env PASS "the job $JOB is the repository's own job, and the config in force records no credentials service (credentials_service.url is absent), so the launch hands no job an address: its environment does not carry FUGARO_CREDENTIALS_SERVICE_URL, which is byte for byte the job of a repository whose root has not been re-applied with the switch on — it reads the key (FUGARO_GITHUB_APP_PRIVATE_KEY is $appkey there) and mints in-job exactly as before, and the mint below is made as the job's own account calls it, which the service admits on the account and not on the variable"
+      fact job-env PASS "$jobsaid is not handed an address: the config in force records no credentials service (credentials_service.url is absent), so the launch hands no job one, and its environment does not carry FUGARO_CREDENTIALS_SERVICE_URL — byte for byte the job of a repository whose root has not been re-applied with the switch on. It reads the key (FUGARO_GITHUB_APP_PRIVATE_KEY is $appkey there) and mints in-job exactly as before"
     fi
+    shared_job_env_stop
     return 0
   fi
   if [ "$CFG_READY" = yes ]; then
     if [ "$url" = present ]; then
-      fact job-env PASS "the job $JOB is the repository's own job and the config in force records this repository's root as applied with the credentials service on, and its environment carries FUGARO_CREDENTIALS_SERVICE_URL: that is the wiring, and its runner opens the github provider keyless (FUGARO_GITHUB_APP_PRIVATE_KEY is $appkey in its environment)"
+      fact job-env PASS "$jobsaid is the wiring: the config in force records this repository's root as applied with the credentials service on, and the job's environment carries FUGARO_CREDENTIALS_SERVICE_URL, so its runner opens the github provider keyless (FUGARO_GITHUB_APP_PRIVATE_KEY is $appkey in its environment)"
     else
-      fact job-env FAIL "the config in force records $REPO's root as applied with the credentials service on, and the repository's own job $JOB carries no FUGARO_CREDENTIALS_SERVICE_URL: a runner with no service to ask, which is a GitHub run that halts rather than one that falls back. Run 'fugaro update --repo' in a checkout of $REPO and re-apply its root"
+      fact job-env FAIL "the config in force records $REPO's root as applied with the credentials service on, and $jobsaid carries no FUGARO_CREDENTIALS_SERVICE_URL: a runner with no service to ask, which is a GitHub run that halts rather than one that falls back. Run 'fugaro update --repo' in a checkout of $REPO and re-apply its root"
     fi
+    shared_job_env_stop
     return 0
   fi
   if [ "$url" = present ]; then
-    fact job-env FAIL "the config in force records $REPO's root as NOT (yet) applied with the service on (credentials_service_ready reads $CFG_READY), and the repository's own job $JOB carries FUGARO_CREDENTIALS_SERVICE_URL: the variable is what opens the github provider keyless, so this job's runner mints at the service while the config in force — the one the launch reads — records the repository as not switched on. The job and the record it is launched from have moved apart: turn the switch on, or re-apply the root ('fugaro update --repo' in a checkout of $REPO) so the job reads what the config records"
+    fact job-env FAIL "the config in force records $REPO's root as NOT (yet) applied with the service on (credentials_service_ready reads $CFG_READY), and $jobsaid carries FUGARO_CREDENTIALS_SERVICE_URL: the variable is what opens the github provider keyless, so this job's runner mints at the service while the config in force — the one the launch reads — records the repository as not switched on. The job and the record it is launched from have moved apart: turn the switch on, or re-apply the root ('fugaro update --repo' in a checkout of $REPO) so the job reads what the config records"
   else
-    fact job-env PASS "the job $JOB is the repository's own job and its environment does not carry FUGARO_CREDENTIALS_SERVICE_URL, while the config in force records this repository as NOT (yet) applied with the service on (credentials_service_ready reads $CFG_READY): byte for byte the job of a repository whose root has not been re-applied with the switch on — it reads the key (FUGARO_GITHUB_APP_PRIVATE_KEY is $appkey in its environment) and mints in-job exactly as before, and the mint below is made as the job's own account calls it, which the service admits on the account and not on the variable"
+    fact job-env PASS "$jobsaid does not carry FUGARO_CREDENTIALS_SERVICE_URL, while the config in force records this repository as NOT (yet) applied with the service on (credentials_service_ready reads $CFG_READY): byte for byte the job of a repository whose root has not been re-applied with the switch on — it reads the key (FUGARO_GITHUB_APP_PRIVATE_KEY is $appkey in its environment) and mints in-job exactly as before"
   fi
+  shared_job_env_stop
+}
+
+# shared_job_env_stop ends the run on a shared project job, one row after the
+# wiring it just judged. Every claim below the job-env row calls the service as
+# the job's own account — the mint it reads as that account, the pairing refusal,
+# the audit lines — and the service admits a shared caller only from its own
+# FUGARO_SHARED_JOB_ACCOUNTS table, which no module under deploy/terraform/
+# renders yet (internal/infra/tf's CredentialsServiceEnvAwaitingTheModule carries
+# the name ahead of its module). So with the table absent the class is refused
+# whole — the caller falls through to the per-repository table and is refused
+# unverified_job_identity there — and those rows would report that refusal as
+# their own finding. Exit 2, which is this check's "the run could not tell", is
+# the honest ending: nothing here is a claim about the release that FAILed. A
+# service whose container does carry the table ends the class's gap, and this
+# stop does not fire.
+shared_job_env_stop() {
+  [ "$JOB_KIND" = project ] || return 0
+  [ "$SVC_SHARED" = present ] && return 0
+  stop "$JOB is a shared project job (fugaro_profile), and the credentials service $SVC does not carry FUGARO_SHARED_JOB_ACCOUNTS: its shared set is empty, so it refuses this class whole (a shared caller falls through to the per-repository table and is refused unverified_job_identity there). Every claim below the job-env row is measured as this job's own account, so none of them can be read for a shared project job until the class is deployed. Run this check against a job of the repository's own ('fugaro setup --repo' in a checkout of $REPO deploys one), or deploy the class first: no module under deploy/terraform/ renders the name yet"
 }
 
 # step_app_key is the first claim: the job holds no App key. Three reads, in the
@@ -1691,6 +1731,15 @@ def cmd_svc():
     print("url=%s" % url)
     print("fproj=%s" % env.get("FUGARO_PROJECT", ""))
     print("sa=%s" % (spec.get("serviceAccountName") or ""))
+    # The class's own table, read off the DEPLOYED revision the same way every
+    # other environment fact here is: internal/cli/credentials_serve.go reads it
+    # from FUGARO_SHARED_JOB_ACCOUNTS and no module under deploy/terraform/
+    # renders that name yet (internal/infra/tf's
+    # CredentialsServiceEnvAwaitingTheModule), so a deployed service that does not
+    # carry it starts with the empty shared set and refuses the class whole. An
+    # empty value reads as absent, which is the same judgement the job reader
+    # makes of the address: present means a plain, non-empty value was set.
+    print("shared=%s" % ("present" if env.get("FUGARO_SHARED_JOB_ACCOUNTS") else "absent"))
 
 
 def cmd_jobs(want=""):

@@ -666,7 +666,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 						o.Checks = append(o.Checks, *c)
 					}
 					o.Checks = append(o.Checks, doctorSecretScopeChecks(facts, o.Secrets, projSecrets, projOK)...)
-					o.Checks = append(o.Checks, doctorBitbucketDirect(ctx, lc, repo, rf.Cfg.Git.Provider, facts)...)
+					o.Checks = append(o.Checks, doctorBitbucketDirect(ctx, lc, repo, rf.Cfg.Git.Provider, authOf(rf), facts)...)
 				}
 			}
 			if c := oauthTokenAllowedCheck(lc, repo, token, authOf(rf)); c != nil {
@@ -2486,6 +2486,12 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 			unreadRouting(doctorRoutingChecks(lc, nil, fmt.Sprintf("the budget database is not project %s's own (%v), so the published switch cannot be read", lc.Name, err), layer))...)
 	}
 	checks := doctorRulesSkew(ctx, db, lc)
+	// The drift alarm (spend-accuracy SA5.3, R6) reads the day counters of the
+	// same database and nothing else the policy node holds, so it stands here
+	// with the credential marks rather than after the node is read: a node this
+	// binary cannot get past says nothing about whether a model's report left
+	// the price table's band.
+	checks = append(checks, doctorSpendDrift(ctx, db, budgetNow())...)
 	checks = append(checks, doctorCredsBroken(ctx, db)...)
 	// The Bitbucket tokens' own marks (T10): the same database, a subtree of
 	// its own (creds/tokens), and a fact of the same kind — a credential of this

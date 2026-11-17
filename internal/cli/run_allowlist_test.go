@@ -14,6 +14,7 @@ import (
 	"gocloud.dev/blob"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -114,9 +115,25 @@ func TestLaunchPolicyGatesRefusesASlugOfAnotherRepository(t *testing.T) {
 // runner.ProviderKinds exports for this message — and a kind added to one of
 // them alone would make this gate, and only this gate, the thing that refuses
 // a launch the run itself would refuse a moment later.
+//
+// The deployer's own list of the providers it deploys an implicit review-only
+// job for is the third reader of the same kinds (infra.ImplicitReviewProviders,
+// which the test below holds to the runner's), and it is here for the same
+// reason: the two ends of a review launch — the job the launcher resolves and
+// the name the runner places — must be the jobs of one list of providers.
 func TestProviderKindsAgreeWithTheConfigsList(t *testing.T) {
 	if got, want := runner.ProviderKinds(), config.Providers; !slices.Equal(got, want) {
 		t.Fatalf("the run's provider kinds are %v, the config's are %v: a repository whose provider one side knows and the other does not is a slug the two disagree about", got, want)
+	}
+	// And the third list, which is a list of the same kinds read from the other
+	// end of a launch (RJ8): the providers an installation deploys an implicit
+	// review-only job for. It is the runner's whole list and not a subset — the
+	// job is the only review job a Bitbucket repository's review has, and a kind
+	// the deployer left out is a review this launcher resolves onto a job no
+	// installation deploys, which Cloud Run answers 404 for after the claim and
+	// the budget token.
+	if got, want := infra.ImplicitReviewProviders, runner.ProviderKinds(); !slices.Equal(got, want) {
+		t.Fatalf("the deployer deploys an implicit review-only job for %v, the runner places the jobs of %v: a review of a repository of a kind one side carries and the other does not is a launch onto a job no run can be in", got, want)
 	}
 }
 

@@ -88,6 +88,15 @@ var planTaskReaders = map[string]string{
 	// screen draws.
 	"internal/plan/state.go":      "joins the id the row published to a plan's task, for the states a screen draws",
 	"internal/cli/plan_status.go": "turns the read's own sanitised rows into the facts the join reads; it never opens launch.json",
+	// The orchestrator's own graph: an item carries the plan task it stands
+	// for, so the import of a plan (D2704) and the plan's adopted runs in
+	// flight (D2702) meet in one node instead of duplicating it (D2746). The
+	// id decides nothing here: the state carries it, shape-checks it and
+	// digests it, and the reads the plan schedules key on the operator's own
+	// graph rather than on anything the id authorises.
+	"internal/orchestrator/state.go":    "defines WorkItem.PlanTask, the node of a plan the item stands for",
+	"internal/orchestrator/validate.go": "applies task.PlanTaskProblem to the id a patch writes, the shape rule the launcher applies on write",
+	"internal/orchestrator/patch.go":    "the upsert op that carries a plan's node id into the state",
 }
 
 // TestPlanTaskIsDisplayTextOnly walks every non-test Go file of the module

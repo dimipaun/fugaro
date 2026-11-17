@@ -286,7 +286,10 @@ func reposEnrolmentRead(ctx context.Context, o *projectReposOptions, lc *localcf
 // written is stored under — so the checkout's fugaro.yaml and its base branch
 // are read from the same place `ls` reads them.
 func reposEnrolmentRow(ctx context.Context, lc *localcfg.Config, db *rtdb.Client, canonical, localKey string) (reposViewRepo, reposViewAllow, map[string]string, error) {
-	allow, cat, imap, projectBase := reposViewAllowOf(ctx, lc, db)
+	allow, cat, imap, projectBase, err := reposViewAllowOf(ctx, lc, db)
+	if err != nil {
+		return reposViewRepo{}, reposViewAllow{}, nil, err
+	}
 	return reposViewRowOf(ctx, lc, cat, imap, projectBase, canonical, localKey, allow), allow, imap, nil
 }
 

@@ -246,33 +246,27 @@ func (s *Signer) Tag(value Record) (string, error) {
 // (§13 — one implementation of the covered field set, so the two halves cannot
 // drift).
 //
-// It signs `{at, boot}`, which is exactly the heartbeat P4.1 writes — the merged
-// heartbeat is `{at, boot, mac}` plus P6.7's `agents` list, and `mac` is the
-// field being computed — and it refuses a signer built for another node: a
-// heartbeat signed in the `outbox` direction is a heartbeat nothing verifies,
-// so the node is not something a caller can get wrong (T2a's red step (d)).
+// It signs `{at, boot}` **and, when the consumer advertises one, the `agents`
+// list** — the record `lease.go` writes, field for field, which is what one
+// implementation of the covered field set means: `canonicalBytes` covers every
+// field but `mac` and `acked`, so a tag over a list the stored heartbeat did not
+// carry would verify nowhere, with no error, and because the write is the lease
+// there would be no lease either. The list is built here from the caller's own
+// agents, in the order it advertises them (the array's order is covered), and
+// `mac` is the field being computed.
 //
-// **A heartbeat that advertises agents is refused**, and that is the one thing
-// this method will not do quietly. `agents` is in the covered set *when it is
-// there* — `canonicalBytes` covers every field but `mac` and `acked` — but the
-// list is **P6.7's** and P4.1 writes the heartbeat without it (§13's ownership
-// table, and §8.2.3's "and its `agents` list, once P6.7 advertises one"), while
-// `lease.go`'s writer carries no list into the value it stores. So a tag
-// computed over a list would be a tag over bytes the stored record does not
-// have: the heartbeat would verify nowhere, with no error, and because the
-// write is the lease there would be no lease either — the failure this method
-// exists to make impossible. The refusal is ErrUnsignable's shape: nothing
-// written, no lease taken, a per-write refusal inside a running pass rather
-// than a panic or a silent mismatch. P6.7 wires the list by signing the record
-// it stores, which is what one implementation of the covered field set means.
+// It refuses a signer built for another node: a heartbeat signed in the
+// `outbox` direction is a heartbeat nothing verifies, so the node is not
+// something a caller can get wrong (T2a's red step (d)).
 func (s *Signer) Heartbeat(hb Heartbeat) (string, error) {
 	if s == nil || s.direction != directionHeartbeat {
 		return "", fmt.Errorf("%w: a heartbeat is signed in the %s direction, and this signer signs for another node", ErrUnsignable, directionHeartbeat)
 	}
+	value := Record{"at": hb.At, "boot": hb.Boot}
 	if len(hb.Agents) > 0 {
-		return "", fmt.Errorf("%w: a heartbeat advertising %d agents is P6.7's to write (P4.1 writes the heartbeat without the list), and signing it here would tag bytes the stored heartbeat does not carry", ErrUnsignable, len(hb.Agents))
+		value["agents"] = AgentList(hb.Agents)
 	}
-	return s.Tag(Record{"at": hb.At, "boot": hb.Boot})
+	return s.Tag(value)
 }
 
 // Gate is the inbound gate: the pairing's key, and §8.1's order, applied to

@@ -1000,6 +1000,142 @@ docker run --rm --entrypoint sh "$$candidate" /probe.sh run-default || echo "LIV
 	checkMetadataProbes(t, meta)
 }
 
+// TestLiveCloudBuildCopiesTheCheckoutAsAnImage is the one thing about the
+// catalog build's checkout handover that no hermetic test can settle: that the
+// worker Cloud Build really gives a build — the pinned base image's docker, the
+// CLI with BuildKit behind `docker build` and no buildx plugin — accepts the
+// handover the request generates.
+//
+// It submits the mechanism as two steps, in the shape the catalog request has
+// (the generated Dockerfile's text is written out here because this package
+// cannot call the unexported generator). The first builds a checkout from the
+// pinned base digest, exported as the scratch stage the generated clone
+// Dockerfile ends with and tagged fugaro-checkout; the second is the template's
+// own `docker build`, of a Dockerfile that copies it with
+// `COPY --from=fugaro-checkout` and fails the build unless the copy is there.
+// The name exists nowhere but the worker's image store — no registry of this
+// project holds a fugaro-checkout — so a build that resolved it remotely would
+// fail here rather than pass by accident, and that is the whole of what this
+// check proves.
+//
+// It also records, without asserting on it, whether this worker's docker takes
+// `--build-context` — the buildx flag the request used to write, and the flag a
+// real `fugaro update` failed on ("unknown flag: --build-context", exit 125) —
+// so the diagnosis is observed on the worker and not only in this file.
+//
+// The credential is not part of this: what the clone step spends its credential
+// on is the generated script, which the hermetic tests run against a stub git
+// (catalog_clone_test.go).
+func TestLiveCloudBuildCopiesTheCheckoutAsAnImage(t *testing.T) {
+	e := openLive(t)
+	if e.lc.BaseImage("base") == "" {
+		t.Fatal("the local config needs base_images.base (fugaro update --base-image writes it)")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+	bld, err := gcp.NewBuilder(ctx, e.opts, e.lc.BuildRegion())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tgt := e.probeTarget(t)
+	fact(t, "checkout handover runs as %s", tgt.sa)
+	const script = `set -euo pipefail
+base=$$(docker image inspect --format '{{index .RepoDigests 0}}' "$$FUGARO_BASE") \
+  || { echo "the base image $$FUGARO_BASE is not on this worker" >&2; exit 1; }
+echo "LIVE base-digest $$base"
+install -d -m 0700 /workspace/clone /workspace/entry
+{ printf '%s\n' "$$DOCKERFILE_SYNTAX"
+  printf 'FROM %s AS clone\n' "$$base"
+  printf 'RUN mkdir -p /out/repo && echo warmed > /out/repo/marker\n'
+  printf 'FROM scratch AS checkout\n'
+  printf 'COPY --from=clone /out/ /\n'
+} > /workspace/clone/Dockerfile
+docker build --progress plain --file /workspace/clone/Dockerfile --tag fugaro-checkout /workspace/clone 2>&1 | sed 's/^/LIVE clone: /'
+{ printf '%s\n' "$$DOCKERFILE_SYNTAX"
+  printf 'FROM %s\n' "$$base"
+  printf 'COPY --from=fugaro-checkout /repo /repo\n'
+  printf 'RUN test -s /repo/marker && echo LIVE copied-the-checkout\n'
+} > /workspace/entry/Dockerfile
+docker build --progress plain --file /workspace/entry/Dockerfile --tag fugaro-live-entry /workspace/entry 2>&1 | sed 's/^/LIVE entry: /'
+echo "LIVE entry built"
+printf 'marker\n' > /workspace/entry/marker
+{ printf '%s\n' "$$DOCKERFILE_SYNTAX"
+  printf 'FROM scratch\n'
+  printf 'COPY marker /\n'
+} > /workspace/entry/probe.Dockerfile
+set +e
+out=$$(docker build --progress plain --build-context "fugaro-checkout=/workspace/clone" --file /workspace/entry/probe.Dockerfile --tag fugaro-live-probe /workspace/entry 2>&1)
+rc=$$?
+printf '%s\n' "$$out" | sed 's/^/LIVE probe: /'
+if [ "$$rc" = 0 ]; then echo "LIVE build-context accepted"; else echo "LIVE build-context refused"; fi
+`
+	req := &cloudbuild.Build{
+		Steps: []*cloudbuild.BuildStep{
+			{Id: "pull", Name: e.lc.BaseImage("base"), Entrypoint: "true"},
+			{Id: "checkout", Name: "gcr.io/cloud-builders/docker", Entrypoint: "bash",
+				Env:  []string{"DOCKER_BUILDKIT=1", "FUGARO_BASE=" + e.lc.BaseImage("base"), "DOCKERFILE_SYNTAX=" + dockerfileSyntax},
+				Args: []string{"-c", script}},
+		},
+		ServiceAccount: "projects/" + liveProject + "/serviceAccounts/" + tgt.sa,
+		Options:        &cloudbuild.BuildOptions{Logging: "CLOUD_LOGGING_ONLY"},
+		Timeout:        probeBuildTime,
+		Tags:           []string{"fugaro-live"},
+	}
+	var buildID string
+	t.Cleanup(func() {
+		if buildID == "" {
+			return
+		}
+		cctx, ccancel := context.WithTimeout(context.Background(), time.Minute)
+		defer ccancel()
+		name := bld.ParentForLive() + "/builds/" + buildID
+		if bd, err := bld.SvcForLive().Projects.Locations.Builds.Get(name).Context(cctx).Do(); err == nil && (bd.Status == "QUEUED" || bd.Status == "WORKING" || bd.Status == "PENDING") {
+			_, err := bld.SvcForLive().Projects.Locations.Builds.Cancel(name, &cloudbuild.CancelBuildRequest{Name: name, ProjectId: liveProject, Id: buildID}).Context(cctx).Do()
+			t.Logf("CLEANUP: cancel build %s: %v", buildID, err)
+		}
+	})
+	op, err := bld.SvcForLive().Projects.Locations.Builds.Create(bld.ParentForLive(), req).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("submitting the checkout handover build: %v", err)
+	}
+	var md cloudbuild.BuildOperationMetadata
+	if err := json.Unmarshal(op.Metadata, &md); err != nil || md.Build == nil || md.Build.Id == "" {
+		t.Fatalf("the build operation %s names no build: %v", op.Name, err)
+	}
+	buildID = md.Build.Id
+	res, werr := bld.Wait(ctx, buildID, 10*time.Second)
+	fact(t, "checkout handover build %s ended %s (log %s)", buildID, res.Status, res.LogURL)
+	lines := buildLogLines(t, ctx, buildID)
+	var digest, contextFlag string
+	copied := false
+	for _, l := range lines {
+		switch {
+		case strings.Contains(l, "LIVE base-digest "):
+			digest = strings.TrimSpace(l[strings.Index(l, "LIVE base-digest ")+len("LIVE base-digest "):])
+			fact(t, "clone build base pinned as %s", digest)
+		case strings.Contains(l, "LIVE copied-the-checkout"):
+			copied = true
+		case strings.Contains(l, "LIVE build-context accepted"), strings.Contains(l, "LIVE build-context refused"):
+			contextFlag = strings.TrimSpace(l[strings.Index(l, "LIVE build-context ")+len("LIVE build-context "):])
+			fact(t, "this worker's docker takes --build-context: %v", contextFlag == "accepted")
+		case strings.Contains(l, "LIVE entry:") && strings.Contains(l, "load metadata for"):
+			fact(t, "entry build: %s", strings.TrimSpace(l[strings.Index(l, "LIVE entry:")+len("LIVE entry:"):]))
+		}
+	}
+	if werr != nil {
+		t.Fatalf("the checkout handover build failed: %v", werr)
+	}
+	if !regexp.MustCompile(`^[^@\s]+@sha256:[0-9a-f]{64}$`).MatchString(digest) {
+		t.Errorf("base digest %q is not repo@sha256:<64 hex>", digest)
+	}
+	if !copied {
+		t.Error("the entry's build did not copy the checkout out of the tagged image: the build succeeded without printing LIVE copied-the-checkout")
+	}
+	if contextFlag == "" {
+		t.Error("the build never reported whether this worker's docker takes --build-context")
+	}
+}
+
 // probeTarget is who the probe build runs as and where it pushes.
 type probeTarget struct {
 	sa    string // the build account's email
