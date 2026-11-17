@@ -469,6 +469,37 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"its table is `FUGARO_SHARED_JOB_ACCOUNTS`",
 		"refuses the class whole",
 		"fugaro creds set",
+		// S3 (B3.5). The service brokers a workflow's own `secrets:` too, and
+		// the claim that matters is the one F4 makes: the reach does NOT
+		// change — the code under test still reads a plain variable in the
+		// job's environment, so the service is where the runner fetches the
+		// value, not a place the value stops. Pinned separately from the
+		// model-credential sentences above, because a reader who takes the
+		// two together would believe S3 narrows what a run can reach, and it
+		// does not.
+		"**The service reads the workflow's own `secrets:` too",
+		"the reach does not change",
+		"the same value in the same variable a mount put there",
+		"`creds/workflowsecrets/<slug>`",
+		"variable names and container IDs, never a value",
+		// The runner's fetch, and what it is bound to: the verified job
+		// account decides the repository and the workflow, never a header the
+		// run writes (G19).
+		"the service's own route, which binds the repository and the workflow to the **verified** job account",
+		// A mounted value wins, so the flip is a no-op until B3.8 lands it.
+		"**A mounted value always wins:**",
+		// And the run-start dependency S3 adds, with D501's cold start and
+		// D1934's heartbeat — the two facts a reader of the plan's T3 owes.
+		"halts the run at bootstrap, before any agent call, rather than carrying on without the value (D143)",
+		"pays a **cold start** on a run's own start",
+		"keeps the instance serving it warm while it runs",
+		"no redundancy beyond Cloud Run's own",
+		// The permanent exception D2075 answers: a Batch VM is not a job
+		// account the service admits, so its workflow secrets stay the VM's
+		// own `secretVariables` and S3's fetch never reaches it.
+		"**A repository on `backend: cloud-batch` keeps its workflow secrets on the VM (D2075):**",
+		"a Batch VM is not a job account the service admits",
+		"a permanent listed exception",
 		// The invariant, spelled as the code enforces it.
 		"an OAuth token is only ever sent to Anthropic's own endpoint",
 		// Unreachable halts rather than falls back (D143) — and the claim is
@@ -617,6 +648,13 @@ func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
 		"the class's own table (`FUGARO_SHARED_JOB_ACCOUNTS`) is rendered by no module yet",
 		"a deployed service refuses the class whole",
 		"a repository whose root has not been re-applied with the switch on is byte for byte what it was",
+		// S3's own limit (B3.5): the fetch is wired, and the mount the flip
+		// takes away has NOT been taken away — a mounted value wins, so the
+		// workflow's `secrets:` stay in the job until B3.8 lands the flip.
+		// Stated here rather than only beside the fetch, because a reader who
+		// takes "the runner fetches them" as the whole story would conclude a
+		// switched job no longer holds one.
+		"the read leaves the job only when the flip lands",
 		// And the App key's own limit stays: the mount and the grant are
 		// still there, the runner just no longer reads the key.
 		"the release after the owner's live Check 96 proves the deployed service mints",
