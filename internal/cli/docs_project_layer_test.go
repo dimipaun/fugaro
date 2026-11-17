@@ -767,7 +767,7 @@ func TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes(t *testing.T) {
 		"the credentials service reads `craft_credentials` and `craft_pools` on every call",
 		"so the pool a craft's `access` names is the list that serves it, in the order the node lists its members",
 		"**A pool naming a member of each half of a run is refused here**",
-		"at `craft_pools.<name>.members[i]`, in one sentence that names the two members and the fix (two pools, one per half)",
+		"at `pools.<name>.members[i]`, in one sentence that names the two members and the fix (two pools, one per half)",
 		"which `projectpolicy.Decode` runs",
 		"the runner, the credentials service, `fugaro doctor` and `fugaro update` itself all meet the refusal",
 		"A crossing pool a node already carries is **repaired rather than refused**",
