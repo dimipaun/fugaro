@@ -61,6 +61,19 @@ func touchPatch(path string) string {
 		"\n@@ -0,0 +1 @@\n+one line\n"
 }
 
+// addGitlink commits a submodule entry at path in the fixture's remote: a
+// gitlink is a tree entry no file map carries (testutil.NewRemote writes files),
+// and it is the one base shape both listings of the fence stop at — git names
+// the entry and never a path below it.
+func addGitlink(t *testing.T, h *harness, path string) {
+	t.Helper()
+	seed := filepath.Join(t.TempDir(), "gitlink")
+	testutil.Git(t, filepath.Dir(seed), "clone", "--quiet", h.remote, seed)
+	testutil.Git(t, seed, "update-index", "--add", "--cacheinfo", "160000,"+strings.Repeat("1", 40)+","+path)
+	testutil.Git(t, seed, "commit", "--quiet", "-m", "the base's submodule")
+	testutil.Git(t, seed, "push", "--quiet", "origin", "HEAD:refs/heads/main")
+}
+
 // putPatch stores patch as runID's own recorded patch object
 // (runs/<slug>/<run-id>/ab/patch.diff), the object a reviewer arm reads under
 // the champion's prefix and nothing else.
@@ -234,23 +247,25 @@ func TestABReplayRefusesPatchFromOtherRun(t *testing.T) {
 // name (the review's finding of 2026-11-15), while an unquoted escape is the
 // file's own name and not a refused one.
 //
-// That reading of the headers is not the one that decides, and the next two
-// cases are the reviews' findings of 2026-11-16: git's older `rename old`/
-// `rename new` header is applied by git and named by no prefix the header
-// reading holds, and a quote git never closes is read by git from the line's
-// own bytes while the header reading keeps the whole remainder of the line. Both
-// patches write a refused path and both are refused by the fence's second
-// reading — the paths git wrote, listed from git once the patch is applied —
-// which is why the reviewer below runs no stage in either case.
+// That reading of the headers is not the one that decides, and the four cases
+// after the header ones are the reviews' findings of 2026-11-16 and of
+// 2026-11-17: git's older `rename old`/`rename new` header is applied by git and
+// named by no prefix the header reading holds; a quote git never closes is read
+// by git from the line's own bytes while the header reading keeps the whole
+// remainder of the line; a path the base's own .gitignore excludes is written by
+// the patch, is in the reviewer's reach and appears in no commit at all; and a
+// refused file one level down an ignored directory is named by no listing that
+// reports the directory as itself. Every one of them writes a refused path and
+// every one is refused by the reading of git's own parser, taken before anything
+// is applied (replayPatchPaths), which is why the reviewer below runs no stage in
+// any of them.
 //
-// The two cases after them are what that second reading missed. It listed the
-// paths a commit would carry, and a path the base's own .gitignore excludes is
-// in the checkout, in the reviewer's reach and in no commit at all; and it took
-// the ignored paths as `git status --ignored=matching` writes them, which
-// reports an ignored directory as one entry of its own and names nothing inside
-// it, so a refused file one level down that directory was named nowhere either.
-// The listing now takes git status in its traditional mode as well, and both
-// cases are the ones that fail without it.
+// What this test pins for those four is the refusal and not the reading that
+// reaches it: the parser reading now refuses them first, and the listing of the
+// paths git wrote — the reading that decides, taken from git once the patch is
+// applied (replayWrittenPaths), in git status's traditional mode so that an
+// ignored directory names the files inside it — is the one the two submodule
+// tests beside this one take further.
 func TestABReplayRefusesPatchTouchingAgentConfig(t *testing.T) {
 	cases := []struct {
 		name string
@@ -302,11 +317,11 @@ func TestABReplayRefusesPatchTouchingAgentConfig(t *testing.T) {
 			comp: ".GITIGNORE",
 		},
 		{
-			// The same fold through the reading that decides: this rename header
-			// is one git applies and the fence's prefix list does not hold, so
-			// the first reading returns "" and the paths git wrote are what
-			// refuse it — CLAUDE.MD, which a filesystem that does not
-			// distinguish case hands the review stage as CLAUDE.md.
+			// The same fold through git's own parser: this rename header is one
+			// git applies and the fence's prefix list does not hold, so the
+			// first reading returns "" and the path git's parser names —
+			// CLAUDE.MD, which a filesystem that does not distinguish case
+			// hands the review stage as CLAUDE.md — is what refuses it.
 			name: "an instruction file in another case behind a rename header",
 			path: "CLAUDE.MD",
 			patch: `diff --git a/README.md b/README.md
@@ -389,8 +404,8 @@ new file mode 100644
 			// prefix list does not hold: the only header the first reading
 			// recognizes is the innocent diff --git line, so the fence's
 			// first reading returns "" and the path git writes is named by no
-			// header it looks at. The second reading — the paths git wrote —
-			// is what refuses it.
+			// header it looks at. The parser reading — the path git's own
+			// reader names — is what refuses it.
 			name: "a rename header git applies and the first reading does not hold",
 			path: "CLAUDE.md",
 			patch: `diff --git a/README.md b/README.md
@@ -405,7 +420,8 @@ rename new CLAUDE.md
 			// line's own bytes, dropping the first path part, so the file it
 			// writes is CLAUDE.md while the fence's reader takes the whole
 			// remainder of the line — the trailing newline included — as the
-			// name, which matches no component. Refused by the paths git wrote.
+			// name, which matches no component. Refused by the path git's own
+			// parser names.
 			name:  "a quoted path git never closes",
 			path:  "CLAUDE.md",
 			patch: "diff --git \"a/q b/q\nnew file mode 100644\n--- /dev/null\n+++ \"b/CLAUDE.md\n@@ -0,0 +1 @@\n+one line\n",
@@ -420,8 +436,10 @@ rename new CLAUDE.md
 			// rename is what makes the case bite: the patch stages README.md's
 			// deletion, so the arm has a change to commit and the review really
 			// runs, where a patch writing the ignored file alone would have been
-			// refused for changing nothing. What refuses it is the listing of
-			// the paths git status names, ignored and untracked alike.
+			// refused for changing nothing. What refuses it is the parser
+			// reading, which names the path whatever the base ignores; the
+			// listing of the paths git status names, ignored and untracked
+			// alike, is the reading that decides and names it too.
 			name: "a rename to a path the base ignores",
 			path: "CLAUDE.local.md",
 			files: map[string]string{
@@ -443,8 +461,9 @@ rename new CLAUDE.local.md
 			// holds no component of the fence — and one level below what
 			// `git add -A` stages, since it skips the whole directory. The
 			// files inside an ignored directory, at every depth, are what
-			// --ignored=traditional names (the review of 2026-11-17), and this
-			// is the case that fails without it.
+			// --ignored=traditional names (the review of 2026-11-17). The
+			// parser reading refuses this patch before the apply now; the
+			// listing's traditional mode is what names the file without it.
 			name: "a rename into an ignored directory",
 			path: "build/.claude/settings.json",
 			patch: `diff --git a/README.md b/README.md
@@ -507,6 +526,126 @@ new file mode 100644
 				t.Fatalf("reason = %q, want it to name the component %s it refused", rec.Reason, tc.comp)
 			}
 		})
+	}
+}
+
+// TestABReplayRefusesPatchWritingIntoASubmodule (B1.2): a base may carry a
+// submodule, and a gitlink is a path git lists nothing under — `git status`
+// names the entry and never a file below it, and `git add -A` stages nothing
+// inside one. A patch that puts a file there is refused by neither of the fence's
+// older readings: the patch's own headers name no refused component (the
+// finding's patch is a rename whose diff --git line names the file it renames
+// away from, and `rename old`/`rename new` is a header the prefix list does not
+// hold), and the listing after the apply names the submodule entry alone. The
+// arm would then commit what it can and run its one review over a checkout whose
+// submodule directory carries a file no listing of it names, which the
+// champion's patch put there and the reviewer has for the whole round — the
+// review of 2026-11-17. What refuses it is the reading of git's own parser, taken
+// before anything is written (replayPatchPaths), and with it the whole of a
+// gitlink: a patch may write nothing at or below one.
+func TestABReplayRefusesPatchWritingIntoASubmodule(t *testing.T) {
+	cases := []struct {
+		name  string
+		patch string
+		// want is what the refusal names: the path git's parser read.
+		want string
+	}{
+		{
+			name: "a rename into the submodule",
+			patch: `diff --git a/README.md b/README.md
+similarity index 100%
+rename old README.md
+rename new sub/CLAUDE.md
+`,
+			want: "sub/CLAUDE.md",
+		},
+		{
+			name:  "a file below the submodule",
+			patch: touchPatch("sub/main.go"),
+			want:  "sub/main.go",
+		},
+		{
+			name: "the submodule's own path",
+			patch: `diff --git a/sub b/sub
+new file mode 100644
+--- /dev/null
++++ b/sub
+@@ -0,0 +1 @@
++one line
++`,
+			want: "sub",
+		},
+		{
+			// A patch that moves the submodule itself: the entry is named, and
+			// what a checkout would carry under it is the submodule's business
+			// and not this repository's.
+			name: "the submodule entry itself",
+			patch: `diff --git a/sub b/sub
+index 1111111..2222222 160000
+--- a/sub
++++ b/sub
+@@ -1 +1 @@
+-Subproject commit 1111111111111111111111111111111111111111
++Subproject commit 2222222222222222222222222222222222222222
+`,
+			want: "sub",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			g, _ := armGWSpec(t, armCfg(t), "50", replayTask(task.ABSlotL2), armLayer)
+			withBucket(g.harness)
+			addGitlink(t, g.harness, "sub")
+			putChampionPatch(t, g.harness, tc.patch)
+			rec, err := g.run(t, replayReview("ship", 0))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(g.agent.calls) != 0 {
+				t.Fatalf("a patch writing at or below the submodule ran %d stage(s), want none", len(g.agent.calls))
+			}
+			if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone || rec.FailureClass != failure.ConfigInvalid {
+				t.Fatalf("record = %s/%s/%s, want failed/none/%s", rec.Status, rec.Outcome, rec.FailureClass, failure.ConfigInvalid)
+			}
+			if !strings.Contains(rec.Reason, "may not be replayed") || !strings.Contains(rec.Reason, tc.want) {
+				t.Fatalf("reason = %q, want the fence's refusal naming %s", rec.Reason, tc.want)
+			}
+		})
+	}
+}
+
+// TestABReplayRefusesPatchWritingIntoANestedRepository (B1.2): the other path
+// git lists nothing under is a nested repository, which git names as the
+// directory alone (`?? vendor/x/`) and never descends into. The checkout an
+// image baked is not the base alone (images/derived/Dockerfile.tmpl), and a
+// build that ran inside it can leave a repository of its own behind, untracked —
+// so this is the shape a patch writes through while every listing of the
+// checkout names only the directory it wrote into. No listing can say what is
+// below it, which is why the fence refuses the write rather than judge it: the
+// review would run over a checkout the patch chose.
+func TestABReplayRefusesPatchWritingIntoANestedRepository(t *testing.T) {
+	g, _ := armGWSpec(t, armCfg(t), "50", replayTask(task.ABSlotL2), armLayer)
+	withBucket(g.harness)
+	baked := bakedDir(t, g.harness, repoSlug)
+	testutil.Git(t, filepath.Dir(baked), "clone", "--quiet", g.harness.remote, baked)
+	nested := filepath.Join(baked, "vendor", "x")
+	testutil.Git(t, baked, "init", "--quiet", nested)
+	testutil.WriteFiles(t, nested, map[string]string{"f.txt": "the nested repository's own file\n"})
+	testutil.Git(t, nested, "add", "-A")
+	testutil.Git(t, nested, "commit", "--quiet", "-m", "the nested repository's own work")
+	putChampionPatch(t, g.harness, touchPatch("vendor/x/g"))
+	rec, err := g.run(t, replayReview("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(g.agent.calls) != 0 {
+		t.Fatalf("a patch writing into a nested repository ran %d stage(s), want none", len(g.agent.calls))
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone || rec.FailureClass != failure.ConfigInvalid {
+		t.Fatalf("record = %s/%s/%s, want failed/none/%s", rec.Status, rec.Outcome, rec.FailureClass, failure.ConfigInvalid)
+	}
+	if !strings.Contains(rec.Reason, "may not be replayed") || !strings.Contains(rec.Reason, "vendor/x") {
+		t.Fatalf("reason = %q, want the fence's refusal naming the nested repository", rec.Reason)
 	}
 }
 

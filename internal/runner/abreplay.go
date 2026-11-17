@@ -159,6 +159,35 @@ func (r *run) runReviewReplay(ctx context.Context) {
 		r.refuseReplay(r.replayFenceReason("touches " + r.stageErrorText(comp)))
 		return
 	}
+	// The paths the patch names, read by git's own parser and before anything is
+	// written: `git apply --numstat` reads the patch with the reader that will
+	// apply it and names one path per entry, whatever spelling the patch's own
+	// headers used (replayPatchPaths). It is what reaches a path no listing of
+	// this checkout can name — one inside a submodule or a nested repository —
+	// and it refuses the whole of one, because what a patch leaves under such a
+	// path is written, is in the reviewer's reach for the whole round, and is
+	// named by no listing git gives of this checkout at all.
+	links, err := replayGitlinkPaths(ctx, r.repo)
+	if err != nil {
+		r.failReplayRead(ctx, fmt.Errorf("listing the submodules this checkout carries: %w", err))
+		return
+	}
+	named, err := replayPatchPaths(ctx, r.repo, patch)
+	if err != nil {
+		// The reader that refuses it here is the one that would refuse it on the
+		// apply, so this is the apply's own refusal: git's message quotes the
+		// paths the patch carries, which are bytes out of it too (stageErrorText).
+		r.refuseReplay(fmt.Sprintf("the champion run %s's patch does not apply to this checkout: %s. The arm applies the patch with git apply, which writes nothing when it refuses, so this is a patch written for another base: launch the arm at the commit the champion's run started from (B1.4)", r.spec.AB.ChampionRun, r.stageErrorText(err.Error())))
+		return
+	}
+	if path := replayRefusedPath(named); path != "" {
+		r.refuseReplay(r.replayFenceReason("touches " + r.stageErrorText(path)))
+		return
+	}
+	if path := replayUnlistedPath(links, named); path != "" {
+		r.refuseReplay(r.replayUnlistedReason("writes " + r.stageErrorText(path)))
+		return
+	}
 	// What the checkout carried before the patch, read before anything is
 	// applied: an image's baked checkout is not the base alone, and the fence
 	// reads the listing after the apply against this one (replayWrittenPaths).
@@ -183,7 +212,11 @@ func (r *run) runReviewReplay(ctx context.Context) {
 		r.failReplayRead(ctx, fmt.Errorf("listing the paths the champion's patch wrote: %w", err))
 		return
 	}
-	if path, comp := replayWrittenRefusal(written); comp != "" {
+	// The paths git wrote, and the ones it names as a submodule entry or as a
+	// directory it will not descend into: what a patch wrote under either of
+	// those is named by no listing of this checkout, which is the one thing the
+	// parser reading above cannot judge on its own.
+	if path, unlisted := replayRefusedPath(written), replayUnlistedPath(links, written); path != "" || unlisted != "" {
 		// The change is discarded before the arm is refused. What it applied is
 		// what finalize would otherwise commit, record as this arm's own changed
 		// paths and upload as this arm's own patch object, and an arm that
@@ -193,7 +226,11 @@ func (r *run) runReviewReplay(ctx context.Context) {
 			r.failReplayRead(ctx, fmt.Errorf("discarding the champion's refused patch: %w", err))
 			return
 		}
-		r.refuseReplay(r.replayFenceReason("writes " + r.stageErrorText(path)))
+		if path != "" {
+			r.refuseReplay(r.replayFenceReason("writes " + r.stageErrorText(path)))
+		} else {
+			r.refuseReplay(r.replayUnlistedReason("writes " + r.stageErrorText(unlisted)))
+		}
 		return
 	}
 	committed, err := r.repo.CommitAll(ctx, "fugaro: the champion's patch (run "+r.spec.AB.ChampionRun+"), replayed")
@@ -348,15 +385,30 @@ func (r *run) refuseReplay(reason string) {
 	r.d.Log.Warn("the reviewer replay was refused", "reason", reason)
 }
 
-// replayFenceReason is the refusal both fences of the arm write: what was read
-// (the component the patch's own headers named, or the path git wrote, each
-// already through stageErrorText, because both are bytes out of an untrusted
-// object) and why a patch that reaches this run's own configuration may not be
-// replayed. One wording for both, so a pair's owner reads one boundary rather
-// than two.
+// replayFenceReason is the refusal the arm's fences write when a patch reaches
+// this run's own configuration: what was read (the component the patch's own
+// headers named, or the path git wrote or named, each already through
+// stageErrorText, because every one of them is bytes out of an untrusted object)
+// and why such a patch may not be replayed. One wording for every reading, so a
+// pair's owner reads one boundary rather than one per reading.
 func (r *run) replayFenceReason(what string) string {
-	return fmt.Sprintf("the champion run %s's patch %s, and a patch that reaches a hook, an instruction file or a tool setting may not be replayed: the review this arm runs would load it as configuration of its own session (B1.2, D728). Launch the pair against a champion whose patch touches none of .claude, .claude-plugin, .fugaro, .github, .git*, fugaro.yaml, CLAUDE.md, CLAUDE.local.md or .mcp.json, at any depth", r.spec.AB.ChampionRun, what)
+	return fmt.Sprintf("the champion run %s's patch %s, and a patch that reaches a hook, an instruction file or a tool setting may not be replayed: the review this arm runs would load it as configuration of its own session (B1.2, D728). %s", r.spec.AB.ChampionRun, what, replayFenceFix)
 }
+
+// replayUnlistedReason is the refusal the fence writes for a path git lists
+// nothing under: a submodule's own path (a gitlink) and a nested repository
+// (which git names as the directory alone). A patch may write anything below
+// such a path and no listing of this checkout will name it, so the arm cannot
+// say what the patch left there — and what it left there is in the checkout the
+// review stage reads, for the whole round. It is the same boundary as the rest
+// of the fence, stated for the one case in which no path under it can be read.
+func (r *run) replayUnlistedReason(what string) string {
+	return fmt.Sprintf("the champion run %s's patch %s, and a patch that writes inside a submodule or a nested repository may not be replayed: git lists nothing under such a path, so the arm cannot read what the patch left there and the review it runs would read a checkout the patch chose (B1.2, D728). %s", r.spec.AB.ChampionRun, what, replayFenceFix)
+}
+
+// replayFenceFix is the sentence every refusal of the arm ends with: what the
+// pair's owner does about it.
+const replayFenceFix = "Launch the pair against a champion whose patch touches none of .claude, .claude-plugin, .fugaro, .github, .git*, fugaro.yaml, CLAUDE.md, CLAUDE.local.md or .mcp.json, at any depth"
 
 // replayRefusedNames are the path components a champion's patch may not touch
 // (B1.2, D728): the files a review stage of this run would load as its own
@@ -413,12 +465,14 @@ var replayPatchPrefixes = []string{"rename from ", "rename to ", "copy from ", "
 // It is the fence's first reading, and not the one that decides: it reads the
 // patch's own header lines, and a patch is free to spell a header git applies
 // and this list does not hold. What decides is the listing of the paths git
-// wrote, taken from git itself once the patch is applied (replayWrittenPaths);
-// this reading is the one that refuses before anything is written at all.
+// wrote, taken from git itself once the patch is applied (replayWrittenPaths).
+// It is also the cheapest of the three readings — the patch's bytes and nothing
+// else, no git call at all — which is why it is the one that comes first.
 //
 // The paths are read from the patch's own header lines rather than from git
 // (git apply --numstat names a rename's new path alone, so a rename away from a
-// refused path would escape the fence), and each is read as git's own reader
+// refused path would escape the fence, and the parser reading beside this one
+// names no other), and each is read as git's own reader
 // reads it rather than as the line's bytes are written: git writes a path whose
 // bytes need escaping — a space, a control character, a byte outside ASCII — as
 // a C-quoted string, and decodes that string when it applies the patch, so the
@@ -446,6 +500,49 @@ func replayPatchRefusal(patch []byte) string {
 		}
 	}
 	return ""
+}
+
+// replayPatchPaths are the paths the patch names, read by git's own parser
+// before anything is written: `git apply --numstat -z` reads the patch with the
+// reader that will apply it, one record per entry, and -z leaves each path's own
+// bytes alone. --numstat applies nothing and runs nothing of the patch's, which
+// is what makes it the reading the fence can take before the apply.
+//
+// It is the fence's reading of git's parser, and the one neither of the other
+// two can stand in for. The header reading is a reading of the patch's lines and
+// misses a spelling git applies (the review of 2026-11-16), and the listing of
+// the paths git wrote stops at a submodule or a nested repository: a file a
+// patch puts below either is written, is in the reviewer's checkout for the
+// whole round, and is named by no listing git gives of it (the review of
+// 2026-11-17).
+//
+// A patch this reader cannot parse is a patch git apply refuses, so its failure
+// is the apply's own refusal rather than one of the fence's, and the caller
+// reads it as that.
+func replayPatchPaths(ctx context.Context, repo *gitops.Repo, patch []byte) ([]string, error) {
+	out, err := replayGit(ctx, repo, bytes.NewReader(patch), "apply", "--numstat", "-z")
+	if err != nil {
+		return nil, err
+	}
+	return replayNumstatPaths(out), nil
+}
+
+// replayNumstatPaths are the paths of a `git apply --numstat -z` listing: one
+// record per NUL, each the added and the deleted line count and then the path,
+// tab-separated and never quoted (-z), so a path holding a newline or a quote is
+// read as itself. A rename names its new path alone — the path git writes, and
+// the one the fence judges — while the path it renames away from is a deletion
+// of this checkout, which the patch's own headers name (replayPatchRefusal).
+func replayNumstatPaths(out string) []string {
+	var paths []string
+	for _, rec := range strings.Split(out, "\x00") {
+		if _, rest, ok := strings.Cut(rec, "\t"); ok {
+			if _, path, ok := strings.Cut(rest, "\t"); ok && path != "" {
+				paths = append(paths, path)
+			}
+		}
+	}
+	return paths
 }
 
 // replayWrittenPaths lists every path the patch put in the checkout: the ones a
@@ -500,15 +597,31 @@ func replayPatchRefusal(patch []byte) string {
 // path part stripped, which is not the name the fence's reader takes out of it.
 // The paths git wrote admit no such spelling: they are what git wrote
 // (TestABReplayRefusesPatchTouchingAgentConfig's last cases).
+//
+// What this listing does not reach is a path inside a submodule or a nested
+// repository: git names a gitlink entry as itself (` M sub`) and a directory it
+// will not descend into as the directory alone (`?? vendor/x/`, a record whose
+// path ends in "/"), and names nothing below either, so a path the patch wrote
+// there is missing from this listing while it is in the reviewer's checkout for
+// the whole round. The caller refuses those two records whole
+// (replayUnlistedPath), and the reading of git's own parser, taken before the
+// patch is applied, is what names a refused path below them (replayPatchPaths).
 func replayWrittenPaths(ctx context.Context, repo *gitops.Repo, before replaySnapshot) ([]string, error) {
+	// The status listing is taken before the checkout is staged, because staging
+	// changes what git names a nested repository by: `git add -A` adds the
+	// embedded repository as a gitlink entry, and `git status` then names the
+	// entry (`A  vendor/x`) where it named the directory it would not descend
+	// into before (`?? vendor/x/`). That trailing slash is the fence's only sign
+	// of a nested repository, so the listing that carries it is this one
+	// (replayUnlistedPath).
+	status, err := replayCheckoutStatus(ctx, repo)
+	if err != nil {
+		return nil, err
+	}
 	if _, err := replayGit(ctx, repo, nil, "add", "-A"); err != nil {
 		return nil, err
 	}
 	staged, err := replayGit(ctx, repo, nil, "--no-replace-objects", "diff", "--cached", "--no-renames", "--name-only", "-z", "HEAD")
-	if err != nil {
-		return nil, err
-	}
-	status, err := replayCheckoutStatus(ctx, repo)
 	if err != nil {
 		return nil, err
 	}
@@ -613,18 +726,68 @@ func replayStatusPaths(out string) []string {
 	return paths
 }
 
-// replayWrittenRefusal is the path among written that no reviewer arm may have
-// in its checkout, and the component of it the fence refuses: both "" when the
-// patch wrote none of them.
-func replayWrittenRefusal(written []string) (path, comp string) {
-	for _, p := range written {
+// replayRefusedPath is the first path among paths that no reviewer arm may have
+// in its checkout — one holding a refused component at any depth
+// (replayRefusesComponent) — "" when there is none. It is applied to every
+// reading that names paths: the parser's and the checkout's alike.
+func replayRefusedPath(paths []string) string {
+	for _, p := range paths {
 		for _, c := range strings.Split(p, "/") {
 			if replayRefusesComponent(c) {
-				return p, c
+				return p
 			}
 		}
 	}
-	return "", ""
+	return ""
+}
+
+// replayGitlinkPaths are the submodule entries of the checkout's index: the
+// gitlink paths (mode 160000), whose content git lists nowhere — `git status`
+// reports a gitlink entry as itself and never a path below it, and `git add -A`
+// stages nothing inside one. The index is the base's own, since the apply writes
+// the working tree and not the index, so the same reading serves both sides of
+// it.
+func replayGitlinkPaths(ctx context.Context, repo *gitops.Repo) ([]string, error) {
+	out, err := replayGit(ctx, repo, nil, "--no-replace-objects", "ls-files", "--stage", "-z")
+	if err != nil {
+		return nil, err
+	}
+	var links []string
+	for _, rec := range strings.Split(out, "\x00") {
+		meta, path, ok := strings.Cut(rec, "\t")
+		if !ok || !strings.HasPrefix(meta, "160000 ") {
+			continue
+		}
+		links = append(links, path)
+	}
+	return links, nil
+}
+
+// replayUnlistedPath is the first path among paths that the fence refuses
+// because git lists nothing under it: a submodule's own path (a gitlink of the
+// index) and a directory git names with a trailing slash, which is how git
+// writes a nested repository it will not descend into. "" when there is none.
+//
+// A patch can write anything below such a path while every listing of this
+// checkout says nothing about what it wrote — a submodule's content is not this
+// repository's, and a nested repository's is not either — so the fence refuses
+// the whole of it rather than judge it. Both readings that name paths apply this
+// one: the parser's, before anything is written, and the listing after the
+// apply, which is where the trailing slash comes from. The snapshot is what
+// keeps the arm of a repository that already carried a nested repository: a path
+// the patch left as it was is not one it wrote (the review of 2026-11-17).
+func replayUnlistedPath(links, paths []string) string {
+	for _, p := range paths {
+		if strings.HasSuffix(p, "/") {
+			return p
+		}
+		for _, link := range links {
+			if p == link || strings.HasPrefix(p, link+"/") {
+				return p
+			}
+		}
+	}
+	return ""
 }
 
 // replayHeaderNames are the path names that rest, a header line's remainder,
