@@ -4337,3 +4337,61 @@ func TestSharedConfigRefusesTheDeclaredAllowlist(t *testing.T) {
 		}
 	}
 }
+
+// TestProjectPolicyPublishKeepsTheOrchestratorSwitchAndIssueSync: R1 of
+// docs/orchestrator-graph-estimates/'s two keys are the node's own — no key of
+// this machine's config states either — so a publish that built a node without
+// them would turn the daemon back on for a project whose owner turned it off
+// and stop ingesting the issues of a project whose adapter names repositories,
+// silently, from a machine whose config predates the keys. `fugaro update`
+// publishes this node on every run, so that is the whole point of the carry.
+//
+// The diff has to say they were kept, the model grades' line and the clone
+// URLs' `kept` one: the member is unchanged, so no +/- line above mentions it,
+// and the operator who wrote the switch or the adapter by hand would read that
+// silence as "it is gone".
+func TestProjectPolicyPublishKeepsTheOrchestratorSwitchAndIssueSync(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":              projectpolicy.Version,
+		"allow_repos":          []string{"github/acme/app"},
+		"orchestrator_enabled": false,
+		"issue_sync": map[string]any{
+			"github": map[string]any{"repos": []string{"acme/app", "acme/lib"}, "mirror": true},
+		},
+	})
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatalf("the publish refused a node carrying the daemon's switch and an issue adapter: %v", err)
+	}
+	p := publishedPolicy(t, f)
+	if p.OrchestratorOn() {
+		t.Error("OrchestratorOn() = true, want false: the publish turned the daemon back on over a written false")
+	}
+	if p.OrchestratorEnabled == nil {
+		t.Fatal("the published node carries no orchestrator_enabled: the publish dropped the owner's answer rather than the member's value")
+	}
+	if p.IssueSync == nil || p.IssueSync.GitHub == nil {
+		t.Fatal("the published node carries no issue_sync: the publish dropped the project's adapter")
+	}
+	if want := []string{"acme/app", "acme/lib"}; !slices.Equal(p.IssueSync.GitHub.Repos, want) {
+		t.Errorf("issue_sync.github.repos = %v, want %v: the publish dropped a repository whose issues feed the backlog", p.IssueSync.GitHub.Repos, want)
+	}
+	if !p.IssueSync.GitHub.MirrorOn() {
+		t.Error("issue_sync.github.mirror = false, want true: the publish turned the mirror off over a written true")
+	}
+	raw := nodeJSON(t, f, projectpolicy.PathShared())
+	for _, member := range []string{`"orchestrator_enabled"`, `"issue_sync"`} {
+		if !strings.Contains(raw, member) {
+			t.Errorf("the node no longer carries %s:\n%s", member, raw)
+		}
+	}
+	for _, want := range []string{
+		"orchestrator_enabled kept: false",
+		"issue_sync kept: acme/app, acme/lib, mirror on: an item with no spec and no external id opens an issue",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the publish does not say %q:\n%s", want, out)
+		}
+	}
+}

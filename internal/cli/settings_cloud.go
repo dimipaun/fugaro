@@ -167,7 +167,9 @@ func (r *settingsRead) readPolicyLayer(ctx context.Context) {
 // block at all keeps the protective defaults above — so a member the node does
 // not carry is left out of this map for the same reason the budget members are,
 // and `credentials.fallback` reads `auto` exactly as a run of that project would
-// get it.
+// get it. The daemon's switch and the project's issue adapter are the third
+// family of that kind (R1 of docs/orchestrator-graph-estimates): the node is
+// their only store too, so they read out of the same block and by the same rule.
 //
 // A member the node does not carry is left out of the map rather than rendered
 // as the zero value the decode gives it. The node's budget members are not
@@ -219,6 +221,19 @@ func policyValues(p *projectpolicy.Policy) map[string]string {
 		if c.ConcurrencyPerToken != nil {
 			out["credentials.concurrency_per_token"] = strconv.Itoa(*c.ConcurrencyPerToken)
 		}
+	}
+	// The daemon's own two (R1 of docs/orchestrator-graph-estimates, D2701,
+	// D2733, D2739) follow the same rule, and for the switch it is the whole
+	// point of the key: `*bool` is nil for a member the node does not carry and
+	// false for the written opt-out, so a map that rendered nil as `false` would
+	// print every project that never mentioned the switch as a project whose
+	// daemon is stopped. The adapter renders as the node's own JSON, which is
+	// what this read does with a block no file spells.
+	if p.OrchestratorEnabled != nil {
+		out["orchestrator_enabled"] = strconv.FormatBool(*p.OrchestratorEnabled)
+	}
+	if t := jsonText(p.IssueSync); t != "" {
+		out["issue_sync"] = t
 	}
 	return out
 }
