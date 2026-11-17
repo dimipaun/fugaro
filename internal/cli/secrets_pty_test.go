@@ -286,3 +286,110 @@ func TestInitPromptStatesTheReachOfAProjectWorkflowSecret(t *testing.T) {
 	}
 	noLeak(t, tokenValue, shown, r.out.String())
 }
+
+// TestSecretsStageNeverPromptsForARepositoryLevelSecret: at a real terminal,
+// with lines already waiting in stdin, a repository-level secret no job mounts
+// project-wide is never asked for. The prompt it would reach is take's else
+// arm, which stores the repository's own copy through this stage's own Secret
+// Manager write — the store D2313 closed at the command, reached here by
+// another route, and one no shared job mounts — so find() would then count the
+// name covered and a later run would never ask again, with nothing a shared job
+// reads ever stored. The two platform names are seeded, so the stage has nothing to
+// ask for at all: the run ends done, the store is untouched and the waiting
+// lines are still waiting. (TestSecretsStageDoesNotAskForARepositoryLevelSecret
+// pins the same name's absence from the line and its presence in the ruling's
+// sentence.)
+func TestSecretsStageNeverPromptsForARepositoryLevelSecret(t *testing.T) {
+	repoSecretsOn(t)
+	tty := newTTY(t)
+	r := newSecretsRig(t, bitbucketOrigin, tty.tty)
+	r.workflowSecretConfig(t, "app-signing-key")
+	r.stage.resolve(context.Background())
+	if r.stage.projectScope("app-signing-key") {
+		t.Fatal("the fixture is not the state this case is about: the secret has a project-wide meaning")
+	}
+	slug := mustSlug("bitbucket", "acme/app")
+	r.store.seed(slug, "bitbucket-token", tokenValue)
+	r.store.seed(slug, "claude-oauth-token", tokenValue)
+	// Lines are waiting: a prompt that were reached reads them (and, if the fix
+	// regressed, stores one) instead of blocking, so a regression fails this
+	// test rather than hanging it.
+	lines := strings.Repeat(tokenValue+"\n", 8)
+	if _, err := tty.master.WriteString(lines); err != nil {
+		t.Fatal(err)
+	}
+	// Linux hands what the master writes to the line discipline from a
+	// workqueue, after write returns (the same note
+	// TestReadSecretHiddenPromptCancelled carries), so wait for the bytes to
+	// arrive: what the assertion is about is that they stay there.
+	before := 0
+	for deadline := time.Now().Add(5 * time.Second); before < len(lines); {
+		if time.Now().After(deadline) {
+			t.Fatalf("the waiting lines never arrived (%d of %d): the stage read them", before, len(lines))
+		}
+		time.Sleep(5 * time.Millisecond)
+		before = queued(t, tty)
+	}
+	res, err := r.run(t)
+	if err != nil {
+		t.Fatalf("%v (prompts %q)", err, r.errOut.String())
+	}
+	if got := stateOf(res, initflow.Secrets); got != initflow.Done {
+		t.Fatalf("state = %q, want done (prompts %q)", got, r.errOut.String())
+	}
+	if n := r.store.setCalls(); n != 0 {
+		t.Fatalf("%d value(s) stored: the prompt was reached", n)
+	}
+	if s := r.errOut.String(); strings.Contains(s, "Paste the value") {
+		t.Fatalf("a prompt was printed: %q", s)
+	}
+	if after := queued(t, tty); after != before || before == 0 {
+		t.Errorf("the terminal was read: %d -> %d", before, after)
+	}
+}
+
+// TestSecretsStagePromptNamesAStoreThatStillWorks: the prompt's way out is a
+// command the person runs in their own terminal, so it must be one that stores
+// something. For a repository-level secret it was not (D2313): `secrets set
+// NAME --repo OWNER/NAME` answers the notice and writes nothing, so the prompt
+// named a step that does nothing. What it names instead is the store that
+// still exists for the name — the project's copy, which is the same store
+// answering the prompt stores — and it says why the repository-level copy is
+// not on offer.
+func TestSecretsStagePromptNamesAStoreThatStillWorks(t *testing.T) {
+	repoSecretsOn(t)
+	tty := newTTY(t)
+	r := newSecretsRig(t, bitbucketOrigin, tty.tty)
+	r.workflowSecretConfig(t, "app-signing-key")
+	r.e.lc.WorkflowSecrets = map[string]config.ProjectSecret{
+		"app-signing-key": {AllowDataTo: []string{"acme/app"}},
+	}
+	r.stage.resolve(context.Background())
+	if !r.stage.projectScope("app-signing-key") {
+		t.Fatal("the stage does not read the entry as a project-wide one: the prompt under test would not fire")
+	}
+	// The other two names are stored, so the workflow secret is the one
+	// prompted for and this test's line is the one the prompt reads.
+	slug := mustSlug("bitbucket", "acme/app")
+	r.store.seed(slug, "bitbucket-token", tokenValue)
+	r.store.seed(slug, "claude-oauth-token", tokenValue)
+	if _, err := tty.master.WriteString(tokenValue + "\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.run(t); err != nil {
+		t.Fatalf("%v (prompts %q)", err, r.errOut.String())
+	}
+	shown := r.errOut.String()
+	if strings.Contains(shown, "app-signing-key --repo") {
+		t.Errorf("the prompt offers a store the ruling answers with the notice:\n%s", shown)
+	}
+	for _, want := range []string{
+		"its repository-level copy is disabled for now (D2313), so this project's copy is the only one it is stored in",
+		"'fugaro secrets set app-signing-key'",
+	} {
+		if !strings.Contains(shown, want) {
+			t.Errorf("the prompt does not say %q:\n%s", want, shown)
+		}
+	}
+	noLeak(t, tokenValue, shown, r.out.String())
+}

@@ -120,8 +120,15 @@ type checkoutTransaction struct {
 	// Paddle's answer and it is what the billing screen's customer-portal
 	// session is minted for (P4.3), so a record written before the customer
 	// exists carries none.
-	CustomerID string    `json:"customer_id"`
-	CreatedAt  time.Time `json:"created_at"`
+	CustomerID string `json:"customer_id"`
+	// EntitlementID is the licence this transaction bought, written when the
+	// purchase event is processed and empty until then. It is what a refund or a
+	// chargeback that names this transaction resolves to (F16, F29): the
+	// transaction is the API's own record of the sale, so the licence the money
+	// belongs to is read off it and never off the workspace, which holds whatever
+	// licence is current rather than the one that was paid for.
+	EntitlementID string    `json:"entitlement_id"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 // checkout opens one purchase: it checks what the caller may buy, records the
@@ -253,6 +260,32 @@ func (s *Service) recordCheckout(ctx context.Context, record checkoutTransaction
 	}
 	if err := s.docs.Put(ctx, checkoutTransactionsCollection, record.ID, doc); err != nil {
 		return fmt.Errorf("the checkout %s was created at the merchant of record and could not be recorded: %w", record.ID, err)
+	}
+	return nil
+}
+
+// recordBought writes the licence one checkout's transaction bought onto that
+// transaction's own record, which is what a refund or a chargeback naming the
+// transaction resolves to (F16, F29).
+//
+// A checkout record the store does not hold is left alone: the licence has
+// already been granted by the time this runs, and a `500` would send the
+// merchant back through a purchase that is done rather than fix anything.
+func (s *Service) recordBought(ctx context.Context, transactionID, entitlementID string) error {
+	record, held, err := getRecord[checkoutTransaction](ctx, s.docs, checkoutTransactionsCollection, transactionID)
+	if err != nil {
+		return err
+	}
+	if !held {
+		return nil
+	}
+	record.EntitlementID = entitlementID
+	doc, err := storedDoc(record)
+	if err != nil {
+		return err
+	}
+	if err := s.docs.Put(ctx, checkoutTransactionsCollection, record.ID, doc); err != nil {
+		return fmt.Errorf("keyservice: the licence the checkout %s bought could not be recorded on it: %w", transactionID, err)
 	}
 	return nil
 }
