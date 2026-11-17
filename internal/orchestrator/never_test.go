@@ -169,13 +169,13 @@ func TestNeverSecretValueRefuses(t *testing.T) {
 // installation, in every spelling the tree's other guards know it by, and
 // nothing else.
 //
-// The spellings are the two sides the rule is judged on. The word inside a
-// longer name is the direction that fails closed and is what catches the
-// project owner's installation is actually read from, `fugaro-belong`
-// (check-lc4's own guard is a substring test "on purpose"); `edge-devel-dimi`
-// carries the word nowhere at all, and `belong` was a name before it became a
-// project id, so both are named here the way
-// internal/backend/batch's outOfBoundsFloor names them.
+// The spellings are the two sides the rule is judged on: the word INSIDE a
+// longer name, which is the direction that fails closed and is what catches the
+// project the owner's installation is actually read from (`fugaro-belong`, and
+// check-lc4's own guard is a substring test "on purpose" for the same reason);
+// and the two ids the installation itself answers to, which
+// internal/backend/batch's outOfBoundsFloor names the same way — one of them
+// built out of the word, and `edge-devel-dimi` carrying it nowhere at all.
 func TestNeverBelongRefusesTheFamily(t *testing.T) {
 	for _, refused := range []string{
 		"belong", "belong-sandbox", "belong-2", "Belong",
