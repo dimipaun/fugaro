@@ -394,11 +394,16 @@ type MergeOutcome struct {
 	// here instead.
 	Replay bool
 	// Retry is a wait on something that is still moving: a ladder run at this
-	// head that has not ended, a review that has not answered, checks that have
-	// not concluded. The next cycle reads the same head again and the answer may
-	// well be different, so none of it is a person's to act on and no question
-	// is raised for it (see merge). It is read on a wait and nowhere else: every
-	// other outcome is one the gate reached on evidence that has stopped moving.
+	// head that has not ended, a review that has been asked for and not yet
+	// recorded, checks that have not concluded. The next cycle reads the same
+	// head again and the answer may well be different, so none of it is a
+	// person's to act on and no question is raised for it (see merge).
+	//
+	// It is set where the reading itself moves, and nowhere else: everything
+	// else the gate waits on has stopped — no checks reported at all, a check
+	// that finished unreadably, a review that ended without a score, a run whose
+	// head is not the one it pushed — and a person is asked about each of those,
+	// once, in the item's own name.
 	Retry bool
 	// Refusal is the closed code of a merge a host refused, and "" otherwise.
 	Refusal string
@@ -432,8 +437,15 @@ type MergeInput struct {
 	// PR is the pull request as the host answered it, and CI the state of its
 	// checks at Head. Both are nil and unknown when there is nothing to read
 	// them for.
-	PR          *gitprov.PRInfo
+	PR *gitprov.PRInfo
+	// CI is the state of those checks, and CIPending whether any of them is
+	// still moving. ChecksState answers CIUnknown for three different readings —
+	// nothing reported at all, a check that has not concluded, and a finished
+	// check whose conclusion this code cannot read — and the gate waits on one
+	// of them (see mergeGate), so the reading beside the state is what tells
+	// them apart.
 	CI          gitprov.CIState
+	CIPending   bool
 	ReadyDrafts bool
 	// Launchable is whether the ladder may start a run of this item at all:
 	// the same four questions every launch is held to (ladderLaunchable), read
@@ -510,15 +522,23 @@ func mergeGate(in MergeInput) MergeOutcome {
 		return waitFact(GateHeadMoved)
 	}
 	if !in.Read.Scored {
-		if in.Read.ReviewRun == "" && !in.Launches.Review {
-			if !in.Launchable {
-				return waitFact(GateLaunchUncovered)
+		if in.Read.ReviewRun == "" {
+			if !in.Launches.Review {
+				if !in.Launchable {
+					return waitFact(GateLaunchUncovered)
+				}
+				return MergeOutcome{Kind: MergeLaunchReview, Launch: RecipeReviewOnly, Facts: []GateReason{GateUncovered}}
 			}
-			return MergeOutcome{Kind: MergeLaunchReview, Launch: RecipeReviewOnly, Facts: []GateReason{GateUncovered}}
+			// A review has been asked for at this head and its run is not in
+			// the reading yet: a run's record appears when its run does, and the
+			// review that was launched is a cycle or two behind its own line
+			// (RungLog). That is a wait on something moving.
+			return retry(waitFact(GateReviewSpent))
 		}
-		// The review D2043 asks for is in flight, or the run is a step behind the
-		// log's line: the next cycle reads what it said.
-		return retry(waitFact(GateReviewSpent))
+		// The review at this head is recorded and carried no score. D2043 allows
+		// one review per head, so no later cycle produces another one, and a
+		// head whose review answered nothing is a person's to read.
+		return waitFact(GateReviewSpent)
 	}
 	if reason, unreadable := headFindingsUnreadable(in.Read); unreadable {
 		return waitReason(reason)
@@ -542,7 +562,15 @@ func mergeGate(in MergeInput) MergeOutcome {
 		return waitFact(GateHeadUnpushed)
 	}
 	if !knownCI(in.CI) {
-		return retry(waitReason(ReasonCIUnknown))
+		if in.CIPending {
+			// Checks that have not concluded: the commit's checks have no
+			// answer yet, and the next cycle reads what they said.
+			return retry(waitReason(ReasonCIUnknown))
+		}
+		// Nothing was reported at all, or a check that finished concluded
+		// something this code cannot read (F25): no cycle reads anything else
+		// here, so a person has to look at a head nothing will ever pass.
+		return waitReason(ReasonCIUnknown)
 	}
 	if in.CI != gitprov.CIGreen {
 		return waitFact(GateCIRed)
@@ -775,7 +803,7 @@ func (s RungSeams) merge(ctx context.Context, item WorkItem, step escalation.Ste
 		if err != nil {
 			return false, err
 		}
-		in.PR, in.CI = &pr, gitprov.ChecksState(checks)
+		in.PR, in.CI, in.CIPending = &pr, gitprov.ChecksState(checks), gitprov.ChecksPending(checks)
 	}
 	out := mergeGate(in)
 
@@ -829,8 +857,9 @@ func (s RungSeams) merge(ctx context.Context, item WorkItem, step escalation.Ste
 		// run that has not ended or checks that have not concluded would spend it
 		// — the judge's later veto (D2037) would reach no person, and the stale
 		// question would sit open over a landing nobody is waiting on. The wait
-		// is retried next cycle, and if it never ends it is the breaker (D1228)
-		// that reaches a person, which is what the breaker is for.
+		// is retried next cycle instead, and the question is kept for the
+		// refusal that is a person's: the one read off a reading that has
+		// stopped moving, which is the reading no later cycle changes.
 		if !out.Retry {
 			if op, n, ok := mergeQuestionOp(st, item, mergeQuestion(item, out)); ok {
 				ops, told = append(ops, op), &n

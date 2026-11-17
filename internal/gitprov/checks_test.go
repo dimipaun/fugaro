@@ -41,6 +41,31 @@ func TestChecksPendingIsUnknown(t *testing.T) {
 	}
 }
 
+func TestChecksPendingOnlyWhenACheckHasNotConcluded(t *testing.T) {
+	// The three shapes ChecksState calls unknown are not one shape to a caller
+	// that waits on the reading: only a run still going will report something.
+	for _, tc := range []struct {
+		name string
+		runs []CheckRun
+		want bool
+	}{
+		{"nothing reported at all", nil, false},
+		{"a check that finished, with nothing readable", []CheckRun{{Status: "completed"}}, false},
+		{"a check that finished and failed", []CheckRun{{Status: "completed", Conclusion: "failure"}}, false},
+		{"every check passed", []CheckRun{{Status: "completed", Conclusion: "success"}}, false},
+		{"a check that is still queued", []CheckRun{{Status: "queued"}}, true},
+		{"a check that finished beside one still running", []CheckRun{
+			{Status: "completed", Conclusion: "success"}, {Status: "in_progress"},
+		}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ChecksPending(tc.runs); got != tc.want {
+				t.Fatalf("ChecksPending(%+v) = %v, want %v", tc.runs, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestChecksGreenOnlyWhenAllReportedPass(t *testing.T) {
 	pass := CheckRun{Status: "completed", Conclusion: "success"}
 	if got := ChecksState([]CheckRun{pass}); got != CIGreen {

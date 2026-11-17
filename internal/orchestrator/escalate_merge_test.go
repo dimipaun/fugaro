@@ -679,10 +679,32 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 			},
 		},
 		{
-			"CI nobody could read",
+			// Checks still queued or running: the commit has no answer yet,
+			// and a later cycle reads what they said. This is the one CI
+			// refusal that is a wait, and it is the reading that moves.
+			"checks that have not concluded",
 			string(orchestrator.ReasonCIUnknown),
 			true,
+			func(_ *orchestrator.MergeReading, h *mergeHostStub) {
+				h.checks = []gitprov.CheckRun{{Status: "in_progress"}}
+			},
+		},
+		{
+			// F25's case, and the reason a reading is not a wait: a repository
+			// that runs no CI reports no checks at all, and no later cycle
+			// reports any either.
+			"no checks reported at all",
+			string(orchestrator.ReasonCIUnknown),
+			false,
 			func(_ *orchestrator.MergeReading, h *mergeHostStub) { h.checks = nil },
+		},
+		{
+			"a check that finished with nothing readable",
+			string(orchestrator.ReasonCIUnknown),
+			false,
+			func(_ *orchestrator.MergeReading, h *mergeHostStub) {
+				h.checks = []gitprov.CheckRun{{Status: "completed"}}
+			},
 		},
 		{
 			"CI that failed",
@@ -743,6 +765,17 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 			string(orchestrator.ReasonRecordUnreadable),
 			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) { r.Record.Status = runstore.Status("invented") },
+		},
+		{
+			// The review at this head is recorded and carried no score, and
+			// D2043 allows one review per head: no later cycle produces
+			// another, so this is a person's and not a wait — where the same
+			// review still on its way (ReviewRun empty, its line written) is
+			// TestR3RebasedHeadNeedsScoredReview's waitedOut.
+			"a review of this head that carried no score",
+			string(orchestrator.GateReviewSpent),
+			false,
+			func(r *orchestrator.MergeReading, _ *mergeHostStub) { r.Scored = false },
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1653,7 +1686,7 @@ func TestR3JudgeAbsentIsVeto(t *testing.T) {
 func TestR3PendingCIThatTurnsIntoAVetoAsksAPerson(t *testing.T) {
 	now := o6Now()
 	m := landable(t, now)
-	m.host.checks = nil
+	m.host.checks = []gitprov.CheckRun{{Status: "in_progress"}}
 
 	m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
 

@@ -68,6 +68,25 @@ const (
 // green would merge on nothing. A check that concluded anything else —
 // failure, cancelled, timed_out, neutral, skipped — is CIRed: the commit was
 // judged, and it did not pass.
+// ChecksPending reports whether a commit's checks are still moving: a check
+// that is queued or running has no answer yet, and what the commit's checks
+// say may be different next cycle.
+//
+// It is the reading beside ChecksState and not a fourth state, because
+// CIUnknown covers three things a caller acting on it has to tell apart. A
+// commit whose checks have not concluded is one to wait for; a commit with no
+// checks reported at all, and one whose finished check concluded something this
+// code cannot read, are answers — nobody is going to report anything more, and
+// a caller that waits for them waits for ever. Only the first is this.
+func ChecksPending(runs []CheckRun) bool {
+	for _, r := range runs {
+		if r.Status != checkCompleted {
+			return true
+		}
+	}
+	return false
+}
+
 func ChecksState(runs []CheckRun) CIState {
 	if len(runs) == 0 {
 		return CIUnknown
