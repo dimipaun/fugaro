@@ -252,6 +252,93 @@ func TestTroubleshootUploadBundleRefusesARunThatAlreadyHasOne(t *testing.T) {
 	}
 }
 
+// An evidence file with nothing in it — the failed command's log is written as
+// it is, so a command that logged nothing leaves <run-id>.log empty — is
+// refused before the first object goes up. The parts are create-only, so a
+// part the manifest would refuse found after the upload would leave the run's
+// prefix holding parts and no manifest, and every later attempt would fail on
+// the first part with ErrExists and report a bundle the run never got: the
+// diagnosis would be unretryable.
+func TestTroubleshootUploadBundleRefusesAnEmptyPartBeforeAnythingIsWritten(t *testing.T) {
+	x := tsSetup(t)
+	ev := tbEvidence(t)
+	s := tbFileStore(t, x, tbRunID)
+	log := filepath.Join(ev.EvidenceDir, diagnoseagent.EvidenceNames(ev.RunID)[0])
+	if err := os.WriteFile(log, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := troubleshootUploadBundle(t.Context(), s, ev, srctree.Record{Version: ev.Version})
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "is empty") {
+		t.Fatalf("uploading a bundle with an empty part = %v, want a user error saying the part is empty", err)
+	}
+	// Nothing was written: the run's prefix is as the refusal found it, which
+	// is what makes the diagnosis attemptable again.
+	if _, err := os.Stat(filepath.Join(x.f.runsDir(), "runs", appSlug, tbRunID, "inputs")); !os.IsNotExist(err) {
+		t.Errorf("the run's inputs hold something after a refused upload: %v", err)
+	}
+	if err := os.WriteFile(log, []byte("the command said nothing, and then this\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := troubleshootUploadBundle(t.Context(), s, ev, srctree.Record{Version: ev.Version}); err != nil {
+		t.Fatalf("the same diagnosis with the log filled in = %v, want it uploaded", err)
+	}
+}
+
+// The ErrExists refusal says what the run's prefix actually holds: a manifest
+// means a diagnosis bundle is already there, and parts without one are the
+// leftovers of an upload that stopped before it could describe them. Reporting
+// the second as the first would send the person looking for a diagnosis no run
+// ever made.
+func TestTroubleshootUploadBundleNamesWhatThePrefixHolds(t *testing.T) {
+	x := tsSetup(t)
+	ev := tbEvidence(t)
+	s := tbFileStore(t, x, tbRunID)
+	// One part of an earlier attempt and no manifest beside it. The write is
+	// create-only, so this upload meets it on the first part.
+	if err := s.PutFile(t.Context(), troubleshootBundleName(diagnoseagent.EvidenceNames(ev.RunID)[0]), []byte("an earlier attempt\n"), "text/plain"); err != nil {
+		t.Fatal(err)
+	}
+	err := troubleshootUploadBundle(t.Context(), s, ev, srctree.Record{Version: ev.Version})
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "no manifest") {
+		t.Fatalf("uploading over the parts of an earlier attempt = %v, want a user error saying the prefix holds parts and no manifest", err)
+	}
+}
+
+// A changes file that is not a regular file — a link somebody left at a
+// predictable name — is not a part of the bundle: the bundle is read from this
+// machine and written into a job's checkout, and neither side has business
+// following a name out of either place.
+//
+// Mutation (troubleshootIsFile returning true): the link is offered to the
+// upload and the whole diagnosis fails on it.
+func TestTroubleshootUploadBundleSkipsAChangesFileThatIsNotOne(t *testing.T) {
+	x := tsSetup(t)
+	ev := tbEvidence(t)
+	changes := filepath.Join(ev.EvidenceDir, troubleshootChangesName)
+	if err := os.Remove(changes); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(ev.EvidenceDir, diagnoseagent.EvidenceNames(ev.RunID)[0]), changes); err != nil {
+		t.Skipf("this machine cannot make a symlink: %v", err)
+	}
+	s := tbFileStore(t, x, tbRunID)
+	if err := troubleshootUploadBundle(t.Context(), s, ev, srctree.Record{Version: ev.Version}); err != nil {
+		t.Fatalf("uploading a bundle whose changes file is a link = %v, want the link left out", err)
+	}
+	b, err := troubleshootReadManifest(t.Context(), s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range b.Parts {
+		if p.Name == troubleshootChangesName {
+			t.Errorf("the manifest names %s, which is a link and not a file", troubleshootChangesName)
+		}
+	}
+	if len(b.Parts) != 4 {
+		t.Errorf("the bundle names %d parts (%+v), want the four evidence files", len(b.Parts), b.Parts)
+	}
+}
+
 func TestTroubleshootReadAnswerRejectsAMissingArtifact(t *testing.T) {
 	tsSetup(t)
 	b := gcpfake.NewGCS(t).Bucket(t, "runs")
@@ -395,5 +482,54 @@ func TestTroubleshootDeleteBundleIsBestEffort(t *testing.T) {
 	entries, err := os.ReadDir(tbInputDir(x, tbRunID))
 	if err != nil || len(entries) == 0 {
 		t.Errorf("the parts were removed without a manifest to name them: %v, %d entries", err, len(entries))
+	}
+}
+
+// The names the delete prints are read back out of the run's bucket, and the
+// manifest's own refusals leave a name free to hold an escape sequence
+// (task.InputNameProblem refuses a NUL and a newline, not an ESC): a job that
+// rewrote its own manifest must not be able to aim one at this terminal.
+//
+// Mutation (drop the oneLine on the line): the ESC reaches warn, and only this
+// test notices.
+func TestTroubleshootDeleteBundleKeepsAnEscapelessNameOutOfTheLine(t *testing.T) {
+	x := tsSetup(t)
+	s := tbFileStore(t, x, tbRunID)
+	// A name the manifest's own rule accepts and a terminal would obey. The
+	// part itself is not in the bucket — a job that rewrote its own manifest
+	// can name anything — so the delete fails on it and the name is what the
+	// failure line would print.
+	const hostile = "\x1b[2Jevidence/log.txt"
+	data, err := diagnoseagent.WriteBundle(diagnoseagent.Bundle{
+		Version:       diagnoseagent.BundleVersion,
+		RunID:         "update-20261107183012-48213",
+		Command:       "update",
+		FugaroVersion: "v0.30.0",
+		OS:            runtime.GOOS + "/" + runtime.GOARCH,
+		Parts:         []diagnoseagent.BundlePart{{Name: hostile, Bytes: 15, SHA256: strings.Repeat("ab", 32)}},
+		SourceVersion: "v0.30.0",
+		SourceCommit:  strings.Repeat("a", 40),
+		SourceTree:    strings.Repeat("cd", 32),
+		Redaction:     diagnoseagent.BundleRedaction,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutFile(t.Context(), troubleshootBundleName(diagnoseagent.BundleManifestName), data, "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	var warn bytes.Buffer
+	troubleshootDeleteBundle(t.Context(), s, &warn)
+	line := warn.String()
+	if line == "" {
+		t.Fatal("the delete said nothing about a part it could not remove")
+	}
+	if strings.ContainsRune(line, 0x1b) {
+		t.Errorf("the delete's line carries an escape sequence out of the bucket: %q", line)
+	}
+	// The name is still named, minus the sequence: dropping the whole line
+	// would hide which part the run still holds.
+	if !strings.Contains(line, "not removed in full") || !strings.Contains(line, "evidence/log.txt") {
+		t.Errorf("the delete's line does not say what happened: %q", line)
 	}
 }

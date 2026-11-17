@@ -105,6 +105,10 @@ func troubleshootBundleType(name string) string {
 // the bundle of a run that never started, and they expire with the run
 // (D2405): a cleanup here would be a second write on a path whose whole point
 // is that the person can see what happened.
+//
+// The bundle's own shape is judged before the first object is written, so a
+// bundle the manifest would refuse leaves the run's prefix as it found it and
+// the diagnosis can be attempted again (below).
 func troubleshootUploadBundle(ctx context.Context, s *runstore.Store, ev diagnoseagent.Evidence, rec srctree.Record) error {
 	b := diagnoseagent.Bundle{
 		Version:       diagnoseagent.BundleVersion,
@@ -123,7 +127,24 @@ func troubleshootUploadBundle(ctx context.Context, s *runstore.Store, ev diagnos
 		return userErr("the source tree of %s cannot be read, so the diagnosis job cannot be told which tree to read: %v", ev.Version, err)
 	}
 	b.SourceTree = digest
-	for _, f := range troubleshootBundleFiles(ev) {
+	files := troubleshootBundleFiles(ev)
+	// The bundle's shape is judged here, before the first object is written,
+	// and not by WriteBundle after the last one. The parts are create-only, so
+	// a part the manifest would refuse — a regular file of no bytes, which is
+	// what a failed command that logged nothing leaves in <run-id>.log — found
+	// after the upload would leave the run's prefix holding parts and no
+	// manifest, and every later attempt would fail on the first part with
+	// ErrExists and report a bundle the run never got. The size judged here is
+	// the file's own; what the manifest records is still the size and the
+	// SHA-256 of the bytes that reached the bucket. Anything else at that path
+	// — a link, a directory, nothing at all — is left to the write itself,
+	// which names it in the record's own words.
+	for _, f := range files {
+		if st, err := os.Lstat(f.path); err == nil && st.Mode().IsRegular() && st.Size() == 0 {
+			return userErr("the diagnosis bundle's part %q is empty, so nothing was uploaded: the manifest accounts for each part's bytes, and the failed command's log is written as it is — a command that logged nothing leaves it empty", f.name)
+		}
+	}
+	for _, f := range files {
 		// The name becomes an object key here and a path in the job's checkout
 		// there, so it is judged before either exists. Both names this command
 		// chooses are its own, but the rule is one function and the run ID in
@@ -135,7 +156,16 @@ func troubleshootUploadBundle(ctx context.Context, s *runstore.Store, ev diagnos
 		size, sum, err := s.PutFileFrom(ctx, troubleshootBundleName(f.name), f.path, troubleshootBundleType(f.name), "")
 		if err != nil {
 			if errors.Is(err, blobx.ErrExists) {
-				return userErr("run %s already holds a diagnosis bundle, so this one was not uploaded: a run's inputs are written once", shortRef(s))
+				// What the prefix holds is what says what this means: a
+				// manifest means a diagnosis bundle is already there and this
+				// launch is a second one; parts and no manifest are the
+				// leftovers of an upload that stopped before it could describe
+				// them, and calling those "a diagnosis bundle" would send the
+				// person looking for a diagnosis no run ever made.
+				if _, merr := troubleshootReadManifest(ctx, s); merr == nil {
+					return userErr("run %s already holds a diagnosis bundle, so this one was not uploaded: a run's inputs are written once", shortRef(s))
+				}
+				return userErr("run %s already holds parts of a diagnosis bundle and no manifest, so this one was not uploaded: an earlier upload stopped before it could describe them, and a run's inputs are written once", shortRef(s))
 			}
 			return remote(fmt.Errorf("uploading the diagnosis bundle's %s: %w", f.name, err))
 		}
