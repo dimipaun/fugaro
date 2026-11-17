@@ -42,6 +42,15 @@ const (
 	// the read of it is bounded before anything is downloaded, so a bucket
 	// holding a large object under that key cannot make the runner hold it.
 	BundleManifestMaxBytes = 64 << 10
+	// BundleMaxBytes bounds the whole bundle — every part together — and it is
+	// one spelling because two binaries hold it: the launcher refuses to upload
+	// a bundle over it, and the runner refuses to read one, both before a byte
+	// moves. The launcher judging it is what keeps the two ends from
+	// disagreeing: the collector's own cap is larger (a log is kept to its last
+	// maxLogBytes), so without the check a failed command with a log many
+	// megabytes long would be uploaded and then refused before any model call,
+	// spending the run's bucket on evidence no answer comes back for (D2404).
+	BundleMaxBytes = 8 << 20
 	// AnswerName and AnswerMarkdownName are the two files the job's diagnose
 	// step writes and the launcher reads back out of the run's artifacts
 	// (D2402, D2410): the document a command parses, and the markdown a person

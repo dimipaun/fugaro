@@ -284,6 +284,33 @@ func TestTroubleshootUploadBundleRefusesAnEmptyPartBeforeAnythingIsWritten(t *te
 	}
 }
 
+// The bundle is judged against diagnoseagent.BundleMaxBytes here, before the
+// first object is written, because that is the bound the runner refuses a
+// bundle over before it downloads a part. The collector's own cap is larger —
+// a log is kept to its last maxLogBytes — so this is a size the evidence can
+// really reach, and uploading past it would leave the person's log in the
+// run's bucket for an answer no run could give (D2404).
+//
+// Mutation (drop the total): the bundle goes up and the run fails on it.
+func TestTroubleshootUploadBundleRefusesABundleOverTheBound(t *testing.T) {
+	x := tsSetup(t)
+	ev := tbEvidence(t)
+	s := tbFileStore(t, x, tbRunID)
+	log := filepath.Join(ev.EvidenceDir, diagnoseagent.EvidenceNames(ev.RunID)[0])
+	// Sparse, so the test does not write the megabytes it is about: the size
+	// is what the bound is judged on.
+	if err := os.Truncate(log, diagnoseagent.BundleMaxBytes+1); err != nil {
+		t.Fatal(err)
+	}
+	err := troubleshootUploadBundle(t.Context(), s, ev, srctree.Record{Version: ev.Version})
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "a cloud diagnosis reads") {
+		t.Fatalf("uploading a bundle over the bound = %v, want a user error naming the bound", err)
+	}
+	if _, err := os.Stat(filepath.Join(x.f.runsDir(), "runs", appSlug, tbRunID, "inputs")); !os.IsNotExist(err) {
+		t.Errorf("the run's inputs hold something after a refused upload: %v", err)
+	}
+}
+
 // The ErrExists refusal says what the run's prefix actually holds: a manifest
 // means a diagnosis bundle is already there, and parts without one are the
 // leftovers of an upload that stopped before it could describe them. Reporting

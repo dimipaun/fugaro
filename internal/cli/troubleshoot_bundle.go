@@ -134,15 +134,32 @@ func troubleshootUploadBundle(ctx context.Context, s *runstore.Store, ev diagnos
 	// what a failed command that logged nothing leaves in <run-id>.log — found
 	// after the upload would leave the run's prefix holding parts and no
 	// manifest, and every later attempt would fail on the first part with
-	// ErrExists and report a bundle the run never got. The size judged here is
-	// the file's own; what the manifest records is still the size and the
+	// ErrExists and report a bundle the run never got. The sizes judged here
+	// are the files' own; what the manifest records is still the size and the
 	// SHA-256 of the bytes that reached the bucket. Anything else at that path
 	// — a link, a directory, nothing at all — is left to the write itself,
 	// which names it in the record's own words.
+	//
+	// The whole bundle is judged against diagnoseagent.BundleMaxBytes for the
+	// same reason, one step further on: it is the bound the runner refuses a
+	// bundle over before it downloads a part, and a launcher that uploaded
+	// past it would leave the person's evidence in the run's bucket for an
+	// answer no run could give. The collector's own cap is larger, so this is
+	// a bound the evidence can really exceed — a log is kept to its last
+	// maxLogBytes — and the refusal is this command's rather than the job's.
+	var total int64
 	for _, f := range files {
-		if st, err := os.Lstat(f.path); err == nil && st.Mode().IsRegular() && st.Size() == 0 {
+		st, err := os.Lstat(f.path)
+		if err != nil || !st.Mode().IsRegular() {
+			continue
+		}
+		if st.Size() == 0 {
 			return userErr("the diagnosis bundle's part %q is empty, so nothing was uploaded: the manifest accounts for each part's bytes, and the failed command's log is written as it is — a command that logged nothing leaves it empty", f.name)
 		}
+		total += st.Size()
+	}
+	if total > diagnoseagent.BundleMaxBytes {
+		return userErr("the diagnosis bundle's parts come to %d bytes together, over the %d a cloud diagnosis reads, so nothing was uploaded: the failed command's log is the part that grows past the bound, and a bundle the job would refuse before it read a part is one this command does not upload", total, diagnoseagent.BundleMaxBytes)
 	}
 	for _, f := range files {
 		// The name becomes an object key here and a path in the job's checkout
