@@ -256,8 +256,14 @@ const (
 // Layers — and both name the `project` family, the family whose command is the
 // node's door, so the generic path refuses them in its name rather than writing
 // them somewhere they do not live.
+//
+// W of docs/rigor-command/ moved it once more, by one row and by none: the local
+// project config gains `rigor_pending`, the wizard's rigor answer waiting for
+// the Layer stage that writes it into the project layer (D900), and its owner is
+// `setup` — the door whose run is asked the question and writes the answer down,
+// and whose Layer stage clears the key — so the generic path carries none of it.
 const (
-	cfmRegistryRows   = 480
+	cfmRegistryRows   = 481
 	cfmAllowlistNamed = 118
 )
 

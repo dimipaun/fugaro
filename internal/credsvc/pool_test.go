@@ -701,12 +701,27 @@ func TestRunnerPathMemberIsNotOfferedToTheService(t *testing.T) {
 		t.Fatalf("the fixture's OpenRouter credential is served by %q, and this test is written against it being the runner path's",
 			config.CredentialServingPath(config.CredentialTypeOpenRouter))
 	}
-	s := poolSvcHolding(t, `"credentials": {"fallback": "auto"},
+	// The reader now refuses a pool naming both halves (MC21), so the crossing
+	// the old reader accepted is rebuilt from a node it accepts: both members
+	// are written as subscriptions, and the router's type is changed after the
+	// decode, which leaves the offering the same document the earlier release
+	// published would have produced.
+	s := newSvcWith(t, func(s *svc, _ *Config) {
+		s.src.docs = [][]byte{poolBundleDoc(t, testRouterCredential)}
+		p := decodeTestPolicy(t, poolNode(`"credentials": {"fallback": "auto"},
 		`+poolCraftBlock(
-		`{"name": "`+testRouterCredential+`", "type": "openrouter"},
+			`{"name": "`+testRouterCredential+`", "type": "claude-oauth"},
 			{"name": "`+testPoolAccount+`", "type": "claude-oauth"}`,
-		testRouterCredential, testPoolAccount)+`,
-		"subscription_spread": true`, testRouterCredential)
+			testRouterCredential, testPoolAccount)+`,
+		"subscription_spread": true`))
+		for i := range p.CraftCredentials {
+			if p.CraftCredentials[i].Name == testRouterCredential {
+				p.CraftCredentials[i].Type = config.CredentialTypeOpenRouter
+			}
+		}
+		s.policy.shared = p
+		s.policy.admissions[s.slug] = decodeTestChild(t, testChildDoc(config.DefaultClaudeAccount, testAccount, testPoolAccount))
+	})
 
 	// The bundle the offering is read off is the one the service holds, the
 	// member's name included: a document without it would drop the member on the

@@ -13,6 +13,18 @@ const (
 	DelimiterRemoved = delimiterRemoved
 )
 
+// MergeReadEvery is how often one repository's pull requests are read (D2742).
+// It is exposed so a test advances a clock past a cadence rather than to an
+// offset beside it: a cadence that moved would move the tests with it.
+const MergeReadEvery = mergeReadEvery
+
+// FoldPhase is the phase an item takes when the run behind its attempt reports
+// this outcome and left, or did not leave, a pull request (G3, D2705). It is
+// exposed because the mapping is the whole decision a finished run makes about
+// an item, and a copy of it written into a test would go on passing after the
+// mapping moved.
+func FoldPhase(o Outcome, leftPR bool) (Phase, bool) { return foldPhase(o, leftPR) }
+
 // OpPayload is the payload each op kind takes, which the patch schema's
 // branches are pinned against.
 func OpPayload(k OpKind) string { return opPayloads[k] }

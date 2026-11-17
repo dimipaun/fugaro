@@ -11,7 +11,9 @@ to zero: not the recommendation;
 D502, staying opt-in, was relayed with it), and **D494**, which follows the recommendation and
 **departs from the owner's spec** (no RTDB token store). **D497a is amended after review** (the
 claim also names the run's pull requests) and waits for the owner's confirmation (O5). Open items
-O1–O8 wait for the owner. Each task needs the
+O1–O7 wait for the owner; **O8 was ruled on 2026-11-15 and its hold released on 2026-11-16** —
+`fugaro update` itself refuses the flip's drop until the bundle holds the token, and the "creds set
+before the re-apply" operator step stays removed (§7's O8 entry). Each task needs the
 owner's own explicit go.
 
 **Updated 2026-11-10.** The proxy chain's runner half, docs and checks are merged too (B1.7
@@ -46,6 +48,7 @@ forward before the PR.
 | [status-2026-11-07.md](status-2026-11-07.md) | The census of 2026-11-07 (the owner's 0.23.0 scope names this work): every task of the plan, DONE, PARTIAL, NOT STARTED or OWNER-RUN, with the merged commit and the test that proves it, what blocks it, and the tasks that can launch now. **It approves no task** |
 | [check190-steps.md](check190-steps.md) | The owner's own steps for Check 190 (written by task B0.4, run by the owner in task B0.5): the token file at mode `0600`, the `--dry-run`, the run, the block to paste back and the `rm`. The script is `scripts/live-checks/check190.sh` and the register's section is `docs/gcp-live-checklist.md`, "Check 190" |
 | [check191-steps.md](check191-steps.md) | The owner's own steps for Checks 191 and 192 (written by task B1.11, run by the owner in task B1.12 and after the flip): the `--dry-run`, the run, the `--after-flip` run, the block to paste back and what each stop by name means. One script, `scripts/live-checks/check191.sh`, and the register's sections are `docs/gcp-live-checklist.md`, "Check 191" and "Check 192" |
+| [check193-steps.md](check193-steps.md) | The owner's own steps for Check 193 and its `--after-flip` half (written by task B2.5, run by the owner in task B2.6 and, after the flip, in B2.8): the two repositories to name, the `--dry-run` that calls nothing at all, the run, the `--after-flip` run with a run in flight, the block to paste back, what each row means and what each stop by name means. One script, `scripts/live-checks/check193.sh`, and the register's section is `docs/gcp-live-checklist.md`, "Check 193" |
 | [check195-steps.md](check195-steps.md) | The owner's own steps for Check 195 (written by task B4.1, run by the owner in task B4.2, the gate S4 stops on): the `--dry-run` that calls nothing at all, the run, the block to paste back and what each stop by name means. Nothing to prepare — no token, no secret, no repository: the only credential in the path is the ID token the build's own step mints for itself. The script is `scripts/live-checks/check195.sh` and the register's section is `docs/gcp-live-checklist.md`, "Check 195" |
 
 ## Typos fixed in the spec

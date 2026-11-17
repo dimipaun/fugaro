@@ -171,7 +171,9 @@ func TestJobIdentityMatchesAComputedProjectJobName(t *testing.T) {
 // profile serving none contributes the one job it always had and that job's
 // variant; and the default account contributes no coding entry of its own,
 // because it rides the no-account job (D5) — while its variant is a job of its
-// own, named for the account the policy speaks.
+// own, named for the account the policy speaks. The installation's implicit
+// review-only job is beside them (implicitReviewCandidates), for each provider
+// kind the policy does not derive that name for itself.
 //
 // Mutation (run, restore): compute one candidate per profile with an empty
 // account (the pre-task code), which leaves every account job's name
@@ -196,6 +198,10 @@ func TestRunnerCandidatesIncludeAccountJobs(t *testing.T) {
 		{Profile: "standard", Provider: "github", Account: "default-review", Class: classReview},
 		{Profile: "standard", Provider: "github", Account: "acme-personal", Class: classCoding},
 		{Profile: "standard", Provider: "github", Account: "acme-personal-review", Class: classReview},
+		// The installation's own review job on the provider no profile of this
+		// policy is on (implicitReviewCandidates): the profile named standard
+		// derives the github job's own name, so that one is not added twice.
+		{Profile: "standard", Provider: "bitbucket", Account: "default-review", Class: classReview, Implicit: true},
 	}
 	if got := projectJobCandidates(p); !slices.Equal(got, want) {
 		t.Fatalf("projectJobCandidates = %+v, want %+v", got, want)
@@ -991,24 +997,6 @@ func TestReviewJobVariantIsPlaced(t *testing.T) {
 	}
 }
 
-// implicitReviewRun is a review the launcher put in the installation's implicit
-// default review-only job: the platform reports an execution of that name
-// (implicitReviewJob, the deployer's own spelling), the policy is the caller's,
-// and the run carries the marker its class is decided by (spec.Mode ==
-// recipe.ModeReview, the same field the launcher sends a review to the variant
-// on) and is a review for everything else (r.review).
-func implicitReviewRun(t *testing.T, repo string, p *projectpolicy.Policy) *run {
-	t.Helper()
-	spec := &task.Spec{Version: 1, RunID: "20261114-101010-abcd", Repo: repo, Ref: "main",
-		Workflow: identityWorkflow, Task: "Read the pull request", Mode: recipe.ModeReview, ReviewPRs: []int{7}}
-	r := identityRun(t, implicitReviewJob(), identitySlug(t, "github", repo), spec, p, true)
-	r.review = true
-	if _, _, _, err := r.jobIdentity(context.Background()); err != nil {
-		t.Fatalf("jobIdentity(%s) = %v: the fixture's job name must be the one this policy's candidate set places", implicitReviewJob(), err)
-	}
-	return r
-}
-
 // TestImplicitReviewJobAdmitsByTheProjectsList is the implicit review job's
 // admission and its credential check together, and it succeeds the marker
 // TestPlacedImplicitReviewRunStillMeetsTheProfileAdmission that the placement
@@ -1037,14 +1025,14 @@ func implicitReviewRun(t *testing.T, repo string, p *projectpolicy.Policy) *run 
 func TestImplicitReviewJobAdmitsByTheProjectsList(t *testing.T) {
 	ctx := context.Background()
 	p := &projectpolicy.Policy{Version: projectpolicy.Version, AllowRepos: []string{"github/acme/*"}}
-	r := implicitReviewRun(t, "acme/app", p)
+	r := implicitReviewRun(t, gitprov.KindGitHub, "acme/app", p, true)
 	if err := r.admissionCheck(ctx); err != nil {
 		t.Fatalf("admissionCheck = %v: a repository on the project's allow_repos is admitted to the implicit review job", err)
 	}
 	if err := r.checkProjectJobAccount(ctx, "oauth"); err != nil {
 		t.Fatalf("checkProjectJobAccount = %v: a review job holds no token, and its class is what says so", err)
 	}
-	err := implicitReviewRun(t, "other/repo", p).admissionCheck(ctx)
+	err := implicitReviewRun(t, gitprov.KindGitHub, "other/repo", p, true).admissionCheck(ctx)
 	if err == nil {
 		t.Fatal("a repository this project never enrolled was admitted to the implicit review job")
 	}
@@ -1288,16 +1276,16 @@ func TestProjectJobOfPolicySeesTheVariant(t *testing.T) {
 	}
 }
 
-// implicitReviewJob is the name of the installation's implicit default
-// review-only job, spelled as internal/infra's ImplicitReviewJobName spells it
-// (credsvc.ReviewJobName over infra.ImplicitReviewProfile, the github provider
-// and config.ReviewVariantAccount of the axis's empty account). This package
-// cannot call that function — internal/infra imports this one for
-// SecretEnvsVar — so the test asserts the spelling it computes against the
-// name the candidate's own triple produces, which is the agreement the two
-// halves need: the deployer names the job the runner has to place.
-func implicitReviewJob() string {
-	return credsvc.ReviewJobName(projectpolicy.DefaultProfileName, gitprov.KindGitHub, config.ReviewVariantAccount(""))
+// implicitReviewJobName is the name of an installation's implicit default
+// review-only job of provider, computed here the way the deployer computes it
+// (internal/infra's ImplicitReviewJobName over the deployer's implicit profile
+// name and the default account's variant segment). It is written through
+// credsvc.ReviewJobName, the deployer's own spelling of a review variant's
+// name, because internal/runner may not import the deployer: what this test
+// asks is that the runner answers for the name the deployer writes, and one
+// statement of it is enough for that.
+func implicitReviewJobName(provider string) string {
+	return credsvc.ReviewJobName(projectpolicy.DefaultProfileName, provider, config.ReviewVariantAccount(""))
 }
 
 // reviewVariantOfTheDefaultProfile is the account segment of that job as a
@@ -1306,130 +1294,167 @@ func implicitReviewJob() string {
 // suffix).
 const reviewVariantOfTheDefaultProfile = config.DefaultClaudeAccount + config.ReviewVariantSuffix
 
-// TestMatchJobNamePlacesTheImplicitReviewJob (reconciliation F3, C1 piece 2):
-// the installation's implicit review-only job is a project job of a policy
-// that declares no profile at all, which is the policy a project with no
-// profiles publishes — `fugaro project policy publish` writes policyProfiles
-// of a config that declares none as no profiles block, so there is nothing for
-// the set to be derived from and, until this candidate, no name such a run
-// could be placed in: it fell to the per-repository comparison and cannotPlaceJob
-// halted it, whichever job the launcher had put it in.
+// implicitReviewRun is a review-marked run in an installation's implicit
+// review-only job of provider: the execution the platform reported is that
+// job's computed name, the run's own task names the pull request it reviews,
+// and the policy is the caller's, nil with found false for a project that has
+// published none.
 //
-// The same triple answers for ProjectJobOfPolicy, which is what the launcher
-// resolves the job with and what internal/cli's watch renders, so the two
-// sides cannot disagree about the one job a profile-less project has.
+// The slug is the repository's under provider and not github's, because this
+// job is the one a repository no shared job serves reaches: every Bitbucket
+// review is launched onto it, and the runner has to place one whatever provider
+// its slug is (the provider of a run in this job is the job's own, read from
+// the name — and the name's provider is the one the launch resolved from the
+// repository).
+func implicitReviewRun(t *testing.T, provider, repo string, p *projectpolicy.Policy, found bool) *run {
+	t.Helper()
+	slug := identitySlug(t, provider, repo)
+	spec := &task.Spec{Version: 1, RunID: "20261114-101010-abcd", Repo: repo, Ref: "main",
+		Workflow: identityWorkflow, Mode: recipe.ModeReview, ReviewPRs: []int{7}, Task: "Review pull request #7"}
+	r := identityRun(t, implicitReviewJobName(provider), slug, spec, p, found)
+	r.review = true
+	return r
+}
+
+// reviewOnlyPolicy is a project's published policy with no profiles and the
+// caller's allow_repos: the node an installation that deploys the implicit
+// review jobs has until its owner declares a profile.
+func reviewOnlyPolicy(allow ...string) *projectpolicy.Policy {
+	return &projectpolicy.Policy{Version: projectpolicy.Version, AllowRepos: allow}
+}
+
+// TestImplicitReviewJobIsPlaced (RJ8, finding F6): a review of a repository no
+// shared coding job serves — every Bitbucket one, and every repository of a
+// project that has published no profile — is launched onto the installation's
+// implicit review-only job of the repository's provider, and the run in it is
+// placed rather than halted. The name is the deployer's own spelling
+// (implicitReviewJobName, which internal/infra's ImplicitReviewJobName computes
+// too), so the launch resolution and the placement are the same name by
+// construction rather than by a comparison one of them could get wrong: what
+// the golden plan pins on the deployer's side is that the job it deploys carries
+// the name credsvc.ReviewJobName computes.
 //
-// The second case is the collision the deployer gates on: a policy that DOES
-// declare the default profile on github derives this very name as the variant
-// of that profile's no-account job, so the set holds one entry for it and not
-// two — the round trip below is what would fail if the two were spelled
-// differently.
+// The three policies are the three states an installation that has deployed the
+// job can be in, and the last two are why the arrival is not the policy's: the
+// job is deployed from the installation's own local config, so a review of a
+// project that published nothing must still be placed, while a policy that
+// published profiles still decides which repositories its own lists admit.
 //
-// Mutation (run, restored): match the implicit candidate in a policy that
-// declares no profile only (guard the append on len(names) == 0). The second
-// case still passes but the set and the deployer's collision gate stop being
-// one rule. Mutation (run, restored): spell the account segment with
-// config.DefaultClaudeAccount instead of the variant's own
-// (reviewVariantAccount). Every case fails, and the one job a profile-less
-// project deploys is one no run can be placed in.
-func TestMatchJobNamePlacesTheImplicitReviewJob(t *testing.T) {
-	slug := identitySlug(t, "github", "acme/app")
-	job := implicitReviewJob()
-	if want := gcp.ProjectJobName(projectpolicy.DefaultProfileName, gitprov.KindGitHub, reviewVariantOfTheDefaultProfile); job != want {
-		t.Fatalf("the implicit review job is named %s, and this test's candidate computes %s", job, want)
-	}
-	for _, tc := range []struct {
-		name string
-		p    *projectpolicy.Policy
-		// implicit is the flag the entry for this name carries: a policy that
-		// derives the name itself contributes its own profile's candidate, and
-		// the flag is what tells the two apart (implicitReviewCandidate).
-		implicit bool
-	}{
-		{"a policy that declares no profile", &projectpolicy.Policy{Version: projectpolicy.Version}, true},
-		{"a policy that declares the default profile on github", policyOf(map[string]config.JobProfile{
-			projectpolicy.DefaultProfileName: profileOf(gitprov.KindGitHub, config.DefaultClaudeAccount),
-		}), false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := projectJobCandidates(tc.p); !slices.Contains(got, jobTriple{
-				Profile: projectpolicy.DefaultProfileName, Provider: gitprov.KindGitHub,
-				Account: reviewVariantOfTheDefaultProfile, Class: classReview, Implicit: tc.implicit,
-			}) {
-				t.Fatalf("projectJobCandidates = %+v: the implicit review job's own name is not in the set", got)
+// Mutation (run, restored): drop the loop over implicitReviewCandidates from
+// matchJobName. Every case halts with cannotPlaceJob. Mutation (run, restored):
+// read the admission out of a profile (the coding arm's rule) rather than the
+// project's allow_repos for an implicit job. The no-profiles case is refused
+// for a profile the policy does not define.
+func TestImplicitReviewJobIsPlaced(t *testing.T) {
+	for _, provider := range jobProviderKinds {
+		t.Run(provider, func(t *testing.T) {
+			repo := "acme/app"
+			canonical := provider + "/" + repo
+			for _, tc := range []struct {
+				name  string
+				what  string
+				p     *projectpolicy.Policy
+				found bool
+			}{
+				{"a policy that defines no profile", "the state the implicit job was built for: no profile exists to be launched onto, and the project's own allow-list is the only one there is", reviewOnlyPolicy(provider + "/acme/*"), true},
+				{"no policy at all", "an installation deploys the job from its local config, so a review may arrive before the first publish", nil, false},
+				{"a policy whose profiles name other jobs", "a profile of another provider's jobs neither places this run nor admits it", func() *projectpolicy.Policy {
+					p := policyOf(map[string]config.JobProfile{"other": profileOf(otherProviderKind(provider))})
+					p.AllowRepos = []string{provider + "/acme/*"}
+					return p
+				}(), true},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					r := implicitReviewRun(t, provider, repo, tc.p, tc.found)
+					profile, gotProvider, account, err := r.jobIdentity(context.Background())
+					if err != nil {
+						t.Fatalf("jobIdentity of the implicit review job %s = %v: %s", implicitReviewJobName(provider), err, tc.what)
+					}
+					if profile != projectpolicy.DefaultProfileName || gotProvider != provider || account != config.ReviewVariantAccount("")+config.ReviewVariantSuffix {
+						t.Fatalf("jobIdentity = %q/%q/%q, want %s/%s/%s", profile, gotProvider, account,
+							projectpolicy.DefaultProfileName, provider, config.ReviewVariantAccount("")+config.ReviewVariantSuffix)
+					}
+					if !r.job.Implicit || r.job.Class != classReview {
+						t.Fatalf("the run adopted %+v: want the implicit review-only job's own triple", r.job)
+					}
+					if err := r.admissionCheck(context.Background()); err != nil {
+						t.Fatalf("admissionCheck = %v: the project's allow-list admits a review of %s (%s)", err, repo, tc.what)
+					}
+				})
 			}
-			profile, provider, account, ok := ProjectJobOfPolicy(tc.p, job)
-			if !ok || profile != projectpolicy.DefaultProfileName || provider != gitprov.KindGitHub || account != reviewVariantOfTheDefaultProfile {
-				t.Fatalf("ProjectJobOfPolicy(%s) = %q/%q/%q, %v; want %s/%s/%s: the launcher resolves the job with this function, so it must answer the triple the runner places",
-					job, profile, provider, account, ok, projectpolicy.DefaultProfileName, gitprov.KindGitHub, reviewVariantOfTheDefaultProfile)
+
+			// And the allow-list is a gate: a project that admits another
+			// repository does not admit this one, and the refusal names it. It
+			// is the project's list and not a profile's, which is the half a
+			// review job cannot answer any other way (the job no profile
+			// defines has no profile admission to fail).
+			r := implicitReviewRun(t, provider, repo, reviewOnlyPolicy(provider+"/acme/other"), true)
+			err := r.admissionCheck(context.Background())
+			if err == nil {
+				t.Fatalf("a review of %s was admitted by an allow-list that names only %s/acme/other", canonical, provider)
 			}
-			r := identityRun(t, job, slug, nil, tc.p, true)
-			r.spec.Mode = recipe.ModeReview
-			r.review = true
-			profile, provider, account, err := r.jobIdentity(context.Background())
-			if err != nil {
-				t.Fatalf("jobIdentity(%s) = %v: the implicit review job is a project job of a policy that declares no profile, and every run of it halts in cannotPlaceJob without this candidate", job, err)
-			}
-			if profile != projectpolicy.DefaultProfileName || provider != gitprov.KindGitHub || account != reviewVariantOfTheDefaultProfile {
-				t.Fatalf("jobIdentity(%s) = %q/%q/%q, want %s/%s/%s", job, profile, provider, account,
-					projectpolicy.DefaultProfileName, gitprov.KindGitHub, reviewVariantOfTheDefaultProfile)
-			}
-			got, project := r.projectJob()
-			if !project || got.Class != classReview {
-				t.Fatalf("the run adopted %+v (a project job: %v): the matched candidate is the run's identity, and the implicit job's class is the review's", got, project)
+			for _, want := range []string{canonical, provider + "/acme/other", "allow_repos", "The run stops"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal %q lacks %q", err, want)
+				}
 			}
 		})
 	}
 }
 
-// TestImplicitReviewJobIsOneEntryOfTheSet: the implicit candidate is added
-// once and only when the policy does not derive its name itself, so the set
-// stays a set of names — the property the round-trip loop of
+// TestImplicitReviewJobIsOneEntryOfTheSet: the implicit candidates are added
+// once each and only when the policy does not derive their names itself, so the
+// set stays a set of names — the property the round-trip loop of
 // TestRunnerCandidatesIncludeAccountJobs and the run's own matching rely on
 // (the first candidate a name matches is the identity the run adopts, so a
 // duplicate would be an identity decided by the order of the set).
 //
-// A policy that derives the name itself is the exception, and it is the one
-// case where the implicit job is NOT the added candidate: its github profile
-// under the default name derives the very same name, and that profile's own
-// candidate is the entry — Implicit false, because the gates this flag moves
-// aside are the policy's to answer for a job it defines.
+// A policy that derives a name itself is the exception, and it is the one case
+// where that implicit job is NOT the added candidate: its github profile under
+// the default name derives the very same name, and that profile's own candidate
+// is the entry — Implicit false, because the gates this flag moves aside are the
+// policy's to answer for a job it defines. The bitbucket job is added beside it
+// in every case, because no profile of this deployer is ever on bitbucket
+// (internal/infra's ProjectJobs skips a provider no shared coding job serves).
 //
-// Mutation (run, restored): append the candidate unconditionally. The first
-// case holds 3 entries for 2 names, and a profile that serves the default
-// account has two candidates whose names are equal.
+// Mutation (run, restored): append the candidates unconditionally. The first
+// case holds two entries for the github name, and a profile that serves the
+// default account has two candidates whose names are equal.
 func TestImplicitReviewJobIsOneEntryOfTheSet(t *testing.T) {
-	imp := jobTriple{Profile: projectpolicy.DefaultProfileName, Provider: gitprov.KindGitHub,
-		Account: reviewVariantOfTheDefaultProfile, Class: classReview, Implicit: true}
-	derived := imp
-	derived.Implicit = false
+	implicit := func(provider string, flag bool) jobTriple {
+		return jobTriple{Profile: projectpolicy.DefaultProfileName, Provider: provider,
+			Account: reviewVariantOfTheDefaultProfile, Class: classReview, Implicit: flag}
+	}
 	deriving := policyOf(map[string]config.JobProfile{
 		projectpolicy.DefaultProfileName: profileOf(gitprov.KindGitHub, config.DefaultClaudeAccount),
 	})
-	if got := projectJobCandidates(deriving); len(got) != 2 || !slices.Contains(got, derived) {
-		t.Fatalf("projectJobCandidates of a policy that derives the name = %+v, want the two candidates of the profile and no second copy of the implicit job", got)
+	if got := projectJobCandidates(deriving); len(got) != 3 || !slices.Contains(got, implicit(gitprov.KindGitHub, false)) || slices.Contains(got, implicit(gitprov.KindGitHub, true)) {
+		t.Fatalf("projectJobCandidates of a policy that derives the github name = %+v, want the profile's own two candidates and the bitbucket implicit one, with no second copy of the github job", got)
+	}
+	noProfiles := projectJobCandidates(&projectpolicy.Policy{Version: projectpolicy.Version})
+	for _, provider := range jobProviderKinds {
+		if !slices.Contains(noProfiles, implicit(provider, true)) {
+			t.Fatalf("projectJobCandidates of a policy that declares no profile = %+v, want the installation's own review job of %s: it is the only job such a project has", noProfiles, provider)
+		}
 	}
 	for _, tc := range []struct {
 		name     string
 		profiles map[string]config.JobProfile
 		want     int
-		implicit bool
 	}{
-		{"no profiles at all", nil, 1, true},
-		{"a profile on bitbucket", map[string]config.JobProfile{"standard": profileOf(gitprov.KindBitbucket)}, 3, true},
-		{"a github profile under another name", map[string]config.JobProfile{"fast": profileOf(gitprov.KindGitHub)}, 3, true},
+		{"no profiles at all", nil, len(jobProviderKinds)},
+		{"a profile on bitbucket", map[string]config.JobProfile{"bb": profileOf(gitprov.KindBitbucket)}, 2 + len(jobProviderKinds)},
+		{"a github profile under another name", map[string]config.JobProfile{"fast": profileOf(gitprov.KindGitHub)}, 2 + len(jobProviderKinds)},
 		// The no-account job is always on the account axis (config.ProjectJobAccounts
 		// opens with the axis's empty account), so a github profile under the
-		// default name derives the implicit job's name whatever accounts it
-		// serves beside it — and that profile's own candidate is the entry.
-		{"a github profile under the default name that serves a named account", map[string]config.JobProfile{projectpolicy.DefaultProfileName: profileOf(gitprov.KindGitHub, "team-a")}, 4, false},
+		// default name derives the github implicit job's name whatever accounts it
+		// serves beside it — and that profile's own candidates are the entries.
+		{"a github profile under the default name that serves a named account", map[string]config.JobProfile{projectpolicy.DefaultProfileName: profileOf(gitprov.KindGitHub, "team-a")}, 4 + len(jobProviderKinds) - 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			want := imp
-			want.Implicit = tc.implicit
 			got := projectJobCandidates(policyOf(tc.profiles))
-			if len(got) != tc.want || !slices.Contains(got, want) {
-				t.Fatalf("projectJobCandidates = %+v, want %d entries including the implicit review job %+v: a policy that does not derive the name still defines the one job a profile-less project has", got, tc.want, want)
+			if len(got) != tc.want {
+				t.Fatalf("projectJobCandidates = %+v, want %d entries: a policy that does not derive a name still defines the one job a profile-less project has, once", got, tc.want)
 			}
 			seen := map[string]bool{}
 			for _, c := range got {
@@ -1443,15 +1468,66 @@ func TestImplicitReviewJobIsOneEntryOfTheSet(t *testing.T) {
 	}
 }
 
-// TestForeignJobStillHalts: the implicit candidate is one name — the deployer's
-// own, computed from the policy's default profile, the github provider and the
+// otherProviderKind is a provider kind other than kind: the fixture profile of
+// the third case above pins it, so the profile its policy defines can never be
+// the job the run is in, whatever kind the run is for.
+func otherProviderKind(kind string) string {
+	for _, k := range jobProviderKinds {
+		if k != kind {
+			return k
+		}
+	}
+	return kind
+}
+
+// TestACodingRunIsNotPlacedInTheImplicitReviewJob (RJ8, and the mutation check
+// the plan calls RJ2's): the class rule of a project job's variant, on the job
+// no profile defines. The implicit job's container is the review container —
+// no App key, no Claude token, a read-only installation token from the
+// credentials service — so a run that is not a review may not adopt its
+// identity however it got there, and the class is the run's own marker and the
+// matched candidate and never the name's suffix read back out.
+//
+// The second half is the same rule in the direction a review could be sent
+// wrong: a review in the implicit job is placed (the case above), and the
+// name is not a name a coding run of any profile is admitted to.
+//
+// Mutation (run, restored): match the implicit names for every run rather than
+// asking the class. The coding run below is admitted, and a container that
+// holds no credential an ordinary run may use reports itself as a project job.
+func TestACodingRunIsNotPlacedInTheImplicitReviewJob(t *testing.T) {
+	for _, provider := range jobProviderKinds {
+		t.Run(provider, func(t *testing.T) {
+			slug := identitySlug(t, provider, "acme/app")
+			spec := &task.Spec{Version: 1, RunID: "20261114-101010-abcd", Repo: "acme/app", Ref: "main",
+				Workflow: identityWorkflow, Task: "Add a feature"}
+			p := &projectpolicy.Policy{Version: projectpolicy.Version, AllowRepos: []string{provider + "/acme/*"}}
+			r := identityRun(t, implicitReviewJobName(provider), slug, spec, p, true)
+			_, _, _, err := r.jobIdentity(context.Background())
+			if err == nil {
+				t.Fatalf("a coding run was placed in the implicit review-only job %s", implicitReviewJobName(provider))
+			}
+			for _, want := range []string{implicitReviewJobName(provider), "review-only variant", "is not a review", "The run stops"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal %q lacks %q", err, want)
+				}
+			}
+			if _, project := r.projectJob(); project {
+				t.Fatal("a coding run adopted the implicit review job's identity")
+			}
+		})
+	}
+}
+
+// TestForeignJobStillHalts: the implicit candidates are names — the deployer's
+// own, computed from the policy's default profile, a provider kind and the
 // default account's variant — and every other name a policy that declares no
 // profile does not compute still halts. This is the constraint that keeps the
-// placement from becoming "any job name is the implicit job": the coding job
-// the same profile would have (the shared job a project with profiles runs on,
-// which a profile-less project deploys no variant of), the implicit job on
-// another provider, a name created by hand, and this run's own per-repository
-// job, which keeps the phase-1 path.
+// placement from becoming "any job name is the implicit job": the coding jobs
+// of the same profile on either provider (the shared job a project with
+// profiles runs on, which a profile-less project deploys no variant of), a name
+// created by hand, and this run's own per-repository job, which keeps the
+// phase-1 path.
 //
 // The per-repository case is here rather than only in
 // TestLegacyJobNameTakesThePhaseOnePath because it is the one the mutation
@@ -1468,7 +1544,7 @@ func TestForeignJobStillHalts(t *testing.T) {
 	p := &projectpolicy.Policy{Version: projectpolicy.Version}
 	for _, job := range []string{
 		gcp.ProjectJobName(projectpolicy.DefaultProfileName, gitprov.KindGitHub, ""),
-		gcp.ProjectJobName(projectpolicy.DefaultProfileName, gitprov.KindBitbucket, reviewVariantOfTheDefaultProfile),
+		gcp.ProjectJobName(projectpolicy.DefaultProfileName, gitprov.KindBitbucket, ""),
 		"someone-elses-job",
 	} {
 		t.Run(job, func(t *testing.T) {
@@ -1479,7 +1555,7 @@ func TestForeignJobStillHalts(t *testing.T) {
 			if err == nil {
 				t.Fatalf("jobIdentity(%s) was accepted: a policy that declares no profile computes this name nowhere", job)
 			}
-			for _, want := range []string{job, "published policy defines no job profiles at all", implicitReviewJob()} {
+			for _, want := range []string{job, "published policy defines no job profiles at all", implicitReviewJobName(gitprov.KindGitHub), implicitReviewJobName(gitprov.KindBitbucket)} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("the refusal %q lacks %q", err, want)
 				}
@@ -1501,38 +1577,62 @@ func TestForeignJobStillHalts(t *testing.T) {
 	})
 }
 
-// TestCoderIsRefusedInTheImplicitReviewJob: the implicit candidate carries the
-// review's class like every other variant, so a run with no review marker is
-// refused in it — the implicit job's container mounts no App key and no Claude
-// token either, and nothing about being the only job a profile-less project
-// has makes it one an ordinary run of that project may hold. The refusal names
-// the job and says the run is not a review, which is the operator's next move
-// (launch a coding job for the repository, which a project with no profiles
-// has none of, or launch the review the job is for).
+// TestTheImplicitReviewNameYieldsToAProfile (RJ8, the collision): a profile the
+// published policy defines under the implicit job's own name — the default
+// profile name, serving no account, is exactly the name internal/infra composes
+// for the implicit job of its provider — is the authority on it, on both sides.
+// The deployer deploys the profile's variant and suppresses the implicit
+// emission (internal/infra's implicitReviewVariant), so the job of that name is
+// the profile's, and the runner must place a run in it as the profile's
+// candidate: an implicit triple here would read the project's allow_repos where
+// the profile's own list is the gate, which is the narrowing a repository's own
+// fugaro.yaml selection is not allowed to undo (design §4.1).
 //
-// The policy declares no profile: the class gate has to hold on the one job
-// such a project has, and not only on the variants of a policy that defines
-// them.
+// The two lists are the whole of the difference, and the second case is the
+// half that proves the first was not vacuous: the profile admits one repository
+// of the fixture's project and the project admits both.
 //
-// Mutation (run, restored): drop Class: classReview from the candidate (the
-// zero classCoding). This test fails, and a coding run is admitted to a
-// container that holds no credential at all.
-func TestCoderIsRefusedInTheImplicitReviewJob(t *testing.T) {
-	slug := identitySlug(t, "github", "acme/app")
-	job := implicitReviewJob()
-	p := &projectpolicy.Policy{Version: projectpolicy.Version}
-	r := identityRun(t, job, slug, nil, p, true)
-	if _, _, _, err := r.jobIdentity(context.Background()); err == nil {
-		t.Fatalf("a coding run was admitted to the implicit review job (%s)", job)
-	} else {
-		for _, want := range []string{job, "review-only variant", "is not a review", "The run stops"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("the refusal %q lacks %q", err, want)
-			}
-		}
+// Mutation (run, restored): match the implicit candidates before the policy's.
+// The implicit triple is adopted, the admission falls back to the project's
+// list, and the repository the profile does not admit is admitted.
+func TestTheImplicitReviewNameYieldsToAProfile(t *testing.T) {
+	const repo = "acme/app"
+	pr := profileOf("github")
+	pr.AllowRepos = []string{"github/acme/other"}
+	p := policyOf(map[string]config.JobProfile{projectpolicy.DefaultProfileName: pr})
+	p.AllowRepos = []string{"github/acme/*"}
+	job := implicitReviewJobName("github")
+	if gcp.ProjectJobName(projectpolicy.DefaultProfileName, "github", reviewVariantAccount("")) != job {
+		t.Fatalf("the fixture's job %s is not the name the implicit candidates compute: this test would not be about a collision", job)
 	}
-	if _, project := r.projectJob(); project {
-		t.Fatal("a coding run adopted the implicit review job's identity")
+
+	for _, tc := range []struct {
+		name string
+		repo string
+		want bool
+	}{
+		{"the repository the profile admits", "acme/other", true},
+		{"a repository only the project admits", repo, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := implicitReviewRun(t, "github", tc.repo, p, true)
+			err := r.admissionCheck(context.Background())
+			if !tc.want {
+				if err == nil {
+					t.Fatalf("a review of %s was admitted by the profile's own list", tc.repo)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("admissionCheck = %v", err)
+			}
+			if r.job.Implicit {
+				t.Errorf("the run adopted %+v: the name is one the published policy computes, so it is the profile's own job and its own list is the gate", r.job)
+			}
+			if r.job.Profile != projectpolicy.DefaultProfileName || r.job.Provider != "github" || r.job.Account != reviewVariantAccount("") {
+				t.Errorf("the run adopted %+v, want the profile's own review variant", r.job)
+			}
+		})
 	}
 }
 
@@ -1703,9 +1803,9 @@ func TestImplicitReviewJobIsNotClampedToAProfilesClass(t *testing.T) {
 	pr := p.Profiles["standard"]
 	pr.TimeoutClass = "20m"
 	p.Profiles["standard"] = pr
-	r := implicitReviewRun(t, "acme/app", p)
+	r := implicitReviewRun(t, gitprov.KindGitHub, "acme/app", p, true)
 	if _, _, _, err := r.jobIdentity(ctx); err != nil {
-		t.Fatalf("jobIdentity(%s) = %v", implicitReviewJob(), err)
+		t.Fatalf("jobIdentity(%s) = %v", implicitReviewJobName(gitprov.KindGitHub), err)
 	}
 	wf := fresh
 	if err := r.clampTotalToJob(ctx, &wf); err != nil {

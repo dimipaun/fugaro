@@ -267,6 +267,19 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 		reaches: "reviewer: team-a",
 		seed:    closedStdinAccountAliasSeed,
 	},
+	// The switch rewrites every key naming an account, and the sentence its
+	// fixture reads is the first line of its own list — the key as the file
+	// spells it and the move it takes, printed before the write. The seed
+	// declares the two accounts and points the default at the first, so the run
+	// rewrites a key rather than answering "no change: no key of this config
+	// names team-a"; and no repository's own list and no profile names either
+	// account, which is what keeps the run off the subset rule the write is
+	// judged by.
+	"fugaro accounts switch": {
+		args:    []string{"team-a", "team-b"},
+		reaches: "default_claude_account: team-a -> team-b",
+		seed:    closedStdinAccountSwitchSeed,
+	},
 	// The settings write used to ask for the project's name over the document it
 	// edits, and what it edits here is the world's own project config. It asks
 	// nothing now (D1540), and the sentence naming the change is the proof this
@@ -856,6 +869,17 @@ func closedStdinAccountAllowListSeed(t *testing.T, f *budgetFixture) {
 func closedStdinAccountAliasSeed(t *testing.T, f *budgetFixture) {
 	t.Helper()
 	f.appendConfig(t, "claude_accounts:\n  team-a: {}\n  team-b: {}\nclaude_account_aliases:\n  reviewer: team-a\n")
+}
+
+// closedStdinAccountSwitchSeed gives the world the two things a switch needs
+// before it has a key to rewrite: the account it moves onto has to be declared
+// (the resolve's own refusal, which would leave the fixture's list unproven),
+// and a key has to name the account it moves off — here the default, which is
+// the shortest of the five keys and names no repository, so the subset rule the
+// write is judged by has nothing to ask about it.
+func closedStdinAccountSwitchSeed(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	f.appendConfig(t, "claude_accounts:\n  team-a: {}\n  team-b: {}\ndefault_claude_account: team-a\n")
 }
 
 // closedStdinProjectSecretAllowListSeed is the same for the project secret's
