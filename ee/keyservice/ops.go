@@ -649,55 +649,17 @@ func (s *Service) operationsAct(ctx context.Context, actor Caller, asked WireEnt
 	if !present {
 		return WireEntitlement{}, errOperationsNoEntitlement
 	}
-	row, known := DefaultPolicy(entitlement.Row)
-	if !known {
-		return WireEntitlement{}, fmt.Errorf("keyservice: the licence %s names the row %q, which the policy table does not carry", entitlement.ID, entitlement.Row)
-	}
 	now := s.now().UTC()
-	changed := entitlement
-	var action string
-	switch asked.Action {
-	case operationsExtend:
-		if asked.EndsAt == nil {
-			return WireEntitlement{}, fmt.Errorf("%w: extend names the end the term moves to", errOperationsBadTerm)
-		}
-		ends := asked.EndsAt.UTC()
-		// F30: the row's own term is the bound, counted from the term's start,
-		// and a new end inside it may shorten the term as well as lengthen it.
-		// An end that is not after now is refused: a licence whose term is over
-		// is ended, and ending one is `revoke`'s act rather than an extension of
-		// a term nobody is in.
-		if !ends.After(now) || ends.After(entitlement.StartsAt.Add(row.Term)) {
-			return WireEntitlement{}, fmt.Errorf("%w: the %s row runs from %s for at most %s", errOperationsBadTerm, row.Name, entitlement.StartsAt, row.Term)
-		}
-		changed.EndsAt = ends
-		action = actionEntitlementExtend
-	case operationsSeats:
-		// F29: a licence that is not active is one no key is minted from again,
-		// and the seat change is the one action of the four that mints. A revoked
-		// licence is one §8's own withdrawal already reached, and a superseded one
-		// is one a later grant in this workspace replaced; the reissue below would
-		// mint the key the binding route refuses on the same status
-		// (`bindEntitlement`), so neither is a licence a count is moved on. Which
-		// term it is comes back under is a grant's or a renewal's question.
-		if entitlement.Status != entitlementActive {
-			return WireEntitlement{}, fmt.Errorf("%w: the licence is %q", errOperationsNotActive, entitlement.Status)
-		}
-		if asked.Seats == nil || *asked.Seats < 1 || (row.Seats != 0 && *asked.Seats != row.Seats) {
-			return WireEntitlement{}, fmt.Errorf("%w: the %s row carries %d seat(s)", errOperationsBadSeats, row.Name, row.Seats)
-		}
-		changed.Seats = *asked.Seats
-		action = actionEntitlementSeats
-	case operationsComp:
-		// A comp is a licence nobody pays for: the kind moves and nothing else
-		// does, so the term, the seats and the buyer stay what they were.
-		changed.Kind = licence.KindComped
-		action = actionEntitlementComp
-	case operationsRevoke:
-		changed.Status = entitlementRevoked
-		action = actionEntitlementRevoke
-	default:
-		return WireEntitlement{}, fmt.Errorf("%w: %q", errOperationsUnknownAction, asked.Action)
+	action, err := operationsActionName(asked.Action)
+	if err != nil {
+		return WireEntitlement{}, err
+	}
+	// The guards are asked of the record the first read answered, before the line
+	// is written: a refusal is not an act, and the log's own rule is that a
+	// request that never passed its checks is not an entry in it
+	// (`operationsMonth` says the same about a month).
+	if _, err := operationsChange(entitlement, asked, now); err != nil {
+		return WireEntitlement{}, err
 	}
 	if err := s.operationsAudit(ctx, actor, action, &entitlement.OrganisationID, &entitlement.ID, false, asked.Reason); err != nil {
 		return WireEntitlement{}, err
@@ -714,17 +676,120 @@ func (s *Service) operationsAct(ctx context.Context, actor Caller, asked WireEnt
 		if err := s.revokeEntitlement(ctx, entitlement); err != nil {
 			return WireEntitlement{}, err
 		}
+		changed := entitlement
+		changed.Status = entitlementRevoked
 		return changed, nil
 	}
-	if err := s.saveEntitlement(ctx, changed); err != nil {
+	// The change is made inside the transaction that re-reads the licence and
+	// asks the guards again. The record this act was decided on is a read from
+	// before the line, and another request moves the same licence: a bind of it, a
+	// refund's revocation, a grant that supersedes it. Written back whole from
+	// that stale read — which is what a plain put does — a change erases whatever
+	// landed in between: a binding's own fields, or a revocation turned back into
+	// an active licence. The fresh record is what is written, with the one field
+	// this action moves, so what another door did stands.
+	var changed WireEntitlement
+	err = s.docs.Update(ctx, func(ctx context.Context, tx Tx) error {
+		held, present, err := getRecord[WireEntitlement](ctx, tx, entitlementsCollection, entitlement.ID)
+		if err != nil {
+			return err
+		}
+		if !present {
+			return errOperationsNoEntitlement
+		}
+		if changed, err = operationsChange(held, asked, now); err != nil {
+			return err
+		}
+		return putRecord(ctx, tx, entitlementsCollection, changed.ID, changed)
+	})
+	if err != nil {
 		return WireEntitlement{}, err
 	}
 	if asked.Action == operationsSeats {
-		if err := s.reissueSeatsOf(ctx, changed, now); err != nil {
+		keyID, err := s.reissueSeatsOf(ctx, changed, now)
+		if err != nil {
 			return WireEntitlement{}, err
+		}
+		if keyID != "" {
+			if err := s.withdrawIfNotActive(ctx, changed.ID, keyID, now); err != nil {
+				return WireEntitlement{}, err
+			}
 		}
 	}
 	return changed, nil
+}
+
+// operationsChange answers the licence one action writes, and refuses the action
+// against the record it is handed: F30's term, D2184's count, F29's status.
+//
+// It is asked twice — once of the read the line was written against, so that a
+// refusal is not an act in the log, and once inside the transaction that writes
+// the change, where it is the record as it now stands. The two answer the same
+// thing as long as nothing moved in between, which is the whole of what the
+// second asking is for.
+func operationsChange(held WireEntitlement, asked WireEntitlementAction, now time.Time) (WireEntitlement, error) {
+	row, known := DefaultPolicy(held.Row)
+	if !known {
+		return WireEntitlement{}, fmt.Errorf("keyservice: the licence %s names the row %q, which the policy table does not carry", held.ID, held.Row)
+	}
+	changed := held
+	switch asked.Action {
+	case operationsExtend:
+		if asked.EndsAt == nil {
+			return WireEntitlement{}, fmt.Errorf("%w: extend names the end the term moves to", errOperationsBadTerm)
+		}
+		ends := asked.EndsAt.UTC()
+		// F30: the row's own term is the bound, counted from the term's start,
+		// and a new end inside it may shorten the term as well as lengthen it.
+		// An end that is not after now is refused: a licence whose term is over
+		// is ended, and ending one is `revoke`'s act rather than an extension of
+		// a term nobody is in.
+		if !ends.After(now) || ends.After(held.StartsAt.Add(row.Term)) {
+			return WireEntitlement{}, fmt.Errorf("%w: the %s row runs from %s for at most %s", errOperationsBadTerm, row.Name, held.StartsAt, row.Term)
+		}
+		changed.EndsAt = ends
+	case operationsSeats:
+		// F29: a licence that is not active is one no key is minted from again,
+		// and the seat change is the one action of the four that mints. A revoked
+		// licence is one §8's own withdrawal already reached, and a superseded one
+		// is one a later grant in this workspace replaced; the reissue below would
+		// mint the key the binding route refuses on the same status
+		// (`bindEntitlement`), so neither is a licence a count is moved on. Which
+		// term it is comes back under is a grant's or a renewal's question.
+		if held.Status != entitlementActive {
+			return WireEntitlement{}, fmt.Errorf("%w: the licence is %q", errOperationsNotActive, held.Status)
+		}
+		if asked.Seats == nil || *asked.Seats < 1 || (row.Seats != 0 && *asked.Seats != row.Seats) {
+			return WireEntitlement{}, fmt.Errorf("%w: the %s row carries %d seat(s)", errOperationsBadSeats, row.Name, row.Seats)
+		}
+		changed.Seats = *asked.Seats
+	case operationsComp:
+		// A comp is a licence nobody pays for: the kind moves and nothing else
+		// does, so the term, the seats and the buyer stay what they were.
+		changed.Kind = licence.KindComped
+	case operationsRevoke:
+		changed.Status = entitlementRevoked
+	default:
+		return WireEntitlement{}, fmt.Errorf("%w: %q", errOperationsUnknownAction, asked.Action)
+	}
+	return changed, nil
+}
+
+// operationsActionName is the log's own word for one of the four actions, and
+// the refusal for a word that is none of them.
+func operationsActionName(action string) (string, error) {
+	switch action {
+	case operationsExtend:
+		return actionEntitlementExtend, nil
+	case operationsSeats:
+		return actionEntitlementSeats, nil
+	case operationsComp:
+		return actionEntitlementComp, nil
+	case operationsRevoke:
+		return actionEntitlementRevoke, nil
+	default:
+		return "", fmt.Errorf("%w: %q", errOperationsUnknownAction, action)
+	}
 }
 
 // reissueSeatsOf mints the successor a seat change is (D2200, §5.3).
@@ -753,54 +818,84 @@ func (s *Service) operationsAct(ctx context.Context, actor Caller, asked WireEnt
 // operations seat change has no address to send to, and the handover is what
 // makes it reach the installation — the successor answers the next `/renew` of
 // the key the customer holds, whose secret D2200 leaves unspent.
-func (s *Service) reissueSeatsOf(ctx context.Context, entitlement WireEntitlement, now time.Time) error {
+//
+// It answers the id of the key it minted, and the empty string when it minted
+// none: the mint is outside the transaction that made the change, so the caller
+// asks the licence once more with that id in hand.
+func (s *Service) reissueSeatsOf(ctx context.Context, entitlement WireEntitlement, now time.Time) (string, error) {
 	if entitlement.WorkspaceID == nil {
-		return nil
+		return "", nil
 	}
 	workspace, present, err := getRecord[WireWorkspace](ctx, s.docs, workspacesCollection, *entitlement.WorkspaceID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !present || workspace.ProjectID == nil {
-		return nil
+		return "", nil
 	}
 	row, known := DefaultPolicy(entitlement.Row)
 	if !known {
-		return fmt.Errorf("keyservice: the licence %s names the row %q, which the policy table does not carry", entitlement.ID, entitlement.Row)
+		return "", fmt.Errorf("keyservice: the licence %s names the row %q, which the policy table does not carry", entitlement.ID, entitlement.Row)
 	}
 	records, err := s.store.Issuances(ctx)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if _, minted := newestIssuance(records, entitlement.ID); !minted {
 		// The licence has no key at all — the binding that mints one did not
 		// finish, or the workspace was unbound again — and a reissue is the
 		// successor of a key, not a first key. The count it now carries is what
 		// the binding reads.
-		return nil
+		return "", nil
 	}
 	days := daysBetween(now, entitlement.EndsAt)
 	if days < 1 {
 		// The term is over. The next one is a renewal's or a fresh grant's
 		// (seatChanged's own reasoning), and a key minted into a term that has
 		// ended would be expired before it arrived.
-		return nil
+		return "", nil
 	}
 	subscription, err := s.licenceSubscription(ctx, entitlement.ID)
 	if err != nil {
-		return err
+		return "", err
 	}
 	source, err := newID()
 	if err != nil {
-		return err
+		return "", err
 	}
-	_, err = s.reissue(ctx, reissueRequest{
+	minted, err := s.reissue(ctx, reissueRequest{
 		Entitlement:  entitlement.ID,
 		Request:      s.paidRequest(row.Name, *workspace.ProjectID, entitlement.OrganisationID, entitlement.Seats, days),
 		Source:       operationsSeatSource + source,
 		Subscription: subscription,
 	})
-	return err
+	if err != nil {
+		return "", err
+	}
+	return minted.Record.KeyID, nil
+}
+
+// withdrawIfNotActive withdraws a key this door minted, when the licence it was
+// minted under is not active by the time the mint is over.
+//
+// A reissue mints and records through the store and outside any transaction, so
+// the licence is read once more afterwards — and the reading and the withdrawal
+// are one transaction, because a check that commits its own read and then acts
+// is the same gap this is here to close. What it closes is F29's second half: a
+// revocation that lands between the change and the mint walks the keys the
+// licence had at that instant (`withdrawEveryKeyOf`), and the successor minted
+// after that walk is one it never reached.
+func (s *Service) withdrawIfNotActive(ctx context.Context, entitlementID, keyID string, now time.Time) error {
+	return s.docs.Update(ctx, func(ctx context.Context, tx Tx) error {
+		held, present, err := getRecord[WireEntitlement](ctx, tx, entitlementsCollection, entitlementID)
+		if err != nil {
+			return err
+		}
+		if present && held.Status == entitlementActive {
+			return nil
+		}
+		return tx.Revoke(ctx, []Revocation{{KeyID: keyID, Reason: ReasonOperations, At: now}})
+	})
 }
 
 // licenceKeys answers every key one licence ever minted (F29), which is the walk
@@ -885,19 +980,6 @@ func (s *Service) withdrawEveryKeyOf(ctx context.Context, entitlementID string, 
 		if err := s.store.Revoke(ctx, Revocation{KeyID: keyID, Reason: ReasonOperations, At: now}); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// saveEntitlement writes a licence's record as it now stands, for the three
-// changes that move a field of it and leave the status alone.
-func (s *Service) saveEntitlement(ctx context.Context, entitlement WireEntitlement) error {
-	doc, err := storedDoc(entitlement)
-	if err != nil {
-		return err
-	}
-	if err := s.docs.Put(ctx, entitlementsCollection, entitlement.ID, doc); err != nil {
-		return fmt.Errorf("keyservice: the licence %s was changed and its record could not be written: %w", entitlement.ID, err)
 	}
 	return nil
 }

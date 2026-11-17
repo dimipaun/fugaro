@@ -15,8 +15,10 @@ package keyservice
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1450,6 +1452,225 @@ func TestOperationsSeatChangeNeedsAnActiveLicence(t *testing.T) {
 			}
 		})
 	}
+}
+
+// gapDocs is the fixture's store with the window a term action has to hold
+// closed: the read that decided the act has answered, and the write that makes
+// it has not happened yet.
+//
+// The window is real and a millisecond wide, which is why what closes it in the
+// service is a transaction that re-reads the licence rather than a second read
+// above the write — and why a case cannot reach it by timing. It is opened here
+// instead. What is wrapped is the fixture's whole store, the deploy's
+// read-before-write rule included, so a step run inside the window reaches the
+// same service, the same records and the same rules as the request it
+// interrupts: an act made here is a competing request in every respect but the
+// socket.
+type gapDocs struct {
+	Docs
+	mu     sync.Mutex
+	armed  string
+	during func()
+}
+
+// arm makes the next read of one collection run the step, once, after that read
+// has answered.
+func (d *gapDocs) arm(collection string, during func()) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.armed, d.during = collection, during
+}
+
+func (d *gapDocs) Get(ctx context.Context, collection, id string) (Doc, error) {
+	doc, err := d.Docs.Get(ctx, collection, id)
+	d.mu.Lock()
+	fire := d.armed != "" && d.armed == collection
+	var during func()
+	if fire {
+		// Disarmed before the step runs: the step is another request, and a
+		// request that read this collection would otherwise fire it again.
+		d.armed, during, d.during = "", d.during, nil
+	}
+	d.mu.Unlock()
+	if fire && during != nil {
+		during()
+	}
+	return doc, err
+}
+
+// gapGround is the ground the competing-act cases share: one customer with a
+// workspace, a licence operations granted on it — bound to the project and
+// carrying the key the binding minted, where the case asks for that — the
+// operations organisation the acts are made as, and the store the service reads
+// through wrapped in `gapDocs`, which is where a case puts its competing act.
+func gapGround(t *testing.T, bound bool) (*bindingFixture, *gapDocs, WireEntitlement) {
+	t.Helper()
+	var gap *gapDocs
+	f := newBindingFixtureWith(t, func(f *fixture) {
+		f.deps.MintsV1 = f.recording
+		gap = &gapDocs{Docs: f.deps.Docs}
+		f.deps.Docs = gap
+	})
+	org := f.seededOrganisation(opsCustomerID, "Dana Ltd", orgTypeCustomer, danaUID, danaEmail, roleOwner)
+	workspace := f.seedWorkspace(opsBoundWS, org.ID, "Dana's bound")
+	held := f.grant(t, entitlementGrant{
+		At:             f.now,
+		OrganisationID: org.ID,
+		WorkspaceID:    &workspace.ID,
+		Source:         entitlementSourceOperations,
+		Row:            PolicyTeamAnnual,
+		Seats:          3,
+		StartsAt:       f.now,
+	})
+	if bound {
+		if rec := f.bind(t, held.ID, opsProject); rec.Code != http.StatusOK {
+			t.Fatalf("binding the licence answered %d (%s), want the key the act is about", rec.Code, rec.Body)
+		}
+	}
+	f.operationsOrg(roleOwner)
+	return f, gap, held
+}
+
+// TestOperationsActSurvivesACompetingAct: what one operator changes stands, and
+// so does what another door did while their request was in flight.
+//
+// The change is made inside the transaction that re-reads the licence, and the
+// record the action was decided on is written afresh in there. Written back
+// whole from the read above the transaction — which is what a plain put does,
+// and what this area did before — the change is an act of erasure: a binding
+// that landed in between has the fields it wrote un-written, so the licence is a
+// licence with a key and no record of the binding, the next bind takes the
+// first-bind path again and mints a second key without withdrawing the first;
+// and a revocation that landed in between is undone, so a licence §8's list
+// already holds goes back to serving and the seat change mints off it.
+//
+// Three windows, because there are three ways the licence moves under one
+// request: a bind (the customer binding it, which writes the licence), a
+// revocation (a refund, or operations' own door through another session), and a
+// revocation that lands on the mint a seat change makes — after the walk a
+// revocation takes, so the successor is one it never reached (F29's second
+// half). `gapDocs` opens each; without the transaction, and without the
+// post-mint check, the first case loses the binding and the third leaves a live
+// key on a revoked licence.
+func TestOperationsActSurvivesACompetingAct(t *testing.T) {
+	t.Run("a bind between the read and the change", func(t *testing.T) {
+		f, gap, held := gapGround(t, false)
+		var bound *httptest.ResponseRecorder
+		gap.arm(entitlementsCollection, func() {
+			f.actsAs(danaUID, danaEmail, signInGoogle)
+			bound = f.bind(t, held.ID, opsProject)
+		})
+		ends := jsonString(t, f.now.Add(30*24*time.Hour).UTC().Format(time.RFC3339))
+		rec := f.apiAsCaller(http.MethodPost, apiOpsEntitlementActionsPath,
+			actionBody(t, held.ID, "extend", "null", ends, "null"))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("the extension answered %d (%s), want it made", rec.Code, rec.Body)
+		}
+		if bound == nil || bound.Code != http.StatusOK {
+			t.Fatalf("the binding this case put in the window answered %v, want the key: the case is about a binding that really landed", bound)
+		}
+
+		after, _ := heldRecord[WireEntitlement](f.fixture, entitlementsCollection, held.ID)
+		if after.BoundAt == nil {
+			t.Errorf("the licence reads %+v, want the binding's own instant on it: the extension wrote the record back whole from the read before the binding, so the binding is unrecorded on the licence and the next bind of it takes the first-bind path again", after)
+		}
+
+		// The state the extension left is what makes a second bind of the licence
+		// the rebind path (bound, so the first-bind path is behind it), and the
+		// rebind withdraws the key it replaces. On the erased licence the second
+		// bind is a first bind again: it mints another key and withdraws nothing,
+		// so the licence ends with two live keys and no record of which is its.
+		first := f.records()[0]
+		again := f.bind(t, held.ID, opsProject)
+		if again.Code != http.StatusOK {
+			t.Fatalf("a second bind of the licence answered %d (%s), want the rebind", again.Code, again.Body)
+		}
+		if _, withdrawn, err := f.store.Revocation(context.Background(), first.KeyID); err != nil || !withdrawn {
+			t.Errorf("the key the first bind minted (%s) is not on §8's list after the second bind (withdrawn=%v err=%v): the second bind took the first-bind path and left both keys live", first.KeyID, withdrawn, err)
+		}
+	})
+
+	t.Run("a revocation between the read and the change", func(t *testing.T) {
+		f, gap, held := gapGround(t, true)
+		var revoked *httptest.ResponseRecorder
+		gap.arm(entitlementsCollection, func() {
+			revoked = f.apiAsCaller(http.MethodPost, apiOpsEntitlementActionsPath,
+				actionBody(t, held.ID, "revoke", "null", "null", "null"))
+		})
+		rec := f.apiAsCaller(http.MethodPost, apiOpsEntitlementActionsPath,
+			actionBody(t, held.ID, "seats", "5", "null", "null"))
+		if revoked == nil || revoked.Code != http.StatusOK {
+			t.Fatalf("the revocation this case put in the window answered %v, want it made", revoked)
+		}
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("the seat change answered %d (%s), want the refusal: the licence was revoked while the request was in flight", rec.Code, rec.Body)
+		}
+		if code := refusal(f.fixture, rec); code != "licence_not_active" {
+			t.Errorf("the refusal carries the code %q, want licence_not_active", code)
+		}
+		after, _ := heldRecord[WireEntitlement](f.fixture, entitlementsCollection, held.ID)
+		if after.Status != entitlementRevoked {
+			t.Errorf("the licence reads %q after the refused change, want %q: the change wrote the record back whole from the read before the revocation and turned a revoked licence active again", after.Status, entitlementRevoked)
+		}
+		if after.Seats != held.Seats {
+			t.Errorf("the licence states %d seat(s), want the %d it had: the change was refused", after.Seats, held.Seats)
+		}
+		if got := len(f.records()); got != 1 {
+			t.Errorf("the licence holds %d record(s), want the binding's one", got)
+		}
+		if got := len(f.revocations()); got != 1 {
+			t.Errorf("§8's list holds %d entry(ies), want the revocation's own one", got)
+		}
+	})
+
+	t.Run("a revocation between the change and the mint", func(t *testing.T) {
+		f, gap, held := gapGround(t, true)
+		binding := f.records()[0]
+		// The workspace read is the step the reissue takes before it mints, so a
+		// revocation standing here lands after the change has committed and before
+		// the successor exists: it walks the keys the licence has at that instant,
+		// and the successor is not one of them.
+		var revoked *httptest.ResponseRecorder
+		gap.arm(workspacesCollection, func() {
+			revoked = f.apiAsCaller(http.MethodPost, apiOpsEntitlementActionsPath,
+				actionBody(t, held.ID, "revoke", "null", "null", "null"))
+		})
+		rec := f.apiAsCaller(http.MethodPost, apiOpsEntitlementActionsPath,
+			actionBody(t, held.ID, "seats", "5", "null", "null"))
+		if revoked == nil || revoked.Code != http.StatusOK {
+			t.Fatalf("the revocation this case put in the window answered %v, want it made", revoked)
+		}
+		if rec.Code != http.StatusOK {
+			t.Fatalf("the seat change answered %d (%s), want it made: the licence was active when the change committed", rec.Code, rec.Body)
+		}
+
+		after, _ := heldRecord[WireEntitlement](f.fixture, entitlementsCollection, held.ID)
+		if after.Status != entitlementRevoked || after.Seats != 5 {
+			t.Errorf("the licence reads %+v, want the revocation standing and the %d seats the change committed", after, 5)
+		}
+		records := f.records()
+		if len(records) != 2 {
+			t.Fatalf("the licence holds %d record(s), want the binding's key and the seat change's successor", len(records))
+		}
+		successor := ""
+		for _, record := range records {
+			if record.KeyID != binding.KeyID {
+				successor = record.KeyID
+			}
+		}
+		if successor == "" {
+			t.Fatalf("the records are %+v, want the binding's key and a successor of it", records)
+		}
+		entry, withdrawn, err := f.store.Revocation(context.Background(), successor)
+		if err != nil || !withdrawn {
+			t.Errorf("the successor %s has no entry on §8's list (withdrawn=%v err=%v): it was minted after the revocation's walk and nothing reached it, so the licence is revoked with a live key in an installation's hand", successor, withdrawn, err)
+		} else if entry.Reason != ReasonOperations {
+			t.Errorf("the successor's entry is %+v, want %q", entry, ReasonOperations)
+		}
+		if got := len(f.revocations()); got != 2 {
+			t.Errorf("§8's list holds %d entry(ies), want the binding's key and the successor", got)
+		}
+	})
 }
 
 // TestParkedEventIsResolvedOnce: a parked event — one whose transaction and
