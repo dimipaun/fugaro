@@ -13,6 +13,7 @@ Who gets access (the effective lists; a plan that grants anyone else is shown an
   budget admins:  user:ba@example.com, user:owner@example.com (from a flag); plus the GCP project's owners and editors who are users or groups, read now
   budget viewers: user:me@example.com, group:ops@example.com (the operators and admins)
   alert email:    none (not set)
+  rigor mode:     pro (default)
 Every Terraform plan is shown as it runs. It is covered only if it consists of creates and in-place updates of the installation's own resource kinds, its attributes are the modules' (images in this project's registry, jobs of this project called by Fugaro's accounts, logs to this project, private buckets, this project's names), and it grants only the modules' roles to the members above or to Fugaro's own service accounts. Anything else (a destroy or replace, a binding or policy, a key, another project, an unlisted member) is shown and then applied, and where nobody is at the terminal the run leaves it to you.
 Still asks separately, never covered by this confirmation:
   - the Firestore database's creation (its location is permanent)

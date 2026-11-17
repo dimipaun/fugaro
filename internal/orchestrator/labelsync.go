@@ -173,6 +173,10 @@ type labelRun struct {
 // Each attempt's label follows its own ending — foldPhase's reading of the
 // outcome, which is the same phase the failure moved the item to — so a run
 // that ended is labelled as it ended whatever the item has moved on to since.
+// Whether the attempt left a pull request is not read: a succeeded one carries
+// no status label under either reading of it (phaseToLabels wants one of
+// `running` and `failed` alone), and which pull requests merged is the merge
+// read's business and not this one's.
 // An attempt nothing was ever started under — abandoned — has no pull request
 // at all and is left out, and a run id no intent of the item names is labelled
 // from the item's phase, which is the reading the phase's own mapping takes.
@@ -191,7 +195,7 @@ func labelRuns(s State, w WorkItem) []labelRun {
 			out = append(out, labelRun{runID: it.RunID, phase: w.Phase})
 			continue
 		}
-		if phase, ok := foldPhase(it.Outcome); ok {
+		if phase, ok := foldPhase(it.Outcome, false); ok {
 			out = append(out, labelRun{runID: it.RunID, phase: phase})
 		}
 	}

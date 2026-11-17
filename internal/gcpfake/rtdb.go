@@ -257,6 +257,14 @@ func (f *RTDB) RulePuts() int {
 }
 
 func (f *RTDB) handle(w http.ResponseWriter, r *http.Request, body []byte) {
+	// Every answer carries the database's clock, this fake's own paths and its
+	// 404s included: a reader takes the time from the Date header of the newest
+	// response (rtdb.Client.ServerNow), so an answer left to net/http would
+	// stamp that reading with the machine's real clock where the database's own
+	// is what SetClock set.
+	f.mu.Lock()
+	w.Header().Set("Date", f.clock().UTC().Format(http.TimeFormat))
+	f.mu.Unlock()
 	if !strings.HasSuffix(r.URL.Path, ".json") {
 		f.unhandled(w, r)
 		return
@@ -274,7 +282,6 @@ func (f *RTDB) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		cred = "bearer:" + strings.TrimPrefix(h, "Bearer ")
 	}
 	f.creds = append(f.creds, cred)
-	w.Header().Set("Date", f.clock().UTC().Format(http.TimeFormat))
 	var hold *rtdbHold
 	for i, h := range f.holds {
 		if h.path == strings.Join(path, "/") {

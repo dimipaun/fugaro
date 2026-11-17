@@ -37,9 +37,11 @@ import (
 // the keyless path is in the tree and not in effect while
 // internal/cli/run.go's credentialsServiceLaunchEnv sets the variable on a
 // repository job; the "The launch is what puts it there" paragraph's
-// "a repository's own job and on no other" clause changed to include shared
-// project jobs → FAIL, because the service refuses a shared job's account
-// (Global Constraint 6) and the variable is what opens the provider keyless; the
+// "on the shared project job a switched profile sends its runs to" clause
+// softened back to "and on no other" → FAIL, because the launch hands a
+// switched profile's shared job the address too (B5.2) and the paragraph's
+// pinned sentence would say the opposite while a reader takes the wiring the
+// wrong way; the
 // "A repository whose root has not been re-applied with the switch on gets no
 // variable at all" sentence
 // deleted → FAIL; the ErrMintNoAppKey sentence deleted → FAIL.
@@ -106,7 +108,7 @@ func TestDocsGitProvidersStateWhatReachesTheAgentExactly(t *testing.T) {
 		// environment") is banned below.
 		"**The launch is what puts it there**",
 		"`internal/cli/run.go`'s `credentialsServiceLaunchEnv`",
-		"a repository's own job and on no other",
+		"a repository's own job and on the shared project job a switched profile sends its runs to",
 		"A repository whose root has not been re-applied with the switch on gets no variable at all",
 		// The bundle has to hold the key, or the mint is a named refusal.
 		"`ErrMintNoAppKey`",
@@ -192,10 +194,11 @@ func TestSecurityMdStatesTheAppKeyIsTheServicesWhenTheServiceIsOn(t *testing.T) 
 		"`fugaro creds set github-app-key`",
 		// The release that sets the variable is THIS one, and the document
 		// says so in the terms the code does: the launch puts it on a
-		// repository's own job, and on no other.
+		// repository's own job, and on the shared project job its profile
+		// sends the run to (B5.2, B5.4).
 		"So **on a switched-on repository a run's installation token is minted by the service and the run's runner opens its git provider with no key at all**",
 		"a bundle that holds none is a named refusal rather than a fall back to the job's copy (D143)",
-		"**A shared project job is deliberately not told**",
+		"**A shared project job is told too, on the same switch (B5.2)**",
 		"A mint call carries the App's ID and nothing else — there is no repository field to fill in.",
 		"**calling job's account is bound to**",
 		"(see \"The GitHub App's key, when the credentials service holds it\" above)",

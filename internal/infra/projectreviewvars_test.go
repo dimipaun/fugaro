@@ -39,78 +39,91 @@ func reviewJobsOf(t *testing.T, vars []byte) map[string]any {
 }
 
 // TestCarriedProjectReviewJobsKeepsTheJobTheConfigCanNoLongerCompose is the
-// report of the installation that deploys the implicit default review job and
+// report of the installation that deploys an implicit default review job and
 // then loses the one fact the config composes it from.
 //
-// implicitReviewVariant is the job's only source, and one of its gates is the
-// single GitHub App ID the config records: a second App ID added (a repository
-// on another App) or the last github repository gone (no App ID recorded at
-// all) takes the job out of project_review_jobs. The job is deployed all the
-// same, so the next plan carries the delete of the module instance that holds
-// it and RefuseProjectJobDeletes stops the whole `fugaro update` — with
-// "restore the profile as it was" as the only remedy it can print, a profile an
-// installation that declares none does not have. Every later run repeats it,
-// and the installation never converges again.
+// implicitReviewVariant is each job's only source, and each is gated on its own
+// provider's fact: the single GitHub App ID the config records — a second App ID
+// added (a repository on another App) or the last github repository gone (no App
+// ID recorded at all) takes the github job out of project_review_jobs — and a
+// repository of the provider (the last Bitbucket repository gone takes the
+// Bitbucket job out). The job is deployed all the same, so the next plan carries
+// the delete of the module instance that holds it and RefuseProjectJobDeletes
+// stops the whole `fugaro update` — with "restore the profile as it was" as the
+// only remedy it can print, a profile an installation that declares none does
+// not have. Every later run repeats it, and the installation never converges
+// again.
 //
 // The carry is what keeps it: the job the installation's own tfvars hold is put
 // back into the document the spec composes, whole, so the plan proposes no
-// change to it. Both transitions are here because both are ordinary acts.
+// change to it. All three transitions are here because all three are ordinary
+// acts.
 //
 // Mutations (each run and restored): return vars without the job when the
-// config composes none, and both transitions fail; carry every review job the
-// record holds rather than the implicit one, and the fast profile's variant
+// config composes none, and every transition fails; carry every review job the
+// record holds rather than the implicit ones, and the fast profile's variant
 // below comes back into a document that declares no such profile.
 func TestCarriedProjectReviewJobsKeepsTheJobTheConfigCanNoLongerCompose(t *testing.T) {
-	// The installation that has the job deployed, with a profile beside it: the
-	// record holds the implicit job AND a variant the config below no longer
+	// The installation that has the jobs deployed, with a profile beside it: the
+	// record holds the two implicit jobs AND a variant the config below no longer
 	// composes, so the carry's narrowness is tested by the same document.
 	one := implicitReviewLC() + implicitReviewProfileLCBlock
 	deployed := projectReviewJobsDocument(t, one)
-	name := ImplicitReviewJobName()
-	job, ok := reviewJobsOf(t, deployed)[name]
-	if !ok {
-		t.Fatalf("the installation that records one App ID deploys %v, want the implicit review job %s", reviewJobsOf(t, deployed), name)
+	github, bitbucket := ImplicitReviewJobName(githubProvider), ImplicitReviewJobName(bitbucketProvider)
+	want := map[string]any{}
+	for _, name := range []string{github, bitbucket} {
+		job, ok := reviewJobsOf(t, deployed)[name]
+		if !ok {
+			t.Fatalf("the installation that records one App ID and one Bitbucket repository deploys %v, want the implicit review job %s", reviewJobsOf(t, deployed), name)
+		}
+		want[name] = job
 	}
-	if len(reviewJobsOf(t, deployed)) != 2 {
-		t.Fatalf("the fixture's installation deploys %v, want the implicit job and the fast profile's variant", reviewJobsOf(t, deployed))
+	if len(reviewJobsOf(t, deployed)) != 3 {
+		t.Fatalf("the fixture's installation deploys %v, want the two implicit jobs and the fast profile's variant", reviewJobsOf(t, deployed))
 	}
 
-	// The two transitions are configs with no profile of their own: with one
-	// declared, the coding set is refused before this job is reached at all
+	// The three transitions are configs with no profile of their own: with one
+	// declared, the coding set is refused before the github job is reached at all
 	// (projectJobGitHubAppID), and the shapes below are the ones that reach it.
+	// Each leaves the OTHER provider's job standing, which is the half that says
+	// the two gates are independent.
 	none := implicitReviewLC()
 	noApp := strings.Replace(none, `, github_app_id: "123456789"`, "", 1)
 	twoApps := strings.Replace(none, projectJobRepoLC,
 		projectJobRepoLC+`  acme/other: { provider: github, base_branch: main, workflows: [web], github_app_id: "987654321" }`+"\n", 1)
-	if noApp == none || twoApps == none {
-		t.Fatal("the two fixtures below did not change: this test would read the installation that records one App ID and composes the job")
+	noBitbucket := strings.Replace(none, "  acme/sandbox: { provider: bitbucket, base_branch: master, workflows: [web] }\n", "", 1)
+	if noApp == none || twoApps == none || noBitbucket == none {
+		t.Fatal("the three fixtures below did not change: this test would read the installation that composes the job")
 	}
-	for _, c := range []struct{ what, lc string }{
-		{"the last github repository gone (no App ID recorded)", noApp},
-		{"a second App ID recorded", twoApps},
+	for _, c := range []struct{ what, lc, gone string }{
+		{"the last github repository gone (no App ID recorded)", noApp, github},
+		{"a second App ID recorded", twoApps, github},
+		{"the last Bitbucket repository gone", noBitbucket, bitbucket},
 	} {
 		fresh := projectReviewJobsDocument(t, c.lc)
-		if got := reviewJobsOf(t, fresh); got != nil {
-			t.Fatalf("%s: the fixture's own document already carries %v, so this test would not be about the carry", c.what, got)
+		if _, ok := reviewJobsOf(t, fresh)[c.gone]; ok {
+			t.Fatalf("%s: the fixture's own document already carries %s, so this test would not be about the carry", c.what, c.gone)
 		}
 		got, err := CarriedProjectReviewJobs(fresh, deployed)
 		if err != nil {
 			t.Fatalf("%s: %v", c.what, err)
 		}
 		jobs := reviewJobsOf(t, got)
-		kept, ok := jobs[name]
+		kept, ok := jobs[c.gone]
 		if !ok {
-			t.Errorf("%s: the carried document holds %v, want the deployed review job %s: the next plan carries its delete, and RefuseProjectJobDeletes stops the whole update on it", c.what, jobs, name)
+			t.Errorf("%s: the carried document holds %v, want the deployed review job %s: the next plan carries its delete, and RefuseProjectJobDeletes stops the whole update on it", c.what, jobs, c.gone)
 			continue
 		}
-		if !reflect.DeepEqual(kept, job) {
-			t.Errorf("%s: the carried job is %v, want the deployed one %v, byte for byte: a job that differs is a job the plan proposes to change", c.what, kept, job)
+		if !reflect.DeepEqual(kept, want[c.gone]) {
+			t.Errorf("%s: the carried job is %v, want the deployed one %v, byte for byte: a job that differs is a job the plan proposes to change", c.what, kept, want[c.gone])
 		}
 		// And nothing else: the variant of the profile the RECORD's installation
 		// declared is the config's to compose, and a document that brings one
-		// back is a document that deploys a job no profile declares.
-		if len(jobs) != 1 {
-			t.Errorf("%s: the carried document holds %v, want the implicit job alone", c.what, jobs)
+		// back is a document that deploys a job no profile declares. The other
+		// provider's implicit job is the config's to compose too — its own gate
+		// is untouched by the transition — and `fresh` already carries it.
+		if len(jobs) != len(reviewJobsOf(t, fresh))+1 {
+			t.Errorf("%s: the carried document holds %v, want the job carried into it and nothing else", c.what, jobs)
 		}
 	}
 }
@@ -144,15 +157,15 @@ func reviewJobAppID(t *testing.T, vars []byte, name, appID string) []byte {
 // the spec cannot compose and nothing else. A document that composes the job
 // itself is the authority on it — that run is what catches the job up with the
 // release's image and environment — so the record never overwrites it; a record
-// that holds no job of that name carries nothing; and a workdir with no tfvars
-// at all (nil: a first run, or a machine that never ran this installation) is
-// not a document to invent one from.
+// that holds no implicit job at all carries nothing; and a workdir with no
+// tfvars at all (nil: a first run, or a machine that never ran this
+// installation) is not a document to invent one from.
 //
 // Mutation (verified, run and restored): drop the "the spec's own job stands"
 // early return: the fixture's fresh document comes back with the record's job
 // instead of its own.
 func TestCarriedProjectReviewJobsLeavesTheSpecsOwnJobAlone(t *testing.T) {
-	name := ImplicitReviewJobName()
+	name := ImplicitReviewJobName(githubProvider)
 	composed := projectReviewJobsDocument(t, implicitReviewLC())
 	if _, ok := reviewJobsOf(t, composed)[name]; !ok {
 		t.Fatalf("the fixture composes no %s: %v", name, reviewJobsOf(t, composed))
@@ -170,17 +183,19 @@ func TestCarriedProjectReviewJobsLeavesTheSpecsOwnJobAlone(t *testing.T) {
 		t.Errorf("a document that composes the job itself came back changed:\nwant %s\ngot  %s", own, got)
 	}
 
-	// A record that holds no job of that name — the document below still
+	// A record that holds no implicit job at all — the document below still
 	// carries the fast profile's variant, so it is a review set without being
-	// this one — carries nothing, and neither does no document at all: a
-	// machine that never ran this installation is not a record of one.
+	// this one — carries nothing, and neither does no document at all: a machine
+	// that never ran this installation is not a record of one.
 	without := projectReviewJobsDocument(t, implicitReviewLC()+implicitReviewProfileLCBlock)
 	var doc map[string]any
 	if err := json.Unmarshal(without, &doc); err != nil {
 		t.Fatal(err)
 	}
 	jobs, _ := doc[ProjectReviewJobsKey].(map[string]any)
-	delete(jobs, name)
+	for _, provider := range ImplicitReviewProviders {
+		delete(jobs, ImplicitReviewJobName(provider))
+	}
 	noJob, err := json.Marshal(doc)
 	if err != nil {
 		t.Fatal(err)

@@ -76,6 +76,28 @@ const (
 	orchSibling = PathOrchestrator + "/" + orchID + "/lease/until"
 )
 
+// mustOrchPath and mustPlanPath are this package's node paths for orchID, built
+// through internal/orchestrator rather than written out here: a path a test
+// spells itself is a path no writer builds, so a wrong one is a node nobody
+// grants — which is exactly the accident the tests below are about.
+func mustOrchPath(t *testing.T, pathOf func(string) (string, error)) string {
+	t.Helper()
+	p, err := pathOf(orchID)
+	if err != nil {
+		t.Fatalf("building the node path: %v", err)
+	}
+	return p
+}
+
+func mustPlanPath(t *testing.T, plan string) string {
+	t.Helper()
+	p, err := orchestrator.PathPlan(orchID, plan)
+	if err != nil {
+		t.Fatalf("building the plan's node path: %v", err)
+	}
+	return p
+}
+
 // minter is a token the launcher's `signJwt` minter made (iam.tf's `minter`
 // grant; reconciliation.md, "What the rules do and do not bind"): a custom
 // token whose claims the minter picked, so it carries the project's `fp` -- it
@@ -373,4 +395,95 @@ func TestOrchestratorRefusesEveryTokenWriter(t *testing.T) {
 	h.mustDeny(forged, "a minted token carrying the person's own mu claim", put(orchState+"/phase", "running"))
 	// And nothing the person's write left behind moved.
 	h.wantValue(orchState+"/phase", `"idle"`)
+}
+
+// TestRunTokenCannotWritePlanOrBacklogNode is X0's half of that rule (D2735,
+// F34): the node per imported plan and the node for the standing backlog sit
+// under the same `orchestrator` subtree, so the one rule that closes the
+// subtree is the whole of what closes them. No rule names either node — the
+// plan's own boundary makes any RTDB rules change an ask-first, and the
+// reconciliation's answer is that these two need none — so what this test adds
+// to TestOrchestratorRefusesEveryTokenWriter is the two nodes by name: the
+// person's own credential writes them, over IAM, and reads them back, and every
+// identity the rules evaluate is refused the write.
+//
+// The positive control at the top is what keeps the refusals from passing for
+// the wrong reason: the root is already `".write": false`, so a node the
+// template never mentions is refused everything by a rule nobody reading the
+// file can see. The person's write proves these two hold data, and the run's
+// and the minter's reads of the caps family prove the refusals are this
+// subtree's rule and not an empty database's.
+func TestRunTokenCannotWritePlanOrBacklogNode(t *testing.T) {
+	const planFolder = "orchestrator-graph-estimates"
+	plan := mustPlanPath(t, planFolder)
+	backlog := mustOrchPath(t, orchestrator.PathBacklog)
+	plans := mustOrchPath(t, orchestrator.PathPlans)
+	planItem := plan + "/work_items/wi-x0"
+	backlogItem := backlog + "/work_items/wi-b1"
+
+	h := newHarness(t)
+	h.seed(leased(2 * usd))
+	alice, run := h.phone(mbAlice), h.run("aurora", "r1")
+	minted := h.minter("svc-minter-1")
+	// Each of the three reaches a family the rules do grant it, so the refusals
+	// below are refusals of these nodes rather than of a database that denies
+	// everything.
+	h.mustRead(alice, budget.PathCapsGlobal)
+	h.mustRead(run, budget.PathCapsGlobal)
+	h.mustRead(minted, budget.PathCapsGlobal)
+
+	// The person's own credential, over IAM: the harness's admin client is that
+	// path, and it is the only writer these two nodes have. What it leaves is
+	// what the readers below read and the writers below are refused.
+	h.set(plan, map[string]any{"schema_version": 4, "agent_id": orchID, "role": "orchestrator", "work_items": []any{}})
+	h.set(backlog, map[string]any{"schema_version": 4, "agent_id": orchID, "role": "orchestrator", "work_items": []any{}})
+	h.set(planItem, map[string]any{"id": "wi-x0", "phase": "queued"})
+	h.set(backlogItem, map[string]any{"id": "wi-b1", "phase": "queued"})
+	h.wantValue(planItem+"/phase", `"queued"`)
+	h.wantValue(backlogItem+"/phase", `"queued"`)
+
+	// The signed-in person reads both nodes, their parent and the items in
+	// them: the grant is at the subtree, so a read of a plan's node or the
+	// backlog's is admitted exactly as a read of the state node is.
+	for _, p := range []string{plans, plan, planItem, backlog, backlogItem} {
+		h.mustRead(alice, p)
+	}
+	// A run's token and a token the launcher's minter made are not readers of
+	// them: these are the daemon's state, not a family a run may read.
+	for _, p := range []string{plans, plan, planItem, backlog, backlogItem} {
+		h.mustReadDenied(run, p)
+		h.mustReadDenied(minted, p)
+	}
+
+	// The phone whose own `mu` claim is the person's, and the same claim on a
+	// token the minter made: the first is the identity a paired phone carries
+	// and the second is the shape a forged "write own" claim would take, and
+	// both are readers of this subtree and neither is a writer of it.
+	forged := h.as(claims{mu: mbAlice, fp: "-"})
+	h.mustRead(forged, planItem)
+
+	for _, c := range []struct {
+		who    string
+		client *rtdb.Client
+		write  func() map[string]any
+	}{
+		{"a run's token", run, func() map[string]any { return put(plan, map[string]any{"schema_version": 4}) }},
+		{"a run's token", run, func() map[string]any { return put(planItem+"/phase", "running") }},
+		{"a run's token", run, func() map[string]any { return put(backlog, map[string]any{"schema_version": 4}) }},
+		{"a run's token", run, func() map[string]any { return put(backlogItem+"/phase", "running") }},
+		{"a run's token", run, func() map[string]any { return map[string]any{planItem: nil} }},
+		{"a run's token", run, func() map[string]any { return map[string]any{backlogItem: nil} }},
+		{"a minter-minted token", minted, func() map[string]any { return put(planItem+"/phase", "running") }},
+		{"a minter-minted token", minted, func() map[string]any { return put(backlogItem+"/phase", "running") }},
+		{"a mailbox consumer's token", h.consumer(mbAlice), func() map[string]any { return put(planItem+"/phase", "running") }},
+		{"a pairing session's token", h.pairing(pairUid), func() map[string]any { return put(backlog, map[string]any{"schema_version": 4}) }},
+		{"a token of an account with no device node", h.unpaired(mbBob), func() map[string]any { return put(backlogItem+"/phase", "running") }},
+		{"the phone's own token", alice, func() map[string]any { return put(planItem+"/phase", "running") }},
+		{"a minted token carrying the person's own mu claim", forged, func() map[string]any { return put(backlogItem+"/phase", "running") }},
+	} {
+		h.mustDeny(c.client, c.who+" writing the plan or the backlog node", c.write())
+	}
+	// And nothing the person's write left behind moved.
+	h.wantValue(planItem+"/phase", `"queued"`)
+	h.wantValue(backlogItem+"/phase", `"queued"`)
 }

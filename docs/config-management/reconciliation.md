@@ -19,7 +19,7 @@ project config** — a sentence it prints and exits on — so the figures below
 are counted from the registry in this tree through the same predicate the write path uses, which is
 what the guard at the end of this section re-runs.
 
-- **F1 — the registry is 480 rows and the generic writer carries 206 of them.** 118 by name
+- **F1 — the registry is 481 rows and the generic writer carries 206 of them.** 118 by name
   (`internal/cli/settings_set.go:117`), made of the thirteen §4.4 names (the four budget scalars,
   `base_branch`, `max_parallel`, `update_check`, `commit_name`, `commit_email`, `layer.default_profile`,
   and D873's three account keys — `default_claude_account`, `claude_account_auto` and the wildcard
@@ -113,7 +113,7 @@ what the guard at the end of this section re-runs.
   (F23, because the node's `credentials` member is the cascade while this file's `credentials` is the
   list of typed credentials; the policy layer's own six `credentials.*` rows stay, one per layer) and
   the three lists of the `node_removals` record that states an explicit unset (F22, D2607) — and all
-  nine name the `accounts` family (D2613), so the rows without a generic writer are nine more for them. The merge judge's two crafts rows and the later M1, M2 and N3 rows, all of them without a generic writer, bring the registry to 478 and the rows without one to 272. R1 of docs/orchestrator-graph-estimates/ moved it once more, by two rows to 480 and by none: the orchestrator's switch `orchestrator_enabled` (D2701, D2739) and the project's issue adapter `issue_sync` (D2733) are top-level keys of the published policy node and of nothing else, so `policy` is the whole of their Layers; both name the `project` family — the family whose command is the node's door, so the generic path refuses them in its name rather than writing them somewhere they do not live — and neither a name nor a prefix in the allowlist reaches them.
+  nine name the `accounts` family (D2613), so the rows without a generic writer are nine more for them. The merge judge's two crafts rows and the later M1, M2 and N3 rows, all of them without a generic writer, bring the registry to 478 and the rows without one to 272. R1 of docs/orchestrator-graph-estimates/ moved it once more, by two rows to 480 and by none: the orchestrator's switch `orchestrator_enabled` (D2701, D2739) and the project's issue adapter `issue_sync` (D2733) are top-level keys of the published policy node and of nothing else, so `policy` is the whole of their Layers; both name the `project` family — the family whose command is the node's door, so the generic path refuses them in its name rather than writing them somewhere they do not live — and neither a name nor a prefix in the allowlist reaches them. W of docs/rigor-command adds the wizard's `rigor_pending` row, which the generic path does not carry either, and brings them to 481 and 275.
 - **F2 — `fugaro rigor` does not exist.** There is no `newRigorCmd` in `internal/cli`, no `rigor` cobra
   command and no `floor` subcommand, while the registry names `rigor` (`internal/settings/registry.go:266`)
   and `rigor floor` (`:682`) as the owners of keys. Two of the registry's owner strings name a command a

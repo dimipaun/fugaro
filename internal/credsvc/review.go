@@ -183,7 +183,7 @@ type ReviewJobAccount struct {
 // identity's repository by the policy's own admissions (pairReview), which the
 // runner places that job against and piece 2 of C1 carried
 // (TestPairReviewAdmitsTheDefaultAccountWithNoProfiles, and the runner's
-// implicitReviewCandidate for the placement). A profile-less project admits the
+// implicitReviewCandidates for the placement). A profile-less project admits the
 // default account through the accounts block its own publish derives from the
 // repository's claude_accounts, so no row of this table ever admits a caller on
 // its own.

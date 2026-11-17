@@ -129,7 +129,7 @@ func ReadStatedVersion(ctx context.Context, db *rtdb.Client) (int, bool, error) 
 // readNode is the two rules above, up to the bytes: the marker gate shared by
 // Read, ReadCarriedForward and ReadCarriedForwardShapeFree.
 func readNode(ctx context.Context, db *rtdb.Client) (json.RawMessage, bool, error) {
-	gen, err := rulesGeneration(ctx, db)
+	gen, err := RulesGeneration(ctx, db)
 	if err != nil {
 		return nil, false, err
 	}
@@ -158,10 +158,19 @@ func (e *MarkerError) Error() string {
 	return fmt.Sprintf("%s holds %s: it must be the integer generation of the deployed rules, written by fugaro update --firebase-project <gcp-project-id>", PathRulesMarker(), e.Value)
 }
 
-// rulesGeneration reads the deployed security rules' generation. An absent
+// RulesGeneration reads the deployed security rules' generation. An absent
 // marker is generation 0: the pre-policy rules, under which the policy nodes
 // do not exist (the owner's rules deploy has not happened yet, and nothing
 // may halt on that).
+//
+// It is exported beside MarkerHandEdited for a second reader, the run's budget
+// session: which leaves a session may write under a model's day counter is a
+// fact about the deployed document alone, because Realtime Database applies a
+// stage report's multi-path update atomically and one leaf the document does
+// not grant refuses the whole report (spend-accuracy F10). The runner reads
+// the generation here, once, at bootstrap and hands the number to
+// budget.Config, which is where the gate lives (SA5.1, F27); nothing else in a
+// run asks.
 //
 // A *negative* generation is a MarkerError and not a small one. Read asks this
 // function only whether the generation is at least PolicyRulesVersion, so a
@@ -175,7 +184,7 @@ func (e *MarkerError) Error() string {
 // guessed at. The same reading applies to a generation far above RulesVersion:
 // that is a newer installation's marker, and it is at least this one's, so it
 // reads as deployed.
-func rulesGeneration(ctx context.Context, db *rtdb.Client) (int, error) {
+func RulesGeneration(ctx context.Context, db *rtdb.Client) (int, error) {
 	var raw json.RawMessage
 	found, err := db.Get(ctx, PathRulesMarker(), &raw)
 	if err != nil {
@@ -196,7 +205,7 @@ func rulesGeneration(ctx context.Context, db *rtdb.Client) (int, error) {
 
 // MarkerHandEdited reports whether the generation a caller has read off
 // config/limits/policyRules is one no deploy writes, which is the value Read
-// refuses as a MarkerError (rulesGeneration's doc has the argument: a negative
+// refuses as a MarkerError (RulesGeneration's doc has the argument: a negative
 // generation would otherwise answer "no policy here" and take a project-centric
 // installation's published policy out of every run's reach).
 //
