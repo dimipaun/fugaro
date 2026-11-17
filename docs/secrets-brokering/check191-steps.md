@@ -5,7 +5,8 @@
 2026-11-17, on CLI **0.25.0**, every row it can measure before the flip PASSED, recorded in the
 register's "Check 191" section (exit `2`: `review-run` is the row the run could not measure, while the
 `--after-flip` rows and the `--dry-run` row are rows it never reaches — the register says what each of
-them is). **Check 192 has not been run**, and it runs on the
+them is). **Check 192 has not been run**, and it runs on the release that carries the flip — **0.26.0**,
+since a build without the flip has none of the rows it reads. Check 191 runs on the
 **released** build whose **runner** carries the proxy — **0.22.0**. The plan's Levels table gives the proxy chain
 0.15.0, which has no proxy to measure, and 0.21.0 is the first tag that holds the service's half
 (`internal/credsvc/bitbucketproxy.go` landed 2026-11-07) — but it was cut **without** the runner's,
