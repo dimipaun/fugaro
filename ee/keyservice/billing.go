@@ -51,7 +51,9 @@ import (
 // subscription object that no event this path stores carries, so a mirror that
 // answered one of them would be this service guessing at Paddle's word from a
 // date. A subscription that reads `active` here and has stopped renewing is one
-// whose term has run out, and what says so is `renews_at` being null.
+// whose term has run out, and what says so is `renews_at` being null — the term
+// running out is a date and not a cancellation, so `canceled` is answered only
+// where a cancellation was recorded.
 const (
 	subscriptionStateActive   = "active"
 	subscriptionStateCanceled = "canceled"
@@ -267,16 +269,19 @@ func (s *Service) mirror(ctx context.Context, workspace WireWorkspace, sub Subsc
 		answer.RenewsAt = &renews
 		return answer, nil
 	}
-	// Nothing renews it, which is one of the two states the records tell apart:
-	// a cancellation was recorded (P4.2's `cancellation`), or the paid term ran
-	// out and nothing followed it. Either way the customer keeps the term they
-	// paid for until it ends, which is what `ends_at` states — and the
-	// cancellation's own instant is a different fact, so it is set only where one
-	// was recorded.
-	answer.State = subscriptionStateCanceled
+	// Nothing renews it, and the records give two different reasons for that —
+	// which are two different facts and only one of them is a word Paddle said.
+	// A cancellation was recorded (P4.2's `cancellation`): `canceled` is the
+	// merchant's own word for that subscription and the store's last event is the
+	// instant it happened. Or the paid term ran out and nothing followed it, which
+	// is **not** a cancellation — nothing said `canceled`, so the state stays what
+	// Paddle last said and the dates are what state the term is over: `renews_at`
+	// null, `ends_at` at the end of the term it paid for. Either way the customer
+	// keeps that term until it ends.
 	ends := sub.Expires
 	answer.EndsAt = &ends
 	if sub.Cancelled {
+		answer.State = subscriptionStateCanceled
 		cancelled := sub.At
 		answer.CancelledAt = &cancelled
 	}

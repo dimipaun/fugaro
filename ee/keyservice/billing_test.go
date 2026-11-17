@@ -44,6 +44,12 @@ const billingSeats = 3
 // seeded one price in both places could not tell which of the two it read.
 const soldPrice = "pri_fixture_team_annual"
 
+// lapsedProject is the project of the workspace whose subscription's paid term
+// ran out without a cancellation, which is the second of the two ways these
+// records stop renewing a subscription. It is a project of its own because a
+// workspace is bound to one and the case is about a workspace of its own.
+const lapsedProject = "lapsed-portal"
+
 // The three routes of this area, as the screen builds them.
 func subscriptionPath(workspaceID string) string {
 	return "/api/workspaces/" + workspaceID + "/subscription"
@@ -282,6 +288,30 @@ func TestBuySeatsUpdatesTheQuantity(t *testing.T) {
 	// (S2.1), so a change here is a customer charged for seats this service never
 	// licences — and the screen offers the form to anyone who holds a
 	// subscription, so the rule is the service's rather than the form's.
+	// The other reason nothing renews a subscription, and it is not the same
+	// fact: the paid term ran out and no cancellation was ever recorded. That is
+	// not a word Paddle said, so the state stays what the merchant last said and
+	// the dates are what state the term is over — the two cases stand beside each
+	// other because telling them apart is the whole of what these records can do.
+	lapsed := f.paidWorkspace(t, org.ID, "ws-3", lapsedProject, "sub-lapsed", 1, f.now.Add(-2*time.Hour), false)
+	read = f.apiAsCaller(http.MethodGet, subscriptionPath(lapsed.ID), "")
+	if read.Code != http.StatusOK {
+		t.Fatalf("reading the subscription whose term ran out answered %d: %s", read.Code, read.Body)
+	}
+	over := readAnswer[WireSubscription](f.fixture, read)
+	if over.State != subscriptionStateActive {
+		t.Errorf("a subscription whose term ran out reads as %q, want the %q Paddle last said: nothing cancelled it", over.State, subscriptionStateActive)
+	}
+	if over.RenewsAt != nil {
+		t.Errorf("a subscription whose term ran out renews at %v, want nothing", over.RenewsAt)
+	}
+	if over.EndsAt == nil || !over.EndsAt.Equal(f.now.Add(-2*time.Hour)) {
+		t.Errorf("a subscription whose term ran out ends at %v, want the end of the term it paid for", over.EndsAt)
+	}
+	if over.CancelledAt != nil {
+		t.Errorf("a subscription whose term ran out was cancelled at %v, want nothing: no cancellation was recorded", over.CancelledAt)
+	}
+
 	notRenewing := f.apiAsCaller(http.MethodPost, seatsPath(gone.ID), `{"seats":4}`)
 	if notRenewing.Code != http.StatusConflict {
 		t.Fatalf("buying seats on a subscription that is not renewing answered %d: %s", notRenewing.Code, notRenewing.Body)
