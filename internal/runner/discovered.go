@@ -29,10 +29,12 @@ import (
 const discoveredFile = "discovered.json"
 
 // maxDiscoveredFileBytes bounds how much of the agent's file is read. What the
-// record carries is at most runstore.MaxDiscoveredItems entries of
-// runstore.MaxDiscoveredText runes in each list, a few KiB, so a file this
-// size is already far more than any block the brief asks for; a bigger one is
-// cut off and read as the malformed file it then is.
+// record can carry is at most runstore.MaxDiscoveredItems entries of
+// runstore.MaxDiscoveredText runes in each list — a few KiB — so a file this
+// size is already far more than any block the brief asks for, and everything
+// past the cut is not read at all: the object is decoded from the first
+// maxDiscoveredFileBytes bytes, and an object the cut lands in the middle of
+// fails to decode and is dropped like any other file no reader can use.
 const maxDiscoveredFileBytes = 64 << 10
 
 // copyDiscovered reads what the run's agent wrote about the graph and puts it
