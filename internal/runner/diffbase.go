@@ -365,6 +365,14 @@ type ownRange struct {
 // more. The record keeps it, so the record and the stop cannot disagree about
 // what a reviewer was handed.
 //
+// A run that skipped implement has no comparison to take again: it has no
+// implement set for the range to be compared with, so its record says the
+// comparison does not apply and is never a mismatch (reviewScopeSkippedImplement,
+// T5.2), and a not-applicable scope never halts (T7.3). Reading one over the
+// range the round reads would replace that reason with the range-moved
+// mismatch the stop halts on, for a run whose record never claimed the range
+// was its own commits.
+//
 // A comparison that cannot be read hands nothing to the stop and leaves the
 // record alone: an absent comparison is never an empty one (G5), and the
 // record's own describes a range the round is not reading.
@@ -373,6 +381,9 @@ func (r *run) reviewScopeNow(ctx context.Context, nb, rev string) *runstore.Revi
 		return nil
 	}
 	if nb == "" || rev == nb || r.rec.ReviewScope == nil {
+		return r.rec.ReviewScope
+	}
+	if r.reviewScopeSkippedImplement() != "" {
 		return r.rec.ReviewScope
 	}
 	now := r.readReviewScope(ctx, ownRange{Base: nb, Narrow: true})
