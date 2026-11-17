@@ -96,6 +96,40 @@ func addresses(plan map[string]plannedResource) []string {
 	return out
 }
 
+// orchestratorBlock is the installation root's var.orchestrator as an operator's
+// own tfvars would carry it: the account and the two names of its token-minter
+// row (P5.1b), and the service, its released pin, the database its process reads
+// this installation's node out of, and the tick's two names (P5.1c). Every test
+// that plans an installation with a resident orchestrator uses this one block,
+// so "the opt-in" is one shape and a test cannot pass by opting into something
+// narrower than another test reads.
+//
+// The image is this run's fixture registry and the recorded owner, in the
+// released pin's closed shape — `us-east5-docker.pkg.dev/proj-1234/
+// fugaro-ghcr/dimipaun/fugaro-<kind>:<version>@sha256:<64 hex>` — which is what
+// internal/infra/tf's cover holds a service's image to (credentialsImageOK).
+// An image the cover refuses would make every plan below ask its own
+// confirmation, and the point of these tests is the rows the opt-in adds.
+// orchestratorImageOwner is the GitHub owner the fixture installation's base
+// images come from, which is the owner a pin through the pull-through
+// repository must name (internal/cli's baseOwner, cover.go's pinOK — the same
+// "dimipaun" the release pins and the golden tfvars spell).
+const orchestratorImageOwner = "dimipaun"
+
+func orchestratorBlock(t *testing.T, spec InstallationSpec, fp string) map[string]any {
+	t.Helper()
+	return map[string]any{
+		"account_id":        OrchestratorAccountID,
+		"firebase_project":  fp,
+		"signer_account_id": SignerAccountID,
+		"service":           "fugaro-orchestrator",
+		"image":             "us-east5-docker.pkg.dev/" + spec.Project + "/fugaro-ghcr/" + orchestratorImageOwner + "/fugaro-base:1.2.3@sha256:" + strings.Repeat("ab", 32),
+		"rtdb_url":          "https://" + fp + "-default-rtdb.firebaseio.com",
+		"scheduler_job":     "fugaro-orchestrator-tick",
+		"scheduler_region":  spec.Region,
+	}
+}
+
 // TestOrchestratorTurnedOffPlansAsTheGoldenDoes is the update's own promise:
 // the installation root's plan for an installation that passes no orchestrator
 // block is the plan the committed golden holds, address for address. The golden
@@ -145,11 +179,7 @@ func TestOrchestratorGrantsAreTheDesignsTableRows(t *testing.T) {
 	member := "serviceAccount:" + OrchestratorAccountID + "@" + spec.Project + ".iam.gserviceaccount.com"
 
 	_, off := installationPlan(t, spec)
-	plan, on := installationPlanWith(t, spec, map[string]any{"orchestrator": map[string]any{
-		"account_id":        OrchestratorAccountID,
-		"firebase_project":  fp,
-		"signer_account_id": SignerAccountID,
-	}})
+	plan, on := installationPlanWith(t, spec, map[string]any{"orchestrator": orchestratorBlock(t, spec, fp)})
 
 	const (
 		accountAddr = "module.installation.google_service_account.orchestrator[0]"
@@ -157,8 +187,16 @@ func TestOrchestratorGrantsAreTheDesignsTableRows(t *testing.T) {
 		writeRow    = "module.installation.google_storage_bucket_iam_member.orchestrator_runs_launcher[0]"
 		readRow     = "module.installation.google_storage_bucket_iam_member.orchestrator_runs_reader[0]"
 		minterRow   = "module.installation.google_service_account_iam_member.orchestrator_token_minter[0]"
+		// The service and its tick (mobile plan task P5.1c; the design's
+		// section 4.1). They are rows of the opt-in and not of section 4.3's
+		// table: they hold no grant for the account, and the two grants among
+		// them are made TO the installation's scheduler account — the one
+		// principal outside this module that may reach the service.
+		serviceAddr = "module.installation.google_cloud_run_v2_service.orchestrator[0]"
+		invokerAddr = "module.installation.google_cloud_run_v2_service_iam_member.orchestrator_invoker[0]"
+		tickAddr    = "module.installation.google_cloud_scheduler_job.orchestrator_tick[0]"
 	)
-	want := []string{accountAddr, launcherRow, writeRow, readRow, minterRow}
+	want := []string{accountAddr, launcherRow, writeRow, readRow, minterRow, serviceAddr, invokerAddr, tickAddr}
 	for key := range spec.ProjectJobs {
 		want = append(want, `google_cloud_run_v2_job_iam_member.orchestrator_runner["`+key+`"]`)
 	}
@@ -281,7 +319,18 @@ func TestOrchestratorGrantsAreTheDesignsTableRows(t *testing.T) {
 	// installation's own opt-in into a question the owner has to answer item by
 	// item. Other rows of this plan may legitimately be refused (the store's own
 	// test says so), so what is asserted is that none of them is this account's.
-	for _, item := range theRunsConfirmation(t, spec).NotCovered(plan, nil) {
+	//
+	// The cover is the run's own with the recorded owner written in: the run
+	// reads that owner out of the local config's image_source, and the fixture
+	// the shared helper parses predates the field, so its cover belongs to an
+	// installation whose base images have no owner — and an empty owner refuses
+	// every reference through the pull-through repository (cover.go's pinOK),
+	// which would refuse this plan's service for a reason the installation
+	// above does not have. The fixture's own M5 additions and the golden tfvars
+	// name the same owner the block above does.
+	cover := theRunsConfirmation(t, spec)
+	cover.Owner = orchestratorImageOwner
+	for _, item := range cover.NotCovered(plan, nil) {
 		if strings.Contains(item, OrchestratorAccountID) || strings.Contains(item, "orchestrator") {
 			t.Errorf("the run's one confirmation refuses the resident orchestrator: %s\nsection 4.3's rows are what the run's own review screen admits, and `fugaro update` creating them must not ask its own question about them", item)
 		}
