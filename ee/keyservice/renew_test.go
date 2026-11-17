@@ -1148,13 +1148,18 @@ func TestRenewalStopsWhenTheEntitlementEnds(t *testing.T) {
 
 // TestCompedKeysRenewOnlyWithinTheirTerm: F27 — a comped key's successor is
 // measured to the end of the licence's own term and never past it, and a licence
-// whose term has run out renews nothing at all. A comped licence is the one no
-// subscription pays for — the free seat, an operations grant, a reseller's — so
-// the whole of "it runs" is its own `ends_at`, and that is also the end its keys'
-// days are counted to. Measured by the row alone, the days asked for here are the
-// key's own end plus a whole year, half of them past the free seat's end: what a
-// comped holder would then be handed is a term nobody granted, renewed for as
-// long as the job keeps asking.
+// whose term has run out renews nothing at all. A comped licence with a term — an
+// operations grant, a reseller's sale — is one no subscription pays for, so the
+// whole of "it runs" is its own `ends_at`, and that is also the end its keys' days
+// are counted to. Measured by the row alone, the days asked for here are the key's
+// own end plus a whole year, half of them past the grant's end: what its holder
+// would then be handed is a term nobody granted, renewed for as long as the job
+// keeps asking.
+//
+// The licence is an operations grant and not the free seat the sign-up writes,
+// because the free seat is the one comped licence whose `ends_at` states nothing
+// (D2184): its own case is TestAFreeSeatRenewsPastItsFirstYear, where the year on
+// the record is taken as the bookkeeping it is.
 func TestCompedKeysRenewOnlyWithinTheirTerm(t *testing.T) {
 	spy := &v1Spy{}
 	f := newBindingFixtureWith(t, func(f *fixture) {
@@ -1162,17 +1167,24 @@ func TestCompedKeysRenewOnlyWithinTheirTerm(t *testing.T) {
 		f.deps.MintsV1 = spy
 	})
 	org := f.signedUp(danaUID, danaEmail, "Dana Ltd")
-	seat := f.onlyEntitlement(t, org.ID)
-	if rec := f.bind(t, seat.ID, exampleProject); rec.Code != http.StatusOK {
-		t.Fatalf("binding the free seat answered %d: %s", rec.Code, rec.Body)
+	// The sign-up's own seat, rewritten as the operations grant it is here: the
+	// row stays the free seat's, which is what leaves every other number in this
+	// case (the year, D2202's thirty days) as it was, and what the renewal reads is
+	// the source and the term — an operations grant is a licence whose `ends_at` is
+	// the end F27 gates on (D2184's free seat is the one that is not).
+	grant := f.onlyEntitlement(t, org.ID)
+	grant.Source = entitlementSourceOperations
+	f.seed(entitlementsCollection, grant.ID, grant)
+	if rec := f.bind(t, grant.ID, exampleProject); rec.Code != http.StatusOK {
+		t.Fatalf("binding the operations grant answered %d: %s", rec.Code, rec.Body)
 	}
 	if len(f.mints.answers) != 1 {
-		t.Fatalf("the binding minted %d key(s), want the one the free seat's installation runs", len(f.mints.answers))
+		t.Fatalf("the binding minted %d key(s), want the one the grant's installation runs", len(f.mints.answers))
 	}
 	held := f.mints.answers[0]
 	row, known := DefaultPolicy(held.Record.Plan)
 	if !known {
-		t.Fatalf("the free seat's key was minted from the row %q, which is not in the policy table", held.Record.Plan)
+		t.Fatalf("the grant's key was minted from the row %q, which is not in the policy table", held.Record.Plan)
 	}
 	// D2202: the key itself runs the thirty days a connected key runs, while the
 	// record it leaves stands for the whole year the licence granted — which is
@@ -1180,25 +1192,25 @@ func TestCompedKeysRenewOnlyWithinTheirTerm(t *testing.T) {
 	if want := f.now.Add(maxKeyTerm(row)); !held.Record.Expires.Equal(want) {
 		t.Fatalf("the bound key ends at %s, want %s: a connected key runs %s whatever the licence behind it is granted for (D2202)", held.Record.Expires, want, maxKeyTerm(row))
 	}
-	if want := daysBetween(f.now, seat.EndsAt); held.Record.TermDays != want {
-		t.Fatalf("the bound key's record stands for %d day(s), want the %d of the free seat's year (D2202)", held.Record.TermDays, want)
+	if want := daysBetween(f.now, grant.EndsAt); held.Record.TermDays != want {
+		t.Fatalf("the bound key's record stands for %d day(s), want the %d of the grant's year (D2202)", held.Record.TermDays, want)
 	}
 
 	at := f.inTheRenewalWindow(t, held.Record.KeyID)
 	rec := f.call(RouteRenew, RenewalCall{KeyID: held.Record.KeyID, WorkspaceID: exampleProject, RenewalSecret: held.RenewalSecret})
 	if rec.Code != http.StatusOK {
-		t.Fatalf("the free seat's key was answered %d (%q), want its successor", rec.Code, rec.Body.String())
+		t.Fatalf("the grant's key was answered %d (%q), want its successor", rec.Code, rec.Body.String())
 	}
 	answer := answerOf(t, rec)
 	if answer.Key == "" {
-		t.Fatalf("the free seat's key was answered %+v, want a successor: a comped licence renews while it runs (F27)", answer)
+		t.Fatalf("the grant's key was answered %+v, want a successor: a comped licence renews while it runs (F27)", answer)
 	}
 	if len(spy.asked) != 1 {
-		t.Fatalf("the minter was asked %d time(s), want the free seat's one successor", len(spy.asked))
+		t.Fatalf("the minter was asked %d time(s), want the grant's one successor", len(spy.asked))
 	}
-	rest := daysBetween(at, seat.EndsAt)
+	rest := daysBetween(at, grant.EndsAt)
 	if got := spy.asked[0].TermDays; got != rest {
-		t.Errorf("the successor was asked for %d day(s), want the %d the free seat has left: a comped key renews inside the licence's term and never a period of its own (F27)", got, rest)
+		t.Errorf("the successor was asked for %d day(s), want the %d the grant has left: a comped key renews inside the licence's term and never a period of its own (F27)", got, rest)
 	}
 	claims, state, err := licence.Verify([]byte(answer.Key), f.now, f.ring, exampleProject)
 	if err != nil {
@@ -1207,38 +1219,150 @@ func TestCompedKeysRenewOnlyWithinTheirTerm(t *testing.T) {
 	if state != licence.Active {
 		t.Fatalf("the successor reads %s at the instant it was minted, want active", state)
 	}
-	if claims.PaidThrough.After(seat.EndsAt) {
-		t.Errorf("the successor runs to %s, past the free seat's own end %s: a comped key renews inside the licence's term and never a period of its own (F27)", claims.PaidThrough, seat.EndsAt)
+	if claims.PaidThrough.After(grant.EndsAt) {
+		t.Errorf("the successor runs to %s, past the grant's own end %s: a comped key renews inside the licence's term and never a period of its own (F27)", claims.PaidThrough, grant.EndsAt)
 	}
 	successor := f.issuance(t, claims.KeyID)
-	if successor.EntitlementID != seat.ID {
-		t.Errorf("the successor names the licence %q, want the free seat's %q: a successor is a key of the licence it renews (P3.6)", successor.EntitlementID, seat.ID)
+	if successor.EntitlementID != grant.ID {
+		t.Errorf("the successor names the licence %q, want the grant's %q: a successor is a key of the licence it renews (P3.6)", successor.EntitlementID, grant.ID)
 	}
 	if successor.TermDays != rest {
-		t.Errorf("the successor's record stands for %d day(s), want the %d left of the free seat, so that the term after it is the next renewal's and not this one's (F27)", successor.TermDays, rest)
+		t.Errorf("the successor's record stands for %d day(s), want the %d left of the grant, so that the term after it is the next renewal's and not this one's (F27)", successor.TermDays, rest)
 	}
 
 	// Nothing at all once the licence's own term is over, and the ask below is
-	// inside the window the successor's own `paid_through` opens: the free seat is
-	// cut short here — operations ending a comped seat before its year is out — so
-	// that what has run out is the licence and not the key's calendar.
-	ended := seat
+	// inside the window the successor's own `paid_through` opens: the grant is cut
+	// short here — operations ending one before its year is out — so that what has
+	// run out is the licence and not the key's calendar.
+	ended := grant
 	ended.EndsAt = f.now.Add(2 * day)
-	f.seed(entitlementsCollection, seat.ID, ended)
+	f.seed(entitlementsCollection, grant.ID, ended)
 	f.advance(maxKeyTerm(row) - time.Duration(row.RenewBeforeDays)*day)
 	rec = f.call(RouteRenew, RenewalCall{KeyID: claims.KeyID, WorkspaceID: exampleProject, RenewalSecret: answer.RenewalSecret})
 	if rec.Code != http.StatusOK {
-		t.Fatalf("an ended seat's key was answered %d, want the holder's own answer", rec.Code)
+		t.Fatalf("an ended grant's key was answered %d, want the holder's own answer", rec.Code)
 	}
 	answer = answerOf(t, rec)
 	if answer.Key != "" || answer.RenewalSecret != "" || answer.NewerKey {
-		t.Errorf("an ended seat's key was answered %+v, want its own state and no key: the licence that would renew it has run out (F27)", answer)
+		t.Errorf("an ended grant's key was answered %+v, want its own state and no key: the licence that would renew it has run out (F27)", answer)
 	}
 	if answer.Status != StatusOK {
 		t.Errorf("the answer reads %q, want %q: the successor runs to its own end", answer.Status, StatusOK)
 	}
 	if got := spy.minted(); got != 1 {
-		t.Errorf("the minter was asked for %d key(s) in all, want the free seat's one successor and nothing after the licence ended", got)
+		t.Errorf("the minter was asked for %d key(s) in all, want the grant's one successor and nothing after the licence ended", got)
+	}
+}
+
+// TestAFreeSeatRenewsPastItsFirstYear: D2184 and F27 — the free seat is the one
+// grant given for as long as the organisation exists, so the year its record ends
+// at is bookkeeping and not a term. Nothing ever moves it on: it is written once,
+// by the sign-up, and the merchant writes an end only for a purchase. Read as a
+// term, that year would stop every free-seat installation renewing about a year
+// after sign-up, and — the key in hand running D2202's thirty days — leave the
+// customer dark a month later with nothing about the money changed. What ends a
+// free seat is the status: a paid grant superseding it in the organisation, or the
+// licensor withdrawing it (D2203, F29).
+//
+// What its successors are measured from is the row's own period, which is how the
+// binding of a free seat measures the key the installation starts with
+// (`bindEntitlement` hands the minter the row's term and the record's end, and for
+// this row the record's end is stale): a whole period from now, at both instants
+// below.
+func TestAFreeSeatRenewsPastItsFirstYear(t *testing.T) {
+	spy := &v1Spy{}
+	f := newBindingFixtureWith(t, func(f *fixture) {
+		spy.inner = Minter{Signer: f.signer, Keys: f.keys, Environment: f.env, Now: f.clock}
+		f.deps.MintsV1 = spy
+	})
+	org := f.signedUp(danaUID, danaEmail, "Dana Ltd")
+	seat := f.onlyEntitlement(t, org.ID)
+	if seat.Source != entitlementSourceFreeSeat {
+		t.Fatalf("the sign-up wrote the licence %q, want the free seat: this case is about the one grant that runs while the organisation does (D2184, D2199)", seat.Source)
+	}
+	if rec := f.bind(t, seat.ID, exampleProject); rec.Code != http.StatusOK {
+		t.Fatalf("binding the free seat answered %d: %s", rec.Code, rec.Body)
+	}
+	held := f.mints.answers[0]
+	row, known := DefaultPolicy(held.Record.Plan)
+	if !known {
+		t.Fatalf("the free seat's key was minted from the row %q, which is not in the policy table", held.Record.Plan)
+	}
+	year := daysBetween(f.now, f.now.Add(row.Term))
+
+	// Inside the free seat's first year, at the first key's own window: the
+	// successor stands the row's whole period and not the days the record has left,
+	// because the day the record ends at is not an end its keys may not outlive.
+	at := f.inTheRenewalWindow(t, held.Record.KeyID)
+	answer := answerOf(t, f.call(RouteRenew, RenewalCall{KeyID: held.Record.KeyID, WorkspaceID: exampleProject, RenewalSecret: held.RenewalSecret}))
+	if answer.Key == "" {
+		t.Fatalf("the free seat's key was answered %+v, want a successor: the licence runs while the organisation does (D2184)", answer)
+	}
+	if got := spy.asked[0].TermDays; got != year {
+		t.Errorf("the successor was asked for %d day(s), want the row's whole %d: the free seat is measured by its row's period and never by the year its record ends at (F27)", got, year)
+	}
+	mintedClaims, mintedState, err := licence.Verify([]byte(answer.Key), f.now, f.ring, exampleProject)
+	if err != nil {
+		t.Fatalf("the successor does not verify: %v", err)
+	}
+	if mintedState != licence.Active {
+		t.Fatalf("the successor reads %s at the instant it was minted, want active", mintedState)
+	}
+	first := f.issuance(t, mintedClaims.KeyID)
+	if first.TermDays != year {
+		t.Errorf("the successor's record stands for %d day(s), want the row's %d (D2202)", first.TermDays, year)
+	}
+	if want := at.Add(maxKeyTerm(row)); !first.Expires.Equal(want) {
+		t.Errorf("the successor runs to %s, want %s: a connected key runs %s whatever the row behind it stands for (D2202)", first.Expires, want, maxKeyTerm(row))
+	}
+
+	// A year on, past the instant the sign-up's record ends at, and the ask is the
+	// one the installation has made every month of that year: it is answered a key,
+	// and that key runs past the stale year.
+	f.advance(seat.EndsAt.Sub(f.now) + day)
+	answer = answerOf(t, f.call(RouteRenew, RenewalCall{KeyID: first.KeyID, WorkspaceID: exampleProject, RenewalSecret: answer.RenewalSecret}))
+	if answer.Key == "" {
+		t.Fatalf("the free seat's key was answered %+v a year after the sign-up, want a successor: the year on the record is not an end of the licence, and a licence read as ended here goes dark a month later while the organisation is alive and paying nothing (D2184, F27)", answer)
+	}
+	if got := spy.asked[1].TermDays; got != year {
+		t.Errorf("the successor a year on was asked for %d day(s), want the row's whole %d: the free seat's term is its row's period and the year on the record is not the end its keys are counted to (F27)", got, year)
+	}
+	claims, state, err := licence.Verify([]byte(answer.Key), f.now, f.ring, exampleProject)
+	if err != nil {
+		t.Fatalf("the successor does not verify: %v", err)
+	}
+	if state != licence.Active {
+		t.Fatalf("the successor reads %s at the instant it was minted, want active", state)
+	}
+	if !claims.PaidThrough.After(seat.EndsAt) {
+		t.Errorf("the successor runs to %s, inside the year the record ends at %s: a free seat's key is good for its own term however long ago the record's year passed (D2202, D2184)", claims.PaidThrough, seat.EndsAt)
+	}
+	second := f.issuance(t, claims.KeyID)
+	if second.EntitlementID != seat.ID {
+		t.Errorf("the successor names the licence %q, want the free seat's %q: a successor is a key of the licence it renews (P3.6)", second.EntitlementID, seat.ID)
+	}
+
+	// The status is the one thing that ends a free seat, and the refusal below is
+	// read off it: the grant a paid purchase supersedes is not active (D2203), so
+	// its keys are answered their own state and handed nothing — while the same key
+	// at the same instant, with the status left alone, was answered a successor.
+	superseded := seat
+	superseded.Status = entitlementSuperseded
+	f.seed(entitlementsCollection, seat.ID, superseded)
+	f.advance(maxKeyTerm(row) - time.Duration(row.RenewBeforeDays)*day)
+	rec := f.call(RouteRenew, RenewalCall{KeyID: second.KeyID, WorkspaceID: exampleProject, RenewalSecret: answer.RenewalSecret})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("a superseded free seat's key was answered %d (%q), want the holder's own answer", rec.Code, rec.Body.String())
+	}
+	refused := answerOf(t, rec)
+	if refused.Key != "" || refused.RenewalSecret != "" || refused.NewerKey {
+		t.Errorf("a superseded free seat's key was answered %+v, want its own state and no key: a paid grant replaced the licence and that is what ends it (D2203, F27)", refused)
+	}
+	if refused.Status != StatusOK {
+		t.Errorf("the answer reads %q, want %q: the key runs to its own end", refused.Status, StatusOK)
+	}
+	if got := spy.minted(); got != 2 {
+		t.Errorf("the minter was asked for %d key(s) in all, want the two successors of the live licence and nothing after the paid grant superseded it", got)
 	}
 }
 

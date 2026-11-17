@@ -281,7 +281,40 @@ func (s *Service) status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.sight(r.Context(), call.KeyID)
-	writeAnswer(w, Answer{Status: key.status(), NewerKey: key.rotated})
+	// Whether a newer key exists is the rotation's own record **and** the handover
+	// the store holds for this key (D2200). A reissue under the licence — a seat
+	// change, the merchant's own renewal — writes the handover and no `rotation:`
+	// record beside it, so the record walk alone answers `false` for the one key
+	// the job is looking for: it renews inside the key's own window or on this
+	// answer (ee/register's licence_renew), and an installation that never opens
+	// the mail would keep the replaced key until the handover's day had passed —
+	// past which `/renew` mints a second successor beside the licence's newest,
+	// which is the fork the handover is there to prevent.
+	now := s.now()
+	newer, err := s.newerKey(r.Context(), call, now)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeAnswer(w, Answer{Status: key.status(), NewerKey: key.rotated || newer})
+}
+
+// newerKey answers whether the store holds a handover this caller's own secret
+// opens: the successor a lost rotation's answer is kept for, or the one a reissue
+// under the licence left for the key it replaced (D2200). What it is read for is
+// the job's check, which asks whether there is a key to fetch whatever the
+// window says.
+//
+// The digest compared is the handover's and the caller's, the way `answerRotation`
+// compares it: a handover kept for another secret of the same key is not this
+// caller's successor, and a window that reopened for someone else's secret is not
+// one this key's holder is told about.
+func (s *Service) newerKey(ctx context.Context, call RenewalCall, now time.Time) (bool, error) {
+	held, live, err := s.store.Handover(ctx, call.KeyID, now)
+	if err != nil {
+		return false, err
+	}
+	return live && subtle.ConstantTimeCompare([]byte(held.SecretHash), []byte(digest(call.RenewalSecret))) == 1, nil
 }
 
 // renew is §7's endpoint: a holder proves the key's renewal secret and is
@@ -311,7 +344,9 @@ func (s *Service) status(w http.ResponseWriter, r *http.Request) {
 // licence it was minted for still runs, and the licence is the record's own
 // entitlement id (P3.6): renewal reads that licence and asks whether it is
 // active and, where no subscription paid for it, whether its own term has run
-// out. What that replaces is the subscription-only rule D2148 wrote, which could
+// out — except for the free seat, whose term is the organisation's own life and
+// whose record therefore states no end to ask about (D2184). What that replaces
+// is the subscription-only rule D2148 wrote, which could
 // not answer for a licence the checkout never sold — a free seat, a trial, an
 // operations grant — and so renewed a reseller's or a comped key for free for
 // ever. A key whose record names no licence at all is still refused with the
@@ -468,11 +503,23 @@ func (s *Service) renew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The licence's own term, which is the whole of "it runs" for a grant no
-	// subscription pays for: an unexpired operations or reseller term, and the
-	// free seat, whose year runs while the organisation exists (F27). A licence
+	// subscription pays for: an unexpired operations or reseller term. A licence
 	// the checkout sold is read off its subscription below instead, because that
 	// is where the money is stated (D2197).
-	if entitlement.Source != entitlementSourcePurchase && !entitlement.EndsAt.After(now) {
+	//
+	// The free seat is the one comped licence this does not read, and it is read
+	// off the status above instead: D2184 gives it for as long as the organisation
+	// exists, and nothing ever moves its `ends_at` off the year the sign-up wrote
+	// (orgs.go's free seat is the only grant written without an end, and the
+	// merchant writes the field only for a purchase). Read as a term here, that
+	// year would stop every free-seat installation renewing about a year after
+	// sign-up and leave it dark a month later, when D2202's thirty-day key ran
+	// out — the installation of a customer who has paid for nothing and owes
+	// nothing. What ends a free seat is the status: a paid grant superseding it in
+	// the organisation, or the licensor withdrawing it (D2203, F29).
+	if entitlement.Source != entitlementSourcePurchase &&
+		entitlement.Source != entitlementSourceFreeSeat &&
+		!entitlement.EndsAt.After(now) {
 		writeAnswer(w, Answer{Status: key.status()})
 		return
 	}
@@ -572,10 +619,18 @@ func (s *Service) renew(w http.ResponseWriter, r *http.Request) {
 	// licence with no subscription has no second count to read, and its own key's
 	// is the one the next term is for.
 	seats := key.record.Seats
-	// And the end its days are measured to is the money's where there is money,
-	// and the licence's own term where there is none (F27): a comped key's
-	// successor runs to the end of the free seat's year and never past it.
+	// And the end its days are measured to is the money's where there is money and
+	// the licence's own term where there is none (F27): a comped key's successor
+	// runs to the end of the grant behind it and never past it. The free seat is
+	// the one licence whose record states no end to measure to — its year is
+	// bookkeeping and is never moved on — so what its successor is measured from is
+	// the row's own period, exactly as the binding of a free seat measures it
+	// (`bindEntitlement` hands the minter the row's term and the record's own end):
+	// a whole period from now, whatever the record says.
 	ends := entitlement.EndsAt
+	if entitlement.Source == entitlementSourceFreeSeat {
+		ends = now.Add(key.policy.Term)
+	}
 	if subscribed {
 		seats = sub.Seats
 		ends = sub.Expires

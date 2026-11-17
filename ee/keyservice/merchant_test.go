@@ -2041,6 +2041,67 @@ func TestSeatChangeIsTheNextRenewal(t *testing.T) {
 	}
 }
 
+// TestASeatChangesKeyIsNewerToTheJobsCheck: D2200 as the job reads it. A seat
+// change leaves the key it replaced a handover and no `rotation:` record beside
+// it, so the record walk alone answers that nothing came after it — while the
+// job's check renews only inside the key's own window or on this answer
+// (`renewWanted = inWindow || answer.NewerKey`, ee/register's licence_renew). With
+// the handover invisible to `/status`, the seat change's key reaches no
+// unattended installation at all: the mail is the only way it arrives, the
+// handover's day passes unused, and the installation renews at its own window
+// into a second successor beside the licence's newest key — the fork the handover
+// is there to prevent.
+//
+// The calls below are the job's own order, with the replaced key presented: the
+// check first, and the renewal only because of what the check answered.
+func TestASeatChangesKeyIsNewerToTheJobsCheck(t *testing.T) {
+	f, spy := renewing(t)
+	bought := f.purchase("evt-check-1", "acme.example", 5, 365)
+	secret := f.secretOf(t, f.mintedKeys()[0])
+	f.advance(100 * day)
+	f.event(Event{ID: "evt-check-2", Type: EventSeatChange, Organisation: "acme.example", Seats: 8, TermDays: 365})
+	records := f.records()
+	reissued := records[len(records)-1]
+
+	rec := f.call(RouteStatus, RenewalCall{KeyID: bought.KeyID, RenewalSecret: secret})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the replaced key's check was answered %d (%q), want its state", rec.Code, rec.Body.String())
+	}
+	if answer := answerOf(t, rec); !answer.NewerKey {
+		t.Fatal("the check says there is no newer key while the store holds the seat change's handover for this key: the job renews only in the key's window or on this answer, so the installation would keep the replaced key for as long as it runs and the handover's day would pass unused")
+	}
+	assertNoKeyIn(t, rec, secret)
+
+	rec = f.call(RouteRenew, RenewalCall{KeyID: bought.KeyID, WorkspaceID: workspaceID, RenewalSecret: secret})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the replaced key's renewal was answered %d (%q), want the seat change's key", rec.Code, rec.Body.String())
+	}
+	answer := answerOf(t, rec)
+	if !answer.NewerKey {
+		t.Error("the answer is not marked as a newer key, want it: the seat change's key replaces the one the caller presented (D2200)")
+	}
+	if got := v1Verified(t, f, answer.Key).KeyID; got != reissued.KeyID {
+		t.Errorf("the job was handed the key %s, want the licence's newest %s (D2200)", got, reissued.KeyID)
+	}
+	if got := spy.minted(); got != 0 {
+		t.Errorf("the minter was asked for %d key(s), want none: the seat change's key is one the licence has already bought", got)
+	}
+
+	// The same answer once the money covers what a successor would be minted for,
+	// which is the call a job that read the handover late makes: the licence's
+	// newest key is the one this key is left, and a mint here is exactly the second
+	// successor the handover exists to prevent.
+	theSubscriptionCovers(t, f, bought.KeyID)
+	repeated := f.call(RouteRenew, RenewalCall{KeyID: bought.KeyID, WorkspaceID: workspaceID, RenewalSecret: secret})
+	again := answerOf(t, repeated)
+	if again.Key == "" || v1Verified(t, f, again.Key).KeyID != reissued.KeyID {
+		t.Errorf("the second call answered %+v, want the licence's newest key %s again (D2200)", again, reissued.KeyID)
+	}
+	if got := spy.minted(); got != 0 {
+		t.Errorf("the minter was asked for %d key(s) in all, want none: a mint beside the seat change's key is the fork this handover prevents", got)
+	}
+}
+
 // TestEnterpriseIsNotACheckoutPlan: D2141 and §5.5 — Enterprise is not sold at
 // the checkout. Its keys are invoiced directly by the entity and minted from the
 // admin page, so a deployment whose paid plan names the Enterprise tier is one
