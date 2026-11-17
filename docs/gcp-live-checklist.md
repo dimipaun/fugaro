@@ -12786,10 +12786,13 @@ half that only the flip can show:
   key** left on a job is counted and is **not** a finding (**R6** — the flip takes the model credentials
   and keeps every provider route); a run of each repository **still succeeds**; and a run **started
   before the re-apply** — named by you in `CHECK193_INFLIGHT`, and compared with the repository's jobs'
-  own `updateTime` — **kept its own mount and still finished**, with **no** audit line of its own
-  (**U9**): an execution created before the re-apply keeps the container spec it was created with, so a
-  call of it cannot reach the service. A run named there that started **after** the re-apply is refused,
-  not read: it was launched by the template the re-apply wrote, and its mount says nothing about U9.
+  own `updateTime` — **kept its own mount and still finished** (**U9**): an execution created before the
+  re-apply keeps the container spec it was created with, and the check reads **that spec** — the
+  execution's own containers still carry the model credential while the job template the re-apply wrote
+  carries none. The service's own lines for that run are not this reading: the flip keeps
+  `FUGARO_CREDENTIALS_SERVICE_URL` on the repository (**D2072**), so a switched run reaches the service
+  before and after it. A run named there that started **after** the re-apply is refused, not read: it
+  was launched by the template the re-apply wrote, and its mount says nothing about U9.
 
 **A run is the only thing that can show this.** The service binds a credential to the run that asked for
 it — a run's identity is its own execution's — so a call made from your machine, with your own

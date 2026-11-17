@@ -42,13 +42,17 @@ deletes. Read those before you start. This file is the commands.
   branch and opens a pull request — so it takes as long as a run of that repository takes (about 30–40
   minutes). `--after-flip` launches two more. **Wall clock, not money**: nothing is created in the
   project, and the runs are ordinary runs of the sandbox repositories.
-- **For `--after-flip`: a run of one of the two repositories that is still going** when you re-apply.
-  Its id goes in `CHECK193_INFLIGHT`. That run is the whole of U9's reading — an execution created
-  before the re-apply keeps the container spec it was created with, so it is served by the credential
-  its **own** mount held and none of its calls reaches the service. The check requires it to have
-  started **before** that repository's jobs were last updated (their own `updateTime`) and to have
-  finished with a pull request; a run that started after the re-apply is refused rather than read,
-  because it was launched by the template the re-apply wrote and its mount says nothing about U9.
+- **For `--after-flip`: a run of one of the two repositories that is still going** when you re-apply
+  the release that drops the mount. Its id goes in `CHECK193_INFLIGHT`. That run is the whole of U9's
+  reading — an execution created before the re-apply keeps the container spec it was created with, and
+  the check reads **that spec**: the execution's own containers still carry the model credential while
+  the job template the re-apply wrote carries none. The check requires it to have started **before**
+  that repository's jobs were last updated (their own `updateTime`) and to have finished with a pull
+  request; a run that started after the re-apply is refused rather than read, because it was launched by
+  the template the re-apply wrote and its mount says nothing about U9. The service's own `credsvc: audit`
+  lines for that run are **not** this row's reading: the flip keeps `FUGARO_CREDENTIALS_SERVICE_URL` on
+  the repository (D2072), so a switched run reaches the service before and after it and has lines of its
+  own either way.
 
 ## The steps
 
@@ -134,8 +138,15 @@ deletes. Read those before you start. This file is the commands.
   `claude-oauth-token*` Secret Manager IDs (the DERIVED id is what a job mounts). Provider keys left on
   a job are counted in the detail row and are **not** a finding (R6).
 - **`inflight-run`, `inflight-mount`** (`--after-flip`) — the run named by `CHECK193_INFLIGHT` started
-  before its repository's jobs were last updated and finished all the same, and **no** audit line of its
-  own exists: its calls were answered by the credential its own mount held, which is U9.
+  before its repository's jobs were last updated and finished all the same, and the execution **its own
+  row names** still mounts the model credential on the container spec it was **created** with, while the
+  job template the re-apply wrote mounts none: the execution kept what it was launched with, which is
+  U9. The mount is read off `gcloud run jobs executions describe` and never off the service's lines.
+  Unmeasured (verdict `2`) when that row names no execution, when the `describe` does not answer, or when
+  the repository's jobs still mount the credential themselves — then the flip has not reached them and
+  the mount on the execution is not a retention (see `no-model-mounts`) — and a run whose execution
+  mounts **nothing** is a FAIL: it was launched by the flipped template, so the re-apply was not in
+  flight across it.
 
 ## If it stops before the end
 

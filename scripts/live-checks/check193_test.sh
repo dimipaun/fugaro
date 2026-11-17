@@ -105,6 +105,17 @@ def record_run(repo, rid):
         fh.write("%s %s\n" % (repo, rid))
 
 
+def execution_path(repo, rid):
+    """The execution a run's own row names: the resource path
+    `projects/<project>/locations/<region>/jobs/<job>/executions/<name>`
+    (internal/backend's Execution.Name, the shape check139 validates), which is
+    what the flip's U9 row describes. A row whose record carries none — a run
+    from before the launcher recorded one — is the state FAKE_ROW_NO_EXECUTION
+    writes, and the row the check must say unmeasured about."""
+    return "projects/fugaro-dev/locations/us-east5/jobs/%s-0123456789abcdef/executions/%s" % (
+        repo.lower().replace("/", "-"), rid)
+
+
 def account_for(repo):
     """The account a run of this repository declares, as the run's OWN row
     spells it: FAKE_OAUTH_ACCOUNT, which is EMPTY for the default account —
@@ -171,6 +182,8 @@ elif args[:1] == ["runs"]:
         row = {"run_id": rid, "repo": repo, "status": os.environ.get("FAKE_ROW_STATUS", "succeeded"),
                "terminal": True, "outcome": "ready", "pushed": True, "pr": 7,
                "started_at": os.environ.get("FAKE_ROW_STARTED", "2026-11-16T08:30:00Z")}
+        if not os.environ.get("FAKE_ROW_NO_EXECUTION"):
+            row["execution"] = execution_path(repo, rid)
         acct = account_for(repo)
         if acct:
             row["oauth_account"] = acct
@@ -212,10 +225,11 @@ write_fake_gcloud() { # dir
 """A stand-in for `gcloud`, for scripts/live-checks/check193.sh's test only: no
 socket is opened and nothing is created.
 
-It answers three reads: the installation's job list (and one job's own
-specification), the access token the installation's Realtime Database record is
-read with, and Cloud Logging — whose lines for a run are the service's own
-`credsvc: audit` lines, built here from the mode the case names.
+It answers four reads: the installation's job list (and one job's own
+specification, and one execution's), the access token the installation's
+Realtime Database record is read with, and Cloud Logging — whose lines for a run
+are the service's own `credsvc: audit` lines, built here from the mode the case
+names.
 """
 import hashlib, json, os, re, sys
 
@@ -235,10 +249,11 @@ ALLOWED = {
     ("auth", "print-access-token"): (),
     ("run", "jobs", "list"): ("--project", "--region", "--format"),
     ("run", "jobs", "describe"): ("--project", "--region", "--format"),
+    ("run", "jobs", "executions", "describe"): ("--project", "--region", "--format"),
     ("logging", "read"): ("--project", "--freshness", "--limit", "--format"),
 }
 sub = None
-for n in (3, 2):
+for n in (4, 3, 2):
     if tuple(positionals[:n]) in ALLOWED:
         sub = tuple(positionals[:n])
         break
@@ -328,6 +343,35 @@ def job_doc(repo):
                 "serviceAccountName": "fugaro-" + name}}}}}}
 
 
+def execution_doc(repo, name):
+    """One execution of a repository's job, as `gcloud run jobs executions
+    describe --format=json` answers it: `kind: Execution` with its containers at
+    spec.template.spec.containers (the other depth a Job's live at, which the
+    check's reader reads both of).
+
+    Its containers are the PRE-flip template's — the model mount and the
+    service's URL both on them — because that is the spec an execution created
+    before the re-apply was created with and keeps for its whole life (U9), and
+    it is the mount the flip's row reads. `execution-no-mount` is the other
+    shape: a spec with no model credential on it at all, which is what a run
+    launched by the FLIPPED template was created with, and the one the row must
+    never read as a mount a run in flight kept.
+    """
+    envs = [{"name": "FUGARO_REMOTE", "value": "https://bitbucket.org/%s.git" % repo},
+            {"name": "FUGARO_CREDENTIALS_SERVICE_URL",
+             "value": "https://fugaro-credentials-fake-ue.a.run.app"}]
+    if mode != "execution-no-mount":
+        envs.append({"name": "ANTHROPIC_API_KEY",
+                     "valueSource": {"secretKeyRef": {
+                         "secret": secret_id(job_name(repo), "anthropic-api-key"),
+                         "version": "latest"}}})
+    return {"apiVersion": "run.googleapis.com/v1", "kind": "Execution",
+            "metadata": {"name": name, "labels": {"run.googleapis.com/job": job_name(repo)},
+                         "updateTime": UPDATE},
+            "spec": {"template": {"spec": {
+                "containers": [{"name": "workflow", "env": envs}]}}}}
+
+
 if sub == ("auth", "print-access-token"):
     print("fake-access-token-for-the-check-test")
 elif sub == ("run", "jobs", "list"):
@@ -345,12 +389,20 @@ elif sub == ("run", "jobs", "describe"):
     else:
         sys.stderr.write("ERROR: (gcloud) run.jobs.get: the job %s was not found\n" % want)
         sys.exit(1)
+elif sub == ("run", "jobs", "executions", "describe"):
+    if mode == "executions-describe-fails":
+        # A read that does not answer at all: the execution's own spec is not in
+        # the file it writes, which is NOT an execution with no mount.
+        sys.stderr.write("ERROR: (gcloud) run.jobs.executions.get was refused: the caller does not have permission to read the execution\n")
+        sys.exit(1)
+    want = positionals[4] if len(positionals) > 4 else ""
+    print(json.dumps(execution_doc(os.environ.get("FAKE_INFLIGHT_REPO", repos[0] if repos else ""), want)))
 elif sub == ("logging", "read"):
     if mode == "log-fails":
         # A log read that does not answer at all: no line of any run's is in the
         # file it writes, which is NOT the same thing as the service having
-        # written none — the distinction the U9 row and the served rows are read
-        # against.
+        # written none — the distinction the rows that read a run's lines (the
+        # audit, served and declared-account rows) are read against.
         sys.stderr.write("ERROR: (gcloud) logging.read was refused: the caller does not have permission to read the log\n")
         sys.exit(1)
     filt = positionals[2] if len(positionals) > 2 else ""
@@ -1112,38 +1164,94 @@ test_after_flip_passes_when_no_job_mounts_a_model_credential() {
   expect_contains "$out" "FACT inflight-mount: PASS" "after the flip: it kept its own mount"
 }
 
-# U9: an execution created before the re-apply carries no service URL, so no
-# call of it can reach the service. A line of its own means the re-apply reached
-# into a run that was already going.
-test_an_inflight_run_the_service_answered_is_a_failure() {
+# The service's own lines for a run in flight across the re-apply are NOT the
+# reading: the flip takes the MOUNTS and keeps FUGARO_CREDENTIALS_SERVICE_URL on
+# the repository (D2072), and a switched run reaches the service on that URL
+# alone (internal/runner's serviceSwitched), so a run that behaved correctly
+# before the flip has lines of its own. The mount is the reading, and it is on
+# the execution's own spec.
+test_an_inflight_run_the_service_answered_still_keeps_its_mount() {
   local dir=$work/inflightserved
   prepare "$dir"
   run193 "$dir" --after-flip \
     FAKE_GCLOUD_MODE=inflight-served \
     CHECK193_INFLIGHT=20261116-070000-aaaa \
     FAKE_INFLIGHT=20261116-070000-aaaa FAKE_INFLIGHT_REPO=acme/sandbox-api
-  expect_status "$status" 1 "in flight, served: the verdict"
-  expect_contains "$out" "FACT inflight-mount: FAIL" "in flight, served: the row"
-  expect_contains "$out" "reached into a run that was already going" "in flight, served: the row says why"
+  expect_status "$status" 0 "in flight, served: the verdict"
+  expect_contains "$out" "FACT inflight-mount: PASS" "in flight, served: the row"
+  expect_contains "$out" "its own container spec still mounts the model credential" \
+    "in flight, served: the row is read off the execution's own spec"
+  expect_contains "$out" "not read here" "in flight, served: the service's lines are not this row's reading"
 }
 
-# U9's whole reading is the service's NOT writing a line for the run, so the
-# reading is only taken off a log this check actually read: a `gcloud logging
-# read` that did not answer leaves no line either, and a row that took that for
-# the service's silence would PASS the flip's central row on a log nobody saw.
-test_a_log_read_that_failed_leaves_the_u9_row_unmeasured() {
-  local dir=$work/inflightlog
+# An execution created before the re-apply keeps the container spec it was
+# created with (U9), so a run in flight across a mount-dropping re-apply has a
+# mount on its execution and no mount on the template. An execution with none is
+# a run launched by the flipped template — a run the re-apply was not in flight
+# across — and reading it as a retained mount would pass the row on nothing.
+test_an_inflight_run_whose_execution_mounts_nothing_is_a_failure() {
+  local dir=$work/inflightnomount
   prepare "$dir"
   run193 "$dir" --after-flip \
-    FAKE_GCLOUD_MODE=log-fails \
+    FAKE_GCLOUD_MODE=execution-no-mount \
     CHECK193_INFLIGHT=20261116-070000-aaaa \
     FAKE_INFLIGHT=20261116-070000-aaaa FAKE_INFLIGHT_REPO=acme/sandbox-api
-  expect_status "$status" 2 "U9, a failed log read: the check could not measure"
-  expect_contains "$out" "FACT inflight-run: PASS" "U9, a failed log read: the rows above it still hold"
-  expect_contains "$out" "FACT inflight-mount: FAIL — the service's own lines for the run" \
-    "U9, a failed log read: the row carries the reason itself"
-  expect_contains "$out" "U9's reading is the absence of a line" "U9, a failed log read: the row says what it could not show"
-  expect_absent "$out" "FACT inflight-mount: PASS" "U9, a failed log read: the absent line is never read as U9"
+  expect_status "$status" 1 "in flight, no mount on the execution: the verdict"
+  expect_contains "$out" "FACT inflight-mount: FAIL" "in flight, no mount on the execution: the row"
+  expect_contains "$out" "has no mount to keep" "in flight, no mount on the execution: the row says why"
+  expect_contains "$out" "the release that drops the mount" "in flight, no mount on the execution: the row names the fix"
+}
+
+# U9's reading is the container spec the execution was CREATED with, so a
+# `gcloud run jobs executions describe` that did not answer must never be read as
+# an execution with no mount: the row says unmeasured instead.
+test_an_execution_that_could_not_be_read_leaves_the_u9_row_unmeasured() {
+  local dir=$work/inflightexecread
+  prepare "$dir"
+  run193 "$dir" --after-flip \
+    FAKE_GCLOUD_MODE=executions-describe-fails \
+    CHECK193_INFLIGHT=20261116-070000-aaaa \
+    FAKE_INFLIGHT=20261116-070000-aaaa FAKE_INFLIGHT_REPO=acme/sandbox-api
+  expect_status "$status" 2 "U9, a failed execution read: the check could not measure"
+  expect_contains "$out" "FACT inflight-run: PASS" "U9, a failed execution read: the rows above it still hold"
+  expect_contains "$out" "gcloud run jobs executions describe" "U9, a failed execution read: the row names the read that failed"
+  expect_contains "$out" "is not an execution with no mount" "U9, a failed execution read: the row says what it could not show"
+  expect_absent "$out" "FACT inflight-mount: PASS" "U9, a failed execution read: the failed read is never read as U9"
+}
+
+# A run whose own record names no execution — one from before the launcher
+# recorded one — has no container spec to read at all: the row says so rather
+# than reading the service's lines, or the absence of a mount, in its place.
+test_a_row_that_names_no_execution_leaves_the_u9_row_unmeasured() {
+  local dir=$work/inflightnoexec
+  prepare "$dir"
+  run193 "$dir" --after-flip \
+    CHECK193_INFLIGHT=20261116-070000-aaaa \
+    FAKE_INFLIGHT=20261116-070000-aaaa FAKE_INFLIGHT_REPO=acme/sandbox-api \
+    FAKE_ROW_NO_EXECUTION=1
+  expect_status "$status" 2 "U9, no execution named: the check could not measure"
+  expect_contains "$out" "FACT inflight-run: PASS" "U9, no execution named: the rows above it still hold"
+  expect_contains "$out" "FACT inflight-mount: FAIL — the row of the run" "U9, no execution named: the row carries the reason itself"
+  expect_contains "$out" "names no execution" "U9, no execution named: the row says what it could not read"
+  expect_absent "$out" "FACT inflight-mount: PASS" "U9, no execution named: nothing is read in its place"
+}
+
+# With the repository's own jobs still mounting the model credential, the flip
+# has not reached it: a mount on the execution is then not the RETENTION U9 is
+# about — the template hands the same mount out to every run it launches — so
+# the row says unmeasured and points at the row that reads the template.
+test_an_inflight_run_whose_repository_still_mounts_is_unmeasured() {
+  local dir=$work/inflighttemplatemounts
+  prepare "$dir"
+  run193 "$dir" --after-flip \
+    FAKE_GCLOUD_MODE=mounted \
+    CHECK193_INFLIGHT=20261116-070000-aaaa \
+    FAKE_INFLIGHT=20261116-070000-aaaa FAKE_INFLIGHT_REPO=acme/sandbox-oauth
+  expect_status "$status" 1 "in flight, the template still mounts: the verdict"
+  expect_contains "$out" "FACT no-model-mounts: FAIL" "in flight, the template still mounts: the row that reads it"
+  expect_contains "$out" "FACT inflight-mount: FAIL — the execution" "in flight, the template still mounts: the row carries the reason itself"
+  expect_contains "$out" "not the RETENTION U9 is about" "in flight, the template still mounts: the row says why"
+  expect_absent "$out" "FACT inflight-mount: PASS" "in flight, the template still mounts: the template's own mount is never read as a retained one"
 }
 
 # A run that started AFTER the re-apply is not the U9 case at all — it was
@@ -1262,8 +1370,11 @@ t test_a_policy_without_the_proxy_leaves_the_row_unmeasured
 t test_after_flip_refuses_a_job_that_still_mounts_the_model_credential
 t test_after_flip_refuses_a_job_that_still_mounts_an_accounts_token
 t test_after_flip_passes_when_no_job_mounts_a_model_credential
-t test_an_inflight_run_the_service_answered_is_a_failure
-t test_a_log_read_that_failed_leaves_the_u9_row_unmeasured
+t test_an_inflight_run_the_service_answered_still_keeps_its_mount
+t test_an_inflight_run_whose_execution_mounts_nothing_is_a_failure
+t test_an_execution_that_could_not_be_read_leaves_the_u9_row_unmeasured
+t test_a_row_that_names_no_execution_leaves_the_u9_row_unmeasured
+t test_an_inflight_run_whose_repository_still_mounts_is_unmeasured
 t test_a_run_that_started_after_the_reapply_is_not_the_u9_case
 t test_a_run_that_did_not_finish_is_a_failure
 t test_a_development_build_is_a_failure

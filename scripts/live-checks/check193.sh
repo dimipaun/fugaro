@@ -26,8 +26,10 @@
 #             second half: the mounts, and the run that was in flight across the
 #             re-apply)
 # Needs:      bash, mktemp, python3, gcloud (authenticated as you: read Cloud
-#             Logging, read `run jobs`, read the installation's Realtime
-#             Database) and fugaro. Nothing is installed and nothing is fetched.
+#             Logging, read `run jobs` and one of its executions — the spec a
+#             run in flight across the re-apply was created with — read the
+#             installation's Realtime Database) and fugaro. Nothing is installed
+#             and nothing is fetched.
 # Where:      installation `fugaro` ONLY — project fugaro-dev, region us-east5.
 #             Both are HARD-CODED in this file and never read from `gcloud
 #             config get-value project`, and `fugaro doctor` must answer that
@@ -329,8 +331,10 @@ audit  argv: the service's lines' file, a run id. Two kinds of line for that
        (internal/credsvc's narrowToRepoAuth) and it is the only place a
        repository-scoped refusal says WHAT it refused for.
 run    argv: the listing's file, a run id. Prints that run's row field by field,
-       `found=no` when the listing does not hold it, and the halt's own reason
-       and detail for a run the record halted.
+       `found=no` when the listing does not hold it, the execution the run's own
+       record names (`projects/<project>/locations/<region>/jobs/<job>/
+       executions/<name>`, internal/backend's Execution.Name) and the halt's own
+       reason and detail for a run the record halted.
 policy argv: the `project policy show --json` document, a repository. Prints
        whether the published Bitbucket block admits that repository
        (`bitbucket_token.allow_repos`), whether it is proxied
@@ -628,12 +632,15 @@ elif cmd == "run":
             continue
         print("found=yes")
         for key in ("run_id", "status", "terminal", "outcome", "pushed", "pr", "repo",
-                    "started_at", "oauth_account"):
+                    "started_at", "execution", "oauth_account"):
             if key in row:
                 v = row[key]
                 if isinstance(v, bool):
                     v = "yes" if v else "no"
-                print("%s=%s" % (key, text(v) if key == "started_at" else word(v, 60)))
+                # The execution is a resource path of about a hundred
+                # characters, so it is carried whole: a truncated one names an
+                # execution nobody can describe.
+                print("%s=%s" % (key, text(v) if key in ("started_at", "execution") else word(v, 60)))
         halt = row.get("halt")
         if isinstance(halt, dict):
             if halt.get("reason"):
@@ -1431,11 +1438,23 @@ step_mounts() {
 # execution was created before the re-apply, so its container spec is the one
 # the old job template wrote, and the reading is exactly that: its own row's
 # started_at is before the job's own updateTime, its row is terminal and it
-# succeeded, and the service wrote NO line for it — because its execution holds
-# no URL at all. A run whose lines are there instead was served by the service
-# and is not the U9 case; a run that did not finish kept nothing worth keeping.
+# succeeded, and the EXECUTION's own container spec — read off `gcloud run jobs
+# executions describe`, the run's row naming the execution — still mounts the
+# model credential while the job template it was created from no longer does. A
+# run that did not finish kept nothing worth keeping; a run that started after
+# the re-apply was launched by the template the flip wrote and is not the U9
+# case at all.
+#
+# The service's own lines for that run are NOT this row's reading. The flip
+# takes the MOUNTS and keeps FUGARO_CREDENTIALS_SERVICE_URL on the repository
+# (D2072), and a switched run reaches the service on that URL alone
+# (internal/runner's serviceSwitched, which the switch mode's own rows depend
+# on) — so a run in flight across the re-apply is served by the service before
+# and after it, and a reading that took a line of its own for the re-apply
+# having reached into it would fail every run that behaved correctly.
 step_inflight() {
-  local rid=$1 row repo started_at order got listed=$SCRATCH/jobs.json lines served
+  local rid=$1 row repo started_at order got listed=$SCRATCH/jobs.json
+  local execpath bare spec mounts tmpl
   if [ -z "$rid" ]; then
     unmeasured inflight-run "CHECK193_INFLIGHT is empty, so there is no run to read"
     unmeasured inflight-mount "CHECK193_INFLIGHT is empty, so there is no run whose mount could be read"
@@ -1482,26 +1501,43 @@ step_inflight() {
     ;;
   esac
   if [ "$(field_of status "$row")" != succeeded ]; then
-    fact inflight-run FAIL "the run named by CHECK193_INFLIGHT (${rid}) started at ${started_at} — before the re-apply ($(field_of update "$got")) — and ended '$(field_of status "$row")' without opening a pull request: $(field_of halt_detail "$row")$(field_of reason "$row") (outcome=$(field_of outcome "$row")). An execution created before the re-apply keeps the container spec it was created with (U9), so it is served by the credential its own mount held: a run of that shape that could not finish is the re-apply having reached INTO a run that was already going"
+    fact inflight-run FAIL "the run named by CHECK193_INFLIGHT (${rid}) started at ${started_at} — before the re-apply ($(field_of update "$got")) — and ended '$(field_of status "$row")' without opening a pull request: $(field_of halt_detail "$row")$(field_of reason "$row") (outcome=$(field_of outcome "$row")). An execution created before the re-apply keeps the container spec it was created with, which is the whole of U9, so the re-apply cannot have taken a credential out from under it: a run of that shape that could not finish is the re-apply having reached INTO a run that was already going"
     unmeasured inflight-mount "the run ${rid} did not finish, so nothing is read about the mount it kept"
     return 0
   fi
   fact inflight-run PASS "the run named by CHECK193_INFLIGHT (${rid}) started at ${started_at}, before ${INFLIGHT_REPO}'s jobs were last updated ($(field_of update "$got"), job $(field_of job "$got")), and still finished: status=$(field_of status "$row"), outcome=$(field_of outcome "$row"), pull request $(field_of pr "$row"), pushed=$(field_of pushed "$row")"
-  lines=$SCRATCH/audit-inflight.json
-  # U9's whole reading is the service's NOT writing a line for this run, so a
-  # `gcloud logging read` that did not answer must never be taken for that: the
-  # absent line would be read as the pass the row exists to take, on a log the
-  # check never saw (audit_read).
-  if ! audit_read "$rid" "$lines"; then
-    unmeasured inflight-mount "$(audit_unread "$lines") — U9's reading is the absence of a line of that run's own, which a read that did not answer cannot show"
+  # The mount the run kept is read off the EXECUTION's own container spec and
+  # never off the service's lines: the run's row names the execution, and the
+  # spec an execution was created with is frozen for its whole life (U9), so
+  # the mount is either on it or it never had one.
+  execpath=$(field_of execution "$row")
+  if [ -z "$execpath" ]; then
+    unmeasured inflight-mount "the row of the run ${rid} names no execution, so the container spec the run was created with cannot be read: U9's reading is that spec. Read 'fugaro runs show ${rid} --repo ${INFLIGHT_REPO}' — a run whose own record carries no execution is one whose mount this row cannot read"
     return 0
   fi
-  served=$(audit_served "$lines" "$rid")
-  if [ "${served:-0}" -ge 1 ]; then
-    fact inflight-mount FAIL "the run ${rid} was in flight across the re-apply and the credentials service wrote ${served} line(s) of its own ($(audit_named "$lines" "$rid" | tr '\n' ' ')): an execution created before the re-apply carries no FUGARO_CREDENTIALS_SERVICE_URL, so no call of it can reach the service — a line of its own means the re-apply reached into a run that was already going, which is the one thing U9 says cannot happen"
+  bare=${execpath##*/}
+  spec=$SCRATCH/execution.json
+  if ! gcloud run jobs executions describe "$bare" --project="$P" --region="$L" --format=json >"$spec" 2>"$SCRATCH/execution.err"; then
+    unmeasured inflight-mount "the execution ${execpath} of the run ${rid} could not be read: 'gcloud run jobs executions describe ${bare}' exited non-zero and printed: $(last_lines "$SCRATCH/execution.err"). U9's reading is the container spec that execution was created with, and a read that did not answer is not an execution with no mount"
     return 0
   fi
-  fact inflight-mount PASS "the run ${rid} was in flight across the re-apply and its model calls were answered by the credential its OWN mount held, not by the credentials service: the service wrote no line of the run's own, and the run finished all the same — which is U9's reading"
+  got=$(reader job "$spec")
+  mounts=$(field_of modelmounts "$got")
+  # The template the execution was created from, off the job list this step has
+  # already read and whose updateTime the `before` above was read from — so the
+  # file holds at least one job of this repository by the time this is read, and
+  # `mounted` is a reading of that list and not of an empty one.
+  tmpl=$(reader jobs "$listed" "$INFLIGHT_REPO")
+  tmounted=$(field_of mounted "$tmpl")
+  if [ "${tmounted:-0}" -ge 1 ]; then
+    unmeasured inflight-mount "the execution ${execpath} of the run ${rid} carries ${mounts}, and the jobs of ${INFLIGHT_REPO} mount a model credential too (${tmounted} of $(field_of jobs "$tmpl")): with the template still handing the mount out, the mount on that execution is not the RETENTION U9 is about — the flip has not reached that repository's jobs, which is the no-model-mounts row above"
+    return 0
+  fi
+  if [ "$mounts" = none ]; then
+    fact inflight-mount FAIL "the execution ${execpath} of the run ${rid} — created before the re-apply and finished all the same — carries NO model mount: $(field_of modelenvs "$got") is not among its container's variables, and the job template of ${INFLIGHT_REPO} mounts none either. An execution created before the re-apply keeps the container spec it was created with (U9), and this one's spec has no mount to keep — so it is not a run the mount-dropping re-apply was in flight across. Name a run that was already going when you re-applied the release that drops the mount"
+    return 0
+  fi
+  fact inflight-mount PASS "the execution ${execpath} of the run ${rid} was created before the re-apply and its own container spec still mounts the model credential — $(field_of modelmounts "$got") — while the job template of ${INFLIGHT_REPO} mounts none: the execution kept the spec it was created with, which is U9's reading. The service's URL is on it too ($(field_of url "$got")), and the flip keeps it (D2072), so the service's own lines for this run are expected and are not read here"
 }
 
 # ---------------------------------------------------------------------- 193
@@ -1555,8 +1591,8 @@ print_plan() {
   say "  [network, read only] gcloud auth print-access-token, then GET ${RTDB:-<budget.rtdb_url>}/creds/repoauth/<slug>.json for each repository — the slug being the repository's own task slug ('<readable>-<16 hex>'), which the check reads off its jobs' 'fugaro_repo' label and never spells out of the repository's name — the record 'fugaro update --repo' writes; READ, never written, the check narrows no record"
   if [ "$MODE" = flip ]; then
     say "  [network] gcloud run jobs list … (each job's container: no ANTHROPIC_API_KEY, no CLAUDE_CODE_OAUTH_TOKEN, no env fed from anthropic-api-key or claude-oauth-token*)"
-    say "  [network] fugaro runs ls --repo <the repository of CHECK193_INFLIGHT> --no-cache --json  (that run's row: terminal, succeeded, and started before the job's own updateTime)"
-    say "  [network] gcloud logging read 'resource.type=\"cloud_run_revision\" resource.labels.service_name=\"fugaro-credentials\" jsonPayload.run=\"${INFLIGHT:-<CHECK193_INFLIGHT>}\"'  (no line at all: the execution holds no URL)"
+    say "  [network] fugaro runs ls --repo <the repository of CHECK193_INFLIGHT> --no-cache --json  (that run's row: terminal, succeeded, started before the job's own updateTime, and the execution it names)"
+    say "  [network] gcloud run jobs executions describe <that execution> --project=${P} --region=${L} --format=json  (its OWN container spec, which is the one it was created with: it still mounts the model credential, while the job template the flip wrote mounts none)"
   fi
   say "  [network, writes] fugaro run --repo ${API_REPO:-<the api-key repository>} --project fugaro --run-id <today>-0193 --title 'Check 193: one' --task-file <task> --json  (one throwaway run: it writes one line to CHK193.md, commits and opens a pull request)"
   say "  [network] fugaro runs ls --repo <that repository> --no-cache --json  (its row, polled until terminal)"
