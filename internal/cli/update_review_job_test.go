@@ -119,7 +119,7 @@ func TestUpdateAddsTheImplicitReviewJobAndLeavesARunInFlightRunning(t *testing.T
 	})}
 	r.save(t)
 
-	name := infra.ImplicitReviewJobName()
+	name := infra.ImplicitReviewJobName("github")
 	if _, ok := reviewJobsHanded(t, r)[name]; ok {
 		t.Fatalf("the fixture already hands terraform the review job %s: the installation is not one at the previous version, and the run below would prove nothing about the job this release adds", name)
 	}
