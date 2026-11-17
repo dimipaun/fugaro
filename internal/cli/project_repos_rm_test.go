@@ -52,6 +52,10 @@ const (
 	rmRepoB  = "owner/repo-b"
 	rmEntryA = "github/owner/repo-a"
 	rmEntryB = "github/owner/repo-b"
+	// rmRepoC is a third repository of the same project, one this machine's
+	// config does not list: the shape of a project two operators share, and the
+	// one the admission step must not touch.
+	rmRepoC = "owner/repo-c"
 	// rmRegion is the region the fixture's config names, which is where its
 	// Cloud Run jobs live.
 	rmRegion = "us-east5"
@@ -421,6 +425,66 @@ func TestReposRmRemovesTheSixAndNamesTheSixItLeaves(t *testing.T) {
 	}
 	if !strings.Contains(after, want) {
 		t.Errorf("the output after the write does not name it either:\n%s", after)
+	}
+}
+
+// TestReposRmLeavesAnotherMachinesAdmissionAlone is the bound on the admission
+// step: `config/policy/repos` holds one child per repository of the project, and
+// this command removes one repository.
+//
+// The narrowing (tightenAdmissions) narrows or deletes every key it is handed,
+// and the map it is handed is this machine's own derivation — the publish's
+// build reads `desired` from the local config alone (policyNodeForPublish →
+// repoAdmissions → DeriveAccounts), which lists the repositories *this* machine
+// onboards. A child belonging to a repository this config does not list is
+// therefore a key with no `desired` entry at all, and a whole-parent narrowing
+// reads it as a repository no account admits any more and deletes it: a removal
+// of repo-a would take away the cascade access of repo-c, a repository its
+// confirmation never named. The removal cuts the parent down to its own child
+// before the narrowing, and the third repository is what says so.
+func TestReposRmLeavesAnotherMachinesAdmissionAlone(t *testing.T) {
+	r := rmRigFor(t, "", rmGone{})
+	third := rmSlug(t, rmRepoC)
+	r.db.Set(projectpolicy.PathRepo(third), map[string]any{
+		"credentials": map[string]any{"accounts": []string{"acme-work"}},
+	})
+
+	out, _ := r.rmOut(t, rmEntryA)
+	if v := r.db.Value(projectpolicy.PathRepo(third)); v == nil {
+		t.Errorf("removing %s deleted %s, the admission of a repository this machine's config does not list:\n%s", rmRepoA, projectpolicy.PathRepo(third), out)
+	}
+	// The child this removal is about is the one that went, so the test is
+	// two-sided in the same way the whole-removal test is.
+	if v := r.db.Value(projectpolicy.PathRepo(r.slugA)); v != nil {
+		t.Errorf("%s still holds %v", projectpolicy.PathRepo(r.slugA), v)
+	}
+}
+
+// TestReposRmDoesNotStopOnAnotherRepositoriesUnreadableAdmission is the same
+// bound seen from the other side. tightenAdmissions refuses a child it cannot
+// read, because the set of accounts it admits is what the narrowing computes —
+// a refusal that belongs to the repository that child is about. Handed the whole
+// parent, a node of somebody else's repository that this Fugaro cannot read
+// would end the removal of repo-a with that sentence, after this machine's
+// config had already been written: a failure about a repository the operator did
+// not name, on a run that has to be finished by hand. Cut down to its own child,
+// the removal does not read it at all.
+func TestReposRmDoesNotStopOnAnotherRepositoriesUnreadableAdmission(t *testing.T) {
+	r := rmRigFor(t, "", rmGone{})
+	third := rmSlug(t, rmRepoC)
+	r.db.Set(projectpolicy.PathRepo(third), map[string]any{"credentials": "not-a-node"})
+
+	out, _ := r.rmOut(t, rmEntryA)
+	if v := r.db.Value(projectpolicy.PathRepo(third)); v == nil {
+		t.Errorf("the unreadable admission of %s was removed rather than left alone:\n%s", rmRepoC, out)
+	}
+	if v := r.db.Value(projectpolicy.PathRepo(r.slugA)); v != nil {
+		t.Errorf("%s still holds %v", projectpolicy.PathRepo(r.slugA), v)
+	}
+	// The refusal the whole-parent narrowing would have ended the run with is
+	// nowhere in the output: it is not this repository's node.
+	if strings.Contains(out, "is a node this Fugaro cannot read") {
+		t.Errorf("the removal refused over a node of another repository:\n%s", out)
 	}
 }
 

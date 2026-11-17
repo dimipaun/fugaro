@@ -602,9 +602,26 @@ func reposRemovalAdmission(ctx context.Context, out io.Writer, db *rtdb.Client, 
 	if err != nil {
 		return err
 	}
-	var existing map[string]json.RawMessage
-	if _, err := db.Get(ctx, projectpolicy.PathRepos(), &existing); err != nil {
+	// The parent is read whole and then cut down to this repository's own child.
+	// tightenAdmissions narrows or removes every key it is handed, and the map it
+	// is handed is this machine's derivation alone (policyNodeForPublish →
+	// repoAdmissions → DeriveAccounts): a child belonging to a repository this
+	// machine's config does not list — one onboarded from another machine, which
+	// is what a shared project is — has no entry in `desired` at all, so the
+	// narrowing reads it as a repository no account admits any more and deletes
+	// it, taking away the cascade access of a repository this removal never named
+	// and its confirmation never showed. This command removes one repository, so
+	// it narrows one child; and a child it cannot read is refused only where that
+	// child is this one (tightenAdmissions' own rule), which is also what keeps
+	// somebody else's unreadable node from stopping a removal whose local config
+	// is already written.
+	var parent map[string]json.RawMessage
+	if _, err := db.Get(ctx, projectpolicy.PathRepos(), &parent); err != nil {
 		return dbErr(lc, err, false)
+	}
+	existing := make(map[string]json.RawMessage, 1)
+	if child, ok := parent[plan.slug]; ok {
+		existing[plan.slug] = child
 	}
 	_, lines, err := tightenAdmissions(ctx, db, lc, desired, existing)
 	if err != nil {
