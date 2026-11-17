@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -43,6 +44,20 @@ import (
 type Tick struct {
 	// Store is the state node the cycle reads and writes.
 	Store Store
+	// Nodes are the nodes beside the state node that this cycle works: one per
+	// imported plan and the standing backlog (D2735), each a Store of its own
+	// (NewNode with PlanShard or ShardBacklog). The cycle loads every one of
+	// them, folds each one's finished runs into its items and plans launches
+	// from each, under the caps counted over all of them at once: max_running
+	// and the spawn caps are one project's allowance and never one per node
+	// (D2743) — and under the daemon's pause, which any of them carrying an
+	// unanswered question puts on all of them.
+	//
+	// A nil or empty slice is the state node alone, which is the daemon this
+	// package had before there were nodes beside it: nothing about that daemon
+	// reads differently. Who builds them is the daemon's, and a plan imported
+	// after a tick was built is one the daemon hands the next cycle's tick.
+	Nodes []Store
 	// Runs reads what the runs behind the intents reported. It is asked about
 	// the run ids the state recorded, and about no others.
 	Runs RunViewReader
@@ -190,6 +205,11 @@ func (t *Tick) ready() error {
 	switch {
 	case t.Store == nil:
 		return errors.New("orchestrator: a tick needs the store its state node is read and written through")
+	case slices.Contains(t.Nodes, nil):
+		// A node with no store is a node nothing can be read or written
+		// through, and a cycle that skipped it would count its caps over a
+		// record it does not have (D2743).
+		return errors.New("orchestrator: a tick needs the store of every node it works, and one of the nodes it was handed has none")
 	case t.Runs == nil:
 		return errors.New("orchestrator: a tick needs a run view, and one it cannot read is not an empty one")
 	case t.Mint == nil:
@@ -200,17 +220,16 @@ func (t *Tick) ready() error {
 	return nil
 }
 
-// cycle is one tick's node: the state as this cycle last read or wrote it, the
-// ETag the next write has to carry, whether that node is still this cycle's to
-// write, and the report being built.
-type cycle struct {
-	tick  *Tick
-	rep   Report
+// node is one node of the project's orchestrator subtree as one cycle works it:
+// the store it is read and written through, the state this cycle read, the ETag
+// its next write has to carry, and whether it is still this cycle's to write
+// (D2735).
+type node struct {
+	store Store
 	state State
 	etag  ETag
-	now   time.Time
 	fresh bool
-	// refused is which of the workspace's refusals a run this cycle folded came
+	// refused is which of the workspace's refusals a run of this node's own came
 	// back with, and "" when none did: the cycle asks a person about it at once
 	// rather than after BreakerThreshold more attempts into the same refusal
 	// (O19, D2022 (a)).
@@ -221,9 +240,134 @@ type cycle struct {
 	refusedRun string
 }
 
+// cycle is one tick's work over the nodes of one project: every node it works,
+// the one it is working on at the moment with the state as it last read or
+// wrote it, and the report being built.
+//
+// A cycle works one node at a time, and the loop in run moves it from node to
+// node: state, etag, fresh and the refusal below are always the node at `at`,
+// which is what every step reads and commits to. What is not one node's is what
+// the whole project is planned under: the caps are counted over all of them and
+// the launches of all of them spend one allowance (counts and planned, D2743),
+// and the pause that stops the daemon is the one any of them carries (paused).
+type cycle struct {
+	tick *Tick
+	rep  Report
+	// nodes is every node this cycle works, the state node first and the plan
+	// and backlog nodes after it in the order the tick carries them; at is which
+	// of them the four fields below belong to.
+	nodes []node
+	at    int
+	// state, etag, fresh, refused and refusedRun are the node at `at`: the state
+	// as this cycle last read or wrote it, the ETag the next write has to carry,
+	// whether that node is still this cycle's to write, and the workspace refusal
+	// a run of its own came back with.
+	state      State
+	etag       ETag
+	fresh      bool
+	refused    string
+	refusedRun string
+	now        time.Time
+	// counts is what the caps are read against: the intents of every node as
+	// this cycle's folds and merge left them. It is read once and not per node,
+	// so that a launch this cycle has already decided is counted by the tally
+	// (planned) and not a second time by a count that now sees its own write
+	// (D2743).
+	counts Counts
+	// planned is how many launches this cycle has decided, counted over every
+	// node it works: one project's allowance, not one per node (D2743).
+	planned int
+	// paused is the daemon's pause as the cycle plans: the question a tripped
+	// breaker or a workspace's refusal raised and nobody has answered yet. It
+	// is read over every node the cycle works for the reason the counts are —
+	// the question is written to the state node whatever node the run behind it
+	// belonged to, so a plan node or the backlog reading its own state would
+	// find no pause and start work into the refusal the pause was raised for
+	// (O19, D2022 (a)).
+	paused bool
+}
+
+// bind makes the node at i the one this cycle is working on.
+func (c *cycle) bind(i int) {
+	c.at = i
+	n := c.nodes[i]
+	c.state, c.etag, c.fresh = n.state, n.etag, n.fresh
+	c.refused, c.refusedRun = n.refused, n.refusedRun
+}
+
+// settle writes the node the cycle has been working on back into the list, so
+// that what reads every node — the counts above all — sees what this cycle has
+// done to it.
+func (c *cycle) settle() {
+	c.nodes[c.at] = node{
+		store: c.nodes[c.at].store, state: c.state, etag: c.etag, fresh: c.fresh,
+		refused: c.refused, refusedRun: c.refusedRun,
+	}
+}
+
+// settled writes the node back and hands the step's error on, so that a step
+// that ended the cycle leaves the node as far as it got.
+func (c *cycle) settled(err error) error {
+	c.settle()
+	return err
+}
+
+// states is what every node reads as, the one being worked on included: what
+// the caps are counted over (D2743).
+func (c *cycle) states() []State {
+	c.settle()
+	out := make([]State, len(c.nodes))
+	for i, n := range c.nodes {
+		out[i] = n.state
+	}
+	return out
+}
+
+// anyNode reports whether any node this cycle works is one f holds for.
+func (c *cycle) anyNode(f func(State) bool) bool {
+	for _, s := range c.states() {
+		if f(s) {
+			return true
+		}
+	}
+	return false
+}
+
+// load reads every node this cycle works — the state node and the plan and
+// backlog nodes beside it — each under its own ETag, so each is written back
+// under its own precondition (D2735). A node of any of them that cannot be read
+// ends the cycle: this release does not launch from a document it could not
+// read, and the caps cannot be counted over a node nobody read (D2743).
+func (c *cycle) load(ctx context.Context) error {
+	stores := make([]Store, 0, 1+len(c.tick.Nodes))
+	stores = append(append(stores, c.tick.Store), c.tick.Nodes...)
+	c.nodes = make([]node, 0, len(stores))
+	for _, st := range stores {
+		s, etag, err := st.Load(ctx)
+		if err != nil {
+			return err
+		}
+		c.nodes = append(c.nodes, node{store: st, state: s, etag: etag, fresh: true})
+	}
+	// The state node is the one the cycle starts on, and the one a step that
+	// reads every node — the run ids and the counts — settles first.
+	c.bind(0)
+	return nil
+}
+
+// openRunIDs is every node's attempt that has not reported. One read answers
+// for all of them: a run belongs to exactly one node, the one whose intent
+// records it, so a node's ids are nobody else's.
+func (c *cycle) openRunIDs() []string {
+	var ids []string
+	for _, s := range c.states() {
+		ids = append(ids, openRunIDs(s)...)
+	}
+	return ids
+}
+
 func (c *cycle) run(ctx context.Context) error {
-	s, etag, err := c.tick.Store.Load(ctx)
-	if err != nil {
+	if err := c.load(ctx); err != nil {
 		return err
 	}
 	now, ok := c.tick.Now()
@@ -234,14 +378,24 @@ func (c *cycle) run(ctx context.Context) error {
 		// with.
 		return ErrNoServerTime
 	}
-	c.state, c.etag, c.now, c.fresh = s, etag, stamp(now), true
+	c.now = stamp(now)
 
-	reports, err := c.tick.Runs.Runs(ctx, openRunIDs(s))
+	reports, err := c.tick.Runs.Runs(ctx, c.openRunIDs())
 	if err != nil {
 		return err
 	}
+	view := viewOf(reports)
+
+	// Every node is folded before any of them is planned: a run that ended in a
+	// plan's node or the backlog's is what frees the room this cycle has, and
+	// the caps are counted over what the nodes say once the folds have landed
+	// (D2743). The state node is folded first, and its fold is the one that
+	// reads a workspace's refusal out of every node's reports and asks the
+	// person about it: the question is the daemon's own node's, as it was when
+	// the daemon had one, and so is the audit line beside it.
+	c.bind(0)
 	if err := c.fold(ctx, reports); err != nil {
-		return err
+		return c.settled(err)
 	}
 	// A run the workspace refused stops this cycle before it plans anything: the
 	// fold has just put the question on the node in the same patch as the
@@ -252,31 +406,71 @@ func (c *cycle) run(ctx context.Context) error {
 	// asks it (Observe).
 	if c.refused != "" {
 		if err := c.auditRefusal(ctx); err != nil {
-			return err
+			return c.settled(err)
 		}
 	}
-	// The merge read comes after the fold and before the plan: the fold has
-	// just left every item whose run succeeded with a pull request in `review`
-	// (D2705), and an item whose pull request has since merged is `done` before
-	// the plan is made, so the work that depends on it starts in this cycle
-	// rather than the next one.
-	if err := c.merge(ctx); err != nil {
-		return err
+	c.settle()
+	for i := 1; i < len(c.nodes); i++ {
+		c.bind(i)
+		if err := c.foldNode(ctx, reports); err != nil {
+			return c.settled(err)
+		}
+		c.settle()
 	}
-	view := viewOf(reports)
+
+	// The merge read comes after the fold and before the plan, and it reaches
+	// every node: the fold has just left every item whose run succeeded with a
+	// pull request in `review` (D2705), wherever it is, and an item whose pull
+	// request has since merged is `done` before the plan is made, so the work
+	// that depends on it starts in this cycle rather than the next one (D2735).
+	// The state node's own turn follows, in the order it has always had: what it
+	// launches, then the ladder, the long-run rule, the decision agent and the
+	// labels.
+	c.bind(0)
+	if err := c.merge(ctx); err != nil {
+		return c.settled(err)
+	}
+	// The counts are read once, here, and held for every node the cycle plans —
+	// the state node and the plan and backlog nodes after it. Reading them again
+	// per node would count the launches this cycle has itself committed, which
+	// are the tally's, and the nodes planned last would spend the allowance
+	// twice (D2743). Every fold has landed by now, so a run that ended in this
+	// cycle is what this reading leaves out.
+	c.counts = CountsOfAll(c.states(), c.now)
+	// And the pause is read with them, over the same nodes: the question that
+	// stops the daemon is on the state node whatever node the run behind it
+	// belonged to, so a plan node or the backlog that read the pause off its own
+	// state would keep launching into the refusal it was raised for (O19,
+	// D2022 (a)) — and a workspace's refusal folded above is one this same cycle
+	// has to stop on, which is why the reading is here and not at the load.
+	c.paused = c.anyNode(func(s State) bool { return BreakerOpen(s, c.now) })
 	if err := c.carry(ctx, view); err != nil {
-		return err
+		return c.settled(err)
 	}
 	if err := c.escalate(ctx); err != nil {
-		return err
+		return c.settled(err)
 	}
 	if err := c.triage(ctx); err != nil {
-		return err
+		return c.settled(err)
 	}
-	if err := c.decide(ctx, viewOf(reports)); err != nil {
-		return err
+	if err := c.decide(ctx, view); err != nil {
+		return c.settled(err)
 	}
 	c.label(ctx)
+	c.settle()
+
+	// The nodes beside it: the launches their own items are ready for, under the
+	// same allowance and the tally this cycle has already spent (D2743). The
+	// state node is planned first, so a project short of room spends it on the
+	// work a person queued there before the imported plans and the backlog.
+	for i := 1; i < len(c.nodes); i++ {
+		c.bind(i)
+		if err := c.carry(ctx, view); err != nil {
+			return c.settled(err)
+		}
+		c.settle()
+	}
+
 	c.rep.Outcome = c.outcome()
 	return nil
 }
@@ -332,6 +526,42 @@ func (c *cycle) fold(ctx context.Context, reports []RunReport) error {
 			asked = op.Decision
 		}
 	}
+	return c.writeFold(ctx, base, folded, ops, notes, asked)
+}
+
+// foldNode writes what one sibling node's finished runs mean into its items and
+// commits them. It is the fold without the two things that belong to the
+// daemon's own node: the question a workspace's refusal raises and the line the
+// audit log keeps of it. The state node's fold is the one that reads a refusal
+// — out of every node's reports, because one call answers for every node's
+// intents — and it is the state node whose question a person answers.
+//
+// A sibling over its size cap is skipped, and this is that node's own affair as
+// much as the plan it is not given is: Apply validates the state a patch is made
+// from as well as the one it makes, so the fold of an over-cap node is a patch
+// the database refuses — and that refusal is this step's error, which ends the
+// whole cycle before the state node's merge and its launches (X4: a node over
+// its cap stops that node alone). The runs the skipped node holds are left
+// unfolded and unreported, which is the same place the node is in for the plan:
+// nothing this release writes can land on a document ValidateState refuses both
+// ways, so there is no fold to make and no launch to hold back.
+func (c *cycle) foldNode(ctx context.Context, reports []RunReport) error {
+	if OverCap(c.state) {
+		return nil
+	}
+	ops, notes, err := foldOps(c.state, reports)
+	if err != nil {
+		return err
+	}
+	return c.writeFold(ctx, c.state, len(ops), ops, notes, nil)
+}
+
+// writeFold commits one fold: the patch its ops make and the notifications that
+// go with it. folded is how many of the ops are folded runs — the question a
+// refusal raises rides in the same patch and is not one — and it is added to
+// the report rather than set, because a cycle that works several nodes folds
+// several times. A fold that asks for no op writes nothing at all.
+func (c *cycle) writeFold(ctx context.Context, base State, folded int, ops []Op, notes []Notification, asked *DecisionOp) error {
 	if len(ops) == 0 {
 		return nil
 	}
@@ -342,7 +572,7 @@ func (c *cycle) fold(ctx context.Context, reports []RunReport) error {
 	if err := c.commit(ctx, next); err != nil {
 		return err
 	}
-	c.rep.Folded = folded
+	c.rep.Folded += folded
 	for _, n := range notes {
 		c.say(ctx, n)
 	}
@@ -352,13 +582,23 @@ func (c *cycle) fold(ctx context.Context, reports []RunReport) error {
 	return nil
 }
 
-// carry runs the plan: each action in the order the plan decided them, each
-// one through the starter, whose commit is this cycle's write. The first action
-// that cannot be carried out ends the cycle — what it left is what the starter
-// committed before it, and the next tick re-derives the rest.
+// carry runs one node's plan: each action in the order the plan decided them,
+// each one through the starter, whose commit is this cycle's write to that node.
+// The caps a node plans under are counted over every node of the project and
+// the tally is the cycle's own, so the nodes of one project spend one allowance
+// between them (D2743) — the state node is planned first, and the plan and
+// backlog nodes get what it left. The counts and the tally meet exactly once:
+// what the nodes held when the cycle read them (counts) and what this cycle has
+// decided since (planned), never the same launch in both. The pause is the
+// daemon's rather than the node's (paused), so a node whose own state carries
+// no question still plans nothing while one stands anywhere in the project.
+// The first action that cannot be carried out ends the cycle — what it left is
+// what the starter committed before it, and the next tick re-derives the rest.
 func (c *cycle) carry(ctx context.Context, view RunView) error {
 	starter := Starter{Launcher: c.tick.Launcher, Commit: c.commit, Mint: c.tick.Mint}
-	for _, a := range Plan(c.state, view, c.tick.Caps, c.now) {
+	actions, planned := planNode(c.state, view, c.tick.Caps, c.now, c.counts, c.planned, c.paused)
+	c.planned = planned
+	for _, a := range actions {
 		next, err := starter.Start(ctx, c.state, a, c.now)
 		if err != nil {
 			return err
@@ -391,13 +631,15 @@ func (c *cycle) outcome() CycleOutcome {
 		return CycleProgress
 	case c.rep.DecideOutcome != "":
 		return c.rep.DecideOutcome
-	case hasOpenIntent(c.state) || hasReviewWait(c.state):
+	case c.anyNode(func(s State) bool { return hasOpenIntent(s) || hasReviewWait(s) }):
 		return CycleInFlight
 	}
 	return CycleEmpty
 }
 
-// commit writes a state this cycle derived and takes the ETag that write left.
+// commit writes a state this cycle derived — to the node the cycle is working
+// on, which is the one the state was read from — and takes the ETag that write
+// left.
 //
 // One conditional write per state, under the ETag the node was last read at —
 // the store's own rule (O3): a body derived from the document read at that ETag,
@@ -408,13 +650,14 @@ func (c *cycle) outcome() CycleOutcome {
 // and that read is also the check that the node is still the one this cycle
 // wrote.
 func (c *cycle) commit(ctx context.Context, next State) error {
-	if err := c.tick.Store.Save(ctx, next, c.etag); err != nil {
+	store := c.nodes[c.at].store
+	if err := store.Save(ctx, next, c.etag); err != nil {
 		// Whatever the reason, this cycle no longer holds the document its
 		// next write would be derived from.
 		c.fresh = false
 		return err
 	}
-	back, etag, err := c.tick.Store.Load(ctx)
+	back, etag, err := store.Load(ctx)
 	if err != nil {
 		c.fresh = false
 		return err
@@ -428,13 +671,48 @@ func (c *cycle) commit(ctx context.Context, next State) error {
 	return nil
 }
 
+// reread takes the node as it now stands after a write this cycle did not make.
+//
+// The rung 3 hook lands its moves through its own seam (MergeSeams.Node), with
+// the store's own conditional write, and the ETag that leaves is not the one
+// this cycle holds: the state it derived and the ETag it read are both older
+// than the document the hook left, so the next write it makes in the same Step
+// — another item's question, the triage, the decision — would be refused under
+// a revision that is already gone. Reading the node back is what gives the
+// cycle the document its next write derives from, and it is the same read the
+// seam could not make for it: the hook is handed the store and not the cycle.
+//
+// A read that fails leaves the cycle with nothing it may write rather than with
+// a state it can no longer place (fresh), which is the direction the breaker's
+// own question and the triage already decline in.
+func (c *cycle) reread(ctx context.Context) error {
+	back, etag, err := c.tick.Store.Load(ctx)
+	if err != nil {
+		c.fresh = false
+		return err
+	}
+	c.state, c.etag = back, etag
+	return nil
+}
+
 // ask commits the question a tripped breaker raises, and says so. The breaker
 // asks at most one question per trip (Decision and WorkspaceDecision each
 // refuse one the node already carries), so a daemon that restarted into an
 // unanswered question does not leave a second one behind — and a cycle whose
 // node is not its own to write asks nothing at all.
+//
+// The question goes on the state node whatever node the cycle was working on
+// when it ended: the streak is the daemon's and the state node is where its
+// question has always landed, beside the workspace refusals its own fold read.
+// A cycle that read no node at all — the load failed on the first one, which is
+// the one thing that can leave the cycle with none — asks nothing: the state
+// node is not among the nodes it holds, and a question is a write.
 func (c *cycle) ask(ctx context.Context) error {
-	if c.tick.Breaker == nil || !c.fresh {
+	if c.tick.Breaker == nil || len(c.nodes) == 0 {
+		return nil
+	}
+	c.bind(0)
+	if !c.fresh {
 		return nil
 	}
 	op, ok := c.question()

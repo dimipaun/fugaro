@@ -252,16 +252,23 @@ var grantRules = map[string]map[string]who{
 		// so the row is here rather than in that type's, and it names the
 		// credentials account alone — a job account holding a project-wide
 		// secretAccessor is precisely what DS2.2 exists to stop.
-		"roles/secretmanager.secretAccessor":      toCredentials,
-		"roles/aiplatform.user":                   toAccounts,
-		"roles/batch.agentReporter":               toAccounts,
-		"roles/batch.jobsEditor":                  toPeople, // only under the Fugaro job-name condition (jobsCondition); never an account
-		"roles/datastore.user":                    toAccounts,
-		"roles/datastore.viewer":                  toPeople,
-		"roles/firebaseauth.admin":                toAccounts,
-		"roles/firebasedatabase.admin":            toPeople | toAccounts | toCoordinator,
-		"roles/firebasedatabase.viewer":           toPeople,
-		"roles/logging.logWriter":                 toAccounts,
+		"roles/secretmanager.secretAccessor": toCredentials,
+		"roles/aiplatform.user":              toAccounts,
+		"roles/batch.agentReporter":          toAccounts,
+		"roles/batch.jobsEditor":             toPeople, // only under the Fugaro job-name condition (jobsCondition); never an account
+		"roles/datastore.user":               toAccounts,
+		"roles/datastore.viewer":             toPeople,
+		"roles/firebaseauth.admin":           toAccounts,
+		"roles/firebasedatabase.admin":       toPeople | toAccounts | toCoordinator,
+		"roles/firebasedatabase.viewer":      toPeople,
+		// logging.logWriter's toBuildIdentity is what a catalog build's own
+		// step logs need (B6): a build that names a user-specified service
+		// account is written to Cloud Logging as that account, and the role
+		// is project-wide because Cloud Logging offers the write no narrower
+		// — appending entries, and nothing else. The per-repository build
+		// account the identity replaces held the same role at the same level
+		// (modules/repo/build.tf's `build` row).
+		"roles/logging.logWriter":                 toAccounts | toBuildIdentity,
 		"roles/serviceusage.serviceUsageConsumer": toPeople | toAccounts,
 	},
 	"google_service_account_iam_member": {
@@ -274,7 +281,17 @@ var grantRules = map[string]map[string]who{
 		// for any uid is one the review has to see classified, not one a
 		// widened toAccounts row would quietly accept.
 		customKey + "fugaroTokenMinter": toPeople | toOrchestrator,
-		"roles/iam.serviceAccountUser":  toPeople | toAccounts,
+		// The operators' actAs on the accounts a build runs as. Two module
+		// sites hold it now: the per-repository build account
+		// (modules/repo/build.tf's operator_build, on google_service_account
+		// .build) and — since B6 moved the catalog build onto the project's
+		// build identity — that identity (modules/installation/
+		// build_identity.tf's operator_build_identity, on the literal account
+		// path). Both are people acting as an account of the installation's
+		// own, which is this row's own kind; the account the role is on is
+		// what the module's literal spelling pins, since this table sees only
+		// the member.
+		"roles/iam.serviceAccountUser": toPeople | toAccounts,
 		// D75's one-time impersonation setup: the operators, and nobody else,
 		// may assume the deployer account. On an account, for people — the
 		// grant that makes the managed apply possible and the only grant of
@@ -324,7 +341,17 @@ var grantRules = map[string]map[string]who{
 		// built from that account (reportsWriteGrant). Without that check the
 		// bit would let a plan hand this account objectUser on runs/ — the
 		// launchers' own write area — or on another bucket.
-		"roles/storage.objectUser": toPeople | toAccounts | toCatalogCheck | toReports | toOrchestrator,
+		//
+		// objectUser's toBuildIdentity is the record step of a catalog build
+		// (B6): the build runs as the project's identity, and the record it
+		// writes is one repository's, so the grant is one condition per
+		// repository — the same bytes the catalog check's own grant carries
+		// (gcp.CatalogRecordsCondition) — and catalogRecordsGrant is what
+		// pins it to the identity and to those bytes. Without the check the
+		// bit would let a plan hand this account a project-wide builds/
+		// prefix, reaching every repository's check state and the copied
+		// definitions beside them.
+		"roles/storage.objectUser": toPeople | toAccounts | toCatalogCheck | toReports | toOrchestrator | toBuildIdentity,
 		// The intake's bit is on the reader row and not on the writer's: what
 		// the class reads is the derived admin list, one object of the runs
 		// bucket (intakeAdminListGrant checks the bucket AND the object), and
@@ -336,12 +363,33 @@ var grantRules = map[string]map[string]who{
 		// are on the two rows and not one: the read is objectViewer, and a
 		// grant of the write role under the read condition (or the reverse) is
 		// refused rather than read as either.
-		"roles/storage.objectViewer": toPeople | toAccounts | toCoordinator | toIntake | toReports | toOrchestrator,
+		//
+		// objectViewer's toBuildIdentity is the copied catalog definitions a
+		// catalog build's pin step reads (B6): objectViewer and never
+		// objectUser, under the input's own expression
+		// (gcp.CatalogReadCondition) and this account's title, which is what
+		// catalogReadGrant reads. A repository's build could not rewrite a
+		// definition before this bit existed, and the identity cannot either.
+		"roles/storage.objectViewer": toPeople | toAccounts | toCoordinator | toIntake | toReports | toOrchestrator | toBuildIdentity,
 	},
 	"google_artifact_registry_repository_iam_member": {
-		customKey + "fugaroTagMover":    toAccounts,
-		"roles/artifactregistry.reader": toPeople | toAccounts,
-		"roles/artifactregistry.writer": toPeople | toAccounts,
+		// toBuildIdentity carries the three roles the per-repository build
+		// account held for the same reasons before B6: the writer and the tag
+		// mover on the ONE shared registry, where the project's build identity
+		// pushes every catalog image and moves its tags (its write already
+		// reads what it pushes), and the reader a build's own pulls need —
+		// fugaro-base and the ghcr remote, because a Cloud Build step pulls
+		// its image as the build's account: the credential step's own image is
+		// the installation's base image, the derived build's step image and
+		// its FROM come through the ghcr remote, and a D2305 entry's smoke
+		// stage pulls the base it pinned. That is modules/repo/build.tf's
+		// build_base and build_ghcr, and B6 moved them with the account. No
+		// other registry row widens for this principal: the identity reads a
+		// repository's own registry through no grant, which is B6's "nothing
+		// wider".
+		customKey + "fugaroTagMover":    toAccounts | toBuildIdentity,
+		"roles/artifactregistry.reader": toPeople | toAccounts | toBuildIdentity,
+		"roles/artifactregistry.writer": toPeople | toAccounts | toBuildIdentity,
 	},
 	"google_secret_manager_secret_iam_member": {
 		// The credentials service's own account reads Secret Manager in two
@@ -363,6 +411,13 @@ var grantRules = map[string]map[string]who{
 		// and deploy/terraform's TestServiceWorkflowSecretGrantsMatchTheJobsMounts
 		// holds D2074's set to the containers the job's own env mounts).
 		//
+		// toBuildIdentity is a catalog build's own provider credential (B6):
+		// Cloud Build resolves AvailableSecrets as the account the build runs
+		// as, which is the project's identity now, and the containers it reads
+		// are the repositories' own — one grant per repository whose entries
+		// this project's catalog builds, exactly the secrets the repository's
+		// own build account read (modules/repo/build.tf's build grant).
+		//
 		// toOrchestrator is P5.1e's row and the only one the resident
 		// orchestrator has here: a cloud consumer verifies the phone's tag, the
 		// tag is a symmetric HMAC, so it holds the key — one container per
@@ -372,7 +427,7 @@ var grantRules = map[string]map[string]who{
 		// project-wide one above, and it is a reader in section 4.3's table
 		// rather than the only one: a project Owner or Editor reads any
 		// container's value past its own policy.
-		"roles/secretmanager.secretAccessor":     toAccounts | toCredentials | toCoordinator | toOrchestrator,
+		"roles/secretmanager.secretAccessor":     toAccounts | toCredentials | toCoordinator | toBuildIdentity | toOrchestrator,
 		"roles/secretmanager.secretVersionAdder": toPeople,
 		"roles/secretmanager.viewer":             toPeople,
 	},
@@ -422,8 +477,10 @@ var grantRules = map[string]map[string]who{
 	// the build before the container can decide its class. It is Fugaro's own
 	// account, created by the same apply that turns the service on, and it
 	// comes with nothing wider — no actAs, no project role, and no second
-	// resource type: the registry roles a catalog build needs to push are added
-	// to this table deliberately, in the task that grants them.
+	// resource type: the registry roles a catalog build needs, to push and to
+	// pull, are in the artifact registry row below, added there deliberately
+	// by the task that granted them (B6), and they are the whole of what this
+	// principal holds outside this bit.
 	"google_cloud_run_v2_service_iam_member": {
 		"roles/run.invoker": toAccounts | toPeople | toCoordinator | toVerifier | toBuildIdentity,
 	},
@@ -2207,14 +2264,17 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 			kind = toOrchestrator
 		case c.isBuildIdentityMember(m):
 			// ... and the project's build identity (B5, D2301): its own kind,
-			// which ONE row accepts — the invoker bit on the credentials
-			// service — so every other grant it is given, and every other role
-			// a plan might reach for, is refused and the update that carries
-			// them asks its owner. Read here, before the review screen's list,
-			// for the deployer's reason: a plan that listed its address would
-			// otherwise be able to grant it a launcher's or an operator's role,
-			// and the whole point of the account is that a catalog build
-			// reaches the one service and nothing else of this installation's.
+			// which the cells B6 added accept — the invoker bit on the
+			// credentials service, the registry pair a push and a pull need,
+			// and the runs bucket and provider-credential reaches a catalog
+			// build's own steps make — so every other grant it is given, and
+			// every other role a plan might reach for, is refused and the
+			// update that carries them asks its owner. Read here, before the
+			// review screen's list, for the deployer's reason: a plan that
+			// listed its address would otherwise be able to grant it a
+			// launcher's or an operator's role, and the whole point of the
+			// account is that a catalog build reaches the one service and
+			// nothing else of this installation's.
 			kind = toBuildIdentity
 		case slices.Contains(c.Listed, m):
 			if !strings.HasPrefix(m, "user:") && !strings.HasPrefix(m, "group:") && !strings.HasPrefix(m, "serviceAccount:") {
@@ -2750,7 +2810,9 @@ func IntakeAdminListCondition(bucket string) string {
 // (jobAccountGrant) — or exactly one whole-builds/catalog/ clause
 // (gcp.CatalogReadCondition, a build account's read of the copied catalog
 // definitions, PIC4), under the same account rule and that condition's own
-// title (catalogReadGrant) — or, in the
+// title (catalogReadGrant) — which since B6 is also the project's build
+// identity's read of the same copy, under the title built from that account
+// and that account alone (buildIdentityGrantAccount) — or, in the
 // project module and for an account that module creates, exactly one
 // whole-tokens/ clause (gcp.ProjectTokenBucketCondition, the shared job's
 // read of every repository's sealed token, plan task 3.2 step 2); a person's
@@ -2763,8 +2825,11 @@ func IntakeAdminListCondition(bucket string) string {
 // account carries exactly one repository's builds/<slug>/catalog/ clause
 // (gcp.CatalogRecordsCondition, the job's read-write reach into the records
 // and check state of the repository an entry belongs to, D1148), under that
-// condition's own title and that account alone (catalogRecordsGrant) — and the
-// reports job's account carries exactly the two-clause condition of ONE prefix
+// condition's own title and that account alone (catalogRecordsGrant) — which
+// since B6 is also the project's build identity's grant of the same condition,
+// one per repository, the record a catalog build writes being the one the
+// check reads back — and the reports job's account carries exactly the
+// two-clause condition of ONE prefix
 // of one of this run's buckets: the runs/ one under objectViewer
 // (gcp.ReportsReadCondition, the records its reports summarise) and the
 // reports/ one under objectUser (gcp.ReportsWriteCondition, the one write that
@@ -3018,19 +3083,22 @@ func (c Cover) projectJobTokenCondition(rc ResourceChange, createdSAIDs, heldSAI
 	return false
 }
 
-// catalogReadGrant reports whether a bucket grant is a repository's build
-// account reading the copied catalog definitions (gcp.CatalogReadCondition,
-// PIC4): objectViewer, which the branch this is called from has already
-// established, on exactly builds/catalog/ of one of this run's buckets, with
-// the condition title built from the account the grant's own module holds or
-// creates (gcp.CatalogReadConditionTitle) — the account rule the tokens/
-// grants pass (jobAccountGrant).
+// catalogReadGrant reports whether a bucket grant is a build account reading
+// the copied catalog definitions (gcp.CatalogReadCondition, PIC4):
+// objectViewer, which the branch this is called from has already established,
+// on exactly builds/catalog/ of one of this run's buckets, with the condition
+// title built from the account the grant's own module holds or creates
+// (gcp.CatalogReadConditionTitle) — the account rule the tokens/ grants pass
+// (jobAccountGrant), or, since B6, the project's build identity
+// (buildIdentityGrantAccount), which reads the same copy as the account a
+// catalog build now runs as.
 //
 // The clause has no slug, so the expression is one builder's bytes for the
 // whole string: the grant the repository module writes is accepted, and any
 // other clause under objects/ — or the same clause on no run bucket — is not.
 func (c Cover) catalogReadGrant(rc ResourceChange, createdSAIDs, heldSAIDs map[string]bool, title, expr string) bool {
-	if _, ok := c.jobAccountGrant(rc, createdSAIDs, heldSAIDs, title, gcp.CatalogReadConditionTitlePrefix); !ok {
+	if _, ok := c.jobAccountGrant(rc, createdSAIDs, heldSAIDs, title, gcp.CatalogReadConditionTitlePrefix); !ok &&
+		!c.buildIdentityGrantAccount(rc, createdSAIDs, heldSAIDs, title, gcp.CatalogReadConditionTitlePrefix) {
 		return false
 	}
 	bucket := str(rc.Change.After["bucket"])
@@ -3136,8 +3204,18 @@ func (c Cover) catalogRecordsGrant(rc ResourceChange, createdSAIDs map[string]bo
 	// this is. A named member needs no further rule than the account's own
 	// name: the ID and the project name it, and no other account of a run
 	// carries either.
-	if !c.isCatalogCheckMember(str(rc.Change.After["member"])) {
-		if !unknown(rc.Change, "member") || !createdSAIDs[modulePrefix(rc)+"|"+CatalogCheckAccountID] {
+	//
+	// Since B6 the project's build identity is the second account this grant is
+	// written for: a catalog build runs as the identity and writes the record
+	// the check reads back, so the same condition is bound to it, one grant per
+	// repository (modules/installation/build_identity.tf) — the account rule is
+	// the check's own, keyed on the identity's literal ID.
+	if !c.isCatalogCheckMember(str(rc.Change.After["member"])) && !c.isBuildIdentityMember(str(rc.Change.After["member"])) {
+		if !unknown(rc.Change, "member") {
+			return false
+		}
+		mod := modulePrefix(rc)
+		if !createdSAIDs[mod+"|"+CatalogCheckAccountID] && !createdSAIDs[mod+"|"+BuildIdentityAccountID] {
 			return false
 		}
 	}
@@ -3201,6 +3279,28 @@ func (c Cover) jobAccountGrant(rc ResourceChange, createdSAIDs, heldSAIDs map[st
 		return "", false
 	}
 	return id, true
+}
+
+// buildIdentityGrantAccount is jobAccountGrant's account rule for the
+// conditioned grants written for the project's build identity (B6, D2301)
+// instead of a job or build account: the condition's title is the prefix its
+// own builder writes plus that account's ID, and the member is that account,
+// held or created by the grant's own module. Its ID is a literal rather than
+// derived, so unlike a job account's there is nothing to read out of the
+// member: the title is the whole of what says whose grant this is, and the
+// member then has to be the account the title names.
+func (c Cover) buildIdentityGrantAccount(rc ResourceChange, createdSAIDs, heldSAIDs map[string]bool, title, titlePrefix string) bool {
+	if title != titlePrefix+BuildIdentityAccountID {
+		return false
+	}
+	mod := modulePrefix(rc) + "|" + BuildIdentityAccountID
+	if c.isBuildIdentityMember(str(rc.Change.After["member"])) {
+		return heldSAIDs[mod] || createdSAIDs[mod]
+	}
+	// The computed member the module writes
+	// (google_service_account.build_identity[0].member): the plan has to be
+	// the one that creates the account the title is built from.
+	return unknown(rc.Change, "member") && createdSAIDs[mod]
 }
 
 func (c Cover) fugaroAccount(m string) bool {

@@ -110,7 +110,7 @@ func TestAccountsAddOpenRouterKey(t *testing.T) {
 	r := newAddRig(t)
 	writes := r.secretWrites(t)
 
-	out, errOut := r.addTyped(t, "team-a", "--repos", "owner/repo-a", "--type", "openrouter")
+	out, errOut := r.add(t, "team-a", "--repos", "owner/repo-a", "--type", "openrouter")
 
 	id := credentialSecretID("team-a")
 	if got := string(r.sm.Latest(id)); got != addToken() {
@@ -331,8 +331,9 @@ func TestTheAccountsDoorKeepsTheJobOfANameTheConfigNowDeclaresAKey(t *testing.T)
 	}
 
 	// A second converge, by a run that does not touch team-a at all.
-	// The retype loosens the shared node (craft_credentials team-a), so this publish confirms by the project name typed at a terminal.
-	r.addTyped(t, "team-c", "--repos", "owner/repo-a")
+	// The retype loosens the shared node (craft_credentials team-a), which is a
+	// grant-only publish: the gate judges it and no name is typed for it (N4).
+	r.add(t, "team-c", "--repos", "owner/repo-a")
 
 	kept := r.projectJobs(t)
 	for name, want := range deployed {
@@ -414,7 +415,7 @@ func TestAccountsAddAnthropicKey(t *testing.T) {
 	r := newAddRig(t)
 	writes := r.secretWrites(t)
 
-	r.addTyped(t, "team-key", "--repos", "owner/repo-a", "--type", "anthropic")
+	r.add(t, "team-key", "--repos", "owner/repo-a", "--type", "anthropic")
 
 	id := credentialSecretID("team-key")
 	if got := string(r.sm.Latest(id)); got != addToken() {
@@ -488,14 +489,16 @@ func TestKeyValueAtTheHiddenPromptIsNotEchoed(t *testing.T) {
 
 	done := runOnTerminal(t, tty, "accounts", "add", "team-a", "--repos", "owner/repo-a", "--type", "openrouter")
 	pasteAtThePrompt(t, tty, config.CredentialSecret("team-a"), addToken())
-	// The publish after the store loosens the shared node and waits at this
-	// terminal for the project's name; without it the command never returns.
-	waitTerminal(t, tty, "Type "+initProjectName+" to confirm")
-	if _, err := tty.master.WriteString(initProjectName + "\n"); err != nil {
-		t.Fatal(err)
-	}
+	// The publish after the store loosens the shared node with the credential
+	// this command declares — the grant members and nothing else — and a
+	// grant-only publish is not confirmed by the project's name typed at a
+	// terminal (N4, D1542/D1552, F24): the hidden prompt above is the only thing
+	// this run waits at.
 	if err := waitCommand(t, done); err != nil {
 		t.Fatalf("accounts add --type openrouter: %v\nterminal:\n%s", err, tty.displayed())
+	}
+	if strings.Contains(tty.displayed(), "Type "+initProjectName+" to confirm") {
+		t.Errorf("the terminal asked for the project's name for a grant-only publish:\n%s", tty.displayed())
 	}
 
 	if strings.Contains(tty.displayed(), addToken()) {
@@ -568,7 +571,7 @@ func TestARerunWithoutTypeWritesOnlyTheCredentialsOwnSecret(t *testing.T) {
 	r := newAddRigWith(t, accountsAddKeyCredentialLocal)
 	writes := r.secretWrites(t)
 
-	out, errOut := r.addTyped(t, "team-a", "--repos", "owner/repo-a")
+	out, errOut := r.add(t, "team-a", "--repos", "owner/repo-a")
 
 	id := credentialSecretID("team-a")
 	if got := string(r.sm.Latest(id)); got != addToken() {
@@ -601,7 +604,7 @@ func TestARerunWithoutTypeWritesOnlyTheCredentialsOwnSecret(t *testing.T) {
 // not leave behind.
 func TestAccountsRmTakesAKeyCredentialsOwnContainer(t *testing.T) {
 	r := newAddRigWith(t, accountsAddKeyCredentialLocal)
-	r.addTyped(t, "team-a", "--repos", "owner/repo-a")
+	r.add(t, "team-a", "--repos", "owner/repo-a")
 	id := credentialSecretID("team-a")
 	if r.sm.Latest(id) == nil {
 		t.Fatalf("the fixture's %s holds no value, so the delete has nothing to take away", id)

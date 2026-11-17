@@ -32,10 +32,10 @@ type WireSubscription struct {
 	// one (D2192).
 	Seats   int    `json:"seats"`
 	PriceID string `json:"price_id"`
-	// StartsAt, RenewsAt and EndsAt are the term as Paddle states it.
-	// RenewsAt is null for a subscription that will not renew, and EndsAt is
-	// null while nothing has ended it: a canceled subscription that has paid
-	// through its term carries a date here and not a state.
+	// StartsAt, RenewsAt and EndsAt are the term as Paddle states it. RenewsAt
+	// is null for a subscription that will not renew, and EndsAt is null while
+	// nothing has ended it: a term that ran out is stated by those two dates,
+	// and `canceled` is the one state a cancellation was recorded for.
 	StartsAt    time.Time  `json:"starts_at"`
 	RenewsAt    *time.Time `json:"renews_at"`
 	EndsAt      *time.Time `json:"ends_at"`
@@ -48,6 +48,24 @@ type WireSeatChange struct {
 	// a customer believes they are buying is what makes a lost reply safe to
 	// send again.
 	Seats int `json:"seats"`
+}
+
+// WireCustomerPortal is what a billing screen is handed when it asks for
+// Paddle's own customer portal: the session's URL, which is where invoices,
+// payment methods and cancellation live.
+//
+// **It is the one shape of this area that the wire registry does not hold**
+// (wire.go), and the gap is the SPA's side of the tree rather than this one.
+// The registry is kept to a fixture in `ee/portal/schemas/fixtures/`, a `$defs`
+// entry in the area's schema and the sweep that reads both (`wire_test.go`,
+// `ee/portal/test/types.test.ts`); the screen that reads this answer declares
+// its own `CustomerPortal` beside itself (P4.4, a level before this route
+// existed) instead of in `ee/portal/src/api/types/billing.ts`, and this task
+// writes no file under `ee/portal/`. The field is spelled the way the screen
+// reads it, and the task's pull request carries the missing registration as the
+// finding it is.
+type WireCustomerPortal struct {
+	URL string `json:"url"`
 }
 
 func init() {

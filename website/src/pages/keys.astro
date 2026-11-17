@@ -19,13 +19,12 @@
  * **The forms post to the intake and to nothing else.** Each action is the key service's
  * intake origin (`src/lib/keys-intake.mjs`, the one host the site sends a request to) plus
  * the route for its own check. The service does not exist yet: it is built after the entity
- * exists (S3.2, S3.5, the design's §1) and deployed by the owner (S3.7), so until then the
- * page exists in the repository and is not published — the publish is the owner's (S7.4) and
- * it waits for S7.3 as well. That is enforced and not merely intended: `firebase.json`'s
- * `ignore` holds the page out of every deploy until S7.3 writes the statement's key sign-up
- * section and takes the entry out, and `website/test/consent.mjs` fails if the page is served
- * while the statement still says the site has no form. The routes are this page's own half of
- * the intake's contract, and `website/test/keys.mjs` pins them.
+ * exists (S3.2, S3.5, the design's §1) and deployed by the owner (S3.7). The page is published
+ * — S7.3 wrote the statement's key sign-up section (`/privacy/`) and took S3.3's hold off in the
+ * same commit, so `firebase.json`'s `ignore` no longer excludes it and `website/test/consent.mjs`
+ * holds the page to the statement rather than to that hold — and the deploy of the site is still
+ * the owner's (S7.4). The routes are this page's own half of the intake's contract, and
+ * `website/test/keys.mjs` pins them.
  *
  * **The CSP's `form-action` is what makes the posting possible.** `form-action 'self'` blocks
  * a form whose action is another origin, so the deployed policy in `firebase.json` admits the
@@ -38,8 +37,10 @@
  * **The privacy statement's key sign-up section is S7.3's, and this page does not write it.**
  * What the intake collects, how long it keeps it and who receives it is counsel's and the
  * owner's copy on `/privacy/` (the design's §7.3), so this page carries a pointer to the
- * statement and no sentence of its own about the data — the page's `website/test/privacy.mjs`
- * and `website/test/consent.mjs` claims are the ones S7.3 restates.
+ * statement and no sentence of its own about the data. The statement's card is written and the
+ * pointer is held to it: `website/test/privacy.mjs` rule 9 reads the card against these forms'
+ * own fields and against the documents behind it, and `website/test/consent.mjs` reads this
+ * page's controls against the card.
  *
  * The look is the site's (P1's `base.css` §2c): the headline is the display scale's largest
  * step with the accent's gradient on it, the three forms are cards in the one column, and the
