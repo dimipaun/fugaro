@@ -37,15 +37,21 @@ const orchestratorTF = "orchestrator.tf"
 const orchestratorMemberExpr = `"serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com"`
 
 // orchestratorResources is every resource that file declares, in the order the
-// file declares them, and the test fails on any other: a resource added to this
-// file is a grant the design's table does not have a row for, and a resource
-// removed from it is a row the account can no longer reach.
+// file declares them, and the test fails on any other: the account and its
+// bindings are section 4.3's table, where a resource added is a grant the design
+// does not have a row for and one removed is a row the account can no longer
+// reach; and the service, its invoker grant and its tick are the design's
+// section 4.1 (mobile plan task P5.1c), where a resource added beside them is a
+// second way in that section 4.3's envelope was never priced against.
 var orchestratorResources = []struct{ typ, name string }{
 	{"google_service_account", "orchestrator"},
 	{"google_project_iam_member", "orchestrator_launcher"},
 	{"google_storage_bucket_iam_member", "orchestrator_runs_launcher"},
 	{"google_storage_bucket_iam_member", "orchestrator_runs_reader"},
 	{"google_service_account_iam_member", "orchestrator_token_minter"},
+	{"google_cloud_run_v2_service", "orchestrator"},
+	{"google_cloud_run_v2_service_iam_member", "orchestrator_invoker"},
+	{"google_cloud_scheduler_job", "orchestrator_tick"},
 }
 
 // tfBlock returns the body of the resource block for typ and name, or "" when
@@ -231,6 +237,131 @@ func TestOrchestratorIsNeverALauncher(t *testing.T) {
 		if strings.Contains(text, "google_service_account.orchestrator") && name != "outputs.tf" {
 			t.Errorf("%s names the orchestrator's account resource: the table is orchestrator.tf's, and outputs.tf is the one other file that may name it — to publish the identity rather than to bind anything with it", name)
 		}
+	}
+}
+
+// TestOrchestratorServiceIsTheDesignsShape is the module's half of section 4.1
+// (mobile plan task P5.1c): one Cloud Run service, scale-to-zero, request-based
+// billing, woken by a Cloud Scheduler tick. It reads the two resources the way
+// this file's tests read the table, and it is the half the plan-level test
+// cannot be: internal/infra's terraform-tagged test reads the rows a plan
+// produces, and a plan cannot say whether a value came from a variable or from a
+// literal somebody typed into terraform.tfvars.json.
+func TestOrchestratorServiceIsTheDesignsShape(t *testing.T) {
+	src := tfSource(t, orchestratorTF)
+
+	svc := tfBlock(src, "google_cloud_run_v2_service", "orchestrator")
+	if svc == "" {
+		t.Fatalf("%s declares no google_cloud_run_v2_service.orchestrator: the resident orchestrator has no service and the tick wakes nothing (design section 4.1)", orchestratorTF)
+	}
+	for _, need := range []string{
+		// Scale-to-zero, twice: the service's own scaling block is what a
+		// read of the live revision reports as minScale and check 660 is what
+		// reads it, and the template's copy is what the revision is created
+		// with. min-instances = 1 is the shape the design priced and did not
+		// take.
+		"min_instance_count = 0",
+		`scaling_mode       = "AUTOMATIC"`,
+		// The fence: an IAM-required service. INGRESS_TRAFFIC_ALL with IAM on
+		// is what "no public ingress" means here (intake.tf's rule); the
+		// invoker is the scheduler account alone, in the grant below.
+		`ingress = "INGRESS_TRAFFIC_ALL"`,
+		"invoker_iam_disabled = false",
+		`name     = var.orchestrator.service`,
+		`location = var.region`,
+		`image = var.orchestrator.image`,
+		`args  = ["orchestrator", "serve"]`,
+		`service_account = google_service_account.orchestrator[0].email`,
+		`type    = "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST"`,
+		"ignore_changes = [client, client_version]",
+		// The three names the process reads, and the three values: the
+		// installation's own name (which is the node's id), its Firebase
+		// project, and the database it reads the node out of. None of them is
+		// a secret and none is a secret ID (section 6 rules 4 and 5).
+		`name  = "FUGARO_PROJECT"`, `value = var.fugaro_project`,
+		`name  = "FUGARO_FIREBASE_PROJECT"`, `value = var.orchestrator.firebase_project`,
+		`name  = "FUGARO_RTDB_URL"`, `value = var.orchestrator.rtdb_url`,
+	} {
+		if !strings.Contains(svc, need) {
+			t.Errorf("%s: the orchestrator's service does not carry %q:\n%s", orchestratorTF, need, svc)
+		}
+	}
+	// The account is the plan's own and not a literal, so a plan reads it back
+	// as the resource this module creates (internal/infra/tf's
+	// orchestratorAccount).
+	if !regexp.MustCompile(`(?m)^\s*count = local\.orchestrator_on \? 1 : 0\s*$`).MatchString(svc) {
+		t.Errorf("%s: the service is not counted on local.orchestrator_on, so an installation that has not opted in acquires it:\n%s", orchestratorTF, svc)
+	}
+	for _, never := range []string{"value_source", "secret", "min_instance_count = 1"} {
+		if strings.Contains(svc, never) {
+			t.Errorf("%s: the orchestrator's service names %q, which section 4.1 and section 6 rules 4 and 5 do not allow here:\n%s", orchestratorTF, never, svc)
+		}
+	}
+
+	// The invoker: the installation's own scheduler account, and nobody else.
+	// Cloud Run's invoker is per service and there is nothing narrower (F36),
+	// so this grant IS the caller class: no person, and no other account of
+	// the installation, may wake the service.
+	inv := tfBlock(src, "google_cloud_run_v2_service_iam_member", "orchestrator_invoker")
+	for _, need := range []string{
+		`role     = "roles/run.invoker"`,
+		`name     = var.orchestrator.service`,
+		`member   = "serviceAccount:${var.names.scheduler_service_account_id}@${var.project}.iam.gserviceaccount.com"`,
+	} {
+		if !strings.Contains(inv, need) {
+			t.Errorf("%s: the service's invoker grant does not carry %q:\n%s", orchestratorTF, need, inv)
+		}
+	}
+	// Written out rather than read off the scheduler account's member, which is
+	// computed: internal/infra/tf's cover reads a principal's KIND off the plan
+	// member, and an unknown one is an ordinary account — the kind whose
+	// invoker rows are wider than this one.
+	if strings.Contains(inv, "google_service_account.scheduler") {
+		t.Errorf("%s: the invoker grant reads the scheduler account's own attribute, which reaches a plan unknown and is read as an ordinary account there: the member is written out from var.names (orchestrator.tf's header):\n%s", orchestratorTF, inv)
+	}
+	// And the orchestrator's own address is nowhere in it: this grant is to the
+	// scheduler, so it is not a row of section 4.3's table.
+	if strings.Contains(inv, "var.orchestrator.account_id") {
+		t.Errorf("%s: the invoker grant names the orchestrator's own account: it is a grant TO the installation's scheduler, and the account's table is the five rows above:\n%s", orchestratorTF, inv)
+	}
+
+	// The tick: every minute (Cloud Scheduler's floor, and the cadence Q4's
+	// answer of 2026-10-19 fixed), UTC, no retry, POST to the service's own URL
+	// on the process's only route, with an OIDC ID token whose audience is that
+	// same URL.
+	tick := tfBlock(src, "google_cloud_scheduler_job", "orchestrator_tick")
+	if tick == "" {
+		t.Fatalf("%s declares no google_cloud_scheduler_job.orchestrator_tick: nothing wakes the service and the phone's worst-case wait is forever", orchestratorTF)
+	}
+	for _, need := range []string{
+		`region    = var.orchestrator.scheduler_region`,
+		`name      = var.orchestrator.scheduler_job`,
+		`schedule  = "* * * * *"`,
+		`time_zone = "Etc/UTC"`,
+		"retry_count = 0",
+		`http_method = "POST"`,
+		`uri         = "${google_cloud_run_v2_service.orchestrator[0].uri}${local.orchestrator_tick_path}"`,
+		`service_account_email = google_service_account.scheduler.email`,
+		`audience              = google_cloud_run_v2_service.orchestrator[0].uri`,
+	} {
+		if !strings.Contains(tick, need) {
+			t.Errorf("%s: the tick does not carry %q:\n%s", orchestratorTF, need, tick)
+		}
+	}
+	// The token is an ID token and not an access token: Cloud Run's front end
+	// admits a run.app caller by the ID token whose audience is the service,
+	// and every other tick in this module carries an oauth_token because what
+	// it calls is the run API.
+	for _, never := range []string{"oauth_token", "scope"} {
+		if strings.Contains(tick, never) {
+			t.Errorf("%s: the tick carries %q: it calls a run.app URL, where Cloud Run requires an OIDC ID token — an OAuth access token is refused before the container runs:\n%s", orchestratorTF, never, tick)
+		}
+	}
+	// The route `/tick` is the process's only one, and it is the local the URI
+	// is composed from: internal/infra/tf's cover holds the tick to that same
+	// path, and the two spellings are one string because this file pins it.
+	if !strings.Contains(src, `orchestrator_tick_path = "/tick"`) {
+		t.Errorf("%s: the tick's route is not the local `/tick` — internal/cli/orchestrator_serve.go's only route, and the path internal/infra/tf's cover admits a tick on", orchestratorTF)
 	}
 }
 

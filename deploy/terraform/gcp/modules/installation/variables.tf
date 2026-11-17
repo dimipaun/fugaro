@@ -649,11 +649,16 @@ variable "managed_deployer_scoped" {
 }
 
 variable "orchestrator" {
-  description = "The resident orchestrator's own identity (mobile plan task P5.1b; docs/mobile/design/always-on-orchestrator.md section 4.3): one service account per installation and exactly the grants the design's table lists, assembled one binding at a time. OFF by default (null) — an installation that has not opted in plans exactly what it planned before this file existed, which is what makes the update carrying it a no-op for every installation that has not asked for a resident orchestrator. account_id is the account's ID, fixed by internal/infra's OrchestratorAccountID so that `fugaro doctor` can find the account by the name the design gives it. firebase_project and signer_account_id are the token-minter row's two names and are on this variable rather than derived from var.coordinator: that row is bound on the FIREBASE root's signer account, in that root's project, where the fugaroTokenMinter role is declared (modules/firebase/iam.tf), and the ID is the one internal/infra hands the Firebase root (FirebaseVars' SignerAccountID, the firebase module's names.signer_account_id), so this file composes the signer's address from the same ID the account is created with, the way scheduler.tf composes its own account's. The variable has no CLI writer yet — fugaro update carries no --orchestrator flag on this branch — so nothing here is reachable until the release that turns the resident orchestrator on writes one, which is also the release that must order this root's token-minter binding behind the Firebase root (orchestrator.tf states the ordering)."
+  description = "The resident orchestrator (mobile plan tasks P5.1b and P5.1c; docs/mobile/design/always-on-orchestrator.md sections 4.1 and 4.3): one service account per installation with exactly the grants the design's table lists, the Cloud Run service that account runs, the Cloud Scheduler tick that wakes it, and the environment that service's one process is configured by. OFF by default (null) — an installation that has not opted in plans exactly what it planned before this file existed, which is what makes the update carrying it a no-op for every installation that has not asked for a resident orchestrator. account_id is the account's ID, fixed by internal/infra's OrchestratorAccountID so that `fugaro doctor` can find the account by the name the design gives it. firebase_project and signer_account_id are the token-minter row's two names and are on this variable rather than derived from var.coordinator: that row is bound on the FIREBASE root's signer account, in that root's project, where the fugaroTokenMinter role is declared (modules/firebase/iam.tf), and the ID is the one internal/infra hands the Firebase root (FirebaseVars' SignerAccountID, the firebase module's names.signer_account_id), so this file composes the signer's address from the same ID the account is created with, the way scheduler.tf composes its own account's. service is the Cloud Run service's name; image is the released image pinned BY DIGEST and never by a tag, for credentials_service.image's and intake.image's reason; rtdb_url is the database the process reads this installation's node out of, and it is a field of its own because the service's own Firebase project and the database's URL are two names the same installation computes in two roots. scheduler_job and scheduler_region are the tick's own two names, scheduler_region separately because Cloud Scheduler is not offered in every Cloud Run region (history.tf's and coordinator.tf's rule). The variable has no CLI writer yet — fugaro update carries no --orchestrator flag on this branch — so nothing here is reachable until the release that turns the resident orchestrator on writes one, which is also the release that must order this root's token-minter binding behind the Firebase root (orchestrator.tf states the ordering)."
   type = object({
     account_id        = string
     firebase_project  = string
     signer_account_id = string
+    service           = string
+    image             = string
+    rtdb_url          = string
+    scheduler_job     = string
+    scheduler_region  = string
   })
   default = null
 
@@ -664,5 +669,24 @@ variable "orchestrator" {
       can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.orchestrator.signer_account_id))
     )
     error_message = "orchestrator needs a service account ID (6-30 characters of a-z, 0-9 and -, starting with a letter) for the installation's own account, the Firebase project the signer account lives in, and the signer account's own ID on that project — the token-minter grant is bound on that account, in that project, which is where the role it names exists."
+  }
+
+  # The service, its pin and the tick, held to intake's rules and for their
+  # reasons: an operator can push a tag, so the image is a digest; the service
+  # name is a Cloud Run name; the database URL is the https://<host> form the
+  # process addresses (no path, no port), which is also what keeps the name it
+  # is composed from a host rather than anything a caller could paste; and the
+  # tick's two names are a Scheduler job name and a Scheduler region, the
+  # region being a field of its own because Scheduler is not offered in every
+  # Cloud Run region.
+  validation {
+    condition = var.orchestrator == null ? true : (
+      can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.orchestrator.service)) &&
+      can(regex("^[A-Za-z0-9][A-Za-z0-9._/@:-]*@sha256:[0-9a-f]{64}$", var.orchestrator.image)) &&
+      can(regex("^https://[a-z0-9.-]+$", var.orchestrator.rtdb_url)) &&
+      can(regex("^[a-zA-Z][a-zA-Z0-9_-]{0,62}$", var.orchestrator.scheduler_job)) &&
+      can(regex("^[a-z]+-[a-z]+[0-9]+$", var.orchestrator.scheduler_region))
+    )
+    error_message = "orchestrator needs a Cloud Run service name, an image pinned by digest (an image reference ending in @sha256: and 64 lower-case hex digits — never a tag: an operator can push a tag), the database URL the process reads this installation's node out of in the https://<host> form (no path), and the tick's Scheduler job name and region."
   }
 }

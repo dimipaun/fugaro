@@ -417,13 +417,23 @@ variable "orchestrator" {
     account_id        = string
     firebase_project  = string
     signer_account_id = string
+    service           = string
+    image             = string
+    rtdb_url          = string
+    scheduler_job     = string
+    scheduler_region  = string
   })
-  # The resident orchestrator's own identity (mobile plan task P5.1b), OFF by
+  # The resident orchestrator (mobile plan tasks P5.1b and P5.1c), OFF by
   # default: null creates nothing, so an installation that has not opted in
   # plans exactly what it planned before the module file existed, and every
-  # `fugaro update` that carries it is a no-op for that installation. All three
-  # fields are computed by internal/infra (the module's type is the same
-  # object, and its validation is the one that holds them to their shape, so
-  # this root declares the value and decides nothing about it).
+  # `fugaro update` that carries it is a no-op for that installation. The
+  # eight fields are the account and the two names of its token-minter row, the
+  # Cloud Run service and the pin it runs, the database that service reads this
+  # installation's node out of, and the tick's Scheduler job name and region.
+  # The module's type is this same object and its validations are the ones that
+  # hold them to their shape, so this root declares the value and decides
+  # nothing about it; nothing in internal/infra composes the block yet (the
+  # module variable's description says so), so the one installation that has it
+  # is one whose owner wrote it into terraform.tfvars.json by hand.
   default = null
 }

@@ -74,6 +74,14 @@ locals {
   # installation that has not opted in, and every resource below is counted on
   # it.
   orchestrator_on = var.orchestrator != null
+
+  # The route the tick calls, which is the process's ONLY route
+  # (internal/cli/orchestrator_serve.go): the service answers POST /tick, 405 to
+  # another method on it and 404 to anything else — so a tick pointed anywhere
+  # else is a job that runs, fails and logs, every minute, forever. It is a local
+  # because the URI is composed from the service's own URL, and it is pinned in
+  # internal/infra/tf's cover_test.go against the route the case accepts.
+  orchestrator_tick_path = "/tick"
 }
 
 # The identity itself. Nothing is granted actAs on it: executing the service
@@ -199,4 +207,201 @@ resource "google_service_account_iam_member" "orchestrator_token_minter" {
   service_account_id = "projects/${var.orchestrator.firebase_project}/serviceAccounts/${var.orchestrator.signer_account_id}@${var.orchestrator.firebase_project}.iam.gserviceaccount.com"
   role               = "projects/${var.orchestrator.firebase_project}/roles/fugaroTokenMinter"
   member             = "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com"
+}
+
+# The service itself (mobile plan task P5.1c; the design's section 4.1: "one
+# Cloud Run service per installation, in the installation's own GCP project,
+# min-instances = 0, request-based billing, woken by a Cloud Scheduler tick").
+# It is the account above, and the whole of what a wake-up may do is the table
+# that account holds — this resource adds an identity to run AS, no reach of its
+# own.
+#
+# It is a SERVICE and not a job, and the design refuses to pretend the choice is
+# free: a scheduled job could do the same work and is cheaper (section 9's
+# alternative A3), and the service is taken only because it can answer a
+# request. Scale-to-zero is what makes "always on" mean available rather than
+# busy: the phone's message waits in the mailbox for the whole 72-hour TTL
+# (D118/O5) and the tick is what bounds the wait (U1), so the instance count has
+# to be 0 when nothing is happening — check 660 reads `minScale` back off the
+# live revision for exactly that, and `min-instances = 1` is the shape the
+# design priced and did not take.
+#
+# The ingress is ALL and the fence is IAM, intake.tf's and credentials.tf's
+# shape one file over: the caller is Cloud Scheduler over the public run.app
+# URL, and `invoker_iam_disabled = false` is the front end refusing an
+# unauthenticated request before the container runs. Those two together are what
+# the plan's "no public ingress" means, and it is stated here rather than left to
+# the provider's default: a service that does not require IAM is a service
+# anybody on the internet can wake, and this one acts on an installation's own
+# state.
+#
+# The image is the released pin, held to var.orchestrator's digest rule: the
+# process is `fugaro orchestrator serve` (internal/cli/orchestrator_serve.go),
+# a subcommand of the same binary the credentials service and the intake run,
+# and there is no orchestrator image of its own. `args` replaces the image's
+# command and no part of its entrypoint, so the two services running the same
+# pin are told apart by their argv — which is what internal/infra/tf's case for
+# this address reads.
+#
+# The environment is the process's whole configuration and it is three names,
+# none of them a credential and none of them a secret (the process's own header
+# counts them): the project that names this installation's node, the Firebase
+# project that node belongs to, and the database URL it is read from. There is
+# deliberately no model key, no git credential and no secret ID here — section
+# 6's rules 4 and 5, and the account's table has no secretAccessor for one to be
+# read with.
+resource "google_cloud_run_v2_service" "orchestrator" {
+  count = local.orchestrator_on ? 1 : 0
+
+  project  = var.project
+  location = var.region
+  name     = var.orchestrator.service
+  labels = {
+    fugaro      = "managed"
+    fugaro_role = "orchestrator"
+  }
+  ingress = "INGRESS_TRAFFIC_ALL"
+
+  invoker_iam_disabled = false
+
+  scaling {
+    scaling_mode       = "AUTOMATIC"
+    min_instance_count = 0
+  }
+
+  deletion_protection = false
+
+  template {
+    labels = {
+      fugaro      = "managed"
+      fugaro_role = "orchestrator"
+    }
+    service_account = google_service_account.orchestrator[0].email
+    timeout         = "300s"
+
+    scaling {
+      min_instance_count = 0
+    }
+
+    containers {
+      image = var.orchestrator.image
+      args  = ["orchestrator", "serve"]
+
+      resources {
+        limits = {
+          cpu    = "1"
+          memory = "512Mi"
+        }
+      }
+
+      env {
+        name  = "FUGARO_PROJECT"
+        value = var.fugaro_project
+      }
+      env {
+        name  = "FUGARO_FIREBASE_PROJECT"
+        value = var.orchestrator.firebase_project
+      }
+      env {
+        name  = "FUGARO_RTDB_URL"
+        value = var.orchestrator.rtdb_url
+      }
+    }
+  }
+
+  traffic {
+    type    = "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST"
+    percent = 100
+  }
+
+  lifecycle {
+    ignore_changes = [client, client_version]
+  }
+
+  depends_on = [google_service_account.orchestrator]
+}
+
+# The one caller the front end admits: the installation's own scheduler account,
+# which is the identity the tick's Google ID token is minted as (the job below).
+# Cloud Run's invoker is per service and there is nothing narrower (F36, the same
+# sentence intake.tf's own invoker grant carries), so this is the whole of the
+# class: nobody else in the installation, and no person, can wake this service.
+#
+# The member is written out rather than read off google_service_account.scheduler
+# .member, for this file's own reason at the top: that attribute is computed, so
+# reading it reaches the plan as an unknown member, and the member is what
+# internal/infra/tf's cover reads a principal's kind off. Written from
+# var.names.scheduler_service_account_id it is one of internal/infra's
+# FugaroAccounts (fugaro-scheduler), which is the kind the cover's run.invoker
+# row admits — and that is also why this grant does not widen section 4.3's
+# table: it is a grant TO the scheduler, and the orchestrator account appears
+# nowhere in it.
+resource "google_cloud_run_v2_service_iam_member" "orchestrator_invoker" {
+  count = local.orchestrator_on ? 1 : 0
+
+  project  = var.project
+  location = var.region
+  name     = var.orchestrator.service
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${var.names.scheduler_service_account_id}@${var.project}.iam.gserviceaccount.com"
+
+  depends_on = [google_service_account.orchestrator]
+}
+
+# The tick that wakes it (section 4.1; Q4's answer of 2026-10-19: the tick is
+# the heartbeat's only writer, one write per tick, and Cloud Scheduler's shortest
+# interval is one minute and it may fire up to that late — U1 says so, so a
+# minute is the floor and the cadence this release takes).
+#
+# It is an HTTP target on the service's own URL, not the run API: a Cloud Run
+# *service* is invoked through its URL, and that URL is what Cloud Run's IAM
+# check reads `roles/run.invoker` against. `.uri` is a computed attribute, so
+# this is the one place in this module where a scheduler job's URI is read off
+# the resource it calls rather than written from var.project and the resource's
+# name — and it is deliberate: the URL is assigned by Cloud Run and no expression
+# can spell it (coordinator.tf writes the run API's path because a job's location
+# and name ARE knowable), so writing it out would be a second spelling of a name
+# only Cloud Run has. The audience is that same URL and not a second copy of it:
+# Cloud Run refuses an ID token whose audience is not the service's own URL, so
+# the two are one expression or the job authenticates against nothing.
+#
+# The token is an OIDC ID token, where every other tick in this tree carries an
+# OAuth access token: the run API takes an access token, and a run.app URL takes
+# an ID token whose audience is the service — an access token there is refused by
+# the front end before the container runs, however the invoker grant reads.
+# `service_account_email` is the scheduler account the invoker grant above names,
+# and this file writes no actAs for it: every other tick in this module mints its
+# token from the same account with no such grant (history.tf, coordinator.tf,
+# reports.tf, catalogcheck.tf), so the Cloud Scheduler agent's own actAs on it is
+# the installation's existing shape and not this task's to change.
+#
+# `retry_count = 0` is the module's rule for every tick in it: a failed pass logs
+# its failure and the next minute is the retry, and a retry of a pass that
+# half-ran is a second pass over the same node. The time zone is UTC as every
+# other job's is. The region is var.orchestrator.scheduler_region, because Cloud
+# Scheduler is not offered in every Cloud Run region.
+resource "google_cloud_scheduler_job" "orchestrator_tick" {
+  count = local.orchestrator_on ? 1 : 0
+
+  project   = var.project
+  region    = var.orchestrator.scheduler_region
+  name      = var.orchestrator.scheduler_job
+  schedule  = "* * * * *"
+  time_zone = "Etc/UTC"
+
+  retry_config {
+    retry_count = 0
+  }
+
+  http_target {
+    http_method = "POST"
+    uri         = "${google_cloud_run_v2_service.orchestrator[0].uri}${local.orchestrator_tick_path}"
+
+    oidc_token {
+      service_account_email = google_service_account.scheduler.email
+      audience              = google_cloud_run_v2_service.orchestrator[0].uri
+    }
+  }
+
+  depends_on = [google_cloud_run_v2_service_iam_member.orchestrator_invoker]
 }
