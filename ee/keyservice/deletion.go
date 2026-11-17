@@ -383,10 +383,14 @@ func (s *Service) revokeLicence(ctx context.Context, entitlement WireEntitlement
 // organisation itself.
 //
 // Every read is taken before the first write, which is what a transaction of this
-// document store requires (docstore's ErrReadAfterWrite) and what makes the
-// whole removal one commit: an organisation whose memberships were removed but
-// whose record stayed would be one the portal lists for nobody and that nobody
-// can delete again.
+// document store requires (docstore's ErrReadAfterWrite), and every removal is
+// the transaction's own (Tx.Delete, docstore's Transaction): the whole group
+// lands in one commit or none of it does, so a store that refused the commit
+// leaves the organisation exactly as it was and the next call does the same job
+// again. An organisation whose memberships were removed but whose record stayed
+// would be one the portal lists for nobody and that nobody can delete again —
+// the caller's own membership is what the route admits them by — and that is the
+// state a group swept one document at a time after the commit leaves behind.
 //
 // The workspaces go with the organisation because nothing else reaches them: a
 // workspace is the organisation's own object — a name it chose, and the Firebase
@@ -429,9 +433,12 @@ func deleteOrganisationRecords(ctx context.Context, tx Tx, organisationID string
 }
 
 // deleteAccount ends one person's account. The reads the refusals are made of
-// and the records that go are one transaction, so a second owner deleting their
-// account at the same moment is a conflict this runs again against rather than a
-// race that leaves an organisation owned by nobody.
+// and the records that go are one transaction, and the removals are the
+// transaction's own writes (Tx.Delete, docstore's Transaction): a second owner
+// deleting their account at the same moment has their membership removed by
+// their own commit, so this one's commit — decided on a membership list that has
+// just moved — is a conflict it runs again against, and the answer the second
+// time is D2195's refusal rather than an organisation left owned by nobody.
 func (s *Service) deleteAccount(ctx context.Context, actor Caller) error {
 	if err := s.docs.Update(ctx, func(ctx context.Context, tx Tx) error {
 		held, err := membershipsOf(ctx, tx, actor.UID)

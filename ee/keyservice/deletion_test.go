@@ -41,6 +41,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/dimipaun/fugaro/ee/keyservice/docstore"
 )
 
 const (
@@ -650,5 +652,215 @@ func TestAnAccountAlreadyGoneIsNotAFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "500") {
 		t.Errorf("the failure reads %q, want the status and not the provider's own body", err)
+	}
+}
+
+// The deployment's own document store, and the two things a group of removals
+// has to survive.
+//
+// **The fixture's store cannot tell a commit from a sweep.** It is a map that
+// keeps whatever a transaction staged, so every case over it passes whether the
+// group of removals landed in one commit or was dropped one document at a time
+// after the commit. The documents go either way, and what separates the two is
+// the state a case makes in between: a store that fails partway through the
+// group, or another caller's write landing in the instant between this
+// transaction's reads and its commit.
+//
+// The cases below therefore wire the adapter a deployment runs
+// (NewDocStoreDocs, P1.7) over the portal's own memory store, and read back what
+// that store holds rather than what the fixture's spy holds: the two are
+// different stores, and only this one is the deployment's.
+
+// deletionStore is the memory document store with those two states, each armed
+// for one transaction attempt.
+type deletionStore struct {
+	*docstore.Memory
+	// refuseRemoval is one document this store fails to remove, the first time a
+	// transaction removes it: a store that cannot write, met in the middle of a
+	// group. It fires once, which is what makes the call after it the retry a
+	// deployment would make.
+	refuseRemoval string
+	refused       bool
+	// beforeCommit is one write another caller lands after a transaction's reads
+	// and before its commit — the instant no sequential case can produce. What
+	// the transaction decided on has moved by the time it commits, so the commit
+	// is a conflict and the function runs again on the state it now finds.
+	beforeCommit func()
+}
+
+func (s *deletionStore) RunTransaction(ctx context.Context, fn func(context.Context, docstore.Transaction) error) error {
+	return s.Memory.RunTransaction(ctx, func(ctx context.Context, tx docstore.Transaction) error {
+		if err := fn(ctx, &deletionTx{Transaction: tx, store: s}); err != nil {
+			return err
+		}
+		if s.beforeCommit != nil {
+			before := s.beforeCommit
+			s.beforeCommit = nil
+			before()
+		}
+		return nil
+	})
+}
+
+// deletionTx is one of those transactions. The one removal a case armed is
+// answered as the store's own failure, which is what a store that cannot write
+// does: the transaction commits nothing, so no half of the group is removed.
+type deletionTx struct {
+	docstore.Transaction
+	store *deletionStore
+}
+
+func (t *deletionTx) Delete(ctx context.Context, collection, id string) error {
+	if !t.store.refused && t.store.refuseRemoval == collection+"/"+id {
+		t.store.refused = true
+		return errStoreRefused
+	}
+	return t.Transaction.Delete(ctx, collection, id)
+}
+
+// newDeletionFixtureOverTheStore is the deletion fixture with the deployment's
+// own adapter in front of that store, handed back beside it: the same acts over
+// the seam a deployment runs, and the store a case reads them back out of.
+func newDeletionFixtureOverTheStore(t *testing.T, store docstore.Store) (*deletionFixture, *DocStoreDocs) {
+	t.Helper()
+	docs := NewDocStoreDocs(store)
+	f := &deletionFixture{
+		bindingFixture: newBindingFixtureWith(t, func(f *fixture) { f.deps.Docs = docs }),
+		directory:      newAccountDirectoryServer(t),
+	}
+	return f, docs
+}
+
+// heldOverTheStore reads one record out of the store the adapter is over, which
+// is the deployment's own: the fixture's spy is a second store these cases never
+// wrote to, and reading there would read an empty map and call it a deletion.
+func heldOverTheStore[T any](t *testing.T, from recordGetter, collection, id string) (T, bool) {
+	t.Helper()
+	record, found, err := getRecord[T](context.Background(), from, collection, id)
+	if err != nil {
+		t.Fatalf("reading %s/%s over the deploy's own store: %v", collection, id, err)
+	}
+	return record, found
+}
+
+// theOrganisationsMembers is every member of one organisation, read the way the
+// service reads them.
+func theOrganisationsMembers(t *testing.T, from recordReader, organisationID string) []WireMembership {
+	t.Helper()
+	held, err := recordsWhere[WireMembership](context.Background(), from, membershipsCollection,
+		Where{Field: "organisation_id", Value: organisationID})
+	if err != nil {
+		t.Fatalf("reading the memberships of %s over the deploy's own store: %v", organisationID, err)
+	}
+	return held
+}
+
+// TestAnOrganisationDeletionRemovesItsRecordsInOneCommit: the deployment's own
+// store, where a group of removals is one act or none of it.
+//
+// The store fails on the last of the group's removals — a store that cannot
+// write is what a deployment meets, and it is met in the middle of the group,
+// with the memberships and the invitations already staged beside it. A seam that
+// swept the group after the commit would leave exactly the state no retry can be
+// made of: the memberships gone with the organisation still there, so the person
+// asking again is not a member of anything, the route answers 404, and the
+// organisation can never be deleted by anybody.
+//
+// It is not that: nothing of the group lands, the organisation is as it was, and
+// the same request again is what finishes the job.
+func TestAnOrganisationDeletionRemovesItsRecordsInOneCommit(t *testing.T) {
+	store := &deletionStore{Memory: docstore.NewMemory()}
+	f, docs := newDeletionFixtureOverTheStore(t, store)
+	org := f.seededOrganisation("org-dana", "Dana Ltd", orgTypeCustomer, danaUID, danaEmail, roleOwner)
+	workspace := f.seedWorkspace("ws-1", org.ID, "Dana's portal")
+	invitation := f.invitationTo("invite-erin", org.ID, erinEmail, invitePending)
+
+	store.refuseRemoval = workspacesCollection + "/" + workspace.ID
+	rec := f.deleteOrg(org.ID)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("a deletion whose store failed on one of its removals answered %d (%s), want this service's own failure", rec.Code, rec.Body)
+	}
+	if _, held := heldOverTheStore[WireOrganisation](t, docs, organisationsCollection, org.ID); !held {
+		t.Error("the organisation is gone after a deletion its store could not finish: the request can never be made again")
+	}
+	if _, held := heldOverTheStore[WireMembership](t, docs, membershipsCollection, membershipID(org.ID, danaUID)); !held {
+		t.Error("the caller's membership is gone with the organisation still there, which is the state that answers 404 for ever")
+	}
+	if _, held := heldOverTheStore[WireInvite](t, docs, invitesCollection, invitation.ID); !held {
+		t.Error("the invitation is gone and the organisation is not: a deletion its store could not finish removed half of its records")
+	}
+	if _, held := heldOverTheStore[WireWorkspace](t, docs, workspacesCollection, workspace.ID); !held {
+		t.Error("the workspace is gone and the organisation is not")
+	}
+
+	// The same request again, which is the whole of what an operator or the
+	// person themselves does about a store that failed.
+	rec = f.deleteOrg(org.ID)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("the deletion made again answered %d: %s", rec.Code, rec.Body)
+	}
+	if _, held := heldOverTheStore[WireOrganisation](t, docs, organisationsCollection, org.ID); held {
+		t.Error("the organisation stands after the deletion went through")
+	}
+	if _, held := heldOverTheStore[WireMembership](t, docs, membershipsCollection, membershipID(org.ID, danaUID)); held {
+		t.Error("a membership of the deleted organisation stands")
+	}
+	if _, held := heldOverTheStore[WireInvite](t, docs, invitesCollection, invitation.ID); held {
+		t.Error("an invitation of the deleted organisation stands, and after it is gone nobody can read or withdraw one")
+	}
+	if _, held := heldOverTheStore[WireWorkspace](t, docs, workspacesCollection, workspace.ID); held {
+		t.Error("a workspace of the deleted organisation stands, and nothing left can reach it")
+	}
+}
+
+// TestTheLastTwoOwnersCannotBothDeleteTheirAccounts: D2195's rule against the
+// race the fixture's own store cannot produce — two owners deleting their
+// accounts at the same instant.
+//
+// Both read an organisation with two owners and both decide their own deletion
+// is allowed. One of them commits first; the other's commit is a conflict,
+// because what it decided on has moved, and its function runs again on the state
+// it now finds: an organisation with one owner, itself, which is the state
+// D2195 refuses to leave behind. Without the removals being the transaction's
+// own, both would sweep their membership after their own commit had landed and
+// the organisation would be left with nobody able to invite into it, buy for it,
+// bind it or delete it.
+func TestTheLastTwoOwnersCannotBothDeleteTheirAccounts(t *testing.T) {
+	store := &deletionStore{Memory: docstore.NewMemory()}
+	f, docs := newDeletionFixtureOverTheStore(t, store)
+	org := f.seededOrganisation("org-dana", "Dana Ltd", orgTypeCustomer, danaUID, danaEmail, roleOwner)
+	f.memberOf(org.ID, secondOwnerUID, secondOwnerEmail, roleOwner)
+
+	// The other owner's account deletion, landing between this request's reads
+	// and its commit: their own membership is the record their deletion removes,
+	// and it is what this answer hangs on.
+	store.beforeCommit = func() {
+		if err := store.Memory.Delete(context.Background(), membershipsCollection,
+			membershipID(org.ID, secondOwnerUID)); err != nil {
+			t.Errorf("removing the other owner's membership: %v", err)
+		}
+	}
+
+	rec := f.deleteAccount()
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("a deletion made after another owner's landed answered %d: %s", rec.Code, rec.Body)
+	}
+	if code := f.refused(rec); code != "sole_owner" {
+		t.Errorf("the refusal is %q, want %q: the person is now the only owner, and what they do instead is delete the organisation or make somebody else an owner", code, "sole_owner")
+	}
+	if _, held := heldOverTheStore[WireMembership](t, docs, membershipsCollection, membershipID(org.ID, secondOwnerUID)); held {
+		t.Fatal("the other owner's membership stands, and their deletion is the one this case landed underneath the request")
+	}
+	if owners := countOwners(theOrganisationsMembers(t, docs, org.ID)); owners != 1 {
+		t.Errorf("the organisation is left with %d owner(s), want the one whose account was not deleted", owners)
+	}
+	if _, held := heldOverTheStore[WireMembership](t, docs, membershipsCollection, membershipID(org.ID, danaUID)); !held {
+		t.Error("the caller's membership is gone after a refusal, and their account is still there")
+	}
+	if _, held := heldOverTheStore[WireOrganisation](t, docs, organisationsCollection, org.ID); !held {
+		t.Error("the organisation is gone, and nobody asked for it to be")
+	}
+	if seen := f.directory.deleted(t); len(seen) != 0 {
+		t.Errorf("the directory was asked to delete %v, and the deletion was refused", seen)
 	}
 }
