@@ -81,16 +81,17 @@ func TestProviderRunEndsInPR(t *testing.T) {
 
 	// The fee and the attribution are the run's: the model's usage at the
 	// run's own rate for it, plus the 10% route fee. The rate is the built-in
-	// catalog's for the route's model — the zdr tier's minimum under the
-	// default switches — read from the table the run built rather than named
+	// catalog's for the route's model — the zdr tier's maximum under the
+	// default switches, which is the dearest end (D2644) — read from the
+	// table the run built rather than named
 	// here, so the arithmetic under test is the fee, the attribution and the
 	// reported figure. The charge is in whole micros, as the engine's is.
 	m, ok := g.deps.Spend.Prices.Lookup(deepseek)
 	if !ok {
 		t.Fatal("the run's table has no row for the model it routed")
 	}
-	if m.Catalog == nil || m.Catalog.Tier != "zdr" || m.Catalog.Bound != "min" {
-		t.Fatalf("the run's row is not the catalog's zdr minimum: %+v", m.Catalog)
+	if m.Catalog == nil || m.Catalog.Tier != "zdr" || m.Catalog.Bound != "max" {
+		t.Fatalf("the run's row is not the catalog's zdr maximum: %+v", m.Catalog)
 	}
 	want := pricing.WithFee(m.Rates.Cost(use), 10).USD()
 	if rec.Cost == nil || !near(rec.CostUSD, want) || !near(rec.Cost.RouteBy["openrouter"], want) || !near(rec.Cost.ModelBy[deepseek], want) {

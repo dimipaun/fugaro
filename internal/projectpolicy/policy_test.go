@@ -561,8 +561,8 @@ func TestDecodeRequireZDRIsDefaultTrue(t *testing.T) {
 	if !unset.RequireZDROn() {
 		t.Error("an omitted require_zdr must read as true: the ZDR tier is the conservative price")
 	}
-	if unset.EffectivePricePolicy() != PricePolicyCheapest {
-		t.Errorf("EffectivePricePolicy = %q, want cheapest", unset.EffectivePricePolicy())
+	if unset.EffectivePricePolicy() != PricePolicyHighest {
+		t.Errorf("EffectivePricePolicy = %q, want highest: an omitted price_policy is the safe end (D2644)", unset.EffectivePricePolicy())
 	}
 
 	p, _, err = Decode(providerPolicy(`{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "require_zdr": false, "price_policy": "cheapest"}`))

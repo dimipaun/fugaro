@@ -57,10 +57,11 @@ type ModelProvider struct {
 	// enforce routing (see PricePolicy).
 	RequireZDR *bool `yaml:"require_zdr,omitempty" json:"require_zdr,omitempty"`
 	// PricePolicy is which end of the selected tier's price range is charged:
-	// "cheapest" or "highest"; unset means cheapest (PricePolicySet). It
-	// prices a tier; it does not choose the endpoint OpenRouter serves from,
-	// so a call may still be billed at the other end of the range (see
-	// docs/multi-model.md §2).
+	// "cheapest" or "highest"; unset means highest (PricePolicySet), the
+	// end that keeps the charge an upper bound on what the endpoint served
+	// can bill. It prices a tier; it does not choose the endpoint OpenRouter
+	// serves from, so a call may still be billed at the other end of the
+	// range (see docs/multi-model.md §2).
 	PricePolicy string `yaml:"price_policy,omitempty" json:"price_policy,omitempty"`
 	// Models are the model IDs the provider serves: exact IDs, or a prefix
 	// ending in "*" such as "deepseek/*". No two providers may overlap.
@@ -146,12 +147,15 @@ var (
 // only: true unless require_zdr is false (the PRSettings.EarlyDraftOn shape).
 func (p ModelProvider) RequireZDROn() bool { return p.RequireZDR == nil || *p.RequireZDR }
 
-// PricePolicySet is the policy to apply, spelled out: cheapest when the field
-// is unset. It is the value that reaches the price table, so the compiler
-// never branches on the empty string.
+// PricePolicySet is the policy to apply, spelled out: highest when the field
+// is unset (D2644, which supersedes the catalog design's ruling that cheapest
+// stays the default: the charge is what the caps and the ledger are computed
+// from, so the safe end is the one that cannot under-count a call OpenRouter
+// serves from a dearer endpoint). It is the value that reaches the price
+// table, so the compiler never branches on the empty string.
 func (p ModelProvider) PricePolicySet() string {
 	if p.PricePolicy == "" {
-		return PricePolicyCheapest
+		return PricePolicyHighest
 	}
 	return p.PricePolicy
 }
@@ -438,7 +442,7 @@ func ValidateModelProviders(providers map[string]ModelProvider) []Problem {
 			add(at+".route_fee_pct", "must be between 0 and %d (a percentage added to every charge)", MaxRouteFeePct)
 		}
 		if p.PricePolicy != "" && p.PricePolicy != PricePolicyCheapest && p.PricePolicy != PricePolicyHighest {
-			add(at+".price_policy", "%q must be one of %s, %s (which end of the built-in price catalog's range to charge; unset means %s)", p.PricePolicy, PricePolicyCheapest, PricePolicyHighest, PricePolicyCheapest)
+			add(at+".price_policy", "%q must be one of %s, %s (which end of the built-in price catalog's range to charge; unset means %s)", p.PricePolicy, PricePolicyCheapest, PricePolicyHighest, PricePolicyHighest)
 		}
 		if len(p.Models) == 0 {
 			add(at+".models", "must list the model IDs the provider serves, such as deepseek/*")
