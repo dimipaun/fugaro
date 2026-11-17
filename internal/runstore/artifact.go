@@ -19,6 +19,14 @@ const InputsDir = "inputs"
 // runner reads it back from there, so the two spell the leaf once.
 func InputKey(prefix, name string) string { return prefix + InputsDir + "/" + name }
 
+// InputName is the same object's name with the run's prefix left off, which is
+// what the Store's own methods take (PutFileFrom, ReadFile, DeleteFile): a
+// caller that has a Store and not a key builds the name through this rather
+// than by joining the two segments itself, so a leaf named in one of them
+// cannot drift from the other. dir is the directory the inputs of one feature
+// live under ("diagnose", the bundle), and name the file inside it.
+func InputName(dir, name string) string { return InputsDir + "/" + dir + "/" + name }
+
 // OutcomeArtifacts is the outcome of a run whose deliverable is in the
 // bucket: a mode: artifact run that rendered, uploaded and (when the recipe
 // asks for one, a later release) probed its outputs. It opens no pull
