@@ -32,6 +32,7 @@ Then read the file for what you are doing:
 | You are | Read |
 |---|---|
 | launching a run | `reference/launch.md` |
+| checking what the project has enrolled, or why a repository cannot run | `reference/repos.md` |
 | asking what is running, finished or failed, or about spend | `reference/status.md` |
 | reading what a run printed | `reference/logs.md` |
 | explaining why a run failed, halted or looks odd | `reference/diagnose.md` |
@@ -54,7 +55,6 @@ A long-lived branch (`integration-0.9.x`) is launched with `--ref BRANCH`, and t
 
 Review cost scales with the diff against the base, and where the base is main that is the branch's whole divergence from main, so keep each pull request small and merge main into the branch often so it never drifts far; a wide batch onto one branch pays that cost once per run (the `parallelism` skill).
 
-To see what a run cost: `fugaro runs ls` for its row, and `fugaro diagnose RUN` for the cost beside the halt and its detail.
 A halt with `run_cap` is the run reaching its dollar cap: `reference/diagnose.md` has the row, and where the base is far from main the review can reach the cap alone.
 On a pull request that was retargeted, check the base its runs recorded before launching a fix round: the plain listing prints none, `fugaro diagnose RUN --json` prints it as `row.base_branch`.
 
