@@ -75,10 +75,14 @@ type mergeStub struct {
 	// its outcome line lost sets it to that line's transition: appendErr refuses
 	// every line, which would refuse the marker before the host was ever asked.
 	appendErrOn string
-	launched    []orchestrator.LadderRequest
-	comments    []string
-	lines       []orchestrator.Entry
-	written     map[string]bool
+	// now is the harness's clock, which every line is stamped with as a real log
+	// stamps one: RungLog.LoggedAt answers the stamp back, and the bound on a
+	// retried wait is read from it (boundRetry). Nil leaves the stamps zero.
+	now      func() time.Time
+	launched []orchestrator.LadderRequest
+	comments []string
+	lines    []orchestrator.Entry
+	written  map[string]bool
 }
 
 func newMergeStub(t *testing.T) *mergeStub {
@@ -109,6 +113,9 @@ func (m *mergeStub) Append(_ context.Context, e orchestrator.Entry) error {
 	if m.appendErrOn != "" && e.Transition == m.appendErrOn {
 		return errors.New("the log would not take this line")
 	}
+	if m.now != nil && e.At.IsZero() {
+		e.At = m.now()
+	}
 	m.lines = append(m.lines, e)
 	m.written[orchestrator.EntryID(e.Subject, e.Transition)] = true
 	return nil
@@ -119,6 +126,22 @@ func (m *mergeStub) Logged(_ context.Context, id string) (bool, error) {
 		return false, m.loggedErr
 	}
 	return m.written[id], nil
+}
+
+// LoggedAt is when a line was written, read off the latest entry under the id —
+// what a log that patches by key holds. It is the read the bound on a retried
+// wait is made of, and a nil clock stamps nothing, so a test that does not move
+// the clock reads a zero time rather than a fabricated one.
+func (m *mergeStub) LoggedAt(_ context.Context, id string) (time.Time, bool, error) {
+	if m.loggedErr != nil {
+		return time.Time{}, false, m.loggedErr
+	}
+	for i := len(m.lines) - 1; i >= 0; i-- {
+		if orchestrator.EntryID(m.lines[i].Subject, m.lines[i].Transition) == id {
+			return m.lines[i].At, true, nil
+		}
+	}
+	return time.Time{}, false, nil
 }
 
 // line is the one line a test expects under one transition, and it fails when
@@ -304,7 +327,20 @@ func newRungHarness(t *testing.T, now time.Time, runs []string, items ...orchest
 		Now:     clockAt(now),
 		Mint:    mint.mint,
 	}
+	m.stub.now = func() time.Time { return m.now }
 	return m
+}
+
+// setClock moves the harness's clock, and everything that reads it with it: the
+// hook's own reading of the server's time (RungSeams.Now), the stamp the node's
+// writes carry and the one the log's lines carry. A test that walks a bound
+// forward has to move all three, or the hook writes a line stamped now and reads
+// the age of one stamped an hour ago off a clock that never moved.
+func (m *rungHarness) setClock(at time.Time) {
+	m.t.Helper()
+	m.now = at
+	m.seams.Now = clockAt(at)
+	m.seams.Node = &storeNode{t: m.t, node: m.node, now: at}
 }
 
 // act drives one entry of the hook, as E10a's ladder does: the item looked up
@@ -704,6 +740,19 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 			false,
 			func(_ *orchestrator.MergeReading, h *mergeHostStub) {
 				h.checks = []gitprov.CheckRun{{Status: "completed"}}
+			},
+		},
+		{
+			// A status this code does not place as movement, and the case the
+			// reading has to fail towards a person on: GitHub's "waiting" is a
+			// deployment approval nobody has answered, so no cycle of the
+			// daemon's moves it and asking the item's question is what a person
+			// who approves the deployment is there for.
+			"a check waiting on a person",
+			string(orchestrator.ReasonCIUnknown),
+			false,
+			func(_ *orchestrator.MergeReading, h *mergeHostStub) {
+				h.checks = []gitprov.CheckRun{{Status: "waiting"}}
 			},
 		},
 		{
@@ -1710,6 +1759,71 @@ func TestR3PendingCIThatTurnsIntoAVetoAsksAPerson(t *testing.T) {
 	}
 	if got := m.sink.got; len(got) != 1 || got[0].Kind != orchestrator.NotifyDecisionNeeded {
 		t.Fatalf("the tick said %+v, and the veto is the one thing it has to say", got)
+	}
+}
+
+// TestR3AWaitThatNeverMovesAsksAPerson is the other half of the retry, and the
+// debt the retry itself left: a reading can look like movement and never move, so
+// the cycles that retry one are bounded (boundRetry) and the item's question is
+// what a person gets once the bound is past.
+//
+// The reading here is a commit status stuck at "pending" — a job that died
+// before it posted anything, which no cycle of the daemon's ever changes — and it
+// is retried while the bound holds: nothing merged and no question, with the line
+// the bound is read from written once, at the first cycle's stamp. Past the
+// window the same reading is a person's: the question names the item, carries the
+// code the wait is recorded under, and a cycle after it asks nothing more.
+//
+// Mutation: take the bound out (retry every cycle, which is all the gate says)
+// and the third act below writes its line and asks nobody — the item cycles for
+// ever, and the only thing that would ever trip over it is the daemon's breaker,
+// which pauses every spawn and names no item (D1228).
+func TestR3AWaitThatNeverMovesAsksAPerson(t *testing.T) {
+	now := o6Now()
+	m := landable(t, now)
+	m.host.checks = []gitprov.CheckRun{{Status: "pending"}}
+
+	waited := "ladder-r3-wait-" + headA[:8]
+	retried := "ladder-r3-retry-" + headA[:8]
+	act := func() {
+		t.Helper()
+		m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+	}
+
+	act()
+	waitedOut(t, m, headA, waited, string(orchestrator.ReasonCIUnknown))
+	began := m.stub.line(retried)
+	if !began.At.Equal(now) {
+		t.Fatalf("the line the bound is read from is stamped %v, and the first cycle that retried the wait wrote it", began.At)
+	}
+	if !strings.Contains(began.Text, string(orchestrator.ReasonCIUnknown)) {
+		t.Fatalf("the line reads %q, and whoever reads it reads what the wait was on", began.Text)
+	}
+
+	// A cycle later, and still inside the window: the same wait, and still not a
+	// person's. The stamp is not rewritten, which is what makes it the start.
+	m.setClock(now.Add(time.Minute))
+	act()
+	waitedOut(t, m, headA, waited, string(orchestrator.ReasonCIUnknown))
+	if again := m.stub.line(retried); !again.At.Equal(now) {
+		t.Fatalf("the stamp moved to %v, and a bound read off a moving stamp is never reached", again.At)
+	}
+
+	// Past the window the reading is one that has stopped moving as far as the
+	// ladder is concerned, and the wait is a person's like any other refusal.
+	m.setClock(now.Add(7 * time.Hour))
+	act()
+	refusedAt(t, m, headA, waited, string(orchestrator.ReasonCIUnknown))
+	if q := m.question("wi-1").Question; !strings.Contains(q, "wi-1") {
+		t.Fatalf("the question reads %q, and the person it goes to reads which item the daemon is stuck on", q)
+	}
+
+	// The item has one question, and the cycle after it adds nothing.
+	told := len(m.sink.got)
+	m.setClock(now.Add(8 * time.Hour))
+	act()
+	if got := m.sink.got[told:]; len(got) != 0 {
+		t.Fatalf("the cycle said %+v, and the question the wait became was already asked", got)
 	}
 }
 

@@ -450,7 +450,11 @@ func (c *cycle) ladderOuter(w WorkItem, step escalation.Step, read LadderReading
 // something still moving asks nobody and is retried (MergeOutcome.Retry): the
 // cycles it spans are cycles of the hook's own that neither acted nor asked,
 // and three of those in a row are the breaker's — whose question is the
-// daemon's and names no item (D1228). The item a hook has finished with is not
+// daemon's and names no item (D1228). Those cycles are bounded rather than left
+// to the breaker, because a reading can look like movement and never move: past
+// the bound the wait is a refusal like any other and asks the item's own
+// question (boundRetry, mergeRetryWindow), so what reaches a person names the
+// item whatever the reading did. The item a hook has finished with is not
 // left to the breaker either: the hook stops it, and the cycle after it finds
 // an item the ladder reads no further rungs for.
 func (c *cycle) ladderBeyond(ctx context.Context, w WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) error {

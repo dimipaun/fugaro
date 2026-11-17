@@ -58,6 +58,18 @@ const (
 	checkSuccess   = "success"
 )
 
+// The four statuses a check carries while it has not concluded, which are the
+// ones ChecksPending reads as movement: GitHub's own words for a run that has
+// been requested, queued or started, and for the combined status of a commit
+// whose checks are still to come. A status outside them this code does not
+// place, and does not read as movement.
+const (
+	checkQueued     = "queued"
+	checkInProgress = "in_progress"
+	checkPending    = "pending"
+	checkRequested  = "requested"
+)
+
 // ChecksState is the state of a commit's checks: CIGreen only when at least
 // one check is reported and every reported one concluded success.
 //
@@ -68,25 +80,6 @@ const (
 // green would merge on nothing. A check that concluded anything else —
 // failure, cancelled, timed_out, neutral, skipped — is CIRed: the commit was
 // judged, and it did not pass.
-// ChecksPending reports whether a commit's checks are still moving: a check
-// that is queued or running has no answer yet, and what the commit's checks
-// say may be different next cycle.
-//
-// It is the reading beside ChecksState and not a fourth state, because
-// CIUnknown covers three things a caller acting on it has to tell apart. A
-// commit whose checks have not concluded is one to wait for; a commit with no
-// checks reported at all, and one whose finished check concluded something this
-// code cannot read, are answers — nobody is going to report anything more, and
-// a caller that waits for them waits for ever. Only the first is this.
-func ChecksPending(runs []CheckRun) bool {
-	for _, r := range runs {
-		if r.Status != checkCompleted {
-			return true
-		}
-	}
-	return false
-}
-
 func ChecksState(runs []CheckRun) CIState {
 	if len(runs) == 0 {
 		return CIUnknown
@@ -106,4 +99,35 @@ func ChecksState(runs []CheckRun) CIState {
 		}
 	}
 	return state
+}
+
+// ChecksPending reports whether a commit's checks are still moving: a check that
+// is requested, queued, pending or running has no answer yet, and what the
+// commit's checks say may be different next cycle.
+//
+// It is the reading beside ChecksState and not a fourth state, because CIUnknown
+// covers three things a caller acting on it has to tell apart. A commit whose
+// checks have not concluded is one to wait for; a commit with no checks reported
+// at all, and one whose finished check concluded something this code cannot
+// read, are answers — nobody is going to report anything more, and a caller that
+// waits for them waits for ever. Only the first is this.
+//
+// The four are the whole of it, and a status outside them is not movement: a
+// reading this code cannot place may be anything, and calling it movement is the
+// direction that fails worst — GitHub's "waiting" is a deployment approval
+// nobody has answered, which no cycle changes until a person does, so a caller
+// that waited on it would wait for ever and tell nobody. It is answering false
+// there, and the caller asks a person, which is what that check is waiting for.
+// The other side of the line is the status this reading cannot tell from real
+// work — a commit status a dead job left at "pending" — and a caller that waits
+// on movement bounds that wait rather than trusting it (the ladder's
+// mergeRetryWindow).
+func ChecksPending(runs []CheckRun) bool {
+	for _, r := range runs {
+		switch r.Status {
+		case checkQueued, checkInProgress, checkPending, checkRequested:
+			return true
+		}
+	}
+	return false
 }

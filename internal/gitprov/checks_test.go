@@ -44,6 +44,11 @@ func TestChecksPendingIsUnknown(t *testing.T) {
 func TestChecksPendingOnlyWhenACheckHasNotConcluded(t *testing.T) {
 	// The three shapes ChecksState calls unknown are not one shape to a caller
 	// that waits on the reading: only a run still going will report something.
+	//
+	// A status outside the four answers false, and that is the case the
+	// ladder's gate leans on: GitHub's "waiting" is a deployment approval
+	// nobody has answered, and a caller that waited on it would wait for ever
+	// without telling anybody.
 	for _, tc := range []struct {
 		name string
 		runs []CheckRun
@@ -54,9 +59,13 @@ func TestChecksPendingOnlyWhenACheckHasNotConcluded(t *testing.T) {
 		{"a check that finished and failed", []CheckRun{{Status: "completed", Conclusion: "failure"}}, false},
 		{"every check passed", []CheckRun{{Status: "completed", Conclusion: "success"}}, false},
 		{"a check that is still queued", []CheckRun{{Status: "queued"}}, true},
+		{"a check that has been requested", []CheckRun{{Status: "requested"}}, true},
+		{"a commit status waiting to be posted", []CheckRun{{Status: "pending"}}, true},
 		{"a check that finished beside one still running", []CheckRun{
 			{Status: "completed", Conclusion: "success"}, {Status: "in_progress"},
 		}, true},
+		{"a check waiting on a person", []CheckRun{{Status: "waiting"}}, false},
+		{"a status this code cannot place", []CheckRun{{Status: "invented"}}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := ChecksPending(tc.runs); got != tc.want {
