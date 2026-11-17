@@ -828,8 +828,9 @@ export const SERVICE_SOURCES = Object.freeze(['ee/keyservice/', 'ee/portal/'])
 
 /** The one production source in the tree that really does reach a host this project operates, and
  * therefore the source the page's restated sentence is held to. `ee/register/licence.go` carries
- * `licenceServerURL` — `https://keys.fugaro.dev`, the key-signing service the design's section 1
- * names — and the CLI uses it in `fugaro licence`'s own commands and in the installation's
+ * `licenceServerURL` — the keys subdomain of the host `website/data/site.yaml` is the one source
+ * of (D92), which is the key-signing service the design's section 1 names — and the CLI uses it in
+ * `fugaro licence`'s own commands and in the installation's
  * renewal job (`ee/register/licence_renew.go`, `ee/register/licence_login.go`), so the software
  * does ask the licence service about a key. That is the fact S7.3 restated the page's sentence
  * for: "and to nothing the Fugaro project operates except the licence service" is true only while
