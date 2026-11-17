@@ -286,7 +286,7 @@ func (s *Service) bindEntitlement(ctx context.Context, actor Caller, entitlement
 	// still the state the store holds.
 	var replacing []string
 	if rebinding {
-		replacing, err = s.bindingKeys(ctx, entitlement.ID)
+		replacing, err = s.licenceKeys(ctx, entitlement.ID)
 		if err != nil {
 			return WireWorkspace{}, err
 		}
@@ -545,11 +545,20 @@ func bindingSource(entitlementID string) (string, error) {
 	return bindingPrefix + entitlementID + ":" + nonce, nil
 }
 
-// bindingKeys answers the keys this licence has bound, as the store's issuance
-// list stands at the instant it is read: the key a rebind replaces, and the ones
-// earlier rebinds already withdrew. The store's source is an idempotency key and
-// this area's own names every binding by the licence it belongs to
-// (bindingPrefix), which is the one way the list is read back.
+// licenceKeys answers the keys this licence's records name, as the store's
+// issuance list stands at the instant it is read: the key a binding minted, the
+// successor a reveal rotated in, and the ones earlier rebinds already withdrew.
+//
+// Two reads make the list, because two shapes of record name one licence. The
+// record's own entitlement id is the rule — F29: every record naming the licence
+// is a key of it — and it is the read a rebind cannot do without, because the
+// successor a reveal rotated in carries a source naming the key it replaced
+// (`rotationSource`) and not the licence: read by the binding's source alone, it
+// is a key left live at the installation of the workspace the licence has moved
+// away from (D2198). The binding's own source is read beside it for the records
+// that name the licence nowhere: the key a trial mints (api_trial.go writes a
+// binding's source and no entitlement) and the ones minted before P3.6 wrote the
+// field at all.
 //
 // What is read here is what a rebind replaces, so it is read once, before the
 // probe: a key minted after this read belongs to a binding this request did not
@@ -557,7 +566,7 @@ func bindingSource(entitlementID string) (string, error) {
 // transaction that revokes: the list held here is one the store may have added
 // to since, and it is the guards there that decide whether anything on it is
 // revoked at all.
-func (s *Service) bindingKeys(ctx context.Context, entitlementID string) ([]string, error) {
+func (s *Service) licenceKeys(ctx context.Context, entitlementID string) ([]string, error) {
 	issued, err := s.store.Issuances(ctx)
 	if err != nil {
 		return nil, err
@@ -565,7 +574,7 @@ func (s *Service) bindingKeys(ctx context.Context, entitlementID string) ([]stri
 	prefix := bindingPrefix + entitlementID + ":"
 	keys := make([]string, 0, 1)
 	for _, record := range issued {
-		if strings.HasPrefix(record.Source, prefix) {
+		if record.EntitlementID == entitlementID || strings.HasPrefix(record.Source, prefix) {
 			keys = append(keys, record.KeyID)
 		}
 	}
@@ -573,7 +582,7 @@ func (s *Service) bindingKeys(ctx context.Context, entitlementID string) ([]stri
 }
 
 // revokeReplacedBindingKeys withdraws the keys one rebind read, through the
-// transaction that makes the rebind (D2198). The key a rebind replaces is the key
+// transaction that makes the rebind (D2198). Every key a rebind replaces is a key
 // of a workspace the licence has moved away from, and the installation holding it
 // is one nobody is looking at any more: it is revoked rather than left to run,
 // which is what makes a leaked installation's key stop at the rebind.
