@@ -105,6 +105,72 @@ func TestReportReadsTheStream(t *testing.T) {
 	}
 }
 
+// TestReportFailsATestTheStreamLeftRunning: a test that reaches `run` and no
+// pass, fail or skip was running when the test binary died -- a `-timeout`
+// panic, a panic in a goroutine, os.Exit -- and the testing package prints no
+// `--- FAIL:` line for it. Written as it stands the report would carry it as a
+// passing case, so the run would record a failure with no test named and
+// `commands.rerun_failed` would have nothing to rerun; gotestsum fails an
+// unfinished test for the same reason. Both ways the stream can end are here:
+// with the package's own fail event, and -- a verify timeout killing the
+// command's process group -- with nothing after the test at all.
+func TestReportFailsATestTheStreamLeftRunning(t *testing.T) {
+	const running = `{"Time":"2026-11-17T05:22:09.457Z","Action":"run","Package":"probe/hang","Test":"TestHang"}
+{"Time":"2026-11-17T05:22:09.457Z","Action":"output","Package":"probe/hang","Test":"TestHang","Output":"    hang_test.go:9: waiting\n","OutputType":"error"}
+`
+	for _, tc := range []struct {
+		what   string
+		stream string
+	}{
+		{
+			"the package's own fail event",
+			running + `{"Time":"2026-11-17T05:22:12.460Z","Action":"output","Package":"probe/hang","Output":"FAIL\tprobe/hang\t3.005s\n","OutputType":"frame"}
+{"Time":"2026-11-17T05:22:12.460Z","Action":"fail","Package":"probe/hang","Elapsed":3.005}
+`,
+		},
+		{
+			"a stream that ends with the test still running",
+			running,
+		},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			var echoed strings.Builder
+			rep, err := read(strings.NewReader(tc.stream), &echoed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "reports", "tree.xml")
+			if err := rep.write(path); err != nil {
+				t.Fatal(err)
+			}
+			f, err := os.Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			cases, err := verify.ParseJUnit(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(cases) != 1 || cases[0].ID != "probe/hang.TestHang" {
+				t.Fatalf("report holds %+v, want one case probe/hang.TestHang", cases)
+			}
+			if !cases[0].Failed {
+				t.Errorf("TestHang is not failed in the report: %+v", cases[0])
+			}
+			// The output collected while it ran is the failure's body: it is
+			// all a reader has to say why the test was still running.
+			body, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(body), "hang_test.go:9: waiting") {
+				t.Errorf("the failure body lacks the output the test printed:\n%s", body)
+			}
+		})
+	}
+}
+
 // TestEchoKeepsWhatPlainGoTestPrints: the log tail is 40 lines read to explain a
 // failed run, so the frames `-json` carries for every test are dropped and the
 // lines a plain `go test` prints are kept.

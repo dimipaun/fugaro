@@ -170,7 +170,27 @@ func read(r io.Reader, echo io.Writer) (*report, error) {
 	if events == 0 {
 		return nil, errors.New("the command printed no `go test -json` events: run `go test -json`")
 	}
+	rep.finish()
 	return rep, nil
+}
+
+// finish marks the tests the stream left running as failures. A test whose
+// binary died partway -- a `-timeout` panic, a panic in a goroutine, os.Exit --
+// reaches no pass, fail or skip, and no event after it names it: written as it
+// stands, the report would carry it as a passing case, which is what a run
+// whose tests hung would record, with the exit code as the only sign of the
+// failure. gotestsum treats an unfinished test the same way. The stream can
+// also end before the package's own fail event, when a verify timeout kills the
+// command's process group mid-run, so this is the end of the stream rather than
+// the package's outcome that decides.
+func (r *report) finish() {
+	for _, s := range r.suites {
+		for _, c := range s.cases {
+			if !c.done {
+				c.failed = true
+			}
+		}
+	}
 }
 
 // report is the test result one run of the command described, keyed the way
@@ -193,8 +213,7 @@ type caseResult struct {
 	name string
 	// done is whether the test reached pass, fail or skip. A test whose binary
 	// died partway -- a `-timeout` panic, a panic in a goroutine, os.Exit --
-	// never does, and go test then reports the package as failed without naming
-	// it (suite.results).
+	// never does, and no event names it afterwards (report.finish).
 	done    bool
 	failed  bool
 	skipped bool
@@ -285,32 +304,19 @@ func (r *report) add(ev event, echo io.Writer) {
 }
 
 // results is the suite's cases as the report writes them, which is what the
-// stream described plus what a package's own failure implies. A test whose
-// binary died partway reaches no outcome, and `go test` reports the package as
-// failed without naming it: the record would then read `FAILED (exit 1, N
-// tests, 0 failures)` and name no test -- a failing run with nothing to explain
-// it, and a `commands.rerun_failed` with nothing to rerun -- so every case the
-// package's failure left without an outcome is a failure here. A package that
+// stream described plus what a package's own failure implies. A package that
 // failed with no case at all -- it never built, or its TestMain died before a
 // test ran -- gets one, so the failure is in the report rather than only in the
-// exit code.
+// exit code; the tests it left running are failed already (finish).
 func (s *suite) results() []*caseResult {
-	if !s.failed {
+	if !s.failed || len(s.cases) > 0 {
 		return s.cases
 	}
-	if len(s.cases) == 0 {
-		name := "[no test results]"
-		if s.buildFailed {
-			name = "[build failed]"
-		}
-		return []*caseResult{{name: name, failed: true}}
+	name := "[no test results]"
+	if s.buildFailed {
+		name = "[build failed]"
 	}
-	for _, c := range s.cases {
-		if !c.done {
-			c.failed = true
-		}
-	}
-	return s.cases
+	return []*caseResult{{name: name, failed: true}}
 }
 
 // write stores the report as JUnit XML at path, creating its directory.
