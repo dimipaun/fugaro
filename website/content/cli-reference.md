@@ -7328,6 +7328,12 @@ project layer file, and `--area <glob>` writes one rule of
 the strictest of the rules that match it. The file is the one `fugaro update`
 publishes, and every write ends with `next: fugaro update`.
 
+`--layer repo` writes the same two keys into a checkout's own `fugaro.yaml`
+instead: there they are live once your branch is merged to the base branch,
+which is what every run reads, and this command commits, pushes and opens
+nothing. The project layer file stays the layer a write lands in when no
+`--layer` says otherwise.
+
 A mode is `poc`, `startup`, `pro`, `critical` or `hotfix`, and `hotfix` is the one
 no layer sets: it is a per-run mode, reached with
 `fugaro run --mode hotfix` from wherever a run is launched — a coding
@@ -7508,24 +7514,33 @@ pull request say decided the mode. --name on a rule the layer already carries
 renames it. A second rule with the same glob is refused: one glob addresses one
 rule, and two rules matching one path leave only the strictest of them deciding.
 
-A mode below what this project resolves to today is the sensitive direction: a
-coding agent's session is refused it with the diff and the command to run at
-your own terminal, and your own terminal writes it and asks
+`--layer repo` writes the same key into a checkout's own `fugaro.yaml`, where
+the two keys are spelled `rigor.default` and `rigor.areas`: that file is the
+repository's own, reviewed like the rest of it, and what it sets is live once
+your branch is merged to the base branch — every run reads the base branch, and
+this command commits, pushes and opens nothing. `--repo` names the repository,
+as owner/name or as a path to its checkout; without it the checkout the command
+runs in is the one written. A layer the key does not have is refused naming the
+layers it does: `local` is not one of them.
+
+A mode below what this project's runs resolve to today is the sensitive
+direction: a coding agent's session is refused it with the diff and the command
+to run at your own terminal, and your own terminal writes it and asks
 nothing. `hotfix` is refused in either form, naming `fugaro run --mode hotfix`.
 
 The command prints the review floor beside the write, and it cannot lower it:
 the floor is outside every layer, and `fugaro rigor floor` is the command that
 changes one.
 
-It writes one file: this machine's own project layer file, whose path is
-derived from the selected project's name. A project that has published no layer
-and has no local file of its own gets one — a project layer document carrying
-this installation's anchors and the change that was asked for — so a fresh
-installation can set a mode. A project that HAS published a layer is not written
-over: with no local file there the command refuses and names `fugaro update`,
-whose Layer stage seeds the file from that layer.
+With no `--layer` it writes one file: this machine's own project layer file,
+whose path is derived from the selected project's name. A project that has
+published no layer and has no local file of its own gets one — a project layer
+document carrying this installation's anchors and the change that was asked for
+— so a fresh installation can set a mode. A project that HAS published a layer
+is not written over: with no local file there the command refuses and names
+`fugaro update`, whose Layer stage seeds the file from that layer.
 
-Usage: `fugaro rigor set MODE [--area GLOB [--name NAME]]`
+Usage: `fugaro rigor set MODE [--area GLOB [--name NAME]] [--layer LAYER] [--repo REPO]`
 
 Flags:
 
@@ -7535,8 +7550,10 @@ Flags:
 | `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this write would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `-h`, `--help` | bool | `false` | no | help for set |
+| `--layer` | string | "" | no | where the write lands: project (this machine's project layer file, the default) or repo (a checkout's own fugaro.yaml, where the keys are spelled rigor.default and rigor.areas and are live once your branch is merged to the base branch) |
 | `--name` | string | "" | no | the rule's name; required for a glob the layer does not carry yet, and a rename for one it does |
 | `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
+| `--repo` | string | "" | no | the repository a --layer repo write is for, as owner/name or as a path to its checkout; without it, the checkout the command runs in |
 
 Subcommands:
 
