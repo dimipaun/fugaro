@@ -428,6 +428,57 @@ func TestReposRmRemovesTheSixAndNamesTheSixItLeaves(t *testing.T) {
 	}
 }
 
+// TestReposRmLeavesASchedulerJobThatTargetsSomethingElse is the check in front
+// of the Scheduler delete, which the whole-removal test cannot reach: every
+// fixture there seeds the job the module writes, so the branch that leaves a
+// job alone never runs.
+//
+// The check is the whole of what keeps this delete honest. `rm` finds the job
+// by name alone — Fugaro's own derivation from the slug (gcp.SchedulerJobName),
+// which is a name an operator can also write by hand or a failed convergence
+// can leave behind — so the name is no evidence the job is this repository's.
+// The identity test is the job's own target: the URI of this repository's check
+// job, which is the same test discovery makes before it adopts a Scheduler job
+// (infra.discovery.schedulerJob, through checkRunURI). A job that posts
+// anywhere else is left alone with a line rather than deleted, and the rest of
+// the removal still happens — this is a check, not a refusal.
+func TestReposRmLeavesASchedulerJobThatTargetsSomethingElse(t *testing.T) {
+	r := rmRigFor(t, "", rmGone{})
+	// The same name the module derives, targeting another repository's check
+	// job: what a job left under this repository's name by anything but this
+	// repository's root looks like.
+	chkA := infra.SchedulerJobName(initProject, rmSchedulerRegion, gcp.SchedulerJobName(r.slugA))
+	r.sched.SetJob(initProject, rmSchedulerRegion, gcp.SchedulerJobName(r.slugA), rmCheckURI(rmSlug(t, rmRepoC)), rmSchedulerEmail)
+
+	out, _ := r.rmOut(t, rmEntryA)
+	if got := r.sched.Deleted(); len(got) != 0 {
+		t.Errorf("Scheduler deletes = %v, want none: the job does not target this repository's check job", got)
+	}
+	if !r.sched.HasJob(chkA) {
+		t.Errorf("the removal deleted a Scheduler job it had just said was not %s's", rmRepoA)
+	}
+	line := rmLineWith(out, "left alone: the Scheduler job "+gcp.SchedulerJobName(r.slugA))
+	if line == "" {
+		t.Fatalf("the removal does not say the Scheduler job was left alone:\n%s", out)
+	}
+	if !strings.Contains(line, "does not target the check job of "+rmRepoA) {
+		t.Errorf("the sentence does not say why it was left alone:\n%s", line)
+	}
+	// The rest of the removal is not skipped: the allow-list entry, the Cloud
+	// Run jobs and the state all went, so a mutation that dropped the check
+	// would fail on the three assertions above rather than on a removal that
+	// never happened.
+	if allow := allowReposOf(t, r.db); len(allow) != 1 || allow[0] != rmEntryB {
+		t.Errorf("allow_repos = %v, want [%s]", allow, rmEntryB)
+	}
+	if r.run.HasJob(gcp.JobName(r.slugA, "web")) || r.run.HasJob(gcp.CheckJobName(r.slugA)) {
+		t.Errorf("a Cloud Run job of %s survived", rmRepoA)
+	}
+	if rmHasObject(t, r.gcs, initStateBucket, infra.RepoStatePrefix(r.slugA)+"/default.tfstate") {
+		t.Errorf("the state object of %s survived", rmRepoA)
+	}
+}
+
 // TestReposRmNamesTheDocumentedOffboardingForTheGrants is the second half of that
 // sentence's claim, and it is the half a reader at the confirmation can act on.
 //
