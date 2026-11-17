@@ -108,7 +108,7 @@ func poolPolicyDoc(t *testing.T, pools ...config.Pool) string {
 		t.Fatalf("the test's own credential does not marshal: %v", err)
 	}
 	return `{
-		"version": 5,
+		"version": 9,
 		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
 		"accounts": {

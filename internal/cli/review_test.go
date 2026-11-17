@@ -554,7 +554,7 @@ func TestReviewResolvesTheImplicitJobForABakedWorkflow(t *testing.T) {
 func TestReviewResolvesTheImplicitJobForAProjectWithNoProfiles(t *testing.T) {
 	f := newImplicitReviewFixture(t)
 	rewriteConfigLine(t, projectJobServingProfile, "")
-	publishPolicy(t, f.launchBudgetFixture, `{"version":5,"allow_repos":["github/acme/*"]}`)
+	publishPolicy(t, f.launchBudgetFixture, `{"version":9,"allow_repos":["github/acme/*"]}`)
 	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
 
 	if _, errOut, err := reviewCLI(t, "--pr", "7"); err != nil {
@@ -717,7 +717,7 @@ func TestReviewRefusesAnImplicitJobTheProfileDoesNotAdmit(t *testing.T) {
 	// names acme/other rather than acme/app, and both accounts cover it, so the
 	// document is one publish could write (a profile's list is exact and every
 	// account has to cover it) and the project's own list still admits acme/app.
-	const narrowed = `{"version":5,"allow_repos":["github/acme/*"],` +
+	const narrowed = `{"version":9,"allow_repos":["github/acme/*"],` +
 		`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",` +
 		`"claude_accounts":["acme-personal","default"],"allow_repos":["github/acme/other"]}},` +
 		`"accounts":{"acme-personal":{"allow_repos":["github/acme/app","github/acme/other"]},` +

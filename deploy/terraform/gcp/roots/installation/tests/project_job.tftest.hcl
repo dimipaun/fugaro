@@ -2,7 +2,7 @@
 # 3.2 and 3.5), planned against a mock provider: no credentials, no network
 # beyond the provider download.
 #
-# It pins the three things phase 3's security review reads here — the job's
+# It pins the four things phase 3's security review reads here — the job's
 # whole grant surface:
 #   1. the launcher's job-runner grant on the job (modules/project/iam.tf),
 #      the surface `fugaro doctor`'s launcher-jobs check reports (task 3.5
@@ -12,7 +12,10 @@
 #      2026-10-17) — the widening SECURITY.md states, pinned here as the
 #      widened condition rather than as the per-slug one;
 #   3. FUGARO_GITHUB_APP_ID in the job's environment, with its precondition
-#      (owner ruling of 2026-10-17, task 3.5 step 4).
+#      (owner ruling of 2026-10-17, task 3.5 step 4);
+#   4. the credentials service's invoker grant for a profile it serves, and
+#      the mounts such a job KEEPS (B5.2, G17: the grant is the whole of what
+#      the switch adds here, and the drop is B5.7's flip).
 # Nothing here derives a name: the job name, the account id and the two
 # condition titles are what internal/infra wrote into the tfvars, and the
 # assertions read the module's own resources. The two names below are the
@@ -173,10 +176,16 @@ run "project_job" {
     error_message = "a project job's tokens/ condition must be exactly gcp.ProjectTokenBucketCondition, under the title internal/infra gave it"
   }
   # The rest of the job account's grant surface, for a profile that mounts no
-  # secret and does not use Vertex AI: nothing.
+  # secret, uses no Vertex AI and is one the credentials service does not
+  # serve (job.credentials_service absent, which is what a profile of a
+  # repository that never opted in looks like): nothing.
   assert {
     condition     = length(google_secret_manager_secret_iam_member.job) == 0 && length(google_project_iam_member.vertex) == 0
     error_message = "a profile with no secrets and no Vertex AI grants its account no secret and no project role"
+  }
+  assert {
+    condition     = length(google_cloud_run_v2_service_iam_member.credentials) == 0
+    error_message = "a profile the credentials service does not serve must make no invoker grant on it (B5.2): roles/run.invoker for a job account whose runs the service serves none of is a reach nothing asks for"
   }
   assert {
     condition     = !strcontains(google_storage_bucket_iam_member.job.condition[0].expression, "runs/fugaro-")
@@ -340,12 +349,14 @@ run "account_job_reads_only_own_secret" {
 }
 
 # A SHARED profile job's account keeps its secretAccessor on the App key, and
-# this run pins that it does. modules/project has no credentials-service
-# variable at all: its job account is granted whatever the profile mounts, the
-# App key among them (internal/infra's projectJobSecrets admits every
-# project-wide container a profile names, and the App key's copy is one), so
-# nothing here can drop the grant the way modules/workflow/sa.tf's job account
-# drops it (C2.3, review finding F1).
+# this run pins that it does. Since B5.2 the module HAS a credentials-service
+# variable — a profile the service serves makes this job's account an invoker
+# on it — and the mounts are still untouched by it: the drop is B5.7's flip,
+# behind the owner's check (G17). So the job account here is granted whatever
+# the profile mounts, the App key among them (internal/infra's projectJobSecrets
+# admits every project-wide container a profile names, and the App key's copy is
+# one), and what this run pins is that neither the variable's presence nor its
+# absence moves that grant or that mount.
 #
 # The retention is deliberate and the plan records it as open, not as an
 # oversight: C2.3's own section closes with "The shared (profile) job account
@@ -355,13 +366,13 @@ run "account_job_reads_only_own_secret" {
 # modules/workflow/sa.tf. The 2026-10-21 code review flagged it again ([low])
 # on the grounds that the credentials-service runs sit in roots/repo's tftest
 # and none of them reaches modules/project — which is the gap this run closes:
-# the retention is now a pinned fact rather than a paragraph, so C3.9 cannot
-# take the grant away without a test saying so.
+# the retention is now a pinned fact rather than a paragraph, so B5.7's flip
+# cannot take the grant away without a test saying so.
 #
-# Mutation (run, restore): adding a credentials-service variable to the module
-# and dropping the App key from the grants here — C3.9's change — fails the
-# member assertion below, and the mount assertion with it: the run asserts the
-# retention, so it cannot be satisfied by a module that has stopped granting it.
+# Mutation (run, restore): drop the App key from this job's grants — the flip's
+# change, one task early — and the member assertion below fails, and the mount
+# assertion with it: the run asserts the retention, so it cannot be satisfied by
+# a module that has stopped granting it.
 run "shared_job_mounting_the_app_key_keeps_the_accessor" {
   command = plan
 
@@ -447,6 +458,124 @@ run "shared_job_mounting_the_app_key_keeps_the_accessor" {
     condition = !anytrue([for e in google_cloud_run_v2_job.this.template[0].template[0].containers[0].env :
     e.name == "FUGARO_GITHUB_APP_PRIVATE_KEY" && length(e.value_source) == 0])
     error_message = "the App key must never travel in the job's plain environment"
+  }
+}
+
+# The credentials service, for a profile it serves (B5.2, D505, D2078): the
+# job account's ONE grant on it — roles/run.invoker, on that one service, in
+# its own region, to this job's own account, with no condition — and every
+# mount the job has left exactly where it was (G17: the grant is the whole of
+# what the switch adds to a shared job, and the drop is B5.7's flip, behind the
+# owner's check). The App key's accessor and its mount are asserted here for
+# that second half, on the same job the run above pins with no
+# credentials_service at all: the two runs differ in that one attribute.
+#
+# What the service then serves this account is the service's own decision and
+# not this grant's (B5.1, G21: a shared caller is admitted for the identity's
+# repository when it is one of its profile's), which is why the grant is pinned
+# as the front door it is and nothing wider: no second member, no project-level
+# role, no condition that could name another service.
+#
+# Mutation (run, restore): give the resource a second member (the profile's
+# other job, an operator, a whole project) or drop the count's null check so
+# every job gets it — the member assertion fails, and the run above's
+# no-grant assertion fails with it.
+run "switched_job_gets_the_invoker_grant_and_keeps_its_mounts" {
+  command = plan
+
+  module {
+    source = "../../modules/project"
+  }
+
+  variables {
+    secrets = {
+      github-app-key = "fugaro-project-aurora-github-app-key-440b21d6e639db12"
+    }
+    job = {
+      profile  = "standard"
+      provider = "github"
+      account  = ""
+      job      = "fugaro-p-standard-github-0ca96e64b636"
+      service_account = {
+        account_id   = "fugaro-p-standard-git-0ca96e64"
+        display_name = "Fugaro project job standard/github"
+      }
+      image          = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/base:0.9.0"
+      cpu            = "4"
+      memory         = "8Gi"
+      task_timeout_s = 2820
+      env = {
+        FUGARO_GITHUB_APP_ID = "123456789"
+        FUGARO_PROJECT       = "aurora"
+        FUGARO_GCP_PROJECT   = "proj-1234"
+        FUGARO_REGION        = "us-east5"
+      }
+      secret_env = {
+        FUGARO_GITHUB_APP_PRIVATE_KEY = "github-app-key"
+      }
+      bucket_condition = {
+        title      = "fugaro-fugaro-p-standard-git-0ca96e64"
+        expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\")"
+      }
+      token_condition = {
+        title      = "fugaro-project-tokens-fugaro-p-standard-git-0ca96e64"
+        expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/tokens/\")"
+      }
+      vertex = false
+      # The name the installation root creates the service under
+      # (infra.CredentialsServiceName) and the installation's region: the two
+      # values internal/infra writes, and the URL is deliberately not among
+      # them (Cloud Run assigns it; a job is told it at launch).
+      credentials_service = {
+        name   = "fugaro-credentials"
+        region = "us-east5"
+      }
+    }
+  }
+
+  override_resource {
+    target          = google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-p-standard-git-0ca96e64@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-p-standard-git-0ca96e64@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  # Exactly one member, and the whole of it: roles/run.invoker, on
+  # fugaro-credentials in us-east5, to this job's own account and no other.
+  assert {
+    condition     = length(google_cloud_run_v2_service_iam_member.credentials) == 1
+    error_message = "a profile the credentials service serves makes exactly one invoker grant on it (B5.2)"
+  }
+  assert {
+    condition = toset([for m in google_cloud_run_v2_service_iam_member.credentials :
+      "${m.role} ${m.location} ${m.name} ${m.member}"]) == toset([
+      "roles/run.invoker us-east5 fugaro-credentials serviceAccount:fugaro-p-standard-git-0ca96e64@proj-1234.iam.gserviceaccount.com",
+    ])
+    error_message = "the invoker grant must be the job's own account on the installation's service, in the service's region, and no other role or member may appear"
+  }
+  assert {
+    condition     = alltrue([for m in google_cloud_run_v2_service_iam_member.credentials : length(m.condition) == 0])
+    error_message = "the invoker grant must carry no IAM condition: the service's own name is what it reaches, and a condition is a second thing to get wrong"
+  }
+
+  # And the job keeps every mount it has: the App key's accessor on the
+  # installation's own project-wide copy, and the mount it belongs to. The
+  # drop is B5.7's flip (G17).
+  assert {
+    condition = toset([for m in google_secret_manager_secret_iam_member.job :
+      "${m.role} ${m.secret_id} ${m.member}"]) == toset([
+      "roles/secretmanager.secretAccessor fugaro-project-aurora-github-app-key-440b21d6e639db12 serviceAccount:fugaro-p-standard-git-0ca96e64@proj-1234.iam.gserviceaccount.com",
+    ])
+    error_message = "a switched shared job's account must still hold secretAccessor on the App key: the switch adds the invoker grant and drops nothing (G17, B5.7's flip)"
+  }
+  assert {
+    condition = length([for e in google_cloud_run_v2_job.this.template[0].template[0].containers[0].env :
+      e if e.name == "FUGARO_GITHUB_APP_PRIVATE_KEY" &&
+      e.value_source[0].secret_key_ref[0].secret == var.secrets["github-app-key"] &&
+    e.value_source[0].secret_key_ref[0].version == "latest"]) == 1
+    error_message = "a switched shared job must still mount the App key: the switch adds the invoker grant and drops nothing (G17, B5.7's flip)"
   }
 }
 

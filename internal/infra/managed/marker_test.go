@@ -1909,6 +1909,15 @@ var runAccountGrants = setOf(
 	// the right to send a request to a Cloud Run service — and the target is
 	// the service, not a job and not the runs bucket.
 	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.name | google_service_account.job.member | for_each= | perms=`,
+	// ... and the same grant in the project module's own terms (B5.2): a shared
+	// project job's account invokes the credentials service its profile is
+	// served by (modules/project/sa.tf), on the profile's own switch. It is the
+	// row above in every respect — the right to send a request to that one
+	// Cloud Run service, no storage permission, nothing that grants itself a
+	// role and no actAs or token minting — to an account THIS module creates,
+	// and its target is the service and not the runs bucket. The service's own
+	// class check is what decides what the account is served (B5.1, G21).
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.job.credentials_service.name | google_service_account.job.member | for_each= | perms=`,
 	// Reviewed for CSR14 (the verifier account, D1068): the account's whole
 	// reach, and it is these two rows. The first is the job's row above again —
 	// the same role on the same service, to an account THIS module creates on
@@ -2359,6 +2368,51 @@ var runAccountGrants = setOf(
 	// this tree refuses outside the Firebase module
 	// (deploy/terraform/terraform_test.go's backendRoleRE).
 	`google_project_iam_member | "projects/${var.project}/roles/fugaroWorkspaceDatabase" | project=var.project | google_service_account.workspace.member | for_each= | perms=firebasedatabase.instances.get,firebasedatabase.instances.update`,
+	// Reviewed for P5.1b (the installation's resident orchestrator, the mobile
+	// design's section 4.3). The account is the installation's own, it exists on
+	// no installation that has not opted in — var.orchestrator is null by
+	// default and the module counts every resource it creates on that null
+	// check, so an installation that never asked for one plans and applies
+	// exactly what it did before the file existed — and it is NEVER a member of
+	// var.launchers (the design's eleventh never-rule: that list is what the
+	// Firebase root binds roles/firebasedatabase.viewer with, an IAM read that
+	// bypasses the Realtime Database rules). Its reach is therefore here one
+	// grant at a time, and none of the five reaches fugaro/managed.json:
+	//
+	//   - the launcher project role (fugaroLauncher) is metadata: run.jobs.get,
+	//     run.jobs.list, run.executions.get/list/cancel, run.operations.get and
+	//     the two secretmanager list permissions, which are names, labels and
+	//     version counts and never a secret value. No storage permission, no
+	//     run.jobs.create/update/delete (it cannot change what a launch would
+	//     run), no IAM write of any kind (nothing that grants itself a role) and
+	//     no iam.serviceAccounts.actAs;
+	//   - the runs bucket's objectUser carries the launchers' OWN condition, the
+	//     same title and expression the launcher list's write carries, pinned in
+	//     modules/installation/orchestrator.tf by a precondition — so its
+	//     create, delete and update are runs/, tokens/ and issues/, and the
+	//     bucket's root, where the marker is, is outside every one of the
+	//     condition's prefixes;
+	//   - the runs bucket's objectViewer carries no create, no delete and no
+	//     update at all: it is the launcher's read, unconditioned because
+	//     storage.objects.list cannot be fenced by an object name (D683);
+	//   - the token-minter grant on the budget signer is
+	//     iam.serviceAccounts.signJwt on that one account, and deliberately not
+	//     roles/iam.serviceAccountTokenCreator: what it mints is a Firebase
+	//     custom token, a Realtime Database identity under the rules, never a
+	//     GCP access token as the signer. It reaches no Cloud Storage object, and
+	//     the reach itself is the one every launcher already holds — the design
+	//     states it rather than claiming a narrower one (section 4.5 E4);
+	//   - the job runner role (run.jobs.run and run.jobs.runWithOverrides) on
+	//     each of the installation's project jobs: a launch executes as the
+	//     JOB's own account, whose grants this list already holds above, and
+	//     overrides change a run's arguments rather than its identity — the
+	//     orchestrator is never the account a job runs as. The role holds no
+	//     run.jobs.create/update/delete, so it cannot change the job it starts.
+	`google_project_iam_member | "projects/${var.project}/roles/fugaroLauncher" | project=var.project | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=run.executions.cancel,run.executions.get,run.executions.list,run.jobs.get,run.jobs.list,run.operations.get,secretmanager.secrets.list,secretmanager.versions.list`,
+	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=google_storage_bucket.runs.name | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=`,
+	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=`,
+	`google_service_account_iam_member | "projects/${var.orchestrator.firebase_project}/roles/fugaroTokenMinter" | service_account_id="projects/${var.orchestrator.firebase_project}/serviceAccounts/${var.orchestrator.signer_account_id}@${var.orchestrator.firebase_project}.iam.gserviceaccount.com" | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=?`,
+	`google_cloud_run_v2_job_iam_member | "projects/${var.project}/roles/fugaroJobRunner" | name=module.project[each.key].job | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each=var.orchestrator == null ? {} : var.project_jobs | perms=?`,
 )
 
 // setOf is a set of strings.

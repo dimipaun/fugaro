@@ -914,14 +914,18 @@ the output work ships, its row and its section, and the sibling test
 forge-authorship-images plan's C6, re-pointed by its owner's answer of
 2026-11-16 — the pin over
 `SECURITY.md`'s paragraph on the source an image carries and who can read it —
-moved the table's row from 141 to 142; `internal/cli/docs_mobile_orchestrator_test.go`, the pin over the mobile orchestrator design, landed in the same sweep and its row was moved from 141 to 142 too; `internal/cli/docs_check601_test.go`, the pin over c39-review-identity's owner Check 601 in the register, landed on this branch beside them, so the merged tree holds 144.) They
+moved the table's row from 141 to 142; `internal/cli/docs_mobile_orchestrator_test.go`, the pin over the mobile orchestrator design, landed in the same sweep and its row was moved from 141 to 142 too; `internal/cli/docs_check601_test.go`, the pin over c39-review-identity's owner Check 601 in the register, landed on this branch beside them, so the merged tree holds 144.)
+(Amended 2026-11-16: `internal/cli/docs_update_in_flight_test.go`, the pin over
+`docs/design/update-in-flight.md`'s installation row — the resident
+orchestrator's account and section 4.3's bindings ride that step, mobile plan
+task P5.1b — moved the table's row from 144 to 145.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
 
 | Construct | Count | Command |
 | --- | --- | --- |
-| Catalog recipes | 12 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
+| Catalog recipes | 13 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
 | Top-level `fugaro.yaml` keys | 15 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*": '` |
 | Top-level `fugaro.yaml` keys whose name contains `review` | 0 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*review[a-z_]*": '` |
 | Config scope rows | 115 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
@@ -933,9 +937,9 @@ stale has found a merge that did not.
 | Files in `internal/runner` that mention `Severity` at all | 4 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
 | Image-skew `Since` constants | 50 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 144 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 146 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
-| Published project-policy version | 8 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
+| Published project-policy version | 9 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Repo\|Repos\|Repository)'` |
 | Fields of `gitprov.PRSpec` whose name is a repository | 0 | `sed -n '/^type PRSpec struct {/,/^}/p' internal/gitprov/gitprov.go \| grep -ci repo` |
 | Sites that narrow an installation token to one repository | 1 | `git grep -hc 'scope = \[\]string{s.repo}' internal/gitprov/github/apptoken.go` |

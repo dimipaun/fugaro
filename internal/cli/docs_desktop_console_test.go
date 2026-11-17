@@ -442,6 +442,12 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(managedStatusRetirements{}),
 		reflect.TypeOf(localcfg.UpdateProject{}),
 		reflect.TypeOf(localcfg.UpdateRetirement{}),
+		// §6.26, the enrolment's doctor (the repos-management plan's RE1):
+		// the document, the repository under it and the row, which is the
+		// shape doctor's own checks are rendered as.
+		reflect.TypeOf(reposStatusDoc{}),
+		reflect.TypeOf(reposStatusRepo{}),
+		reflect.TypeOf(reposStatusRow{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command:
 		// ee/coordinator/cli/console_contract_test.go pins them against the
 		// tagged tree, which is the tree that still serves the console.
@@ -740,6 +746,10 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(managedStatusRetirements{}),
 		reflect.TypeOf(localcfg.UpdateProject{}),
 		reflect.TypeOf(localcfg.UpdateRetirement{}),
+		// §6.26, the enrolment's doctor, the same three shapes as the test
+		// above (the repos-management plan's RE1).
+		reflect.TypeOf(reposStatusDoc{}), reflect.TypeOf(reposStatusRepo{}),
+		reflect.TypeOf(reposStatusRow{}),
 		// §6.23, the security list's own document (the security-classification
 		// design's SC3, D1512): the list in force with the layer of every row,
 		// and one answer per checked path.

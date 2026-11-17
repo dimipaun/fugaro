@@ -199,6 +199,41 @@ func TestRecipeDigestStepFailsBeforeImplement(t *testing.T) {
 	}
 }
 
+// TestRecipeDiagnoseStepFailsBeforeRender: the diagnose step is a model stage
+// this build's runner does not execute yet (T-TC4 lands it), so a run of a
+// recipe holding one is refused at bootstrap, before anything runs — the
+// shape the digest step had until T3.2 dispatched it. Without the refusal
+// artifactMode would run the repository's commands.render in the step's place
+// and end succeeded/artifacts with no diagnosis in it, which is what this
+// test pins against: it launches the catalog's own troubleshoot, whose
+// outputs name out/diagnosis.md and out/diagnosis.json — files no render
+// writes — so the run it prevents is exactly the "a step Parse accepts and
+// the run drops" outcome recipe.RegisterStepKind's own comment (recipe.go)
+// says may never happen.
+//
+// Mutation (drop the recipe.UsesDiagnose arm from runner.go's bootstrap):
+// this test fails, finding the run succeeded with outcome artifacts, a render
+// recorded and no diagnosis anywhere in it.
+func TestRecipeDiagnoseStepFailsBeforeRender(t *testing.T) {
+	data, ok := recipe.CatalogText(recipe.TroubleshootRecipe)
+	if !ok {
+		t.Fatalf("%s is not in the catalog", recipe.TroubleshootRecipe)
+	}
+	spec := recipeSpec(embeddedTask(recipe.TroubleshootRecipe, string(data)))
+	spec.Mode = recipe.ModeArtifact
+	h := newHarnessFiles(t, renderCfg(t, "", ""), spec, renderScript(sizzleScript))
+	rec, err := h.run(t)
+	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "holds a diagnose step, which this job image's runner does not execute yet") {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if rec.Render != nil || rec.Outcome == runstore.OutcomeArtifacts {
+		t.Fatalf("render = %+v, outcome = %q: commands.render ran and the run ended as an artifact run", rec.Render, rec.Outcome)
+	}
+	if len(h.agent.calls) != 0 {
+		t.Fatalf("%d agent calls, want none (no stage runs)", len(h.agent.calls))
+	}
+}
+
 // TestRecipeCheckStepReachesTheGate: an embedded recipe with a check step —
 // the same resolution path recipe.NotYetRunnable used to refuse before
 // Task 11's runner gated the run on it — now runs the gate instead: a clean

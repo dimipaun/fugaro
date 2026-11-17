@@ -890,11 +890,21 @@ var doctorShorts = map[string]doctorShort{
 	// the same job by hand rebuilds the node from the config, and a line that
 	// offered it would be the lossy move in place of the one the update makes.
 	"policy-older-than-binary": {"the published policy is older than this Fugaro, and no run applies it.", ""},
-	"policy-rules-skew":        {"the deployed budget rules are older than the policy generation, so a published policy cannot be read.", ""},
-	"policy-vs-jobs":           {"the jobs run an image older than this Fugaro, so they do not read a published policy.", ""},
-	"installation":             {"no Fugaro installation is configured.", "run `fugaro setup`"},
-	"fugaro-yaml":              {"this checkout's fugaro.yaml is not valid.", "fix what `fugaro validate` prints"},
-	"gcp-project-line":         {"this checkout's fugaro.yaml has no gcp_project: line, so a run cannot tell which project it belongs to.", "run `fugaro update --anchor`"},
+	// The deployed document is older than the one this Fugaro generates, which
+	// is the whole of what the ID's states have in common: one of them is below
+	// PolicyRulesVersion, where a published policy really is unreadable, and the
+	// other is between PolicyRulesVersion and RulesVersion, where the policy is
+	// read and enforced and only this release's own additions are missing (the
+	// review finding on P2.1). The short said "so a published policy cannot be
+	// read" of both, which was false of the second and is the sentence the
+	// check's own Problem was rewritten to stop making; the fix line names what
+	// the redeploy adds for that generation (rulesMarkerOlderText), so the short
+	// stays at the fact the states share.
+	"policy-rules-skew": {"the deployed budget rules are older than the generation this Fugaro deploys.", ""},
+	"policy-vs-jobs":    {"the jobs run an image older than this Fugaro, so they do not read a published policy.", ""},
+	"installation":      {"no Fugaro installation is configured.", "run `fugaro setup`"},
+	"fugaro-yaml":       {"this checkout's fugaro.yaml is not valid.", "fix what `fugaro validate` prints"},
+	"gcp-project-line":  {"this checkout's fugaro.yaml has no gcp_project: line, so a run cannot tell which project it belongs to.", "run `fugaro update --anchor`"},
 	// The node is newer than this binary, and the move is two of them: the
 	// release that understands the node is not installed yet, so the upgrade
 	// comes first, and the update behind it is what brings the installation and

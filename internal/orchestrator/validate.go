@@ -358,6 +358,11 @@ func validateItem(s State, w WorkItem) error {
 // its time is the time the item entered it. A block whose halves could
 // disagree would let a reader draw a rung the transitions never reached.
 //
+// The two names the block carries for a reader that may read it and nothing
+// above it — the item's repository and the run the move was about (E12, F27) —
+// are held to the shapes those names have everywhere else, which is what keeps
+// G8's "every string is a name of a known shape" true of this block too.
+//
 // The bounds are the ledger's own (MaxEscalationTransitions, MaxOuterAttempts)
 // on top of the node's size target: the transitions are append-only, so
 // nothing else stops an item the ladder keeps acting on from growing a node
@@ -368,6 +373,14 @@ func validateEscalation(itemID string, e Escalation) error {
 	}
 	if e.EnteredAt.IsZero() {
 		return fmt.Errorf("%w: the escalation of %q carries no time it entered its rung", ErrInvalid, safetext.OneLine(itemID))
+	}
+	if e.Repo != "" {
+		if _, err := task.CanonicalRepo(e.Repo); err != nil {
+			return fmt.Errorf("%w: the escalation of %q names the repository %q, which is not owner/name", ErrInvalid, safetext.OneLine(itemID), safetext.OneLine(e.Repo))
+		}
+	}
+	if e.RunID != "" && !task.ValidRunID(e.RunID) {
+		return fmt.Errorf("%w: the escalation of %q names the run %q, which is not a run id", ErrInvalid, safetext.OneLine(itemID), safetext.OneLine(e.RunID))
 	}
 	if e.OuterAttempts < 0 || e.OuterAttempts > MaxOuterAttempts {
 		return fmt.Errorf("%w: the escalation of %q counts %d ladder runs, and at most %d may be spent", ErrTooLarge, safetext.OneLine(itemID), e.OuterAttempts, MaxOuterAttempts)

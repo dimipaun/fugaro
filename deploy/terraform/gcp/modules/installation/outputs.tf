@@ -137,3 +137,8 @@ output "project_secrets" {
   description = "The project-wide secret containers by logical name (their secret IDs), so a consumer waits for the container: the project job module grants each job the ones its profile mounts."
   value       = { for name, s in google_secret_manager_secret.project : name => s.secret_id }
 }
+
+output "orchestrator" {
+  description = "The resident orchestrator's own account email, or null on an installation the owner has not turned it on for (mobile plan task P5.1b; the design's section 4.3). P5.1c's service runs as it, and it is the account internal/infra/tf's cover reads as its own principal kind rather than as a launcher — the design's eleventh never-rule is that it is never a member of var.launchers. The variable this reads has no CLI writer yet — fugaro update carries no --orchestrator flag on this branch — so nothing here is reachable until the release that turns the resident orchestrator on writes one; orchestrator.tf states the ordering that release also has to get right."
+  value       = local.orchestrator_on ? google_service_account.orchestrator[0].email : null
+}

@@ -348,9 +348,9 @@ setup_case() {
   printf '%s\n' "$TOKEN_MARKER" >"$dir/state/token"
   write_doctor "$dir"
   write_config "$dir"
-  write_store "$dir" 1
+  write_store "$dir" 2
   write_update "$dir" "rules: deploys the security rules (60309 bytes, generated)
-config/limits/orchestratorRules: records the orchestrator rules generation (config/limits/orchestratorRules = 1)"
+config/limits/orchestratorRules: records the orchestrator rules generation (config/limits/orchestratorRules = 2)"
 }
 
 # run300 [ARGS...] — runs the check on the case at hand. RUN300_ARGS adds
@@ -456,11 +456,11 @@ case_skip_update() {
 # --------------------------------------------------- the marker and the document
 case_stale_marker() {
   setup_case stale-marker
-  write_store "$dir" 2
+  write_store "$dir" 1
   run300 --installation "$INSTALLATION"
   expect_status "$status" 1 "stale-marker: a database one generation behind"
   expect_fact marker FAIL "stale-marker"
-  expect_contains "$out" "want 1" "stale-marker: the row names the generation it wanted"
+  expect_contains "$out" "want 2" "stale-marker: the row names the generation it wanted"
   expect_fact subtree PASS "stale-marker: the document is still read"
 }
 
@@ -476,7 +476,7 @@ case_absent_marker() {
 case_subtree_absent() {
   setup_case subtree-absent
   write_rules "$dir/state/rules-absent.json" absent
-  write_store "$dir" 1 "$dir/state/rules-absent.json"
+  write_store "$dir" 2 "$dir/state/rules-absent.json"
   run300 --installation "$INSTALLATION"
   expect_status "$status" 1 "subtree-absent: a document with no orchestrator node"
   expect_fact subtree FAIL "subtree-absent"
@@ -486,7 +486,7 @@ case_subtree_absent() {
 case_subtree_widened() {
   setup_case subtree-widened
   write_rules "$dir/state/rules-widened.json" '{".read": USER, ".write": "true"}'
-  write_store "$dir" 1 "$dir/state/rules-widened.json"
+  write_store "$dir" 2 "$dir/state/rules-widened.json"
   run300 --installation "$INSTALLATION"
   expect_status "$status" 1 "subtree-widened: a write grant on the subtree"
   expect_fact subtree FAIL "subtree-widened"
@@ -498,7 +498,7 @@ case_subtree_widened() {
 case_subtree_child() {
   setup_case subtree-child
   write_rules "$dir/state/rules-child.json" '{".read": USER, ".write": false, "state": {".write": "true"}}'
-  write_store "$dir" 1 "$dir/state/rules-child.json"
+  write_store "$dir" 2 "$dir/state/rules-child.json"
   run300 --installation "$INSTALLATION"
   expect_status "$status" 1 "subtree-child: a grant hidden one level down"
   expect_fact subtree FAIL "subtree-child"
@@ -615,7 +615,7 @@ case_restore_failed() {
 case_stopped_before_write() {
   setup_case stopped-before-write
   printf '["not a rules document"]\n' >"$dir/state/rules-broken.json"
-  write_store "$dir" 1 "$dir/state/rules-broken.json"
+  write_store "$dir" 2 "$dir/state/rules-broken.json"
   run300 --installation "$INSTALLATION"
   expect_status "$status" 2 "stopped-before-write: the deployed document cannot be read"
   expect_contains "$out" "the deployed rules are not the JSON document this check reads" "stopped-before-write: the block says why it stopped"
