@@ -38,6 +38,11 @@
       "maxLength": 128,
       "description": "The plan task this run works on (fugaro run --plan-task; console dependency graph plan GV1.2, decision GD5): <plan>/<task>, the id the plan's own dependency graph spells a node with. Absent for every launch that named none, which is the common case and every spec written before the field. The shape here is task.PlanTaskProblem's, applied by the launcher on write and by task.Parse on read: two or more '/'-separated elements, each starting with a letter or a digit and otherwise letters, digits, '.', '_' and '-', at most 128 bytes. Two rules of that one the pattern cannot carry are that a '.' or '..' element and a control character are refused. It is a display-only join hint: nothing authorises, admits or budgets anything by it. Needs a 0.11.2 runner, which is why a launch that sets it is gated at launch (internal/cli/recipes_skew.go's planTaskSince): task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than running the task without it."
     },
+    "external": {
+      "type": "string",
+      "pattern": "^github:[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*#[1-9][0-9]{0,18}$",
+      "description": "The ticket this run's work item came from outside Fugaro with (task.Spec.External, the orchestrator's WorkItem.external): github:<owner>/<repo>#<n>, one issue, lower-case as the installation's own App answers a repository name. Absent for every task whose item carries no external id, which is every launch before this field and every item nobody ingested. The pattern is internal/orchestrator's externalRE, the rule that admitted the id when the daemon's state was written and read it back: no flag writes this field, so the launcher copies an id the state already validated rather than applying a second rule of its own. It is what the run's pull request names so a merge closes that issue (Fixes #<n> in the run's own repository, Fixes <owner>/<repo>#<n> in another): a reference, never text the run follows. Needs a 0.26.0 runner, which is why the daemon's launcher drops it against an older job image (internal/cli/recipes_skew.go's externalSince and externalSkew) rather than writing a task that run dies on at bootstrap, task.Parse decoding with DisallowUnknownFields."
+    },
     "author": {
       "type": "object",
       "additionalProperties": false,
@@ -172,6 +177,10 @@
     "mode": {
       "enum": ["implement", "review", "artifact", "evaluate"],
       "description": "The resolved recipe's mode, written by the launching CLI (\"artifact\" and \"evaluate\" today; an implement or review recipe writes nothing, so those specs are unchanged). The runner selects the run's shape from it at bootstrap, before the recipe is resolved, and cross-checks it against the resolved recipe afterwards. Needs a 0.8.0 runner, which is why an artifact launch at a job image older than that is refused at launch; \"evaluate\" is the judge run's mode (docs/model-ab-testing A5.2) and needs the runner that carries it."
+    },
+    "review_class": {
+      "type": "boolean",
+      "description": "task.Spec.ReviewClass, the marker the cloud tier of `fugaro troubleshoot` writes (docs/troubleshoot-cloud D2411): it admits a run to the review-only job variant, whose container mounts no App key and no Claude token, without the run being a review — the tier's recipe is mode: artifact (D2402) while the job it must run on is that variant (D2403). It is legal only beside mode: artifact (Spec.Validate refuses it in every other mode, and task.Parse does too), and it never overrides the mode: a mode: review spec is a review whatever this property says. Absent for every launch that is not a diagnosis, so every other spec is byte-identical to what the previous release wrote. Needs the runner of the release that first carries the diagnose step, which is why the launcher gates a launch that sets it at the job image the way it gates the step kind itself: task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than running the task as an ordinary artifact run."
     },
     "rigor": {
       "enum": ["poc", "startup", "pro", "critical", "hotfix"],

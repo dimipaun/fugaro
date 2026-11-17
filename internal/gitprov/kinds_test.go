@@ -38,6 +38,7 @@ import (
 var forgeKindGoSites = map[string]string{
 	"ee/ab/admit.go":                           "the A/B admission of a Bitbucket repository",
 	"ee/coordinator/cli/coordinator.go":        "the coordinator's read-only token source and the providers it opens",
+	"ee/coordinator/cli/coordinator_settle.go": "the kind each member of a change set is written through: the settle-only token is a GitHub installation token, so a member of another kind is reported rather than written to",
 	"ee/coordinator/project.go":                "the project-wide view's read mint, and the kinds it reads",
 	"internal/backend/gcp/build.go":            "the image build's credential env, its secret env and the provider it is given",
 	"internal/backend/gcp/catalog.go":          "the catalog build's credential env, its secret env and the provider it is given",

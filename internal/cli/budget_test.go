@@ -878,9 +878,9 @@ func TestPricesShowsLocalOverrides(t *testing.T) {
 func TestBudgetPricesJSONPinsTheFigures(t *testing.T) {
 	modelsFixture(t)
 	// A clock inside the catalog's 30-day window, because the figures below are
-	// the fresh catalog's: past 2026-11-22 the catalog is stale, every
-	// catalog-priced row is charged the dearest end of its tier instead of the
-	// cheapest, and this pin would break on a date no change to the code marked.
+	// the fresh catalog's: past 2026-11-22 the catalog is stale and every
+	// catalog-priced row says so, and this pin would break on a date no change
+	// to the code marked.
 	old := budgetNow
 	t.Cleanup(func() { budgetNow = old })
 	budgetNow = func() time.Time { return time.Date(2026, 10, 26, 0, 0, 0, 0, time.UTC) }
@@ -902,10 +902,12 @@ func TestBudgetPricesJSONPinsTheFigures(t *testing.T) {
 		// 0.05x and cache writes at 1.25x and 2x, a search at $10 a thousand,
 		// and no source of its own (the document's is the table's).
 		{"claude-opus-5-5", `{"id":"claude-opus-5-5","input_per_m":4,"output_per_m":20,"cache_read_per_m":0.2,"cache_write_5m_per_m":5,"cache_write_1h_per_m":8,"web_search_per_1k":10,"local":false,"unverified":false}`},
-		// The catalog row the openrouter route claims: the zdr tier's cheapest
-		// end, its 15 endpoints (10 of them ZDR-eligible) and the dearest price
-		// the tier carries, which is the most a call it serves can be billed.
-		{"deepseek/deepseek-v4-flash", `{"id":"deepseek/deepseek-v4-flash","input_per_m":0.05,"output_per_m":0.17,"cache_read_per_m":0.013999999999999999,"cache_write_5m_per_m":0.0625,"cache_write_1h_per_m":0.1,"web_search_per_1k":0,"local":false,"unverified":false,"catalog":{"tier":"zdr","bound":"min","endpoints":15,"zdr_endpoints":10,"source":"https://openrouter.ai/api/v1/models","checked_at":"2026-10-23","stale":false,"tier_input_max_per_m":0.7,"tier_output_max_per_m":1.32}}`},
+		// The catalog row the openrouter route claims: the zdr tier's dearest
+		// end, which is what a route that names no price_policy is charged
+		// (D2644), its 15 endpoints (10 of them ZDR-eligible) and the dearest
+		// price the tier carries — the same figures, since the row is charged
+		// at the top of the range.
+		{"deepseek/deepseek-v4-flash", `{"id":"deepseek/deepseek-v4-flash","input_per_m":0.7,"output_per_m":1.32,"cache_read_per_m":0.2,"cache_write_5m_per_m":0.875,"cache_write_1h_per_m":1.4,"web_search_per_1k":0,"local":false,"unverified":false,"catalog":{"tier":"zdr","bound":"max","endpoints":15,"zdr_endpoints":10,"source":"https://openrouter.ai/api/v1/models","checked_at":"2026-10-23","stale":false,"tier_input_max_per_m":0.7,"tier_output_max_per_m":1.32}}`},
 		// The override: the owner's own numbers, marked local, with the cache
 		// multipliers the table's defaults give them.
 		{"vendor/model-y", `{"id":"vendor/model-y","input_per_m":1,"output_per_m":2,"cache_read_per_m":0.1,"cache_write_5m_per_m":1.25,"cache_write_1h_per_m":2,"web_search_per_1k":10,"local":true,"unverified":false}`},
@@ -1225,7 +1227,11 @@ func TestPricesOverrideClearsUnverified(t *testing.T) {
 }
 
 // catalogRouteYAML is a project config's route block that the built-in
-// provider price catalog prices (OpenRouter, claiming the DeepSeek rows).
+// provider price catalog prices (OpenRouter, claiming the DeepSeek rows). It
+// spells out price_policy: cheapest because the tests below pin the cheapest
+// end's own words and numbers — the undercharge the row leaves and the range
+// behind it; the default is highest (D2644), and the rows of a route that
+// says nothing are pinned by TestBudgetPricesJSONPinsTheFigures.
 const catalogRouteYAML = `providers:
   openrouter:
     kind: anthropic-compat
@@ -1234,6 +1240,7 @@ const catalogRouteYAML = `providers:
     secret: openrouter-api-key
     models: ["deepseek/*"]
     allow_data_to: ["acme/app"]
+    price_policy: cheapest
 `
 
 // shippedCatalog is the price catalog this repository ships, embedded in the

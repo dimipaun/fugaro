@@ -1978,12 +1978,106 @@ var runAccountGrants = setOf(
 	// creates beside it (modules/installation/build_identity.tf), which is the
 	// one identity a shared repository's catalog build runs as. roles/run.invoker
 	// carries no storage permission, no permission to grant a role, no actAs and
-	// no token minting; the target is that one Cloud Run service. The account's
-	// registry roles — the writer and tag-mover the per-repository build account
-	// held, which B6 moves onto this identity — are not written yet, so its whole
-	// reach here is this row, and it can reach neither the runs bucket's root nor
-	// any repository's registry through it.
+	// no token minting; the target is that one Cloud Run service.
 	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | google_service_account.build_identity[0].member | for_each= | perms=`,
+	// Reviewed for B6: the identity's other reach, and the whole of it — the
+	// writer and the installation's tag mover on the ONE shared registry every
+	// catalog image is pushed into, which are the two roles the per-repository
+	// build account held there before this task (modules/repo/registry.tf's
+	// build_shared and build_shared_tag_mover, whose rows above read the same
+	// way), and the READER on the two registries every build pulls its own
+	// steps from, fugaro-base and the ghcr remote (modules/repo/build.tf's
+	// build_base and build_ghcr, whose rows above read the same way): a Cloud
+	// Build step pulls its image as the build's service account, so without
+	// the reader the credential step's own base image would not start the
+	// container it runs as, and the derived build's step image and its FROM
+	// would not come through the proxy. No one of the three roles carries a
+	// storage permission, nothing that grants a role, acts as or mints for
+	// another account; the tag mover's whole permission list is
+	// artifactregistry.tags.delete (pinned by perms); and every target is one
+	// registry repository — never the project and never the runs bucket, so
+	// none is a write path to the marker. What the identity deliberately does
+	// NOT hold is the reader on the SHARED registry (its write already reads
+	// what it pushes) or any role on a repository's own registry. Their five
+	// rows are the top half of its reach here; the rows below are the rest.
+	`google_artifact_registry_repository_iam_member | "roles/artifactregistry.writer" | repository=google_artifact_registry_repository.shared.repository_id | google_service_account.build_identity[0].member | for_each= | perms=`,
+	`google_artifact_registry_repository_iam_member | "projects/${var.project}/roles/fugaroTagMover" | repository=google_artifact_registry_repository.shared.repository_id | google_service_account.build_identity[0].member | for_each= | perms=artifactregistry.tags.delete`,
+	`google_artifact_registry_repository_iam_member | "roles/artifactregistry.reader" | repository=google_artifact_registry_repository.base.repository_id | google_service_account.build_identity[0].member | for_each= | perms=`,
+	`google_artifact_registry_repository_iam_member | "roles/artifactregistry.reader" | repository=google_artifact_registry_repository.ghcr.repository_id | google_service_account.build_identity[0].member | for_each= | perms=`,
+	// Reviewed for B6's review (a catalog build's own steps): the identity's
+	// reach inside the runs bucket and inside Secret Manager, which is what a
+	// build that ran as the per-repository build account had there and lost
+	// when the build moved onto this one account — the definition its pin step
+	// describes, the record its record step writes back and the provider
+	// credential its clone step resolves through Cloud Build's
+	// AvailableSecrets. Without them every catalog build, the operator's and
+	// the nightly check's alike, fails on the first of the three it reaches.
+	//
+	// None of the three is a write path to the marker. The definitions read is
+	// objectViewer, and its condition is the input's own byte for byte —
+	// builds/catalog/ of the runs bucket and nothing else (gcp.CatalogReadCondition),
+	// which does not contain fugaro/managed.json; objectViewer grants no write
+	// at all, so nothing here can rewrite ANY object, the marker's included. The records write is objectUser, which is a write role on the
+	// runs bucket, so what keeps it off the marker is the condition: ONE
+	// repository's builds/<slug>/catalog/ per grant (gcp.CatalogRecordsCondition,
+	// the condition the catalog check job's own row above carries), never the
+	// bucket's root and never a project-wide builds/ prefix, and the set of
+	// slugs is the catalog check's own input rather than a second list. Neither
+	// role carries a permission to grant a role, to act as another account or
+	// to mint a token, and the runs bucket is not a storage write of the
+	// managed configuration's own object path. The secretAccessor is on a
+	// secret_id and not on the project: it reads the VALUE of one repository's
+	// provider credential, which is the reach the repository's own build
+	// account held (modules/repo/build.tf's build row, whose key above reads
+	// the same way), and the for_each set is exactly the repositories of
+	// var.catalog_check that name one.
+	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | google_service_account.build_identity[0].member | for_each= | perms=`,
+	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=google_storage_bucket.runs.name | google_service_account.build_identity[0].member | for_each=local.credentials_service_on && var.catalog_check != null ? { for r in var.catalog_check.repositories : r.slug => r } : {} [local.credentials_service_on=var.credentials_service != null] | perms=`,
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=each.value.git_secret_id | google_service_account.build_identity[0].member | for_each=local.credentials_service_on && var.catalog_check != null ? { for r in var.catalog_check.repositories : r.slug => r if try(r.git_secret_id, "") != "" } : {} [local.credentials_service_on=var.credentials_service != null] | perms=`,
+	// Reviewed for B6's other half: the project's catalog check job may act as
+	// that identity, which is what makes every build it submits run as the
+	// project's one build account rather than a repository's. actAs on ONE
+	// account is not actAs on the project and not a role on anything: it lets
+	// the job mint that account's token and submit a build that names it, so
+	// what the check reaches through it is exactly that account's rows above —
+	// and it reaches them already, holding cloudbuild.builds.create. The target is
+	// the literal path of the identity this module creates (a computed
+	// service_account_id is a grant internal/infra/tf's cover cannot read), and
+	// the member is the module's own catalog check account.
+	//
+	// The repository root's half of the same actAs (on that repository's own
+	// build account) is still in the module tree above and leaves with the root
+	// when M2 retires it; this row is the one that survives, which is why B6
+	// moved it into the installation module.
+	`google_service_account_iam_member | "roles/iam.serviceAccountUser" | service_account_id="projects/${var.project}/serviceAccounts/fugaro-build-identity@${var.project}.iam.gserviceaccount.com" | google_service_account.catalog_check[0].member | for_each= | perms=`,
+	// Reviewed for B6's third review, and these are the identity's last two:
+	// the operators' actAs on it, which is what makes a MANUAL catalog build
+	// possible — `fugaro image build <entry>` submits as the identity
+	// (internal/cli/image_build_catalog.go names BuildIdentityEmail), and Cloud
+	// Build refuses a caller holding no iam.serviceAccounts.actAs on the
+	// account the build runs as, so without this row every operator's build
+	// fails with PERMISSION_DENIED at CreateBuild. It is the repository root's
+	// own operator_build one account over, and the same kind of grant as the
+	// check's row above: actAs on ONE account, whose reach it therefore adds
+	// nothing to — it lets a listed operator mint that account's token and
+	// submit a build naming it, and an operator already holds the runs bucket's
+	// own grants.
+	//
+	// The second is the one project-level role the identity holds, and the
+	// reason it has to: Cloud Build writes a build's step logs as the account
+	// the build runs as, and a catalog build submits with
+	// Logging: CLOUD_LOGGING_ONLY (internal/backend/gcp/catalog.go), so an
+	// account without logging.logWriter either has the build refused or loses
+	// every step log — the log an operator reads when a nightly rebuild fails.
+	// It is the project level because Cloud Logging offers the write no
+	// narrower, it is the role the per-repository build account this identity
+	// replaces held at the same level (modules/repo/build.tf's `build` row,
+	// whose own key is further down this list), and what it grants is
+	// appending log entries: no storage permission, nothing that grants a
+	// role, no actAs, no token minting and no read of any log — so it is not a
+	// write path to the marker.
+	`google_service_account_iam_member | "roles/iam.serviceAccountUser" | service_account_id="projects/${var.project}/serviceAccounts/fugaro-build-identity@${var.project}.iam.gserviceaccount.com" | each.value | for_each=local.credentials_service_on ? toset(var.operators) : toset([]) [local.credentials_service_on=var.credentials_service != null] | perms=`,
+	`google_project_iam_member | "roles/logging.logWriter" | project=var.project | google_service_account.build_identity[0].member | for_each= | perms=`,
 	`google_service_account_iam_member | "roles/iam.serviceAccountTokenCreator" | service_account_id="projects/${var.project}/serviceAccounts/fugaro-verifier@${var.project}.iam.gserviceaccount.com" | each.value | for_each=local.credentials_service_on ? toset(var.operators) : toset([]) [local.credentials_service_on=var.credentials_service != null] | perms=`,
 	// Reviewed for M4 (the coordinator's front door): D920 makes the front
 	// door public, and this is therefore the one grant in the tree whose
@@ -2435,7 +2529,7 @@ var runAccountGrants = setOf(
 	// var.launchers (the design's eleventh never-rule: that list is what the
 	// Firebase root binds roles/firebasedatabase.viewer with, an IAM read that
 	// bypasses the Realtime Database rules). Its reach is therefore here one
-	// grant at a time, and none of the five reaches fugaro/managed.json:
+	// grant at a time, and none of the six reaches fugaro/managed.json:
 	//
 	//   - the launcher project role (fugaroLauncher) is metadata: run.jobs.get,
 	//     run.jobs.list, run.executions.get/list/cancel, run.operations.get and
@@ -2465,12 +2559,46 @@ var runAccountGrants = setOf(
 	//     JOB's own account, whose grants this list already holds above, and
 	//     overrides change a run's arguments rather than its identity — the
 	//     orchestrator is never the account a job runs as. The role holds no
-	//     run.jobs.create/update/delete, so it cannot change the job it starts.
+	//     run.jobs.create/update/delete, so it cannot change the job it starts;
+	//   - and the per-secret accessor P5.1e adds (the mobile design's section
+	//     4.2 and its section 4.7 step 2b): the third copy of a pairing's MAC
+	//     key — the tag is a symmetric HMAC, so the consumer that verifies one
+	//     holds the key the phone signs with — in the installation's own
+	//     container `fugaro-orch-pairing`, one version per pairing, written by
+	//     `fugaro pair` and destroyed by `fugaro pair revoke`. The grant is the
+	//     SECRET row and not the project row, and the role reads the VALUE of a
+	//     container that already exists: no storage permission at all, nothing
+	//     that grants a role, no actAs and no token minting. The target is a
+	//     Secret Manager container and not the runs bucket — fugaro/managed.json
+	//     is an object at that bucket's root, which this reaches no more than the
+	//     two list permissions above do — and the container holds pairing keys
+	//     and nothing else.
 	`google_project_iam_member | "projects/${var.project}/roles/fugaroLauncher" | project=var.project | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=run.executions.cancel,run.executions.get,run.executions.list,run.jobs.get,run.jobs.list,run.operations.get,secretmanager.secrets.list,secretmanager.versions.list`,
 	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=google_storage_bucket.runs.name | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=`,
 	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=`,
 	`google_service_account_iam_member | "projects/${var.orchestrator.firebase_project}/roles/fugaroTokenMinter" | service_account_id="projects/${var.orchestrator.firebase_project}/serviceAccounts/${var.orchestrator.signer_account_id}@${var.orchestrator.firebase_project}.iam.gserviceaccount.com" | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=?`,
 	`google_cloud_run_v2_job_iam_member | "projects/${var.project}/roles/fugaroJobRunner" | name=module.project[each.key].job | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each=var.orchestrator == null ? {} : var.project_jobs | perms=?`,
+	// Reviewed for P5.1c (the resident orchestrator's service and the tick that
+	// wakes it, the mobile design's section 4.1). This row is the one of the
+	// block that is not a grant to var.orchestrator.account_id: it is made TO
+	// the installation's own scheduler account — the fixed account that already
+	// holds the history, reports, coordinator and catalog-check ticks' invoker
+	// grants, in the module's own terms — and it is what lets this tick call
+	// the service at all: Cloud Run's front end refuses a caller without
+	// roles/run.invoker before the container runs, which is the whole of "no
+	// public ingress" on a service whose ingress is INGRESS_TRAFFIC_ALL.
+	//
+	// What it grants is roles/run.invoker on the orchestrator's own service:
+	// the right to send a request to that one Cloud Run service. It carries no
+	// storage permission at all (no objectUser, no objectViewer), no permission
+	// to grant a role, no iam.serviceAccounts.actAs and no token minting, and
+	// its target is the service rather than the runs bucket, the project or a
+	// job. The scheduler account's reach through it is the POST the module
+	// configures and nothing else, and the container behind it runs as the
+	// orchestrator's own account — whose five rows are the block above — so
+	// nothing here widens what any run credential can reach.
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.orchestrator.service | google_service_account.scheduler.member | for_each= | perms=`,
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=google_secret_manager_secret.pairing_key[0].secret_id | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=`,
 )
 
 // setOf is a set of strings.
@@ -3030,11 +3158,15 @@ func (s *iamScan) customRolePermissions(resources []tfResource) map[string][]str
 	return roles
 }
 
-// literalRoleIDs are the role ids a grant of Task 1.5's step 5 names as a
-// literal, and the custom role resource that creates each, for the two roles
-// whose role_id the module takes from var.names.role_ids.*: the value is a Go
-// constant written into the root's tfvars (internal/infra's RoleLauncher and
-// RoleBuildSubmitter), so the Terraform text carries only the variable. The
+// literalRoleIDs are the role ids a grant names as a literal, and the custom
+// role resource that creates each, for the roles whose role_id the module
+// takes from var.names.role_ids.*: the value is a Go constant written into the
+// root's tfvars (internal/infra's RoleLauncher, RoleBuildSubmitter and
+// RoleTagMover), so the Terraform text carries only the variable. The
+// installation module's two literal grants of fugaroLauncher and
+// fugaroBuildSubmitter are Task 1.5's step 5; fugaroTagMover's is B6's (the
+// project's build identity's tag mover on the shared registry), which spells
+// the same role the repository module reads from var.installation.role_ids. The
 // mapping is stated here and checked against the resource's own role_id
 // above, so mapping an id to the wrong resource is a finding rather than a
 // grant read against another role's permissions. The roles whose role_id is a
@@ -3043,6 +3175,7 @@ func (s *iamScan) customRolePermissions(resources []tfResource) map[string][]str
 var literalRoleIDs = map[string]string{
 	"fugaroLauncher":       "google_project_iam_custom_role.launcher",
 	"fugaroBuildSubmitter": "google_project_iam_custom_role.build_submitter",
+	"fugaroTagMover":       "google_project_iam_custom_role.tag_mover",
 }
 
 // roleIDKey is a role id compared the way the two spellings differ: the

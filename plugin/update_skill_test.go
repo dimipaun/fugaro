@@ -12,6 +12,15 @@ import (
 // its three commands (decision U14: the bound is in the text, not in
 // frontmatter).
 //
+// What that one command does includes the orchestrator's unit since D2700 of
+// docs/orchestrator-graph-estimates (the owner's answer of 2026-11-16, amended
+// after review and corrected by F48): `fugaro update` installs the login unit
+// on a machine that has none and re-renders an installed one, so the skill
+// that hands the command over has to say the unit is part of the upgrade. The
+// pinned half is the fence F48 kept: the write happens only where a person is
+// at the terminal, and the agent reading this skill is told to hand the run
+// over rather than promise the unit from a session of its own.
+//
 // The three commands are `fugaro version`, `fugaro update --check` and
 // `fugaro update-skills` since U4 of
 // docs/plugin-user-scope/implementation-plan.md retired `fugaro upgrade` and
@@ -30,6 +39,12 @@ func TestUpdateSkill(t *testing.T) {
 		"never look for a flag or another command that would let this session apply those writes",
 		"Never edit `.claude/settings.json`", "brew upgrade dimipaun/tap/fugaro", "restart",
 		"Exit 1 means something is stale", "you never change which marketplace this machine trusts",
+		// D2700: the unit is part of what the one command does, on a machine
+		// that has none as well as over an installed one, and the session that
+		// reads this skill is not where that write happens.
+		"installs the orchestrator daemon's login unit on this machine when it has none, re-rendering the one already there",
+		"the per-project lease keeps one of those daemons live and the rest on standby",
+		"a run inside a coding agent's session installs no unit and says so in one line, and the user's next run of it at their own terminal installs it",
 		"Nothing in this skill's frontmatter can limit which commands it runs: the three-command rule above is an instruction, not a permission, and the user's own Claude Code permission settings are what bound it.",
 	} {
 		if !strings.Contains(skill, want) {

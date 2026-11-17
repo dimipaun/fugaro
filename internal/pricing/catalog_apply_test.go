@@ -92,11 +92,19 @@ func TestApplyCatalogCompilesTierMinMax(t *testing.T) {
 			}
 		})
 	}
-	// The zero-value policy is cheapest, not the accident of an unset field
-	// reaching the wrong branch.
-	m, _ := compile(t, catalogFile("2026-10-14", entry()), route(false, "")).Lookup("vendor/model")
-	if m.Rates.InputPerM != 1 {
-		t.Errorf("an empty policy charged input %v, want the cheapest bound 1", m.Rates.InputPerM)
+}
+
+// TestApplyCatalogUnsetPolicyIsHighest pins the compiler's own default: an
+// empty CatalogRoute.Policy charges the dearest end of the selected tier
+// (D2644), so the value that reaches catalogModel is never the empty string
+// and a route built without a policy cannot under-count a call.
+func TestApplyCatalogUnsetPolicyIsHighest(t *testing.T) {
+	m, ok := compile(t, catalogFile("2026-10-14", entry()), route(false, "")).Lookup("vendor/model")
+	if !ok {
+		t.Fatal("no row")
+	}
+	if m.Rates.InputPerM != 4 || m.Catalog == nil || m.Catalog.Bound != "max" {
+		t.Errorf("an empty policy charged input %v at the %+v bound, want the dearest end 4 at max", m.Rates.InputPerM, m.Catalog)
 	}
 }
 

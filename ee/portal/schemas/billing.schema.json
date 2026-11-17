@@ -2,13 +2,16 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/ee/portal/schemas/billing.schema.json",
   "title": "Portal billing mirror",
-  "description": "What Paddle says about a workspace's subscription, and the one change a customer makes to it (portal plan P4.3; spec §Customer experience, D2192). The portal mirrors and never decides: invoices, payment methods and cancellation live in Paddle's own customer portal, and what is here is the state the screens read. Seats are Paddle's quantity on purpose — a seat change updates that one subscription rather than making another, because one workspace has one (D2192). Every object here is closed, because ee/keyservice/wire_billing.go decodes it with DisallowUnknownFields.",
+  "description": "What Paddle says about a workspace's subscription, the one change a customer makes to it and the door to Paddle's own portal (portal plan P4.3; spec §Customer experience, D2192). The portal mirrors and never decides: invoices, payment methods and cancellation live in Paddle's own customer portal, and what is here is the state the screens read and the session that sends a person there. Seats are Paddle's quantity on purpose — a seat change updates that one subscription rather than making another, because one workspace has one (D2192). Every object here is closed, because ee/keyservice/wire_billing.go decodes it with DisallowUnknownFields.",
   "oneOf": [
     {
       "$ref": "#/$defs/subscription"
     },
     {
       "$ref": "#/$defs/seats"
+    },
+    {
+      "$ref": "#/$defs/portal"
     }
   ],
   "$defs": {
@@ -108,6 +111,21 @@
           "type": "integer",
           "minimum": 1,
           "description": "The whole quantity and not an increment: a customer asking for the number they believe they are buying is what makes a request whose reply was lost safe to send again."
+        }
+      }
+    },
+    "portal": {
+      "type": "object",
+      "description": "Paddle's own customer portal, as the screen that asks for one is handed it (P4.3). It is a session and not a page this portal serves: invoices, payment methods and cancellation are Paddle's, and the URL is where a person is sent to reach them.",
+      "additionalProperties": false,
+      "required": [
+        "url"
+      ],
+      "properties": {
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The customer-portal session the merchant of record minted, checked to be an https address before it leaves the service (ee/keyservice/billing.go's `customerPortal`): it is followed by a browser, so its scheme is part of what is vouched for rather than a detail the screen is left to refuse."
         }
       }
     }

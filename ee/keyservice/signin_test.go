@@ -152,7 +152,12 @@ func (f *fixture) tokenWith(t *testing.T, claim string, value any) string {
 // the routes. P1.3's `portalauth.go` is the production half of this pairing, and
 // it carries the provider and the tenant the portal's `Caller` adds; these flows
 // read the address and nothing else, which is what the purchaser binding is.
-type licenceSignIn struct{ *mcpauth.Verifier }
+type licenceSignIn struct {
+	*mcpauth.Verifier
+	// now is the clock the freshness rule is measured against, which is the
+	// fixture's (f.clock), the way the verifier's own verify clock is.
+	now func() time.Time
+}
 
 func (v licenceSignIn) Verify(ctx context.Context, idToken string) (Caller, error) {
 	identity, err := v.Verifier.VerifyIDToken(ctx, idToken)
@@ -169,6 +174,19 @@ func (v licenceSignIn) Verify(ctx context.Context, idToken string) (Caller, erro
 // double that claims no sign-in method owes.
 func (v licenceSignIn) RequireSSO(caller Caller, rule SSORule) error {
 	return ssoRefuses(signInOf(caller), rule)
+}
+
+// FreshWithin is the rule itself for the same reason, and with the same answer:
+// the flows this verifier is wired for reach no route that asks for a step-up,
+// and the caller Verify builds here attests no sign-in instant — a rule that did
+// reach it would refuse, which is the answer a double that claims no sign-in
+// time owes.
+func (v licenceSignIn) FreshWithin(caller Caller, within time.Duration) error {
+	now := time.Now
+	if v.now != nil {
+		now = v.now
+	}
+	return freshSignIn(signInOf(caller), within, now())
 }
 
 // signingIn is the fixture with the two doors these routes need wired: the
@@ -204,7 +222,7 @@ func signingInWith(t *testing.T, edit func(*fixture)) (*fixture, *v1Spy) {
 		if err != nil {
 			t.Fatalf("building the licence project's verifier: %v", err)
 		}
-		f.deps.SignIn = licenceSignIn{verifier}
+		f.deps.SignIn = licenceSignIn{Verifier: verifier, now: f.clock}
 		edit(f)
 	})
 	return f, spy

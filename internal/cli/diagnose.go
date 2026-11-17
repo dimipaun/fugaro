@@ -880,11 +880,11 @@ func routeOf(d *Diagnosis, rec *runstore.Record, lc *localcfg.Config, red func(s
 		// against the charge agrees with it by construction (F16).
 		switch {
 		case d.TableHiUSD > 0 && d.Reported > d.TableHiUSD*(1+reportedGapPct/100.0):
-			// Two answers, because a catalog-priced route has two: the
-			// owner's own price, or the built-in catalog's dearest end
-			// while the route served an endpoint dearer still (design §7,
-			// D12).
-			d.BandWarning = fmt.Sprintf("the providers reported $%.4f, more than %d%% above the $%.4f the table would have charged the calls they reported at the tier's dearest end: model_prices may be too low, or a catalog-priced route served an endpoint dearer than the tier's range — set price_policy: highest, or price the model under model_prices; check model_prices and the account's provider settings",
+			// The one answer left: the catalog already charges its dearest
+			// end by default (D2644), so a report above it is the owner's
+			// own price being too low, or an endpoint dearer than the whole
+			// tier (design §7, D12).
+			d.BandWarning = fmt.Sprintf("the providers reported $%.4f, more than %d%% above the $%.4f the table would have charged the calls they reported at the tier's dearest end: model_prices may be too low, or a catalog-priced route served an endpoint dearer than the tier's range — price the model under model_prices; check model_prices and the account's provider settings",
 				d.Reported, reportedGapPct, d.TableHiUSD)
 		case d.TableLoUSD > 0 && d.Reported < d.TableLoUSD*(1-reportedGapPct/100.0):
 			// Below the band the table over-prices those calls, which is the
@@ -900,7 +900,7 @@ func routeOf(d *Diagnosis, rec *runstore.Record, lc *localcfg.Config, red func(s
 			// and only a report above it is a sign of under-pricing: a lower
 			// one may be partial reporting (a cut stream, a call without a
 			// cost).
-			d.ReportedWarning = fmt.Sprintf("the providers reported $%.4f, more than %d%% above the $%.4f the table charged without the route fee: model_prices may be too low, or a catalog-priced route was charged its cheapest end while a dearer endpoint served the call — set price_policy: highest, or price the model under model_prices (partial reporting is also possible); check model_prices and the account's provider settings",
+			d.ReportedWarning = fmt.Sprintf("the providers reported $%.4f, more than %d%% above the $%.4f the table charged without the route fee: model_prices may be too low, or a catalog-priced route served an endpoint dearer than the end it charged — price the model under model_prices (partial reporting is also possible); check model_prices and the account's provider settings",
 				d.Reported, reportedGapPct, bare)
 		}
 	}
@@ -1220,23 +1220,26 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 		// stage (design §6.1), so the Cost line above counts a figure the
 		// reader cannot otherwise explain -- on a provider route nothing
 		// else names it, since the provider's own reported cost is recorded
-		// and is the floor under that charge rather than its price. The rates
-		// the multiple scales are the ones the call was otherwise priced at --
+		// and is what a complete call settled on (D2640). The rates the
+		// multiple scales are the ones the call was otherwise priced at --
 		// the serving model's own, or the table's maximum for a model it
 		// doesn't know -- so the line says that and not "its own rates", which
 		// would be wrong for a call the table priced at maximum rates, or one
 		// the response also priced as a surprise. The multiple is an assumed
 		// ceiling and not a published price, so where a provider reported a
-		// cost the charge may be that figure with the route fee instead, and
-		// the line says so -- in the warning's own words, and with the fee
-		// named, because the Reported line below shows the report without it.
-		// The clause is printed only when the record carries a report at all:
-		// a Claude call has no route, so a report cannot exist for it, and a
-		// provider that sent none floors nothing.
+		// cost a complete call settled on that figure with the route fee,
+		// floored at the row's cheapest end, and only a call the stream cut
+		// short keeps the multiple with the report as a floor under it. The
+		// record cannot tell the two apart -- it carries the tiers, not the
+		// calls -- so the line names both, in the warning's own words and with
+		// the fee named, because the Reported line below shows the report
+		// without it. The clause is printed only when the record carries a
+		// report at all: a Claude call has no route, so a report cannot exist
+		// for it, and a provider that sent none floors nothing.
 		line := fmt.Sprintf("%s charged at %dx the rates the call was priced at",
 			oneLine(strings.Join(r.Cost.ServiceTiers, ", ")), pricing.ConservativeTierMultiplier)
 		if d.Reported > 0 {
-			line += ", or the provider's reported cost with the route fee if dearer"
+			line += ", or the provider's reported cost with the route fee: a complete call settled on that figure, floored at the row's cheapest end, and a call the stream cut short was charged the dearer of the multiple and that figure"
 		}
 		fmt.Fprintf(&b, "Tier:     %s (no published price for the tier)\n", line)
 	}

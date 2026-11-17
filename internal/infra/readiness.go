@@ -859,22 +859,27 @@ func hasLatest(ctx context.Context, c *Clients, tg target, spec RepoSpec, image 
 }
 
 // imageContextShipped is the gate the release that first writes — and reads —
-// a catalog source carrying `context` flips (D1403, F22). False means no
-// released fugaro reads that member, so a job whose image comes from an entry
-// that names a context is not one a released fugaro can run, and readiness
-// holds it back with the fix that gives the operator one that can.
+// a catalog source carrying `context` flips (D1403, F22). It is true as of
+// 0.26.0, the first release that carries the member: the copy stages the
+// context and the build checks it out at the pinned commit, and this release's
+// runner reads `context` in the node it decodes. Before it, the gate meant no
+// released fugaro read that member, so a job whose image came from an entry
+// that named a context was not one a released fugaro could run, and readiness
+// held it back with the fix that gives the operator one that can.
 //
 // The member is not optional the way the catalog's own key is: it sits inside
 // a node shape an older reader already accepts, so the reader does not skip it
 // and read the rest — it refuses the whole node, which fails the project's
-// runs rather than its catalog. That is why the key may not ship before the
-// gate is flipped (D1403), and why this one is false while image_catalog's is
+// runs rather than its catalog. That is what the gate kept out of a runner
+// that predates this release, and why it was false while image_catalog's was
 // true: internal/config accepting the member is not a release.
 //
-// No package may read the CLI's own release constants here — internal/cli
-// imports internal/infra, never the other way round — so the release that
-// flips this one states the version in its own notes.
-var imageContextShipped = false
+// internal/cli's imageContextShipped (recipes_skew.go) is the same fact at the
+// CLI's own edge, and neither package may read the other's release constants —
+// internal/cli imports internal/infra, never the other way round — so the
+// release that flips both says the version in its own notes
+// (docs/releases/v0.26.0.md).
+var imageContextShipped = true
 
 // imageCatalogShipped is the gate the release that publishes — and reads —
 // the project policy's image_catalog key flips (D1140, D1156). False means no

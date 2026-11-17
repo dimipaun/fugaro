@@ -65,15 +65,34 @@
 # What the account may never do is the design's section 6 and it is not
 # expressible as a comment here: no IAM (nothing this file creates carries
 # setIamPolicy or iam.roles.*), no managed apply (the runs bucket's root is
-# outside the write condition below), no model credential (no secretAccessor,
-# no secret container named anywhere in this file), and no second
+# outside the write condition below), no model credential, and no second
 # installation's nodes (one project, one account).
+#
+# The ONE secret container this file names, and the one secretAccessor it
+# grants, are the pairing key's cloud copy (P5.1e; the design's section 4.2 and
+# its section 6 rule 5). They are not a widening of the row above: the tag is a
+# symmetric HMAC, so the consumer that verifies a phone's messages in the cloud
+# holds the key, and rule 5 states the copy as the exception the tag forces. The
+# grant is the per-secret one on that one container — never the project-wide
+# role, which dynamicSecretsGrant refuses for any account but the credentials
+# service's — and section 4.3's reader table is what the note P5.1e writes in
+# SECURITY.md says out loud: this account is a reader, and so is every project
+# Owner or Editor, whose basic roles carry secretmanager.versions.access past
+# any secret-level policy.
 
 locals {
   # The switch, credentials.tf's and intake.tf's shape: a null variable is an
   # installation that has not opted in, and every resource below is counted on
   # it.
   orchestrator_on = var.orchestrator != null
+
+  # The route the tick calls, which is the process's ONLY route
+  # (internal/cli/orchestrator_serve.go): the service answers POST /tick, 405 to
+  # another method on it and 404 to anything else — so a tick pointed anywhere
+  # else is a job that runs, fails and logs, every minute, forever. It is a local
+  # because the URI is composed from the service's own URL, and it is pinned in
+  # internal/infra/tf's cover_test.go against the route the case accepts.
+  orchestrator_tick_path = "/tick"
 }
 
 # The identity itself. Nothing is granted actAs on it: executing the service
@@ -91,6 +110,61 @@ resource "google_service_account" "orchestrator" {
   description  = "The installation's resident orchestrator: launches this installation's runs and consumes this installation's mailbox. It holds a grant of its own, assembled one binding at a time, and is deliberately not a member of the launcher list."
 
   depends_on = [google_project_service.this]
+}
+
+# The pairing key's cloud copy (P5.1e; the design's section 4.2 and section 4.7
+# step 2b): ONE container per installation, and one version per pairing inside
+# it, written and destroyed by `fugaro pair` and `fugaro pair revoke` with the
+# operator's own credential. Terraform creates the container and never a
+# version, credentials.tf's rule for the same reason: a pairing key is drawn on
+# the operator's machine and never reaches Terraform or its state
+# (TestNoSecretVersionsInTerraform). A container with no version yet is fine —
+# an installation that has opted in and paired nothing has nothing for the
+# orchestrator to verify with.
+#
+# The labels are `fugaro=managed` and the installation's name, and deliberately
+# NOT fugaro_secret, credentials.tf's reason exactly: that label is what
+# `fugaro update`'s discovery reads to decide which logical secret of the
+# project's secret set a container holds, and this container is not one of those
+# — it is one version per pairing with two writers, neither of them Terraform.
+#
+# prevent_destroy is secrets.tf's rule: an edit that dropped the container must
+# be a hard plan failure rather than a deletion of every pairing's key. The
+# delete that ends a pairing is `fugaro pair revoke`'s, one version at a time.
+resource "google_secret_manager_secret" "pairing_key" {
+  count = local.orchestrator_on ? 1 : 0
+
+  project   = var.project
+  secret_id = "fugaro-orch-pairing"
+  labels = {
+    fugaro         = "managed"
+    fugaro_project = var.fugaro_project
+  }
+
+  replication {
+    auto {}
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  depends_on = [google_project_service.this]
+}
+
+# The reader, and the only one this file grants: the account above, on that one
+# container. It is the per-secret row of section 4.3's table rather than the
+# project-wide accessor, which is what the cover's own rule refuses for every
+# principal but the credentials service's account. The member is written out
+# like every other binding here and for the same reason: the account's `.member`
+# is computed, and a computed member reaches the plan unknown.
+resource "google_secret_manager_secret_iam_member" "orchestrator_pairing_key" {
+  count = local.orchestrator_on ? 1 : 0
+
+  project   = var.project
+  secret_id = google_secret_manager_secret.pairing_key[0].secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com"
 }
 
 # The launcher's project role: run.jobs.get/list, run.executions.get/list/
@@ -199,4 +273,203 @@ resource "google_service_account_iam_member" "orchestrator_token_minter" {
   service_account_id = "projects/${var.orchestrator.firebase_project}/serviceAccounts/${var.orchestrator.signer_account_id}@${var.orchestrator.firebase_project}.iam.gserviceaccount.com"
   role               = "projects/${var.orchestrator.firebase_project}/roles/fugaroTokenMinter"
   member             = "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com"
+}
+
+# The service itself (mobile plan task P5.1c; the design's section 4.1: "one
+# Cloud Run service per installation, in the installation's own GCP project,
+# min-instances = 0, request-based billing, woken by a Cloud Scheduler tick").
+# It is the account above, and the whole of what a wake-up may do is the table
+# that account holds — this resource adds an identity to run AS, no reach of its
+# own.
+#
+# It is a SERVICE and not a job, and the design refuses to pretend the choice is
+# free: a scheduled job could do the same work and is cheaper (section 9's
+# alternative A3), and the service is taken only because it can answer a
+# request. Scale-to-zero is what makes "always on" mean available rather than
+# busy: the phone's message waits in the mailbox for the whole 72-hour TTL
+# (D118/O5) and the tick is what bounds the wait (U1), so the instance count has
+# to be 0 when nothing is happening — check 660 reads `minScale` back off the
+# live revision for exactly that, and `min-instances = 1` is the shape the
+# design priced and did not take.
+#
+# The ingress is ALL and the fence is IAM, intake.tf's and credentials.tf's
+# shape one file over: the caller is Cloud Scheduler over the public run.app
+# URL, and `invoker_iam_disabled = false` is the front end refusing an
+# unauthenticated request before the container runs. Those two together are what
+# the plan's "no public ingress" means, and it is stated here rather than left to
+# the provider's default: a service that does not require IAM is a service
+# anybody on the internet can wake, and this one acts on an installation's own
+# state.
+#
+# The image is the released pin, held to var.orchestrator's digest rule: the
+# process is `fugaro orchestrator serve` (internal/cli/orchestrator_serve.go),
+# a subcommand of the same binary the credentials service and the intake run,
+# and there is no orchestrator image of its own. `args` replaces the image's
+# command and no part of its entrypoint, so the two services running the same
+# pin are told apart by their argv — which is what internal/infra/tf's case for
+# this address reads.
+#
+# The environment is the process's whole configuration and it is three names,
+# none of them a credential and none of them a secret (the process's own header
+# counts them): the project that names this installation's node, the Firebase
+# project that node belongs to, and the database URL it is read from. There is
+# deliberately no model key, no git credential and no secret ID here — section
+# 6's rules 4 and 5, and the account's table has no secretAccessor for one to be
+# read with.
+resource "google_cloud_run_v2_service" "orchestrator" {
+  count = local.orchestrator_on ? 1 : 0
+
+  project  = var.project
+  location = var.region
+  name     = var.orchestrator.service
+  labels = {
+    fugaro      = "managed"
+    fugaro_role = "orchestrator"
+  }
+  ingress = "INGRESS_TRAFFIC_ALL"
+
+  invoker_iam_disabled = false
+
+  scaling {
+    scaling_mode       = "AUTOMATIC"
+    min_instance_count = 0
+  }
+
+  deletion_protection = false
+
+  template {
+    labels = {
+      fugaro      = "managed"
+      fugaro_role = "orchestrator"
+    }
+    service_account = google_service_account.orchestrator[0].email
+    timeout         = "300s"
+
+    scaling {
+      min_instance_count = 0
+    }
+
+    containers {
+      image = var.orchestrator.image
+      args  = ["orchestrator", "serve"]
+
+      resources {
+        limits = {
+          cpu    = "1"
+          memory = "512Mi"
+        }
+      }
+
+      env {
+        name  = "FUGARO_PROJECT"
+        value = var.fugaro_project
+      }
+      env {
+        name  = "FUGARO_FIREBASE_PROJECT"
+        value = var.orchestrator.firebase_project
+      }
+      env {
+        name  = "FUGARO_RTDB_URL"
+        value = var.orchestrator.rtdb_url
+      }
+    }
+  }
+
+  traffic {
+    type    = "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST"
+    percent = 100
+  }
+
+  lifecycle {
+    ignore_changes = [client, client_version]
+  }
+
+  depends_on = [google_service_account.orchestrator]
+}
+
+# The one caller the front end admits: the installation's own scheduler account,
+# which is the identity the tick's Google ID token is minted as (the job below).
+# Cloud Run's invoker is per service and there is nothing narrower (F36, the same
+# sentence intake.tf's own invoker grant carries), so this is the whole of the
+# class: nobody else in the installation, and no person, can wake this service.
+#
+# The member is the scheduler account's own attribute, as it is on the four other
+# ticks this module creates (history.tf, coordinator.tf, reports.tf,
+# catalogcheck.tf): the grant names the account this module makes rather than
+# repeating its address, so the identity the tick mints its token as and the
+# identity the front end admits cannot drift apart. On a plan that creates the
+# account the attribute is unknown, and internal/infra/tf's cover reads an
+# unknown member as an account of this run exactly when the module creates a
+# service account with it (checkGrant's createsSA arm) — fugaro-scheduler is one
+# of FugaroAccounts, the kind its run.invoker row admits, and that is also why
+# this grant does not widen section 4.3's table: it is a grant TO the scheduler,
+# and the orchestrator account appears nowhere in it.
+resource "google_cloud_run_v2_service_iam_member" "orchestrator_invoker" {
+  count = local.orchestrator_on ? 1 : 0
+
+  project  = var.project
+  location = var.region
+  name     = var.orchestrator.service
+  role     = "roles/run.invoker"
+  member   = google_service_account.scheduler.member
+
+  depends_on = [google_service_account.orchestrator]
+}
+
+# The tick that wakes it (section 4.1; Q4's answer of 2026-10-19: the tick is
+# the heartbeat's only writer, one write per tick, and Cloud Scheduler's shortest
+# interval is one minute and it may fire up to that late — U1 says so, so a
+# minute is the floor and the cadence this release takes).
+#
+# It is an HTTP target on the service's own URL, not the run API: a Cloud Run
+# *service* is invoked through its URL, and that URL is what Cloud Run's IAM
+# check reads `roles/run.invoker` against. `.uri` is a computed attribute, so
+# this is the one place in this module where a scheduler job's URI is read off
+# the resource it calls rather than written from var.project and the resource's
+# name — and it is deliberate: the URL is assigned by Cloud Run and no expression
+# can spell it (coordinator.tf writes the run API's path because a job's location
+# and name ARE knowable), so writing it out would be a second spelling of a name
+# only Cloud Run has. The audience is that same URL and not a second copy of it:
+# Cloud Run refuses an ID token whose audience is not the service's own URL, so
+# the two are one expression or the job authenticates against nothing.
+#
+# The token is an OIDC ID token, where every other tick in this tree carries an
+# OAuth access token: the run API takes an access token, and a run.app URL takes
+# an ID token whose audience is the service — an access token there is refused by
+# the front end before the container runs, however the invoker grant reads.
+# `service_account_email` is the scheduler account the invoker grant above names,
+# and this file writes no actAs for it: every other tick in this module mints its
+# token from the same account with no such grant (history.tf, coordinator.tf,
+# reports.tf, catalogcheck.tf), so the Cloud Scheduler agent's own actAs on it is
+# the installation's existing shape and not this task's to change.
+#
+# `retry_count = 0` is the module's rule for every tick in it: a failed pass logs
+# its failure and the next minute is the retry, and a retry of a pass that
+# half-ran is a second pass over the same node. The time zone is UTC as every
+# other job's is. The region is var.orchestrator.scheduler_region, because Cloud
+# Scheduler is not offered in every Cloud Run region.
+resource "google_cloud_scheduler_job" "orchestrator_tick" {
+  count = local.orchestrator_on ? 1 : 0
+
+  project   = var.project
+  region    = var.orchestrator.scheduler_region
+  name      = var.orchestrator.scheduler_job
+  schedule  = "* * * * *"
+  time_zone = "Etc/UTC"
+
+  retry_config {
+    retry_count = 0
+  }
+
+  http_target {
+    http_method = "POST"
+    uri         = "${google_cloud_run_v2_service.orchestrator[0].uri}${local.orchestrator_tick_path}"
+
+    oidc_token {
+      service_account_email = google_service_account.scheduler.email
+      audience              = google_cloud_run_v2_service.orchestrator[0].uri
+    }
+  }
+
+  depends_on = [google_cloud_run_v2_service_iam_member.orchestrator_invoker]
 }

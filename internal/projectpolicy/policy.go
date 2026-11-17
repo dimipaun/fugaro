@@ -710,10 +710,12 @@ type Provider struct {
 // as constants of this package too so a reader of a policy need not import
 // internal/config to name one.
 const (
-	// PricePolicyCheapest charges the cheapest eligible endpoint's price, and
-	// is what an unset price_policy means (the catalogue's own default).
+	// PricePolicyCheapest charges the cheapest eligible endpoint's price.
 	PricePolicyCheapest = config.PricePolicyCheapest
-	// PricePolicyHighest charges the dearest eligible endpoint's price.
+	// PricePolicyHighest charges the dearest eligible endpoint's price, and
+	// is what an unset price_policy means (D2644: the charge is what the
+	// caps and the ledger are computed from, so the safe end is the one
+	// that cannot under-count a call served from a dearer endpoint).
 	PricePolicyHighest = config.PricePolicyHighest
 )
 
@@ -724,7 +726,7 @@ const (
 func (p Provider) RequireZDROn() bool { return p.ModelProvider.RequireZDROn() }
 
 // EffectivePricePolicy is the policy a route is priced under:
-// PricePolicyCheapest when the policy does not set one (D3). It is the
+// PricePolicyHighest when the policy does not set one (D2644). It is the
 // carrier's own accessor (config.ModelProvider.PricePolicySet), under the
 // name this package's readers use.
 func (p Provider) EffectivePricePolicy() string { return p.ModelProvider.PricePolicySet() }

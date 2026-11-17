@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/orchestrator"
 )
 
 // TestDocsMobileOrchestratorDesignIsWritten (mobile plan Task P5.1a, approved
@@ -297,6 +299,38 @@ func TestDocsMobileOrchestratorNeverListIsWhole(t *testing.T) {
 	}
 }
 
+// mobileOrchestratorNeverRuleRE reads one rule of section 6: its number and the
+// sentence the design states in bold.
+var mobileOrchestratorNeverRuleRE = regexp.MustCompile(`(?m)^([0-9]+)\. \*\*(.+?)\*\*`)
+
+// TestOrchestratorNeverRulesAreTheDesignsEleven (mobile plan Task P5.1c):
+// section 6 of the design of record is the never-list the resident
+// orchestrator's code answers with, and internal/orchestrator/never.go is that
+// list as refusals. The two are compared rule by rule and sentence by sentence,
+// so a rule added, renumbered or reworded on one side fails here rather than
+// drifts: the code half is what a path meets, the document half is what a
+// reviewer reads, and neither is the other's copy.
+func TestOrchestratorNeverRulesAreTheDesignsEleven(t *testing.T) {
+	const path = "docs/mobile/design/always-on-orchestrator.md"
+	list := docSection(t, path, readDoc(t, path), "## 6. What it must never do")
+	rules := orchestrator.NeverRules()
+	written := mobileOrchestratorNeverRuleRE.FindAllStringSubmatch(list, -1)
+	if len(written) != len(rules) {
+		t.Fatalf("%s's never-list states %d rules and internal/orchestrator/never.go carries %d: the two are one list",
+			path, len(written), len(rules))
+	}
+	for i, m := range written {
+		rule := rules[i]
+		if want := strconv.Itoa(rule.Number); m[1] != want {
+			t.Errorf("%s's rule %d is numbered %s in the code: the numbering is the design's", path, i+1, want)
+		}
+		if m[2] != rule.Never {
+			t.Errorf("%s's rule %s reads %q and the code's Rule.Never reads %q: a reworded rule is reworded in both places",
+				path, m[1], m[2], rule.Never)
+		}
+	}
+}
+
 // mobileOrchestratorChecks are the four numbers the register text of Task
 // P5.1h took, in the order the register writes them. The design named 110 and
 // claimed none (TestDocsMobileOrchestratorClaimsNoCheckNumber); the number the
@@ -466,6 +500,119 @@ func TestDocsMobileOrchestratorChecksAreRegistered(t *testing.T) {
 	} {
 		if !strings.Contains(para, want) {
 			t.Errorf("%s's 660–663 claim paragraph does not say %q: the paragraph is the reading the four numbers rest on, and a later work takes the register's claims from it", liveChecksDoc, want)
+		}
+	}
+}
+
+// TestDocsMobileOrchestratorPairingKeyNoteIsWritten is task P5.1e's docs half,
+// which the design itself defers here: its P5.1-Q2 answer says the note that the
+// pairing key has a third copy "is P5.1e's to write, not this document's", and
+// the three places it is owed are D111's row, Global Constraint 4 and
+// SECURITY.md. What the note has to carry is the whole of what the design's
+// section 4.3 reader table says, because the key is a symmetric HMAC's: WHERE the
+// copy is (a Secret Manager container of the installation's own project), WHO
+// reads it (the orchestrator's account by `secretAccessor` on that one secret,
+// **and every project Owner**, whose basic role carries
+// `secretmanager.versions.access` past any secret-level policy — and not an
+// Editor, which carries no `versions.access`: the owner's ruling of 2026-10-29,
+// the later word over the design's own wider table), and WHAT ends it
+// (`fugaro pair revoke`, destroying the version — not rotating or disabling it,
+// which a holder of `versions.access` on the parent can still read).
+//
+// The three documents are read together rather than one at a time because a note
+// written in one of them and not the others is exactly the failure the row warns
+// about: D111 and Global Constraint 4 are where the two-places sentence lives, so
+// a reader who trusts them and not SECURITY.md believes the key has two homes.
+func TestDocsMobileOrchestratorPairingKeyNoteIsWritten(t *testing.T) {
+	// The load-bearing fragments, as phrases rather than whole sentences: the
+	// documents wrap their prose, so a sentence-long needle hides behind a
+	// newline and would leave this guard green.
+	note := []string{
+		"2026-11-17",
+		"Secret Manager container",
+		"one container per installation and one version per pairing",
+		"secretAccessor",
+		"reads any secret's value past its own policy",
+		"roles/owner",
+		"An Editor is not one of them",
+		"secretmanager.versions.access",
+		"fugaro pair revoke",
+	}
+
+	reconciliation := readDoc(t, "docs/mobile/reconciliation.md")
+	// The D111 row, and not the file: "every project Owner or Editor" occurs in
+	// other rows of this document (D113b's alternatives argue about admin
+	// credentials), so a whole-file check would pass on words a reader of D111
+	// never sees.
+	start := strings.Index(reconciliation, "| **D111** |")
+	if start < 0 {
+		t.Fatalf("docs/mobile/reconciliation.md no longer carries a | **D111** | row, so P5.1e's note has no cell to sit in")
+	}
+	end := strings.Index(reconciliation[start:], "\n| **D112**")
+	if end < 0 {
+		t.Fatalf("the D111 row does not end at D112: the document's rows have been reordered, so this guard is reading the wrong cell")
+	}
+	row := flattenDoc(reconciliation[start : start+end])
+	plan := readDoc(t, "docs/mobile/implementation-plan.md")
+	constraint := plan[strings.Index(plan, "4. **The app holds exactly two items per account"):]
+	if cut := strings.Index(constraint, "\n5. "); cut > 0 {
+		constraint = constraint[:cut]
+	}
+	constraint = flattenDoc(constraint)
+	security := flattenDoc(readDoc(t, "SECURITY.md"))
+
+	for _, doc := range []struct {
+		path string
+		body string
+	}{
+		{"docs/mobile/reconciliation.md's D111 row", row},
+		{"docs/mobile/implementation-plan.md's Global Constraint 4", constraint},
+		{"SECURITY.md", security},
+	} {
+		for _, want := range note {
+			if !strings.Contains(doc.body, want) {
+				t.Errorf("%s does not say %q: the third copy of the pairing key is owed in D111, in Global Constraint 4 and in SECURITY.md, and a note written in two of the three leaves a reader of the third believing the key has two homes", doc.path, want)
+			}
+		}
+	}
+
+	// The two halves the note is easy to write and still get wrong. The reader
+	// set is not "the orchestrator's account": a project Owner reads the value
+	// past the container's own policy, and the note exists because that is the
+	// sentence a reader does not expect. The second half is the correction the
+	// wider sentence needs — an Editor carries no `versions.access` (the owner's
+	// ruling of 2026-10-29), so a note that lumps the two basic roles together
+	// states a false reader and hides the Editor's own grant, which is exactly
+	// what `doctor`'s reader check refuses to do.
+	for _, doc := range []struct {
+		path string
+		body string
+	}{
+		{"docs/mobile/reconciliation.md's D111 row", row},
+		{"docs/mobile/implementation-plan.md's Global Constraint 4", constraint},
+		{"SECURITY.md", security},
+	} {
+		if !strings.Contains(doc.body, "reads any secret's value past its own policy") {
+			t.Errorf("%s does not state that a project Owner reads any secret's value past its own policy: `secretAccessor` on the orchestrator's account is not the only reader (the credentials-service reconciliation's F3), and a note that names only the grant overstates the fence", doc.path)
+		}
+		if !strings.Contains(doc.body, "An Editor is not one of them") {
+			t.Errorf("%s does not say an Editor is not a reader of every secret: `roles/editor` carries no `secretmanager.versions.access` (the owner's ruling of 2026-10-29, `doctor`'s reader check), so the design's wider table cannot be repeated as it stands", doc.path)
+		}
+	}
+	// And the deletion is a destroy rather than a disable, which is the one
+	// mistake here that looks like success: the design's step 2b says a disabled
+	// version is still readable by a service holding `versions.access` on the
+	// parent.
+	for _, doc := range []struct {
+		path string
+		body string
+	}{
+		{"docs/mobile/reconciliation.md's D111 row", row},
+		{"docs/mobile/implementation-plan.md's Global Constraint 4", constraint},
+		{"SECURITY.md", security},
+	} {
+		if !strings.Contains(doc.body, "destroy") {
+			t.Errorf("%s does not say the copy is destroyed: a rotation or a disable leaves the version readable, which is the whole of why the design's step 2b is a destroy", doc.path)
 		}
 	}
 }

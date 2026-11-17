@@ -333,6 +333,17 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 		reaches: "read 0, delivered 0, duplicates 0, refused 0, replied 0",
 		seed:    closedStdinMailboxSeed,
 	},
+	// The sweeper is the consumer's other half over the same world, and the one
+	// leaf of the pair that writes nothing at all: `--dry-run` is the plan
+	// rather than the work, so what it reaches is the line naming the mailbox it
+	// walked and the prompts D118's TTL left behind. It reads no keychain, so
+	// the seed is here for the mailbox block the world would otherwise have
+	// none of — a project with no mailbox refuses before it walks anything.
+	"fugaro mailbox sweep": {
+		args:    []string{"--dry-run"},
+		reaches: "0 stored prompt(s) past the TTL",
+		seed:    closedStdinMailboxSeed,
+	},
 	// The daemon is the same shape and answers it the same way: it drives the
 	// project until it is stopped, and --once is its own one cycle — the lease
 	// taken for it and released with it. In this world the node holds no work
@@ -489,6 +500,7 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 // their bodies, in sentences of their own, which the run's own error carries.
 var closedStdinNoFixture = map[string]string{
 	"fugaro ab":                "refuses: the edition is not in this build",
+	"fugaro apply":             "owes nothing in this world, which holds no record: the whole of what a bare run does is the answer of a run with nothing to apply, and it reaches its own body to print it",
 	"fugaro accounts":          "is a name for its four subcommands: a bare run prints its own usage and returns",
 	"fugaro accounts alias":    "is a name for set and rm: a bare run prints its own usage and returns",
 	"fugaro accounts ls":       "selects no project and names the two ways to (--repo, an origin remote)",
@@ -496,9 +508,9 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro accounts pool ls":  "reads the selected project's own config, which this world's has no pools in, and prints that none are defined",
 	"fugaro backends":          "is a name for ls and use: a bare run prints its own usage and returns",
 	"fugaro backends ls":       "lists every backend a project may name, which needs no project",
-	"fugaro backlog add":       "stops at its own D27 field checks, which this world has no values for",
+	"fugaro backlog add":       "refuses from inside its body: a bare run names --title, which is the one line it files an item from",
 	"fugaro backlog index":     "reads docs/backlog, which this world has no checkout to hold",
-	"fugaro backlog list":      "reads docs/backlog, which this world has no checkout to hold",
+	"fugaro backlog list":      "prints the no-project-config refusal",
 	"fugaro budget prices":     "prints the built-in price list with no project selected",
 	"fugaro budget show":       "prints the no-project-config refusal",
 	"fugaro config example":    "prints the example fugaro.yaml",

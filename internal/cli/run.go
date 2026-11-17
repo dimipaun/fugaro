@@ -247,9 +247,9 @@ type runOptions struct {
 	// left draft for the settle step to flip once every member is verified.
 	// False (the default) is the ordinary single-repository launch, whose task
 	// carries no change set at all and stays byte-identical to what the
-	// previous release wrote. Refused by every build until the settle step
-	// ships, which is what keeps a set from being created that nothing could
-	// lift out of draft (changeSetRefusal).
+	// previous release wrote. Refused by a build without the settle step, which
+	// is what keeps a set from being created that nothing could lift out of
+	// draft (changeSetRefusal).
 	changeSet bool
 	// title is --title, as the task stores it: the run's own job title
 	// (task.Spec.Title), the one line every surface that names a run shows
@@ -259,7 +259,9 @@ type runOptions struct {
 	// the follow-up comparison reads it back. Empty (the default) is no
 	// title at all: the task prompt's first line is the title, exactly as
 	// before the flag existed. A follow-up (--pr) inherits its previous
-	// run's title unless this is given (newFollowUpSpec).
+	// run's title unless this is given, and, with no title and no task of
+	// its own, takes the title of the pull request it continues
+	// (newFollowUpSpec, followUpPRTitle).
 	title string
 	// token is the named Claude account (docs/design/named-oauth-tokens.md)
 	// this run uses: fugaro run --token. A follow-up (--pr) inherits its
@@ -426,8 +428,10 @@ func newRunCmd() *cobra.Command {
 			"heading) of the pull request the run opens when the agent writes no pr.md of\n" +
 			"its own. Without it the run is named by the task's first line, so briefs that\n" +
 			"start with the same preamble all read alike. A follow-up (--pr) keeps its run's\n" +
-			"title unless --title is given, and --retry takes none (the stored task keeps its\n" +
-			"own).\n\n" +
+			"title unless --title is given, and with neither a title nor a task of its own it\n" +
+			"takes the title of the pull request it continues, read from the code host (a host\n" +
+			"that cannot be read leaves the run named by its own instructions). A task of its\n" +
+			"own always wins, and --retry takes none (the stored task keeps its own).\n\n" +
 			"--plan-task PLAN/TASK records which task of which plan this run works on, so\n" +
 			"the console's graph can join the run to that node. One plan and one task id,\n" +
 			"as the plan's own graph spells them, at most 128 bytes; what the run does is\n" +
@@ -470,12 +474,12 @@ func newRunCmd() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.StringArrayVar(&o.repos, "repo", nil, "repository as owner/name, or a path inside its checkout (default: this checkout's origin); repeatable only with --change-set, which launches one run per repository named, 2 to "+fmt.Sprint(task.MaxChangeSetMembers))
-	f.BoolVar(&o.changeSet, "change-set", false, "launch one run per repository named by --repo (2 to "+fmt.Sprint(task.MaxChangeSetMembers)+") as members of one change set: every member's task carries the set's ID and the whole member list, and the members' pull requests are linked as siblings. Part of Fugaro Subscription Edition, and not available yet in any build: the settle step that flips a set's pull requests ready ships after this release, and a set launched now would stay in draft with nothing able to lift it")
+	f.BoolVar(&o.changeSet, "change-set", false, "launch one run per repository named by --repo (2 to "+fmt.Sprint(task.MaxChangeSetMembers)+") as members of one change set: every member's task carries the set's ID and the whole member list, and the members' pull requests are linked as siblings, each left in draft for the settle step to make ready once every member is verified. Part of Fugaro Subscription Edition")
 	f.StringVar(&o.ref, "ref", "", "base branch or ref the run is cut from (default: the branch this checkout is on, when origin has it and it is not the base branch; else the base branch (fugaro.yaml git.base_branch, then the local config's, then the project's base_branch, then main))")
 	f.StringVar(&o.workflow, "workflow", "", "workflow to run (default: the repo's only workflow)")
 	f.StringVar(&o.runID, "run-id", "", "run ID to use; repeating one reports its launch instead of starting another")
 	f.StringVar(&o.batch, "batch", "", "batch label, to group runs in fugaro runs ls")
-	f.StringVar(&o.title, "title", "", "the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given")
+	f.StringVar(&o.title, "title", "", "the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given, and with no title and no task of its own it takes the pull request's title instead")
 	f.StringVar(&o.planTask, "plan-task", "", "record the plan task this run works on, as <plan>/<task> (for example setup-wizard/W1.3): the id the console's graph joins this run to a node by; it changes nothing about what the run does, and a follow-up (--pr) records one only when given. A plan task that a run in flight, or a pull request a run of it left behind, already holds is refused (--allow-duplicate launches it anyway)")
 	f.BoolVar(&o.allowDuplicate, "allow-duplicate", false, "launch even though the plan task named by --plan-task is already being worked on: a run of it in flight, or a pull request a run of it left behind. It turns that one refusal off, for a second attempt that is deliberate (the redundant attempts of a hard task); it records nothing, and with no --plan-task there is nothing to duplicate and it changes nothing")
 	f.StringVar(&o.tf, "task-file", "", "read the task from this file, or - for stdin")
@@ -2030,6 +2034,23 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if err := checkCloneReviewLevelsImage(env.lc, spec, levelsAsk, warn); err != nil {
 			return config.Inputs{}, err
 		}
+		// The A/B pair's slot, on the same configuration read and beside
+		// those: a task that carries ab.slot itself asks for a runner that
+		// acts on a review slot, and one older than slotSince runs the whole
+		// coding loop on the challenger's model in place of that one review
+		// (slotAsk).
+		if err := checkCloneSlotImage(env.lc, spec, slotAsk(spec), warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// A workflow's own ask for an A/B reviewer arm
+		// (workflows.<name>.ab.reviewer_arm) is a key of the file the job
+		// reads rather than of the task, so a runner older than
+		// workflowABSince refuses the whole file at bootstrap: judged beside
+		// the slot gate above and on the same configuration read
+		// (checkCloneWorkflowABImage).
+		if err := checkCloneWorkflowABImage(env.lc, spec, fileCfg, warn); err != nil {
+			return config.Inputs{}, err
+		}
 		// The spelling's own gate, on the same configuration read and
 		// beside the one above: a runner older than noneModelSince reads
 		// `model: none` as a model ID rather than as the level's switch
@@ -2083,9 +2104,12 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		// The job title's own gate, for the same reason as the two
 		// above: task.Parse decodes with DisallowUnknownFields, so a
 		// runner older than titlesSince refuses a task carrying a title
-		// outright. A launch with no --title carries no such field (the
-		// spec is byte-identical to what the previous release wrote) and
-		// is never gated: the check is the field's, not the flag's.
+		// outright. A launch with no title at all carries no such field
+		// (the spec is byte-identical to what the previous release wrote)
+		// and is never gated: the check is the field's, not the flag's —
+		// which is also why a follow-up that took the title of the pull
+		// request it continues is gated here like any other titled launch,
+		// without a line of its own.
 		if spec.Title != "" {
 			if err := checkImageSince(ctx, env, slug, spec, kind, titlesSince,
 				"a job title (--title, kept by --pr follow-ups and --retry)", "the job title", "", warn); err != nil {
@@ -2211,6 +2235,16 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		// The review levels' gate, the same as the clone branch's above
 		// and for the same reason: see reviewLevelsAsk.
 		if err := checkReviewLevelsImage(ctx, env, slug, spec, kind, levelsAsk, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The same gate as the clone branch's above and for the same
+		// reason: see slotAsk.
+		if err := checkSlotImage(ctx, env, slug, spec, kind, slotAsk(spec), warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The same gate as the clone branch's above and for the same
+		// reason: see checkWorkflowABImage.
+		if err := checkWorkflowABImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
 			return config.Inputs{}, err
 		}
 		// The same gate as the clone branch's above, and for the same
@@ -2573,7 +2607,10 @@ func ownerRuledText(cmd *cobra.Command, value string) (string, error) {
 //
 // The flag's absence is not a title, and leaves o.title empty — every
 // surface then falls back to the task's first line, exactly as before the
-// flag existed. Its PRESENCE with nothing in it is a mistake and is
+// flag existed (a follow-up that also has no task of its own takes the pull
+// request's title instead, which is followUpPRTitle's business and not this
+// function's: the flag's value is the one thing here that a person typed).
+// Its PRESENCE with nothing in it is a mistake and is
 // refused: --title "" would otherwise be silently the same as no --title at
 // all, which is the one reading nobody meant. The emptiness check runs
 // again on the sanitised value, because the characters safetext.Field drops
@@ -2751,24 +2788,22 @@ func contextReposFlag(o *runOptions) error {
 
 // changeSetRefusal says why this build does not launch a change set, and ""
 // when it does (plan task D1; reconciliation-image-setup D616 as amended).
-// Two answers, in this order: an untagged build has no change sets at all —
-// the settle step and the ordering are `ee/` behaviour, and the flag is
-// refused the way a paid command is, in D522's sentence — and a tagged one
-// still refuses the flag until the settle step ships, because a set whose
-// members' pull requests nothing can flip ready would be stuck in draft for
-// good, and the draft hold (D614) is the whole point of creating one.
+// One answer: an untagged build has no change sets at all — the settle step
+// and the ordering are `ee/` behaviour, and the flag is refused the way a paid
+// command is, in D522's sentence. A tagged one has the step the draft hold
+// (D614) needs — `fugaro coordinator settle` — so it launches the set, and a
+// set is a set whose pull requests something can lift.
 //
 // The edition is a parameter rather than a call to Edition() inside, so that
 // both answers are reachable from one test binary: a test of this package
 // builds without ee/register (only cmd/fugaro imports it), so Edition() is
-// core here whatever tag the test binary carries, and the refusal a tagged
-// BUILD gives — the sentence every release until D3 prints — would otherwise
-// never be judged by the release that ships it.
+// core here whatever tag the test binary carries, and the launch a tagged
+// BUILD makes would otherwise never be judged by the release that ships it.
 func changeSetRefusal(edition string) string {
 	if edition != EditionEE {
 		return "--change-set is part of Fugaro Subscription Edition; this build does not include it"
 	}
-	return "--change-set is not available yet in any build: the settle step that flips a change set's pull requests ready is not part of this release, and a set created now would keep its pull requests in draft with nothing able to lift them; it opens with the release that ships that step"
+	return ""
 }
 
 // changeSetExcludes are the flags a change set refuses, each with the reason
@@ -2776,16 +2811,16 @@ func changeSetRefusal(edition string) string {
 // request, a run ID, a chain, a batch of attempts — and a change set is a
 // launch of several fresh runs at once (D613's linked runs), so applying one
 // to every member would either name a run that is not the member's or mean
-// something the caller did not ask for. --json is here because the set's
-// several launches have no single document: the document a set answers with is
-// the settle step's to define, and a shape published now would be one this
-// release cannot fill (a field never changes meaning).
+// something the caller did not ask for. --json is here because a launch of
+// several runs has no single document to print: the document a set answers with
+// is the settle step's (one report for the set, once its members have shipped),
+// and a launch has one run per member.
 var changeSetExcludes = []struct{ name, why string }{
 	{"pr", "a change set is a launch of fresh runs, one per repository, and --pr continues one pull request of one repository"},
 	{"attempts", "a change set launches one run per repository itself, and --attempts launches several of one repository"},
 	{"run-id", "a change set mints one run ID per member, the first of which is the set's own ID"},
 	{"continues", "each member begins a chain of its own, and --continues joins a chain that exists"},
-	{"json", "the several runs a change set launches have no single document yet"},
+	{"json", "the several runs a change set launches have no single document"},
 }
 
 // noteRigorRequest says, once per launch, when --mode asks for an on-axis mode

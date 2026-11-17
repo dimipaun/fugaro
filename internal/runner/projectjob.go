@@ -83,20 +83,37 @@ const (
 	classReview
 )
 
-// runClass is the class of job this run is: a review run belongs on the
-// review-only variant and every other run on the shared coding job.
+// runClass is the class of job this run is: a run of the review class belongs
+// on the review-only variant and every other run on the shared coding job.
 //
-// The marker is spec.Mode == recipe.ModeReview, which is the launcher's own and
-// the same one finishLaunch sends a run to the variant on (internal/cli/run.go)
-// — never anything the job's environment says, so a container cannot be told
-// which class it is by the name it was started under. It is the task's mode and
-// not the pull requests it names: `fugaro run --pr N --recipe review-only`
-// carries ReviewPRs with an empty Mode and is launched onto the shared coding
-// job, so its run is a review (r.review, reviewmode.go) on the coder's
-// container, and only `fugaro review` — the class whose container mounts no App
-// key and no Claude token — carries the mode.
+// The markers are the launcher's own and never anything the job's environment
+// says, so a container cannot be told which class it is by the name it was
+// started under. There are two, and either is enough:
+//
+//   - spec.Mode == recipe.ModeReview, which is the mode finishLaunch sends a
+//     run to the variant on (internal/cli/run.go). It is the task's mode and
+//     not the pull requests it names: `fugaro run --pr N --recipe review-only`
+//     carries ReviewPRs with an empty Mode and is launched onto the shared
+//     coding job, so its run is a review (r.review, reviewmode.go) on the
+//     coder's container, and only `fugaro review` — the class whose container
+//     mounts no App key and no Claude token — carries the mode.
+//   - spec.ReviewClass, the diagnosis launch's marker (docs/troubleshoot-cloud
+//     D2411): the cloud tier of `fugaro troubleshoot` runs a mode: artifact
+//     recipe (D2402) on the same credential-less variant (D2403), and the mode
+//     alone would make it a coding-class run the variant's doors halt. The
+//     mode still wins where the two would disagree — a mode: review spec is a
+//     review whatever this field says — task.Validate refuses the field
+//     outside mode: artifact, and resolveRecipe refuses a spec carrying it
+//     against a recipe that holds no diagnose step (runner.go), so no other
+//     run claims the class.
+//
+// Every reader of the class reads it here — checkJobClass, the second door on
+// the same credential (checkProjectReviewJobAccount), and the model path
+// (reviewClassRun, gateway.go) — so a diagnosis admitted by the second marker
+// is admitted and served as a review is, without any of them being taught what
+// a diagnosis is.
 func (r *run) runClass() jobClass {
-	if r.spec.Mode == recipe.ModeReview {
+	if r.spec.Mode == recipe.ModeReview || r.spec.ReviewClass {
 		return classReview
 	}
 	return classCoding
@@ -271,13 +288,14 @@ func (r *run) jobIdentity(ctx context.Context) (profile, provider, account strin
 // its model credential from the credentials service's review class (O1), while
 // the shared job mounts the App key the review container exists to be without.
 //
-// The class is the run's own marker (r.runClass, the task's mode: review, set
-// before admission) and the candidate's, never a suffix read back out of the
-// job's name (R2-5): a name is matched against the names the published policy
-// computes, and what a matched name *means* is the candidate it matched. So a
-// container cannot choose its class by the name it was started under — the
-// name is the platform's, but a run that is not a review is a run that may not
-// adopt a review job's identity however it got there.
+// The class is the run's own markers (r.runClass: the task's mode: review, or
+// the review class a diagnosis's launch writes, both set before admission) and
+// the candidate's, never a suffix read back out of the job's name (R2-5): a
+// name is matched against the names the published policy computes, and what a
+// matched name *means* is the candidate it matched. So a container cannot
+// choose its class by the name it was started under — the name is the
+// platform's, but a run of neither class is a run that may not adopt a review
+// job's identity however it got there.
 //
 // It is a halt and not a silent correction in either direction: what a run may
 // do with the credential the job it is in already holds is decided before it
@@ -289,11 +307,11 @@ func (r *run) checkJobClass(id jobTriple) error {
 		return nil
 	}
 	if class == classReview {
-		return fmt.Errorf("this run is a review, and it is in the Cloud Run job %s, which is the shared project job of the profile %q: a review runs on the review-only variant of that job, %s, whose container mounts no App key and no Claude token, and never on the shared job, whose container holds both. What class a run is, is the launcher's marker (the task's mode: review) and the job the run is in, never the job's name. The run stops before any git credential is requested",
+		return fmt.Errorf("this run is a review or a diagnosis, and it is in the Cloud Run job %s, which is the shared project job of the profile %q: a run of that class runs on the review-only variant of that job, %s, whose container mounts no App key and no Claude token, and never on the shared job, whose container holds both. What class a run is, is the launcher's marker (the task's mode: review, or the review class a diagnosis's launch writes) and the job the run is in, never the job's name. The run stops before any git credential is requested",
 			gcp.ProjectJobName(id.Profile, id.Provider, id.Account), id.Profile,
 			gcp.ProjectJobName(id.Profile, id.Provider, reviewVariantAccount(id.Account)))
 	}
-	return fmt.Errorf("this run is in the Cloud Run job %s, which is the review-only variant of the project job of the profile %q: the variant exists for a review that reads a pull request and pushes nothing, its container mounts no App key and no Claude token, and this run is not a review. Every other run of the profile belongs on the shared project job of that profile. What class a run is, is the launcher's marker (the task's mode: review) and the job the run is in, never the job's name: this name is not read back out of the job. The run stops before any git credential is requested",
+	return fmt.Errorf("this run is in the Cloud Run job %s, which is the review-only variant of the project job of the profile %q: the variant exists for a review that reads a pull request, or for a diagnosis that reads its own evidence, and pushes nothing either way; its container mounts no App key and no Claude token, and this run is neither a review nor a diagnosis. Every other run of the profile belongs on the shared project job of that profile. What class a run is, is the launcher's marker (the task's mode: review, or the review class a diagnosis's launch writes) and the job the run is in, never the job's name: this name is not read back out of the job. The run stops before any git credential is requested",
 		gcp.ProjectJobName(id.Profile, id.Provider, id.Account), id.Profile)
 }
 
@@ -1073,7 +1091,7 @@ func (r *run) checkProjectReviewJobAccount(job jobTriple) error {
 		// decided. Kept as the halt it would be, because this check is the
 		// run's second, independent door on the credential it holds and a door
 		// that admits what the first refused is not one.
-		return fmt.Errorf("this run is in the review-only project job %s, and it is not a review: that job's container holds no Claude token and no App key, and what a run of it may do is decided by its class, so no other run may be admitted to it. The run stops before the agent starts",
+		return fmt.Errorf("this run is in the review-only project job %s, and it is neither a review nor a diagnosis: that job's container holds no Claude token and no App key, and what a run of it may do is decided by its class, so no other run may be admitted to it. The run stops before the agent starts",
 			gcp.ProjectJobName(job.Profile, job.Provider, job.Account))
 	}
 	return nil

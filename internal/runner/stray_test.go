@@ -460,6 +460,34 @@ func TestTheRefusalNamesThePathAndTheSize(t *testing.T) {
 	}
 }
 
+// TestTheRefusalSaysARepositoryCannotWidenTheRule: the reason names the rule
+// and says who can change it (D992, spec.md §5). A refusal that named only the
+// file would leave an agent to "fix" it by writing the list into fugaro.yaml —
+// a file this rule never reads, and one whose decode refuses the key — so the
+// sentence says where the fix is (the owner's project config, published by
+// either door) and that no file in the repository can widen the list.
+func TestTheRefusalSaysARepositoryCannotWidenTheRule(t *testing.T) {
+	const path = "test_dup_case2"
+	b := policyRun(t, gwConfig(t, ""), "off", "", binariesNode(`"website/public/**"`, "1048576"))
+	rec, err := b.run(t, implementLeaving(path, compiledBinary), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("record = status %s, outcome %s, reason %q; want a draft: the artifact is at no path the project admits", rec.Status, rec.Outcome, rec.Reason)
+	}
+	for _, want := range []string{
+		"binaries.allow",
+		"fugaro project policy publish",
+		"fugaro update",
+		"no file in the repository can widen it",
+	} {
+		if !strings.Contains(rec.Reason, want) {
+			t.Errorf("reason = %q; want it to say %q", rec.Reason, want)
+		}
+	}
+}
+
 // TestAMovedBinaryIsNotRefused: a move is not an addition, and it is the false
 // refusal D997's cost column is about. --no-renames reports the move of a
 // tracked file as a delete and an add, and the two rows' blob ids are the same
