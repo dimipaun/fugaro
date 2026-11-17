@@ -660,6 +660,11 @@ type PerformResult struct {
 // be written — and it means **nothing was performed**: the in-memory ledger is
 // rolled back to the state on disk, so a failed write cannot leave this process
 // believing in a record that no restart would find.
+//
+// One thing a caller can do about the fence is take a delivery back: `Retract`
+// below undoes the record of an act that could not be made, and it is the only
+// way a delivery is offered twice. It is sound for the one act whose repetition
+// costs nothing and no other, which is what its own note is about.
 func (l *Ledger) Perform(msg *Message, kind string, now int64, perform func(LedgerEntry)) (PerformResult, error) {
 	state, result := l.deliver(l.state, msg, kind, now)
 	if result.Refusal != nil {
@@ -686,6 +691,39 @@ func (l *Ledger) Perform(msg *Message, kind string, now int64, perform func(Ledg
 		perform(actResult.Entry)
 	}
 	return PerformResult{Outcome: actResult.Outcome, Entry: actResult.Entry}, nil
+}
+
+// Retract takes back the record of one delivery, for a caller that could not
+// make the act it was handed: the delivery is a new one again, and the next pass
+// reads the message out of the inbox and offers it under the same
+// `(sender, id)`. Nothing else moves — the clock's floor and the eviction
+// watermark are the state they were — and a pair the ledger does not hold is
+// already the state the caller is asking for, so it is not an error.
+//
+// **The narrowness is the point.** A delivery's record is what makes acting
+// at-most-once (Perform's own note), so taking one back is sound only where
+// repeating the act costs nothing: P5.2.4's registration, whose act merges the
+// phone's own token into the phone's own push node (§3.5 (b)) — the same values,
+// written again, with a fresher `updated_at`. Every other act the caller runs
+// must not be repeated (a hand-off to the orchestrator, a prompt settled, an
+// action run), and none of them calls this.
+//
+// A record the phone has already spoken for is not retracted: `acked` is history
+// rather than a delivery, and it stays. A caller that asks for one is reaching
+// for the wrong record, and nothing is what it gets.
+func (l *Ledger) Retract(sender, id string) error {
+	index, found := findEntry(l.state.seen, sender, id)
+	if !found || l.state.seen[index].Status != StatusActed {
+		return nil
+	}
+	seen := append(make([]LedgerEntry, 0, len(l.state.seen)-1), l.state.seen[:index]...)
+	seen = append(seen, l.state.seen[index+1:]...)
+	state := ledgerState{now: l.state.now, evictedThrough: l.state.evictedThrough, seen: seen}
+	if err := l.commit(state); err != nil {
+		return err
+	}
+	l.state = state
+	return nil
 }
 
 // Ack is the module's `ack` step: the phone has spoken the answer to which the

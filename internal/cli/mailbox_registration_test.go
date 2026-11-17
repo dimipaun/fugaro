@@ -23,6 +23,7 @@ package cli
 // with the operator's own ADC (C0).
 
 import (
+	"context"
 	"encoding/json"
 	"reflect"
 	"slices"
@@ -322,8 +323,14 @@ func TestMailboxRegistrationNeverWritesTheDeviceNode(t *testing.T) {
 // database refuses the write, and what the operator gets is this command's own
 // sentence naming the role rather than the shared budget-admin one, which would
 // send them to the wrong place. It is a run-level refusal (exit 1): the write
-// is this command's, and a pass that cannot make it has nothing to report but
-// the reason.
+// is this command's, so a pass that cannot make it stops and reports the reason
+// rather than going on to the next delivery.
+//
+// **And the refusal is not the end of the delivery**, which is what
+// TestMailboxRegistrationRefusedByTheDatabaseIsOwedByTheNextPass is about: the
+// role this sentence names is one an operator grants while the phone is away,
+// so the record of a registration the store would not take is taken back out of
+// the ledger and the first pass that finds the store willing applies it.
 func TestMailboxRegistrationRefusedByTheDatabaseNamesTheRole(t *testing.T) {
 	f := newMailboxFixture(t, "")
 	mailboxSeedDeviceNode(f, mailboxUID)
@@ -343,6 +350,75 @@ func TestMailboxRegistrationRefusedByTheDatabaseNamesTheRole(t *testing.T) {
 	if v := f.db.Value(pairPushPath(mailboxUID)); v != nil {
 		t.Fatalf("%s holds %v: a refused write writes nothing", pairPushPath(mailboxUID), v)
 	}
+}
+
+// TestMailboxRegistrationRefusedByTheDatabaseIsOwedByTheNextPass is the other
+// half of the paragraph above, and the case the operator actually lives: the
+// role is granted, or the outage ends, while the phone is away — so the
+// delivery has to be there for the pass that finds the store willing rather
+// than have been consumed by the pass that did not. The whole case is deny →
+// pass → lift → pass, and what the last pass leaves in the push node is the
+// token the first one could not write.
+//
+// Nothing happens between the passes but the lifting of the refusal: the same
+// consumer object makes both, so the second is the renewal of the lease the
+// first took (a holder's own re-read honours a fresh claim only), and the inbox
+// record is the one the first pass read — the phone never speaks again. What
+// the refused pass leaves behind is a push node that was never written **and a
+// ledger with no record of the delivery** (`mailbox.Ledger.Retract`): a record
+// still there would meet the second pass as `OutcomeDuplicate` and the token
+// would never be written at all.
+func TestMailboxRegistrationRefusedByTheDatabaseIsOwedByTheNextPass(t *testing.T) {
+	f := newMailboxFixture(t, "")
+	mailboxSeedDeviceNode(f, mailboxUID)
+	f.db.Deny(pairPushPath(mailboxUID))
+	f.writeRecord(t, "reg-1", mailboxRegistration(mailboxRegistrationToken, "ios", nil), mailboxNowMs(), mailboxKeyMaterial)
+	ctx := context.Background()
+	c := f.consumer(t, "boot-registration-owed")
+
+	if _, err := c.pass(ctx, c.pairings[0]); err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, code %d, want exit 1: the database refused this command's own write", err, ExitCode(err))
+	}
+	if v := f.db.Value(pairPushPath(mailboxUID)); v != nil {
+		t.Fatalf("%s holds %v: a refused write writes nothing", pairPushPath(mailboxUID), v)
+	}
+	if entries := mailboxLedgerEntries(t); len(entries) != 0 {
+		t.Fatalf("the ledger holds %+v after the refused pass: a registration the store would not take is owed by the next pass, so its record is taken back out rather than left to answer the delivery as a duplicate", entries)
+	}
+
+	// The operator grants the role — or the network comes back — while the phone
+	// is away. Nothing else about the fixture changes.
+	f.db.Deny("")
+
+	second, err := c.pass(ctx, c.pairings[0])
+	if err != nil {
+		t.Fatalf("the pass after the write was allowed: %v", err)
+	}
+	if got := mailboxNodeString(t, mailboxPushNode(t, f, mailboxUID), "token"); got != mailboxRegistrationToken {
+		t.Errorf("token = %q, want the token the refused pass could not write: the second pass read the same inbox node and applied it", got)
+	}
+	if len(second.acted) != 1 || second.acted[0].ID != "reg-1" || second.acted[0].Outcome != mailboxOutcomeRegistered {
+		t.Errorf("acted = %+v, want the one registration this pass applied", second.acted)
+	}
+	if second.verdict.duplicates != 0 {
+		t.Errorf("duplicates = %d, want 0: a delivery no pass has applied is not a duplicate of anything", second.verdict.duplicates)
+	}
+	if entries := mailboxLedgerEntries(t); len(entries) != 1 || entries[0].Sender != mailboxUID ||
+		entries[0].ID != "reg-1" || entries[0].Status != mailbox.StatusActed {
+		t.Errorf("the ledger holds %+v after the applied pass, want the one record of the delivery that was performed", entries)
+	}
+}
+
+// mailboxLedgerEntries is this machine's mailbox ledger for the fixture's
+// project as the passes above left it — the file under the state directory
+// newMailboxFixture isolates, opened the way the command opens it.
+func mailboxLedgerEntries(t *testing.T) []mailbox.LedgerEntry {
+	t.Helper()
+	ledger, err := mailbox.OpenLedger(mailbox.LedgerOptions{Project: "aurora", PromptTtlMs: mailboxPromptTtlMs})
+	if err != nil {
+		t.Fatalf("opening the ledger: %v", err)
+	}
+	return ledger.Entries()
 }
 
 // TestMailboxRegistrationPrefsAreTheSchemas holds §3.8's child names to

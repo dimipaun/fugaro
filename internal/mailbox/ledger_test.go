@@ -516,6 +516,116 @@ func TestRestartDoesNotRePerform(t *testing.T) {
 	}
 }
 
+// TestLedgerRetractOffersTheDeliveryAgain is the one way a delivery is offered
+// twice, and it is the caller's own act rather than the module's: the record is
+// what makes acting at-most-once (Perform's note), so a record taken back is a
+// delivery the next pass reads out of the inbox and acts on again. That is
+// sound for the one act whose repetition costs nothing — a registration
+// re-merging the phone's own token into the phone's own push node — and the
+// test exists so the shape of it is pinned rather than assumed.
+//
+// It is not a rollback, and the floor is what says so: the clock's floor is the
+// state it was, so an event earlier than the record this ledger no longer holds
+// is refused exactly as it was before, which is the answer a re-delivered
+// message must keep getting.
+func TestLedgerRetractOffersTheDeliveryAgain(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ledger.json")
+	l := openLedger(t, dir)
+	msg := ledgerMessage("m-1", "mb-a", "hi", testNow-1_000)
+
+	performed := 0
+	first, err := l.Perform(msg, KindCommand, testNow, func(LedgerEntry) { performed++ })
+	if err != nil {
+		t.Fatalf("the delivery: %v", err)
+	}
+	if first.Outcome != OutcomeActed || performed != 1 {
+		t.Fatalf("the delivery answered %q and performed %d times, want it acted on once", first.Outcome, performed)
+	}
+	acted := ledgerBytes(t, path)
+
+	if err := l.Retract("mb-a", "m-1"); err != nil {
+		t.Fatalf("retracting: %v", err)
+	}
+	if entries := l.Entries(); len(entries) != 0 {
+		t.Fatalf("after the retraction the ledger holds %+v, want the record gone: it is the record that made the delivery a duplicate", entries)
+	}
+	if got := ledgerBytes(t, path); got == acted {
+		t.Errorf("the ledger on disk still holds the record: %s", got)
+	}
+
+	// The same message again, and the caller's action runs a second time: that
+	// is the whole of what taking the record back is for.
+	second, err := l.Perform(msg, KindCommand, testNow+1_000, func(LedgerEntry) { performed++ })
+	if err != nil {
+		t.Fatalf("the delivery after the retraction: %v", err)
+	}
+	if second.Outcome != OutcomeActed || performed != 2 {
+		t.Errorf("after the retraction the delivery answered %q and performed %d times, want it acted on again", second.Outcome, performed)
+	}
+	if entries := l.Entries(); len(entries) != 1 || entries[0].Status != StatusActed || entries[0].At != testNow-1_000 {
+		t.Errorf("the ledger holds %+v, want the one acted record of the delivery that was performed", entries)
+	}
+
+	// The floor the first delivery set is still the ledger's, so an event
+	// earlier than it is refused rather than admitted over a gap.
+	back, err := l.Perform(ledgerMessage("m-2", "mb-a", "hi", testNow-1_500), KindCommand, testNow-500, func(LedgerEntry) { performed++ })
+	if err != nil {
+		t.Fatalf("an event earlier than the ledger's floor: %v", err)
+	}
+	if back.Refusal == nil || back.Refusal.Code != CodeNowWentBackwards {
+		t.Errorf("an event at now=%d answered %+v, and the floor the first delivery set is the ledger's own still", testNow-500, back)
+	}
+	if performed != 2 {
+		t.Errorf("the refused event performed an action: %d actions for two deliveries", performed)
+	}
+}
+
+// TestLedgerRetractLeavesWhatItIsNotFor is the two calls a caller can make that
+// Retract does not answer with a write: a pair this ledger has never held is
+// already the state the caller is asking for, so nothing is an answer and not
+// an error; and a record the phone has **acked** — a second commit, and the
+// only thing that makes a record forgettable — is history rather than a
+// delivery, so offering its message again would hand a caller back an action
+// whose answer this machine has already spoken for.
+func TestLedgerRetractLeavesWhatItIsNotFor(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ledger.json")
+	l := openLedger(t, dir)
+	if _, err := l.Perform(ledgerMessage("m-1", "mb-a", "hi", testNow-1_000), KindCommand, testNow, nil); err != nil {
+		t.Fatalf("delivering: %v", err)
+	}
+	if _, err := l.Ack(testNow + 1_000); err != nil {
+		t.Fatalf("acking: %v", err)
+	}
+
+	if err := l.Retract("mb-a", "m-1"); err != nil {
+		t.Fatalf("retracting an acked record: %v", err)
+	}
+	if entries := l.Entries(); len(entries) != 1 || entries[0].Status != StatusAcked {
+		t.Errorf("the retraction left %+v, want the acked record as it was", entries)
+	}
+	before := ledgerBytes(t, path)
+	if err := l.Retract("mb-a", "m-9"); err != nil {
+		t.Fatalf("retracting a pair the ledger does not hold: %v", err)
+	}
+	if after := ledgerBytes(t, path); after != before {
+		t.Errorf("retracting a pair the ledger does not hold rewrote it:\n  %s\n  %s", before, after)
+	}
+	// The sender is not the identity: another sender's message of the same id is
+	// a different pair, and neither call above may touch the record that shares
+	// this ledger with it.
+	if _, err := l.Perform(ledgerMessage("m-9", "mb-b", "hi", testNow-1_000), KindCommand, testNow+2_000, nil); err != nil {
+		t.Fatalf("delivering a second sender's message: %v", err)
+	}
+	if err := l.Retract("mb-b", "m-9"); err != nil {
+		t.Fatalf("retracting the second sender's pair: %v", err)
+	}
+	if entries := l.Entries(); len(entries) != 1 || entries[0].Sender != "mb-a" || entries[0].Status != StatusAcked {
+		t.Errorf("the ledger holds %+v, want the acked record of mb-a's message alone", entries)
+	}
+}
+
 // TestLedgerRollsBackAFailedWrite is the other half of the fence: if the commit
 // fails, nothing is performed and nothing is remembered. A process that could
 // not write the ledger must not act, and must not come back believing it did.

@@ -64,6 +64,14 @@ import (
 // only reading was one of those is exit 1, because the operator asked for one
 // thing and nothing happened.
 //
+// **The one answer whose failure is not final is the registration's**, and it is
+// the only place this file takes a record back out of the ledger
+// (mailbox.Ledger.Retract, registrationOwed): a write the store refused or could
+// not be reached for is owed by the next pass rather than consumed, because the
+// act it could not make is convergent — the phone's own token, written to the
+// phone's own push node — and a registration nobody applies is invisible to the
+// phone that sent it.
+//
 // **Two things the consumer decides on its own clock**, so that neither waits on
 // a process that may not run: a command is honoured only inside the six-hour
 // window measured from its confirmation's own time, and a prompt expires at
@@ -476,8 +484,10 @@ func newMailboxCmd() *cobra.Command {
 			"platform and the time it was written and leaves the rest of the node alone.\n" +
 			"The write needs roles/firebasedatabase.admin, the role a pairing needs, since\n" +
 			"every node under config/admin is the operator's own credential's and no\n" +
-			"client token's: where the credential does not hold it, the pass stops and\n" +
-			"says so rather than pretending the phone registered.\n" +
+			"client token's: where the credential does not hold it, or the database cannot\n" +
+			"be reached, the pass stops and says so rather than pretending the phone\n" +
+			"registered — and the delivery is not consumed, so the first pass after the\n" +
+			"role is granted or the outage ends writes the node.\n" +
 			"\n" +
 			"The heartbeat IS the lease, and the loop renews it on every pass: it is\n" +
 			"rewritten with the current instant under the same compare-and-swap a take\n" +
@@ -1535,6 +1545,16 @@ func (c *mailboxConsumer) runAction(ctx context.Context, pairing mailboxPairing,
 // switches and would send the operator to the wrong place. Registration is an
 // admin act like pairing (Q3, §3.5 (b)), and this is what it says so.
 //
+// **And a write the store would not take leaves the delivery owed rather than
+// lost** (`registrationOwed`), which is the one act in this file the ledger's
+// at-most-once fence is taken back for: the registration is convergent — the
+// same token, platform and switches written again — so the account that could
+// not be registered because the role was missing or the database was
+// unreachable is registered by the first pass that finds the store willing,
+// instead of needing the phone to notice and speak again. It is a record taken
+// back and not a fence walked around: the delivery is offered by the ledger
+// exactly as a new one is, window, cap and quota included.
+//
 // **One check runs before the write, and it is the design's own rule read one
 // step earlier.** The device node's existence IS the allowlist (§3.4, D166), so
 // a registration whose account has no device node — the everyday case being a
@@ -1546,6 +1566,9 @@ func (c *mailboxConsumer) runAction(ctx context.Context, pairing mailboxPairing,
 // stays final. §3.4 permits that write and has the sender reap the orphan
 // afterwards; writing nothing is the stricter half of the same rule, and the
 // net above it stays where it is for the paths that do not come through here.
+// That answer is a **decision** and not a failure, so it is refused in the pass
+// and the delivery is consumed: a revoked account is not owed a registration,
+// and a message that says otherwise is refused once.
 //
 // **The token is written because it was validated, not because it arrived.**
 // Every field below has been through the schema's own validator in the module
@@ -1557,7 +1580,7 @@ func (c *mailboxConsumer) runAction(ctx context.Context, pairing mailboxPairing,
 func (c *mailboxConsumer) runRegistration(ctx context.Context, pairing mailboxPairing, message *mailbox.Message, entry mailbox.LedgerEntry, pass *mailboxPass) error {
 	paired, err := c.pairedDevice(ctx, pairing.uid)
 	if err != nil {
-		return err
+		return c.registrationOwed(entry, err)
 	}
 	if !paired {
 		pass.refuse(entry.ID, mailboxCodeRegistrationUnpaired, false)
@@ -1574,12 +1597,38 @@ func (c *mailboxConsumer) runRegistration(ctx context.Context, pairing mailboxPa
 	}
 	if err := c.db.Patch(ctx, pairPushPath(pairing.uid), node); err != nil {
 		if errors.Is(err, rtdb.ErrPermission) {
-			return userErr("the registration %s was not applied: the write to %s was refused, and applying a registration writes the push node there with the roles/firebasedatabase.admin a pairing writes the device node with, which this credential does not hold on project %s's Firebase project (its owners and editors hold it, and terraform.budget_admins): %v", entry.ID, pairPushPath(pairing.uid), c.lc.Name, err)
+			return c.registrationOwed(entry, userErr("the registration %s was not applied: the write to %s was refused, and applying a registration writes the push node there with the roles/firebasedatabase.admin a pairing writes the device node with, which this credential does not hold on project %s's Firebase project (its owners and editors hold it, and terraform.budget_admins): %v", entry.ID, pairPushPath(pairing.uid), c.lc.Name, err))
 		}
-		return dbErr(c.lc, err, true)
+		return c.registrationOwed(entry, dbErr(c.lc, err, true))
 	}
 	pass.acted = append(pass.acted, mailboxActed{ID: entry.ID, Kind: mailboxKindRegistration, Outcome: mailboxOutcomeRegistered})
 	return nil
+}
+
+// registrationOwed answers a registration the store would not let this pass
+// apply: the delivery's record is taken back out of the ledger (Retract), so the
+// next pass reads the same inbox node and applies it then, and the cause is
+// returned with the sentence that says so in front of it. The classification
+// survives the re-sentencing — `%w` and `remote` keep the code the cause's own
+// `dbErr` or `userErr` gave it, exit 1 for a refusal and exit 2 for an outage —
+// because a registration the store refused is the same failure whether or not
+// the delivery is offered again.
+//
+// **The retrying is bounded by the module's own window and not by a counter
+// here.** A registration the consumer is still holding six hours later is
+// outside the command window, so the next pass reads it as the replay it is,
+// refuses it and moves on; the app registers again on its next open (§3.5 (b)),
+// which is the design's own answer to a lost registration.
+//
+// A ledger that will not take the retraction is the worse of the two failures
+// and is said rather than hidden: the record stands, so the delivery is consumed
+// and the account keeps whatever token the push node holds until the phone
+// registers again.
+func (c *mailboxConsumer) registrationOwed(entry mailbox.LedgerEntry, cause error) error {
+	if err := c.ledger.Retract(entry.Sender, entry.ID); err != nil {
+		return userErr("the registration %s was not applied (%v), and this machine's mailbox ledger would not take the write that offers it again (%v), so the delivery is consumed and the account keeps the push node it has until the phone registers again", entry.ID, cause, err)
+	}
+	return remote(fmt.Errorf("the registration %s was not applied and is not consumed, so the next pass applies it again: %w", entry.ID, cause))
 }
 
 // pairedDevice answers whether the account this pairing serves still has a

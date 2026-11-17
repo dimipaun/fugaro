@@ -4706,8 +4706,10 @@ so a revocation is final; a re-registration overwrites the token, the
 platform and the time it was written and leaves the rest of the node alone.
 The write needs roles/firebasedatabase.admin, the role a pairing needs, since
 every node under config/admin is the operator's own credential's and no
-client token's: where the credential does not hold it, the pass stops and
-says so rather than pretending the phone registered.
+client token's: where the credential does not hold it, or the database cannot
+be reached, the pass stops and says so rather than pretending the phone
+registered — and the delivery is not consumed, so the first pass after the
+role is granted or the outage ends writes the node.
 
 The heartbeat IS the lease, and the loop renews it on every pass: it is
 rewritten with the current instant under the same compare-and-swap a take
