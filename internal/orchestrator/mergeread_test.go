@@ -372,6 +372,71 @@ func TestDependentWaitsForMerge(t *testing.T) {
 	}
 }
 
+// TestReviewWaitDoesNotTripTheBreaker is the wait as the loop reads it: a cycle
+// whose only work is an item waiting for its pull request to merge is waiting,
+// not idling, so the cycles of the wait are in flight and the breaker's
+// question is never raised over them (D1228's reading of an unreported attempt,
+// G3's of a merge).
+//
+// What the trip costs is the launch the merge is for: the pause the question
+// leaves on the node is what a plan refuses a start over, so an installation
+// whose dependent should start when the pull request merges would sit still
+// until a person answered a question about a daemon that was doing its job.
+func TestReviewWaitDoesNotTripTheBreaker(t *testing.T) {
+	now := o6Now()
+	approvedAt := now.Add(-time.Hour)
+	a, itA := mergeOpenItem("wi-a", mergeRepo, mergeRunA, approvedAt)
+	b := mergeDependent("wi-b", mergeRepo, []string{"wi-a"}, approvedAt)
+	h := newMergeHarness(t, tickState(t, now, []orchestrator.WorkItem{a, b}, []orchestrator.Intent{itA}), now, mergeRunC)
+	h.tick.Breaker = &orchestrator.Breaker{}
+	h.reader.reports = []orchestrator.RunReport{mergeReport(mergeRunA, 12)}
+	h.reads.open[mergeRepo] = map[int]bool{12: true}
+
+	// The first cycle folds the run, which is work whatever the cycle beside it
+	// is: the wait starts where the fold leaves the item.
+	if rep := h.step(); rep.Folded != 1 {
+		t.Fatalf("the first cycle folded %d runs where one reported", rep.Folded)
+	}
+
+	// Then the waiting alone, a cadence at a time, one cycle past the threshold
+	// the breaker counts to.
+	at := now
+	for i := 1; i <= orchestrator.BreakerThreshold+1; i++ {
+		at = at.Add(orchestrator.MergeReadEvery)
+		h.clock.at = at
+		rep := h.step()
+		if got := h.mergePhase("wi-a"); got != orchestrator.PhaseReview {
+			t.Fatalf("cycle %d left the item %q, and its pull request is still open", i, got)
+		}
+		if rep.Outcome != orchestrator.CycleInFlight {
+			t.Errorf("cycle %d of the wait read %q, and a cycle waiting for a merge is in flight", i, rep.Outcome)
+		}
+	}
+	if orchestrator.BreakerOpen(h.state(), at) {
+		t.Errorf("the node carries the breaker's question after %d cycles of waiting, and the pause it raises is what refuses the launch a merge unlocks", orchestrator.BreakerThreshold)
+	}
+	if len(h.launcher.asked) != 0 {
+		t.Errorf("the wait launched %q, and the item the dependent waits on has not merged", h.launcher.asked)
+	}
+
+	// The merge, on the next cadence: the item is done and the dependent starts.
+	h.reads.open[mergeRepo] = map[int]bool{}
+	h.reads.states[mergeKey(mergeRepo, 12)] = orchestrator.MergeMerged
+	h.clock.at = at.Add(orchestrator.MergeReadEvery)
+
+	rep := h.step()
+
+	if got := h.mergePhase("wi-a"); got != orchestrator.PhaseDone {
+		t.Fatalf("the item is %q after its pull request merged", got)
+	}
+	if rep.Merged != 1 {
+		t.Errorf("the cycle moved %d items out of review, and the pull request merged", rep.Merged)
+	}
+	if len(h.launcher.asked) != 1 || h.launcher.asked[0] != mergeRunC {
+		t.Errorf("the dependent launched as %q, and the merge is what unlocks it", h.launcher.asked)
+	}
+}
+
 // TestMergeReadKeepsItsCadence: the read is per repository per cadence, and a
 // wake is not a reason to make another one (D2742). The loop wakes on a stream
 // and on a ceiling, so a read per wake would spend the label route's budget the

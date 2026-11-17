@@ -374,6 +374,12 @@ func (c *cycle) carry(ctx context.Context, view RunView) error {
 // not reported is waiting on a run — never a failure, however many ticks of one
 // run go by (D1228) — and anything else did nothing at all.
 //
+// An item waiting for its pull request to merge is that same reading (G3): the
+// attempt has reported, so an unreported intent is not what says the daemon is
+// waiting, and a cycle spent waiting is not a cycle that did nothing — three of
+// them would raise the pause that refuses the very launch the merge is for
+// (D2705).
+//
 // A judgement counts as work when it landed — Decided is the case the agent
 // answered and the patch it landed is committed — and a cycle whose only news
 // is a call is read by what the call came to: a call that failed or answered
@@ -385,7 +391,7 @@ func (c *cycle) outcome() CycleOutcome {
 		return CycleProgress
 	case c.rep.DecideOutcome != "":
 		return c.rep.DecideOutcome
-	case hasOpenIntent(c.state):
+	case hasOpenIntent(c.state) || hasReviewWait(c.state):
 		return CycleInFlight
 	}
 	return CycleEmpty

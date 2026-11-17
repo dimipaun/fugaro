@@ -177,6 +177,26 @@ func (c *cycle) mergeOps(ctx context.Context) []Op {
 	return ops
 }
 
+// hasReviewWait reports whether the node holds an item waiting for its pull
+// request to merge. It is what the loop reads the wait by: the attempt has
+// reported, so nothing else on the node says the daemon is waiting, and a cycle
+// whose only work is this one is in flight rather than empty (D1228's reading
+// of an unreported attempt, D2705, G3).
+//
+// An item with no repository counts here as it does not in mergeGroups: what
+// ends the wait is a person merging the pull request, with or without a
+// repository on the record, so a cycle spent waiting for one is not a cycle the
+// breaker is for — and the pause a trip raises is what refuses the launch a
+// merge unlocks.
+func hasReviewWait(s State) bool {
+	for _, w := range s.WorkItems {
+		if w.Phase == PhaseReview {
+			return true
+		}
+	}
+	return false
+}
+
 // mergeGroup is one repository's items waiting on a merge: the bulk read is per
 // repository, so the items are grouped before anything is read.
 type mergeGroup struct {
