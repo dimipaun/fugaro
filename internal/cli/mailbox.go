@@ -482,6 +482,7 @@ func newMailboxCmd() *cobra.Command {
 	f.BoolVar(&o.asJSON, "json", false, "one JSON document per pass instead of lines")
 	f.BoolVar(&o.noHeartbeat, "no-heartbeat", false, "write no heartbeat, so no lease is taken and nothing is acted on")
 	addCloudFlags(cmd, &o.cloudOptions)
+	cmd.AddCommand(newMailboxSweepCmd())
 	return cmd
 }
 
@@ -1666,4 +1667,277 @@ func leaseDocument(run mailbox.LeaseRun) mailboxLease {
 		doc.ExpiresAt = time.UnixMilli(run.ExpiresAt).UTC().Format(time.RFC3339)
 	}
 	return doc
+}
+
+// fugaro mailbox sweep (mobile P6.13) is the D118 mailbox sweeper the owner
+// runs: the only command in this file that deletes anything from the store, and
+// the whole of what it deletes is **stored prompts past D118's TTL**.
+//
+// **A prompt is stored once, in the outbox**: `produce` (P6.7) writes each
+// question the orchestrator asks as a `prompt` message under
+// `mailbox/<mailbox>/outbox/<id>`, and the phone reads it there. So "past the
+// TTL" is a fact about that node's own `at` — the schema has no `expires_at`,
+// by D168 as amended — and the node it names is the one this sweep removes,
+// under the operator's own ADC, which is the credential that reaches a delete
+// (C0 of the P4.1 plan: no grant admits a token-bearing writer to one). The
+// deletion is one `PATCH` of nulls per mailbox, which is the shape
+// `internal/budget/sweep.go` uses and the reason a sweep is one write per
+// mailbox rather than one per prompt.
+//
+// **The sweeper never answers the conversation.** Expiring a prompt and handing
+// the orchestrator its non-destructive answer — or a stop, when it named none —
+// is the consumer's, decided on its own clock and recorded in its own memory
+// (`expire` above), and it is the consumer's precisely because **a sweep can run
+// while the consumer is down** (D168 as amended, P6.13's reason for the split).
+// So this command reads the stored state, reports what it deleted, and writes
+// nothing else: no outbox answer, no heartbeat, no ledger, no offer to an
+// orchestrator it never opens. A prompt whose stored copy is gone is still
+// expired by the consumer, from the local copy the memory holds, exactly once —
+// `TestMailboxSweepConsumerDownStillExpiresFromTheLocalCopy` is that property.
+//
+// **What is not in its delete set, and why each one is a report rather than an
+// edit.** A stored *answer* or a stored reply, and every node under the inbox —
+// P6.13's remit is "stored prompts past D118's TTL and nothing more", and the
+// mailbox's wider retention is the owner's decision (D118) rather than a rule
+// this command may widen on its own. A Firebase user — the `m~` rule is P6.6's
+// and lives in `internal/budget/sweep.go` — and this sweep holds no user key at
+// all: it lists the mailboxes from the project config and never asks for one. A
+// node whose `at` a reader cannot use is kept rather than deleted, because a
+// record that cannot be dated is not one this command can call expired.
+//
+// **It needs no keychain and no lease.** The mailboxes it walks are the
+// `mailbox.keychain_item` keys of the project config — the uids `fugaro pair`
+// recorded — so a revocation that emptied an item leaves its mailbox sweepable,
+// and a sweep of a mailbox no consumer is holding deletes exactly what an
+// unheld mailbox should lose. The clock is the database's own (D117), like every
+// other instant this file decides against.
+
+// mailboxSweepOptions is the hidden sweeper's flag surface (§4.2 of the P4.1
+// plan): `--json` for one document, `--dry-run` to print the same plan and write
+// nothing.
+type mailboxSweepOptions struct {
+	cloudOptions
+	asJSON bool
+	dryRun bool
+}
+
+func newMailboxSweepCmd() *cobra.Command {
+	o := &mailboxSweepOptions{}
+	cmd := &cobra.Command{
+		Use:   "sweep",
+		Short: "Delete this project's stored mailbox prompts past their TTL (internal)",
+		Long: "Delete the stored prompts of the mailboxes this project's config names, past\n" +
+			"D118's 72-hour TTL — and nothing else.\n" +
+			"\n" +
+			"A prompt is stored once, in the outbox the phone reads it from, and its age is\n" +
+			"its own `at`: the schema carries no expiry field, so the TTL is computed from\n" +
+			"that instant and the database's own clock. A prompt at the TTL or older is\n" +
+			"deleted; one younger than it, one whose `at` cannot be read, and every other\n" +
+			"kind of message are left where they are. The deletion is one atomic write per\n" +
+			"mailbox, under the operator's own credential, which is the one that reaches a\n" +
+			"delete.\n" +
+			"\n" +
+			"The sweeper never answers a conversation. Expiring a prompt and handing its\n" +
+			"non-destructive answer to the orchestrator is the consumer's, on its own clock\n" +
+			"and from its own copy of what the prompt said — that is why a sweep may run\n" +
+			"while the consumer is down: the consumer still expires the question, once,\n" +
+			"when it comes back, whether or not the stored copy is still there. Nothing\n" +
+			"this command does writes an answer, a heartbeat or a lease, and it needs\n" +
+			"neither a pairing key nor a lease to run.\n" +
+			"\n" +
+			"The mailboxes it walks are the pairing uids in this project's\n" +
+			"mailbox.keychain_item block, so a revoked pairing's mailbox is swept too. It\n" +
+			"deletes no Firebase user — the `m~` rule belongs to the history sweeper — and\n" +
+			"nothing outside the mailboxes it is configured for.\n" +
+			"\n" +
+			"It prints one line per mailbox, or with --json one document, naming each id it\n" +
+			"deleted and how many prompts it kept. With --dry-run it prints the same plan\n" +
+			"and writes nothing. A message's text, a MAC and a key are never printed.",
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE:   func(cmd *cobra.Command, _ []string) error { return runMailboxSweep(cmd, o) },
+	}
+	f := cmd.Flags()
+	f.BoolVar(&o.asJSON, "json", false, "one JSON document instead of lines")
+	f.BoolVar(&o.dryRun, "dry-run", false, "print what would be deleted and write nothing")
+	addCloudFlags(cmd, &o.cloudOptions)
+	return cmd
+}
+
+// mailboxSweepDocument is one sweep as `--json` reports it: the project, the
+// instant it decided at, whether it wrote, one entry per mailbox it walked, and
+// what it could not read. A deleted prompt is named by its **id**, which is its
+// outbox key, and never by its text (§4.3's rule, which holds for this command's
+// output as much as for a pass's).
+type mailboxSweepDocument struct {
+	Project   string                `json:"project"`
+	At        string                `json:"at"`
+	DryRun    bool                  `json:"dry_run"`
+	Mailboxes []mailboxSweepMailbox `json:"mailboxes"`
+	Warnings  []string              `json:"warnings"`
+}
+
+type mailboxSweepMailbox struct {
+	Mailbox string `json:"mailbox"`
+	// Deleted is the id of every stored prompt this sweep removed (or, with
+	// `--dry-run`, would remove). It is empty rather than absent when a mailbox
+	// lost nothing: an empty list and a missing field are two different facts to
+	// a reader that has to tell "I swept this mailbox" from "I never got to it".
+	Deleted []string `json:"deleted"`
+	// Kept is how many stored prompts were left alone — younger than the TTL, or
+	// carrying no `at` a reader can use.
+	Kept int `json:"kept"`
+}
+
+// mailboxSweeper is one sweep: the project config it lists its mailboxes from,
+// the database it deletes through, and the store's own clock.
+type mailboxSweeper struct {
+	lc     *localcfg.Config
+	db     *rtdb.Client
+	out    io.Writer
+	asJSON bool
+	dryRun bool
+	now    func() time.Time
+}
+
+func runMailboxSweep(cmd *cobra.Command, o *mailboxSweepOptions) error {
+	ctx := cmd.Context()
+	lc, db, err := openBudget(ctx, o.cloudOptions)
+	if err != nil {
+		return err
+	}
+	uids, err := mailboxSweepMailboxes(lc)
+	if err != nil {
+		return err
+	}
+	s := &mailboxSweeper{lc: lc, db: db, out: cmd.OutOrStdout(), asJSON: o.asJSON, dryRun: o.dryRun, now: mailboxClock(db)}
+	return s.sweep(ctx, uids)
+}
+
+// mailboxSweepMailboxes is the mailboxes one sweep walks, sorted, as a fact
+// about the config rather than about Go's map order — the same order the
+// consumer serves its pairings in.
+//
+// It reads the config and **not** the keychain: a sweep verifies nothing and
+// signs nothing, so a pairing whose key is gone is a mailbox whose stored
+// prompts are swept like any other. That is the direction a revocation leaves
+// things, and refusing to start over it would leave exactly the prompts nobody
+// can answer any more in the store for ever.
+func mailboxSweepMailboxes(lc *localcfg.Config) ([]string, error) {
+	m := lc.Mailbox
+	if m == nil || len(m.KeychainItem) == 0 {
+		return nil, userErr("project %s has no mailbox configured: its project config has no mailbox.keychain_item block, so there is no mailbox whose stored prompts this sweep could delete; the mailboxes it walks are the pairings `fugaro pair` recorded there", lc.Name)
+	}
+	uids := make([]string, 0, len(m.KeychainItem))
+	for uid := range m.KeychainItem {
+		uids = append(uids, uid)
+	}
+	sort.Strings(uids)
+	return uids, nil
+}
+
+// sweep walks every configured mailbox once and reports what it did, in the
+// order the config gave. Every mailbox is swept before anything is printed, so a
+// failure part-way through is an error with nothing half-reported: the deletion
+// each mailbox already took is a write that landed, and §4.2's discipline is
+// that a sweep's output names what it did rather than what it meant to do.
+func (s *mailboxSweeper) sweep(ctx context.Context, uids []string) error {
+	now := s.now()
+	doc := mailboxSweepDocument{
+		Project:   s.lc.Name,
+		At:        now.UTC().Format(time.RFC3339),
+		DryRun:    s.dryRun,
+		Mailboxes: []mailboxSweepMailbox{},
+		Warnings:  []string{},
+	}
+	for _, uid := range uids {
+		one, warnings, err := s.mailbox(ctx, uid, now)
+		if err != nil {
+			return err
+		}
+		doc.Mailboxes = append(doc.Mailboxes, one)
+		doc.Warnings = append(doc.Warnings, warnings...)
+	}
+	return s.report(doc)
+}
+
+// mailbox sweeps one mailbox: one read of its outbox, one decision per child,
+// and one atomic write of the deletions — nothing at all when a `--dry-run`
+// asked for the plan rather than the work.
+//
+// The decision is the consumer's own expiry boundary, deliberately: `expire`
+// keeps a prompt while `now - at < ttl` and expires it once that difference
+// reaches the TTL, and a sweeper that drew the line a millisecond away from the
+// consumer's would delete a stored prompt the consumer still calls live (or keep
+// one it has already answered). A prompt whose `at` is absent or unusable is
+// kept: this command deletes what it can prove is past the TTL.
+func (s *mailboxSweeper) mailbox(ctx context.Context, uid string, now time.Time) (mailboxSweepMailbox, []string, error) {
+	out := mailboxSweepMailbox{Mailbox: uid, Deleted: []string{}}
+	var raw map[string]json.RawMessage
+	found, err := s.db.Get(ctx, "mailbox/"+uid+"/outbox", &raw)
+	if err != nil {
+		return out, nil, dbErr(s.lc, err, false)
+	}
+	if !found {
+		return out, nil, nil
+	}
+	nowMs := now.UnixMilli()
+	updates := map[string]any{}
+	warnings := []string{}
+	for id, data := range raw {
+		record, err := mailbox.Decode(data)
+		if err != nil {
+			// A node the strict decoder cannot read is not a stored prompt, so it
+			// is none of this command's business to delete — but it is worth
+			// saying, because it stays there and a reader who expected a sweep to
+			// empty the mailbox is owed the reason it did not.
+			warnings = append(warnings, fmt.Sprintf("the outbox node %s of mailbox %s could not be read as a message, so it was left alone", id, uid))
+			continue
+		}
+		if kind, _ := record["kind"].(string); kind != mailboxKindPrompt {
+			continue
+		}
+		if at := mailboxRecordAt(record); at <= 0 || nowMs-at < mailboxPromptTtlMs {
+			out.Kept++
+			continue
+		}
+		path, err := mailbox.OutboxPath(uid, id)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("the outbox node %s of mailbox %s is not a path this command will build (%v), so it was left alone", id, uid, err))
+			continue
+		}
+		out.Deleted = append(out.Deleted, id)
+		updates[path] = nil
+	}
+	sort.Strings(out.Deleted)
+	if s.dryRun || len(updates) == 0 {
+		return out, warnings, nil
+	}
+	if err := s.db.Patch(ctx, "", updates); err != nil {
+		return out, warnings, dbErr(s.lc, err, true)
+	}
+	return out, warnings, nil
+}
+
+// report prints one sweep: the JSON document, or one line per mailbox with the
+// ids it deleted under it. Either way the text of a message never appears — an
+// id is a key and a fact about the sweep, and what a prompt said is not.
+func (s *mailboxSweeper) report(doc mailboxSweepDocument) error {
+	if s.asJSON {
+		return json.NewEncoder(s.out).Encode(doc)
+	}
+	verb := "delete"
+	if doc.DryRun {
+		verb = "would delete"
+	}
+	for _, one := range doc.Mailboxes {
+		fmt.Fprintf(s.out, "mailbox %s: %d stored prompt(s) past the TTL, %d kept\n", one.Mailbox, len(one.Deleted), one.Kept)
+		for _, id := range one.Deleted {
+			fmt.Fprintf(s.out, "  %s %s\n", verb, id)
+		}
+	}
+	for _, warning := range doc.Warnings {
+		fmt.Fprintf(s.out, "  warning: %s\n", warning)
+	}
+	return nil
 }
