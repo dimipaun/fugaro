@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 // layerRig is updateRig with a project layer bucket this machine can read:
@@ -806,6 +807,24 @@ type layerStageRig struct {
 // recorded beside it.
 func newLayerStageRig(t *testing.T, published, local, generation string) *layerStageRig {
 	t.Helper()
+	return newLayerStageRigFor(t, published, local, generation, &initOptions{door: updateDoor.name})
+}
+
+// newRigorStageRig is that rig for a first run of `fugaro setup` that answered
+// the wizard's rigor question (task W of
+// docs/rigor-command/implementation-plan.md; D900): the same stage over the
+// same bucket, with the answer on the run's own options and the door the
+// question belongs to — the door whose Layer stage is the one that writes it.
+func newRigorStageRig(t *testing.T, published, local, generation, mode string) *layerStageRig {
+	t.Helper()
+	return newLayerStageRigFor(t, published, local, generation, &initOptions{door: setupDoor.name, rigor: mode})
+}
+
+// newLayerStageRigFor is newLayerStageRig over the run's own options, which is
+// what tells the two rigs above apart: the door decides which run this is, and
+// --rigor is the answer one of them carries.
+func newLayerStageRigFor(t *testing.T, published, local, generation string, o *initOptions) *layerStageRig {
+	t.Helper()
 	r := newLayerRig(t, published)
 	if local != "" {
 		recordLayer(t, local, generation)
@@ -822,9 +841,237 @@ func newLayerStageRig(t *testing.T, published, local, generation string) *layerS
 	// The run's own streams are the door's (newInitRun): the stage writes
 	// through initRun.w, which is the run's writer and not the buffer itself,
 	// so a test that gives this run a reporter sees what a person would.
-	run := newInitRun(cmd, &initOptions{door: updateDoor.name})
+	run := newInitRun(cmd, o)
 	run.setProject(lc)
 	return &layerStageRig{initRig: r.initRig, runs: r.runs, s: newLayerStage(&initEngine{r: run, lc: lc, path: r.cfg}), out: out}
+}
+
+// rigorObject is the project layer as this rig's bucket holds it right now.
+func rigorObject(t *testing.T, r *layerStageRig) (string, bool) {
+	t.Helper()
+	return layerObject(t, &layerRig{initRig: r.initRig, runs: r.runs})
+}
+
+// TestSetupWritesTheRigorAnswerAndPublishesItInTheSameRun is task W's half of
+// the HARD RULE (CLAUDE.md): the run that ASKED the wizard's rigor question is
+// the run that writes the answer and publishes it, so a person who answered it
+// owes no second command — and no `fugaro rigor set`, no `config publish`, no
+// re-run.
+//
+// The file this leaves is the one `fugaro rigor set` would have left (the three
+// anchor keys and the mode) and the object is that file's bytes, published
+// through the stage `fugaro update` already publishes with.
+func TestSetupWritesTheRigorAnswerAndPublishesItInTheSameRun(t *testing.T) {
+	r := newRigorStageRig(t, "", "", "", string(rigor.Critical))
+	ctx := context.Background()
+	if _, err := r.s.Apply(ctx, initflow.Env{Yes: true}); err != nil {
+		t.Fatalf("apply: %v\n%s", err, r.out)
+	}
+	got := readFileString(t, localLayerPath(t))
+	l, problems := config.ParseProjectLayer([]byte(got), config.LayerAnchor{Project: initProjectName, GCPProject: initProject})
+	if len(problems) > 0 {
+		t.Fatalf("the file this run wrote does not read back as a project layer: %s\n%s", layerProblemsText(problems), got)
+	}
+	if l.Defaults.Rigor.Default != rigor.Critical {
+		t.Errorf("the local layer file's defaults.rigor.default = %q, want critical:\n%s", l.Defaults.Rigor.Default, got)
+	}
+	obj, ok := rigorObject(t, r)
+	if !ok {
+		t.Fatalf("the run wrote the answer into %s and published nothing, so answering the wizard still costs a second command:\n%s", localLayerPath(t), r.out)
+	}
+	if obj != got {
+		t.Errorf("the published project layer is not the file this run wrote:\nfile:\n%s\nobject:\n%s", got, obj)
+	}
+	if !strings.Contains(r.out.String(), "published the project layer of "+initProjectName) {
+		t.Errorf("the run does not say it published the layer the answer went into:\n%s", r.out)
+	}
+}
+
+// pendingRigor writes the hand-off a first run that stopped before its Layer
+// stage leaves in the local config (writeConfig): the wizard's answer, waiting
+// for the converge that reaches this stage.
+func pendingRigor(t *testing.T, path, mode string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, []byte("rigor_pending: "+mode+"\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// rerunStage makes the rig's run the converge of an installation that is
+// already there (initEngine.old is the config file that exists, and the config
+// it holds is read again): that is what the run after a stopped first run is,
+// and it is the run the wizard asks nothing on.
+func rerunStage(t *testing.T, r *layerStageRig) {
+	t.Helper()
+	old, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.s.e.old, r.s.e.lc = old, lc
+}
+
+// TestTheLayerStageWritesTheRigorAnswerAStoppedFirstRunLeft: the wizard's
+// answer survives the run that was asked (task W of
+// docs/rigor-command/implementation-plan.md; D900). A first run that fails or
+// stops after its Installation stage wrote the local config — which is what
+// makes the next converge not a first run — and before this stage leaves the
+// answer in that config (writeConfig, localcfg.Config.RigorPending), and this
+// converge is the one that writes it into the project layer and publishes it.
+//
+// Without the hand-off the answer is lost for good: this run asks the wizard
+// nothing, because a config exists, and refuses --rigor by name
+// (setupRigorRefusal), so the project would run the built-in pro with nobody
+// having chosen it and `fugaro rigor set` as the only way back.
+func TestTheLayerStageWritesTheRigorAnswerAStoppedFirstRunLeft(t *testing.T) {
+	// No --rigor: the flag is a first run's, and the person who answered the
+	// question once is not asked it again.
+	r := newRigorStageRig(t, "", "", "", "")
+	pendingRigor(t, r.cfg, string(rigor.Critical))
+	rerunStage(t, r)
+	ctx := context.Background()
+
+	st, err := r.s.Check(ctx)
+	if err != nil {
+		t.Fatalf("check: %v\n%s", err, r.out)
+	}
+	if st.State != initflow.Todo || !strings.Contains(st.Detail, "the wizard's rigor answer (critical)") {
+		t.Fatalf("the answer the stopped run left is not what this run plans to write (%s):\n%s", st.Detail, r.out)
+	}
+	if _, err := r.s.Apply(ctx, initflow.Env{Yes: true}); err != nil {
+		t.Fatalf("apply: %v\n%s", err, r.out)
+	}
+	got := readFileString(t, localLayerPath(t))
+	l, problems := config.ParseProjectLayer([]byte(got), config.LayerAnchor{Project: initProjectName, GCPProject: initProject})
+	if len(problems) > 0 {
+		t.Fatalf("the file this run wrote does not read back as a project layer: %s\n%s", layerProblemsText(problems), got)
+	}
+	if l.Defaults.Rigor.Default != rigor.Critical {
+		t.Errorf("defaults.rigor.default = %q, want critical: the answer the stopped run was given was lost\n%s", l.Defaults.Rigor.Default, got)
+	}
+	if obj, ok := rigorObject(t, r); !ok || obj != got {
+		t.Errorf("the answer is in the file and the layer was not published as this run's own bytes (published=%v):\n%s", ok, r.out)
+	}
+	// The hand-off is over once the layer file carries the mode: a value left
+	// behind would write this answer again over the owner's later
+	// `fugaro rigor set` on the next converge.
+	after, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatalf("the config does not parse after the run: %v", err)
+	}
+	if after.RigorPending != "" {
+		t.Errorf("the config still records the pending answer %q", after.RigorPending)
+	}
+	if data := readFileString(t, r.cfg); strings.Contains(data, "rigor_pending") {
+		t.Errorf("the pending answer is still in the config text:\n%s", data)
+	}
+	if err := r.s.Verify(ctx); err != nil {
+		t.Fatalf("the write this run claims does not verify: %v", err)
+	}
+}
+
+// TestTheLayerStageWritesNoRigorAnswerItWasNotGiven: the reading of the
+// hand-off is a reading of a key and nothing else, so a converge of a project
+// whose config carries no answer plans no rigor write — which is every run
+// that was asked nothing, and every run after the one that cleared the key.
+func TestTheLayerStageWritesNoRigorAnswerItWasNotGiven(t *testing.T) {
+	r := newRigorStageRig(t, "", "", "", "")
+	rerunStage(t, r)
+
+	st, err := r.s.Check(context.Background())
+	if err != nil {
+		t.Fatalf("check: %v\n%s", err, r.out)
+	}
+	if strings.Contains(st.Detail, "the wizard's rigor answer") {
+		t.Errorf("a run with no answer in its config planned to write one (%s):\n%s", st.Detail, r.out)
+	}
+	if _, err := os.Stat(localLayerPath(t)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a run with no answer wrote a layer file: %v", err)
+	}
+}
+
+// TestTheLayerStageRefusesAModeNoLayerMaySet is the stage's own half of the
+// door above (task W; D834): the mode this stage writes is read by the
+// question's own reader (setupRigorMode) where it is spliced, so a walk whose
+// wizard returned before asking the question — `fugaro update` on a machine
+// with no project config — cannot publish a value no layer may carry. hotfix is
+// the one that matters: it is off the axis, an operator's own per-run mode, and
+// a project-wide default of it is exactly what D834 forbids.
+func TestTheLayerStageRefusesAModeNoLayerMaySet(t *testing.T) {
+	for _, mode := range []string{string(rigor.Hotfix), "fast"} {
+		t.Run(mode, func(t *testing.T) {
+			r := newRigorStageRig(t, "", "", "", mode)
+			st, err := r.s.Check(t.Context())
+			if err == nil {
+				t.Fatalf("the layer stage planned a write of %q (%s):\n%s", mode, st.Detail, r.out)
+			}
+			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--rigor") {
+				t.Errorf("the refusal is not the run's own, naming the flag the value came from: %v", err)
+			}
+			if obj, ok := rigorObject(t, r); ok {
+				t.Errorf("a mode no layer may set was published: %s", obj)
+			}
+		})
+	}
+}
+
+// TestTheLayerStageWritesTheRigorAnswerWhenTheBucketCannotBeRead: the answer is
+// this machine's own write and the publish is the cloud step, so a bucket this
+// run cannot read costs the publish and not the answer (task W; D900). What it
+// leaves is the state a declined confirmation already leaves — the answer in
+// the file, the object untouched — whose one documented next step is
+// `fugaro update`.
+//
+// Dropping the answer instead loses it for good: the config the run leaves
+// means the next converge asks the wizard nothing and refuses --rigor besides,
+// so the project would run the built-in default with nobody having chosen it —
+// the state D900 ends.
+func TestTheLayerStageWritesTheRigorAnswerWhenTheBucketCannotBeRead(t *testing.T) {
+	r := newRigorStageRig(t, "", "", "", string(rigor.Critical))
+	read := layerPublishedRead
+	t.Cleanup(func() { layerPublishedRead = read })
+	layerPublishedRead = func(context.Context, *localcfg.Config, string) ([]byte, int64, bool, error) {
+		return nil, 0, false, errors.New("the bucket is not there")
+	}
+	ctx := context.Background()
+
+	st, err := r.s.Check(ctx)
+	if err != nil {
+		t.Fatalf("check: %v\n%s", err, r.out)
+	}
+	if st.State != initflow.Todo {
+		t.Fatalf("the stage's state is %q, want todo: the answer is still this run's to write\n%s", st.State, r.out)
+	}
+	if !strings.Contains(st.Detail, "unpublished") || !strings.Contains(st.Detail, selfCommand()+" update") {
+		t.Errorf("the check does not say the answer is written and the layer left unpublished:\n%s", st.Detail)
+	}
+	if _, err := r.s.Apply(ctx, initflow.Env{Yes: true}); err != nil {
+		t.Fatalf("apply: %v\n%s", err, r.out)
+	}
+	got := readFileString(t, localLayerPath(t))
+	l, problems := config.ParseProjectLayer([]byte(got), config.LayerAnchor{Project: initProjectName, GCPProject: initProject})
+	if len(problems) > 0 {
+		t.Fatalf("the file this run wrote does not read back as a project layer: %s\n%s", layerProblemsText(problems), got)
+	}
+	if l.Defaults.Rigor.Default != rigor.Critical {
+		t.Errorf("defaults.rigor.default = %q, want critical: the bucket cost the answer\n%s", l.Defaults.Rigor.Default, got)
+	}
+	if obj, ok := rigorObject(t, r); ok {
+		t.Errorf("the layer was published although the bucket could not be read: %s", obj)
+	}
+	if out := r.out.String(); !strings.Contains(out, "left unpublished") || !strings.Contains(out, selfCommand()+" update") {
+		t.Errorf("the run does not say the answer is written and the layer left unpublished:\n%s", out)
+	}
+	if err := r.s.Verify(ctx); err != nil {
+		t.Fatalf("the write this run claims does not verify: %v", err)
+	}
 }
 
 // put publishes text as the project layer of this rig's bucket, as another

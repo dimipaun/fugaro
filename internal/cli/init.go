@@ -164,6 +164,17 @@ type initOptions struct {
 	// creates; with one, it must be that config's name.
 	name string
 
+	// --rigor answers the wizard's rigor question without a terminal (task W
+	// of docs/rigor-command/implementation-plan.md; D900): the project's
+	// default mode, as `defaults.rigor.default` of the project layer. It is
+	// the flag of a FIRST RUN of `fugaro setup` and of nothing else: a run
+	// with a project config refuses it by name, because the one command that
+	// changes a project's default is `fugaro rigor set` (setupRigorRefusal,
+	// setup.go). The answer is recorded here and written by the Layer stage,
+	// which is the one stage that edits the one local layer file — the
+	// question phase applies nothing.
+	rigor string
+
 	// --repo: onboard the repository of a checkout.
 	repo, noBuild, allowJobDelete bool
 	// retire is --retire: run the retirement a config change needs, behind
@@ -479,6 +490,12 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	addCloudFlags(cmd, &o.cloud)
 	f := cmd.Flags()
 	f.StringVar(&o.name, "name", "", "the project's name: for a project config "+d.name+" creates, and what names an installation that has no name yet (with a config, it must be its name; an installation's name never changes; with several project configs it names the one to create or use; on a machine with no config for an installation that exists, it defaults to the installation's)")
+	// The rigor question (task W of docs/rigor-command/implementation-plan.md;
+	// D900). It names no door: the question is a first run's, and what says so
+	// is the run's own state (a project config, or not) rather than the verb
+	// the reader typed. `fugaro run --mode hotfix` is named here because it is
+	// the one door hotfix has, and it is not a layer's to set (D834).
+	f.StringVar(&o.rigor, "rigor", "", "answer the wizard's rigor question without a terminal: the project's default rigor mode, written as defaults.rigor.default of the project layer this run writes and publishes. One of poc, startup, pro or critical; pro keeps what a project that says nothing runs today, and it is not taken for you where nobody can be asked — a scripted run without this flag is refused. hotfix is not a mode a layer sets: it is an operator's own per-run mode, `fugaro run --mode hotfix`. It is a first run's flag: on a project that already has a config it is refused by name, and the one command that changes a project's default is fugaro rigor set")
 	f.StringVar(&o.schedulerRegion, "scheduler-region", "", "Cloud Scheduler region of the daily image checks (default: the region, or the nearest one Scheduler offers)")
 	f.StringVar(&o.runsBucket, "runs-bucket", "", "the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>)")
 	f.StringVar(&o.stateBucket, "state-bucket", "", "the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>)")
@@ -1726,6 +1743,28 @@ func (o *initOptions) check() error {
 	if o.githubAppID != "" && (o.forget || o.configOnly || o.printVars) {
 		return userErr("--github-app-id is for the repository stage of the converge (or --repo); it has no use with --forget, --config-only and --print-vars")
 	}
+	if o.rigor != "" && (o.forget || o.configOnly || o.printVars || o.publishConfig) {
+		// These four stop before the converge's stages — forgetting, writing
+		// this machine's config, printing the variables, publishing the shared
+		// config — and the Layer stage, the flag's only reader, is one of
+		// them: accepted, the mode would be dropped with exit 0, and the
+		// user's explicit answer to the wizard's question would be lost with
+		// no error. Refused by name here, as the two flags above are.
+		return userErr("--rigor is the mode of the project a first run creates, written by that run's Layer stage; it has no use with --forget, --config-only, --print-vars and --publish-config")
+	}
+	if o.rigor != "" && o.door == updateDoor.name {
+		// The question belongs to the run that creates the installation, and
+		// this door never does (setupCreates): its Layer stage asks nothing and
+		// writes nothing, so a value here has no reader at all. Left alone it
+		// rides the run's options into that stage, which would splice it into
+		// defaults.rigor.default and publish it — the hole the wizard's own
+		// refusal does not cover, because the walk that settles the name from
+		// the installation returns before the question, and the walk with
+		// --name never enters that branch. Refused by name here, before
+		// anything is read, and after the one-shot refusal above so the flag
+		// that stops before the stages keeps the sentence that names it.
+		return updateRigorRefusal(o.rigor)
+	}
 	n := 0
 	for _, b := range []bool{o.planOnly, o.printVars, o.configOnly, o.forget, o.publishConfig, o.anchor} {
 		if b {
@@ -2065,7 +2104,10 @@ func (r *initRun) publishedJobsPaused(ctx context.Context, lc *localcfg.Config, 
 	if spec.CatalogCheck == nil && spec.Reports == nil {
 		return spec
 	}
-	p, err := layerPlanFor(ctx, lc)
+	// No rigor answer is passed: what this reads is the PUBLISHED layer's own
+	// catalog check, and the wizard's answer is a mode this run is about to
+	// write into the local file, which no published object carries (task W).
+	p, err := layerPlanFor(ctx, lc, "")
 	if err != nil || p.skip != "" || (p.stale == nil && !p.seed) {
 		return spec
 	}
@@ -3448,6 +3490,27 @@ func (r *initRun) carryBakeAnswer(next *localcfg.Config) bool {
 	return true
 }
 
+// carryRigorAnswer writes the wizard's rigor answer into the local config the
+// run is about to write (task W of docs/rigor-command/implementation-plan.md;
+// D900) — the question's answer, or --rigor.
+//
+// It is written because the answer is a person's, given once, and the two
+// writes are stages apart: this file is written by the Installation stage, and
+// the Layer stage that writes the mode into the project layer comes after the
+// Repository stage. A run that fails or stops in between would otherwise lose
+// the answer for good — the config it left means the next converge is not a
+// first run, so the wizard asks nothing and --rigor is refused by name
+// (setupRigorRefusal), and the project runs the built-in pro until the person
+// finds `fugaro rigor set`. The Layer stage reads the key and clears it once
+// the layer file carries the mode (init_layer_stage.go), so what a later run
+// writes is the owner's `fugaro rigor set` and never this answer again.
+func (r *initRun) carryRigorAnswer(next *localcfg.Config) {
+	if r.o.rigor == "" {
+		return
+	}
+	next.RigorPending = r.o.rigor
+}
+
 // writeConfig writes the local config from the installation's outputs and
 // the flags, keeping everything else (repos, the legacy registry, the
 // endpoints) and dropping build.service_account. It shows the diff first,
@@ -3460,6 +3523,7 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 	r.res.Outputs = &outs
 	next := *lc
 	carried := r.carryBakeAnswer(&next)
+	r.carryRigorAnswer(&next)
 	if outs.RunsBucket != "" {
 		next.RunsBucket = outs.RunsBucket
 	}
@@ -4205,6 +4269,12 @@ func (o *initOptions) installationFlags() []string {
 		// writes no local config of its own shape — would drop a value it was
 		// handed. It is refused by name instead, like the flags above it.
 		"--bake-repos": o.bakeReposChanged,
+		// --rigor is the project's mode, written by the Layer stage of the run
+		// that creates the installation: --anchor returns before that stage,
+		// and a --repo run has none of the installation's stages at all, so
+		// both would drop the answer. Refused by name instead, in the sentence
+		// each of those two walks already has for a flag it cannot act on.
+		"--rigor": o.rigor != "",
 	}
 	var set []string
 	for _, f := range slices.Sorted(maps.Keys(installationOnly)) {

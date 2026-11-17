@@ -79,6 +79,12 @@ import (
 // of the others adds its own subcommand to it: G7's `floor` is in
 // rigor_floor.go, and S7 was closed as G7's duplicate on 2026-11-10.
 
+// rigorHotfixRefusal is D834's sentence for `hotfix`, in the words this command
+// gives it. It is a constant because it is one sentence spoken at two doors: the
+// wizard's rigor question refuses the same value with it (setup.go's
+// setupRigorMode), and a second spelling is a second refusal.
+const rigorHotfixRefusal = "hotfix is not a mode a layer sets: it is a per-run mode, reached with `fugaro run --mode hotfix`, and no layer may set it as a default or as an area rule; nothing was written"
+
 // rigorOptions are `fugaro rigor set`'s flags. It takes no --layer (D830: the
 // path is derived and there is nothing to choose) and no --dry-run (the
 // settings family's dry run reads a registry row's value, and this edit is a
@@ -202,7 +208,7 @@ func runRigorSet(cmd *cobra.Command, name string, o rigorOptions) error {
 	// of 2026-11-16 says the D832/SD9 fence is about this write and not about
 	// a run's own request.
 	if mode == rigor.Hotfix {
-		return userErr("hotfix is not a mode a layer sets: it is a per-run mode, reached with `fugaro run --mode hotfix`, and no layer may set it as a default or as an area rule; nothing was written")
+		return userErr(rigorHotfixRefusal)
 	}
 	// A name belongs to a rule, and the rule is the one the glob addresses: a
 	// name with no glob names nothing this command can find.
