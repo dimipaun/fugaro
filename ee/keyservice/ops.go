@@ -673,12 +673,12 @@ func (s *Service) operationsAct(ctx context.Context, actor Caller, asked WireEnt
 		if err := s.withdrawEveryKeyOf(ctx, entitlement.ID, now); err != nil {
 			return WireEntitlement{}, err
 		}
-		if err := s.revokeEntitlement(ctx, entitlement); err != nil {
-			return WireEntitlement{}, err
-		}
-		changed := entitlement
-		changed.Status = entitlementRevoked
-		return changed, nil
+		// The status is moved on the record the store holds now and not on the
+		// one this act was decided on (`revokeEntitlement`): a change that landed
+		// while the keys were being walked — a binding, another operator's act —
+		// would otherwise be written away by that stale read, and a revocation
+		// moves the status and nothing else.
+		return s.revokeEntitlement(ctx, entitlement)
 	}
 	// The change is made inside the transaction that re-reads the licence and
 	// asks the guards again. The record this act was decided on is a read from
@@ -1080,7 +1080,18 @@ func (s *Service) operationsTransfer(ctx context.Context, actor Caller, asked Wi
 				return err
 			}
 		}
-		if err := s.revokeProjectKeys(ctx, tx, replacing, now); err != nil {
+		// The withdrawal is the one the licence this transfer decided on earns
+		// (F29), and that licence is re-read with the workspace that named it: a
+		// workspace re-bound to another licence between the read above and this
+		// write is a workspace whose key list is that other licence's, and
+		// withdrawing it here would reach the keys of a licence this transfer has
+		// nothing to do with. What is revoked is the list only while the
+		// workspace still names the licence it was read for.
+		revoking := replacing
+		if source.EntitlementID == nil || heldSource.EntitlementID == nil || *source.EntitlementID != *heldSource.EntitlementID {
+			revoking = nil
+		}
+		if err := s.revokeProjectKeys(ctx, tx, revoking, now); err != nil {
 			return err
 		}
 		heldSource.ProjectID = nil
@@ -1285,6 +1296,12 @@ func (s *Service) operationsParkedEvents(ctx context.Context, state string) ([]W
 // a second state for one fact would be a reader of the ledger with a case to
 // add. A dismissal answers `dismissed`, which is its own state and not a
 // processed event — nothing was resolved and the money is somebody else's.
+//
+// The read above is what the decision and the log line are made of, and the
+// write is made in the transaction that reads the state again
+// (`markEventFrom`): two members deciding one event at once both read it
+// parked, and a write that did not re-read would leave the second decision on
+// the event while the first is what the store already answered with.
 func (s *Service) resolveOperationsEvent(ctx context.Context, actor Caller, asked WireEventResolution) (WireLedgerEvent, error) {
 	held, present, err := s.storedEvent(ctx, asked.ID)
 	if err != nil {
@@ -1326,14 +1343,7 @@ func (s *Service) resolveOperationsEvent(ctx context.Context, actor Caller, aske
 	if err := s.operationsAudit(ctx, actor, action, organisation, &held.ID, false, nil); err != nil {
 		return WireLedgerEvent{}, err
 	}
-	if err := s.markEvent(ctx, held.ID, state, target); err != nil {
-		return WireLedgerEvent{}, err
-	}
-	held.State = state
-	if target != nil {
-		held.EntitlementID = target
-	}
-	return held, nil
+	return s.markEventFrom(ctx, held.ID, ledgerParked, state, target)
 }
 
 // operationsSearchOrganisations answers the organisations whose name holds the

@@ -1235,7 +1235,7 @@ func (s *Service) withdrawn(ctx context.Context, e Event) error {
 	// installation: a store that fails on this write leaves keys that are already
 	// dead and a licence the merchant's retry withdraws again — the walk above is
 	// idempotent — rather than a licence that is dead with its keys still live.
-	if err := s.revokeEntitlement(ctx, entitlement); err != nil {
+	if _, err := s.revokeEntitlement(ctx, entitlement); err != nil {
 		return err
 	}
 	return nil
