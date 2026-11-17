@@ -5976,6 +5976,25 @@ func (r *run) finalize(ctx context.Context) error {
 		dec = blockedDecision(reason, haltClass(halt.Reason))
 	}
 	ready, reason, class := dec.Ready, dec.Reason, dec.Class
+	// The hold a change set puts on its members (D614, F15): a member run
+	// never flips its own pull request ready, because the set's pull requests
+	// go ready together and the step that flips them is the set's own (D3). It
+	// is applied here — after every cause the run named for itself above, and
+	// before the pull request is created or updated below — so the member's
+	// pull request is opened, or kept, a draft, no reviewer is requested for
+	// it (settlePR applies them to a ready pull request only), and the answer
+	// the run earned becomes the verdict its member record carries for the set
+	// to read rather than the outcome of its own pull request.
+	//
+	// A follow-up carries the same block as the run it continues (the launcher
+	// writes it into the task), so the hold binds a follow-up too and no
+	// `fugaro run --pr N` is a way around it (F15).
+	held := false
+	verdict := ""
+	if r.spec.ChangeSet != nil && ready {
+		held, verdict = true, runstore.VerdictShip
+		ready, reason = false, changeSetHoldReason(r.spec.ChangeSet)
+	}
 	// Finalize's push must not outlive its token either; a short reserve
 	// still asks for at least what bootstrap's fetch does.
 	if err := r.refreshGitAuth(ctx, authValidity(max(r.wf.Timeouts.FinalizeReserve.Duration, bootstrapAuthMinValid))); err != nil {
@@ -6110,6 +6129,14 @@ func (r *run) finalize(ctx context.Context) error {
 	switch {
 	case ready:
 		r.recordEnd(runstore.StatusSucceeded, runstore.OutcomeReady, "", reason)
+	case held:
+		// The hold is the only thing keeping this pull request a draft: the
+		// run's work is done, its tests passed and its review shipped, so it
+		// is a succeeded run — what turns it ready is the set's own step
+		// (D3), not a second run of this repository — and its outcome is the
+		// draft its pull request carries. The class is empty, as every
+		// succeeded ending's is.
+		r.recordEnd(runstore.StatusSucceeded, runstore.OutcomeDraft, "", reason)
 	case halt != nil:
 		r.rec.Halt = halt
 		r.recordEnd(runstore.StatusHalted, runstore.OutcomeDraft, haltClass(halt.Reason), reason)
@@ -6120,6 +6147,14 @@ func (r *run) finalize(ctx context.Context) error {
 	default:
 		r.recordEnd(runstore.StatusFailed, runstore.OutcomeDraft, class, reason)
 	}
+	// The verdict joins the member's record once the ending is known — here
+	// and not at the hold above — so what the set's step reads is the ending
+	// this run reached. Every ending that gets this far writes it, the empty
+	// word included, which is what clears a `ship` an earlier attempt at the
+	// same pull request left behind; an ending that returns above this line (a
+	// push that failed, a pull request closed during the run) writes nothing
+	// and leaves the last word about this pull request standing.
+	r.recordChangeSetVerdict(ctx, pr, verdict)
 	r.updateCost()
 	r.narrowText = r.narrowSummary(ctx)
 	notes, gone := r.settlePR(ctx, pr, ready, reason, records)

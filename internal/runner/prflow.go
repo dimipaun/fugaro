@@ -870,18 +870,55 @@ func (r *run) changeSetPart() string {
 	return gitprov.ChangeSetLine(inlineText(task.ShortRun(cs.ID)), inlineText(task.ShortRun(r.rec.RunID)), members)
 }
 
+// changeSetHoldReason is the sentence a member run's record and pull request
+// carry instead of the ready one: why a run that answered ready is left a draft
+// (D614). It names the set the way the pull request's own change-set block does
+// (the short form, which is what a reader of one member can see) and says what
+// lifts the hold, because neither the draft state nor the record says it: what
+// turns the pull request ready is the set's own step, once every member has
+// shipped (D3).
+func changeSetHoldReason(cs *task.ChangeSet) string {
+	return fmt.Sprintf("held: the pull requests of change set %s go ready together, when every member has shipped",
+		inlineText(task.ShortRun(cs.ID)))
+}
+
 // noteChangeSetMember records this run as a member of its change set, with the
-// pull request it just opened. The record lives in the run's own prefix, the
-// only one a run reaches, and it is what a step that reads a whole set reads
-// from this member (D3); the run's own verdict joins it when the run ends
-// (D2). A run in no change set records nothing.
+// pull request it just opened. The record lives in the member run's prefix, the
+// only one a run of its repository reaches, and it is what a step that reads a
+// whole set reads from this member (D3); the run's own verdict joins it when
+// the run ends (recordChangeSetVerdict, D2). A run in no change set records
+// nothing.
+func (r *run) noteChangeSetMember(ctx context.Context, pr gitprov.PR) {
+	r.writeChangeSetMember(ctx, pr, "")
+}
+
+// recordChangeSetVerdict writes the member's verdict once the run has ended
+// (D2), so the step that settles a whole set reads each member's own word about
+// whether anything must change before its pull request is merged (D3). It
+// writes the empty verdict for a run that ended without shipping, which is what
+// clears one an earlier attempt at the same pull request left behind: a member
+// whose follow-up failed must not be settled from a `ship` nobody stands by.
+func (r *run) recordChangeSetVerdict(ctx context.Context, pr gitprov.PR, verdict string) {
+	r.writeChangeSetMember(ctx, pr, verdict)
+}
+
+// writeChangeSetMember stores the member record of this run, at pr, with
+// verdict as the run's own word about merging it ("" while the run has none).
+// A run in no change set writes nothing.
+//
+// The record names and sits under the set's own member run — the run the set
+// was launched from (task.ChangeSetMember.RunID) — never the run that happens
+// to be writing: membership is fixed at the set's launch (D642), and a
+// follow-up to a member's pull request answers on that member's record rather
+// than making itself a member (D2). Runs of one repository share their
+// prefixes, which is what lets a follow-up write there (SECURITY.md, T5).
 //
 // The repository is written canonically (task.CanonicalRepo) while the task
 // keeps the spelling it was launched with: the record is matched against the
 // member list every member's task carries, which is canonical, and a record
 // that spelled its own repository differently would not match the list it
 // repeats.
-func (r *run) noteChangeSetMember(ctx context.Context, pr gitprov.PR) {
+func (r *run) writeChangeSetMember(ctx context.Context, pr gitprov.PR, verdict string) {
 	cs := r.spec.ChangeSet
 	if cs == nil {
 		return
@@ -891,15 +928,25 @@ func (r *run) noteChangeSetMember(ctx context.Context, pr gitprov.PR) {
 		r.d.Log.Warn("the run's repository is not a name a change set can record", "err", r.redact(err.Error()))
 		return
 	}
+	// task.Validate requires the set to name the run's own repository, so a
+	// set that does not is a task written by something other than a launcher
+	// this build ships; nothing is recorded for it rather than a member the
+	// set never named.
+	member, ok := cs.Member(repo)
+	if !ok {
+		r.d.Log.Warn("the change set does not name this run's repository", "repo", repo)
+		return
+	}
 	m := &runstore.ChangeSetMember{
 		Version: 1,
 		SetID:   cs.ID,
 		Repo:    repo,
-		RunID:   r.spec.RunID,
+		RunID:   member.RunID,
 		PRURL:   pr.URL,
+		Verdict: verdict,
 		At:      r.d.Now().UTC(),
 	}
-	if err := r.d.Store.WriteChangeSetMember(ctx, m); err != nil {
+	if err := r.d.Store.Sibling(member.RunID).WriteChangeSetMember(ctx, m); err != nil {
 		// The record is a coordination aid, not the run's own record: a set
 		// whose member cannot record its pull request is one the settle step
 		// reports rather than one this run fails over (T5).
