@@ -1990,6 +1990,69 @@ func TestR4CycleWritesAfterTheHooksWrite(t *testing.T) {
 	m.stub.line("ladder-r4-split-" + headA[:8])
 }
 
+// TestR3HookCyclesDoNotTripTheBreaker: a cycle whose whole work was the hook's
+// is a cycle that did something, and the breaker has to read it that way. The
+// moves these rungs make are landed through the hook's own seam and counted
+// nowhere else in the Step, so a cycle the hook was entered for reports nothing
+// done at all unless the hook's return counts — and three of those in a row
+// reach the threshold and put the breaker's question on the node, which pauses
+// the plan and the ladder daemon-wide over a ladder that is working (D1228,
+// Report.Escalated).
+//
+// Mutation: drop c.rep.Escalated++ from ladderBeyond's hook branch and the first
+// cycle below reports CycleEmpty, and the third leaves the breaker's question on
+// the node.
+func TestR3HookCyclesDoNotTripTheBreaker(t *testing.T) {
+	now := o6Now()
+	m := newMergeHarness(t, now, []string{mergeReviewRun, mergeReviewRun, mergeReviewRun},
+		mergeItem("wi-1", r3Ledger(now, headA, 2)))
+	m.host.head, m.host.checks = headA, mergeGreen()
+
+	// Nothing scored at the head, which is where a rung 3 item stands before
+	// D2043's review: the hook's first cycle launches it, and the cycles after
+	// that read the launch back off the log and wait on it.
+	uncovered := mergePass(headA)
+	uncovered.Scored, uncovered.ReviewRun = false, ""
+	m.reader.reads["wi-1"] = uncovered
+
+	l := &ladderStub{t: t, reads: map[string]orchestrator.LadderReading{
+		"wi-1": reading(rigor.POC, 4*time.Hour, headA),
+	}}
+	seams := l.seams(escalation.DefaultThresholds())
+	seams.Beyond = m.seams.Beyond()
+	var breaker orchestrator.Breaker
+	tick := &orchestrator.Tick{
+		Store:    m.node,
+		Runs:     ladderNoRuns{},
+		Launcher: &o6Launcher{},
+		Mint:     func(time.Time) (string, error) { return mergeRun, nil },
+		Caps:     o6Caps(),
+		Now:      clockAt(now),
+		Ladder:   seams,
+		Notifier: m.sink,
+		Breaker:  &breaker,
+	}
+
+	// The threshold's own number of cycles, every one of them the hook's: the
+	// item stands at rung 3, and the rung it is at is the one the hook re-enters
+	// for as long as the sequence runs.
+	for i := range orchestrator.BreakerThreshold {
+		rep, err := tick.Step(context.Background())
+		if err != nil {
+			t.Fatalf("cycle %d ended as %v, and the hook acted on it", i+1, err)
+		}
+		if rep.Escalated != 1 || rep.Outcome != orchestrator.CycleProgress {
+			t.Fatalf("cycle %d reports %+v, and a cycle the hook was entered for moved the item", i+1, rep)
+		}
+	}
+	if len(m.stub.launched) != 1 {
+		t.Errorf("the hook launched %+v, and the review the first cycle starts is the head's only one", m.stub.launched)
+	}
+	if orchestrator.BreakerOpen(m.state(), now) {
+		t.Fatalf("three cycles the hook acted on asked a person to look at a ladder that is working: %+v", m.state().Decisions)
+	}
+}
+
 // TestR3HookFailureLeavesTheBreakerItsQuestion is the hook's failure and not its
 // return: a rung 3 move that landed on the node and a line the log would not
 // take leave the hook failing with the cycle holding the document it read before

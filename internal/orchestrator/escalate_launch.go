@@ -413,6 +413,20 @@ func (c *cycle) ladderOuter(w WorkItem, step escalation.Step, read LadderReading
 // question, when the streak reached it (Step's ask) — from the document the
 // cycle holds. The hook's own error is what the cycle reports; a re-read that
 // fails too is joined to it.
+//
+// The move a hook carries out is counted here, which is what Report.Escalated
+// means by "a rung recorded for the hook the rungs past rung 2 attach through":
+// the review a rung 3 launched, the head it judged and the landing it made are
+// the whole of what such a cycle did, and nothing else in the Step counts them.
+// A cycle whose only work was the hook's would otherwise read as one that did
+// nothing at all, and three of those in a row reach the breaker's threshold and
+// pause the daemon over a ladder that is working (D1228). A hook that fails is
+// not counted: the cycle ends failed, and the streak is what that failure is.
+//
+// A rung 3 hook that waits asks its own question rather than reading as an idle
+// daemon — the ladder's question about the item is on the node from the cycle
+// the hook first waits on (mergeQuestionOp) — so what the count leaves for the
+// breaker is only the cycle the hook could not act on at all.
 func (c *cycle) ladderBeyond(ctx context.Context, w WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) error {
 	if c.tick.Ladder.Beyond == nil {
 		runID := w.RunID
@@ -427,6 +441,7 @@ func (c *cycle) ladderBeyond(ctx context.Context, w WorkItem, step escalation.St
 		}
 		return err
 	}
+	c.rep.Escalated++
 	return c.reread(ctx)
 }
 
