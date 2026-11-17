@@ -271,6 +271,8 @@ var exemptAnswers = map[string]string{
 	"report":                 "a paid name this build carries no code for: the stub refuses and prints one line",
 	"rigor floor set":        "writes the project layer's rigor floor, and prints the row it wrote",
 	"rigor floor unset":      "removes the project layer's rigor floor, and prints what it dropped",
+	"rigor security add":     "writes one security path into the project layer file or the checkout's own fugaro.yaml, and prints the row it wrote",
+	"rigor security rm":      "removes one security path, or turns the project layer's always-level-3 switch off, and prints what it dropped",
 	"rigor set":              "writes the project layer's rigor default, or one area rule, and prints the row it wrote",
 	"review":                 "launches a review in a job of its own, and prints the run it started",
 	"runs digest":            "writes a closed period's report into the repository's docs tree, and prints where it landed",
