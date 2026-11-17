@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -102,7 +103,7 @@ func TestCoordinatorSettleRefusesASetItCannotRead(t *testing.T) {
 // ready.
 func TestCoordinatorSettleSettlesASetFromTheRunsBucket(t *testing.T) {
 	f := newCloudFixture(t)
-	enrollSettleRepo(t, "acme/other")
+	enrollSettleRepo(t, "acme/other", gitprov.KindGitHub)
 	set := &task.ChangeSet{ID: settleSetID, Members: []task.ChangeSetMember{
 		{Repo: "acme/app", RunID: settleSetID},
 		{Repo: "acme/other", RunID: settleOtherID},
@@ -118,8 +119,8 @@ func TestCoordinatorSettleSettlesASetFromTheRunsBucket(t *testing.T) {
 	t.Setenv(providers.EnvGitHubAppID, appIDFixture)
 	t.Setenv(providers.EnvGitHubAppKey, appKeyPEM(t))
 	hosts := map[string]*settleHostProvider{
-		"acme/app":   settleHost("acme/app", settleAppHead),
-		"acme/other": settleHost("acme/other", settleOtherHead),
+		"acme/app":   settleHost(mint.log, "acme/app", settleAppHead),
+		"acme/other": settleHost(mint.log, "acme/other", settleOtherHead),
 	}
 	setSettleHosts(t, hosts)
 
@@ -178,6 +179,22 @@ func TestCoordinatorSettleSettlesASetFromTheRunsBucket(t *testing.T) {
 	if perms["pull_requests"] != "write" {
 		t.Errorf("the settle token's pull requests permission = %v, want write", perms["pull_requests"])
 	}
+
+	// The credential's life is the command's (D641): the token it minted is
+	// taken back, it is taken back ONCE, and it is taken back after the writes
+	// it was minted for rather than before them.
+	events := mint.log.list()
+	if got := mint.revokes(); len(got) != 1 || got[0] != settleFixtureToken {
+		t.Errorf("the settle took back %v, want exactly the one token it minted", got)
+	}
+	if n := len(events); n == 0 || events[n-1] != "revoke" {
+		t.Errorf("the settle's last act was %v, want the revoke", events)
+	}
+	for _, want := range []string{"write acme/app", "write acme/other", "revoke"} {
+		if !slices.Contains(events, want) {
+			t.Errorf("the settle's log %v does not hold %q", events, want)
+		}
+	}
 }
 
 // TestCoordinatorSettleReportsASetThatHasNotShipped: a set one of whose members
@@ -187,7 +204,7 @@ func TestCoordinatorSettleSettlesASetFromTheRunsBucket(t *testing.T) {
 // for a job that settles every set it knows.
 func TestCoordinatorSettleReportsASetThatHasNotShipped(t *testing.T) {
 	f := newCloudFixture(t)
-	enrollSettleRepo(t, "acme/other")
+	enrollSettleRepo(t, "acme/other", gitprov.KindGitHub)
 	set := &task.ChangeSet{ID: settleSetID, Members: []task.ChangeSetMember{
 		{Repo: "acme/app", RunID: settleSetID},
 		{Repo: "acme/other", RunID: settleOtherID},
@@ -207,7 +224,7 @@ func TestCoordinatorSettleReportsASetThatHasNotShipped(t *testing.T) {
 	setCoordinatorGitHubRoot(t, mint.srv.URL)
 	t.Setenv(providers.EnvGitHubAppID, appIDFixture)
 	t.Setenv(providers.EnvGitHubAppKey, appKeyPEM(t))
-	hosts := map[string]*settleHostProvider{"acme/app": settleHost("acme/app", settleAppHead)}
+	hosts := map[string]*settleHostProvider{"acme/app": settleHost(mint.log, "acme/app", settleAppHead)}
 	setSettleHosts(t, hosts)
 
 	out, _, err := execute(t, "coordinator", "settle", "--change-set", settleSetID, "--repo", "acme/app")
@@ -228,6 +245,58 @@ func TestCoordinatorSettleReportsASetThatHasNotShipped(t *testing.T) {
 	}
 }
 
+// TestCoordinatorSettleReportsAMemberOfAnotherKind: the settle-only token is a
+// GitHub installation token, so the settle makes pull requests ready on GitHub
+// and nowhere else. A set with a member of another kind is reported rather than
+// half-written: the member is named, the pull request the settle could write to
+// is left alone, and no token is asked for covering the member it cannot write
+// to — the token names the set's members on GitHub, and the other kind's
+// repository is not one of them.
+func TestCoordinatorSettleReportsAMemberOfAnotherKind(t *testing.T) {
+	f := newCloudFixture(t)
+	enrollSettleRepo(t, "forge/other", gitprov.KindBitbucket)
+	set := &task.ChangeSet{ID: settleSetID, Members: []task.ChangeSetMember{
+		{Repo: "acme/app", RunID: settleSetID},
+		{Repo: "forge/other", RunID: settleOtherID},
+	}}
+	seedSettleTask(t, f, "acme/app", appSlug, settleSetID, set)
+	seedSettleMember(t, f, appSlug, "acme/app", settleSetID, settleAppHead, set)
+	otherSlug := mustSlug(gitprov.KindBitbucket, "forge/other")
+	seedSettleTask(t, f, "forge/other", otherSlug, settleOtherID, set)
+	seedSettleMember(t, f, otherSlug, "forge/other", settleOtherID, settleOtherHead, set)
+
+	mint := newSettleMintServer(t, "app")
+	setCoordinatorGitHubRoot(t, mint.srv.URL)
+	t.Setenv(providers.EnvGitHubAppID, appIDFixture)
+	t.Setenv(providers.EnvGitHubAppKey, appKeyPEM(t))
+	// Only the GitHub member has a host: the settle must refuse the other kind
+	// before it opens anything, so the opener failing for it is what says none
+	// was opened for it.
+	hosts := map[string]*settleHostProvider{"acme/app": settleHost(mint.log, "acme/app", settleAppHead)}
+	setSettleHosts(t, hosts)
+
+	out, _, err := execute(t, "coordinator", "settle", "--change-set", settleSetID, "--repo", "acme/app")
+	if err != nil {
+		t.Fatalf("settle of a set with a member of another kind = %v, want a report and exit 0", err)
+	}
+	if !strings.Contains(out, "not settled") || !strings.Contains(out, "forge/other") || !strings.Contains(out, "github only") {
+		t.Errorf("the report = %q, want the member the settle cannot write to named as the reason the set is held back", out)
+	}
+	if prs := hosts["acme/app"].Snapshot().PRs; len(prs) != 1 || !prs[0].Draft {
+		t.Errorf("the GitHub member was made ready while the set was held back: %+v", prs)
+	}
+	if calls := hosts["acme/app"].Snapshot().Calls; len(calls) != 0 {
+		t.Errorf("the GitHub member's host was written to while the set was held back: %+v", calls)
+	}
+	got := mint.bodies()
+	if len(got) != 1 {
+		t.Fatalf("the settle minted %d tokens, want 1 for the one owner it can write to: %+v", len(got), got)
+	}
+	if repos := got[0]["repositories"]; !equalStrings(repos, []string{"app"}) {
+		t.Errorf("the token is scoped to %v, want the one member of the set the settle can write to", repos)
+	}
+}
+
 // settleHost is one member repository's fake host: the draft pull request its
 // run opened, at head.
 //
@@ -237,9 +306,12 @@ func TestCoordinatorSettleReportsASetThatHasNotShipped(t *testing.T) {
 // core's own test of that refusal depends on it (TestCoordinatorCredentialIs-
 // InstalledOnTheProvider). What the wrapper holds is the source the settle
 // installed, so a test can assert which credential the writes would have gone
-// out with.
+// out with, and it notes its two writes in the settle's log beside the mint's
+// revoke, which is what says the credential outlives the write it was minted
+// for.
 type settleHostProvider struct {
 	*fake.Provider
+	log  *settleLog
 	mu   sync.Mutex
 	from gitprov.TokenSource
 }
@@ -250,6 +322,20 @@ func (p *settleHostProvider) UseServiceTokens(src gitprov.TokenSource) {
 	p.from = src
 }
 
+func (p *settleHostProvider) UpdatePR(ctx context.Context, number int, u gitprov.PRUpdate) (gitprov.PR, error) {
+	if p.log != nil {
+		p.log.add("write " + p.Repo)
+	}
+	return p.Provider.UpdatePR(ctx, number, u)
+}
+
+func (p *settleHostProvider) ApplyReady(ctx context.Context, number int, reviewers, labels []string) error {
+	if p.log != nil {
+		p.log.add("ready " + p.Repo)
+	}
+	return p.Provider.ApplyReady(ctx, number, reviewers, labels)
+}
+
 // source is the token source the settle installed on this host, nil when it
 // opened none.
 func (p *settleHostProvider) source() gitprov.TokenSource {
@@ -258,13 +344,35 @@ func (p *settleHostProvider) source() gitprov.TokenSource {
 	return p.from
 }
 
-func settleHost(repo, head string) *settleHostProvider {
-	return &settleHostProvider{Provider: &fake.Provider{Repo: repo, SelfID: "1", State: fake.State{PRs: []fake.PRState{{
+func settleHost(log *settleLog, repo, head string) *settleHostProvider {
+	return &settleHostProvider{log: log, Provider: &fake.Provider{Repo: repo, SelfID: "1", State: fake.State{PRs: []fake.PRState{{
 		PR:    gitprov.PR{Number: 1, URL: "https://github.com/" + repo + "/pull/1", Draft: true},
 		Spec:  gitprov.PRSpec{Branch: "topic"},
 		Title: "a change",
 		Head:  head,
 	}}}}}
+}
+
+// settleLog is the order of what one settle did across the two fakes it talks
+// to: the hosts it writes pull requests through and the GitHub root it mints
+// and revokes at. Neither fake can see the other, and the order between them is
+// the whole point — the credential is taken back after the writes it was minted
+// for (D641) and not before.
+type settleLog struct {
+	mu     sync.Mutex
+	events []string
+}
+
+func (l *settleLog) add(event string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.events = append(l.events, event)
+}
+
+func (l *settleLog) list() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.events...)
 }
 
 // setSettleHosts points the command's GitHub opener at one fake host per
@@ -285,11 +393,13 @@ func setSettleHosts(t *testing.T, hosts map[string]*settleHostProvider) {
 }
 
 // settleMemberRecord is one member's changeset.json as its run leaves it: the
-// set it belongs to, its own run and repository, its pull request and the
-// verdict it ended on.
+// set it belongs to, its own run and repository, its pull request, the commit
+// its verdict is about with a passing clean-tree test on it, and the verdict it
+// ended on.
 func settleMemberRecord(repo, runID, head string, set *task.ChangeSet) *runstore.ChangeSetMember {
 	return &runstore.ChangeSetMember{Version: 1, SetID: set.ID, Repo: repo, RunID: runID,
 		PRURL: "https://github.com/" + repo + "/pull/1", Verdict: runstore.VerdictShip,
+		HeadSHA: head, Verified: true,
 		At: time.Date(2026, 11, 16, 14, 30, 0, 0, time.UTC)}
 }
 
@@ -345,10 +455,11 @@ func settleBucket(t *testing.T, f *cloudFixture) *blob.Bucket {
 	return b
 }
 
-// enrollSettleRepo writes a second repository into the fixture's own repos
-// block: a change set spans repositories, and a member the project's own
-// configuration cannot place is one the command cannot read.
-func enrollSettleRepo(t *testing.T, repo string) {
+// enrollSettleRepo writes another repository into the fixture's own repos
+// block, on provider: a change set spans repositories, a member the project's
+// own configuration cannot place is one the command cannot read, and a member
+// whose provider is not GitHub is one the settle cannot write to.
+func enrollSettleRepo(t *testing.T, repo, provider string) {
 	t.Helper()
 	path := os.Getenv("FUGARO_CONFIG")
 	data, err := os.ReadFile(path)
@@ -361,7 +472,11 @@ func enrollSettleRepo(t *testing.T, repo string) {
 		t.Fatal("the fixture's config has no repos block to enroll a repository in")
 	}
 	at += len(key)
-	entry := "  " + repo + ": { provider: github, base_branch: main, workflows: [web], github_app_id: \"" + appIDFixture + "\" }\n"
+	entry := "  " + repo + ": { provider: " + provider + ", base_branch: main, workflows: [web]"
+	if provider == gitprov.KindGitHub {
+		entry += ", github_app_id: \"" + appIDFixture + "\""
+	}
+	entry += " }\n"
 	if err := os.WriteFile(path, []byte(string(data)[:at]+entry+string(data)[at:]), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -370,16 +485,19 @@ func enrollSettleRepo(t *testing.T, repo string) {
 // settleMintServer is the fake GitHub the settle mints at: the installation
 // lookup and the access-token endpoint, answering one token, and the revoke the
 // command ends with. It records every access-token request body, which is what
-// says which repositories and which permissions the command asked for.
+// says which repositories and which permissions the command asked for, and
+// every token taken back, in the settle's own log beside the hosts' writes.
 type settleMintServer struct {
-	srv *httptest.Server
-	mu  sync.Mutex
-	got []map[string]any
+	srv  *httptest.Server
+	log  *settleLog
+	mu   sync.Mutex
+	got  []map[string]any
+	back []string
 }
 
 func newSettleMintServer(t *testing.T, repos ...string) *settleMintServer {
 	t.Helper()
-	m := &settleMintServer{}
+	m := &settleMintServer{log: &settleLog{}}
 	m.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -395,6 +513,15 @@ func newSettleMintServer(t *testing.T, repos ...string) *settleMintServer {
 			m.mu.Unlock()
 			_, _ = w.Write([]byte(`{"token": "` + settleFixtureToken + `", "expires_at": "` +
 				time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `"}`))
+		case r.Method == "DELETE" && strings.HasSuffix(r.URL.Path, "/installation/token"):
+			// The revoke carries the token it is about as its bearer
+			// (github.RevokeInstallationToken), which is what lets a test say
+			// the credential taken back is the one the writes went out with.
+			m.mu.Lock()
+			m.back = append(m.back, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+			m.mu.Unlock()
+			m.log.add("revoke")
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			w.WriteHeader(http.StatusNoContent)
 		}
@@ -408,6 +535,14 @@ func (m *settleMintServer) bodies() []map[string]any {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return append([]map[string]any(nil), m.got...)
+}
+
+// revokes is every token the settle took back, in order: the credential's
+// lifetime is the command's (D641), so this is what it minted or nothing.
+func (m *settleMintServer) revokes() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.back...)
 }
 
 // equalStrings reports whether v is exactly want: the repositories the mint

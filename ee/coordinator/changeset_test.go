@@ -34,6 +34,10 @@ const (
 	// settleHeadMoved is a commit no member's tests ever ran on: what a
 	// push to the branch after the run ended leaves the pull request at.
 	settleHeadMoved = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b"
+	// settleHeadFollowUp is the commit a follow-up to settleRunB's pull
+	// request pushed: the member's verdict is recorded on it, while the
+	// member's own run ended at settleHeadB.
+	settleHeadFollowUp = "5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d"
 )
 
 // settleSet is the set every fixture settles: two members, one run each, the
@@ -47,9 +51,13 @@ func settleSet() *task.ChangeSet {
 
 // settleMember is one member's records as its run left them: the task the
 // launcher wrote (which carries the whole set, D642), the changeset.json it
-// recorded (D2) and the result.json with the commit its tests ran on. head is
-// the commit, verdict the word the run ended on, and both are the fixture's to
-// vary — every test below is one of them varied.
+// recorded (D2) and the result.json with the pull request the live read is made
+// with. head is the commit the member's verdict was recorded on, verdict the
+// word the run ended on, and both are the fixture's to vary — every test below
+// is one of them varied. The commit is verified unless a test says otherwise,
+// and the result.json carries it too, as a launch run's does; a test whose
+// member was followed up moves the record's head alone, which is what a
+// follow-up leaves behind.
 func settleMember(repo, runID, head, verdict string) MemberReads {
 	cs := settleSet()
 	url := "https://github.com/" + repo + "/pull/1"
@@ -57,7 +65,8 @@ func settleMember(repo, runID, head, verdict string) MemberReads {
 		Task: &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: "main", Workflow: "app",
 			Task: "a change", ChangeSet: cs},
 		Member: &runstore.ChangeSetMember{Version: 1, SetID: cs.ID, Repo: repo, RunID: runID,
-			PRURL: url, Verdict: verdict, At: time.Date(2026, 11, 16, 14, 30, 0, 0, time.UTC)},
+			PRURL: url, Verdict: verdict, HeadSHA: head, Verified: true,
+			At: time.Date(2026, 11, 16, 14, 30, 0, 0, time.UTC)},
 		Run: &runstore.Record{Version: 1, RunID: runID, Repo: repo, HeadSHA: head,
 			PR:     &runstore.PRRef{Number: 1, URL: url},
 			Verify: []verify.Record{{N: 1, Kind: verify.KindTest, HeadSHA: head, CleanTree: true, Passed: true}}},
@@ -240,6 +249,39 @@ func TestSettleRereadsPRStateNotTheRecord(t *testing.T) {
 	}
 }
 
+// TestSettleSettlesOnTheCommitTheVerdictWasRecordedOn: a follow-up to a
+// member's pull request pushes to the member's branch, keeps its own commit and
+// its own verify table under its own run id, and answers on the MEMBER's record
+// (D2). So the commit a settle compares the live head against is the one the
+// record's verdict was written with, never the one the member's launch run
+// happened to end at: reading the launch run's commit refuses such a member
+// forever — and one the set had already settled would be pushed back into draft
+// by the follow-up with nothing able to settle it again.
+func TestSettleSettlesOnTheCommitTheVerdictWasRecordedOn(t *testing.T) {
+	f := newSettleFixture()
+	// The member's launch run ended at settleHeadB; a follow-up pushed
+	// settleHeadFollowUp and recorded the verdict on it, which is where the
+	// pull request is now. The launch run's own result.json still names
+	// settleHeadB, which is what the settle must NOT decide on.
+	other := f.records[settleRunB]
+	other.Member.HeadSHA = settleHeadFollowUp
+	f.records[settleRunB] = other
+	f.host("acme/other", settleHeadFollowUp)
+	rep, err := f.settler().Settle(context.Background(), settleSet())
+	if err != nil {
+		t.Fatalf("Settle: %v", err)
+	}
+	if !rep.Settled || rep.Flipped != 2 {
+		t.Fatalf("report = %+v, want the followed-up member settled on the commit its verdict was recorded on", rep)
+	}
+	if r := row(t, rep, "acme/other"); r.Why != "" || !r.Flipped {
+		t.Errorf("the followed-up member's row = %+v, want it flipped", r)
+	}
+	if pr := f.pr(t, "acme/other"); pr.Draft {
+		t.Error("the followed-up member's pull request is still a draft")
+	}
+}
+
 // TestSettleRefusesAHeadThatMoved: what makes a member shippable is passing
 // tests on the commit its pull request is AT, not on the commit its run ended
 // at. A pull request the host says is at another commit is reported, so a
@@ -326,11 +368,14 @@ func TestSettleRefusesAMemberThatHasNotShipped(t *testing.T) {
 // TestSettleRefusesTestsThatDidNotPass: a member whose commit has no passing
 // clean-tree test on it is not shippable, whatever its verdict says: the run's
 // word is that nothing must change before its pull request is merged, and a
-// commit nothing verified is not a pull request a settle may publish.
+// commit nothing verified is not a pull request a settle may publish. The
+// commit and its test are the verdict's own — the run that wrote them may be a
+// follow-up — so a record whose commit nothing verified holds the set back even
+// when the member's launch run has a passing test on its own, older commit.
 func TestSettleRefusesTestsThatDidNotPass(t *testing.T) {
 	f := newSettleFixture()
 	other := f.records[settleRunB]
-	other.Run.Verify = []verify.Record{{N: 1, Kind: verify.KindTest, HeadSHA: settleHeadB, CleanTree: true, Passed: false}}
+	other.Member.Verified = false
 	f.records[settleRunB] = other
 	rep, err := f.settler().Settle(context.Background(), settleSet())
 	if err != nil {

@@ -11,7 +11,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
-	"github.com/dimipaun/fugaro/internal/verify"
 )
 
 // This file is D3 of docs/forge-authorship-images/implementation-plan.md: the
@@ -42,9 +41,9 @@ import (
 //   - It RE-READS what it acts on (F15). A member's records are a run's word
 //     about itself, and the state they name may have moved on since: this step
 //     reads the pull request's live head and live draft flag from the host, and
-//     refuses a member whose head is not the commit its tests ran on. A settle
-//     that trusted the record would flip a pull request whose last commit
-//     nothing tested.
+//     refuses a member whose live head is not the commit its verdict was
+//     recorded on. A settle that trusted the record for the head too would flip
+//     a pull request whose last commit nothing tested.
 //   - It is a COORDINATION AID, not a security control (T5). Every fact it
 //     reads is written by a run of the repository it is about — the runs of one
 //     repository share their prefixes, so a later run can rewrite an earlier
@@ -66,12 +65,23 @@ type MemberReads struct {
 	// and every member's task carries the same list.
 	Task *task.Spec
 	// Member is the run's changeset.json — the set it recorded itself in, the
-	// pull request it opened and the verdict it ended on (D2). Nil when the run
-	// recorded none: a run that ended before it had a pull request to record,
-	// or one whose write failed.
+	// pull request it opened, the commit its verdict is about, whether a
+	// clean-tree test passed there, and the verdict it ended on (D2). Nil when
+	// the run recorded none: a run that ended before it had a pull request to
+	// record, or one whose write failed.
+	//
+	// The commit and its test are read from HERE and not from Run, because the
+	// run that wrote this record is not always the run the set was launched
+	// from: a follow-up to a member's pull request pushes to the member's
+	// branch, keeps its own commit under its own run id, and answers on the
+	// MEMBER's record (D2). A step that compared the pull request against the
+	// launch run's commit would refuse such a member forever, and one already
+	// settled would be pushed back into draft with nothing able to settle it
+	// again (a follow-up holds the member's pull request the way its own run
+	// did).
 	Member *runstore.ChangeSetMember
-	// Run is the run's result.json: the commit it decided on, the tests it ran
-	// there and the pull request it opened.
+	// Run is the run's result.json, read for the pull request the member
+	// opened: its number is what the live read is made with.
 	Run *runstore.Record
 }
 
@@ -175,8 +185,9 @@ type settleFlip struct {
 //     which a later attempt at the same pull request clears, so a member whose
 //     follow-up failed does not settle on a `ship` nobody stands by;
 //   - it has a pull request, the host says that pull request is open, and its
-//     live head is the commit the member's tests ran on (F15);
-//   - that commit has a passing test record on a clean tree.
+//     live head is the commit the member's verdict was recorded on (F15);
+//   - that commit has a passing test record on a clean tree, as the run that
+//     recorded the verdict read it.
 //
 // The reads are two passes and the writes come after both. Every member's
 // records are read first, and a set one of them holds back is one no host is
@@ -294,23 +305,25 @@ func heldByRecords(set *task.ChangeSet, member task.ChangeSetMember, reads Membe
 		return "its record names another member of the set"
 	case reads.Member.Verdict != runstore.VerdictShip:
 		return "it has not shipped"
+	case reads.Member.HeadSHA == "":
+		return "its verdict records no commit"
 	}
 	switch {
 	case reads.Run == nil:
 		return "its run record could not be read"
 	case reads.Run.PR == nil || reads.Run.PR.Number <= 0:
 		return "it has no pull request"
-	case reads.Run.HeadSHA == "":
-		return "its run recorded no commit"
 	}
 	return ""
 }
 
 // heldByPR is why the LIVE state of one member's pull request holds it back, ""
-// when it does not (F15). It reads what the host answered, never the record the
-// member wrote about itself: the head is compared as a commit (a provider may
-// answer with an abbreviated one) and the tests must be the ones that ran on
-// the commit the pull request is actually at.
+// when it does not (F15). The state and the head are what the host answers now;
+// the commit they are compared against, and the test that passed there, are the
+// ones the record's verdict was written with — a record is a run's word about a
+// commit, and a settle that took the head from somewhere else would flip a pull
+// request whose last commit nothing tested. The head is compared as a commit (a
+// provider may answer with an abbreviated one).
 func heldByPR(reads MemberReads, live gitprov.PRInfo) string {
 	switch {
 	case live.State != gitprov.PROpen:
@@ -318,9 +331,9 @@ func heldByPR(reads MemberReads, live gitprov.PRInfo) string {
 			return "its pull request is not open"
 		}
 		return "its pull request is " + string(live.State)
-	case !gitprov.SameCommit(live.HeadSHA, reads.Run.HeadSHA):
+	case !gitprov.SameCommit(live.HeadSHA, reads.Member.HeadSHA):
 		return "its pull request has moved on from the commit its tests ran on"
-	case !verifiedOn(reads.Run.Verify, reads.Run.HeadSHA):
+	case !reads.Member.Verified:
 		return "its tests did not pass on the commit its pull request is at"
 	}
 	return ""
@@ -359,21 +372,4 @@ func listsSameSet(set, from *task.ChangeSet) bool {
 		}
 	}
 	return true
-}
-
-// verifiedOn reports whether sha has a passing test record on a clean tree: the
-// last clean-tree test record on the commit being the one that decides, which
-// is the rule the runner's own pushedVerified keeps (internal/runner/outcome.go).
-// It is restated here rather than shared because that one is unexported, and
-// this step must read the same fact about a member's commit that the member's
-// own run read before it recorded its verdict.
-func verifiedOn(records []verify.Record, sha string) bool {
-	var latest *verify.Record
-	for i := range records {
-		r := &records[i]
-		if r.Kind == verify.KindTest && r.HeadSHA == sha && r.CleanTree {
-			latest = r
-		}
-	}
-	return latest != nil && latest.Passed
 }
