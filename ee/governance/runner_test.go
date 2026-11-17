@@ -987,6 +987,164 @@ func TestCheckpointCallFailureStillHalts(t *testing.T) {
 	}
 }
 
+// The tier's expected cost as a checkpoint (plan T8.2, D329, D330). What the
+// tests below drive is the run-level threshold the gateway carries beside its
+// stage budgets (ee/governance/gateway.go, expectationStop) and the halt
+// ee/governance's Stopped makes of that stop. The two together are the rule as
+// the tier states it: at 100% of what the tier expected, the run halts with
+// expected_exceeded and a checkpoint report; with no tier there is no threshold
+// at all.
+
+// expectedCap is the run cap the expectation test enforces: far above both the
+// expectation and anything the calls below spend, so neither the run's cap nor
+// a stage budget — implement's share of it is 0.7 — is anywhere near the stop
+// and the expectation is the only rule that can make one.
+const expectedCap = "20"
+
+// untieredCap is the cap the no-tier test enforces: higher still, so the two
+// calls below (about $18 together) stay clear of implement's 0.7 share of it as
+// well, and what the test reads is the absence of a threshold and never a
+// budget that happened to fire.
+const untieredCap = "50"
+
+// pastTheTier is the reply the fake upstream answers the expectation test's
+// calls with: a million input tokens at the embedded table's $2 a million for
+// sonnet is $2.00 settled, twice the $1.00 the shipped `small` expectation
+// carries.
+func pastTheTier() anthropicfake.Reply {
+	return anthropicfake.MessageOK(sonnet, pricing.Usage{Input: 1_000_000, Output: 1})
+}
+
+// pastEveryTier is the reply the untiered run's calls are answered with:
+// $9.00 settled a call, above the largest expectation Fugaro ships for any
+// tier ($8 for `large`, governance.TierExpectations), so a threshold read off
+// the wrong place — a default, or the dearest tier — is what the test would
+// catch.
+func pastEveryTier() anthropicfake.Reply {
+	return anthropicfake.MessageOK(sonnet, pricing.Usage{Input: 4_500_000, Output: 1})
+}
+
+// spendsPastItsTier is the implement stage of a run dispatched at `small`: its
+// first call settles $2.00, past the $1.00 the tier expects the whole run to
+// cost, and the call after it is refused with the expectation's own sentence.
+// The call that crosses the expectation is admitted and the next one is what
+// the stop lands on — an expectation is not a cap, and a reservation counted
+// into it would refuse the first call of a fresh run (T8.2, D330).
+func spendsPastItsTier(t *testing.T, _ context.Context, req agent.Request) (agent.Result, error) {
+	t.Helper()
+	// The run has work of its own by the time the stage stops, as the stage
+	// budget's test needs it to: the checkpoint prompt carries what the run had
+	// done, and the answer below is one a fresh session could give only because
+	// it does (checkpoint_stage.go).
+	runnertest.Script(t, req, "echo the feature > feature.txt && git add -A && git commit -qm 'Add the feature'")
+	if code, body := runnertest.Post(t, req, sonnet, 4000); code != http.StatusOK {
+		t.Fatalf("the first call was answered %d, want 200: %s", code, body)
+	}
+	code, body := runnertest.Post(t, req, sonnet, 4000)
+	if code != http.StatusForbidden {
+		t.Fatalf("the call after the run passed its tier's expectation was answered %d, want the expectation's 403: %s", code, body)
+	}
+	if !strings.Contains(body, "tier small expects $1.00") {
+		t.Errorf("the refusal does not carry the expectation the run crossed, so the agent cannot tell what stopped it: %s", body)
+	}
+	return agent.Result{CostUSD: 2}, nil
+}
+
+// TestExpectedCostHalts: a run that has spent what its tier expected of it
+// halts with `expected_exceeded` and a checkpoint report, and the report
+// reaches the draft pull request a governance stop leaves (T8.2, D329).
+//
+// The spend is the gateway's own — the run's ledger, the money its calls
+// settled — and the stop is the gateway's, so what the halt carries is the
+// sentence the gateway refused the call with and not a figure the runner
+// recomputed from the agent's report.
+func TestExpectedCostHalts(t *testing.T) {
+	spec := runnertest.Task()
+	spec.Tier = tier.Small
+	h := runnertest.New(t, gatewayCfg(t), spec)
+	// One reply per call that reaches the upstream: the first implement call and
+	// the checkpoint stage's own. The refused call is never sent.
+	h.Gateway(t, "enforce", expectedCap, pastTheTier(), pastTheTier())
+	rec, err := h.Run(t, spendsPastItsTier, answersTheCheckpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Halt == nil {
+		t.Fatalf("record = %+v, halt = %+v: the run passed its tier's expectation and went on", rec, rec.Halt)
+	}
+	if rec.Halt.Reason != runstore.HaltExpectedExceeded {
+		t.Fatalf("halt = %+v, want the expected-cost reason", rec.Halt)
+	}
+	// The sentence is the whole of what a person has to decide with: which tier
+	// expected what, and what the run had spent when it was stopped.
+	for _, want := range []string{"tier small expects $1.00", "the run has spent $2.00"} {
+		if !strings.Contains(rec.Halt.Detail, want) {
+			t.Errorf("halt detail = %q, want %q in it", rec.Halt.Detail, want)
+		}
+	}
+	cp := rec.Checkpoint
+	if cp == nil {
+		t.Fatal("the expected-cost halt left no checkpoint report")
+	}
+	if cp.Trigger != string(runstore.HaltExpectedExceeded) {
+		t.Errorf("checkpoint trigger = %q, want %q", cp.Trigger, runstore.HaltExpectedExceeded)
+	}
+	if cp.WhyOver != "the run passed the cost its tier expected of it" {
+		t.Errorf("checkpoint why_over = %q, want the runner's own words for this halt", cp.WhyOver)
+	}
+	if cp.Done != "the feature is committed" {
+		t.Errorf("checkpoint done = %q, want what the stopping agent answered", cp.Done)
+	}
+	// The checkpoint stage is the one stage the expectation does not touch: a
+	// run already past it is exactly the run whose report has to be written, and
+	// the one call that stage admits is what writes it. That the call was served
+	// is what `answersTheCheckpoint` fails on, and the record's own report above
+	// is the second reading.
+	if pr := h.PR(t); !pr.Draft {
+		t.Errorf("pull request = %+v, want the draft a governance halt leaves", pr)
+	}
+}
+
+// spendsPastEveryTier is the implement stage of a run dispatched at no tier: it
+// spends about $18 in two calls — more than any tier Fugaro ships expects, and
+// more than a run of any of them would be allowed to spend before its
+// checkpoint — and neither call is refused.
+func spendsPastEveryTier(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+	t.Helper()
+	for call := range 2 {
+		if code, body := runnertest.Post(t, req, sonnet, 4000); code != http.StatusOK {
+			t.Fatalf("call %d was answered %d, want 200: a run with no tier has no expectation to be stopped at: %s", call+1, code, body)
+		}
+	}
+	return runnertest.Implement("feature")(t, ctx, req)
+}
+
+// TestNoTierNoExpectation: the threshold is the tier's, so a run that carries
+// no tier has none (T8.2, D330). `--tier` is optional and most tasks are
+// untiered, so a run nobody expected a figure of is bounded by the governance
+// block and the run's cap exactly as it was before tiers existed: it is not
+// stopped at a default, at the dearest tier's figure, or at zero.
+func TestNoTierNoExpectation(t *testing.T) {
+	h := runnertest.New(t, gatewayCfg(t), nil)
+	// Again one reply per call that reaches the upstream: the two implement
+	// calls, and nothing after them — an untiered run is not halted, so no
+	// checkpoint call follows, and a request past the script is a test error.
+	h.Gateway(t, "enforce", untieredCap, pastEveryTier(), pastEveryTier())
+	rec, err := h.Run(t, spendsPastEveryTier, runnertest.Review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Halt != nil {
+		t.Fatalf("halt = %+v: an untiered run has no expectation to be stopped at", rec.Halt)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Errorf("record = %+v, want the untiered run to go on to its review and end ready", rec)
+	}
+	if rec.Tier != nil {
+		t.Errorf("record tier = %+v, want none: the run was dispatched at no tier", rec.Tier)
+	}
+}
+
 // The review-scope stop (T5.2, T7.3, D332). What the tests below drive is the
 // comparison the core records after implement (diffbase.go, readReviewScope)
 // and the reading ee/governance's Before takes of it before a review round:

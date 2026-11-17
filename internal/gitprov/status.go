@@ -262,13 +262,42 @@ type ChangeSetMember struct {
 	PR    string
 }
 
+// ChangeSetOrder is the set's advisory merge order as one line: every member's
+// repository, in the order the set lists them, which is the order the launch
+// named them — contracts and shared libraries first, then the consumers that
+// need them — and the statement that nothing enforces it (D615).
+//
+// Nothing is recorded for the order beyond the member list every member's task
+// already carries (task.ChangeSet.Members is in launch order), so this line
+// states a fact of the set rather than a second list to keep in step with it.
+// It exists because the order is read from ONE member's pull request: whoever
+// lands on one of a set's pull requests sees that member's body alone, and the
+// order a set is meant to be merged in cannot be left to the sibling list.
+//
+// The line says "advisory" and means it: the settle step makes a set's pull
+// requests ready together and nothing here orders, blocks or reorders a merge
+// (D615).
+//
+// Backticks around each repository, the way the block's member lines draw one:
+// a repository is a name a reader copies. "" for a set with no members.
+func ChangeSetOrder(members []ChangeSetMember) string {
+	if len(members) == 0 {
+		return ""
+	}
+	repos := make([]string, 0, len(members))
+	for _, m := range members {
+		repos = append(repos, "`"+m.Repo+"`")
+	}
+	return strings.Join(repos, ", then ") + " — merge in this order; nothing blocks a merge"
+}
+
 // ChangeSetLine is the section's change-set block: the set's name, how many
-// runs it holds and one line per member. setID, selfRunID and each member's
-// RunID are the short forms the CLI's own prose names runs by
-// (task.ShortRun): what a reader acts on is the repository beside them and the
-// pull request where the caller knows it. selfRunID is the run whose section
-// this is and is marked as such, so a reader who landed on one member's pull
-// request can tell which of the runs it is.
+// runs it holds, the set's advisory merge order and one line per member. setID,
+// selfRunID and each member's RunID are the short forms the CLI's own prose
+// names runs by (task.ShortRun): what a reader acts on is the repository beside
+// them and the pull request where the caller knows it. selfRunID is the run
+// whose section this is and is marked as such, so a reader who landed on one
+// member's pull request can tell which of the runs it is.
 //
 // A member run can never fill this in completely. Runs of one repository share
 // their prefixes in the runs bucket and no run reaches another repository's
@@ -293,6 +322,7 @@ func ChangeSetLine(setID, selfRunID string, members []ChangeSetMember) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "**Change set** `%s`: %d runs, one per repository, held in draft until every member is ready\n",
 		setID, len(members))
+	fmt.Fprintf(&b, "**Merge order** (advisory): %s\n", ChangeSetOrder(members))
 	for _, m := range members {
 		if m.RunID == selfRunID {
 			fmt.Fprintf(&b, "- `%s` run `%s` (this run)\n", m.Repo, m.RunID)

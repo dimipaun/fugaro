@@ -223,6 +223,7 @@ func TestChangeSetStatusSectionListsSiblingPRs(t *testing.T) {
 	}
 	got := ChangeSetLine("a1b2", "a1b2", members)
 	want := "**Change set** `a1b2`: 3 runs, one per repository, held in draft until every member is ready\n" +
+		"**Merge order** (advisory): `acme/app`, then `acme/other`, then `acme/third` — merge in this order; nothing blocks a merge\n" +
 		"- `acme/app` run `a1b2` (this run)\n" +
 		"- `acme/other` run `c3d4`: https://github.com/acme/other/pull/9\n" +
 		"- `acme/third` run `e5f6`: its pull request is not known to this run\n"
@@ -252,5 +253,49 @@ func TestChangeSetLineEmpty(t *testing.T) {
 	}
 	if got := ChangeSetLine("a1b2", "a1b2", nil); got != "" {
 		t.Fatalf("a set with no members rendered %q", got)
+	}
+}
+
+// TestChangeSetOrderInEveryPR is D4's red step: EVERY member's pull request
+// states the set's advisory merge order (D4, D615). A reader lands on one of a
+// set's pull requests and sees that member's body alone, so an order written
+// only in a sibling's body — or only in the block's member list, which is read
+// the same way — is an order half the set's readers never see.
+//
+// The order is the member list's own, which is the order the launch named the
+// repositories: contracts and shared libraries first, then the consumers that
+// need them. The line says what enforces it, because nothing does — the settle
+// step makes a set's pull requests ready together and never orders, blocks or
+// reorders a merge (D615).
+func TestChangeSetOrderInEveryPR(t *testing.T) {
+	members := []ChangeSetMember{
+		{Repo: "acme/contract", RunID: "a1b2", PR: "https://github.com/acme/contract/pull/7"},
+		{Repo: "acme/library", RunID: "c3d4", PR: "https://github.com/acme/library/pull/9"},
+		{Repo: "acme/consumer", RunID: "e5f6"},
+	}
+	const want = "**Merge order** (advisory): `acme/contract`, then `acme/library`, then `acme/consumer`" +
+		" — merge in this order; nothing blocks a merge\n"
+	for _, self := range []string{"a1b2", "c3d4", "e5f6"} {
+		got := ChangeSetLine("a1b2", self, members)
+		if !strings.Contains(got, want) {
+			t.Errorf("the section of run %s does not state the order %q:\n%s", self, want, got)
+		}
+		// The line is section text like the rest: cleaning it leaves it whole,
+		// and a block that lost it would put the order in no pull request at
+		// all.
+		if cleaned := strings.Join(cleanSection(got)[1:], "\n"); !strings.Contains(cleaned, strings.TrimSuffix(want, "\n")) {
+			t.Errorf("the order line did not survive the section's own cleaning:\n%s", cleaned)
+		}
+	}
+	// The order is the set's and not a second list to keep in step: the same
+	// members named the other way round state the other order.
+	reversed := []ChangeSetMember{members[2], members[1], members[0]}
+	if got := ChangeSetOrder(reversed); !strings.HasPrefix(got, "`acme/consumer`, then `acme/library`, then `acme/contract`") {
+		t.Errorf("a set launched the other way round states %q", got)
+	}
+	// A set with no members states no order, and no pull request of one exists
+	// to state it in.
+	if got := ChangeSetOrder(nil); got != "" {
+		t.Errorf("a set with no members stated the order %q", got)
 	}
 }

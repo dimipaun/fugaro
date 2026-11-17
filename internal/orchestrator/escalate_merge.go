@@ -81,7 +81,7 @@ const (
 	RecipeMergeJudge = "merge-judge"
 )
 
-// LadderMergeSeams is what rungs 3 and 4 act through: the reading the gate is decided
+// BeyondSeams is what rungs 3 and 4 act through: the reading the gate is decided
 // on, the host a landing is made through, the node the moves are written to, the
 // launcher a rung 3 run starts through, the comment a move posts and the log
 // every move leaves a line in.
@@ -91,9 +91,9 @@ const (
 // the direction an unwired seam has to fail in is "nothing happens" — which is
 // what Set and Beyond between them give: no seam, no hook, and the item is left
 // exactly where E10a's default put it.
-type LadderMergeSeams struct {
+type BeyondSeams struct {
 	// Read gathers what the gate is decided on for one item and one head.
-	Read LadderMergeReader
+	Read BeyondReader
 	// Host is the provider slice a landing needs (E8).
 	Host MergeHost
 	// Node is the state the hook reads and the one write path it lands its
@@ -112,7 +112,7 @@ type LadderMergeSeams struct {
 	Comment LadderCommenter
 	// Log is the line every move is appended under, and the place a line
 	// already written is read back from.
-	Log LadderMergeLog
+	Log BeyondLog
 	// Notify is where the merge a Pro or Hotfix ceiling makes is told, or nil
 	// for a daemon that tells nobody.
 	Notify Notifier
@@ -131,7 +131,7 @@ type LadderMergeSeams struct {
 }
 
 // Set reports whether every seam but the two optional ones is there.
-func (s LadderMergeSeams) Set() bool {
+func (s BeyondSeams) Set() bool {
 	return s.Read != nil && s.Host != nil && s.Node != nil && s.Launch != nil &&
 		s.Comment != nil && s.Log != nil && s.Now != nil && s.Mint != nil
 }
@@ -140,19 +140,22 @@ func (s LadderMergeSeams) Set() bool {
 // set that is not complete answers no hook at all, which leaves the item where
 // the decision put it — the same place a release without this file leaves it —
 // rather than a rung 3 that launched a run nothing recorded.
-func (s LadderMergeSeams) Beyond() LadderBeyond {
+func (s BeyondSeams) Beyond() LadderBeyond {
 	if !s.Set() {
 		return nil
 	}
 	return s.beyond
 }
 
-func (s LadderMergeSeams) beyond(ctx context.Context, item WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) (bool, error) {
+func (s BeyondSeams) beyond(ctx context.Context, item WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) (LadderAct, error) {
 	if read.Running != "" {
 		// A run of the ladder's is under way for this item and has not
 		// reported. What it answers with is the next cycle's, and acting over
-		// it would judge a head that run's own push may be about to move.
-		return false, nil
+		// it would judge a head that run's own push may be about to move. The
+		// wait is the run's and not this hook's — the executor reads a ladder
+		// run that has not reported before it calls any hook at all (ladderItem)
+		// — so there is nothing here for the cycle's count to carry.
+		return LadderIdle, nil
 	}
 	switch step.Rung {
 	case escalation.R3:
@@ -160,10 +163,10 @@ func (s LadderMergeSeams) beyond(ctx context.Context, item WorkItem, step escala
 	case escalation.R4:
 		return s.split(ctx, item, step, reason, read)
 	}
-	return false, nil
+	return LadderIdle, nil
 }
 
-// LadderMergeReader gathers what the rung 3 gate is decided on for one item at one
+// BeyondReader gathers what the rung 3 gate is decided on for one item at one
 // head: the run behind that head, the findings open at it — the run's own and
 // the review's — the pull request it belongs to, and the two ladder runs at that
 // head: the review D2043 requires and the judge whose answer may veto.
@@ -177,7 +180,7 @@ func (s LadderMergeSeams) beyond(ctx context.Context, item WorkItem, step escala
 // A reading that could not be made is Read false, which the gate refuses on
 // (G5); an error is a read that did not happen, and it ends the item's turn for
 // the next cycle to retry.
-type LadderMergeReader interface {
+type BeyondReader interface {
 	MergeAt(ctx context.Context, item WorkItem, head string) (MergeReading, error)
 }
 
@@ -217,8 +220,24 @@ type MergeReading struct {
 	Scored bool
 	// JudgeRun is the merge judge's run for this head, or "".
 	JudgeRun string
+	// JudgeScored is whether the judge at this head has answered, and it is the
+	// judge's half of what Scored is to the review. A judge that has not
+	// answered yet — no run of its own in the reading, or a run that has not
+	// reported — is a wait, which the gate retries rather than reading as the
+	// veto D2044 makes of an absent verdict: a veto raised for a judge that has
+	// simply not spoken yet spends the item's one question, and the judge's real
+	// answer then reaches nobody (D2037).
+	//
+	// A judge whose run has ended without an answer has answered with nothing,
+	// and the caller that read the run's own end says so: Scored, with the zero
+	// verdict D2044 makes a veto. That is not a distinction the gate can draw
+	// for itself — both arrive as a run id with no verdict beside it — and only
+	// the reader that read the run knows whether it has ended.
+	JudgeScored bool
 	// Verdict is the judge's answer, as the caller read it out of that run. The
-	// zero value is a judge that did not answer, which is a veto (D2044).
+	// zero value is a judge that answered nothing, which is a veto (D2044);
+	// where the judge has not answered at all, JudgeScored is false and the gate
+	// waits rather than reading the zero value.
 	Verdict runstore.MergeJudge
 }
 
@@ -241,27 +260,35 @@ var _ MergeHost = gitprov.Provider(nil)
 
 // MergeNode is the state a hook reads and the one write path it lands its moves
 // through: the cycle's own, or the moves are written over a revision the cycle
-// has already moved past. See LadderMergeSeams.Node.
+// has already moved past. See BeyondSeams.Node.
 type MergeNode interface {
 	State(ctx context.Context) (State, error)
 	Apply(ctx context.Context, ops []Op) error
 }
 
-// LadderMergeLog is the log seam: the append the rungs below use, and the read that
-// answers whether a line under one id is already there.
+// BeyondLog is the log seam: the append the rungs below use, and the two reads
+// that answer what is already written down.
 //
-// The read is what makes a launch safe to retry. A run's record appears when its
-// run does, so the window between asking a launcher for a review and the record
-// existing is a window in which the reading alone cannot tell a head that has
-// had its review from one that has not — and D2043 allows one review per head.
-// The line the launch itself writes is what closes it (G4).
-type LadderMergeLog interface {
+// The first read is what makes a launch safe to retry. A run's record appears
+// when its run does, so the window between asking a launcher for a review and
+// the record existing is a window in which the reading alone cannot tell a head
+// that has had its review from one that has not — and D2043 allows one review
+// per head. The line the launch itself writes is what closes it (G4).
+//
+// The second is when a line was written, which is what bounds a wait the ladder
+// keeps retrying (boundRetry): such a wait looks like movement, and no reading
+// says how long it has looked that way, so the cycle that starts one writes a
+// line of its own and later cycles read its stamp back. That line is written
+// once and never rewritten, because a log keeps the latest write under an id and
+// a stamp that moved with every cycle would bound nothing.
+type BeyondLog interface {
 	LadderLog
 	Logged(ctx context.Context, id string) (bool, error)
+	LoggedAt(ctx context.Context, id string) (time.Time, bool, error)
 }
 
 // MergeLaunches is whether a rung 3 run has already been asked for at the head
-// under judgement, read from the log's own lines. See LadderMergeLog.
+// under judgement, read from the log's own lines. See BeyondLog.
 type MergeLaunches struct {
 	Review bool
 	Judge  bool
@@ -324,6 +351,10 @@ const (
 	GateReviewSpent GateReason = "review_spent"
 	// GateJudgeAbsent is a head no judge has been asked about yet (E6).
 	GateJudgeAbsent GateReason = "judge_absent"
+	// GateJudgeSpent is a head whose judge has been launched and has not
+	// answered: there is one judge per head, and the next cycle reads what it
+	// said.
+	GateJudgeSpent GateReason = "judge_spent"
 	// GateLaunchUncovered is a rung 3 run the ladder may not start: an item no
 	// approval covers, one a dependency still holds, one a run is moving
 	// through, or one whose ladder runs are all spent. The rungs below leave
@@ -332,7 +363,9 @@ const (
 	// like every other (D2042, G15).
 	GateLaunchUncovered GateReason = "launch_uncovered"
 	// GateJudgeVeto is the judge's no: it blocked the merge, said something the
-	// reader could not place, or did not answer at all (D2031, D2044).
+	// reader could not place, or ended without answering (D2031, D2044). A judge
+	// that has not answered yet is not this — the gate retries that wait, and
+	// only a head whose judge has stopped speaking is a person's (GateJudgeSpent).
 	GateJudgeVeto GateReason = "judge_veto"
 	// GateCeilingUnset is a decision with no ceiling action for this rung, which
 	// is a threshold nobody set and never a default (G5).
@@ -393,6 +426,26 @@ type MergeOutcome struct {
 	// findings are filed and the person a Pro or Hotfix merge is owed is told
 	// here instead.
 	Replay bool
+	// Retry is a wait on something that is still moving: a ladder run at this
+	// head that has not ended, a review that has been asked for and not yet
+	// recorded, a judge that has been asked for and not yet answered, checks
+	// that have not concluded. The next cycle reads the same head again and the
+	// answer may well be different, so none of it is a person's to act on and no
+	// question is raised for it (see merge).
+	//
+	// It is set where the reading itself moves, and nowhere else: everything
+	// else the gate waits on has stopped — no checks reported at all, a check
+	// that finished unreadably, a check nobody has placed, a review that ended
+	// without a score, a judge whose run ended without an answer, a run whose
+	// head is not the one it pushed — and a person is asked about each of those,
+	// once, in the item's own name.
+	//
+	// The gate does not bound this, because what it reads cannot say how long a
+	// reading has looked like movement: a commit status a dead job left at
+	// "pending" and a job really running read the same. merge bounds it instead,
+	// on the log's own stamp of the first cycle that retried the wait at this
+	// head (boundRetry), and past that bound the wait is a person's after all.
+	Retry bool
 	// Refusal is the closed code of a merge a host refused, and "" otherwise.
 	Refusal string
 	// Verdict is the judge's answer, attached to the question a refusal raises
@@ -425,8 +478,15 @@ type MergeInput struct {
 	// PR is the pull request as the host answered it, and CI the state of its
 	// checks at Head. Both are nil and unknown when there is nothing to read
 	// them for.
-	PR          *gitprov.PRInfo
+	PR *gitprov.PRInfo
+	// CI is the state of those checks, and CIPending whether any of them is
+	// still moving. ChecksState answers CIUnknown for three different readings —
+	// nothing reported at all, a check that has not concluded, and a finished
+	// check whose conclusion this code cannot read — and the gate waits on one
+	// of them (see mergeGate), so the reading beside the state is what tells
+	// them apart.
 	CI          gitprov.CIState
+	CIPending   bool
 	ReadyDrafts bool
 	// Launchable is whether the ladder may start a run of this item at all:
 	// the same four questions every launch is held to (ladderLaunchable), read
@@ -503,12 +563,22 @@ func mergeGate(in MergeInput) MergeOutcome {
 		return waitFact(GateHeadMoved)
 	}
 	if !in.Read.Scored {
-		if in.Read.ReviewRun == "" && !in.Launches.Review {
-			if !in.Launchable {
-				return waitFact(GateLaunchUncovered)
+		if in.Read.ReviewRun == "" {
+			if !in.Launches.Review {
+				if !in.Launchable {
+					return waitFact(GateLaunchUncovered)
+				}
+				return MergeOutcome{Kind: MergeLaunchReview, Launch: RecipeReviewOnly, Facts: []GateReason{GateUncovered}}
 			}
-			return MergeOutcome{Kind: MergeLaunchReview, Launch: RecipeReviewOnly, Facts: []GateReason{GateUncovered}}
+			// A review has been asked for at this head and its run is not in
+			// the reading yet: a run's record appears when its run does, and the
+			// review that was launched is a cycle or two behind its own line
+			// (BeyondLog). That is a wait on something moving.
+			return retry(waitFact(GateReviewSpent))
 		}
+		// The review at this head is recorded and carried no score. D2043 allows
+		// one review per head, so no later cycle produces another one, and a
+		// head whose review answered nothing is a person's to read.
 		return waitFact(GateReviewSpent)
 	}
 	if reason, unreadable := headFindingsUnreadable(in.Read); unreadable {
@@ -519,7 +589,7 @@ func mergeGate(in MergeInput) MergeOutcome {
 		return waitReason(ReasonRecordUnreadable)
 	}
 	if !rec.Status.Terminal() {
-		return waitFact(GateRunRunning)
+		return retry(waitFact(GateRunRunning))
 	}
 	paths := rec.ChangedFiles.Bounded()
 	switch {
@@ -533,6 +603,14 @@ func mergeGate(in MergeInput) MergeOutcome {
 		return waitFact(GateHeadUnpushed)
 	}
 	if !knownCI(in.CI) {
+		if in.CIPending {
+			// Checks that have not concluded: the commit's checks have no
+			// answer yet, and the next cycle reads what they said.
+			return retry(waitReason(ReasonCIUnknown))
+		}
+		// Nothing was reported at all, or a check that finished concluded
+		// something this code cannot read (F25): no cycle reads anything else
+		// here, so a person has to look at a head nothing will ever pass.
 		return waitReason(ReasonCIUnknown)
 	}
 	if in.CI != gitprov.CIGreen {
@@ -565,6 +643,17 @@ func mergeGate(in MergeInput) MergeOutcome {
 			return waitFact(GateLaunchUncovered)
 		}
 		return MergeOutcome{Kind: MergeLaunchJudge, Launch: RecipeMergeJudge, Facts: []GateReason{GateJudgeAbsent}}
+	}
+	if !in.Read.JudgeScored {
+		// The judge has been asked about this head and has not answered yet: the
+		// run's record appears when its run does, and its verdict when the run
+		// has read the head, so the cycle after the launch — and any cycle while
+		// the run is going — reads a judge that has not spoken. That is the same
+		// wait the review clause above retries, and it must not be read as the
+		// veto D2044 makes of an absent verdict: a veto raised here spends the
+		// item's one question on a judge that is still reading, and the answer
+		// the question was being kept for (D2037) then reaches no person at all.
+		return retry(waitFact(GateJudgeSpent))
 	}
 	if judgeVetoes(in.Read.Verdict) {
 		return MergeOutcome{Kind: MergeWait, Facts: []GateReason{GateJudgeVeto}, Verdict: in.Read.Verdict}
@@ -674,6 +763,93 @@ func waitReason(r TriageReason) MergeOutcome {
 	return MergeOutcome{Kind: MergeWait, Reasons: []TriageReason{r}}
 }
 
+// retry marks a wait as one on something that is still moving, which is what
+// keeps it away from a person (MergeOutcome.Retry). It wraps the two above so a
+// clause reads as the thing it refuses on, and whether anybody is asked is
+// decided in one place rather than at each clause.
+//
+// What it says is that the reading may be different next cycle, and not that it
+// will be: a reading can look like movement for ever, so the cycles that retry
+// one are bounded (boundRetry) and the wait becomes a person's once the bound is
+// passed.
+func retry(out MergeOutcome) MergeOutcome {
+	out.Retry = true
+	return out
+}
+
+// mergeRetryWindow is how long a rung 3 retries a wait on a reading that looks
+// like it is still moving before it stops believing it (MergeOutcome.Retry,
+// boundRetry).
+//
+// A wait is retried because the reading may be different next cycle, and that is
+// true only while something really is moving. Some readings look like movement
+// and never move: a commit status a dead job left at "pending" never concludes, a
+// launcher that took a request whose job never wrote a record leaves a review
+// launched and never recorded, and a run whose job died leaves a record that
+// never reaches a terminal status. Retrying those asks nobody and names no item,
+// and nothing else ends them: the cycles that retry one are cycles in flight and
+// not empty ones, so the breaker does not reach them either (outcome,
+// Report.Waited) — that pause is the daemon's answer to a loop that spins, and
+// this is a daemon waiting on a reading. So the wait is bounded in time instead,
+// and the item's own question is what a person gets when the bound is past.
+//
+// The window is measured from the first cycle that retried the wait at the head
+// under judgement, which is what the line mergeRetryTransition names records —
+// not from the item's arrival at the rung, and not from the head's age, because
+// neither is the wait a person is being told about. Six hours is longer than any
+// one run may last under a repository's own timeouts, so a real wait (checks
+// running, a run that has not ended, a review that is a cycle or two behind its
+// launch) is never cut short by it, and it is far short of for ever, which is the
+// direction the alternative fails in.
+const mergeRetryWindow = 6 * time.Hour
+
+// boundRetry is the bound on a retried wait: it stamps the cycle that first found
+// a wait at this head looking like movement, and past mergeRetryWindow it answers
+// the same outcome with Retry cleared — which is what makes the item's question
+// reachable, since merge asks a person for every wait that is not retried.
+//
+// The stamp is a line of its own and not the wait's own line, because the wait's
+// line is rewritten every cycle with the reading that cycle made and a log keeps
+// the latest write under an id: its stamp is the last cycle's, and a bound read
+// off it would never be reached. The line written here is written once, so the
+// stamp it carries is when the waiting began and does not move.
+func (s BeyondSeams) boundRetry(ctx context.Context, item WorkItem, head string, out MergeOutcome, now time.Time) (MergeOutcome, error) {
+	id := EntryID(item.ID, mergeRetryTransition(head))
+	began, ok, err := s.Log.LoggedAt(ctx, id)
+	switch {
+	case err != nil:
+		return out, err
+	case !ok:
+		return out, s.Log.Append(ctx, Entry{
+			Subject:    item.ID,
+			Transition: mergeRetryTransition(head),
+			Text:       "escalation: " + mergeRetryPhase + ": " + mergeLine(out),
+		})
+	case now.Sub(began) > mergeRetryWindow:
+		out.Retry = false
+	}
+	return out, nil
+}
+
+// mergeRetryPhase is the word the bound on a retried wait is recorded under.
+const mergeRetryPhase = "retry"
+
+// mergeRetryTransition is the audit id's transition half for that line, under
+// the head it names for the same reason an outcome line is: what is bounded is a
+// wait at one head, and a head that moves is a wait of its own.
+//
+// It is deliberately not one of MergeKind's outcomes. The gate has reached
+// nothing by writing it — the wait it stamps is still a wait, and the cycle goes
+// on retrying it — and a reader that took it for an outcome would read a cycle
+// that decided something.
+func mergeRetryTransition(head string) string {
+	name := "ladder-r3-" + mergeRetryPhase
+	if h := recordableHead(head); h != "" {
+		name += "-" + h[:min(len(h), questionHashHex)]
+	}
+	return name
+}
+
 // vetoed is a refusal taken with the judge's verdict in hand: the verdict is the
 // reader's, so the verdict dangles only while there is no judge to have answered
 // — a malformed one that is present is still a veto, and judgeVetoes has already
@@ -710,33 +886,40 @@ func merged(out MergeOutcome, code string) MergeOutcome {
 // after the line is the stop a merge leaves behind (see the end of the
 // function): it is the write that ends this hook's own recoverability, so it
 // comes once everything a cycle after it would have to redo has landed.
-func (s LadderMergeSeams) merge(ctx context.Context, item WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) (bool, error) {
+//
+// A wait the gate reads as movement writes one line before any of that: the
+// stamp the bound on retrying it is read from (boundRetry). It is written first
+// because it is about the reading and not about the outcome — a cycle whose op
+// list or outcome line fails after it still leaves the wait's age recorded — and
+// because it is written once, so a cycle that finds it already there reads the
+// age off it rather than writing a stamp of its own.
+func (s BeyondSeams) merge(ctx context.Context, item WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) (LadderAct, error) {
 	now, ok := s.Now()
 	if !ok {
-		return false, ErrNoServerTime
+		return LadderIdle, ErrNoServerTime
 	}
 	st, err := s.Node.State(ctx)
 	if err != nil {
-		return false, err
+		return LadderIdle, err
 	}
 	if cur, ok := st.Item(item.ID); ok {
 		item = cur
 	}
 	launches, err := s.launches(ctx, item.ID, read.HeadSHA)
 	if err != nil {
-		return false, err
+		return LadderIdle, err
 	}
 	said, err := s.said(ctx, item.ID, read.HeadSHA)
 	if err != nil {
-		return false, err
+		return LadderIdle, err
 	}
 	mr, err := s.Read.MergeAt(ctx, item, read.HeadSHA)
 	if err != nil {
-		return false, err
+		return LadderIdle, err
 	}
 	landed, err := s.landed(ctx, item.ID, read.HeadSHA)
 	if err != nil {
-		return false, err
+		return LadderIdle, err
 	}
 	in := MergeInput{
 		Item: item, Step: step, Head: read.HeadSHA, Read: mr, Launches: launches,
@@ -751,15 +934,24 @@ func (s LadderMergeSeams) merge(ctx context.Context, item WorkItem, step escalat
 		// retry — a read that did not happen is not a refusal to merge.
 		pr, err := s.Host.PullRequest(ctx, mr.Number)
 		if err != nil {
-			return false, err
+			return LadderIdle, err
 		}
 		checks, err := s.Host.Checks(ctx, mr.Number, in.Head)
 		if err != nil {
-			return false, err
+			return LadderIdle, err
 		}
-		in.PR, in.CI = &pr, gitprov.ChecksState(checks)
+		in.PR, in.CI, in.CIPending = &pr, gitprov.ChecksState(checks), gitprov.ChecksPending(checks)
 	}
 	out := mergeGate(in)
+	if out.Retry {
+		// A wait the gate reads as movement is retried, and a reading that never
+		// moves has to stop looking like one: the bound is what turns it into the
+		// item's question (boundRetry, mergeRetryWindow).
+		out, err = s.boundRetry(ctx, item, in.Head, out, now)
+		if err != nil {
+			return LadderIdle, err
+		}
+	}
 
 	runID, launched := item.RunID, false
 	var told *Notification
@@ -767,7 +959,7 @@ func (s LadderMergeSeams) merge(ctx context.Context, item WorkItem, step escalat
 	case MergeLaunchReview, MergeLaunchJudge:
 		id, err := s.launch(ctx, now, item, step, out, in.Head)
 		if err != nil {
-			return false, err
+			return LadderIdle, err
 		}
 		runID, launched = id, true
 	case MergeLand:
@@ -781,11 +973,11 @@ func (s LadderMergeSeams) merge(ctx context.Context, item WorkItem, step escalat
 			Transition: mergeLandingTransition(in.Head),
 			Text:       "escalation: " + mergeLandingPhase,
 		}); err != nil {
-			return false, err
+			return LadderIdle, err
 		}
 		code, err := s.land(ctx, in)
 		if err != nil {
-			return false, err
+			return LadderIdle, err
 		}
 		if code != "" {
 			out = merged(out, code)
@@ -806,19 +998,37 @@ func (s LadderMergeSeams) merge(ctx context.Context, item WorkItem, step escalat
 		// this write is safe to re-run.
 		ops = append(ops, mergeFollowUpOps(st, item, out)...)
 	case MergeWait:
-		if op, n, ok := mergeQuestionOp(st, item, mergeQuestion(item, out)); ok {
-			ops, told = append(ops, op), &n
+		// A wait on something still moving asks nobody (MergeOutcome.Retry): the
+		// item has one question and it is asked once, so a question raised for a
+		// run that has not ended or checks that have not concluded would spend it
+		// — the judge's later veto (D2037) would reach no person, and the stale
+		// question would sit open over a landing nobody is waiting on. The wait
+		// is retried next cycle instead, and the question is kept for the
+		// refusal that is a person's: the one read off a reading that has
+		// stopped moving, which is the reading no later cycle changes.
+		//
+		// A retried wait is one the gate read as movement, and movement that never
+		// arrives is what boundRetry bounds: past mergeRetryWindow the wait stops
+		// being retried and is a person's like any other refusal, which is what
+		// keeps a stuck reading from cycling for ever and naming nobody. Nothing
+		// else ends such a wait: the cycles that retry one read as in flight and
+		// not as cycles that did nothing, so the breaker is not what reaches them
+		// (outcome, Report.Waited).
+		if !out.Retry {
+			if op, n, ok := mergeQuestionOp(st, item, mergeQuestion(item, out)); ok {
+				ops, told = append(ops, op), &n
+			}
 		}
 	}
 	if len(ops) > 0 {
 		if err := s.Node.Apply(ctx, ops); err != nil {
-			return false, err
+			return LadderIdle, err
 		}
 	}
 	line := "escalation: " + ladderMove(step, reason, runID) + " " + mergeLine(out)
 	entry := Entry{Subject: item.ID, Transition: mergeTransition(step.Rung, out.Kind, in.Head), Text: line}
 	if err := s.Log.Append(ctx, entry); err != nil {
-		return false, err
+		return LadderIdle, err
 	}
 	if moved {
 		// One comment per move and not one per cycle: the move is what the
@@ -873,7 +1083,7 @@ func (s LadderMergeSeams) merge(ctx context.Context, item WorkItem, step escalat
 		// for. So the line, the comment and the person a ceiling tells all land
 		// first, and the write that cannot be taken back comes after them.
 		if err := s.Node.Apply(ctx, []Op{cancelItemOp(item.ID)}); err != nil {
-			return false, err
+			return LadderIdle, err
 		}
 	}
 	// What this cycle moved, read off the outcome rather than off the writes:
@@ -883,7 +1093,17 @@ func (s LadderMergeSeams) merge(ctx context.Context, item WorkItem, step escalat
 	// refusal a host answered — leaves the item where it stands and is the next
 	// cycle's, and a merge this ladder did not make with nothing left to file
 	// moved nothing at all.
-	return launched || out.Kind == MergeLand || out.Replay, nil
+	switch {
+	case launched || out.Kind == MergeLand || out.Replay:
+		return LadderMoved, nil
+	case out.Kind == MergeWait && out.Retry:
+		// The wait the gate retried, read off the outcome the bound left: a
+		// wait that has passed mergeRetryWindow is no longer retried, asks the
+		// item's question above, and is an idle cycle here like every other
+		// refusal a person has to read.
+		return LadderWaiting, nil
+	}
+	return LadderIdle, nil
 }
 
 // launch starts one rung 3 run and answers the id it was minted under. The id is
@@ -891,7 +1111,7 @@ func (s LadderMergeSeams) merge(ctx context.Context, item WorkItem, step escalat
 // below do it: what records the launch is the transition this cycle writes once
 // the start has come back, and the window in between is the log's line, which
 // the launch writes through the seam it was started through.
-func (s LadderMergeSeams) launch(ctx context.Context, now time.Time, item WorkItem, step escalation.Step, out MergeOutcome, head string) (string, error) {
+func (s BeyondSeams) launch(ctx context.Context, now time.Time, item WorkItem, step escalation.Step, out MergeOutcome, head string) (string, error) {
 	runID, err := s.Mint(now)
 	if err != nil {
 		return "", err
@@ -913,7 +1133,7 @@ func (s LadderMergeSeams) launch(ctx context.Context, now time.Time, item WorkIt
 // provider's merge cannot be bound to an expected head at all, it holds no merge
 // credential, or the pull request is no longer open (mergeRefusalCode). A host
 // that did not answer is the next cycle's to retry.
-func (s LadderMergeSeams) land(ctx context.Context, in MergeInput) (string, error) {
+func (s BeyondSeams) land(ctx context.Context, in MergeInput) (string, error) {
 	if in.PR.Draft {
 		if err := s.Host.MarkReady(ctx, in.PR.Number, in.Head); err != nil {
 			if code := mergeRefusalCode(err); code != "" {
@@ -933,7 +1153,7 @@ func (s LadderMergeSeams) land(ctx context.Context, in MergeInput) (string, erro
 
 // launches is whether a rung 3 run has already been asked for at this head, read
 // from the log by the audit id of its own line.
-func (s LadderMergeSeams) launches(ctx context.Context, itemID, head string) (MergeLaunches, error) {
+func (s BeyondSeams) launches(ctx context.Context, itemID, head string) (MergeLaunches, error) {
 	if recordableHead(head) == "" {
 		return MergeLaunches{}, nil
 	}
@@ -954,7 +1174,7 @@ func (s LadderMergeSeams) launches(ctx context.Context, itemID, head string) (Me
 // cycle that made the landing writes the first, and the cycle that finished a
 // lost one writes the second, so every cycle after either of them finds this
 // true and does nothing.
-func (s LadderMergeSeams) said(ctx context.Context, itemID, head string) (bool, error) {
+func (s BeyondSeams) said(ctx context.Context, itemID, head string) (bool, error) {
 	if recordableHead(head) == "" {
 		return false, nil
 	}
@@ -984,7 +1204,7 @@ func (s LadderMergeSeams) said(ctx context.Context, itemID, head string) (bool, 
 // finishing what this ladder started. That is the direction to fail in: the
 // work a landing owes is filed and the person is told, where the other reading
 // loses D2040's follow-ups to a merge that really happened.
-func (s LadderMergeSeams) landed(ctx context.Context, itemID, head string) (bool, error) {
+func (s BeyondSeams) landed(ctx context.Context, itemID, head string) (bool, error) {
 	if recordableHead(head) == "" {
 		return false, nil
 	}
@@ -1067,7 +1287,9 @@ func mergeLedgerOp(item WorkItem, step escalation.Step, reason escalation.Reason
 // carries is the question already asked, and a cycle that re-runs after its
 // write landed asks nothing more. Nothing new is asked while a rung 3 waits
 // either — the answer is what moves the item, and the ladder's reading of the
-// next cycle is what it acts on.
+// next cycle is what it acts on — and a wait on something still moving is not
+// asked about in the first place (merge, MergeOutcome.Retry), nor after the
+// bound on one is passed (boundRetry).
 func mergeQuestionOp(st State, item WorkItem, question string) (Op, Notification, bool) {
 	id := ladderQuestionID(item.ID)
 	if _, ok := st.Decision(id); ok {
@@ -1349,7 +1571,7 @@ func recordableHead(h string) string {
 // say hands one notification to the sink, and a sink that will not take it is
 // reported and never fails the cycle: what a cycle must not lose is the write
 // behind the notification.
-func (s LadderMergeSeams) say(ctx context.Context, n Notification) {
+func (s BeyondSeams) say(ctx context.Context, n Notification) {
 	if s.Notify == nil {
 		return
 	}
@@ -1358,7 +1580,7 @@ func (s LadderMergeSeams) say(ctx context.Context, n Notification) {
 	}
 }
 
-func (s LadderMergeSeams) warn(err error) {
+func (s BeyondSeams) warn(err error) {
 	if err != nil && s.Warn != nil {
 		s.Warn(err)
 	}

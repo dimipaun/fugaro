@@ -48,6 +48,7 @@ type OpKind string
 const (
 	OpWorkItemUpsert  OpKind = "work_item_upsert"
 	OpWorkItemApprove OpKind = "work_item_approve"
+	OpPlanApprove     OpKind = "plan_approve"
 	OpWorkItemArchive OpKind = "work_item_archive"
 	OpDecisionAdd     OpKind = "decision_add"
 	OpDecisionResolve OpKind = "decision_resolve"
@@ -58,11 +59,11 @@ const (
 
 // OpKinds is the whole vocabulary.
 var OpKinds = []OpKind{
-	OpWorkItemUpsert, OpWorkItemApprove, OpWorkItemArchive,
+	OpWorkItemUpsert, OpWorkItemApprove, OpPlanApprove, OpWorkItemArchive,
 	OpDecisionAdd, OpDecisionResolve, OpFactSet, OpFactDelete, OpGoalSet,
 }
 
-// Known reports whether k is one of the eight ops.
+// Known reports whether k is one of the nine ops.
 func (k OpKind) Known() bool {
 	for _, o := range OpKinds {
 		if o == k {
@@ -77,14 +78,15 @@ func (k OpKind) Known() bool {
 // an upsert changes what it carries and leaves the rest alone, which is how
 // the daemon moves a phase without rewriting — and re-digesting — a brief.
 type Op struct {
-	Op       OpKind      `json:"op"`
-	WorkItem *WorkItemOp `json:"work_item,omitempty"`
-	Approve  *ApproveOp  `json:"approve,omitempty"`
-	Archive  *ArchiveOp  `json:"archive,omitempty"`
-	Decision *DecisionOp `json:"decision,omitempty"`
-	Resolve  *ResolveOp  `json:"resolve,omitempty"`
-	Fact     *FactOp     `json:"fact,omitempty"`
-	Goal     *GoalOp     `json:"goal,omitempty"`
+	Op          OpKind         `json:"op"`
+	WorkItem    *WorkItemOp    `json:"work_item,omitempty"`
+	Approve     *ApproveOp     `json:"approve,omitempty"`
+	PlanApprove *PlanApproveOp `json:"plan_approve,omitempty"`
+	Archive     *ArchiveOp     `json:"archive,omitempty"`
+	Decision    *DecisionOp    `json:"decision,omitempty"`
+	Resolve     *ResolveOp     `json:"resolve,omitempty"`
+	Fact        *FactOp        `json:"fact,omitempty"`
+	Goal        *GoalOp        `json:"goal,omitempty"`
 }
 
 // WorkItemOp is what a work_item_upsert carries: the declaration a person or
@@ -231,6 +233,8 @@ func applyOp(s *State, op Op, a Actor) error {
 		return applyUpsert(s, *op.WorkItem, a)
 	case OpWorkItemApprove:
 		return applyApprove(s, *op.Approve, a)
+	case OpPlanApprove:
+		return applyPlanApprove(s, *op.PlanApprove, a)
 	case OpWorkItemArchive:
 		return applyArchive(s, *op.Archive, a)
 	case OpDecisionAdd:

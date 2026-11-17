@@ -561,29 +561,49 @@ func TestSetupSkillVerifiesBeforeRecommending(t *testing.T) {
 	}
 }
 
-// githubAppFacts are what the skill and docs must say about the GitHub App;
-// the permissions are derived from the code that mints the token.
+// githubAppPermissions are what the skill and docs must say about the GitHub
+// App; the permissions are derived from the code that asks GitHub for them —
+// a run's set and the credentials service's issue route, the higher level where
+// two or more name one, which is what RequiredPermissions holds the App's
+// installation to.
 func githubAppPermissions(t *testing.T) []string {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("..", "internal", "gitprov", "github", "apptoken.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := regexp.MustCompile(`(?s)var tokenPermissions = map\[string\]string\{(.*?)\n\}`).FindStringSubmatch(string(data))
-	if m == nil {
-		t.Fatal("tokenPermissions not found in apptoken.go")
-	}
-	var out []string
-	for _, kv := range regexp.MustCompile(`"(\w+)":\s*"(\w+)"`).FindAllStringSubmatch(m[1], -1) {
-		name := map[string]string{"contents": "Contents", "pull_requests": "Pull requests", "issues": "Issues", "metadata": "Metadata"}[kv[1]]
-		if name == "" {
-			t.Fatalf("unknown permission %q in apptoken.go: update the skill and docs", kv[1])
+	levels := map[string]int{"": 0, "read": 1, "write": 2, "admin": 3}
+	need := map[string]string{}
+	for _, set := range []string{"tokenPermissions", "issueTokenPermissions"} {
+		m := regexp.MustCompile(`(?s)var ` + set + ` = map\[string\]string\{(.*?)\n\}`).FindStringSubmatch(string(data))
+		if m == nil {
+			t.Fatalf("%s not found in apptoken.go", set)
 		}
-		access := map[string]string{"write": "Read & write", "read": "Read"}[kv[2]]
-		out = append(out, name+" "+access)
+		for _, kv := range regexp.MustCompile(`"(\w+)":\s*"(\w+)"`).FindAllStringSubmatch(m[1], -1) {
+			if levels[kv[2]] > levels[need[kv[1]]] {
+				need[kv[1]] = kv[2]
+			}
+		}
+	}
+	names := make([]string, 0, len(need))
+	for name := range need {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	var out []string
+	for _, name := range names {
+		display, ok := map[string]string{"contents": "Contents", "pull_requests": "Pull requests", "issues": "Issues", "metadata": "Metadata"}[name]
+		if !ok {
+			t.Fatalf("unknown permission %q in apptoken.go: update the skill and docs", name)
+		}
+		access, ok := map[string]string{"write": "Read & write", "read": "Read", "admin": "Admin"}[need[name]]
+		if !ok {
+			t.Fatalf("unknown level %q for %q in apptoken.go", need[name], name)
+		}
+		out = append(out, display+" "+access)
 	}
 	if len(out) != 4 {
-		t.Fatalf("apptoken.go asks for %d permissions, the skill says four", len(out))
+		t.Fatalf("Fugaro requires %d permissions of the App, the skill says four", len(out))
 	}
 	return out
 }
@@ -739,7 +759,7 @@ func TestSetupSkillRecommendationAnchors(t *testing.T) {
 		"checked with a read-only command you may run, or stated by the user",
 		"Recommend the credential the evidence supports; `vertex` only once the facts are verified",
 		"The App's four repository permissions are Contents Read & write",
-		"Pull requests Read & write, Issues Read and Metadata Read, and never Workflows",
+		"Pull requests Read & write, Issues Read & write and Metadata Read, and never Workflows",
 		"skipped, with a one-line confirmation",
 	} {
 		if !strings.Contains(skill, want) && !strings.Contains(dec, want) {

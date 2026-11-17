@@ -44,6 +44,15 @@
         },
         {
           "type": "object",
+          "required": ["op", "plan_approve"],
+          "additionalProperties": false,
+          "properties": {
+            "op": { "const": "plan_approve" },
+            "plan_approve": { "$ref": "#/$defs/plan_approve_op" }
+          }
+        },
+        {
+          "type": "object",
           "required": ["op", "archive"],
           "additionalProperties": false,
           "properties": {
@@ -226,6 +235,38 @@
           "type": "string",
           "pattern": "^sha256:[0-9a-f]{64}$",
           "description": "The digest of the spec the person read. Apply refuses it unless it is the item's digest right then, which is what binds the approval to what was approved. There is no approval field on an upsert: an approval comes from this op and from nothing else."
+        }
+      }
+    },
+    "plan_approve_op": {
+      "type": "object",
+      "required": ["node", "items"],
+      "additionalProperties": false,
+      "properties": {
+        "node": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 44,
+          "description": "The node whose items this approves: an imported plan's folder under docs/, as the import wrote it on the items (`spec`), or `backlog` for the standing backlog's node, whose items carry no spec (D2706, D2717, D2735). Apply is handed one node's document, so the node is checked against the items themselves: a listed item tagged with another plan, or a plan's item listed under `backlog`, is not approved by this op."
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "description": "The items the import wrote and the digests the person read, which is the whole scope of the approval (D2738). An item whose spec has moved since it was read is skipped rather than approved, and the skip is recorded as one fact naming the item; an id the node does not carry, or one that is not an item of `node`, is skipped silently. Nothing here refuses the patch, so one moved item does not hold up the rest."
+        }
+      }
+    },
+    "plan_approve_item": {
+      "type": "object",
+      "required": ["id", "digest"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$" },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "The digest of the spec the person read, as the import printed it. Apply skips the item unless it is the item's digest right then, which is what binds the approval to what was approved."
         }
       }
     },

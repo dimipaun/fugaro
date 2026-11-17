@@ -216,19 +216,28 @@ func (n *Node) Load(ctx context.Context) (State, ETag, error) {
 }
 
 // ReadState reads one orchestrator's state node for a reader that holds
-// nothing: no ETag to save under and no lease to keep. It is Node.Load's read
-// without the node's own writer, for the surfaces that only display a state —
-// the front door's get_state is one (O16b) — so both ends of this node apply
-// the same rule to what they read: the absent node is this orchestrator's empty
-// state rather than an error, and a document another id or role wrote is
-// refused (ErrNotThisNode).
+// nothing: no ETag to save under and no lease to keep. It is ReadShard at the
+// state node, which is the node every caller of this package had before there
+// were shards.
 //
 // The role is the caller's and not the document's, as it is for a Node: the
 // front door reads the project's own orchestrator (RoleOrchestrator), which is
 // the loop the CLI reads too, so it cannot come to read the coordinator's
 // document as an orchestrator's.
 func ReadState(ctx context.Context, db Reader, agentID, role string) (State, error) {
-	path, err := PathState(agentID)
+	return ReadShard(ctx, db, agentID, role, ShardState)
+}
+
+// ReadShard reads one node of the subtree for a reader that holds nothing: the
+// state node (ReadState), one imported plan's node, or the standing backlog's
+// (D2735). It is Node.Load's read without the node's own writer, for the
+// surfaces that only display a state — the front door's get_state is one
+// (O16b), and the CLI's brief reads a plan's node and the backlog's — so both
+// ends of every node apply the same rule to what they read: an absent node is
+// this orchestrator's empty state rather than an error, and a document another
+// id or role wrote is refused (ErrNotThisNode).
+func ReadShard(ctx context.Context, db Reader, agentID, role string, shard Shard) (State, error) {
+	path, err := shardPath(agentID, shard)
 	if err != nil {
 		return State{}, err
 	}

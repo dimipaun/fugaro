@@ -9,6 +9,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // rigor_repo_layer_test.go is M3's half of `fugaro rigor set`
@@ -493,5 +494,117 @@ func TestRigorWideningRefusedInAnAgentSession(t *testing.T) {
 	}
 	if got := rigorRepoMode(t, path); got != rigor.Critical {
 		t.Errorf("the checkout's file reads %q, want %q", got, rigor.Critical)
+	}
+}
+
+// TestRigorSetRepoLayerWritesTheRepositoryItNames is the guard on the one line
+// that decides WHERE a `--layer repo` write lands. The command runs in some
+// checkout and may be pointed at another repository of the same project
+// (`--repo owner/name`, or a path to its checkout), and the two are told apart
+// by the origin of the directory the command runs in: when that origin IS the
+// repository --repo named, the checkout in hand is the file to edit, and when
+// it is not, the write is handed to the resolver, which lands it in the
+// checkout this machine remembers for that repository.
+//
+// The failure the guard prevents is silent and worse than a refusal: a `--repo
+// owner/repo-b` typed in owner/repo-a's checkout that cleared the name would
+// write the working tree the command is standing in — a repository the caller
+// never named — and the sentence that follows would name it as if it were the
+// one asked for. Nothing in the layer, the registry or the loader would
+// object, because both files are the same project's and both are read
+// through the same path.
+//
+// Mutation (run, restore): replace the `if here != "" && strings.EqualFold(here,
+// repo)` branch of runRigorSet with `opts.repo = ""`, and the write lands in
+// owner/repo-a and leaves owner/repo-b untouched.
+func TestRigorSetRepoLayerWritesTheRepositoryItNames(t *testing.T) {
+	home, _ := settingsWriteHome(t)
+	rigorModeSet(t, rigorAnchors, "pro")
+	// The repository the write is FOR: a checkout this machine remembers for
+	// the project, which is how settingsRepoFile finds a repository the
+	// command does not run in.
+	other := modelsWriteCheckout(t, home, "owner/repo-b", rigorRepoLayerYAML)
+	// And the one the command runs in, which is what the write must not touch.
+	here := modelsWriteGitCheckout(t, "owner/repo-a", rigorRepoLayerYAML)
+	beforeHere := readFileString(t, here)
+
+	out, _, err := execute(t, "rigor", "set", "critical", "--layer", "repo", "--repo", "owner/repo-b")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	assertNoPrompt(t, out)
+	if got := rigorRepoMode(t, other); got != rigor.Critical {
+		t.Errorf("the repository the write named reads %q, want %q:\n%s", got, rigor.Critical, readFileString(t, other))
+	}
+	if got := readFileString(t, here); got != beforeHere {
+		t.Errorf("a --repo naming another repository wrote the checkout the command runs in:\n%s", got)
+	}
+	// The sentence names the repository the write is in, which is the one
+	// --repo named and not the one the command happened to run in.
+	if !strings.Contains(out, "owner/repo-b's working tree and nowhere else") {
+		t.Errorf("the write does not say whose working tree it is in:\n%s", out)
+	}
+	if strings.Contains(out, "owner/repo-a") {
+		t.Errorf("the write names the checkout it was read in:\n%s", out)
+	}
+}
+
+// TestRigorSetRepoLayerRefusesACheckoutWithNoRepository is the other half of
+// that line: a repository is the name of the file the change is in, and a
+// checkout whose origin names no repository is one the command cannot hand its
+// change over from. What it must not do is write the file anyway — the sentence
+// it ends with names the repository, and a file it cannot name is one the owner
+// is not told to review — so the checkout is refused, the refusal says what to
+// pass instead, and nothing is written.
+//
+// The command the refusal prints is the one that works, --area and --name
+// included: it is what a coding agent's session hands a person, and a session's
+// refusal that dropped the rule being written would send them to a different
+// edit.
+func TestRigorSetRepoLayerRefusesACheckoutWithNoRepository(t *testing.T) {
+	settingsWriteHome(t)
+	rigorModeSet(t, rigorAnchors, "pro")
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q", "-b", "main")
+	path := filepath.Join(dir, "fugaro.yaml")
+	if err := os.WriteFile(path, []byte(rigorRepoLayerYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	before := readFileString(t, path)
+
+	for _, tc := range []struct {
+		name string
+		argv []string
+		want string
+	}{
+		{"the layer's default", []string{"rigor", "set", "critical", "--layer", "repo"},
+			"fugaro rigor set critical --layer repo --repo owner/name"},
+		{"one area rule", []string{"rigor", "set", "critical", "--area", "src/**", "--name", "core", "--layer", "repo"},
+			"fugaro rigor set critical --area 'src/**' --name core --layer repo --repo owner/name"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, _, err := execute(t, tc.argv...)
+			if err == nil {
+				t.Fatalf("a checkout whose origin names no repository was written:\n%s", out)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+			}
+			if !strings.Contains(err.Error(), "a --layer repo write names the repository") {
+				t.Errorf("the refusal does not say what is missing: %v", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the refusal does not print the command that works (%q): %v", tc.want, err)
+			}
+			if !strings.Contains(err.Error(), "run it from that repository's checkout") {
+				t.Errorf("the refusal names no other way to run it: %v", err)
+			}
+			assertNoPrompt(t, out)
+			if got := readFileString(t, path); got != before {
+				t.Errorf("the refused write changed the checkout:\n%s", got)
+			}
+		})
 	}
 }

@@ -3060,3 +3060,118 @@ func TestBinariesNotInShared(t *testing.T) {
 		t.Error("Shared/MergeShared cleared the local block")
 	}
 }
+
+// TestLocalConfigReportsCommitIsHeldToTheNodeRule: the designated repository is
+// the owner's own word about where every report of the project lands (D2750,
+// D2751; periodic-reviews R14), and the file that carries it is held to the
+// same rule the policy node's decode applies (projectpolicy.ValidReportsCommit)
+// rather than to a second one written here — a block this file accepted while
+// the node refused it, or the other way round, would be a repository whose
+// reports are committed or not depending on which door the block came through.
+// A block that names no repository is refused because it reads as a
+// designation and designates nothing, and a folder that is absolute or walks
+// out of the checkout is refused because it would put a report, and the commit
+// that carries it, somewhere no report run may write.
+func TestLocalConfigReportsCommitIsHeldToTheNodeRule(t *testing.T) {
+	for name, block := range map[string]string{
+		"a block naming only the folder":    "dir: docs/reports",
+		"a repo that is not owner/name":     "repo: reports",
+		"a repo with a .. segment":          "repo: acme/../etc",
+		"an absolute folder":                "repo: acme/reports, dir: /etc/fugaro",
+		"a folder with a .. segment":        "repo: acme/reports, dir: ../elsewhere",
+		"a member the block does not model": "repo: acme/reports, folder: docs",
+	} {
+		if _, err := Parse([]byte(sample + "reports_commit: {" + block + "}\n")); err == nil {
+			t.Errorf("%s: the file loaded, and a designation the node refuses must be refused where the owner writes it — a publish is not where it should surface", name)
+		}
+	}
+	c, err := Parse([]byte(sample + "reports_commit: {repo: acme/reports, dir: docs/reports}\n"))
+	if err != nil {
+		t.Fatalf("a block the rule accepts was refused: %v", err)
+	}
+	if c.ReportsCommit == nil || c.ReportsCommit.Repo != "acme/reports" || c.ReportsCommit.Dir != "docs/reports" {
+		t.Errorf("reports_commit = %+v, want the repository and folder the file names", c.ReportsCommit)
+	}
+	// The one spelling this file accepts and the node does not: a written block
+	// that names nothing is how an owner takes a published designation away, so
+	// refusing it here would leave that act with no spelling at all. `{}` and a
+	// block whose members are written empty are the same block to this file —
+	// both name no repository — and both are kept as written.
+	empty, err := Parse([]byte(sample + "reports_commit: {}\n"))
+	if err != nil {
+		t.Fatalf("a written empty block was refused: %v — it is the spelling that takes a published designation away (D987)", err)
+	}
+	if empty.ReportsCommit == nil || !empty.ReportsCommit.SetsNothing() {
+		t.Errorf("reports_commit = %+v, want the written block kept as the empty one it is", empty.ReportsCommit)
+	}
+	blank, err := Parse([]byte(sample + "reports_commit: {repo: ''}\n"))
+	if err != nil {
+		t.Fatalf("a written block with an empty repo was refused: %v — it names no repository, which is the empty block in another spelling", err)
+	}
+	if blank.ReportsCommit == nil || !blank.ReportsCommit.SetsNothing() {
+		t.Errorf("reports_commit = %+v, want the block kept and read as naming nothing", blank.ReportsCommit)
+	}
+}
+
+// TestLocalConfigReportsCommitKeepsThePublishedBlockWhenSilent is the keep rule
+// written out the way the binaries block's is (ReportsCommitEffective, D987): a
+// machine whose config says nothing keeps the node's designation — a teammate's
+// file that predates the key, or an owner who declined to set one, must not
+// publish a node that designates nothing and stops the project's reports from
+// being committed at all — a stated block replaces it, and a written empty
+// block takes it away on purpose.
+func TestLocalConfigReportsCommitKeepsThePublishedBlockWhenSilent(t *testing.T) {
+	published := &projectpolicy.ReportsCommit{Repo: "acme/reports", Dir: "docs/reports"}
+	silent, err := Parse([]byte(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := silent.ReportsCommitEffective(published); got != published {
+		t.Errorf("a silent config takes %+v, want the published designation", got)
+	}
+	if got := silent.ReportsCommitEffective(nil); got != nil {
+		t.Errorf("a silent config beside a node that designates nothing takes %+v, want no member published at all", got)
+	}
+	stated, err := Parse([]byte(sample + "reports_commit: {repo: acme/elsewhere}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stated.ReportsCommitEffective(published); got != stated.ReportsCommit {
+		t.Errorf("a config that states a block takes %+v, want its own", got)
+	}
+	empty, err := Parse([]byte(sample + "reports_commit: {}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := empty.ReportsCommitEffective(published); got != nil {
+		t.Errorf("a written empty block takes %+v, want none: it is how a published designation is taken away on purpose", got)
+	}
+}
+
+// TestReportsCommitNotInShared: the member decides which repository every
+// report of the project is committed into, and the shared config is a file the
+// launcher writes — a launcher that could write it would be aiming the
+// project's reports at a repository of its own choosing, which is the one
+// decision D2751 keeps to the owner. internal/cli's ParseShared refuses the key
+// besides.
+func TestReportsCommitNotInShared(t *testing.T) {
+	c, err := Parse([]byte(sample + "reports_commit: {repo: acme/reports}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, got := range map[string]*Config{"shared": c.Shared(), "merged": MergeShared(nil, c)} {
+		if got.ReportsCommit != nil {
+			t.Errorf("%s: reports_commit = %+v", name, got.ReportsCommit)
+		}
+		out, err := got.Marshal()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if strings.Contains(string(out), "reports_commit") {
+			t.Errorf("%s: output carries reports_commit:\n%s", name, out)
+		}
+	}
+	if c.ReportsCommit == nil {
+		t.Error("Shared/MergeShared cleared the local block")
+	}
+}

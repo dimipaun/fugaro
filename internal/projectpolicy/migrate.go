@@ -48,6 +48,7 @@ var migrators = map[int]migrator{
 	6: migrateV6ToV7,
 	7: migrateV7ToV8,
 	8: migrateV8ToV9,
+	9: migrateV9ToV10,
 }
 
 // tooOld names the versions this Fugaro reads but has no migrator for. The
@@ -114,6 +115,16 @@ func Migratable(v int) bool {
 // running the step would serve a pool whose listed order the credentials service
 // cannot honour, which is the whole of D1668.
 //
+// Version 9 is the fourth shape-free step (R14, D2752): the `reports_commit`
+// member version 10 models is a top-level key no version-9 release wrote, and a
+// node without it designates no repository — which is what a project that never
+// named one means, and what a report run reads as "commit nothing anywhere".
+// The member is safe by default when it is ignored (version.go says what the
+// bump does and does not buy), so a version-9 node is a version-10 node in
+// everything but the number, and the step is what keeps `fugaro update`'s own
+// window from being a refusal: the update's policy stage and the images stage
+// it sits beside cannot leave a launcher reading a node it refuses.
+//
 // The counter-examples are version 3 and version 4, and they are why this
 // table is a table and not a rule about numbers. Version 4's step marks every
 // ownerless pool legacy-open, so its node is not the one above it. Version 3's: that step's node needs a block (the Bitbucket
@@ -125,6 +136,7 @@ var shapeFreeSteps = map[int]bool{
 	5: true,
 	6: true,
 	7: true,
+	9: true,
 }
 
 // ReadsVersion reports whether a node written in version v is one this reader
@@ -828,6 +840,40 @@ func migrateV7ToV8(raw json.RawMessage) (json.RawMessage, Change, error) {
 		From:    7,
 		To:      8,
 		Changed: "the version field: 7 to 8",
+		Kept:    keptKeys(doc, "version"),
+	}, nil
+}
+
+// migrateV9ToV10 writes the version field version 10 reads, and nothing else.
+//
+// Version 10 adds one member to the node — `reports_commit`, the project's
+// designated repository for committed reports and the folder inside it (D2751)
+// — and the step is shape-free all the same, because a node that carries no
+// such member designates no repository, which is exactly what a project that
+// never named one means and what a report run reads as "commit nothing
+// anywhere". That is version 6's and version 7's shape rather than version 9's,
+// and it is what keeps this release's window from being a refusal: a version-9
+// node is read as it stands by this release's readers, so `fugaro update`'s
+// policy stage and the images stage beside it cannot leave a launcher reading a
+// node it refuses.
+//
+// It carries no Note: there is nothing for the operator to republish for, and
+// nothing to republish *with* that the node does not already hold — a project
+// that wants a designation writes the block in its own config and publishes,
+// which is the publish door's work and not this step's.
+func migrateV9ToV10(raw json.RawMessage) (json.RawMessage, Change, error) {
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, Change{}, fmt.Errorf("projectpolicy: the version-9 node is not a JSON object: %w", err)
+	}
+	out, err := writeVersionField(raw, 9, 10)
+	if err != nil {
+		return nil, Change{}, err
+	}
+	return out, Change{
+		From:    9,
+		To:      10,
+		Changed: "the version field: 9 to 10",
 		Kept:    keptKeys(doc, "version"),
 	}, nil
 }

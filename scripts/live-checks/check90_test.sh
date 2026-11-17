@@ -550,7 +550,7 @@ test_block_format() {
     token-file token-validity control ca-bundle observed-control swap swap-credential-header \
     stream headers-observed headers-required headers-optional usage-limit \
     timeout-retry restore tier-a; do
-    printf '%s' "$out" | grep -q "^FACT $key: " || fail "format: the block has no '$key' line"
+    grep -q "^FACT $key: " <<<"$out" || fail "format: the block has no '$key' line"
   done
 }
 

@@ -493,6 +493,13 @@ type SignInVerifier interface {
 	// organisation the request is about, so an area passes the membership's own
 	// organisation.
 	RequireSSO(caller Caller, rule SSORule) error
+	// FreshWithin refuses a caller whose sign-in happened longer ago than within
+	// (D2187: five minutes for a reveal, which is the first act to ask for one).
+	// It is asked through this seam for the reason the rule above is — a rule
+	// about a sign-in belongs to whatever holds the sign-in, and a second copy of
+	// it in an area is the one thing D2207 has an area read instead — and the
+	// age it measures is the sign-in's own `auth_time` and not the token's.
+	FreshWithin(caller Caller, within time.Duration) error
 }
 
 // Paddle is the merchant of record as the portal reaches it. Every method is one

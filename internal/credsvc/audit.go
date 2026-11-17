@@ -250,6 +250,27 @@ const (
 	// identity and is not a job of this installation (callerWithoutJobPurpose,
 	// repositoryOnlyPurpose).
 	PurposeLabel = "label"
+	// PurposeIssue is one issue read or one issue creation this service
+	// performs on the repository of the installation's orchestrator daemon (the
+	// issue route, D2718, B3): the service performs the act itself and no token
+	// leaves it, because GitHub has no issue-only permission either and a token
+	// handed out for issues would be an issue write credential on the whole
+	// repository.
+	//
+	// The credential a line of this purpose names is the App key the service
+	// mints its own token from — the same credential a mint, a read mint, a
+	// merge mint and a label call name, which is why the purpose is what tells
+	// the five acts apart. The token itself is this route's own set
+	// (`issues: write`, D2718) and not the label route's: the credential NAME is
+	// what a line carries, and a name says which key signed the mint and not
+	// which permissions it asked for. It is not a model credential of the
+	// cascade and has no tier (credentialWithoutTier).
+	//
+	// Its line carries a repository and no run, like the read mints', the merge
+	// mint's and the label route's: the caller is the orchestrator daemon, which
+	// holds no run identity and is not a job of this installation
+	// (callerWithoutJobPurpose, repositoryOnlyPurpose).
+	PurposeIssue = "issue"
 	// PurposeBuildToken is the read-only installation token a catalog build is
 	// answered with (B1, D2301): ONE token covering the repositories of the
 	// entry its request named, which the service read from the published image
@@ -360,7 +381,7 @@ const (
 func ValidPurpose(purpose string) bool {
 	switch purpose {
 	case PurposeForward, PurposeProbe, PurposeMint, PurposeReviewSign, PurposeReviewVerify, PurposeBitbucketRead, PurposeGitHubRead,
-		PurposeGit, PurposeBitbucketAPI, PurposeSlipGrant, PurposeSlipClaim, PurposeMergeMint, PurposeWorkflowSecret, PurposeLabel,
+		PurposeGit, PurposeBitbucketAPI, PurposeSlipGrant, PurposeSlipClaim, PurposeMergeMint, PurposeWorkflowSecret, PurposeLabel, PurposeIssue,
 		PurposeBuildToken, PurposeBuildGrant, PurposeBuildGit,
 		PurposeBuildBitbucket, PurposeBuildProxy, PurposeContextToken:
 		return true
@@ -396,6 +417,7 @@ func credentialWithoutTier(purpose string) bool {
 		purpose == PurposeGitHubRead || purpose == PurposeGit ||
 		purpose == PurposeBitbucketAPI || purpose == PurposeMergeMint ||
 		purpose == PurposeWorkflowSecret || purpose == PurposeLabel ||
+		purpose == PurposeIssue ||
 		purpose == PurposeBuildToken || purpose == PurposeBuildGit ||
 		purpose == PurposeBuildBitbucket || purpose == PurposeBuildProxy ||
 		purpose == PurposeContextToken
@@ -419,6 +441,7 @@ func callerWithoutJobPurpose(purpose string) bool {
 	return purpose == PurposeReviewVerify || purpose == PurposeBitbucketRead ||
 		purpose == PurposeGitHubRead || purpose == PurposeSlipGrant ||
 		purpose == PurposeMergeMint || purpose == PurposeLabel ||
+		purpose == PurposeIssue ||
 		purpose == PurposeBuildToken || purpose == PurposeBuildGrant ||
 		purpose == PurposeBuildGit || purpose == PurposeBuildBitbucket ||
 		purpose == PurposeBuildProxy
@@ -441,6 +464,7 @@ func callerWithoutJobPurpose(purpose string) bool {
 func repositoryOnlyPurpose(purpose string) bool {
 	return purpose == PurposeBitbucketRead || purpose == PurposeGitHubRead ||
 		purpose == PurposeMergeMint || purpose == PurposeLabel ||
+		purpose == PurposeIssue ||
 		purpose == PurposeBuildGit || purpose == PurposeBuildBitbucket ||
 		purpose == PurposeBuildProxy
 }

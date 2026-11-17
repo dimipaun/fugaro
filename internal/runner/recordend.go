@@ -17,6 +17,13 @@ import (
 // what the pull request's own section reads. Nothing derives a class at read
 // time, nothing caches one and nothing writes one back.
 func (r *run) recordEnd(status runstore.Status, outcome runstore.Outcome, class failure.Class, reason string) {
+	// The run is ending, and this is where everything the record carries about
+	// the graph it worked from is picked up: what the agent wrote about the
+	// order of the work (discovered.go, E2) is read here, so however the run
+	// ends — and every ending comes through this function — the block that
+	// landed during the implement or fix stage is on the record rather than
+	// lost to a boundary nothing reads it at.
+	r.copyDiscovered()
 	writeEnd(r.rec, status, outcome, class, reason)
 }
 
