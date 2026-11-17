@@ -258,47 +258,6 @@ func (s *Service) freeMail(domain string) bool {
 	return false
 }
 
-// holdsFree answers whether a domain already holds a free key (§4.2).
-//
-// The count is over issued keys and not over applications: a domain that has
-// applied and not yet followed the link holds nothing, and a second applicant at
-// the same domain can still apply. That is what the record is for and §4.2's
-// proxy is only as strong as it — a second domain, a subdomain and anyone who
-// can read mail at an address they do not administer are outside it (§4.6).
-func (s *Service) holdsFree(ctx context.Context, domain string) (bool, error) {
-	held, err := s.store.Issuances(ctx)
-	if err != nil {
-		return false, err
-	}
-	for _, r := range held {
-		if r.Plan == s.freeSeat.Name && strings.EqualFold(r.Organisation, domain) {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// paidFor answers whether a domain the service's own event store knows holds a
-// paid subscription (§4.3, §10.2(a)). A cancelled subscription is not a
-// customer: the check refuses a buyer asking for a free seat, and a domain whose
-// subscription has ended may apply like any other.
-//
-// The store is the only place this question is answered, which is the limit the
-// design states with it: a customer who bought under another domain is not
-// caught (§4.3, §4.6).
-func (s *Service) paidFor(ctx context.Context, domain string) (bool, error) {
-	held, err := s.store.Subscriptions(ctx)
-	if err != nil {
-		return false, err
-	}
-	for _, sub := range held {
-		if !sub.Cancelled && strings.EqualFold(sub.Organisation, domain) {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
 // recorded answers whether a source has already been minted for, and the record
 // it made (§5.2). It is the whole of the service's idempotency: an event
 // delivered twice, a link followed twice and a trigger that fires twice all read
@@ -314,28 +273,4 @@ func (s *Service) recorded(ctx context.Context, source string) (Record, bool, er
 		}
 	}
 	return Record{}, false, nil
-}
-
-// planFor answers the plan one verification or application names. The name in a
-// record is what the record carries and the plan is the deploy's, so the two are
-// matched here rather than trusted: a store written by an earlier deploy names a
-// plan this one may not have, and that is a refusal and not a mint.
-func (s *Service) planFor(name string) (Plan, bool) {
-	if s.freeSeat.Name == name {
-		return s.freeSeat, true
-	}
-	if s.openSource.Name == name {
-		return s.openSource, true
-	}
-	return Plan{}, false
-}
-
-// detail is the applicant's own text as it is stored: bounded, because a
-// store entry is not a place to paste a novel, and trimmed of nothing — what a
-// person wrote is what the owner reads (§6, escaping is the page's).
-func detail(raw string) string {
-	if len(raw) > maxDetailBytes {
-		return raw[:maxDetailBytes]
-	}
-	return raw
 }

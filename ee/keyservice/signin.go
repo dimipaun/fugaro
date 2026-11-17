@@ -1623,8 +1623,9 @@ func sameAddress(a, b string) bool {
 }
 
 // signInCSP is what these pages may load, and it is none of it: they carry no
-// script, submit only to themselves and cannot be framed — the same three rules
-// the admin page's carries (adminCSP), for the same reason.
+// script, submit only to themselves and cannot be framed. Every page this
+// service renders its own markup for is a page that hands somebody a way in, so
+// none of them loads anything.
 const signInCSP = "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
 
 // signInRedirectCSP is the authorize form's own policy: signInCSP with the one
@@ -1673,16 +1674,15 @@ type confirmView struct {
 	IDToken      string
 }
 
-// renderSignIn writes one of these pages, with the three headers the admin page
-// writes for the same reasons (adminPage), under the policy its caller chose:
+// renderSignIn writes one of these pages, under the policy its caller chose:
 // every page here takes signInCSP whole except the authorize form, whose
 // submission a redirect answers (signInRedirectCSP).
 func (s *Service) renderSignIn(w http.ResponseWriter, page *template.Template, view any, policy string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Content-Security-Policy", policy)
 	// The sign-in page carries the person's own ID token back and the
-	// confirmation page carries it too, and the page that mints is not a page a
-	// shared cache holds either (adminPage).
+	// confirmation page carries it too, and a page carrying a token is not one a
+	// shared cache may hold.
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
@@ -1700,8 +1700,8 @@ func (s *Service) renderSignIn(w http.ResponseWriter, page *template.Template, v
 // script at all (signInCSP).
 //
 // The installation's name is a text node of the confirmation page and
-// html/template escapes it, exactly as the admin page's applicant text is: the
-// page names a stranger's string and never renders it.
+// html/template escapes it: the page names a stranger's string and never renders
+// it.
 var (
 	signInTemplate = template.Must(template.New("authorize").Parse(`<!doctype html>
 <html lang="en">

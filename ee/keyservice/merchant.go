@@ -515,7 +515,7 @@ func (s *Service) completed(ctx context.Context, e Event, record Record) error {
 // customer would be granted a licence nobody sold them (D2141).
 func (s *Service) purchased(ctx context.Context, e Event) error {
 	if s.cfg.Paid.Tier != licence.TierTeam {
-		return fmt.Errorf("the checkout sells Team keys and this deployment's paid plan names the %s tier, and an Enterprise key is invoiced directly and minted from the admin page (D2141, §5.5)", s.cfg.Paid.Tier)
+		return fmt.Errorf("the checkout sells Team keys and this deployment's paid plan names the %s tier, and an Enterprise key is invoiced directly and granted by operations (D2141, §5.5)", s.cfg.Paid.Tier)
 	}
 	if e.Organisation == "" || e.WorkspaceID == "" || e.Seats < 1 || e.TermDays < 1 {
 		return fmt.Errorf("%w: the purchase %s", ErrNoClaims, e.ID)
@@ -1505,11 +1505,9 @@ func checkoutPolicy(termDays int) (string, bool) {
 
 // paidRequest is the minter's v1 Request for one term of one subscription: the
 // row the term is sold under, the workspace the checkout bound, and the claims
-// and the term in days the merchant's event names (§5.1). It is the v1 twin of
-// mintRequest, and the difference between the two is the format: this one names
-// a row of the policy table, and the row is where the grace, the renewal mode
-// and the check interval come from — the caller names none of them (D2133,
-// D2138).
+// and the term in days the merchant's event names (§5.1). It names a row of the
+// policy table, and the row is where the grace, the renewal mode and the check
+// interval come from — the caller names none of them (D2133, D2138).
 func (s *Service) paidRequest(policy, workspaceID, organisation string, seats, days int) RequestV1 {
 	return RequestV1{
 		Environment:  s.cfg.Environment,
@@ -1707,21 +1705,6 @@ func paidKeyMail(to, key, secret string) Message {
 		Body: "Your Fugaro licence key:\n\n" + key + "\n" + secret + "\n\n" +
 			"Keep both lines: the first is the key and the second is its renewal secret.\n" +
 			"Install them in the console, or keep them for the CLI.\n",
-	}
-}
-
-// mintRequest is the minter's Request for one plan: the claims, and a term in days.
-// The service never states a date, and it cannot: `issued` and `expires` are the
-// minter's own (§2).
-func (s *Service) mintRequest(plan Plan, organisation string, seats, days int) Request {
-	return Request{
-		Environment:  s.cfg.Environment,
-		Tier:         plan.Tier,
-		Features:     append([]string(nil), plan.Features...),
-		Seats:        seats,
-		Organisation: organisation,
-		Plan:         plan.Name,
-		TermDays:     days,
 	}
 }
 

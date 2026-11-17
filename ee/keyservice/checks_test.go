@@ -3,269 +3,21 @@
 
 package keyservice
 
-// The free keys, the queue, and the identity the open-source check reads
-// (subscriptions plan S3.2; the design docs/design/key-signing-service.md §4 and
-// §7). Every test here drives the intake over the routes the site's own forms
-// post to, because the routes and the field names are the two halves' contract
-// (S3.3, website/src/pages/keys.astro).
+// The checks' own data and grammars (subscriptions plan S3.2; the design
+// docs/design/key-signing-service.md §4 and §7): the licences §4.4 admits, the
+// repository lines it reads, the count the deploy bounds them by, and the two
+// halves of an address.
+//
+// Every case here drives the checks through the portal's open-source ask
+// (api_opensource.go), which is the door that reaches them since P9.3 retired
+// the website's forms and their routes; the free seat's own rules are the
+// portal's entitlements and not this service's checks (D2199), so what is left
+// to hold here is what a stranger's lines can make the checks do.
 
 import (
-	"context"
-	"net/url"
-	"strings"
+	"net/http"
 	"testing"
-	"time"
 )
-
-// TestFreeMailDomainGoesToTheQueue: an address at a free email provider is not
-// refused and not minted — it goes to the queue, because an individual is an
-// organisation of one for the free seat (T15) and §4.1 is where that decision
-// belongs.
-func TestFreeMailDomainGoesToTheQueue(t *testing.T) {
-	f := newFixture(t)
-	rec := f.apply("maintainer@gmail.example")
-
-	answer := answerBody(t, rec)
-	if got := f.signer.calls; got != 0 {
-		t.Errorf("a free-mail application signed %d key(s), want none: it is the queue's, not the minter's", got)
-	}
-	if len(f.mail.sent) != 0 {
-		t.Errorf("a free-mail application mailed %d message(s), want none: nothing is verified that nothing mints", len(f.mail.sent))
-	}
-	queued := f.queued()
-	if len(queued) != 1 {
-		t.Fatalf("the queue holds %d application(s), want one", len(queued))
-	}
-	if queued[0].Domain != "gmail.example" || queued[0].Email != "maintainer@gmail.example" {
-		t.Errorf("the queued application is %+v, want the applicant's own address and domain", queued[0])
-	}
-	if queued[0].Plan != freePlanName {
-		t.Errorf("the queued application names plan %q, want %q", queued[0].Plan, freePlanName)
-	}
-	if len(answer) == 0 {
-		t.Error("the free-mail application was answered with nothing")
-	}
-}
-
-// TestSecondFreeKeyForADomainGoesToTheQueue: one free seat per organisation,
-// proxied by the email domain (§4.2, T15). The second application is not
-// silently refused — it is seen, which is what the queue is for.
-func TestSecondFreeKeyForADomainGoesToTheQueue(t *testing.T) {
-	f := newFixture(t)
-	f.apply(applicantAddress)
-	f.verify(f.mailedToken())
-	if len(f.records()) != 1 {
-		t.Fatalf("the first free seat minted %d key(s), want one", len(f.records()))
-	}
-	mailed := len(f.mail.sent)
-
-	f.apply("other@acme.example")
-
-	if got := len(f.records()); got != 1 {
-		t.Errorf("a second application for a domain that holds a free key minted %d key(s), want the one it holds: %d", got, got)
-	}
-	if got := len(f.mail.sent); got != mailed {
-		t.Errorf("the second application mailed %d more message(s), want none", got-mailed)
-	}
-	queued := f.queued()
-	if len(queued) != 1 {
-		t.Fatalf("the queue holds %d application(s), want the second one alone", len(queued))
-	}
-	if queued[0].Email != "other@acme.example" {
-		t.Errorf("the queued application is %q, want the second applicant", queued[0].Email)
-	}
-}
-
-// TestDomainWithAPaidSubscriptionGetsNoFreeKey: §10.2(a) — a domain the
-// service's own event store knows holds a paid subscription is refused, and
-// refused rather than queued (§4.3). The knowledge is the merchant's events,
-// so the test drives a purchase through the webhook first.
-func TestDomainWithAPaidSubscriptionGetsNoFreeKey(t *testing.T) {
-	f := newFixture(t)
-	bought := f.purchase("evt-buy", "buyer.example", 5, 365)
-	if bought.Organisation != "buyer.example" {
-		t.Fatalf("the purchase was recorded for %q, want the buying organisation", bought.Organisation)
-	}
-	minted := f.signer.calls
-	mailed := len(f.mail.sent)
-
-	answer := answerBody(t, f.apply("dev@buyer.example"))
-
-	if got := f.signer.calls; got != minted {
-		t.Errorf("the buyer's domain was minted %d more key(s), want none", got-minted)
-	}
-	if got := len(f.mail.sent); got != mailed {
-		t.Errorf("the buyer's domain was mailed %d message(s), want none", got-mailed)
-	}
-	if queued := f.queued(); len(queued) != 0 {
-		t.Errorf("the buyer's domain was queued (%+v), want a refusal: a domain with a paid subscription has no free seat", queued)
-	}
-	if len(answer) == 0 {
-		t.Error("the refusal was answered with nothing")
-	}
-}
-
-// TestAFreeSeatIsRecheckedWhenTheLinkIsFollowed: §4.2 and §4.3 are read again at
-// the moment of minting and not only when the form was submitted. The window
-// between an application and its link is a window in which the domain can have
-// bought and in which another applicant on it can have been verified, and the
-// link that was legitimate when it was mailed is not entitled to a key when it
-// is followed — a link whose plan the deploy no longer serves is the third shape
-// of the same thing, an application the store no longer says this service may
-// mint from.
-//
-// Each of the three is refused the way the application-time refusals are: the
-// one page, no key, no record, and a link that keeps nothing about the applicant
-// (§7.3) and cannot be followed again. What a test reads here is the store and
-// the signer rather than the answer alone, because the answer is the same page
-// whether a key was minted or not.
-func TestAFreeSeatIsRecheckedWhenTheLinkIsFollowed(t *testing.T) {
-	// refused is the whole of what each outcome has to read: the counts the
-	// fixture stood at before the follow, unchanged, and a spent link with no
-	// personal data left on it.
-	refused := func(t *testing.T, f *fixture, token string, keys, records, mails int) {
-		t.Helper()
-		answerBody(t, f.verify(token))
-		if got := f.signer.calls; got != keys {
-			t.Errorf("the follow signed %d key(s), want none: the entitlement the application was for is not the one the store holds", got-keys)
-		}
-		if got := len(f.records()); got != records {
-			t.Errorf("the follow recorded %d key(s), want none", got-records)
-		}
-		if got := len(f.mail.sent); got != mails {
-			t.Errorf("the follow mailed %d message(s), want none", got-mails)
-		}
-		for _, v := range f.verifications() {
-			if v.ID != digest(token) {
-				continue
-			}
-			if !v.Used {
-				t.Error("the refused link was handed back, want it spent: a link this service has decided against is not one an applicant can follow until it mints")
-			}
-			if v.Email != "" || v.Domain != "" || v.Organisation != "" || len(v.Repositories) != 0 {
-				t.Errorf("the refused link kept %+v, want the address, the domain, the organisation and the repositories dropped (§7.3)", v)
-			}
-			return
-		}
-		t.Error("the refused link is not in the store at all, want it spent with nothing about the applicant left on it")
-	}
-
-	t.Run("the domain has bought since the application", func(t *testing.T) {
-		f := newFixture(t)
-		f.apply(applicantAddress)
-		token := f.mailedToken()
-		f.purchase("evt-buy", "acme.example", 5, 365)
-
-		refused(t, f, token, f.signer.calls, len(f.records()), len(f.mail.sent))
-	})
-
-	t.Run("the domain holds a free key since the application", func(t *testing.T) {
-		f := newFixture(t)
-		// Two applications on one domain, both before either link is followed:
-		// the second is legitimate when it is submitted and the first is not when
-		// it comes back, because the domain holds a free key by then.
-		f.apply(applicantAddress)
-		token := f.mailedToken()
-		f.apply("other@acme.example")
-		answerBody(t, f.verify(f.mailedToken()))
-		if len(f.records()) != 1 {
-			t.Fatalf("the domain's free seat minted %d key(s), want one", len(f.records()))
-		}
-
-		refused(t, f, token, f.signer.calls, len(f.records()), len(f.mail.sent))
-	})
-
-	t.Run("the plan is no longer one the deploy serves", func(t *testing.T) {
-		f := newFixture(t)
-		// A link the deploy's own configuration has moved on from: what mints from
-		// a plan name is the plan, and a name this service cannot answer for is one
-		// it mints nothing from.
-		token := "a-token-this-test-holds"
-		if err := f.store.SaveVerification(context.Background(), Verification{
-			ID:           digest(token),
-			Plan:         "a-plan-this-deploy-no-longer-serves",
-			Email:        applicantAddress,
-			Domain:       "acme.example",
-			Organisation: "acme.example",
-			Expires:      f.now.Add(time.Hour),
-		}); err != nil {
-			t.Fatalf("storing the link: %v", err)
-		}
-
-		refused(t, f, token, 0, 0, 0)
-	})
-}
-
-// TestOpenSourceCheckNeedsProofOfControl: visibility and licence prove nothing
-// about who is asking (F47), so the check mints nothing until proof of control
-// is given — and what counts as proof is D452, which is why the check is an
-// interface and this fixture's answer is the only one in the tree.
-func TestOpenSourceCheckNeedsProofOfControl(t *testing.T) {
-	f := newFixture(t)
-	f.proofs.proved = false
-
-	answerBody(t, f.applyOpenSource(applicantAddress, repositoryURL))
-	if got := f.proofs.asked; got != 1 {
-		t.Errorf("the check asked for proof %d time(s), want once", got)
-	}
-	if got := f.signer.calls; got != 0 {
-		t.Errorf("an open-source application with no proof of control signed %d key(s), want none", got)
-	}
-	if len(f.mail.sent) != 0 {
-		t.Errorf("an open-source application with no proof of control mailed %d message(s), want none", len(f.mail.sent))
-	}
-
-	// The proof given, the same application reaches the verification mail, and
-	// the token mints the open-source key.
-	f.proofs.proved = true
-	answerBody(t, f.applyOpenSource(applicantAddress, repositoryURL))
-	if len(f.mail.sent) != 1 {
-		t.Fatalf("an open-source application with proof mailed %d message(s), want the verification one", len(f.mail.sent))
-	}
-	f.verify(f.mailedToken())
-	records := f.records()
-	if len(records) != 1 {
-		t.Fatalf("the verified open-source application minted %d key(s), want one", len(records))
-	}
-	if records[0].Plan != openPlanName {
-		t.Errorf("the minted key is of plan %q, want %q", records[0].Plan, openPlanName)
-	}
-	if records[0].Organisation != openSourceOrg {
-		t.Errorf("the minted key binds to %q, want what the proof showed control of (%q)", records[0].Organisation, openSourceOrg)
-	}
-}
-
-// TestOpenSourceCheckRefusesAPrivateOrNonOSIRepository: §6.3 and §10.2(b) —
-// every repository the applicant names has to be public under a licence the
-// Open Source Initiative approves (§4.4).
-func TestOpenSourceCheckRefusesAPrivateOrNonOSIRepository(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		url  string
-	}{
-		{name: "a private repository", url: privateURL},
-		{name: "a repository under a licence the OSI does not approve", url: unlicensedURL},
-		// A licence that reads as permissive and is not approved: the host's
-		// metadata carries the id, the table has no business admitting it.
-		{name: "a repository under a permissive licence the OSI does not approve", url: unapprovedURL},
-		{name: "a URL the code host cannot answer for", url: "https://elsewhere.example/acme/widget"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newFixture(t)
-			answerBody(t, f.applyOpenSource(applicantAddress, tc.url))
-
-			if got := f.signer.calls; got != 0 {
-				t.Errorf("%s was signed %d key(s), want none", tc.name, got)
-			}
-			if len(f.mail.sent) != 0 {
-				t.Errorf("%s was mailed %d message(s), want none: the check failed before anything was verified", tc.name, len(f.mail.sent))
-			}
-			if queued := f.queued(); len(queued) != 0 {
-				t.Errorf("%s was queued (%+v), want a refusal: the queue is not the checks' fallback (§4.5)", tc.name, queued)
-			}
-		})
-	}
-}
 
 // TestTheLicenceTableIsTheOSIsApprovedList holds §4.4's data to the design's
 // rule — the licences the OSI approves are the ones admitted — with the ids a
@@ -307,7 +59,7 @@ func TestTheLicenceTableIsTheOSIsApprovedList(t *testing.T) {
 
 // TestARepositoryOffTheDeploysHostIsNeverAskedAbout: §4.4's check reads a
 // repository **of the deploy's own code host**, with the deploy's credentials —
-// so a line an unauthenticated stranger typed must never become an address this
+// so a line a signed-in stranger pasted must never become an address this
 // service dials. What is admitted is one host, one scheme, one `owner/name`
 // path, and the code host is handed the two parts and never the line: a line
 // naming an internal address, a port, a deeper path or another host at all is
@@ -334,16 +86,28 @@ func TestARepositoryOffTheDeploysHostIsNeverAskedAbout(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
-			answerBody(t, f.applyOpenSource(applicantAddress, tc.url))
-
+			f.actsAs(danaUID, danaEmail, signInGoogle)
+			rec := f.askOpenSource(openSourceAsk(t, repositoryURL, tc.url))
+			if rec.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("the ask answered %d (%s), want 422: one line the deploy's host does not serve refuses the whole request (§4.4)", rec.Code, rec.Body.String())
+			}
+			if code := refusal(f, rec); code != "unserved_repository" {
+				t.Errorf("the refusal carries the code %q, want %q", code, "unserved_repository")
+			}
 			if got := len(f.host.asked); got != 0 {
-				t.Errorf("%s asked the code host about %v, want nothing: what an applicant typed is not an address the service dials (§4.4, §7.2)", tc.name, f.host.asked)
+				t.Errorf("%s asked the code host about %v, want nothing: what a stranger pasted is not an address the service dials (§4.4, §7.2)", tc.name, f.host.asked)
 			}
 			if got := f.signer.calls; got != 0 {
 				t.Errorf("%s signed %d key(s), want none", tc.name, got)
 			}
 			if got := len(f.mail.sent); got != 0 {
 				t.Errorf("%s mailed %d message(s), want none", tc.name, got)
+			}
+			if got := f.proofs.asked; got != 0 {
+				t.Errorf("%s asked for proof of control %d time(s), want none: the lines are read before anything is asked about", tc.name, got)
+			}
+			if open := f.open(); len(open) != 0 {
+				t.Errorf("%s left %+v in the queue, want nothing", tc.name, open)
 			}
 		})
 	}
@@ -353,194 +117,68 @@ func TestARepositoryOffTheDeploysHostIsNeverAskedAbout(t *testing.T) {
 	// host is asked about is the repository the applicant named and not the
 	// spelling of it.
 	f := newFixture(t)
-	answerBody(t, f.applyOpenSource(applicantAddress, "https://Code.Example/acme/widget.git"))
+	f.actsAs(danaUID, danaEmail, signInGoogle)
+	if rec := f.askOpenSource(openSourceAsk(t, "https://Code.Example/acme/widget.git")); rec.Code != http.StatusNoContent {
+		t.Fatalf("the ask answered %d (%s), want 204", rec.Code, rec.Body.String())
+	}
 	if got := len(f.host.asked); got != 1 || f.host.asked[0] != "acme/widget" {
 		t.Fatalf("the code host was asked %v, want the repository's two parts alone", f.host.asked)
 	}
-	if got := len(f.mail.sent); got != 1 {
-		t.Fatalf("the application mailed %d message(s), want the verification one", got)
+	if got := f.proofs.asked; got != 1 {
+		t.Errorf("the proof of control was asked for %d time(s), want once", got)
 	}
-	// The record is read here, while the link is still pending, because following
-	// it is what drops the applicant's personal data (§7.3). What is stored while
-	// it is pending is the URL on the deploy's own host and never the line.
-	held := f.verifications()
-	if len(held) != 1 || len(held[0].Repositories) != 1 || held[0].Repositories[0] != repositoryURL {
-		t.Errorf("the verification holds %v, want the canonical URL %q: what is stored is the URL on the deploy's own host and never the line", held, repositoryURL)
+	open := f.open()
+	if len(open) != 1 {
+		t.Fatalf("the queue holds %d open request(s), want one", len(open))
 	}
-	f.verify(f.mailedToken())
-	records := f.records()
-	if len(records) != 1 {
-		t.Fatalf("the application recorded %d key(s), want one", len(records))
+	if want := []string{repositoryURL}; len(open[0].Repositories) != 1 || open[0].Repositories[0] != want[0] {
+		t.Errorf("the queued request names %v, want the canonical URL %q: what is stored is the URL on the deploy's own host and never the line", open[0].Repositories, repositoryURL)
 	}
 }
 
 // TestAnApplicationOverTheRepositoryCapIsRefused: the count is the deploy's,
-// because each repository it names is a call into the deploy's code-host
-// credentials made on the strength of one unauthenticated post — and the form's
-// body cap is not a bound on that: 16 KiB is more URLs than the check should
-// ever ask the host about. An application past the cap is refused before the
-// first call.
+// because each repository an ask names is a call into the deploy's code-host
+// credentials made on the strength of one request — and the body's own size cap
+// is not a bound on that (api_opensource.go). An ask past the cap is refused
+// before the first call.
 func TestAnApplicationOverTheRepositoryCapIsRefused(t *testing.T) {
 	f := newFixtureWith(t, Production, func(f *fixture) { f.cfg.MaxRepositories = 2 })
+	f.actsAs(danaUID, danaEmail, signInGoogle)
 
 	// At the cap: read, and the address verified.
-	answerBody(t, f.applyOpenSource(applicantAddress, repositoryURL, repositoryTwoURL))
+	if rec := f.askOpenSource(openSourceAsk(t, repositoryURL, repositoryTwoURL)); rec.Code != http.StatusNoContent {
+		t.Fatalf("an ask at the cap answered %d (%s), want 204", rec.Code, rec.Body.String())
+	}
 	if got := len(f.host.asked); got != 2 {
-		t.Fatalf("an application naming two repositories asked the code host %d time(s), want its two", got)
+		t.Fatalf("an ask naming two repositories asked the code host %d time(s), want its two", got)
 	}
-	if got := len(f.mail.sent); got != 1 {
-		t.Fatalf("an application at the cap mailed %d message(s), want the verification one", got)
+	if got := len(f.queued()); got != 1 {
+		t.Errorf("an ask at the cap queued %d request(s), want one", got)
 	}
-	asked, mailed := len(f.host.asked), len(f.mail.sent)
+	asked := len(f.host.asked)
 
-	// One past it: nothing is read and nothing is mailed.
-	answerBody(t, f.applyOpenSource("dev@other.example", repositoryURL, repositoryTwoURL, repositoryURL+"-three"))
+	// One past it: nothing is read and nothing is queued.
+	rec := f.askOpenSource(openSourceAsk(t, repositoryURL, repositoryTwoURL, repositoryURL+"-three"))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("an ask past the cap answered %d (%s), want 400", rec.Code, rec.Body.String())
+	}
+	if code := refusal(f, rec); code != "unreadable_body" {
+		t.Errorf("the refusal carries the code %q, want %q", code, "unreadable_body")
+	}
 	if got := len(f.host.asked) - asked; got != 0 {
-		t.Errorf("an application past the cap asked the code host %d time(s), want none: the count is checked before the first call", got)
+		t.Errorf("an ask past the cap asked the code host %d time(s), want none: the count is checked before the first call", got)
 	}
-	if got := len(f.mail.sent); got != mailed {
-		t.Errorf("an application past the cap mailed %d message(s) in all, want the verification one alone", got)
-	}
-	if queued := f.queued(); len(queued) != 0 {
-		t.Errorf("an application past the cap was queued (%+v), want a refusal", queued)
-	}
-}
-
-// TestUnverifiedEmailMintsNothing: nothing is minted before the address is
-// verified (§4.1) — the free seat's application mails a single-use token and
-// mints only when it comes back.
-func TestUnverifiedEmailMintsNothing(t *testing.T) {
-	f := newFixture(t)
-	f.apply(applicantAddress)
-
-	if got := f.signer.calls; got != 0 {
-		t.Errorf("an application with an unverified address signed %d key(s), want none", got)
-	}
-	if got := len(f.records()); got != 0 {
-		t.Errorf("an application with an unverified address recorded %d key(s), want none", got)
-	}
-	if len(f.mail.sent) != 1 {
-		t.Fatalf("the application mailed %d message(s), want the verification one", len(f.mail.sent))
-	}
-	if got := f.mail.sent[0].To; got != applicantAddress {
-		t.Errorf("the verification mail went to %q, want the address the applicant typed (%q)", got, applicantAddress)
-	}
-	if got := f.mail.sent[0].Subject; !strings.Contains(got, verificationSubject) {
-		t.Errorf("the verification mail's subject is %q, want the service's own (%q)", got, verificationSubject)
-	}
-
-	f.verify(f.mailedToken())
-
-	if got := f.signer.calls; got != 1 {
-		t.Fatalf("the verified application signed %d key(s), want one", got)
-	}
-	records := f.records()
-	if len(records) != 1 {
-		t.Fatalf("the verified application recorded %d key(s), want one", len(records))
-	}
-	if records[0].Plan != freePlanName || records[0].Organisation != "acme.example" {
-		t.Errorf("the minted key is %+v, want the free seat's plan bound to the applicant's domain", records[0])
-	}
-	if len(f.mail.sent) != 2 {
-		t.Errorf("the verified application mailed %d message(s) in all, want the key's too", len(f.mail.sent))
-	}
-}
-
-// TestVerificationTokenSingleUse: a leaked link is not a key forever (§7.2) —
-// the token is spent by the first request that carries it.
-func TestVerificationTokenSingleUse(t *testing.T) {
-	f := newFixture(t)
-	f.apply(applicantAddress)
-	token := f.mailedToken()
-
-	f.verify(token)
-	if got := f.signer.calls; got != 1 {
-		t.Fatalf("the first use signed %d key(s), want one", got)
-	}
-	f.verify(token)
-	if got := f.signer.calls; got != 1 {
-		t.Errorf("the second use of one token signed %d key(s) in all, want the first use's one", got)
-	}
-	if got := len(f.records()); got != 1 {
-		t.Errorf("the record holds %d key(s), want one", got)
-	}
-
-	// The open-source programme's token too, where nothing else stops a second
-	// mint: the free seat's second use is refused by §4.2's domain check whether
-	// or not the token is spent, and this half is the one that holds the spending
-	// itself.
-	open := newFixture(t)
-	open.applyOpenSource(applicantAddress, repositoryURL)
-	openToken := open.mailedToken()
-	open.verify(openToken)
-	open.verify(openToken)
-	if got := open.signer.calls; got != 1 {
-		t.Errorf("the open-source link followed twice signed %d key(s), want the first use's one", got)
-	}
-}
-
-// TestAnswersDoNotRevealAnExistingKey: §7.1 — every answer reads the same,
-// whether the application was minted, queued or refused, so the form is not a
-// lookup for someone else's licence state.
-func TestAnswersDoNotRevealAnExistingKey(t *testing.T) {
-	f := newFixture(t)
-	f.apply(applicantAddress)
-	f.verify(f.mailedToken())
-	mailed := len(f.mail.sent)
-
-	held := answerBody(t, f.apply("other@acme.example"))   // this domain holds one
-	free := answerBody(t, f.apply("person@gmail.example")) // a free-mail domain
-	fresh := answerBody(t, f.apply("dev@fresh.example"))   // nothing known about it
-
-	if held != free || held != fresh {
-		t.Errorf("the answers differ, so the form says which domains hold a key:\n held: %q\nfree: %q\nfresh: %q", held, free, fresh)
-	}
-	if got := len(f.mail.sent); got != mailed+1 {
-		t.Errorf("the three applications mailed %d message(s) in all, want one more: the unknown domain is the only one that verifies, and the answers must hide the difference", got)
-	}
-}
-
-// TestTheChecksRefuseANonAddress keeps the one field the three forms share to
-// an address: a value that is not one is answered uniformly and reaches neither
-// the mail path nor the store.
-//
-// The list is the specials RFC 5322 allows *around* an address and not in one,
-// most of them with no whitespace anywhere to catch them: an address the intake
-// reads whole is one it can mail to and count by, and `maintainer@gmail.example(x)`
-// is the case that costs three checks at once — §4.1's free-mail list, §4.2's
-// one-per-domain count and §4.3's paid-domain refusal all compare the domain,
-// while net/mail delivers that address to gmail.example.
-func TestTheChecksRefuseANonAddress(t *testing.T) {
-	f := newFixture(t)
-	for _, raw := range []string{
-		"",
-		"not-an-address",
-		"two@example.example, three@example.example",
-		"no-domain@localhost",
-		"a@b.example,victim@c.example",
-		"a@b.example;victim@c.example",
-		"maintainer@gmail.example(x)",
-		"\"dev\"@acme.example",
-		"dev@acme.example>",
-		"dev\\v@acme.example",
-	} {
-		rec := f.post(RouteFreeSeat, url.Values{"email": {raw}})
-		answerBody(t, rec)
-	}
-	if len(f.mail.sent) != 0 {
-		t.Errorf("a refused address mailed %d message(s), want none", len(f.mail.sent))
-	}
-	if len(f.queued()) != 0 {
-		t.Errorf("a refused address queued %d application(s), want none", len(f.queued()))
+	if got := len(f.queued()); got != 1 {
+		t.Errorf("an ask past the cap left %d request(s) in the queue, want the one at the cap alone", got)
 	}
 }
 
 // TestAddressReadsEachHalfByItsOwnGrammar is the same rule one layer down, where
 // the two halves can be read apart: the local part is RFC 5322's dot-atom, which
 // is what refuses a header injection's punctuation, and the domain is a name of
-// labels, which is what the three eligibility checks compare. Both are pinned
-// here, because through the routes every refusal is the one answer page (§7.1)
-// and a whole table can go green for the wrong reason.
+// labels, which is what the eligibility checks compare. Both are pinned here,
+// because through the routes every refusal is one answer (§7.1) and a whole
+// table can go green for the wrong reason.
 func TestAddressReadsEachHalfByItsOwnGrammar(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -590,128 +228,5 @@ func TestAddressReadsEachHalfByItsOwnGrammar(t *testing.T) {
 		if !ok || got != tc.want {
 			t.Errorf("%s: address(%q) = %q, %v, want %q", tc.name, tc.raw, got, ok, tc.want)
 		}
-	}
-}
-
-// TestTheRequestFormQueuesWhatAPersonReads: §4.5 — the third form is the
-// requests the checks cannot decide, and every one of them is a person's.
-func TestTheRequestFormQueuesWhatAPersonReads(t *testing.T) {
-	f := newFixture(t)
-	answerBody(t, f.post(RouteRequest, url.Values{
-		"email":   {"prof@academic.example"},
-		"request": {"a multi-seat trial for a seminar"},
-	}))
-
-	queued := f.queued()
-	if len(queued) != 1 {
-		t.Fatalf("the manual request queued %d application(s), want one", len(queued))
-	}
-	if queued[0].Detail != "a multi-seat trial for a seminar" {
-		t.Errorf("the queued request's text is %q, want what the applicant wrote", queued[0].Detail)
-	}
-	if got := f.signer.calls; got != 0 {
-		t.Errorf("a manual request signed %d key(s), want none: it is the owner's to answer (§4.5)", got)
-	}
-	if len(f.mail.sent) != 0 {
-		t.Errorf("a manual request mailed %d message(s), want none", len(f.mail.sent))
-	}
-}
-
-// TestTheTokenExpires: §8's sibling — a token's life is bounded, so a link in a
-// mailbox nobody reads is not a key (D457's period is the owner's and this is
-// the rule it feeds).
-func TestTheTokenExpires(t *testing.T) {
-	f := newFixture(t)
-	f.apply(applicantAddress)
-	token := f.mailedToken()
-
-	f.advance(time.Duration(f.svc.cfg.VerificationTTL) + time.Minute)
-	answerBody(t, f.verify(token))
-
-	if got := f.signer.calls; got != 0 {
-		t.Errorf("an expired token signed %d key(s), want none", got)
-	}
-}
-
-// TestASpentVerificationKeepsNoPersonalData: §7.3's rule at the link that was
-// followed. The record of a pending link holds the address it was mailed to —
-// what the key is delivered to — and once the token is spent that address has
-// done its work: what is left is the token's digest, the plan and the instant,
-// none of which is a person. The link's single-use is what keeps the record, so
-// the drop must not take it with it.
-func TestASpentVerificationKeepsNoPersonalData(t *testing.T) {
-	f := newFixture(t)
-	answerBody(t, f.apply(applicantAddress))
-	token := f.mailedToken()
-
-	pending := f.verifications()
-	if len(pending) != 1 {
-		t.Fatalf("the application left %d verification(s), want one", len(pending))
-	}
-	if pending[0].Email != applicantAddress || pending[0].Domain != "acme.example" || pending[0].Organisation == "" {
-		t.Fatalf("the pending link holds %+v, want the address it was mailed to and the domain it was about", pending[0])
-	}
-	if pending[0].ID != digest(token) {
-		t.Errorf("the pending link is keyed by %q, want the token's digest alone (§7.3)", pending[0].ID)
-	}
-
-	answerBody(t, f.verify(token))
-
-	held := f.verifications()
-	if len(held) != 1 {
-		t.Fatalf("the store holds %d verification(s) after the follow, want the one the link was", len(held))
-	}
-	spent := held[0]
-	if spent.Email != "" || spent.Domain != "" || spent.Organisation != "" || len(spent.Repositories) != 0 {
-		t.Errorf("the spent verification holds %+v, want no address, domain, organisation or repositories (§7.3)", spent)
-	}
-	if spent.ID != pending[0].ID || spent.Plan != pending[0].Plan || !spent.Expires.Equal(pending[0].Expires) || !spent.Used {
-		t.Errorf("the spent verification holds %+v, want the digest, the plan, the instant and the spending kept", spent)
-	}
-	if got := len(f.records()); got != 1 {
-		t.Errorf("the spent link recorded %d key(s), want one: the drop is the record's and not the applicant's", got)
-	}
-	// And the token is still spent, so the drop did not hand it back.
-	f.verify(token)
-	if got := f.signer.calls; got != 1 {
-		t.Errorf("following the spent link again signed %d key(s) in all, want the first use's one", got)
-	}
-}
-
-// TestAnUnfollowedLinkLosesItsAddress: the common case §7.3's rule is for — an
-// address at which nobody ever proved the mailbox. The link expires unused and
-// the address it was about goes with it, so the store is a list of applications
-// that were decided and never a list of addresses that were tried.
-func TestAnUnfollowedLinkLosesItsAddress(t *testing.T) {
-	f := newFixture(t)
-	answerBody(t, f.apply("first@one.example"))
-	answerBody(t, f.apply("second@two.example"))
-	tokens := f.mailedTokens()
-	if len(tokens) != 2 {
-		t.Fatalf("the two applications mailed %d link(s), want one each", len(tokens))
-	}
-	if held := f.verifications(); len(held) != 2 {
-		t.Fatalf("the applications left %d verification(s), want two", len(held))
-	}
-
-	f.advance(time.Duration(f.svc.cfg.VerificationTTL) + time.Minute)
-	// The second link is the one followed, so the first is dropped by the sweep
-	// and not by the request that carried it.
-	answerBody(t, f.verify(tokens[1]))
-
-	held := f.verifications()
-	if len(held) != 2 {
-		t.Fatalf("the store holds %d verification(s) after the follow, want both", len(held))
-	}
-	for _, v := range held {
-		if v.Email != "" || v.Domain != "" || v.Organisation != "" || len(v.Repositories) != 0 {
-			t.Errorf("the verification %s holds %+v, want an expired link's address gone too (§7.3)", v.ID, v)
-		}
-	}
-	if held[0].ID != digest(tokens[0]) {
-		t.Errorf("the store's first verification is %q, want the link nobody followed", held[0].ID)
-	}
-	if got := f.signer.calls; got != 0 {
-		t.Errorf("two expired links signed %d key(s), want none", got)
 	}
 }
