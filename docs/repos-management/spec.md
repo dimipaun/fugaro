@@ -43,9 +43,9 @@ So the order is one symptom and the empty container is another, and both have th
 
 `fugaro project repos rm <repo>` must undo the enrolment, and it must be **exactly as wide as `add`, minus what must never be removed**.
 
-It removes: the published allow-list entry; the repository's `repos:` entry in this machine's project config; its image map entry; the published per-repository policy node; and the repository's cloud resources — its workflow job, its check job, its Scheduler job and its job account's grants — through the same retire path `fugaro update` uses.
+It removes: the published allow-list entry; the repository's `repos:` entry in this machine's project config; its image map entry; the published per-repository policy node; and the repository's cloud resources — its workflow job, its check job and its Scheduler job — through the same retire path `fugaro update` uses.
 
-It **deliberately leaves**, and says so before the confirmation and after the write: the provider's App installation; the images built for it; its secrets and their versions; its run history; its open pull requests; its remote branch. A removal that silently deleted a run's history would be a different promise than the one the order makes.
+It **deliberately leaves**, and says so before the confirmation and after the write: the provider's App installation; the images built for it; its secrets and their versions; its run history; its open pull requests; its remote branch; and — by the owner's ruling of 2026-11-17, which amends D2405 — the repository's Terraform state and the repository root's own IAM members, which only an apply of that root removes ([offboarding](../how-to/offboarding.md) lays the sequence out). A removal that silently deleted a run's history would be a different promise than the one the order makes.
 
 **An in-flight run is never disturbed.** `rm` reads whether a run of that repository is going; if one is, the confirmation is the strict one — no flag stands in for it — and the removal never rewrites the run's records, its ledger or its counters.
 

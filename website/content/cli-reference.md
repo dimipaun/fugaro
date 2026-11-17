@@ -6580,7 +6580,7 @@ Subcommands:
 
 - `fugaro project repos add` -- Enroll a repository: one confirmation for the whole enrolment
 - `fugaro project repos ls` -- List the allow-list and the repositories that have run here
-- `fugaro project repos rm` -- Un-enroll a repository: remove it from the allow-list
+- `fugaro project repos rm` -- Un-enroll a repository: remove its enrolment and its jobs
 - `fugaro project repos set` -- Write a repository's workflow selection or a job profile, in this machine's project config
 - `fugaro project repos status` -- Whether a repository can run: the enrolment's rows, each failing one naming its fix
 
@@ -6674,18 +6674,48 @@ This command has no subcommands.
 
 ## `fugaro project repos rm`
 
-Un-enroll a repository: remove it from the allow-list
+Un-enroll a repository: remove its enrolment and its jobs
 
-Remove an entry from the published policy's allow_repos. Removing an allowed
-repository stops its runs — a run of a repository the list does not admit is
-refused before it mints a git token — unless another entry on the list still
-admits it, which is the case a pattern makes (github/acme/app stays admitted
-while github/acme/* is there); the confirmation says which of the two it is.
-Removing * refuses every repository the rest of the list does not admit.
+Remove a repository's enrolment in one step, the way `fugaro project repos add`
+writes it: the published allow-list entry, this machine's repos: entry, this
+machine's image mapping, the published per-repository admission
+(config/policy/repos/<slug>), the repository's Cloud Run jobs (its workflow job
+and its check job) and its Cloud Scheduler job. Every step is the writer the
+enrolment used, one confirmation covers them all, and a store that holds
+nothing says so rather than failing. The allow-list entry is written last,
+because it is the store this command reads to know the repository is enrolled
+at all — so a removal left half done by an earlier failure is finished by
+running it again.
+
+It keeps the repository's Terraform state and the repository root's own IAM
+members — the grants of the repository's job accounts and of its build
+account, on the project, on the runs bucket, on its secrets and on its image
+registry. Neither is this command's to take away: the state is what an apply
+of that root plans from, and the grants are members only such an apply
+deletes. There is no command that does it: the root goes by hand,
+docs/how-to/offboarding.md lays the sequence out, and the state goes in its
+last step, `fugaro update --repo --forget`. It says so before the
+confirmation and after the write.
+
+Removing an allowed repository stops its runs — a run of a repository the list
+does not admit is refused before it mints a git token — unless another entry on
+the list still admits it, which is the case a pattern makes (github/acme/app
+stays admitted while github/acme/* is there); the confirmation says which of
+the two it is. It also names, before the confirmation and after the write, what
+it deliberately leaves: the provider's App installation, the built images, the
+secrets and their versions, the run history, every pull request a run opened and
+the remote branch. Nothing here deletes a secret, an image or a run's history.
+
 So it asks you to type the project's name, and while a run is in flight only
-that typing confirms it.
+that typing confirms it: the sentence names the run, which keeps its job, its
+record and its ledger until it ends.
 
-Usage: `fugaro project repos rm <provider/owner/name | owner/name | *>`
+`*` and a pattern such as github/acme/* are allow-list entries and not
+repositories: neither has a provider, a repos: entry, a job or a state of its
+own, so removing one takes that entry away and says nothing about the
+repositories it admitted.
+
+Usage: `fugaro project repos rm <provider/owner/name | owner/name | pattern>`
 
 Flags:
 
