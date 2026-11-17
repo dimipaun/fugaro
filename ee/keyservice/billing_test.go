@@ -56,6 +56,17 @@ const lapsedProject = "lapsed-portal"
 // does not (it is moved by the merchant's own events alone).
 const reboundProject = "rebound-portal"
 
+// eventProject is the Firebase project the purchase event of the portal case
+// buys for, and eventCustomer is the customer that event names. Both are the
+// point of that case: the customer arrives with the purchase event and never
+// with the checkout's own reply, and the customer it names is deliberately not
+// the one the case's other records carry (`customerOf`) — a case that wrote one
+// id in both places could not tell which of the two a session was minted for.
+const (
+	eventProject  = "event-portal"
+	eventCustomer = "ctm-dana-purchase"
+)
+
 // The three routes of this area, as the screen builds them.
 func subscriptionPath(workspaceID string) string {
 	return "/api/workspaces/" + workspaceID + "/subscription"
@@ -355,6 +366,38 @@ func TestCustomerPortalLinkIsPerOrg(t *testing.T) {
 		if f.paddle.customerID != customerOf(org.ID) {
 			t.Errorf("the session for %s was minted for the customer %q, want the organisation's own %q", workspace.ID, f.paddle.customerID, customerOf(org.ID))
 		}
+	}
+
+	// And the customer is the merchant's own, which arrives with the purchase
+	// event: the transaction the checkout opens is created with the items and the
+	// custom data alone (P4.1's `CreateTransaction`), so Paddle makes the customer
+	// with it and the event is the only thing that ever names one. The record the
+	// checkout wrote therefore carries none until the purchase lands, which is
+	// what `recordBought` writes onto it — and a case that seeded the customer
+	// itself would pass over a portal that can never mint a session in production.
+	purchase := purchaseEvent("evt-portal-customer", org.ID, 1, 365)
+	purchase.WorkspaceID = eventProject
+	purchase.CustomerID = eventCustomer
+	// The organisation id is not an address, and a purchase with nothing
+	// deliverable to it is refused (ErrNoBuyer): the buyer is the organisation's
+	// owner, whose address the fixture's own memberships carry.
+	purchase.Email = danaEmail
+	if rec := f.event(purchase); rec.Code != http.StatusOK {
+		t.Fatalf("delivering the purchase answered %d: %s", rec.Code, rec.Body)
+	}
+	admitted, present, err := getRecord[checkoutTransaction](context.Background(), f.docs, checkoutTransactionsCollection, "txn-"+purchase.Subscription)
+	if err != nil || !present {
+		t.Fatalf("reading the checkout the purchase was admitted by: %v (present %t)", err, present)
+	}
+	if admitted.CustomerID != eventCustomer {
+		t.Errorf("the checkout's record holds the customer %q, want the one the purchase event named (%q)", admitted.CustomerID, eventCustomer)
+	}
+	portalRec := f.apiAsCaller(http.MethodGet, portalPath(eventProject), "")
+	if portalRec.Code != http.StatusOK {
+		t.Fatalf("asking for the customer portal of the workspace the purchase bought for answered %d: %s", portalRec.Code, portalRec.Body)
+	}
+	if f.paddle.customerID != eventCustomer {
+		t.Errorf("the session was minted for the customer %q, want the one the purchase event named (%q) and not the organisation's earlier %q", f.paddle.customerID, eventCustomer, customerOf(org.ID))
 	}
 
 	// Another organisation's workspace is another customer, and no request can

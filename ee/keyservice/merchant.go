@@ -178,8 +178,15 @@ type Event struct {
 	// purchase or a seat change without one is refused here rather than minted
 	// into a key nobody can install.
 	WorkspaceID string `json:"workspace_id"`
-	Seats       int    `json:"seats"`
-	TermDays    int    `json:"term_days"`
+	// CustomerID is the merchant's own customer, which the purchase event is the
+	// only place one arrives from: the transaction the checkout opens is created
+	// with the items and the custom data alone (P4.1's `CreateTransaction`), so
+	// the customer Paddle makes with it is stated here and nowhere earlier. It is
+	// written onto the checkout's record (P4.3's `recordBought`), which is what
+	// the portal's customer-portal session is minted for.
+	CustomerID string `json:"customer_id"`
+	Seats      int    `json:"seats"`
+	TermDays   int    `json:"term_days"`
 }
 
 // webhook receives one merchant event, in the order F16 fixes: **verify, store,
@@ -636,7 +643,7 @@ func (s *Service) purchased(ctx context.Context, e Event) error {
 		// refund of this transaction resolves to that licence months later —
 		// when the workspace's current one is a licence this money never paid
 		// for, or when there is none at all (F16, F29).
-		if err := s.recordBought(ctx, bought.TransactionID, licence); err != nil {
+		if err := s.recordBought(ctx, bought.TransactionID, licence, e.CustomerID); err != nil {
 			return err
 		}
 	}
