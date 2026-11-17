@@ -594,6 +594,11 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// version drift so the person is told to update rather than handed a second
 	// command. It reads this machine's own file and reaches nothing.
 	o.Checks = append(o.Checks, doctorOrchestratorUnit())
+	// The resident orchestrator's own identity (P5.1b): the account exists only
+	// for an installation that opted into one, and when it does, this is the
+	// only place what it actually holds is read back against the design's
+	// section 4.3 table. Read-only, and it prints rather than asks.
+	o.Checks = append(o.Checks, doctorOrchestratorIdentity(ctx, lc, crmSvc)...)
 
 	// The installation's project-wide secret containers, listed once for
 	// doctor's three project-secret checks: the two per-repository ones
@@ -661,13 +666,13 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 						o.Checks = append(o.Checks, *c)
 					}
 					o.Checks = append(o.Checks, doctorSecretScopeChecks(facts, o.Secrets, projSecrets, projOK)...)
-					o.Checks = append(o.Checks, doctorBitbucketDirect(ctx, lc, repo, rf.Cfg.Git.Provider, facts)...)
+					o.Checks = append(o.Checks, doctorBitbucketDirect(ctx, lc, repo, rf.Cfg.Git.Provider, authOf(rf), facts)...)
 				}
 			}
 			if c := oauthTokenAllowedCheck(lc, repo, token, authOf(rf)); c != nil {
 				o.Checks = append(o.Checks, *c)
 			}
-			if c := doctorModelKeyInAgent(lc, rf); c != nil {
+			if c := doctorModelKeyInAgent(lc, rf, repo); c != nil {
 				o.Checks = append(o.Checks, *c)
 			}
 			o.Checks = append(o.Checks, doctorVisionChecks(ctx, co.Root, lc, rf, repo)...)
@@ -2481,6 +2486,12 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 			unreadRouting(doctorRoutingChecks(lc, nil, fmt.Sprintf("the budget database is not project %s's own (%v), so the published switch cannot be read", lc.Name, err), layer))...)
 	}
 	checks := doctorRulesSkew(ctx, db, lc)
+	// The drift alarm (spend-accuracy SA5.3, R6) reads the day counters of the
+	// same database and nothing else the policy node holds, so it stands here
+	// with the credential marks rather than after the node is read: a node this
+	// binary cannot get past says nothing about whether a model's report left
+	// the price table's band.
+	checks = append(checks, doctorSpendDrift(ctx, db, budgetNow())...)
 	checks = append(checks, doctorCredsBroken(ctx, db)...)
 	// The Bitbucket tokens' own marks (T10): the same database, a subtree of
 	// its own (creds/tokens), and a fact of the same kind — a credential of this
@@ -3156,10 +3167,14 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) 
 		// rulesMarkerOlderText does: a device-generation marker already has the
 		// mailbox and only the coordinator's read grant is new to it, a
 		// coordinator-generation marker already has that grant too and only the
-		// voice policy node is new to it, and a voice-generation marker already
-		// has that node and only the registration kind's fields are new to it.
+		// voice policy node is new to it, a voice-generation marker already has
+		// that node and only the registration kind's fields are new to it, and a
+		// registration-generation marker already has those fields and only the
+		// four day-counter leaves a stage report writes per model are new to it.
 		adds := "the mailbox, the device binding and the coordinator's read grant"
 		switch {
+		case gen >= rulesRegistrationGeneration:
+			adds = "the four day-counter leaves a run's stage report writes per model"
 		case gen >= rulesVoiceGeneration:
 			adds = "the registration kind's fields on a mailbox message"
 		case gen >= rulesCoordinatorGeneration:

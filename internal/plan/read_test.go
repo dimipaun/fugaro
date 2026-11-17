@@ -1,11 +1,19 @@
 package plan
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/bmatcuk/doublestar/v4"
+
+	"github.com/dimipaun/fugaro/internal/tier"
 )
 
 // TestPlanReadsTheFixtureGraph: the artifact parses, and what it carries is
@@ -489,5 +497,131 @@ func TestIDFromPath(t *testing.T) {
 		if got := IDFromPath(path); got != want {
 			t.Errorf("IDFromPath(%q) = %q, want %q", path, got, want)
 		}
+	}
+}
+
+// nodeTier is the tier a node of a graph carries, for the two tests below: a
+// node saying nothing carries none, and that is the answer most of their cases
+// are about.
+func nodeTier(t *testing.T, doc Document, id string) *tier.Tier {
+	t.Helper()
+	for _, n := range doc.Nodes {
+		if n.ID == id {
+			return n.Tier
+		}
+	}
+	t.Fatalf("the graph carries no node %q", id)
+	return nil
+}
+
+// TestNodeTierAcceptsTheFourTiers: a node may carry the expectation tier its
+// run is launched with (D2711), and the four it may carry are internal/tier's
+// own — written and read back one at a time, so this package holds no second
+// list beside the vocabulary that drifts from it.
+//
+// Absent and null are one statement, "the planner did not size this task",
+// which is what S2's estimate falls back to medium on: a node the planner left
+// alone is not a node expected to be medium, and the document keeps the two
+// apart.
+func TestNodeTierAcceptsTheFourTiers(t *testing.T) {
+	const base = `{"id": "A", "title": "the base", "size": 3,`
+	for _, want := range tier.Tiers {
+		t.Run(string(want), func(t *testing.T) {
+			doc := parseDoc(t, v3Doc(t, base, fmt.Sprintf(`{"id": "A", "title": "the base", "tier": %q, "size": 3,`, want)))
+			if got := nodeTier(t, doc, "A"); got == nil || *got != want {
+				t.Errorf("A's tier = %v, want %q", got, want)
+			}
+			if got := nodeTier(t, doc, "B"); got != nil {
+				t.Errorf("B's tier = %q, want none: a task the planner did not size says so by saying nothing", *got)
+			}
+			// It survives the write as well as the read, so a planner's file and
+			// the read of it cannot disagree about how big the task is.
+			body, err := json.Marshal(doc)
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			again, err := Parse("graph.json", body)
+			if err != nil {
+				t.Fatalf("the document this build wrote was refused: %v", err)
+			}
+			if !reflect.DeepEqual(doc, again) {
+				t.Errorf("a round trip changed the document:\n%+v\n%+v", doc, again)
+			}
+		})
+	}
+
+	t.Run("null is no tier", func(t *testing.T) {
+		doc := parseDoc(t, v3Doc(t, base, `{"id": "A", "title": "the base", "tier": null, "size": 3,`))
+		if got := nodeTier(t, doc, "A"); got != nil {
+			t.Errorf("A's tier = %q, want none: null is a planner that did not size the task", *got)
+		}
+	})
+}
+
+// TestNodeTierRefusesOthers: the vocabulary is closed where it is written, and
+// the refusal names the node and the four, as the kind's does. A tier is what
+// the run is launched with, so a name outside the four is a node no launcher
+// can size rather than a node drawn with an unknown size.
+func TestNodeTierRefusesOthers(t *testing.T) {
+	const base = `{"id": "A", "title": "the base", "size": 3,`
+	for _, tc := range []struct{ name, value string }{
+		{"no tier at all", `""`},
+		{"a tier this build does not know", `"huge"`},
+		{"a tier in the wrong case", `"Small"`},
+		{"a tier with a space around it", `" small "`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse("graph.json", []byte(v3Doc(t, base, fmt.Sprintf(`{"id": "A", "title": "the base", "tier": %s, "size": 3,`, tc.value))))
+			if err == nil {
+				t.Fatalf("Parse accepted %s", tc.name)
+			}
+			for _, want := range []string{`node "A" carries the tier`, "trivial, small, medium, large"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal for %s = %q, want it to say %q", tc.name, err, want)
+				}
+			}
+		})
+	}
+
+	// The key in a document written to an older schema is a schema-3 field like
+	// the kind and the size beside it: a v2 artifact carrying one is written to
+	// neither schema, so it is refused rather than read with the tier dropped.
+	t.Run("a tier in a v2 document", func(t *testing.T) {
+		refused(t, `{"schema_version": 2, "plan": "p.md", "nodes": [
+		{"id": "a", "title": "x", "tier": "small", "footprint": {"prediction": true, "paths": []}}], "edges": []}`,
+			"schema version 2 and carries", "tier", "schema version 3 field")
+	})
+}
+
+// TestCommittedGraphsStillRead: every graph artifact this tree carries is a
+// document this build renders, read through the call the command itself makes.
+// The tier is additive to schema 3 — schema 3 stays schema 3 (D2711, D2734) —
+// and this is the tie that says so: the artifacts written before the field
+// existed still read, so a renamed tag, a retyped field or a decode made
+// stricter than the documents in the tree fails here rather than in the plan
+// command of whoever next opens one.
+func TestCommittedGraphsStillRead(t *testing.T) {
+	root := filepath.Join("..", "..")
+	files, err := doublestar.Glob(os.DirFS(root), "docs/**/implementation-plan.graph.json", doublestar.WithFilesOnly())
+	if err != nil {
+		t.Fatalf("globbing the committed artifacts: %v", err)
+	}
+	const shipped = "docs/console-dependency-graph/implementation-plan.graph.json"
+	if !slices.Contains(files, shipped) {
+		t.Fatalf("the enumeration found %d artifacts and not the shipped one %s: %v", len(files), shipped, files)
+	}
+	for _, rel := range files {
+		t.Run(rel, func(t *testing.T) {
+			doc, err := ReadFile(filepath.Join(root, rel))
+			if err != nil {
+				t.Fatalf("%s is not a graph this build reads: %v", rel, err)
+			}
+			// The artifact is found because it sits beside the plan it names: a
+			// move of one without the other leaves the command looking for a
+			// file that is not there.
+			if beside := filepath.Join(root, ArtifactPath(doc.Plan)); beside != filepath.Join(root, rel) {
+				t.Errorf("%s names the plan %q, whose artifact is %s", rel, doc.Plan, beside)
+			}
+		})
 	}
 }

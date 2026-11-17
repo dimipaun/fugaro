@@ -280,7 +280,7 @@ func TestReviewPairingMayNameTheProjectsAnthropicKey(t *testing.T) {
 // the other's job is not the one for.
 func TestReviewRowsCarryEachAxisValueOfItsOwn(t *testing.T) {
 	doc := `{
-		"version": 5,
+		"version": 9,
 		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ["` + testRepo + `"],
 		"accounts": {
@@ -394,7 +394,7 @@ func profilelessPolicyDoc(t *testing.T, allowRepos []string, entry string, accou
 		t.Fatalf("the fixture's own allow-list is not one json can write: %v", err)
 	}
 	return `{
-		"version": 5,
+		"version": 9,
 		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ` + string(list) + `,
 		"accounts": ` + string(written) + `,
@@ -1280,7 +1280,7 @@ func testPolicyDocOneProfile(name string, accounts ...string) string {
 		profiles += `, "` + name + `": ` + body
 	}
 	return `{
-		"version": 5,
+		"version": 9,
 		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
 		"accounts": {
@@ -1544,7 +1544,7 @@ func testPolicyDocProfilesNameBoth(project string) string {
 		profiles += `, "` + sharedCodingProfile + `": ` + body
 	}
 	return `{
-		"version": 5,
+		"version": 9,
 		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ` + project + `,
 		"accounts": {

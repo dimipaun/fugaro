@@ -58,30 +58,22 @@ import (
 // duplicate, and a run in flight may carry a pull request of its own (a
 // follow-up the task's own chain is on).
 type duplicateOf struct {
-	// live is the run in flight, as its short ending; "" when none is.
+	// live is the run in flight, as the records name it (the full
+	// <repo-slug>/<run-id>); "" when none is. The prose shortens it to its
+	// ending (task.ShortRun), which is how every listing shows a run.
 	live string
 	// status is that run's own word: launching, pending or running.
 	status string
 	// pr is the pull request found on the task, 0 when none is: the run in
 	// flight's own, or one a run that ended left behind.
 	pr int
-	// prRun is the short ending of the run whose row carries that pull
-	// request, when it is not the run in flight.
+	// prRun is the same ref for the run whose row carries that pull request,
+	// when it is not the run in flight.
 	prRun string
 	// prState is that pull request as the records fold it (markPRStates):
 	// runview's live, ready or stalled, the words `fugaro runs ls --state`
 	// matches. "" when no pull request was found.
 	prState string
-}
-
-// run is the run to name as the task's: the one in flight when there is one,
-// else the one whose row carries the pull request. Both are a run of the chain
-// --retry and --continues take.
-func (d duplicateOf) run() string {
-	if d.live != "" {
-		return d.live
-	}
-	return d.prRun
 }
 
 // prWord is the pull request's state as a reader of the refusal meets it: the
@@ -99,54 +91,104 @@ func (d duplicateOf) prWord() string {
 }
 
 // what names the duplicate, as the whole of the --allow-duplicate note and the
-// opening of the refusal below: the plan task, and what holds it.
-func (d duplicateOf) what(planTask, slug string) string {
+// opening of the refusal below: the plan task, and what holds it. A run is
+// named by its ending, the way every listing shows it; the repository is the
+// caller's own <owner/name> and never the runs bucket's slug, which no command
+// the refusal prints would accept.
+func (d duplicateOf) what(planTask, repo string) string {
 	switch {
 	case d.live != "" && d.pr != 0:
-		return fmt.Sprintf("plan task %s is already being worked on (run %s is still %s, on pull request #%d of %s)", planTask, d.live, d.status, d.pr, slug)
+		return fmt.Sprintf("plan task %s is already being worked on (run %s is still %s, on pull request #%d of %s)", planTask, task.ShortRun(d.live), d.status, d.pr, repo)
 	case d.live != "":
-		return fmt.Sprintf("plan task %s is already being worked on (run %s is still %s)", planTask, d.live, d.status)
+		return fmt.Sprintf("plan task %s is already being worked on (run %s is still %s)", planTask, task.ShortRun(d.live), d.status)
 	default:
-		return fmt.Sprintf("plan task %s is already being worked on (run %s left pull request #%d of %s, %s)", planTask, d.prRun, d.pr, slug, d.prWord())
+		return fmt.Sprintf("plan task %s is already being worked on (run %s left pull request #%d of %s, %s)", planTask, task.ShortRun(d.prRun), d.pr, repo, d.prWord())
 	}
 }
 
 // refusal is the message a launch of the same task is refused with: what holds
-// the task, that nothing was launched, and the ways out. --pr is named only
-// where there is a pull request to name, and the chain is named by the run the
-// guard found -- the same run --retry resolves, since an ending two runs share
-// is refused there rather than guessed at.
-func (d duplicateOf) refusal(planTask, slug string) string {
+// the task, that nothing was launched, and the ways out -- each of them a
+// command the CLI takes that starts nothing on the task already being worked on,
+// because a way out that is itself refused, that launches nothing, or that
+// starts the second run by another door, sends the caller into a second error or
+// into the duplicate instead of out of it.
+//
+// So the ways out are shaped by what holds the task. A run in flight is waited
+// for, and the deliberate second attempt is the other thing a caller may do: a
+// run that is going is continued by nothing the CLI takes, so a wait is the
+// whole of it. --retry is missing from every shape: it starts only a run that
+// never launched (its own help), and every run this guard can name has -- the
+// one in flight holds a launch claim or a launch.json, and the one behind a pull
+// request ended -- so existingLaunch answers a --retry of either with
+// already-launched and the launch does nothing. --continues is missing from
+// every shape too: it is for a halted run that opened nothing, and the launch it
+// asks for is a way out of this guard rather than one that could meet it (the
+// call site skips the check for it), so naming the run in flight would aim the
+// caller at a second run of the very task this refusal just stopped, one that
+// also inherits the chain's remainder from the ledgers the live run is still
+// spending against -- the two between them spending up to twice what one chain
+// holds. --pr is named only where a run of the task ended and left its pull
+// request behind and no run of that pull request is going: continuing the pull
+// request is the one way its chain is continued (chainFrom refuses a --continues
+// of a run that is part of one), and resolvePR refuses a follow-up while any run
+// of the pull request is still live -- the run of the task itself, or one the
+// guard did not match at all, a --pr follow-up launched without --plan-task
+// (followup.go records o.planTask, so the command this refusal prints itself
+// leaves it empty) whose row carries the pull request and no task -- so naming
+// --pr in either case would be one more dead end, and the pull request's own
+// listing is the way out instead.
+//
+// Every launch a way out prints carries --repo, and the listings carry it too:
+// the caller that reads the refusal may be in another checkout, or in none at
+// all (a launch that resolves the repository from the flag), and a launch
+// without it is refused there or silently aimed at the checkout's own
+// repository -- the duplicate this refusal exists to stop, one repository over.
+func (d duplicateOf) refusal(planTask, repo string) string {
 	second := "launch a deliberate second attempt of the same task with --allow-duplicate"
-	if d.pr != 0 {
+	var ways string
+	switch {
+	case d.live != "":
+		// A run in flight is waited for, and the deliberate second attempt is
+		// the other thing the caller may do. Nothing else is named: --pr does
+		// not apply to a run that is going, as resolvePR refuses a follow-up
+		// while one of the pull request's runs is still live, and --retry and
+		// --continues are the dead ends the note above sets out.
+		ways = fmt.Sprintf("wait for that run (fugaro runs ls --repo %s), or %s", repo, second)
+	case d.prState == prStateLive:
+		// The pull request a run of the task left is itself being worked on: a
+		// run of it is going that this guard did not match, so a --pr of it
+		// would meet the very resolvePR refusal the run in flight above does
+		// (resolvePR reads one pull request's runs, whatever task they name).
+		// Waiting is the whole of the way out here too, read over that one pull
+		// request rather than the repository.
+		ways = fmt.Sprintf("wait for the run going on that pull request (fugaro runs ls --pr %d --repo %s), or %s", d.pr, repo, second)
+	default:
 		// The caveat belongs where the pull request is named and nowhere else:
 		// the records cannot see a merge, so one that is done with still
 		// refuses, and the caller has to hear that before it reaches for the
 		// flag.
 		second += " (the run records, and not the code host, are where that pull request is read from, so one since merged or closed refuses too)"
+		ways = fmt.Sprintf("continue that pull request with fugaro run --pr %d --repo %s, or %s", d.pr, repo, second)
 	}
-	ways := fmt.Sprintf("continue the chain with fugaro run --retry %s (or --continues %s), or %s", d.run(), d.run(), second)
-	if d.pr != 0 {
-		ways = fmt.Sprintf("continue that pull request with fugaro run --pr %d, %s", d.pr, ways)
-	} else {
-		ways = fmt.Sprintf("wait for that run (fugaro runs ls --repo %s), %s", slug, ways)
-	}
-	return fmt.Sprintf("%s, so this launch would be its second run: nothing was launched. %s.", d.what(planTask, slug), ways)
+	return fmt.Sprintf("%s, so this launch would be its second run: nothing was launched. %s.", d.what(planTask, repo), ways)
 }
 
 // planTaskDuplicate is the guard itself, called by every launch shape that
 // starts a new task (a plain launch and a best-of-N batch): it refuses
 // o.planTask while the task is already being worked on, unless
 // --allow-duplicate says the second attempt is deliberate, and it launches as
-// today whenever it cannot find out. runID is the run this launch is about
-// (spec.RunID), left out of the read so that a repeated --run-id reports its
-// own launch instead of being refused as its own duplicate; it is "" for a
-// batch, whose attempts are minted after this call.
+// today whenever it cannot find out. slug is the repository's name in the runs
+// bucket, which is all the read below is made over; repo is the caller's own
+// <owner/name> for it, which is what the refusal names, since no command it
+// prints takes the slug. runID is the run this launch is about (spec.RunID),
+// left out of the read so that a repeated --run-id reports its own launch
+// instead of being refused as its own duplicate; it is "" for a batch, whose
+// attempts are minted after this call.
 //
 // A --pr follow-up, a --retry and a --continues launch never reach it: they
 // are the ways out of the refusal, and each continues a run that already
 // exists rather than starting a second one.
-func planTaskDuplicate(ctx context.Context, env *cloudEnv, o *runOptions, slug, runID string, warn io.Writer) error {
+func planTaskDuplicate(ctx context.Context, env *cloudEnv, o *runOptions, slug, repo, runID string, warn io.Writer) error {
 	if o.planTask == "" {
 		return nil
 	}
@@ -158,10 +200,10 @@ func planTaskDuplicate(ctx context.Context, env *cloudEnv, o *runOptions, slug, 
 		return nil
 	}
 	if o.allowDuplicate {
-		fmt.Fprintf(warn, "note: --allow-duplicate: %s; launching a second run of it\n", d.what(oneLine(o.planTask), slug))
+		fmt.Fprintf(warn, "note: --allow-duplicate: %s; launching a second run of it\n", d.what(oneLine(o.planTask), repo))
 		return nil
 	}
-	return userErr("%s", d.refusal(oneLine(o.planTask), slug))
+	return userErr("%s", d.refusal(oneLine(o.planTask), repo))
 }
 
 // findPlanTaskDuplicate reads the plan task's own runs and answers what holds
@@ -200,7 +242,7 @@ func findPlanTaskDuplicate(ctx context.Context, env *cloudEnv, o *runOptions, sl
 			// The newest one is named, so a task whose runs piled up is
 			// answered with the run a reader would look at.
 			if found.live == "" || r.Created.After(newest) {
-				found.live, found.status, found.pr, newest = task.ShortRun(oneLine(r.Run)), r.Status, r.PR, r.Created
+				found.live, found.status, found.pr, newest = oneLine(r.Run), r.Status, r.PR, r.Created
 			}
 			continue
 		}
@@ -211,7 +253,7 @@ func findPlanTaskDuplicate(ctx context.Context, env *cloudEnv, o *runOptions, sl
 		// while its record names none (runview's PRState note), so the row
 		// that has the number is the one that speaks for it.
 		if r.PR != 0 && !slices.ContainsFunc(prs, func(p duplicatePR) bool { return p.pr == r.PR }) {
-			prs = append(prs, duplicatePR{pr: r.PR, run: task.ShortRun(oneLine(r.Run)), state: r.PRState, created: r.Created})
+			prs = append(prs, duplicatePR{pr: r.PR, run: oneLine(r.Run), state: r.PRState, created: r.Created})
 		}
 	}
 	if found.live != "" {

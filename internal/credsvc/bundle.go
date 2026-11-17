@@ -834,6 +834,35 @@ func CredentialKey(key string) (name string, kind Kind, tier creds.Tier, ok bool
 		return config.ProviderKeySecret, KindProvider, creds.TierC, true
 	case key == config.AnthropicSecret:
 		return config.AnthropicSecret, KindModel, creds.TierB, true
+	case config.KeyCredentialSecret(key):
+		// A service-served key credential's own entry (D1670, MC22, MC23):
+		// `fugaro accounts add <name> --type anthropic` declares the credential
+		// and stores its key under config.CredentialSecret(name), and this is
+		// the half of the run that serves that type — so the entry the
+		// credentials service reads is here, offered to a craft's calls at the
+		// tier of a paid API key exactly as the project's own Anthropic key is.
+		//
+		// The NAME this document answers is the credential's and not the
+		// entry's: a craft's access and a pool's member spell `name`, the way
+		// they spell an account's, and the entry's spelling is the container the
+		// CLI stores the value in. That is also what makes the duplicate rule
+		// work: an account and a key credential of one name resolve to one name
+		// here, and a document holding both is refused rather than read under a
+		// name that would mean two credentials (the model family's rule below).
+		//
+		// A name the account rule does not admit is refused, the reason the
+		// claude-oauth-token family gives: no policy could name it and no writer
+		// would rotate it, so a document holding one is refused rather than
+		// loaded under a name the rest of the service cannot speak.
+		//
+		// A runner-path key credential (openrouter) never reaches this
+		// document, and the loader cannot know that: what keeps it out is the
+		// write (config.CredentialServingPath at `fugaro creds set`, and the
+		// job's own mount carrying the value to the run that spends it).
+		if name, ok := config.CredentialBySecret(key); ok {
+			return name, KindModel, creds.TierB, true
+		}
+		return "", "", "", false
 	case key == config.ClaudeOAuthToken:
 		return config.DefaultClaudeAccount, KindModel, creds.TierA, true
 	case strings.HasPrefix(key, config.ClaudeOAuthTokenPrefix):

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -36,6 +37,19 @@ import (
 const brokeringBitbucketYAML = `version: 1
 project: aurora
 git: { provider: bitbucket }
+workflows:
+  app: { commands: { build: sh build.sh, test: sh test.sh } }
+`
+
+// brokeringCascadeBitbucketYAML is that checkout with the agent.auth the
+// credentials service serves, which is the third condition of the flip's own
+// switch (infra.CredentialsServiceServes, read live from this file). A rig
+// whose repository is not served keeps its mount by design, which is a state
+// of its own.
+const brokeringCascadeBitbucketYAML = `version: 1
+project: aurora
+git: { provider: bitbucket }
+agent: { auth: cascade }
 workflows:
   app: { commands: { build: sh build.sh, test: sh test.sh } }
 `
@@ -73,6 +87,30 @@ func brokeringVariantsConfig(on bool) string {
 type brokeringRig struct {
 	*doctorRig
 	svcs *gcpfake.RunServices
+	// checkout is the working directory's own path, where the rig's
+	// fugaro.yaml is: serveTheRepository rewrites it.
+	checkout string
+}
+
+// serveTheRepository makes the rig's repository one the credentials service
+// serves, which is what the flip fires on: the checkout's agent.auth becomes
+// the cascade, and the local config records the repository's root as applied
+// with the service on. Both halves are what flipServes reads. A rig without
+// them is a proxied repository whose jobs keep their mount, which is its own
+// state and its own test.
+func (r *brokeringRig) serveTheRepository(t *testing.T) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(r.checkout, "fugaro.yaml"), []byte(brokeringCascadeBitbucketYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before := readFileString(t, r.cfgPath)
+	r.cfg = strings.Replace(before, "workspace-a/repo-a: {", "workspace-a/repo-a: { credentials_service_ready: true,", 1)
+	if r.cfg == before {
+		t.Fatalf("the rig's local config does not name the repository: %s", before)
+	}
+	if err := os.WriteFile(r.cfgPath, []byte(r.cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func newBrokeringRig(t *testing.T) *brokeringRig {
@@ -141,8 +179,8 @@ func newBrokeringVariantsRig(t *testing.T, on bool) *brokeringRig {
 // state the test is about).
 func newBrokeringCheckout(t *testing.T, withService bool) *brokeringRig {
 	t.Helper()
-	r := &brokeringRig{doctorRig: newDoctorRig(t), svcs: gcpfake.NewRunServices(t)}
 	dir := checkoutWith(t, map[string]string{"fugaro.yaml": brokeringBitbucketYAML})
+	r := &brokeringRig{doctorRig: newDoctorRig(t), svcs: gcpfake.NewRunServices(t), checkout: dir}
 	testutil.Git(t, dir, "remote", "set-url", "origin", "https://bitbucket.org/workspace-a/repo-a.git")
 	cfg := strings.Replace(r.cfg, "run: "+r.run.URL+"/", "run: "+cloudRunEndpoint(t, r.run, r.svcs)+"/", 1)
 	if err := os.WriteFile(r.cfgPath, []byte(cfg), 0o600); err != nil {
@@ -202,23 +240,14 @@ func (r *brokeringRig) jobMountingToken(t *testing.T, job string) string {
 	return job
 }
 
-// flipProxiedGitList turns the proxy's flip on for the duration of one test:
-// the list is the release-time switch B1.13 part two fills.
-func flipProxiedGitList(t *testing.T, names ...string) {
-	t.Helper()
-	old := config.ProxiedGitSecretNames
-	config.ProxiedGitSecretNames = names
-	t.Cleanup(func() { config.ProxiedGitSecretNames = old })
-}
-
-// TestDoctorBrokeringMountedTokenOnFlippedInstallation: the red step. Once the
-// flip has happened (config.ProxiedGitSecretNames names the token), a proxied
-// repository's job must have given the mount up: a job that still mounts it
-// was applied before the flip, and the next deploy of that job would fail on a
-// mount whose accessor is gone. Doctor warns.
+// TestDoctorBrokeringMountedTokenOnFlippedInstallation: the red step. On a
+// repository the credentials service serves, whose jobs the flip list names
+// the token for (B1.13 part two), a job must have given the mount up: a job
+// that still mounts it was applied before the flip, and the next deploy of
+// that job would fail on a mount whose accessor is gone. Doctor warns.
 func TestDoctorBrokeringMountedTokenOnFlippedInstallation(t *testing.T) {
-	flipProxiedGitList(t, config.BitbucketSecret)
 	r := newBrokeringRig(t)
+	r.serveTheRepository(t)
 	job := r.jobMountingBitbucketToken(t)
 
 	o, err := r.doctor(t)
@@ -990,9 +1019,13 @@ func brokeringServiceStates() []brokeringServiceState {
 			// this" either: the deploy is the ordinary update, and what moves a
 			// repository's credential out of its jobs is the switch, so what is
 			// pinned here is the deploy's own reach and what the switch costs
-			// when it is on.
+			// when it is on. The switch's terms are pinned as of B2.4: the pin
+			// used to be "agent.auth: cascade", which was the whole of the
+			// condition while the switch admitted the cascade alone, and the
+			// line now has to name the two the other auths add — the budget
+			// mode, and the bundle entry the auth's runs are served under.
 			name:     "the installation carries no credentials service",
-			names:    []string{infra.CredentialsServiceName, selfCommand() + " update", "deploys one on every installation", "re-applied with the switch", "agent.auth: cascade", selfCommand() + " creds set github-app-key"},
+			names:    []string{infra.CredentialsServiceName, selfCommand() + " update", "deploys one on every installation", "re-applied with the switch", "an api-key or oauth one only where its budget mode is observe or enforce", selfCommand() + " creds set github-app-key"},
 			absent:   []string{"has not converged", "opt in", "provision-credentials", "nothing for a run to fetch"},
 			severity: "info",
 			build:    newBrokeringNoServiceRig,
@@ -1849,10 +1882,11 @@ func TestDoctorBitbucketTokenRoots(t *testing.T) {
 }
 
 // TestDoctorBrokeringBitbucketDirect: the repository's own side of the flip.
-// Before it — no project_secrets entry admits the repository, or the release
-// that fills the flip list has not shipped — a job mounting bitbucket-token is
-// the state the installation is in, and the line is information. Only after
-// the flip is that same mount a job applied before it.
+// On a repository no project_secrets entry admits, a job mounting
+// bitbucket-token is the state the installation is in, and the line is
+// information. On a repository the owner proxied — the flip list names the
+// token since B1.13 part two — that same mount is a job applied before the
+// flip.
 func TestDoctorBrokeringBitbucketDirect(t *testing.T) {
 	t.Run("not proxied", func(t *testing.T) {
 		r := newBrokeringDirectRig(t)
@@ -1872,9 +1906,15 @@ func TestDoctorBrokeringBitbucketDirect(t *testing.T) {
 		}
 	})
 
-	t.Run("proxied, before the flip", func(t *testing.T) {
+	t.Run("proxied, and the switch holds the flip off", func(t *testing.T) {
+		// The rig as it is built: the repository is admitted with proxy: true,
+		// and nothing serves it — no record of its root applied with the
+		// service on, and an agent.auth that is not the cascade — so the flip
+		// fires for no job of it and the mount below is the state, not a
+		// leftover.
 		r := newBrokeringRig(t)
 		r.jobMountingBitbucketToken(t)
+
 		o, err := r.doctor(t)
 		if err != nil {
 			t.Fatalf("doctor: %v", err)
@@ -1883,14 +1923,17 @@ func TestDoctorBrokeringBitbucketDirect(t *testing.T) {
 		if len(cs) != 1 || cs[0].OK || cs[0].Severity != "info" {
 			t.Fatalf("bitbucket-direct = %+v, want one informational line", cs)
 		}
-		if !strings.Contains(cs[0].Problem, "flip list has not shipped") {
-			t.Errorf("the line does not say the flip has not shipped: %q", cs[0].Problem)
+		if !strings.Contains(cs[0].Problem, "does not serve it") || !strings.Contains(cs[0].Problem, config.BitbucketSecret) {
+			t.Errorf("the line does not say the flip leaves this repository alone: %q", cs[0].Problem)
+		}
+		if !strings.Contains(cs[0].Problem, "records no apply of its root") {
+			t.Errorf("the line does not name the condition that holds the switch off: %q", cs[0].Problem)
 		}
 	})
 
-	t.Run("proxied and flipped, the mount given up", func(t *testing.T) {
-		flipProxiedGitList(t, config.BitbucketSecret)
+	t.Run("proxied and served, the job's mount given up", func(t *testing.T) {
 		r := newBrokeringRig(t)
+		r.serveTheRepository(t)
 		// The job the flip's own re-apply deploys: the same name, no mount.
 		job := gcp.JobName(mustSlug("bitbucket", "workspace-a/repo-a"), "app")
 		r.run.SetJobJSON(job, `{"name":"projects/proj-1234/locations/us-east5/jobs/`+job+`",
@@ -1908,8 +1951,8 @@ func TestDoctorBrokeringBitbucketDirect(t *testing.T) {
 	})
 
 	t.Run("a named account's variant job", func(t *testing.T) {
-		flipProxiedGitList(t, config.BitbucketSecret)
 		r := newBrokeringRig(t)
+		r.serveTheRepository(t)
 		addClaudeAccounts(t, r.doctorRig, "claude_accounts:\n  workspace-a-team:\n    allow_data_to: [workspace-a/repo-a]\n")
 		putProjectSecret(t, r.sm, "aurora", config.ClaudeAccountSecret("workspace-a-team"), []byte("account-token"))
 		// The named account runs the workflow as its own job
@@ -2195,7 +2238,10 @@ func TestDoctorBrokeringSecretRotationAge(t *testing.T) {
 // model credential a workflow's agent holds in its own environment. It is
 // information, never a failure (running without the budget is a legitimate
 // choice), and it is silent whenever something holds the credential away from
-// the agent: the budget gateway for an api-key run, or the credentials service.
+// the agent: the budget gateway for an api-key run, and the credentials service
+// for the auths the switch admits, which for an api-key repository is the same
+// budget mode the gateway is asked about (CredentialsServiceServes) and for an
+// oauth one the switch alone.
 func TestDoctorBrokeringModelKeyInAgent(t *testing.T) {
 	newRig := func(t *testing.T, auth string, withService bool) *doctorRig {
 		t.Helper()
@@ -2245,9 +2291,19 @@ func TestDoctorBrokeringModelKeyInAgent(t *testing.T) {
 		}
 	})
 
+	// The service's half is the switch's own predicate, so what makes this
+	// silent is the state a switched run is in — a budget mode the gateway
+	// exists in, a service deployed, and the record `fugaro update --repo`
+	// leaves when it applies a root with the switch on — and not the
+	// credentials_service block alone. oauth is where that shows on its own:
+	// the gateway never holds it (F30), so the switch is the only thing that
+	// can.
 	t.Run("the credentials service holds it", func(t *testing.T) {
-		if cs := check(t, newRig(t, "api-key", true)); len(cs) != 0 {
-			t.Errorf("an installation that brokers its credentials got %+v", cs)
+		r := newRig(t, "oauth", true)
+		addLocalLines(t, r, "budget: { mode: enforce, per_run_usd: 5 }\n")
+		addLocalLines(t, r, "repos:\n  acme/app: { provider: github, workflows: [app], credentials_service_ready: true }\n")
+		if cs := check(t, r); len(cs) != 0 {
+			t.Errorf("a repository whose root was applied with the switch on got %+v", cs)
 		}
 	})
 
@@ -2272,6 +2328,120 @@ func TestDoctorBrokeringModelKeyInAgent(t *testing.T) {
 			}
 		}
 	})
+}
+
+// modelKeyRig is a checkout of github.com/acme/app whose workflows run with
+// agent.auth auth, on an installation carrying the extra local lines — with the
+// credentials service block (service) or without it.
+func modelKeyRig(t *testing.T, auth string, service bool, local string) *doctorRig {
+	t.Helper()
+	r := newDoctorRig(t)
+	yaml := strings.Replace(cliMinimalYAML, "workflows:", "agent: { auth: "+auth+" }\nworkflows:", 1)
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": yaml})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	if service {
+		addLocalLines(t, r, "credentials_service: { url: https://fugaro-credentials-abc-uc.a.run.app }\n")
+	}
+	if local != "" {
+		addLocalLines(t, r, local)
+	}
+	return r
+}
+
+// modelKeyCheck is doctor's model-key-in-agent finding on that rig, read from
+// --json as an owner reads it.
+func modelKeyCheck(t *testing.T, r *doctorRig) []doctorCheck {
+	t.Helper()
+	out, _, _ := execute(t, "doctor", "--json")
+	var o doctorOutput
+	if err := json.Unmarshal([]byte(out), &o); err != nil {
+		t.Fatalf("json: %v\n%s", err, out)
+	}
+	return checksByID(o, "model-key-in-agent")
+}
+
+// TestDoctorBrokeringNamesWhyAnOAuthRepoIsOffTheSwitch: an oauth repository is
+// the auth the gateway never holds (F30), so its line is the switch's answer
+// alone, and the switch is held off for it until the record `fugaro update
+// --repo` leaves says its root was applied with the credential its runs are
+// served under in the service's bundle (B2.3). The check names that state and
+// the bundle entries the switch waits for — in the bundle's own document
+// spelling, which is what `fugaro creds set` takes — and it never says the
+// bundle lacks them: doctor reads the bundle's document only behind
+// --check-bitbucket-token.
+func TestDoctorBrokeringNamesWhyAnOAuthRepoIsOffTheSwitch(t *testing.T) {
+	t.Run("the record says the root was applied with the switch off", func(t *testing.T) {
+		r := modelKeyRig(t, "oauth", true, "budget: { mode: enforce, per_run_usd: 5 }\n")
+		cs := modelKeyCheck(t, r)
+		if len(cs) != 1 || cs[0].OK || cs[0].Severity != "info" {
+			t.Fatalf("model-key-in-agent = %+v, want one informational line", cs)
+		}
+		if !strings.Contains(cs[0].Problem, "held off for this repository") {
+			t.Errorf("the line does not name the switch as the reason: %q", cs[0].Problem)
+		}
+		if !strings.Contains(cs[0].Problem, config.ClaudeOAuthToken) {
+			t.Errorf("the line does not name the entry the switch waits for: %q", cs[0].Problem)
+		}
+		if !strings.Contains(cs[0].Fix, "creds set "+config.ClaudeOAuthToken) {
+			t.Errorf("the fix does not name the command that fills the bundle: %q", cs[0].Fix)
+		}
+		// The gateway is not a route for this auth, and the fix must not offer
+		// it as one: an oauth run never starts a gateway (F30), so a line that
+		// said "turn the budget on" would send the operator to a switch that
+		// does nothing for this repository.
+		if strings.Contains(cs[0].Fix, "turn the budget on") || !strings.Contains(cs[0].Fix, "never starts one") {
+			t.Errorf("the fix offers the gateway for an oauth repository: %q", cs[0].Fix)
+		}
+		if checksFail(cs, true) {
+			t.Errorf("the line fails doctor under --strict: %+v", cs)
+		}
+	})
+
+	t.Run("no service to switch the repository onto", func(t *testing.T) {
+		r := modelKeyRig(t, "oauth", false, "budget: { mode: enforce, per_run_usd: 5 }\n")
+		cs := modelKeyCheck(t, r)
+		if len(cs) != 1 || cs[0].OK {
+			t.Fatalf("model-key-in-agent = %+v, want one informational line", cs)
+		}
+		if !strings.Contains(cs[0].Problem, "no credentials service") {
+			t.Errorf("the line does not name the missing service: %q", cs[0].Problem)
+		}
+	})
+}
+
+// TestDoctorBrokeringNamesBudgetOffForAnAPIKeyRepo: for an api-key repository
+// the mode is the whole answer, because the service is reached from behind the
+// gateway and the gateway exists in observe and enforce alone (D2071). A
+// repository whose record says its root was applied with the switch on, on a
+// project whose mode is off, is one where neither the gateway nor the service
+// holds the key — the state this line has to read as held, and not as brokered
+// because a service happens to be deployed.
+func TestDoctorBrokeringNamesBudgetOffForAnAPIKeyRepo(t *testing.T) {
+	r := modelKeyRig(t, "api-key", true, "repos:\n  acme/app: { provider: github, workflows: [app], credentials_service_ready: true }\n")
+	cs := modelKeyCheck(t, r)
+	if len(cs) != 1 || cs[0].OK || cs[0].Severity != "info" {
+		t.Fatalf("model-key-in-agent = %+v, want one informational line", cs)
+	}
+	for _, want := range []string{"budget.mode is off", "observe or enforce", config.AnthropicSecret} {
+		if !strings.Contains(cs[0].Problem, want) {
+			t.Errorf("the line does not carry %q: %q", want, cs[0].Problem)
+		}
+	}
+	// The gateway is a route for this auth, and the fix offers it: an api-key
+	// run's key is the gateway's the moment the mode is on, whether or not a
+	// service is deployed.
+	if !strings.Contains(cs[0].Fix, "turn the budget on") || !strings.Contains(cs[0].Fix, "creds set "+config.AnthropicSecret) {
+		t.Errorf("the fix does not offer both routes: %q", cs[0].Fix)
+	}
+	// The mutant this kills is the check that reads the credentials service as
+	// the gateway's replacement rather than as the thing behind it: it reports
+	// a repository the switch holds off as one whose key is held away. The
+	// other direction is the same rig with the mode on, where the gateway holds
+	// it and there is no line at all.
+	on := modelKeyRig(t, "api-key", true, "budget: { mode: enforce, per_run_usd: 5 }\n")
+	if cs := modelKeyCheck(t, on); len(cs) != 0 {
+		t.Errorf("with the budget on the gateway holds the key, got %+v", cs)
+	}
 }
 
 // TestDoctorBrokeringStatesOnTheOneScreen is item 1's classification read from
@@ -2436,9 +2606,8 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 		counted(t, def, "`fugaro doctor --all`")
 	})
 
-	// Before the flip a proxied repository's own mount is the installation's
-	// state, and a repository nobody proxied is holding its token by design:
-	// both are information, both are counted, neither is an item.
+	// A repository nobody proxied is holding its token by design — before the
+	// flip and after it — so its line is information, counted and not an item.
 	t.Run("the repository holds its own token", func(t *testing.T) {
 		r := newBrokeringDirectRig(t)
 		o, err := r.doctor(t)
@@ -2457,8 +2626,8 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 	})
 
 	t.Run("a job still mounts the token after the flip", func(t *testing.T) {
-		flipProxiedGitList(t, config.BitbucketSecret)
 		r := newBrokeringRig(t)
+		r.serveTheRepository(t)
 		job := r.jobMountingBitbucketToken(t)
 
 		o, err := r.doctor(t)
@@ -2513,8 +2682,8 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 // a check that passed or a measurement doctor made, and neither is an item or a
 // count.
 func TestDoctorBrokeringCleanInstallationIsOneLine(t *testing.T) {
-	flipProxiedGitList(t, config.BitbucketSecret)
 	r := newBrokeringRig(t)
+	r.serveTheRepository(t)
 	r.svcs.AddService(infra.CredentialsServiceName)
 	r.svcs.SetServicePolicy(infra.CredentialsServiceName,
 		gcpfake.Binding{Role: "roles/run.invoker", Members: []string{brokeringJobAccount("app")}})
@@ -2617,7 +2786,7 @@ func TestDoctorBrokeringStrictFailsTheWarnings(t *testing.T) {
 			setup: func(*testing.T, *brokeringRig) {}},
 		{name: "a job still mounts the token after the flip", id: "bitbucket-direct", red: true,
 			setup: func(t *testing.T, r *brokeringRig) {
-				flipProxiedGitList(t, config.BitbucketSecret)
+				r.serveTheRepository(t)
 				r.jobMountingBitbucketToken(t)
 			}},
 		{name: "a container older than the period", id: "secret-rotation-age", red: true,

@@ -579,6 +579,10 @@ const rulesCoordinatorGeneration = 4
 // (mobile plan task P5.3.1).
 const rulesVoiceGeneration = 5
 
+// rulesRegistrationGeneration is the rules generation that added the fields a
+// push registration carries on a mailbox message (mobile plan task P5.2.2).
+const rulesRegistrationGeneration = 6
+
 // rulesMarkerOlderText is the sentence for the state between the two
 // generations: at or above PolicyRulesVersion and below RulesVersion. Nothing
 // refuses here — Read reads the policy the marker's rules carry and
@@ -593,9 +597,16 @@ const rulesVoiceGeneration = 5
 // marker at rulesDeviceGeneration already has the mailbox and the device
 // binding, one at rulesCoordinatorGeneration already has the coordinator's read
 // grant and only the voice policy node is new to it (mobile plan task P5.3.1),
-// and one at rulesVoiceGeneration already has that node too and only the
-// registration kind's fields are new to it (mobile plan task P5.2.2).
+// one at rulesVoiceGeneration already has that node too and only the
+// registration kind's fields are new to it (mobile plan task P5.2.2), and one
+// at rulesRegistrationGeneration already has those fields and only the four
+// day-counter leaves a run's stage report writes per model are new to it
+// (spend-accuracy task SA5.0, D2648 as amended by D2650).
 func rulesMarkerOlderText(gen int) string {
+	if gen >= rulesRegistrationGeneration {
+		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox, the device binding, the coordinator's read grant, the voice policy node and the registration kind's fields, so runs, a published policy, the mobile app and the coordinator are unaffected — what they predate is this release's own document, which adds the four leaves a run's stage report writes per model (%s/{notional,rep,tlo,thi}: the subscription part of the model's dollars, the cost the provider reported for the calls that carried one, and the table's charge over those same calls at the two ends of the tier that served them, spend-accuracy D2648 and D2650): a run under these rules that writes them is refused the whole stage report, because Realtime Database applies a multi-path update atomically, so it writes the leaves it knows and none of these until the deploy; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
+			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, rules.PathByModel, projectpolicy.RulesVersion)
+	}
 	if gen >= rulesVoiceGeneration {
 		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox, the device binding, the coordinator's read grant and the voice policy node, so runs, a published policy, the mobile app and the coordinator are unaffected — what they predate is this release's own document, which adds the fields a push registration carries (the `token`, `platform` and `prefs` fields of a mailbox message of the new `registration` kind, mobile plan task P5.2.2): the app writes one into its own inbox, and until this is deployed the database refuses that message with no error, so the phone is registered with nothing; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
 			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, projectpolicy.RulesVersion)
@@ -1418,6 +1429,25 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		// publish gets here. It is what the diff reads (printPolicyDiff's kept
 		// line) and what the node is built from.
 		pol.ModelGrades = old.ModelGrades
+		// The daemon's switch and the project's issue adapter are kept for the
+		// model grades' reason (R1 of docs/orchestrator-graph-estimates, D2701,
+		// D2733, D2739): no key of this machine's config states either — the
+		// switch is the project's own answer to whether the daemon launches, and
+		// the adapter is which repositories' issues the backlog is fed from —
+		// and the node is the only place both exist. A publish that built a node
+		// without them would turn the daemon back on for a project whose owner
+		// turned it off, and stop ingesting the issues of a project whose
+		// adapter names repositories, silently, from a machine whose config
+		// merely predates the keys.
+		//
+		// The typed copy is the whole of both, the credentials block's reading:
+		// the adapter is strict inside (decodeIssueSync, its nested block
+		// included), so a member this Fugaro does not model is refused by
+		// publishedPolicyOf before a publish gets here, and the switch is one
+		// bool. The two are what the diff reads (printPolicyDiff's kept lines)
+		// and what the node is built from.
+		pol.OrchestratorEnabled = old.OrchestratorEnabled
+		pol.IssueSync = old.IssueSync
 	}
 	// The crafts' credentials, their pools and the crafts that choose among
 	// them are the operator's own blocks from this release on (docs/model-crafts
@@ -2570,6 +2600,19 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	if new.ModelGrades != nil {
 		fmt.Fprintf(out, "  model_grades kept: %s\n", modelGradesText(new.ModelGrades))
 	}
+	// The daemon's switch and the project's issue adapter are kept too (R1 of
+	// docs/orchestrator-graph-estimates, D2701, D2733), and the operator reading
+	// this diff has to be told: no key of this machine's config states either,
+	// so the member is unchanged and no +/- line above mentions it — and a
+	// person who turned the daemon off, or named the repositories whose issues
+	// feed the backlog, would read that silence as "it is gone". It is the model
+	// grades' line and the clone URLs' `kept` one, for the same reason.
+	if new.OrchestratorEnabled != nil {
+		fmt.Fprintf(out, "  orchestrator_enabled kept: %v\n", *new.OrchestratorEnabled)
+	}
+	if new.IssueSync != nil {
+		fmt.Fprintf(out, "  issue_sync kept: %s\n", issueSyncText(new.IssueSync))
+	}
 	// The crafts, their credentials and their pools are the operator's own
 	// blocks (docs/model-crafts §1–3, MC18, D1667), so a publish that writes
 	// them names them: a credential by its name and its type, a pool by its
@@ -2709,6 +2752,26 @@ func modelGradesText(g *projectpolicy.ModelGrades) string {
 		return "written with no grade in it"
 	}
 	return strings.Join(parts, ", ")
+}
+
+// issueSyncText is the issue adapter as one line: the repositories whose open
+// issues are ingested into the backlog, and whether an item of the project with
+// no spec and no external id opens an issue of its own (D2719, D2733). Only what
+// the block writes is printed, the credentials block's line: an absent `github`
+// is the absent adapter and not an adapter with no repository, and a mirror that
+// is not written is off.
+func issueSyncText(b *projectpolicy.IssueSync) string {
+	if b == nil || b.GitHub == nil {
+		return "none"
+	}
+	repos := "no repository"
+	if len(b.GitHub.Repos) > 0 {
+		repos = strings.Join(b.GitHub.Repos, ", ")
+	}
+	if b.GitHub.Mirror {
+		return repos + ", mirror on: an item with no spec and no external id opens an issue"
+	}
+	return repos
 }
 
 // binariesText is the binaries block as one line, member by member and only the

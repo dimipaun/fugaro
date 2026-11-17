@@ -147,7 +147,7 @@ func buildBody(t *testing.T, req buildRequestBody) string {
 // have written.
 func buildPolicyDoc() string {
 	return `{
-		"version": 5,
+		"version": 9,
 		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
 		"accounts": {

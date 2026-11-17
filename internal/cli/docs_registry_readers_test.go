@@ -13,9 +13,10 @@ package cli
 // writes), who can read it once it is pushed (the shared registry's grants),
 // and that image builds are Cloud Build cost the run's budget never sees
 // (D621). The context-repository half is pinned as what the mechanism is —
-// a read-only clone for one run, never baked — and says in the document that
-// it is not built yet, because a security document may not describe an
-// unbuilt mechanism as one that is running.
+// a read-only clone for one run, never baked — and as the read it permits,
+// because a security document may not describe a mechanism as one that is
+// running before it is: the sentence said the clone was not built yet until
+// C5c built it, and says what the token it is made with may do since.
 //
 // The red step is this file's first run: the section is not written yet.
 
@@ -58,11 +59,12 @@ func TestDocsRegistryReaders(t *testing.T) {
 		"the run removes none of the checkouts it does not work on",
 		// And what the layout does bound: the run works on its own checkout.
 		"another repository's baked checkout is readable",
-		// A context repository is not baked: one run's read-only clone, and
-		// the document says the mechanism is not built yet.
+		// A context repository is not baked: one run's read-only clone, under a
+		// token that reads and does nothing else — what the mechanism does now
+		// that it is built, where the document said it was not.
 		"context repository is never baked",
 		"clone for one run alone",
-		"not built yet",
+		"permitting a read of nothing else",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("SECURITY.md's %q section never says %q: a reader cannot check what source an image carries, or who reads it, from the document", imageSourceHeading, want)

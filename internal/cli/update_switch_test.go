@@ -14,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -474,6 +475,260 @@ func TestAnOptedInInstallationConvergesWithOneUpdate(t *testing.T) {
 		if lc.Repos[name].CredentialsServiceOn() {
 			t.Errorf("the update recorded the credentials service as ready for %s, whose root was applied with the service OFF (or was never applied on this machine at all): its jobs keep their model mounts and its accounts hold no roles/run.invoker, so its launch would be handed an address the service refuses it for — a record is a statement about a grant, and neither state is evidence of one\n%s", name, readFileString(t, r.cfg))
 		}
+	}
+}
+
+// TestOneUpdateGrantsASharedJobTheServiceItsRecordsAskFor is the other half of
+// the record, and it is read where the INSTALLATION root's own apply puts it:
+// the project_jobs of the tfvars that run wrote.
+//
+// A record is a statement about a roles/run.invoker grant on the credentials
+// service, and the grant is made by the installation root's plan — so the run
+// that first records a repository as switched owes the SAME run an apply of
+// that root with the switch on. The record is written in the middle of such a
+// run and never before it: the upgrade backfill writes it at the end of the
+// installation stage (init.go's install), after the root's first apply, and the
+// repository stage writes the entry of the checkout it converges. A set of
+// project jobs derived once, when the run's options were read — which is what
+// every stage applies — is therefore behind the records the launcher is about
+// to read live (run.go's credentialsServiceLaunchEnv) and hands a shared job
+// the service's address with no grant to knock with: Cloud Run refuses at the
+// front door and a cascade run has no fallback (D143). That is the state the
+// switch exists to make impossible, and nothing in the run repairs it until the
+// run's last apply of that root (the credentials stage) re-derives the jobs
+// from the records as they now stand.
+//
+// The state is an installation whose service an earlier release deployed and
+// whose repository one of its roots applied with the service on — this release
+// is what makes the launcher read a record — and it is the FIRST association of
+// a profile with the service, so no document of this machine has ever carried
+// the switch. One ordinary update has to leave the shared job of the profile
+// that admits the repository carrying it; the sibling profile, whose only
+// repository no record vouches for, has to be left exactly as it was, or the
+// run has granted a job account an access nothing asked for.
+//
+// Mutation (verified, run and restored): drop the re-derivation from installRoot
+// (internal/cli/init.go) and the jobs keep whatever the door derived — the
+// profile's job with no service while the config records its repository as
+// served. The credentials stage's own arm is the OTHER run that can rescue this
+// state, and this converge does not isolate it: an apply of the same root
+// (the second installation stage's, or the credentials stage's for an image)
+// still follows the record's write here, and
+// TestTheCredentialsStageAppliesForAMovedRecord pins that arm where it is the
+// last apply left.
+func TestOneUpdateGrantsASharedJobTheServiceItsRecordsAskFor(t *testing.T) {
+	slug, err := task.Slug("github", "acme/sandbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := credentialsRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
+	credentialsOutputs(t, r)
+	// The job a shared one is deployed for is a github job (SharedJobProvider
+	// admits github alone until I1), so the entry the profile admits is a github
+	// repository carrying the App its jobs are built from. The sibling entry is
+	// the same one repository over: nothing seeds a state grant for it, so no
+	// record vouches for it and its profile's job must stay off.
+	switchReposOntoGitHub(t, r.initRig, "acme/sandbox", "acme/other")
+	r.appendConfig(t, "profiles:\n"+
+		"  { standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, allow_repos: [github/acme/sandbox] },\n"+
+		"    sibling: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, allow_repos: [github/acme/other] } }\n")
+	putSwitchBundle(t, r.initRig, []byte(config.AnthropicSecret+": "+credsValue(t, "model")+"\n"))
+	// The installation's own state for the repository whose root was applied
+	// with the service on: the evidence the backfill records the entry from, and
+	// the fact the launcher's answer is about. It is the installation's copy and
+	// not this machine's, so no workdir exists anywhere in this test.
+	seedRepoStateGrant(t, r.initRig, slug)
+	if repoWorkdirExists(t, slug) {
+		t.Fatalf("this machine holds a workdir for %s: the run about to be judged is the one that converges from the installation's own state", slug)
+	}
+
+	out, errOut, err := executeStdin(t, "", "update")
+	if err != nil {
+		t.Fatalf("an ordinary update failed: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
+	}
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatalf("the local config does not parse: %v", err)
+	}
+	if !lc.Repos["acme/sandbox"].CredentialsServiceOn() {
+		t.Fatalf("the run recorded no service for acme/sandbox, so this test is not the state it is about: the backfill has to converge the upgrade first (TestAnOptedInInstallationConvergesWithOneUpdate)\n%s", readFileString(t, r.cfg))
+	}
+	jobs := switchedProjectJobsEnv(t)
+	if len(jobs) == 0 {
+		t.Fatalf("the installation root's tfvars carry no project job at all: the run's own apply is where a grant on the service is made, and this test reads it there")
+	}
+	want := infra.CredentialsService{Name: infra.CredentialsServiceName, Region: lc.Region}
+	served := false
+	for name, job := range jobs {
+		if job.Profile == "sibling" {
+			if job.CredentialsService != nil {
+				t.Errorf("the job %s of the sibling profile carries the credentials service %+v, though no record vouches for the only repository that profile admits: the module would grant its account roles/run.invoker on a service nothing hands its runs the address of", name, *job.CredentialsService)
+			}
+			continue
+		}
+		served = true
+		if job.CredentialsService == nil {
+			t.Errorf("the job %s carries no credentials service, though the config records its profile's repository as served by one: this run's own apply is what grants that job's account roles/run.invoker, and a launcher reading the record live hands its runs the service's address — which the front door refuses, with no fallback (D143) — so the grant waits for a second `fugaro update` the owner is not told to make", name)
+			continue
+		}
+		if *job.CredentialsService != want {
+			t.Errorf("the job %s carries the credentials service %+v, want %+v: the name is the one the installation root creates it under and the region is the installation's; the URL is Cloud Run's to assign and the launcher's to hand over", name, *job.CredentialsService, want)
+		}
+	}
+	if !served {
+		t.Fatalf("the installation root's tfvars carry no job of the profile that admits the served repository, only %d job(s) of other profiles: the fixture is not the world this test is about", len(jobs))
+	}
+}
+
+// TestTheCredentialsStageAppliesForAMovedRecord is the credentials stage's own
+// arm of the state above: the image is this release's — an installation that
+// converged before this run — and the records the shared project jobs' switch
+// is read from moved anyway, while the stage's skip is being decided.
+//
+// The writer here is the repository door's (recordCredentialsServiceReady), and
+// the moment is its real one: the run builds its spec from the records as they
+// stand, the door the run is in writes the entry of the checkout it converges,
+// and every stage between that write and this one applies the installation root
+// with the spec the door derived. This stage is the run's last apply of that
+// root, so with the image already this release's the skip would answer its
+// sentence and the run would end with a profile the launcher now hands the
+// service's address — the launcher reads the records live — and no
+// roles/run.invoker grant on the job's account: the front door is what refuses
+// the run that follows, and a cascade run has no fallback (D143). One update
+// that converges everything else therefore still owes this apply, which is what
+// the arm answers.
+//
+// The stage is driven on its own, as the other one-stage tests drive theirs:
+// what is under test is the decision, and the apply it makes is read where the
+// converge above reads it (the tfvars' project_jobs). The second half is the
+// same installation with the record left where it was: the sentence, and the
+// root untouched — an arm that always applies would plan and apply the
+// installation root on every converged run.
+//
+// Mutation (verified, run and restored): force the arm to false
+// (case infra.ProjectJobsCredentialsServiceStale(...) -> case false:) and the
+// stage skips with the image sentence, leaving the job without the service the
+// record vouches for — the first half fails on both the stage's state and the
+// tfvars it never wrote.
+func TestTheCredentialsStageAppliesForAMovedRecord(t *testing.T) {
+	slug, err := task.Slug("github", "acme/sandbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := credentialsRig(t)
+	r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
+	credentialsOutputs(t, r)
+	switchReposOntoGitHub(t, r.initRig, "acme/sandbox")
+	r.appendConfig(t, "profiles:\n"+
+		"  { standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, allow_repos: [github/acme/sandbox] } }\n")
+	putSwitchBundle(t, r.initRig, []byte(config.AnthropicSecret+": "+credsValue(t, "model")+"\n"+config.GitHubAppKeySecret+": "+credsValue(t, "appkey")+"\n"))
+	// The installation as this run finds it: the service is there, on THIS
+	// release's image, so the stage has no image of its own to move and its
+	// skip has nothing to decide on but the records.
+	seedCredentialsService(t, r, r.credentialsRef())
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+
+	// The records have not moved: the door derived the jobs from them, nothing
+	// wrote an entry, and the stage has nothing of its own — the sentence,
+	// which is what makes the first half's apply the arm's own doing.
+	e := rigEngine(t, r.initRig, &initOptions{door: updateDoor.name, yes: true})
+	if len(e.spec.ProjectJobs) == 0 {
+		t.Fatalf("the installation root's spec carries no shared project job, so this test cannot see the switch it is about: the fixture needs a profile admitting a github repository")
+	}
+	control, err := initflow.Run(t.Context(), []initflow.Stage{newCredentialsStage(e)}, e.options())
+	if err != nil {
+		t.Fatalf("the credentials stage failed on an installation with nothing to move: %v", err)
+	}
+	if st := control.Stages[0]; st.State != initflow.Skipped || !strings.Contains(st.Detail, "already this release's") {
+		t.Fatalf("the credentials stage answered %+v for an installation whose image is this release's and whose records have not moved: this half is the control, and without it an arm that applies on every run would pass the other one", st)
+	}
+
+	// The door's own write, after the spec was built: the entry of the checkout
+	// this run converges, recorded as the plan of that root was made with it.
+	moved := rigEngine(t, r.initRig, &initOptions{door: updateDoor.name, yes: true})
+	moved.r.recordCredentialsServiceReady(t.Context(), moved.lc, switchOutputs(), "acme/sandbox", "github", config.AuthCascade, nil, "")
+	if !moved.lc.Repos["acme/sandbox"].CredentialsServiceOn() {
+		t.Fatalf("the door recorded nothing for %s, so this test is not the state it is about: the bundle has to hold a model credential and the repository's auth has to be the cascade\n%s", slug, readFileString(t, r.cfg))
+	}
+	res, err := initflow.Run(t.Context(), []initflow.Stage{newCredentialsStage(moved)}, moved.options())
+	if err != nil {
+		t.Fatalf("the credentials stage failed: %v", err)
+	}
+	if st := res.Stages[0]; st.State == initflow.Skipped {
+		t.Fatalf("the credentials stage skipped with %q, though %s was recorded as served after the run derived the jobs: the job's account holds no roles/run.invoker, and a launcher that reads the record live hands that job the service's address — which Cloud Run refuses at the front door, a cascade run having no fallback (D143) — so the grant waits for a second `fugaro update` the owner is not told to make", st.Detail, slug)
+	}
+	jobs := switchedProjectJobsEnv(t)
+	want := infra.CredentialsService{Name: infra.CredentialsServiceName, Region: moved.lc.Region}
+	served := false
+	for name, job := range jobs {
+		if job.Profile != "standard" {
+			continue
+		}
+		served = true
+		switch {
+		case job.CredentialsService == nil:
+			t.Errorf("the job %s carries no credentials service after the stage applied the root, though the config records its profile's repository as served: the apply this arm makes is the grant its account needs", name)
+		case *job.CredentialsService != want:
+			t.Errorf("the job %s carries the credentials service %+v, want %+v: the name is the one the installation root creates it under and the region is the installation's; the URL is Cloud Run's to assign and the launcher's to hand over", name, *job.CredentialsService, want)
+		}
+	}
+	if !served {
+		t.Fatalf("the installation root's tfvars carry no job of the profile that admits the served repository, only %d job(s) of other profiles: the fixture is not the world this test is about", len(jobs))
+	}
+}
+
+// switchedProjectJobsEnv is the shared project jobs as the installation root's
+// own tfvars carry them — the document the run's LAST apply of that root wrote,
+// which is where a grant on the credentials service is made.
+func switchedProjectJobsEnv(t *testing.T) map[string]struct {
+	Profile            string                    `json:"profile"`
+	CredentialsService *infra.CredentialsService `json:"credentials_service"`
+} {
+	t.Helper()
+	dir, err := infra.InstallationWorkdir(os.Getenv, initProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vars, err := infra.ReadWorkdirVars(dir, "installation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		ProjectJobs map[string]struct {
+			Profile            string                    `json:"profile"`
+			CredentialsService *infra.CredentialsService `json:"credentials_service"`
+		} `json:"project_jobs"`
+	}
+	if err := json.Unmarshal(vars, &doc); err != nil {
+		t.Fatalf("the installation's tfvars do not parse: %v\n%s", err, vars)
+	}
+	return doc.ProjectJobs
+}
+
+// switchReposOntoGitHub replaces the rig's own repository line — switchRepos,
+// which the tests above rewrite — with one entry per name, over the github
+// provider: the provider a shared project job is deployed for
+// (SharedJobProvider, github alone until I1). github_app_id is the one field a
+// github entry must carry beyond the provider's own, since the shared job's
+// environment is built from it (projectJobGitHubAppID); the same value serves
+// every entry, one App being the project's.
+func switchReposOntoGitHub(t *testing.T, r *initRig, names ...string) {
+	t.Helper()
+	b, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), switchRepos) {
+		t.Fatalf("the rig's local config no longer holds %q:\n%s", switchRepos, b)
+	}
+	entries := ""
+	for _, name := range names {
+		entries += "  " + name + ": { provider: github, base_branch: master, workflows: [web], github_app_id: \"1\" }\n"
+	}
+	if err := os.WriteFile(r.cfg, []byte(strings.Replace(string(b), switchRepos+"\n", entries, 1)), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 

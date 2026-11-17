@@ -382,7 +382,7 @@ func TestUpdateInFlightLineNamesTheCredentialsServiceWindow(t *testing.T) {
 		}
 	})
 	t.Run("the service moves over a node that does not", func(t *testing.T) {
-		got := line(t, v8Node())
+		got := line(t, currentNode())
 		if strings.Contains(got, "credentials service") {
 			t.Errorf("the note names the credentials service over a run that raises no node, so no call can meet a service that cannot read it:\n%s", got)
 		}

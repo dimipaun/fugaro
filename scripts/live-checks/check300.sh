@@ -446,7 +446,7 @@ step_update() {
 # step_marker reads the generation marker the update writes after the rules: it
 # is the statement about the document underneath it, and the daemon's own gate
 # reads the same node before it writes any state.
-GEN=1 # rules.OrchestratorRulesVersion (internal/budget/rules/marker.go); a bump rewrites this line and the section that pins it
+GEN=2 # rules.OrchestratorRulesVersion (internal/budget/rules/marker.go); a bump rewrites this line and the section that pins it
 step_marker() {
   local status body
   status=$(api GET "/config/limits/orchestratorRules.json" "$SCRATCH/marker.json") || status=000
@@ -465,7 +465,11 @@ step_marker() {
 # step_subtree reads the deployed document and asks it the three questions the
 # subtree's fence is: is the node there, is its write false for every identity
 # the rules evaluate, and does its read carry the device conjunct the person's
-# own account needs (D166).
+# own account needs (D166). The children count is the node's *direct* children
+# that carry a rule of their own, which is the shape a widening hidden one level
+# down takes; E12's reports-job read sits deeper, on the escalation block of a
+# work item, and is deliberate — this row is the fence, not an inventory of the
+# subtree.
 step_subtree() {
   local status
   status=$(api GET "/.settings/rules.json" "$SCRATCH/rules.json") || status=000
@@ -478,10 +482,10 @@ step_subtree() {
   answer=$(python3 "$SCRATCH/rules_reader.py" "$SCRATCH/rules.json") || stop "the deployed rules are not the JSON document this check reads"
   case "$answer" in
   "subtree=present write=false read=user children=0")
-    fact subtree PASS "the deployed document carries /orchestrator with an explicit .write of false, a .read carrying the paired phone's mu claim and the device conjunct, and no grant of its own anywhere under it"
+    fact subtree PASS "the deployed document carries /orchestrator with an explicit .write of false, a .read carrying the paired phone's mu claim and the device conjunct, and no rule of its own on any of its direct children"
     ;;
   *)
-    fact subtree FAIL "the deployed document reads: $answer — want subtree=present write=false read=user children=0, which is the fence O2 deploys (write=false for every identity the rules evaluate, read=user for the signed-in person, and no child rule to widen it)"
+    fact subtree FAIL "the deployed document reads: $answer — want subtree=present write=false read=user children=0, which is the fence O2 deploys (write=false for every identity the rules evaluate, read=user for the signed-in person, and no rule on a direct child to widen it)"
     ;;
   esac
 }
