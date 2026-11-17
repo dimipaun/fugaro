@@ -677,6 +677,22 @@ func (c *cycle) triaged(ctx context.Context, target TriageTarget, in TriageInput
 		// only merge this package ever asks for: the head is the one the
 		// rule judged, and the actor's own implementation is what refuses a
 		// head that moved or a diff nothing corroborates.
+		//
+		// An item the daemon adopted at start-up is the one this rule may not
+		// hand the host at all (D2702): adoption writes it for a run in
+		// flight with no approval of a person's, and the ladder's rung 3 —
+		// the other place in this package that lands work — refuses an
+		// adopted item for exactly that reason (adoptedMergeRefused). The
+		// rule cannot see this: it reads the run's inputs and never the item,
+		// so the refusal is here, in the shape an actor's own refusal is
+		// recorded in, and the person the approval belongs to is asked.
+		if adoptedMergeRefused(target.Item, escalation.R3) {
+			text = triageLine(out) + " " + string(ReasonMergeRefused) + " (" + codeUnapproved + ")"
+			if op, question, ok := c.askPerson(target, mergeRefusedQuestion(target, codeUnapproved)); ok {
+				ops, told = append(ops, op), append(told, question)
+			}
+			break
+		}
 		err := c.tick.Triage.Act.Merge(ctx, target, *in.PR)
 		code := mergeRefusalCode(err)
 		switch {
@@ -753,6 +769,14 @@ var ErrTriageUncorroborated = errors.New("the changed paths are not corroborated
 
 // codeUncorroborated is that refusal's closed code in the log and the question.
 const codeUncorroborated = "uncorroborated"
+
+// codeUnapproved is the closed code of the other merge this file refuses: the
+// item the rule judged was adopted from a run the daemon did not start, and no
+// person has approved it (D2702). It is not an error an actor answers with — the
+// item is not the actor's to see — so it is written where the refusal is made
+// rather than mapped from one, and it is a closed code of the same vocabulary
+// for the same reason: the line and the question carry no untrusted text.
+const codeUnapproved = "unapproved"
 
 // mergeRefusalCode is the closed code of a merge the actor refused, or ""
 // when the error is not a refusal at all. A refusal is a person's: the head
@@ -872,11 +896,15 @@ func escalateQuestion(target TriageTarget, out TriageOutcome) string {
 // mergeRefusedQuestion is what a person is asked about a merge that was
 // refused: the refusal is theirs to act on — a moved head is a review, an
 // unbound merge and a missing credential are configuration, an uncorroborated
-// diff is the one the daemon will not land by itself — and the run keeps its
-// own record either way.
+// diff is the one the daemon will not land by itself, and an item nobody
+// approved is the one no daemon may land at all — and the run keeps its own
+// record either way.
 func mergeRefusedQuestion(target TriageTarget, code string) string {
 	if code == codeUncorroborated {
 		return "The triage will not land the pull request of run " + target.RunID + " by itself: the changed paths it judged are the run's own account of its diff, and no host read of the judged head corroborates them (" + code + "). Read the diff and land it yourself, or close it."
+	}
+	if code == codeUnapproved {
+		return "The triage will not land the pull request of run " + target.RunID + " by itself: the item stands for a run the daemon adopted at start-up and no person has approved it (" + code + "). Approve the item, or read the diff and land the pull request yourself."
 	}
 	return "The triage could not land the pull request of run " + target.RunID + " (" + code + "). Decide what happens to it."
 }
