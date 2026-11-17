@@ -520,6 +520,7 @@ the service's own set -- so a response that echoes back what it was given cannot
 reach the check's result block through this.
 """
 import json
+import os
 import re
 import sys
 
@@ -543,6 +544,16 @@ LOOPBACK = re.compile(r"http://127\.0\.0\.1:[0-9]{1,5}")
 # printable ASCII with no space. Anything else is refused, and its own text is
 # never printed -- the message names the FILE.
 VALUE = re.compile(r"[\x21-\x7e]+")
+# The Bitbucket error codes this check is willing to print. A code outside this
+# set is not printed at all: an answer's own words are its writer's, and a row
+# that carried them as they arrived would put whatever an endpoint chose into the
+# block (the test's hostile endpoint echoes the token it was sent into exactly
+# this field).
+ERROR_CODES = {
+    "access_denied", "bad_request", "conflict", "forbidden", "insufficient_scope",
+    "invalid_request", "invalid_token", "method_not_allowed", "not_found",
+    "server_error", "unauthorized",
+}
 
 
 def die(message):
@@ -654,7 +665,7 @@ def cmd_repo(path):
     print("project=%s" % safe(key))
     error = doc.get("error")
     code = error.get("code") if isinstance(error, dict) else error
-    print("error=%s" % (word(code, 40) if code else "-"))
+    print("error=%s" % (code if isinstance(code, str) and code in ERROR_CODES else "-"))
 
 
 def cmd_creds(path, name_token, name_project):
@@ -965,8 +976,12 @@ step_premises() {
   sr_b=$(api_request "$SCRATCH/b-repo.json" GET "/repositories/${OTHER_REPO}" --config "$SCRATCH/repository.conf")
   pr_a=$(api_request "$SCRATCH/a-project.json" GET "/repositories/${REPO}" --config "$SCRATCH/project.conf")
   pr_b=$(api_request "$SCRATCH/b-project.json" GET "/repositories/${OTHER_REPO}" --config "$SCRATCH/project.conf")
+  # The Bitbucket code the reader prints only when it is one of the codes the
+  # service's own vocabulary holds; `-` is how it says "nothing this check will
+  # print", and a dash is not a code to write into a row.
   local err_note
   err_note=$(field_of error "$(reader repo "$SCRATCH/b-repo.json" 2>/dev/null || true)")
+  if [ "$err_note" = "-" ]; then err_note=""; fi
 
   if [ "$sr_a" = 200 ]; then
     case "$sr_b" in
@@ -1097,9 +1112,20 @@ set_run_result() { # set_run_result LABEL REPO RUNID ROW RC LOG
 audit_read() {
   local rid=$1 out=$2 need=$3 waited=0 filter got=0
   filter='resource.type="cloud_run_revision" resource.labels.service_name="'"$SERVICE_NAME"'" jsonPayload.run="'"$rid"'"'
+  AUDIT_GCLOUD_ERROR=""
   while :; do
-    gcloud logging read "$filter" --project="$GCP_PROJECT" --freshness="$AUDIT_AGE" \
-      --limit="$AUDIT_LIMIT" --format=json >"$out" 2>"$SCRATCH/audit.err" || true
+    if ! gcloud logging read "$filter" --project="$GCP_PROJECT" --freshness="$AUDIT_AGE" \
+      --limit="$AUDIT_LIMIT" --format=json >"$out" 2>"$SCRATCH/audit.err"; then
+      # A gcloud that refuses (no Cloud Logging read on the project, or a
+      # project it cannot reach) has not answered a page of nothing, it has
+      # answered nothing: the file is left as an empty page so the reader reads
+      # a run with no lines, and the row that follows says gcloud itself was
+      # what failed rather than the run having written none.
+      AUDIT_GCLOUD_ERROR=$(head -n 1 "$SCRATCH/audit.err" 2>/dev/null || true)
+      [ -n "$AUDIT_GCLOUD_ERROR" ] || AUDIT_GCLOUD_ERROR="gcloud logging read exited non-zero and wrote nothing"
+      printf '[]\n' >"$out"
+      return 0
+    fi
     got=$(reader audit "$out" "$rid" 2>/dev/null | sed -n 's/^git-lines=//p' | head -n 1 || true)
     case "$got" in '' | *[!0-9]*) got=0 ;; esac
     if [ "$got" -ge "$need" ]; then return 0; fi
@@ -1132,6 +1158,18 @@ step_audit() { # step_audit LABEL RUNID EXPECTED
     return 0
   fi
   audit_read "$rid" "$SCRATCH/audit-${label}.json" 1
+  # gcloud itself not answering is a reading from nowhere, and the check says
+  # that rather than reporting the run as one whose lines carry no token: the two
+  # lead to different places (a missing Cloud Logging role here, a repository not
+  # on the credentials-service switch there).
+  if [ -n "$AUDIT_GCLOUD_ERROR" ]; then
+    case "$label" in
+    audit-a) CREDS_A="" ;;
+    audit-b) CREDS_B="" ;;
+    esac
+    fact "$label" UNVERIFIED "'gcloud logging read' did not answer for ${rid} ('${AUDIT_GCLOUD_ERROR}'), so the credentials service's own lines for the run on ${repo} were NOT read and which token served it was NOT measured. Nothing about the swap is concluded from this row. The reading needs roles/logging.viewer (or a role holding logging.views.access) on ${GCP_PROJECT} for the account 'gcloud auth' is using, and the service's lines are under resource.labels.service_name=\"${SERVICE_NAME}\""
+    return 0
+  fi
   facts=$(reader audit "$SCRATCH/audit-${label}.json" "$rid" 2>"$SCRATCH/reader.err") \
     || stop "the service's lines for ${rid} could not be read: $(head -n 1 "$SCRATCH/reader.err" 2>/dev/null)"
   local lines git_lines creds purposes statuses refusals classes repositories
@@ -1188,23 +1226,33 @@ step_audit() { # step_audit LABEL RUNID EXPECTED
 # The swap itself: two runs of one installation, on two repositories of one
 # project, served by two different tokens.
 step_swap() {
-  case "${CREDS_A:-}${CREDS_B:-}" in
-  ""*)
+  local missing=""
+  case "${CREDS_A:-}" in "" | -) missing=yes ;; esac
+  case "${CREDS_B:-}" in "" | -) missing=yes ;; esac
+  if [ -n "$missing" ]; then
     fact swap UNVERIFIED "one of the two runs' audit rows named no credential at all, so whether the swap happens per request could NOT be measured: per-request swapping is a claim about two readings, and a row that is missing leaves it unsettled. The two audit rows above say which of the two it was"
     return 0
-    ;;
-  esac
+  fi
   if [ "$CREDS_A" = "$CREDS_B" ]; then
+    # Which of the three readings this is decides what the owner has to look at,
+    # so the row says it rather than leaving one sentence for all three cases.
+    local why
     case " $CREDS_A " in
     *" $PROJECT_TOKEN_NAME "*)
-      # One token served both repositories: with a repository token recorded for
-      # ${REPO} alone and usable, that is the finding this check exists to catch.
-      fact swap FAIL "both runs were served by the SAME credential '${CREDS_A}': the run on ${REPO} and the run on ${OTHER_REPO} name one token. The selection is per request and narrowest first (R2, D2355), so with a repository token recorded for ${REPO} alone the run there has to be served by it. Read the two audit rows above against the bundle row: the records, the node they were published to ('fugaro update' publishes a record's coverage, and a record this machine holds alone is invisible to every run) and the token's status"
+      # The wider token served both: the repository token that the bundle row
+      # read as recorded for ${REPO} alone did not serve ${REPO}.
+      why="the repository token recorded for ${REPO} alone (${REPO_TOKEN_NAME}) did not serve it, and the selection is per request and narrowest first (R2, D2355): a repository token recorded for ${REPO} alone and usable is the one ${REPO}'s traffic gets. Read the two audit rows above against the bundle row — the record's coverage, the node it was published to ('fugaro update' publishes a record's coverage, and a record this machine holds alone is invisible to every run) and the token's status (a token the store holds is skipped for the next narrowest, R12)"
+      ;;
+    *" $REPO_TOKEN_NAME "*)
+      # The narrower token served both, which the premise rows above read as
+      # impossible: this one is about the lines or about the token, not the order.
+      why="and it is the token the premise rows above read as REFUSED at ${OTHER_REPO}, so either those requests were not served by it and its line says something this check cannot read, or the token reaches ${OTHER_REPO} after all and the premise row above is the row to read first"
       ;;
     *)
-      fact swap FAIL "both runs were served by the same credential '${CREDS_A}', and it is neither of the two this check expects (${REPO_TOKEN_NAME} for ${REPO}, ${PROJECT_TOKEN_NAME} for ${OTHER_REPO}): the audit rows above carry the reading"
+      why="and it is neither of the two this check expects (${REPO_TOKEN_NAME} for ${REPO}, ${PROJECT_TOKEN_NAME} for ${OTHER_REPO}): the audit rows above carry the reading, and the bundle row says which records the installation holds"
       ;;
     esac
+    fact swap FAIL "both runs were served by the SAME credential '${CREDS_A}': the run on ${REPO} and the run on ${OTHER_REPO} name one token, ${why}"
     return 0
   fi
   fact swap PASS "the two runs of one installation were served by DIFFERENT tokens — ${REPO} by '${CREDS_A}', ${OTHER_REPO} by '${CREDS_B}' — read from the service's own lines for each run and never from the runs' reports: the choice is made per REQUEST and per repository (R2, D2355), over the records the bundle row read, and the narrower token is the one ${REPO} got"
@@ -1436,6 +1484,9 @@ parse_args() {
   RUN_B=""
   CREDS_A=""
   CREDS_B=""
+  # Set by audit_read when gcloud itself refused, so the row that follows can say
+  # the lines were never read rather than that the run wrote none.
+  AUDIT_GCLOUD_ERROR=""
   while [ $# -gt 0 ]; do
     case "$1" in
     --repo | --other-repo)
