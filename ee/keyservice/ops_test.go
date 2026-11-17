@@ -409,6 +409,93 @@ func TestOperationsMintsQueueOverTheRate(t *testing.T) {
 	}
 }
 
+// TestOperationsQueueDrainsAtTheRate: D454's cap counts the **grants** of the
+// window and never the requests waiting in the queue, which is the difference
+// between a queue and a wedge.
+//
+// The state this pins is the one a burst leaves behind: the window takes one
+// request, so the queue holds one. A serve pass that counted the waiting record
+// as spent room would find no room in the window it is there to fill, serve
+// nothing, drain nothing, and leave every later mint refused and queued — the
+// tier stops minting for good. What the pass has to do is grant the record it is
+// holding, whatever is still waiting behind it.
+func TestOperationsQueueDrainsAtTheRate(t *testing.T) {
+	f := newFixtureWith(t, Production, func(f *fixture) {
+		f.cfg.MintCaps = map[string]Limits{
+			licence.TierCommunity:  {Requests: 1, Window: time.Hour},
+			licence.TierTeam:       {Requests: 1, Window: time.Hour},
+			licence.TierEnterprise: {Requests: 1, Window: time.Hour},
+		}
+	})
+	f.operationsOrg(roleOwner)
+	f.operationsGround()
+	body := f.mintBody(opsMintWS, PolicyTeamAnnual, 3, f.now.Add(30*24*time.Hour))
+
+	rec := f.apiAsCaller(http.MethodPost, apiOpsMintsPath, body)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("the window's own grant answered %d (%s), want it minted", rec.Code, rec.Body)
+	}
+	rec = f.apiAsCaller(http.MethodPost, apiOpsMintsPath, body)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("the mint over the cap answered %d (%s), want it held back", rec.Code, rec.Body)
+	}
+	held := f.operationsQueuedRecords()
+	if len(held) != 1 {
+		t.Fatalf("the queue holds %d request(s), want the one the window could not take: %+v", len(held), held)
+	}
+	requested := held[0]
+
+	// The window opens. The next mint drains the queue before it counts itself,
+	// and with the window one request wide the record it drains is the whole of
+	// it: the request that was held back becomes the licence, and the request
+	// this pass was called for is the one that now waits.
+	f.advance(time.Hour)
+	f.actsAs(opsUID, opsEmail, signInGoogle)
+	rec = f.apiAsCaller(http.MethodPost, apiOpsMintsPath, body)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("the mint after the window answered %d (%s), want the drained request served and the new one held back", rec.Code, rec.Body)
+	}
+	licences := f.entitlementsOfOrganisation(opsCustomerID)
+	byID := map[string]WireEntitlement{}
+	for _, one := range licences {
+		byID[one.ID] = one
+	}
+	served, found := byID[requested.ID]
+	if !found {
+		t.Fatalf("the record the queue was holding was never served: the store holds %+v, want a licence under %s", licences, requested.ID)
+	}
+	if served.Seats != 3 || served.WorkspaceID == nil || *served.WorkspaceID != opsMintWS {
+		t.Errorf("the served licence is %+v, want the request the queue was holding", served)
+	}
+	if !served.StartsAt.Equal(f.now) {
+		t.Errorf("the served licence starts at %s, want the instant it was served (%s)", served.StartsAt, f.now)
+	}
+	now := f.operationsQueuedRecords()
+	if len(now) != 1 || now[0].ID == requested.ID {
+		t.Fatalf("the queue holds %+v, want the request this pass could not take and not the one it served", now)
+	}
+	if now[0].WorkspaceID != opsMintWS || now[0].Row != PolicyTeamAnnual {
+		t.Errorf("the queue holds %+v, want the request that was refused", now[0])
+	}
+
+	// And it drains again, so a tier under a one-a-window cap keeps minting
+	// rather than holding a queue that never empties.
+	f.advance(time.Hour)
+	f.actsAs(opsUID, opsEmail, signInGoogle)
+	if rec := f.apiAsCaller(http.MethodPost, apiOpsMintsPath, body); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("the mint after the second window answered %d (%s), want the queue served once more", rec.Code, rec.Body)
+	}
+	drained := false
+	for _, one := range f.entitlementsOfOrganisation(opsCustomerID) {
+		if one.ID == now[0].ID {
+			drained = true
+		}
+	}
+	if !drained {
+		t.Errorf("the second window served nothing: the store holds no licence under %s", now[0].ID)
+	}
+}
+
 // TestEveryOperationsActionIsAudited: every route of this area writes a line
 // before it acts, reads included (D456). The cases below are the routes
 // themselves and the table is pinned against the registry, so a route added to
@@ -459,6 +546,9 @@ func TestEveryOperationsActionIsAudited(t *testing.T) {
 		{name: "an extension", method: http.MethodPost, route: apiOpsEntitlementActionsPath, request: apiOpsEntitlementActionsPath,
 			body:   actionBody(t, granted.ID, "extend", "null", ends, "null"),
 			action: actionEntitlementExtend},
+		{name: "a seat change", method: http.MethodPost, route: apiOpsEntitlementActionsPath, request: apiOpsEntitlementActionsPath,
+			body:   actionBody(t, granted.ID, "seats", "5", "null", "null"),
+			action: actionEntitlementSeats},
 		{name: "a transfer", method: http.MethodPost, route: apiOpsProjectTransfersPath, request: apiOpsProjectTransfersPath,
 			body:   transferBody(t, opsProject, opsFreeWS, "null"),
 			action: actionProjectTransfer},
@@ -470,6 +560,11 @@ func TestEveryOperationsActionIsAudited(t *testing.T) {
 			action: actionOperationsListsSet},
 		{name: "cutting a handover short", method: http.MethodPost, route: apiOpsHandoverCutPath, request: cutPath(opsHandoverID),
 			action: actionKeyHandoverCut},
+		// The revocation is last because it is the one act here that ends the
+		// licence every other case above writes against.
+		{name: "a revocation", method: http.MethodPost, route: apiOpsEntitlementActionsPath, request: apiOpsEntitlementActionsPath,
+			body:   actionBody(t, granted.ID, "revoke", "null", "null", jsonString(t, "the customer asked for the term to end")),
+			action: actionEntitlementRevoke},
 	}
 
 	// The table covers the registry: every route this area registers is asked
@@ -539,6 +634,184 @@ func TestEveryOperationsActionIsAudited(t *testing.T) {
 	}
 	if len(entries) != len(cases) {
 		t.Errorf("the %d requests left %d line(s), want one each (D456)", len(cases), len(entries))
+	}
+}
+
+// TestOperationsSeatChangeReachesTheKey: §5.3 and D2200 at this door. The seat
+// count is a claim in the **key** and not in the term, and the renewal of a
+// licence no subscription sold mints the next term from the key's own record
+// (renew.go reads the record it holds and never the licence), so a change that
+// only rewrote the licence would never reach the installation: the key in its
+// hand would go on stating the count the customer gave up, for as long as it
+// renews. What the change does instead is what the merchant's own seat change
+// does — a successor under the same licence, the licence's renewal secret kept,
+// and the key it supersedes left in the handover for `/renew` to answer with.
+func TestOperationsSeatChangeReachesTheKey(t *testing.T) {
+	// The v1 minter the renewal door mints through (Check 174), which the
+	// binding fixture leaves unset because a binding mints through the other
+	// seam: the last step below is a renewal and no other part of this case is.
+	f := newBindingFixtureWith(t, func(f *fixture) { f.deps.MintsV1 = f.recording })
+	org := f.seededOrganisation(opsCustomerID, "Dana Ltd", orgTypeCustomer, danaUID, danaEmail, roleOwner)
+	workspace := f.seedWorkspace(opsBoundWS, org.ID, "Dana's workspace")
+	held := f.grant(t, entitlementGrant{
+		At:             f.now,
+		OrganisationID: org.ID,
+		WorkspaceID:    &workspace.ID,
+		Source:         entitlementSourceOperations,
+		Row:            PolicyTeamAnnual,
+		Seats:          3,
+		StartsAt:       f.now,
+	})
+	if rec := f.bind(t, held.ID, opsProject); rec.Code != http.StatusOK {
+		t.Fatalf("binding the licence answered %d (%s), want the key a seat change is about", rec.Code, rec.Body)
+	}
+	binding := f.records()[0]
+	if binding.Seats != 3 {
+		t.Fatalf("the bound key states %d seat(s), want the licence's 3", binding.Seats)
+	}
+	// The secret the installation keeps is the mint's own answer and nothing the
+	// store holds (§7.3), and the key it belongs to is the record's.
+	secret := f.secretOf(t, f.mintedKeys()[0])
+	if answer := f.mints.answers[0]; answer.Record.KeyID != binding.KeyID {
+		t.Fatalf("the mint answered the key %s and the licence's record names %s", answer.Record.KeyID, binding.KeyID)
+	}
+
+	f.operationsOrg(roleOwner)
+	rec := f.apiAsCaller(http.MethodPost, apiOpsEntitlementActionsPath, actionBody(t, held.ID, "seats", "5", "null", "null"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the seat change answered %d (%s), want it made", rec.Code, rec.Body)
+	}
+	if answered := readAnswer[WireEntitlement](f.fixture, rec); answered.Seats != 5 {
+		t.Errorf("the answer states %d seat(s), want 5", answered.Seats)
+	}
+	// The licence moved …
+	if now, _ := heldRecord[WireEntitlement](f.fixture, entitlementsCollection, held.ID); now.Seats != 5 {
+		t.Errorf("the licence states %d seat(s) after the change, want 5", now.Seats)
+	}
+	// … and so did the key: a successor under the same licence, at the new count.
+	records := f.records()
+	if len(records) != 2 {
+		t.Fatalf("the store holds %d record(s), want the binding's and the seat change's", len(records))
+	}
+	successor := records[1]
+	if successor.KeyID == binding.KeyID {
+		t.Fatal("the seat change wrote no key: an installation goes on renewing from the one it holds, so the count it was minted with is the count it keeps")
+	}
+	if successor.EntitlementID != held.ID || successor.Seats != 5 {
+		t.Errorf("the successor is %+v, want a key of %s at 5 seat(s)", successor, held.ID)
+	}
+	state, known, err := f.store.KeyState(context.Background(), successor.KeyID)
+	if err != nil || !known {
+		t.Fatalf("the successor has no key state (known=%v, err=%v), want one: a key with no state is one nothing can renew", known, err)
+	}
+	if state.RenewalSecretHash != digest(secret) {
+		t.Errorf("the successor's state holds %q, want the digest of the secret the installation already has: a reissue keeps the licence's secret and never rotates it (D2200)", state.RenewalSecretHash)
+	}
+	if _, live, err := f.store.Handover(context.Background(), binding.KeyID, f.now); err != nil || !live {
+		t.Fatalf("the store holds no live handover for the replaced key %s (live=%v, err=%v): without it only a mail would tell the installation, and this door sends none", binding.KeyID, live, err)
+	}
+
+	// The installation is handed the successor: the key it holds is answered
+	// with the licence's newest one and nothing is minted, because nothing about
+	// that key was spent (D2200).
+	rec = f.call(RouteRenew, RenewalCall{KeyID: binding.KeyID, WorkspaceID: opsProject, RenewalSecret: secret})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the replaced key's renewal was answered %d (%q), want the seat change's key", rec.Code, rec.Body.String())
+	}
+	answer := answerOf(t, rec)
+	if !answer.NewerKey {
+		t.Error("the answer is not marked as a newer key, want it: the seat change's key replaces the one the caller presented (D2200)")
+	}
+	claims, _, err := licence.Verify([]byte(answer.Key), f.now, f.ring, opsProject)
+	if err != nil {
+		t.Fatalf("the key the handover answered does not verify: %v", err)
+	}
+	if claims.KeyID != successor.KeyID || claims.Seats != 5 {
+		t.Errorf("`/renew` handed the replaced key %s at %d seat(s), want the licence's newest %s at 5", claims.KeyID, claims.Seats, successor.KeyID)
+	}
+	if again := f.records(); len(again) != 2 {
+		t.Errorf("the handover minted a key of its own: the store holds %d record(s), want the licence's two", len(again))
+	}
+
+	// And the count carries on. The successor's own renewal mints the term after
+	// it from its own record's seats, which is the path a licence no subscription
+	// sold renews through (renew.go), so the installation states the new count
+	// from here on rather than the one the customer gave up.
+	f.inTheRenewalWindow(t, successor.KeyID)
+	rec = f.call(RouteRenew, RenewalCall{KeyID: successor.KeyID, WorkspaceID: opsProject, RenewalSecret: secret})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the successor's own renewal was answered %d (%q), want the next term", rec.Code, rec.Body.String())
+	}
+	var rotation Record
+	for _, record := range f.records() {
+		if record.Source == rotationSource(successor.KeyID) {
+			rotation = record
+		}
+	}
+	if rotation.KeyID == "" {
+		t.Fatal("the successor's renewal minted no successor, and the store holds no rotation of it")
+	}
+	if rotation.Seats != 5 || rotation.EntitlementID != held.ID {
+		t.Errorf("the renewed key is %+v, want a key of %s carrying the 5 seats the customer was moved to", rotation, held.ID)
+	}
+}
+
+// TestOperationsRevokeWithdrawsEveryKeyOfTheLicence: F29 at this door. The
+// withdrawal is `merchant.go`'s walk read a second time (its `withdrawn` is the
+// merchant's own refunds), and what the two must agree on is the **set** of
+// keys: every record that names the licence, every other issuance of the
+// subscription it was sold under, and every successor those keys were rotated
+// into — and never a key of another licence that happens to be minted from the
+// same code. A divergence would leave a live key on a licence operations ended,
+// which is the gap F29 states, and no read of this area would show it.
+func TestOperationsRevokeWithdrawsEveryKeyOfTheLicence(t *testing.T) {
+	f, _ := renewing(t)
+	sold := f.purchase("evt-ops-1", "acme.example", 5, 365)
+	// The licence this revocation must not reach: another workspace's, because
+	// two purchases into one workspace are one licence under D2204 and the
+	// second supersedes the first.
+	untouched, _, _ := heldKeyIn(t, f, PolicyTeamMonthly, "widget-workshop")
+	// Two renewals, so the licence the revocation names has been succeeded
+	// twice: the chain the walk follows from a key to the one that replaced it
+	// is three keys long.
+	theSubscriptionCovers(t, f, sold.KeyID)
+	second, secondSecret := renewThroughTheEndpoint(t, f, sold.KeyID, f.secretOf(t, f.mintedKeys()[0]))
+	theSubscriptionCovers(t, f, second.KeyID)
+	third, _ := renewThroughTheEndpoint(t, f, second.KeyID, secondSecret)
+	// The last successor is left naming no subscription, which is the shape a
+	// record written before the field existed has: the walk's subscription step
+	// cannot reach it, and the licence its own record names is what does (P3.6,
+	// F29).
+	withoutASubscription(t, f, third.KeyID)
+
+	f.operationsOrg(roleOwner)
+	at := f.now
+	rec := f.apiAsCaller(http.MethodPost, apiOpsEntitlementActionsPath,
+		actionBody(t, sold.EntitlementID, "revoke", "null", "null", jsonString(t, "the customer asked for the licence to end")))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the revocation answered %d (%s), want it made", rec.Code, rec.Body)
+	}
+
+	for _, keyID := range []string{sold.KeyID, second.KeyID, third.KeyID} {
+		entry, held, err := f.store.Revocation(context.Background(), keyID)
+		if err != nil || !held {
+			t.Errorf("the revocation left no entry for %s (held=%v err=%v), want every key of the licence withdrawn", keyID, held, err)
+			continue
+		}
+		if entry.Reason != ReasonOperations || !entry.At.Equal(at) {
+			t.Errorf("the entry for %s is %+v, want %q at the instant the act was made %s", keyID, entry, ReasonOperations, at)
+		}
+	}
+	if _, held, _ := f.store.Revocation(context.Background(), untouched); held {
+		t.Errorf("the revocation withdrew the key %s as well, want another licence's key left alone", untouched)
+	}
+	if got := len(f.revocations()); got != 3 {
+		t.Errorf("§8's list holds %d entry(ies), want the three keys of the chain", got)
+	}
+	// F29's rule is the licence and not only the keys that happened to be
+	// minted: a licence left active is one the customer binds again.
+	if now, _ := heldRecord[WireEntitlement](f, entitlementsCollection, sold.EntitlementID); now.Status != entitlementRevoked {
+		t.Errorf("the licence is %q after the revocation, want %q", now.Status, entitlementRevoked)
 	}
 }
 

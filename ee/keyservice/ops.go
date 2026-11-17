@@ -87,6 +87,13 @@ const maxOperationsLookupTerm = maxOrganisationName
 // line's and not this (wire_ops.go's Reason).
 const ReasonOperations = "operations"
 
+// operationsSeatSource names the record of the key a seat change reissued. A
+// record's Source is the issuance's identity and §5.2's idempotency is "has this
+// source been minted for?", so it cannot be a name two reissues share: this act
+// has no merchant event id to borrow the way `seatChanged` borrows one, and the
+// id the prefix carries is the record's own.
+const operationsSeatSource = "operations-seats:"
+
 // What one operations request may do. The three are the three gates D2187
 // states: a member reads, an owner or an admin changes, and the two lists the
 // team's own door is configured with are the owner's alone (D455, F40).
@@ -369,7 +376,7 @@ func (s *Service) operationsMint(ctx context.Context, actor Caller, asked WireEn
 	operationsMintMu.Lock()
 	defer operationsMintMu.Unlock()
 	s.serveQueuedOperations(ctx, now)
-	within, err := s.operationsCap(ctx, row.Tier, now, "")
+	within, err := s.operationsRoom(ctx, row.Tier, now)
 	if err != nil {
 		return WireEntitlement{}, err
 	}
@@ -485,7 +492,7 @@ func (s *Service) serveQueuedOperations(ctx context.Context, now time.Time) {
 		return held[i].QueuedAt.Before(held[j].QueuedAt)
 	})
 	for _, queued := range held {
-		within, err := s.operationsCap(ctx, queued.Tier, now, queued.ID)
+		within, err := s.operationsServeable(ctx, queued.Tier, now)
 		if err != nil {
 			log.Printf("keyservice: counting the operations mints of %s: %v", queued.Tier, err)
 			return
@@ -540,21 +547,20 @@ func (s *Service) serveQueuedOperation(ctx context.Context, queued operationsQue
 	})
 }
 
-// operationsCap answers whether one more operations mint of a tier fits inside
+// operationsRoom answers whether one more operations mint of a tier fits inside
 // D454's window, counting what is queued as well as what is granted: a cap that
 // counted only the grants would let a burst queue without bound, and the queue
 // is what the excess waits in rather than somewhere to put it.
 //
-// skip is the queue record the caller is serving, whose grant is already in the
-// count: it is still a queued record when this is asked — the record is dropped
-// after the grant lands — and counting it as both would spend two of the
-// window's requests on one request.
+// This is the **admission** question, asked of a request that is not in the
+// queue yet, and it is not the serve one (operationsServeable): the two count
+// different things, and the record being served must not be counted at all.
 //
 // The count is over the **operations grants** of the tier and not over the
 // keys, where `admin.go`'s page counts its issuances: an operations mint is a
 // term, the key follows from the customer binding the workspace (D2196), and
 // the term is what this team hands out.
-func (s *Service) operationsCap(ctx context.Context, tier string, now time.Time, skip string) (bool, error) {
+func (s *Service) operationsRoom(ctx context.Context, tier string, now time.Time) (bool, error) {
 	limit, capped := s.cfg.MintCaps[tier]
 	if !capped {
 		return true, nil
@@ -566,20 +572,44 @@ func (s *Service) operationsCap(ctx context.Context, tier string, now time.Time,
 	if granted >= limit.Requests {
 		return false, nil
 	}
-	queued, err := recordsWhere[operationsQueued](ctx, s.docs, operationsQueueCollection, Where{Field: "tier", Value: tier})
+	waiting, err := s.operationsWaiting(ctx, tier)
 	if err != nil {
 		return false, err
 	}
-	if skip != "" {
-		held := make([]operationsQueued, 0, len(queued))
-		for _, one := range queued {
-			if one.ID != skip {
-				held = append(held, one)
-			}
-		}
-		queued = held
+	return granted+waiting < limit.Requests, nil
+}
+
+// operationsServeable answers whether D454's window has room to serve one more
+// record the queue is holding, and it counts the **grants alone**.
+//
+// Counting the waiting list here is the wedge this exists to avoid. The serve
+// pass runs on the mint path, so the queue is at its fullest exactly when the
+// pass runs, and a burst leaves the queue holding as many records as the window
+// takes: with the waiting records counted as spent room, a tier in that state
+// reads its own queue as full, serves nothing, drains nothing — and every later
+// mint is refused and joins the queue. The tier stops minting for good. A
+// grant, unlike a waiting record, fills the window for real: `granted` counts
+// the served ones as they land (`operationsGrantedIn` reads the licences
+// themselves), which is what bounds one pass and lets the rest wait.
+func (s *Service) operationsServeable(ctx context.Context, tier string, now time.Time) (bool, error) {
+	limit, capped := s.cfg.MintCaps[tier]
+	if !capped {
+		return true, nil
 	}
-	return granted+len(queued) < limit.Requests, nil
+	granted, err := s.operationsGrantedIn(ctx, tier, now)
+	if err != nil {
+		return false, err
+	}
+	return granted < limit.Requests, nil
+}
+
+// operationsWaiting is how many requests of one tier the queue is holding.
+func (s *Service) operationsWaiting(ctx context.Context, tier string) (int, error) {
+	queued, err := recordsWhere[operationsQueued](ctx, s.docs, operationsQueueCollection, Where{Field: "tier", Value: tier})
+	if err != nil {
+		return 0, err
+	}
+	return len(queued), nil
 }
 
 // operationsGrantedIn is how many operations grants of one tier were written
@@ -673,7 +703,88 @@ func (s *Service) operationsAct(ctx context.Context, actor Caller, asked WireEnt
 	if err := s.saveEntitlement(ctx, changed); err != nil {
 		return WireEntitlement{}, err
 	}
+	if asked.Action == operationsSeats {
+		if err := s.reissueSeatsOf(ctx, changed, now); err != nil {
+			return WireEntitlement{}, err
+		}
+	}
 	return changed, nil
+}
+
+// reissueSeatsOf mints the successor a seat change is (D2200, §5.3).
+//
+// The count is a claim in the **key** and not in the term, so moving the
+// licence's own record is not the change reaching the installation: the key in
+// an installation's hand keeps the count it was minted with, and the renewal of
+// a licence no subscription sold mints its successor from that key's own count
+// (renew.go reads the record and not the licence), so a licence whose seats
+// moved without a reissue would keep handing back the count the customer gave
+// up. The merchant's own seat change mints here for the same reason
+// (merchant.go's `seatChanged`), and this is that rule at a second door rather
+// than a second rule: a new key under a new id, the licence's renewal secret
+// kept (D2200), the key it supersedes left in the handover for `/renew` to hand
+// the successor over with, and the term the licence has left — which for a
+// connected row's key is D2202's own cap and never the whole licence.
+//
+// A licence no workspace has bound mints nothing: there is no key in anybody's
+// hand and no installation to reach, and the count is read off the licence when
+// the customer binds (D2196). A licence whose term is over mints nothing either,
+// for `seatChanged`'s reason — the next term is a renewal's or a fresh grant's,
+// and a key minted now would be expired before it arrived.
+//
+// No mail is sent. The merchant's reissue mails the buyer because the
+// subscription carries an address and the change is the merchant's news; an
+// operations seat change has no address to send to, and the handover is what
+// makes it reach the installation — the successor answers the next `/renew` of
+// the key the customer holds, whose secret D2200 leaves unspent.
+func (s *Service) reissueSeatsOf(ctx context.Context, entitlement WireEntitlement, now time.Time) error {
+	if entitlement.WorkspaceID == nil {
+		return nil
+	}
+	workspace, present, err := getRecord[WireWorkspace](ctx, s.docs, workspacesCollection, *entitlement.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	if !present || workspace.ProjectID == nil {
+		return nil
+	}
+	row, known := DefaultPolicy(entitlement.Row)
+	if !known {
+		return fmt.Errorf("keyservice: the licence %s names the row %q, which the policy table does not carry", entitlement.ID, entitlement.Row)
+	}
+	records, err := s.store.Issuances(ctx)
+	if err != nil {
+		return err
+	}
+	if _, minted := newestIssuance(records, entitlement.ID); !minted {
+		// The licence has no key at all — the binding that mints one did not
+		// finish, or the workspace was unbound again — and a reissue is the
+		// successor of a key, not a first key. The count it now carries is what
+		// the binding reads.
+		return nil
+	}
+	days := daysBetween(now, entitlement.EndsAt)
+	if days < 1 {
+		// The term is over. The next one is a renewal's or a fresh grant's
+		// (seatChanged's own reasoning), and a key minted into a term that has
+		// ended would be expired before it arrived.
+		return nil
+	}
+	subscription, err := s.licenceSubscription(ctx, entitlement.ID)
+	if err != nil {
+		return err
+	}
+	source, err := newID()
+	if err != nil {
+		return err
+	}
+	_, err = s.reissue(ctx, reissueRequest{
+		Entitlement:  entitlement.ID,
+		Request:      s.paidRequest(row.Name, *workspace.ProjectID, entitlement.OrganisationID, entitlement.Seats, days),
+		Source:       operationsSeatSource + source,
+		Subscription: subscription,
+	})
+	return err
 }
 
 // withdrawEveryKeyOf withdraws every key one licence ever minted (F29).
