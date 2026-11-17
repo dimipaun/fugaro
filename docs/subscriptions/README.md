@@ -1,11 +1,14 @@
 # Subscriptions
 
 **Status: partly built — 7 of the plan's 51 tasks are done, 7 partial, 27 not started and 10 are
-owner-run — and, until 2026-11-16, no task was approved; **the owner approved ALL agent tasks of this folder on 2026-11-16, but what is gated stays gated: the counsel-gated tasks (S8.4), the entity-gated ones (S8.1 and what is built after the entity exists), every owner-run check and key operation, and any task whose own decision is unanswered**; the task-by-task census against `origin/main` is
+owner-run — and, until 2026-11-16, no task was approved; **the owner approved ALL agent tasks of this folder on 2026-11-16, but what is gated stays gated: the entity-gated ones (S8.1 and what is built after the entity exists), every owner-run check and key operation, and any task whose own decision is unanswered**; the task-by-task census against `origin/main` is
 [status-2026-11-07.md](status-2026-11-07.md).** Since that census the counsel addendum (S0.2) has
 been written: [counsel-packet.md](counsel-packet.md) asks counsel only what the Terms' own list does
-not already ask, and it is what S8.4's next round answers. The lapse state's core half has landed as
-well (RS9 of [docs/roles-scopes](../roles-scopes/implementation-plan.md), 2026-11-09): the licence
+not already ask. **Counsel has closed all of S8.4 — its review of the Terms, questions 12–18, the
+S0.2 addendum, D433 and the rest — and the owner recorded it on 2026-11-17**, so what was
+counsel-gated is now approved and unblocked: S0.4, S7.1 and S7.3, each of which has its own run. The
+lapse state's core half has landed as well (RS9 of
+[docs/roles-scopes](../roles-scopes/implementation-plan.md), 2026-11-09): the licence
 input and the seam a Subscription surface asks through exist (`access.Input.Lapse`,
 `access.SetSubscriptionLimit`, with the actions a lapse keeps in `ee/register`), so S6.1–S6.3 fill a
 seam rather than invent one. Nothing is limited today: no surface asks it yet. D430–D448 and the Terms draft's

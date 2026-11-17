@@ -10,11 +10,16 @@ in the four licence files (#1140, merged).
 **Status: partly built — of the 51 tasks below, 7 are done, 7 partial, 27 not started and 10 are
 owner-run — and, **since 2026-11-16, every agent task is approved** (the owner's approval of that day; before it NO TASK WAS APPROVED); the census of every task against `origin/main` is
 [status-2026-11-07.md](status-2026-11-07.md).** Each task needs the owner's
-explicit go, **given for all agent tasks on 2026-11-16; the counsel-gated (S8.4) and entity-gated (S8.1, and what is built after the entity exists) tasks, the owner-run checks and key operations, and a task whose own decision is unanswered stay gated and are not approved away.** Answering D430–D448 and B1–B17, and ruling T10–T26, O4 and the key binding, approved
-none of them. Some tasks also wait on counsel (S8.4) or on the new entity (S8.1); each task says
+explicit go, **given for all agent tasks on 2026-11-16; the entity-gated (S8.1, and what is built after the entity exists) tasks, the owner-run checks and key operations, and a task whose own decision is unanswered stay gated and are not approved away.** Answering D430–D448 and B1–B17, and ruling T10–T26, O4 and the key binding, approved
+none of them. Some tasks also waited on counsel (S8.4, closed 2026-11-17) or still wait on the new entity (S8.1); each task says
 which. **T27, the one consequence of the rulings, was ruled (b) on 2026-10-29:** the paid commands
 warn, not refuse, until enforcement ships, and that warning is itself deferred with the key work
 (ee-reorg D523), so nothing waits on it.
+
+**Updated 2026-11-17: counsel has closed all of S8.4** — its review of the Terms, questions 12–18,
+the S0.2 addendum, D433 and the rest — on the owner's word of that day. Every edge S8.4 carried is
+satisfied, so the tasks that waited on it are unblocked; S0.4, S7.1 and S7.3 are approved with it,
+and each of them has its own run.
 
 **Re-sliced 2026-10-27 after the owner's rulings** (reconciliation, "Rulings"). What changed, with
 the earlier version kept visible:
@@ -201,7 +206,8 @@ The owner's answers and rulings that shape it (non-price; figures are private, D
 - **Files:** `docs/licensing/subscription-terms.md`.
 - **Change:** counsel's mark-up plus the rulings, in one run. **The Terms are not revised before
   counsel answers — one exception, edited 2026-10-29 on the owner's ruling D531 (counsel not yet
-  consulted: tell counsel in the next revision round).** The owner ruled the coordinator moves
+  consulted: tell counsel in the next revision round).** **Satisfied 2026-11-17: counsel has closed
+  S8.4, so the revision this task is can be made.** The owner ruled the coordinator moves
   under `ee/` (the move is S1.4 and has not landed: `ee/` holds only its licence and README, so the
   coordinator is still Core by the Terms' own definition) and had section 9.1 (now 7.1) of
   [licensing/subscription-terms.md](../licensing/subscription-terms.md) edited at once to stop
@@ -233,7 +239,7 @@ The owner's answers and rulings that shape it (non-price; figures are private, D
 - **Tests:** S0.1's scan; the Docs suite.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1`.
 - **Red step:** none; S0.1 is the gate.
-- **Depends on:** S8.4. **Reviewer:** opus + mandatory independent review.
+- **Depends on:** S8.4 (closed 2026-11-17: approved and unblocked, with its own run). **Reviewer:** opus + mandatory independent review.
 - **Commit:** `docs(licensing): the Subscription Terms revised per counsel and the owner's rulings`.
 
 #### S0.5 Supported versions (T23, default)
@@ -1010,11 +1016,12 @@ after is the key's own `grace_days` rather than a fixed thirty days, and "Free" 
 #### S7.1 The Community page's licence section
 
 - **Files:** `website/src/pages/community.astro`, `website/test/faq-community.mjs`.
-- **Change:** what D431–D433 and T15 settle (an individual is an organisation of one), after counsel.
+- **Change:** what D431–D433 and T15 settle (an individual is an organisation of one), after counsel
+  (S8.4 closed 2026-11-17).
 - **Tests:** the pins in `faq-community.mjs`, updated.
 - **Command:** `cd website && npm run check`.
 - **Red step:** the updated pin fails first.
-- **Depends on:** S8.4. **Reviewer:** opus + mandatory independent review.
+- **Depends on:** S8.4 (closed 2026-11-17: approved and unblocked, with its own run). **Reviewer:** opus + mandatory independent review.
 - **Commit:** `website: the community page states the licence and the free seat`.
 
 #### S7.2 The pricing page
@@ -1048,7 +1055,7 @@ after is the key's own `grace_days` rather than a fixed thirty days, and "Free" 
 - **Tests:** `privacy.mjs`.
 - **Command:** `cd website && npm run check`.
 - **Red step:** the new section's pin fails first.
-- **Depends on:** S8.4. **Reviewer:** opus + mandatory independent review.
+- **Depends on:** S8.4 (closed 2026-11-17: approved and unblocked, with its own run). **Reviewer:** opus + mandatory independent review.
 - **Commit:** `website: the privacy notice covers key sign-up`.
 
 #### S7.4 Publish (OWNER-RUN)
@@ -1088,6 +1095,10 @@ after is the key's own `grace_days` rather than a fixed thirty days, and "Free" 
 
   **Its sign-off gates console 0.113.0 and the first app release (D448, T17, S0.7).**
   **Depends on:** S0.2.
+  **Done 2026-11-17, on the owner's word:** counsel has closed all of S8.4 — its review of the
+  Terms, questions 12–18, the S0.2 addendum, D433 and the rest. The tasks that waited on it are
+  unblocked, and S0.4, S7.1 and S7.3 are approved, each of them with its own run; what the sign-off
+  releases is S0.7's own record.
 - **S8.5 The Paddle account.** In the entity's name, with test mode. The §4.3 discounts are
   configured from the private figures, and the Team true-up (§5.6) is collected at renewal.
   **Depends on:** S8.1.
@@ -1102,7 +1113,8 @@ S1.1–S1.5, S1.7 and S1.9 are superseded (2026-10-29) and stay in these tables 
 
 - **Counsel and the entity:**
   - S0.2→S8.4.
-  - S8.4→S0.4, S6.2, S6.3, S7.1, S7.3, S3.7.
+  - S8.4→S0.4, S6.2, S6.3, S7.1, S7.3, S3.7; satisfied 2026-11-17, when counsel closed S8.4 (S0.4,
+    S7.1 and S7.3 are the three of these with their own runs).
   - S8.1→S8.2, S8.5, S3.2, S3.7.
   - S8.2→S8.3; S0.4→S8.3, S7.2; S8.3→S3.7; S8.5→S3.7.
 - **The `ee/` folder:** S0.6→S0.3, S1.3, S2.3.
@@ -1150,7 +1162,8 @@ S1.1–S1.5, S1.7 and S1.9 are superseded (2026-10-29) and stay in these tables 
     gated by the entity (S8.1), and is no longer on the release path.
 - **Release-blocking:** console 0.113.0 and the first app release now wait **only for counsel**
   (S0.2 → S8.4, then S0.7's gate), honour-based (T17). The lapse state and the key move to a
-  later, enforcing release.
+  later, enforcing release. **Updated 2026-11-17: counsel has closed S8.4, so that wait is over;
+  what each release's procedure records of it is S0.7's.**
 
 **What must be sequential and why:**
 
