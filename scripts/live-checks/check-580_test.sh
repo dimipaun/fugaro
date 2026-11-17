@@ -150,7 +150,30 @@ logging)
     printf '[]\n'
     ;;
   *)
-    sed "s/@RID@/$rid/g" "$FAKE_JSON_DIR/${FAKE_LOG_FILE:-log.json}"
+    # The real `gcloud logging read` answers the NEWEST --limit lines unless
+    # --order=asc is asked for, so this stand-in honours both flags: the fixture
+    # is written oldest-first, and only a read that says `asc` is handed its head.
+    # Without that, a check reading the default answer would decide the run's
+    # FIRST model call on a later one, and no case here could catch it.
+    limit=200
+    order=desc
+    while [ $# -gt 0 ]; do
+      case "$1" in
+      --limit=*) limit=${1#--limit=} ;;
+      --limit) limit=${2:-200}; shift ;;
+      --order=*) order=${1#--order=} ;;
+      --order) order=${2:-desc}; shift ;;
+      esac
+      shift
+    done
+    python3 - "$FAKE_JSON_DIR/${FAKE_LOG_FILE:-log.json}" "$limit" "$order" "$rid" <<'PY'
+import json, sys
+doc = json.loads(open(sys.argv[1]).read().replace("@RID@", sys.argv[4]))
+limit = int(sys.argv[2]) if sys.argv[2].isdigit() else len(doc)
+if sys.argv[3].lower() != "asc":
+    doc = doc[::-1]
+json.dump(doc[:limit], sys.stdout)
+PY
     ;;
   esac
   ;;
@@ -298,7 +321,23 @@ def out(name, mutate):
 out("policy-no-profile.json",
     lambda x: x["policy"]["profiles"][sys.argv[2]].__setitem__("allow_repos", ["bitbucket/other-owner/other"]))
 out("policy-no-accounts.json", lambda x: x["policy"]["profiles"][sys.argv[2]].__setitem__("claude_accounts", []))
-out("policy-other-provider.json", lambda x: x["policy"]["profiles"][sys.argv[2]].__setitem__("provider", "github"))
+def other_provider(x):
+    # A profile of ANOTHER provider that writes no allow_repos of its own, so it
+    # falls back to the project's list — which names a bitbucket repository no
+    # github profile admits (projectpolicy.Admits gates on the provider first).
+    x["policy"]["profiles"]["github-only"] = {
+        "provider": "github", "cpu": 2, "memory": "4Gi", "timeout_class": "standard"}
+
+
+out("policy-other-provider.json", other_provider)
+
+
+def only_other_provider(x):
+    other_provider(x)
+    x["policy"]["profiles"].pop(sys.argv[2])
+
+
+out("policy-other-provider-only.json", only_other_provider)
 out("policy-mode-off.json", lambda x: x["policy"]["budget"].__setitem__("mode", "off"))
 out("policy-no-mode.json", lambda x: x["policy"]["budget"].pop("mode"))
 out("policy-not-admitted.json", lambda x: x["policy"].__setitem__("allow_repos", ["bitbucket/other-owner/elsewhere"]))
@@ -409,6 +448,37 @@ switched["timestamp"] = "2026-11-17T12:00:20Z"
 switched["jsonPayload"]["credential"] = "spare-account"
 doc.append(switched)
 json.dump(doc, open(sys.argv[2], "w"))
+PY
+  # A run whose first model calls are the profile's account and whose later ones
+  # are not, with the push at the end: read from the run's OWN start the first
+  # forward line is the profile's account, and read newest-first (gcloud's own
+  # default) the first forward line in the answer belongs to a later call — the
+  # reading that makes this row a false FAIL, or a false PASS. The case below
+  # bends CHECK580_LOG_LIMIT to 3 so that the two answers really differ.
+  python3 - "$1/json/log.json" "$1/json/log-late-switch.json" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1]))
+git_line = [e for e in doc if e["jsonPayload"].get("purpose") == "git"][0]
+first = [e for e in doc if e["jsonPayload"].get("purpose") == "forward"][0]
+late = json.loads(json.dumps(first))
+late["jsonPayload"]["credential"] = "anthropic-api-key"
+late["jsonPayload"]["tier"] = "B"
+
+
+def line(base, stamp):
+    e = json.loads(json.dumps(base))
+    e["timestamp"] = stamp
+    return e
+
+
+json.dump([line(git_line, "2026-11-17T12:00:03Z"),
+           line(first, "2026-11-17T12:00:09Z"),
+           line(first, "2026-11-17T12:00:41Z"),
+           line(late, "2026-11-17T12:01:10Z"),
+           line(late, "2026-11-17T12:01:40Z"),
+           line(late, "2026-11-17T12:02:05Z"),
+           line(git_line, "2026-11-17T12:02:20Z")],
+          open(sys.argv[2], "w"))
 PY
   # A git line of the run that was NOT served, and a model line that was: the git
   # row must read the status and not the purpose alone.
@@ -596,6 +666,10 @@ test_happy_path() {
   expect_contains "$(cat "$dir/logs/fugaro.calls")" "runs ls --repo $repo --project $install --no-cache --json" "the happy path: the listing it polled"
   expect_contains "$(cat "$dir/logs/gcloud.calls")" "run jobs list --project=$gcp_project --region=$region --format=json" "the happy path: the job list"
   expect_contains "$(cat "$dir/logs/gcloud.calls")" "jsonPayload.run=\"$run_id\"" "the happy path: the service's lines are read for the run's own id"
+  # The read asks for the run's OLDEST lines, and asks back far enough to hold the
+  # run's first one: the knob (1h) is the floor here, and the run took no longer.
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "--limit=200 --order=asc" "the happy path: the lines are read oldest-first"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "--freshness=1h" "the happy path: the window is the knob when it is the wider one"
   # The check ran every command from the checkout it was given.
   expect_contains "$(cat "$dir/logs/fugaro.calls")" "doctor --json (in $dir/sandbox)" "the happy path: the reads are made in the checkout"
   # The task file it wrote is the smallest thing that makes a run push a branch
@@ -842,13 +916,23 @@ test_a_repository_two_profiles_admit_is_not_measured() {
   assert_no_launch "$dir" "a repository two profiles admit"
 }
 
-test_a_profile_of_another_provider_is_a_finding() {
+test_a_profile_of_another_provider_does_not_admit_the_repository() {
   local dir=$work/other-provider
   prepare "$dir"
   run_check "$dir" FAKE_POLICY_FILE=policy-other-provider.json
-  expect_status "$status" 1 "a profile of another provider"
-  expect_contains "$out" "FACT policy: FAIL — $repo is admitted to the profile 'bb', which serves provider 'github'" "a profile of another provider: the row"
-  assert_no_launch "$dir" "a profile of another provider"
+  expect_status "$status" 0 "a profile of another provider beside the one that admits it"
+  expect_contains "$out" "FACT policy: PASS — $repo is admitted to the profile 'bb' (provider bitbucket)" "a profile of another provider: the ONE profile that admits it"
+  expect_absent "$out" "github-only" "a profile of another provider: it is not read as the one that admits the repository"
+  assert_scratch_removed "$dir" "a profile of another provider beside the one that admits it"
+}
+
+test_a_policy_whose_only_profile_serves_another_provider_is_a_finding() {
+  local dir=$work/other-provider-only
+  prepare "$dir"
+  run_check "$dir" FAKE_POLICY_FILE=policy-other-provider-only.json
+  expect_status "$status" 1 "a policy whose only profile serves another provider"
+  expect_contains "$out" "FACT policy: FAIL — $repo is admitted to the project and to NO profile of $install's published policy" "a policy whose only profile serves another provider: no profile admits it"
+  assert_no_launch "$dir" "a policy whose only profile serves another provider"
 }
 
 test_a_profile_with_no_claude_accounts_is_a_finding() {
@@ -1109,6 +1193,23 @@ test_the_first_model_call_is_read_by_its_time() {
   expect_absent "$out" "served with the credential 'spare-account'" "two served model calls: the later switch is not the first call"
 }
 
+test_the_first_model_call_is_read_from_the_runs_own_start() {
+  local dir=$work/late-switch
+  prepare "$dir"
+  # A run of seven lines whose first forward line is the profile's account and
+  # whose last three are the paid key's, read three at a time: `gcloud logging
+  # read` answers the NEWEST three unless `--order=asc` says otherwise, and that
+  # answer's first forward line is a later call's credential, which is the false
+  # FAIL this row must never take. CHECK580_LOG_AGE is bent below the run's own
+  # duration too, so the window has to come from the launch and not from the knob.
+  run_check "$dir" FAKE_LOG_FILE=log-late-switch.json CHECK580_LOG_LIMIT=3 CHECK580_LOG_AGE=1m
+  expect_status "$status" 0 "a run that switched credential after its first calls"
+  expect_contains "$out" "FACT model: PASS — the run's first model call ($run_id) was served with the credential 'work'" "a run that switched credential after its first calls: the FIRST call decides the row"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "--limit=3 --order=asc" "the run's oldest lines are the ones asked for"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "--freshness=" "the window is asked for"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "--freshness=1m" "a knob narrower than the run is widened to the launch, not used as written"
+}
+
 test_a_git_line_that_was_not_served_is_not_the_git_row() {
   local dir=$work/git-refused
   prepare "$dir"
@@ -1213,7 +1314,8 @@ t test_a_policy_that_could_not_be_read_leaves_the_rows_unmeasured
 t test_a_repository_the_project_does_not_admit_is_not_measured
 t test_a_repository_no_profile_admits_is_a_finding
 t test_a_repository_two_profiles_admit_is_not_measured
-t test_a_profile_of_another_provider_is_a_finding
+t test_a_profile_of_another_provider_does_not_admit_the_repository
+t test_a_policy_whose_only_profile_serves_another_provider_is_a_finding
 t test_a_profile_with_no_claude_accounts_is_a_finding
 t test_a_budget_mode_of_off_is_a_finding
 t test_a_policy_with_no_budget_mode_is_not_measured
@@ -1239,6 +1341,7 @@ t test_a_run_the_service_wrote_no_line_for_is_a_finding
 t test_a_run_with_no_served_forward_line_is_a_finding
 t test_a_first_model_call_with_another_credential_is_a_finding
 t test_the_first_model_call_is_read_by_its_time
+t test_the_first_model_call_is_read_from_the_runs_own_start
 t test_a_git_line_that_was_not_served_is_not_the_git_row
 t test_a_line_of_another_run_is_not_read
 t test_kept_scratch_is_reported

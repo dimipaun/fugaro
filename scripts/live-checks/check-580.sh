@@ -118,7 +118,9 @@
 # check's own run id, default `date -u +%Y%m%d-%H%M%S`; the four hex characters
 # `-0580` are appended, task.ValidRunID's form), CHECK580_RUN_SECONDS (how long
 # the run is waited for; 2400), CHECK580_POLL_SECONDS (20), CHECK580_LOG_AGE
-# (1h), CHECK580_LOG_LIMIT (200), CHECK580_LOG_WAIT_SECONDS (120),
+# (1h: the least the read of the service's lines looks back — a run that
+# outlasted it is read from its own launch, because the row that proves F17 is
+# its FIRST model call), CHECK580_LOG_LIMIT (200), CHECK580_LOG_WAIT_SECONDS (120),
 # CHECK580_LOG_POLL_SECONDS (5), CHECK580_DOCTOR_TIMEOUT_SECONDS (180) and
 # CHECK580_CLI_TIMEOUT_SECONDS (180). None of them can point this check at
 # another installation: the project and the region are read from the checkout.
@@ -240,6 +242,9 @@ SANDBOX_STOP=""
 PROFILE_STOP=""
 JOB_STOP=""
 RUN_ROW="no"
+# LAUNCH_EPOCH is the second the run was launched in, and empty until then: it is
+# what log_freshness measures the read of the service's lines from.
+LAUNCH_EPOCH=""
 
 scratch_up() {
   SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/chk580.XXXXXXXX") || die "Check 580 cannot make a scratch directory"
@@ -479,33 +484,30 @@ def carries(containers, name):
     return False
 
 
-def inside(entry, repo):
-    """Whether a published repository entry admits a repository.
+def inside(entry, canonical):
+    """Whether a published repository entry admits a canonical repository.
 
-    The entries are spelled with the provider in front of the path —
-    `bitbucket/acme/web`, `github/acme/app` (projectpolicy's allow_repos) — and
-    the repository this check reads is `<workspace>/<name>` without one, so the
-    provider segment is dropped before the two are compared. A segment may be
-    `*`, which is how the published node spells a whole workspace."""
-    e = entry.split("/")
-    if e and e[0] in ("github", "bitbucket", "gitlab"):
-        e = e[1:]
-    r = repo.split("/")
-    if len(e) != len(r):
+    Both sides are canonical — `bitbucket/acme/web`, `github/acme/app` and the
+    wildcards `*` and `bitbucket/acme/*` (projectpolicy.Canonical, MatchRepo) —
+    so they are compared segment against segment, exactly as the runner does:
+    the provider segment is a segment like any other, so an entry naming another
+    provider admits nothing here, and `*` alone admits every repository."""
+    if entry == "*":
+        return True
+    e, c = entry.split("/"), canonical.split("/")
+    if canonical == "" or len(e) != len(c):
         return False
-    for a, b in zip(e, r):
-        if a == b or a == "*":
+    for a, b in zip(e, c):
+        if a == b:
             continue
-        if "*" in a:
-            if not re.match("^" + re.escape(a).replace(r"\*", "[^/]*") + "$", b):
-                return False
-        else:
-            return False
+        if "*" in a and re.match("^" + re.escape(a).replace(r"\*", "[^/]*") + "$", b):
+            continue
+        return False
     return True
 
 
-def any_admits(entries, repo):
-    return any(inside(e, repo) for e in entries if isinstance(e, str))
+def any_admits(entries, canonical):
+    return any(inside(e, canonical) for e in entries if isinstance(e, str))
 
 
 def job_of_execution(execution):
@@ -543,6 +545,11 @@ elif cmd == "doctor":
     print("region=%s" % word(project.get("region"), 40))
 elif cmd == "policy":
     repo = sys.argv[3]
+    # The repository's own provider, and never the profile's below: `canonical`
+    # is the repository in the policy's spelling, and a profile is counted only
+    # when it serves that provider.
+    repo_provider = (sys.argv[4] if len(sys.argv) > 4 else "").strip()
+    canonical = ("%s/%s" % (repo_provider, repo)) if repo_provider else repo
     doc = load(sys.argv[2]) or {}
     policy = doc.get("policy") if isinstance(doc, dict) else None
     if not isinstance(policy, dict):
@@ -556,10 +563,17 @@ elif cmd == "policy":
         pr = profiles.get(name) or {}
         if not isinstance(pr, dict):
             continue
+        # A profile admits only repositories of ITS OWN provider
+        # (projectpolicy.Admits, which compares the canonical's provider against
+        # the profile's): a github profile's list says nothing about a bitbucket
+        # repository, and one that writes no list of its own falls back to the
+        # project's, which is nowhere near enough to count it.
+        if repo_provider and pr.get("provider") != repo_provider:
+            continue
         eff = pr.get("allow_repos") or project
-        if any_admits(eff, repo):
+        if any_admits(eff, canonical):
             names.append(name)
-    print("proj_admits=%s" % ("yes" if any_admits(project, repo) else "no"))
+    print("proj_admits=%s" % ("yes" if any_admits(project, canonical) else "no"))
     print("profiles=%s" % len(names))
     print("profile=%s" % (word(names[0], 60) if names else "-"))
     provider = ""
@@ -738,6 +752,12 @@ step_sandbox() {
   if [ "$host" != bitbucket.org ]; then
     stop "the origin of $SANDBOX is $url, which is not a Bitbucket repository (its host is '${host:-none}'): this check is the BITBUCKET shared-job half — a shared job mounts no Bitbucket token and reaches bitbucket.org through the credentials service — and a GitHub or GitLab checkout has nothing here for it to measure"
   fi
+  # The repository's provider, in the policy's own canonical spelling
+  # (projectpolicy.Canonical: "<provider>/<owner>/<name>"). This check is the
+  # Bitbucket one — the host above is bitbucket.org or the check has stopped — and
+  # the profile count below is provider-gated on it, so a profile serving another
+  # provider is never counted as admitting this repository.
+  REPO_PROVIDER=bitbucket
   say "reading the installation: fugaro doctor --json, in ${SANDBOX}"
   run_bounded "$DOCTOR_TIMEOUT" doctor "$FUGARO_BIN" doctor --json
   # doctor exits 1 whenever any of its checks is not ok, warnings included, and
@@ -789,7 +809,7 @@ step_policy() {
     PROFILE_STOP=yes
     return 0
   fi
-  if ! reader policy "$SCRATCH/policy.out" "$REPO" >"$SCRATCH/policy.txt" 2>"$SCRATCH/policy.reader.err"; then
+  if ! reader policy "$SCRATCH/policy.out" "$REPO" "$REPO_PROVIDER" >"$SCRATCH/policy.txt" 2>"$SCRATCH/policy.reader.err"; then
     unmeasured policy "fugaro project policy show --json printed a document this check could not read: what it printed is in $SCRATCH/policy.out"
     PROFILE_STOP=yes
     return 0
@@ -960,6 +980,12 @@ step_run() {
     return 0
   fi
   RUN_ID="${RUN_BASE}-0580"
+  # The second the run is launched in, recorded HERE and not inside the launch:
+  # that call is read through a command substitution, which is a subshell, and a
+  # value set there is the subshell's alone. log_freshness measures the read of
+  # the service's lines from it, so a run that outlasted CHECK580_LOG_AGE still
+  # has its FIRST model call in the answer.
+  LAUNCH_EPOCH=$(date -u +%s)
   local row status pushed pr outcome
   if ! row=$(launch_and_wait); then
     unmeasured run "$(cat "$SCRATCH/launch-err" 2>/dev/null || true)"
@@ -1006,6 +1032,20 @@ step_landed() {
   esac
 }
 
+# log_freshness: how far back the service's lines are read. The run's FIRST model
+# call is the oldest forward line the service wrote for it, so the window has to
+# reach back to the run's own start: CHECK580_LOG_AGE is the floor and this widens
+# it by the time since the launch, which is what a run that outlasted the knob —
+# CHECK580_RUN_SECONDS waits 2400s for one — would otherwise lose the head of.
+log_freshness() {
+  local since=$LOG_AGE mins
+  if [ -n "$LAUNCH_EPOCH" ] && [ -n "$LOG_AGE_MINUTES" ]; then
+    mins=$(( ($(date -u +%s) - LAUNCH_EPOCH) / 60 + 5 ))
+    [ "$mins" -gt "$LOG_AGE_MINUTES" ] && since="${mins}m"
+  fi
+  printf '%s' "$since"
+}
+
 # audit_read RID OUT: the run's service lines, retried while Cloud Logging
 # catches up — ingestion lags the request by seconds. It returns 0 only when the
 # last read ANSWERED: `gcloud logging read` exiting non-zero (no permission on
@@ -1018,8 +1058,15 @@ audit_read() {
   filter='resource.type="cloud_run_revision" resource.labels.service_name="fugaro-credentials" jsonPayload.run="'"$rid"'"'
   while :; do
     rc=0
-    gcloud logging read "$filter" --project="$PROJECT" --freshness="$LOG_AGE" \
-      --limit="$LOG_LIMIT" --format=json >"$out" 2>"$SCRATCH/audit.err" || rc=$?
+    # --order=asc, because gcloud answers the NEWEST --limit lines by default and
+    # a run of this repository writes far more than that: the run's first model
+    # call — the row that proves F17 — is the OLDEST forward line, and read
+    # newest-first it is not in the answer at all, so the row would be decided on
+    # a later call's credential. The git lines the row above counts are the run's
+    # earliest ones too (the clone and the fetch), so the old end is the end both
+    # rows are read from.
+    gcloud logging read "$filter" --project="$PROJECT" --freshness="$(log_freshness)" \
+      --limit="$LOG_LIMIT" --order=asc --format=json >"$out" 2>"$SCRATCH/audit.err" || rc=$?
     if [ "$rc" -eq 0 ] && reader audit "$out" "$rid" 2>/dev/null | grep -qE '^audit='; then return 0; fi
     if [ "$waited" -ge "$LOG_WAIT_SECONDS" ]; then
       [ "$rc" -eq 0 ] || {
@@ -1208,6 +1255,27 @@ RUN_BASE=${CHECK580_RUN_ID:-$(date -u +%Y%m%d-%H%M%S)}
 RUN_SECONDS=${CHECK580_RUN_SECONDS:-2400}
 POLL_SECONDS=${CHECK580_POLL_SECONDS:-20}
 LOG_AGE=${CHECK580_LOG_AGE:-1h}
+# The knob in minutes, for the comparison log_freshness makes against the time
+# since the launch. A spelling this does not convert — anything but <digits>m,
+# <digits>h or <digits>d — leaves it empty, and the knob is then used exactly as
+# written and never widened: a unit this check cannot read is not one it may
+# quietly shorten.
+LOG_AGE_MINUTES=""
+LOG_AGE_NUM=${LOG_AGE%?}
+case "$LOG_AGE" in
+*m | *h | *d)
+  case "$LOG_AGE_NUM" in
+  "" | *[!0-9]*) ;;
+  *)
+    case "${LOG_AGE#"$LOG_AGE_NUM"}" in
+    m) LOG_AGE_MINUTES=$LOG_AGE_NUM ;;
+    h) LOG_AGE_MINUTES=$(( LOG_AGE_NUM * 60 )) ;;
+    d) LOG_AGE_MINUTES=$(( LOG_AGE_NUM * 1440 )) ;;
+    esac
+    ;;
+  esac
+  ;;
+esac
 LOG_LIMIT=${CHECK580_LOG_LIMIT:-200}
 LOG_WAIT_SECONDS=${CHECK580_LOG_WAIT_SECONDS:-120}
 LOG_POLL_SECONDS=${CHECK580_LOG_POLL_SECONDS:-5}
