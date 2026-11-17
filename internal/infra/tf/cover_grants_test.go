@@ -2347,6 +2347,7 @@ func TestOrchestratorAccountIsItsOwnPrincipalKind(t *testing.T) {
 		"google_service_account_iam_member|" + customKey + "fugaroTokenMinter",
 		"google_storage_bucket_iam_member|roles/storage.objectUser",
 		"google_storage_bucket_iam_member|roles/storage.objectViewer",
+		"google_secret_manager_secret_iam_member|roles/secretmanager.secretAccessor",
 	}
 	var got []string
 	for typ, row := range grantRules {
@@ -2359,7 +2360,7 @@ func TestOrchestratorAccountIsItsOwnPrincipalKind(t *testing.T) {
 	slices.Sort(got)
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
-		t.Errorf("the cells carrying toOrchestrator are %v, want exactly %v: the account holds the design's §4.3 table — the launcher's role, the job runner's, the token minter's and the runs bucket's two grants — and a cell beside them is a grant the never-list has not priced (design §6 rule 11)", got, want)
+		t.Errorf("the cells carrying toOrchestrator are %v, want exactly %v: the account holds the design's §4.3 table — the launcher's role, the job runner's, the token minter's, the runs bucket's two grants, and P5.1e's per-secret accessor on the pairing key's one container — and a cell beside them is a grant the never-list has not priced (design §6 rule 11)", got, want)
 	}
 
 	launcherCond := []any{map[string]any{"title": gcp.LauncherBucketConditionTitle, "expression": gcp.LauncherBucketCondition(bucketName), "description": nil}}
@@ -2402,6 +2403,14 @@ func TestOrchestratorAccountIsItsOwnPrincipalKind(t *testing.T) {
 			map[string]any{"member": member, "role": "roles/storage.objectUser", "bucket": bucketName, "condition": launcherCond}, map[string]any{}, true},
 		{"the runs bucket's read, unconditioned", "google_storage_bucket_iam_member",
 			map[string]any{"member": member, "role": "roles/storage.objectViewer", "bucket": bucketName}, map[string]any{}, true},
+		// P5.1e: the pairing key's cloud copy, and this is the row the design
+		// states as the exception the symmetric tag forces (§6 rule 5). It is
+		// the per-secret row and never the project-wide one — the case below
+		// is the same role, moved to the project, and it stays refused.
+		{"the per-secret accessor on the pairing key's container", "google_secret_manager_secret_iam_member",
+			map[string]any{"member": member, "role": "roles/secretmanager.secretAccessor", "secret_id": "fugaro-orch-pairing"}, map[string]any{}, true},
+		{"the project-wide accessor, which is the credentials service's alone", "google_project_iam_member",
+			map[string]any{"member": member, "role": "roles/secretmanager.secretAccessor", "project": "proj-1"}, map[string]any{}, false},
 
 		// The design's eleventh never-rule, named by hand: these three are what
 		// being a member of var.launchers would have granted, and the whole

@@ -32,6 +32,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -847,6 +848,102 @@ func entitlementEnd(record Record) time.Time {
 	return record.Issued.Add(time.Duration(record.TermDays) * 24 * time.Hour)
 }
 
+// licenceOf is the licence one subscription was bought under, which every
+// reissue path reads before it mints (P3.6).
+//
+// A subscription whose origin names no licence is a record this service did not
+// write — the same state `renewedLicence` refuses for a renewal event — and it
+// is a failure rather than a plain mint: the key a reissue mints is one `/renew`
+// serves, and `/renew` serves only keys that name the licence they run under
+// (F27), so a reissue under none would hand the customer a key whose every later
+// renewal is refused. A `500` is the merchant's cue to send the event again, and
+// by then the store either holds the licence or an operator is looking at it.
+func (s *Service) licenceOf(ctx context.Context, subscriptionID string) (string, error) {
+	origin, held, err := s.origin(ctx, subscriptionID)
+	if err != nil {
+		return "", err
+	}
+	if !held || origin.EntitlementID == "" {
+		return "", fmt.Errorf("%w: the subscription %s, whose record names no licence (P3.6)", ErrNoTransaction, subscriptionID)
+	}
+	return origin.EntitlementID, nil
+}
+
+// reissueRequest is one reissue under a licence: what the minter is asked for,
+// where the key is mailed, and the two names the record keeps (P3.6, D2200).
+type reissueRequest struct {
+	// Entitlement is the licence the key is reissued under. A path that cannot
+	// name one does not reach here — `licenceOf` is what refuses it — and the
+	// empty string is refused again in `reissue`, because what it would mint is
+	// a key no renewal can serve.
+	Entitlement  string
+	Request      RequestV1
+	Applicant    string
+	Source       string
+	Subscription string
+}
+
+// reissue mints the next key of a licence that already has one, and it is D2200
+// as code: the successor keeps the **licence's renewal secret hash** rather than
+// rotating it, the key it supersedes is left in the handover for `/renew` to
+// answer with, and the licence's own record carries both keys.
+//
+// Keeping the hash is what the ruling is for. The secret is the installation's
+// half of a renewal — it is written into the keychain once, at the first
+// binding, and the key's claim set carries only its digest — so a seat change or
+// the merchant's own renewal that minted a *fresh* secret would leave the
+// installation holding a key and a secret that no longer renew it, waiting for a
+// mail nobody has to read (F2). The minter takes the hash in place of a fresh
+// secret and answers none (P1.8, minter.MintV1), which is why `paid` files the
+// key state under the request's hash and the mail says the secret is unchanged.
+//
+// The handover is what makes `/renew` answer the newest key, and it is written
+// against the key it supersedes: an installation still running that key asks
+// with it, the state still proves it — the secret is the same one — and the
+// handover hands over the successor the mail may never have been read for
+// (renew.go's `answerRotation`). It is written only when the holder's secret is
+// known: a predecessor with no key state is a key that cannot renew at all, so
+// there is no secret to reopen the window for, and the successor — minted with a
+// fresh secret the same mail carries — stands on its own.
+func (s *Service) reissue(ctx context.Context, req reissueRequest) (MintedV1, error) {
+	if req.Entitlement == "" {
+		return MintedV1{}, fmt.Errorf("%w: a reissue under no licence (P3.6)", ErrNoClaims)
+	}
+	records, err := s.store.Issuances(ctx)
+	if err != nil {
+		return MintedV1{}, err
+	}
+	predecessor, supersedes := newestIssuance(records, req.Entitlement)
+	hash := ""
+	if supersedes {
+		state, known, err := s.store.KeyState(ctx, predecessor.KeyID)
+		if err != nil {
+			return MintedV1{}, err
+		}
+		if known {
+			hash = state.RenewalSecretHash
+		}
+	}
+	request := req.Request
+	request.RenewalSecretHash = hash
+	minted, err := s.paid(ctx, request, req.Applicant, req.Source, req.Subscription, req.Entitlement)
+	if err != nil || !supersedes || hash == "" {
+		return minted, err
+	}
+	now := s.now()
+	if sealed, held := s.sealHandover(ctx, predecessor.KeyID, minted.Key, minted.RenewalSecret); held {
+		if err := s.store.SaveHandover(ctx, Handover{
+			KeyID:      predecessor.KeyID,
+			SecretHash: hash,
+			Sealed:     sealed,
+			Until:      now.Add(renewalHandover),
+		}, now); err != nil {
+			log.Printf("keyservice: keeping the answer the reissue of the key %s left for it: %v", predecessor.KeyID, err)
+		}
+	}
+	return minted, nil
+}
+
 // seatChanged reissues inside the term the customer already paid for: `seats`
 // is a claim in the key, and the term is not (§5.3). The new key covers what is
 // left of that term — which for a connected row's key is D2202's thirty days
@@ -913,7 +1010,20 @@ func (s *Service) seatChanged(ctx context.Context, e Event, sub Subscription) er
 	if !sold {
 		return fmt.Errorf("%w: the seat change %s is for a subscription whose term is not one the checkout sells (D442)", ErrNoClaims, e.ID)
 	}
-	if _, err := s.paid(ctx, s.paidRequest(policy, e.WorkspaceID, sub.Organisation, e.Seats, days), to, e.ID, e.Subscription); err != nil {
+	// The licence the reissue is under, read before anything is minted: the
+	// successor it mints is a key of that licence and not a second one bought by
+	// this event (§5.3), and D2200's kept secret is the licence's (P3.6).
+	entitlement, err := s.licenceOf(ctx, sub.ID)
+	if err != nil {
+		return err
+	}
+	if _, err := s.reissue(ctx, reissueRequest{
+		Entitlement:  entitlement,
+		Request:      s.paidRequest(policy, e.WorkspaceID, sub.Organisation, e.Seats, days),
+		Applicant:    to,
+		Source:       e.ID,
+		Subscription: e.Subscription,
+	}); err != nil {
 		return err
 	}
 	sub.Seats = e.Seats
@@ -936,13 +1046,17 @@ func (s *Service) seatChanged(ctx context.Context, e Event, sub Subscription) er
 // entitlement is what the transaction and the subscription both resolve to.
 //
 // The walk is over one **licence** and nothing else, and that is the owner's
-// ruling of 2026-11-13 (D2147). Three steps reach a key of it and the walk takes
-// all three: the entitlement's own bindings, which are the keys D2196 mints for
-// it (`bindingKeys`); the subscription every other issuance of the licence
-// stamps on its record — the key a **seat change** reissued, and the merchant's
-// own renewal, which is §5.1's ordinary route — and the record's own word for
-// the key it replaced, `rotation:<the key it replaces>` (see `rotationSource`),
-// which the `/renew` endpoint's rotation carries beside the subscription.
+// ruling of 2026-11-13 (D2147). **F29's rule is the entitlement itself**: every
+// record that names this licence is one of its keys, and every one of them is
+// withdrawn, whatever minted it. On top of that the walk follows the three steps
+// that reach a key whose record does not name the licence — the ones minted
+// before P3.6 wrote the field — which are the entitlement's own bindings, the
+// keys D2196 mints for it (`bindingKeys`); the subscription every other issuance
+// of the licence stamps on its record — the key a **seat change** reissued, and
+// the merchant's own renewal, which is §5.1's ordinary route — and the record's
+// own word for the key it replaced, `rotation:<the key it replaces>` (see
+// `rotationSource`), which the `/renew` endpoint's rotation carries beside the
+// subscription.
 //
 // The subscription is the step that matters for a licence bought before D2196
 // and for every reissue after it, and a seat change's key belongs to it like any
@@ -1040,6 +1154,25 @@ func (s *Service) withdrawn(ctx context.Context, e Event) error {
 	}
 	for _, keyID := range keys {
 		if err := revoke(keyID); err != nil {
+			return err
+		}
+	}
+	// **F29: revocation is by entitlement.** Every record that names this licence
+	// is a key of it and is withdrawn here, whatever minted it and whatever its
+	// record's source and subscription say: the binding's key, the key a seat
+	// change reissued, the one the merchant's own renewal minted, and the
+	// successor a rotation left in the handover — all of them carry the licence's
+	// id, and the walk below reaches only the ones whose shape it can follow.
+	//
+	// It is here rather than only below because a record the walk cannot follow is
+	// still a key the customer's installation may be running: the source of a
+	// reissue names the event that caused it and not the key it replaced (D2200
+	// keeps the secret, so nothing about that key is spent), and a key whose
+	// record names no subscription at all — a comped or operations grant — has
+	// nothing for the subscription step to match on. A key left live here is the
+	// gap F29 states: the customer keeps a licence the money went back for.
+	for _, record := range entitlementRecords(records, entitlement.ID) {
+		if err := revoke(record.KeyID); err != nil {
 			return err
 		}
 	}
@@ -1271,7 +1404,20 @@ func (s *Service) Renew(ctx context.Context, subscriptionID string) (MintedV1, b
 	if !deliverable {
 		return MintedV1{}, false, fmt.Errorf("%w: the subscription %s", ErrNoBuyer, sub.ID)
 	}
-	answer, err := s.paid(ctx, s.paidRequest(policy, sub.WorkspaceID, sub.Organisation, sub.Seats, days), to, source, sub.ID)
+	// The licence the renewal is under, which is the key's own as well as the
+	// money's: the renewal of a subscription mints the next key of the licence
+	// that subscription bought, under the same renewal secret (D2200, P3.6).
+	entitlement, err := s.licenceOf(ctx, sub.ID)
+	if err != nil {
+		return MintedV1{}, false, err
+	}
+	answer, err := s.reissue(ctx, reissueRequest{
+		Entitlement:  entitlement,
+		Request:      s.paidRequest(policy, sub.WorkspaceID, sub.Organisation, sub.Seats, days),
+		Applicant:    to,
+		Source:       source,
+		Subscription: sub.ID,
+	})
 	if err != nil {
 		return MintedV1{}, false, err
 	}
@@ -1416,7 +1562,7 @@ func (s *Service) paidRequest(policy, workspaceID, organisation string, seats, d
 // failed key state withdraws nothing: it is the pair's safe half (above), and
 // the key it belongs to is one the store holds, so a revocation can name it and
 // a redelivery can finish it.
-func (s *Service) paid(ctx context.Context, req RequestV1, applicant, source, subscription string) (MintedV1, error) {
+func (s *Service) paid(ctx context.Context, req RequestV1, applicant, source, subscription, entitlement string) (MintedV1, error) {
 	mints, answersV1 := s.mints.(MintsV1)
 	if !answersV1 {
 		return MintedV1{}, errors.New("the intake's minter does not answer a v1 mint request, and the paid path issues v1 keys")
@@ -1428,6 +1574,13 @@ func (s *Service) paid(ctx context.Context, req RequestV1, applicant, source, su
 	answer.Record.Source = source
 	answer.Record.Email = applicant
 	answer.Record.Subscription = subscription
+	// The licence the key was minted for, which is the record's own word for it
+	// (P3.6). Every path through here mints under one — a binding, a reissue, the
+	// merchant's own renewal — and the id is what a later renewal reads to know
+	// whether the licence still runs (F27), what a reissue reads to find the key
+	// it supersedes (D2200) and what a withdrawal walks (F29). A record without
+	// it is a key nothing can prove was granted, and `/renew` refuses it.
+	answer.Record.EntitlementID = entitlement
 	if applicant != "" {
 		if err := s.mail.Send(ctx, paidKeyMail(applicant, answer.Key, answer.RenewalSecret)); err != nil {
 			return MintedV1{}, err

@@ -25,6 +25,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -476,12 +477,38 @@ func (r *run) startBudgetBackend(ctx context.Context) error {
 	if ident.db == nil {
 		return r.refuseStrayToken(ctx)
 	}
+	// The generation of the database's rules this installation has deployed,
+	// which the session needs before it may write the day counter's
+	// spend-accuracy leaves: Realtime Database applies a stage report's
+	// multi-path update atomically, so one leaf the deployed document does not
+	// grant refuses the whole report and the stage fails (spend-accuracy F10,
+	// SA5.1). The marker is the same node the policy read above gates on
+	// (projectpolicy.PathRulesMarker), and an absent one is generation 0: the
+	// pre-policy rules, under which the session writes the leaves it always
+	// wrote.
+	//
+	// A marker this run cannot read is one warning and generation 0, not a
+	// halt, and the direction is the reason: the four leaves are figures for
+	// the report's drift alarm and nothing decides on them, while the safe
+	// side of the gate is the one that writes fewer leaves -- the ones every
+	// deployed document grants. A cloud run meets the marker in this state
+	// only if admissionCheck's own read of it succeeded a moment earlier
+	// (projectpolicy.Read refuses a hand-edited one there, and an outage is
+	// left to the session's own grace), and a local run against a backend,
+	// which reads no policy at all, then writes today's leaves rather than
+	// failing.
+	deployed, rerr := projectpolicy.RulesGeneration(ctx, ident.db)
+	if rerr != nil {
+		r.d.Log.Warn("budget: the deployed rules generation could not be read, so this run writes only the day-counter leaves every document carries (run 'fugaro update' to deploy the rules that carry the spend-accuracy ones)",
+			"node", projectpolicy.PathRulesMarker(), "err", r.redact(rerr.Error()))
+	}
 
 	mode := r.spend.Mode
 	// The configuration the policy read already built and Tuned; only the
 	// fields that depend on the merged policy are set here.
 	cfg := ident.cfg
 	cfg.PolicyCap, cfg.CommittedDaily, cfg.LocalEnforce = r.spend.Cap, r.committedDaily(), mode == policyEnforce
+	cfg.RulesGeneration = deployed
 	if r.rec.Deadline != nil {
 		cfg.Deadline = *r.rec.Deadline
 	}

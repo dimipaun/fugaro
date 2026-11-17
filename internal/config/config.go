@@ -1060,8 +1060,9 @@ type Commands struct {
 	Fix string `yaml:"fix"`
 	// Render is a mode: artifact recipe's render command (design
 	// artifact-runs.md §3): repository text, run once, in the checkout, as
-	// the agent's user. "" means no artifact recipe may run against this
-	// workflow: the runner refuses one whose workflow leaves it empty.
+	// the agent's user. "" means no recipe with a render step may run
+	// against this workflow: the runner refuses one whose workflow leaves
+	// it empty.
 	Render string `yaml:"render"`
 	// Probe is the artifact recipe's optional check on what it rendered:
 	// one command, given the outputs directory and the names in its

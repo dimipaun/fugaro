@@ -100,7 +100,8 @@ func everyDollarIsDoubled(s string) bool {
 // build step of its own, whose Dockerfile and script Fugaro writes entirely
 // (B8, rule 3). The entry has no part in that build: its own file is not in the
 // clone's context, its build never sees these two files, and what crosses
-// between the two builds is a directory — the checkout the clone exports —
+// between the two builds is the checkout the clone exports — as a directory for
+// an entry that names a context and as the image it tagged for every entry —
 // rather than a secret. The build the credential is spent in is built from the
 // pinned base digest with GIT_CONFIG_NOSYSTEM=1, so the git that spends it is
 // the base image's own and no entry RUN step can alter the tools that spent it
@@ -138,7 +139,7 @@ func TestCloneStepIsGeneratedAndSeparateFromTheEntryBuild(t *testing.T) {
 			for _, want := range []string{
 				"--file " + catalogCloneDockerfile,
 				"--secret \"id=git-credentials,src=" + catalogCloneCredential + "\"",
-				"--output \"type=local,dest=" + catalogCloneDest + "\"",
+				"--tag " + catalogCloneImage,
 				`--build-arg "FUGARO_BASE=$$base"`,
 				" " + catalogCloneWork + "\n",
 				"trap 'rm -f " + catalogCloneCredential + "' EXIT\n",
@@ -204,7 +205,9 @@ func TestCloneStepIsGeneratedAndSeparateFromTheEntryBuild(t *testing.T) {
 // Dockerfile is hand-written and internal/catalog/fetch.go tells its author to
 // write that mount. The entry's build now carries no credential argument, no
 // credential volume and no credential variable, and what replaces them is the
-// checkout as a named build context.
+// checkout as an image of the worker's own — the one shape a plain `docker
+// build` can copy out of, its `--build-context` being a buildx flag the worker
+// has no plugin for.
 //
 // The repository's own workflow secrets are not this step's: an entry that
 // installed from a private registry declared them in its fugaro.yaml, and an
@@ -230,17 +233,23 @@ func TestEntryBuildCarriesNoSecretAndNoIdentity(t *testing.T) {
 			if slices.Contains(build.SecretEnv, credentialSecretEnv[tc.spec.GitProvider]) {
 				t.Fatalf("the entry's build mounts the provider credential: %v", build.SecretEnv)
 			}
-			if !strings.Contains(script, `--build-context "`+catalogCloneContext+`=$$CLONE_CONTEXT"`) {
-				t.Fatalf("the entry's build is not handed the checkout as a named context: %q", script)
+			// The checkout crosses between the two builds as the image the clone
+			// step tagged, so this step names it in no argument and in no env
+			// value: an entry's Dockerfile copies it with `COPY --from=` and
+			// docker reads the name out of the worker's image store. The flags a
+			// step may carry are pinned by
+			// TestNoStepRunsAFlagTheWorkersDockerDoesNotTake.
+			if !strings.Contains(strings.Join(step(t, b, catalogCloneStepID).Args, "\n"), "--tag "+catalogCloneImage) {
+				t.Fatal("the clone step does not tag the checkout the entry's build copies")
 			}
-			if !slices.Contains(build.Env, "CLONE_CONTEXT="+catalogCloneDest) {
-				t.Fatalf("the entry's build does not carry the checkout's path in its env: %v", build.Env)
+			if strings.Contains(script, "build-context") || strings.Contains(script, "buildx") {
+				t.Fatalf("the entry's build is handed the checkout by a flag the worker's docker does not take: %q", script)
 			}
-			// What the entry's build builds from: the checkout the clone
+			// What the entry's build builds from: the checkout the clone step
 			// exported for an entry that names a context, and the copied
 			// definition's own directory for one that names none — which copies
-			// the checkout out of the named context instead. Either way the
-			// directory is one this request made.
+			// the checkout out of the image instead. Either way the directory is
+			// one this request made.
 			dir, wantDir := b.Substitutions["_CONTEXT_DIR"], contextDirDefault
 			if tc.spec.Context != "" {
 				wantDir = catalogCloneDest
@@ -275,6 +284,140 @@ func TestEntryBuildCarriesNoSecretAndNoIdentity(t *testing.T) {
 				t.Error("the clone step leaves the credential file behind when it fails")
 			}
 		})
+	}
+}
+
+// dockerCommand is one `docker <verb>` a step's script runs, with the flags
+// that verb is handed: what the scanner below reads every generated step with.
+type dockerCommand struct {
+	step  string
+	verb  string
+	flags []string
+}
+
+// dockerFlagsTheWorkerTakes is what every step this package generates may hand
+// the docker CLI, per subcommand. The worker's docker is the pinned base image's
+// — the CLI with BuildKit behind it and no buildx plugin
+// (docs/design/base-image.md) — and `--build-context` is deliberately not here:
+// it is a buildx flag, and the template's plain `docker build` answers it with
+// "unknown flag" and exit 125. The checkout reaches an entry's build as an image
+// instead (catalogCloneImage).
+var dockerFlagsTheWorkerTakes = map[string][]string{
+	"build":  {"--progress", "--file", "--build-arg", "--secret", "--label", "--tag", "--output", "--no-cache", "--target", "--network", "--pull"},
+	"run":    {"--rm", "-i", "-t", "--network", "--user", "--entrypoint", "--env", "-e", "--volume", "-v"},
+	"create": {},
+	"cp":     {"-a", "-L"},
+	"rm":     {"-f", "-v"},
+	"push":   {},
+	"pull":   {"--quiet"},
+	"image":  {"--format"},
+}
+
+// dockerCommands reads every `docker <verb>` a step's script runs, with the
+// flags of that command: the continuation lines are joined first, so the flags
+// read are the flags of the whole command, and a `docker` that is a word inside
+// another command's name — the `gcloud artifacts docker tags` the promote and
+// untag steps run — is not one.
+func dockerCommands(stepID, script string) []dockerCommand {
+	var out []dockerCommand
+	for _, line := range strings.Split(strings.ReplaceAll(script, "\\\n", " "), "\n") {
+		fields := strings.Fields(line)
+		for i, field := range fields {
+			if commandWord(field) != "docker" || i+1 >= len(fields) {
+				continue
+			}
+			if i > 0 && !strings.ContainsAny(fields[i-1][len(fields[i-1])-1:], "(|;&=") {
+				continue
+			}
+			verb := fields[i+1]
+			if strings.HasPrefix(verb, "-") {
+				continue
+			}
+			cmd := dockerCommand{step: stepID, verb: verb}
+			for _, a := range fields[i+2:] {
+				if strings.HasPrefix(a, "-") {
+					cmd.flags = append(cmd.flags, a)
+				}
+			}
+			out = append(out, cmd)
+		}
+	}
+	return out
+}
+
+// commandWord is the command a shell field names, with an assignment and a
+// command substitution in front of it taken off: `cid=$(docker` is the command
+// `docker`.
+func commandWord(field string) string {
+	if i := strings.LastIndexAny(field, "=|&;("); i >= 0 {
+		return field[i+1:]
+	}
+	return field
+}
+
+// TestNoStepRunsAFlagTheWorkersDockerDoesNotTake: a step that hands the worker's
+// docker a flag it does not take fails the whole build at its first flag, before
+// a single layer is built. That is how the `go` catalog image's rebuild failed
+// on 2026-11-17 — the build step was handed `--build-context`, which only buildx
+// takes, and the worker has no buildx — and every entry built from a Dockerfile
+// failed the same way, while an entry on a prebuilt --image, which builds
+// nothing, was spared.
+//
+// Every docker command of every step a catalog build runs is read here — an
+// entry that names a context and one that names none, and a repository's own
+// build, which runs the same template — and every flag is answered for against
+// what that subcommand takes. A flag outside the table fails, and so does a
+// subcommand the table does not know, so a step cannot pass by being unread.
+func TestNoStepRunsAFlagTheWorkersDockerDoesNotTake(t *testing.T) {
+	plain, err := CatalogBuildRequest("proj-1234", catalogBuildSpec(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	context, err := CatalogBuildRequest("proj-1234", catalogContextSpec(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	derived, err := BuildRequest("proj-1234", buildSpec(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string][]string{}
+	for _, tc := range []struct {
+		name  string
+		build *cloudbuild.Build
+	}{
+		{"a catalog entry that names a context", context},
+		{"a catalog entry that names none", plain},
+		{"a repository's own build", derived},
+	} {
+		for _, st := range tc.build.Steps {
+			for _, cmd := range dockerCommands(st.Id, strings.Join(st.Args, "\n")) {
+				seen[st.Id] = append(seen[st.Id], cmd.verb+" "+strings.Join(cmd.flags, " "))
+				taken, known := dockerFlagsTheWorkerTakes[cmd.verb]
+				if !known {
+					t.Errorf("%s: step %s runs `docker %s`, which this test does not know: %v", tc.name, cmd.step, cmd.verb, cmd.flags)
+					continue
+				}
+				for _, f := range cmd.flags {
+					if !slices.Contains(taken, f) {
+						t.Errorf("%s: step %s runs `docker %s %s`, which the worker's docker does not take: %v", tc.name, cmd.step, cmd.verb, f, cmd.flags)
+					}
+				}
+			}
+		}
+	}
+	// The scanner reads the commands it is meant to: the clone step's own build
+	// tags the checkout the entry's build copies, and the entry's build step
+	// runs the one `docker build` a catalog build exists for. A scanner that
+	// found nothing would make every assertion above vacuous.
+	if got := seen[catalogCloneStepID]; !slices.ContainsFunc(got, func(c string) bool { return strings.HasPrefix(c, "build ") }) {
+		t.Errorf("the scanner reads no build out of the clone step: %v", got)
+	}
+	if clone := strings.Join(step(t, plain, catalogCloneStepID).Args, "\n"); !strings.Contains(clone, "--tag "+catalogCloneImage) {
+		t.Errorf("the clone step's build does not tag the checkout the entry's build copies: %q", clone)
+	}
+	if got := seen["build"]; !slices.ContainsFunc(got, func(c string) bool { return strings.HasPrefix(c, "build ") }) {
+		t.Errorf("the scanner reads no build out of the entry's build step: %v", got)
 	}
 }
 

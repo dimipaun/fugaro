@@ -163,8 +163,10 @@ type run struct {
 	// cfgRes is how cfg was resolved: the layer each key cfg carries came
 	// from (resolveConfig, set beside cfg). It is read to name the layer the
 	// run's own timeouts.stage came from, which is the source of the bound a
-	// dropped governance.stage_timeout is recorded against (T7.6); nothing
-	// else reads it, and it is nil only for a run that resolved no config.
+	// dropped governance.stage_timeout is recorded against (T7.6), and to tell
+	// a workflow's own `commands.reports` from the defaults filled in behind it
+	// (bootstrap, verify.Settings.ReportsDeclared); it is nil only for a run
+	// that resolved no config.
 	cfgRes *config.Resolution
 	// providers are r.d.Providers with the project layer's claude_models
 	// merged in (config.ApplyClaudeClaims), set once in resolveConfig --
@@ -505,6 +507,13 @@ type run struct {
 	// narrowText is narrowSummary's line, read once at finalize for both the
 	// status section and the report.
 	narrowText string
+	// binariesAdmitted are the binaries this run added at a path the project's
+	// policy admits, both readings together, sorted (stray.go's
+	// admittedBinaries). The two checks fill it at finalize and the pull
+	// request's status section reports it, so a reader knows an unreadable file
+	// is in the diff (D993); it is empty for a run that added none, which is
+	// every run whose task was not an asset.
+	binariesAdmitted []string
 	// rigorCfg is the run's rigor configuration *as the base branch has it*
 	// (docs/rigor-modes D25), read once at bootstrap and reused at every
 	// later moment (rigor.go); rigorRev is the revision it was read from, ""
@@ -1644,7 +1653,7 @@ func (r *run) unstampedCommits(ctx context.Context) (total, unstamped int, err e
 	// gitops.readableBounds: a base branch's tip that this checkout never
 	// fetched is a bound git ignores rather than a git that refuses the whole
 	// range, so a base the remote moved on to cannot cost the run its count.
-	args := []string{"--no-replace-objects", "log", "--ignore-missing",
+	args := []string{"log", "--ignore-missing",
 		"--format=%H%x09%(trailers:key=" + gitops.TrailerRun + ",valueonly)",
 		"--end-of-options", since + "..HEAD"}
 	for _, e := range except {
@@ -2874,6 +2883,22 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return fmt.Errorf("recipe %s is not mode: review, but the task names pull requests to review", rrec.Name)
 	case !r.review && rcp.Mode == recipe.ModeReview:
 		return fmt.Errorf("recipe %s is mode: review, but the task names no pull request to review", rrec.Name)
+	// The review-class marker is the diagnosis's, and a diagnosis is the one
+	// run the review-only variant carries without being a review (docs/
+	// troubleshoot-cloud D2411): task.Spec.ReviewClass is what checkJobClass
+	// and checkProjectReviewJobAccount read, so a task carrying it is admitted
+	// to that container and its model calls take the credentials service's
+	// review class (reviewClassRun, gateway.go). The step that makes a run a
+	// diagnosis is the diagnose one, and task.Validate cannot see it — it pins
+	// the field to mode: artifact and no more — so a mode: artifact spec naming
+	// a render recipe would run that recipe's stages in the variant's container,
+	// its model calls served by the class's credential rather than its own
+	// account's, and so past the allow_repos that bounds the latter. Refused
+	// before any stage, keyed on the RESOLVED recipe and not on what the task
+	// claims, because a repository recipe read by name at this run's base is the
+	// recipe that would run.
+	case spec.ReviewClass && !recipe.UsesDiagnose(rcp):
+		return fmt.Errorf("recipe %s holds no diagnose step, and this task claims the review class (review_class): that marker admits a run to the review-only job variant, whose container mounts no App key and no Claude token and whose model calls the credentials service serves as the review class's, and the only run of it that is not a review is the diagnosis the diagnose step runs. The run stops before any stage", rrec.Name)
 	}
 	// A follow-up continues a pull request: it inherits that PR's branch
 	// and base, pushes to the branch and reports on the PR. A mode:
@@ -3217,6 +3242,12 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err := verify.WriteSettings(r.d.StateDir, verify.Settings{
 		RepoDir: r.d.WorkDir, Build: wf.Commands.Build, Test: wf.Commands.Test, Lint: wf.Commands.Lint,
 		RerunFailed: wf.Commands.RerunFailed, Reports: wf.Commands.Reports,
+		// Whether the workflow declared these reports or they are
+		// config.DefaultReports filled in: a test run that then finds no report
+		// of a workflow that declared none has no globs to name
+		// (verify.Settings.ReportsDeclared).
+		ReportsDeclared: r.cfgRes != nil &&
+			r.cfgRes.SourceOf("workflows."+r.rec.Workflow+".commands.reports") != config.SourceDefault,
 		TimeoutS: int(wf.Timeouts.Verify.Seconds()),
 	}); err != nil {
 		return fmt.Errorf("writing verify settings: %w", err)
@@ -3624,6 +3655,12 @@ func (r *run) systemPromptData() PromptData {
 		ContextRepos: r.contextRepoLines(),
 		NoWorkflows:  r.providerKind == gitprov.KindGitHub, Checkpoints: r.checkpointsOn(),
 		LintConfigured: strings.TrimSpace(r.wf.Commands.Lint) != "",
+		// The paths the project admits a binary at, and the cap it holds one
+		// to, are the run's resolved policy: a coder that has to add an asset
+		// is told where before it writes one (D992). An empty list leaves the
+		// clause out (prompts.go's binariesRule), and the cap is the effective
+		// one, so a project that wrote none is named the shipped bound.
+		BinariesAllow: r.policy.BinariesAllow, BinariesMaxBytes: r.binaryCap(),
 		// The brief is the coder's, and "implement" is one of its stages: the
 		// answer is the coder's own model, never a review stage's, which is
 		// why denyBinaryReads' review half cannot reach it (D2014).
@@ -5804,13 +5841,39 @@ func (r *run) finalize(ctx context.Context) error {
 	// same draft a failed run leaves — the work pushed, the pull request open,
 	// the reason naming the file. That is what makes it actionable; a run that
 	// returned here would put nothing on the branch and open nothing.
-	strays, err := r.strayArtifacts(ctx)
+	strays, admitted, err := r.strayArtifacts(ctx)
 	if err != nil {
 		return fmt.Errorf("listing what the run left untracked: %w", err)
 	}
-	if len(strays) > 0 {
-		r.fail(strayRefusal(strays))
+	// And the other end of the same reading: a binary the run's own commits
+	// added is in a commit, so the untracked listing above cannot see it and no
+	// commit finalize makes would carry it (stray.go, spec.md §4.2, D997). Both
+	// are answers of one predicate, and a run refused by both is refused once,
+	// with both lists named.
+	//
+	// A reading that fails is one of those answers and not an error out of
+	// finalize: a run whose own commits nothing read is refused rather than
+	// passed — the check is the last thing between a payload and the branch —
+	// and refusing it is not a stop, which is what the note above says of every
+	// other refusal here. Returning the error instead would leave the person
+	// with nothing at all: no branch, no pull request, and a run whose work the
+	// agent did and nobody can see.
+	added, committedAdmitted, err := r.committedBinaries(ctx)
+	unread := ""
+	if err != nil {
+		unread = r.redact(err.Error())
+		r.d.Log.Error("reading the run's own diff for binaries it added failed; the run is refused for it", "err", unread)
 	}
+	if len(strays) > 0 || len(added) > 0 || unread != "" {
+		r.fail(strayRefusal(strays, added, unread))
+	}
+	// The other answer of the two readings: the binaries the run added at a
+	// path the project's list admits, which the pull request's status section
+	// names so a reader knows an unreadable file is in the diff (D993,
+	// prflow.go's binariesPart). It is read here, where the two readings are,
+	// and read once: the section is written later, and no part of it may go
+	// looking through the run's diff of its own.
+	r.binariesAdmitted = admittedBinaries(admitted, committedAdmitted)
 	committed, err := r.repo.CommitAllExcept(ctx, leftover, strayPaths(strays))
 	if err != nil {
 		return fmt.Errorf("committing leftover work: %w", err)
@@ -5941,6 +6004,25 @@ func (r *run) finalize(ctx context.Context) error {
 		dec = blockedDecision(reason, haltClass(halt.Reason))
 	}
 	ready, reason, class := dec.Ready, dec.Reason, dec.Class
+	// The hold a change set puts on its members (D614, F15): a member run
+	// never flips its own pull request ready, because the set's pull requests
+	// go ready together and the step that flips them is the set's own (D3). It
+	// is applied here — after every cause the run named for itself above, and
+	// before the pull request is created or updated below — so the member's
+	// pull request is opened, or kept, a draft, no reviewer is requested for
+	// it (settlePR applies them to a ready pull request only), and the answer
+	// the run earned becomes the verdict its member record carries for the set
+	// to read rather than the outcome of its own pull request.
+	//
+	// A follow-up carries the same block as the run it continues (the launcher
+	// writes it into the task), so the hold binds a follow-up too and no
+	// `fugaro run --pr N` is a way around it (F15).
+	held := false
+	verdict := ""
+	if r.spec.ChangeSet != nil && ready {
+		held, verdict = true, runstore.VerdictShip
+		ready, reason = false, changeSetHoldReason(r.spec.ChangeSet)
+	}
 	// Finalize's push must not outlive its token either; a short reserve
 	// still asks for at least what bootstrap's fetch does.
 	if err := r.refreshGitAuth(ctx, authValidity(max(r.wf.Timeouts.FinalizeReserve.Duration, bootstrapAuthMinValid))); err != nil {
@@ -6075,6 +6157,14 @@ func (r *run) finalize(ctx context.Context) error {
 	switch {
 	case ready:
 		r.recordEnd(runstore.StatusSucceeded, runstore.OutcomeReady, "", reason)
+	case held:
+		// The hold is the only thing keeping this pull request a draft: the
+		// run's work is done, its tests passed and its review shipped, so it
+		// is a succeeded run — what turns it ready is the set's own step
+		// (D3), not a second run of this repository — and its outcome is the
+		// draft its pull request carries. The class is empty, as every
+		// succeeded ending's is.
+		r.recordEnd(runstore.StatusSucceeded, runstore.OutcomeDraft, "", reason)
 	case halt != nil:
 		r.rec.Halt = halt
 		r.recordEnd(runstore.StatusHalted, runstore.OutcomeDraft, haltClass(halt.Reason), reason)
@@ -6085,6 +6175,14 @@ func (r *run) finalize(ctx context.Context) error {
 	default:
 		r.recordEnd(runstore.StatusFailed, runstore.OutcomeDraft, class, reason)
 	}
+	// The verdict joins the member's record once the ending is known — here
+	// and not at the hold above — so what the set's step reads is the ending
+	// this run reached. Every ending that gets this far writes it, the empty
+	// word included, which is what clears a `ship` an earlier attempt at the
+	// same pull request left behind; an ending that returns above this line (a
+	// push that failed, a pull request closed during the run) writes nothing
+	// and leaves the last word about this pull request standing.
+	r.recordChangeSetVerdict(ctx, pr, verdict)
 	r.updateCost()
 	r.narrowText = r.narrowSummary(ctx)
 	notes, gone := r.settlePR(ctx, pr, ready, reason, records)

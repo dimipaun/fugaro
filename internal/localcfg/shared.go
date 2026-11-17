@@ -257,6 +257,19 @@ func (c *Config) Shared() *Config {
 	// it besides, because a shared config carrying it was not written by the
 	// converge.
 	s.Triage = nil
+	// RigorPending is dropped here for Triage's reason and one of its own that
+	// is nearer still: it is the wizard's rigor answer waiting to be written
+	// into the project layer, and the mode decides how much review every run of
+	// the project gets, so a launcher who could put one in the shared file would
+	// be choosing the review every teammate's runs are held to — the mode
+	// `fugaro rigor set` refuses to lower behind the owner's back (D1026), set
+	// by whoever can write this file. And it is a key that means nothing on
+	// another machine: it is one machine's hand-off, and a teammate whose
+	// config filled the gap from here would have its own converge write that
+	// mode into the layer file nobody on that machine answered for.
+	// ParseShared refuses the key besides, because a shared config carrying it
+	// was not written by the converge.
+	s.RigorPending = ""
 	// Orchestrator travels the catalog's way, into the policy node, and is
 	// dropped here for the same reason the floor is: the block is what stops a
 	// launcher spending the project's budget faster than the owner allows — the

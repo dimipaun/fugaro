@@ -561,8 +561,8 @@ func TestDecodeRequireZDRIsDefaultTrue(t *testing.T) {
 	if !unset.RequireZDROn() {
 		t.Error("an omitted require_zdr must read as true: the ZDR tier is the conservative price")
 	}
-	if unset.EffectivePricePolicy() != PricePolicyCheapest {
-		t.Errorf("EffectivePricePolicy = %q, want cheapest", unset.EffectivePricePolicy())
+	if unset.EffectivePricePolicy() != PricePolicyHighest {
+		t.Errorf("EffectivePricePolicy = %q, want highest: an omitted price_policy is the safe end (D2644)", unset.EffectivePricePolicy())
 	}
 
 	p, _, err = Decode(providerPolicy(`{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "require_zdr": false, "price_policy": "cheapest"}`))
@@ -1627,5 +1627,269 @@ func TestImageServicesFromCatalog(t *testing.T) {
 	p, found, err := Decode([]byte(`{"version": 9, "image_services": ` + string(raw) + `}`))
 	if err != nil || !found || !reflect.DeepEqual(p.ImageServices, want) {
 		t.Errorf("the derived block does not decode back: (%v, %v, %v)", p, found, err)
+	}
+}
+
+// TestOrchestratorEnabledFalseWins is R1's own red step, and the rule the key
+// is: the daemon launches runs unless the policy writes false (D2701, D2739).
+//
+// False is the only value that can undo the daemon's work, and it is the only
+// one the node has to keep. A layer that writes nothing passes on what the layer
+// under it decided, and so does one that writes true — which is why the member
+// is a pointer rather than a bool whose zero value would read as "off", and why
+// the key merges by the ceiling rule (the registry's Tighten row, and
+// internal/policy's Merge for a run's own layers): whatever layer writes false
+// decides, and no layer turns it back on over one.
+func TestOrchestratorEnabledFalseWins(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{"absent: the default is on", `{"version": 9}`, true},
+		{"written true: the default restated", `{"version": 9, "orchestrator_enabled": true}`, true},
+		{"written null: no statement at all", `{"version": 9, "orchestrator_enabled": null}`, true},
+		{"written false: the daemon launches nothing", `{"version": 9, "orchestrator_enabled": false}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, found, err := Decode([]byte(tc.raw))
+			if err != nil || !found {
+				t.Fatalf("Decode = (%v, %v, %v), want the node read", p, found, err)
+			}
+			if len(p.UnknownKeys) != 0 {
+				t.Errorf("UnknownKeys = %v, want none: orchestrator_enabled is a key this Fugaro reads", p.UnknownKeys)
+			}
+			if got := p.OrchestratorOn(); got != tc.want {
+				t.Errorf("OrchestratorOn() = %v, want %v: absent is on, and only a written false turns the daemon off", got, tc.want)
+			}
+			// The pointer is the difference the default rests on: nil is "this
+			// policy says nothing", and a false one is a statement the node
+			// keeps — which is what a merge reads as the winner.
+			switch {
+			case p.OrchestratorEnabled == nil && !tc.want:
+				t.Error("a policy that writes false decodes to a nil member: the statement is lost, and the reader falls back to the default that launches")
+			case p.OrchestratorEnabled != nil && tc.raw == `{"version": 9}`:
+				t.Error("a policy that writes no member carries one: the node of a project that never answered is not byte for byte what it was")
+			}
+		})
+	}
+
+	// A written false survives the round trip — it is the one value the node has
+	// to keep — while a policy that writes no member writes none.
+	off, _, err := Decode([]byte(`{"version": 9, "orchestrator_enabled": false}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(off)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"orchestrator_enabled":false`) {
+		t.Errorf("a policy whose switch is off marshals %s, want the member written: the writer that round trips a node would drop the owner's own answer", b)
+	}
+
+	// Every other JSON kind is refused where the operator can see it, rather
+	// than read as a truthy or zero value: a switch that hands orchestration
+	// back is the last place a typo may mean "on".
+	for _, body := range []string{`"false"`, `1`, `0`, `[]`, `{}`} {
+		p, found, err := Decode([]byte(`{"version": 9, "orchestrator_enabled": ` + body + `}`))
+		if err == nil || p != nil || !found || !strings.Contains(err.Error(), "orchestrator_enabled") {
+			t.Errorf("Decode(orchestrator_enabled: %s) = (%v, %v, %v), want a refusal naming the key", body, p, found, err)
+		}
+	}
+
+	// The key's spelling is the node's: another case is the same key folded by
+	// encoding/json, so the value under it would be read or not depending on
+	// the order the document was written in (checkTopLevelNames).
+	p, found, err := Decode([]byte(`{"version": 9, "Orchestrator_Enabled": false}`))
+	if err == nil || p != nil || !found || !strings.Contains(err.Error(), "orchestrator_enabled") {
+		t.Errorf("Decode with the key in another case = (%v, %v, %v), want a refusal naming the spelling this Fugaro reads", p, found, err)
+	}
+}
+
+// TestIssueSyncStrictAndMirrorDefaultsFalse: the project's issue adapter
+// (D2733, D2719) is decoded strictly, member by member and entry by entry, and
+// an unset mirror means off — the backlog stays internal until the owner says
+// otherwise, so the default is the direction that opens no issue in anybody's
+// repository.
+func TestIssueSyncStrictAndMirrorDefaultsFalse(t *testing.T) {
+	// What the block reads, and what the mirror answers.
+	for _, tc := range []struct {
+		name   string
+		body   string
+		repos  []string
+		mirror bool
+	}{
+		{"repos and an explicit false", `{"github": {"repos": ["acme/app", "acme/lib"], "mirror": false}}`, []string{"acme/app", "acme/lib"}, false},
+		{"repos alone: mirror defaults off", `{"github": {"repos": ["acme/app"]}}`, []string{"acme/app"}, false},
+		{"mirror on", `{"github": {"repos": ["acme/app"], "mirror": true}}`, []string{"acme/app"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, found, err := Decode([]byte(`{"version": 9, "issue_sync": ` + tc.body + `}`))
+			if err != nil || !found {
+				t.Fatalf("Decode = (%v, %v, %v), want the node read", p, found, err)
+			}
+			if p.IssueSync == nil || p.IssueSync.GitHub == nil {
+				t.Fatalf("IssueSync = %+v, want the github block read", p.IssueSync)
+			}
+			if !slices.Equal(p.IssueSync.GitHub.Repos, tc.repos) {
+				t.Errorf("repos = %v, want %v", p.IssueSync.GitHub.Repos, tc.repos)
+			}
+			if got := p.IssueSync.GitHub.MirrorOn(); got != tc.mirror {
+				t.Errorf("MirrorOn() = %v, want %v: mirror is false unless the node writes it true", got, tc.mirror)
+			}
+			if len(p.UnknownKeys) != 0 {
+				t.Errorf("UnknownKeys = %v, want none: issue_sync is a key this Fugaro reads", p.UnknownKeys)
+			}
+		})
+	}
+
+	// The block is strict: a member it does not model is refused rather than
+	// dropped, nested members included, and so is a modelled member in another
+	// case or one written twice — the four spellings that would otherwise read
+	// as one key or as no key at all.
+	for _, tc := range []struct{ name, body, want string }{
+		{"an unknown member of the block", `{"github": {"repos": ["acme/app"]}, "jira": {}}`, "issue_sync"},
+		{"an unknown member of github", `{"github": {"repos": ["acme/app"], "mirror_issues": true}}`, "mirror_issues"},
+		{"a member of github in another case", `{"github": {"Repos": ["acme/app"]}}`, "repos"},
+		{"the block's member in another case", `{"Github": {"repos": ["acme/app"]}}`, "github"},
+		{"a member written twice", `{"github": {"repos": ["acme/app"]}, "github": {"repos": ["acme/lib"]}}`, "twice"},
+		{"github not an object", `{"github": ["acme/app"]}`, "issue_sync"},
+		{"mirror not a bool", `{"github": {"repos": ["acme/app"], "mirror": "yes"}}`, "mirror"},
+		{"repos not a list", `{"github": {"repos": "acme/app"}}`, "repos"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, found, err := Decode([]byte(`{"version": 9, "issue_sync": ` + tc.body + `}`))
+			if err == nil || p != nil || !found || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Decode(issue_sync: %s) = (%v, %v, %v), want a refusal naming %q", tc.body, p, found, err, tc.want)
+			}
+		})
+	}
+
+	// Every entry is a canonical repository name, and no repository is named
+	// twice: the adapter lists and opens issues by the name, so an entry in
+	// another case is a repository no lookup reaches, and a name written twice
+	// is one repository's issues ingested twice.
+	for _, body := range []string{
+		`{"github": {"repos": ["Acme/App"]}}`,
+		`{"github": {"repos": ["acme/app.git"]}}`,
+		`{"github": {"repos": ["acme"]}}`,
+		`{"github": {"repos": [""]}}`,
+		`{"github": {"repos": ["acme/app", "acme/app"]}}`,
+	} {
+		p, found, err := Decode([]byte(`{"version": 9, "issue_sync": ` + body + `}`))
+		if err == nil || p != nil || !found || !strings.Contains(err.Error(), "repos") {
+			t.Errorf("Decode(issue_sync: %s) = (%v, %v, %v), want a refusal naming the entry", body, p, found, err)
+		}
+	}
+
+	// A block that decides nothing is no block: the daemon walks the
+	// repositories the block names and no others, so a block naming none has
+	// nothing to sync — and the mirror switch is a decision about those
+	// repositories' items. Each of these writes no member, which is what keeps
+	// the node of a project that configures no adapter byte for byte what it
+	// was; a mirror turned on with no repository is a statement, and is kept.
+	for _, raw := range []string{
+		`{"version": 9}`,
+		`{"version": 9, "issue_sync": null}`,
+		`{"version": 9, "issue_sync": {}}`,
+		`{"version": 9, "issue_sync": {"github": null}}`,
+		`{"version": 9, "issue_sync": {"github": {}}}`,
+		`{"version": 9, "issue_sync": {"github": {"repos": []}}}`,
+		`{"version": 9, "issue_sync": {"github": {"mirror": false}}}`,
+	} {
+		p, _, err := Decode([]byte(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.IssueSync != nil {
+			t.Errorf("Decode(%s).IssueSync = %+v, want nil: a block that names no repository and leaves the mirror off decides nothing", raw, p.IssueSync)
+		}
+	}
+	p, _, err := Decode([]byte(`{"version": 9, "issue_sync": {"github": {"mirror": true}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.IssueSync == nil || !p.IssueSync.GitHub.MirrorOn() {
+		t.Errorf("Decode of a block that turns the mirror on reads %+v, want the statement kept: it is a decision about the items of every repository the block names, and a written one is the owner's own answer", p.IssueSync)
+	}
+}
+
+// TestOlderReaderToleratesNewTopLevelKeys is the two keys' skew as a test rather
+// than a sentence (F35, F46, P8): this binary reads a node that carries
+// orchestrator_enabled and issue_sync and lists no unknown key at all, while a
+// reader older than the keys — the one every CLI was before this release —
+// lists them in UnknownKeys and reads everything else unchanged. The older
+// reader is not reached by spelling a key this package does not model, because
+// knownTopLevelKeys holds both: the same fixture node is decoded twice, once
+// under this key set and once under a copy of the list as it stood before them.
+func TestOlderReaderToleratesNewTopLevelKeys(t *testing.T) {
+	raw := []byte(`{"version": 9, "budget": {"mode": "observe", "per_run_usd": 5}, "orchestrator_enabled": false, "issue_sync": {"github": {"repos": ["acme/app"]}}}`)
+	p, found, err := Decode(raw)
+	if err != nil || !found {
+		t.Fatalf("Decode = (%v, %v, %v), want the node read", p, found, err)
+	}
+	if len(p.UnknownKeys) != 0 {
+		t.Errorf("UnknownKeys = %v, want none: both keys are ones this Fugaro reads", p.UnknownKeys)
+	}
+	if p.OrchestratorOn() {
+		t.Error("OrchestratorOn() = true, want the written false: this binary reads the switch")
+	}
+	if p.IssueSync == nil || p.IssueSync.GitHub == nil || !slices.Equal(p.IssueSync.GitHub.Repos, []string{"acme/app"}) {
+		t.Errorf("IssueSync = %+v, want the block this binary reads", p.IssueSync)
+	}
+
+	preKey := make(map[string]bool, len(knownTopLevelKeys))
+	for k, v := range knownTopLevelKeys {
+		preKey[k] = v
+	}
+	delete(preKey, "orchestrator_enabled")
+	delete(preKey, "issue_sync")
+	q, found, err := decodeWithKeys(raw, preKey)
+	if err != nil || !found {
+		t.Fatalf("the reader that predates the keys refused the node: (%v, %v, %v)", q, found, err)
+	}
+	if want := []string{"issue_sync", "orchestrator_enabled"}; !slices.Equal(q.UnknownKeys, want) {
+		t.Errorf("the reader that predates the keys lists UnknownKeys = %v, want %v: that is the node a CLI of that age refuses and a runner of it logs", q.UnknownKeys, want)
+	}
+	// The rest of the node decodes unchanged, which is the whole point of the
+	// keys being top-level ones: a member of a block would have made that reader
+	// refuse the policy whole (F35).
+	if q.Version != 9 || q.Budget.PerRunUSD != 5 {
+		t.Errorf("the reader that predates the keys read version %d and a per-run cap of %v, want the node's own 9 and 5: a top-level key the reader does not know costs it nothing else", q.Version, q.Budget.PerRunUSD)
+	}
+}
+
+// TestPolicyWithoutNewKeysUnchanged: a project that sets neither key publishes
+// no member for either, so its node is byte for byte what it was before the two
+// existed — the promise every optional member of this node keeps, and the one
+// that keeps a release from making every project's policy a node an older CLI
+// refuses.
+func TestPolicyWithoutNewKeysUnchanged(t *testing.T) {
+	for _, raw := range []string{
+		`{"version": 9}`,
+		`{"version": 9, "orchestrator_enabled": null, "issue_sync": null}`,
+		`{"version": 9, "issue_sync": {}}`,
+		`{"version": 9, "issue_sync": {"github": {}}}`,
+	} {
+		p, found, err := Decode([]byte(raw))
+		if err != nil || !found {
+			t.Fatalf("Decode(%s) = (%v, %v, %v), want the node read", raw, p, found, err)
+		}
+		if p.OrchestratorEnabled != nil || p.IssueSync != nil {
+			t.Errorf("Decode(%s) = {%v, %+v}, want both members nil: the node says nothing about either key", raw, p.OrchestratorEnabled, p.IssueSync)
+		}
+		if !p.OrchestratorOn() {
+			t.Errorf("Decode(%s): OrchestratorOn() = false, want the default that launches", raw)
+		}
+		b, err := json.Marshal(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, member := range []string{"orchestrator_enabled", "issue_sync"} {
+			if strings.Contains(string(b), member) {
+				t.Errorf("a policy that sets no %s marshals one: %s", member, b)
+			}
+		}
 	}
 }

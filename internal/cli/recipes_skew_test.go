@@ -1740,7 +1740,7 @@ func TestRefuseCatalogSwitches(t *testing.T) {
 		{"require_zdr: false", config.ModelProvider{AllowDataTo: allows, RequireZDR: &no}, true},
 		{"require_zdr: true (the default, but still written)", config.ModelProvider{AllowDataTo: allows, RequireZDR: &yes}, true},
 		{"price_policy: highest", config.ModelProvider{AllowDataTo: allows, PricePolicy: config.PricePolicyHighest}, true},
-		{"price_policy: cheapest (the default, but still written)", config.ModelProvider{AllowDataTo: allows, PricePolicy: config.PricePolicyCheapest}, true},
+		{"price_policy: cheapest (not the default, but still written)", config.ModelProvider{AllowDataTo: allows, PricePolicy: config.PricePolicyCheapest}, true},
 		{"both", config.ModelProvider{AllowDataTo: allows, RequireZDR: &no, PricePolicy: config.PricePolicyHighest}, true},
 		{"a switch on a route that may not receive this repository", config.ModelProvider{AllowDataTo: []string{"acme/other"}, RequireZDR: &no}, false},
 	}
