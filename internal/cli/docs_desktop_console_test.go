@@ -1669,6 +1669,29 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// that document's own `id`, so the row spells the command's argv and
 		// names the argument in its parenthesis, as the `graph --json` row does.
 		"coordinator roadmap move --json TASK --to <release> --expect <release>",
+		// The pending-steps read (the composite-commands plan's AP8, the
+		// `apply.pending` operation, D1569): the steps a management command
+		// saved for a later `fugaro apply`, as the one closed document the
+		// command prints. `--status` is a word of the command path and not an
+		// argument -- it is the arm that writes nothing at all, which is what
+		// admits the read to this table while the bare `apply` below stays out
+		// of the console's surface -- and the two project flags are §3.4 rule
+		// 3's, so the row spells the whole argv back with no argument an
+		// operation's schema fills. **It is the first row here whose command
+		// carries a second argv**: AP8 also adds the write's row below, which is
+		// the same command without `--status`, so the census counts `apply`
+		// once while this list counts both argvs.
+		"apply --status --json --project <name> [--config <path>]",
+		// The chain (the same plan's AP8, D1572 and §4.4): the one command that
+		// runs the follow-up steps a management command saved, which the console
+		// runs after a management command with `--no-apply` left something owed.
+		// It is a **write** and it is on this table as a fence rather than as an
+		// operation the surface carries yet -- the console's pending screen is
+		// the console plan's task -- because an argv the console may spawn is
+		// here whether or not an operation spawns it today. No word of it comes
+		// from a renderer: no positional word, no `--repo`, and the two project
+		// flags are rule 3's, so the row spells the whole argv back.
+		"apply --project <name> [--config <path>]",
 	}
 	rows := docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |")
 	got := map[string]bool{}
@@ -1927,7 +1950,7 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Twenty-eight commands: the thirteen dashboard reads (logs has two argvs), the
+	// Twenty-nine commands: the thirteen dashboard reads (logs has two argvs), the
 	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
 	// screen's `plan status --json` (GV2.1), the dependency graph read
 	// `graph --json` (the graph plan's CG9a), the project view's
@@ -1950,9 +1973,13 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	// `user ls --json --repo R` (the roles-and-scopes plan's RS7, roles.md
 	// D691(b)), whose one argument is optional and whose five writing relatives
 	// -- `user grant`, `user revoke`, `user add`, `user rm` and `user offboard`
-	// -- the never table below keeps off this list.
-	if len(allowed) != 28 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 28 (logs has two argvs)", path, argvs, len(allowed))
+	// -- the never table below keeps off this list, and the pending-steps read
+	// `apply --status --json` (docs/composite-commands, D1569, AP8), which
+	// shares its command with the chain the console runs after a management
+	// command saved a change (D1572): the two are two argvs and one command, so
+	// this table counts thirty argvs over the twenty-nine commands.
+	if len(allowed) != 29 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 29 (logs and apply have two argvs each)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown
@@ -2232,19 +2259,35 @@ func TestDocsDesktopConsoleDesignSurfaceIsTheConsoleSource(t *testing.T) {
 // consoleLaunchPaths is §5.1's allow-list written as an exemption rather
 // than as a hole: the writers the console spawns are deliberately absent from
 // consoleReadPaths -- a write is not a read and must not be -- and this map is
-// where each one is named instead. There are three: `fugaro run` is the launch
+// where each one is named instead. There are four: `fugaro run` is the launch
 // (rule 11, D22), `fugaro settings set`/`fugaro settings unset` are the
 // settings write (the settings-edit plan's C3, D1103, rule 12), whose row on
 // §5.1's table is the `set` form and whose two words share this one entry's
-// reason, and `fugaro coordinator roadmap move` is the record's move (the
+// reason, `fugaro coordinator roadmap move` is the record's move (the
 // dependency-graph plan's GV3.2, rule 14), whose row the same task added on
-// 2026-11-12. The exemption is the security claim, so it sits beside the
-// reason: a table that grew another writer comes back here and says so.
+// 2026-11-12, and `fugaro apply` is the chain the console runs after a
+// management command saved a change for later (docs/composite-commands,
+// D1572; §5.1 carries its own row). The exemption is the security claim, so it
+// sits beside the reason: a table that grew another writer comes back here and
+// says so.
+//
+// `fugaro apply` is the one command on both lists at once, and it is not an
+// oversight: §5.1 carries two rows for one command because its two argv are
+// two questions -- `apply --status --json` is the read the console shows the
+// pending steps from, and the bare `apply` is the write that runs them, which
+// AP8 does not build (the composite-commands plan leaves the console's pending
+// write to the console plan). consoleReadPaths is keyed by the command path
+// and not by an argv, so the read's entry covers the write's too, which is the
+// safe direction for the table's own rule: a console-spawned `apply` writes no
+// remembered checkout. A later task that wants the chain to record the
+// checkout it ran in has to split this command's entry by argv, which is a
+// change to the table's key rather than a row in it.
 var consoleLaunchPaths = map[string]bool{
 	"fugaro run":                      true,
 	"fugaro settings set":             true,
 	"fugaro settings unset":           true,
 	"fugaro coordinator roadmap move": true,
+	"fugaro apply":                    true,
 }
 
 // planPhaseRow returns the "What ships" cell of the project-centric plan's

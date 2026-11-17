@@ -363,6 +363,18 @@ var consoleReadPaths = map[string]bool{
 	// read-only half of the roles model: `user grant` and `user revoke` are the
 	// writes, and no row of §5.1 admits either.
 	"fugaro user ls": true,
+	// The pending-steps read (docs/composite-commands, D1569): the console's
+	// one view of what a management command saved for later. Its child is
+	// `fugaro apply --status --json` and never the bare word -- `--status` is
+	// the arm that writes nothing at all, no pending file, no cache and no
+	// remembered checkout, which is what makes it the one read the console is
+	// admitted to (the command's own comment, `apply.go`) -- and `apply` is
+	// the design's row for exactly that argv. The entry is keyed by the
+	// command path, as this whole table is, so the bare `fugaro apply` the
+	// console will later spawn for the chain (D1572, §5.1's other row for this
+	// command) is covered by it too: it is named in consoleLaunchPaths for
+	// that reason, and the two tables are read together.
+	"fugaro apply": true,
 	// The one the design names and §5.1 has not carried a row for yet (the
 	// console task adds it); it resolves no checkout today.
 	"fugaro plan graph": true,
