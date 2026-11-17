@@ -26,8 +26,10 @@ from the checkout in the working directory alone:
    job and the runner's own `checkJobProfile` refuses it at run start.
 4. `provider := e.repoProvider(spec.Repo, co)`, and `provider != pr.Provider ||
    !infra.SharedJobProvider(pr.Provider)` keeps the per-repository job — a profile serves exactly
-   its own provider, and no shared job serves Bitbucket (`internal/infra/projectjobs.go`, the one
-   place both the deployer and the launcher read that fact).
+   its own provider, and the list it reads admits both of them since docs/shared-jobs-default's I1
+   (`internal/infra`'s `SharedJobProvider`), so this arm now turns on the provider alone
+   (`internal/infra/projectjobs.go`, the one place both the deployer and the launcher read that
+   fact).
 5. `profileAdmissionRefusal`, `projectJobAgentAuth` (which reads the ref's `fugaro.yaml` **out of
    the checkout's own object database**, `checkoutFugaroYAMLAtRef`, `git cat-file`, never the
    network and never the working tree) and `projectJobAccountFor` — three gates, then

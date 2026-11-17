@@ -131,7 +131,8 @@ func newProjectPolicyPublishCmd() *cobra.Command {
 			"repos.<owner/name>.claude_accounts, qualified by that entry's provider:\n" +
 			"an account this config defines but neither names admits nothing a run\n" +
 			"could read — a repository whose runs are not on a profile job (a\n" +
-			"per-repository job, which is every Bitbucket repository) names its\n" +
+			"per-repository job — what a repository the published policy serves no\n" +
+			"profile for, and a `checkout: baked` one, keep) names its\n" +
 			"accounts there, because a profile is not the only kind of job its runs\n" +
 			"land on. The two are a union, so nothing a profile admits is narrowed by\n" +
 			"a repository's entry.\n" +

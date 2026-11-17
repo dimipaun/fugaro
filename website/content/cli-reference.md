@@ -6313,7 +6313,8 @@ qualified by its profile's provider, and by a repository's own
 repos.<owner/name>.claude_accounts, qualified by that entry's provider:
 an account this config defines but neither names admits nothing a run
 could read — a repository whose runs are not on a profile job (a
-per-repository job, which is every Bitbucket repository) names its
+per-repository job — what a repository the published policy serves no
+profile for, and a `checkout: baked` one, keep) names its
 accounts there, because a profile is not the only kind of job its runs
 land on. The two are a union, so nothing a profile admits is narrowed by
 a repository's entry.

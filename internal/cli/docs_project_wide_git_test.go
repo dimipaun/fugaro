@@ -476,17 +476,27 @@ func TestDocsStateBitbucketSharedJobIsolation(t *testing.T) {
 		t.Error("docs/git-providers.md still says the phase-3 design's shared job has no Bitbucket credential to carry: D460 put Bitbucket repositories on shared jobs and D2302 said what the job holds — nothing, with the proxy serving it")
 	}
 	// And the "not shipped" wording is I1's own leftover: the list it names
-	// admits Bitbucket on this tree, so the page may not tell a reader the
+	// admits Bitbucket on this tree, so neither page may tell a reader the
 	// move is still owed. Each spelling this sentence had is listed, because
-	// the lie is one clause and it migrates to whichever paragraph survives.
-	for _, wrong := range []string{
-		"still admits `github` alone",
-		"no shared job serves a Bitbucket profile today",
-		"every Bitbucket repository is still on the per-repository path",
-		"every Bitbucket repository is on the per-repository path until I1 lands",
-	} {
-		if strings.Contains(providers, wrong) {
-			t.Errorf("docs/git-providers.md still says %q: I1 landed the one-line change, so a shared job serves a Bitbucket profile and the page may not read as if the move were owed", wrong)
+	// the lie is one clause and it migrates to whichever paragraph survives —
+	// and it is asked of both documents rather than of the page alone,
+	// because SECURITY.md's own paragraph about the shared job ended with the
+	// same clause, which is the misreading the whole-function rule above
+	// exists to prevent: a reader who found the model on one page and the old
+	// ruling on the other takes the weaker reading.
+	for _, doc := range []struct {
+		path string
+		text string
+	}{{"docs/git-providers.md", providers}, {"SECURITY.md", sec}} {
+		for _, wrong := range []string{
+			"still admits `github` alone",
+			"no shared job serves a Bitbucket profile today",
+			"every Bitbucket repository is still on the per-repository path",
+			"every Bitbucket repository is on the per-repository path until I1 lands",
+		} {
+			if strings.Contains(doc.text, wrong) {
+				t.Errorf("%s still says %q: I1 landed the one-line change, so a shared job serves a Bitbucket profile and the page may not read as if the move were owed", doc.path, wrong)
+			}
 		}
 	}
 

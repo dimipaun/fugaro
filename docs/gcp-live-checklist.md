@@ -13419,11 +13419,11 @@ built on this tree — S1's deployer refuses a profile that mounts a Bitbucket c
 that does not; S2's pairing serves the shared class at the credentials service's Bitbucket proxy;
 S3's runner reaches git only through it (`internal/runner`'s `TestSharedBitbucketJobHoldsNoToken` and
 `TestSharedBitbucketJobHaltsWhenTheProxyRefusesARepository`); S4's launcher resolves the profile —
-while the three that would put a working job in front of a user are not. `internal/infra`'s
-`sharedJobProviders` still admits `github` alone, the one-line change docs/shared-jobs-default calls
-**I1**; S5, which would have `fugaro update` write the default profile a shared Bitbucket job is
-deployed from, has not shipped; and **no deployment lets a shared job's account reach the credentials
-service at all** — which is two facts, and both of them are absent.
+and **the two that put such a job in the deployer's hands have landed since this was written**:
+docs/shared-jobs-default's **I1** (`internal/infra`'s `sharedJobProviders` admits `bitbucket` beside
+`github`) and its **S5** (**`fugaro update` writes the default profile a shared Bitbucket job is
+deployed from**). What is still owed is **a deployment that lets a shared job's account reach the
+credentials service at all** — which is two facts, and both of them are absent.
 
 The first is the one to know before step 5: the service's shared class is its table of
 `FUGARO_SHARED_JOB_ACCOUNTS` rows, nothing under `deploy/terraform/` renders that name
@@ -13446,10 +13446,11 @@ before the container starts — the request never reaches the proxy, the pairing
 6 is about. An owner who lands I1, S5 and the table's rendering and launches anyway meets that 403
 first; it is **not** this section's refusal, and it is not a pass of step 6.
 
-So **no shared job serves a Bitbucket profile today**, step 4 below is where that shows: the profile
-it deploys a job for is one you write by hand, and with that entry unrendered the job's runs have no
-service to reach. Run this section once all of them have landed, and read the documents that say so
-as of 2026-11-16 — [git-providers.md](git-providers.md) and [project-layer.md](project-layer.md).
+So what a shared Bitbucket job lacks today is not the provider list or the profile it is deployed
+from — both landed — but the two facts above, and their consequence is the **403** of steps 5 and 6:
+the job's runs have no service to reach, which is why neither step can read the refusal this check is
+for until both have landed. Run this section once both have landed, and read the documents that say
+so as of 2026-11-16 — [git-providers.md](git-providers.md) and [project-layer.md](project-layer.md).
 
 **What the check settles** (**D460**–**D462**, **D466**, **D2302**; and F11 and F12 of the
 [reconciliation](bitbucket-workspace-token/reconciliation-secrets-brokering.md)): the shape a shared
