@@ -265,22 +265,60 @@ func diagnoseSourceNote(rec srctree.Record) string {
 // records them straight after this, so the run ends succeeded/artifacts with
 // the two files named and hashed in its record (D2402), and the tier reads the
 // answer back out of the bucket (D2410).
+//
+// The directory is emptied and recreated and each file is created
+// O_EXCL|O_NOFOLLOW after its own path is cleared, the shape every other write
+// this runner makes into a directory an agent can reach has (writeArtifactNames,
+// the staging copy). The checkout is the repository's — the plan stage that
+// recipe.Parse allows before this step writes in it too — so a symlink at out,
+// out/diagnosis.md or out/diagnosis.json would otherwise choose what the
+// model's answer is written through, anywhere the runner user can write, and
+// the artifact path would then refuse the link and record an answer missing the
+// file a person reads while the run still ended succeeded/artifacts. An out
+// that is itself a link out of the checkout is refused before anything is
+// created (outputsRootAbs), and a file that cannot be created this way fails the
+// run.
 func (r *run) writeDiagnosisAnswer(a diagnoseagent.Answer, b diagnoseagent.Bundle) error {
+	// Measured the way the artifact path measures its own outputs root, so a
+	// link standing in for out is refused here rather than followed. A root
+	// that is not there yet is no link: the recipe's globs have matched
+	// nothing, and this stage is what creates it.
+	if _, err := r.outputsRootAbs(diagnoseOutDir); err != nil {
+		return err
+	}
 	dir := filepath.Join(r.d.WorkDir, diagnoseOutDir)
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("emptying %s: %w", dir, err)
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("creating %s: %w", dir, err)
 	}
-	body, err := json.Marshal(a)
+	js, err := json.Marshal(a)
 	if err != nil {
 		return fmt.Errorf("writing the diagnosis answer as JSON: %w", err)
 	}
-	jsonPath := filepath.Join(dir, diagnoseJSONName)
-	if err := os.WriteFile(jsonPath, append(body, '\n'), 0o644); err != nil {
-		return fmt.Errorf("writing %s: %w", jsonPath, err)
-	}
-	mdPath := filepath.Join(dir, diagnoseMDName)
-	if err := os.WriteFile(mdPath, []byte(diagnosisMarkdown(a, b)), 0o644); err != nil {
-		return fmt.Errorf("writing %s: %w", mdPath, err)
+	for _, f := range []struct {
+		name string
+		body []byte
+	}{
+		{diagnoseJSONName, append(js, '\n')},
+		{diagnoseMDName, []byte(diagnosisMarkdown(a, b))},
+	} {
+		path := filepath.Join(dir, f.name)
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("clearing %s: %w", path, err)
+		}
+		out, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|oNoFollow, 0o644)
+		if err != nil {
+			return fmt.Errorf("creating %s: %w", path, err)
+		}
+		if _, err := out.Write(f.body); err != nil {
+			out.Close()
+			return fmt.Errorf("writing %s: %w", path, err)
+		}
+		if err := out.Close(); err != nil {
+			return fmt.Errorf("writing %s: %w", path, err)
+		}
 	}
 	return nil
 }

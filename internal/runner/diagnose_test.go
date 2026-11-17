@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -566,6 +567,122 @@ func TestDiagnoseStageReportedABadAnswerAsAFailure(t *testing.T) {
 	}
 	if len(rec.Artifacts) != 0 {
 		t.Fatalf("a refused answer uploaded %v", artifactNames(rec.Artifacts))
+	}
+}
+
+// TestDiagnoseAnswerIsNotWrittenThroughAPlantedLink is the write half of the
+// stage at the checkout's own threat: the run clones the repository and then
+// writes out/diagnosis.md and out/diagnosis.json into it, so a symlink at
+// either name — committed to the repository, or planted by the plan stage that
+// recipe.Parse allows before this step — must not become the path the model's
+// answer is written through. The link here points at a file outside the
+// checkout, which no write of this run may reach.
+//
+// What is asserted is the property, not the errno: the victim is exactly as
+// the test left it, the file a person reads is a regular file holding the
+// answer, and the record names BOTH files. The outcome this pins down is the
+// one a write that follows the link produces: the artifact path then refuses
+// the link and leaves it out, and the run ends succeeded/artifacts with only
+// diagnosis.json recorded and nothing saying the answer a person reads is
+// missing.
+//
+// Mutation (the shape this replaced: MkdirAll plus os.WriteFile, which follows
+// a link): the answer is written into the victim, the artifact path then
+// refuses the link it finds, diagnosis.md is left out of the record, and this
+// test fails on both counts. What the emptying of out does not cover is a link
+// planted between the emptying and the create; that is what the two create
+// flags are for, and they are pinned where a test can time them (the staging
+// copy and the probe's names file — TestAStagedPathThatIsASymlinkIsRefused,
+// TestTheProbesNamesFileIsNotWrittenThroughAPlantedLink), since dropping them
+// alone is invisible here, the link being gone by then.
+func TestDiagnoseAnswerIsNotWrittenThroughAPlantedLink(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""), diagnoseSpec(t), nil)
+	seedDiagnoseBundle(t, h, map[string]string{"evidence/log.txt": "fugaro update failed: no such file\n"})
+	diagnoseTree(t, h)
+
+	victim := filepath.Join(t.TempDir(), "victim.txt")
+	if err := os.WriteFile(victim, []byte("untouched"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const signature = "update missing configuration"
+	const text = "The project config names a workflow the repository does not declare."
+	// The link is planted while the model answers, which is after the clone
+	// and before the answer is written: the window the fix closes.
+	planting := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		t.Helper()
+		outDir := filepath.Join(h.deps.WorkDir, "out")
+		if err := os.MkdirAll(outDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(victim, filepath.Join(outDir, diagnoseMDName)); err != nil {
+			t.Fatal(err)
+		}
+		return diagnoseAnswer(diagnoseagent.OutcomeConfiguration, signature, text)(t, ctx, req)
+	}
+	rec, err := h.run(t, planting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := readText(t, victim); got != "untouched" {
+		t.Fatalf("the answer was written through the planted link: the victim holds %q", got)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("record = status %s, outcome %s, reason %q", rec.Status, rec.Outcome, rec.Reason)
+	}
+	names := artifactNames(rec.Artifacts)
+	for _, name := range []string{diagnoseMDName, diagnoseJSONName} {
+		if !slices.Contains(names, name) {
+			t.Fatalf("the record's artifacts are %v, want %s among them", names, name)
+		}
+	}
+	// The name the link stood for is a regular file the run wrote: the link is
+	// gone, and what is at that path is the answer a person reads.
+	md := filepath.Join(h.deps.WorkDir, "out", diagnoseMDName)
+	if fi, err := os.Lstat(md); err != nil || !fi.Mode().IsRegular() {
+		t.Fatalf("%s is %v, %v, want a regular file the run wrote", md, fi, err)
+	}
+	if got := readText(t, md); !strings.Contains(got, text) {
+		t.Errorf("%s holds %q, want the answer", md, got)
+	}
+}
+
+// TestDiagnoseAnswerRefusesAnOutsRootOutsideTheCheckout is the same threat one
+// level up: out itself a link, here to a directory outside the checkout. The
+// root is measured before anything is created, so the run fails rather than
+// writing both files into a directory the repository does not hold — and the
+// directory the link names stays empty.
+//
+// Mutation (MkdirAll without the outputsRootAbs refusal): the two files land in
+// the linked directory and this test fails.
+func TestDiagnoseAnswerRefusesAnOutsRootOutsideTheCheckout(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""), diagnoseSpec(t), nil)
+	seedDiagnoseBundle(t, h, map[string]string{"evidence/log.txt": "fugaro update failed: no such file\n"})
+	diagnoseTree(t, h)
+
+	elsewhere := t.TempDir()
+	planting := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		t.Helper()
+		if err := os.Symlink(elsewhere, filepath.Join(h.deps.WorkDir, "out")); err != nil {
+			t.Fatal(err)
+		}
+		return diagnoseAnswer(diagnoseagent.OutcomeConfiguration, "update missing configuration",
+			"The project config names a workflow the repository does not declare.")(t, ctx, req)
+	}
+	rec, err := h.run(t, planting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = status %s, outcome %s, reason %q, want failed/none", rec.Status, rec.Outcome, rec.Reason)
+	}
+	if !strings.Contains(rec.Reason, "outside the checkout") {
+		t.Errorf("reason %q does not say the outputs root leaves the checkout", rec.Reason)
+	}
+	if entries, err := os.ReadDir(elsewhere); err != nil || len(entries) != 0 {
+		t.Fatalf("the linked directory holds %v, %v, want nothing: the run wrote through out", entries, err)
+	}
+	if len(rec.Artifacts) != 0 {
+		t.Fatalf("a refused write recorded %v", artifactNames(rec.Artifacts))
 	}
 }
 
