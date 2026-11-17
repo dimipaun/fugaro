@@ -49,7 +49,7 @@ As of 2026-11-17 12:20 UTC, read from `main` at `30acc78ce` (#3034), the open pu
 | rigor-modes | about 24/40 | T7.1, T8.1, T8.3; the overlay plan LV1 to LV7 is unblocked in principle (LD2: the level wins), but LV1.1's type-naming and record-version rulings are still open |
 | secrets-brokering | 40/65 | B1.15, B1.16; owner Check 192 (the --after-flip half; the flip itself merged as #2166 on 2026-11-17, after Check 191 passed its pre-flip rows, and its operator steps are release notes 9 and 10); B2.6–B2.9, B3.6–B3.10, B4.2–B4.11, B5.5 (Check 197 written, ready #3014, a follow-up run live) and B5.6–B5.9 (all approved 2026-11-10, each with its own gate; owner Checks 193–197); dynamic-delivery subfolder: owner DS0.3 (Checks 510 and 511) |
 | shared-jobs-default | 17/32 | 15 left: I1 (draft #3024, stalled), B6 (draft #3023, stalled) and B4 (Check 581 written, draft #3029, stalled) are open, S6, S7, S8, S10, N1 to N3, M2 and M4 to M7 not started; owner Checks 191, 192, 580, 581 and 582 |
-| subscriptions | about 22/51 | the rest not started or open, all agent tasks approved 2026-11-16 (counsel- and entity-gated tasks and the 10 owner-run stay gated); TN1 seat enforcement is not in 0.24.0 (owner) |
+| subscriptions | about 22/51 | the rest not started or open, all agent tasks approved 2026-11-16 (entity-gated tasks and the 10 owner-run stay gated); TN1 seat enforcement is not in 0.24.0 (owner) |
 | troubleshoot-cloud | 5/12 | 7 left, all agent tasks approved 2026-11-16: T-TC4 (ready #3025, a follow-up run live) and T-TC5 (draft #3030, stalled) are open, T-TC6 to T-TC9 not started; T-TC10 is owner-run |
 
 ## To do or parked
