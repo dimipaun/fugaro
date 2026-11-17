@@ -448,3 +448,37 @@ func TestPolicyPublishAndUpdateReconcileTheSameNode(t *testing.T) {
 		t.Errorf("craft_credentials = %+v, want the file's credential alone: node-main is the explicit unset", p.CraftCredentials)
 	}
 }
+
+// TestBuildProjectPolicyRefusesAMergedCascadeTheCascadeCannotUse is the merge's
+// own rule: the file and the node are each valid alone — the file at load
+// (localcfg.validate) and the node at decode (publishedPolicyOf) — and the
+// block the merge hands back is held to the block's own rules, because the
+// backoff pair's rule is about the EFFECTIVE pair, an absent member being its
+// default (ValidCredentials, D153). The node's `backoff.initial: 2h` beside the
+// file's `backoff.cap: 1h` is a schedule that never doubles, and the publish
+// must refuse it where the file's key can be named rather than let the node's
+// decode refuse it on the next `fugaro update`.
+func TestBuildProjectPolicyRefusesAMergedCascadeTheCascadeCannotUse(t *testing.T) {
+	lc := &localcfg.Config{
+		Name:              "acme",
+		Budget:            &localcfg.Budget{Mode: "observe"},
+		CredentialCascade: &projectpolicy.Credentials{Backoff: &projectpolicy.Backoff{Cap: "1h"}},
+	}
+	node := &projectpolicy.Policy{
+		Budget:      projectpolicy.Budget{Mode: "observe"},
+		Credentials: &projectpolicy.Credentials{Backoff: &projectpolicy.Backoff{Initial: "2h"}},
+	}
+	if err := projectpolicy.ValidCredentials(lc.CredentialCascade, "credential_cascade"); err != nil {
+		t.Fatalf("the fixture's file block is not valid alone, so it is no fixture for the merge: %v", err)
+	}
+	if err := projectpolicy.ValidCredentials(node.Credentials, "credentials"); err != nil {
+		t.Fatalf("the fixture's node block is not valid alone, so it is no fixture for the merge: %v", err)
+	}
+	pol, _, err := buildProjectPolicy(lc, []string{"github/acme/app"}, node, false, nil)
+	if err == nil {
+		t.Fatalf("the merged block was built into a policy: %+v", pol.Credentials)
+	}
+	if !strings.Contains(err.Error(), "credential_cascade.backoff.cap") {
+		t.Errorf("the refusal does not name the local key the operator wrote: %v", err)
+	}
+}

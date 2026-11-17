@@ -1415,6 +1415,24 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	// because the block's source is now the file as much as the node: a first
 	// publish writes what the file states (publishedCredentials).
 	pol.Credentials = publishedCredentials(lc, publishedCascade)
+	// The merged block is held to the block's own rules, because the merge can
+	// hand back one neither side held while each side was validated alone: the
+	// file at load (localcfg.validate) and the node at decode
+	// (publishedPolicyOf), and the backoff pair's rule is about the EFFECTIVE
+	// pair, an absent member being its default (ValidCredentials, D153). A file
+	// that writes only `backoff.cap: 1h` is valid beside a node holding
+	// `backoff.initial: 2h`, and the merge of the two is a cap below the initial
+	// — a schedule that never doubles. Left to the node's decode, the operator
+	// would meet it on the next `fugaro update`, in a sentence that names
+	// neither the key they wrote nor the member that came from the node; asked
+	// here, both halves are still in hand and the refusal names the file's key.
+	// A config that states no block is not asked: what it hands back is the
+	// node's own block, which the decode already read.
+	if credentialsStated(lc.CredentialCascade) {
+		if err := projectpolicy.ValidCredentials(pol.Credentials, "credential_cascade"); err != nil {
+			return nil, false, userErr("the credential_cascade block this project's local config states, merged with the members the published node holds, is not one the cascade can use: %v. A member the file leaves out is the node's (D2607), and the rules are asked of the block as the cascade would use it — an absent member being its default — so a member that is valid on its own can be refused beside one the node holds: write the member in the file too, or remove the one you wrote", err)
+		}
+	}
 	// The model grades are merged for the cascade's reason (E2, D2039, D2607):
 	// they are the project's own choice of the model each rung runs, the local
 	// config carries them from this release (ModelGrades), and the node's block
@@ -2302,14 +2320,16 @@ func checkPolicyBytes(raw []byte) error {
 	p, found, err := projectpolicy.Decode(raw)
 	switch {
 	case err != nil:
-		// The credentials member, when the refusal names one, can only have come
-		// from the published node: nothing in this release writes a credentials
-		// block (the project layer refuses the key, and the local config has no
-		// field for it), so the block is the carry-over. That matters to the
+		// The credentials member, when the refusal names one, is the block this
+		// machine's own file is the carrier of (credential_cascade, D2607) as the
+		// publisher merged it with the members the node holds — or, for a config
+		// that states no block, the published node's own. That matters to the
 		// operator because 'fugaro validate' — which the sentence sends them to
-		// for everything else — cannot remove it: the way out is the node itself,
-		// or a fresh policy. (Security review m-1.)
-		return userErr("the policy this Fugaro would write is one it cannot read back, so nothing was written (%v): check the values it is built from — the budget block, the providers' models, model_prices, the profiles and the allow-list — with 'fugaro validate'. When the refusal names a credentials member, the block is the one carried over from the published node, which no CLI writes or removes in this release: remove that member from the node by hand, or publish with --delete to drop the policy and write a fresh one", err)
+		// for everything else — reads a repository's fugaro.yaml and the project
+		// config, not this key: a block the file states is fixed in the file,
+		// while a block only the node holds has no local key to fix, and its ways
+		// out are the node itself or a fresh policy. (Security review m-1.)
+		return userErr("the policy this Fugaro would write is one it cannot read back, so nothing was written (%v): check the values it is built from — the budget block, the providers' models, model_prices, the profiles and the allow-list — with 'fugaro validate'. When the refusal names a credentials member, the block is this machine's own: the credential_cascade key its local config states, merged with the members the published node holds — or, when the file states no block, the node's own, which no local key reaches. Write the member in your own file ('fugaro validate' reads a repository's fugaro.yaml, not this key); when the file states no block there is no key to write, and the ways out are removing that member from the node by hand, or publishing with --delete to drop the policy and write a fresh one", err)
 	case !found || p == nil:
 		return userErr("the policy this Fugaro would write is one it cannot read back, so nothing was written: check the values it is built from with 'fugaro validate'")
 	}

@@ -59,11 +59,13 @@ type policyDrift struct {
 // The comparison is the JSON both sides spell, so a member the node omits and a
 // config that states nothing for it are one value (the carrier's omitempty is
 // what drops an empty list on the way in). Only the members a config edit has to
-// reach a run through are compared: the keys no command of this release writes
-// into the node (credentials, allow_repos) are the node's own, and
-// `providers` reaches a run through its own job's copy, not through this node
-// (F9), so a config whose only difference is its providers: block is no reason
-// to rewrite what every run of the project is admitted by.
+// reach a run through are compared: allow_repos is the node's own (no command of
+// this release writes it from the local config), and `providers` reaches a run
+// through its own job's copy, not through this node (F9), so a config whose only
+// difference is its providers: block is no reason to rewrite what every run of
+// the project is admitted by. The credentials block is not in that list any
+// more: this release's local config carries it (credential_cascade), so it is
+// compared below through the publisher's own merge (D2607).
 func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy, identities map[string]string) []policyDrift {
 	if lc.Budget == nil || p == nil {
 		// A config with no budget block names no budget backend, so the stage
