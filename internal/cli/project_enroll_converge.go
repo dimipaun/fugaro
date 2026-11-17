@@ -726,7 +726,7 @@ func reposEnrolmentApply(ctx context.Context, cmd *cobra.Command, o *projectRepo
 	if err != nil {
 		return err
 	}
-	before, err := chainSave(after, reposEnrolmentChanges(), names)
+	queued, err := chainSave(after, reposEnrolmentChanges(), names)
 	if err != nil {
 		return err
 	}
@@ -734,7 +734,7 @@ func reposEnrolmentApply(ctx context.Context, cmd *cobra.Command, o *projectRepo
 		chainSavedLine(out, names)
 		return nil
 	}
-	return reposEnrolmentStages(ctx, cmd, o, after, plan, before, names)
+	return reposEnrolmentStages(ctx, cmd, o, after, plan, queued, names)
 }
 
 // reposEnrolmentChanges is the change `project repos add` makes, as apply's
@@ -840,7 +840,7 @@ func reposEnrolmentWriteAllow(ctx context.Context, out io.Writer, configPath str
 // confirmation is about what it is: `fugaro update --repo` offers the first
 // build behind its own billable confirmation, and a single question about
 // enrolment may not stand for a bill (D2400).
-func reposEnrolmentStages(ctx context.Context, cmd *cobra.Command, o *projectReposOptions, lc *localcfg.Config, plan reposEnrolment, before *apply.Pending, names []string) error {
+func reposEnrolmentStages(ctx context.Context, cmd *cobra.Command, o *projectReposOptions, lc *localcfg.Config, plan reposEnrolment, queued *apply.Pending, names []string) error {
 	run := stepRunFor(cmd, "project-repos-add", cmd.ErrOrStderr())
 	defer run.close()
 	env, err := openCloudFor(ctx, lc)
@@ -866,7 +866,7 @@ func reposEnrolmentStages(ctx context.Context, cmd *cobra.Command, o *projectRep
 	// printed over a step the run did not answer — a line that says the change is
 	// still owed belongs above it, or nowhere (D1563, and the settle is what
 	// clears the record the run above answered).
-	if err := chainSettle(cmd, lc, plan.path, before, names, stages); err != nil {
+	if err := chainSettle(cmd, lc, plan.path, queued, names, stages); err != nil {
 		return err
 	}
 	reposEnrolmentReport(cmd, lc, plan, stages)

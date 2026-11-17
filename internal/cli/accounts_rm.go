@@ -290,7 +290,7 @@ func runAccountsRm(cmd *cobra.Command, name string, o accountsRmOptions) error {
 	if err != nil {
 		return err
 	}
-	before, err := chainSave(lc, accountsRmChanges(), names)
+	queued, err := chainSave(lc, accountsRmChanges(), names)
 	if err != nil {
 		return err
 	}
@@ -298,7 +298,7 @@ func runAccountsRm(cmd *cobra.Command, name string, o accountsRmOptions) error {
 		chainSavedLine(cmd.OutOrStdout(), names)
 		return nil
 	}
-	return accountsRmConverge(cmd.Context(), cmd, after, next, sel.Path, plan, secret, before, names)
+	return accountsRmConverge(cmd.Context(), cmd, after, next, sel.Path, plan, secret, queued, names)
 }
 
 // accountsRmResolve reads the config as it is and answers what this run
@@ -1186,7 +1186,7 @@ func accountsRmRestore(cmd *cobra.Command, path string, wrote, back []byte, name
 // A stage that FAILED ends the run here instead, with the record holding every
 // step: the change is saved and nothing about it is live, which is what the
 // sentence beside the stage's own error says.
-func accountsRmConverge(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config, wrote []byte, path string, plan accountsRmPlan, secret string, before *apply.Pending, names []string) error {
+func accountsRmConverge(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config, wrote []byte, path string, plan accountsRmPlan, secret string, queued *apply.Pending, names []string) error {
 	// The removal's own account (CL7a), filed under the removal's own name: the
 	// block below is stdout, so the run's steps go to stderr, which is where
 	// this command's converge already accounted for itself.
@@ -1207,7 +1207,7 @@ func accountsRmConverge(ctx context.Context, cmd *cobra.Command, lc *localcfg.Co
 	// would be the one sentence this command may not print.
 	allow, carried, why := accountsRmNode(ctx, lc, plan.name)
 	accountsRmReport(cmd, lc, stages, plan, secret, allow, carried, why)
-	return chainSettle(cmd, lc, path, before, names, stages)
+	return chainSettle(cmd, lc, path, queued, names, stages)
 }
 
 // accountsRmChanges is the change `accounts rm` makes, as apply's table is

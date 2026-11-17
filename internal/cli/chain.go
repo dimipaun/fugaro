@@ -82,17 +82,19 @@ func chainSteps(changes []apply.Change) ([]string, error) {
 // the failure is said with the sentence that names `fugaro apply`, which is
 // the same sentence the run below ends on when a step does not finish.
 //
-// It answers the record as it was read, before these entries were queued: that
-// is what the settle below matches the entries of the run against, so a step
-// somebody queued while the run was going — the same step, for a change made
-// after this command's — stays owed rather than reading as the entry this run
-// answered (apply.Pending.ClearUnchanged, D1563).
+// It answers the record as this command left it, its own entries included:
+// that is what the settle below matches the entries of the run against, so a
+// step somebody queued while the run was going — the same step, for a change
+// made after this command's — stays owed rather than reading as the entry this
+// run answered (apply.Pending.ClearUnchanged, D1563). The queue sequence Add
+// stamps is what tells the two apart: every other member of an entry for the
+// same step and the same change is the same, so without it the entry this
+// command queued and the one that replaced it would be one entry.
 func chainSave(lc *localcfg.Config, changes []apply.Change, names []string) (*apply.Pending, error) {
 	p, _, err := loadPendingSteps(lc)
 	if err != nil {
 		return nil, err
 	}
-	before := p.Clone()
 	for _, name := range names {
 		p.Add(apply.PendingStep{
 			Step:       name,
@@ -104,7 +106,7 @@ func chainSave(lc *localcfg.Config, changes []apply.Change, names []string) (*ap
 	if err := apply.SavePending(os.Getenv, lc.Name, p); err != nil {
 		return nil, userErr("%v", err)
 	}
-	return before, nil
+	return p.Clone(), nil
 }
 
 // chainSettle is the other end of chainSave for a command whose own converge
@@ -121,7 +123,11 @@ func chainSave(lc *localcfg.Config, changes []apply.Change, names []string) (*ap
 // record nor the command may do (applyRunRecord's own rule) — and the rule that
 // reads a result is applyStepAnswered's, the one applyRunRecord uses, so the
 // two doors cannot come to disagree about whether a step is done.
-func chainSettle(cmd *cobra.Command, lc *localcfg.Config, path string, before *apply.Pending, names []string, states map[string]initflow.StageResult) error {
+//
+// queued is the record chainSave answered: the document as this command left
+// it, its own entries included. What the settle clears is the entries still
+// equal to those, and nothing else (ClearUnchanged's own rule).
+func chainSettle(cmd *cobra.Command, lc *localcfg.Config, path string, queued *apply.Pending, names []string, states map[string]initflow.StageResult) error {
 	after, afterRecorded, err := applyRecordRead(lc)
 	if err != nil {
 		return userErr("%v", err)
@@ -134,7 +140,7 @@ func chainSettle(cmd *cobra.Command, lc *localcfg.Config, path string, before *a
 		}
 		kept = append(kept, n)
 	}
-	after.ClearUnchanged(before, ran...)
+	after.ClearUnchanged(queued, ran...)
 	// The stamp is written on the same rule applyRunRecord writes it (D1575): a
 	// run that answered everything and left nothing owed stamps the config as it
 	// stands now, so a later read can tell a config that changed since from one
