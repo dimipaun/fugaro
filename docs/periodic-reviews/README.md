@@ -181,7 +181,7 @@ as a docs-only change. `docs/release-streams.yaml` has the CLI stream's `current
 - **The failures report** is `docs/design/failure-classes.md`'s own cut — its **FC1–FC8**, with its
   D1–D9, its O1–O6 and its own levels and shared-files table. **That document is not edited.**
 - **What Part II adds is what neither can state alone:** the union's leveling (Part II §P3), the
-  twenty-five files the two meet in (§P4) — twenty-six with the table's one conditional row — every
+  twenty-six files the two meet in (§P4) — twenty-seven with the table's one conditional row — every
   task's commit and reviewer tier (§P5), the critical path
   (§P6), the release slot and its `### For operators` text (§P7), and the owner-run checks (§P8).
   **Three file lists are wrong and Part II corrects them** (F27): `website/content/cli-reference.md`
@@ -234,6 +234,6 @@ record are `docs/design/failure-classes.md`'s to change — **not the whole pack
 `internal/runner/digest.go` and `internal/runner/digest_test.go` are this folder's own R0, which
 moves the due computation out of them** — and this folder's plan cites its **FC1–FC8** rather than
 restating them ([implementation-plan.md](implementation-plan.md) Part II §P1). **The two plans meet
-in twenty-five files — twenty-six with the table's one conditional row — and Part II §P4 is where
+in twenty-six files — twenty-seven with the table's one conditional row — and Part II §P4 is where
 that is
 checked**, so neither folder becomes a second plan for the other's feature.
