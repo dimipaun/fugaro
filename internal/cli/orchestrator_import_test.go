@@ -238,6 +238,36 @@ func TestImportRefusesAnOversizeDump(t *testing.T) {
 	}
 }
 
+// TestImportDumpJSONIsThePatchDocument: `--json` on the dump path prints
+// `orchestrator patch --json`'s own document, because the dump is a patch
+// document and the write that landed is the same write. It is additive — the
+// prose path is untouched — and it is here so the flag means one thing on both
+// paths rather than printing prose over a dump.
+func TestImportDumpJSONIsThePatchDocument(t *testing.T) {
+	newOrchestratorFixture(t)
+	asPerson(t)
+	path := patchFile(t, patchDoc(t, 0, workItemUpsert("web-fix", "fix the web build")))
+
+	out, _, err := runOrchestrator(t, "", "orchestrator", "import", "-f", path, "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	orchestratorDocMatchesSchema(t, out)
+	var doc struct {
+		Kind  string `json:"kind"`
+		ID    string `json:"id"`
+		Rev   int64  `json:"rev"`
+		Actor string `json:"actor"`
+		Ops   int    `json:"ops"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("the document is not JSON: %v\n%s", err, out)
+	}
+	if doc.Kind != "patch" || doc.ID != orchestratorTestID || doc.Actor != string(orchestrator.Person) || doc.Ops != 1 || doc.Rev != 1 {
+		t.Errorf("the dump's document is %+v, and the dump lands as the person, one op, at rev 1", doc)
+	}
+}
+
 // G1: `--plan`, a plan's graph imported into the plan's own node (docs/
 // orchestrator-graph-estimates, D2704, D2735, D2737). The unit's own tests
 // (internal/orchestrator) hold what one import writes; these hold what the

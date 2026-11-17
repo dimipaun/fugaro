@@ -213,6 +213,7 @@
         "items": {
           "type": "array",
           "description": "Every task of the graph in the graph's own order, each with the id its item stands under in the node and the digest of the spec it stands for. This is the list `plan_approve` takes and the reason the document exists: the import lands as a session and approves nothing, so a person approves these items from this list (D2706).",
+          "maxItems": 100,
           "items": {
             "type": "object",
             "additionalProperties": false,
