@@ -469,8 +469,8 @@ func newMailboxCmd() *cobra.Command {
 			"\n" +
 			"A registration is the app's push token, its platform and its per-category\n" +
 			"switches, and it is written to the sibling node config/admin/push/<uid> —\n" +
-			"never to config/admin/devices/<uid>, which only `fugaro pair` and `fugaro\n" +
-			"pair revoke` write, whose existence is what admits the device at all. A\n" +
+			"never under config/admin/devices/<uid>, which only `fugaro pair` and\n" +
+			"`fugaro pair revoke` write and whose existence is what admits the device. A\n" +
 			"registration whose account has no device node is refused and writes nothing,\n" +
 			"so a revocation is final; a re-registration overwrites the token, the\n" +
 			"platform and the time it was written and leaves the rest of the node alone.\n" +
@@ -1529,12 +1529,11 @@ func (c *mailboxConsumer) runAction(ctx context.Context, pairing mailboxPairing,
 // the role.** The write needs the same `roles/firebasedatabase.admin` a pairing
 // needs, because `config/admin/**` is client-denied and every write under it is
 // an IAM write (P5.2.2); where the operator's credential does not hold it, the
-// refusal is classified the way this file classifies every write this command
-// makes for itself (`dbErr`, `adminDenied`) rather than being swallowed — and
-// the role is named in this command's own words, because the shared
-// admin-denied sentence is about budget caps and would send the operator to the
-// wrong place. Registration is an admin act like pairing (Q3, §3.5 (b)), and
-// this is what it says so.
+// refusal is a run-level one — the class `dbErr` sends a refused write to, exit
+// 1 — but it is raised with this command's own sentence rather than with the
+// shared admin-denied one, because that one is about budget caps and kill
+// switches and would send the operator to the wrong place. Registration is an
+// admin act like pairing (Q3, §3.5 (b)), and this is what it says so.
 //
 // **One check runs before the write, and it is the design's own rule read one
 // step earlier.** The device node's existence IS the allowlist (§3.4, D166), so
@@ -1607,12 +1606,12 @@ func (c *mailboxConsumer) pairedDevice(ctx context.Context, uid string) (bool, e
 // `QuietHoursFields`) for the same reason the kind constants are held to
 // `mailbox.Kinds`.
 //
-// The five switches are written whether they are on or off, and the window is
-// written only when the message has one: the schema requires the five (the
-// message is the whole state, so a partial one would leave a reader choosing a
-// value the app never sent) and treats an absent window as §3.8's default of
-// off. Off and absent are the same thing for a switch and not for the window,
-// which is why the two are not spelled the same way here.
+// All five switches are written, on or off, because the schema requires them:
+// the message is the whole state, so a partial one would leave a reader
+// choosing a value the app never sent. The window is written only when the
+// message carries one, because §3.8's default for quiet hours is off and an
+// absent window is exactly that — a switch, by contrast, is never absent, so
+// nothing has to read off-or-on out of its absence.
 func mailboxPrefsNode(prefs *mailbox.Prefs) map[string]any {
 	node := map[string]any{
 		"kill_switch":      prefs.KillSwitch,

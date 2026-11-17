@@ -4699,8 +4699,8 @@ the signer refuses is not written at all.
 
 A registration is the app's push token, its platform and its per-category
 switches, and it is written to the sibling node config/admin/push/<uid> —
-never to config/admin/devices/<uid>, which only `fugaro pair` and `fugaro
-pair revoke` write, whose existence is what admits the device at all. A
+never under config/admin/devices/<uid>, which only `fugaro pair` and
+`fugaro pair revoke` write and whose existence is what admits the device. A
 registration whose account has no device node is refused and writes nothing,
 so a revocation is final; a re-registration overwrites the token, the
 platform and the time it was written and leaves the rest of the node alone.
