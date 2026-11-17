@@ -81,7 +81,7 @@ const (
 	RecipeMergeJudge = "merge-judge"
 )
 
-// RungSeams is what rungs 3 and 4 act through: the reading the gate is decided
+// BeyondSeams is what rungs 3 and 4 act through: the reading the gate is decided
 // on, the host a landing is made through, the node the moves are written to, the
 // launcher a rung 3 run starts through, the comment a move posts and the log
 // every move leaves a line in.
@@ -91,9 +91,9 @@ const (
 // the direction an unwired seam has to fail in is "nothing happens" — which is
 // what Set and Beyond between them give: no seam, no hook, and the item is left
 // exactly where E10a's default put it.
-type RungSeams struct {
+type BeyondSeams struct {
 	// Read gathers what the gate is decided on for one item and one head.
-	Read RungReader
+	Read BeyondReader
 	// Host is the provider slice a landing needs (E8).
 	Host MergeHost
 	// Node is the state the hook reads and the one write path it lands its
@@ -112,7 +112,7 @@ type RungSeams struct {
 	Comment LadderCommenter
 	// Log is the line every move is appended under, and the place a line
 	// already written is read back from.
-	Log RungLog
+	Log BeyondLog
 	// Notify is where the merge a Pro or Hotfix ceiling makes is told, or nil
 	// for a daemon that tells nobody.
 	Notify Notifier
@@ -131,7 +131,7 @@ type RungSeams struct {
 }
 
 // Set reports whether every seam but the two optional ones is there.
-func (s RungSeams) Set() bool {
+func (s BeyondSeams) Set() bool {
 	return s.Read != nil && s.Host != nil && s.Node != nil && s.Launch != nil &&
 		s.Comment != nil && s.Log != nil && s.Now != nil && s.Mint != nil
 }
@@ -140,14 +140,14 @@ func (s RungSeams) Set() bool {
 // set that is not complete answers no hook at all, which leaves the item where
 // the decision put it — the same place a release without this file leaves it —
 // rather than a rung 3 that launched a run nothing recorded.
-func (s RungSeams) Beyond() LadderBeyond {
+func (s BeyondSeams) Beyond() LadderBeyond {
 	if !s.Set() {
 		return nil
 	}
 	return s.beyond
 }
 
-func (s RungSeams) beyond(ctx context.Context, item WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) (LadderAct, error) {
+func (s BeyondSeams) beyond(ctx context.Context, item WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) (LadderAct, error) {
 	if read.Running != "" {
 		// A run of the ladder's is under way for this item and has not
 		// reported. What it answers with is the next cycle's, and acting over
@@ -166,7 +166,7 @@ func (s RungSeams) beyond(ctx context.Context, item WorkItem, step escalation.St
 	return LadderIdle, nil
 }
 
-// RungReader gathers what the rung 3 gate is decided on for one item at one
+// BeyondReader gathers what the rung 3 gate is decided on for one item at one
 // head: the run behind that head, the findings open at it — the run's own and
 // the review's — the pull request it belongs to, and the two ladder runs at that
 // head: the review D2043 requires and the judge whose answer may veto.
@@ -180,7 +180,7 @@ func (s RungSeams) beyond(ctx context.Context, item WorkItem, step escalation.St
 // A reading that could not be made is Read false, which the gate refuses on
 // (G5); an error is a read that did not happen, and it ends the item's turn for
 // the next cycle to retry.
-type RungReader interface {
+type BeyondReader interface {
 	MergeAt(ctx context.Context, item WorkItem, head string) (MergeReading, error)
 }
 
@@ -260,13 +260,13 @@ var _ MergeHost = gitprov.Provider(nil)
 
 // MergeNode is the state a hook reads and the one write path it lands its moves
 // through: the cycle's own, or the moves are written over a revision the cycle
-// has already moved past. See RungSeams.Node.
+// has already moved past. See BeyondSeams.Node.
 type MergeNode interface {
 	State(ctx context.Context) (State, error)
 	Apply(ctx context.Context, ops []Op) error
 }
 
-// RungLog is the log seam: the append the rungs below use, and the two reads
+// BeyondLog is the log seam: the append the rungs below use, and the two reads
 // that answer what is already written down.
 //
 // The first read is what makes a launch safe to retry. A run's record appears
@@ -281,14 +281,14 @@ type MergeNode interface {
 // line of its own and later cycles read its stamp back. That line is written
 // once and never rewritten, because a log keeps the latest write under an id and
 // a stamp that moved with every cycle would bound nothing.
-type RungLog interface {
+type BeyondLog interface {
 	LadderLog
 	Logged(ctx context.Context, id string) (bool, error)
 	LoggedAt(ctx context.Context, id string) (time.Time, bool, error)
 }
 
 // MergeLaunches is whether a rung 3 run has already been asked for at the head
-// under judgement, read from the log's own lines. See RungLog.
+// under judgement, read from the log's own lines. See BeyondLog.
 type MergeLaunches struct {
 	Review bool
 	Judge  bool
@@ -573,7 +573,7 @@ func mergeGate(in MergeInput) MergeOutcome {
 			// A review has been asked for at this head and its run is not in
 			// the reading yet: a run's record appears when its run does, and the
 			// review that was launched is a cycle or two behind its own line
-			// (RungLog). That is a wait on something moving.
+			// (BeyondLog). That is a wait on something moving.
 			return retry(waitFact(GateReviewSpent))
 		}
 		// The review at this head is recorded and carried no score. D2043 allows
@@ -813,7 +813,7 @@ const mergeRetryWindow = 6 * time.Hour
 // the latest write under an id: its stamp is the last cycle's, and a bound read
 // off it would never be reached. The line written here is written once, so the
 // stamp it carries is when the waiting began and does not move.
-func (s RungSeams) boundRetry(ctx context.Context, item WorkItem, head string, out MergeOutcome, now time.Time) (MergeOutcome, error) {
+func (s BeyondSeams) boundRetry(ctx context.Context, item WorkItem, head string, out MergeOutcome, now time.Time) (MergeOutcome, error) {
 	id := EntryID(item.ID, mergeRetryTransition(head))
 	began, ok, err := s.Log.LoggedAt(ctx, id)
 	switch {
@@ -893,7 +893,7 @@ func merged(out MergeOutcome, code string) MergeOutcome {
 // list or outcome line fails after it still leaves the wait's age recorded — and
 // because it is written once, so a cycle that finds it already there reads the
 // age off it rather than writing a stamp of its own.
-func (s RungSeams) merge(ctx context.Context, item WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) (LadderAct, error) {
+func (s BeyondSeams) merge(ctx context.Context, item WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) (LadderAct, error) {
 	now, ok := s.Now()
 	if !ok {
 		return LadderIdle, ErrNoServerTime
@@ -1111,7 +1111,7 @@ func (s RungSeams) merge(ctx context.Context, item WorkItem, step escalation.Ste
 // below do it: what records the launch is the transition this cycle writes once
 // the start has come back, and the window in between is the log's line, which
 // the launch writes through the seam it was started through.
-func (s RungSeams) launch(ctx context.Context, now time.Time, item WorkItem, step escalation.Step, out MergeOutcome, head string) (string, error) {
+func (s BeyondSeams) launch(ctx context.Context, now time.Time, item WorkItem, step escalation.Step, out MergeOutcome, head string) (string, error) {
 	runID, err := s.Mint(now)
 	if err != nil {
 		return "", err
@@ -1133,7 +1133,7 @@ func (s RungSeams) launch(ctx context.Context, now time.Time, item WorkItem, ste
 // provider's merge cannot be bound to an expected head at all, it holds no merge
 // credential, or the pull request is no longer open (mergeRefusalCode). A host
 // that did not answer is the next cycle's to retry.
-func (s RungSeams) land(ctx context.Context, in MergeInput) (string, error) {
+func (s BeyondSeams) land(ctx context.Context, in MergeInput) (string, error) {
 	if in.PR.Draft {
 		if err := s.Host.MarkReady(ctx, in.PR.Number, in.Head); err != nil {
 			if code := mergeRefusalCode(err); code != "" {
@@ -1153,7 +1153,7 @@ func (s RungSeams) land(ctx context.Context, in MergeInput) (string, error) {
 
 // launches is whether a rung 3 run has already been asked for at this head, read
 // from the log by the audit id of its own line.
-func (s RungSeams) launches(ctx context.Context, itemID, head string) (MergeLaunches, error) {
+func (s BeyondSeams) launches(ctx context.Context, itemID, head string) (MergeLaunches, error) {
 	if recordableHead(head) == "" {
 		return MergeLaunches{}, nil
 	}
@@ -1174,7 +1174,7 @@ func (s RungSeams) launches(ctx context.Context, itemID, head string) (MergeLaun
 // cycle that made the landing writes the first, and the cycle that finished a
 // lost one writes the second, so every cycle after either of them finds this
 // true and does nothing.
-func (s RungSeams) said(ctx context.Context, itemID, head string) (bool, error) {
+func (s BeyondSeams) said(ctx context.Context, itemID, head string) (bool, error) {
 	if recordableHead(head) == "" {
 		return false, nil
 	}
@@ -1204,7 +1204,7 @@ func (s RungSeams) said(ctx context.Context, itemID, head string) (bool, error) 
 // finishing what this ladder started. That is the direction to fail in: the
 // work a landing owes is filed and the person is told, where the other reading
 // loses D2040's follow-ups to a merge that really happened.
-func (s RungSeams) landed(ctx context.Context, itemID, head string) (bool, error) {
+func (s BeyondSeams) landed(ctx context.Context, itemID, head string) (bool, error) {
 	if recordableHead(head) == "" {
 		return false, nil
 	}
@@ -1571,7 +1571,7 @@ func recordableHead(h string) string {
 // say hands one notification to the sink, and a sink that will not take it is
 // reported and never fails the cycle: what a cycle must not lose is the write
 // behind the notification.
-func (s RungSeams) say(ctx context.Context, n Notification) {
+func (s BeyondSeams) say(ctx context.Context, n Notification) {
 	if s.Notify == nil {
 		return
 	}
@@ -1580,7 +1580,7 @@ func (s RungSeams) say(ctx context.Context, n Notification) {
 	}
 }
 
-func (s RungSeams) warn(err error) {
+func (s BeyondSeams) warn(err error) {
 	if err != nil && s.Warn != nil {
 		s.Warn(err)
 	}

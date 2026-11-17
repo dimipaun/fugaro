@@ -56,21 +56,22 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	fcli "github.com/dimipaun/fugaro/internal/cli"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // licenceRenewalSecretLogical is the logical name of the Secret Manager
-// container holding the installation's per-key renewal secret. It is derived
-// into an ID by gcp.ProjectSecretID, the same way every other installation-wide
-// container is, and K4.2's Terraform creates that container: this command only
-// writes a version into one that is already there, so `fugaro update` never
-// meets a secret it did not create. The literal is the coupling between the two
-// tasks — a rename on either side has to move the other — and
-// TestLicenceRenewalSecretIDIsTheInstallationsContainer pins the derived ID so
-// that a rename here fails a test rather than leaving `set` writing into a
-// container nobody reads.
-const licenceRenewalSecretLogical = "licence-renewal"
+// container holding the installation's per-key renewal secret, and it is
+// internal/infra's own constant rather than a literal repeated here (K4.2):
+// `fugaro update` derives the container's ID from that constant, writes it into
+// the licence job's spec and licence.tf creates it, so a second spelling here
+// would be a second answer to one question. This command only writes a version
+// into a container that is already there, so `fugaro update` never meets a
+// secret it did not create, and TestLicenceRenewalSecretIDIsTheInstallationsContainer
+// pins the derived ID so that a rename on the other side fails a test rather
+// than leaving `set` writing into a container nobody reads.
+const licenceRenewalSecretLogical = infra.LicenceRenewalSecretLogical
 
 // licenceMaxBundleBytes bounds what `set` reads: a key is about a kilobyte and
 // a renewal secret is 32 bytes base64url, so this is far more than either and
@@ -399,14 +400,14 @@ func openLicenceSecrets(ctx context.Context, lc *localcfg.Config) (*licenceSecre
 }
 
 // licenceRenewalSecretID is the container K4.2's Terraform creates for the
-// installation's renewal secret, derived from the Fugaro project name exactly
-// as every other installation-wide container is. K4.2 is not written yet, so
-// nothing creates it: until it is, the keyring this build verifies with stays
-// empty (licenceRing), which is what keeps the refusal that names `fugaro
-// update` out of reach — the pair is held together by
-// TestTheRenewalContainerIsCreatedBeforeTheRingIsPublished.
+// installation's renewal secret. The derivation is internal/infra's and not
+// this package's: the same ID is what `fugaro update` writes into the licence
+// job's spec (infra.Licence.RenewalSecret) and what licence.tf creates, so a
+// second derivation here would be a second answer to one question —
+// infra.LicenceRenewalSecretID is the one, and TestTheRenewalSecretIDIsThe
+// InstallationsContainer pins that the two agree.
 func licenceRenewalSecretID(fugaroProject string) string {
-	return gcp.ProjectSecretID(fugaroProject, licenceRenewalSecretLogical)
+	return infra.LicenceRenewalSecretID(fugaroProject)
 }
 
 func (s *licenceSecrets) parent() string { return "projects/" + s.project + "/secrets/" + s.id }

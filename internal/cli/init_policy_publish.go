@@ -176,6 +176,20 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy, identities 
 	if lc.Binaries != nil {
 		add("binaries", lc.BinariesEffective(p.Binaries), p.Binaries, false)
 	}
+	// The designated repository reaches a run off this node and nowhere else
+	// (D2750, D2751; periodic-reviews R14), and the local config is its carrier,
+	// the binaries block's line word for word: without the comparison the
+	// operator's own `reports_commit:` edit would reach no run until they ran the
+	// explicit publish, which is the second command the HARD RULE forbids. It is
+	// compared by the publisher's own keep rule (ReportsCommitEffective), so a
+	// config that writes no block is not reported — nil would read as a
+	// difference against every node that carries a designation, and the block is
+	// then deliberately the node's own (D987) — while a written block, the empty
+	// one that takes the designation away included, is the operator's edit and is
+	// reported like any other.
+	if lc.ReportsCommit != nil {
+		add("reports_commit", lc.ReportsCommitEffective(p.ReportsCommit), p.ReportsCommit, false)
+	}
 	// The crafts, their credentials and their pools reach a run off this node
 	// and nowhere else (docs/model-crafts §1–3), and the local config is their
 	// carrier from this release on (MC18, D1667), so a config that states one
@@ -486,6 +500,13 @@ func policyConfigPath(lc *localcfg.Config) string {
 // (projectpolicy's catalogSourceMembers), so the node would fail every run of
 // the project rather than the one job the entry builds — the failure D1403
 // keeps out of a published node.
+//
+// The gate is true from 0.26.0, the release that first writes and reads the
+// member, so the branch below is the record of what the release behind met
+// rather than something an operator meets today: a 0.25.0 installation's
+// `fugaro update` refuses to publish this node, and this release's publishes
+// it (the pair is one fact with internal/infra's imageContextShipped, and the
+// release's notes say which one carries it).
 //
 // The node is judged and not the local config, because the node is what the
 // older runner reads: a config silent about the catalog keeps the published

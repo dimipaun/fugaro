@@ -65,6 +65,16 @@ func troubleshootDeclineCloud(reason error) string {
 // block at all. checkReviewHeadIsStill, that function's fourth call, is
 // deliberately not among them: it judges a pull request's head, and a
 // diagnosis has no pull request.
+//
+// The step the diagnosis's recipe holds has a gate of its own beside the
+// variant's image (checkDiagnoseImage, D2401 and F18): the runner of an image
+// that predates the diagnose step refuses the whole recipe at bootstrap, after
+// the container was started and the bundle uploaded, so a diagnosis is refused
+// here at the terminal instead, naming the release that carries the step and
+// fugaro update. It is judged the same way and from the same read as the
+// variant's image gate above — the two are one build record apart in what they
+// require, not in what they read — and it is asked after it, so an image too
+// old for the variant is refused with the variant's sentence first.
 func troubleshootLaunchPath(ctx context.Context, env *cloudEnv, o *runOptions, slug string, s *runstore.Store, spec *task.Spec) error {
 	// A copy, so a caller's --attach is not silently carried into a launch
 	// shape that uploads nothing: the block's own attach arm would gate and
@@ -87,8 +97,16 @@ func troubleshootLaunchPath(ctx context.Context, env *cloudEnv, o *runOptions, s
 		if err := checkCloneReviewJobImage(env.lc, spec, io.Discard); err != nil {
 			return err
 		}
-	} else if err := checkReviewJobImage(ctx, env, slug, spec, kind, io.Discard); err != nil {
-		return err
+		if err := checkCloneDiagnoseImage(env.lc, spec, io.Discard); err != nil {
+			return err
+		}
+	} else {
+		if err := checkReviewJobImage(ctx, env, slug, spec, kind, io.Discard); err != nil {
+			return err
+		}
+		if err := checkDiagnoseImage(ctx, env, slug, spec, kind, io.Discard); err != nil {
+			return err
+		}
 	}
 	if err := checkReviewAdmission(env.lc, io.Discard); err != nil {
 		return err

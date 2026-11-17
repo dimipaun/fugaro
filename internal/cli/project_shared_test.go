@@ -344,3 +344,62 @@ func TestOfflineCommandsNeverFetchTheSharedConfig(t *testing.T) {
 		t.Errorf("the offline refusal changed: %s", errOut)
 	}
 }
+
+// TestTheGCPProjectEnvIsTheThirdResortForAContainerJob: the licence renewal
+// job (K4.2) runs in a Cloud Run container — no checkout, no fugaro.yaml, no
+// command line — so $FUGARO_GCP_PROJECT, which every job's environment carries
+// (platformEnvFor), is the only thing that can name the GCP project whose runs
+// bucket holds its installation's published config. Without it the job has
+// nothing to fetch, and the review found the fallback with no test at all: no
+// test set the variable, so a selectWith that dropped it would have gone on
+// passing every other test of this package.
+//
+// The two resorts a person typed keep winning, which is the other half of the
+// same claim and the reason the fallback is cmp.Or's last argument rather than
+// its first: on a machine that has a --gcp-project, the environment must not
+// move the read to another project.
+//
+// What is asserted is the fetch's own gcp argument, through the sharedFetch
+// seam: the fixture's bucket opener ignores the project name, so a read of the
+// wrong project would otherwise look exactly like the right one.
+func TestTheGCPProjectEnvIsTheThirdResortForAContainerJob(t *testing.T) {
+	sharedEnd2End(t)
+	// The job's machine: a container, and the directory it starts in is not a
+	// repository. The two names the platform sets are all it has.
+	t.Chdir(t.TempDir())
+	t.Setenv("FUGARO_PROJECT", "aurora")
+	t.Setenv("FUGARO_GCP_PROJECT", "proj-1234")
+
+	var fetched []string
+	old := sharedFetch
+	sharedFetch = func(ctx context.Context, g func(string) string, n time.Time, name, gcp string) (*localcfg.Config, string, error) {
+		fetched = append(fetched, gcp)
+		return old(ctx, g, n, name, gcp)
+	}
+	t.Cleanup(func() { sharedFetch = old })
+
+	out, errOut, err := execute(t, "runs", "ls")
+	if err != nil {
+		t.Fatalf("a job with no checkout and no flag: %v\n%s", err, errOut)
+	}
+	if len(fetched) != 1 || fetched[0] != "proj-1234" {
+		t.Fatalf("the shared config was fetched for %v, want [proj-1234]: the environment's GCP project is the third resort and the only one a container has", fetched)
+	}
+	if !strings.Contains(errOut, "project: aurora (GCP proj-1234)") || !strings.Contains(errOut, "using the shared config published to gs://fugaro-runs-proj-1234") {
+		t.Errorf("the job must read its installation's published config and say so:\n%s", errOut)
+	}
+	if !strings.Contains(out, "0 runs") {
+		t.Errorf("out = %q", out)
+	}
+
+	// The flag is read before the environment: an installation whose project is
+	// named on the command line is not moved by a stale variable.
+	t.Setenv("FUGARO_GCP_PROJECT", "other-proj")
+	fetched = nil
+	if _, errOut, err = execute(t, "runs", "ls", "--gcp-project", "proj-1234"); err != nil {
+		t.Fatalf("ls --gcp-project with the environment naming another project: %v\n%s", err, errOut)
+	}
+	if len(fetched) != 1 || fetched[0] != "proj-1234" {
+		t.Fatalf("--gcp-project did not win over $FUGARO_GCP_PROJECT: fetched %v", fetched)
+	}
+}

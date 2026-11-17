@@ -39,7 +39,7 @@ import (
 // the write landed therefore finds the item cancelled — the ladder reads no
 // further rungs for it — and still files nothing twice, because the split item's
 // name is derived from the item's id (G4).
-func (s RungSeams) split(ctx context.Context, item WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) (LadderAct, error) {
+func (s BeyondSeams) split(ctx context.Context, item WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) (LadderAct, error) {
 	now, ok := s.Now()
 	if !ok {
 		return LadderIdle, ErrNoServerTime

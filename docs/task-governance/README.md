@@ -46,7 +46,7 @@ None. Both are byte for byte as received.
 | Block | Use |
 | --- | --- |
 | **D320–D359** | this work's decision block. **D320–D333** are written and answered; **D334–D359** are reserved and unused. Taken above the highest decision on `main` (D311, inside the licensing block D300–D319, which is reserved through D319) and in every open PR's docs (D260). D272–D299 stay unused as the licensing work left them |
-| **Checks 135–144** | this work's check block. **135, 136 and 139** are written by T3.5 and on `main` (owner-run, NOT RUN); **137 and 138** are T7.5's and unwritten; **140–144** reserved and unused. The block sits above 134 (licensing's reserved 130–134) and the register's highest written section is 149 |
+| **Checks 135–144** | this work's check block. **135, 136 and 139** are written by T3.5 and on `main` (owner-run, NOT RUN); **137 and 138** are written by T7.5 (the stage budget and the fan-out stop, owner-run, NOT RUN); **140–144** reserved and unused. The block sits above 134 (licensing's reserved 130–134) and the register's highest written section is 149 |
 
 The owner's ruling of 2026-10-25 on the shape of the periodic reviews is recorded in the
 reconciliation (§1): a user's reports land in their own repository, redacted; central submission

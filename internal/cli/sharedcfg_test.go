@@ -1034,6 +1034,7 @@ func TestSharedNeverPublishedCatchesTheDecodedSections(t *testing.T) {
 		{"credential_cascade", "credential_cascade: {fallback: auto}\n"},
 		{"model_grades", "model_grades:\n    strong: {model: anthropic/claude-sonnet-5.5, access: acme-main}\n"},
 		{"node_removals", "node_removals:\n    pools: [acme-pool]\n"},
+		{"reports_commit", "reports_commit: {repo: acme/reports}\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, err := localcfg.Parse([]byte(validShared() + tc.yaml))

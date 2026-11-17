@@ -30,7 +30,7 @@ import (
 // is one the validator would take.
 //
 // The hook is called directly rather than through a tick, and that is the one
-// thing a reader of this file should know. RungSeams.Node is the cycle's own
+// thing a reader of this file should know. BeyondSeams.Node is the cycle's own
 // state and commit path: a hook's write lands inside a cycle that holds a
 // revision of its own (patch.go's Apply is bound to BaseRev, store.go's Save to
 // the ETag it read), so a node of the hook's own would leave the cycle's next
@@ -63,7 +63,7 @@ const (
 // mergeStub is the launcher, the commenter and the log as one seam: what the
 // hook started, what it posted and what it wrote down. The log remembers the
 // entries it was given, which is what makes the hook's own read of an earlier
-// line (RungLog.Logged) the read a real log would answer.
+// line (BeyondLog.Logged) the read a real log would answer.
 type mergeStub struct {
 	t          *testing.T
 	launchErr  error
@@ -76,7 +76,7 @@ type mergeStub struct {
 	// every line, which would refuse the marker before the host was ever asked.
 	appendErrOn string
 	// now is the harness's clock, which every line is stamped with as a real log
-	// stamps one: RungLog.LoggedAt answers the stamp back, and the bound on a
+	// stamps one: BeyondLog.LoggedAt answers the stamp back, and the bound on a
 	// retried wait is read from it (boundRetry). Nil leaves the stamps zero.
 	now      func() time.Time
 	launched []orchestrator.LadderRequest
@@ -276,9 +276,9 @@ func (n *storeNode) Apply(ctx context.Context, ops []orchestrator.Op) error {
 	return n.node.Save(ctx, next, etag)
 }
 
-// rungHarness is one rung 3 or 4 execution: the node the state lives in, the
+// beyondHarness is one rung 3 or 4 execution: the node the state lives in, the
 // reading, the host, the log, the sink and the seams a hook acts through.
-type rungHarness struct {
+type beyondHarness struct {
 	t      *testing.T
 	now    time.Time
 	db     *gcpfake.RTDB
@@ -287,14 +287,14 @@ type rungHarness struct {
 	host   *mergeHostStub
 	stub   *mergeStub
 	sink   *tickSink
-	seams  orchestrator.RungSeams
+	seams  orchestrator.BeyondSeams
 }
 
-// newRungHarness is a hook over one node: the state is seeded through the
+// newBeyondHarness is a hook over one node: the state is seeded through the
 // store's own write, and every seam but the state is a stub. The run ids are the
 // ones the minter hands out in order, so a test names the ids it expects a
 // launch to be minted under and a launch it did not expect fails loudly.
-func newRungHarness(t *testing.T, now time.Time, runs []string, items ...orchestrator.WorkItem) *rungHarness {
+func newBeyondHarness(t *testing.T, now time.Time, runs []string, items ...orchestrator.WorkItem) *beyondHarness {
 	t.Helper()
 	f := gcpfake.NewRTDB(t)
 	node := mustNode(t, rtdbClient(t, f), nil)
@@ -308,7 +308,7 @@ func newRungHarness(t *testing.T, now time.Time, runs []string, items ...orchest
 	if err := node.Save(ctx, s, etag); err != nil {
 		t.Fatalf("seeding the node with the test's state: %v", err)
 	}
-	m := &rungHarness{
+	m := &beyondHarness{
 		t: t, now: now, db: f, node: node,
 		reader: &mergeReaderStub{t: t, reads: map[string]orchestrator.MergeReading{}},
 		host:   newMergeHost(),
@@ -316,7 +316,7 @@ func newRungHarness(t *testing.T, now time.Time, runs []string, items ...orchest
 		sink:   &tickSink{},
 	}
 	mint := &o6Mint{t: t, runs: runs}
-	m.seams = orchestrator.RungSeams{
+	m.seams = orchestrator.BeyondSeams{
 		Read:    m.reader,
 		Host:    m.host,
 		Node:    &storeNode{t: t, node: node, now: now},
@@ -332,11 +332,11 @@ func newRungHarness(t *testing.T, now time.Time, runs []string, items ...orchest
 }
 
 // setClock moves the harness's clock, and everything that reads it with it: the
-// hook's own reading of the server's time (RungSeams.Now), the stamp the node's
+// hook's own reading of the server's time (BeyondSeams.Now), the stamp the node's
 // writes carry and the one the log's lines carry. A test that walks a bound
 // forward has to move all three, or the hook writes a line stamped now and reads
 // the age of one stamped an hour ago off a clock that never moved.
-func (m *rungHarness) setClock(at time.Time) {
+func (m *beyondHarness) setClock(at time.Time) {
 	m.t.Helper()
 	m.now = at
 	m.seams.Now = clockAt(at)
@@ -346,7 +346,7 @@ func (m *rungHarness) setClock(at time.Time) {
 // act drives one entry of the hook, as E10a's ladder does: the item looked up
 // again from the node rather than carried in, the step and the reason the
 // decision gave, and the reading the daemon made.
-func (m *rungHarness) act(id string, step escalation.Step, reason escalation.Reason, read orchestrator.LadderReading) {
+func (m *beyondHarness) act(id string, step escalation.Step, reason escalation.Reason, read orchestrator.LadderReading) {
 	m.t.Helper()
 	beyond := m.seams.Beyond()
 	if beyond == nil {
@@ -358,7 +358,7 @@ func (m *rungHarness) act(id string, step escalation.Step, reason escalation.Rea
 }
 
 // state is the node as it now stands, read back through the store.
-func (m *rungHarness) state() orchestrator.State {
+func (m *beyondHarness) state() orchestrator.State {
 	m.t.Helper()
 	s, _, err := m.node.Load(context.Background())
 	if err != nil {
@@ -368,17 +368,17 @@ func (m *rungHarness) state() orchestrator.State {
 }
 
 // item is one item of the node as it now stands.
-func (m *rungHarness) item(id string) orchestrator.WorkItem {
+func (m *beyondHarness) item(id string) orchestrator.WorkItem {
 	m.t.Helper()
 	return itemAt(m.t, m.state(), id)
 }
 
 // edit writes one change into the node's state, which is how a test puts an item
-// in a position whose only difference from rungItem is one field: the approval
+// in a position whose only difference from beyondItem is one field: the approval
 // taken away, a spec edited since it, a rung's runs spent. It is the store's own
 // write, so what it leaves behind is a node the daemon could have written, and
 // whatever the write side refuses is refused here rather than by the gate.
-func (m *rungHarness) edit(change func(*orchestrator.State)) {
+func (m *beyondHarness) edit(change func(*orchestrator.State)) {
 	m.t.Helper()
 	ctx := context.Background()
 	s, etag, err := m.node.Load(ctx)
@@ -416,14 +416,14 @@ func mergeDependsOn(s *orchestrator.State, id, dep string) {
 // the log holds it when the outcome line never arrived: the window the replay
 // tests below cover begins there, and it is the only thing that says the merge
 // at that head is this ladder's.
-func (m *rungHarness) mergeMarker(id, head string) {
+func (m *beyondHarness) mergeMarker(id, head string) {
 	m.t.Helper()
 	m.stub.written[orchestrator.EntryID(id, "ladder-r3-landing-"+head[:8])] = true
 }
 
 // question is the ladder's question about one item, which these tests expect to
 // be there: every refusal this file pins raises one.
-func (m *rungHarness) question(id string) orchestrator.Decision {
+func (m *beyondHarness) question(id string) orchestrator.Decision {
 	m.t.Helper()
 	d, ok := m.state().Decision(id + "-escalation")
 	if !ok {
@@ -435,7 +435,7 @@ func (m *rungHarness) question(id string) orchestrator.Decision {
 	return d
 }
 
-// mergeReaderStub is RungReader as a test sets it: the readings by item, and
+// mergeReaderStub is BeyondReader as a test sets it: the readings by item, and
 // the heads it was asked about, which is what pins that the gate judged the head
 // the ladder named.
 type mergeReaderStub struct {
@@ -477,7 +477,7 @@ func r3Ledger(now time.Time, head string, outer int) *orchestrator.Escalation {
 	return &e
 }
 
-// rungItem is one of these tests' items: the item the ladder has walked to the
+// beyondItem is one of these tests' items: the item the ladder has walked to the
 // rung its ledger names, in the phase a stalled item is left in, and under the
 // approval that covers the ladder's launches on it — spent, both of its attempts
 // run, which is where a rung 3 item stands: the loop has failed twice and the
@@ -485,7 +485,7 @@ func r3Ledger(now time.Time, head string, outer int) *orchestrator.Escalation {
 // another recipe under that approval's At, so the state the ladder reads them
 // through is the same one the rungs below read. The tests that take the approval
 // away are the ones about a launch the ladder may not make.
-func rungItem(id string, e *orchestrator.Escalation) orchestrator.WorkItem {
+func beyondItem(id string, e *orchestrator.Escalation) orchestrator.WorkItem {
 	w := workItemOf(id)
 	w.Phase = orchestrator.PhaseFailed
 	w.RunID = mergeRun
@@ -587,9 +587,9 @@ func r3Read(head string) orchestrator.LadderReading {
 }
 
 // landable is a harness whose gate passes on the whole of D1245's evidence.
-func landable(t *testing.T, now time.Time, runs ...string) *rungHarness {
+func landable(t *testing.T, now time.Time, runs ...string) *beyondHarness {
 	t.Helper()
-	m := newRungHarness(t, now, runs, rungItem("wi-1", r2Ledger(now, headA, 2)))
+	m := newBeyondHarness(t, now, runs, beyondItem("wi-1", r2Ledger(now, headA, 2)))
 	m.reader.reads["wi-1"] = mergePass(headA)
 	m.host.head = headA
 	m.host.checks = mergeGreen()
@@ -849,7 +849,7 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 // refusedAt is the outcome of a rung 3 the gate refused: nothing merged, one
 // question for a person carrying the code, and one line under the head's own
 // name. It is the assertion every refusal case below shares.
-func refusedAt(t *testing.T, m *rungHarness, head, transition, code string) {
+func refusedAt(t *testing.T, m *beyondHarness, head, transition, code string) {
 	t.Helper()
 	if len(m.host.merged) != 0 {
 		t.Fatalf("the host merged %v, and the gate refused this head", m.host.merged)
@@ -874,7 +874,7 @@ func refusedAt(t *testing.T, m *rungHarness, head, transition, code string) {
 // Mutation: raise the question for these too and a wait on a run that has not
 // ended spends the item's one question, which is what the veto test below
 // catches — the judge's refusal then reaches nobody.
-func waitedOut(t *testing.T, m *rungHarness, head, transition, code string) {
+func waitedOut(t *testing.T, m *beyondHarness, head, transition, code string) {
 	t.Helper()
 	if len(m.host.merged) != 0 {
 		t.Fatalf("the host merged %v, and the gate refused this head", m.host.merged)
@@ -1266,9 +1266,9 @@ func TestR3ReplayFinishesALostLanding(t *testing.T) {
 	now := o6Now()
 	const second = "fedcba9876543210"
 
-	lost := func(t *testing.T) *rungHarness {
+	lost := func(t *testing.T) *beyondHarness {
 		t.Helper()
-		m := newRungHarness(t, now, nil, rungItem("wi-1", r3Ledger(now, headA, 2)))
+		m := newBeyondHarness(t, now, nil, beyondItem("wi-1", r3Ledger(now, headA, 2)))
 		m.mergeMarker("wi-1", headA)
 		read := mergePass(headA)
 		read.Findings.List = []orchestrator.Finding{
@@ -1331,7 +1331,7 @@ func TestR3ReplayFinishesALostLanding(t *testing.T) {
 	t.Run("a marker at another head is not this head's landing", func(t *testing.T) {
 		// The ladder landed another head, so this head is none of its landing's:
 		// it has no landing to finish and nothing to say.
-		m := newRungHarness(t, now, nil, rungItem("wi-1", r3Ledger(now, headB, 2)))
+		m := newBeyondHarness(t, now, nil, beyondItem("wi-1", r3Ledger(now, headB, 2)))
 		m.mergeMarker("wi-1", headB)
 		read := mergePass(headA)
 		read.Findings.List = []orchestrator.Finding{{Severity: orchestrator.SeverityHigh, Path: mergeRoutinePath, Key: mergeFinding}}
@@ -1377,7 +1377,7 @@ func TestR3ReplayFinishesALostLanding(t *testing.T) {
 // have told them.
 func TestR3ALostLandingLineLeavesTheItemWalkable(t *testing.T) {
 	now := o6Now()
-	m := newRungHarness(t, now, nil, rungItem("wi-1", r3Ledger(now, headA, 2)))
+	m := newBeyondHarness(t, now, nil, beyondItem("wi-1", r3Ledger(now, headA, 2)))
 	read := mergePass(headA)
 	read.Findings.List = []orchestrator.Finding{{Severity: orchestrator.SeverityHigh, Path: mergeRoutinePath, Key: mergeFinding}}
 	read.Verdict.FollowUps = []runstore.MergeJudgeFollowUp{{Key: mergeFinding, Importance: runstore.MergeJudgeMinor}}
@@ -1509,7 +1509,7 @@ func TestR3NotifiesProAndHotfix(t *testing.T) {
 // specification runs a third time.
 func TestR4SplitScopedToBlocker(t *testing.T) {
 	now := o6Now()
-	m := newRungHarness(t, now, nil, rungItem("wi-1", r3Ledger(now, headA, 2)))
+	m := newBeyondHarness(t, now, nil, beyondItem("wi-1", r3Ledger(now, headA, 2)))
 	read := mergePass(headA)
 	read.Verdict = runstore.MergeJudge{
 		Verdict: runstore.MergeJudgeBlocked,
@@ -1561,7 +1561,7 @@ func TestR4SplitScopedToBlocker(t *testing.T) {
 // scoped to a sentence that is not the fundamental issue.
 func TestR4NoBlockerWaitsForAPerson(t *testing.T) {
 	now := o6Now()
-	m := newRungHarness(t, now, nil, rungItem("wi-1", r3Ledger(now, headA, 2)))
+	m := newBeyondHarness(t, now, nil, beyondItem("wi-1", r3Ledger(now, headA, 2)))
 	read := mergePass(headA)
 	read.Read = true
 	read.Verdict = runstore.MergeJudge{Verdict: runstore.MergeJudgeBlocked, Reason: "the same finding came back twice", Unreadable: true}
@@ -1592,7 +1592,7 @@ func TestR4NoBlockerWaitsForAPerson(t *testing.T) {
 // with a fence in it writes the rest of the brief.
 func TestR4BlockerTextFencedAndClipped(t *testing.T) {
 	now := o6Now()
-	m := newRungHarness(t, now, nil, rungItem("wi-1", r3Ledger(now, headA, 2)))
+	m := newBeyondHarness(t, now, nil, beyondItem("wi-1", r3Ledger(now, headA, 2)))
 	read := mergePass(headA)
 	raw := "\x1b[31mthe fence ``` is inside this\x1b[0m and then " + strings.Repeat("more ", 200)
 	read.Verdict = runstore.MergeJudge{
@@ -2122,8 +2122,8 @@ func TestR3NoAdminBypass(t *testing.T) {
 // answering that the pull request is merged, lands nothing a second time.
 func TestR3TickReentersTheRung(t *testing.T) {
 	now := o6Now()
-	m := newRungHarness(t, now, []string{mergeReviewRun, mergeJudgeRun},
-		rungItem("wi-1", r3Ledger(now, headA, 2)))
+	m := newBeyondHarness(t, now, []string{mergeReviewRun, mergeJudgeRun},
+		beyondItem("wi-1", r3Ledger(now, headA, 2)))
 	m.host.head, m.host.checks = headA, mergeGreen()
 
 	l := &ladderStub{t: t, reads: map[string]orchestrator.LadderReading{
@@ -2217,7 +2217,7 @@ func TestR3TickReentersTheRung(t *testing.T) {
 
 // TestR3CycleWritesAfterTheHooksWrite is the half of the hook that belongs to
 // the cycle rather than to the rung: the hook lands its rung 3 moves through its
-// own seam (RungSeams.Node), so the moment it returns, the state and the ETag
+// own seam (BeyondSeams.Node), so the moment it returns, the state and the ETag
 // the cycle read at the top of the Step are older than the node — and the Step
 // has more to write, here the question owed to a second item whose runs nobody
 // could read. The cycle re-reads the node once the hook is done (reread), so
@@ -2237,9 +2237,9 @@ func TestR3TickReentersTheRung(t *testing.T) {
 // review it should carry.
 func TestR3CycleWritesAfterTheHooksWrite(t *testing.T) {
 	now := o6Now()
-	m := newRungHarness(t, now, []string{mergeReviewRun, mergeJudgeRun},
-		rungItem("wi-1", r3Ledger(now, headA, 2)),
-		rungItem("wi-2", r2Ledger(now, headB, 0)))
+	m := newBeyondHarness(t, now, []string{mergeReviewRun, mergeJudgeRun},
+		beyondItem("wi-1", r3Ledger(now, headA, 2)),
+		beyondItem("wi-2", r2Ledger(now, headB, 0)))
 	m.host.head, m.host.checks = headA, mergeGreen()
 
 	l := &ladderStub{t: t, reads: map[string]orchestrator.LadderReading{
@@ -2310,7 +2310,7 @@ func TestR3CycleWritesAfterTheHooksWrite(t *testing.T) {
 
 // TestR4CycleWritesAfterTheHooksWrite is the same half of the hook at the other
 // rung the finding names: rung 4's split writes through the seam rung 3's launch
-// does (RungSeams.Node), so the cycle that entered it holds a document the hook
+// does (BeyondSeams.Node), so the cycle that entered it holds a document the hook
 // has already moved past — and its Step is not over. What it owes here is the
 // question a second item's unreadable reading raises, and the split is what the
 // hook left on the node: the item stopped, and the scope it filed beside it.
@@ -2321,9 +2321,9 @@ func TestR3CycleWritesAfterTheHooksWrite(t *testing.T) {
 // split, where the item the block sits on still names both.
 func TestR4CycleWritesAfterTheHooksWrite(t *testing.T) {
 	now := o6Now()
-	m := newRungHarness(t, now, nil,
-		rungItem("wi-1", r2Ledger(now, headA, 1)),
-		rungItem("wi-2", r2Ledger(now, headB, 0)))
+	m := newBeyondHarness(t, now, nil,
+		beyondItem("wi-1", r2Ledger(now, headA, 1)),
+		beyondItem("wi-2", r2Ledger(now, headB, 0)))
 	blocked := mergePass(headA)
 	blocked.Verdict = runstore.MergeJudge{
 		Verdict: runstore.MergeJudgeBlocked,
@@ -2410,8 +2410,8 @@ func TestR4CycleWritesAfterTheHooksWrite(t *testing.T) {
 // the node.
 func TestR3HookCyclesDoNotTripTheBreaker(t *testing.T) {
 	now := o6Now()
-	m := newRungHarness(t, now, []string{mergeReviewRun, mergeJudgeRun},
-		rungItem("wi-1", r3Ledger(now, headA, 2)))
+	m := newBeyondHarness(t, now, []string{mergeReviewRun, mergeJudgeRun},
+		beyondItem("wi-1", r3Ledger(now, headA, 2)))
 	m.host.head, m.host.checks = headA, mergeGreen()
 
 	// Nothing scored at the head, which is where a rung 3 item stands before
@@ -2482,7 +2482,7 @@ func TestR3HookCyclesDoNotTripTheBreaker(t *testing.T) {
 // the question the bound promises is never asked.
 func TestR3AWaitOnSomethingMovingIsACycleInFlight(t *testing.T) {
 	now := o6Now()
-	m := newRungHarness(t, now, nil, rungItem("wi-1", r3Ledger(now, headA, 2)))
+	m := newBeyondHarness(t, now, nil, beyondItem("wi-1", r3Ledger(now, headA, 2)))
 	m.reader.reads["wi-1"] = mergePass(headA)
 	m.host.head, m.host.checks = headA, []gitprov.CheckRun{{Status: "pending"}}
 
@@ -2560,7 +2560,7 @@ func TestR3AWaitOnSomethingMovingIsACycleInFlight(t *testing.T) {
 // cycle reports CycleProgress where the item it found merged moved nothing.
 func TestR3MergedPullRequestLeavesTheItemStopped(t *testing.T) {
 	now := o6Now()
-	m := newRungHarness(t, now, nil, rungItem("wi-1", r3Ledger(now, headA, 2)))
+	m := newBeyondHarness(t, now, nil, beyondItem("wi-1", r3Ledger(now, headA, 2)))
 	m.reader.reads["wi-1"] = mergePass(headA)
 	// A pull request the ladder did not land: no marker of its own, and the
 	// host's word for it is the merge. It is D1245's gate read at a head whose
@@ -2622,7 +2622,7 @@ func TestR3HookFailureLeavesTheBreakerItsQuestion(t *testing.T) {
 	now := o6Now()
 	// Three ids for three cycles: a mint is asked for its id before the launch
 	// that is refused, so the two failing launches spend one each.
-	m := newRungHarness(t, now, []string{mergeRun, mergeRun, mergeReviewRun}, rungItem("wi-1", r3Ledger(now, headA, 2)))
+	m := newBeyondHarness(t, now, []string{mergeRun, mergeRun, mergeReviewRun}, beyondItem("wi-1", r3Ledger(now, headA, 2)))
 	m.host.head, m.host.checks = headA, mergeGreen()
 
 	// Nothing scored at the head: the hook's first move is D2043's review, which

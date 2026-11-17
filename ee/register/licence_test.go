@@ -59,6 +59,7 @@ import (
 	"github.com/dimipaun/fugaro/ee/licence"
 	"github.com/dimipaun/fugaro/ee/licence/project"
 	"github.com/dimipaun/fugaro/internal/agentenv"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	fcli "github.com/dimipaun/fugaro/internal/cli"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -451,6 +452,26 @@ func (f *licenceFixture) status(t *testing.T) map[string]any {
 func TestLicenceRenewalSecretIDIsTheInstallationsContainer(t *testing.T) {
 	if got, want := licenceRenewalSecretID(licenceTestProject), "fugaro-project-aurora-licence-renewal-0e382f732fd21bbd"; got != want {
 		t.Errorf("the renewal secret container of %s is %q, want %q: K4.2's Terraform creates that container, and a derived name that moved is a write into one nobody reads", licenceTestProject, got, want)
+	}
+}
+
+// TestTheLicenceObjectIsTheStores pins the third name the renewal job is granted
+// (plan K4.2): the object this store writes the licence into, and the object
+// licence.tf's write condition names.
+//
+// The core may not import this package (D524, .claude/rules/ee.md), so the
+// condition's builder (internal/backend/gcp's gcp.LicenceWriteCondition) spells
+// the object as a literal and internal/infra.LicenceObject carries it. Nothing
+// in the type system holds the two spellings together — this test is what does,
+// and what it catches is the failure that would be invisible: `fugaro licence
+// set` writing into one object while the job is granted a condition on another,
+// so the licence renews never and every command still answers 0.
+func TestTheLicenceObjectIsTheStores(t *testing.T) {
+	if gcp.LicenceKeyObject != project.Object {
+		t.Errorf("the core's licence object is %q and this store's is %q: the renewal job's write grant names the first (gcp.LicenceWriteCondition) and every command here writes the second, so the two spellings have to be one name", gcp.LicenceKeyObject, project.Object)
+	}
+	if infra.LicenceObject != project.Object {
+		t.Errorf("internal/infra.LicenceObject is %q and this store's object is %q: the spec the plan carries and the object the commands write have to be one name", infra.LicenceObject, project.Object)
 	}
 }
 
