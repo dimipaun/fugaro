@@ -812,16 +812,25 @@ func TestUpdateLeavesTheRedeployOwedWhenItHasNoCheckout(t *testing.T) {
 // stages and reaches readOwedBefore and clearAnsweredSteps at all
 // (init_stages.go's converge calls both), and a setup that cleared what it
 // answered would drop steps the run had published nothing for.
+//
+// The redeploy is in the result beside the installation for a second reason:
+// the clearing rule drops a stage that skipped and did nothing everywhere
+// except that one (D1574), and this is where both halves of that rule are
+// read without a run's own stages having to skip the way the entry says.
 func TestOnlyTheUpdateDoorSettlesTheRecord(t *testing.T) {
 	r := updateRig(t)
 	updating(t, r)
 	owed(t, initflow.Installation, apply.Change{Kind: apply.Setting, Key: "layer.defaults.agent.model"})
+	owed(t, initflow.Repository, apply.Change{Kind: apply.Resource, Key: apply.ResourceRepo})
 	lc, err := localcfg.Load(r.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	read := record(t)
-	answered := &initflow.Result{Stages: []initflow.StageResult{{Name: initflow.Installation, State: initflow.Changed}}}
+	answered := &initflow.Result{Stages: []initflow.StageResult{
+		{Name: initflow.Installation, State: initflow.Changed},
+		{Name: initflow.Repository, State: initflow.Skipped},
+	}}
 
 	e, _ := stageEngine(t, "", &initOptions{door: applyName})
 	e.lc = lc
@@ -845,8 +854,12 @@ func TestOnlyTheUpdateDoorSettlesTheRecord(t *testing.T) {
 		t.Fatal("update read nothing before its first stage, so nothing would be cleared")
 	}
 	e.clearAnsweredSteps(answered)
-	if got := pendingSteps(record(t)); slices.Contains(got, initflow.Installation) {
+	got := pendingSteps(record(t))
+	if slices.Contains(got, initflow.Installation) {
 		t.Errorf("update left the step its own stage answered owed: %v", got)
+	}
+	if !slices.Contains(got, initflow.Repository) {
+		t.Errorf("update cleared the redeploy its own stage skipped without doing the work: %v", got)
 	}
 }
 
@@ -905,11 +918,17 @@ func TestApplyKeptLineForAStepItHasNoStageFor(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a run that could not answer an owed step exited 0:\n%s", out+errOut)
 	}
+	got := out + errOut + ErrorText(err)
 	if !strings.Contains(out, "Run `fugaro apply` again to finish the steps it can answer") {
 		t.Errorf("the answer does not name the command that runs the steps it has:\n%s", out)
 	}
-	if strings.Contains(out, "to finish the job") {
-		t.Errorf("a step this command has no stage for is promised the job:\n%s", out)
+	// And the run's own error says the same: it is the sentence a script sees,
+	// and the one a person who piped the answer away is left with.
+	if !strings.Contains(got, "still owed; run `fugaro apply` again to finish the steps it can answer") {
+		t.Errorf("the error does not name the command that runs the steps it has:\n%q", got)
+	}
+	if strings.Contains(got, "to finish the job") {
+		t.Errorf("a step this command has no stage for is promised the job:\n%s", got)
 	}
 }
 
