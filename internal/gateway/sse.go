@@ -129,10 +129,11 @@ type usageAcc struct {
 	in, cc, cr, out, w5, w1, web field
 	speed, tier, geo             json.RawMessage
 	// reported is the cost a provider put in the usage object (OpenRouter's
-	// usage.cost, in USD), in micros. It is recorded for comparison with the
-	// charge and never settles a call the table priced; on a provider route
-	// it is the floor under the charge for a service tier no one prices
-	// (forward.go's fromUsage).
+	// usage.cost, in USD), in micros. What a complete call on a provider
+	// route settles at (D2640): the figure plus the route's fee, floored at
+	// the table's charge for the same usage at its cheapest end (forward.go's
+	// fromUsage). On the Claude route, which has no provider to report one,
+	// it is recorded beside the charge and prices nothing.
 	reported    pricing.Micros
 	hasReported bool
 }
@@ -140,6 +141,12 @@ type usageAcc struct {
 // maxReportedUSD bounds a provider-reported cost the gateway will record;
 // anything above it is a malformed field, not a price.
 const maxReportedUSD = 1e6
+
+// malformedReportMultiple is how far above a call's own reservation a
+// provider-reported cost may sit and still settle the call: past it the
+// figure is malformed rather than a price, and the table's own charge
+// settles the call instead (D2641).
+const malformedReportMultiple = 10
 
 type wireUsage struct {
 	InputTokens              *int64 `json:"input_tokens"`
@@ -179,7 +186,15 @@ func (a *usageAcc) merge(u *wireUsage) {
 	if len(u.Cost) > 0 && string(bytes.TrimSpace(u.Cost)) != "null" {
 		var usd float64
 		if json.Unmarshal(u.Cost, &usd) == nil && usd >= 0 && usd <= maxReportedUSD {
-			a.reported, a.hasReported = pricing.Micros(math.Round(usd*1e6)), true
+			// On a provider route the largest figure any event reported
+			// wins, as each count's own takeMax does: a later event must not
+			// talk a call's charge down, and a call settles on the most the
+			// response ever said it cost (F22). The Claude route has no
+			// report to settle on and keeps the last value.
+			m := pricing.Micros(math.Round(usd * 1e6))
+			if !a.provider || !a.hasReported || m > a.reported {
+				a.reported, a.hasReported = m, true
+			}
 		}
 	}
 	for _, x := range []struct {

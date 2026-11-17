@@ -14,10 +14,11 @@ import (
 
 // How a call was priced and settled, as the log line says.
 const (
-	pricedTable    = "table"    // the serving model's rates
+	pricedTable    = "table"    // the table's own charge: the serving model's rates, or the maximum rates for a model the table doesn't know
 	pricedMax      = "max"      // an unknown serving model: the table's maximum rates
 	pricedSurprise = "surprise" // a dimension the request didn't allow: maximum rates × SurpriseMultiplier
-	pricedTier     = "tier"     // a service tier no one prices: the rates the call was priced at × ConservativeTierMultiplier, or the provider's own reported cost where that is dearer
+	pricedTier     = "tier"     // a service tier no one prices: the rates the call was priced at × ConservativeTierMultiplier
+	pricedReported = "reported" // the cost the provider reported for a complete call, plus the route's fee: what a provider call settles at (D2640)
 
 	settledUsage    = "usage"    // the usage a complete response reported
 	settledPartial  = "partial"  // input and cache from message_start, plus the reserved output
@@ -203,7 +204,8 @@ type charge struct {
 	// call the table priced, the standard tier included.
 	serviceTier string
 	route       string         // the provider route the call went to; "" is Anthropic
-	reported    pricing.Micros // the cost the provider reported: recorded for comparison, and the floor under a tier charge, but never the price of a call the table priced
+	reported    pricing.Micros // the cost the provider reported: what a complete call on a provider route settles at, and the figure the split and the band are over
+
 	// hasReport says `reported` above is a figure the gateway records, and is
 	// what the per-model report split and the band are over (F7, D2650). It
 	// is set by recordReport, with `reported` itself and nowhere else, so the
