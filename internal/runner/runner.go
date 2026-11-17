@@ -2107,6 +2107,100 @@ func (r *run) forwarderRemote(remote string) string {
 	return strings.TrimSuffix(r.forward.URL(), "/") + "/" + owner + "/" + name + ".git"
 }
 
+// routeNestedFetches sends this run's nested fetches — the fetches of the
+// checkout's submodules and of its LFS objects — through this execution's
+// forwarder (N2, R4), so that a nested fetch reaches no more than the run's own
+// fetch does: the same listener, the same credentials service, and the same
+// repository list the published block holds (D2302).
+//
+// What it writes is the checkout's own configuration and never a tracked file
+// (gitops' PointSubmoduleAt and PointLFSAt): submodule.<name>.url outranks what
+// .gitmodules declares — `git submodule init` writes it and never overwrites it
+// — and lfs.url is where git-lfs looks before it derives an endpoint from the
+// remote. A route written into a tracked file would be a change of the run's
+// own making in the work it commits, and the route belongs to this execution
+// alone: the endpoint's port dies with it, and the next execution routes its
+// own.
+//
+// A run with no forwarder has no endpoint to point anything at, and writes
+// nothing: no submodule URL is sent anywhere and no LFS endpoint is installed,
+// so the checkout keeps exactly what the job's own configuration gives it —
+// lfsFiltersOff is how review mode's checkouts already turn the filters off,
+// and a per-repository job that is not proxied holds the token its own LFS
+// traffic needs. A checkout this run's provider does not host is not routed
+// either: a local run's own checkout, cloned from a path, declares its
+// submodules against that path, and a route the run cannot map is not one it
+// may refuse.
+func (r *run) routeNestedFetches(ctx context.Context) error {
+	if r.forward == nil || r.repo == nil {
+		return nil
+	}
+	origin, err := r.repo.OriginConfigURL(ctx)
+	if err != nil {
+		return err
+	}
+	if gitprov.KindForURL(origin) != gitprov.KindBitbucket {
+		return nil
+	}
+	subs, err := r.repo.Submodules(ctx)
+	if err != nil {
+		return err
+	}
+	for _, sub := range subs {
+		endpoint, err := r.nestedEndpoint(ctx, fmt.Sprintf("the submodule %s of %s", sub.Name, r.spec.Repo), sub.URL)
+		if err != nil {
+			return err
+		}
+		if err := r.repo.PointSubmoduleAt(ctx, sub.Name, endpoint); err != nil {
+			return err
+		}
+	}
+	endpoint, err := r.nestedEndpoint(ctx, "the origin of this checkout", origin)
+	if err != nil {
+		return err
+	}
+	return r.repo.PointLFSAt(ctx, strings.TrimSuffix(endpoint, "/")+"/info/lfs")
+}
+
+// nestedEndpoint is the endpoint this execution's forwarder serves remote at:
+// the forwarder's own URL with remote's path on it, which is the URL the
+// insteadOf rewrite credentialVars installs lands every bitbucket.org URL on
+// (forwarderRemote is this same endpoint for the run's own repository).
+//
+// what names the thing that declared the URL and is the subject of every
+// refusal below, so the operator reads which submodule to edit. A nested fetch
+// this run may not make is refused rather than routed: a URL that names no
+// repository a run can fetch, a host this run does not reach at all, and a
+// Bitbucket repository the published block does not cover. Each has its own
+// fix, and the service would refuse the same fetch a moment later with a class
+// rather than a repository name (G7) — after the agent had started, which is
+// what makes the sentence here worth having.
+//
+// The refusals never quote a remote as it was written: a URL a repository
+// declares may carry a credential of its own, and remoteDisplay is what drops
+// one.
+func (r *run) nestedEndpoint(ctx context.Context, what, remote string) (string, error) {
+	host, repoPath, ok := gitprov.SplitRemote(remote)
+	if !ok {
+		return "", fmt.Errorf("%s names %s, which is not a URL a repository is fetched from: a nested fetch is made through this run's forwarder, and a URL with no repository in it is one the forwarder cannot serve. Give the submodule a URL git can resolve — a relative one, which git resolves against this checkout's own remote, is the shape almost every repository writes — and launch the run again", what, remoteDisplay(remote))
+	}
+	if gitprov.KindForHost(host) != gitprov.KindBitbucket {
+		return "", fmt.Errorf("%s names %s, which is on %s: this run's git and LFS traffic reaches bitbucket.org through the installation's credentials service, and it holds no credential for another host — a shared Bitbucket job mounts no token at all (D2302). A submodule or an LFS object of another host cannot be fetched by this run, so it stops here instead of failing part way through a fetch. Point the submodule at its Bitbucket repository, or at a relative URL git resolves against this checkout's own remote", what, remoteDisplay(remote), safetext.OneLine(host))
+	}
+	repo, err := task.CanonicalRepo(gitprov.TrimRepoPath(repoPath))
+	if err != nil {
+		return "", fmt.Errorf("%s names %s, which does not name a Bitbucket repository as owner/name: a nested fetch is made through this run's forwarder, whose path is the repository it serves, and a path that is not one cannot be served. Point the submodule at the repository it is, or at a relative URL git resolves against this checkout's own remote", what, remoteDisplay(remote))
+	}
+	p, found, err := r.projectPolicy(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !found || p == nil || p.BitbucketToken == nil || !projectpolicy.AdmitRepo(p.BitbucketToken.AllowRepos, repo) {
+		return "", fmt.Errorf("%s is the repository %s, which this run's Bitbucket access does not cover: a submodule's fetch and an LFS object's reach bitbucket.org through the installation's credentials service, which serves a repository only when the published policy's bitbucket_token.allow_repos covers it (the block is derived from project_secrets.%s.allow_data_to). Add the repository with 'fugaro secrets allow %s %s', then run 'fugaro update', which publishes the widened list. The run stops before the agent starts and before any git credential is requested", what, repo, config.BitbucketSecret, config.BitbucketSecret, repo)
+	}
+	return strings.TrimSuffix(r.forward.URL(), "/") + "/" + gitprov.TrimRepoPath(repoPath), nil
+}
+
 // originURL returns the checkout's origin URL, or the remote it will be
 // cloned from when there is no checkout yet.
 func (r *run) originURL(ctx context.Context) string {
@@ -2725,6 +2819,13 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return fmt.Errorf("opening checkout %s: %w", r.d.WorkDir, err)
 	}
 	r.repo = strip(repo)
+	// Before any stage and before the checkout itself, which is where a
+	// smudge filter would fetch an LFS object: a nested fetch this run may
+	// not make stops it here, naming the repository, rather than at git's own
+	// "could not read Username" once a stage is under way.
+	if err := r.routeNestedFetches(ctx); err != nil {
+		return err
+	}
 	var cfg *config.Config
 	var startErr error // reading a first run's start commit (checkpoints)
 	switch {
