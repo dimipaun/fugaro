@@ -85,7 +85,7 @@ model_prices:
 // command prints about a price below the catalog's floor, which is the other
 // thing R4 owes the one command the owner runs.
 func TestUpdateMigratesCacheReadKey(t *testing.T) {
-	r := newConvergeRig(t, v8Node())
+	r := newConvergeRig(t, currentNode())
 	r.appendConfig(t, cacheKeyFixture)
 	// The keys go in before the copy the door reads is taken: the rig clears
 	// FUGARO_CONFIG, so the local config `fugaro update` reads and writes is the
@@ -249,7 +249,7 @@ func TestModelPricesStageOnAFirstRunHasNothingToRename(t *testing.T) {
 // read of it is what the assertion asks: the plan of a second run over these
 // bytes renames nothing.
 func TestUpdateMigrationIdempotent(t *testing.T) {
-	r := newConvergeRig(t, v8Node())
+	r := newConvergeRig(t, currentNode())
 	r.appendConfig(t, cacheKeyFixture)
 	registerInstallation(t, r.initRig)
 	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
