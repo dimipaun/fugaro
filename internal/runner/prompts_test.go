@@ -405,6 +405,35 @@ func TestTheStatusLineIsBounded(t *testing.T) {
 	}
 }
 
+// TestTheStatusLineNeutralizesThePathsItNames pins the guard on the one part of
+// the status section whose text the run's own checkout chose: the binaries line
+// names paths (D993), a path is data — it comes from NUL-separated git listings
+// (gitops.NewPaths), so it may hold a newline or an @mention — and the section
+// is the body of a pull request, where a newline is a new line and a mention
+// notifies a person. The guard is inlineText, which binariesPart sends each
+// path through.
+//
+// Mutation (drop the call: `paths[i] = p` in prflow.go's binariesPart): this
+// test fails twice over, finding "@team" in the body and a newline inside the
+// binaries line.
+func TestTheStatusLineNeutralizesThePathsItNames(t *testing.T) {
+	const name = "website/public/@team\nx.webp"
+	b := policyRun(t, gwConfig(t, ""), "off", "", binariesNode(`"website/public/**"`, "1048576"))
+	if _, err := b.run(t, implementLeaving(name, imageFile(512)), review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	body := onlyPR(t, b.harness.provider).Body
+	if strings.Contains(body, "@team") {
+		t.Errorf("the section carries a raw mention, which would notify a person:\n%s", body)
+	}
+	if !strings.Contains(body, "@​team") {
+		t.Errorf("the section does not name the admitted file at all:\n%s", body)
+	}
+	if part := binariesPart(t, body); strings.ContainsAny(part, "\n\r") {
+		t.Errorf("the binaries line is more than one line: %q", part)
+	}
+}
+
 // binariesPart is the section's binaries line, from its own words to the ")"
 // that closes the list.
 func binariesPart(t *testing.T, body string) string {
