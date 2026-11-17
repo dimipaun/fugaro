@@ -538,6 +538,13 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 		// about and pause on a spend question nobody sees.
 		Notifier: orchestrator.LogSink{W: d.out},
 		Triage:   orchestratorTriageSeams(d),
+		// The labels of the pull requests the runs it launched opened (F25, T7):
+		// read back from the runs bucket by run id and written through the
+		// installation's credentials service, which is the one holder of the App
+		// key (D2439). Empty until the installation records a service URL and
+		// this build can mint the daemon's own identity for it
+		// (orchestratorLabelSeams), which is the state this tree is in.
+		Labels: orchestratorLabelSeams(d),
 		// The audit log the trip writes its refusal line to (O19): the daemon's
 		// own node, under the id the entry derives from the run, which is the
 		// same log the triage and the decision agent append to. It is wired
