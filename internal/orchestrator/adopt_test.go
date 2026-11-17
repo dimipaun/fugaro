@@ -13,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
 // Adoption (R4, D2702): the runs a daemon's first start finds in flight, the
@@ -140,6 +141,25 @@ func planNodeState(t *testing.T, f *gcpfake.RTDB, plan string) orchestrator.Stat
 	return nodeState(t, mustShardNode(t, rtdbClient(t, f), &stubLease{held: true}, orchestrator.PlanShard(plan)))
 }
 
+// denyPathCAS is the store with one node's conditional write refused the way a
+// save that lost its race is refused and every other node's left alone: how a
+// call whose plan node landed and whose state node did not is reached. It is
+// both halves of the client a node is built over, because adoption reads the
+// server's clock off the same store it writes through (D1230).
+type denyPathCAS struct {
+	orchestrator.CAS
+	orchestrator.Reader
+	path string
+	deny bool
+}
+
+func (c *denyPathCAS) PutIfMatch(ctx context.Context, path, etag string, v any) error {
+	if c.deny && path == c.path {
+		return fmt.Errorf("the state node's write lost its race: %w", rtdb.ErrPrecondition)
+	}
+	return c.CAS.PutIfMatch(ctx, path, etag, v)
+}
+
 // TestAdoptWritesRunningItemsOnce is D2702's first half: a run the daemon did
 // not start becomes the item the daemon would have written had it started it —
 // running, with the run id as its own id and one committed attempt under it —
@@ -218,6 +238,41 @@ func TestAdoptCarriesPlanTask(t *testing.T) {
 	}
 }
 
+// TestAdoptClipsAnOverCapRecord is the bound every writer of this document
+// keeps on free text: a run's brief is the whole task file and its title the
+// task's first line, so a record past MaxTitleRunes or MaxBriefRunes is an
+// ordinary run — and an item built from it raw is one ValidateState refuses, so
+// the run is named in adopt_not_carried and then never folded, never counted
+// and never adopted by a later start.
+//
+// Mutation: build the item from the run's text as it comes and a run launched
+// with a long brief is silently not adopted at all.
+func TestAdoptClipsAnOverCapRecord(t *testing.T) {
+	at := o6Now()
+	long := adoptRun(runA, "")
+	long.Title = strings.Repeat("t", orchestrator.MaxTitleRunes+100)
+	long.Brief = strings.Repeat("b", orchestrator.MaxBriefRunes+500)
+	_, node, _, got := adopt(t, at, long)
+	if got != 1 {
+		t.Fatalf("adoption wrote %d items for one over-cap run in flight, want the one item its other fields are good for", got)
+	}
+	s := nodeState(t, node)
+	if len(s.WorkItems) != 1 {
+		t.Fatalf("the node carries %d items, want the one the run's other fields are good for", len(s.WorkItems))
+	}
+	w := s.WorkItems[0]
+	if len([]rune(w.Title)) != orchestrator.MaxTitleRunes || len([]rune(w.Brief)) != orchestrator.MaxBriefRunes {
+		t.Fatalf("the item's title is %d runes and its brief %d, want them at the caps of %d and %d",
+			len([]rune(w.Title)), len([]rune(w.Brief)), orchestrator.MaxTitleRunes, orchestrator.MaxBriefRunes)
+	}
+	if !strings.HasPrefix(w.Title, "ttt") || !strings.HasPrefix(w.Brief, "bbb") {
+		t.Fatalf("the item reads %q / %q, and clipping keeps the run's own words", w.Title, w.Brief)
+	}
+	if fact, ok := s.Facts["adopt_not_carried"]; ok {
+		t.Fatalf("the node names the run as left out (%q), and it was adopted", fact.Value)
+	}
+}
+
 // TestAdoptRecordsPlanInFlightFact is D2721: one fact per plan an adopted run
 // belongs to, so the session that opens a checkout afterwards imports it and
 // takes it to a person — one fact for two runs of the same plan, and none for a
@@ -253,6 +308,98 @@ func TestAdoptRecordsPlanInFlightFact(t *testing.T) {
 	}
 	if !strings.Contains(fact.Value, "fugaro orchestrator import --plan "+planFolder) {
 		t.Fatalf("the fact reads %q, and the import is what it asks for (R5)", fact.Value)
+	}
+}
+
+// TestAdoptRecordsPlanFactFromTheItem is D2721's hand-over surviving the write
+// that makes it: the plan node is saved before the state node, so a state save
+// that loses its race leaves the run's item on the plan node with no fact
+// beside it — and the next start finds the run claimed by that item and adopts
+// nothing. The fact is what a session acts on, and what it is made from is the
+// item, so it is written by that later start rather than lost with the save
+// that did not land.
+//
+// Mutation: record the plans from this call's own writes and the fact is lost
+// for good the moment one state save is refused.
+func TestAdoptRecordsPlanFactFromTheItem(t *testing.T) {
+	at := o6Now()
+	f := gcpfake.NewRTDB(t)
+	f.SetClock(func() time.Time { return at })
+	client := rtdbClient(t, f)
+	store := &denyPathCAS{CAS: client, Reader: client}
+	leased := mustNode(t, store, &stubLease{held: true})
+	store.path = leased.Path()
+	plain := mustNode(t, rtdbClient(t, f), nil)
+	lister := &adoptLister{runs: []orchestrator.RunInFlight{adoptRun(runA, planFolder+"/3")}}
+
+	store.deny = true
+	n, err := orchestrator.Adopt(context.Background(), lister, leased)
+	if err == nil || n != 1 {
+		t.Fatalf("adoption wrote %d items and answered %v, want the one plan item and the refused state save", n, err)
+	}
+	if s := planNodeState(t, f, planFolder); len(s.WorkItems) != 1 {
+		t.Fatalf("the plan's node carries %d items, and its save is the one before the state's", len(s.WorkItems))
+	}
+	if s := nodeState(t, plain); len(s.Facts) != 0 {
+		t.Fatalf("the state node carries %v, and its save is the one that was refused", s.Facts)
+	}
+
+	store.deny = false
+	again, err := orchestrator.Adopt(context.Background(), lister, leased)
+	if err != nil || again != 0 {
+		t.Fatalf("the second start wrote %d items and answered %v, want the item it already has and nothing new", again, err)
+	}
+	s := nodeState(t, plain)
+	fact, ok := s.Facts["plan_in_flight_"+planFolder]
+	if !ok {
+		t.Fatalf("the state node carries %v, and the plan the item stands in is what a session has to import", s.Facts)
+	}
+	if !strings.Contains(fact.Value, "fugaro orchestrator import --plan "+planFolder) {
+		t.Fatalf("the fact reads %q, want the import of the plan the item names", fact.Value)
+	}
+	if s := planNodeState(t, f, planFolder); len(s.WorkItems) != 1 {
+		t.Fatalf("the plan's node carries %d items after the second start", len(s.WorkItems))
+	}
+}
+
+// TestAdoptKeepsItsItemsWhenTheFactsAreAtTheirBound is the node a year of facts
+// arrives at: MaxFacts facts and no room for one more. A fact past the bound is
+// a document ValidateState refuses, and the state node is saved with the items
+// this same call writes into it, so a fact queued regardless would lose the
+// items with it — the plan's node saved, the shared node not, and runs adopted
+// into it neither folded nor counted. The fact is what adoption drops, the items
+// land, and a node with room again records the plan on a later start.
+//
+// Mutation: queue the fact without asking whether it fits and a node at its
+// bound loses every item adopted into it to a save that never lands.
+func TestAdoptKeepsItsItemsWhenTheFactsAreAtTheirBound(t *testing.T) {
+	at := o6Now()
+	seed := stateWithAQueuedItem(t, at)
+	seed.WorkItems, seed.Intents = nil, nil
+	seed.Facts = map[string]orchestrator.Fact{}
+	for i := range orchestrator.MaxFacts {
+		seed.Facts[fmt.Sprintf("fact_%02d", i)] = orchestrator.Fact{Value: "a fact of a node that has been running a while", By: orchestrator.Daemon}
+	}
+	h := newHarness(t, seed, at)
+	node := adoptNode(t, h.db, at, &stubLease{held: true})
+	lister := &adoptLister{runs: []orchestrator.RunInFlight{adoptRun(runA, ""), adoptRun(runB, planFolder+"/3")}}
+
+	n, err := orchestrator.Adopt(context.Background(), lister, node)
+	if err != nil || n != 2 {
+		t.Fatalf("adoption wrote %d items and answered %v, want both items on a node whose facts are full", n, err)
+	}
+	s := h.state()
+	if _, ok := s.Item(runA); !ok {
+		t.Fatalf("the state node carries %d items and not the run adopted into it", len(s.WorkItems))
+	}
+	if len(s.Facts) != orchestrator.MaxFacts {
+		t.Fatalf("the state node carries %d facts, want the bound of %d it was at", len(s.Facts), orchestrator.MaxFacts)
+	}
+	if _, ok := s.Facts["plan_in_flight_"+planFolder]; ok {
+		t.Fatalf("the state node carries the plan fact, and its facts were full before this call")
+	}
+	if one := planNodeState(t, h.db, planFolder); len(one.WorkItems) != 1 || one.WorkItems[0].ID != runB {
+		t.Fatalf("the node of %q carries %+v, want the run of that plan", planFolder, one.WorkItems)
 	}
 }
 

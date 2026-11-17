@@ -152,7 +152,7 @@ type RunLister interface {
 // It writes each run as one running item with one committed attempt under it,
 // into the plan's own node where the launch names a plan and into the state
 // node otherwise (D2702, F44); it records one plan_in_flight fact per plan an
-// adopted run names, so a session in a checkout imports it (D2721); and it
+// adopted item stands in, so a session in a checkout imports it (D2721); and it
 // names the runs it did not take in one fact. It writes only under the lease:
 // the node's own save refuses a guard that no longer holds, and a node built
 // with no guard at all — a person's own patch (NodeOptions.Lease) — is refused
@@ -194,7 +194,6 @@ func Adopt(ctx context.Context, lister RunLister, node *Node) (int, error) {
 		node:    node,
 		plans:   map[Shard]*adoptPlan{},
 		claimed: map[string]bool{},
-		named:   map[string]string{},
 	}
 	if err := a.read(ctx, runs); err != nil {
 		return 0, err
@@ -299,10 +298,11 @@ type adoption struct {
 	// adopt nothing, and what keeps a run the daemon itself launched from being
 	// adopted beside its own item.
 	claimed map[string]bool
-	// named is the plan_in_flight fact each adopted plan is named under, by the
-	// plan the fact names, and left is the runs no item was written for.
-	named map[string]string
-	left  []string
+	// left is the runs no item was written for. The plans the plan_in_flight
+	// facts are about are not remembered here: they are read off the adopted
+	// items of the nodes this call loaded, so a fact outlives the write that
+	// made it (facts).
+	left []string
 }
 
 // adoptPlan is one node adoption may write: its state as it was read, the ETag
@@ -430,9 +430,6 @@ func (a *adoption) take(r RunInFlight, now time.Time) bool {
 	p.state, p.added, p.changed = next, p.added+1, true
 	p.room--
 	a.claimed[r.RunID] = true
-	if plan, ok := planName(r.PlanTask); ok {
-		a.named[plan] = planInFlightValue(plan)
-	}
 	return true
 }
 
@@ -457,21 +454,57 @@ func (a *adoption) write(ctx context.Context, adopted int) (int, error) {
 }
 
 // facts writes the facts the state node carries: one naming each plan an
-// adopted run belongs to, and one naming the runs no item was written for. Each
-// is written only where it is not already what the node says, which is what
-// leaves a second call with nothing to save.
+// adopted item stands in, and one naming the runs no item was written for.
+//
+// The plans are read off the nodes this call loaded rather than off what this
+// call wrote, because a plan fact outlives the write that made it: the plan
+// nodes are saved first and the state node last, so a state save that is
+// refused (a moved ETag, a node at its facts or its bytes) leaves the run's
+// item on the plan node with no fact beside it — and the next start finds that
+// run claimed by that item, adopts nothing, and would never write the fact
+// again. The fact is the hand-over a session acts on (D2721), so it is derived
+// from the item and the start after the refused save writes it. Each fact is
+// written only where it is not already what the node says, which is what leaves
+// a second call with nothing to save.
 func (a *adoption) facts() {
 	p := a.plans[ShardState]
-	for _, plan := range sortedKeys(a.named) {
-		a.setFact(p, planInFlightKey(plan), a.named[plan])
+	for _, plan := range a.adoptedPlans() {
+		a.setFact(p, planInFlightKey(plan), planInFlightValue(plan))
 	}
 	if len(a.left) > 0 {
 		a.setFact(p, adoptNotCarriedKey, adoptNotCarriedValue(a.left))
 	}
 }
 
+// adoptedPlans is every plan an adopted item of a node this call loaded stands
+// in, sorted: the facts are written in that one order, so which of them a node
+// with room for one more records does not depend on map order.
+func (a *adoption) adoptedPlans() []string {
+	named := map[string]bool{}
+	for _, shard := range a.order {
+		for _, w := range a.plans[shard].state.WorkItems {
+			if !w.Adopted {
+				continue
+			}
+			if plan, ok := planName(w.PlanTask); ok {
+				named[plan] = true
+			}
+		}
+	}
+	return sortedKeys(named)
+}
+
+// setFact writes one fact, and leaves the node alone where it already says this
+// or where its facts are at their bound. A fact past MaxFacts is a document
+// ValidateState refuses, and that save carries this call's items with it, so the
+// fact is what is dropped and never an item — the bound mergeread checks before
+// it queues one of its own — and a node with room again records the plan on a
+// later start, because the plans are derived from the items (facts).
 func (a *adoption) setFact(p *adoptPlan, key, value string) {
 	if p.state.Facts[key].Value == value {
+		return
+	}
+	if _, known := p.state.Facts[key]; !known && len(p.state.Facts) >= MaxFacts {
 		return
 	}
 	next := p.state.Clone()
@@ -490,6 +523,13 @@ func (a *adoption) setFact(p *adoptPlan, key, value string) {
 // what the ladder reads before it merges anything (X1). It carries no approval:
 // a person approves work, and an item nobody has read is not one.
 //
+// Its free text is clipped as every other writer of this document clips it
+// (cleanLine, cleanText): the run's title is the first line of its task file and
+// its brief is the whole file, so a record over MaxTitleRunes or MaxBriefRunes
+// is an ordinary run, and an item built from it as it comes is one ValidateState
+// refuses — the run would be named in adopt_not_carried and then never folded,
+// never counted and never adopted by a later start.
+//
 // The intent is D2744's: the record a run with no intent never gets, so the run
 // is folded and counted with the runs the daemon started (openRunIDs and
 // CountsOf read intents and nothing else, F54). Its approval stamp is the
@@ -500,12 +540,12 @@ func (a *adoption) setFact(p *adoptPlan, key, value string) {
 func adoptedRun(r RunInFlight, now time.Time) (WorkItem, Intent) {
 	item := WorkItem{
 		ID:        r.RunID,
-		Title:     r.Title,
+		Title:     cleanLine(r.Title, MaxTitleRunes),
 		Repo:      r.Repo,
 		Recipe:    r.Recipe,
 		RigorTier: r.RigorTier,
 		PlanTask:  r.PlanTask,
-		Brief:     r.Brief,
+		Brief:     cleanText(r.Brief, MaxBriefRunes),
 		Phase:     PhaseRunning,
 		RunID:     r.RunID,
 		Attempts:  1,
