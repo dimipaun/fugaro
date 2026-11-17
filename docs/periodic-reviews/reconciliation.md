@@ -238,7 +238,7 @@ the one schedule the rulings add is not the one it refuses.**
 | D | Question | Recommendation | The alternative, and its cost |
 | --- | --- | --- | --- |
 | **D960** | Where do a user's reports live? | **In the repository they report, at `docs/fugaro-reviews/<YYYY>/<key>.md` with the generated index beside them** (D321/D324 stand, F2). Reviewable in a pull request, greppable by the next agent, and the one place the figures are not a second copy. **Amended after the owner's ruling, 2026-11-05 (§5, E1) — not the recommendation:** the reports are generated into the project's runs bucket under `reports/`, and committing one anywhere is a separate opt-in run to the project's designated repository or folder. The answer above stands as the 2026-11-04 record. | A central store, or an orphan `fugaro-reviews` branch: unreviewed, invisible to an agent reading the default branch, and a copy that can disagree with the tree the runs came from |
-| **D961** | Do Fugaro's own reports land in this public repository? | **Yes, as D324 answered, and the first ones are written by the owner's own report run** (F14). The dogfooding is the product's best example, and it is what makes `typical-costs.yaml`'s provenance a committed report rather than a hand measurement. **Amended after the owner's ruling, 2026-11-05 (§5, E1/E5):** the reports are written into this installation's `reports/` prefix by the reports job, and landing them in this public repository is the opt-in commit run — which needs this repository to be the project's designated one (E6, Open items). | Keep them out: the feature's own example stays invisible, the website's figures keep a provenance no reader can check, and D324's rationale stays untrue |
+| **D961** | Do Fugaro's own reports land in this public repository? | **Yes, as D324 answered, and the first ones are written by the owner's own report run** (F14). The dogfooding is the product's best example, and it is what makes `typical-costs.yaml`'s provenance a committed report rather than a hand measurement. **Amended after the owner's ruling, 2026-11-05 (§5, E1/E5):** the reports are written into this installation's `reports/` prefix by the reports job, and landing them in this public repository is the opt-in commit run — which needs this repository to be the project's designated one (E6, answered by the owner 2026-11-17: §7, `reports_commit`). | Keep them out: the feature's own example stays invisible, the website's figures keep a provenance no reader can check, and D324's rationale stays untrue |
 | **D962** | What tells a user a report is due? | **`fugaro runs digest --due [--json]`: read-only, offline, no cloud, reading the committed folder in the checkout** (F16), with the due computation moved into `internal/digest` so the CLI and a report run cannot disagree (F17). **The command keeps its answer and its offline reading; the source is re-opened** after the owner's ruling of 2026-11-05 (§5, E8 and Open items): the reports sit in the bucket by default now, and whether the signal reads the bucket, the checkout's folder or both is not decided here. | Nothing, and the cadence stays honour-system prose: a user who is not asking never learns the reports exist, which is exactly the gap the owner's request is about. **Or** a cloud-side read of the runs bucket: it would make the signal need credentials, a project and a network, and it would fail in the one place the skill runs it — an agent's session in a checkout |
 | **D963** | Does the installation report it too? | **Yes: one `doctor` line, `reviews-due`, from the same reading** — an info line when the newest report is more than a period old, a warning line when a closed period has no report at all (F18). Offline, like the other checkout checks. | A separate command only: a user runs `doctor` far more often than they think about reviews, and the nudge is worth one line. A `--security`-style gate instead: it would hide a finding that is not a security one |
 | **D964** | Does the CLI commit, push or open the pull request? | **No. It writes the tree and prints the paths; the commit is the person's or their automation's** (F15). The report run already commits and opens the pull request for a user who wants that (F5). **Unchanged by the 2026-11-05 rulings, and they are its test:** the committing path is a run (§5, E5), not a flag, so `fugaro runs digest` still never commits, pushes or opens a pull request. | `--commit`/`--pr` on the CLI: a second identity that pushes to the user's repository, on whatever branch they happen to be on, with a message the tool chose; and a second implementation of what the runner's digest step already does correctly, including its finalize guard |
@@ -521,7 +521,9 @@ project repo.
 **Whose credentials read the source (answered 2026-11-05, as recommended).** Not the run's: a job account reaches
 `runs/`, `cache/` and `locks/` only, and E4's answer gives `reports/` to **no** job account. The read
 is the **starting person's launcher account**, whose bucket-wide `objectViewer` covers the prefix, and
-how the bytes reach the run is the designated-repo design item's to settle (E6).
+how the bytes reach the run was the designated-repo design item's to settle (E6) — **settled
+2026-11-17: §7, D2754, the launcher hands the objects in with the task**, under a member of its own
+so that no job account ever reads `reports/` and the reports job keeps its one writer.
 
 *Why:* the job's account holds no git credential (E4) and a commit is a reviewed change to a
 repository; the run that makes it is the one path that already has the credential, the identity and
@@ -537,7 +539,8 @@ and is not replaced by this run's.
 project-level material — the cross-repo backlog filing design already speaks of a designated
 repository (`docs/backlog/20261021-01-cross-repo-backlog-filing.md`, D29). It is listed under **Open
 items** in [implementation-plan.md](implementation-plan.md), **no config key is invented for it**,
-and **the committing task (R9) depends on it**.
+and **the committing task (R9) depends on it**. **That is the ruling as it was written, and the
+paragraph below is what became of it.**
 
 *Why:* the target is a project-level policy decision with its own questions (which repository, which
 folder, who may change it), and the reports design is not where those are settled.
@@ -992,8 +995,8 @@ numbered in this folder's own sequence rather than into the D960–D979 block, f
 gives: that block is written and reserved as this work's, four documents on `main` name it, and the
 rulings that amend decisions take none.
 
-**Checks.** **R9's live check is claimed as Check 343** — this work's own reservation from §P8's
-`Checks 340–349` row — and **344–349 stay reserved and unused**. The register itself is untouched by
+**Checks.** **R9's live check is claimed as Check 343** — the number this work's own `Checks
+340–349` row reserved and this design now claims (§P8) — and **344–349 stay reserved and unused**. The register itself is untouched by
 this design: the task that implements the check writes the register's row and its `## Check 343`
 section, under the number free at that merge, which is the register's own rule for the task that
 implements a check (`docs/gcp-live-checklist.md:586`). The register's highest **written** `## Check`

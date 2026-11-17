@@ -89,7 +89,7 @@ claim of the request against the tree and settles those.
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The recorded request (§1), what the periodic review is (§2–§7), what this design adds (§8–§9). The commands are written to the owner's answers of 2026-11-04, **and this run does not rewrite it**: §3, §5 and §6 keep their 2026-11-04 text and are read through [reconciliation.md](reconciliation.md) §5 |
-| [reconciliation.md](reconciliation.md) | Each spec claim against the code on `main`: what exists (F1–F13), what is missing or conflicts (F14–F24), the decisions **D960–D971** with the owner's answers (§3), what the 2026-11-04 refresh found (§4), **the owner's rulings of 2026-11-05 (§5, E1–E8)**, which amend D321, D322 and G2, and **the 2026-11-07 reconciliation (§6)**, which reads the folder against the failures report's design and holds F25–F34 and the decisions **D1430–D1449**. **Where it disagrees with `spec.md`, it wins** |
+| [reconciliation.md](reconciliation.md) | Each spec claim against the code on `main`: what exists (F1–F13), what is missing or conflicts (F14–F24), the decisions **D960–D971** with the owner's answers (§3), what the 2026-11-04 refresh found (§4), **the owner's rulings of 2026-11-05 (§5, E1–E8)**, which amend D321, D322 and G2, and **the 2026-11-07 reconciliation (§6)**, which reads the folder against the failures report's design and holds F25–F34 and the decisions **D1430–D1449**, and **the 2026-11-17 reconciliation (§7)**, which answers E6 (Open item 1) and holds the decisions **D2750–D2754**: the designated repository, the `reports_commit` key, policy version 10, the answer on public repositories and the launcher handing the stored bytes in. **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | **Part I** — tasks R0–R16 (the reports job's module and grants, its paused setting, the plan and the command, the aggregate, the opt-in commit and the `runs digest` default among them, and the 2026-11-17 designation's own R14–R16) with the shared-files table, the levels, **Open items** and the release slot. **Part II** — the 0.22.0 release plan over Part I's reports job and `docs/design/failure-classes.md`'s FC1–FC8: the two works' one leveling, the shared-files table over the union, every task with its commit and reviewer tier, the critical path, the release slot with its `### For operators` text, and the owner-run checks **340–343**. **Plan only when this was written; not now** — every task in both parts is approved (2026-11-07, and the 2026-11-17 designation's three with them), and what has landed since is Part I's R0–R4, R6 and R13, named with their commits in the status line above, and Part II's FC3 |
 
 ## The owner's answers, 2026-11-04
@@ -153,8 +153,9 @@ reconciliation** ([reconciliation.md](reconciliation.md) §5, E1–E8). They tak
   pull request; the read of `reports/` is the **starting person's launcher account**, since no job
   account holds that prefix. Nothing else needs a git credential.
 - **E6 — the designated project repo or folder is a separate design item**, listed under Open items;
-  the committing task depends on it and no config key is invented for it here. **Answered by the
-  owner on 2026-11-17, all four as recommended** ([reconciliation.md](reconciliation.md) §7,
+  the committing task depends on it and no config key is invented for it here. **So the ruling read
+  when it was made; answered by the owner on 2026-11-17, all four as recommended**
+  ([reconciliation.md](reconciliation.md) §7,
   D2750–D2754): one repository plus an optional folder, set by the owner in the published project
   layer alone (`reports_commit`), public allowed, and the launcher handing the stored bytes to the
   run. R9 is unblocked and R14, R15 and R16 are the tasks it adds.
