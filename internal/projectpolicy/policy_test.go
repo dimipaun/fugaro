@@ -216,15 +216,15 @@ func TestDecodeRefusesADuplicatedTopLevelKey(t *testing.T) {
 func TestDecodeRefusesBadVersion(t *testing.T) {
 	ahead := Version + 1
 	for name, raw := range map[string]string{
-		"no version":     `{"budget": {"mode": "observe"}}`,
-		"version 0":      `{"version": 0}`,
+		"no version":      `{"budget": {"mode": "observe"}}`,
+		"version 0":       `{"version": 0}`,
 		"a newer version": fmt.Sprintf(`{"version": %d}`, ahead),
-		"a string":       `{"version": "1"}`,
-		"a float":        `{"version": 1.5}`,
-		"a bool":         `{"version": true}`,
-		"not an object":  `[1, 2]`,
-		"a bare number":  `7`,
-		"truncated json": `{"version": 1`,
+		"a string":        `{"version": "1"}`,
+		"a float":         `{"version": 1.5}`,
+		"a bool":          `{"version": true}`,
+		"not an object":   `[1, 2]`,
+		"a bare number":   `7`,
+		"truncated json":  `{"version": 1`,
 	} {
 		p, found, err := Decode([]byte(raw))
 		if err == nil || p != nil {
