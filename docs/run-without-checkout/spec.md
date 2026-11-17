@@ -70,15 +70,21 @@ has nothing to do with the console: `checkoutParse` returns `nil` both when ther
 leaves the result zero). An operator in a checkout of `X`, on a branch whose tree predates the file,
 is told today (by the merged refusal) to "run it from `X`'s checkout" — which is where they are.
 
-**Source 3 is the last resort, and the narrowing that stood beside it is empty on this tree.** For a
-repository whose provider no shared job serves there is nothing to learn: step 4 above keeps the
-per-repository job whatever the repository's `fugaro.yaml` says, and the provider is known without a
-checkout — `repoSlug` has already refused the launch if the local config does not name it — so such a
-launch proceeds on the per-repository job with **no read and no credential**, which is the same answer
-the checkout path gives for the same repository. **No provider that predicate separates is left to
-reach it**: `infra.SharedJobProvider` admits `bitbucket` beside `github` since docs/shared-jobs-default's
-I1, so a Bitbucket launch is no longer the case this paragraph describes — one without a checkout
-makes the read — and the shape stands only for a provider a later list does not serve. (Narrowing,
+**Source 3 is the last resort, and Bitbucket has left it.** For a repository whose provider no shared
+job serves there is nothing to learn: step 4 above keeps the per-repository job whatever the
+repository's `fugaro.yaml` says, and the provider is known without a checkout — `repoSlug` has already
+refused the launch if the local config does not name it — so such a launch proceeds on the
+per-repository job with **no read and no credential**, which is the same answer the checkout path gives
+for the same repository. **No provider that predicate separates is left to reach it**:
+`infra.SharedJobProvider` admits `bitbucket` beside `github` since docs/shared-jobs-default's I1, so a
+Bitbucket launch is no longer the case this paragraph describes — and the read does not take it either,
+because **the read is GitHub's**: the mint is signed as the repository's App, the launcher takes that
+ID from `repos.<repo>.github_app_id` (§5, and reconciliation O1 is the field's absence), and a
+Bitbucket repository's local entry records none. `serviceReadTarget` refuses such a launch before
+anything is read, so **a Bitbucket launch from outside its checkout is refused today**, in
+`errNoGitHubAppID`'s own words — the missing value named, and the repository's checkout as the way out
+— which is neither a read deciding it nor the per-repository job this arm gave such a launch before I1.
+That fallback being gone is a behaviour change of its own, not a reading of this design. (Narrowing,
 D901.)
 
 **Source 3 is also bounded by the installation's own opt-in, and that is the cost of the owner's answer
@@ -348,7 +354,7 @@ own identity can make through the installation's credentials service, or with th
 | --- | --- | --- |
 | From `X`'s checkout, `fugaro.yaml` in the tree | decided from the tree | same |
 | From `X`'s checkout, tree has no file, ref does | refused, one way out and it is where the operator is | decided from the checkout's objects at the ref |
-| Anywhere, no checkout of `X`, Bitbucket, profiles published | refused | decided by the read through the service, at the ref: the provider narrowing this row recorded is empty since docs/shared-jobs-default's I1 admitted `bitbucket` to the list a shared job serves (where the read cannot be made, the refusal of the row below stands) |
+| Anywhere, no checkout of `X`, Bitbucket, profiles published | refused | **refused, and the §5 read cannot be made for it**: the provider narrowing this row recorded is empty since docs/shared-jobs-default's I1 admitted `bitbucket` to the list a shared job serves, and the mint is signed as the repository's App — a Bitbucket entry records no `repos.<repo>.github_app_id` — so the launcher refuses before reading anything, naming the missing value and `X`'s checkout. Falling back to the per-repository job this launch ran on before I1 is a behaviour change, not a reading of this design |
 | Anywhere, no checkout of `X`, GitHub, profiles published, human session, installation has a credentials service | refused | decided by the read through the service, at the ref |
 | The same, installation has **no** credentials service | refused | refused, unchanged, naming the checkout |
 | The same, the service is there but its mint cannot read a file (not redeployed after A0) | refused | refused, naming the service and the redeploy |
@@ -356,7 +362,7 @@ own identity can make through the installation's credentials service, or with th
 | Anywhere, no checkout, **no profiles published** | launch proceeds | unchanged |
 | The console's launch of the repository it is showing | refused (broken GUI) | decided by the read at the ref, where the installation has a service |
 | `--retry` / `--pr` outside the checkout | refused | the run's recorded job |
-| The read cannot be made (no service, network, not a person, repository not held) | refused | refused, the cause and the way out named |
+| The read cannot be made (no service, network, not a person, repository not held, no App recorded for it) | refused | refused, the cause and the way out named |
 
 ## 12. Threat model
 
