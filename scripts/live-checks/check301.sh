@@ -38,7 +38,10 @@
 #                the unit names (brew-style), the daemon notices and exits so
 #                launchd or systemd starts the new one, and nothing restarts it.
 #                On a machine whose unit is not installed yet it first measures
-#                the boundary: `fugaro update` never installs one.
+#                the boundary D2700 moved: an agent-marked `fugaro update` writes
+#                none there, and the same command at your own terminal installs
+#                the first unit and loads it, so the half then goes on to read
+#                the handover on the machine it just gave a unit to.
 #   update       T7's half: `fugaro update` re-renders the unit when this
 #                release's template differs, a second run writes nothing and
 #                reloads nothing, and an agent-marked run writes no unit.
@@ -48,12 +51,14 @@
 # `FACT <name>: PASS|FAIL|INFO — <what>` line in the block, and the run ends
 # with `CHECK 301 RESULT ... END (exit <code>)`. The steps only you can take are
 # printed once, with their exact command, and recorded in the block as their own
-# row: the reboot (`human-reboot`), the install of the unit (`human-install`,
-# which the command itself confirms by asking you to type the word `install` —
-# no flag stands in for it, so this script never runs it for you), and the
-# brew-style upgrade (`human-upgrade`). Each is verified by a reading rather
-# than by your word: the reboot by the boot identity, the install by the unit's
-# file and the manager, the upgrade by the version at the path the unit names.
+# row: the reboot (`human-reboot`), the install of the unit (`human-install`:
+# `fugaro orchestrator install` asks you to type the word `install` and no flag
+# stands in for it, and since D2700 `fugaro update` at your own terminal installs
+# the unit of a machine that is missing one — this script runs neither of them
+# for you), and the brew-style upgrade (`human-upgrade`). Each is verified by a
+# reading rather than by your word: the reboot by the boot identity, the install
+# by the unit's file and the manager, the upgrade by the version at the path the
+# unit names.
 #
 # Needs:      bash, mktemp, awk, sed and python3 on PATH. No credential is read,
 #             printed or needed: every reading of the cloud goes through your own
@@ -65,12 +70,14 @@
 #             it. The upgrade half belongs on a throwaway machine — it replaces
 #             the fugaro at the path your unit names — so run it there, not on
 #             the Mac you care about.
-# Costs:      `upgrade` runs `fugaro update --yes` once (and only on a machine
-#             with no unit, to measure the boundary), `update` runs it three
-#             times: an agent-marked run, the run itself, and a second one to
-#             prove it is quiet. `fugaro orchestrator run --once` is run twice as
-#             the second-instance probe and is refused both times. No model call
-#             and no run of your own is launched by this check.
+# Costs:      `upgrade` runs `fugaro update --yes` once, and twice on a machine
+#             with no unit — the agent-marked run and the person's own, which is
+#             the boundary D2700 moved and the install D2700 puts there. `update`
+#             runs it three times: an agent-marked run, the run itself, and a
+#             second one to prove it is quiet. `fugaro orchestrator run --once`
+#             is run twice as the second-instance probe and is refused both
+#             times. No model call and no run of your own is launched by this
+#             check.
 # Runs:       by YOU. No agent runs any step of it, and a shell that arrived
 #             with a coding agent's marker is refused rather than measured.
 # Cleanup:    each phase removes the run's own scratch directory; the state file
@@ -342,7 +349,29 @@ run_bounded() {
   shift 2
   BOUNDED_TIMED_OUT=no
   "$@" >>"$SCRATCH/$key.out" 2>>"$SCRATCH/$key.err" &
-  local pid=$! waited=0 limit=$((secs * 20))
+  bounded_wait "$!" "$secs"
+}
+
+# run_bounded_here SECONDS KEY CMD...: run_bounded with this shell's own standard
+# input left on the command. A background job in a script has its standard input
+# on /dev/null before any redirection the caller writes, and the door measured at
+# D2700's boundary reads exactly that: it installs the unit where a person is at
+# the run's own standard input. A probe that went through the hole could only read
+# the hole, so the two runs of that reading are started with this shell's stdin —
+# which is the terminal `[ -t 0 ]` asks about — and an explicit redirection wins
+# over the /dev/null default.
+run_bounded_here() {
+  local secs=$1 key=$2
+  shift 2
+  BOUNDED_TIMED_OUT=no
+  "$@" >>"$SCRATCH/$key.out" 2>>"$SCRATCH/$key.err" <&0 &
+  bounded_wait "$!" "$secs"
+}
+
+# bounded_wait PID SECONDS: the poll and the kill, shared by the two runners
+# above. Sets BOUNDED_STATUS and BOUNDED_TIMED_OUT.
+bounded_wait() {
+  local pid=$1 secs=$2 waited=0 limit=$((secs * 20))
   while kill -0 "$pid" 2>/dev/null; do
     [ "$waited" -lt "$limit" ] || break
     sleep 0.05
@@ -364,6 +393,13 @@ run_bounded() {
 # the run instead of letting the caller record what happened.
 bounded_ok() {
   run_bounded "$@"
+  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" -ne 0 ]; then return 1; fi
+  return 0
+}
+
+# bounded_ok_here SECONDS KEY CMD...: bounded_ok over run_bounded_here.
+bounded_ok_here() {
+  run_bounded_here "$@"
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" -ne 0 ]; then return 1; fi
   return 0
 }
@@ -760,9 +796,10 @@ plan_upgrade() {
 check301 upgrade — the plan, and nothing of it is run in a dry run:
   1. read the platform, the release and the login unit; record the version at the
      path the unit names, the unit's hash and the daemon's pid
-  2. on a machine whose unit is not installed yet: run 'fugaro update --yes' and
-     read that it wrote no unit — the boundary T7 keeps — then hand the install
-     to you
+  2. on a machine whose unit is not installed yet: run 'fugaro update --yes' with an
+     agent's marker and read that it wrote no unit, then run it again here where
+     you are at the terminal and read D2700's rule — the first unit installed and
+     loaded — so step 3 finds a machine with a unit either way
   3. print the one thing you do: replace the binary the unit names, brew-style
      ('brew upgrade fugaro', or the release over that path)
   4. read the handover: the version at the unit's path moved, the manager reports
@@ -1025,24 +1062,61 @@ phase_upgrade() {
   case "$UNIT_STATE" in
   none)
     if [ "$measuring" = yes ]; then
-      fact never-installs FAIL "the unit is gone from $UNIT_PATH, and the upgrade half was waiting to read a handover on it: nothing can be measured on a machine with no unit"
-      stop "the login unit at $UNIT_PATH was removed while the upgrade half was waiting: run 'fugaro orchestrator install' and start this half again"
+      fact handover FAIL "the unit is gone from $UNIT_PATH, and the upgrade half was waiting to read a handover on it: nothing can be measured on a machine with no unit"
+      stop "the login unit at $UNIT_PATH was removed while the upgrade half was waiting: run 'fugaro update' in your own terminal (on a machine with no unit it installs the first one) and start this half again"
     fi
-    fact unit INFO "there is no login unit on this machine (${UNIT_PATH:+$UNIT_PATH does not exist}), which is what this half reads the boundary on"
-    if ! bounded_ok 600 never-installs fugaro update --yes; then
-      fact never-installs FAIL "the unit is not installed here and 'fugaro update --yes' exited $BOUNDED_STATUS: the boundary reading needs the command to converge (or to report a settled installation) and this run did neither. Its last lines: $(tail -n 5 "$SCRATCH/never-installs.out" "$SCRATCH/never-installs.err" 2>/dev/null | tr '\n' ' ')"
+    fact unit INFO "there is no login unit on this machine (${UNIT_PATH:+$UNIT_PATH does not exist}), which is where this half reads D2700's boundary before anything else: 'fugaro update' installs the first unit where a person is at the terminal, and writes none where one is not"
+    # Both runs below keep this shell's own standard input (bounded_ok_here), and
+    # the door decides whether a person is at it from the run's own: a script's
+    # background job has its standard input on /dev/null, so a probe that asked
+    # D2700's question through that hole could only ever read the hole.
+    if [ -t 0 ]; then
+      fact terminal PASS "this check's standard input is a real terminal and the two runs below are started with it, so they are runs a person is at: D2700's install reading is the second of them — 'fugaro update' writes this machine's first login unit and loads it"
+    else
+      fact terminal INFO "this check's standard input is not a terminal (it is redirected), so the runs below are runs nobody is at: they must write no unit either, which is the fence F48 kept, and the install reading cannot be made from here — run this phase from your own terminal window for it"
+    fi
+    # The fence first, because it is the reading that needs the machine left as
+    # it is: a run a coding agent's session starts writes no unit, whatever the
+    # door would otherwise do.
+    if ! bounded_ok_here 600 boundary-agent env CLAUDECODE=1 fugaro update --yes; then
+      fact boundary-agent FAIL "fugaro update --yes exited $BOUNDED_STATUS with CLAUDECODE=1 set on a machine with no login unit: the agent-marked run did not finish, so what it wrote cannot be read. Its last lines: $(tail -n 5 "$SCRATCH/boundary-agent.out" "$SCRATCH/boundary-agent.err" 2>/dev/null | tr '\n' ' ')"
     else
       read_unit unit-status-2
-      if [ "$UNIT_STATE" = none ]; then
-        fact never-installs PASS "this machine has no login unit and 'fugaro update --yes' (exit 0) wrote none: update never installs a unit, which is the boundary T7 keeps — 'fugaro orchestrator install' (and fugaro setup) is the door that writes the first one"
+      if [ "$UNIT_STATE" != none ]; then
+        fact boundary-agent FAIL "an agent-marked run of 'fugaro update --yes' installed a login unit at $UNIT_PATH on a machine that had none: a coding agent's session must write no unit, and this is the marker rule internal/agentenv's G2 is"
+      elif [ -t 0 ]; then
+        fact boundary-agent PASS "an agent-marked run of 'fugaro update --yes' (CLAUDECODE=1, exit 0) at this terminal wrote no login unit at $UNIT_PATH and left the machine with none: a session a person cannot answer at installs nothing, which is the fence D2700 keeps"
       else
-        fact never-installs FAIL "'fugaro update --yes' wrote a login unit at $UNIT_PATH on a machine that had none: update installed a unit, which T7's ruling refuses"
+        fact boundary-agent PASS "an agent-marked run of 'fugaro update --yes' (CLAUDECODE=1, exit 0) wrote no login unit at $UNIT_PATH, and this check's own terminal is not a person's either, so this reading cannot tell the marker rule from the hole every unattended run has: run this phase from your own terminal window to read the marker itself"
       fi
     fi
-    fact handover INFO "nothing to hand over: this machine has no login unit, so the binary at the path a unit would name was never replaced and no daemon was restarted here"
-    fact human-install INFO "now install the unit here, in your own terminal, once: fugaro orchestrator install (it asks you to type the word install)"
-    fact state INFO "no state file is written: this phase stopped before it had a unit to read a handover on"
-    stop "no login unit is installed on this machine, and 'fugaro update' writes none: run 'fugaro orchestrator install' (typing the word install) and then run this phase again"
+    if ! bounded_ok_here 900 boundary fugaro update --yes; then
+      fact boundary FAIL "fugaro update --yes exited $BOUNDED_STATUS on a machine with no login unit: D2700's rule is read from a run that converges (or that reports a settled installation), and this run did neither. Its last lines: $(tail -n 5 "$SCRATCH/boundary.out" "$SCRATCH/boundary.err" 2>/dev/null | tr '\n' ' ')"
+    else
+      read_unit unit-status-3
+      if [ "$UNIT_STATE" = none ]; then
+        if [ -t 0 ]; then
+          fact boundary FAIL "'fugaro update --yes' (exit 0) wrote no login unit at $UNIT_PATH on a machine that had none, and a person was at this run: D2700 makes this the run that installs the first unit and loads it, so 'fugaro orchestrator install' is not a step you owe — this release carries T7's boundary, which D2700 supersedes"
+        else
+          fact boundary PASS "'fugaro update --yes' (exit 0) with no terminal at it wrote no login unit at $UNIT_PATH and loaded nothing: the write happens only where a person is, which is the fence F48 kept"
+        fi
+      else
+        read_manager manager-after-boundary
+        if [ -t 0 ] && [ "$MANAGER_STATE" = running ]; then
+          fact boundary PASS "'fugaro update --yes' at this terminal installed the login unit at $UNIT_PATH and loaded it: $(manager_words) — one command with nothing typed at it, which is D2700"
+        elif [ -t 0 ]; then
+          fact boundary FAIL "'fugaro update --yes' installed the login unit at $UNIT_PATH and $(manager_words): the install loads the unit it writes, so the service has to be running under it. Read the manager's own report and the daemon's log"
+        else
+          fact boundary FAIL "'fugaro update --yes' installed a login unit at $UNIT_PATH with no terminal at it: the write happens only where a person is at the terminal, and this run was not one"
+        fi
+      fi
+    fi
+    if [ "$UNIT_STATE" = none ]; then
+      fact handover INFO "nothing to hand over: this machine has no login unit, so the binary at the path a unit would name was never replaced and no daemon was restarted here"
+      fact human-install INFO "run 'fugaro update' in your own terminal window, once: on a machine with no login unit it installs the first one and loads it (D2700), and this half then reads the handover on it"
+      fact state INFO "no state file is written: this phase stopped before it had a unit to read a handover on"
+      stop "there is no login unit at $UNIT_PATH and the run above left the machine without one: run 'fugaro update' in your own terminal window and then run this phase again"
+    fi
     ;;
   unknown)
     fact unit FAIL "fugaro orchestrator status did not answer a state this check reads: its first line is '$UNIT_NOTE'"
@@ -1172,8 +1246,8 @@ phase_update() {
   local program hash before_pid state_before
   case "$UNIT_STATE" in
   none)
-    fact unit INFO "the login unit is not installed at $UNIT_PATH, so there is nothing for 'fugaro update' to re-render here. Install it ('fugaro orchestrator install', typing the word install) and run this phase again"
-    stop "no login unit is installed at $UNIT_PATH: 'fugaro update' never installs one, so this phase has nothing to measure — install it first"
+    fact unit INFO "the login unit is not installed at $UNIT_PATH, so there is nothing for 'fugaro update' to re-render here. One command puts the first one there since D2700: run 'fugaro update' in your own terminal window (the upgrade half is where that install is read) and then run this phase again"
+    stop "no login unit is installed at $UNIT_PATH: run 'fugaro update' in your own terminal window (on a machine that has none it installs the first unit and loads it, which is D2700) and then run this phase again"
     ;;
   unknown)
     fact unit FAIL "fugaro orchestrator status did not answer a state this check reads: its first line is '$UNIT_NOTE'"
@@ -1368,7 +1442,7 @@ block_keys() {
   case "$PHASE" in
   start) list="phase platform installation agent release xtrace unit daemon state human-install human-reboot restore" ;;
   after-reboot) list="phase platform installation release unit boot daemon lease second-refuses state human-next restore" ;;
-  upgrade) list="phase platform installation release unit daemon never-installs version handover unit-kept lease state human-install human-upgrade human-next restore" ;;
+  upgrade) list="phase platform installation release unit daemon boundary-agent terminal boundary version handover unit-kept lease state human-install human-upgrade human-next restore" ;;
   update) list="phase platform installation agent release xtrace terminal unit before boundary update re-render quiet lease state restore" ;;
   forget) list="phase platform installation state restore" ;;
   esac

@@ -105,7 +105,7 @@ FAKE_PLATFORM=linux
 # it.
 START_KEYS=(phase platform installation agent release xtrace unit daemon state human-install human-reboot restore)
 AFTER_KEYS=(phase platform installation release unit boot daemon lease second-refuses state human-next restore)
-UPGRADE_KEYS=(phase platform installation release unit daemon never-installs version handover unit-kept lease state human-install human-upgrade human-next restore)
+UPGRADE_KEYS=(phase platform installation release unit daemon boundary-agent terminal boundary version handover unit-kept lease state human-install human-upgrade human-next restore)
 UPDATE_KEYS=(phase platform installation agent release xtrace terminal unit before boundary update re-render quiet lease state restore)
 FORGET_KEYS=(phase platform installation state restore)
 
@@ -128,9 +128,12 @@ if [ -n "${CLAUDECODE:-}" ]; then agent=yes; fi
 render_unit() {
   cp "$D/unit.new" "$(cat "$D/unit.path")"
   # What the manager does after a re-render: the daemon running is a new
-  # process, so the pid moves. The unit's text becomes this release's template,
-  # which is what `fugaro orchestrator status` then reports.
+  # process, so the pid moves, and the unit is loaded, so the manager reports it
+  # running — which is what an install of a first unit does too (D2700: the step
+  # installs the unit and loads it). The unit's text becomes this release's
+  # template, which is what `fugaro orchestrator status` then reports.
   printf '%s\n' "$(($(cat "$D/pid") + 1))" >"$D/pid"
+  printf 'running\n' >"$D/manager.state"
   printf 'the login unit at %s is installed and current (fake)\n' "$(cat "$D/unit.path")" >"$D/unit.status"
 }
 
@@ -195,7 +198,11 @@ update)
     if ! cmp -s "$D/unit.new" "$(cat "$D/unit.path")"; then render_unit; fi
     ;;
   install-unit)
-    render_unit
+    # D2700 installs the unit where a person is at the terminal, and F48 fences
+    # the write: a run nobody is at writes none whatever this mode says, which
+    # is what `[ -t 0 ]` asks of the standard input this fake inherits from the
+    # check that ran it.
+    if [ -t 0 ]; then render_unit; fi
     ;;
   *)
     printf 'fake fugaro: unknown update mode\n' >&2
@@ -779,37 +786,88 @@ case_second_instance_other_holder() {
   expect_contains "$out" "for another holder (run-zzz) than the listing read (run-abc)" "other holder: the mismatch"
 }
 
-# case_upgrade_boundary: on a machine with no unit, `fugaro update` writes none
-# — T7's boundary — and the check hands the install to the person instead of
-# pretending to have measured a handover.
+# case_upgrade_boundary: on a machine with no unit, the check reads D2700's
+# boundary before it reads anything else — an agent-marked `fugaro update` writes
+# none, and the same command at the person's own terminal installs the first unit
+# and loads it — so the machine has a unit afterwards and the half goes on to
+# record the version at the path that unit names.
 case_upgrade_boundary() {
   setup_case upgrade-boundary
   write_status "$dir" none
   rm -f "$dir/unit/fugaro-orchestrator.service"
+  printf 'absent\n' >"$dir/state/manager.state"
+  printf 'install-unit\n' >"$dir/state/update.mode"
+  RUN301_TTY=yes
   run301 upgrade
   expect_status "$status" 2 "boundary: the exit"
   expect_block_keys "boundary" "${UPGRADE_KEYS[@]}"
-  expect_fact never-installs PASS "boundary: the row"
-  expect_contains "$out" "wrote none" "boundary: what update did"
-  expect_fact human-install INFO "boundary: the install to run"
-  expect_fact handover INFO "boundary: nothing to hand over"
+  expect_fact boundary-agent PASS "boundary: the marker rule on a machine with no unit"
+  expect_fact terminal PASS "boundary: the person at the terminal"
+  expect_fact boundary PASS "boundary: the row"
+  expect_contains "$out" "installed the login unit at" "boundary: what update did"
+  expect_contains "$out" "one command with nothing typed at it, which is D2700" "boundary: the rule the row names"
+  expect_fact daemon PASS "boundary: the daemon the install left running"
+  expect_fact human-upgrade INFO "boundary: the half it now waits for"
+  expect_state_key stage pending-upgrade "boundary"
+  expect_state_key version 0.24.0 "boundary"
+  expect_state_key unit "$dir/unit/fugaro-orchestrator.service" "boundary"
+}
+
+# case_upgrade_boundary_no_install: the mutation of D2700's rule. A run at the
+# person's own terminal that writes no unit on a machine that has none is T7's
+# boundary, the one D2700 supersedes, and the row has to say so instead of
+# passing.
+case_upgrade_boundary_no_install() {
+  setup_case upgrade-no-install
+  write_status "$dir" none
+  rm -f "$dir/unit/fugaro-orchestrator.service"
+  printf 'absent\n' >"$dir/state/manager.state"
+  RUN301_TTY=yes
+  run301 upgrade
+  expect_status "$status" 2 "boundary not installed: the exit"
+  expect_fact boundary FAIL "boundary not installed: the row"
+  expect_contains "$out" "wrote no login unit at" "boundary not installed: what happened"
+  expect_contains "$out" "a person was at this run" "boundary not installed: who was there"
+  expect_fact human-install INFO "boundary not installed: the command to run"
   if [ -e "$(state_file)" ]; then
-    fail "boundary: it recorded a state file with no unit to read a handover on"
+    fail "boundary not installed: it recorded a state file with no unit to read a handover on"
   fi
 }
 
-# case_upgrade_boundary_writes_unit: the mutation of that boundary. An update
-# that installs a login unit on a machine that had none is exactly what T7
-# refuses, and the row has to say so.
-case_upgrade_boundary_writes_unit() {
-  setup_case upgrade-installs
+# case_upgrade_boundary_no_terminal: no person at this check's terminal, so the
+# run it makes is one nobody is at: D2700 installs only where a person is, and
+# the row reads that fence rather than pretending to have made the install
+# reading. The mode asks for an install, and the fake writes none without a
+# terminal — which is the F48 fence itself.
+case_upgrade_boundary_no_terminal() {
+  setup_case upgrade-boundary-no-tty
   write_status "$dir" none
   rm -f "$dir/unit/fugaro-orchestrator.service"
+  printf 'absent\n' >"$dir/state/manager.state"
   printf 'install-unit\n' >"$dir/state/update.mode"
   run301 upgrade
-  expect_status "$status" 2 "boundary broken: the exit"
-  expect_fact never-installs FAIL "boundary broken: the row"
-  expect_contains "$out" "update installed a unit" "boundary broken: what happened"
+  expect_status "$status" 2 "boundary without a terminal: the exit"
+  expect_fact terminal INFO "boundary without a terminal: the row"
+  expect_fact boundary PASS "boundary without a terminal: the fence"
+  expect_contains "$out" "the write happens only where a person is" "boundary without a terminal: what it read"
+  expect_fact human-install INFO "boundary without a terminal: the command to run"
+}
+
+# case_upgrade_boundary_agent_writes_unit: the marker rule broken. An
+# agent-marked run that installs a login unit on a machine that had none is the
+# fence D2700 keeps and the one internal/agentenv's G2 rules on.
+case_upgrade_boundary_agent_writes_unit() {
+  setup_case upgrade-agent-installs
+  write_status "$dir" none
+  rm -f "$dir/unit/fugaro-orchestrator.service"
+  printf 'absent\n' >"$dir/state/manager.state"
+  printf 'install-unit\n' >"$dir/state/update.mode"
+  : >"$dir/state/agent-writes-unit"
+  RUN301_TTY=yes
+  run301 upgrade
+  expect_status "$status" 2 "marker broken: the exit"
+  expect_fact boundary-agent FAIL "marker broken: the row"
+  expect_contains "$out" "a coding agent's session must write no unit" "marker broken: what happened"
 }
 
 # case_upgrade_waits_for_the_human: the check never replaces a binary itself.
@@ -977,7 +1035,9 @@ case_update_not_terminal() {
   expect_contains "$out" "standard input is not a terminal" "no terminal: the row says why"
 }
 
-# case_update_no_unit: nothing to re-render, and update never installs one.
+# case_update_no_unit: nothing to re-render here, and since D2700 the command
+# that installs the first unit is `fugaro update` itself at the person's own
+# terminal — which is what this phase hands over instead of running it.
 case_update_no_unit() {
   setup_case update-no-unit
   write_status "$dir" none
@@ -986,7 +1046,7 @@ case_update_no_unit() {
   run301 update
   expect_status "$status" 2 "update with no unit: the exit"
   expect_fact unit INFO "update with no unit: the row"
-  expect_contains "$errtext" "never installs one" "update with no unit: why it stops"
+  expect_contains "$errtext" "installs the first unit and loads it, which is D2700" "update with no unit: why it stops"
   expect_absent "$(cat "$dir/state/calls")" "fugaro update" "update with no unit: it ran an update anyway"
 }
 
@@ -1121,7 +1181,9 @@ t case_after_reboot_two_holders
 t case_second_instance_not_refused
 t case_second_instance_other_holder
 t case_upgrade_boundary
-t case_upgrade_boundary_writes_unit
+t case_upgrade_boundary_no_install
+t case_upgrade_boundary_no_terminal
+t case_upgrade_boundary_agent_writes_unit
 t case_upgrade_waits_for_the_human
 t case_upgrade_handover
 t case_upgrade_binary_not_moved
