@@ -146,12 +146,18 @@ layer.profiles.web.image.key_files
 layer.profiles.web.image.node
 layer.profiles.web.image.setup
 layer.profiles.web.image.tools
+layer.profiles.web.rebuild.check
+layer.profiles.web.rebuild.lockfiles
+layer.profiles.web.rebuild.max_age
 layer.profiles.web.rebuild.paths
+layer.profiles.web.resources.cpu
+layer.profiles.web.resources.memory
 layer.security.always_level_3
 layer.security.patterns.secret.category
 layer.security.patterns.secret.match
 layer.security.patterns.secret.name
 mailbox.keychain_item
+max_parallel
 mobile_allow.operator.address
 mobile_allow.operator.role
 mobile_allow.operator.uid
@@ -197,6 +203,8 @@ providers.conformance.price_policy
 providers.conformance.require_zdr
 providers.conformance.route_fee_pct
 providers.conformance.secret
+reports_commit.dir
+reports_commit.repo
 repos.acme/web.claude_accounts
 repos.acme/web.credentials_service_ready
 repos.acme/web.vertex
@@ -215,6 +223,7 @@ subscription_spread
 verifier_accounts
 workflow_secrets.CONFORMANCE.allow_data_to
 workflow_secrets.CONFORMANCE.proxy
+workflows.web.ab.reviewer_arm
 workflows.web.base
 workflows.web.cache
 workflows.web.checkout

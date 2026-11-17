@@ -1689,39 +1689,45 @@ spawn yet**: it is the data behind the backlog screen (CLI 0.11.0), and the
 section is here so the screen that follows has a shape read off the code rather
 than assumed from a design.
 
-It is read-only, and in the strongest sense this document uses: the rows come
-from the Markdown item files under the folder `--dir` names (`docs/backlog/` by
-default), never from a network, a database, a credential or an installation,
-and `list` **writes nothing at all**. The command that writes is
-`fugaro backlog index`, and it is not in the console's set: it rewrites the
-folder's own `README.md`, which is derived state a pull request regenerates
-rather than merges (rigor modes D26–D28).
+**The backlog it reads is the project's own work list, in the project's
+database** (the orchestrator graph estimates plan, B1, D2715): the spec-less
+work items of the orchestrator's backlog node, `orchestrator/<project>/backlog`
+(D2735), together with the spec-less items a session queued in the project's
+state node — the same list to a reader, which is why one document carries both
+and says in each row which of the two nodes it came from. An item that carries
+a spec belongs to the plan that spec names and is not in this document.
+`docs/backlog/`, the Markdown folder the backlog was before it became the work
+items, is history (D2716): the command that reads it is `fugaro backlog index`,
+which is not in the console's set — it rewrites the folder's own `README.md`,
+which is derived state a pull request regenerates rather than merges (rigor
+modes D26–D28).
 
-| Field | Type | omitempty | Availability state |
-|---|---|---|---|
-| `dir` | string | no | the folder the items were read from, exactly as `--dir` named it (`docs/backlog` by default). The document echoes the argument rather than resolving it, so a screen can show which folder it is looking at |
-| `items` | `[]backlogRow` | no | `[]` when the folder holds no item. One row per item, in the index's own order — sorted by `id`, which is to say by the day the item was filed |
-| `open` | int | no | the open items' count: the first figure of the index's count line |
-| `closed` | int | no | the closed items' count: the second figure |
-| `dropped` | int | no | the dropped items' count: the third figure. The three are the index's own figures, so a screen's totals and the Markdown's count line cannot disagree |
-
-`backlogRow` is one item as the index lists it. The names are the index's own
-columns, so the Markdown and the document cannot drift apart about what a row
-says.
+**It is a cloud read, and `list` writes nothing at all.** Both nodes are read
+with the operator's own credential, in the selected project, so this command
+carries the cloud flags every other cloud read carries (§5.1 rule 6's argv
+shape, §8): the console must pass `--project <name>` on every spawn. Nothing
+here is authorised by an item's text, and no row is a URL a screen may link.
 
 | Field | Type | omitempty | Note |
 |---|---|---|---|
-| `id` | string | no | the item's id: the day it was filed (`YYYYMMDD`) and a two-digit sequence that day, so two pull requests filing at once mint two ids rather than one conflict. It is also the first two segments of the file's name, so an id resolves to a file without a lookup |
-| `title` | string | no | the filer's own words, one line. **Untrusted display text**: a filer writes it, nothing is authorised by it, and a screen renders it as text |
-| `mode` | string | no | the resolved mode the filing run ran under; `"none"` for an item a person filed by hand, which is not a mode the CLI knows — it is the absence of one |
-| `area` | string | no | the matched areas, strictest first, comma-separated; `"project"` or `"repo"` for an item about a whole layer |
-| `status` | string | no | `"open"`, `"closed"` or `"dropped"` — the three words the format allows and no fourth |
-| `filed_by` | string | no | the filing run's launcher, or the login of the person who filed it by hand. **Untrusted display text**, like `title` |
-| `filed_in` | string | no | `"run:<run id>"`, `"pr:<number>"` or `"hand"`. The third is a person's filing, which has no run and no recorded pull request behind it and says so rather than spelling a run id nobody minted |
-| `date` | string | no | the item's own `date` field, a UTC day (`YYYY-MM-DD`), never a timestamp and never a clock read at render time — so the same folder renders to the same bytes |
-| `path` | string | no | the file the row was read from, `<dir>/<id>-<slug>.md`. It is a path in the checkout the CLI was run in, not a URL: a screen must not link it as one |
+| `version` | int | no | the document's version, `1` (`backlogOutputVersion`): a field's meaning never changes inside one, and a rename is a new version |
+| `kind` | string | no | `"backlog"`, the document's own name — what a screen switches on when it holds a document it did not ask for |
+| `project` | string | no | the project the two nodes were read in, as this machine's config names it (the newest `--project` value, the selected one or the name minted from the project ID, §8). It is the name a screen shows, not an ID |
+| `waiting` | int | no | how many of the rows are **unfinished** work no person has approved: a filed item arrives queued and unapproved and **nothing runs it until a person approves it** (D2717), so this is the figure a screen shows as the work waiting on the person. A row whose phase is `done` or `cancelled` is **not** counted, and that is not a rounding: the state model refuses an approval on a terminal item, and the last few finished items stay in the node's work list as a record, so counting them would print a figure that never clears and no action can change. It is a count of the document rather than a second reading |
+| `items` | `[]backlogRow` | no | `[]` when neither node holds a spec-less item — never absent and never `null`, so a screen renders an empty backlog without a second guess. One row per item, sorted by `id`, which is to say by the day the item was filed |
 
-**Flags** (`newBacklogListCmd`): `--dir`, `--json`.
+`backlogRow` is one item of the listing.
+
+| Field | Type | omitempty | Note |
+|---|---|---|---|
+| `id` | string | no | the item's id: the day it was filed (`YYYYMMDD`) and a two-digit sequence that day, so two filers a moment apart mint two ids rather than one overwriting the other. `fugaro backlog add` mints it from the ids the node already holds, and the same id names the item everywhere — a person's approval of it included |
+| `title` | string | no | the filer's own words, one line. **Untrusted display text**: a filer writes it, nothing is authorised by it, and a screen renders it as text |
+| `phase` | string | no | the item's phase, spelled as the state model spells it (`queued` for every item filed by `fugaro backlog add`, and one of the later phases for an item a run has moved). It is the item's own record, never a phase derived from a run this read did not look at |
+| `repo` | string | no | the repository the item is about, `owner/name`, as the item carries it |
+| `node` | string | no | `"backlog"` or `"state"`: which node of the project's own subtree the row was read from (`orchestrator.BacklogNode` or `orchestrator.StateNode`). A screen may group by it, and it is the one fact that tells a row filed into the backlog from one a session queued in the main node |
+| `approved` | bool | no | whether a person has approved the item (D2717). **It is the person's own word and not a property of the text**: an unapproved item is one nothing will run, and a screen must not read this as "will run later" |
+
+**Flags** (`newBacklogListCmd`): `--json`, plus the cloud flags.
 
 ### 6.12 `fugaro plan status --json` (**the CLI release after 0.11.4**)
 
@@ -2813,7 +2819,10 @@ the document and `writeSettingsWriteDoc` prints it. Cited by symbol, not by
 line, for §6.11's reason. **The console spawns it since the settings-edit plan's
 C3** (operation `settings.edit`, design §5.1 rule 12), and it is **not** the
 console's read of the settings: §6.19's document is the table the pencil is
-drawn from, and this one is about **one edit of one key**.
+drawn from, and this one is about **one edit of one key** — or, for the one
+command whose run prints more than one record, about **a run of several**
+(`records` below, `fugaro secrets set`'s record flags), which is the one
+document that names no single key.
 
 **Why it exists: one edit, classified by the CLI's own code, before a window is
 shown or a byte is written.** The dry run writes nothing — no file, not even the
@@ -2826,7 +2835,7 @@ old value and shape come from this document and from nowhere else.
 | Key | Type | Absent | Null | Notes |
 | --- | --- | --- | --- | --- |
 | `version` | int | never | never | the document's version, `1` today (`settingsWriteDocVersion`, pinned by `schemas/settings-write.schema.json`). Members are only ever added within a version (D848) |
-| `key` | string | never | never | the key the edit is about, printed through `safetext.Field`. A consumer reads it to check that the document is about **the** edit it asked for: the window draws the key from here and writes the layer from the read's own row, so a document answering about another key is refused before any window exists |
+| `key` | string | **absent from a run that prints more than one record, and from no other document** | never | the key the edit is about, printed through `safetext.Field`. A consumer reads it to check that the document is about **the** edit it asked for: the window draws the key from here and writes the layer from the read's own row, so a document answering about another key is refused before any window exists. **A run prints more than one record and names none of them here** — each value's own `key` is in `records` below, and the records are one per value the flags named, so a key named twice (one flag naming two roots — comma-separated or repeated — may name one) has two records carrying that same `key` — so the member is left out rather than set to one of them, and the console's own read refuses a document without it (`dryRunAt`, `settingsview.ts`), which is the fail-closed direction for a document its argv never produces. Where it is present it is never empty (`minLength`), so it still means exactly what it meant |
 | `layer` | string | never | never | the layer the edit would write, `local`, `project` or `repo` (`settingsWriteLayers`). A console cannot name it: it is §6.19's `target_layer`, and this member is the check that the child was aimed where the read said |
 | `path` | string | never | never | the file the edit would write, printed through `safetext.Field`. It is a path of the operator's machine: a consumer may show it and may never spawn anything built from it |
 | `changed` | bool | never | never | the write path's own comparison of the two byte strings — the same comparison that decides whether a write would happen at all — so the document cannot claim a change the write path did not see |
@@ -2839,6 +2848,7 @@ old value and shape come from this document and from nowhere else.
 | `entry_key` | string | unless the write is an entry write | never | **the field the entry is addressed by**, printed through `safetext.Field`: an object list's own key field — `name`, for `workflows.*.secrets`, the pair's only keyed list (`settingsEntryBlocks`) — and the member's own name for a map, whose entry *is* one member. It is an address, not a value a form is drawn from |
 | `entry_value` | string | unless the write is an entry write that carries one — absent for a map's `remove-entry` too | never | that field's value — the key field's value for an object list, the member's value for a map's add — printed through `safetext.Field`. **A map's `remove-entry` leaves it out**: its address is the member's name and nothing else, what the member held is in `old` as its own `field=value` pair, and a document omits a member it has no value for rather than writing an empty one |
 | `entry_fields` | `map[string]string` | unless the write is an object list's `add-entry` | never | the members the entry carries **beside** the field that names it, keyed by member name, both sides printed through `safetext.Field`. **Only an object list's `add-entry` has any**: a map's entry is one member and carries none, and no removal carries any. The table spells it the one way a cell carries an entry — the pairs sorted by field and joined with `, ` (`settingsEntryFieldsString`) — which is the same spelling `old` and `new` carry an entry in |
+| `records` | array of documents | unless the run prints more than one record | never | **the records of a run: one document of this shape per value the invocation named, in the order the flags named them, so a key named twice appears twice** (`secretsSettingsRunDoc`, `writeSecretsSettingsDryRun`). It holds **two or more** (`minItems: 2`): one write answers with its own document and makes no list of one, and a run is two records as soon as it names two values — two of the four record flags, or one flag naming two roots. The command that produces it is `fugaro secrets set` — its four record flags are the ones that record what a machine knows about a secret rather than storing its value: when it lapses, the installation's rotation period, and the Bitbucket API roots a token may be sent to (S1, `secrets_expiry.go`) — and **the console's argv cannot ask for it**: `settings set KEY --layer <L>` names one key (`settingsedit.ts`), and a run document is refused by the console's own read for want of `key`. Each element is a document of this same shape about **one of the values the run named** — two of them about the same `key` when the run named that key twice — with its own `key`, `old` and `new`, so a consumer reads a record exactly where it reads a single edit. **The records are the run in order**: each record's `old` is the state the records before it leave in the file and the last record's `new` is what the write leaves, because a dry run writes nothing and carries that state from one record to the next (`secretsSetSettings`' carried) — a record worked out from the file on disk would state a diff the run never makes. **The members beside it are the run's own**: `layer` and `path` are the file every record lands in (these are one command's local config keys, so a run cannot reach two files), `changed` and `widening` are whether **any** record changes the file or widens a limit, `why` is the first record's sentence for a widening, and `old` and `new` are empty because the run names no single key. **Nothing here is a secret's value** — a record is this machine's knowledge *about* a secret (D1171) |
 
 **Version 1 has grown four optional members, and a scalar write's document is
 the shape it has always had** (D1164, under D848's rule that a version gains
@@ -2864,7 +2874,12 @@ built.
 
 **The table shape carries the same facts.** Without `--json` the command prints
 one `FIELD`/`VALUE` row per member, in this document's own order, so the two
-shapes cannot drift into two contracts.
+shapes cannot drift into two contracts. **A run of several records is the one
+place the two shapes do not print the same number of things**: the document
+nests its records, because one value a consumer parses must be one document, and
+the table prints **one table per record** — a table inside a table is not a
+table, and each table is a member list of its own. The facts are the same on
+both sides: every record of the run, with the run's own layer, path and file.
 
 **The phase words are exclusive, and that is the command's own rule**
 (`settingsDryRunFlags`). `--json` without `--dry-run` is refused ("`--json` is

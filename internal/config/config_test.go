@@ -256,6 +256,41 @@ func TestReviewAllowForksRemoved(t *testing.T) {
 	}
 }
 
+// TestFugaroYamlRefusesAReportsCommitKey: `reports_commit` is the project's
+// designated repository for committed reports (D2750, D2751; periodic-reviews
+// R14) and it is deliberately NOT a key of this file. This file sits in the
+// checkout on the run's own branch and the run's own agent writes it, so a key
+// here would let a prompt-injected agent designate the repository its own
+// reports are committed into — the one decision D2751 keeps to the owner, who
+// states it in the local project config (internal/localcfg, the binaries
+// block's carrier). The strict parser (KnownFields) refuses it like any other
+// key this file does not model, and the schema says the same
+// (schemas/fugaro.schema.json's additionalProperties is false).
+//
+// Mutation (add a ReportsCommit field to Config): this test fails, finding no
+// problem for a key that must not exist here.
+func TestFugaroYamlRefusesAReportsCommitKey(t *testing.T) {
+	for _, block := range []string{
+		"reports_commit: { repo: acme/reports }\n",
+		"reports_commit:\n",
+		"reports_commit: {}\n",
+	} {
+		_, problems := Parse([]byte(minimalYAML + block))
+		if len(problems) == 0 {
+			t.Fatalf("want a problem for the %q key, got none: the run's own agent writes this file, so a key here would let it designate where its reports are committed", strings.TrimSpace(block))
+		}
+		var named bool
+		for _, p := range problems {
+			if strings.Contains(p.String(), "reports_commit") {
+				named = true
+			}
+		}
+		if !named {
+			t.Errorf("the problems for %q name no reports_commit key: %v", strings.TrimSpace(block), problems)
+		}
+	}
+}
+
 // TestParseVerbatimTagNeverEchoesValue: yamlValueRE strips the backtick-quoted
 // value after a type error's tag, whatever the tag's own text looks like.
 // yaml.v3 percent-decodes a verbatim tag, so that text can hold a space (not

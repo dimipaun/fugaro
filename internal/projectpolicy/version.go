@@ -159,14 +159,34 @@ import (
 // version-8 node is one a version-9 reader refuses until `fugaro update`'s
 // policy stage has migrated it. A node with no crossing pool changes only its
 // number.
-const Version = 9
+//
+// Version 10 (periodic-reviews, plan task R14; decisions D2751 and D2752) is
+// the node that carries the project's designated repository for committed
+// reports, `reports_commit` with its `repo` and its `dir`. What the bump buys
+// is stated plainly, because it is less than the blocks above bought: a
+// version-9 reader lists `reports_commit` in UnknownKeys and decodes past it
+// (P8), and a version-9 binary holds neither the recipe nor the flag that
+// commits a report, so it can neither launch the commit nor commit one — the
+// member is safe by default when it is ignored, and the bump is not what makes
+// the rule true. What it is: the lockstep every policy member takes (P8), taken
+// because the flag and the node are one feature and a project-level decision
+// whose two doors ship together, and because the version is what `fugaro
+// update` migrates — a job image of the release behind is refused a version-10
+// node (policyImageGate, which names `fugaro image refresh`), which is why the
+// step below is shape-free and why the release that ships this ships the
+// node's migration in the same command. The migration step that carries a
+// version-9 node forward is shape-free (internal/projectpolicy/migrate.go): a
+// node with no `reports_commit` designates nothing, which is what a project
+// that never named one means, and every version-9 node keeps its bytes.
+const Version = 10
 
 // VersionSince names, for each policy version, the fugaro release that
 // introduced it: 1 is the model itself (0.8.0, internal/cli's policySince), 2
 // is the profile gate above (0.8.5), 3 the account axis (0.9.0), 4 the
 // Bitbucket token block (0.14.0), 5 the pools' owner and roster (0.23.0), 6 the
 // binaries block (0.24.0), 7 the two model grades (0.24.0) and 8 the binaries
-// block's carrier in the project's own config (0.26.0) and 9 the one-path pool
+// block's carrier in the project's own config (0.26.0), 9 the one-path pool
+// (0.26.0) and 10 the project's designated repository for committed reports
 // (0.26.0). It sits beside
 // Version because a bump of Version adds its row in the same change
 // (TestVersionSinceCoversEveryVersion fails until it does), and it is
@@ -181,15 +201,16 @@ const Version = 9
 // introduced. A version no row names gets the remedy alone (VersionRelease
 // answers false), never a borrowed release.
 var VersionSince = map[int]string{
-	1: "0.8.0",
-	2: "0.8.5",
-	3: "0.9.0",
-	4: "0.14.0",
-	5: "0.23.0",
-	6: "0.24.0",
-	7: "0.24.0",
-	8: "0.26.0",
-	9: "0.26.0",
+	1:  "0.8.0",
+	2:  "0.8.5",
+	3:  "0.9.0",
+	4:  "0.14.0",
+	5:  "0.23.0",
+	6:  "0.24.0",
+	7:  "0.24.0",
+	8:  "0.26.0",
+	9:  "0.26.0",
+	10: "0.26.0",
 }
 
 // VersionRelease is the release that introduced policy version v, and false

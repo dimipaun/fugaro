@@ -90,7 +90,9 @@ Pieces 1 and 3 are in runs or merged; see the tasks. RJ1, RJ6 and RJ7 are merged
 ### RJ4: piece 4a, the migration converges with a run in flight
 - Acceptance: an installation at the previous version (no implicit job in its tfvars, credentials service on) gets
   the job from one `fugaro update`, with a run in flight left running and its records, ledger and counters untouched;
-  a second `update` is a no-op.
+  the second `update` moves only the job's image and environment, because the base image lags one stage and the
+  credentials-service URL lands on the apply after the deploy, and the third is the fixed point: the installation
+  root's ordinary lag, not a second job.
 - Files: `internal/cli/update_in_flight_test.go` (or `internal/cli/update_review_job_test.go` (new)),
   `docs/design/update-in-flight.md` (its row for the implicit job).
 - Tests: `TestUpdateAddsTheImplicitReviewJobAndLeavesARunInFlightRunning`, plus the existing

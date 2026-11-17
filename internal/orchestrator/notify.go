@@ -1,11 +1,12 @@
 // What a tick tells a person (O7).
 //
-// A tick has two things to say: a run it folded has ended, and it has raised a
-// question somebody has to answer. Both are things the cycle itself wrote — the
-// other half of the notification rule, level-triggered and without a cursor
-// (D1229): the cycle that records an outcome or commits a question is the one
-// that says so, and no cycle afterwards repeats it, because the node no longer
-// has anything new to say. There is nothing on a decision or an intent that
+// A tick has three things to say: a run it folded has ended, it has raised a
+// question somebody has to answer, and it has merged a pull request under a
+// ceiling that merges and tells somebody (D2030). All three are things the cycle
+// itself wrote — the other half of the notification rule, level-triggered and
+// without a cursor (D1229): the cycle that records an outcome, commits a
+// question or lands a merge is the one that says so, and no cycle afterwards
+// repeats it, because the node no longer has anything new to say. There is nothing on a decision or an intent that
 // remembers "a person was told", and there is nothing to add to the wire
 // formats either: what was told is derived from what the cycle wrote.
 //
@@ -41,10 +42,15 @@ const (
 	// nobody has answered — the breaker's, in this slice — so the daemon has
 	// stopped starting what the question holds back.
 	NotifyDecisionNeeded Kind = "decision-needed"
+	// NotifyMergedNeedsReview is a merge the escalation ladder made under its
+	// gate for an item whose ceiling is Pro's or Hotfix's, which is the one
+	// ceiling that merges and tells somebody (D2030): the work landed without
+	// a person reading it, and the line says how much it left behind.
+	NotifyMergedNeedsReview Kind = "merged-needs-review"
 )
 
 // Kinds is the whole vocabulary.
-var Kinds = []Kind{NotifyRunFinished, NotifyDecisionNeeded}
+var Kinds = []Kind{NotifyRunFinished, NotifyDecisionNeeded, NotifyMergedNeedsReview}
 
 // Notification is one thing a tick says. Subject is the id the event is
 // about — the run's id, or the decision's — and Text is the line a person

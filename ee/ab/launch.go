@@ -171,14 +171,27 @@ func abRate(cfg *config.Config, layer *config.AB) float64 {
 // closed — a launch whose recipe this build cannot read is not one it spends a
 // second run on.
 func recipeMode(spec *task.Spec) string {
+	if r := embeddedRecipe(spec); r != nil {
+		return r.Mode
+	}
+	return ""
+}
+
+// embeddedRecipe is the recipe the task carries as text, parsed, or nil when
+// it carries none: a launch with no recipe at all, and one whose recipe
+// travels as a name alone — a repository's own file, which only the runner,
+// holding the checkout, can read. Both come out nil, which is the same answer
+// for the same reason here and in recipeMode above: what this package cannot
+// read it does not guess at.
+func embeddedRecipe(spec *task.Spec) *recipe.Recipe {
 	if spec.Recipe == nil || spec.Recipe.YAML == "" {
-		return ""
+		return nil
 	}
 	r, ps := recipe.Parse([]byte(spec.Recipe.YAML))
 	if len(ps) > 0 {
-		return ""
+		return nil
 	}
-	return r.Mode
+	return r
 }
 
 // launchedMode is the rigor mode the launch resolved, with the same

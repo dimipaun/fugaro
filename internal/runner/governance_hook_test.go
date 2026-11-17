@@ -2,26 +2,36 @@ package runner_test
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/tier"
 )
 
-// TestHooksDefaultToTheUntaggedBuild: the stage hook's default pair is the one
+// TestHooksDefaultToTheUntaggedBuild: the stage hook's default set is the one
 // an untagged build runs with — no bound of its own and no halt — so the core
-// bounds no stage by governance whatever its layers wrote (D522, G10). The
-// pair is read the way the stage loop reads it, and it is the real default and
-// not a probe: a test that installed the off-switch itself could not tell it
-// from a core that had quietly kept a stage bound.
+// bounds no stage by governance whatever its layers wrote (D522, G10). The set
+// is read the way the stage loop reads it, and it is the real default and not a
+// probe: a test that installed the off-switch itself could not tell it from a
+// core that had quietly kept a stage bound.
+//
+// All four functions are the default's, the two stops T7.3 added included: a
+// core that answered a gateway stop or a moved review range would halt a run
+// for a tripwire no untagged build carries.
 func TestHooksDefaultToTheUntaggedBuild(t *testing.T) {
 	f := runner.StageHook()
-	if f.Timeout == nil || f.TimedOut == nil {
-		t.Fatalf("the default pair is %+v, want both functions", f)
+	if f.Timeout == nil || f.TimedOut == nil || f.Stopped == nil || f.Before == nil {
+		t.Fatalf("the default set is %+v, want all four functions", f)
 	}
 	g := policy.Governance{StageTimeout: policy.StageTimeout{
 		Implement: time.Minute, Review: 2 * time.Minute, Fix: 3 * time.Minute}}
@@ -31,8 +41,17 @@ func TestHooksDefaultToTheUntaggedBuild(t *testing.T) {
 			t.Errorf("Timeout(%q) = %v, want no bound: this build applies none", stage, got)
 		}
 	}
-	if d := f.TimedOut(runner.StageView{Stage: "implement", Governance: g}); d.Halt {
+	v := runner.StageView{Stage: "implement", Governance: g}
+	if d := f.TimedOut(v); d.Halt {
 		t.Errorf("TimedOut = %+v, want no stop", d)
+	}
+	v.Stop = gateway.StageStop{Reason: string(runstore.HaltStageBudget), Detail: "implement stage budget"}
+	if d := f.Stopped(v); d.Halt {
+		t.Errorf("Stopped = %+v, want no stop: this build records the gateway's own halt", d)
+	}
+	v.ReviewScope = runstore.NewReviewScope(false, runstore.ReviewScopeRangeMoved, []string{"a.go"}, []string{"a.go", "b.go"})
+	if d := f.Before(v); d.Halt {
+		t.Errorf("Before = %+v, want no stop: this build reads no review scope", d)
 	}
 }
 
@@ -155,22 +174,29 @@ func TestStageBoundAskedIsAboutTheBlocksNotTheMerge(t *testing.T) {
 
 // TestLateOrDuplicateStageHookIsRefused: the stage hook is installed once, by
 // ee/register, so a second SetStage — the way a tagged binary's enforcement
-// would be halved after it was set — is refused, and so is a pair the stage
-// loop would call into and panic on. The refusals leave the installed pair
-// exactly as it was (design §5.5).
+// would be halved after it was set — is refused, and so is a set the stage
+// loop would call into and panic on. Every one of the four is required: the
+// loop calls each of them at the stage it belongs to, so a set missing any of
+// them is a nil dereference rather than a decision (T7.3). The refusals leave
+// the installed set exactly as it was (design §5.5).
 func TestLateOrDuplicateStageHookIsRefused(t *testing.T) {
 	runner.ResetStageHook(t)
+	no := func(runner.StageView) runner.StageDecision { return runner.StageDecision{} }
 	real := runner.StageFuncs{
 		Timeout:  func(runner.StageView) time.Duration { return 0 },
-		TimedOut: func(runner.StageView) runner.StageDecision { return runner.StageDecision{} },
+		TimedOut: no,
+		Stopped:  no,
+		Before:   no,
 	}
 	for _, tc := range []struct {
 		name string
 		f    runner.StageFuncs
 	}{
-		{"no Timeout", runner.StageFuncs{TimedOut: real.TimedOut}},
-		{"no TimedOut", runner.StageFuncs{Timeout: real.Timeout}},
-		{"neither", runner.StageFuncs{}},
+		{"no Timeout", runner.StageFuncs{TimedOut: no, Stopped: no, Before: no}},
+		{"no TimedOut", runner.StageFuncs{Timeout: real.Timeout, Stopped: no, Before: no}},
+		{"no Stopped", runner.StageFuncs{Timeout: real.Timeout, TimedOut: no, Before: no}},
+		{"no Before", runner.StageFuncs{Timeout: real.Timeout, TimedOut: no, Stopped: no}},
+		{"none of them", runner.StageFuncs{}},
 	} {
 		if err := runner.SetStageHook(tc.f); err == nil {
 			t.Errorf("a hook with %s was accepted", tc.name)
@@ -182,8 +208,8 @@ func TestLateOrDuplicateStageHookIsRefused(t *testing.T) {
 	if err := runner.SetStageHook(real); err == nil {
 		t.Error("a second SetStage was accepted, so a tagged build's enforcement can be replaced")
 	}
-	if got := runner.StageHook(); got.Timeout == nil || got.TimedOut == nil {
-		t.Errorf("a refused call changed the installed pair: %+v", got)
+	if got := runner.StageHook(); got.Timeout == nil || got.TimedOut == nil || got.Stopped == nil || got.Before == nil {
+		t.Errorf("a refused call changed the installed set: %+v", got)
 	}
 }
 
@@ -201,11 +227,14 @@ func TestAStageHookCannotLeaveAHaltReasonTheRunnerCannotRecord(t *testing.T) {
 		"timeouts: { total: 5m, stage: 300ms, verify: 5s, finalize_reserve: 2m }", "")
 	h := newHarness(t, cfg, nil)
 	runner.ResetStageHook(t)
+	no := func(runner.StageView) runner.StageDecision { return runner.StageDecision{} }
 	if err := runner.SetStageHook(runner.StageFuncs{
 		Timeout: func(runner.StageView) time.Duration { return 200 * time.Millisecond },
 		TimedOut: func(runner.StageView) runner.StageDecision {
 			return runner.StageDecision{Halt: true, Reason: runstore.HaltReason("invented_stop"), Detail: "time"}
 		},
+		Stopped: no,
+		Before:  no,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -218,5 +247,115 @@ func TestAStageHookCannotLeaveAHaltReasonTheRunnerCannotRecord(t *testing.T) {
 	}
 	if rec.Status != runstore.StatusFailed || !strings.Contains(rec.Reason, "invented_stop") {
 		t.Fatalf("record = %+v, want the stage failed over the reason the hook left", rec)
+	}
+}
+
+// stageStopLimit is a gateway stage limit that stops the first call of every
+// stage, the way a stage budget does: the test's own limit, installed through
+// the seam ee/register sets in a tagged build (T7.2), so the core's own answer
+// to a stop the gateway made is reached without an ee/ build.
+type stageStopLimit struct{ detail string }
+
+func (stageStopLimit) Begin(gateway.StageLimitView) {}
+
+func (l stageStopLimit) Stop(gateway.StageLimitView) gateway.StageStop {
+	return gateway.StageStop{Reason: string(runstore.HaltStageBudget), Detail: l.detail}
+}
+
+// stoppedStage is the implement stage of a run whose first call the gateway's
+// stage limit stops: it answers the refusal the way a real agent's client does
+// — the call returns, the stage does not — which is the shape the runner has to
+// turn into a halt.
+func stoppedStage(t *testing.T, _ context.Context, req agent.Request) (agent.Result, error) {
+	t.Helper()
+	if code, body := post(t, req, sonnet, 4000); code != http.StatusForbidden {
+		t.Fatalf("the stage's call was answered %d, want the stage limit's 403: %s", code, body)
+	}
+	return agent.Result{CostUSD: 0.1}, nil
+}
+
+// TestAGatewayStopOutsideTheVocabularyKeepsTheGatewaysOwnHalt: the stop the
+// gateway's stage limit made is real whatever the stage hook makes of it, so a
+// hook that names a reason outside the vocabulary records no halt of its own
+// and the gateway's own is recorded instead — a run is never left running by a
+// hook that misbehaved (governance_hook.go, gatewayStop). It is the check the
+// stage's own bound makes (TimedOut), on the stop the gateway made rather than
+// the one the runner's clock made, and the run log says which halt was taken.
+//
+// The checkpoint allowance is not opened for it either: an invented reason is
+// not a governance stop, and a stop the core cannot account for buys no report.
+func TestAGatewayStopOutsideTheVocabularyKeepsTheGatewaysOwnHalt(t *testing.T) {
+	runner.ResetGatewayStageLimitHook(t)
+	if err := runner.SetGatewayStageLimitHook(func(policy.Governance, tier.Tier, pricing.Micros) gateway.StageLimit {
+		return stageStopLimit{detail: "implement stage budget"}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h := newGW(t, gwConfig(t, ""), "enforce", "5", out4k())
+	runner.ResetStageHook(t)
+	no := func(runner.StageView) runner.StageDecision { return runner.StageDecision{} }
+	if err := runner.SetStageHook(runner.StageFuncs{
+		Timeout:  func(runner.StageView) time.Duration { return 0 },
+		TimedOut: no,
+		Stopped: func(runner.StageView) runner.StageDecision {
+			return runner.StageDecision{Halt: true, Reason: runstore.HaltReason("invented_stop"), Detail: "invented"}
+		},
+		Before: no,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := h.run(t, stoppedStage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Halt == nil {
+		t.Fatalf("record = %+v, halt = %+v: the reason a hook invented left the run running", rec, rec.Halt)
+	}
+	if rec.Halt.Reason != runstore.HaltStageBudget {
+		t.Errorf("halt = %+v, want the gateway's own reason: the stop is real whatever the hook made of it", rec.Halt)
+	}
+	if !strings.Contains(rec.Halt.Detail, "implement stage budget") {
+		t.Errorf("halt detail = %q, want the gateway's own sentence about the stop", rec.Halt.Detail)
+	}
+	if rec.Checkpoint != nil {
+		t.Errorf("checkpoint = %+v, want none: a reason outside the vocabulary is not a governance stop", rec.Checkpoint)
+	}
+	if !strings.Contains(h.logs.String(), "outside the vocabulary the record carries") {
+		t.Errorf("the run log does not say the hook's reason was left out:\n%s", h.logs.String())
+	}
+}
+
+// TestAReviewStopOutsideTheVocabularyFailsTheStage: the review-scope stop is
+// the one decision taken before a round rather than at a stage's end, and a
+// hook that names a reason outside the vocabulary there fails the stage named
+// instead of writing a halt result.schema.json's enum and haltReasonText
+// between them cannot account for (governance_hook.go, beforeReview; D521,
+// D529). The round is not bought: the run ends failed and not halted, and no
+// checkpoint report is left for it.
+func TestAReviewStopOutsideTheVocabularyFailsTheStage(t *testing.T) {
+	cfg := stageTimeoutCfg(t,
+		"timeouts: { total: 5m, stage: 2m, verify: 5s, finalize_reserve: 2m }", "")
+	h := newHarness(t, cfg, nil)
+	runner.ResetStageHook(t)
+	no := func(runner.StageView) runner.StageDecision { return runner.StageDecision{} }
+	if err := runner.SetStageHook(runner.StageFuncs{
+		Timeout:  func(runner.StageView) time.Duration { return 0 },
+		TimedOut: no,
+		Stopped:  no,
+		Before: func(runner.StageView) runner.StageDecision {
+			return runner.StageDecision{Halt: true, Reason: runstore.HaltReason("invented_stop"), Detail: "scope"}
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Halt != nil || rec.Checkpoint != nil {
+		t.Fatalf("a reason outside the vocabulary halted the run: halt = %+v, checkpoint = %+v", rec.Halt, rec.Checkpoint)
+	}
+	if rec.Status != runstore.StatusFailed || !strings.Contains(rec.Reason, "invented_stop") {
+		t.Fatalf("record = %+v, want the review stage failed over the reason the hook left", rec)
 	}
 }

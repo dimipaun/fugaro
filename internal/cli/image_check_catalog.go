@@ -124,8 +124,12 @@ type catalogCheckRepo struct {
 	// that the name it is given exists, so this is the repository's own first
 	// workflow, as the manual path passes for the same reason.
 	Workflow string `json:"workflow"`
-	// BuildServiceAccount is the email of the repository's build account: the
-	// one account a build of this repository's entries may run as.
+	// BuildServiceAccount is the email of the repository's own build account,
+	// as internal/infra derived it when it wrote this spec. It is a drift check
+	// and not the account a build runs as: every build this job submits runs as
+	// the project's build identity (B6), so the check below compares this field
+	// against the account this fugaro derives for the repository, and a
+	// mismatch is an installed job this binary does not agree with.
 	BuildServiceAccount string `json:"build_service_account"`
 	// Entries are the catalog entries this repository builds.
 	Entries []string `json:"entries"`
@@ -454,12 +458,15 @@ func (t *catalogCheckTarget) bakedRepoFor(slug string) (string, bool) {
 	return "", false
 }
 
-// submit submits entry e's rebuild as repository r's build account: the request
-// fugaro image build <entry> sends, with the definition this run read and the
-// commit the entry's record names — or, for an entry that names a build
-// context, the commit and digest the copy staged with it, which is what its
-// rebuild is pinned to. The account is r's, and CatalogBuildSpec.check refuses
-// any other, so the job's own account is never the one a build runs as.
+// submit submits entry e's rebuild as the project's build identity (B6): the
+// request fugaro image build <entry> sends, with the definition this run read
+// and the commit the entry's record names — or, for an entry that names a
+// build context, the commit and digest the copy staged with it, which is what
+// its rebuild is pinned to. The account is the installation's own and not r's:
+// CatalogBuildSpec.check refuses any other, so neither a repository's build
+// account (which a retired root has destroyed) nor this job's own account is
+// ever the one a build runs as. r decides everything else the request names —
+// the credential it clones with and the record's slug.
 func (t *catalogCheckTarget) submit(ctx context.Context, e config.Entry, r catalogCheckRepo, slug string, ev catalogEvaluation) (id, status string, err error) {
 	rec := ev.rec
 	if rec == nil {
@@ -486,7 +493,7 @@ func (t *catalogCheckTarget) submit(ctx context.Context, e config.Entry, r catal
 		GitSecretID: r.GitSecretID, GitUser: r.GitUser, GitHubAppID: r.GitHubAppID,
 		Base: t.base, Image: imageRef,
 		Definition:     gcp.CatalogDefinition{SourceCommit: commit, Generation: ev.definitionGeneration, SHA256: ev.definitionSHA256},
-		ServiceAccount: r.BuildServiceAccount, MachineType: t.spec.MachineType,
+		ServiceAccount: gcp.BuildIdentityEmail(t.gcpProject), MachineType: t.spec.MachineType,
 		Bucket: "gs://" + t.bucket.GCSName,
 		// The rebuild records the template it ran, which is this job's own: the
 		// entry it rebuilds stops firing the template trigger (F33, D1402).
@@ -658,9 +665,10 @@ func runImageCheckCatalogJob(cmd *cobra.Command, o imageCheckOptions) error {
 
 	// The spec's assignment, and the two cross-checks that say the installed
 	// job and this fugaro agree: the slug is this fugaro's own derivation
-	// (task.Slug), and the build account is the one that slug's repository has.
-	// A mismatch is the whole job's rather than one entry's: every build it
-	// would submit could run as the wrong account, so nothing is submitted.
+	// (task.Slug), and the build account the spec records for that repository
+	// is the one this fugaro derives for the same slug. A mismatch is the whole
+	// job's rather than one entry's: the spec was written by a fugaro that names
+	// a repository differently from this one, so nothing is submitted.
 	var work []catalogAssignment
 	assigned := map[string]bool{}
 	for _, r := range s.Repositories {

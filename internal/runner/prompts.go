@@ -178,6 +178,7 @@ func SystemPrompt(d PromptData, instructions string) string {
 	} else {
 		lines = append(lines, fmt.Sprintf("- Write the pull request title on the first line of %s/pr.md and the description below it.", d.StateDir))
 	}
+	lines = append(lines, fmt.Sprintf("- Tell Fugaro what you found out about the order of the work by writing %s/%s, which is outside your checkout: a JSON object with `blocks` (the items that must wait for this run) and `needed` (the items this run found it needed first), each a list of entries naming a plan task as `plan_task`, or a path your change touches as `path`, with a one-line `reason`. Fugaro reads it when the run ends, and a file that is missing or unreadable changes nothing.", d.StateDir, discoveredFile))
 	s := strings.Join(lines, "\n") + "\n"
 	if strings.TrimSpace(instructions) != "" {
 		s += "\nRepository instructions:\n\n" + instructions

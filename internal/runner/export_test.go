@@ -13,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/srctree"
 )
 
 // ToolchainHash exposes toolchainHash to the runner_test package.
@@ -340,6 +341,16 @@ func SetArtifactCopiedSeam(t *testing.T, f func()) {
 	prev := artifactCopiedSeam
 	artifactCopiedSeam = f
 	t.Cleanup(func() { artifactCopiedSeam = prev })
+}
+
+// SetDiagnoseSource replaces the diagnose stage's source fetch with f for the
+// rest of t. A diagnosis fetches the Fugaro source over the network
+// (srctree.Ensure), which no test of this package may do, so the test that
+// wants a diagnosis to run hands it a tree it made instead.
+func SetDiagnoseSource(t *testing.T, f func(ctx context.Context, o srctree.Options) (string, srctree.Record, error)) {
+	prev := diagnoseSource
+	diagnoseSource = f
+	t.Cleanup(func() { diagnoseSource = prev })
 }
 
 // SetArtifactStagedSeam runs f in collectArtifacts after the set is staged
