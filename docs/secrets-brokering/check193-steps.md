@@ -121,7 +121,9 @@ deletes. Read those before you start. This file is the commands.
   a row that read the declaration there would compare the answers with themselves and pass a service
   that served one account the run never declared. The observation is the run's tier-A lines: every one
   of them must name `default` and no other account the repository's record names. A record naming a
-  single account leaves this row unmeasured (verdict `2`) rather than passing it, and a sandbox
+  single account leaves this row unmeasured (verdict `2`) rather than passing it, and so does an
+  `oauth` run that **never launched** — the row is read off that run's own lines, and a launch that
+  failed left it none (the launch's own `served-oauth` row says why). A sandbox
   repository whose own `fugaro.yaml` sets `agent.oauth_token` names an account there, which its run
   declares instead — this row then reads the account it was served as one the run did not declare.
 - **`proxy`** — a line of the run's own under the purpose `git` or `bitbucket-api`, for the one of the

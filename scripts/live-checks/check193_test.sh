@@ -856,6 +856,26 @@ test_a_record_with_one_account_leaves_the_row_unmeasured() {
   expect_contains "$out" "FACT served-oauth: PASS" "one account: everything above it still holds"
 }
 
+# The declared-account row is read off the oauth run's OWN lines, so a run that
+# never launched leaves it nothing to read: the file step_run writes them to is
+# not there at all. A row built from a file nobody wrote reports the boundary as
+# broken — a FAIL the verdict reads as a criterion that did not hold, exit 1 —
+# on the strength of nothing, when what happened is that this check could not
+# measure it (exit 2). Its sibling step_proxy guards the row it reads the same
+# way, and the launch's own row is where the reason is.
+test_a_launch_that_failed_leaves_the_declared_account_unmeasured() {
+  local dir=$work/nolaunch
+  prepare "$dir"
+  run193 "$dir" FAKE_FUGARO_MODE=launch-fails
+  expect_status "$status" 2 "no launch: the check could not measure"
+  expect_contains "$out" "FACT declared-account: FAIL" "no launch: the row is a FAIL and never a pass"
+  expect_contains "$out" "was never launched" "no launch: the row says what happened"
+  expect_absent "$out" "no served line of its own names that account at tier A" "no launch: the row is not read off a file nobody wrote"
+  expect_contains "$out" "FACT served-oauth: FAIL" "no launch: the launch's own row is the one that carries the reason"
+  expect_contains "$out" "never launched one" "no launch: the reason is the launch's own"
+  expect_contains "$out" "CHECK 193 RESULT END (exit 2)" "no launch: the end line"
+}
+
 # The record's key is the repository's own task slug, and the slug is read off
 # the `fugaro_repo` label the engine that writes the record also writes on the
 # jobs. A job list whose jobs carry no such label leaves the key unknown — so
@@ -1098,6 +1118,7 @@ t test_a_second_account_served_is_a_failure
 t test_a_served_account_the_run_never_declared_is_a_failure
 t test_a_line_naming_an_account_the_record_does_not_name_is_a_failure
 t test_a_record_with_one_account_leaves_the_row_unmeasured
+t test_a_launch_that_failed_leaves_the_declared_account_unmeasured
 t test_a_proxied_repository_whose_run_did_not_reach_the_service_is_a_failure
 t test_a_policy_without_the_proxy_leaves_the_row_unmeasured
 t test_after_flip_refuses_a_job_that_still_mounts_the_model_credential

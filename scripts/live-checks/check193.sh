@@ -1171,6 +1171,19 @@ step_declared_account() {
   rid=$(run_id two)
   lines=$SCRATCH/audit-two.json
   note="the account a launch that names no account declares, which is the launch this check made (fugaro run, no --token)"
+  # The row is read off the oauth run's OWN lines and off nothing else, so a run
+  # that never launched — step_run writes that file after a launch and never
+  # before it — leaves the row nothing to read at all. Read off a file nobody
+  # wrote, every line below is empty and the row reports the boundary as broken
+  # on the strength of nothing: a FAIL the verdict takes for a criterion that did
+  # not hold (exit 1), where what happened is a row this check could not measure
+  # (exit 2), and the launch's own row above already carries the reason. The
+  # sibling row step_proxy reads its own run's file the same way and guards it
+  # the same way.
+  if [ ! -f "$lines" ]; then
+    unmeasured declared-account "the oauth run (${rid}) of ${OAUTH_REPO} was never launched, so it left no lines of its own and the account the service served it is not read here: the launch's own row above says why it never launched. The row is read off that run's own audit lines and never off a call this check makes"
+    return 0
+  fi
   named=$(audit_named "$lines" "$rid")
   # The accounts the run's own tier-A lines name, and then the ones of those that
   # are not the declared account: the service may only ever serve it the account

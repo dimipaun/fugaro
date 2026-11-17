@@ -12766,9 +12766,12 @@ half that only the flip can show:
   (`internal/runner`'s `recordCredential`), so a row that read the declaration there would compare the
   answers with themselves and pass a service that served one account the run never declared. Every
   tier-A line of that run must then name `default` and **no other account the repository's own record
-  names** — the refusal the check exists for. A record naming only one account leaves the row
-  **unmeasured** and the verdict `2`: with nothing this run could have been served besides the account
-  it declared, the row would be a row about nothing.
+  names** — the refusal the check exists for. The row is read off the oauth run's **own lines**, so
+  two states leave it **unmeasured** and the verdict `2`: a record naming only one account, with
+  nothing this run could have been served besides the account it declared, and an oauth run that
+  **never launched** (its own launch row carries the reason), which left the row no lines to read at
+  all — a row read off a file nobody wrote would report the boundary as broken on the strength of
+  nothing.
 - **The proxy, for the one of the two the published policy admits with `proxy: true`** (**F29**, the
   plan's G7). A proxied Bitbucket repository's own git traffic goes **through** the service, which writes
   a line of that run's own under the purpose `git` (a fetch, the receive-pack advertisement, or a push)
