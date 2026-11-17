@@ -651,24 +651,31 @@ func TestProviderModelNeedsEnforce(t *testing.T) {
 	}
 }
 
-// A report the gateway settled the call on is the run's own charge, so the
-// run's reported total can no longer sit above what it charged -- the one
-// report that still can is the one the gateway refused to settle on, a
-// figure past ten times the call's reservation, which is charged at the
-// table instead (D2641). That report is logged once at the end of the run
-// (warn level, no key), and no other is. The charge is compared without the
-// route fee, which the provider doesn't report. The reported figures are
-// relative to what the run's own table makes of the usage -- read from that
-// table, so the case under test is the threshold and not a number -- and to
-// the reservation the coder's own 4096 output tokens make.
-func TestReportedAboveChargeWarnsOnce(t *testing.T) {
+// A report is logged once at the end of the run (warn level, no key) when it
+// leaves the price table's band by more than 10%, in either direction, and
+// never otherwise. The band -- not the charge -- is the comparison, because
+// D2640 settles a complete call on its report, so a report read against the
+// charge would agree with it by construction (F16); the band carries no route
+// fee and neither does the report, so a fee never moves it. The one report
+// that leaves the band without the provider having charged it is the figure
+// the gateway refused to settle on, ten times past the call's reservation
+// (D2641): it is charged at the table instead, and it is still the report the
+// run carries, so the warning names it above the band's dearest end. The
+// reported figures are relative to the band the run's own table makes of the
+// usage -- read from that table, so the case under test is the threshold and
+// not a number -- and to the reservation the coder's own 4096 output tokens
+// make.
+func TestReportedOutsideBandWarnsOnce(t *testing.T) {
 	use := pricing.Usage{Input: 1000, Output: 500}
 	g0 := providerRun(t, providerPinned(t), "enforce", "50", nil, "acme/app")
 	m, ok := g0.deps.Spend.Prices.Lookup(deepseek)
 	if !ok {
 		t.Fatal("the run's table has no row for the model it routed")
 	}
-	bare := m.Rates.Cost(use).USD()
+	lo, hi := m.Lo.Cost(use).USD(), m.Hi.Cost(use).USD()
+	if lo <= 0 || hi <= 0 {
+		t.Fatalf("the fixture's band is $%v-$%v: a run whose calls carry none is compared with the charge, not this", lo, hi)
+	}
 	// The reservation the coder's own call makes, from its max_tokens
 	// alone: a report past ten times this one is malformed.
 	reserved := m.WorstCase(pricing.Request{MaxTokens: 4096})
@@ -685,11 +692,12 @@ func TestReportedAboveChargeWarnsOnce(t *testing.T) {
 		warn      int
 		malformed bool
 	}{
-		{"three times the table's charge, settled on", bare * 3, 0, 0, false},
-		{"just above the charge, settled on", bare * 1.05, 0, 0, false},
-		{"below the charge, floored", bare * 0.5, 0, 0, false},
-		{"above the charge with a route fee, settled on", bare * 1.2, 10, 0, false},
-		{"just above the charge with a route fee, settled on", bare * 1.05, 10, 0, false},
+		{"inside the band, settled on", (lo + hi) / 2, 0, 0, false},
+		{"just above the band, settled on", hi * 1.05, 0, 0, false},
+		{"above the band, settled on", hi * 1.2, 0, 1, false},
+		{"just below the band, floored", lo * 0.95, 0, 0, false},
+		{"below the band, floored", lo * 0.5, 0, 1, false},
+		{"inside the band with a route fee", (lo + hi) / 2, 10, 0, false},
 		{"past ten times the reservation", malformed, 0, 1, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {

@@ -24,8 +24,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-// catalogSlug is the repository whose build account runs the catalog builds
-// below.
+// catalogSlug is the repository the catalog builds below name: the one whose
+// provider credential clones, under whose builds/<slug>/ prefix the record
+// lands, and that is why the repository's own build account is the wrong one
+// for these builds to run as (B6).
 func catalogSlug(t *testing.T) string {
 	t.Helper()
 	slug, err := task.Slug("bitbucket", "acme/app")
@@ -35,8 +37,9 @@ func catalogSlug(t *testing.T) string {
 	return slug
 }
 
-// catalogBuildSpec is one build of the entry "agent" by that repository's
-// build account: the request the catalog path submits (PIC4).
+// catalogBuildSpec is one build of the entry "agent" by the bitbucket
+// repository: the request the catalog path submits (PIC4), run as the
+// project's build identity (B6).
 func catalogBuildSpec(t *testing.T) CatalogBuildSpec {
 	t.Helper()
 	slug := catalogSlug(t)
@@ -58,7 +61,7 @@ func catalogBuildSpec(t *testing.T) CatalogBuildSpec {
 			Generation:   1712345678901234,
 			SHA256:       strings.Repeat("b", 64),
 		},
-		ServiceAccount: BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com",
+		ServiceAccount: BuildIdentityEmail("proj-1234"),
 		MachineType:    "E2_HIGHCPU_8",
 		Bucket:         "gs://fugaro-runs-proj-1234",
 		Selftest:       []byte(`{"skip_verify":true,"tools":"critical"}`),
@@ -217,9 +220,8 @@ func TestCatalogBuildMountsItsSecretAsAFileNeverAnEnv(t *testing.T) {
 }
 
 // TestCatalogBuildWritesARecordTheCheckReads: the build writes the entry's
-// record under builds/<slug>/, where the repository's build account already
-// writes and the daily check already reads, and the record holds what the
-// build itself measured: the copied object's generation, the sha256 of the
+// record under builds/<slug>/, the prefix the daily check already reads, and
+// the record holds what the build itself measured: the copied object's generation, the sha256 of the
 // bytes it built, the commit the copy was taken from and the pushed digest.
 // A record key under builds/catalog/ would need a write grant this task
 // deliberately does not give a build (its catalog grant is read-only).
@@ -234,7 +236,7 @@ func TestCatalogBuildWritesARecordTheCheckReads(t *testing.T) {
 		t.Fatalf("CatalogRecordKey = %q, want %q", key, want)
 	}
 	if !strings.HasPrefix(key, "builds/"+slug+"/") {
-		t.Fatalf("the record key %q is outside the build account's own prefix", key)
+		t.Fatalf("the record key %q is outside the repository's own prefix", key)
 	}
 	b, err := CatalogBuildRequest("proj-1234", s)
 	if err != nil {
@@ -531,6 +533,90 @@ func TestCatalogBuildRefusesAnImageOutsideTheSharedRegistry(t *testing.T) {
 	}
 }
 
+// TestCatalogBuildRunsAsTheBuildIdentity is B6's own claim, and the reason the
+// project identity exists (D2301): the account a catalog build runs as is the
+// PROJECT's build identity — one account for the whole installation, created
+// by the same apply that turns the credentials service on (B5) — and never the
+// repository's build account the spec carried until this task.
+//
+// A repository's build account is derived from the repository and dies with
+// the repository's Terraform root, and M2 retires every root, while the entries
+// of that repository and the nightly builds of them stay: an entry's build must
+// run as an account that outlives every repository the entry names. The reach
+// the build needs for its own push — the writer and the tag mover on the
+// installation's one shared registry — moves with the account, into the
+// installation module (build_identity.tf), so the account a request names and
+// the account the module grants those roles to are the same one.
+//
+// The red step of this task was the fixture: with catalogBuildSpec naming the
+// identity, check and checkPrebuilt — which still required
+// BuildServiceAccountID(s.Slug) — refused the request with "the build service
+// account ... is not the repository's build account". The refusals at the end
+// are what the check says now, and they are why the identity is not merely
+// accepted but required: a build submitted as any other account would run
+// somewhere the installation's registry grants do not reach.
+func TestCatalogBuildRunsAsTheBuildIdentity(t *testing.T) {
+	const project = "proj-1234"
+	identity := BuildIdentityEmail(project)
+	// The identity is the installation module's own literal (B5's
+	// BuildIdentityAccountID) and this package's copy of it, which cannot
+	// import internal/infra: internal/infra/build_identity.go holds the other
+	// half, and internal/infra's TestProjectHasOneBuildIdentity reads the
+	// module's account_id and pins the two literals together.
+	if want := BuildIdentityAccountID + "@" + project + ".iam.gserviceaccount.com"; identity != want {
+		t.Fatalf("BuildIdentityEmail(%q) = %q, want %q", project, identity, want)
+	}
+
+	for name, spec := range map[string]CatalogBuildSpec{
+		"a build":          catalogBuildSpec(t),
+		"a context build":  catalogContextSpec(t),
+		"a smoke-only run": catalogPrebuiltSpec(t),
+	} {
+		if spec.ServiceAccount != identity {
+			t.Fatalf("%s: the spec names %q as the account it runs as, want the project's build identity %q", name, spec.ServiceAccount, identity)
+		}
+		b, err := CatalogBuildRequest(project, spec)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if want := "projects/" + project + "/serviceAccounts/" + identity; b.ServiceAccount != want {
+			t.Errorf("%s: the request runs as %q, want %q", name, b.ServiceAccount, want)
+		}
+		// The identity of another project is a different account, and it is
+		// not granted anything in this one: a build submitted in a project
+		// runs as that project's identity or not at all.
+		if _, err := CatalogBuildRequest("proj-5678", spec); err == nil || !strings.Contains(err.Error(), "the project's build identity") {
+			t.Errorf("%s: submitted in another project, the spec was not refused as another project's identity (err = %v)", name, err)
+		}
+	}
+
+	// Everything else a caller could name is refused, each for its own good
+	// reason: the repository's own build account is the value this task
+	// replaced (it dies with the repository's root), another repository's is
+	// an account of a repository this build has nothing to do with, a job's
+	// is an account Cloud Run runs, another project's identity holds nothing
+	// here, and an empty field is no account at all.
+	slug := catalogSlug(t)
+	for _, tc := range []struct{ what, sa, want string }{
+		{"the repository's own build account", BuildServiceAccountID(slug) + "@" + project + ".iam.gserviceaccount.com", "is not the project's build identity"},
+		{"another repository's build account", BuildServiceAccountID(slug+"x") + "@" + project + ".iam.gserviceaccount.com", "is not the project's build identity"},
+		{"a job account", ServiceAccountID(slug, "web") + "@" + project + ".iam.gserviceaccount.com", "is not the project's build identity"},
+		{"the identity of another project", BuildIdentityEmail("proj-5678"), "is not the project's build identity"},
+		{"no account at all", "", "has no build identity"},
+	} {
+		for name, spec := range map[string]CatalogBuildSpec{
+			"a build":          catalogBuildSpec(t),
+			"a smoke-only run": catalogPrebuiltSpec(t),
+		} {
+			bad := spec
+			bad.ServiceAccount = tc.sa
+			if _, err := CatalogBuildRequest(project, bad); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("%s run as %s: err = %v, want a refusal saying %q", name, tc.what, err, tc.want)
+			}
+		}
+	}
+}
+
 // keyOf is the Dockerfile key of an entry, as a test reads it.
 func keyOf(t *testing.T, entry string) string {
 	t.Helper()
@@ -541,7 +627,7 @@ func keyOf(t *testing.T, entry string) string {
 	return key
 }
 
-// TestCatalogReadConditionCoversEveryCopy: the build account's read grant is
+// TestCatalogReadConditionCoversEveryCopy: the build's read grant is
 // the other half of the build's read step — without it the step's cp is a
 // 403 — so the one prefix the grant names must be the prefix every entry's
 // copied definition sits under, and it must not reach anything else in the
@@ -1577,14 +1663,15 @@ func TestCatalogRecordCarriesTheContextCommitAndHash(t *testing.T) {
 // catalogPrebuiltSpec is one smoke-only run of the entry "agent", whose
 // source is a prebuilt image (F10/IS11): the request
 // internal/cli/image_build_catalog.go submits for such an entry. It names the
-// reference the entry's jobs start on and nothing a build has.
+// reference the entry's jobs start on and nothing a build has, and it runs as
+// the project's build identity like every other catalog run (B6).
 func catalogPrebuiltSpec(t *testing.T) CatalogBuildSpec {
 	t.Helper()
 	slug := catalogSlug(t)
 	return CatalogBuildSpec{
 		Entry: "agent", Slug: slug,
 		Prebuilt:       "docker.io/library/node:22",
-		ServiceAccount: BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com",
+		ServiceAccount: BuildIdentityEmail("proj-1234"),
 		MachineType:    "E2_HIGHCPU_8",
 		Bucket:         "gs://fugaro-runs-proj-1234",
 		Selftest:       []byte(`{"tools_only":true,"tools":"critical"}`),
@@ -1784,9 +1871,9 @@ func TestPrebuiltEntrySmoked(t *testing.T) {
 		"a bucket that is not gs://": func(s *CatalogBuildSpec) { s.Bucket = "fugaro-runs-proj-1234" },
 		"no entry":                   func(s *CatalogBuildSpec) { s.Entry = "" },
 		"no repository":              func(s *CatalogBuildSpec) { s.Slug = "" },
-		"no build account":           func(s *CatalogBuildSpec) { s.ServiceAccount = "" },
-		"a build account of another repository": func(s *CatalogBuildSpec) {
-			s.ServiceAccount = BuildServiceAccountID(catalogSlug(t)+"x") + "@proj-1234.iam.gserviceaccount.com"
+		"no build identity":          func(s *CatalogBuildSpec) { s.ServiceAccount = "" },
+		"the repository's build account": func(s *CatalogBuildSpec) {
+			s.ServiceAccount = BuildServiceAccountID(catalogSlug(t)) + "@proj-1234.iam.gserviceaccount.com"
 		},
 		"a smoke with no tools":    func(s *CatalogBuildSpec) { s.Selftest = []byte(`{"tools":"none"}`) },
 		"a smoke that is not JSON": func(s *CatalogBuildSpec) { s.Selftest = []byte("critical") },

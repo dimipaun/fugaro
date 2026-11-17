@@ -1220,23 +1220,26 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 		// stage (design §6.1), so the Cost line above counts a figure the
 		// reader cannot otherwise explain -- on a provider route nothing
 		// else names it, since the provider's own reported cost is recorded
-		// and is the floor under that charge rather than its price. The rates
-		// the multiple scales are the ones the call was otherwise priced at --
+		// and is what a complete call settled on (D2640). The rates the
+		// multiple scales are the ones the call was otherwise priced at --
 		// the serving model's own, or the table's maximum for a model it
 		// doesn't know -- so the line says that and not "its own rates", which
 		// would be wrong for a call the table priced at maximum rates, or one
 		// the response also priced as a surprise. The multiple is an assumed
 		// ceiling and not a published price, so where a provider reported a
-		// cost the charge may be that figure with the route fee instead, and
-		// the line says so -- in the warning's own words, and with the fee
-		// named, because the Reported line below shows the report without it.
-		// The clause is printed only when the record carries a report at all:
-		// a Claude call has no route, so a report cannot exist for it, and a
-		// provider that sent none floors nothing.
+		// cost a complete call settled on that figure with the route fee,
+		// floored at the row's cheapest end, and only a call the stream cut
+		// short keeps the multiple with the report as a floor under it. The
+		// record cannot tell the two apart -- it carries the tiers, not the
+		// calls -- so the line names both, in the warning's own words and with
+		// the fee named, because the Reported line below shows the report
+		// without it. The clause is printed only when the record carries a
+		// report at all: a Claude call has no route, so a report cannot exist
+		// for it, and a provider that sent none floors nothing.
 		line := fmt.Sprintf("%s charged at %dx the rates the call was priced at",
 			oneLine(strings.Join(r.Cost.ServiceTiers, ", ")), pricing.ConservativeTierMultiplier)
 		if d.Reported > 0 {
-			line += ", or the provider's reported cost with the route fee if dearer"
+			line += ", or the provider's reported cost with the route fee: a complete call settled on that figure, floored at the row's cheapest end, and a call the stream cut short was charged the dearer of the multiple and that figure"
 		}
 		fmt.Fprintf(&b, "Tier:     %s (no published price for the tier)\n", line)
 	}

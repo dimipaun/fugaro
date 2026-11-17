@@ -121,7 +121,7 @@
     "diagnose": {
       "type": "object", "additionalProperties": false, "required": ["diagnose"],
       "properties": { "diagnose": { "type": ["object", "null"], "additionalProperties": false } },
-      "description": "The cloud tier of `fugaro troubleshoot`'s own step (recipe.StepDiagnose, docs/troubleshoot-cloud D2402): one model stage reads the evidence a launcher left under the run's own prefix and writes the two files the recipe's outputs block names — out/diagnosis.md and out/diagnosis.json in the catalog's troubleshoot. It takes no options, like digest and render, and recipe.Parse refuses it anywhere but alone or after one plan in a mode: artifact recipe, at most once. The stage's own bounds are the recipe's (recipe.TroubleshootMaxTurns, recipe.TroubleshootReviewerMaxOutput)."
+      "description": "The cloud tier of `fugaro troubleshoot`'s own step (recipe.StepDiagnose, docs/troubleshoot-cloud D2402): one model stage reads the evidence a launcher left under the run's own prefix and writes the two files the recipe's outputs block names — out/diagnosis.md and out/diagnosis.json in the catalog's troubleshoot. It takes no options, like digest and render, and recipe.Parse refuses it anywhere but alone or after one plan in a mode: artifact recipe, at most once. The stage's per-call output bound is the recipe's (recipe.TroubleshootReviewerMaxOutput, which the runner applies to the slot the stage's own call reads). recipe.TroubleshootMaxTurns is D2407's turn bound written down and read by nothing: the stage's call has no turn knob, so a cloud diagnosis is bounded by that per-call reservation, the run's own lease and the stage's timeout."
     },
     "render": {
       "type": "object", "additionalProperties": false, "required": ["render"],

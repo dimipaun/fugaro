@@ -532,6 +532,35 @@ type Policy struct {
 	// reading every block of this node gets.
 	Binaries *Binaries `json:"binaries,omitempty"`
 
+	// ReportsCommit is the project's designated repository for committed
+	// reports and the folder inside it (D2750, D2751, plan task R14): the one
+	// repository a report run may open its pull request in.
+	//
+	// It is the owner's decision and nobody else's, and it is a top-level
+	// member of this node because this node is the one document the owner
+	// writes and every run reads: `fugaro.yaml` has no such key (the run's own
+	// agent writes that file, so a key there would let a prompt-injected agent
+	// designate where its own reports land, D2751), the launcher-writable
+	// project layer and the runs bucket's shared config refuse it by name (a
+	// launcher who could write it would redirect every report of the project),
+	// and the managed publish gate refuses it for a coding agent's publish
+	// because no rule of that gate reads it — the answer `binaries` gets, and
+	// the right one here rather than a rule.
+	//
+	// It is a pointer because the member's *presence* is a statement, exactly
+	// as Binaries' is: a written empty block is how an operator takes a
+	// designation away on purpose (`reports_commit: {}` in the owner's own
+	// config, D987), while a file that says nothing keeps the designation the
+	// node already carries. The two are the same answer at launch time — no
+	// report may be committed anywhere — and two different answers at publish
+	// time, so folding them together here would leave the publisher unable to
+	// tell "clear it" from "say nothing".
+	//
+	// The block's own rules are ReportsCommit' decode (reportscommit.go): the
+	// required `repo`, the folder's shape, and the strict member reading every
+	// block of this node gets.
+	ReportsCommit *ReportsCommit `json:"reports_commit,omitempty"`
+
 	// ImageServices is the services each catalog entry's image provides
 	// (D1904): the entry's own list, keyed by the entry's name, which a run
 	// reads back to start the services its tests need before they run.
@@ -661,7 +690,8 @@ var knownTopLevelKeys = map[string]bool{
 	"model_grades":        true,
 	"subscription_spread": true,
 	"orchestrator":        true, "binaries": true,
-	"triage": true,
+	"reports_commit": true,
+	"triage":         true,
 	// The daemon's own two (R1 of docs/orchestrator-graph-estimates): the
 	// switch that hands orchestration back (D2701, D2739) and the project's
 	// issue adapter (D2733). Both are top-level keys and not members of a
@@ -1687,6 +1717,13 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 			return nil, true, err
 		}
 		p.Binaries = block
+	}
+	if rraw, ok := doc["reports_commit"]; ok && !IsNull(rraw) {
+		block, err := decodeReportsCommit(rraw)
+		if err != nil {
+			return nil, true, err
+		}
+		p.ReportsCommit = block
 	}
 	if sraw, ok := doc["image_services"]; ok && !IsNull(sraw) {
 		if err := json.Unmarshal(sraw, &p.ImageServices); err != nil {

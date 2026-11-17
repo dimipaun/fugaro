@@ -103,11 +103,12 @@ since, and each one changes this plan rather than decorating it:
    `.read: false` on it). That last part is why the coordinator's state is a **separate** subtree
    and not a child of the allowlist (D195): Q15(A)'s read grant is a question about a subtree,
    and the identity behind it already exists and is already revocable.
-5. **The rigor modes work is a plan in open PR #773 and is not on `main`.** It is named here
-   because the register's numbering turns on it (§9) and because its guard — the pinning test
-   this folder's own guard would copy from — is not in the tree to copy from. The models to
-   follow are `internal/cli/docs_coordinator_test.go` and `internal/cli/docs_windows_cli_test.go`,
-   both on `main`.
+5. **The rigor modes work was a plan in open PR #773 when this was read, and it is on `main`
+   now**, at `docs/rigor-modes/`. It is named here because the register's numbering turns on it
+   (§9) and because its guard — the pinning test this folder's own guard would copy from — is in
+   the tree to copy from (`internal/cli/docs_rigor_modes_test.go`). The models to follow are
+   `internal/cli/docs_coordinator_test.go` and `internal/cli/docs_windows_cli_test.go`, both on
+   `main`.
 
 Two things the reconciliation recorded are **still true and still shape this plan**: the
 sibling's *"never a model credential in the resident service"* (its §6 rule 4, which is Q4(A) and
@@ -1571,9 +1572,12 @@ and by the always-on orchestrator design in **open PR #632** — and the registe
 *whichever of two open claims merges second renumbers itself*. **111 is written**, by the setup
 wizard (its Task W0.3, whose rewritten Check 27 is its end-to-end pass). **112 is proposed** by
 `docs/windows-cli/`, **113–118 are taken** by `docs/mobile/voice-session/` (its own README works
-the 112/113 collision out and yields 112), and **119 is taken** by the rigor modes work in **open
-PR #773**, which is not on `main` and whose claim this folder can therefore only record and not
-read. **So the next free number depends on how 110 and 119 settle, and this plan takes none.**
+the 112/113 collision out and yields 112), and **119 is the console-on-Windows work's**, claimed by
+the owner on 2026-11-14 for that work's manual checklist, whose row and section the register now
+carries. The rigor modes work proposed that same number and also asked for one; it is **on `main`
+now**, at `docs/rigor-modes/`, and the collision is settled by the owner's ruling of **2026-11-17**:
+its live check takes **Check 127** (that plan's §3, written by its task **T8.1**). **So the next free
+number depends on how 110 settles, and this plan takes none.**
 Each check below is **owner-run, on a real project, by the owner** unless it is marked
 **runner**; there is no live action of any kind in this work.
 

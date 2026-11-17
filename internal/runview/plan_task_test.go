@@ -51,6 +51,14 @@ var planTaskReaders = map[string]string{
 	// no run, budgets nothing and launches nothing, and a fold that would make a
 	// cycle or pass the node's cap is refused outright.
 	"internal/runstore/discovered.go": "defines runstore.DiscoveredItem.PlanTask, the id a run's own record carries out for the daemon to fold, add-only, into a graph a screen draws",
+	// The two runner files that put such an entry on the record and ask for it
+	// (E2). The reader copies the id out of the file the run's own agent wrote
+	// and decides nothing by it: it draws no edge, reads no graph and admits
+	// nothing, and what it does carry is bounded at write and again at read
+	// (runstore.NewDiscovered). The brief is a sentence to the coder naming the
+	// key it writes an entry under, and reads nothing at all.
+	"internal/runner/discovered.go": "reads the id the run's own agent reported into the record's block, bounded and redacted, and decides nothing by it",
+	"internal/runner/prompts.go":    "the coder's brief names the key an entry is written under; a text instructing a model reads nothing",
 	// The one writer of both records: fugaro run stores the id in the task
 	// (so --retry and the recovery path keep it) and in launch.json, and
 	// gates the launch on the image whose runner can read it.
@@ -111,6 +119,13 @@ var planTaskReaders = map[string]string{
 	// item is written unapproved by construction, and the ladder will not
 	// enter the rung that merges one (D2702).
 	"internal/orchestrator/adopt.go": "files the record of a run in flight under the plan node its launch named, and names that plan in one fact (D2702, D2721, D2746)",
+	// The item's id on its way to the launch (B7): the declaration the state
+	// digests carries it into the spec the launcher is handed, and the daemon's
+	// launcher passes it through the command's own resolution, which is what
+	// writes it into the task and into launch.json -- the records a screen joins
+	// a run to its node with. Neither decides anything with it.
+	"internal/orchestrator/launch.go":       "carries the item's plan task into the launch spec (Spec.PlanTask, SpecOf), where the launcher reads it",
+	"internal/cli/orchestrator_launcher.go": "passes the item's plan task into the command's own launch resolution, which records it in the task and in launch.json",
 }
 
 // TestPlanTaskIsDisplayTextOnly walks every non-test Go file of the module

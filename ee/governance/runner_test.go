@@ -14,6 +14,11 @@ package governance_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -21,12 +26,17 @@ import (
 	"github.com/dimipaun/fugaro/ee/governance"
 	_ "github.com/dimipaun/fugaro/ee/register"
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/digest"
+	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runner/runnertest"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 	"github.com/dimipaun/fugaro/internal/tier"
+	"github.com/dimipaun/fugaro/internal/verify"
 )
 
 // stageTimeoutCfg is the fixture repository's file with the workflow's
@@ -758,5 +768,704 @@ func TestRunRecordIgnoresALooserTierInTheRepository(t *testing.T) {
 	got := h.Log.String()
 	if !strings.Contains(got, "a looser value in fugaro.yaml was ignored") || !strings.Contains(got, "governance.tiers.small.expected_usd") {
 		t.Errorf("the run log does not warn about the dropped tier figure:\n%s", got)
+	}
+}
+
+// The stops that become checkpoints (plan T7.3, G7). What the tests below
+// drive is the pair the core and ee/ own between them: the gateway's own stop
+// (T7.2), the halt ee/governance's Stopped and Before make of it, and the one
+// call the runner then makes to the stopping agent for the report's three
+// model-written fields (checkpoint_stage.go). They run through
+// internal/runner/runnertest's gateway frame, which is the least of the core
+// harness a package outside internal/runner can reach.
+
+// sonnet and haiku are the models these tests pin the run's roles to: the
+// embedded price table prices both, and a run with a cap of its own has to
+// name the models its calls are priced at (bootstrap refuses one that does
+// not). The call a stage makes is posted as sonnet whatever the stage's own
+// model is, since no stage here is about which model it runs.
+const (
+	sonnet = "claude-sonnet-5-5"
+	haiku  = "claude-haiku-4-5"
+)
+
+// gatewayCfg is the fixture repository's file with the roles pinned: what a
+// run whose budget is enforced is admitted with.
+func gatewayCfg(t *testing.T) string {
+	t.Helper()
+	cfg := testutil.FixtureFiles(t)["fugaro.yaml"]
+	out := strings.Replace(cfg, "  review_rounds: 2\n", `  review_rounds: 2
+  model: `+sonnet+`
+  models: { coder: `+sonnet+`, reviewer: `+sonnet+`, background: `+haiku+` }
+  max_output_tokens: { coder: 4096, reviewer: 4096 }
+`, 1)
+	if out == cfg {
+		t.Fatal("fixture has no review_rounds line")
+	}
+	return out
+}
+
+// stageCap is the run cap these tests enforce: implement's own share of it is
+// 0.7 of $0.02, and the call below reserves about $0.048 of input and output
+// together, which is what the stage's budget cannot hold.
+const stageCap = "0.02"
+
+// aCall is the reply the fake upstream answers every call of a run with: a
+// usage of one token each way, since nothing below is about what a call costs
+// rather than about whether it was admitted.
+func aCall() anthropicfake.Reply {
+	return anthropicfake.MessageOK(sonnet, pricing.Usage{Input: 1, Output: 1})
+}
+
+// implementOverItsBudget is the implement stage of a run whose own share of
+// the cap is smaller than the call it makes: the call's worst case is four
+// thousand output tokens and the input bound beside them, and the gateway
+// stops the stage rather than send it (T7.2). It answers the refusal the way a
+// real agent's client does — the call returns, the stage does not — which is
+// the shape the runner has to turn into a halt and a checkpoint.
+func implementOverItsBudget(t *testing.T, _ context.Context, req agent.Request) (agent.Result, error) {
+	t.Helper()
+	// The run has work of its own by the time the stage is stopped: the
+	// checkpoint prompt is the only place the stopping agent can learn what it
+	// was, and the answer below is one a session with no checkout could give
+	// only because the prompt carries it (checkpoint_stage.go).
+	runnertest.Script(t, req, "echo the feature > feature.txt && git add -A && git commit -qm 'Add the feature'")
+	if code, body := runnertest.Post(t, req, sonnet, 4000); code != http.StatusForbidden {
+		t.Fatalf("the call was answered %d, want the stage budget's 403: %s", code, body)
+	}
+	return agent.Result{CostUSD: 0.1}, nil
+}
+
+// answersTheCheckpoint is the checkpoint stage's work: one call, admitted by
+// the one allowance the checkpoint stage has (gateway.CheckpointStage), whose
+// answer is the three labelled lines the report is filled from.
+func answersTheCheckpoint(t *testing.T, _ context.Context, req agent.Request) (agent.Result, error) {
+	t.Helper()
+	if code, body := runnertest.Post(t, req, sonnet, 100); code != http.StatusOK {
+		t.Fatalf("the checkpoint call was answered %d, want 200: %s", code, body)
+	}
+	return agent.Result{Text: "done: the feature is committed\nnext: nothing\nhard instructions: none"}, nil
+}
+
+// TestGatewayStageHaltBecomesCheckpoint: a stage the gateway's own limit stops
+// is a governance halt with a checkpoint report, and the report's three
+// model-written fields are answered by the stopping agent in a fresh session
+// (T7.3, T7.2, G7). The stop is not a failed stage and not a silent kill: the
+// run halts, the draft pull request carries the report, and the one call that
+// follows is the checkpoint stage's — a stage of its own, whose name is the
+// one the gateway admits exactly one call for.
+func TestGatewayStageHaltBecomesCheckpoint(t *testing.T) {
+	h := runnertest.New(t, gatewayCfg(t), nil)
+	h.Gateway(t, "enforce", stageCap, aCall())
+	rec, err := h.Run(t, implementOverItsBudget, answersTheCheckpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Halt == nil {
+		t.Fatalf("record = %+v, halt = %+v: a gateway stop did not halt the run", rec, rec.Halt)
+	}
+	if rec.Halt.Reason != runstore.HaltStageBudget {
+		t.Fatalf("halt = %+v, want the stage budget's own reason", rec.Halt)
+	}
+	if !strings.Contains(rec.Halt.Detail, "implement stage budget") {
+		t.Errorf("halt detail = %q, want the gateway's own sentence about the stage it stopped", rec.Halt.Detail)
+	}
+	cp := rec.Checkpoint
+	if cp == nil {
+		t.Fatal("a governance halt left no checkpoint report")
+	}
+	if cp.Trigger != string(runstore.HaltStageBudget) || cp.WhyOver == "" {
+		t.Errorf("checkpoint = %+v, want the stage budget's trigger and the runner's own account of it", cp)
+	}
+	if cp.Done != "the feature is committed" || cp.Next != "nothing" || cp.HardInstructions != "none" {
+		t.Errorf("checkpoint = %+v, want the three fields the stopping agent answered", cp)
+	}
+	// The call is the checkpoint stage's, made after the stop: the stopped
+	// stage's own process is gone by then, which is what keeps the allowance
+	// the gateway admits from being spendable by the caller that was stopped.
+	calls := h.Calls()
+	if len(calls) != 2 {
+		t.Fatalf("%d stages ran, want implement and the checkpoint stage", len(calls))
+	}
+	if got := calls[1].Prompt; !strings.Contains(got, "Your task was:") || !strings.Contains(got, "Add a feature") ||
+		!strings.Contains(got, "run stopped in stage implement") {
+		t.Errorf("the checkpoint prompt does not carry the task and the stop:\n%s", got)
+	}
+	// The run's own work, and not just the task: the session is fresh and has no
+	// tools, so the commit the run made and the path it changed reach it only
+	// here, and without them "what the work had finished" is a guess the record
+	// and the pull request then carry as fact (checkpoint_stage.go).
+	for _, want := range []string{
+		"Commits it made, newest first:", "- Add the feature",
+		"Paths it changed:", "- feature.txt",
+	} {
+		if !strings.Contains(calls[1].Prompt, want) {
+			t.Errorf("the checkpoint prompt does not carry %q:\n%s", want, calls[1].Prompt)
+		}
+	}
+	// A fresh session, not the stopped stage's: the agent that was stopped is
+	// the one thing this call must not reach.
+	if calls[1].SessionID == calls[0].SessionID {
+		t.Errorf("the checkpoint call resumed the stopped stage's session %q", calls[0].SessionID)
+	}
+	// The stage writes a report and nothing else: no setting source, no
+	// built-in tool and no MCP server, so nothing the checkout declares runs
+	// after the halt in the tree finalize commits and pushes (F25, F29). The
+	// two lists are the empty one and not nil, which is what the flags need to
+	// mean "none" rather than "the CLI's own default".
+	if calls[1].Tools == nil || len(calls[1].Tools) != 0 {
+		t.Errorf("the checkpoint call's tools = %v, want the empty list", calls[1].Tools)
+	}
+	if calls[1].SettingSources == nil || len(calls[1].SettingSources) != 0 {
+		t.Errorf("the checkpoint call's setting sources = %v, want the empty list", calls[1].SettingSources)
+	}
+	if !calls[1].StrictMCPConfig {
+		t.Error("the checkpoint call was not launched with a strict MCP config")
+	}
+	// The call's dollars carry a stage row of their own, as every other
+	// stage's do. The run's model figure is what the stages sum to plus the
+	// split's own "unattributed" residual (runstore.StageTiming), and the
+	// checkpoint stage is the one stage not recorded by stageOnce — so it is
+	// the one whose dollars, without its row, would land in model_usd and in
+	// the split while no stage carried them, leaving the record's own
+	// reconciliation short by exactly its cost.
+	var staged, checkpointUSD float64
+	for _, st := range rec.Stages {
+		staged += st.ModelUSD
+		if st.Name == "checkpoint" {
+			checkpointUSD = st.ModelUSD
+		}
+	}
+	if checkpointUSD <= 0 {
+		t.Errorf("stages = %+v, want the checkpoint stage's own row, carrying its spend", rec.Stages)
+	}
+	if rest := staged + rec.Cost.ModelBy["unattributed"] - rec.Cost.ModelUSD; rest > 1e-9 || rest < -1e-9 {
+		t.Errorf("sum(stages[].model_usd) = %v and model_by[unattributed] = %v against model_usd %v: %v unaccounted for",
+			staged, rec.Cost.ModelBy["unattributed"], rec.Cost.ModelUSD, rest)
+	}
+	// The draft is where a person reads the report; finalize must not have
+	// turned the halted run into a ready pull request.
+	if pr := h.PR(t); !pr.Draft {
+		t.Errorf("pull request = %+v, want the draft a governance halt leaves", pr)
+	}
+}
+
+// TestCheckpointCallFailureStillHalts: the checkpoint call is best-effort and
+// the halt is not. An agent that fails the call leaves the report with the
+// runner's own fields alone — the trigger, why the run is over and what it had
+// spent — and the run still ends halted with its draft pull request (T7.3,
+// D329). Nothing about the report may turn a governance stop into a failure or
+// un-halt a run.
+func TestCheckpointCallFailureStillHalts(t *testing.T) {
+	h := runnertest.New(t, gatewayCfg(t), nil)
+	h.Gateway(t, "enforce", stageCap, aCall())
+	failedCheckpoint := func(_ *testing.T, _ context.Context, _ agent.Request) (agent.Result, error) {
+		return agent.Result{}, errors.New("the checkpoint agent gave up")
+	}
+	rec, err := h.Run(t, implementOverItsBudget, failedCheckpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Halt == nil || rec.Halt.Reason != runstore.HaltStageBudget {
+		t.Fatalf("record = %+v, halt = %+v: a failed checkpoint call un-halted the run", rec, rec.Halt)
+	}
+	cp := rec.Checkpoint
+	if cp == nil {
+		t.Fatal("a governance halt left no checkpoint report")
+	}
+	if cp.Trigger != string(runstore.HaltStageBudget) || cp.WhyOver == "" {
+		t.Errorf("checkpoint = %+v, want the runner's own fields kept", cp)
+	}
+	if cp.Done != "" || cp.Next != "" || cp.HardInstructions != "" {
+		t.Errorf("checkpoint = %+v, want the three model-written fields left empty", cp)
+	}
+	if got := h.Log.String(); !strings.Contains(got, "the checkpoint call failed") {
+		t.Errorf("the run log does not say the checkpoint call failed:\n%s", got)
+	}
+	if pr := h.PR(t); !pr.Draft {
+		t.Errorf("pull request = %+v, want the draft a governance halt leaves", pr)
+	}
+}
+
+// The tier's expected cost as a checkpoint (plan T8.2, D329, D330). What the
+// tests below drive is the run-level threshold the gateway carries beside its
+// stage budgets (ee/governance/gateway.go, expectationStop) and the halt
+// ee/governance's Stopped makes of that stop. The two together are the rule as
+// the tier states it: at 100% of what the tier expected, the run halts with
+// expected_exceeded and a checkpoint report; with no tier there is no threshold
+// at all.
+
+// expectedCap is the run cap the expectation test enforces: far above both the
+// expectation and anything the calls below spend, so neither the run's cap nor
+// a stage budget — implement's share of it is 0.7 — is anywhere near the stop
+// and the expectation is the only rule that can make one.
+const expectedCap = "20"
+
+// untieredCap is the cap the no-tier test enforces: higher still, so the two
+// calls below (about $18 together) stay clear of implement's 0.7 share of it as
+// well, and what the test reads is the absence of a threshold and never a
+// budget that happened to fire.
+const untieredCap = "50"
+
+// pastTheTier is the reply the fake upstream answers the expectation test's
+// calls with: a million input tokens at the embedded table's $2 a million for
+// sonnet is $2.00 settled, twice the $1.00 the shipped `small` expectation
+// carries.
+func pastTheTier() anthropicfake.Reply {
+	return anthropicfake.MessageOK(sonnet, pricing.Usage{Input: 1_000_000, Output: 1})
+}
+
+// pastEveryTier is the reply the untiered run's calls are answered with:
+// $9.00 settled a call, above the largest expectation Fugaro ships for any
+// tier ($8 for `large`, governance.TierExpectations), so a threshold read off
+// the wrong place — a default, or the dearest tier — is what the test would
+// catch.
+func pastEveryTier() anthropicfake.Reply {
+	return anthropicfake.MessageOK(sonnet, pricing.Usage{Input: 4_500_000, Output: 1})
+}
+
+// spendsPastItsTier is the implement stage of a run dispatched at `small`: its
+// first call settles $2.00, past the $1.00 the tier expects the whole run to
+// cost, and the call after it is refused with the expectation's own sentence.
+// The call that crosses the expectation is admitted and the next one is what
+// the stop lands on — an expectation is not a cap, and a reservation counted
+// into it would refuse the first call of a fresh run (T8.2, D330).
+func spendsPastItsTier(t *testing.T, _ context.Context, req agent.Request) (agent.Result, error) {
+	t.Helper()
+	// The run has work of its own by the time the stage stops, as the stage
+	// budget's test needs it to: the checkpoint prompt carries what the run had
+	// done, and the answer below is one a fresh session could give only because
+	// it does (checkpoint_stage.go).
+	runnertest.Script(t, req, "echo the feature > feature.txt && git add -A && git commit -qm 'Add the feature'")
+	if code, body := runnertest.Post(t, req, sonnet, 4000); code != http.StatusOK {
+		t.Fatalf("the first call was answered %d, want 200: %s", code, body)
+	}
+	code, body := runnertest.Post(t, req, sonnet, 4000)
+	if code != http.StatusForbidden {
+		t.Fatalf("the call after the run passed its tier's expectation was answered %d, want the expectation's 403: %s", code, body)
+	}
+	if !strings.Contains(body, "tier small expects $1.00") {
+		t.Errorf("the refusal does not carry the expectation the run crossed, so the agent cannot tell what stopped it: %s", body)
+	}
+	return agent.Result{CostUSD: 2}, nil
+}
+
+// TestExpectedCostHalts: a run that has spent what its tier expected of it
+// halts with `expected_exceeded` and a checkpoint report, and the report
+// reaches the draft pull request a governance stop leaves (T8.2, D329).
+//
+// The spend is the gateway's own — the run's ledger, the money its calls
+// settled — and the stop is the gateway's, so what the halt carries is the
+// sentence the gateway refused the call with and not a figure the runner
+// recomputed from the agent's report.
+func TestExpectedCostHalts(t *testing.T) {
+	spec := runnertest.Task()
+	spec.Tier = tier.Small
+	h := runnertest.New(t, gatewayCfg(t), spec)
+	// One reply per call that reaches the upstream: the first implement call and
+	// the checkpoint stage's own. The refused call is never sent.
+	h.Gateway(t, "enforce", expectedCap, pastTheTier(), pastTheTier())
+	rec, err := h.Run(t, spendsPastItsTier, answersTheCheckpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Halt == nil {
+		t.Fatalf("record = %+v, halt = %+v: the run passed its tier's expectation and went on", rec, rec.Halt)
+	}
+	if rec.Halt.Reason != runstore.HaltExpectedExceeded {
+		t.Fatalf("halt = %+v, want the expected-cost reason", rec.Halt)
+	}
+	// The sentence is the whole of what a person has to decide with: which tier
+	// expected what, and what the run had spent when it was stopped.
+	for _, want := range []string{"tier small expects $1.00", "the run has spent $2.00"} {
+		if !strings.Contains(rec.Halt.Detail, want) {
+			t.Errorf("halt detail = %q, want %q in it", rec.Halt.Detail, want)
+		}
+	}
+	cp := rec.Checkpoint
+	if cp == nil {
+		t.Fatal("the expected-cost halt left no checkpoint report")
+	}
+	if cp.Trigger != string(runstore.HaltExpectedExceeded) {
+		t.Errorf("checkpoint trigger = %q, want %q", cp.Trigger, runstore.HaltExpectedExceeded)
+	}
+	if cp.WhyOver != "the run passed the cost its tier expected of it" {
+		t.Errorf("checkpoint why_over = %q, want the runner's own words for this halt", cp.WhyOver)
+	}
+	if cp.Done != "the feature is committed" {
+		t.Errorf("checkpoint done = %q, want what the stopping agent answered", cp.Done)
+	}
+	// The checkpoint stage is the one stage the expectation does not touch: a
+	// run already past it is exactly the run whose report has to be written, and
+	// the one call that stage admits is what writes it. That the call was served
+	// is what `answersTheCheckpoint` fails on, and the record's own report above
+	// is the second reading.
+	if pr := h.PR(t); !pr.Draft {
+		t.Errorf("pull request = %+v, want the draft a governance halt leaves", pr)
+	}
+}
+
+// spendsPastEveryTier is the implement stage of a run dispatched at no tier: it
+// spends about $18 in two calls — more than any tier Fugaro ships expects, and
+// more than a run of any of them would be allowed to spend before its
+// checkpoint — and neither call is refused.
+func spendsPastEveryTier(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+	t.Helper()
+	for call := range 2 {
+		if code, body := runnertest.Post(t, req, sonnet, 4000); code != http.StatusOK {
+			t.Fatalf("call %d was answered %d, want 200: a run with no tier has no expectation to be stopped at: %s", call+1, code, body)
+		}
+	}
+	return runnertest.Implement("feature")(t, ctx, req)
+}
+
+// TestNoTierNoExpectation: the threshold is the tier's, so a run that carries
+// no tier has none (T8.2, D330). `--tier` is optional and most tasks are
+// untiered, so a run nobody expected a figure of is bounded by the governance
+// block and the run's cap exactly as it was before tiers existed: it is not
+// stopped at a default, at the dearest tier's figure, or at zero.
+func TestNoTierNoExpectation(t *testing.T) {
+	h := runnertest.New(t, gatewayCfg(t), nil)
+	// Again one reply per call that reaches the upstream: the two implement
+	// calls, and nothing after them — an untiered run is not halted, so no
+	// checkpoint call follows, and a request past the script is a test error.
+	h.Gateway(t, "enforce", untieredCap, pastEveryTier(), pastEveryTier())
+	rec, err := h.Run(t, spendsPastEveryTier, runnertest.Review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Halt != nil {
+		t.Fatalf("halt = %+v: an untiered run has no expectation to be stopped at", rec.Halt)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Errorf("record = %+v, want the untiered run to go on to its review and end ready", rec)
+	}
+	if rec.Tier != nil {
+		t.Errorf("record tier = %+v, want none: the run was dispatched at no tier", rec.Tier)
+	}
+}
+
+// The review-scope stop (T5.2, T7.3, D332). What the tests below drive is the
+// comparison the core records after implement (diffbase.go, readReviewScope)
+// and the reading ee/governance's Before takes of it before a review round:
+// one comparison is a mismatch — a range narrowed to the run's own commits and
+// then moved off them — and every other one is a fact about the run.
+
+// integrationBranch is the branch a test's run cuts its work from, the way a
+// brief that says `git checkout -b <b> origin/<integration>` does
+// (diffbase.go): the commits the run makes are then the ones no branch on
+// origin holds, so the review range narrows to them.
+const integrationBranch = "integration"
+
+// integrationOnRemote pushes an integration branch of two commits onto the
+// remote's main and returns its tip: the commit the run's own range is
+// narrowed to, and the one a fix round moves the branch off.
+func integrationOnRemote(t *testing.T, remote string) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "integration")
+	testutil.Git(t, filepath.Dir(dir), "clone", "--quiet", remote, dir)
+	testutil.WriteFiles(t, dir, map[string]string{"integration.txt": "the integration branch's own file\n"})
+	testutil.Git(t, dir, "add", "-A")
+	testutil.Git(t, dir, "commit", "--quiet", "-m", "the integration branch's first commit")
+	testutil.WriteFiles(t, dir, map[string]string{"more-integration.txt": "more of it\n"})
+	testutil.Git(t, dir, "add", "-A")
+	testutil.Git(t, dir, "commit", "--quiet", "-m", "the integration branch's second commit")
+	testutil.Git(t, dir, "push", "--quiet", "origin", "HEAD:refs/heads/"+integrationBranch)
+	return testutil.Git(t, dir, "rev-parse", "HEAD")
+}
+
+// advanceBranch pushes one commit onto branch on the remote: the base a run is
+// measured against moving on while the run works.
+func advanceBranch(t *testing.T, remote, branch string, files map[string]string) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "advance")
+	testutil.Git(t, filepath.Dir(dir), "clone", "--quiet", remote, dir)
+	testutil.Git(t, dir, "checkout", "--quiet", branch)
+	testutil.WriteFiles(t, dir, files)
+	testutil.Git(t, dir, "add", "-A")
+	testutil.Git(t, dir, "commit", "--quiet", "-m", "a person's commit on "+branch)
+	testutil.Git(t, dir, "push", "--quiet", "origin", "HEAD:refs/heads/"+branch)
+	return testutil.Git(t, dir, "rev-parse", "HEAD")
+}
+
+// cutFromTheIntegrationBranch is implement's work cut from a branch the run's
+// own task never recorded. The refspec brings the branch in as a
+// remote-tracking ref whatever shape the clone has, so the run's own commits
+// are the ones origin holds no branch for and the review range is narrowed to
+// them (narrowReviewRange).
+func cutFromTheIntegrationBranch(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+	t.Helper()
+	runnertest.Script(t, req, "git fetch -q origin +refs/heads/"+integrationBranch+":refs/remotes/origin/"+integrationBranch+
+		" && git checkout -q -b work origin/"+integrationBranch)
+	return runnertest.Implement("feature")(t, ctx, req)
+}
+
+// movedOffTheNarrowedCommit is the fix round that leaves the commit the review
+// range was narrowed to behind: the run's own commit is replayed onto the
+// integration branch's first commit, so the commit the range starts after is
+// no longer an ancestor of HEAD and the round that follows reads the recorded
+// range instead (diffbase.go, reviewRev).
+func movedOffTheNarrowedCommit(t *testing.T, _ context.Context, req agent.Request) (agent.Result, error) {
+	t.Helper()
+	runnertest.Script(t, req, "git rebase -q --onto origin/"+integrationBranch+"~1 origin/"+integrationBranch)
+	return agent.Result{CostUSD: 0.5}, nil
+}
+
+// movedOntoTheRecordedBase is the other way a fix round leaves the narrowed
+// commit behind: the run's own commit is replayed onto main, the base the run
+// recorded, so the round that follows reads the recorded range and is handed
+// nothing implement did not write. The range has moved, and the moved range is
+// the run's own commits still — so the stop does not fire and neither does the
+// digest's drift flag, which needs a path outside them (reviewScopeDrift).
+func movedOntoTheRecordedBase(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+	t.Helper()
+	runnertest.Script(t, req, "git rebase -q --onto origin/main origin/"+integrationBranch)
+	// The rebase rewrote the commit implement's own verify was made on, and the
+	// readiness rule wants a passing record for the commit the run ends on, so
+	// the fix verifies what it leaves — what Implement does for its own commit.
+	if _, err := verify.Run(ctx, verify.Options{StateDir: runnertest.StateDir(req), Kind: verify.KindTest,
+		Env: req.Env, Stdout: io.Discard, Stderr: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
+	return agent.Result{CostUSD: 0.5}, nil
+}
+
+// TestReviewScopeMismatchHaltsBeforeReview: a review round about to be handed
+// a range that starts where the run's own commits no longer do is a round the
+// run does not buy at all (T5.2, T7.3, D332). The fix round before it moved the
+// branch off the commit the range was narrowed to, so the round would read the
+// recorded base and cover the integration branch's own file, which implement
+// never wrote: the run halts with the review_scope reason, the record carries
+// the comparison the stop was taken on, and no second review round and no
+// second fix are run.
+func TestReviewScopeMismatchHaltsBeforeReview(t *testing.T) {
+	h := runnertest.New(t, fixtureYAML(t), nil)
+	narrowed := integrationOnRemote(t, h.Provider.Remote)
+	rec, err := h.Run(t,
+		cutFromTheIntegrationBranch,
+		runnertest.Review("changes", 1),
+		movedOffTheNarrowedCommit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Halt == nil || rec.Halt.Reason != runstore.HaltReviewScope {
+		t.Fatalf("record = %+v, halt = %+v: the round the stop is about was bought", rec, rec.Halt)
+	}
+	// The detail is the runner's own sentence for it: the two revisions the
+	// comparison was read over, and how many of the range's paths the run never
+	// wrote. It carries no path — the record and the digest's flag hold those.
+	for _, want := range []string{"origin/main", narrowed, "1 path(s)"} {
+		if !strings.Contains(rec.Halt.Detail, want) {
+			t.Errorf("halt detail = %q, want it to name %q", rec.Halt.Detail, want)
+		}
+	}
+	sc := rec.ReviewScope
+	if sc == nil || sc.Applicable || sc.WhyNot != runstore.ReviewScopeRangeMoved || sc.Truncated {
+		t.Fatalf("review scope = %+v, want the moved comparison the stop was taken on", sc)
+	}
+	if len(sc.Outside) != 1 || sc.Outside[0] != "integration.txt" {
+		t.Errorf("review scope outside = %v, want the integration branch's own file alone", sc.Outside)
+	}
+	// Three stages and no fourth: implement, the review round, and the fix that
+	// moved the branch. The round the stop is about is never bought.
+	if got := len(h.Calls()); got != 3 {
+		t.Fatalf("%d stages ran, want implement, review and fix", got)
+	}
+	if pr := h.PR(t); !pr.Draft {
+		t.Errorf("pull request = %+v, want the draft a governance halt leaves", pr)
+	}
+}
+
+// reviewView is a review round's view of one comparison: the stage, the two
+// revisions the stop's detail is made of, and the record's block.
+func reviewView(sc *runstore.ReviewScope) runner.StageView {
+	return runner.StageView{
+		Stage:       "review",
+		ReviewScope: sc,
+		Narrowed:    "1111111111111111111111111111111111111111",
+		ReviewRev:   "origin/main",
+	}
+}
+
+// TestReviewScopeNotApplicableNeverHalts: a comparison that does not apply is a
+// fact about the run and never a mismatch, so no review round is refused for
+// one (T5.2, T7.3, D332). The wide range kept on purpose is driven through a
+// whole run; the rest of the reasons are handed to the decision as a record
+// carries them, because a follow-up, a review run and an autofix's Fixed gate
+// are not runs internal/runner/runnertest can make — it has no follow-up state,
+// no review mode and no check step — and the block each of them writes is what
+// the stop reads.
+//
+// The last case is the control: the one comparison that IS a mismatch, with a
+// path implement never wrote, stops the round, so the table above is not a
+// table of a decision that never fires.
+func TestReviewScopeNotApplicableNeverHalts(t *testing.T) {
+	t.Run("a range kept wide on purpose", func(t *testing.T) {
+		h := runnertest.New(t, fixtureYAML(t), nil)
+		// The base the run recorded moves on while it works, and the run does
+		// not merge it in: the recorded range then holds no more commits than
+		// the run's own, so it is kept as it was and the record says why.
+		baseMovesOn := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+			t.Helper()
+			advanceBranch(t, h.Provider.Remote, "main", map[string]string{"person.txt": "a person's file\n"})
+			runnertest.Script(t, req, "git fetch -q origin main")
+			return runnertest.Implement("feature")(t, ctx, req)
+		}
+		rec, err := h.Run(t, baseMovesOn, runnertest.Review("ship", 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.Halt != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+			t.Fatalf("record = %+v, halt = %+v: a range kept wide on purpose stopped the run", rec, rec.Halt)
+		}
+		sc := rec.ReviewScope
+		if sc == nil || sc.Applicable || sc.WhyNot != runstore.ReviewScopeNoNarrowerRange {
+			t.Fatalf("review scope = %+v, want the range recorded as kept wide on purpose", sc)
+		}
+		if got := len(h.Calls()); got != 2 {
+			t.Fatalf("%d stages ran, want implement and review", got)
+		}
+	})
+
+	t.Run("a moved range that is still the run's own commits", func(t *testing.T) {
+		h := runnertest.New(t, fixtureYAML(t), nil)
+		integrationOnRemote(t, h.Provider.Remote)
+		// The fix round replays the run's own commit onto the base the run
+		// recorded, so the round after it reads the recorded range and is handed
+		// nothing implement did not write: the range moved and is still the run's
+		// own commits, which is the case the stop has to tell from the mismatch
+		// above.
+		rec, err := h.Run(t, cutFromTheIntegrationBranch,
+			runnertest.Review("changes", 1), movedOntoTheRecordedBase, runnertest.Review("ship", 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.Halt != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+			t.Fatalf("record = %+v, halt = %+v: a moved range that is still the run's own commits stopped the run", rec, rec.Halt)
+		}
+		sc := rec.ReviewScope
+		if sc == nil || sc.Applicable || sc.WhyNot != runstore.ReviewScopeRangeMoved {
+			t.Fatalf("review scope = %+v, want the moved comparison the round was read over", sc)
+		}
+		if len(sc.Outside) != 0 {
+			t.Errorf("review scope outside = %v, want nothing implement did not write", sc.Outside)
+		}
+		// Both rounds are bought: the stop is about the range a round would be
+		// handed, and this one is handed the run's own work.
+		if got := len(h.Calls()); got != 4 {
+			t.Fatalf("%d stages ran, want implement, two review rounds and the fix", got)
+		}
+	})
+
+	// A comparison whose lists were capped is not a mismatch either: Outside is
+	// taken over the two bounded lists, so a path it names may be one the run
+	// did change.
+	wrote := make([]string, 0, runstore.MaxReviewScopeFiles+5)
+	for i := range runstore.MaxReviewScopeFiles + 5 {
+		wrote = append(wrote, fmt.Sprintf("w%03d.go", i))
+	}
+	truncated := runstore.NewReviewScope(false, runstore.ReviewScopeRangeMoved, wrote, append([]string{"a.go"}, wrote...))
+	if !truncated.Truncated || len(truncated.Outside) == 0 {
+		t.Fatalf("the fixture is not a truncated comparison with an outside: %+v", truncated)
+	}
+
+	for _, tc := range []struct {
+		name string
+		sc   *runstore.ReviewScope
+	}{
+		{"a follow-up's range", runstore.NewReviewScope(false, runstore.ReviewScopeFollowUp, nil, []string{"a.go"})},
+		{"a review run's range", runstore.NewReviewScope(false, runstore.ReviewScopeReviewRun, nil, []string{"a.go"})},
+		{"an autofix's range", runstore.NewReviewScope(false, runstore.ReviewScopeAutofix, nil, []string{"a.go"})},
+		{"a git too old to read the run's own commits", runstore.NewReviewScope(false, runstore.ReviewScopeGitTooOld, nil, nil)},
+		{"a run with no commits of its own", runstore.NewReviewScope(false, runstore.ReviewScopeNoOwnCommits, nil, nil)},
+		{"a run whose own commits could not be read", runstore.NewReviewScope(false, runstore.ReviewScopeOwnCommitsUnreadable, nil, nil)},
+		{"a comparison whose reads failed", runstore.NewReviewScope(false, runstore.ReviewScopeReadFailed, nil, nil)},
+		{"no comparison at all", nil},
+		{"the range is the run's own commits", runstore.NewReviewScope(true, "", []string{"a.go"}, []string{"a.go"})},
+		{"a moved range that handed over nothing new", runstore.NewReviewScope(false, runstore.ReviewScopeRangeMoved, []string{"a.go"}, []string{"a.go"})},
+		{"a moved range whose lists were truncated", truncated},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if d := governance.Before(reviewView(tc.sc)); d.Halt {
+				t.Errorf("the review round was refused for a comparison that does not apply: %+v", d)
+			}
+		})
+	}
+
+	moved := runstore.NewReviewScope(false, runstore.ReviewScopeRangeMoved, []string{"a.go"}, []string{"a.go", "b.go"})
+	if d := governance.Before(reviewView(moved)); !d.Halt || d.Reason != runstore.HaltReviewScope {
+		t.Fatalf("a moved range that handed over a path the run never wrote did not stop the round: %+v", d)
+	}
+}
+
+// loopsOnOneCommand is the implement stage of a run whose agent ran one
+// identical shell command past the digest's threshold: the stage's own stream
+// is where the runner's relay counts it (T1.4), so the step writes the lines a
+// real agent's transcript would carry.
+func loopsOnOneCommand(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+	t.Helper()
+	line := `{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"sh test.sh"}}]}}` + "\n"
+	for range digest.RepeatedCommandThreshold {
+		if _, err := io.WriteString(req.Transcript, line); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return runnertest.Implement("feature")(t, ctx, req)
+}
+
+// digestFlags is the flags the digest raises for one run's record, as the
+// report prints them: the flags are a reader's, and the record itself carries
+// no flag.
+func digestFlags(t *testing.T, rec *runstore.Record) []string {
+	t.Helper()
+	if rec.FinishedAt == nil {
+		t.Fatal("the record carries no finish time")
+	}
+	p, err := digest.NewPeriod(digest.ByWeek, rec.FinishedAt.UTC().Format("2006-01-02"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := digest.Build([]runstore.Record{*rec}, p).Runs
+	if len(rows) != 1 {
+		t.Fatalf("the digest selected %d runs, want the one this test wrote", len(rows))
+	}
+	out := make([]string, 0, len(rows[0].Flags))
+	for _, f := range rows[0].Flags {
+		out = append(out, f.String())
+	}
+	return out
+}
+
+// TestReportOnlyTripwiresDoNotHalt: the loop tripwire is a report line and
+// nothing else (G8, D332). A stage that ran one identical shell command
+// RepeatedCommandThreshold times or more is flagged in the digest, and the run
+// it happened in goes on — the review round is bought, the run ends ready, and
+// no halt is written for it.
+func TestReportOnlyTripwiresDoNotHalt(t *testing.T) {
+	h := runnertest.New(t, fixtureYAML(t), nil)
+	rec, err := h.Run(t, loopsOnOneCommand, runnertest.Review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Halt != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("record = %+v, halt = %+v: the loop flag stopped the run", rec, rec.Halt)
+	}
+	// The count is the runner's relay's, off the stage's own stream, and it is
+	// what the digest's flag is raised from: a run whose stages recorded none
+	// would be a run the tripwire never fired in.
+	var repeats int
+	for _, st := range rec.Stages {
+		if st.Name == "implement" && st.Repeats != nil {
+			repeats = *st.Repeats
+		}
+	}
+	if repeats < digest.RepeatedCommandThreshold {
+		t.Fatalf("stages = %+v, want the implement stage's repeats at the threshold", rec.Stages)
+	}
+	if flags := digestFlags(t, rec); !slices.Contains(flags, digest.FlagRepeatedCommand) {
+		t.Errorf("the digest raised %v, want %s among them", flags, digest.FlagRepeatedCommand)
+	}
+	if got := len(h.Calls()); got != 2 {
+		t.Fatalf("%d stages ran, want implement and review", got)
 	}
 }

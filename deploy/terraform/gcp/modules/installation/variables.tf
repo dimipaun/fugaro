@@ -338,6 +338,15 @@ variable "catalog_check" {
         title      = string
         expression = string
       })
+      # The repository's provider credential (internal/infra's
+      # CatalogCheckRepository.GitSecretID), which the project's build identity
+      # holds one secretAccessor on: a build of one of this repository's
+      # entries runs as the identity now (B6, D2301) and reads that container
+      # through AvailableSecrets, so the reach the per-repository build account
+      # held (modules/repo/build.tf's own build grant) has to be the
+      # identity's. Optional, and absent for a repository whose credential this
+      # installation cannot name, where no build of its entries is submitted.
+      git_secret_id = optional(string)
     }))
   })
   default = null
@@ -444,6 +453,61 @@ variable "reports" {
   validation {
     condition     = var.reports == null ? true : contains(keys(var.reports.env), "FUGARO_REPORTS_JOB_SPEC")
     error_message = "reports.env must carry FUGARO_REPORTS_JOB_SPEC: it is the whole run's assignment (fugaro runs reports --job refuses to start without it)."
+  }
+}
+
+variable "licence" {
+  description = "The installation's licence renewal job (plan K4.2 of docs/licence-key-v2), or null on an installation that has no coordinator: the scheduled Cloud Run job that runs `fugaro licence renew --job`, whose CODE is the Subscription Edition's (ee/register/licence_renew.go). It is created UNDER the coordinator's own condition and not a switch of its own (licence.tf reads local.deploy_coordinator): its image is the coordinator's, so an installation that has not opted into the coordinator has no tagged image to run. Its job name must not start with fugaro-, which fugaro runs ls and max_parallel count as workflow jobs. account_id is the one ID internal/infra/tf reads as this job's own kind of principal, so it is pinned to that literal; renewal_secret is the ID of the Secret Manager container the job reads and writes, derived by internal/infra.LicenceRenewalSecretID because a container ID with a hash in it cannot be computed in Terraform. The container is created EMPTY and nothing here ever reads a key (D524): an installation that buys no licence holds a job that no-ops and says so, and `fugaro licence set` is what writes the first version (K3.2). The two IAM conditions are the input's (the three-object read the job finds its installation by, internal/backend/gcp's gcp.LicenceReadCondition, and the licence object's write, gcp.LicenceWriteCondition): what makes a grant narrow here is its condition, and it is the bytes the plan review reads."
+  type = object({
+    account_id       = string
+    job              = string
+    image            = string
+    scheduler_job    = string
+    scheduler_region = string
+    env              = map(string)
+    read_condition = object({
+      title      = string
+      expression = string
+    })
+    write_condition = object({
+      title      = string
+      expression = string
+    })
+    renewal_secret = string
+  })
+  default = null
+
+  validation {
+    condition = var.licence == null ? true : (
+      # Pinned to the one ID the plan review knows as the licence job's account
+      # (tf.LicenceAccountID), for the reports account's reason: an ID the review
+      # reads as one of the project's job accounts (fugaro-<readable>-<8 hex>,
+      # tf's jobAccount) would be a member every toAccounts row accepts, and the
+      # three rows this account's own kind opens are narrowed by the conditions
+      # and the container below alone.
+      var.licence.account_id == "fugaro-licence" &&
+      can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.licence.job)) &&
+      !startswith(var.licence.job, "fugaro-") &&
+      can(regex("^[a-zA-Z][a-zA-Z0-9_-]{0,62}$", var.licence.scheduler_job)) &&
+      can(regex("^[a-z]+-[a-z]+[0-9]+$", var.licence.scheduler_region)) &&
+      length(var.licence.image) > 0 &&
+      length(var.licence.renewal_secret) > 0 &&
+      length(var.licence.read_condition.title) > 0 &&
+      length(var.licence.read_condition.expression) > 0 &&
+      length(var.licence.write_condition.title) > 0 &&
+      length(var.licence.write_condition.expression) > 0
+    )
+    error_message = "licence needs the service account ID fugaro-licence — the one internal/infra/tf reads as this job's own kind of principal, so a job-account-shaped ID would be covered by the rows that accept those — an image, a job name that doesn't start with fugaro- (ls counts those), a Scheduler job name and region, the renewal container's ID and the two IAM conditions."
+  }
+
+  # The job finds WHICH installation it renews for from its environment: it is a
+  # Cloud Run container with no checkout and no config file, so FUGARO_PROJECT
+  # and FUGARO_GCP_PROJECT are the whole of what names the project whose
+  # published config it reads (internal/cli's selectWith), and the job's own
+  # preconditions in licence.tf check the same two against this root's.
+  validation {
+    condition     = var.licence == null ? true : contains(keys(var.licence.env), "FUGARO_PROJECT") && contains(keys(var.licence.env), "FUGARO_GCP_PROJECT")
+    error_message = "licence.env must carry FUGARO_PROJECT and FUGARO_GCP_PROJECT: a container has no checkout and no config file, so those two names are how the job finds the installation whose licence it renews."
   }
 }
 
@@ -649,11 +713,16 @@ variable "managed_deployer_scoped" {
 }
 
 variable "orchestrator" {
-  description = "The resident orchestrator's own identity (mobile plan task P5.1b; docs/mobile/design/always-on-orchestrator.md section 4.3): one service account per installation and exactly the grants the design's table lists, assembled one binding at a time. OFF by default (null) — an installation that has not opted in plans exactly what it planned before this file existed, which is what makes the update carrying it a no-op for every installation that has not asked for a resident orchestrator. account_id is the account's ID, fixed by internal/infra's OrchestratorAccountID so that `fugaro doctor` can find the account by the name the design gives it. firebase_project and signer_account_id are the token-minter row's two names and are on this variable rather than derived from var.coordinator: that row is bound on the FIREBASE root's signer account, in that root's project, where the fugaroTokenMinter role is declared (modules/firebase/iam.tf), and the ID is the one internal/infra hands the Firebase root (FirebaseVars' SignerAccountID, the firebase module's names.signer_account_id), so this file composes the signer's address from the same ID the account is created with, the way scheduler.tf composes its own account's. The variable has no CLI writer yet — fugaro update carries no --orchestrator flag on this branch — so nothing here is reachable until the release that turns the resident orchestrator on writes one, which is also the release that must order this root's token-minter binding behind the Firebase root (orchestrator.tf states the ordering)."
+  description = "The resident orchestrator (mobile plan tasks P5.1b and P5.1c; docs/mobile/design/always-on-orchestrator.md sections 4.1 and 4.3): one service account per installation with exactly the grants the design's table lists, the Cloud Run service that account runs, the Cloud Scheduler tick that wakes it, and the environment that service's one process is configured by. OFF by default (null) — an installation that has not opted in plans exactly what it planned before this file existed, which is what makes the update carrying it a no-op for every installation that has not asked for a resident orchestrator. account_id is the account's ID, fixed by internal/infra's OrchestratorAccountID so that `fugaro doctor` can find the account by the name the design gives it. firebase_project and signer_account_id are the token-minter row's two names and are on this variable rather than derived from var.coordinator: that row is bound on the FIREBASE root's signer account, in that root's project, where the fugaroTokenMinter role is declared (modules/firebase/iam.tf), and the ID is the one internal/infra hands the Firebase root (FirebaseVars' SignerAccountID, the firebase module's names.signer_account_id), so this file composes the signer's address from the same ID the account is created with, the way scheduler.tf composes its own account's. service is the Cloud Run service's name; image is the released image pinned BY DIGEST and never by a tag, for credentials_service.image's and intake.image's reason; rtdb_url is the database the process reads this installation's node out of, and it is a field of its own because the service's own Firebase project and the database's URL are two names the same installation computes in two roots. scheduler_job and scheduler_region are the tick's own two names, scheduler_region separately because Cloud Scheduler is not offered in every Cloud Run region (history.tf's and coordinator.tf's rule). The variable has no CLI writer yet — fugaro update carries no --orchestrator flag on this branch — so nothing here is reachable until the release that turns the resident orchestrator on writes one, which is also the release that must order this root's token-minter binding behind the Firebase root (orchestrator.tf states the ordering)."
   type = object({
     account_id        = string
     firebase_project  = string
     signer_account_id = string
+    service           = string
+    image             = string
+    rtdb_url          = string
+    scheduler_job     = string
+    scheduler_region  = string
   })
   default = null
 
@@ -664,5 +733,24 @@ variable "orchestrator" {
       can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.orchestrator.signer_account_id))
     )
     error_message = "orchestrator needs a service account ID (6-30 characters of a-z, 0-9 and -, starting with a letter) for the installation's own account, the Firebase project the signer account lives in, and the signer account's own ID on that project — the token-minter grant is bound on that account, in that project, which is where the role it names exists."
+  }
+
+  # The service, its pin and the tick, held to intake's rules and for their
+  # reasons: an operator can push a tag, so the image is a digest; the service
+  # name is a Cloud Run name; the database URL is the https://<host> form the
+  # process addresses (no path, no port), which is also what keeps the name it
+  # is composed from a host rather than anything a caller could paste; and the
+  # tick's two names are a Scheduler job name and a Scheduler region, the
+  # region being a field of its own because Scheduler is not offered in every
+  # Cloud Run region.
+  validation {
+    condition = var.orchestrator == null ? true : (
+      can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.orchestrator.service)) &&
+      can(regex("^[A-Za-z0-9][A-Za-z0-9._/@:-]*@sha256:[0-9a-f]{64}$", var.orchestrator.image)) &&
+      can(regex("^https://[a-z0-9.-]+$", var.orchestrator.rtdb_url)) &&
+      can(regex("^[a-zA-Z][a-zA-Z0-9_-]{0,62}$", var.orchestrator.scheduler_job)) &&
+      can(regex("^[a-z]+-[a-z]+[0-9]+$", var.orchestrator.scheduler_region))
+    )
+    error_message = "orchestrator needs a Cloud Run service name, an image pinned by digest (an image reference ending in @sha256: and 64 lower-case hex digits — never a tag: an operator can push a tag), the database URL the process reads this installation's node out of in the https://<host> form (no path), and the tick's Scheduler job name and region."
   }
 }

@@ -896,7 +896,7 @@ func changeSetHoldReason(cs *task.ChangeSet) string {
 // the run ends (recordChangeSetVerdict, D2). A run in no change set records
 // nothing.
 func (r *run) noteChangeSetMember(ctx context.Context, pr gitprov.PR) {
-	r.writeChangeSetMember(ctx, pr, "")
+	r.writeChangeSetMember(ctx, pr, "", "", false)
 }
 
 // recordChangeSetVerdict writes the member's verdict once the run has ended
@@ -905,13 +905,24 @@ func (r *run) noteChangeSetMember(ctx context.Context, pr gitprov.PR) {
 // writes the empty verdict for a run that ended without shipping, which is what
 // clears one an earlier attempt at the same pull request left behind: a member
 // whose follow-up failed must not be settled from a `ship` nobody stands by.
-func (r *run) recordChangeSetVerdict(ctx context.Context, pr gitprov.PR, verdict string) {
-	r.writeChangeSetMember(ctx, pr, verdict)
+//
+// The commit the verdict is about goes with it: the head this run pushed and
+// whether a clean-tree test passed there. It has to travel with the verdict
+// rather than being read later from this run's result.json, because the run
+// writing this record is not always the run the set was launched from — a
+// follow-up pushes to the member's branch and answers on the MEMBER's record —
+// and a settle step that compared the member's pull request against the launch
+// run's commit would refuse a followed-up member forever (D3).
+func (r *run) recordChangeSetVerdict(ctx context.Context, pr gitprov.PR, verdict, head string, verified bool) {
+	r.writeChangeSetMember(ctx, pr, verdict, head, verified)
 }
 
 // writeChangeSetMember stores the member record of this run, at pr, with
-// verdict as the run's own word about merging it ("" while the run has none).
-// A run in no change set writes nothing.
+// verdict as the run's own word about merging it ("" while the run has none),
+// head as the commit that word is about and verified as whether a clean-tree
+// test passed there. The commit is empty when the run has no verdict yet: the
+// record's word about a commit is the verdict's, and nothing else writes it. A
+// run in no change set writes nothing.
 //
 // The record names and sits under the set's own member run — the run the set
 // was launched from (task.ChangeSetMember.RunID) — never the run that happens
@@ -925,7 +936,7 @@ func (r *run) recordChangeSetVerdict(ctx context.Context, pr gitprov.PR, verdict
 // member list every member's task carries, which is canonical, and a record
 // that spelled its own repository differently would not match the list it
 // repeats.
-func (r *run) writeChangeSetMember(ctx context.Context, pr gitprov.PR, verdict string) {
+func (r *run) writeChangeSetMember(ctx context.Context, pr gitprov.PR, verdict, head string, verified bool) {
 	cs := r.spec.ChangeSet
 	if cs == nil {
 		return
@@ -945,13 +956,15 @@ func (r *run) writeChangeSetMember(ctx context.Context, pr gitprov.PR, verdict s
 		return
 	}
 	m := &runstore.ChangeSetMember{
-		Version: 1,
-		SetID:   cs.ID,
-		Repo:    repo,
-		RunID:   member.RunID,
-		PRURL:   pr.URL,
-		Verdict: verdict,
-		At:      r.d.Now().UTC(),
+		Version:  1,
+		SetID:    cs.ID,
+		Repo:     repo,
+		RunID:    member.RunID,
+		PRURL:    pr.URL,
+		Verdict:  verdict,
+		HeadSHA:  head,
+		Verified: verified,
+		At:       r.d.Now().UTC(),
 	}
 	if err := r.d.Store.Sibling(member.RunID).WriteChangeSetMember(ctx, m); err != nil {
 		// The record is a coordination aid, not the run's own record: a set

@@ -1689,39 +1689,45 @@ spawn yet**: it is the data behind the backlog screen (CLI 0.11.0), and the
 section is here so the screen that follows has a shape read off the code rather
 than assumed from a design.
 
-It is read-only, and in the strongest sense this document uses: the rows come
-from the Markdown item files under the folder `--dir` names (`docs/backlog/` by
-default), never from a network, a database, a credential or an installation,
-and `list` **writes nothing at all**. The command that writes is
-`fugaro backlog index`, and it is not in the console's set: it rewrites the
-folder's own `README.md`, which is derived state a pull request regenerates
-rather than merges (rigor modes D26–D28).
+**The backlog it reads is the project's own work list, in the project's
+database** (the orchestrator graph estimates plan, B1, D2715): the spec-less
+work items of the orchestrator's backlog node, `orchestrator/<project>/backlog`
+(D2735), together with the spec-less items a session queued in the project's
+state node — the same list to a reader, which is why one document carries both
+and says in each row which of the two nodes it came from. An item that carries
+a spec belongs to the plan that spec names and is not in this document.
+`docs/backlog/`, the Markdown folder the backlog was before it became the work
+items, is history (D2716): the command that reads it is `fugaro backlog index`,
+which is not in the console's set — it rewrites the folder's own `README.md`,
+which is derived state a pull request regenerates rather than merges (rigor
+modes D26–D28).
 
-| Field | Type | omitempty | Availability state |
-|---|---|---|---|
-| `dir` | string | no | the folder the items were read from, exactly as `--dir` named it (`docs/backlog` by default). The document echoes the argument rather than resolving it, so a screen can show which folder it is looking at |
-| `items` | `[]backlogRow` | no | `[]` when the folder holds no item. One row per item, in the index's own order — sorted by `id`, which is to say by the day the item was filed |
-| `open` | int | no | the open items' count: the first figure of the index's count line |
-| `closed` | int | no | the closed items' count: the second figure |
-| `dropped` | int | no | the dropped items' count: the third figure. The three are the index's own figures, so a screen's totals and the Markdown's count line cannot disagree |
-
-`backlogRow` is one item as the index lists it. The names are the index's own
-columns, so the Markdown and the document cannot drift apart about what a row
-says.
+**It is a cloud read, and `list` writes nothing at all.** Both nodes are read
+with the operator's own credential, in the selected project, so this command
+carries the cloud flags every other cloud read carries (§5.1 rule 6's argv
+shape, §8): the console must pass `--project <name>` on every spawn. Nothing
+here is authorised by an item's text, and no row is a URL a screen may link.
 
 | Field | Type | omitempty | Note |
 |---|---|---|---|
-| `id` | string | no | the item's id: the day it was filed (`YYYYMMDD`) and a two-digit sequence that day, so two pull requests filing at once mint two ids rather than one conflict. It is also the first two segments of the file's name, so an id resolves to a file without a lookup |
-| `title` | string | no | the filer's own words, one line. **Untrusted display text**: a filer writes it, nothing is authorised by it, and a screen renders it as text |
-| `mode` | string | no | the resolved mode the filing run ran under; `"none"` for an item a person filed by hand, which is not a mode the CLI knows — it is the absence of one |
-| `area` | string | no | the matched areas, strictest first, comma-separated; `"project"` or `"repo"` for an item about a whole layer |
-| `status` | string | no | `"open"`, `"closed"` or `"dropped"` — the three words the format allows and no fourth |
-| `filed_by` | string | no | the filing run's launcher, or the login of the person who filed it by hand. **Untrusted display text**, like `title` |
-| `filed_in` | string | no | `"run:<run id>"`, `"pr:<number>"` or `"hand"`. The third is a person's filing, which has no run and no recorded pull request behind it and says so rather than spelling a run id nobody minted |
-| `date` | string | no | the item's own `date` field, a UTC day (`YYYY-MM-DD`), never a timestamp and never a clock read at render time — so the same folder renders to the same bytes |
-| `path` | string | no | the file the row was read from, `<dir>/<id>-<slug>.md`. It is a path in the checkout the CLI was run in, not a URL: a screen must not link it as one |
+| `version` | int | no | the document's version, `1` (`backlogOutputVersion`): a field's meaning never changes inside one, and a rename is a new version |
+| `kind` | string | no | `"backlog"`, the document's own name — what a screen switches on when it holds a document it did not ask for |
+| `project` | string | no | the project the two nodes were read in, as this machine's config names it (the newest `--project` value, the selected one or the name minted from the project ID, §8). It is the name a screen shows, not an ID |
+| `waiting` | int | no | how many of the rows are **unfinished** work no person has approved: a filed item arrives queued and unapproved and **nothing runs it until a person approves it** (D2717), so this is the figure a screen shows as the work waiting on the person. A row whose phase is `done` or `cancelled` is **not** counted, and that is not a rounding: the state model refuses an approval on a terminal item, and the last few finished items stay in the node's work list as a record, so counting them would print a figure that never clears and no action can change. It is a count of the document rather than a second reading |
+| `items` | `[]backlogRow` | no | `[]` when neither node holds a spec-less item — never absent and never `null`, so a screen renders an empty backlog without a second guess. One row per item, sorted by `id`, which is to say by the day the item was filed |
 
-**Flags** (`newBacklogListCmd`): `--dir`, `--json`.
+`backlogRow` is one item of the listing.
+
+| Field | Type | omitempty | Note |
+|---|---|---|---|
+| `id` | string | no | the item's id: the day it was filed (`YYYYMMDD`) and a two-digit sequence that day, so two filers a moment apart mint two ids rather than one overwriting the other. `fugaro backlog add` mints it from the ids the node already holds, and the same id names the item everywhere — a person's approval of it included |
+| `title` | string | no | the filer's own words, one line. **Untrusted display text**: a filer writes it, nothing is authorised by it, and a screen renders it as text |
+| `phase` | string | no | the item's phase, spelled as the state model spells it (`queued` for every item filed by `fugaro backlog add`, and one of the later phases for an item a run has moved). It is the item's own record, never a phase derived from a run this read did not look at |
+| `repo` | string | no | the repository the item is about, `owner/name`, as the item carries it |
+| `node` | string | no | `"backlog"` or `"state"`: which node of the project's own subtree the row was read from (`orchestrator.BacklogNode` or `orchestrator.StateNode`). A screen may group by it, and it is the one fact that tells a row filed into the backlog from one a session queued in the main node |
+| `approved` | bool | no | whether a person has approved the item (D2717). **It is the person's own word and not a property of the text**: an unapproved item is one nothing will run, and a screen must not read this as "will run later" |
+
+**Flags** (`newBacklogListCmd`): `--json`, plus the cloud flags.
 
 ### 6.12 `fugaro plan status --json` (**the CLI release after 0.11.4**)
 
@@ -2813,7 +2819,10 @@ the document and `writeSettingsWriteDoc` prints it. Cited by symbol, not by
 line, for §6.11's reason. **The console spawns it since the settings-edit plan's
 C3** (operation `settings.edit`, design §5.1 rule 12), and it is **not** the
 console's read of the settings: §6.19's document is the table the pencil is
-drawn from, and this one is about **one edit of one key**.
+drawn from, and this one is about **one edit of one key** — or, for the one
+command whose run prints more than one record, about **a run of several**
+(`records` below, `fugaro secrets set`'s record flags), which is the one
+document that names no single key.
 
 **Why it exists: one edit, classified by the CLI's own code, before a window is
 shown or a byte is written.** The dry run writes nothing — no file, not even the
@@ -2826,7 +2835,7 @@ old value and shape come from this document and from nowhere else.
 | Key | Type | Absent | Null | Notes |
 | --- | --- | --- | --- | --- |
 | `version` | int | never | never | the document's version, `1` today (`settingsWriteDocVersion`, pinned by `schemas/settings-write.schema.json`). Members are only ever added within a version (D848) |
-| `key` | string | never | never | the key the edit is about, printed through `safetext.Field`. A consumer reads it to check that the document is about **the** edit it asked for: the window draws the key from here and writes the layer from the read's own row, so a document answering about another key is refused before any window exists |
+| `key` | string | **absent from a run that prints more than one record, and from no other document** | never | the key the edit is about, printed through `safetext.Field`. A consumer reads it to check that the document is about **the** edit it asked for: the window draws the key from here and writes the layer from the read's own row, so a document answering about another key is refused before any window exists. **A run prints more than one record and names none of them here** — each value's own `key` is in `records` below, and the records are one per value the flags named, so a key named twice (one flag naming two roots — comma-separated or repeated — may name one) has two records carrying that same `key` — so the member is left out rather than set to one of them, and the console's own read refuses a document without it (`dryRunAt`, `settingsview.ts`), which is the fail-closed direction for a document its argv never produces. Where it is present it is never empty (`minLength`), so it still means exactly what it meant |
 | `layer` | string | never | never | the layer the edit would write, `local`, `project` or `repo` (`settingsWriteLayers`). A console cannot name it: it is §6.19's `target_layer`, and this member is the check that the child was aimed where the read said |
 | `path` | string | never | never | the file the edit would write, printed through `safetext.Field`. It is a path of the operator's machine: a consumer may show it and may never spawn anything built from it |
 | `changed` | bool | never | never | the write path's own comparison of the two byte strings — the same comparison that decides whether a write would happen at all — so the document cannot claim a change the write path did not see |
@@ -2839,6 +2848,7 @@ old value and shape come from this document and from nowhere else.
 | `entry_key` | string | unless the write is an entry write | never | **the field the entry is addressed by**, printed through `safetext.Field`: an object list's own key field — `name`, for `workflows.*.secrets`, the pair's only keyed list (`settingsEntryBlocks`) — and the member's own name for a map, whose entry *is* one member. It is an address, not a value a form is drawn from |
 | `entry_value` | string | unless the write is an entry write that carries one — absent for a map's `remove-entry` too | never | that field's value — the key field's value for an object list, the member's value for a map's add — printed through `safetext.Field`. **A map's `remove-entry` leaves it out**: its address is the member's name and nothing else, what the member held is in `old` as its own `field=value` pair, and a document omits a member it has no value for rather than writing an empty one |
 | `entry_fields` | `map[string]string` | unless the write is an object list's `add-entry` | never | the members the entry carries **beside** the field that names it, keyed by member name, both sides printed through `safetext.Field`. **Only an object list's `add-entry` has any**: a map's entry is one member and carries none, and no removal carries any. The table spells it the one way a cell carries an entry — the pairs sorted by field and joined with `, ` (`settingsEntryFieldsString`) — which is the same spelling `old` and `new` carry an entry in |
+| `records` | array of documents | unless the run prints more than one record | never | **the records of a run: one document of this shape per value the invocation named, in the order the flags named them, so a key named twice appears twice** (`secretsSettingsRunDoc`, `writeSecretsSettingsDryRun`). It holds **two or more** (`minItems: 2`): one write answers with its own document and makes no list of one, and a run is two records as soon as it names two values — two of the four record flags, or one flag naming two roots. The command that produces it is `fugaro secrets set` — its four record flags are the ones that record what a machine knows about a secret rather than storing its value: when it lapses, the installation's rotation period, and the Bitbucket API roots a token may be sent to (S1, `secrets_expiry.go`) — and **the console's argv cannot ask for it**: `settings set KEY --layer <L>` names one key (`settingsedit.ts`), and a run document is refused by the console's own read for want of `key`. Each element is a document of this same shape about **one of the values the run named** — two of them about the same `key` when the run named that key twice — with its own `key`, `old` and `new`, so a consumer reads a record exactly where it reads a single edit. **The records are the run in order**: each record's `old` is the state the records before it leave in the file and the last record's `new` is what the write leaves, because a dry run writes nothing and carries that state from one record to the next (`secretsSetSettings`' carried) — a record worked out from the file on disk would state a diff the run never makes. **The members beside it are the run's own**: `layer` and `path` are the file every record lands in (these are one command's local config keys, so a run cannot reach two files), `changed` and `widening` are whether **any** record changes the file or widens a limit, `why` is the first record's sentence for a widening, and `old` and `new` are empty because the run names no single key. **Nothing here is a secret's value** — a record is this machine's knowledge *about* a secret (D1171) |
 
 **Version 1 has grown four optional members, and a scalar write's document is
 the shape it has always had** (D1164, under D848's rule that a version gains
@@ -2864,7 +2874,12 @@ built.
 
 **The table shape carries the same facts.** Without `--json` the command prints
 one `FIELD`/`VALUE` row per member, in this document's own order, so the two
-shapes cannot drift into two contracts.
+shapes cannot drift into two contracts. **A run of several records is the one
+place the two shapes do not print the same number of things**: the document
+nests its records, because one value a consumer parses must be one document, and
+the table prints **one table per record** — a table inside a table is not a
+table, and each table is a member list of its own. The facts are the same on
+both sides: every record of the run, with the run's own layer, path and file.
 
 **The phase words are exclusive, and that is the command's own rule**
 (`settingsDryRunFlags`). `--json` without `--dry-run` is refused ("`--json` is
@@ -2873,11 +2888,30 @@ of the group: `--ask` is about the confirmations a write is given, which a dry
 run has none of and asks for none of (a managed project writes on the gate's
 verdict and asks nothing, and `--ask` is the flag that puts those questions
 back). **A console passes the dry run's spelling and nothing else** —
-`--dry-run --json` for the read, and no flag at all for the write — and the CLI
-is what makes that a property rather than a convention: `--ask` is not a word of
-the console's argv (design §5.1 rule 6), because the questions it restores are
-asked at a terminal and the console's child has none, so the write it spawns
-asks nothing and needs no flag to say so. **The layer is never guessed by the console** either: the CLI itself falls back to the narrowest layer when `--layer` is
+`--dry-run --json` for the read, and `--no-apply` for the write, above the floor
+that registers it — and the CLI
+is what makes the choice a property rather than a convention: `--ask` is not a
+word of the console's argv (design §5.1 rule 6), because the questions it
+restores are asked at a terminal and the console's child has none, so the write
+it spawns asks nothing and needs no flag to say so. **`--no-apply` is the one
+word in this section that no command of this build registers yet**: `settings
+set` and `settings unset` gain it in the composite-commands plan's AP5 and AP6,
+and the helper that will spell it once for every management command
+(`addNoApplyFlag`) is already in `internal/cli/apply.go`. **And a word no
+release answers goes to no child**: the write carries it only above the floor
+that registers it (`NO_APPLY_CLI_FLOOR`, `console/src/shared/version.ts`, unset
+while no release answers the word), which the one place that builds a settings
+edit's plan asks (`CliSource`'s `#plan`) — so the argv the console spawns today
+is the dry run's spelling for the read and, for the write, the command with no
+phase word at all, which is the argv every installed CLI accepts; a release that
+registers the flag moves that one constant and nothing else. **The write's own word
+is not an answer to a question either** (the composite-commands plan's AP8,
+D1565, D1572): it says *save this and run none of its follow-up steps*, so the
+console writes the local half of a change and what it owes is run later by
+`fugaro apply` (§6.28) rather than from behind the settings window. It is the
+same word on a widening and on a narrowing: the two phases differ in the
+console's own window, the tick a widening needs, and never in the argv the CLI
+is handed (D1107). **The layer is never guessed by the console** either: the CLI itself falls back to the narrowest layer when `--layer` is
 omitted, but the console always names one (`argvFor` refuses a settings edit without it), the layer must be
 one `settingsWriteLayers` names, and a layer outside them is a refusal rather
 than a document. The command is the same pair §6.19's paragraph describes, so the
@@ -3848,6 +3882,85 @@ group's read and not a console row yet: the design's §5.1 table and
 `CONSOLE_OPERATIONS` take the two read verbs once both documents exist, which is
 a later task of the same plan.
 
+### 6.28 `fugaro apply --status --json` — the steps a change still owes
+
+**Command:** `internal/cli/apply.go` `newApplyCmd` / `runApply`, with the
+document built as `applyDoc` and the record read by `loadPendingSteps`. **The
+record itself is `internal/apply`'s** (`apply.Pending`, `apply.LoadPending`,
+`apply.PendingPath`), and the file's own shape is pinned by
+`schemas/pending-steps.schema.json` — this section documents the answer, not the
+file.
+
+**`--status` is the read half of the one command that runs what a change
+owes.** A management command (`settings set`, `image add`, `models rm`, `workspace
+add`, …) writes its change and then runs the steps that make it live — publishing the project policy, redeploying the checkout's
+repository, building a catalog image — and `--no-apply` is the skip word
+that saves the change and stops — `--no-apply`, spelled in §6.20 (D1565), and passed by the console's settings write only above the floor that registers it. What it leaves behind is a local record per
+machine, and `fugaro apply` runs it. **`--status` prints what is owed, runs
+nothing and writes nothing**, which is what makes it the arm the console is
+admitted to (the composite-commands plan's AP8, D1569; design §5.1 rule 6's
+`apply --status --json` row, operation `apply.pending`). The bare `apply` — the
+same command's write arm — is a rule 6 row the console does not spawn yet
+(D1572).
+
+**The document is one object.**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `version` | int | never | never | the document's own version (`applyStatusVersion`), `1` today. A field is added and never repointed, so a reader can tell a shape it knows from one it does not (F9) |
+| `project` | string | never | never | the Fugaro project this answer is about: the installation the aiming pair resolved, and the name every entry of the record is bound to (D1575) |
+| `gcp_project` | string | never | never | the GCP project of that same installation, and the other half of the binding: a record whose entries name another pair is **refused rather than answered for**, so this document is only ever about the installation it was read for |
+| `recorded` | bool | never | never | whether a record of what is owed is on disk **at all**. A machine that never made such a change and one whose record was deleted read the same — nothing is owed — and this is what tells the two apart (D1575) |
+| `current` | bool | never | never | whether the record was stamped against the project config **as it stands**. `false` means the config changed since the last successful apply, so what is owed may be older than the config — or newer than it. It is a fact about the stamp, not a refusal |
+| `pending` | array | never | never | what is still owed, in the order it runs — one row per step, the table below. **It is written even when it is empty**: `[]` is "nothing is owed", a true answer, and a different one from a document that could not be read at all. **No step appears twice**, whatever queued it, because the record is keyed by step |
+| `applied` | array | **yes — for `--status`** | never | the steps a run answered, in the order they ran. **`--status` runs none and the key is absent from its document**, not present-and-empty: the write arm is the only one that carries it, and then only when it answered something |
+
+**One row of `pending`:**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `step` | string | never | never | the step's name: an `internal/initflow` stage name, or the one step that is not a stage, `catalog-build` (D1577). It is a **name** and never a command line: the console draws it, and a reader must not run it |
+| `kind` | string | never | never | what kind of change asked for the step (`apply.Setting` or `apply.Resource`), which is the vocabulary the text form's own sentence is built from |
+| `key` | string | never | never | which thing changed: a setting key or a resource type, **exactly as the writer typed it**. **The document carries it raw, and the text form is the form that sanitises it**: without `--json` the change is a sentence and the key inside it goes through `safetext.Field` (`applyChangeText`, `internal/cli/apply.go`), because a key carrying an escape sequence would draw whatever it liked on the terminal that form prints to — while `applyRows` copies the record's own `Change.Key` through untouched, as this table's other members are copied. So **a consumer that draws this member puts it through its own class first** (design §5.1 rule 7; `src/shared/sanitize.ts`'s `TEXT_CLASSES`), the way every document's text is read here |
+
+**No value is ever in this document, and no argv either** (D1570, D1575). The
+record holds the *names* of the steps and the change that asked for each of
+them; what a step will write, publish or deploy is decided when it runs, by the
+step's own read-only check. That is why this document is safe to draw and safe
+for a console to hold: it names work, not secrets.
+
+**Read-only, and local only.** `--status` reads this machine's project config
+(for the binding pair and the stamp), the pending record beside it, and nothing
+else: **no runs bucket, no database, no host and no container**. It mints no
+credential and it starts no child. So a console reads it with no cloud access at
+all — and the same is why the console's operation is on no reduced view and no
+lapse refusal (design §5.1 rules 13 and 14; the read costs nothing and reaches
+nothing).
+
+**Exit status.** Zero for a read, whether or not anything is owed: an empty
+`pending` with `recorded: false` is a true answer and the text form prints
+`Nothing to apply.` Non-zero, **with no document at all**, for the two ways the
+answer cannot be made into one: the project cannot be resolved from the flags,
+the environment and the checkout, and the record could not be read — a record
+bound to another project name or another GCP project is refused there (D1575),
+and so is one this build cannot parse. Nothing is printed before the refusal.
+
+**Flags** (`newApplyCmd`): `--status`, `--json`, and the aiming pair `--project
+<name>` / `--config <path>`. They are the pair every project read carries
+(design §3.4 rule 3) and this command carries no cloud flags: it never opens a
+cloud. `--json` without `--status` is the run arm's document — `applied`, and
+the version the file was written as — and not this one. The command takes **no
+argument** (`cobra.NoArgs`), so `apply --status --json` and nothing else is the
+whole of the console's argv.
+
+**The console's operation allow-list gains `apply.pending` here** (D1569), and
+the console's own wording for the row is the design's §5.1 rule 6 entry: the
+pending steps a management command saved for a later `fugaro apply`, the change
+that asked for each of them, and whether a record is on disk and still stamped
+against this machine's config. The
+write half — the bare `apply` — is a rule 6 row and **not** an operation: the
+console shows what is owed and does not run the chain yet.
+
 ## 7. The CLI gaps, settled against the code
 
 The console ships **without any of these** and must work, visibly degraded
@@ -3912,7 +4025,8 @@ and **not** off this document or the design:
 | `coordinator status` | yes (`newCoordinatorStatusCmd`, §6.13) — with `--from-store` it is the one read here that asks nothing of the host (the stored view, through the caller's own credentials), and it is a cloud read all the same: the view lives in the project's database, so it carries `--project` and `--config` like the rest |
 | `coordinator show` | yes (`newCoordinatorShowCmd`, §6.15) — the pull request read (coordinator v2 C3, D816): `--repo` and `--pr` are its own two arguments, both required, and it carries `--project` and `--config` like the rest because it resolves the repository's provider the way the project view does. **The second row here whose child mints a credential of the host's** — the first is `run`'s below, whose child is a run and mints the write-capable token it pushes and opens the pull request with; this row's is the person read set's own read-only installation token (contents, pull requests and metadata, all read), revoked when the command is done — so its argv is the whole of what a renderer may influence about it |
 | `coordinator intents` | yes (`newCoordinatorIntentsCmd`, §6.16) — the declarations read (coordinator v2 C4, D827): it has **no argument of its own** (`--all` and `--json` are the console row's fixed words), and it carries `--project` and `--config` like the rest because it resolves the local config the way the project view does. **The one row here whose child asks nothing of the host at all**: the declarations are the caller's own database node, read through the same credentials §6.13's stored read uses, so there is no App key, no installation token and no provider anywhere in it |
-| `settings set\|unset` | yes (`newSettingsCmd`, §6.20) — **the second row here that writes** (the settings-edit plan's C3, design §5.1 rule 12): the dry run and the confirmed write are the same command with the same aiming pair, and the layer written is §6.19's `target_layer` rather than a flag a renderer chose |
+| `settings set\|unset` | yes (`newSettingsCmd`, §6.20) — **the second row here that writes** (the settings-edit plan's C3, design §5.1 rule 12): the dry run and the confirmed write are the same command with the same aiming pair, and the layer written is §6.19's `target_layer` rather than a flag a renderer chose. The write carries `--no-apply` (the composite-commands plan's AP8, D1572), so the change is saved and its follow-up steps are owed rather than run — and it carries it only above the floor that registers the word (`NO_APPLY_CLI_FLOOR`, unset until that plan's AP5 and AP6 ship it, §6.20), so no child gets the word today |
+| `apply --status` | yes (`newApplyCmd`, §6.28) — **the third row here that writes**, and the only one with a read arm: `fugaro apply` runs the follow-up steps a management command saved for later (the composite-commands plan's D1560). The console is admitted to `apply --status --json` and nothing else (D1569, design §5.1 rule 6): the bare `apply` is a row of that table the console does not spawn yet, and the read costs no cloud, so the pair here is what aims it at an installation |
 | **`run`** | yes (`newRunCmd`, §6.14) — **the other row here that writes**: the launch (design §5.1 rule 11) is cut for a project like every cloud command, so it carries `--project` and `--config` too, and the task itself arrives on stdin rather than as a flag |
 
 So the console passes `--project <name>` (and `--config <path>` when the

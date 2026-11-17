@@ -522,26 +522,30 @@ func TestNoShippedTextNamesTheRetiredOAuthGate(t *testing.T) {
 // reference paragraph said, in the present tense, that "the policy is version 2
 // from fugaro 0.8.5" — and the bumps raise `projectpolicy.Version` (VersionSince
 // [8] = "0.26.0", the release whose own config states the binaries block, AR1,
-// and VersionSince[9] = "0.26.0", the one-path pool MC20 and MC21 ship), so the
-// sentence must name the version and release this tree writes. The paragraph now
-// leads with version 9 and keeps version 8 as the node that came before it,
+// VersionSince[9] = "0.26.0", the one-path pool MC20 and MC21 ship, and
+// VersionSince[10] = "0.26.0", the designated reports repository R14 ships), so
+// the sentence must name the version and release this tree writes. The paragraph
+// now leads with version 10 and keeps version 9 as the node that came before it,
 // which is what the table says.
 //
 // The version the page names is read from the constants rather than typed
 // twice, so the next bump fails here instead of shipping a page describing
-// another release's node.
+// another release's node. The clause after the release is the one part that is
+// typed, because it is a description of the member the version carries and not a
+// value any constant holds — the bump moves it by hand, and this test is what
+// makes that hand move fail loudly when it is not made.
 //
 // Mutation (verified, run and restored): put back the clause the bump
-// replaced — "the release whose own config states the binaries block" for
-// "the release that refuses a pool naming members of both halves of a run" —
-// and this test fails naming the sentence it wants.
+// replaced — "the release that refuses a pool naming members of both halves of a
+// run" for "the release that designates the repository a project's reports are
+// committed into" — and this test fails naming the sentence it wants.
 func TestDocsProjectLayerStatesThePolicyVersionItShips(t *testing.T) {
 	doc := readDoc(t, "docs/project-layer.md")
 	rel, ok := projectpolicy.VersionRelease(projectpolicy.Version)
 	if !ok {
 		t.Fatalf("projectpolicy.VersionSince has no row for Version %d, and this page names the release each version came in", projectpolicy.Version)
 	}
-	want := fmt.Sprintf("**The policy is version %d from fugaro %s, the release that refuses a pool naming members of both halves of a run**", projectpolicy.Version, rel)
+	want := fmt.Sprintf("**The policy is version %d from fugaro %s, the release that designates the repository a project's reports are committed into**", projectpolicy.Version, rel)
 	if !strings.Contains(doc, want) {
 		t.Errorf("docs/project-layer.md does not say %q: the page describes the node this release writes, and projectpolicy.Version/%d is that node", want, projectpolicy.Version)
 	}
@@ -660,7 +664,12 @@ func TestDocsProjectLayerSaysWhatTiesARepositoryToAProject(t *testing.T) {
 // the row has to follow — a key this release decodes, validates and accepts and
 // no run applies yet — while `binaries` left that state with AR3 of the
 // binary-allow-rule plan, whose finalize enforces it, so the row says what the
-// run now does with the block rather than that nothing does; it stays the one
+// run now does with the block rather than that nothing does. AR4 closed the
+// residual the row used to name as still open — the rule is read over the run's
+// own diff as well, so a payload the agent committed itself fails the run — and
+// AR5 added what the coder and the pull request see, so the row states both
+// readings and the sentences that go with them rather than the one reading and
+// the hole beside it; it stays the one
 // row whose *written block* is a statement at publish time, which the row has to
 // state because a publisher reading it is deciding whether to write
 // `{"allow": []}` or nothing — and because the database keeps no member for an
@@ -675,18 +684,35 @@ func TestDocsProjectLayerSaysWhatTiesARepositoryToAProject(t *testing.T) {
 // spend on — and it has to say that a grade nobody sets is no grade, because
 // that is the answer a rung's refusal prints.
 //
+// R14's `reports_commit` row is the third of the kind, and the one whose absence
+// would be invisible in the way the `binaries` row's was: the member is the
+// designation a commit run reads, no run of this release reads it yet (the
+// commit run is periodic-reviews R9), and an operator who published one has
+// nowhere else to read what a run does with it or who may write it — so the row
+// says both, and says that a version-9 reader decodes past the key.
+//
 // The row set is pinned as a list rather than derived from the Policy struct:
 // the table groups the four `budget` members into one row and deliberately
 // leaves out the members whose effect is not a run's (base_branch, credentials,
-// accounts, clone_urls, the crafts), so a reflection over the struct would
-// refuse the table as it stands. What the list catches is the removal of a row
-// and the return of a claim the row no longer carries.
+// accounts, clone_urls), so a reflection over the struct would refuse the table
+// as it stands. What the list catches is the removal of a row and the return of
+// a claim the row no longer carries.
+//
+// The crafts row is MC25's of the model-crafts activation plan, and it moved the
+// one clause that used to say the table left the crafts out: a craft's access is
+// what serves a call — a run reads its own craft, the credentials service reads
+// a pool's members on every call — so `crafts`, `craft_credentials` and
+// `craft_pools` are members whose effect is a run's, and the operator editing
+// the node has to read the crossing rule where the node's keys are described.
 //
 // Mutation (verified, run and restored): delete the `binaries` row — this fails
 // naming it; put "decoded, validated and accepted, **not applied**" back as the
 // row's whole description without the written-block half — it fails naming that;
-// delete the `model_grades` row — it fails naming the key the table stopped
-// describing.
+// put the residual clause AR4 closed back in place of the two-readings sentence
+// — it fails naming the sentence it wants; delete the `model_grades` row — it
+// fails naming the key the table stopped describing; delete the crafts row — it
+// fails naming the three keys the table stopped describing; delete the
+// `reports_commit` row — it fails naming it.
 func TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes(t *testing.T) {
 	const header = "| Policy key | What the run does with it today |"
 	doc := readDoc(t, "docs/project-layer.md")
@@ -717,8 +743,10 @@ func TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes(t *testing.T) {
 		"providers",
 		"binaries",
 		"model_grades",
+		"crafts", "craft_credentials", "craft_pools",
 		"routing",
 		"profiles",
+		"reports_commit",
 	}
 	if !slices.Equal(keys, want) {
 		t.Errorf("docs/project-layer.md's policy table lists %v, want %v: every key of the node the page describes has a row, and a member that ships without one is invisible to the operator reading what a run does with it", keys, want)
@@ -726,10 +754,14 @@ func TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes(t *testing.T) {
 	for _, want := range []string{
 		"| `binaries` | decoded, validated and accepted, **applied at finalize**",
 		"the block is the owner's grant of the paths a run may add a binary at",
-		"reads it over what a commit would carry that no commit has — the run's untracked files and the ones the agent staged itself",
+		"**the rule is read twice at finalize, because a binary reaches the branch by two roads**",
+		"the run's untracked files and the ones the agent staged itself",
 		"a file the project admits at that path and within the cap is committed with the run's work",
-		"**What the run commits as work of its own is not read here**",
-		"which is the residual [binary-allow-rule/](binary-allow-rule/) closes as its task AR4",
+		"The second is the run's own diff (`committedRange...HEAD`, the range the review stage is handed), read over the paths the run's own commits added",
+		"**the branch carries that file all the same and a person has to delete it**",
+		"the implement brief names the admitted paths and the cap (D992, and a project that admits nothing gets no clause, because there is no path to name)",
+		"the pull request's status section carries a bounded `binaries: …` line naming the admitted files",
+		"the refusal itself names the two readers who have a fix and that no file in the repository can widen the list",
 		"the one key of this table whose *written block* is a statement at publish time and not at admission time",
 		"the database keeps no member for an empty list, so the node never *holds* that spelling",
 		"an empty block and a write of nothing leave the same node, and both admit nothing",
@@ -750,6 +782,43 @@ func TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes(t *testing.T) {
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("docs/project-layer.md's `model_grades` row lacks %q: the row is where an operator reads what the grades do today, that they are the project's own, and what an unset one means", want)
+		}
+	}
+	for _, want := range []string{
+		"| `crafts`, `craft_credentials`, `craft_pools` | **applied**",
+		"the credential or pool each of a run's five crafts sends its calls out on",
+		"the credentials service reads `craft_credentials` and `craft_pools` on every call",
+		"so the pool a craft's `access` names is the list that serves it, in the order the node lists its members",
+		"**A pool naming a member of each half of a run is refused here**",
+		"at `pools.<name>.members[i]`, in one sentence that names the two members and the fix (two pools, one per half)",
+		"which `projectpolicy.Decode` runs",
+		"the runner, the credentials service, `fugaro doctor` and `fugaro update` itself all meet the refusal",
+		"A crossing pool a node already carries is **repaired rather than refused**",
+		"the policy chain's step from 8 splits it into one pool per half and repoints each craft that named it",
+		"**The three members are the ones 0.24.0 published and version 9 adds no member**",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/project-layer.md's crafts row lacks %q: the row is where an administrator editing the node reads what a pool's members may be and where a crossing one is refused", want)
+		}
+	}
+	for _, want := range []string{
+		"| `reports_commit` | decoded, validated and accepted, **not applied**",
+		"the one repository a report run may open its pull request in",
+		"the layout's own `docs/fugaro-reviews` unless the project says otherwise",
+		"A block with no `repo` is refused where it is read",
+		"a folder that is absolute or walks out of the checkout is refused with it",
+		"the commit run that would is [periodic-reviews/](periodic-reviews/) R9",
+		"the key is that config's and never `fugaro.yaml`'s",
+		"a key there would let a prompt-injected agent designate the repository its own reports are committed to",
+		"`layerTopKeys` does not list it, so a layer that writes it is refused by name",
+		"a config that states nothing keeps the node's designation",
+		"a written empty block is how it is taken away on purpose",
+		"An agent's `project policy publish` refuses it",
+		"`fugaro project policy show` prints it either way",
+		"A version-9 reader lists the key as unknown and decodes past it, which is why the node is version 10",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/project-layer.md's `reports_commit` row lacks %q: the row is where an operator reads what the member does today, who may write it, and what writing an empty one means", want)
 		}
 	}
 }

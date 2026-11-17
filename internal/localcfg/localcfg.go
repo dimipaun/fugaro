@@ -753,7 +753,44 @@ type Config struct {
 	// block at all: the same node a project that never set one has, and one
 	// that admits nothing either way.
 	Binaries *projectpolicy.Binaries `yaml:"binaries,omitempty"`
-	Repos    map[string]Repo         `yaml:"repos"`
+	// ReportsCommit is the project's designated repository for committed
+	// reports and the folder inside it (D2750, D2751; periodic-reviews R14):
+	// `reports_commit.repo` names the ONE repository a report run may open its
+	// pull request in, and `reports_commit.dir` the folder inside it, the
+	// layout's own folder (projectpolicy.DefaultReportsCommitDir) unless the
+	// owner says otherwise.
+	//
+	// It travels the way Binaries does, and for a sharper reason: the member
+	// decides where every report of the project is committed, so no file the
+	// subject of the rule can write may carry it. A repository's committed
+	// `fugaro.yaml` has no such key at all (the run's own agent writes that
+	// file, and a key there would let a prompt-injected agent designate the
+	// repository its own reports are committed to), the launcher-writable
+	// project layer refuses it by name, the runs bucket's shared config refuses
+	// it (Shared drops it and ParseShared refuses the key besides), and
+	// `fugaro settings set` does not carry it — this file is the one store, and
+	// the publish is what puts it on the node the runs read.
+	//
+	// It is projectpolicy's type, the way Binaries is, because the file's key
+	// and the node's member are one block: the rule cannot be applied one way
+	// to a file and another to the node (projectpolicy.ValidReportsCommit is
+	// called here and by that package's decode of the node).
+	//
+	// A publish keeps the node's designation when this file states none, and a
+	// written empty block takes it away (ReportsCommitEffective, D987):
+	// silence is not a request to remove a designation the owner published — a
+	// second machine whose config predates the key, or an owner who declined to
+	// set one, would otherwise stop the project's reports from being committed
+	// at all — while taking it away on purpose is written, and the spelling of
+	// it is a block that names nothing: `reports_commit: {}`, or the same block
+	// with its members written empty (`repo: ""`), which is the same statement
+	// in another spelling. That written-empty block is the one spelling
+	// this file accepts and the node does not: the node's own read refuses a
+	// block with no repo (ValidReportsCommit), and the publisher writes no
+	// member for this one, so what it leaves is the node a project that never
+	// designated a repository has.
+	ReportsCommit *projectpolicy.ReportsCommit `yaml:"reports_commit,omitempty"`
+	Repos         map[string]Repo              `yaml:"repos"`
 	// Workspace is the membership: the name of the workspace this project
 	// belongs to, and nothing else (D1291, docs/workspaces/spec.md §2). It is
 	// a scalar and not a list, because a project is in at most one workspace —
@@ -2621,6 +2658,32 @@ func (c *Config) BinariesEffective(published *projectpolicy.Binaries) *projectpo
 	return c.Binaries
 }
 
+// ReportsCommitEffective is the keep rule for the designated repository
+// (R14, D987): the block this file states when it writes one, and the
+// published node's when it says nothing. The second half is what leaves a
+// machine whose config predates the key — a teammate's, a CI box, an
+// operator's second laptop — publishing the node's own designation rather than
+// a node that designates nothing and stops the project's reports from being
+// committed at all: the designation is the owner's own word about where the
+// project's reports land, and a publish must not take it away by saying
+// nothing.
+//
+// A written block that states no member is the other direction, and it is the
+// one spelling that takes a published designation away on purpose: nil, so the
+// publisher writes a node with no member at all, which is the node a project
+// that never designated a repository has and the node whose runs commit no
+// report anywhere. A written block naming a repository is published as it
+// stands, its folder included.
+func (c *Config) ReportsCommitEffective(published *projectpolicy.ReportsCommit) *projectpolicy.ReportsCommit {
+	if c.ReportsCommit == nil {
+		return published
+	}
+	if c.ReportsCommit.SetsNothing() {
+		return nil
+	}
+	return c.ReportsCommit
+}
+
 // BakeReposEffective is the keep rule for the bake switch (D1901): this file's
 // answer when it writes one, and the published node's otherwise — so a machine
 // whose config predates the key does not publish a node that turns baking off
@@ -3234,6 +3297,26 @@ func (c *Config) validate() error {
 			if err := projectpolicy.ValidBinariesMaxBytes(c.Binaries.MaxBytes); err != nil {
 				bad("%v", err)
 			}
+		}
+	}
+	// The designated repository is held to the node's own rule here, the
+	// binaries block's way and for the same reason: it is copied into the
+	// policy node, and a designation this file accepted while the node refused
+	// it — or the one the node accepted and this file refused — would be a
+	// repository whose reports are committed or not depending on which door the
+	// block came through. projectpolicy.ValidReportsCommit is that one rule, the
+	// same function the node's own decode applies: a block with no repo, a repo
+	// this tree cannot read as a repository, and a folder that is absolute or
+	// walks out of the checkout are all refused at the load rather than at the
+	// next publish or, worse, at the next commit run.
+	//
+	// The written-empty block is the one spelling the node refuses and this file
+	// accepts, and it is accepted here on purpose: it is how an owner takes a
+	// published designation away (ReportsCommitEffective, D987), and a loader
+	// that refused it would leave that act with no spelling at all.
+	if c.ReportsCommit != nil && !c.ReportsCommit.SetsNothing() {
+		if err := projectpolicy.ValidReportsCommit(*c.ReportsCommit); err != nil {
+			bad("%v", err)
 		}
 	}
 	for repo, r := range c.Repos {

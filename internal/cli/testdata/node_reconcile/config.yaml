@@ -1,0 +1,21 @@
+# The local config of the installation whose published node is node.json, as the
+# release behind left it. It is a fixture file and never a string in Go, so that
+# a run of this tree is read against a document this tree did not write.
+#
+# The two typed credentials are stated because the file's own validation demands
+# it: a pool may list only the credentials the same document defines, or the
+# built-in vertex (config.ValidatePools). They are the node's own two, so the
+# merge keeps the node's craft_credentials and the only block that differs is
+# the pools.
+#
+# The three pools are the acceptance's three answers:
+#   loose-pool  both carry it; the node marks it legacy_open and the file states
+#               neither that nor an owner, so the node's marker is what survives.
+#   acme-loose  the file's own, ownerless and in no node: left out, and named.
+# node-pool     the node's own, stated nowhere in this file: kept, owner and all.
+credentials:
+  - { name: team-a, type: claude-oauth }
+  - { name: team-b, type: claude-oauth }
+pools:
+  - { name: loose-pool, members: [team-b] }
+  - { name: acme-loose, members: [vertex] }
