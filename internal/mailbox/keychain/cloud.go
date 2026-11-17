@@ -106,14 +106,22 @@ func (c *Cloud) Put(ctx context.Context, deviceUID string, key Key) error {
 	return cloudErr(err, payload)
 }
 
-// Delete destroys every version of the container that carries deviceUID, and
-// returns how many it destroyed.
+// Delete destroys every version of the container that carries deviceUID — a
+// DISABLED one among them — and returns how many it destroyed.
 //
 // It is the design's revocation step 2b, and the unit is the version: one
 // pairing's key is one version, so a revoke destroys that one and leaves every
 // other pairing's alone. A container that is not there, or one that holds no
 // version for that uid, is not an error — absence is the state the caller asked
 // for, exactly as it is for the keychain Store's Delete.
+//
+// **A DISABLED version is destroyed too, and the read is what that costs.** A
+// disabled version's value is not served at all, so a version an operator
+// disabled — or a rotation left behind, internal/cli/creds.go's own idiom —
+// would be invisible to a listing that saw only enabled ones, and a revoke that
+// took "no ENABLED version carries this uid" for "nothing to destroy" would
+// report a pairing revoked with its key still in the container: the failure the
+// note in SECURITY.md says is refused and reported rather than passed over.
 func (c *Cloud) Delete(ctx context.Context, deviceUID string) (int, error) {
 	versions, err := c.versions(ctx)
 	if errors.Is(err, ErrNoCloud) {
@@ -124,19 +132,65 @@ func (c *Cloud) Delete(ctx context.Context, deviceUID string) (int, error) {
 	}
 	destroyed := 0
 	for _, v := range versions {
-		uid, _, err := c.record(ctx, v.name)
+		gone, err := c.revokeVersion(ctx, v, deviceUID)
 		if err != nil {
 			return destroyed, err
 		}
-		if uid != deviceUID {
-			continue
+		if gone {
+			destroyed++
 		}
-		if _, err := c.svc.Projects.Secrets.Versions.Destroy(v.name, &secretmanager.DestroySecretVersionRequest{}).Context(ctx).Do(); err != nil {
-			return destroyed, cloudErr(err, nil)
-		}
-		destroyed++
 	}
 	return destroyed, nil
+}
+
+// revokeVersion destroys the version at v if it carries deviceUID, and answers
+// whether it did.
+//
+// A version whose state serves no read is ENABLED so that it can be attributed
+// at all — the design's step 2b sentence is about this very state, and a
+// version a revoke cannot read is one it cannot destroy — and put back DISABLED
+// unless the destroy took it: an enable left behind would hand another pairing's
+// key back to the consumer, which is the opposite of what this file is for.
+func (c *Cloud) revokeVersion(ctx context.Context, v cloudVersion, deviceUID string) (destroyed bool, err error) {
+	if v.state != "ENABLED" {
+		if err := c.enableVersion(ctx, v.name); err != nil {
+			return false, err
+		}
+		defer func() {
+			if destroyed {
+				return
+			}
+			if back := c.disableVersion(ctx, v.name); back != nil {
+				err = errors.Join(err, fmt.Errorf("the version %s could not be left DISABLED again: %w", v.name, back))
+			}
+		}()
+	}
+	var uid string
+	uid, _, err = c.record(ctx, v.name)
+	if err != nil {
+		return false, err
+	}
+	if uid != deviceUID {
+		return false, nil
+	}
+	if _, err := c.svc.Projects.Secrets.Versions.Destroy(v.name, &secretmanager.DestroySecretVersionRequest{}).Context(ctx).Do(); err != nil {
+		return false, cloudErr(err, nil)
+	}
+	return true, nil
+}
+
+// enableVersion and disableVersion are one version's two state calls, and the
+// pair a revoke makes around a version whose value it cannot otherwise read. A
+// state call that did not land is the container's failure like every other
+// call's here — one of cloudFailure's — and never the OS keychain's.
+func (c *Cloud) enableVersion(ctx context.Context, name string) error {
+	_, err := c.svc.Projects.Secrets.Versions.Enable(name, &secretmanager.EnableSecretVersionRequest{}).Context(ctx).Do()
+	return cloudErr(err, nil)
+}
+
+func (c *Cloud) disableVersion(ctx context.Context, name string) error {
+	_, err := c.svc.Projects.Secrets.Versions.Disable(name, &secretmanager.DisableSecretVersionRequest{}).Context(ctx).Do()
+	return cloudErr(err, nil)
 }
 
 // Keys reads every pairing's key as a map from the device uid the version
@@ -156,6 +210,12 @@ func (c *Cloud) Keys(ctx context.Context) (map[string]Key, error) {
 	}
 	out := make(map[string]Key, len(versions))
 	for _, v := range versions {
+		// A version that is not ENABLED is no version for a consumer, and its
+		// value could not be read anyway: a reader that did not skip one would
+		// fail rather than fall back.
+		if v.state != "ENABLED" {
+			continue
+		}
 		uid, key, err := c.record(ctx, v.name)
 		if err != nil {
 			return nil, err
@@ -165,30 +225,36 @@ func (c *Cloud) Keys(ctx context.Context) (map[string]Key, error) {
 	return out, nil
 }
 
-// cloudVersion is one version's number and the full name every other call takes.
+// cloudVersion is one version's number, the full name every other call takes,
+// and the state the container answered it in.
 type cloudVersion struct {
-	n    int
-	name string
+	n     int
+	name  string
+	state string
 }
 
-// versions lists the container's ENABLED versions, oldest first, so that a
-// caller reading them in order keeps the newest of a uid. A DISABLED version is
-// no version as far as this file is concerned — the same reading the readiness
-// gates take, and the state a rotation leaves behind — and a DESTROYED one is
-// not listed at all. The number is read off the name rather than taken from the
-// order the server answered in.
+// versions lists the container's versions, oldest first, with the state each
+// answered in: a caller reading them in order keeps the newest of a uid, and
+// what a state means is the caller's to say. It is the one place this file
+// reads the list, so the two callers keep their own reading of a state that is
+// not ENABLED: `Keys` skips one — a disabled version is no version for a
+// consumer, the same reading the readiness gates take — while `Delete` must
+// not, or a revoke would pass a version over and report a success the container
+// does not agree with. A DESTROYED version is dropped here, since nothing of it
+// is left to read or to take away, and the number is read off the name rather
+// than taken from the order the server answered in.
 func (c *Cloud) versions(ctx context.Context) ([]cloudVersion, error) {
 	var out []cloudVersion
 	err := c.svc.Projects.Secrets.Versions.List(c.parent).Pages(ctx, func(p *secretmanager.ListSecretVersionsResponse) error {
 		for _, v := range p.Versions {
-			if v.State != "ENABLED" {
+			if v.State == "DESTROYED" {
 				continue
 			}
 			n, err := strconv.Atoi(v.Name[strings.LastIndexByte(v.Name, '/')+1:])
 			if err != nil {
 				continue
 			}
-			out = append(out, cloudVersion{n: n, name: v.Name})
+			out = append(out, cloudVersion{n: n, name: v.Name, state: v.State})
 		}
 		return nil
 	})

@@ -201,6 +201,83 @@ func TestCloudDeleteDestroysOnlyTheRevokedPairing(t *testing.T) {
 	}
 }
 
+// TestCloudDeleteDestroysADisabledVersionOfTheRevokedPairing is the state a
+// revoke must not read as "nothing to destroy": a version an operator disabled
+// — or a rotation left behind, the same repository's own idiom — keeps its bytes
+// (that is the whole of the design's sentence about a disable) and its value is
+// not served at all, so a Delete that looked only at ENABLED versions answered
+// (0, nil) with the key still in the container. The version is enabled to be
+// attributed, and destroyed: a revoke of a disabled version is a revoke.
+func TestCloudDeleteDestroysADisabledVersionOfTheRevokedPairing(t *testing.T) {
+	x := newCloudFixture(t)
+	x.seeded()
+	if err := x.c.Put(x.ctx(), cloudUID, cloudKey(testKey)); err != nil {
+		t.Fatalf("the pairing's copy could not be written: %v", err)
+	}
+	x.f.AllowAccess()
+	x.f.DisableVersions(cloudContainer)
+
+	n, err := x.c.Delete(x.ctx(), cloudUID)
+	if err != nil {
+		t.Fatalf("the disabled copy could not be destroyed: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("the revoke destroyed %d version(s), want 1: a disabled version carrying the uid is the pairing's copy, and a revoke that passed it over would report a pairing revoked with its key still there", n)
+	}
+	if destroyed := x.f.Destroyed(); len(destroyed) != 1 || !strings.HasSuffix(destroyed[0], "/versions/1") {
+		t.Errorf("the versions destroyed are %v, want the one carrying the uid", destroyed)
+	}
+	if enabled := x.f.Enabled(); len(enabled) != 1 || !strings.HasSuffix(enabled[0], "/versions/1") {
+		t.Errorf("the versions enabled are %v, want the one the destroy took: a disabled version's value is not served, so reading which pairing it is costs an enable", enabled)
+	}
+	if disabled := x.f.Disabled(); len(disabled) != 0 {
+		t.Errorf("the versions disabled are %v, want none: the destroy is the last thing that happens to a version it takes, and it puts nothing back", disabled)
+	}
+
+	got, err := x.c.Keys(x.ctx())
+	if err != nil {
+		t.Fatalf("the container could not be read after the revoke: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("the container answers %v, want nothing: the pairing's copy is destroyed, so its key verifies nothing", got)
+	}
+}
+
+// TestCloudDeleteLeavesAnotherPairingsDisabledVersionDisabled: attributing a
+// disabled version costs an enable, and an enable left behind would hand a key
+// an operator had taken out of service back to the consumer. Every version a
+// revoke does not destroy is left as it was found, and no other pairing's
+// version is destroyed on the way to the one that is.
+func TestCloudDeleteLeavesAnotherPairingsDisabledVersionDisabled(t *testing.T) {
+	x := newCloudFixture(t)
+	x.seeded()
+	if err := x.c.Put(x.ctx(), cloudUID, cloudKey(testKey)); err != nil {
+		t.Fatalf("the pairing's copy could not be written: %v", err)
+	}
+	if err := x.c.Put(x.ctx(), cloudOther, cloudKey("other-key-0000000000")); err != nil {
+		t.Fatalf("the other pairing's copy could not be written: %v", err)
+	}
+	x.f.AllowAccess()
+	x.f.DisableVersions(cloudContainer)
+
+	n, err := x.c.Delete(x.ctx(), cloudUID)
+	if err != nil || n != 1 {
+		t.Fatalf("Delete = (%d, %v), want (1, nil)", n, err)
+	}
+	if destroyed := x.f.Destroyed(); len(destroyed) != 1 || !strings.HasSuffix(destroyed[0], "/versions/1") {
+		t.Errorf("the versions destroyed are %v, want only the revoked pairing's", destroyed)
+	}
+	if enabled := x.f.Enabled(); len(enabled) != 2 {
+		t.Errorf("the versions enabled are %v, want both: a disabled version's value is not served, so telling one pairing's from another's costs an enable each", enabled)
+	}
+	if disabled := x.f.Disabled(); len(disabled) != 1 || !strings.HasSuffix(disabled[0], "/versions/2") {
+		t.Errorf("the versions disabled are %v, want one disable, of the version that was not the revoked pairing's: the enable that read it is undone", disabled)
+	}
+	if n := len(x.f.EnabledVersions(cloudContainer)); n != 0 {
+		t.Errorf("the container answers %d enabled version(s), want none: one is destroyed and the other is back DISABLED, which is how the revoke found it", n)
+	}
+}
+
 // TestCloudDeleteIsANoOpForWhatIsNotThere: the two absences a revoke meets —
 // a uid this container holds no version for, and a container an installation
 // that never opted in does not have — are both the state the caller asked for.

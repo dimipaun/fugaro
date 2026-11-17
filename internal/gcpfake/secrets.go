@@ -18,7 +18,8 @@ import (
 // Secrets is a stateful fake of the Secret Manager v1 calls Fugaro makes:
 // secrets get, create, list (with a filter of labels.k=v terms joined by
 // " AND "), delete, getIamPolicy, addVersion and versions list, disable,
-// delete and destroy, and the value read at `latest` or at a numbered version.
+// enable, delete and destroy, and the value read at `latest` or at a numbered
+// version.
 // It has no access call unless a test allows it (AllowAccess): the CLI reads a
 // value back only where the work cannot be done without it — the GitHub App
 // pre-check and a catalog build's copy of a repository-sourced entry, which
@@ -110,6 +111,7 @@ type Secrets struct {
 	deletes     []string // the secret IDs a delete removed, in order
 	destroys    []string // the version names a destroy or a version delete took
 	disables    []string // the version names a versions/N:disable took, in order
+	enables     []string // the version names a versions/N:enable took, in order
 	versionList int      // the version lists served, successful or failed
 	// versionLists is the same count per secret ID: VersionsListCalls answers
 	// for the whole run, which cannot say whether ONE container was listed —
@@ -162,6 +164,7 @@ var (
 	versionRE      = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/([0-9]+)$`)
 	destroyRE      = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/([0-9]+):destroy$`)
 	disableRE      = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/([0-9]+):disable$`)
+	enableRE       = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/([0-9]+):enable$`)
 	labelTermRE    = regexp.MustCompile(`^labels\.([a-z0-9_-]+)=([a-z0-9_-]*)$`)
 )
 
@@ -232,7 +235,10 @@ func (f *Secrets) VersionsListedFor(id string) int {
 // DisableVersions marks every version of secret id DISABLED, as
 // secretmanager.versions.disable does. It is the state a readiness gate
 // must still read as "no version": the container is there and resolves to
-// nothing.
+// nothing. The mark is the secret's, because this helper stands for an
+// operator's disable of the whole container; an enable names one version, so
+// the first one spreads the mark onto the versions that exist and lifts it from
+// the version the call names, exactly as disabling them one at a time would.
 func (f *Secrets) DisableVersions(id string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -282,6 +288,16 @@ func (f *Secrets) Disabled() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.disables...)
+}
+
+// Enabled lists the version names a versions/N:enable call turned ENABLED, in
+// order (their full names): what a revoke makes of a version it has to read to
+// attribute it, and what it puts back with a disable when the version turns out
+// not to be the revoked pairing's.
+func (f *Secrets) Enabled() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.enables...)
 }
 
 // AddVersion appends a version to secret id, as another writer of the same
@@ -432,6 +448,34 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		s.off[atoi(m[3])] = true
 		writeJSON(w, http.StatusOK, versionJSON(m[1], m[2], atoi(m[3]), s.created, s.state(atoi(m[3]))))
+	case r.Method == http.MethodPost && enableRE.MatchString(p):
+		m := enableRE.FindStringSubmatch(p)
+		s := f.secrets[m[2]]
+		if s == nil || version(s, m[3]) == nil {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "not found")
+			return
+		}
+		n := atoi(m[3])
+		if s.state(n) == "DESTROYED" {
+			// A destroyed version cannot be brought back, as real Secret
+			// Manager refuses it: the destroy is the one call here with no way
+			// back, which is the whole of why step 2b makes it and not a
+			// disable.
+			writeError(w, http.StatusBadRequest, "FAILED_PRECONDITION", "Secret Version ["+p+"] is destroyed.")
+			return
+		}
+		if s.disabled {
+			if s.off == nil {
+				s.off = map[int]bool{}
+			}
+			for i := 1; i <= len(s.versions); i++ {
+				s.off[i] = true
+			}
+			s.disabled = false
+		}
+		delete(s.off, n)
+		f.enables = append(f.enables, "projects/"+m[1]+"/secrets/"+m[2]+"/versions/"+m[3])
+		writeJSON(w, http.StatusOK, versionJSON(m[1], m[2], n, s.created, s.state(n)))
 	case r.Method == http.MethodDelete && versionRE.MatchString(p):
 		m := versionRE.FindStringSubmatch(p)
 		s := f.secrets[m[2]]

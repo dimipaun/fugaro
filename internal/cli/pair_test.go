@@ -3092,6 +3092,49 @@ func TestRevokeDestroysTheCloudCopyOfTheKey(t *testing.T) {
 	}
 }
 
+// TestRevokeDestroysTheCloudCopyOfADisabledVersion: a version an operator
+// disabled — or a rotation left behind, this repository's own idiom — is not
+// "nothing to destroy". It still carries the pairing's key, its value is not
+// served at all, so a revoke that read the container as an empty one would exit
+// 0 with the key where it was: exactly what step 2b is for. The revoke destroys
+// it, reports it in wrote, and leaves the other pairing's version DISABLED
+// again, since reading a disabled version to tell it apart costs an enable.
+func TestRevokeDestroysTheCloudCopyOfADisabledVersion(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	f.pairSeedDevice(pairDevA, "phone-a")
+	f.pairSeedDevice(pairDevB, "phone-b")
+	_, keyA := f.pairSeedItem(t, pairDevA)
+	_, keyB := f.pairSeedItem(t, pairDevB)
+	f.pairSeedCloud(t)
+	f.secrets.AddVersion(infra.OrchestratorPairingSecretID, pairCloudVersion(t, pairDevA, keyA))
+	f.secrets.AddVersion(infra.OrchestratorPairingSecretID, pairCloudVersion(t, pairDevB, keyB))
+	f.secrets.AllowAccess()
+	f.secrets.DisableVersions(infra.OrchestratorPairingSecretID)
+
+	out, _, err := pairRun(t, "revoke", "--uid", pairDevA, "--json")
+	if err != nil {
+		t.Fatalf("revoke over a disabled copy: %v", err)
+	}
+	events := pairLines(t, out)
+	if len(events) != 1 || events[0].Event != pairEventRevoked || events[0].Revoke == nil {
+		t.Fatalf("events = %v, want one %s carrying a document", events, pairEventRevoked)
+	}
+	want := []string{rules.PathDevices + "/" + pairDevA, pairPushPath(pairDevA), pairCloudCopy()}
+	if !slices.Equal(events[0].Revoke.Wrote, want) {
+		t.Fatalf("wrote = %v, want %v: the copy is step 2b, and a version a disable hides from the revoke is the state step 2b exists for", events[0].Revoke.Wrote, want)
+	}
+	destroyed := f.secrets.Destroyed()
+	if len(destroyed) != 1 || !strings.HasSuffix(destroyed[0], "/versions/1") {
+		t.Fatalf("destroyed = %v, want the disabled version carrying the revoked device's uid", destroyed)
+	}
+	if disabled := f.secrets.Disabled(); len(disabled) != 1 || !strings.HasSuffix(disabled[0], "/versions/2") {
+		t.Fatalf("disabled = %v, want one disable, of the other pairing's version: the enable the revoke made to read it is undone, so a revoke hands no other pairing's key back to the consumer", disabled)
+	}
+	if n := len(f.secrets.EnabledVersions(infra.OrchestratorPairingSecretID)); n != 0 {
+		t.Fatalf("the container answers %d enabled version(s), want none: one is destroyed and the other is DISABLED again", n)
+	}
+}
+
 // TestRevokeWithoutAContainerDestroysNothing: an installation that never opted
 // into a resident orchestrator has no container, so there is no third copy to
 // destroy — the revoke is the two nodes and the laptop's item, exactly as it was
