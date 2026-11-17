@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/apply"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -117,14 +119,24 @@ func TestWorkspaceAddAsksNothing(t *testing.T) {
 // TestWorkspaceCapSetAsksNothing are the rest of this family's D1540 half: the
 // three writes below the `workspace` root land with neither --yes nor a
 // terminal, and the sentence naming the edit stands where the y/N was.
+//
+// AP6 puts the change's own follow-up behind each of them (spec rule 1), and
+// the follow-up of the owner's half is the workspace's own project plus the
+// published record (apply's ResourceWorkspace row). The workspace's own project
+// is an access grant, and a grant is confirmed by the name typed at its own
+// terminal — never by a flag and never by a chain, which asks nothing at all
+// (spec §6, D1540) — so on this fixture, whose workspace has never been applied,
+// the change is saved and the two steps stay owed: D1563's outcome, said in
+// D1563's sentence, and the door that can ask is `fugaro update`
+// (applyKeptLine's own branch). TestWorkspaceWritesChain is the other half of
+// this: a machine whose workspace's own root is already converged runs both
+// steps and ends with nothing owed.
 func TestWorkspaceMemberAddAsksNothing(t *testing.T) {
 	_, _, owner := workspaceOwnerHome(t)
 
 	out, _, err := execute(t, workspaceMemberAddArgsNoYes("--repo", "owner/repo-a")...)
-	if err != nil {
-		t.Fatalf("workspace member add: %v\n%s", err, out)
-	}
 	assertNoPrompt(t, out)
+	workspaceAssertSavedNotLive(t, "workspace member add", out, err)
 	lc, err := localcfg.Parse([]byte(readFileString(t, owner)))
 	if err != nil {
 		t.Fatal(err)
@@ -136,12 +148,15 @@ func TestWorkspaceMemberAddAsksNothing(t *testing.T) {
 
 // TestWorkspaceMemberRmAsksNothing takes the member back out without --yes: the
 // entry and the empty table go, so the file is byte-identical to the one the
-// fixture wrote.
+// fixture wrote. The removal takes the last member out of the table, so this
+// project declares no workspace of its own afterwards and the change is live as
+// soon as the file is written — the two stages skip, and neither of them asks
+// anything (D1540).
 func TestWorkspaceMemberRmAsksNothing(t *testing.T) {
 	_, _, owner := workspaceOwnerHome(t)
 	before := readFileString(t, owner)
-	if _, _, err := execute(t, workspaceMemberAddArgsNoYes()...); err != nil {
-		t.Fatalf("workspace member add: %v", err)
+	if _, _, err := execute(t, workspaceMemberAddArgsNoYes()...); err == nil {
+		t.Fatal("workspace member add reported the member live: this machine has never applied the workspace's own project")
 	}
 
 	out, _, err := execute(t, "workspace", "member", "rm", "workspace-alpha", "aurora")
@@ -149,6 +164,7 @@ func TestWorkspaceMemberRmAsksNothing(t *testing.T) {
 		t.Fatalf("workspace member rm: %v\n%s", err, out)
 	}
 	assertNoPrompt(t, out)
+	workspaceAssertNoSecondCommand(t, "workspace member rm", out, "workspace-alpha", "ws-gcp")
 	if after := readFileString(t, owner); after != before {
 		t.Errorf("the removal did not restore the file:\n--- before\n%s--- after\n%s", before, after)
 	}
@@ -159,10 +175,8 @@ func TestWorkspaceCapSetAsksNothing(t *testing.T) {
 	_, _, owner := workspaceOwnerHome(t)
 
 	out, _, err := execute(t, "workspace", "cap", "set", "--workspace", "workspace-alpha", "--monthly", "50")
-	if err != nil {
-		t.Fatalf("workspace cap set: %v\n%s", err, out)
-	}
 	assertNoPrompt(t, out)
+	workspaceAssertSavedNotLive(t, "workspace cap set", out, err)
 	lc, err := localcfg.Parse([]byte(readFileString(t, owner)))
 	if err != nil {
 		t.Fatal(err)
@@ -170,6 +184,43 @@ func TestWorkspaceCapSetAsksNothing(t *testing.T) {
 	if lc.WorkspaceCap == nil || lc.WorkspaceCap.Monthly != 50 {
 		t.Errorf("the cap is %+v, want 50 a month", lc.WorkspaceCap)
 	}
+}
+
+// workspaceAssertSavedNotLive holds a workspace write's owner-half chain to
+// D1563: the change is written, the two steps the owner's half owes are the ones
+// this machine still has to run, and the sentence names the door that can
+// confirm the grant. The command exits non-zero — a run that said "live" here
+// would be the lie D1563 exists to prevent — and it asks nothing on the way
+// (D1540).
+func workspaceAssertSavedNotLive(t *testing.T, what, out string, err error) {
+	t.Helper()
+	owed := []string{initflow.WorkspaceProject, initflow.Workspace}
+	if err == nil {
+		t.Fatalf("%s reported the change live with the workspace's own project unapplied:\n%s", what, out)
+	}
+	if want := "saved, not live yet: " + strings.Join(owed, ", ") + " still owed"; !strings.Contains(out, want) {
+		t.Errorf("%s does not say the change is saved and not live yet (%q):\n%s", what, want, out)
+	}
+	if !strings.Contains(out, "Run `fugaro update` in your own terminal window") {
+		t.Errorf("%s does not name the door that can confirm the workspace's own project:\n%s", what, out)
+	}
+	if got := workspaceOwedFor(t, "workspace-alpha", "ws-gcp"); !slices.Equal(got, owed) {
+		t.Errorf("%s left %v owed, want %v", what, got, owed)
+	}
+}
+
+// workspaceOwedFor is what this machine owes for one project, read the way the
+// command reads it: bound to the project name and the GCP project the change was
+// made in. A record bound to another pair is an error rather than an empty
+// answer (apply.LoadPending's own rule), so a mis-bound entry fails a test
+// instead of reading as "nothing owed".
+func workspaceOwedFor(t *testing.T, project, gcp string) []string {
+	t.Helper()
+	p, err := apply.LoadPending(os.Getenv, project, gcp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pendingSteps(p)
 }
 
 // TestWorkspaceRmAsksNothing is the removal half: the key and the pin it
@@ -227,9 +278,7 @@ func TestWorkspaceAddWritesOneKeyAndKeepsEveryOtherByte(t *testing.T) {
 	if strings.Count(after, "workspace:") != 1 {
 		t.Errorf("the membership key was written more than once:\n%s", after)
 	}
-	if !strings.Contains(out, "next: fugaro update") {
-		t.Errorf("the write does not hand off to fugaro update:\n%s", out)
-	}
+	workspaceAssertNoSecondCommand(t, "workspace add", out, "aurora", "aurora-gcp")
 }
 
 // TestWorkspaceRmRemovesTheKeyAndNothingElse: the other direction of the red
@@ -249,8 +298,27 @@ func TestWorkspaceRmRemovesTheKeyAndNothingElse(t *testing.T) {
 	if after := readFileString(t, path); after != before {
 		t.Errorf("the removal did not restore the file:\n--- before\n%s--- after\n%s", before, after)
 	}
-	if !strings.Contains(out, "next: fugaro update") {
-		t.Errorf("the write does not hand off to fugaro update:\n%s", out)
+	workspaceAssertNoSecondCommand(t, "workspace rm", out, "aurora", "aurora-gcp")
+}
+
+// workspaceAssertNoSecondCommand holds a write whose change is live the moment
+// the file is written to the shape AP6 gives it: no command is named as the
+// next thing to run, and nothing is left owed. Two writes of this family are
+// that. The MEMBER's half (`workspace add`, `workspace rm`) declares no step at
+// all — apply's `workspace` and `workspace_pin.` rows say why — and so does the
+// owner's half once the change takes the last member out of the table: the
+// config then declares no workspace of its own, both stages skip, and a skip
+// that did nothing is this stage's answer that there is nothing here to
+// converge (workspaceProjectSkip).
+func workspaceAssertNoSecondCommand(t *testing.T, what, out, project, gcp string) {
+	t.Helper()
+	for _, forbidden := range []string{"next:", "fugaro update", "fugaro apply"} {
+		if strings.Contains(out, forbidden) {
+			t.Errorf("%s sends the person to run something else (%q):\n%s", what, forbidden, out)
+		}
+	}
+	if got := workspaceOwedFor(t, project, gcp); len(got) != 0 {
+		t.Errorf("%s left %v owed, and the member's own half declares no step", what, got)
 	}
 }
 

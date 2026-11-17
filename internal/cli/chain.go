@@ -136,6 +136,26 @@ func chainApply(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config, se
 	if len(names) == 0 {
 		return nil
 	}
+	// The steps run over the config as the write left it, never over the copy
+	// the command read before it. The command's own `lc` is that earlier read,
+	// and a step reads its subject out of the config it is handed — the
+	// workspace stages decide whether this installation is a workspace's own
+	// from `workspace_members` and `workspace_cap`, which is exactly what
+	// `workspace cap set` and `workspace member add` have just written — so a
+	// chain handed the stale copy would ask a stage about a config that no
+	// longer exists and skip it as "nothing to do here".
+	//
+	// The write has already been held to the strict loader by the command
+	// (applySettingsEdit's read-back), so a file that does not read back here is
+	// the one thing this may not carry on past: the steps would run over a
+	// config nobody can name.
+	if sel.Path != "" {
+		fresh, err := localcfg.Load(sel.Path)
+		if err != nil {
+			return userErr("%s would not read back after the write, so the steps this change owes were not run: %v", sel.Path, err)
+		}
+		lc = fresh
+	}
 	// The record is written BEFORE the run, on both arms: a run is minutes of
 	// Terraform, and one that died in the middle would leave a change nothing
 	// remembers is not live. The steps the run answers are cleared from it as it
