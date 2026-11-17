@@ -121,11 +121,20 @@ func (r *run) checkpointStage(ctx context.Context) {
 		Dir:             r.d.WorkDir,
 		Env:             env,
 	}
+	// The stage's own clock starts at its call, as every other stage's does
+	// (stageOnce): the row below is a stage's timing and not this stage's setup.
+	started := r.d.Now()
 	res, err := r.d.Agent.Run(stageCtx, req)
 	violations, _ := r.endGatewayStage(name)
 	// The stage's spend is the run's like any other stage's, and the ledger is
-	// what the run's own figure is read from (recordGatewayStageCost).
+	// what the run's own figure is read from (recordGatewayStageCost). Its row
+	// in the record is appended as stageOnce appends one, before the outcome is
+	// read: whatever became of the call, its dollars are in the run's figure
+	// and in its split, and a call that reaches cost.model_usd and
+	// cost.model_by with no stage of its own would leave the record's own
+	// reconciliation short by exactly its cost (runstore.StageTiming).
 	r.recordGatewayStageCost(ctx, name, res.CostUSD, true)
+	r.rec.Stages = append(r.rec.Stages, r.stageTiming(name, started, res.CostUSD, res.SubAgents, res.Repeats))
 	if err != nil {
 		log.Warn("the checkpoint call failed; the run's checkpoint report keeps the runner's own fields", "err", r.redactErr(err))
 		return

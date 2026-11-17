@@ -922,6 +922,27 @@ func TestGatewayStageHaltBecomesCheckpoint(t *testing.T) {
 	if !calls[1].StrictMCPConfig {
 		t.Error("the checkpoint call was not launched with a strict MCP config")
 	}
+	// The call's dollars carry a stage row of their own, as every other
+	// stage's do. The run's model figure is what the stages sum to plus the
+	// split's own "unattributed" residual (runstore.StageTiming), and the
+	// checkpoint stage is the one stage not recorded by stageOnce — so it is
+	// the one whose dollars, without its row, would land in model_usd and in
+	// the split while no stage carried them, leaving the record's own
+	// reconciliation short by exactly its cost.
+	var staged, checkpointUSD float64
+	for _, st := range rec.Stages {
+		staged += st.ModelUSD
+		if st.Name == "checkpoint" {
+			checkpointUSD = st.ModelUSD
+		}
+	}
+	if checkpointUSD <= 0 {
+		t.Errorf("stages = %+v, want the checkpoint stage's own row, carrying its spend", rec.Stages)
+	}
+	if rest := staged + rec.Cost.ModelBy["unattributed"] - rec.Cost.ModelUSD; rest > 1e-9 || rest < -1e-9 {
+		t.Errorf("sum(stages[].model_usd) = %v and model_by[unattributed] = %v against model_usd %v: %v unaccounted for",
+			staged, rec.Cost.ModelBy["unattributed"], rec.Cost.ModelUSD, rest)
+	}
 	// The draft is where a person reads the report; finalize must not have
 	// turned the halted run into a ready pull request.
 	if pr := h.PR(t); !pr.Draft {
