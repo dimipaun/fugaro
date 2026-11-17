@@ -1068,6 +1068,7 @@ probe account carries predefined grants only).
 | 661 | A phone's message becomes a job execution **with the laptop shut** ([`docs/mobile/`](mobile/implementation-plan.md), Task **P5.1h**, the number taken on 2026-11-16, and the design of record [design/always-on-orchestrator.md](mobile/design/always-on-orchestrator.md) §4.2 and §3.2; tasks **P5.1c**, **P5.1d**, **P5.1f** and **P5.1g** are the half built, and **P4.1** is the consumer it reuses): from a **real phone**, paired by `fugaro pair`, one **launch** message is acted on **once** by the installation's own service — the pass verifies the tag, takes the run's claim, mints the budget token and starts a **Cloud Run job execution** — and the run it starts ends as a laptop-launched run does: a record, a PR and the phone's own outbox answer and presence. The machine that paired is **shut and no `fugaro mailbox` runs anywhere**, which is the whole of what phase 2 claims; the agent runs in the **job**, never in the resident service, and the execution's own job id is where that is read | See "Check 661" below; **you** run it, with a **real phone** on a **sandbox installation** and the **sandbox repository**, **never `belong`**, and **no agent runs any step of it** | One sandbox run: **billable**, on the installation's own budget, which a phone-launchable installation must have published, **on and enforcing** (the plan's P5.1-Q3, without which no caps sentence of the design is true) and bounded by the per-device caps and the named recipe **P5.1g** publishes. The launch itself is a claim, a mint and a job start; the model spend is the run's own, and it is what a laptop-launched run of the same task costs. Restore: the run's own cleanup — decline its PR, delete its branch and the run's objects — and `fugaro pair revoke --uid <uid>` if you paired for this check alone. **OWNER-RUN, NOT RUN.** |
 | 662 | `pair revoke` deletes the pairing key's cloud copy, and the pairing's messages **stop verifying in the cloud** ([`docs/mobile/`](mobile/implementation-plan.md), Task **P5.1h**, the number taken on 2026-11-16, and the design of record [design/always-on-orchestrator.md](mobile/design/always-on-orchestrator.md) §4.7, its step **2b**; task **P5.1e** is the copy and the deletion, and **D111** and **Global Constraint 4** are the custody the copy widens): with the copy in place the pass acts on a message from the phone **once** — the positive half, without which "messages stop verifying" measures nothing — and after `fugaro pair revoke --uid <uid>` the Secret Manager version the service reads is **destroyed** (not merely disabled, and not merely rotated: a disabled version is still readable by a principal granted `versions.access` on the parent, which is the design's own sentence) and the phone's next message is **refused in the cloud, with no action taken and no execution started**. What it does not settle is said in its own section: deleting the copy un-reads nothing, so what it ends is the **service's** ability to verify and to forge, not a reader's | See "Check 662" below; **you** run it, with a **real phone** on a **sandbox installation** whose module is applied, **never `belong`**, and **no agent runs any step of it** | The positive half is **one message the pass acts on** — the launch Check 661 runs is the cheapest, and this check may be run directly after it — so at most **one run is billable**; every other step is a read or the revoke itself, and **no value is read on any path and no line of the check prints one**. The revoke is steps 1, 2, 2b and 3: the device node, the Auth user, **the Secret Manager version** and the laptop's keychain item. Restore is **re-pairing**: `fugaro pair` issues a new device uid and a new key, and the old pairing stays revoked. A launch already claimed continues — the caps, not the revocation, bound it. **OWNER-RUN, NOT RUN.** |
 | 663 | The `orch` account is refused the grants §4.3 does not list ([`docs/mobile/`](mobile/implementation-plan.md), Task **P5.1h**, the number taken on 2026-11-16, and the design of record [design/always-on-orchestrator.md](mobile/design/always-on-orchestrator.md) §4.3, §4.5's E4 and §6's never-list; task **P5.1b** writes the account and its **piecemeal** bindings): read from the project's actual IAM and then probed with a token **for that account** — the account is **not in `var.launchers`** (no `roles/firebasedatabase.viewer`, `roles/datastore.viewer` or `roles/serviceusage.serviceUsageConsumer`, and a read of another mailbox or of `config/admin/devices/**` over the RTDB API is **denied by the rules** rather than answered with a `null`, which is what that viewer role — an IAM read that bypasses the rules — would give it); `setIamPolicy` and `iam.roles.*` are refused and the deployer is **not impersonable**; a write at the **runs-bucket root** is refused (the launcher's condition is `runs/`, `tokens/` and `issues/` only, so the marker that permits a managed apply is unwritable) **while the read of it is not**, which the design says in its own words; `secretmanager.secrets.list` and `versions.list` succeed and `versions access` on a model, git or App secret is refused; and the same token **does** list the installation's jobs, which is the positive control a check of nothing but refusals would not have | See "Check 663" below; **you** run it, on a **sandbox installation** with the module applied and your own credential, **never `belong`**, and **no agent runs any step of it** | Reads and probes: **no model call, no run and nothing billable** — two IAM policy reads, one bucket listing, one RTDB `GET` and the refusals. The one write attempted at the bucket root is a **throwaway object of your own, never the marker itself**, because a probe that succeeds must not leave a marker behind. The probes run with a token minted for the account, which needs you to hold `roles/iam.serviceAccountTokenCreator` on it: that grant is **added by hand for the check and removed afterwards**, and deleting the throwaway object is the other half of the restore. **OWNER-RUN, NOT RUN.** |
+| 581 | A multi-repository catalog build and the leak scan ([`docs/shared-jobs-default/`](shared-jobs-default/implementation-plan.md), its **Check 581** and task **B4**; **D2301** for a build baking every repository the project's map puts on the entry, and **B3**/**R2** for the scan that stands before the promote): one catalog entry the project's image map puts two repositories on is built through Cloud Build, from the checkout its Dockerfile belongs to — the CLI refuses a build from any other repository by name — and the build's own record is read back: its note names every repository the map puts on the entry, its steps carry `catalog-scan` with SUCCESS before `promote`, the build itself ends SUCCESS, and the entry records the digest that build promoted | See "Check 581" below; `bash scripts/live-checks/check-581.sh --sandbox <a sandbox repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check-581_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** (`fugaro-dev`) and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call) | **One billable Cloud Build**, of an entry the catalog already lists, which promotes that entry's image; the check writes no entry, no mapping and no switch, launches no run and opens no pull request. **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -18967,3 +18968,87 @@ next week's comparison is not read against it.
 this spec: a 651 that holds is the change's acceptance, and a 651 that does not is the owner's decision about
 which of the three causes is still open, read against Check 650's per-model figures, rather than a task this
 plan adds.
+
+## Check 581: one catalog entry over two repositories — the bake and the leak scan (the sandbox project `fugaro-dev` and the sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **B4** of
+[docs/shared-jobs-default/implementation-plan.md](shared-jobs-default/implementation-plan.md) — its
+"Checks the plan takes", the row `581 | A multi-repository catalog build and the leak scan | The owner` — and
+**run by you**: nothing below is a claim that an image carries two repositories' source or that the scan ran,
+and what it measures is a real Cloud Build of a real catalog entry on the sandbox, read back from the build's
+own record of itself. The check is `scripts/live-checks/check-581.sh` (its sibling test
+`scripts/live-checks/check-581_test.sh` drives it against fake `gcloud` and `fugaro` only), and the owner
+types `bash scripts/live-checks/check-581.sh --sandbox <a sandbox repository checkout>`. A project or region
+naming `belong` is refused by name, and a coding agent's session is refused too — **no agent runs any step of
+it**, and it asks you nothing: it takes the checkout, builds one entry, reads the build back and prints one
+block.
+
+**What it settles.** Two things the tree can only claim offline, both read from outside: **D2301** — one
+build bakes every repository the project's image map puts on the entry it builds, not the one it runs for
+alone — and **B3**/**R2** — the build scans the image it made for a leftover credential of the build's,
+between the smoke and the promote, and refuses rather than moves `latest`. The bake is the stages a build
+composes into a definition and the scan is a step of a real Cloud Build, so neither is answerable by reading
+the tree: this check builds one entry and reads what the build says and what Cloud Build recorded.
+
+- **The entry is the project's own, and over two repositories.** The project is read from the checkout
+  itself (`fugaro doctor --json`), so the check measures the project you work in rather than one it guessed.
+  The catalog (`fugaro image ls --json`) and the map (`fugaro image survey --json`) are read back, and **the
+  entry this check builds is the one the map puts the most repositories on** — two at least, ties broken by
+  name so the pick is a fact about the project and not about the read's order — with `CHECK581_ENTRY` naming
+  one instead. A project whose map puts no entry on two repositories, or one with `bake_repos=false`, has
+  nothing here to measure, and that is a finding whose row carries the command that fixes it (`fugaro image
+  map <the repository> <the entry>`, published by `fugaro update`; `fugaro settings set bake_repos true`).
+- **The build is a real Cloud Build, from the right checkout.** `fugaro image build <the entry>` is run from
+  the checkout of the repository the entry's Dockerfile belongs to — the sandbox checkout by default, or
+  `CHECK581_CHECKOUT` — because a build runs as the build account of the repository it was submitted from
+  and the CLI refuses any other by name; that refusal is reported as the row's finding, with the checkout to
+  point the check at. It is billable, it waits for the build by default, and the id it names is the build the
+  rows below read.
+- **The bake, out of the build's own note.** The build prints the repositories it baked and where each was
+  written (`note: the catalog entry <entry> bakes the checkouts of <repo> at /work/baked/<slug>, …, so the
+  image carries the source of every repository the project's map puts on it`, from `imagebake.Decide` by way
+  of `noteBakePlan`). **Every repository the map puts on the entry has to be named there** — one bake stage
+  per repository, at the per-slug path a job of that repository opens instead of cloning. A note that names
+  one repository, or leaves one of the map's out, is the reading that the image a job of that repository
+  starts on carries no checkout of it; a build that baked nothing says so in its own words.
+- **The scan, out of the build's own steps.** `gcloud builds describe <the build id> --project=<the project>`
+  answers the steps that ran, and the row holds `catalog-scan` to being **present**, to standing **before**
+  `promote`, and to having ended **SUCCESS**, with the build itself SUCCESS. The order is the whole point
+  (B3, R2; `internal/backend/gcp`'s `catalogBuildSteps`): an image carrying a git config credential, a
+  `.netrc`, a credential-helper store or a token in the environment or in any layer must be refused rather
+  than moved to `latest`, and a build that failed at or after the scan is the scan working — the row says
+  which, with the build's own failure detail.
+- **The digest the build recorded.** `fugaro image ls --json` is read again afterwards: the build's record
+  step stands **after** the promote, so an entry that now records a digest is one whose build reached the
+  end of the chain the scan guards, and the row prints the digest before and after. An entry that records
+  none is a build that did not reach its record step.
+
+**What a run costs.** **One billable Cloud Build** of an entry the catalog already lists, which promotes that
+entry's image: `latest` moves to what the build made, which is what `fugaro image build` does on any day and
+is not the check's to undo. Nothing else is billed — no run is launched, no model is called, no branch is
+pushed and no pull request is opened — and the check writes no catalog entry, no mapping and no switch of its
+own. On disk it is one scratch directory, removed at the end.
+
+**The commands.**
+
+```sh
+bash scripts/live-checks/check-581.sh --dry-run
+bash scripts/live-checks/check-581.sh --sandbox <a sandbox repository checkout>
+```
+
+The dry run prints the plan and calls nothing. The real run needs `gcloud` authenticated as **you** (it is
+your credential that describes the build) and the installed `fugaro` (the build it drives is the one you
+have). Progress goes to stderr and one `CHECK 581 RESULT` block goes to stdout at the end: paste that block
+here and nothing else. **Exit `0`** is every criterion that was measured holding; **`1`** is a measured
+criterion that did not hold, or a guard that stopped the check — an empty catalog, a map with no entry over
+two repositories, `bake_repos=false`, a build that failed or was refused, a note that leaves a repository
+out, a scan missing or after the promote; **`2`** is the check not being able to measure (a tool missing, the
+checkout not being one, a read that did not answer, a build that never ended). A key the run never reached
+reads `FAIL — not reached`. The knobs are `CHECK581_DRY_RUN`, `CHECK581_KEEP_SCRATCH`, `CHECK581_SANDBOX`,
+`CHECK581_ENTRY`, `CHECK581_CHECKOUT`, `CHECK581_REGION` (us-east5), `CHECK581_DOCTOR_TIMEOUT_SECONDS` (180),
+`CHECK581_CLI_TIMEOUT_SECONDS` (180) and `CHECK581_BUILD_TIMEOUT_SECONDS` (1800).
+
+**What waits on it.** Nothing gates on it: it is the outside reading of the multi-repository bake and of the
+scan, and the one to take again whenever the bake plan, the catalog build's steps or `images/scan.sh`
+change — the same reading **I2**'s hermetic test takes with a credential service in place of the cloud. Its
+own test is the offline half (`bash scripts/live-checks/check-581_test.sh`), and it is what CI runs.

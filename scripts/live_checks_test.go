@@ -83,7 +83,14 @@ import (
 // and the tool log is the child's own. Checks 500 and 501 drive a fake `gcloud`
 // and a fake `fugaro` that logs every call with the directory it was made in, so
 // a case says both what the check measured and that no image was built, no
-// `fugaro update` was answered for the owner and no run was launched. Checks 520
+// `fugaro update` was answered for the owner and no run was launched. Check 581
+// drives those same two fakes over the multi-repository catalog build: a fake
+// `fugaro` that answers `version`, `doctor --json`, `image ls --json`, `image
+// survey --json` and `image build`, printing the submitted line and the bake
+// note the real one prints and marking the entry as built so the second catalog
+// read is the one after it, and a fake `gcloud` that serves the build's own
+// steps -- so a case can bend the map, the note and the steps and say what the
+// check made of each. Checks 520
 // and 521 drive the same two fakes over the vision-model work: a fake `fugaro`
 // whose `doctor --json` carries the `vision-coder` sentence the premise is read
 // from, whose `run --json` launches the run the check follows, whose `runs ls
@@ -340,6 +347,7 @@ var liveCheckScripts = []struct {
 	{"check-410.sh", "check-410_test.sh"},
 	{"check-500.sh", "check-500_test.sh"},
 	{"check-501.sh", "check-501_test.sh"},
+	{"check-581.sh", "check-581_test.sh"},
 	{"check-411.sh", "check-411_test.sh"},
 	{"check-412.sh", "check-412_test.sh"},
 	{"check-c0.sh", "check-c0_test.sh"},
