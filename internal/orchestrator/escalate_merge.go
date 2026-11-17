@@ -164,9 +164,15 @@ func (s MergeSeams) beyond(ctx context.Context, item WorkItem, step escalation.S
 }
 
 // MergeReader gathers what the rung 3 gate is decided on for one item at one
-// head: the run behind that head, the findings it left open, the pull request it
-// belongs to, and the two ladder runs at that head — the review D2043 requires
-// and the judge whose answer may veto.
+// head: the run behind that head, the findings open at it — the run's own and
+// the review's — the pull request it belongs to, and the two ladder runs at that
+// head: the review D2043 requires and the judge whose answer may veto.
+//
+// The review's findings are read from the review-only run's own artifact and
+// never from the run behind the record's: D2043 lands a rebased head under a
+// review's verdict **and its severities**, and a reader that carried the verdict
+// as a flag alone would leave the gate's no-critical-finding clause fed by the
+// run's own account of itself.
 //
 // A reading that could not be made is Read false, which the gate refuses on
 // (G5); an error is a read that did not happen, and it ends the item's turn for
@@ -196,6 +202,13 @@ type MergeReading struct {
 	// produced them (BF1) — the same input the triage reads, so the two rules
 	// refuse on the same evidence.
 	Findings Findings
+	// ReviewFindings is the review-only run's own open findings at this head —
+	// the read D2043 requires — and the state of the read that produced them.
+	// The gate reads them beside the run's (see headFindings): a landing makes
+	// this commit durable, and the severities that decide whether it may are the
+	// review's, so a review that reported a critical finding stops the merge
+	// however clean the run behind the record reported itself to be.
+	ReviewFindings Findings
 	// ReviewRun is the review-only run at this head, or "".
 	ReviewRun string
 	// Scored is whether a review at this head has a verdict. A head with none
@@ -450,6 +463,13 @@ type MergeInput struct {
 // and refuses when that read was not made, because a merge that lands unread
 // rests on it, and the diff's own account of itself is not corroboration (D2047;
 // triage reads the same rule as a reading nothing corroborated).
+//
+// The findings clauses are read on two readings of the one commit and never on
+// one: the run behind the record's, which is what the triage escalates on, and
+// the review-only run's, because D2043 lands a rebased head under a scored
+// review's severities — a head whose review reported a critical finding, or a
+// high one on a security path, is one a person has to read first, whatever the
+// run said about itself (headFindings).
 func mergeGate(in MergeInput) MergeOutcome {
 	switch {
 	case !in.Read.Read:
@@ -468,12 +488,12 @@ func mergeGate(in MergeInput) MergeOutcome {
 		// that found a severity nothing can place files nothing, and the head
 		// still waits for nobody because the merge is the host's fact, not the
 		// ladder's.
-		if in.Landed && !in.Said && findingsReadable(in.Read.Findings) {
+		if in.Landed && !in.Said && findingsReadable(in.Read) {
 			return MergeOutcome{
 				Kind:      MergeAlready,
 				Replay:    true,
 				Verdict:   in.Read.Verdict,
-				FollowUps: mergeFollowUps(in.Read.Findings.List, in.Read.Verdict),
+				FollowUps: mergeFollowUps(headFindings(in.Read), in.Read.Verdict),
 			}
 		}
 		return MergeOutcome{Kind: MergeAlready}
@@ -491,7 +511,7 @@ func mergeGate(in MergeInput) MergeOutcome {
 		}
 		return waitFact(GateReviewSpent)
 	}
-	if reason, unreadable := unreadableFindings(in.Read.Findings); unreadable {
+	if reason, unreadable := headFindingsUnreadable(in.Read); unreadable {
 		return waitReason(reason)
 	}
 	rec := in.Read.Record
@@ -536,8 +556,9 @@ func mergeGate(in MergeInput) MergeOutcome {
 	if sensitivity.Classify(host.Paths) != sensitivity.Routine {
 		return waitFact(GatePathsNotRoutine)
 	}
-	if blocksALanding(in.Read.Findings.List) {
-		return waitReason(blockingCode(in.Read.Findings.List))
+	findings := headFindings(in.Read)
+	if blocksALanding(findings) {
+		return waitReason(blockingCode(findings))
 	}
 	if in.Read.JudgeRun == "" && !in.Launches.Judge {
 		if !in.Launchable {
@@ -562,16 +583,55 @@ func mergeGate(in MergeInput) MergeOutcome {
 		Ready:     in.PR.Draft,
 		Reasons:   []TriageReason{ReasonRunOver, ReasonPullRequestReady, ReasonCommitsPushed, ReasonCIGreen, ReasonPathsRoutine, ReasonFindingsClear},
 		Verdict:   in.Read.Verdict,
-		FollowUps: mergeFollowUps(in.Read.Findings.List, in.Read.Verdict),
+		FollowUps: mergeFollowUps(findings, in.Read.Verdict),
 	}
 }
 
 // findingsReadable is the findings clause as the boolean a replay needs: the
 // same rule the gate refuses on, read where the refusal is not available
 // because the merge has been made already and nothing is left to refuse.
-func findingsReadable(f Findings) bool {
-	_, unreadable := unreadableFindings(f)
+func findingsReadable(r MergeReading) bool {
+	_, unreadable := headFindingsUnreadable(r)
 	return !unreadable
+}
+
+// headFindings is every open finding the gate reads at one head, the review's
+// own first: D2043's read of the head and D1245's read of the run behind it are
+// two readings of one commit, and both are read because a landing makes the
+// commit durable — a critical finding either of them reported is one a person
+// has to read before it does.
+//
+// One entry per key stands in it, and the review's: a key is the finding's
+// identity across rounds and the name its follow-up is derived from
+// (mergeFollowUpID), so two readings of one finding are one finding, and the
+// severity an independent reader put on it is the one kept.
+func headFindings(r MergeReading) []Finding {
+	out := make([]Finding, 0, len(r.ReviewFindings.List)+len(r.Findings.List))
+	seen := make(map[string]bool, cap(out))
+	for _, list := range [][]Finding{r.ReviewFindings.List, r.Findings.List} {
+		for _, f := range list {
+			if f.Key != "" {
+				if seen[f.Key] {
+					continue
+				}
+				seen[f.Key] = true
+			}
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// headFindingsUnreadable names why a findings read the gate makes at this head
+// is not one it can read, or reports that they all are. Every read is required
+// and each refuses with its own code: a review nobody could read the findings
+// of is not a review that found nothing, and what an unreadable read is not is
+// an empty one.
+func headFindingsUnreadable(r MergeReading) (TriageReason, bool) {
+	if reason, unreadable := unreadableFindings(r.Findings); unreadable {
+		return reason, true
+	}
+	return unreadableFindings(r.ReviewFindings)
 }
 
 // judgeVetoes reports whether the judge's answer stops this head. It is D2044's

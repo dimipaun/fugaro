@@ -475,19 +475,27 @@ func mergeYes() runstore.MergeJudge {
 
 // mergePass is a reading every clause of D1245's gate passes on: a run that
 // ended at the judged head, a routine path set the host reports for that head,
-// green CI, no finding, a scored review of that head and the judge's yes.
+// green CI, no finding in either of the two reads the gate makes, a scored
+// review of that head and the judge's yes.
 func mergePass(head string) orchestrator.MergeReading {
 	return orchestrator.MergeReading{
-		Read:      true,
-		Number:    mergePR,
-		Record:    mergeRecord(head),
-		Paths:     runstore.NewChangedFiles([]string{mergeRoutinePath}),
-		Findings:  orchestrator.Findings{Read: orchestrator.FindingsReadable, List: []orchestrator.Finding{}},
-		ReviewRun: mergeReviewRun,
-		Scored:    true,
-		JudgeRun:  mergeJudgeRun,
-		Verdict:   mergeYes(),
+		Read:           true,
+		Number:         mergePR,
+		Record:         mergeRecord(head),
+		Paths:          runstore.NewChangedFiles([]string{mergeRoutinePath}),
+		Findings:       mergeClearFindings(),
+		ReviewFindings: mergeClearFindings(),
+		ReviewRun:      mergeReviewRun,
+		Scored:         true,
+		JudgeRun:       mergeJudgeRun,
+		Verdict:        mergeYes(),
 	}
+}
+
+// mergeClearFindings is an artifact the reader found and read, carrying no open
+// finding: the read that is not the same fact as no read at all.
+func mergeClearFindings() orchestrator.Findings {
+	return orchestrator.Findings{Read: orchestrator.FindingsReadable, List: []orchestrator.Finding{}}
 }
 
 // mergeGreen is CI as a host reports it green: one check, finished, successful.
@@ -660,6 +668,27 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 			"findings nobody could read",
 			string(orchestrator.ReasonFindingsAbsent),
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) { r.Findings.Read = orchestrator.FindingsAbsent },
+		},
+		{
+			"a critical finding in the review at this head",
+			string(orchestrator.ReasonCriticalFinding),
+			func(r *orchestrator.MergeReading, _ *mergeHostStub) {
+				r.ReviewFindings.List = []orchestrator.Finding{{Severity: orchestrator.SeverityCritical, Path: mergeRoutinePath, Key: mergeFinding}}
+			},
+		},
+		{
+			"a high finding in a security path, in the review at this head",
+			string(orchestrator.ReasonSecurityHighFinding),
+			func(r *orchestrator.MergeReading, _ *mergeHostStub) {
+				r.ReviewFindings.List = []orchestrator.Finding{{Severity: orchestrator.SeverityHigh, Path: mergeSecurityPath, Key: mergeFinding}}
+			},
+		},
+		{
+			"review findings nobody could read",
+			string(orchestrator.ReasonFindingsAbsent),
+			func(r *orchestrator.MergeReading, _ *mergeHostStub) {
+				r.ReviewFindings.Read = orchestrator.FindingsAbsent
+			},
 		},
 		{
 			"a record nobody can place",
@@ -975,6 +1004,78 @@ func TestR3FollowUpsFiledWithImportance(t *testing.T) {
 	if len(m.state().WorkItems) != 3 {
 		t.Fatalf("the second cycle filed %d items, and a landing files each follow-up once", len(m.state().WorkItems))
 	}
+}
+
+// TestR3TheReviewAtTheHeadIsRead is D2043 at the clause it is about: the
+// review-only run a rebased head wears is not a yes the gate passes on. Its own
+// findings are the severities the no-critical-finding clause is decided on, so a
+// head its review called critical never merges, and a finding it left open is
+// what the landing files with the importance the judge gave it (D2040).
+//
+// The run behind the record is clean in every case, which is the reading a gate
+// that carried the review as a flag alone would land on.
+//
+// Mutation: read the clause on the run's own findings only — the state this
+// finding was written about — and the first case below merges a head whose
+// review reported a critical finding.
+func TestR3TheReviewAtTheHeadIsRead(t *testing.T) {
+	now := o6Now()
+
+	t.Run("a review that reported a critical finding never merges", func(t *testing.T) {
+		m := landable(t, now)
+		read := mergePass(headA)
+		read.ReviewFindings.List = []orchestrator.Finding{{Severity: orchestrator.SeverityCritical, Path: mergeRoutinePath, Key: mergeFinding}}
+		m.reader.reads["wi-1"] = read
+
+		m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+
+		refusedAt(t, m, headA, "ladder-r3-wait-"+headA[:8], string(orchestrator.ReasonCriticalFinding))
+	})
+
+	t.Run("a finding the review left open is what the landing files", func(t *testing.T) {
+		m := landable(t, now)
+		read := mergePass(headA)
+		read.ReviewFindings.List = []orchestrator.Finding{{Severity: orchestrator.SeverityMedium, Path: mergeRoutinePath, Key: mergeFinding}}
+		read.Verdict.FollowUps = []runstore.MergeJudgeFollowUp{{Key: mergeFinding, Importance: runstore.MergeJudgeImportant}}
+		m.reader.reads["wi-1"] = read
+
+		m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+
+		if !slices.Equal(m.host.merged, []string{headA}) {
+			t.Fatalf("the host merged %v, and a medium finding on a routine path blocks no landing", m.host.merged)
+		}
+		w, ok := m.state().Item("wi-1-fu-" + mergeFinding)
+		if !ok {
+			t.Fatalf("the node carries no follow-up for the review's finding: %+v", m.state().WorkItems)
+		}
+		if !strings.Contains(w.Brief, string(orchestrator.SeverityMedium)) || !strings.Contains(w.Brief, string(runstore.MergeJudgeImportant)) {
+			t.Fatalf("the brief reads %q, and the finding the review left open is filed as the landing's own work (D2040)", w.Brief)
+		}
+	})
+
+	t.Run("one finding the two reads agree on is one finding", func(t *testing.T) {
+		// Both runs wrote the same key, which is what a key is for: the item is
+		// one, and the severity the brief names is the independent reader's.
+		m := landable(t, now)
+		read := mergePass(headA)
+		read.Findings.List = []orchestrator.Finding{{Severity: orchestrator.SeverityMedium, Path: mergeRoutinePath, Key: mergeFinding}}
+		read.ReviewFindings.List = []orchestrator.Finding{{Severity: orchestrator.SeverityLow, Path: mergeRoutinePath, Key: mergeFinding}}
+		m.reader.reads["wi-1"] = read
+
+		m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+
+		s := m.state()
+		if len(s.WorkItems) != 2 {
+			t.Fatalf("the node carries %d items, and one finding is one follow-up", len(s.WorkItems))
+		}
+		w, ok := s.Item("wi-1-fu-" + mergeFinding)
+		if !ok {
+			t.Fatalf("the node carries no follow-up for the shared key: %+v", s.WorkItems)
+		}
+		if !strings.Contains(w.Brief, string(orchestrator.SeverityLow)) {
+			t.Fatalf("the brief reads %q, and the review's own word is kept", w.Brief)
+		}
+	})
 }
 
 // TestR3ReplayFinishesALostLanding is the landing the node never heard about:
