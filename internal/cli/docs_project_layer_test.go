@@ -660,7 +660,12 @@ func TestDocsProjectLayerSaysWhatTiesARepositoryToAProject(t *testing.T) {
 // the row has to follow — a key this release decodes, validates and accepts and
 // no run applies yet — while `binaries` left that state with AR3 of the
 // binary-allow-rule plan, whose finalize enforces it, so the row says what the
-// run now does with the block rather than that nothing does; it stays the one
+// run now does with the block rather than that nothing does. AR4 closed the
+// residual the row used to name as still open — the rule is read over the run's
+// own diff as well, so a payload the agent committed itself fails the run — and
+// AR5 added what the coder and the pull request see, so the row states both
+// readings and the sentences that go with them rather than the one reading and
+// the hole beside it; it stays the one
 // row whose *written block* is a statement at publish time, which the row has to
 // state because a publisher reading it is deciding whether to write
 // `{"allow": []}` or nothing — and because the database keeps no member for an
@@ -692,9 +697,10 @@ func TestDocsProjectLayerSaysWhatTiesARepositoryToAProject(t *testing.T) {
 // Mutation (verified, run and restored): delete the `binaries` row — this fails
 // naming it; put "decoded, validated and accepted, **not applied**" back as the
 // row's whole description without the written-block half — it fails naming that;
-// delete the `model_grades` row — it fails naming the key the table stopped
-// describing; delete the crafts row — it fails naming the three keys the table
-// stopped describing.
+// put the residual clause AR4 closed back in place of the two-readings sentence
+// — it fails naming the sentence it wants; delete the `model_grades` row — it
+// fails naming the key the table stopped describing; delete the crafts row — it
+// fails naming the three keys the table stopped describing.
 func TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes(t *testing.T) {
 	const header = "| Policy key | What the run does with it today |"
 	doc := readDoc(t, "docs/project-layer.md")
@@ -735,10 +741,14 @@ func TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes(t *testing.T) {
 	for _, want := range []string{
 		"| `binaries` | decoded, validated and accepted, **applied at finalize**",
 		"the block is the owner's grant of the paths a run may add a binary at",
-		"reads it over what a commit would carry that no commit has — the run's untracked files and the ones the agent staged itself",
+		"**the rule is read twice at finalize, because a binary reaches the branch by two roads**",
+		"the run's untracked files and the ones the agent staged itself",
 		"a file the project admits at that path and within the cap is committed with the run's work",
-		"**What the run commits as work of its own is not read here**",
-		"which is the residual [binary-allow-rule/](binary-allow-rule/) closes as its task AR4",
+		"The second is the run's own diff (`committedRange...HEAD`, the range the review stage is handed), read over the paths the run's own commits added",
+		"**the branch carries that file all the same and a person has to delete it**",
+		"the implement brief names the admitted paths and the cap (D992, and a project that admits nothing gets no clause, because there is no path to name)",
+		"the pull request's status section carries a bounded `binaries: …` line naming the admitted files",
+		"the refusal itself names the two readers who have a fix and that no file in the repository can widen the list",
 		"the one key of this table whose *written block* is a statement at publish time and not at admission time",
 		"the database keeps no member for an empty list, so the node never *holds* that spelling",
 		"an empty block and a write of nothing leave the same node, and both admit nothing",
