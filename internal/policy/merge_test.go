@@ -312,6 +312,52 @@ func TestReviewFloorMergesTightenOnly(t *testing.T) {
 	}
 }
 
+// TestReviewFloorForHoldsBothRowsOfAnOffAxisRequest: a request may raise a
+// mode and never lower a floor (D8, LF5). The floor is read off the mode the
+// run is at, so a run whose own request took it to hotfix — off the axis,
+// where the mode the layers resolved no longer says what the run is — is held
+// to hotfix's row *and* to the row the layers resolved for it. Reading one
+// row would let a per-run flag drop a floor the owner set.
+func TestReviewFloorForHoldsBothRowsOfAnOffAxisRequest(t *testing.T) {
+	e := Merge(Layer{ReviewFloor: map[rigor.Mode][]Level{
+		rigor.Pro:    {LevelL2, LevelL3},
+		rigor.Hotfix: {LevelL1},
+	}})
+
+	// No second row: the request did not take the run off the axis ("" is
+	// what rigor.LayersMode answers for every on-axis request), so the answer
+	// is ReviewFloor's own.
+	if got, want := e.ReviewFloorFor(rigor.Pro, ""), []Level{LevelL2, LevelL3}; !slices.Equal(got, want) {
+		t.Errorf("ReviewFloorFor(pro, no beside) = %v, want %v", got, want)
+	}
+	if got, want := e.ReviewFloorFor(rigor.Hotfix, ""), []Level{LevelL1}; !slices.Equal(got, want) {
+		t.Errorf("ReviewFloorFor(hotfix, no beside) = %v, want %v", got, want)
+	}
+	// Both rows, in the vocabulary's order.
+	if got, want := e.ReviewFloorFor(rigor.Hotfix, rigor.Pro), []Level{LevelL1, LevelL2, LevelL3}; !slices.Equal(got, want) {
+		t.Errorf("ReviewFloorFor(hotfix, pro) = %v, want %v: a hotfix run is held to hotfix's row and to the row the layers resolved", got, want)
+	}
+	// A mode with no row of its own adds nothing, and neither does naming the
+	// same mode twice.
+	if got, want := e.ReviewFloorFor(rigor.POC, rigor.Pro), []Level{LevelL2, LevelL3}; !slices.Equal(got, want) {
+		t.Errorf("ReviewFloorFor(poc, pro) = %v, want %v: the row the layers resolved still holds", got, want)
+	}
+	if got, want := e.ReviewFloorFor(rigor.Pro, rigor.Pro), []Level{LevelL2, LevelL3}; !slices.Equal(got, want) {
+		t.Errorf("ReviewFloorFor(pro, pro) = %v, want %v", got, want)
+	}
+	// FloorFor is the same rule for a reader that holds the map itself, which
+	// is what the launcher reads off the published policy node.
+	if got, want := FloorFor(e.Layer.ReviewFloor, rigor.Hotfix, rigor.Pro), []Level{LevelL1, LevelL2, LevelL3}; !slices.Equal(got, want) {
+		t.Errorf("FloorFor(policy node, hotfix, pro) = %v, want %v", got, want)
+	}
+	// The merged policy is not modified, and the answer is the caller's own
+	// slice to append to (both readers force level 3 on).
+	_ = append(e.ReviewFloorFor(rigor.Hotfix, rigor.Pro), LevelL3)
+	if want := []Level{LevelL2, LevelL3}; !slices.Equal(e.Layer.ReviewFloor[rigor.Pro], want) {
+		t.Errorf("ReviewFloor(pro) = %v after a caller appended to the answer, want %v", e.Layer.ReviewFloor[rigor.Pro], want)
+	}
+}
+
 // TestParseFloor is the one rule a written floor is held to, shared by the
 // operator's config file and the policy node (internal/localcfg and
 // internal/projectpolicy call it): the two cannot disagree about what a

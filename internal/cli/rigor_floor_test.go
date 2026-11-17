@@ -175,6 +175,43 @@ func TestRigorFloorAddsAnEntryAskingNothing(t *testing.T) {
 	}
 }
 
+// The floor is per mode, and hotfix is a mode it takes. This is the owner's
+// lever for a floored hotfix run: `fugaro run --mode hotfix` is taken
+// whole by the run's request (R7, rigor.Mode.PerRun), so a run reaches the mode
+// whatever the layers resolved and the row it is held to is hotfix's own — the
+// row this command writes. Nothing here is special to hotfix: the mode is in
+// the vocabulary, so the write is the ordinary addition every other mode gets
+// (TestRigorFloorAddsAnEntryAskingNothing), and a refusal of the mode here
+// would be the only way an owner could not floor a hotfix run at all.
+func TestRigorFloorSetAcceptsHotfix(t *testing.T) {
+	path := rigorFloorHome(t, "review_floor:\n  pro: [l2]\n")
+	noAgentSession(t)
+	fakeTerminal(t)
+
+	out, _, err := executeStdin(t, "", "rigor", "floor", "set", "hotfix", "l2,l3")
+	if err != nil {
+		t.Fatalf("flooring hotfix was refused: %v\n%s", err, out)
+	}
+	assertNoPrompt(t, out)
+	if !strings.Contains(out, "set review_floor.hotfix from none to l2, l3 in") {
+		t.Errorf("the addition does not name the mode it writes:\n%s", out)
+	}
+	if strings.Contains(out, "whole project reviewing less") {
+		t.Errorf("flooring a mode that had none was classed as the owner's own step, which is the class a lowering and a removal are in:\n%s", out)
+	}
+	got := readFileString(t, path)
+	cfg, err := localcfg.Parse([]byte(got))
+	if err != nil {
+		t.Fatalf("the written file is not a local project config: %v\n%s", err, got)
+	}
+	if floor := cfg.ReviewFloor["hotfix"]; !slices.Equal(floor, []string{"l2", "l3"}) {
+		t.Errorf("the hotfix floor reads back as %v, want l2, l3:\n%s", floor, got)
+	}
+	if floor := cfg.ReviewFloor["pro"]; !slices.Equal(floor, []string{"l2"}) {
+		t.Errorf("the pro floor reads back as %v, want it untouched:\n%s", floor, got)
+	}
+}
+
 // A set naming the floor that is already there, and the one case that is
 // written rather than reported. The levels a person types are put in the
 // vocabulary's own order before anything is compared, so how they typed them

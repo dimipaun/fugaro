@@ -39,7 +39,8 @@ const (
 // The values of Recipe.Mode. ModeArtifact is 0.8.0's third mode: a run whose
 // deliverable is a file set rather than a pull request (design
 // artifact-runs.md §3), with no git token in the agent's environment, one
-// optional plan stage, one render step and a top-level outputs: block.
+// optional plan stage, one render or diagnose step and a top-level outputs:
+// block.
 //
 // ModeEvaluate is the judge run's mode (docs/model-ab-testing A5.2, U6): the
 // run's whole work is one registered step's, on material the run's own bucket
@@ -102,6 +103,15 @@ const (
 	// branch it reads — so a recipe carrying it holds it alone, pushes
 	// nothing and opens no pull request.
 	StepMergeJudge StepKind = "merge_judge"
+	// StepDiagnose is the cloud tier of `fugaro troubleshoot`'s own step
+	// (docs/troubleshoot-cloud, D2402): one model stage reads the evidence a
+	// launcher left under the run's own prefix and writes the two files the
+	// recipe's outputs block names. It takes no options, like plan, render and
+	// digest: what the step reads and what it writes are the runner's own
+	// contract rather than an author's choice, and the bounds a diagnosis runs
+	// under are the recipe's (TroubleshootMaxTurns,
+	// TroubleshootReviewerMaxOutput; D2407).
+	StepDiagnose StepKind = "diagnose"
 )
 
 // registeredSteps are the step kinds this build adds to version 1's closed
@@ -200,6 +210,7 @@ var builtinStepKinds = map[StepKind]bool{
 	StepRender:      true,
 	StepRebase:      true,
 	StepMergeJudge:  true,
+	StepDiagnose:    true,
 	"checks":        true,
 }
 
@@ -863,6 +874,8 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 			kind = StepRebase
 		case string(StepMergeJudge):
 			kind = StepMergeJudge
+		case string(StepDiagnose):
+			kind = StepDiagnose
 		case "checks":
 			p.add(kpath, k.Line, "the step type is check, not checks")
 			continue
@@ -877,7 +890,7 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 				p.add(kpath, k.Line, "%s", paidStepMsg(k.Value))
 				continue
 			default:
-				p.add(kpath, k.Line, "is not a step type (version 1 has first_line, review, adversarial, check, digest, plan, render, rebase and merge_judge)")
+				p.add(kpath, k.Line, "is not a step type (version 1 has first_line, review, adversarial, check, digest, plan, render, rebase, merge_judge and diagnose)")
 				continue
 			}
 		}
@@ -898,7 +911,7 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 			idx = append(idx, i)
 			continue
 		}
-		if kind == StepPlan || kind == StepRender || kind == StepDigest || kind == StepRebase || kind == StepMergeJudge {
+		if kind == StepPlan || kind == StepRender || kind == StepDigest || kind == StepRebase || kind == StepMergeJudge || kind == StepDiagnose {
 			p.emptyStepBody(kpath, body)
 			out = append(out, s)
 			idx = append(idx, i)
@@ -957,9 +970,9 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 	return out, idx
 }
 
-// emptyStepBody parses a plan, render or digest step's body: it holds
-// nothing. None of the three is a loop, so there is no max_rounds to set and
-// no bounce (a digest step has no review before it to bounce back to), and
+// emptyStepBody parses a plan, render, digest, diagnose or judge step's body:
+// it holds nothing. None of them is a loop, so there is no max_rounds to set
+// and no bounce (a digest step has no review before it to bounce back to), and
 // any key here is refused as an unknown recipe key rather than silently
 // ignored.
 func (p *parser) emptyStepBody(kpath string, body *yaml.Node) {
@@ -1259,7 +1272,7 @@ func (p *parser) order(r *Recipe, src []int) {
 			if r.Mode != ModeImplement {
 				p.add(path, 0, "rebase is only for mode: implement")
 			}
-		case StepPlan, StepRender:
+		case StepPlan, StepRender, StepDiagnose:
 			// Refused here rather than in steps(), which reads a step
 			// before the recipe's mode is necessarily known.
 			p.add(path, 0, "%s is only for mode: artifact", s.Kind)
@@ -1342,9 +1355,13 @@ func (p *parser) orderEvaluate(steps []Step, src []int) {
 	}
 }
 
-// orderArtifact checks a mode: artifact recipe's steps: exactly one render,
-// optionally led by one plan, and no agent step of the other two modes.
+// orderArtifact checks a mode: artifact recipe's steps: exactly one render or
+// one diagnose, optionally led by one plan, and no agent step of the other two
+// modes. A diagnose step is the cloud tier of `fugaro troubleshoot`'s own work
+// (docs/troubleshoot-cloud, D2402): it delivers the two files the recipe's
+// outputs block names, so it stands where a render stands and never beside one.
 func (p *parser) orderArtifact(steps []Step, src []int) {
+	diagnoses := 0
 	for i, s := range steps {
 		path := fmt.Sprintf("steps[%d]", src[i])
 		switch s.Kind {
@@ -1353,20 +1370,25 @@ func (p *parser) orderArtifact(steps []Step, src []int) {
 			// gate to judge, no report to write and no review to give a
 			// ship verdict.
 			p.add(path+"."+string(s.Kind), 0, "%s is not a step of mode: artifact", s.Kind)
+		case StepDiagnose:
+			diagnoses++
+			if diagnoses > 1 {
+				p.add(path, 0, "diagnose may appear at most once")
+			}
 		default:
 			// A registered step kind, refused for order's own reason: the
-			// artifact shape is a render and optionally a plan, and has no
-			// rule for a step it does not carry.
+			// artifact shape is a render or a diagnosis, optionally after a
+			// plan, and has no rule for a step it does not carry.
 			if mode, ok := registeredStepMode(s.Kind); ok {
 				p.add(path+"."+string(s.Kind), 0, "%s is a step of mode: %s, not of mode: artifact", s.Kind, mode)
 			}
 		}
 	}
-	if len(steps) == 1 && steps[0].Kind == StepRender {
+	if len(steps) == 1 && (steps[0].Kind == StepRender || steps[0].Kind == StepDiagnose) {
 		return
 	}
-	if len(steps) == 2 && steps[0].Kind == StepPlan && steps[1].Kind == StepRender {
+	if len(steps) == 2 && steps[0].Kind == StepPlan && (steps[1].Kind == StepRender || steps[1].Kind == StepDiagnose) {
 		return
 	}
-	p.add("steps", 0, "mode: artifact takes one render step, optionally after one plan step")
+	p.add("steps", 0, "mode: artifact takes one render or diagnose step, optionally after one plan step")
 }

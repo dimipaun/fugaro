@@ -410,6 +410,39 @@ func TestRecipesSkewRefusesReviewLevelsOnOldImage(t *testing.T) {
 	}
 }
 
+// TestLaunchReviewLevelsAskHoldsTheFloorOfTheModeTheLayersResolved: the
+// launcher resolves the levels a run will run before any run exists, and it
+// reads the owner's floor the way the run does (policy.FloorFor). A run whose
+// own request takes it off the axis to hotfix is held to hotfix's row *and* to
+// the row the layers resolved — a request raises a mode and never lowers a
+// floor (D8, LF5) — so the launch asks for the owner's floor and for the
+// adversarial step the floor turns on. Reading hotfix's row alone would resolve
+// the launch at no floor and no level 3 while the run resolves at both, and
+// every gate written on this ask would judge a launch that never happens.
+func TestLaunchReviewLevelsAskHoldsTheFloorOfTheModeTheLayersResolved(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	env.policy = policyReadOnce{done: true, found: true, p: &projectpolicy.Policy{
+		ReviewFloor: map[rigor.Mode][]policy.Level{rigor.Pro: {policy.LevelL2, policy.LevelL3}},
+	}}
+	cfg := &config.Config{RepoRigor: &config.Rigor{Default: rigor.Pro}}
+	spec := &task.Spec{Version: 1, Rigor: rigor.Hotfix}
+
+	ask, err := launchReviewLevelsAsk(context.Background(), env, spec, cfg, nil, false, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("resolving the levels of a --mode hotfix launch under a floor on pro: %v", err)
+	}
+	if want := "the owner's review-level floor and review level 3 (its adversarial step)"; ask != want {
+		t.Errorf("ask = %q, want %q: the floor of the mode the layers resolved holds beside hotfix's", ask, want)
+	}
+	// The same launch without the request keeps its own mode, which is the row
+	// the floor was written for: the answer does not depend on the union.
+	spec.Rigor = ""
+	if ask, err := launchReviewLevelsAsk(context.Background(), env, spec, cfg, nil, false, &bytes.Buffer{}); err != nil || ask != "the owner's review-level floor and review level 3 (its adversarial step)" {
+		t.Errorf("a pro launch under a floor on pro: ask = %q, err = %v", ask, err)
+	}
+}
+
 // TestRecipesSkewRefusesSlotOnOldImage: a launch whose pair names a slot needs
 // a job image whose runner acts on it (B1.1, slotSince, D728). A runner that
 // only decodes the field is not enough: handed a challenger at a review slot
@@ -1241,7 +1274,7 @@ func TestRecipesSkewRefusesTheOwnerFloorOnOldImage(t *testing.T) {
 	// is what the 0.15.0 image meets below, and it is the refusal that matters
 	// to the owner (the run never starts on an image that cannot read the node,
 	// floor or no floor).
-	publishPolicy(t, f, `{"version":6,"allow_repos":["github/acme/*"],"review_floor":{"pro":["l3"]}}`)
+	publishPolicy(t, f, `{"version":`+strconv.Itoa(projectpolicy.Version)+`,"allow_repos":["github/acme/*"],"review_floor":{"pro":["l3"]}}`)
 	isolateCache(t)
 	testutil.IsolateGit(t)
 	t.Chdir(t.TempDir())

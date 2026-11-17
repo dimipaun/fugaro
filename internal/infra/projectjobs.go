@@ -66,9 +66,12 @@ type ProjectJob struct {
 
 // ProjectJobs is the installation's project jobs, by job name: one job and
 // one job service account per (profile, provider, account) of the local
-// config's profiles (design §4.1). An installation whose local config names
-// no profile gets none — the map is nil, the tfvars key is left out and the
-// root creates nothing, so an existing installation's plan is unchanged.
+// config's profiles (design §4.1), less the names the local config declares a
+// key credential — those get no job at all (config.ClaudeAccountTokenNames,
+// the rule the per-repository set is built with too). An installation whose
+// local config names no profile gets none — the map is nil, the tfvars key is
+// left out and the root creates nothing, so an existing installation's plan is
+// unchanged.
 //
 // bucket and vertex are the installation's, computed by Installation, so the
 // jobs' bucket condition, FUGARO_* env and Vertex grant are the ones the
@@ -78,6 +81,74 @@ type ProjectJob struct {
 // asserts (plan step 6).
 func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]ProjectJob, error) {
 	return projectJobs(lc, bucket, vertex, nil)
+}
+
+// ProjectJobAccount is one point of the shared jobs' account axis: the
+// (profile, provider, account) triple a job of ProjectJobs or ProjectReviewJobs
+// is deployed for, which that job states in its own entry (ProjectJob's first
+// three fields).
+//
+// It is a value of its own because one rule is about a triple rather than about
+// a job: the accounts this installation declares a KEY credential are composed
+// into no job at all (ProjectKeyAccountJobs), and the run that composes the
+// installation's spec names them so that the carry can keep the job an earlier
+// release deployed for one (CarriedProjectJobAccounts).
+type ProjectJobAccount struct {
+	Profile  string
+	Provider string
+	Account  string
+}
+
+// ProjectKeyAccountJobs is the shared jobs' account axis with the names this
+// installation declares a KEY credential left IN: the (profile, provider,
+// account) triples ProjectJobs composes no job for.
+//
+// It is the very filter that drops them, read to NAME what it drops
+// (config.ClaudeAccountTokenNames over config.ProjectJobAccounts, the two
+// functions the composer applies), because a run that composes a spec has to
+// carry the job an earlier release deployed for such a name from the
+// installation's own tfvars (CarriedProjectJobAccounts). That job is one the
+// installation holds, and a document rewritten without it is the plan of its
+// destruction: RefuseProjectJobDeletes stops the whole `fugaro update` on that
+// plan, with "restore the profile as it was" as the only remedy it can print —
+// and here that remedy does not exist, because putting the name back into the
+// profile's claude_accounts is exactly what the filter drops again. The
+// installation would stop converging for good (CLAUDE.md's HARD RULE).
+//
+// The profiles a carry holds whole (projectJobs' carried, which is
+// InstallOptions.CarriedJobProfiles) are not named here: every job of such a
+// profile, a key credential's included, is the deployed one CarriedProjectJobs
+// keeps, so naming its accounts again would be a second answer to one question.
+// A profile no shared job serves is not named either, and for the filter's own
+// reason: no job of its axis is composed, so none was deployed for a carry to
+// keep.
+func ProjectKeyAccountJobs(lc *localcfg.Config, carried []string) []ProjectJobAccount {
+	var out []ProjectJobAccount
+	for name, pr := range lc.Profiles {
+		if !SharedJobProvider(pr.Provider) || slices.Contains(carried, name) {
+			continue
+		}
+		axis := config.ProjectJobAccounts(pr)
+		kept := config.ClaudeAccountTokenNames(lc.Credentials, axis)
+		for _, account := range axis {
+			if slices.Contains(kept, account) {
+				continue
+			}
+			out = append(out, ProjectJobAccount{Profile: name, Provider: pr.Provider, Account: account})
+		}
+	}
+	// Sorted, so that the note a run computes is the same list on every run:
+	// the order the profiles and the axis arrive in is a map's.
+	slices.SortFunc(out, func(a, b ProjectJobAccount) int {
+		if c := strings.Compare(a.Profile, b.Profile); c != 0 {
+			return c
+		}
+		if c := strings.Compare(a.Provider, b.Provider); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Account, b.Account)
+	})
+	return out
 }
 
 // projectJobs is ProjectJobs with the named profiles carried: no job is
@@ -274,13 +345,31 @@ func projectJobs(lc *localcfg.Config, bucket string, vertex bool, carried []stri
 		// deployer skipped is a review the launcher would ask Cloud Run for
 		// and never find. The loop is the axis itself, so the two are
 		// deployed without this function naming them: it builds one job per
-		// value config.ProjectJobAccounts yields, whichever value that is.
+		// value the axis yields, whichever value that is, less the names the
+		// paragraph below filters out of it.
 		//
 		// Each account's job gets its own copy of the profile's mounts — the
 		// token of one account must never ride on another's job — its own copy
 		// of the profile's environment (the redaction list below is per job),
 		// and its own service account, which is the only thing that may read
 		// that account's token (D2).
+		//
+		// The axis is the profile's own, less the names this installation
+		// declares a KEY credential (config.ClaudeAccountTokenNames, the one
+		// function WorkflowAccounts applies to the per-repository set): every
+		// job this loop builds exists to carry its account's Claude token —
+		// projectAccountMount mounts config.ClaudeAccountSecret(account) as
+		// CLAUDE_CODE_OAUTH_TOKEN — and a key credential's value is stored under
+		// the credential's own derived secret instead (config.CredentialSecret,
+		// D1670), so nothing ever writes a version to that container and a job
+		// built for the name would mount an empty token: its runs would fail in
+		// the credential, and `fugaro secrets ls` would flag a MISSING name no
+		// `claude setup-token` step could fill. What such a name keeps is its
+		// claude_accounts entry — the reach its allow_data_to bounds, which
+		// DeriveAccounts and CheckProfiles judged above and this does not move —
+		// and what it does not get is a job. `fugaro accounts add` refuses to
+		// put one in a profile's list (accounts_add.go, MC22), so the config
+		// that reaches this is one written by hand.
 		// The credentials service, when it serves this profile: every job of
 		// the profile then carries it, and the module grants each account
 		// roles/run.invoker on it. Computed once per profile and not per
@@ -291,7 +380,7 @@ func projectJobs(lc *localcfg.Config, bucket string, vertex bool, carried []stri
 		// the URL left behind: an object conversion in Terraform drops an
 		// extra attribute silently).
 		credentials := repoCredentialsService(installationCredentialsService(lc), projectJobServesTheCredentialsService(lc, pr))
-		for _, account := range config.ProjectJobAccounts(pr) {
+		for _, account := range config.ClaudeAccountTokenNames(lc.Credentials, config.ProjectJobAccounts(pr)) {
 			jobSecrets := maps.Clone(secretEnv)
 			if err := projectAccountMount(lc, name, pr, account, jobSecrets, env); err != nil {
 				return nil, err

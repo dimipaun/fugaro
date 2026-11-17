@@ -240,6 +240,78 @@ func TestResolveLevelsFloorRefusesNone(t *testing.T) {
 	}
 }
 
+// TestResolveLevelsFloorHoldsForAHotfixRequest pins what a request may not do
+// to the owner's floor. `review_floor` is a mode→levels map, and a run reads
+// the row of the mode it is at (policy.Effective.ReviewFloorFor) — but a
+// request may raise a mode and never lower a floor (D8, LF5), so a request
+// that takes a run off the axis to hotfix (rigor.Mode.PerRun) is held to
+// hotfix's row *and* to the row of the mode the layers resolved beside it
+// (rigor.LayersMode): a floor of l2,l3 on pro still turns l3 on for that run.
+// Reading hotfix's row alone would let one flag drop a floor the owner set,
+// silently, which is the lowering no request may take.
+//
+// The owner's lever for a floored hotfix run stays the floor written for
+// hotfix, which `fugaro rigor floor set hotfix l2,l3` accepts
+// (TestRigorFloorSetAcceptsHotfix, internal/cli).
+func TestResolveLevelsFloorHoldsForAHotfixRequest(t *testing.T) {
+	owner := policy.Layer{ReviewFloor: map[rigor.Mode][]policy.Level{
+		rigor.Pro: {policy.LevelL2, policy.LevelL3},
+	}}
+	effective := policy.Merge(owner)
+	// The two steps both readers of a floor take: resolve the run, then read
+	// the mode it is at beside the mode the layers resolved for it.
+	floorFor := func(req rigor.Request) (rigor.Mode, []policy.Level) {
+		cfg := rigor.Config{Repo: rigor.Pro}
+		mode := rigor.Resolve(cfg, req).Mode
+		return mode, effective.ReviewFloorFor(mode, rigor.LayersMode(cfg, req, ""))
+	}
+	levels := func(mode rigor.Mode, floor []policy.Level) Levels {
+		t.Helper()
+		got, _, err := ResolveLevels(LevelInputs{
+			Config: &Config{Agent: levelAgent()}, Mode: mode, Floor: floor,
+			Recipe: levelRecipe(t, "default"), CatalogDefault: true,
+		})
+		if err != nil {
+			t.Fatalf("ResolveLevels at %s under floor %v: %v", mode, floor, err)
+		}
+		return got
+	}
+
+	mode, floor := floorFor(rigor.Request{})
+	if mode != rigor.Pro {
+		t.Fatalf("the run resolved to %s; want pro, the repository layer's mode", mode)
+	}
+	if !levels(mode, floor).L3.On {
+		t.Error("l3 is off for a pro run under a floor of l2,l3 on pro; want it on: the floor turns on a level the mode's own row leaves off")
+	}
+
+	// The same repository and the same owner, with the run's own request for
+	// hotfix: hotfix's row is empty, and pro's still holds beside it.
+	mode, floor = floorFor(rigor.Request{Mode: rigor.Hotfix})
+	if mode != rigor.Hotfix {
+		t.Fatalf("the run resolved to %s; want hotfix from the request", mode)
+	}
+	if len(floor) != 2 {
+		t.Fatalf("the hotfix run's floor = %v; want the two levels the owner set for pro: the request took the run off the axis and left the floor of the mode the layers resolved in force", floor)
+	}
+	if !levels(mode, floor).L3.On {
+		t.Error("l3 is off for a hotfix run the owner floored on pro; want it on: a request raises a mode and never lowers a floor (D8, LF5)")
+	}
+
+	// The owner's lever for a floored hotfix run: the same request, with the
+	// floor written for hotfix. The command accepts the mode, so this row is
+	// one an owner reaches.
+	hotfixFloor := policy.Merge(policy.Layer{ReviewFloor: map[rigor.Mode][]policy.Level{
+		rigor.Hotfix: {policy.LevelL2, policy.LevelL3},
+	}}).ReviewFloor(rigor.Hotfix)
+	if len(hotfixFloor) != 2 {
+		t.Fatalf("ReviewFloor(hotfix) = %v; want the owner's two levels", hotfixFloor)
+	}
+	if !levels(rigor.Hotfix, hotfixFloor).L3.On {
+		t.Error("l3 is off for a hotfix run under a floor on hotfix; want it on: the floor is per mode and this mode has one")
+	}
+}
+
 // TestResolveLevelsRefusesSameModel is D721: a run never launches with level
 // 1 and level 2 on the same exact model ID, and the refusal names both
 // levels and the model they share.

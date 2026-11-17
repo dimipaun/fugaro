@@ -1,6 +1,9 @@
 package recipe
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -770,7 +773,7 @@ func TestArtifactStepsArePlanThenRenderOrRenderAlone(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, ps := Parse([]byte(artifactHead + artifactOutputs + tc.steps))
-			if !problemsHave(ps, "steps", "one render step, optionally after one plan step") {
+			if !problemsHave(ps, "steps", "one render or diagnose step, optionally after one plan step") {
 				t.Fatalf("problems = %v", ps)
 			}
 		})
@@ -784,6 +787,170 @@ func TestArtifactStepsArePlanThenRenderOrRenderAlone(t *testing.T) {
 		} else if r.Mode != ModeArtifact {
 			t.Errorf("%q: mode = %q", steps, r.Mode)
 		}
+	}
+}
+
+// TestDiagnoseStepParses: the diagnose step is version 1's own kind for the
+// cloud tier of `fugaro troubleshoot`'s work (docs/troubleshoot-cloud,
+// D2402), where a mode: artifact recipe delivers the two files a model stage
+// writes rather than the ones a render command makes, and it is admitted
+// exactly where a render is: alone, or after one plan. The step itself carries
+// nothing: the files it writes and the evidence it reads are the runner's
+// contract, so what the recipe says about a diagnosis is its mode, its
+// outputs block and the bounds this package exports.
+func TestDiagnoseStepParses(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		steps string
+	}{
+		{"alone", "steps:\n  - diagnose: {}\n"},
+		{"after a plan", "steps:\n  - plan: {}\n  - diagnose: {}\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := mustParse(t, artifactHead+artifactOutputs+tc.steps)
+			if !UsesDiagnose(r) {
+				t.Fatal("UsesDiagnose = false, want true")
+			}
+			if len(r.Steps) == 0 || r.Steps[len(r.Steps)-1] != (Step{Kind: StepDiagnose}) {
+				t.Fatalf("steps = %+v, want the diagnose step and no options of its own", r.Steps)
+			}
+			if r.Mode != ModeArtifact || r.Outputs == nil {
+				t.Fatalf("recipe = %+v, want a mode: artifact recipe with its outputs block", r)
+			}
+		})
+	}
+	// A recipe without the step does not read as one: UsesDiagnose is the
+	// launch gate's whole test (internal/cli/recipes_skew.go), so a render-only
+	// artifact recipe must not be gated as a diagnosis.
+	r := mustParse(t, artifactHead+artifactOutputs+"steps:\n  - render: {}\n")
+	if UsesDiagnose(r) {
+		t.Fatal("UsesDiagnose = true on a render-only recipe")
+	}
+}
+
+// TestDiagnoseStepRefusedOutsideArtifactMode: mode: artifact is the only mode
+// the diagnose step is a step of (D2402). It delivers files rather than a
+// diff or a verdict, so the implement shape — which opens a pull request and
+// pushes a branch — has no place to put it, mode: review is one senior review
+// and nothing else, and mode: evaluate runs no model at all: a diagnosis
+// there would be an agent the judge runs are built to refuse.
+func TestDiagnoseStepRefusedOutsideArtifactMode(t *testing.T) {
+	for _, tc := range []struct{ name, text, path, want string }{
+		{"implement by default", "version: 1\nname: d\nsteps:\n  - diagnose: {}\n", "steps[0]", "diagnose is only for mode: artifact"},
+		{"implement written out", "version: 1\nname: d\nmode: implement\nsteps:\n  - diagnose: {}\n", "steps[0]", "diagnose is only for mode: artifact"},
+		{"review", "version: 1\nname: d\nmode: review\nsteps:\n  - diagnose: {}\n", "steps[0]", "diagnose is only for mode: artifact"},
+		{"evaluate", "version: 1\nname: d\nmode: evaluate\nsteps:\n  - diagnose: {}\n", "steps[0].diagnose", "is not a step of mode: evaluate"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, ps := Parse([]byte(tc.text)); !problemsHave(ps, tc.path, tc.want) {
+				t.Fatalf("problems = %v", ps)
+			}
+		})
+	}
+}
+
+// TestDiagnoseStepTakesNoOptions: a diagnose step's body holds nothing, like
+// plan's and digest's. What the stage reads under the run's prefix and the two
+// files it writes are the runner's own contract (D2402), so a key here would
+// be a knob nothing reads: it is refused as an unknown recipe key rather than
+// silently ignored.
+func TestDiagnoseStepTakesNoOptions(t *testing.T) {
+	for _, key := range []string{"max_rounds: 2", "bounce: first_line", "command: test", "outputs: out"} {
+		t.Run(key, func(t *testing.T) {
+			_, ps := Parse([]byte(artifactHead + artifactOutputs + "steps:\n  - diagnose: { " + key + " }\n"))
+			if !problemsHave(ps, "steps[0].diagnose."+strings.SplitN(key, ":", 2)[0], "is not a recipe key") {
+				t.Fatalf("problems = %v", ps)
+			}
+		})
+	}
+	// A body written as a bare key and nothing beside it is the empty body,
+	// as it is for plan and digest: a recipe may write `- diagnose:` and mean
+	// the same step.
+	r := mustParse(t, artifactHead+artifactOutputs+"steps:\n  - diagnose:\n")
+	if len(r.Steps) != 1 || r.Steps[0] != (Step{Kind: StepDiagnose}) {
+		t.Fatalf("steps = %+v", r.Steps)
+	}
+}
+
+// TestDiagnoseStepOnlyOnce: one diagnosis to a run, whatever it is led by
+// (D2402). The step is the run's whole deliverable — two files on one
+// failure — so a second one would ask the same question twice, and the shape
+// that puts one beside a render is refused for the same reason a render
+// beside a render is: the outputs block names the deliverable, and the
+// runner's artifact stage is written for one producer of it.
+func TestDiagnoseStepOnlyOnce(t *testing.T) {
+	_, ps := Parse([]byte(artifactHead + artifactOutputs + "steps:\n  - diagnose: {}\n  - diagnose: {}\n"))
+	if !problemsHave(ps, "steps[1]", "diagnose may appear at most once") {
+		t.Fatalf("problems = %v", ps)
+	}
+	for _, tc := range []struct{ name, steps string }{
+		{"beside a render", "steps:\n  - render: {}\n  - diagnose: {}\n"},
+		{"before a render", "steps:\n  - diagnose: {}\n  - render: {}\n"},
+		{"after a plan and a diagnose", "steps:\n  - plan: {}\n  - diagnose: {}\n  - diagnose: {}\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, ps := Parse([]byte(artifactHead + artifactOutputs + tc.steps))
+			if !problemsHave(ps, "steps", "one render or diagnose step, optionally after one plan step") {
+				t.Fatalf("problems = %v", ps)
+			}
+		})
+	}
+}
+
+// TestRecipeSchemaNamesDiagnose: schemas/recipe.schema.json is the format's
+// published shape, and a step kind this parser admits but the schema never
+// names is a recipe an editor marks invalid and a reader cannot check. The
+// definition is closed, because the step takes no options, and the artifact
+// shape lists exactly the four shapes orderArtifact admits — a diagnose alone
+// or after a plan beside the render's two — so a schema that drifts either way
+// (narrower refuses a recipe the parser runs, wider accepts one it refuses)
+// fails here.
+func TestRecipeSchemaNamesDiagnose(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "schemas", "recipe.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sch struct {
+		Defs map[string]struct {
+			AdditionalProperties *bool                      `json:"additionalProperties"`
+			Required             []string                   `json:"required"`
+			Properties           map[string]json.RawMessage `json:"properties"`
+			OneOf                []struct {
+				PrefixItems []struct {
+					Ref string `json:"$ref"`
+				} `json:"prefixItems"`
+			} `json:"oneOf"`
+		} `json:"$defs"`
+	}
+	if err := json.Unmarshal(data, &sch); err != nil {
+		t.Fatal(err)
+	}
+	diag, ok := sch.Defs["diagnose"]
+	if !ok {
+		t.Fatal("$defs has no diagnose: the schema does not name the step kind")
+	}
+	if _, ok := diag.Properties["diagnose"]; !ok {
+		t.Errorf("$defs.diagnose holds no diagnose property: %+v", diag)
+	}
+	if !slices.Equal(diag.Required, []string{"diagnose"}) {
+		t.Errorf("$defs.diagnose requires %v, want the diagnose property alone", diag.Required)
+	}
+	if diag.AdditionalProperties == nil || *diag.AdditionalProperties {
+		t.Errorf("$defs.diagnose is open: the step takes no options, and Parse refuses any key in its body")
+	}
+
+	// The artifact shapes, read as the refs each one lists: the schema spells
+	// a shape as prefixItems, so the alternatives are compared by name.
+	var got []string
+	for _, alt := range sch.Defs["artifactSteps"].OneOf {
+		var refs []string
+		for _, item := range alt.PrefixItems {
+			refs = append(refs, strings.TrimPrefix(item.Ref, "#/$defs/"))
+		}
+		got = append(got, strings.Join(refs, "+"))
+	}
+	if want := []string{"render", "plan+render", "diagnose", "plan+diagnose"}; !slices.Equal(got, want) {
+		t.Fatalf("artifactSteps.oneOf = %v, want %v", got, want)
 	}
 }
 
@@ -978,7 +1145,7 @@ func TestUnregisteredStepRefused(t *testing.T) {
 		t.Errorf("problems = %s: a paid step is reported as an unknown one", text)
 	}
 	_, ps = Parse([]byte("version: 1\nname: judge\nmode: evaluate\nsteps:\n  - judge_it: {}\n"))
-	if text := ProblemsText(ps); !strings.Contains(text, "is not a step type (version 1 has first_line, review, adversarial, check, digest, plan, render, rebase and merge_judge)") {
+	if text := ProblemsText(ps); !strings.Contains(text, "is not a step type (version 1 has first_line, review, adversarial, check, digest, plan, render, rebase, merge_judge and diagnose)") {
 		t.Errorf("problems = %s, want version 1's own list for an unknown kind", text)
 	}
 }

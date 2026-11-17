@@ -115,7 +115,7 @@ func proxyTokenNodeDoc(t *testing.T, legacy bool, entries ...projectpolicy.Bitbu
 		profiles += `, "` + sharedCodingProfile + `": ` + body
 	}
 	doc := `{
-		"version": 5,
+		"version": 9,
 		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ` + both + `,
 		"accounts": {

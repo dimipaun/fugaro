@@ -1530,3 +1530,96 @@ func TestLedgerSumsCacheTokens(t *testing.T) {
 		t.Errorf("ledger cache writes = %d, want %d", l.CacheWriteTokens, want)
 	}
 }
+
+// --- the report, the band and the tokens by serving model (SA1.2) ---
+
+// TestNotionalByModel: a tier-A call's spend reaches the stage's per-model
+// notional split, so a cascade run can tell one model's notional dollars from
+// its billed ones (F23), and a tier-B call is in none of it: that is money,
+// and ByModel is where it shows.
+func TestNotionalByModel(t *testing.T) {
+	a, b := pricing.Usage{Input: 6000, CacheRead: 300, Output: 40}, pricing.Usage{Input: 2000, Output: 100}
+	reply := func(tier, name, model string, u pricing.Usage) anthropicfake.Reply {
+		r := anthropicfake.MessageOK(model, u)
+		r.Header = http.Header{HeaderTier: []string{tier}, HeaderCredential: []string{name}}
+		return r
+	}
+	h, _ := newServiceStub(t, func(_ *http.Request, body []byte) anthropicfake.Reply {
+		if strings.Contains(string(body), haiku) {
+			return reply(TierB, "repo-b", haiku, b)
+		}
+		return reply(TierA, "repo-a", sonnet, a)
+	}, nil)
+	for _, model := range []string{sonnet, haiku} {
+		if resp, body := h.post(msg(model, 100)); resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s: %d %s", model, resp.StatusCode, body)
+		}
+	}
+	rep := h.gw.EndStage()
+	wantA, wantB := cost(t, sonnet, a), cost(t, haiku, b)
+	if rep.Notional != wantA || rep.NotionalBy[sonnet] != wantA {
+		t.Errorf("notional %d by model %v, want %d in the serving model's key", rep.Notional, rep.NotionalBy, wantA)
+	}
+	if _, ok := rep.NotionalBy[haiku]; ok {
+		t.Errorf("a tier-B call is in the notional split: %v", rep.NotionalBy)
+	}
+	if rep.Used != wantB || rep.ByModel[haiku] != wantB {
+		t.Errorf("used %d by model %v, want the tier-B call's %d", rep.Used, rep.ByModel, wantB)
+	}
+}
+
+// TestTokensByServingModel: the stage's tokens are keyed by the model that
+// served the calls, the way its dollars are (F25), while the run's own
+// per-model counts keep the model the gateway priced each call under (the
+// pin): the two keys answer different questions and must not be swapped.
+func TestTokensByServingModel(t *testing.T) {
+	u := pricing.Usage{Input: 100, CacheWrite5m: 20, CacheRead: 30, Output: 40}
+	h := newHarness(t, anthropicfake.StreamOK("claude-opus-5-5", u))
+	h.post(msg(sonnet, 1000, `"stream":true`))
+	rep := h.gw.EndStage()
+	if got := rep.TokensBy["claude-opus-5-5"]; got != u {
+		t.Errorf("tokens by model %v, want the serving model's own counts %+v", rep.TokensBy, u)
+	}
+	if _, ok := rep.TokensBy[sonnet]; ok {
+		t.Errorf("the pin is a key of the stage's tokens: %v", rep.TokensBy)
+	}
+	if rep.Tokens != u.Input+u.CacheWrite5m+u.CacheRead+u.Output {
+		t.Errorf("tokens %d, want the same counts summed", rep.Tokens)
+	}
+	if l := h.gw.Ledger(); l.ModelTokens[sonnet] != u {
+		t.Errorf("the run's own counts %v, want the pin's key and this call's usage", l.ModelTokens)
+	}
+}
+
+// TestLateSettleReachesLedgerBand: a call that settles after its stage's wait
+// ran out is in the run's figures and in no stage report (F24) -- the runs
+// whose model_by carries "unattributed". The report and the band are run-level
+// for exactly that reason: the runner takes the run's record from the ledger,
+// so reading the stage reports instead would drop this call's report and band
+// from every model's row.
+func TestLateSettleReachesLedgerBand(t *testing.T) {
+	old := endStageWait
+	endStageWait = 50 * time.Millisecond
+	t.Cleanup(func() { endStageWait = old })
+	u := pricing.Usage{Input: 1000, Output: 2000}
+	reply := anthropicfake.Compat{Cost: 0.05}.StreamOK(dsModel, u)
+	reply.EventDelay = 100 * time.Millisecond
+	r := feeRouted(t, 0, nil, routedStage, dsRoute, reply)
+	go func() { r.post(msg(dsModel, 4000, `"stream":true`)) }()
+	waitFor(t, "the upstream to see the call", func() bool { return r.prov.Count() == 1 })
+	stale := r.gw.EndStage()
+	if stale.Calls != 0 || len(stale.ReportedBy) != 0 {
+		t.Errorf("the stage report took a call that settled after it: %+v", stale)
+	}
+	waitFor(t, "the call to settle", func() bool { return r.gw.Ledger().Reserved == 0 })
+	l := r.gw.Ledger()
+	if l.ReportedBy[dsModel] != 50_000 || l.UnreportedCalls != 0 {
+		t.Errorf("ledger reported %v unreported %d, want 50000 in the serving model's key",
+			l.ReportedBy, l.UnreportedCalls)
+	}
+	// dsPrices gives dsModel one number, so both ends are its own rates.
+	want := cost(t, dsModel, u)
+	if l.TableLoBy[dsModel] != want || l.TableHiBy[dsModel] != want {
+		t.Errorf("ledger band %v-%v, want the row's one number %d at both ends", l.TableLoBy, l.TableHiBy, want)
+	}
+}

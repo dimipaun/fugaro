@@ -102,6 +102,11 @@ type WorkItemOp struct {
 	Brief     *string   `json:"brief,omitempty"`
 	DependsOn *[]string `json:"depends_on,omitempty"`
 	Note      *string   `json:"note,omitempty"`
+	// BodySHA256 and PlanTask are declarations like the fields above them: the
+	// ingest writes the first and a plan import the second. They are digested,
+	// so writing one is an edit and an edit revokes a standing approval.
+	BodySHA256 *string `json:"body_sha256,omitempty"`
+	PlanTask   *string `json:"plan_task,omitempty"`
 
 	Phase           *Phase      `json:"phase,omitempty"`
 	RunID           *string     `json:"run_id,omitempty"`
@@ -109,6 +114,12 @@ type WorkItemOp struct {
 	Attempts        *int        `json:"attempts,omitempty"`
 	Intent          *IntentOp   `json:"intent,omitempty"`
 	Escalation      *Escalation `json:"escalation,omitempty"`
+	// External is the ticket the item came from and Adopted is the mark of a
+	// run the daemon took over: both are the daemon's alone to write, the
+	// first because it is the dedupe key the ingest holds unique (D2728) and
+	// the second because only the daemon knows which runs it adopted (D2702).
+	External *string `json:"external,omitempty"`
+	Adopted  *bool   `json:"adopted,omitempty"`
 }
 
 // IntentOp declares the attempt a launch is for, or records how one ended.
@@ -245,9 +256,9 @@ func applyOp(s *State, op Op, a Actor) error {
 // where a merge happens (G12).
 func applyUpsert(s *State, op WorkItemOp, a Actor) error {
 	daemonOnly := op.Phase != nil || op.RunID != nil || op.SpentApprovalAt != nil || op.Attempts != nil ||
-		op.Intent != nil || op.Escalation != nil
+		op.Intent != nil || op.Escalation != nil || op.External != nil || op.Adopted != nil
 	if daemonOnly && a.Class != Daemon {
-		return fmt.Errorf("%w: a %s may not write a work item's phase, run id, spent approval, attempts, intent or escalation", ErrActorNotAllowed, a.Class)
+		return fmt.Errorf("%w: a %s may not write a work item's phase, run id, spent approval, attempts, intent, escalation, external id or adoption mark", ErrActorNotAllowed, a.Class)
 	}
 	i, exists := s.indexOf(op.ID)
 	w := WorkItem{ID: op.ID, Phase: PhaseQueued, DependsOn: []string{}}
@@ -281,6 +292,18 @@ func applyUpsert(s *State, op WorkItemOp, a Actor) error {
 			return fmt.Errorf("%w: the spec %q is not a plan folder name", ErrInvalid, safetext.OneLine(*op.Spec))
 		}
 		w.Spec = spec
+	}
+	if op.External != nil {
+		// Stored as written: the shape check above is the whole of what an
+		// external id may be, and there is nothing to fold — the ingest builds
+		// it from the names the App answers with, which are the canonical ones.
+		w.External = *op.External
+	}
+	if op.BodySHA256 != nil {
+		w.BodySHA256 = *op.BodySHA256
+	}
+	if op.PlanTask != nil {
+		w.PlanTask = *op.PlanTask
 	}
 	if op.Brief != nil {
 		w.Brief = cleanText(*op.Brief, MaxBriefRunes)
@@ -319,6 +342,9 @@ func applyUpsert(s *State, op WorkItemOp, a Actor) error {
 	}
 	if op.Attempts != nil {
 		w.Attempts = *op.Attempts
+	}
+	if op.Adopted != nil {
+		w.Adopted = *op.Adopted
 	}
 	if op.Intent != nil {
 		if err := commitIntent(s, &w, *op.Intent, a); err != nil {

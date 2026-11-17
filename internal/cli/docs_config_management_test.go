@@ -249,12 +249,20 @@ const (
 // `fugaro models price set` writes an entry's prices (D2613), so the generic
 // path carries none of them.
 //
+// R1 of docs/orchestrator-graph-estimates/ is the last mover, by two rows and by
+// none: the orchestrator's switch `orchestrator_enabled` (D2701, D2739) and the
+// project's issue adapter `issue_sync` (D2733) are top-level keys of the
+// published policy node and of nothing else, so `policy` is the whole of their
+// Layers — and both name the `project` family, the family whose command is the
+// node's door, so the generic path refuses them in its name rather than writing
+// them somewhere they do not live.
+//
 // B1.4 of docs/review-levels-ab-jobmax/ is the last mover, by one row and by
 // none: the repository's `workflows.*.ab.reviewer_arm` is a workflow's ask for
 // an A/B reviewer arm (O12), a key a person states in `fugaro.yaml` by hand and
 // the launch reads, and no name and no prefix in the allowlist reaches it.
 const (
-	cfmRegistryRows   = 479
+	cfmRegistryRows   = 481
 	cfmAllowlistNamed = 118
 )
 
