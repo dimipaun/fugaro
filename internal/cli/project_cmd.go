@@ -1395,6 +1395,30 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		publishedBinaries = old.Binaries
 	}
 	pol.Binaries = lc.BinariesEffective(publishedBinaries)
+	// The designated repository for committed reports is the owner's own word
+	// about where every report of the project lands (D2750, D2751;
+	// periodic-reviews R14), and the local config is its carrier, the binaries
+	// block's shape: `fugaro.yaml` has no such key (D986's reason, sharper here
+	// — the checkout's own agent writes that file, and a key there would let a
+	// prompt-injected agent designate where its own reports are committed), the
+	// project layer refuses it by name (the launcher's file, and this member
+	// decides where every report of the project lands) and the shared config
+	// refuses it for the launcher's reason again, so this file is where the
+	// operator states it. A file that says nothing keeps the node's designation
+	// (ReportsCommitEffective), and a written empty block takes it away (D987).
+	//
+	// The typed copy is the whole of it, the credentials block's reading rather
+	// than the binaries one: the block is strict inside (decodeReportsCommit), so
+	// a member this Fugaro does not model, or a block its rules refuse, is
+	// refused by publishedPolicyOf before a publish gets here, and what this
+	// assignment re-encodes is therefore the whole of the operator's block — no
+	// byte-for-byte carry is needed for a spelling to survive. It is what the
+	// diff reads (printPolicyDiff's kept line) and what the node is built from.
+	var publishedReportsCommit *projectpolicy.ReportsCommit
+	if old != nil {
+		publishedReportsCommit = old.ReportsCommit
+	}
+	pol.ReportsCommit = lc.ReportsCommitEffective(publishedReportsCommit)
 	if old != nil {
 		// The credentials block is kept too, and for the same reason plus a
 		// stronger one: D153 makes every member of it operator-written policy
@@ -2474,13 +2498,14 @@ func repoAdmissions(pol *projectpolicy.Policy) (map[string][]string, error) {
 // so the operator reads the values about money and data sharing that this
 // publish replaces rather than a count of them.
 //
-// lc is the operator's own config, and the two members whose source it is read
-// off it rather than passed beside it (the clone_urls and binaries blocks are
-// the config's where it states them): the diff says which side an entry came
-// from, and the craft members' lines are the same question asked of a third
-// family of blocks.
+// lc is the operator's own config, and the members whose source it is read off
+// it rather than passed beside it (the clone_urls, binaries and reports_commit
+// blocks are the config's where it states them): the diff says which side an
+// entry came from, and the craft members' lines are the same question asked of
+// a third family of blocks.
 func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[string]string, lc *localcfg.Config) {
 	keepCloneURLs, keepBinaries := lc.CloneURLs == nil, lc.Binaries == nil
+	keepReportsCommit := lc.ReportsCommit == nil
 	if old == nil {
 		fmt.Fprintf(out, "%s: not published yet; writing version %d\n", projectpolicy.PathShared(), new.Version)
 	} else {
@@ -2590,6 +2615,14 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	// then the line would be the operator's own edit read back.
 	if keepBinaries && new.Binaries != nil {
 		fmt.Fprintf(out, "  binaries kept: %s\n", binariesText(new.Binaries))
+	}
+	// The designated repository is kept while this machine's config states none
+	// (ReportsCommitEffective, D987), and the operator reading this diff has to
+	// be told, the binaries block's `kept` line: the member is unchanged, so no
+	// +/- line above mentions it, and a person who designated a repository would
+	// read that silence as "the project commits its reports nowhere now".
+	if keepReportsCommit && new.ReportsCommit != nil {
+		fmt.Fprintf(out, "  reports_commit kept: %s\n", reportsCommitText(new))
 	}
 	// The model grades are the project's own choice of model for the ladder's
 	// rungs, and no key of this release's config writes them onto the node
@@ -3220,7 +3253,27 @@ func policyLines(p *projectpolicy.Policy) map[string]string {
 		"profiles":              profilesText(p),
 		"accounts":              accountsText(p),
 		"review_floor":          reviewFloorText(p),
+		"reports_commit":        reportsCommitText(p),
 	}
+}
+
+// reportsCommitText is the designated repository as one line — the repository
+// and the folder inside it (D2750, D2751; periodic-reviews R14). It is a row of
+// the diff and of `policy show` for the review floor's reason: the member is
+// what decides where every report of the project is committed, so a
+// designation that appeared, moved or went away is exactly what an operator
+// reading the publish has to see, and a node that carries one must not read
+// like a node that designates nothing.
+//
+// The two values are read through the policy's own accessors, so this line and
+// the commit run cannot disagree about the spelling of a repository or about
+// which folder an absent `dir` means. An absent member prints as the
+// designation it is, "none", and not as a folder nobody named.
+func reportsCommitText(p *projectpolicy.Policy) string {
+	if p == nil || p.ReportsCommit == nil {
+		return "none (no report may be committed anywhere)"
+	}
+	return fmt.Sprintf("%s, folder %s", p.ReportsCommitRepo(), p.ReportsCommitDir())
 }
 
 // reviewFloorText is the owner's review-level floor as one line, mode by mode

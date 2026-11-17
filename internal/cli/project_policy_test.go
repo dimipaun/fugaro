@@ -3809,6 +3809,105 @@ func TestPublishClearsTheBinariesListOnAWrittenEmptyBlock(t *testing.T) {
 	}
 }
 
+// TestAPublishThatSaysNothingLeavesTheNodeAlone is the designated repository's
+// three publish states (D2750, D2751, D987; periodic-reviews R14): the owner's
+// local config carries the block, so a file that states one publishes it; a
+// file that says nothing keeps the node's, because the designation is the
+// owner's own word about where the project's reports land and a second machine
+// whose file predates the key — or an owner who declined to set one — must not
+// be the publish that stops every report of the project from being committed;
+// and a written empty block takes it away on purpose, which is the only
+// spelling that can mean "no repository is designated" and the reason the two
+// are told apart at all.
+//
+// The diff has to say the designation was kept: the member is unchanged, so no
+// +/- line of the diff mentions it, and an operator who designated a repository
+// would read that silence as "the project commits its reports nowhere now".
+func TestAPublishThatSaysNothingLeavesTheNodeAlone(t *testing.T) {
+	f := newProjectFixture(t, "reports_commit: { repo: acme/reports, dir: docs/reports }\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatalf("the publish refused a config that designates a repository: %v", err)
+	}
+	p := publishedPolicy(t, f)
+	if got := p.ReportsCommitRepo(); got != "acme/reports" {
+		t.Fatalf("ReportsCommitRepo() = %q, want acme/reports: the publish did not carry the owner's designation onto the node", got)
+	}
+	if got := p.ReportsCommitDir(); got != "docs/reports" {
+		t.Errorf("ReportsCommitDir() = %q, want docs/reports", got)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); !strings.Contains(raw, `"reports_commit"`) {
+		t.Errorf("the node does not carry the member:\n%s", raw)
+	}
+
+	// Silence: the file states nothing, and the node's designation stands.
+	rewriteProjectConfig(t, f, "")
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatalf("the publish refused a config silent about the designation: %v", err)
+	}
+	if got := publishedPolicy(t, f).ReportsCommitRepo(); got != "acme/reports" {
+		t.Errorf("ReportsCommitRepo() = %q, want acme/reports: a publish that says nothing took the owner's designation away", got)
+	}
+	if !strings.Contains(out, "reports_commit kept: acme/reports, folder docs/reports") {
+		t.Errorf("the publish does not say the designation was kept:\n%s", out)
+	}
+
+	// The written empty block: the one spelling that takes it away.
+	rewriteProjectConfig(t, f, "reports_commit: {}\n")
+	out, _, err = execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatalf("the publish refused a written empty reports_commit block: %v", err)
+	}
+	if p := publishedPolicy(t, f); p.ReportsCommit != nil {
+		t.Errorf("the published node carries reports_commit %+v, and the file wrote an empty block: the publish kept a designation the owner took away", p.ReportsCommit)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); strings.Contains(raw, "reports_commit") {
+		t.Errorf("the published node carries a reports_commit member:\n%s", raw)
+	}
+	// The diff says the designation is gone, which is the line the operator
+	// reads: a publish that removed it in silence would leave them to find out
+	// from a commit run that refuses.
+	if !strings.Contains(out, "none (no report may be committed anywhere)") {
+		t.Errorf("the diff does not say the designation was taken away:\n%s", out)
+	}
+}
+
+// TestPolicyShowPrintsTheDesignatedReportsRepository: `policy show` is the
+// command an operator audits the published node with, and this member decides
+// where every report of the project is committed — so a node that carries a
+// designation must not read like a node that designates nothing. The line is
+// the diff's own row (policyLines), so the audit and the publish cannot
+// disagree, and the folder is printed from the policy's accessor, which is what
+// the commit run reads: a node that writes no `dir` means the layout's own
+// folder and not a folder nobody named.
+func TestPolicyShowPrintsTheDesignatedReportsRepository(t *testing.T) {
+	f := newProjectFixture(t, "reports_commit: { repo: acme/reports }\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "project", "policy", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "  reports_commit: acme/reports, folder " + projectpolicy.DefaultReportsCommitDir; !strings.Contains(out, want) {
+		t.Errorf("policy show does not print %q:\n%s", want, out)
+	}
+	// A node that designates nothing says so, in the same row: the operator
+	// reading it is reading whether the project's reports may be committed at
+	// all.
+	rewriteProjectConfig(t, f, "reports_commit: {}\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err = execute(t, "project", "policy", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "  reports_commit: none (no report may be committed anywhere)"; !strings.Contains(out, want) {
+		t.Errorf("policy show does not print %q for a node that designates nothing:\n%s", want, out)
+	}
+}
+
 // TestPublishKeepsTheTriageSwitchTheConfigIsSilentAbout is the same finding one
 // key over (D1854): the switch is what decides whether a review round's
 // findings are judged at all, so a publish from a machine whose config says
