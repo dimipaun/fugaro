@@ -153,7 +153,13 @@ type orchestratorWiring struct {
 
 // orchestratorTest is nil in production: the function above is then
 // google.DefaultTokenSource over the database scopes, as the revision's own
-// service account (the one grant section 4.3 gives it is this read).
+// service account. This is an IAM read and not a rules read (rtdb sends a
+// source as a Bearer header, and an IAM read bypasses the rules entirely), and
+// Realtime Database IAM has no path scope, so it needs
+// firebasedatabase.instances.get. Section 4.3's table has no row granting this
+// account that permission and orchestrator.tf binds it to none, so on a real
+// installation this read is refused: that is the P5.1c review's finding A, and
+// the row is the design's to add rather than a line to slip into a fix.
 var orchestratorTest *orchestratorWiring
 
 // orchestratorConfig is one deployment's facts, as the builder below reads
