@@ -11953,8 +11953,9 @@ printf 'CHECK 137 SETUP: repository %s, mode enforce, layer %s\n' "${SLUG}" "$(f
 
 3. **Write the task, and launch.** Write the task brief with your editor or Write tool — never an
    unquoted shell heredoc, which runs any backticked text in it — with a first line `# Task: <title>` and
-   a body asking for one small, reviewable change: one page or one function with its test, no wider, so
-   the run reaches the review stage cheaply. Then:
+   a body asking for a change the **review stage has something real to read** — two or three files with
+   their tests, a small review-heavy change rather than a one-liner — and no wider than that, so the run
+   reaches the review stage. Then:
 
    ```bash
    : "${CHECK137_TASK:?the task file written for this check, <path>}"
