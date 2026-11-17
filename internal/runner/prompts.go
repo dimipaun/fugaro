@@ -105,9 +105,35 @@ func imageReadKinds() string {
 func binariesRule(allow []string, maxBytes int64) string {
 	line := "- The project admits a binary only at " + strings.Join(allow, ", ")
 	if maxBytes > 0 {
-		line += ", and no larger than " + fmtBytes(maxBytes)
+		line += ", and no larger than " + binaryCapWords(maxBytes)
 	}
 	return line + ": a binary you add anywhere else, or one over that size, is refused when the run ends and the pull request stays a draft, so delete a build product or an asset the task does not need instead of leaving it in the tree."
+}
+
+// binaryCapWords is the size the brief states for the project's binary cap: the
+// artifact cap's own spelling (fmtBytes) when that spelling is the cap itself,
+// and the exact byte count when it is not.
+//
+// The cap is the number finalize compares a file against (stray.go's
+// binaryRefusal), so a brief that rounds it up briefs a size the run does not
+// admit: fmtBytes spells a 1600000-byte cap as "2 MiB", and a coder that trusts
+// it writes a 1.8 MiB asset at an admitted path, which the refusal then turns
+// down — the draft this whole clause exists to prevent. Rounding down is the
+// same fault with the sign reversed, a coder leaving room the project granted.
+// A cap that is a whole unit of its spelling keeps fmtBytes' words byte for
+// byte, so every brief that reads well today still reads the same.
+func binaryCapWords(maxBytes int64) string {
+	unit := int64(1)
+	for _, u := range []int64{1 << 30, 1 << 20, 1 << 10} {
+		if maxBytes >= u {
+			unit = u
+			break
+		}
+	}
+	if maxBytes%unit != 0 {
+		return fmt.Sprintf("%d bytes", maxBytes)
+	}
+	return fmtBytes(maxBytes)
 }
 
 // SystemPrompt is appended to Claude Code's system prompt for implement and fix stages.

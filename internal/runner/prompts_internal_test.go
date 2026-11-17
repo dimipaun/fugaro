@@ -152,3 +152,33 @@ func TestSystemPromptIsUnchangedWithAnImageRate(t *testing.T) {
 		}
 	}
 }
+
+// TestBinaryCapWordsStatesACapTheRunEnforces: the size the brief gives is the
+// one finalize compares a file against (stray.go's binaryRefusal), so a cap
+// that is not a whole unit of its spelling is stated in bytes rather than
+// rounded. fmtBytes is the artifact cap's spelling and rounds to the nearest
+// unit — a 1600000-byte cap reads "2 MiB" — and a coder that trusts that number
+// writes an asset the refusal turns down, which is the draft the clause exists
+// to prevent. A cap that is a whole unit keeps fmtBytes' words, so no brief
+// that reads well today changes.
+//
+// Mutation (return fmtBytes(maxBytes) here): the three non-round cases fail,
+// each naming a size the run does not admit.
+func TestBinaryCapWordsStatesACapTheRunEnforces(t *testing.T) {
+	for _, c := range []struct {
+		bytes int64
+		want  string
+	}{
+		{1600000, "1600000 bytes"},
+		{1536, "1536 bytes"},
+		{1500, "1500 bytes"},
+		{999, "999 bytes"},
+		{1048576, "1 MiB"},
+		{2097152, "2 MiB"},
+		{2048, "2 KiB"},
+	} {
+		if got := binaryCapWords(c.bytes); got != c.want {
+			t.Errorf("binaryCapWords(%d) = %q, want %q", c.bytes, got, c.want)
+		}
+	}
+}
