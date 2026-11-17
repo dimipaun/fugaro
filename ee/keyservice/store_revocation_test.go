@@ -316,14 +316,19 @@ func TestTheLastSeenLeavesTheDigestAlone(t *testing.T) {
 // over when P3.2 lands. Either is a paid key the money has gone back for, which
 // is the gap F29 states and this test is the closing of.
 //
-// The licence's keys here are the three shapes the sweep has to reach by three
-// different routes: the purchase's binding (`binding:<licence>:`), the successor
-// `/renew` minted (`rotation:<key>`), and one that names the licence and
-// nothing else — no subscription, so the subscription step cannot match it, and
-// no prefix the walk follows. That last one is written straight into the store
-// because the route that will mint it is P3.2's reveal, which depends on this
-// task and is not here yet; the sweep reads a record's entitlement id and never
-// its source, which is the point of the case.
+// The licence's keys here are the three shapes its records come in: the
+// purchase's binding (`binding:<licence>:`), the successor `/renew` minted
+// (`rotation:<key>`), and one that names the licence and nothing else — no
+// subscription, so the subscription step cannot match it, and no prefix the walk
+// follows, so the walk cannot reach it either. The first two are withdrawn by
+// the walk as well as by the sweep, and the third is withdrawn by the sweep
+// alone: with the sweep taken out, this case fails on exactly that key, which is
+// the F29 gap in one line.
+//
+// That third record is written straight into the store because the route that
+// will mint it is P3.2's reveal, which depends on this task and is not here yet;
+// its source is the test's own name for the record, and no part of the sweep
+// reads a source at all — the entitlement id is the whole of what it matches on.
 func TestRevocationCoversEveryRotation(t *testing.T) {
 	f, _ := renewing(t)
 	ctx := context.Background()
@@ -336,14 +341,13 @@ func TestRevocationCoversEveryRotation(t *testing.T) {
 	rotated, _ := renewThroughTheEndpoint(t, f, bought.KeyID, f.secretOf(t, f.mintedKeys()[0]))
 
 	unreachable := Record{
-		Source:        "reveal:" + bought.KeyID,
+		Source:        "reveal:test:" + bought.KeyID,
 		KeyID:         "lk_test_revealed",
 		EntitlementID: licenceID,
 		Plan:          bought.Plan,
 		Tier:          bought.Tier,
 		Seats:         bought.Seats,
 		Organisation:  bought.Organisation,
-		Email:         bought.Email,
 		Issued:        f.now,
 		Expires:       bought.Expires,
 		TermDays:      bought.TermDays,
