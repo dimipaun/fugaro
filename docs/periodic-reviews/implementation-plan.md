@@ -534,7 +534,7 @@ counts.
   without a row fails `TestRegistryCoversEveryConfigField`), the schema, and the three count pins
   that move with them — `docs/config-management/README.md:47`,
   `docs/config-management/reconciliation.md:22` and
-  `internal/cli/docs_config_management_test.go:99` (`cfmRegistryRows`).
+  `internal/cli/docs_config_management_test.go:266` (`cfmRegistryRows`).
 - **Files (11):** `internal/config/layer.go` (the `Jobs` block), `schemas/project-layer.schema.json`
   (its shape), `internal/settings/registry.go` (the two rows),
   `internal/settings/registry_test.go` (the coverage test that fails without them),
@@ -702,7 +702,7 @@ R14 and R15 are the designation it reads and R16 is the half that hands the byte
   step's kind is **`commit_reports`** (`StepCommitReports` in `internal/recipe/recipe.go`, beside
   `StepDigest` and `StepMergeJudge`), a body-less step the runner executes itself — no options, no
   plan arm and no model stage — with **`UsesCommitReports`** reading it off a recipe exactly as
-  `UsesDigest` reads the digest step off one (`internal/runner/runner.go:2804`, called at `:3756`).
+  `UsesDigest` reads the digest step off one (`internal/runner/runner.go:2813`, called at `:3772`).
 - **What the step does.** It takes each object the launcher handed in (`task.Spec.Reports`), refuses
   any whose bytes do not match the SHA-256 it was handed, and writes the store's documents into the
   folder the designation names: the per-repository reports at `<dir>/<slug>/<YYYY>/<key>.md`, the
@@ -722,7 +722,7 @@ R14 and R15 are the designation it reads and R16 is the half that hands the byte
   names read one definition (R16). **`task.InputNameProblem` is not that check and is not enough for
   it:** the function admits a name beginning with a dot on purpose, because an `--attach` input is
   written under the git-excluded `inputs/` and `.git/hooks/pre-commit` there cannot reach the
-  repository's own `.git` (`internal/task/task.go:886`) — and **this step commits what it writes**, so
+  repository's own `.git` (`internal/task/task.go:892`) — and **this step commits what it writes**, so
   the same name would be a path in the repository. Nor does the handed-in SHA-256 stand in for the
   check: it matches the bytes to the hash the task document itself declares, and says nothing about
   where the file lands.
@@ -895,7 +895,7 @@ this one.
 - **The pins that move.** The two rows move the registry's own count, and the three places that state
   it move in the same change: `docs/config-management/README.md:47`,
   `docs/config-management/reconciliation.md:22` and
-  `internal/cli/docs_config_management_test.go:99` (`cfmRegistryRows`).
+  `internal/cli/docs_config_management_test.go:266` (`cfmRegistryRows`).
 - **Files (6):** `internal/settings/registry.go` (the two rows), `internal/settings/registry_test.go`
   (the coverage test that fails without them), `schemas/settings.schema.json`, the three count pins
   above. **`docs/periodic-reviews/README.md` is not one of them** — the status line is R6's, and this
@@ -1228,8 +1228,8 @@ reports job's tasks live in `internal/infra`, `deploy/terraform/**`, `internal/d
 `internal/cli`; the failures report's live in `internal/runner` — its `runner.go`, `refused.go`,
 `outcome.go`, `halt.go`, `prflow.go` and the FC2–FC4 test files, **not the `digest.go` and
 `digest_test.go` R0 holds** — `internal/runstore`, `internal/runview`, `schemas/` and the same two
-packages. The two therefore meet in **twenty-five files**
-(§P4) — twenty-six with the table's one conditional row — and every one of the twenty-five already had a
+packages. The two therefore meet in **twenty-six files**
+(§P4) — twenty-seven with the table's one conditional row — and every one of the twenty-six already had a
 level of its own in one work or the other — which
 is why the union adds **no edge that re-levels anything**: the only cross-work edges are **R11 (3) →
 FC7 (4)**, stated in §P6, and the shared files' own ordering. **A union that had to re-level would be
@@ -1258,6 +1258,7 @@ and the design's own: **no level holds two writers of one file.**
 | `internal/runner/refused.go` | FC2 (1), FC3 (2) | `endRefused`'s call and the push rejection's class |
 | `internal/infra/tfvars.go` | R13 (0), R7 (1) | the two `paused` settings, then the `reports` node and `reports_days` |
 | `internal/settings/registry.go`, `registry_test.go` | R13 (0), R15 (4) | R13's two `jobs.*.paused` rows and R15's two `reports_commit.*` rows, and the one coverage test that fails for either |
+| `schemas/settings.schema.json` | R13 (0), R15 (4) | R13's two `jobs.*.paused` entries in the schema's key-defaults map, and R15's two `reports_commit.*` keys beside them |
 | `internal/cli/docs_config_management_test.go` | R13 (0), R15 (4) | the registry's count pin, which each task's rows move |
 | `docs/config-management/README.md`, `reconciliation.md` | R13 (0), R15 (4) | the same count, in prose, in the two documents the config-management work owns |
 | `internal/cli/recipes_skew.go` | R11 (3), R16 (5) | R11's constant names `fugaro runs reports`; R16's names the task's `reports` member |
@@ -1271,8 +1272,8 @@ and the design's own: **no level holds two writers of one file.**
 owning documents' own **file lists**, not from their shared-files tables: a file the rule counts is
 one two or more tasks write, wherever it was first written down, and `schemas/schemas_test.go` —
 FC1's at level 0, R1's at level 1 and R16's at level 5 — is in all three owning lists and in neither
-of the first two shared-files tables. **Twenty-five of the files below are written by two or more
-tasks unconditionally and the twenty-sixth, `docs/periodic-reviews/README.md`, is one only under the
+of the first two shared-files tables. **Twenty-six of the files below are written by two or more
+tasks unconditionally and the twenty-seventh, `docs/periodic-reviews/README.md`, is one only under the
 answer to D1449 that sends
 FC8's fifth file there** — the row carries its own condition, and it is the only row whose being a
 shared file at all an open answer decides: `plugin/skills/working/reference/periodic-reviews.md`'s

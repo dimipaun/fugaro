@@ -983,7 +983,7 @@ own ruling with the mechanism E6 asked for (D2754):
    opening an empty pull request. **An object's name must be one of those two shapes and nothing
    else**, and a name outside them is refused before a byte is written: the step commits the path it
    writes, so the input rule — which admits a dot-prefixed name on purpose, an `--attach` input
-   landing under the git-excluded `inputs/` (`internal/task/task.go:886`) — does not carry over, and
+   landing under the git-excluded `inputs/` (`internal/task/task.go:892`) — does not carry over, and
    neither does the handed-in SHA-256, which only matches the bytes to the hash the task document
    itself declares.
 

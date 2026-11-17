@@ -215,7 +215,7 @@ type StageReport struct {
 	ByTier       map[string]pricing.Micros
 	ByModel      map[string]pricing.Micros // by serving model
 	ByRoute      map[string]pricing.Micros // by provider route (Claude calls have none)
-	Reported     pricing.Micros            // what providers said their calls cost: for comparison, and the floor under an unpriced tier's charge
+	Reported     pricing.Micros            // what providers said their calls cost: a complete call settles on it (D2640), and it floors the charge for a service tier no one prices
 	Unreconciled pricing.Micros            // charged from reservations, not from reported usage
 	Overrun      pricing.Micros            // charged above the calls' reservations
 	// ReportedBy is what providers said this stage's calls cost, by serving
