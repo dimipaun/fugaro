@@ -568,7 +568,7 @@ func (s *Service) trialCaller(w http.ResponseWriter, r *http.Request) (Caller, b
 		return Caller{}, false
 	}
 	// The address is read the way every other part of this service reads one
-	// (§4.2's `address`, which the forms validate through), and what it answers is
+	// (§4.2's `address`), and what it answers is
 	// what the trial is counted against. A verifier that proved no address, or one
 	// it proved that is not an address, has not done the half of its job §14 needs
 	// and is answered as a sign-in that failed: the account is what a trial is

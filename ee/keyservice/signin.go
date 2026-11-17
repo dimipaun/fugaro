@@ -6,7 +6,7 @@ package keyservice
 // The licence site's sign-in, authorize and device code (spec §11.3, §11.4;
 // D2144, TN3): the two paths `fugaro licence login` (K3.3) reaches, and the
 // first routes here that act for a person's own account rather than for a
-// merchant's event, a key's own secret or the operator reading the admin page.
+// merchant's event or a key's own secret.
 //
 // What proves the person is a Firebase ID token of the **owner's own licence
 // project** — never a customer's workspace project, whose token would prove only

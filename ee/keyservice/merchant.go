@@ -11,7 +11,7 @@ package keyservice
 // subscription belongs to (§8, D2131 — see `withdrawn` for how the walk finds
 // them and what that does not stop), a cancellation stops the reissue, and a
 // test-mode event mints a staging key and nothing else. Enterprise is not this
-// path: it is invoiced directly by the entity and its key is the admin page's
+// path: it is invoiced directly by the entity and its key is minted by hand
 // (D2141, §5.5).
 //
 // Three rules give this path its shape. A body is verified **before it is read**,
@@ -509,8 +509,8 @@ func (s *Service) completed(ctx context.Context, e Event, record Record) error {
 // again.
 //
 // Enterprise is refused before any of that, and it is refused rather than sold
-// the Team row: §5.5's keys are invoiced directly by the entity and minted from
-// the admin page, so a deployment whose paid plan names the Enterprise tier is
+// the Team row: §5.5's keys are invoiced directly by the entity and minted by
+// hand, so a deployment whose paid plan names the Enterprise tier is
 // one whose checkout would price a tier that is never self-serve — and the
 // customer would be granted a licence nobody sold them (D2141).
 func (s *Service) purchased(ctx context.Context, e Event) error {
@@ -1076,7 +1076,7 @@ func (s *Service) seatChanged(ctx context.Context, e Event, sub Subscription) er
 // leave the licence renewing after the money went back.
 //
 // Only a key whose record names a subscription is walked by that step, which is
-// what keeps a hand-minted key — the admin page's, the mint tool's, a trial's —
+// what keeps a hand-minted key — the mint tool's, a trial's —
 // from being read as the same licence as every other key whose record names
 // none.
 //
@@ -1458,7 +1458,7 @@ func (s *Service) renewed(ctx context.Context, sub Subscription, record Record) 
 // checkoutRows is the whole of what the checkout sells: the Team month and the
 // Team year (D442, spec section 12.1). The two rows are the plans a merchant
 // event may be minted under, and Enterprise is not one of them — §5.5's keys are
-// invoiced directly and minted from the admin page (D2141).
+// invoiced directly and minted by hand (D2141).
 var checkoutRows = []struct {
 	policy string
 	period time.Duration
