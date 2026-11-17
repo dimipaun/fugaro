@@ -538,6 +538,81 @@ func TestAFreeSeatRevealsPastItsFirstYear(t *testing.T) {
 	}
 }
 
+// TestAFreeSeatWithALapsedKeyIsRefused: the other half of the case above, and the
+// bound the exemption is written against. What a free seat is excused from is its
+// `ends_at` alone — the year the sign-up wrote and nothing ever moves on — and
+// what still bounds its reveal is the key in the installation's hand. A free seat
+// whose installation stopped renewing is a lapsed key, and a lapsed key is a
+// renewal rather than a reveal (F27, F30): the minter is handed the predecessor's
+// own end, and an end behind the clock is nothing to re-sign.
+//
+// The clock is put behind **both** the year and the key, so what the case reads is
+// which of the two this door refuses on: an exemption that had gone one step
+// further and skipped the key's own bound answers `licence_ended` here rather than
+// `key_lapsed`, and a door that had dropped the bound altogether is one that mints
+// on a term that has already run out.
+func TestAFreeSeatWithALapsedKeyIsRefused(t *testing.T) {
+	f := newBindingFixture(t)
+	org := f.signedUp(danaUID, danaEmail, "Dana Ltd")
+	seat := f.onlyEntitlement(t, org.ID)
+	if seat.Source != entitlementSourceFreeSeat {
+		t.Fatalf("the sign-up wrote the licence %q, want the free seat: this case is about the one grant whose record states no term (D2184, D2199)", seat.Source)
+	}
+	if rec := f.bind(t, seat.ID, exampleProject); rec.Code != http.StatusOK {
+		t.Fatalf("binding the free seat answered %d: %s", rec.Code, rec.Body)
+	}
+	key := f.mints.answers[0]
+
+	// A year on and never renewed: the sign-up's year is behind the clock, and so
+	// is D2202's thirty days of key that the binding minted under it.
+	f.advance(seat.EndsAt.Sub(f.now) + day)
+	if !f.now.After(seat.EndsAt) || !f.now.After(key.Record.Expires) {
+		t.Fatalf("the clock %s is inside the year (%s) or the key (%s), so this case reads nothing",
+			f.now, seat.EndsAt, key.Record.Expires)
+	}
+	f.actsAs(danaUID, danaEmail, signInGoogle)
+
+	rec := f.apiAsCaller(http.MethodPost, apiKeysRevealPath,
+		`{"workspace_id":`+jsonString(t, f.workspaceOf(t, seat))+`}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("revealing a free seat whose key has lapsed answered %d, want %d: %s",
+			rec.Code, http.StatusConflict, rec.Body)
+	}
+	if code := f.refused(rec); code != "key_lapsed" {
+		t.Errorf("a free seat whose key has lapsed was refused as %q, want key_lapsed: the year on the record is not an end of the licence and the key is what still bounds it (F27, F30)", code)
+	}
+	if len(f.mints.answers) != 1 {
+		t.Errorf("the deployment minted %d key(s), want the binding's alone: a key that has ended has no term left to re-sign", len(f.mints.answers))
+	}
+}
+
+// TestAnEndedLicenceIsNotRevealed is the exemption's own edge: the free seat is
+// the one licence the reveal's end check excuses, and every other one whose record
+// states an end behind the clock is refused `licence_ended` — the answer that
+// sends its owner to buy a new term rather than a key. Read the other way round,
+// this is what keeps the exemption from being the check's removal: a licence the
+// checkout sold is refused on the record's own end even while it holds a key.
+func TestAnEndedLicenceIsNotRevealed(t *testing.T) {
+	f := newRevealFixture(t)
+	f.advance(f.entitlement.EndsAt.Sub(f.now) + day)
+	if !f.now.After(f.entitlement.EndsAt) {
+		t.Fatalf("the clock %s is inside the licence's own term (%s), so this case reads nothing", f.now, f.entitlement.EndsAt)
+	}
+	f.signedInAgain()
+
+	rec := f.reveal(t, f.workspace.ID)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("revealing a licence whose term has ended answered %d, want %d: %s",
+			rec.Code, http.StatusConflict, rec.Body)
+	}
+	if code := f.refused(rec); code != "licence_ended" {
+		t.Errorf("a licence whose term has ended was refused as %q, want licence_ended: the free seat is the one grant the end check excuses (D2184)", code)
+	}
+	if len(f.mints.answers) != 1 {
+		t.Errorf("the deployment minted %d key(s), want the binding's alone: nothing re-signs a licence that has ended", len(f.mints.answers))
+	}
+}
+
 // TestARebindWithdrawsARevealedKey: D2198 read after a reveal. A rebind is what
 // takes the licence away from the installation holding its key, and the key that
 // installation holds after a reveal is the successor the reveal minted: it is a
