@@ -766,3 +766,25 @@ func TestFollowUpStoresASanitisedTitle(t *testing.T) {
 		t.Fatalf("task.json carries the raw title:\n%s", data)
 	}
 }
+
+// A follow-up that took its title from the pull request it continues is
+// gated on that title exactly as one that typed the flag: the gate judges
+// the field the spec carries, and this launch carries one nobody typed.
+// An image older than titlesSince would refuse the task at bootstrap on a
+// field the operator never saw, one launch after the launch that wrote it.
+//
+// Mutation (gate the follow-up's title only when --title was given): the
+// 0.8.0 image is launched and the run dies at bootstrap.
+func TestRunTitleGatesOnAFollowUpThatTookItFromThePR(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+	followUpTitleStub(t, titlePR("Rename the gadget"))
+	writeBuildRecord(t, f, appSlug, "web", release080)
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "a job title (--title, kept by --pr follow-ups and --retry) needs a job image whose runner knows the job title (fugaro "+titlesSince+" or later)") {
+		t.Fatalf("err = %v, want the pull request's title gated", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+}
