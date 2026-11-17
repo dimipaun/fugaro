@@ -52,7 +52,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { useParams } from 'react-router-dom'
 import { ApiError, createApiClient } from '../../api/client'
-import type { Subscription, SubscriptionSeats } from '../../api/types/billing'
+import type { CustomerPortal, Subscription, SubscriptionSeats } from '../../api/types/billing'
 import { useSession } from '../../auth/session'
 
 /**
@@ -73,11 +73,6 @@ const ROUTES = {
   subscription: (workspaceId: string) => `/workspaces/${encodeURIComponent(workspaceId)}/subscription`,
   seats: (workspaceId: string) => `/workspaces/${encodeURIComponent(workspaceId)}/subscription/seats`,
   portal: (workspaceId: string) => `/workspaces/${encodeURIComponent(workspaceId)}/subscription/portal`,
-}
-
-/** What the API answers when the screen asks for Paddle's customer portal. */
-interface CustomerPortal {
-  url: string
 }
 
 const SEATS_LABEL = 'New seat count'
