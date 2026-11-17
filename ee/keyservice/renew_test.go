@@ -293,6 +293,23 @@ func withoutASubscription(t *testing.T, f *fixture, keyID string) {
 	setSubscription(t, f, keyID, "")
 }
 
+// withoutAnEntitlement takes the licence out of one key's record, which is the
+// record of a key no licence is known to have granted (P3.6, D2148): the whole of
+// what F27's gate asks about, and a state the records of a service that has been
+// running longer than the field exists are still in.
+func withoutAnEntitlement(t *testing.T, f *fixture, keyID string) {
+	t.Helper()
+	f.store.mu.Lock()
+	defer f.store.mu.Unlock()
+	for i, record := range f.store.issuances {
+		if record.KeyID == keyID {
+			f.store.issuances[i].EntitlementID = ""
+			return
+		}
+	}
+	t.Fatalf("the store holds no record of the key %s", keyID)
+}
+
 // withoutAWorkspace is the same key's state with its workspace taken away, which
 // is what an issue path that never learned one leaves behind.
 func withoutAWorkspace(t *testing.T, f *fixture, keyID string) {
@@ -1526,6 +1543,39 @@ func TestAKeyWithNoSubscriptionIsRefused(t *testing.T) {
 	setSubscription(t, f, keyID, subscriptionFor(keyID))
 	if got := answerOf(t, f.call(RouteRenew, RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: secret})).Key; got == "" {
 		t.Error("the same key renewed once its subscription was written back, want a refusal only while it names none")
+	}
+}
+
+// TestAKeyWithNoEntitlementIsRefused: the licence is what F27's gate reads, so a
+// record naming none is the state that gate exists for — a key nothing here can
+// prove was granted at all, which is the licensor's own key, the admin page's and
+// the mint tool's, and D2148's reading off the subscription only because the
+// record named nothing else. The answer is the uniform refusal and not the key's
+// own state: the state would tell its holder a renewal is one secret away. It is
+// not the failure an unnamed store read gives either — that read would be of the
+// empty id, and a 500 tells the caller to retry a record that will never name a
+// licence.
+func TestAKeyWithNoEntitlementIsRefused(t *testing.T) {
+	f, spy := renewing(t)
+	keyID, secret, _ := heldKey(t, f, PolicyTeamMonthly)
+	f.inTheRenewalWindow(t, keyID)
+	if f.issuance(t, keyID).EntitlementID == "" {
+		t.Fatal("the fixture's key names no licence to take away, so this test proves nothing")
+	}
+	withoutAnEntitlement(t, f, keyID)
+	if got := f.issuance(t, keyID).EntitlementID; got != "" {
+		t.Fatalf("the key's record still names the licence %q, want none", got)
+	}
+
+	rec := f.call(RouteRenew, RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: secret})
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("a key naming no licence was answered %d, want %d: a key nothing can prove was granted does not renew", rec.Code, http.StatusForbidden)
+	}
+	if body := strings.TrimSpace(rec.Body.String()); body != renewalRefusal {
+		t.Errorf("the refusal reads %q, want the uniform sentence %q: a caller that proved its secret is still not told what the record lacks (F27)", body, renewalRefusal)
+	}
+	if got := spy.minted(); got != 0 {
+		t.Errorf("the minter was asked for %d key(s) for a key naming no licence, want none", got)
 	}
 }
 
