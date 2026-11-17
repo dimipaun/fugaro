@@ -419,12 +419,59 @@ func TestReposRmRemovesTheSixAndNamesTheSixItLeaves(t *testing.T) {
 	// The one part of the repository this door cannot reach at all, named rather
 	// than left to be discovered: the grants, which are the repository root's own
 	// IAM members, before the question and again after the write.
-	want := "it does not remove the grants of " + rmRepoA + "'s job accounts"
+	want := "it does not remove the repository root's own IAM members — the grants of " + rmRepoA + "'s job accounts and of its build account"
 	if !strings.Contains(warning, want) {
 		t.Errorf("the warning does not name what the repository root's own apply removes:\n%s", warning)
 	}
 	if !strings.Contains(after, want) {
 		t.Errorf("the output after the write does not name it either:\n%s", after)
+	}
+}
+
+// TestReposRmNamesTheDocumentedOffboardingForTheGrants is the second half of that
+// sentence's claim, and it is the half a reader at the confirmation can act on.
+//
+// Saying "the grants stay" is not enough if the sentence also says how to take
+// them away and that door does not exist: the previous wording named
+// `fugaro update --repo . --retire`, and `--retire` retires the addresses the
+// configuration no longer produces (Retirements is a set difference against the
+// spec), so over a repository whose `fugaro.yaml` still declares its workflows
+// it answers "Nothing to retire" and the grants stay exactly where they were.
+// The sentence therefore names the sequence that does reach them — the hand-run
+// offboarding the repository documents — and this test holds it to the two
+// things that make the naming honest: the document is there, and it carries the
+// step the sentence attributes to it.
+func TestReposRmNamesTheDocumentedOffboardingForTheGrants(t *testing.T) {
+	r := rmRigFor(t, "", rmGone{})
+	out, _ := r.rmOut(t, rmEntryA)
+	sentence := rmLineWith(out, "it does not remove the repository root's own IAM members")
+	if sentence == "" {
+		t.Fatalf("the removal does not name what it leaves of the repository root:\n%s", out)
+	}
+	if !strings.Contains(sentence, "docs/how-to/offboarding.md") {
+		t.Errorf("the sentence names no document for the flow that takes the grants away:\n%s", sentence)
+	}
+	// The one command the sentence names is the state removal this command
+	// performs, and it is a command the tree has: a `fugaro …` a person cannot
+	// type is a dead end at the one moment they are cleaning up.
+	cmds := rmFugaroCommands(sentence)
+	if len(cmds) == 0 {
+		t.Fatalf("the sentence names no command:\n%s", sentence)
+	}
+	root := NewRootCmd()
+	for _, path := range cmds {
+		if err := rmResolveCommand(root, path); err != nil {
+			t.Errorf("%v\n%s", err, sentence)
+		}
+	}
+	// And the document is the door it says it is: the sequence it lays out ends
+	// with that command, which is what makes the pointer worth following.
+	doc, err := os.ReadFile("../../docs/how-to/offboarding.md")
+	if err != nil {
+		t.Fatalf("reading docs/how-to/offboarding.md, the flow the sentence names: %v", err)
+	}
+	if !strings.Contains(string(doc), "fugaro update --repo --forget") {
+		t.Errorf("the sentence names docs/how-to/offboarding.md as the flow whose last step is `fugaro update --repo --forget`, and the document does not name that step:\n%s", sentence)
 	}
 }
 

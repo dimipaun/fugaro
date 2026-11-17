@@ -476,15 +476,27 @@ func reposRemovalKept(plan reposRemoval) string {
 }
 
 // reposRemovalRootOwned is the one part of the repository this command cannot
-// remove at all: the grants of its job accounts, which are the repository
-// root's own Terraform IAM members — on the project, on the runs bucket, on the
-// repository's secrets and on its image registry. Only an apply of that root
-// removes them, and that apply reads the state this command deletes, so they
-// are removed before this command or not at all. Saying nothing would make this
-// removal read as one that took everything the enrolment created, which is the
-// one thing the list above exists to prevent.
+// remove at all: the repository root's own Terraform IAM members — the grants of
+// its job accounts and of its build account, on the project, on the runs bucket,
+// on the repository's secrets and on its image registry. Only an apply (a
+// destroy) of that root removes them, this command runs no Terraform, and the
+// state it deletes is what such an apply reads, so they are removed before this
+// command or not at all. Saying nothing would make this removal read as one that
+// took everything the enrolment created, which is the one thing the list above
+// exists to prevent.
+//
+// It names the sequence rather than a verb because there is no verb: the retire
+// path's API-delete half (RetireSplit's api group, JobDeleteLabels) covers Cloud
+// Run jobs and nothing else, and its apply half is `fugaro update`'s own flow,
+// which this command does not run. The door that does exist is
+// docs/how-to/offboarding.md — whose first line is "There is no offboarding
+// command" — and its last step, `fugaro update --repo --forget`, is the state
+// removal this command performs. Naming `--retire` here would send the operator
+// to a command that answers "Nothing to retire" over a repository whose
+// `fugaro.yaml` still declares every address, at the one moment they are
+// cleaning up.
 func reposRemovalRootOwned(plan reposRemoval) string {
-	return fmt.Sprintf("it does not remove the grants of %s's job accounts (the repository root's own IAM members: on the project, on the runs bucket, on the repository's secrets and on its image registry): only an apply of that root removes them, and it reads the state this command deletes, so the one command that reaches them is `fugaro update --repo . --retire` from a checkout that no longer lists the repository, run before this one",
+	return fmt.Sprintf("it does not remove the repository root's own IAM members — the grants of %s's job accounts and of its build account, on the project, on the runs bucket, on its secrets and on its image registry. Nothing here removes them: this command runs no Terraform, and it deletes the state an apply of that root reads, so they are taken away before this command, by hand, or not at all — there is no command that does it, and docs/how-to/offboarding.md lays the sequence out, whose last step is the state removal this command performs (`fugaro update --repo --forget`)",
 		pluginwire.Printable(plan.ownerName))
 }
 
