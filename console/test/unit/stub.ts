@@ -229,7 +229,11 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 // The command path this invocation is for. It is commandKey's own source,
 // injected rather than written out again: the stub's scenario keys and the key
 // this child computes are then one function, and a second copy of the rules
-// cannot drift from the first.
+// cannot drift from the first. The one constant its source reads is injected
+// beside it, or the child would throw a ReferenceError on a settings write's
+// argv -- a case no test had spawned until the settings write's own floor case
+// did (settings-write-floor.test.ts).
+const SETTINGS_EDIT_KEY = ${JSON.stringify(SETTINGS_EDIT_KEY)}
 ${commandKey.toString()}
 const key = commandKey(argv)
 const answer = (scenario.commands && scenario.commands[key]) || scenario.default || {}

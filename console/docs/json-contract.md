@@ -3915,7 +3915,7 @@ same command's write arm — is a rule 6 row the console does not spawn yet
 | --- | --- | --- | --- | --- |
 | `step` | string | never | never | the step's name: an `internal/initflow` stage name, or the one step that is not a stage, `catalog-build` (D1577). It is a **name** and never a command line: the console draws it, and a reader must not run it |
 | `kind` | string | never | never | what kind of change asked for the step (`apply.Setting` or `apply.Resource`), which is the vocabulary the text form's own sentence is built from |
-| `key` | string | never | never | which thing changed: a setting key or a resource type, **exactly as the writer typed it**. It is written by a person and printed through `safetext.Field` in both forms, because a key carrying an escape sequence would draw whatever it liked on the terminal the text form prints to |
+| `key` | string | never | never | which thing changed: a setting key or a resource type, **exactly as the writer typed it**. **The document carries it raw, and the text form is the form that sanitises it**: without `--json` the change is a sentence and the key inside it goes through `safetext.Field` (`applyChangeText`, `internal/cli/apply.go`), because a key carrying an escape sequence would draw whatever it liked on the terminal that form prints to — while `applyRows` copies the record's own `Change.Key` through untouched, as this table's other members are copied. So **a consumer that draws this member puts it through its own class first** (design §5.1 rule 7; `src/shared/sanitize.ts`'s `TEXT_CLASSES`), the way every document's text is read here |
 
 **No value is ever in this document, and no argv either** (D1570, D1575). The
 record holds the *names* of the steps and the change that asked for each of
